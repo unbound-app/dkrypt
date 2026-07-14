@@ -30,13 +30,20 @@ export const config = {
   publicBaseUrl: optional('PUBLIC_BASE_URL', 'http://localhost:8080'),
 
   // admin dashboard - separate password from API_KEY so dashboard access
-  // and programmatic API access can be rotated independently.
+  // and programmatic API access can be rotated independently. This is the
+  // root/recovery login; normal users sign in via GitHub OAuth below.
   adminPassword: required('ADMIN_PASSWORD'),
   stateDir: optional('STATE_DIR', '/data/state'),
+
+  // GitHub OAuth for dashboard login (in addition to the root password).
+  // Leave both blank to disable the "Sign in with GitHub" option entirely.
+  githubOauthClientId: optional('GITHUB_OAUTH_CLIENT_ID', ''),
+  githubOauthClientSecret: optional('GITHUB_OAUTH_CLIENT_SECRET', ''),
 
   // ipadecrypt
   ipadecryptBin: optional('IPADECRYPT_BIN', 'ipadecrypt'),
   outputDir: optional('OUTPUT_DIR', '/data/tmp'),
+  ipadecryptConfigPath: optional('IPADECRYPT_CONFIG_PATH', '/root/.ipadecrypt/config.json'),
 
   // job lifecycle
   jobMaxWaitSeconds: optionalInt('JOB_MAX_WAIT_SECONDS', 1800),
@@ -54,3 +61,5 @@ export const config = {
   runPollTimeoutMinutes: optionalInt('RUN_POLL_TIMEOUT_MINUTES', 30),
   notifyWebhookUrl: optional('NOTIFY_WEBHOOK_URL', ''),
 };
+
+export const githubOauthEnabled = config.githubOauthClientId !== '' && config.githubOauthClientSecret !== '';

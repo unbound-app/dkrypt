@@ -20,10 +20,11 @@ can only run one `ipadecrypt decrypt` at a time.
 1. Jailbroken iPhone on the same network as this host, with OpenSSH,
    AppSync Unified, and appinst installed (see the
    [ipadecrypt README](https://github.com/londek/ipadecrypt#requirements)).
-2. Copy `.env.example` to `.env` and fill it in. At minimum: `API_KEY`,
-   `DOWNLOAD_SIGNING_SECRET`, `PUBLIC_BASE_URL`. Fill in the `WATCH_*` /
-   `GH_*` vars too if you want the automated side; leave them blank to
-   disable it.
+2. Copy `.env.example` to `.env` and fill it in. Required: `API_KEY`,
+   `DOWNLOAD_SIGNING_SECRET`, `PUBLIC_BASE_URL`, `ADMIN_PASSWORD`. Fill in
+   the `WATCH_*` / `GH_*` vars too if you want the automated side (leave
+   them blank to disable it), and `GITHUB_OAUTH_*` if you want other people
+   to log into the dashboard without sharing `ADMIN_PASSWORD`.
 3. Build the image:
    ```sh
    docker compose build
@@ -83,35 +84,62 @@ deleted from disk immediately after a successful download, or after
 ### `GET /v1/health`
 Liveness + whether the scheduler is enabled. Still requires the API key.
 
-## Admin dashboard
+## Dashboard
 
-`GET /admin` - a single static page (no build step, no external
-dependencies), gated by its own session login using `ADMIN_PASSWORD` (a
-separate secret from `API_KEY`, so either can be rotated independently).
-The static shell and `POST /v1/admin/login` are the only unauthenticated
-routes; every other `/v1/admin/*` route requires the session cookie set on
-login.
+`GET /` - a single static page (no build step, no external dependencies).
+Two ways in:
+
+- **Root password** (`ADMIN_PASSWORD`) - always logs in as an implicit
+  admin. Your recovery path if everything else is locked out.
+- **Sign in with GitHub** - only shown if `GITHUB_OAUTH_CLIENT_ID` /
+  `GITHUB_OAUTH_CLIENT_SECRET` are set (see `.env.example` for how to
+  register the OAuth App). A successful GitHub login only grants access if
+  that username is on the **Users** tab's allowlist - registering the
+  OAuth app doesn't let just anyone in, an admin has to add them first
+  (chicken-and-egg: add yourself via `ADMIN_PASSWORD` first).
+
+Two roles, enforced server-side (the UI just hides what a role can't do):
+
+- **admin** - everything below, plus Settings, Users, and Apple Auth.
+- **member** - read-only Overview/Jobs, and manages their *own* API keys
+  (request, reveal-once, regenerate, revoke) - but a request sits as
+  `pending` until an admin approves it on the API Keys tab.
+
+Tabs:
 
 - **Overview** - scheduler on/off, active jobs, recent history, and a
   banner if a decrypt failure looked like an App Store auth issue.
 - **Jobs** - full bounded history (last 100) of finished/failed jobs.
-- **API Keys** - issue/revoke additional bearer keys (stored hashed, shown
-  in full only once at creation). The root `API_KEY` from `.env` always
-  works too and can't be revoked from here - it's your recovery key if you
-  ever lock yourself out.
-- **Settings** - edit the watch bundle ID, watch/dispatch repos, workflow
-  file, poll cron, and notification webhook URL live, no restart needed.
-  `GH_TOKEN` and `API_KEY` stay env-only, not editable here.
+- **API Keys** - request/reveal/regenerate/revoke your own keys; admins
+  additionally see all pending requests (approve/deny), the full key list
+  across every user, and can create an auto-approved key directly (e.g.
+  for a CI runner). Keys are stored hashed - the plaintext is only ever
+  shown once, right after approval/regeneration. The root `API_KEY` from
+  `.env` always works too and isn't managed here.
+- **Settings** (admin) - edit the watch bundle ID, watch/dispatch repos,
+  workflow file, poll cron, and notification webhook URL live, no restart
+  needed. `GH_TOKEN` and `API_KEY` stay env-only, not editable here.
+- **Users** (admin) - the GitHub OAuth allowlist: add a username with a
+  role, or remove one.
+- **Apple Auth** (admin) - re-runs just the App Store sign-in step of
+  `ipadecrypt bootstrap` (email/password, and a 2FA code if Apple asks for
+  one) as a piped child process, streaming its prompts to the page so you
+  don't need to SSH in for routine re-auth. It deliberately can't drive the
+  device-setup wizard's interactive arrow-key menu - only `device.*`
+  fields stay untouched (so that step is skipped entirely), never the full
+  wizard. See the note below on why a fully headless approach isn't
+  possible.
 
 **Auth-failure detection**: there's no headless way to proactively check
 whether the App Store session is still valid - `ipadecrypt versions` is an
 interactive TUI, not scriptable. Instead, any decrypt job failure is
 pattern-matched against common re-auth error text (`login failed`,
 `reauthenticate`, `invalid credentials`, etc.); a match sets a persistent
-alert (cleared automatically by the next successful decrypt) and, if
-`NOTIFY_WEBHOOK_URL` is set, posts a Discord-webhook-shaped notification.
-If it turns out ipadecrypt sessions expire more/less often than expected,
-this is the place to tighten the detection (`api/src/util/appleAuth.ts`).
+alert (cleared automatically by the next successful decrypt or a
+successful Apple Auth re-run) and, if `NOTIFY_WEBHOOK_URL` is set, posts a
+Discord-webhook-shaped notification. If it turns out sessions expire
+more/less often than expected, this is the place to tighten the detection
+(`api/src/util/appleAuth.ts`).
 
 ## Notes / limitations
 

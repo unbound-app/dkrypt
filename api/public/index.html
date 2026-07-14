@@ -1,0 +1,572 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ipadecrypt-service</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0f1115;
+    --panel: #171a21;
+    --border: #262b36;
+    --text: #e6e8ec;
+    --muted: #8b93a3;
+    --accent: #5b8cff;
+    --ok: #3ecf8e;
+    --warn: #f5a623;
+    --err: #f2545b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border);
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  header h1 span { color: var(--muted); font-weight: 400; }
+  main { max-width: 960px; margin: 0 auto; padding: 24px; }
+  nav { display: flex; gap: 4px; margin-bottom: 20px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  nav button {
+    background: none; border: none; color: var(--muted); padding: 10px 14px;
+    cursor: pointer; font-size: 13px; border-bottom: 2px solid transparent;
+  }
+  nav button.active { color: var(--text); border-bottom-color: var(--accent); }
+  .panel {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: 18px; margin-bottom: 16px;
+  }
+  .panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 0 0 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; }
+  tr:last-child td { border-bottom: none; }
+  .badge { padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+  .badge.done, .badge.ok, .badge.approved, .badge.admin { background: rgba(62,207,142,0.15); color: var(--ok); }
+  .badge.failed, .badge.err, .badge.denied { background: rgba(242,84,91,0.15); color: var(--err); }
+  .badge.running, .badge.queued, .badge.pending, .badge.member { background: rgba(91,140,255,0.15); color: var(--accent); }
+  input, textarea, select {
+    width: 100%; background: #0d0f13; border: 1px solid var(--border); color: var(--text);
+    border-radius: 6px; padding: 8px 10px; font-size: 13px; font-family: inherit;
+  }
+  label { display: block; font-size: 12px; color: var(--muted); margin: 12px 0 4px; }
+  label:first-child { margin-top: 0; }
+  button.action {
+    background: var(--accent); color: white; border: none; border-radius: 6px;
+    padding: 8px 16px; font-size: 13px; cursor: pointer; margin-top: 14px;
+  }
+  button.action.danger { background: var(--err); }
+  button.action.secondary { background: transparent; border: 1px solid var(--border); color: var(--text); }
+  button.action.github { background: #24292f; }
+  button.small { font-size: 12px; padding: 4px 10px; margin: 0; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .alert { background: rgba(245,166,35,0.12); border: 1px solid rgba(245,166,35,0.4); color: var(--warn);
+    border-radius: 8px; padding: 12px 14px; margin-bottom: 16px; font-size: 13px; }
+  .muted { color: var(--muted); }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .actions-cell { display: flex; gap: 6px; flex-wrap: wrap; }
+  .stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 12px; }
+  .stat-row > div { min-width: 0; }
+  .stat { font-size: 26px; font-weight: 600; }
+  .stat-label { font-size: 12px; color: var(--muted); }
+  dl.config-list { margin: 0; }
+  dl.config-list > div { display: flex; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+  dl.config-list > div:last-child { border-bottom: none; }
+  dl.config-list dt { flex: 0 0 140px; color: var(--muted); font-size: 12px; padding-top: 2px; }
+  dl.config-list dd { margin: 0; font-family: ui-monospace, monospace; font-size: 13px; word-break: break-all; }
+  #login-screen { max-width: 340px; margin: 80px auto; }
+  #login-screen h2 { font-size: 16px; margin-bottom: 4px; }
+  #login-screen .muted { margin-bottom: 16px; }
+  code { background: #0d0f13; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+  .key-reveal { background: #0d0f13; border: 1px solid var(--accent); border-radius: 6px; padding: 10px; margin-top: 10px; word-break: break-all; font-size: 12px; }
+  .hidden { display: none; }
+  pre.log { background: #0d0f13; border: 1px solid var(--border); border-radius: 6px; padding: 10px;
+    font-size: 12px; max-height: 260px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
+  hr.sep { border: none; border-top: 1px solid var(--border); margin: 18px 0; }
+</style>
+</head>
+<body>
+
+<div id="login-screen" class="panel hidden">
+  <h2>ipadecrypt-service</h2>
+  <div class="muted">Sign in to continue.</div>
+  <button id="github-login-btn" class="action github hidden" style="width:100%;" onclick="location.href='/v1/auth/github/login'">Sign in with GitHub</button>
+  <hr class="sep" />
+  <label for="password">Root password</label>
+  <input type="password" id="password" autocomplete="current-password" />
+  <button class="action" onclick="loginRoot()">Sign in</button>
+  <div id="login-error" class="muted" style="margin-top:8px;"></div>
+</div>
+
+<div id="app" class="hidden">
+  <header>
+    <h1>ipadecrypt-service <span id="scheduler-status"></span></h1>
+    <div class="row">
+      <span id="whoami" class="muted" style="font-size:13px;"></span>
+      <button class="action secondary small" onclick="logout()">Log out</button>
+    </div>
+  </header>
+  <main>
+    <div id="alert-banner"></div>
+    <nav id="tab-nav"></nav>
+
+    <section id="tab-overview">
+      <div class="panel">
+        <h2>Status</h2>
+        <div class="stat-row">
+          <div><div class="stat" id="ov-scheduler">-</div><div class="stat-label">Scheduler</div></div>
+          <div><div class="stat" id="ov-active">-</div><div class="stat-label">Active jobs</div></div>
+        </div>
+        <dl class="config-list">
+          <div><dt>Watching</dt><dd id="ov-bundle">-</dd></div>
+          <div><dt>Poll cron</dt><dd id="ov-cron">-</dd></div>
+        </dl>
+      </div>
+      <div class="panel">
+        <h2>Active jobs</h2>
+        <table id="active-jobs-table"><thead><tr><th>Bundle ID</th><th>Source</th><th>Status</th><th>Progress</th></tr></thead><tbody></tbody></table>
+        <div id="active-jobs-empty" class="muted hidden">Nothing running.</div>
+      </div>
+      <div class="panel">
+        <h2>Recent history</h2>
+        <table id="recent-history-table"><thead><tr><th>Bundle ID</th><th>Source</th><th>Status</th><th>Finished</th></tr></thead><tbody></tbody></table>
+      </div>
+    </section>
+
+    <section id="tab-jobs" class="hidden">
+      <div class="panel">
+        <h2>Job history</h2>
+        <table id="jobs-table"><thead><tr><th>Bundle ID</th><th>Source</th><th>Status</th><th>Size</th><th>Finished</th><th>Error</th></tr></thead><tbody></tbody></table>
+      </div>
+    </section>
+
+    <section id="tab-keys" class="hidden">
+      <div class="panel">
+        <h2 id="request-key-heading">Request a key</h2>
+        <label for="key-name">Name</label>
+        <input id="key-name" placeholder="e.g. laptop, ci-runner" />
+        <button class="action" id="request-key-btn" onclick="requestKey()">Request</button>
+        <div id="key-reveal" class="key-reveal hidden"></div>
+      </div>
+      <div class="panel">
+        <h2>My keys</h2>
+        <table id="mine-keys-table"><thead><tr><th>Name</th><th>Status</th><th>Created</th><th>Last used</th><th></th></tr></thead><tbody></tbody></table>
+        <div class="muted" style="margin-top:10px;">Pending keys need admin approval before they work.</div>
+      </div>
+      <div id="admin-keys-panels" class="hidden">
+        <div class="panel">
+          <h2>Pending requests</h2>
+          <table id="pending-keys-table"><thead><tr><th>Name</th><th>Requested by</th><th>Requested</th><th></th></tr></thead><tbody></tbody></table>
+          <div id="pending-keys-empty" class="muted hidden">Nothing pending.</div>
+        </div>
+        <div class="panel">
+          <h2>Create a key directly</h2>
+          <div class="muted" style="margin-bottom:10px;">Auto-approved, e.g. for a CI runner or yourself.</div>
+          <label for="admin-key-name">Name</label>
+          <input id="admin-key-name" placeholder="e.g. ci-runner" />
+          <button class="action" onclick="createKeyDirect()">Create</button>
+          <div id="admin-key-reveal" class="key-reveal hidden"></div>
+        </div>
+        <div class="panel">
+          <h2>All keys</h2>
+          <table id="all-keys-table"><thead><tr><th>Name</th><th>Owner</th><th>Status</th><th>Created</th><th>Last used</th><th></th></tr></thead><tbody></tbody></table>
+        </div>
+        <div class="muted" style="margin-top:-6px;">The root <code>API_KEY</code> from <code>.env</code> always works too and isn't listed here.</div>
+      </div>
+    </section>
+
+    <section id="tab-settings" class="hidden">
+      <div class="panel">
+        <h2>Automated watch → GitHub dispatch</h2>
+        <label>Watch bundle ID</label>
+        <input id="s-watchBundleId" />
+        <label>Watch app repo (releases tracked here)</label>
+        <input id="s-watchAppRepo" />
+        <label>GitHub dispatch repo (owns the workflow)</label>
+        <input id="s-ghDispatchRepo" />
+        <label>Workflow file</label>
+        <input id="s-ghWorkflowFile" />
+        <label>Poll cron</label>
+        <input id="s-pollCron" />
+        <label>Notification webhook URL (Discord-compatible, optional)</label>
+        <input id="s-notifyWebhookUrl" />
+        <button class="action" onclick="saveSettings()">Save</button>
+        <div id="settings-saved" class="muted hidden" style="margin-top:8px;">Saved.</div>
+      </div>
+    </section>
+
+    <section id="tab-users" class="hidden">
+      <div class="panel">
+        <h2>Add an allowed GitHub user</h2>
+        <label for="user-username">GitHub username</label>
+        <input id="user-username" placeholder="e.g. octocat" />
+        <label for="user-role">Role</label>
+        <select id="user-role">
+          <option value="member">member (read-only + own API keys)</option>
+          <option value="admin">admin (full access)</option>
+        </select>
+        <button class="action" onclick="addUser()">Add</button>
+      </div>
+      <div class="panel">
+        <h2>Allowlist</h2>
+        <table id="users-table"><thead><tr><th>Username</th><th>Role</th><th>Added</th><th></th></tr></thead><tbody></tbody></table>
+      </div>
+    </section>
+
+    <section id="tab-apple" class="hidden">
+      <div class="panel">
+        <h2>Apple ID re-authentication</h2>
+        <div class="muted" style="margin-bottom:10px;">
+          Redoes the App Store sign-in step only (email, password, and a 2FA code if Apple asks for one).
+          The device SSH connection isn't touched. This can't drive the device-setup wizard's interactive
+          menu, so it's only useful for refreshing an expired Apple session.
+        </div>
+        <div class="row">
+          <button class="action" id="apple-start-btn" onclick="startAppleAuth()">Start re-authentication</button>
+          <button class="action secondary" id="apple-cancel-btn" onclick="cancelAppleAuth()" disabled>Cancel</button>
+        </div>
+        <pre class="log" id="apple-log" style="margin-top:14px;"></pre>
+        <div id="apple-input-row" class="row hidden" style="margin-top:10px;">
+          <input id="apple-input" placeholder="type the requested value and press Enter" />
+          <button class="action small" onclick="submitAppleInput()">Send</button>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+let me = { loggedIn: false, sub: null, role: null, githubOauthEnabled: false };
+let appleAuthPoll = null;
+
+async function api(path, opts) {
+  const res = await fetch(path, { ...opts, headers: { 'Content-Type': 'application/json', ...(opts?.headers || {}) } });
+  if (res.status === 401) { showLogin(); throw new Error('unauthorized'); }
+  return res;
+}
+
+function showLogin() {
+  document.getElementById('login-screen').classList.remove('hidden');
+  document.getElementById('app').classList.add('hidden');
+  document.getElementById('github-login-btn').classList.toggle('hidden', !me.githubOauthEnabled);
+}
+
+function tabsForRole(role) {
+  const base = [
+    ['overview', 'Overview'],
+    ['jobs', 'Jobs'],
+    ['keys', 'API Keys'],
+  ];
+  if (role === 'admin') {
+    base.push(['settings', 'Settings'], ['users', 'Users'], ['apple', 'Apple Auth']);
+  }
+  return base;
+}
+
+function showApp() {
+  document.getElementById('login-screen').classList.add('hidden');
+  document.getElementById('app').classList.remove('hidden');
+  document.getElementById('whoami').textContent = `${me.sub} (${me.role})`;
+  document.getElementById('admin-keys-panels').classList.toggle('hidden', me.role !== 'admin');
+  document.getElementById('request-key-heading').textContent = me.role === 'admin' ? 'Request a key (for yourself)' : 'Request a key';
+
+  const nav = document.getElementById('tab-nav');
+  nav.innerHTML = tabsForRole(me.role).map(([id, label], i) =>
+    `<button class="tab ${i === 0 ? 'active' : ''}" data-tab="${id}" onclick="showTab('${id}')">${label}</button>`
+  ).join('');
+
+  showTab('overview');
+}
+
+async function loginRoot() {
+  const password = document.getElementById('password').value;
+  const res = await fetch('/v1/auth/login', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }),
+  });
+  if (res.ok) { await init(); } else { document.getElementById('login-error').textContent = 'Wrong password.'; }
+}
+
+async function logout() {
+  await fetch('/v1/auth/logout', { method: 'POST' });
+  await init();
+}
+
+function showTab(name) {
+  document.querySelectorAll('nav .tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
+  document.querySelectorAll('main section').forEach((s) => s.classList.toggle('hidden', s.id !== `tab-${name}`));
+  if (name === 'overview') loadOverview();
+  if (name === 'jobs') loadJobs();
+  if (name === 'keys') loadKeys();
+  if (name === 'settings') loadSettings();
+  if (name === 'users') loadUsers();
+  if (name === 'apple') startAppleAuthPolling(); else stopAppleAuthPolling();
+}
+
+function fmtTime(ms) { return ms ? new Date(ms).toLocaleString() : '-'; }
+function fmtSize(b) { if (!b) return '-'; const mb = b / 1024 / 1024; return mb >= 1 ? `${mb.toFixed(1)} MB` : `${(b/1024).toFixed(0)} KB`; }
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+async function loadOverview() {
+  const res = await api('/v1/dashboard/overview');
+  const data = await res.json();
+
+  document.getElementById('scheduler-status').textContent = data.schedulerEnabled ? '· scheduler enabled' : '· scheduler disabled';
+
+  const banner = document.getElementById('alert-banner');
+  if (data.appleAuthAlert?.suspected) {
+    const dismissBtn = me.role === 'admin' ? `<div><button class="action small secondary" onclick="clearAuthAlert()">Dismiss</button></div>` : '';
+    banner.innerHTML = `<div class="alert">⚠️ App Store auth may need re-authentication (last error at ${fmtTime(data.appleAuthAlert.lastErrorAt)}): <code>${escapeHtml(data.appleAuthAlert.lastError || '')}</code>${dismissBtn}</div>`;
+  } else {
+    banner.innerHTML = '';
+  }
+
+  document.getElementById('ov-scheduler').textContent = data.schedulerEnabled ? 'On' : 'Off';
+  document.getElementById('ov-active').textContent = data.activeJobs.length;
+  document.getElementById('ov-bundle').textContent = data.settings.watchBundleId || '-';
+  document.getElementById('ov-cron').textContent = data.settings.pollCron || '-';
+
+  const activeBody = document.querySelector('#active-jobs-table tbody');
+  activeBody.innerHTML = data.activeJobs.map((j) => `
+    <tr><td>${escapeHtml(j.bundleId)}</td><td>${j.source}</td><td><span class="badge ${j.status}">${j.status}</span></td><td class="muted">${escapeHtml(j.progress)}</td></tr>
+  `).join('');
+  document.getElementById('active-jobs-empty').classList.toggle('hidden', data.activeJobs.length > 0);
+
+  const historyBody = document.querySelector('#recent-history-table tbody');
+  historyBody.innerHTML = data.recentHistory.map((j) => `
+    <tr><td>${escapeHtml(j.bundleId)}</td><td>${j.source}</td><td><span class="badge ${j.status}">${j.status}</span></td><td class="muted">${fmtTime(j.finishedAt)}</td></tr>
+  `).join('');
+}
+
+async function clearAuthAlert() {
+  await api('/v1/dashboard/auth-alert/clear', { method: 'POST' });
+  loadOverview();
+}
+
+async function loadJobs() {
+  const res = await api('/v1/dashboard/jobs');
+  const data = await res.json();
+  document.querySelector('#jobs-table tbody').innerHTML = data.history.map((j) => `
+    <tr>
+      <td>${escapeHtml(j.bundleId)}</td><td>${j.source}</td>
+      <td><span class="badge ${j.status}">${j.status}</span></td>
+      <td>${fmtSize(j.sizeBytes)}</td><td class="muted">${fmtTime(j.finishedAt)}</td>
+      <td class="muted">${escapeHtml(j.error || '')}</td>
+    </tr>
+  `).join('');
+}
+
+async function loadKeys() {
+  const mineRes = await api('/v1/dashboard/keys/mine');
+  const mine = (await mineRes.json()).keys;
+  document.querySelector('#mine-keys-table tbody').innerHTML = mine.map((k) => `
+    <tr>
+      <td>${escapeHtml(k.name)}</td><td><span class="badge ${k.status}">${k.status}</span></td>
+      <td class="muted">${fmtTime(k.createdAt)}</td><td class="muted">${fmtTime(k.lastUsedAt)}</td>
+      <td class="actions-cell">
+        ${k.hasUnrevealedSecret ? `<button class="action small" onclick="revealKey('${k.id}')">Reveal</button>` : ''}
+        ${k.status === 'approved' ? `<button class="action small secondary" onclick="regenerateKey('${k.id}')">Regenerate</button>` : ''}
+        <button class="action small danger" onclick="revokeKey('${k.id}')">Revoke</button>
+      </td>
+    </tr>
+  `).join('');
+
+  if (me.role !== 'admin') return;
+
+  const pendingRes = await api('/v1/dashboard/keys/pending');
+  const pending = (await pendingRes.json()).keys;
+  document.querySelector('#pending-keys-table tbody').innerHTML = pending.map((k) => `
+    <tr>
+      <td>${escapeHtml(k.name)}</td><td>${escapeHtml(k.ownerId)}</td><td class="muted">${fmtTime(k.createdAt)}</td>
+      <td class="actions-cell">
+        <button class="action small" onclick="approveKey('${k.id}')">Approve</button>
+        <button class="action small danger" onclick="denyKey('${k.id}')">Deny</button>
+      </td>
+    </tr>
+  `).join('');
+  document.getElementById('pending-keys-empty').classList.toggle('hidden', pending.length > 0);
+
+  const allRes = await api('/v1/dashboard/keys/all');
+  const all = (await allRes.json()).keys;
+  document.querySelector('#all-keys-table tbody').innerHTML = all.map((k) => `
+    <tr>
+      <td>${escapeHtml(k.name)}</td><td>${escapeHtml(k.ownerId)}</td><td><span class="badge ${k.status}">${k.status}</span></td>
+      <td class="muted">${fmtTime(k.createdAt)}</td><td class="muted">${fmtTime(k.lastUsedAt)}</td>
+      <td><button class="action small danger" onclick="revokeKey('${k.id}')">Revoke</button></td>
+    </tr>
+  `).join('');
+}
+
+async function requestKey() {
+  const name = document.getElementById('key-name').value.trim();
+  if (!name) return;
+  await api('/v1/dashboard/keys/request', { method: 'POST', body: JSON.stringify({ name }) });
+  document.getElementById('key-name').value = '';
+  loadKeys();
+}
+
+async function createKeyDirect() {
+  const name = document.getElementById('admin-key-name').value.trim();
+  if (!name) return;
+  const res = await api('/v1/dashboard/keys', { method: 'POST', body: JSON.stringify({ name }) });
+  const data = await res.json();
+  const reveal = document.getElementById('admin-key-reveal');
+  reveal.classList.remove('hidden');
+  reveal.innerHTML = `Save this now, it won't be shown again:<br><code>${escapeHtml(data.key)}</code>`;
+  document.getElementById('admin-key-name').value = '';
+  loadKeys();
+}
+
+async function revealKey(id) {
+  const res = await api(`/v1/dashboard/keys/${id}/reveal`, { method: 'POST' });
+  const data = await res.json();
+  const reveal = document.getElementById('key-reveal');
+  reveal.classList.remove('hidden');
+  reveal.innerHTML = `Save this now, it won't be shown again:<br><code>${escapeHtml(data.key)}</code>`;
+  loadKeys();
+}
+
+async function regenerateKey(id) {
+  if (!confirm('Regenerate this key? The old secret stops working immediately.')) return;
+  await api(`/v1/dashboard/keys/${id}/regenerate`, { method: 'POST' });
+  loadKeys();
+}
+
+async function approveKey(id) {
+  await api(`/v1/dashboard/keys/${id}/approve`, { method: 'POST' });
+  loadKeys();
+}
+
+async function denyKey(id) {
+  await api(`/v1/dashboard/keys/${id}/deny`, { method: 'POST' });
+  loadKeys();
+}
+
+async function revokeKey(id) {
+  if (!confirm('Revoke this key? Anything using it will lose access immediately.')) return;
+  await api(`/v1/dashboard/keys/${id}`, { method: 'DELETE' });
+  loadKeys();
+}
+
+async function loadSettings() {
+  const res = await api('/v1/dashboard/settings');
+  const data = await res.json();
+  for (const field of ['watchBundleId', 'watchAppRepo', 'ghDispatchRepo', 'ghWorkflowFile', 'pollCron', 'notifyWebhookUrl']) {
+    document.getElementById(`s-${field}`).value = data[field] || '';
+  }
+}
+
+async function saveSettings() {
+  const patch = {};
+  for (const field of ['watchBundleId', 'watchAppRepo', 'ghDispatchRepo', 'ghWorkflowFile', 'pollCron', 'notifyWebhookUrl']) {
+    patch[field] = document.getElementById(`s-${field}`).value;
+  }
+  await api('/v1/dashboard/settings', { method: 'PUT', body: JSON.stringify(patch) });
+  const saved = document.getElementById('settings-saved');
+  saved.classList.remove('hidden');
+  setTimeout(() => saved.classList.add('hidden'), 2000);
+  loadOverview();
+}
+
+async function loadUsers() {
+  const res = await api('/v1/dashboard/users');
+  const data = await res.json();
+  document.querySelector('#users-table tbody').innerHTML = data.users.map((u) => `
+    <tr>
+      <td>${escapeHtml(u.username)}</td><td><span class="badge ${u.role}">${u.role}</span></td>
+      <td class="muted">${fmtTime(u.addedAt)}</td>
+      <td><button class="action small danger" onclick="removeUser('${u.username}')">Remove</button></td>
+    </tr>
+  `).join('');
+}
+
+async function addUser() {
+  const username = document.getElementById('user-username').value.trim();
+  const role = document.getElementById('user-role').value;
+  if (!username) return;
+  await api('/v1/dashboard/users', { method: 'POST', body: JSON.stringify({ username, role }) });
+  document.getElementById('user-username').value = '';
+  loadUsers();
+}
+
+async function removeUser(username) {
+  if (!confirm(`Remove ${username} from the allowlist?`)) return;
+  await api(`/v1/dashboard/users/${encodeURIComponent(username)}`, { method: 'DELETE' });
+  loadUsers();
+}
+
+async function refreshAppleAuthStatus() {
+  const res = await api('/v1/dashboard/apple-auth/status');
+  const data = await res.json();
+  document.getElementById('apple-log').textContent = data.log || '(not started)';
+  document.getElementById('apple-input-row').classList.toggle('hidden', !data.waitingForInput);
+  document.getElementById('apple-start-btn').disabled = !!data.running;
+  document.getElementById('apple-cancel-btn').disabled = !data.running;
+  const log = document.getElementById('apple-log');
+  log.scrollTop = log.scrollHeight;
+}
+
+function startAppleAuthPolling() {
+  refreshAppleAuthStatus();
+  if (appleAuthPoll) return;
+  appleAuthPoll = setInterval(refreshAppleAuthStatus, 1200);
+}
+
+function stopAppleAuthPolling() {
+  if (appleAuthPoll) { clearInterval(appleAuthPoll); appleAuthPoll = null; }
+}
+
+async function startAppleAuth() {
+  const res = await api('/v1/dashboard/apple-auth/start', { method: 'POST' });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    document.getElementById('apple-log').textContent = `Failed to start: ${data.error || res.status}`;
+    return;
+  }
+  refreshAppleAuthStatus();
+}
+
+async function cancelAppleAuth() {
+  await api('/v1/dashboard/apple-auth/cancel', { method: 'POST' });
+  refreshAppleAuthStatus();
+}
+
+async function submitAppleInput() {
+  const input = document.getElementById('apple-input');
+  const value = input.value;
+  input.value = '';
+  await api('/v1/dashboard/apple-auth/input', { method: 'POST', body: JSON.stringify({ value }) });
+  refreshAppleAuthStatus();
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && document.activeElement?.id === 'apple-input') submitAppleInput();
+  if (e.key === 'Enter' && document.activeElement?.id === 'password') loginRoot();
+});
+
+async function init() {
+  const res = await fetch('/v1/auth/session');
+  const data = await res.json();
+  me = data;
+  if (data.loggedIn) showApp(); else showLogin();
+}
+
+init();
+setInterval(() => {
+  if (!document.getElementById('app').classList.contains('hidden')) {
+    const active = document.querySelector('nav .tab.active')?.dataset.tab;
+    if (active === 'overview') loadOverview();
+  }
+}, 10000);
+</script>
+</body>
+</html>
