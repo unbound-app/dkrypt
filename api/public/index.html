@@ -46,11 +46,6 @@
     padding: 18px; margin-bottom: 16px;
   }
   .panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 0 0 12px; }
-  .panel-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-  .panel-head h2 { margin: 0; }
-  button.refresh { background: none; border: 1px solid var(--border); color: var(--muted); border-radius: 6px;
-    padding: 4px 10px; font-size: 12px; cursor: pointer; }
-  button.refresh:hover { color: var(--text); border-color: var(--accent); }
   pre.code-block { background: #0d0f13; border: 1px solid var(--border); border-radius: 6px; padding: 12px 14px;
     font-size: 12.5px; overflow-x: auto; line-height: 1.6; }
   pre.code-block .cmt { color: var(--muted); }
@@ -129,7 +124,7 @@
 
     <section id="tab-overview">
       <div class="panel">
-        <div class="panel-head"><h2>Status</h2><button class="refresh" onclick="loadOverview()">Refresh</button></div>
+        <h2>Status</h2>
         <div class="stat-row">
           <div><div class="stat" id="ov-scheduler">-</div><div class="stat-label">Scheduler</div></div>
           <div><div class="stat" id="ov-active">-</div><div class="stat-label">Active jobs</div></div>
@@ -152,7 +147,7 @@
 
     <section id="tab-jobs" class="hidden">
       <div class="panel">
-        <div class="panel-head"><h2>Job history</h2><button class="refresh" onclick="loadJobs()">Refresh</button></div>
+        <h2>Job history</h2>
         <table id="jobs-table"><thead><tr><th>Bundle ID</th><th>Source</th><th>Status</th><th>Size</th><th>Finished</th><th>Error</th></tr></thead><tbody></tbody></table>
       </div>
     </section>
@@ -167,17 +162,17 @@
         <div id="key-reveal" class="key-reveal hidden"></div>
       </div>
       <div class="panel">
-        <div class="panel-head"><h2>My keys</h2><button class="refresh" onclick="loadKeys()">Refresh</button></div>
+        <h2>My keys</h2>
         <table id="mine-keys-table"><thead><tr><th>Name</th><th>Status</th><th>Created</th><th>Last used</th><th></th></tr></thead><tbody></tbody></table>
       </div>
       <div id="admin-keys-panels" class="hidden">
         <div class="panel">
-          <div class="panel-head"><h2>Pending requests</h2><button class="refresh" onclick="loadKeys()">Refresh</button></div>
+          <h2>Pending requests</h2>
           <table id="pending-keys-table"><thead><tr><th>Name</th><th>Requested by</th><th>Requested</th><th></th></tr></thead><tbody></tbody></table>
           <div id="pending-keys-empty" class="muted hidden">Nothing pending.</div>
         </div>
         <div class="panel">
-          <div class="panel-head"><h2>All keys</h2><button class="refresh" onclick="loadKeys()">Refresh</button></div>
+          <h2>All keys</h2>
           <table id="all-keys-table"><thead><tr><th>Name</th><th>Owner</th><th>Status</th><th>Created</th><th>Last used</th><th></th></tr></thead><tbody></tbody></table>
         </div>
         <div class="muted" style="margin-top:-6px;">The root <code>API_KEY</code> from <code>.env</code> always works too and isn't listed here.</div>
@@ -234,7 +229,7 @@
         <button class="action" onclick="addUser()">Add</button>
       </div>
       <div class="panel">
-        <div class="panel-head"><h2>Allowlist</h2><button class="refresh" onclick="loadUsers()">Refresh</button></div>
+        <h2>Allowlist</h2>
         <table id="users-table"><thead><tr><th>Username</th><th>Role</th><th>Added</th><th></th></tr></thead><tbody></tbody></table>
       </div>
     </section>
