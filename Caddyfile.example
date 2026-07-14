@@ -1,0 +1,15 @@
+# Example Caddyfile for ipa.dylib.dev.
+#
+# If Caddy runs directly on the homelab host (not in Docker), point it at
+# the api container's published localhost port:
+ipa.dylib.dev {
+	reverse_proxy 127.0.0.1:8080
+}
+
+# If Caddy runs as a container on the same compose network instead (see the
+# commented `caddy` service in docker-compose.yml), use the service name
+# and internal port instead, and drop the `ports:` publish on `api`:
+#
+# ipa.dylib.dev {
+# 	reverse_proxy api:8080
+# }

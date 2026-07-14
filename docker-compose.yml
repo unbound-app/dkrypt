@@ -1,0 +1,45 @@
+services:
+  api:
+    build: ./api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      PORT: 8080
+    volumes:
+      # Persists the ipadecrypt App Store login + device SSH config across
+      # restarts. Bootstrap it once with:
+      #   docker compose run --rm -it api ipadecrypt bootstrap
+      - ipadecrypt-config:/root/.ipadecrypt
+      # Scratch space for decrypted IPAs in flight. Safe to wipe.
+      - ipa-tmp:/data/tmp
+    ports:
+      # Bound to localhost only: reachable from a Caddy instance running
+      # directly on this host (reverse_proxy 127.0.0.1:8080), but not
+      # exposed to the network directly. If you'd rather run Caddy as a
+      # container instead, drop this ports: block and use the `caddy`
+      # service below (same compose network, `reverse_proxy api:8080`).
+      - "127.0.0.1:8080:8080"
+
+  # Optional: uncomment to run Caddy as a container on the same network
+  # instead of on the host. If you use this, remove the `ports:` block
+  # from the `api` service above - Caddy reaches it via the service name.
+  #
+  # caddy:
+  #   image: caddy:2-alpine
+  #   restart: unless-stopped
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   volumes:
+  #     - ./Caddyfile:/etc/caddy/Caddyfile:ro
+  #     - caddy-data:/data
+  #     - caddy-config:/config
+  #   depends_on:
+  #     - api
+
+volumes:
+  ipadecrypt-config:
+  ipa-tmp:
+  # caddy-data:
+  # caddy-config:
