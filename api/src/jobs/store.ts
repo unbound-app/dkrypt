@@ -26,7 +26,13 @@ function findActiveJobForBundle(bundleId: string): Job | undefined {
   return undefined;
 }
 
-/** Creates a new job for bundleId, or returns the already in-flight one for that bundle. */
+/**
+ * Creates a new job for bundleId, or returns the already in-flight one for
+ * that bundle. Scheduler jobs jump ahead of anything dashboard-queued (but
+ * never ahead of a job already running - the device can't be interrupted
+ * mid-decrypt) since the automated release watch matters more than someone
+ * poking around the dashboard for fun.
+ */
 export function enqueueDecryptJob(bundleId: string, source: JobSource): Job {
   const existing = findActiveJobForBundle(bundleId);
   if (existing) return existing;
@@ -42,8 +48,12 @@ export function enqueueDecryptJob(bundleId: string, source: JobSource): Job {
   };
 
   jobs.set(job.id, job);
-  queue.push(job.id);
-  log.info('job queued', { jobId: job.id, bundleId });
+  if (source === 'scheduler') {
+    queue.unshift(job.id);
+  } else {
+    queue.push(job.id);
+  }
+  log.info('job queued', { jobId: job.id, bundleId, source });
 
   void runWorker();
   return job;
@@ -55,6 +65,17 @@ export function getJob(id: string): Job | undefined {
 
 export function getActiveJobs(): Job[] {
   return [...jobs.values()].filter((j) => j.status === 'queued' || j.status === 'running');
+}
+
+/** 1-based position among not-yet-finished jobs (a running job is position 1), plus the total. */
+export function getQueueInfo(jobId: string): { position: number; total: number } | undefined {
+  const job = jobs.get(jobId);
+  if (!job || job.status === 'done' || job.status === 'failed') return undefined;
+
+  const runningId = [...jobs.values()].find((j) => j.status === 'running')?.id;
+  const ordered = runningId ? [runningId, ...queue] : queue;
+  const idx = ordered.indexOf(jobId);
+  return { position: idx === -1 ? ordered.length : idx + 1, total: ordered.length };
 }
 
 /** Resolves once the job reaches done/failed, or immediately if it already has. */

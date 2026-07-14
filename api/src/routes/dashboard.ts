@@ -6,8 +6,10 @@ import {
   sendAppleAuthInput,
   startAppleReauth,
 } from '../appleAuthRunner.js';
-import { getActiveJobs } from '../jobs/store.js';
+import { jobSummary, streamJobFile } from '../jobs/http.js';
+import { enqueueDecryptJob, getActiveJobs, getJob } from '../jobs/store.js';
 import { applySchedule } from '../scheduler/index.js';
+import { searchApps } from '../scheduler/itunes.js';
 import { requireAdmin, requireSession } from '../session.js';
 import {
   addAllowedUser,
@@ -56,6 +58,57 @@ dashboardRouter.get('/v1/dashboard/overview', (_req, res) => {
 
 dashboardRouter.get('/v1/dashboard/jobs', (_req, res) => {
   res.json({ history: getJobHistory() });
+});
+
+// --- decrypt-from-the-dashboard: open to every role, since it can't be
+// automated (unlike settings/keys) - it's just a nice-to-have. Shares the
+// exact same queue as the API/scheduler, so a dashboard-queued job can
+// still get bumped behind a scheduler job that arrives after it. ---
+
+const BUNDLE_ID_RE = /^[A-Za-z0-9.-]{3,200}$/;
+
+dashboardRouter.get('/v1/dashboard/search', async (req, res) => {
+  const term = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+  if (!term || term.length > 200) {
+    res.status(400).json({ error: 'query param q is required' });
+    return;
+  }
+
+  try {
+    const results = await searchApps(term);
+    res.json({ results });
+  } catch (err) {
+    res.status(502).json({ error: String(err) });
+  }
+});
+
+dashboardRouter.post('/v1/dashboard/decrypt', (req, res) => {
+  const bundleId = typeof req.body?.bundleId === 'string' ? req.body.bundleId.trim() : '';
+  if (!BUNDLE_ID_RE.test(bundleId)) {
+    res.status(400).json({ error: 'bundleId is required and must look like a bundle identifier' });
+    return;
+  }
+
+  const job = enqueueDecryptJob(bundleId, 'manual');
+  res.status(202).json(jobSummary(job));
+});
+
+dashboardRouter.get('/v1/dashboard/jobs/:id/status', (req, res) => {
+  const job = getJob(req.params.id);
+  if (!job) {
+    res.status(404).json({ error: 'job not found (finished jobs are pruned after retention window)' });
+    return;
+  }
+  res.json(jobSummary(job));
+});
+
+dashboardRouter.get('/v1/dashboard/jobs/:id/file', async (req, res) => {
+  const job = getJob(req.params.id);
+  if (!job) {
+    res.status(404).json({ error: 'job not found' });
+    return;
+  }
+  await streamJobFile(job, req, res);
 });
 
 // --- api keys: everyone manages their own; admins manage everyone's ---

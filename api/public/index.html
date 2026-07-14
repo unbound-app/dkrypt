@@ -113,6 +113,14 @@
     padding: 2px 8px; font-size: 11px; cursor: pointer; }
   button.copy:hover { color: var(--text); border-color: var(--accent); }
   .you-badge { font-size: 11px; color: var(--muted); }
+
+  .search-result { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .search-result:last-child { border-bottom: none; }
+  .search-result img { width: 40px; height: 40px; border-radius: 8px; flex-shrink: 0; }
+  .search-result .meta { flex: 1; min-width: 0; }
+  .search-result .name { font-size: 13px; }
+  .search-result .sub { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .search-result button, .search-result .badge { flex-shrink: 0; }
 </style>
 </head>
 <body>
@@ -160,6 +168,23 @@
       <div class="panel">
         <h2>Recent history</h2>
         <table id="recent-history-table"><thead><tr><th>Bundle ID</th><th>Source</th><th>Status</th><th>Finished</th></tr></thead><tbody></tbody></table>
+      </div>
+    </section>
+
+    <section id="tab-decrypt" class="hidden">
+      <div class="panel">
+        <h2>Find an app</h2>
+        <div class="row">
+          <input id="search-term" placeholder="Search the App Store…" />
+          <button class="action" style="margin-top:0;" onclick="searchAppsUI()">Search</button>
+        </div>
+        <div id="search-results" style="margin-top:14px;"></div>
+      </div>
+      <div class="panel">
+        <h2>My requests</h2>
+        <table id="my-decrypts-table"><thead><tr><th>App</th><th>Status</th><th></th></tr></thead><tbody></tbody></table>
+        <div id="my-decrypts-empty" class="muted hidden">Nothing queued yet - search above.</div>
+        <div class="muted" style="margin-top:10px;">Shares the same queue as the API and the scheduler - only one decrypt runs at a time, and scheduler jobs jump ahead of anything queued here.</div>
       </div>
     </section>
 
@@ -304,6 +329,7 @@ function showLogin() {
 function tabsForRole(role) {
   const base = [
     ['overview', 'Overview'],
+    ['decrypt', 'Decrypt'],
     ['jobs', 'Jobs'],
     ['keys', 'API Keys'],
     ['docs', 'Docs'],
@@ -331,6 +357,7 @@ function showApp() {
   ).join('');
 
   showTab('overview');
+  pollMyDecrypts();
 }
 
 async function loginRoot() {
@@ -350,6 +377,7 @@ function showTab(name) {
   document.querySelectorAll('nav .tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
   document.querySelectorAll('main section').forEach((s) => s.classList.toggle('hidden', s.id !== `tab-${name}`));
   if (name === 'overview') loadOverview();
+  if (name === 'decrypt') renderMyDecrypts();
   if (name === 'jobs') loadJobs();
   if (name === 'keys') loadKeys();
   if (name === 'docs') loadDocs();
@@ -375,6 +403,126 @@ curl -H "Authorization: Bearer <YOUR_API_KEY>" \\
 `curl -H "Authorization: Bearer <YOUR_API_KEY>" \\
   "${base}/v1/jobs/<JOB_ID>/file" \\
   -o discord.ipa`;
+}
+
+let lastSearchResults = [];
+
+async function searchAppsUI() {
+  const term = document.getElementById('search-term').value.trim();
+  if (!term) return;
+  const container = document.getElementById('search-results');
+  container.innerHTML = '<div class="muted">Searching…</div>';
+
+  const res = await api(`/v1/dashboard/search?q=${encodeURIComponent(term)}`);
+  const data = await res.json();
+  if (!res.ok) {
+    container.innerHTML = `<div class="muted">${escapeHtml(data.error || 'Search failed')}</div>`;
+    return;
+  }
+
+  lastSearchResults = data.results;
+  if (data.results.length === 0) {
+    container.innerHTML = '<div class="muted">No results.</div>';
+    return;
+  }
+
+  container.innerHTML = data.results.map((r, i) => {
+    const paid = r.price > 0;
+    return `
+    <div class="search-result">
+      ${r.artworkUrl ? `<img src="${escapeHtml(r.artworkUrl)}" alt="" />` : ''}
+      <div class="meta">
+        <div class="name">${escapeHtml(r.trackName)}</div>
+        <div class="sub" title="${escapeHtml(r.bundleId)}">${escapeHtml(r.bundleId)} · v${escapeHtml(r.version)} · ${escapeHtml(r.sellerName)}</div>
+      </div>
+      ${paid
+        ? `<span class="badge failed" title="ipadecrypt only supports free apps">Paid</span>`
+        : `<button class="action small" onclick="queueDecryptFromSearch(${i})">Decrypt</button>`}
+    </div>`;
+  }).join('');
+}
+
+function queueDecryptFromSearch(index) {
+  const r = lastSearchResults[index];
+  if (r) queueDecrypt(r.bundleId, r.trackName);
+}
+
+let myDecrypts = [];
+try { myDecrypts = JSON.parse(localStorage.getItem('myDecrypts') || '[]'); } catch {}
+let myDecryptsPollTimer = null;
+
+function saveMyDecrypts() {
+  localStorage.setItem('myDecrypts', JSON.stringify(myDecrypts));
+}
+
+async function queueDecrypt(bundleId, trackName) {
+  const res = await api('/v1/dashboard/decrypt', { method: 'POST', body: JSON.stringify({ bundleId }) });
+  const data = await res.json();
+  if (!res.ok) {
+    showToast(data.error || 'Failed to queue', 'error');
+    return;
+  }
+
+  myDecrypts.unshift({
+    id: data.id, bundleId, trackName: trackName || bundleId,
+    status: data.status, progress: data.progress, queue: data.queue, error: null,
+  });
+  saveMyDecrypts();
+  showToast(`Queued ${trackName || bundleId}`, 'success');
+  renderMyDecrypts();
+  pollMyDecrypts();
+}
+
+function renderMyDecrypts() {
+  document.getElementById('my-decrypts-empty').classList.toggle('hidden', myDecrypts.length > 0);
+  document.querySelector('#my-decrypts-table tbody').innerHTML = myDecrypts.map((d, i) => {
+    let statusCell;
+    if (d.status === 'done') {
+      statusCell = `<span class="badge done">done</span>`;
+    } else if (d.status === 'failed') {
+      statusCell = `<span class="badge failed">failed</span> <span class="muted">${escapeHtml(d.error || '')}</span>`;
+    } else if (d.status === 'running') {
+      statusCell = `<span class="badge running">running</span> <span class="muted">${escapeHtml(d.progress || '')}</span>`;
+    } else {
+      const q = d.queue ? `position ${d.queue.position} of ${d.queue.total}` : '';
+      statusCell = `<span class="badge queued">queued</span> <span class="muted">${q}</span>`;
+    }
+
+    const action = d.status === 'done'
+      ? `<a class="action small" href="/v1/dashboard/jobs/${d.id}/file">Download</a>`
+      : `<button class="action small secondary" onclick="dismissMyDecrypt(${i})">Dismiss</button>`;
+
+    return `<tr><td>${escapeHtml(d.trackName)}</td><td>${statusCell}</td><td>${action}</td></tr>`;
+  }).join('');
+}
+
+function dismissMyDecrypt(index) {
+  myDecrypts.splice(index, 1);
+  saveMyDecrypts();
+  renderMyDecrypts();
+}
+
+async function pollMyDecrypts() {
+  clearTimeout(myDecryptsPollTimer);
+  const pending = myDecrypts.filter((d) => d.status !== 'done' && d.status !== 'failed');
+  if (pending.length === 0) return;
+
+  for (const d of pending) {
+    try {
+      const res = await api(`/v1/dashboard/jobs/${d.id}/status`);
+      if (res.ok) {
+        const data = await res.json();
+        d.status = data.status;
+        d.progress = data.progress;
+        d.queue = data.queue;
+        d.error = data.error;
+      }
+    } catch {}
+  }
+
+  saveMyDecrypts();
+  if (!document.getElementById('tab-decrypt').classList.contains('hidden')) renderMyDecrypts();
+  myDecryptsPollTimer = setTimeout(pollMyDecrypts, 2500);
 }
 
 function fmtTime(ms) { return ms ? new Date(ms).toLocaleString() : '-'; }

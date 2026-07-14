@@ -19,3 +19,41 @@ export async function lookupCurrentVersion(bundleId: string): Promise<ItunesLook
 
   return { version: result.version, bundleId: result.bundleId };
 }
+
+export interface ItunesSearchResult {
+  bundleId: string;
+  trackName: string;
+  version: string;
+  sellerName: string;
+  artworkUrl: string;
+  price: number;
+}
+
+interface ItunesSearchResponse {
+  results: Array<{
+    bundleId: string;
+    trackName: string;
+    version: string;
+    sellerName: string;
+    artworkUrl60?: string;
+    artworkUrl100?: string;
+    price: number;
+  }>;
+}
+
+/** Free-text app search (iTunes Search API), used by the dashboard's "find an app" box. */
+export async function searchApps(term: string, limit = 10): Promise<ItunesSearchResult[]> {
+  const url = `https://itunes.apple.com/search?entity=software&limit=${limit}&term=${encodeURIComponent(term)}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`itunes search failed: HTTP ${res.status}`);
+
+  const body = (await res.json()) as ItunesSearchResponse;
+  return body.results.map((r) => ({
+    bundleId: r.bundleId,
+    trackName: r.trackName,
+    version: r.version,
+    sellerName: r.sellerName,
+    artworkUrl: r.artworkUrl100 || r.artworkUrl60 || '',
+    price: r.price,
+  }));
+}
