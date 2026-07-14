@@ -95,6 +95,24 @@
   pre.log { background: #0d0f13; border: 1px solid var(--border); border-radius: 6px; padding: 10px;
     font-size: 12px; max-height: 260px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
   hr.sep { border: none; border-top: 1px solid var(--border); margin: 18px 0; }
+
+  #toast-container { position: fixed; bottom: 20px; right: 20px; display: flex; flex-direction: column; gap: 8px; z-index: 1000; max-width: 320px; }
+  .toast { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px;
+    font-size: 13px; box-shadow: 0 4px 16px rgba(0,0,0,0.35); animation: toast-in 0.15s ease-out; }
+  .toast.success { border-color: rgba(62,207,142,0.5); }
+  .toast.error { border-color: rgba(242,84,91,0.5); }
+  @keyframes toast-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+  #modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex;
+    align-items: center; justify-content: center; z-index: 999; }
+  #modal-overlay.hidden { display: none; }
+  #modal-box { max-width: 360px; width: 90%; }
+  #modal-box .row { justify-content: flex-end; margin-top: 16px; }
+
+  button.copy { background: transparent; border: 1px solid var(--border); color: var(--muted); border-radius: 6px;
+    padding: 2px 8px; font-size: 11px; cursor: pointer; }
+  button.copy:hover { color: var(--text); border-color: var(--accent); }
+  .you-badge { font-size: 11px; color: var(--muted); }
 </style>
 </head>
 <body>
@@ -136,7 +154,7 @@
       </div>
       <div class="panel">
         <h2>Active jobs</h2>
-        <table id="active-jobs-table"><thead><tr><th>Bundle ID</th><th>Source</th><th>Status</th><th>Progress</th></tr></thead><tbody></tbody></table>
+        <table id="active-jobs-table"><thead><tr><th>Bundle ID</th><th>Source</th><th>Status</th><th>Progress</th><th>Job ID</th></tr></thead><tbody></tbody></table>
         <div id="active-jobs-empty" class="muted hidden">Nothing running.</div>
       </div>
       <div class="panel">
@@ -212,7 +230,6 @@
         <label>Notification webhook URL (Discord-compatible, optional)</label>
         <input id="s-notifyWebhookUrl" />
         <button class="action" onclick="saveSettings()">Save</button>
-        <div id="settings-saved" class="muted hidden" style="margin-top:8px;">Saved.</div>
       </div>
     </section>
 
@@ -254,6 +271,18 @@
       </div>
     </section>
   </main>
+</div>
+
+<div id="toast-container"></div>
+
+<div id="modal-overlay" class="hidden">
+  <div id="modal-box" class="panel">
+    <div id="modal-message"></div>
+    <div class="row">
+      <button class="action secondary" id="modal-cancel">Cancel</button>
+      <button class="action danger" id="modal-confirm">Confirm</button>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -354,7 +383,70 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+function showToast(message, type = 'success') {
+  const container = document.getElementById('toast-container');
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.textContent = message;
+  container.appendChild(el);
+  setTimeout(() => el.remove(), 3000);
+}
+
+function confirmDialog(message) {
+  return new Promise((resolve) => {
+    document.getElementById('modal-message').textContent = message;
+    const overlay = document.getElementById('modal-overlay');
+    const confirmBtn = document.getElementById('modal-confirm');
+    const cancelBtn = document.getElementById('modal-cancel');
+    overlay.classList.remove('hidden');
+
+    const cleanup = (result) => {
+      overlay.classList.add('hidden');
+      confirmBtn.removeEventListener('click', onConfirm);
+      cancelBtn.removeEventListener('click', onCancel);
+      resolve(result);
+    };
+    const onConfirm = () => cleanup(true);
+    const onCancel = () => cleanup(false);
+    confirmBtn.addEventListener('click', onConfirm);
+    cancelBtn.addEventListener('click', onCancel);
+  });
+}
+
+async function copyText(text, btn) {
+  try {
+    await navigator.clipboard.writeText(text);
+    if (btn) {
+      const orig = btn.textContent;
+      btn.textContent = 'Copied!';
+      setTimeout(() => { btn.textContent = orig; }, 1200);
+    }
+  } catch {
+    showToast('Copy failed - select and copy manually', 'error');
+  }
+}
+
+/** Wraps a mutating api() call with a success/error toast, based on the response status. */
+async function apiAction(path, opts, successMsg) {
+  const res = await api(path, opts);
+  let data = {};
+  try { data = await res.json(); } catch {}
+  if (!res.ok) {
+    showToast(data.error || `Request failed (${res.status})`, 'error');
+    return { ok: false, data };
+  }
+  if (successMsg) showToast(successMsg, 'success');
+  return { ok: true, data };
+}
+
+function loadingRow(colspan) {
+  return `<tr><td colspan="${colspan}" class="muted">Loading…</td></tr>`;
+}
+
 async function loadOverview() {
+  document.querySelector('#active-jobs-table tbody').innerHTML = loadingRow(5);
+  document.querySelector('#recent-history-table tbody').innerHTML = loadingRow(4);
+
   const res = await api('/v1/dashboard/overview');
   const data = await res.json();
 
@@ -375,7 +467,11 @@ async function loadOverview() {
 
   const activeBody = document.querySelector('#active-jobs-table tbody');
   activeBody.innerHTML = data.activeJobs.map((j) => `
-    <tr><td>${escapeHtml(j.bundleId)}</td><td>${j.source}</td><td><span class="badge ${j.status}">${j.status}</span></td><td class="muted">${escapeHtml(j.progress)}</td></tr>
+    <tr>
+      <td>${escapeHtml(j.bundleId)}</td><td>${j.source}</td><td><span class="badge ${j.status}">${j.status}</span></td>
+      <td class="muted">${escapeHtml(j.progress)}</td>
+      <td><code title="${j.id}">${j.id.slice(0, 8)}</code> <button class="copy" onclick="copyText('${j.id}', this)">Copy</button></td>
+    </tr>
   `).join('');
   document.getElementById('active-jobs-empty').classList.toggle('hidden', data.activeJobs.length > 0);
 
@@ -383,14 +479,17 @@ async function loadOverview() {
   historyBody.innerHTML = data.recentHistory.map((j) => `
     <tr><td>${escapeHtml(j.bundleId)}</td><td>${j.source}</td><td><span class="badge ${j.status}">${j.status}</span></td><td class="muted">${fmtTime(j.finishedAt)}</td></tr>
   `).join('');
+
+  scheduleOverviewPoll(data.activeJobs.length);
 }
 
 async function clearAuthAlert() {
-  await api('/v1/dashboard/auth-alert/clear', { method: 'POST' });
-  loadOverview();
+  const { ok } = await apiAction('/v1/dashboard/auth-alert/clear', { method: 'POST' }, 'Alert dismissed');
+  if (ok) loadOverview();
 }
 
 async function loadJobs() {
+  document.querySelector('#jobs-table tbody').innerHTML = loadingRow(6);
   const res = await api('/v1/dashboard/jobs');
   const data = await res.json();
   document.querySelector('#jobs-table tbody').innerHTML = data.history.map((j) => `
@@ -404,6 +503,8 @@ async function loadJobs() {
 }
 
 async function loadKeys() {
+  document.querySelector('#mine-keys-table tbody').innerHTML = loadingRow(5);
+
   const mineRes = await api('/v1/dashboard/keys/mine');
   const mine = (await mineRes.json()).keys;
   document.querySelector('#mine-keys-table tbody').innerHTML = mine.map((k) => `
@@ -419,6 +520,9 @@ async function loadKeys() {
   `).join('');
 
   if (me.role !== 'admin') return;
+
+  document.querySelector('#pending-keys-table tbody').innerHTML = loadingRow(4);
+  document.querySelector('#all-keys-table tbody').innerHTML = loadingRow(6);
 
   const pendingRes = await api('/v1/dashboard/keys/pending');
   const pending = (await pendingRes.json()).keys;
@@ -444,53 +548,64 @@ async function loadKeys() {
   `).join('');
 }
 
+function showKeyReveal(key) {
+  const reveal = document.getElementById('key-reveal');
+  reveal.classList.remove('hidden');
+  reveal.innerHTML = `Save this now, it won't be shown again:<br>
+    <code id="reveal-code">${escapeHtml(key)}</code>
+    <button class="copy" onclick="copyText(document.getElementById('reveal-code').textContent, this)">Copy</button>`;
+}
+
 async function requestKey() {
   const name = document.getElementById('key-name').value.trim();
   if (!name) return;
   const res = await api('/v1/dashboard/keys/request', { method: 'POST', body: JSON.stringify({ name }) });
   const data = await res.json();
+  if (!res.ok) {
+    showToast(data.error || 'Request failed', 'error');
+    return;
+  }
   document.getElementById('key-name').value = '';
 
   // Admins get the plaintext key back immediately (auto-approved); members
   // get a pending record with no key yet - they'll reveal it once approved.
   if (data.key) {
-    const reveal = document.getElementById('key-reveal');
-    reveal.classList.remove('hidden');
-    reveal.innerHTML = `Save this now, it won't be shown again:<br><code>${escapeHtml(data.key)}</code>`;
+    showKeyReveal(data.key);
+    showToast('Key created', 'success');
+  } else {
+    showToast('Request submitted - waiting on admin approval', 'success');
   }
 
   loadKeys();
 }
 
 async function revealKey(id) {
-  const res = await api(`/v1/dashboard/keys/${id}/reveal`, { method: 'POST' });
-  const data = await res.json();
-  const reveal = document.getElementById('key-reveal');
-  reveal.classList.remove('hidden');
-  reveal.innerHTML = `Save this now, it won't be shown again:<br><code>${escapeHtml(data.key)}</code>`;
+  const { ok, data } = await apiAction(`/v1/dashboard/keys/${id}/reveal`, { method: 'POST' });
+  if (!ok) return;
+  showKeyReveal(data.key);
   loadKeys();
 }
 
 async function regenerateKey(id) {
-  if (!confirm('Regenerate this key? The old secret stops working immediately.')) return;
-  await api(`/v1/dashboard/keys/${id}/regenerate`, { method: 'POST' });
-  loadKeys();
+  if (!(await confirmDialog('Regenerate this key? The old secret stops working immediately.'))) return;
+  const { ok } = await apiAction(`/v1/dashboard/keys/${id}/regenerate`, { method: 'POST' }, 'Key regenerated - reveal it to get the new value');
+  if (ok) loadKeys();
 }
 
 async function approveKey(id) {
-  await api(`/v1/dashboard/keys/${id}/approve`, { method: 'POST' });
-  loadKeys();
+  const { ok } = await apiAction(`/v1/dashboard/keys/${id}/approve`, { method: 'POST' }, 'Key approved');
+  if (ok) loadKeys();
 }
 
 async function denyKey(id) {
-  await api(`/v1/dashboard/keys/${id}/deny`, { method: 'POST' });
-  loadKeys();
+  const { ok } = await apiAction(`/v1/dashboard/keys/${id}/deny`, { method: 'POST' }, 'Key denied');
+  if (ok) loadKeys();
 }
 
 async function revokeKey(id) {
-  if (!confirm('Revoke this key? Anything using it will lose access immediately.')) return;
-  await api(`/v1/dashboard/keys/${id}`, { method: 'DELETE' });
-  loadKeys();
+  if (!(await confirmDialog('Revoke this key? Anything using it will lose access immediately.'))) return;
+  const { ok } = await apiAction(`/v1/dashboard/keys/${id}`, { method: 'DELETE' }, 'Key revoked');
+  if (ok) loadKeys();
 }
 
 async function loadSettings() {
@@ -506,38 +621,44 @@ async function saveSettings() {
   for (const field of ['watchBundleId', 'watchAppRepo', 'ghDispatchRepo', 'ghWorkflowFile', 'pollCron', 'notifyWebhookUrl']) {
     patch[field] = document.getElementById(`s-${field}`).value;
   }
-  await api('/v1/dashboard/settings', { method: 'PUT', body: JSON.stringify(patch) });
-  const saved = document.getElementById('settings-saved');
-  saved.classList.remove('hidden');
-  setTimeout(() => saved.classList.add('hidden'), 2000);
-  loadOverview();
+  const { ok } = await apiAction('/v1/dashboard/settings', { method: 'PUT', body: JSON.stringify(patch) }, 'Settings saved');
+  if (ok) loadOverview();
 }
 
 async function loadUsers() {
+  document.querySelector('#users-table tbody').innerHTML = loadingRow(4);
   const res = await api('/v1/dashboard/users');
   const data = await res.json();
-  document.querySelector('#users-table tbody').innerHTML = data.users.map((u) => `
+  document.querySelector('#users-table tbody').innerHTML = data.users.map((u) => {
+    const isSelf = u.username === (me.sub || '').toLowerCase();
+    return `
     <tr>
       <td>${escapeHtml(u.username)}</td><td><span class="badge ${u.role}">${u.role}</span></td>
       <td class="muted">${fmtTime(u.addedAt)}</td>
-      <td><button class="action small danger" onclick="removeUser('${u.username}')">Remove</button></td>
-    </tr>
-  `).join('');
+      <td>${isSelf ? '<span class="you-badge">(you)</span>' : `<button class="action small danger" onclick="removeUser('${u.username}')">Remove</button>`}</td>
+    </tr>`;
+  }).join('');
 }
 
 async function addUser() {
   const username = document.getElementById('user-username').value.trim();
   const role = document.getElementById('user-role').value;
   if (!username) return;
-  await api('/v1/dashboard/users', { method: 'POST', body: JSON.stringify({ username, role }) });
-  document.getElementById('user-username').value = '';
-  loadUsers();
+  const { ok } = await apiAction('/v1/dashboard/users', { method: 'POST', body: JSON.stringify({ username, role }) }, `${username} added`);
+  if (ok) {
+    document.getElementById('user-username').value = '';
+    loadUsers();
+  }
 }
 
 async function removeUser(username) {
-  if (!confirm(`Remove ${username} from the allowlist?`)) return;
-  await api(`/v1/dashboard/users/${encodeURIComponent(username)}`, { method: 'DELETE' });
-  loadUsers();
+  if ((me.sub || '').toLowerCase() === username.toLowerCase()) {
+    showToast("You can't remove your own account - ask another admin.", 'error');
+    return;
+  }
+  if (!(await confirmDialog(`Remove ${username} from the allowlist?`))) return;
+  const { ok } = await apiAction(`/v1/dashboard/users/${encodeURIComponent(username)}`, { method: 'DELETE' }, `${username} removed`);
+  if (ok) loadUsers();
 }
 
 async function refreshAppleAuthStatus() {
@@ -596,13 +717,22 @@ async function init() {
   if (data.loggedIn) showApp(); else showLogin();
 }
 
-init();
-setInterval(() => {
-  if (!document.getElementById('app').classList.contains('hidden')) {
+// Polls faster (2.5s) while a job is actually running and you're watching
+// the Overview tab, and backs off to 10s otherwise - loadOverview() calls
+// this again each time with the freshly-fetched active-job count.
+let overviewPollTimer = null;
+function scheduleOverviewPoll(activeCount) {
+  clearTimeout(overviewPollTimer);
+  const delay = activeCount > 0 ? 2500 : 10000;
+  overviewPollTimer = setTimeout(() => {
+    if (document.getElementById('app').classList.contains('hidden')) return;
     const active = document.querySelector('nav .tab.active')?.dataset.tab;
     if (active === 'overview') loadOverview();
-  }
-}, 10000);
+    else scheduleOverviewPoll(0);
+  }, delay);
+}
+
+init();
 </script>
 </body>
 </html>
