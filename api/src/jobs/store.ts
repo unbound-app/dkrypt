@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { rm } from 'node:fs/promises';
 import { config } from '../config.js';
-import { log } from '../logger.js';
+import { scopedLogger } from '../logger.js';
+
+const log = scopedLogger('jobs');
 import { notify } from '../notify.js';
 import { clearAppleAuthAlert, recordJobHistory, setAppleAuthAlert } from '../store/state.js';
 import { looksLikeAppleAuthFailure } from '../util/appleAuth.js';

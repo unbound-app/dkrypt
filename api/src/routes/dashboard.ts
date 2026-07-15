@@ -8,6 +8,7 @@ import {
 } from '../appleAuthRunner.js';
 import { jobSummary, streamJobFile } from '../jobs/http.js';
 import { enqueueDecryptJob, getActiveJobs, getJob } from '../jobs/store.js';
+import { getRecentLogs } from '../logger.js';
 import { applySchedule } from '../scheduler/index.js';
 import { searchApps } from '../scheduler/itunes.js';
 import { requireAdmin, requireSession } from '../session.js';
@@ -57,6 +58,10 @@ dashboardRouter.get('/v1/dashboard/overview', (_req, res) => {
 
 dashboardRouter.get('/v1/dashboard/jobs', (_req, res) => {
   res.json({ history: getJobHistory() });
+});
+
+dashboardRouter.get('/v1/dashboard/logs', (_req, res) => {
+  res.json({ logs: getRecentLogs() });
 });
 
 // --- decrypt-from-the-dashboard: open to every role, since it can't be

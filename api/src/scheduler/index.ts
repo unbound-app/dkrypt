@@ -1,7 +1,9 @@
 import cron from 'node-cron';
 import { config } from '../config.js';
 import { enqueueDecryptJob, reclaimJobFile, waitForJob } from '../jobs/store.js';
-import { log } from '../logger.js';
+import { scopedLogger } from '../logger.js';
+
+const log = scopedLogger('scheduler');
 import { notify } from '../notify.js';
 import { getEffectiveSettings, isSchedulerEnabled } from '../store/state.js';
 import { buildSignedFileUrl } from '../util/signedUrl.js';

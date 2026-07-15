@@ -1,6 +1,8 @@
 import type { Request, Response } from 'express';
 import { createReadStream } from 'node:fs';
-import { log } from '../logger.js';
+import { scopedLogger } from '../logger.js';
+
+const log = scopedLogger('jobs');
 import { getQueueInfo, reclaimJobFile } from './store.js';
 import type { Job } from './types.js';
 

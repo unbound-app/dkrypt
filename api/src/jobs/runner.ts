@@ -2,7 +2,9 @@ import { spawn } from 'node:child_process';
 import { mkdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { config } from '../config.js';
-import { log } from '../logger.js';
+import { scopedLogger } from '../logger.js';
+
+const log = scopedLogger('jobs');
 import type { Job } from './types.js';
 
 /**
