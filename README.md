@@ -143,10 +143,10 @@ Tabs:
   - *Scheduler* - edit the watch bundle ID, watch/dispatch repos, workflow
     file, poll cron, and notification webhook URL live, no restart
     needed. `GH_TOKEN` and `API_KEY` stay env-only, not editable here.
-  - *Users* - the GitHub OAuth allowlist: add a username with a role,
-    change an existing user's role inline, or remove one. An admin can't
-    change their own role or remove themselves - get another admin to do
-    it, or fall back to `ADMIN_PASSWORD`.
+  - *Users* - the GitHub OAuth allowlist: add a username with a role, or
+    open the Manage dialog on an existing entry to change their role or
+    remove them. An admin can't change their own role or remove themselves
+    - get another admin to do it, or fall back to `ADMIN_PASSWORD`.
   - *Apple Auth* - re-runs just the App Store sign-in step of `ipadecrypt
     bootstrap` (email/password, and a 2FA code if Apple asks for one) as
     a piped child process, streaming its prompts to the page so you don't

@@ -5,11 +5,12 @@
   import Badge from '../../lib/components/ui/Badge.svelte';
   import Button from '../../lib/components/ui/Button.svelte';
   import Card from '../../lib/components/ui/Card.svelte';
+  import Dialog from '../../lib/components/ui/Dialog.svelte';
   import Input from '../../lib/components/ui/Input.svelte';
   import Select from '../../lib/components/ui/Select.svelte';
   import { statusToBadgeVariant } from '../../lib/components/ui/variants';
   import { sessionState } from '../../lib/session.svelte';
-  import { confirmDialog, showToast } from '../../lib/ui.svelte';
+  import { confirmDialog } from '../../lib/ui.svelte';
 
   let username = $state('');
   let role = $state<Role>('member');
@@ -40,19 +41,33 @@
     }
   }
 
-  async function changeRole(name: string, newRole: Role): Promise<void> {
-    await updateUserRole(name, newRole);
-    void load();
+  let manageOpen = $state(false);
+  let manageUser = $state<AllowedUser | null>(null);
+  let manageRole = $state<Role>('member');
+
+  function openManage(u: AllowedUser): void {
+    manageUser = u;
+    manageRole = u.role;
+    manageOpen = true;
   }
 
-  async function remove(name: string): Promise<void> {
-    if ((sessionState.sub ?? '').toLowerCase() === name.toLowerCase()) {
-      showToast("You can't remove your own account - ask another admin.", 'error');
-      return;
+  async function saveRole(): Promise<void> {
+    if (!manageUser || manageRole === manageUser.role) return;
+    const { ok } = await updateUserRole(manageUser.username, manageRole);
+    if (ok) {
+      manageOpen = false;
+      void load();
     }
-    if (!(await confirmDialog(`Remove ${name} from the allowlist?`))) return;
-    const { ok } = await removeUser(name);
-    if (ok) void load();
+  }
+
+  async function removeManaged(): Promise<void> {
+    if (!manageUser) return;
+    if (!(await confirmDialog(`Remove ${manageUser.username} from the allowlist?`))) return;
+    const { ok } = await removeUser(manageUser.username);
+    if (ok) {
+      manageOpen = false;
+      void load();
+    }
   }
 </script>
 
@@ -84,24 +99,13 @@
               {@const isSelf = u.username === (sessionState.sub ?? '').toLowerCase()}
               <tr>
                 <td>{u.username}</td>
-                <td>
-                  {#if isSelf}
-                    <Badge variant={statusToBadgeVariant(u.role)}>{u.role}</Badge>
-                  {:else}
-                    <Select
-                      items={ROLE_OPTIONS}
-                      value={u.role}
-                      onValueChange={(v) => void changeRole(u.username, v as Role)}
-                      class="w-56"
-                    />
-                  {/if}
-                </td>
+                <td><Badge variant={statusToBadgeVariant(u.role)}>{u.role}</Badge></td>
                 <td class="text-muted"><RelativeTime ms={u.addedAt} /></td>
                 <td>
                   {#if isSelf}
                     <span class="text-xs text-muted">(you)</span>
                   {:else}
-                    <Button size="sm" variant="destructive" onclick={() => remove(u.username)}>Remove</Button>
+                    <Button size="sm" variant="secondary" onclick={() => openManage(u)}>Manage</Button>
                   {/if}
                 </td>
               </tr>
@@ -112,3 +116,15 @@
     </div>
   </Card>
 </div>
+
+<Dialog open={manageOpen} onOpenChange={(v) => (manageOpen = v)} class="max-w-sm">
+  {#if manageUser}
+    <div class="mb-3 text-sm font-medium">Manage {manageUser.username}</div>
+    <label for="manage-role" class="mb-1 block text-xs text-muted">Role</label>
+    <Select id="manage-role" items={ROLE_OPTIONS} value={manageRole} onValueChange={(v) => (manageRole = v as Role)} class="w-full" />
+    <Button class="mt-3 w-full" onclick={saveRole} disabled={manageRole === manageUser.role}>Save role</Button>
+    <div class="border-border mt-4 border-t pt-4">
+      <Button variant="destructive" class="w-full" onclick={removeManaged}>Remove from allowlist</Button>
+    </div>
+  {/if}
+</Dialog>
