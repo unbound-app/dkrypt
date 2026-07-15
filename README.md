@@ -1,7 +1,7 @@
 # ipadecrypt-service
 
 Docker Compose service that wraps [londek/ipadecrypt](https://github.com/londek/ipadecrypt)
-behind an authenticated HTTP API, run against a jailbroken iPhone reachable
+behind an authenticated HTTP API, run against a jailbroken iDevice reachable
 over SSH from the host. Two jobs:
 
 1. **On-demand decrypt** - `GET /v1/decrypt?bundleId=...` decrypts and
@@ -17,7 +17,7 @@ can only run one `ipadecrypt decrypt` at a time.
 
 ## Setup
 
-1. Jailbroken iPhone on the same network as this host, with OpenSSH,
+1. Jailbroken iDevice on the same network as this host, with OpenSSH,
    AppSync Unified, and appinst installed (see the
    [ipadecrypt README](https://github.com/londek/ipadecrypt#requirements)).
 2. Copy `.env.example` to `.env` and fill it in. Required: `API_KEY`,
