@@ -19,6 +19,7 @@
     --err: #f2545b;
   }
   * { box-sizing: border-box; }
+  html { scrollbar-gutter: stable; }
   body {
     margin: 0;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -187,7 +188,7 @@
         <h2>Decrypt an app</h2>
         <div class="muted" style="margin-bottom:10px;">Search the App Store, then hit Decrypt on any free result.</div>
         <div class="row">
-          <input id="search-term" placeholder="Search the App Store to decrypt… (press / to focus)" />
+          <input id="search-term" placeholder="Search the App Store to decrypt… (press / to focus)" oninput="handleSearchInput()" />
           <button class="action" style="margin-top:0;" onclick="searchAppsUI()">Search</button>
         </div>
         <div id="search-results" style="margin-top:14px;"></div>
@@ -439,6 +440,7 @@ async function logout() {
 let currentSettingsSubtab = localStorage.getItem('activeSettingsSubtab') || 'scheduler';
 
 function showTab(name) {
+  window.scrollTo(0, 0);
   localStorage.setItem('activeTab', name);
   document.querySelectorAll('nav .tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
   document.querySelectorAll('main > section').forEach((s) => s.classList.toggle('hidden', s.id !== `tab-${name}`));
@@ -453,6 +455,7 @@ function showTab(name) {
 }
 
 function showSettingsSubtab(name) {
+  window.scrollTo(0, 0);
   currentSettingsSubtab = name;
   localStorage.setItem('activeSettingsSubtab', name);
   document.querySelectorAll('#settings-subnav .tab').forEach((b) => b.classList.toggle('active', b.dataset.subtab === name));
@@ -484,6 +487,12 @@ curl -H "Authorization: Bearer <YOUR_API_KEY>" \\
 
 let lastSearchResults = [];
 let searchInFlight = false;
+
+function handleSearchInput() {
+  if (document.getElementById('search-term').value.trim()) return;
+  lastSearchResults = [];
+  document.getElementById('search-results').innerHTML = '';
+}
 
 async function searchAppsUI() {
   const term = document.getElementById('search-term').value.trim();
