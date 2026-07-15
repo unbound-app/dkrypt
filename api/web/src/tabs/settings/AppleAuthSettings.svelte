@@ -1,5 +1,9 @@
 <script lang="ts">
   import { cancelAppleAuth, fetchAppleAuthStatus, startAppleAuth, submitAppleInput, type AppleAuthStatus } from '../../lib/api';
+  import Button from '../../lib/components/ui/Button.svelte';
+  import Card from '../../lib/components/ui/Card.svelte';
+  import Input from '../../lib/components/ui/Input.svelte';
+  import { cn } from '../../lib/utils';
 
   type Step = 'idle' | 'connecting' | 'signing-in' | '2fa' | 'done' | 'failed';
 
@@ -63,76 +67,40 @@
   const stepIndex = $derived(STEPS.findIndex((s) => s.id === step));
 </script>
 
-<div class="panel">
-  <h2>Apple ID re-authentication</h2>
-  <div class="muted" style="margin-bottom:10px;">Redoes the App Store sign-in only - the device connection isn't touched.</div>
+<Card title="Apple ID re-authentication">
+  <div class="mb-2.5 text-sm text-muted">Redoes the App Store sign-in only - the device connection isn't touched.</div>
 
   {#if step !== 'idle'}
-    <div class="steps">
+    <div class="mb-4 flex gap-1.5">
       {#each STEPS as s, i (s.id)}
-        <div class="step" class:active={i === stepIndex} class:done={i < stepIndex || step === 'done'} class:failed={step === 'failed' && i === stepIndex}>
-          <div class="dot"></div>
+        {@const isDone = i < stepIndex || step === 'done'}
+        {@const isActive = i === stepIndex}
+        {@const isFailed = step === 'failed' && isActive}
+        <div class="flex flex-1 flex-col items-center gap-1.5 text-[11px] text-muted" class:text-text={isActive}>
+          <div
+            class={cn('h-1 w-full rounded-full bg-border', isDone && 'bg-ok', isActive && !isFailed && 'bg-accent', isFailed && 'bg-err')}
+          ></div>
           <span>{s.label}</span>
         </div>
       {/each}
     </div>
   {/if}
 
-  <div class="row">
-    <button class="action" disabled={status?.running} onclick={start}>Start re-authentication</button>
-    <button class="action secondary" disabled={!status?.running} onclick={cancel}>Cancel</button>
+  <div class="flex gap-2">
+    <Button disabled={status?.running} onclick={start}>Start re-authentication</Button>
+    <Button variant="secondary" disabled={!status?.running} onclick={cancel}>Cancel</Button>
   </div>
 
-  <details style="margin-top:14px;">
-    <summary class="muted">Raw output</summary>
-    <pre class="log">{status?.log || '(not started)'}</pre>
+  <details class="mt-3.5">
+    <summary class="cursor-pointer text-sm text-muted">Raw output</summary>
+    <pre class="border-border bg-panel-muted mt-2 max-h-64 overflow-y-auto rounded-md border p-2.5 text-xs break-all whitespace-pre-wrap">{status?.log ||
+        '(not started)'}</pre>
   </details>
 
   {#if status?.waitingForInput}
-    <div class="row" style="margin-top:10px;">
-      <input bind:this={inputEl} bind:value={inputValue} onkeydown={onKeydown} placeholder="type the requested value and press Enter" />
-      <button class="action small" onclick={submit}>Send</button>
+    <div class="mt-2.5 flex gap-2">
+      <Input bind:ref={inputEl} bind:value={inputValue} onkeydown={onKeydown} placeholder="type the requested value and press Enter" />
+      <Button size="sm" onclick={submit}>Send</Button>
     </div>
   {/if}
-</div>
-
-<style>
-  .steps {
-    display: flex;
-    gap: 6px;
-    margin-bottom: 16px;
-  }
-
-  .step {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 6px;
-    font-size: 11px;
-    color: var(--muted);
-  }
-
-  .dot {
-    width: 100%;
-    height: 4px;
-    border-radius: 999px;
-    background: var(--border);
-  }
-
-  .step.done .dot {
-    background: var(--ok);
-  }
-
-  .step.active .dot {
-    background: var(--accent);
-  }
-
-  .step.active {
-    color: var(--text);
-  }
-
-  .step.failed .dot {
-    background: var(--err);
-  }
-</style>
+</Card>

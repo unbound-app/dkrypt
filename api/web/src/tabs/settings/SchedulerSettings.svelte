@@ -1,5 +1,8 @@
 <script lang="ts">
   import { fetchSettings, saveSettings, testWebhook, validateCron, type SchedulerSettings } from '../../lib/api';
+  import Button from '../../lib/components/ui/Button.svelte';
+  import Card from '../../lib/components/ui/Card.svelte';
+  import Input from '../../lib/components/ui/Input.svelte';
   import { debounce } from '../../lib/format';
   import { liveState } from '../../lib/live.svelte';
   import { confirmDialog, showToast } from '../../lib/ui.svelte';
@@ -37,8 +40,8 @@
   });
 
   const repoErrors = $derived({
-    watchAppRepo: form.watchAppRepo && !REPO_RE.test(form.watchAppRepo) ? "Expected owner/repo" : '',
-    ghDispatchRepo: form.ghDispatchRepo && !REPO_RE.test(form.ghDispatchRepo) ? "Expected owner/repo" : '',
+    watchAppRepo: form.watchAppRepo && !REPO_RE.test(form.watchAppRepo) ? 'Expected owner/repo' : '',
+    ghDispatchRepo: form.ghDispatchRepo && !REPO_RE.test(form.ghDispatchRepo) ? 'Expected owner/repo' : '',
   });
 
   function wouldDisableScheduler(): boolean {
@@ -73,47 +76,36 @@
   }
 </script>
 
-<div class="panel">
-  <h2>Automated watch → GitHub dispatch</h2>
-  <label for="s-watchBundleId">Watch bundle ID</label>
-  <input id="s-watchBundleId" bind:value={form.watchBundleId} />
+<Card title="Automated watch → GitHub dispatch">
+  <label for="s-watchBundleId" class="mb-1 block text-xs text-muted">Watch bundle ID</label>
+  <Input id="s-watchBundleId" bind:value={form.watchBundleId} />
 
-  <label for="s-watchAppRepo">Watch app repo (releases tracked here)</label>
-  <input id="s-watchAppRepo" bind:value={form.watchAppRepo} />
+  <label for="s-watchAppRepo" class="mt-3 mb-1 block text-xs text-muted">Watch app repo (releases tracked here)</label>
+  <Input id="s-watchAppRepo" bind:value={form.watchAppRepo} />
   {#if repoErrors.watchAppRepo}
-    <div class="field-error">{repoErrors.watchAppRepo}</div>
+    <div class="mt-1 text-xs text-err">{repoErrors.watchAppRepo}</div>
   {/if}
 
-  <label for="s-ghDispatchRepo">GitHub dispatch repo (owns the workflow)</label>
-  <input id="s-ghDispatchRepo" bind:value={form.ghDispatchRepo} />
+  <label for="s-ghDispatchRepo" class="mt-3 mb-1 block text-xs text-muted">GitHub dispatch repo (owns the workflow)</label>
+  <Input id="s-ghDispatchRepo" bind:value={form.ghDispatchRepo} />
   {#if repoErrors.ghDispatchRepo}
-    <div class="field-error">{repoErrors.ghDispatchRepo}</div>
+    <div class="mt-1 text-xs text-err">{repoErrors.ghDispatchRepo}</div>
   {/if}
 
-  <label for="s-ghWorkflowFile">Workflow file</label>
-  <input id="s-ghWorkflowFile" bind:value={form.ghWorkflowFile} />
+  <label for="s-ghWorkflowFile" class="mt-3 mb-1 block text-xs text-muted">Workflow file</label>
+  <Input id="s-ghWorkflowFile" bind:value={form.ghWorkflowFile} />
 
-  <label for="s-pollCron">Poll cron</label>
-  <input id="s-pollCron" bind:value={form.pollCron} />
+  <label for="s-pollCron" class="mt-3 mb-1 block text-xs text-muted">Poll cron</label>
+  <Input id="s-pollCron" bind:value={form.pollCron} />
   {#if cronValid === false}
-    <div class="field-error">Not a valid cron expression</div>
+    <div class="mt-1 text-xs text-err">Not a valid cron expression</div>
   {/if}
 
-  <label for="s-notifyWebhookUrl">Notification webhook URL (Discord-compatible, optional)</label>
-  <div class="row">
-    <input id="s-notifyWebhookUrl" bind:value={form.notifyWebhookUrl} />
-    <button class="action secondary small" style="margin-top:0;" disabled={testingWebhook} onclick={runTestWebhook}>
-      Test
-    </button>
+  <label for="s-notifyWebhookUrl" class="mt-3 mb-1 block text-xs text-muted">Notification webhook URL (Discord-compatible, optional)</label>
+  <div class="flex gap-2">
+    <Input id="s-notifyWebhookUrl" bind:value={form.notifyWebhookUrl} />
+    <Button variant="secondary" size="sm" disabled={testingWebhook} onclick={runTestWebhook}>Test</Button>
   </div>
 
-  <button class="action" onclick={save}>Save</button>
-</div>
-
-<style>
-  .field-error {
-    color: var(--err);
-    font-size: 12px;
-    margin-top: 4px;
-  }
-</style>
+  <Button class="mt-4" onclick={save}>Save</Button>
+</Card>

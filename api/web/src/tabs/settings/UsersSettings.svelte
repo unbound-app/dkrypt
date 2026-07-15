@@ -2,12 +2,22 @@
   import RelativeTime from '../../components/RelativeTime.svelte';
   import SkeletonRows from '../../components/SkeletonRows.svelte';
   import { addUser, fetchUsers, removeUser, type AllowedUser, type Role } from '../../lib/api';
+  import Badge from '../../lib/components/ui/Badge.svelte';
+  import Button from '../../lib/components/ui/Button.svelte';
+  import Card from '../../lib/components/ui/Card.svelte';
+  import Input from '../../lib/components/ui/Input.svelte';
+  import Select from '../../lib/components/ui/Select.svelte';
   import { sessionState } from '../../lib/session.svelte';
   import { confirmDialog, showToast } from '../../lib/ui.svelte';
 
   let username = $state('');
   let role = $state<Role>('member');
   let users = $state<AllowedUser[] | null>(null);
+
+  const ROLE_OPTIONS = [
+    { value: 'member', label: 'member (read-only + own API keys)' },
+    { value: 'admin', label: 'admin (full access)' },
+  ];
 
   async function load(): Promise<void> {
     users = (await fetchUsers()).users;
@@ -38,50 +48,47 @@
   }
 </script>
 
-<div class="panel">
-  <h2>Add an allowed GitHub user</h2>
-  <label for="user-username">GitHub username</label>
-  <input id="user-username" placeholder="e.g. octocat" bind:value={username} />
-  <label for="user-role">Role</label>
-  <select id="user-role" bind:value={role}>
-    <option value="member">member (read-only + own API keys)</option>
-    <option value="admin">admin (full access)</option>
-  </select>
-  <button class="action" onclick={submit}>Add</button>
-</div>
+<div class="flex flex-col gap-4">
+  <Card title="Add an allowed GitHub user">
+    <label for="user-username" class="mb-1 block text-xs text-muted">GitHub username</label>
+    <Input id="user-username" placeholder="e.g. octocat" bind:value={username} />
+    <label for="user-role" class="mt-3 mb-1 block text-xs text-muted">Role</label>
+    <Select items={ROLE_OPTIONS} value={role} onValueChange={(v) => (role = v as Role)} class="w-full" />
+    <Button class="mt-4" onclick={submit}>Add</Button>
+  </Card>
 
-<div class="panel">
-  <h2>Allowlist</h2>
-  <div class="table-wrap">
-    <table class="min-w">
-      <thead>
-        <tr>
-          <th>Username</th>
-          <th>Role</th>
-          <th>Added</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        {#if users === null}
-          <SkeletonRows rows={3} colspan={4} />
-        {:else}
-          {#each users as u (u.username)}
-            <tr>
-              <td>{u.username}</td>
-              <td><span class="badge {u.role}">{u.role}</span></td>
-              <td class="muted"><RelativeTime ms={u.addedAt} /></td>
-              <td>
-                {#if u.username === (sessionState.sub ?? '').toLowerCase()}
-                  <span class="you-badge">(you)</span>
-                {:else}
-                  <button class="action small danger" onclick={() => remove(u.username)}>Remove</button>
-                {/if}
-              </td>
-            </tr>
-          {/each}
-        {/if}
-      </tbody>
-    </table>
-  </div>
+  <Card title="Allowlist">
+    <div class="overflow-x-auto">
+      <table class="min-w-[480px]">
+        <thead>
+          <tr>
+            <th>Username</th>
+            <th>Role</th>
+            <th>Added</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {#if users === null}
+            <SkeletonRows rows={3} colspan={4} />
+          {:else}
+            {#each users as u (u.username)}
+              <tr>
+                <td>{u.username}</td>
+                <td><Badge variant={u.role === 'admin' ? 'success' : 'default'}>{u.role}</Badge></td>
+                <td class="text-muted"><RelativeTime ms={u.addedAt} /></td>
+                <td>
+                  {#if u.username === (sessionState.sub ?? '').toLowerCase()}
+                    <span class="text-xs text-muted">(you)</span>
+                  {:else}
+                    <Button size="sm" variant="destructive" onclick={() => remove(u.username)}>Remove</Button>
+                  {/if}
+                </td>
+              </tr>
+            {/each}
+          {/if}
+        </tbody>
+      </table>
+    </div>
+  </Card>
 </div>

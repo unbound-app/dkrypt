@@ -1,26 +1,25 @@
 <script lang="ts">
+  import Tabs from '../lib/components/ui/Tabs.svelte';
   import { setSettingsSubtab, tabState } from '../lib/ui.svelte';
   import AppleAuthSettings from './settings/AppleAuthSettings.svelte';
   import SchedulerSettings from './settings/SchedulerSettings.svelte';
   import UsersSettings from './settings/UsersSettings.svelte';
+
+  const SUBTABS = [
+    { id: 'scheduler', label: 'Scheduler' },
+    { id: 'users', label: 'Users' },
+    { id: 'apple', label: 'Apple Auth' },
+  ];
 </script>
 
-<nav class="tabs subnav">
-  <button class:active={tabState.settingsSubtab === 'scheduler'} onclick={() => setSettingsSubtab('scheduler')}>Scheduler</button>
-  <button class:active={tabState.settingsSubtab === 'users'} onclick={() => setSettingsSubtab('users')}>Users</button>
-  <button class:active={tabState.settingsSubtab === 'apple'} onclick={() => setSettingsSubtab('apple')}>Apple Auth</button>
-</nav>
+<Tabs items={SUBTABS} value={tabState.settingsSubtab} onValueChange={setSettingsSubtab} class="mb-5" />
 
-{#if tabState.settingsSubtab === 'scheduler'}
+<div class:hidden={tabState.settingsSubtab !== 'scheduler'}>
   <SchedulerSettings />
-{:else if tabState.settingsSubtab === 'users'}
+</div>
+<div class:hidden={tabState.settingsSubtab !== 'users'}>
   <UsersSettings />
-{:else if tabState.settingsSubtab === 'apple'}
+</div>
+<div class:hidden={tabState.settingsSubtab !== 'apple'}>
   <AppleAuthSettings />
-{/if}
-
-<style>
-  .subnav {
-    margin-bottom: 16px;
-  }
-</style>
+</div>

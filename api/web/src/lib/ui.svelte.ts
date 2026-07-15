@@ -1,8 +1,14 @@
+import { toast } from 'svelte-sonner';
+
 export type Theme = 'dark' | 'light';
 
 function readStoredTheme(): Theme | null {
   const stored = localStorage.getItem('theme');
   return stored === 'dark' || stored === 'light' ? stored : null;
+}
+
+function systemTheme(): Theme {
+  return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
 }
 
 export const themeState = $state<{ value: Theme | null }>({ value: readStoredTheme() });
@@ -14,24 +20,18 @@ export function setTheme(theme: Theme): void {
 }
 
 export function initTheme(): void {
-  if (themeState.value) document.documentElement.setAttribute('data-theme', themeState.value);
+  document.documentElement.setAttribute('data-theme', themeState.value ?? systemTheme());
+
+  if (!themeState.value) {
+    window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
+      if (!themeState.value) document.documentElement.setAttribute('data-theme', systemTheme());
+    });
+  }
 }
 
-export interface Toast {
-  id: number;
-  message: string;
-  type: 'success' | 'error';
-}
-
-let toastSeq = 0;
-export const toastState = $state<{ items: Toast[] }>({ items: [] });
-
-export function showToast(message: string, type: Toast['type'] = 'success'): void {
-  const id = ++toastSeq;
-  toastState.items.push({ id, message, type });
-  setTimeout(() => {
-    toastState.items = toastState.items.filter((t) => t.id !== id);
-  }, 3000);
+export function showToast(message: string, type: 'success' | 'error' = 'success'): void {
+  if (type === 'error') toast.error(message);
+  else toast.success(message);
 }
 
 interface ConfirmState {

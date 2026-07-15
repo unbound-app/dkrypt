@@ -1,14 +1,16 @@
 <script lang="ts">
+  import { Moon, Sun } from 'lucide-svelte';
+  import { Toaster } from 'svelte-sonner';
   import AlertBanner from './components/AlertBanner.svelte';
   import CommandPalette from './components/CommandPalette.svelte';
   import ConfirmModal from './components/ConfirmModal.svelte';
   import Login from './components/Login.svelte';
   import SessionExpiryBanner from './components/SessionExpiryBanner.svelte';
-  import ThemeToggle from './components/ThemeToggle.svelte';
-  import ToastContainer from './components/ToastContainer.svelte';
+  import Button from './lib/components/ui/Button.svelte';
+  import Tabs from './lib/components/ui/Tabs.svelte';
   import { connectLive, disconnectLive, liveState } from './lib/live.svelte';
   import { logout, refreshSession, sessionState } from './lib/session.svelte';
-  import { initTheme, openPalette, setActiveTab, tabState, type TabId } from './lib/ui.svelte';
+  import { initTheme, openPalette, setActiveTab, setTheme, tabState, themeState, type TabId } from './lib/ui.svelte';
   import Docs from './tabs/Docs.svelte';
   import Home from './tabs/Home.svelte';
   import Keys from './tabs/Keys.svelte';
@@ -54,65 +56,67 @@
       homeRef?.focusSearch();
     }
   }
+
+  function toggleTheme(): void {
+    setTheme(themeState.value === 'light' ? 'dark' : 'light');
+  }
 </script>
 
 <svelte:window onkeydown={onKeydown} />
 
+<Toaster theme={themeState.value ?? 'dark'} richColors position="bottom-right" />
+
 {#if !sessionState.loggedIn}
   <Login />
 {:else}
-  <div id="app">
-    <header>
-      <h1>
-        ipadecrypt-service
-        <span>{liveState.overview ? (liveState.overview.schedulerEnabled ? '· scheduler enabled' : '· scheduler disabled') : ''}</span>
-      </h1>
-      <div class="row">
-        <ThemeToggle />
-        <span class="whoami muted">{sessionState.sub} ({sessionState.role})</span>
-        <button class="action secondary small" onclick={() => void logout()}>Log out</button>
+  <div class="min-h-screen">
+    <header class="border-border flex flex-wrap items-center justify-between gap-3 border-b px-6 py-4">
+      <div class="flex items-center gap-3">
+        <h1 class="text-[15px] font-semibold">ipadecrypt-service</h1>
+        {#if liveState.overview}
+          <span class="border-border inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium text-muted">
+            <span class={['h-1.5 w-1.5 rounded-full', liveState.overview.schedulerEnabled ? 'bg-ok' : 'bg-muted']}></span>
+            Scheduler {liveState.overview.schedulerEnabled ? 'on' : 'off'}
+          </span>
+        {/if}
+      </div>
+      <div class="flex items-center gap-2.5">
+        <Button variant="secondary" size="icon" onclick={toggleTheme} aria-label="Toggle theme" title="Toggle theme">
+          {#if themeState.value === 'light'}
+            <Moon class="h-4 w-4" />
+          {:else}
+            <Sun class="h-4 w-4" />
+          {/if}
+        </Button>
+        <span class="max-w-[40vw] truncate text-[13px] text-muted sm:max-w-[55vw]">{sessionState.sub} ({sessionState.role})</span>
+        <Button variant="secondary" size="sm" onclick={() => void logout()}>Log out</Button>
       </div>
     </header>
-    <main>
+    <main class="mx-auto max-w-[1120px] p-6">
       <SessionExpiryBanner />
       <AlertBanner />
-      <nav class="tabs">
-        {#each visibleTabs as t (t.id)}
-          <button class:active={tabState.active === t.id} onclick={() => setActiveTab(t.id)}>{t.label}</button>
-        {/each}
-      </nav>
+      <Tabs items={visibleTabs.map((t) => ({ id: t.id, label: t.label }))} value={tabState.active} onValueChange={(v) => setActiveTab(v as TabId)} class="mb-5" />
 
-      {#if tabState.active === 'home'}
+      <div class:hidden={tabState.active !== 'home'}>
         <Home bind:this={homeRef} />
-      {:else if tabState.active === 'keys'}
+      </div>
+      <div class:hidden={tabState.active !== 'keys'}>
         <Keys />
-      {:else if tabState.active === 'logs'}
+      </div>
+      <div class:hidden={tabState.active !== 'logs'}>
         <Logs />
-      {:else if tabState.active === 'docs'}
+      </div>
+      <div class:hidden={tabState.active !== 'docs'}>
         <Docs />
-      {:else if tabState.active === 'settings'}
-        <Settings />
+      </div>
+      {#if sessionState.role === 'admin'}
+        <div class:hidden={tabState.active !== 'settings'}>
+          <Settings />
+        </div>
       {/if}
     </main>
   </div>
 {/if}
 
-<ToastContainer />
 <ConfirmModal />
 <CommandPalette />
-
-<style>
-  .whoami {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    max-width: 40vw;
-    font-size: 13px;
-  }
-
-  @media (max-width: 640px) {
-    .whoami {
-      max-width: 55vw;
-    }
-  }
-</style>

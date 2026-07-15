@@ -1,6 +1,9 @@
 <script lang="ts">
   import { logout, sessionState } from '../lib/session.svelte';
   import { closePalette, paletteState, setActiveTab, setTheme, themeState } from '../lib/ui.svelte';
+  import Dialog from '../lib/components/ui/Dialog.svelte';
+  import Input from '../lib/components/ui/Input.svelte';
+  import { cn } from '../lib/utils';
 
   interface Command {
     id: string;
@@ -49,10 +52,6 @@
   }
 
   function onKeydown(e: KeyboardEvent): void {
-    if (e.key === 'Escape') {
-      close();
-      return;
-    }
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       selected = Math.min(selected + 1, filtered.length - 1);
@@ -69,68 +68,19 @@
   }
 </script>
 
-{#if paletteState.open}
-  <div class="overlay" role="button" tabindex="-1" onclick={(e) => e.target === e.currentTarget && close()} onkeydown={onKeydown}>
-    <div class="palette panel" role="dialog" aria-modal="true" tabindex="-1">
-      <input bind:this={inputEl} bind:value={query} onkeydown={onKeydown} placeholder="Type a command…" />
-      <div class="results">
-        {#each filtered as cmd, i (cmd.id)}
-          <button class="result" class:selected={i === selected} onclick={() => run(cmd)}>{cmd.label}</button>
-        {/each}
-        {#if filtered.length === 0}
-          <div class="muted empty">No matching commands.</div>
-        {/if}
-      </div>
-    </div>
+<Dialog open={paletteState.open} onOpenChange={(open) => !open && close()} class="top-[18vh] w-[90%] max-w-md translate-y-0 p-2">
+  <Input bind:ref={inputEl} bind:value={query} onkeydown={onKeydown} placeholder="Type a command…" autofocus />
+  <div class="mt-1.5 flex max-h-80 flex-col overflow-y-auto">
+    {#each filtered as cmd, i (cmd.id)}
+      <button
+        class={cn('cursor-pointer rounded-md px-3 py-2.5 text-left text-sm text-text', i === selected && 'bg-accent/15')}
+        onclick={() => run(cmd)}
+      >
+        {cmd.label}
+      </button>
+    {/each}
+    {#if filtered.length === 0}
+      <div class="px-3 py-2.5 text-sm text-muted">No matching commands.</div>
+    {/if}
   </div>
-{/if}
-
-<style>
-  .overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.5);
-    display: flex;
-    align-items: flex-start;
-    justify-content: center;
-    padding-top: 15vh;
-    z-index: 1001;
-  }
-
-  .palette {
-    width: 90%;
-    max-width: 480px;
-    padding: 8px;
-  }
-
-  input {
-    margin-bottom: 6px;
-  }
-
-  .results {
-    display: flex;
-    flex-direction: column;
-    max-height: 320px;
-    overflow-y: auto;
-  }
-
-  .result {
-    text-align: left;
-    background: none;
-    border: none;
-    color: var(--text);
-    padding: 10px 12px;
-    border-radius: 6px;
-    font-size: 13px;
-    cursor: pointer;
-  }
-
-  .result.selected {
-    background: color-mix(in srgb, var(--accent) 15%, transparent);
-  }
-
-  .empty {
-    padding: 10px 12px;
-    font-size: 13px;
-  }
-</style>
+</Dialog>

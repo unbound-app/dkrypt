@@ -2,6 +2,10 @@
   import RelativeTime from '../../components/RelativeTime.svelte';
   import SkeletonRows from '../../components/SkeletonRows.svelte';
   import { fetchJobHistory, queueDecrypt, type JobHistoryEntry } from '../../lib/api';
+  import Badge from '../../lib/components/ui/Badge.svelte';
+  import Button from '../../lib/components/ui/Button.svelte';
+  import Card from '../../lib/components/ui/Card.svelte';
+  import { statusToBadgeVariant } from '../../lib/components/ui/variants';
   import { addDecrypt, pushRecentBundleId } from '../../lib/decrypts.svelte';
   import { fmtSize } from '../../lib/format';
   import { liveState } from '../../lib/live.svelte';
@@ -59,10 +63,9 @@
   }
 </script>
 
-<div class="panel">
-  <h2>Job history</h2>
-  <div class="table-wrap">
-    <table class="min-w">
+<Card title="Job history">
+  <div class="overflow-x-auto">
+    <table class="min-w-[640px]">
       <thead>
         <tr>
           <th>Bundle ID</th>
@@ -80,13 +83,13 @@
         {:else}
           {#each entries as j (j.id)}
             <tr>
-              <td>{j.bundleId}</td>
+              <td class="max-w-40 truncate" title={j.bundleId}>{j.bundleId}</td>
               <td>{j.source}</td>
-              <td><span class="badge {j.status}">{j.status}</span></td>
+              <td><Badge variant={statusToBadgeVariant(j.status)}>{j.status}</Badge></td>
               <td>{fmtSize(j.sizeBytes)}</td>
-              <td class="muted"><RelativeTime ms={j.finishedAt} /></td>
-              <td class="muted">{j.error ?? ''}</td>
-              <td><button class="action small secondary" onclick={() => decryptAgain(j.bundleId)}>Decrypt again</button></td>
+              <td class="text-muted"><RelativeTime ms={j.finishedAt} /></td>
+              <td class="max-w-52 truncate text-muted" title={j.error ?? ''}>{j.error ?? ''}</td>
+              <td><Button size="sm" variant="secondary" onclick={() => decryptAgain(j.bundleId)}>Decrypt again</Button></td>
             </tr>
           {/each}
         {/if}
@@ -94,10 +97,10 @@
     </table>
   </div>
   {#if loaded && entries.length < total}
-    <div class="row" style="justify-content:center;">
-      <button class="action small secondary" style="margin-top:12px;" disabled={loadingMore} onclick={loadMore}>
+    <div class="mt-3 flex justify-center">
+      <Button size="sm" variant="secondary" disabled={loadingMore} onclick={loadMore}>
         Load more ({total - entries.length} older)
-      </button>
+      </Button>
     </div>
   {/if}
-</div>
+</Card>

@@ -18,5 +18,7 @@
 </script>
 
 {#if showWarning}
-  <div class="alert">Your session expires in {fmtCountdown(remaining)} - save your work and sign in again soon.</div>
+  <div class="mb-4 rounded-lg border border-warn/40 bg-warn/10 px-3.5 py-3 text-[13px] text-warn">
+    Your session expires in {fmtCountdown(remaining)} - save your work and sign in again soon.
+  </div>
 {/if}

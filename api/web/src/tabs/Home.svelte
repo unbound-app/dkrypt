@@ -12,14 +12,14 @@
   }
 </script>
 
-<div class="home-grid">
-  <div class="home-main">
+<div class="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
+  <div class="flex flex-col gap-4">
     <DecryptPanel bind:this={decryptPanel} />
     <MyRequestsPanel />
     <ActiveJobsPanel />
     <JobHistoryPanel />
   </div>
-  <div class="home-side">
+  <div class="flex flex-col gap-4">
     <StatusPanel />
   </div>
 </div>

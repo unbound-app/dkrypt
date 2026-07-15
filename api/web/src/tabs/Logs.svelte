@@ -1,6 +1,12 @@
 <script lang="ts">
   import RelativeTime from '../components/RelativeTime.svelte';
   import { fetchLogs, type LogEntry } from '../lib/api';
+  import Badge from '../lib/components/ui/Badge.svelte';
+  import Button from '../lib/components/ui/Button.svelte';
+  import Card from '../lib/components/ui/Card.svelte';
+  import Input from '../lib/components/ui/Input.svelte';
+  import Select from '../lib/components/ui/Select.svelte';
+  import type { BadgeVariant } from '../lib/components/ui/variants';
   import { liveState } from '../lib/live.svelte';
 
   let scopeFilter = $state(localStorage.getItem('logScopeFilter') ?? 'all');
@@ -9,6 +15,19 @@
   let autoScroll = $state(localStorage.getItem('logAutoScroll') !== 'false');
   let initialLogs = $state<LogEntry[] | null>(null);
   let listEl: HTMLDivElement | undefined = $state();
+
+  const LEVEL_OPTIONS = [
+    { value: 'all', label: 'All levels' },
+    { value: 'info', label: 'Info' },
+    { value: 'warn', label: 'Warnings' },
+    { value: 'error', label: 'Errors' },
+  ];
+
+  const LEVEL_BADGE: Record<LogEntry['level'], BadgeVariant> = {
+    info: 'default',
+    warn: 'warning',
+    error: 'destructive',
+  };
 
   $effect(() => {
     void fetchLogs().then((d) => {
@@ -76,56 +95,46 @@
   });
 </script>
 
-<div class="panel">
-  <h2>Scheduler &amp; job logs</h2>
-  <div class="log-filters">
-    <div class="log-filter-group">
-      <button class="action small secondary log-filter" class:active={scopeFilter === 'all'} onclick={() => (scopeFilter = 'all')}>
-        All
-      </button>
+<Card title="Scheduler &amp; job logs">
+  <div class="mb-3.5 flex flex-wrap items-center gap-2.5">
+    <div class="flex flex-wrap gap-1">
+      <Button variant={scopeFilter === 'all' ? 'default' : 'secondary'} size="sm" onclick={() => (scopeFilter = 'all')}>All</Button>
       {#each scopes as scope (scope)}
-        <button class="action small secondary log-filter" class:active={scopeFilter === scope} onclick={() => (scopeFilter = scope)}>
-          {scope}
-        </button>
+        <Button variant={scopeFilter === scope ? 'default' : 'secondary'} size="sm" onclick={() => (scopeFilter = scope)}>{scope}</Button>
       {/each}
     </div>
-    <select class="log-level-filter" bind:value={levelFilter}>
-      <option value="all">All levels</option>
-      <option value="info">Info</option>
-      <option value="warn">Warnings</option>
-      <option value="error">Errors</option>
-    </select>
-    <input style="width:auto; min-width:160px;" placeholder="Search logs…" bind:value={searchText} />
-    <label class="row" style="margin:0; font-size:12px; gap:4px;">
+    <Select items={LEVEL_OPTIONS} bind:value={levelFilter} class="w-36" />
+    <Input class="w-44" placeholder="Search logs…" bind:value={searchText} />
+    <label class="ml-auto flex items-center gap-1.5 text-xs text-muted">
       <input type="checkbox" bind:checked={autoScroll} />
       Auto-scroll to newest
     </label>
   </div>
 
   {#if initialLogs === null}
-    <div class="log-list">
+    <div class="flex flex-col gap-1.5">
       {#each Array(6) as _, i (i)}
-        <div class="skeleton-row" style="height:32px;"></div>
+        <div class="skeleton bg-panel-muted h-8 rounded-md"></div>
       {/each}
     </div>
   {:else}
-    <div class="log-list" bind:this={listEl}>
+    <div class="flex max-h-[560px] flex-col gap-1.5 overflow-y-auto" bind:this={listEl}>
       {#each filtered as l (entryKey(l))}
-        <div class="log-entry">
-          <span class="log-time"><RelativeTime ms={l.ts} /></span>
-          <span class="badge loglevel-{l.level}">{l.level}</span>
-          <span class="badge logscope">{l.scope}</span>
-          <span class="log-msg">
+        <div class="border-border bg-panel-muted flex items-baseline gap-2 rounded-md border px-2.5 py-2 text-[12.5px]">
+          <span class="shrink-0 font-mono text-[11.5px] whitespace-nowrap text-muted"><RelativeTime ms={l.ts} /></span>
+          <Badge variant={LEVEL_BADGE[l.level]} class="shrink-0">{l.level}</Badge>
+          <Badge variant="secondary" class="shrink-0">{l.scope}</Badge>
+          <span class="min-w-0 flex-1 truncate" title="{l.message} {fmtLogMeta(l.meta)}">
             {l.message}
             {#if l.meta}
-              <span class="log-meta">{fmtLogMeta(l.meta)}</span>
+              <span class="font-mono text-[11px] text-muted">{fmtLogMeta(l.meta)}</span>
             {/if}
           </span>
         </div>
       {/each}
     </div>
     {#if filtered.length === 0}
-      <div class="muted" style="margin-top:10px;">No log entries yet.</div>
+      <div class="mt-2.5 text-sm text-muted">No log entries yet.</div>
     {/if}
   {/if}
-</div>
+</Card>

@@ -15,6 +15,12 @@
     revokeKey,
     type ApiKeyRecord,
   } from '../lib/api';
+  import Badge from '../lib/components/ui/Badge.svelte';
+  import Button from '../lib/components/ui/Button.svelte';
+  import Card from '../lib/components/ui/Card.svelte';
+  import Input from '../lib/components/ui/Input.svelte';
+  import Select from '../lib/components/ui/Select.svelte';
+  import { statusToBadgeVariant } from '../lib/components/ui/variants';
   import { sessionState } from '../lib/session.svelte';
   import { confirmDialog, showToast } from '../lib/ui.svelte';
 
@@ -23,8 +29,15 @@
   let mine = $state<ApiKeyRecord[] | null>(null);
   let pending = $state<ApiKeyRecord[] | null>(null);
   let all = $state<ApiKeyRecord[] | null>(null);
-  let statusFilter = $state<'all' | 'pending' | 'approved' | 'denied'>('all');
+  let statusFilter = $state('all');
   let selected = $state<Set<string>>(new Set());
+
+  const STATUS_OPTIONS = [
+    { value: 'all', label: 'All statuses' },
+    { value: 'pending', label: 'Pending' },
+    { value: 'approved', label: 'Approved' },
+    { value: 'denied', label: 'Denied' },
+  ];
 
   const isAdmin = $derived(sessionState.role === 'admin');
 
@@ -101,121 +114,29 @@
   }
 </script>
 
-<div class="panel">
-  <h2>{isAdmin ? 'Get a key' : 'Request a key'}</h2>
-  <div class="muted" style="margin-bottom:10px;">
-    {isAdmin ? "You get it instantly - no approval needed." : 'Needs approval from an admin before it works.'}
-  </div>
-  <label for="key-name">Name</label>
-  <input id="key-name" placeholder="e.g. laptop, ci-runner" bind:value={keyName} />
-  <button class="action" onclick={submitRequest}>{isAdmin ? 'Create' : 'Request'}</button>
-  {#if revealedKey}
-    <div class="key-reveal">
-      Save this now, it won't be shown again:<br />
-      <code>{revealedKey}</code>
-      <CopyButton text={revealedKey} />
+<div class="flex flex-col gap-4">
+  <Card title={isAdmin ? 'Get a key' : 'Request a key'}>
+    <div class="mb-2.5 text-sm text-muted">
+      {isAdmin ? "You get it instantly - no approval needed." : 'Needs approval from an admin before it works.'}
     </div>
-  {/if}
-</div>
-
-<div class="panel">
-  <h2>My keys</h2>
-  <div class="table-wrap">
-    <table class="min-w">
-      <thead>
-        <tr>
-          <th>Name</th>
-          <th>Status</th>
-          <th>Created</th>
-          <th>Last used</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        {#if mine === null}
-          <SkeletonRows rows={2} colspan={5} />
-        {:else}
-          {#each mine as k (k.id)}
-            <tr>
-              <td>{k.name}</td>
-              <td><span class="badge {k.status}">{k.status}</span></td>
-              <td class="muted"><RelativeTime ms={k.createdAt} /></td>
-              <td class="muted"><RelativeTime ms={k.lastUsedAt} /></td>
-              <td class="actions-cell">
-                {#if k.hasUnrevealedSecret}
-                  <button class="action small" onclick={() => doReveal(k.id)}>Reveal</button>
-                {/if}
-                {#if k.status === 'approved'}
-                  <button class="action small secondary" onclick={() => doRegenerate(k.id)}>Regenerate</button>
-                {/if}
-                <button class="action small danger" onclick={() => doRevoke(k.id)}>Revoke</button>
-              </td>
-            </tr>
-          {/each}
-        {/if}
-      </tbody>
-    </table>
-  </div>
-</div>
-
-{#if isAdmin}
-  <div class="panel">
-    <h2>Pending requests</h2>
-    <div class="table-wrap">
-      <table class="min-w">
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>Requested by</th>
-            <th>Requested</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {#if pending === null}
-            <SkeletonRows rows={2} colspan={4} />
-          {:else}
-            {#each pending as k (k.id)}
-              <tr>
-                <td>{k.name}</td>
-                <td>{k.ownerId}</td>
-                <td class="muted"><RelativeTime ms={k.createdAt} /></td>
-                <td class="actions-cell">
-                  <button class="action small" onclick={() => doApprove(k.id)}>Approve</button>
-                  <button class="action small danger" onclick={() => doDeny(k.id)}>Deny</button>
-                </td>
-              </tr>
-            {/each}
-          {/if}
-        </tbody>
-      </table>
-    </div>
-    {#if pending !== null && pending.length === 0}
-      <div class="muted">Nothing pending.</div>
+    <label for="key-name" class="mb-1 block text-xs text-muted">Name</label>
+    <Input id="key-name" placeholder="e.g. laptop, ci-runner" bind:value={keyName} />
+    <Button class="mt-3" onclick={submitRequest}>{isAdmin ? 'Create' : 'Request'}</Button>
+    {#if revealedKey}
+      <div class="border-accent bg-panel-muted mt-3 rounded-md border p-2.5 text-xs break-all">
+        Save this now, it won't be shown again:<br />
+        <code>{revealedKey}</code>
+        <CopyButton text={revealedKey} />
+      </div>
     {/if}
-  </div>
+  </Card>
 
-  <div class="panel">
-    <h2>All keys</h2>
-    <div class="row" style="margin-bottom:10px; justify-content:space-between; flex-wrap:wrap;">
-      <select style="width:auto;" bind:value={statusFilter}>
-        <option value="all">All statuses</option>
-        <option value="pending">Pending</option>
-        <option value="approved">Approved</option>
-        <option value="denied">Denied</option>
-      </select>
-      {#if selected.size > 0}
-        <button class="action small danger" style="margin-top:0;" onclick={bulkRevoke}>Revoke {selected.size} selected</button>
-      {/if}
-    </div>
-    <div class="table-wrap">
-      <table class="min-w">
+  <Card title="My keys">
+    <div class="overflow-x-auto">
+      <table class="min-w-[480px]">
         <thead>
           <tr>
-            <th></th>
-            <th>ID</th>
             <th>Name</th>
-            <th>Owner</th>
             <th>Status</th>
             <th>Created</th>
             <th>Last used</th>
@@ -223,24 +144,118 @@
           </tr>
         </thead>
         <tbody>
-          {#if all === null}
-            <SkeletonRows rows={3} colspan={8} />
+          {#if mine === null}
+            <SkeletonRows rows={2} colspan={5} />
           {:else}
-            {#each filteredAll as k (k.id)}
+            {#each mine as k (k.id)}
               <tr>
-                <td><input type="checkbox" checked={selected.has(k.id)} onchange={() => toggleSelect(k.id)} /></td>
-                <td><code title={k.id}>{k.id.slice(0, 8)}</code> <CopyButton text={k.id} /></td>
                 <td>{k.name}</td>
-                <td>{k.ownerId}</td>
-                <td><span class="badge {k.status}">{k.status}</span></td>
-                <td class="muted"><RelativeTime ms={k.createdAt} /></td>
-                <td class="muted"><RelativeTime ms={k.lastUsedAt} /></td>
-                <td><button class="action small danger" onclick={() => doRevoke(k.id)}>Revoke</button></td>
+                <td><Badge variant={statusToBadgeVariant(k.status)}>{k.status}</Badge></td>
+                <td class="text-muted"><RelativeTime ms={k.createdAt} /></td>
+                <td class="text-muted"><RelativeTime ms={k.lastUsedAt} /></td>
+                <td>
+                  <div class="flex flex-wrap gap-1.5">
+                    {#if k.hasUnrevealedSecret}
+                      <Button size="sm" onclick={() => doReveal(k.id)}>Reveal</Button>
+                    {/if}
+                    {#if k.status === 'approved'}
+                      <Button size="sm" variant="secondary" onclick={() => doRegenerate(k.id)}>Regenerate</Button>
+                    {/if}
+                    <Button size="sm" variant="destructive" onclick={() => doRevoke(k.id)}>Revoke</Button>
+                  </div>
+                </td>
               </tr>
             {/each}
           {/if}
         </tbody>
       </table>
     </div>
-  </div>
-{/if}
+  </Card>
+
+  {#if isAdmin}
+    <Card title="Pending requests">
+      <div class="overflow-x-auto">
+        <table class="min-w-[480px]">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Requested by</th>
+              <th>Requested</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {#if pending === null}
+              <SkeletonRows rows={2} colspan={4} />
+            {:else}
+              {#each pending as k (k.id)}
+                <tr>
+                  <td>{k.name}</td>
+                  <td>{k.ownerId}</td>
+                  <td class="text-muted"><RelativeTime ms={k.createdAt} /></td>
+                  <td>
+                    <div class="flex gap-1.5">
+                      <Button size="sm" onclick={() => doApprove(k.id)}>Approve</Button>
+                      <Button size="sm" variant="destructive" onclick={() => doDeny(k.id)}>Deny</Button>
+                    </div>
+                  </td>
+                </tr>
+              {/each}
+            {/if}
+          </tbody>
+        </table>
+      </div>
+      {#if pending !== null && pending.length === 0}
+        <div class="text-sm text-muted">Nothing pending.</div>
+      {/if}
+    </Card>
+
+    <Card title="All keys">
+      {#snippet headerExtra()}
+        {#if selected.size > 0}
+          <Button size="sm" variant="destructive" onclick={bulkRevoke}>Revoke {selected.size} selected</Button>
+        {/if}
+      {/snippet}
+      <Select items={STATUS_OPTIONS} bind:value={statusFilter} class="mb-3 w-44" />
+      <div class="overflow-x-auto">
+        <table class="min-w-[620px]">
+          <thead>
+            <tr>
+              <th></th>
+              <th>ID</th>
+              <th>Name</th>
+              <th>Owner</th>
+              <th>Status</th>
+              <th>Created</th>
+              <th>Last used</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {#if all === null}
+              <SkeletonRows rows={3} colspan={8} />
+            {:else}
+              {#each filteredAll as k (k.id)}
+                <tr>
+                  <td><input type="checkbox" checked={selected.has(k.id)} onchange={() => toggleSelect(k.id)} /></td>
+                  <td>
+                    <div class="flex items-center gap-1.5">
+                      <code title={k.id}>{k.id.slice(0, 8)}</code>
+                      <CopyButton text={k.id} />
+                    </div>
+                  </td>
+                  <td>{k.name}</td>
+                  <td>{k.ownerId}</td>
+                  <td><Badge variant={statusToBadgeVariant(k.status)}>{k.status}</Badge></td>
+                  <td class="text-muted"><RelativeTime ms={k.createdAt} /></td>
+                  <td class="text-muted"><RelativeTime ms={k.lastUsedAt} /></td>
+                  <td><Button size="sm" variant="destructive" onclick={() => doRevoke(k.id)}>Revoke</Button></td>
+                </tr>
+              {/each}
+            {/if}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  {/if}
+</div>

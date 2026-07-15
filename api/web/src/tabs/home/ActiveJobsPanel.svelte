@@ -1,16 +1,18 @@
 <script lang="ts">
   import CopyButton from '../../components/CopyButton.svelte';
   import SkeletonRows from '../../components/SkeletonRows.svelte';
+  import Badge from '../../lib/components/ui/Badge.svelte';
+  import Card from '../../lib/components/ui/Card.svelte';
+  import { statusToBadgeVariant } from '../../lib/components/ui/variants';
   import { liveState } from '../../lib/live.svelte';
 
   const jobs = $derived(liveState.overview?.activeJobs ?? []);
   const loaded = $derived(liveState.overview !== null);
 </script>
 
-<div class="panel">
-  <h2>Active jobs</h2>
-  <div class="table-wrap">
-    <table class="min-w">
+<Card title="Active jobs">
+  <div class="overflow-x-auto">
+    <table class="min-w-[560px]">
       <thead>
         <tr>
           <th>Bundle ID</th>
@@ -26,22 +28,24 @@
         {:else}
           {#each jobs as j (j.id)}
             <tr>
-              <td>{j.bundleId}</td>
+              <td class="max-w-40 truncate" title={j.bundleId}>{j.bundleId}</td>
               <td>{j.source}</td>
-              <td><span class="badge {j.status}">{j.status}</span></td>
-              <td class="muted">
+              <td><Badge variant={statusToBadgeVariant(j.status)}>{j.status}</Badge></td>
+              <td class="max-w-52 text-muted">
                 {#if j.status === 'running'}
-                  <div class="progress-cell">
-                    <div class="progress-indeterminate"></div>
-                    <span>{j.progress}</span>
+                  <div class="flex items-center gap-2">
+                    <div class="progress-indeterminate bg-border relative h-1 w-10 shrink-0 overflow-hidden rounded-full after:bg-accent"></div>
+                    <span class="truncate" title={j.progress}>{j.progress}</span>
                   </div>
                 {:else}
-                  {j.progress}
+                  <span class="block truncate" title={j.progress}>{j.progress}</span>
                 {/if}
               </td>
               <td>
-                <code title={j.id}>{j.id.slice(0, 8)}</code>
-                <CopyButton text={j.id} />
+                <div class="flex items-center gap-1.5">
+                  <code title={j.id}>{j.id.slice(0, 8)}</code>
+                  <CopyButton text={j.id} />
+                </div>
               </td>
             </tr>
           {/each}
@@ -50,14 +54,6 @@
     </table>
   </div>
   {#if loaded && jobs.length === 0}
-    <div class="muted">Nothing running.</div>
+    <div class="text-sm text-muted">Nothing running.</div>
   {/if}
-</div>
-
-<style>
-  .progress-cell {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-</style>
+</Card>

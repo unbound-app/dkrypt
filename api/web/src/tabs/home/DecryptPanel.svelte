@@ -1,9 +1,16 @@
 <script lang="ts">
+  import { Search } from 'lucide-svelte';
   import { queueDecrypt, searchApps, type AppStoreSearchResult } from '../../lib/api';
+  import Badge from '../../lib/components/ui/Badge.svelte';
+  import Button from '../../lib/components/ui/Button.svelte';
+  import Card from '../../lib/components/ui/Card.svelte';
+  import Input from '../../lib/components/ui/Input.svelte';
+  import { statusToBadgeVariant } from '../../lib/components/ui/variants';
   import { addDecrypt, myDecryptsState, pushRecentBundleId, recentBundleIdsState } from '../../lib/decrypts.svelte';
   import { debounce } from '../../lib/format';
   import { liveState } from '../../lib/live.svelte';
   import { showToast } from '../../lib/ui.svelte';
+  import { cn } from '../../lib/utils';
 
   let term = $state('');
   let results = $state<AppStoreSearchResult[]>([]);
@@ -86,80 +93,59 @@
   }
 </script>
 
-<div class="panel">
-  <h2>Decrypt an app</h2>
-  <div class="row">
-    <input
-      bind:this={inputEl}
+<Card title="Decrypt an app">
+  <div class="flex gap-2">
+    <Input
+      bind:ref={inputEl}
       bind:value={term}
       oninput={onInput}
       onkeydown={onKeydown}
       placeholder="Search the App Store to decrypt… (press / to focus)"
     />
-    <button class="action" style="margin-top:0;" onclick={() => runSearch(term)}>Search</button>
+    <Button onclick={() => runSearch(term)}>
+      <Search class="h-4 w-4" />
+      Search
+    </Button>
   </div>
 
   {#if !term.trim() && recentBundleIdsState.items.length > 0}
-    <div class="recent-chips">
+    <div class="mt-2.5 flex flex-wrap gap-1.5">
       {#each recentBundleIdsState.items as bundleId (bundleId)}
-        <button class="chip" onclick={() => pickRecent(bundleId)}>{bundleId}</button>
+        <button
+          class="border-border text-muted hover:text-text hover:border-accent cursor-pointer rounded-full border px-2.5 py-1 font-mono text-[11.5px]"
+          onclick={() => pickRecent(bundleId)}
+        >
+          {bundleId}
+        </button>
       {/each}
     </div>
   {/if}
 
-  <div class="results">
+  <div class="mt-3.5">
     {#if loading}
-      <div class="muted">Searching…</div>
+      <div class="text-sm text-muted">Searching…</div>
     {:else if searched && results.length === 0}
-      <div class="muted">No results.</div>
+      <div class="text-sm text-muted">No results.</div>
     {:else}
       {#each results as r, i (r.bundleId)}
-        <div class="search-result" class:highlighted={i === highlighted}>
+        <div class={cn('border-border flex items-center gap-3 border-t py-2.5 first:border-t-0', i === highlighted && 'bg-accent/10 rounded-lg')}>
           {#if r.artworkUrl}
-            <img src={r.artworkUrl} alt="" />
+            <img src={r.artworkUrl} alt="" class="h-10 w-10 shrink-0 rounded-lg" />
           {/if}
-          <div class="meta">
-            <div class="name">{r.trackName}</div>
-            <div class="sub" title={r.bundleId}>{r.bundleId} · v{r.version} · {r.sellerName}</div>
+          <div class="min-w-0 flex-1">
+            <div class="text-[13px]">{r.trackName}</div>
+            <div class="truncate text-xs text-muted" title={r.bundleId}>{r.bundleId} · v{r.version} · {r.sellerName}</div>
           </div>
           {#if r.price > 0}
-            <span class="badge failed" title="ipadecrypt only supports free apps">Paid</span>
+            <Badge variant="destructive" title="ipadecrypt only supports free apps">Paid</Badge>
           {:else if statusByBundle.has(r.bundleId)}
-            <span class="badge {statusByBundle.get(r.bundleId)}">{statusByBundle.get(r.bundleId)}</span>
+            {@const status = statusByBundle.get(r.bundleId) ?? ''}
+            <Badge variant={statusToBadgeVariant(status)}>{status}</Badge>
           {:else}
-            <button class="action small" onclick={() => queue(r.bundleId, r.trackName)}>Decrypt</button>
+            <Button size="sm" onclick={() => queue(r.bundleId, r.trackName)}>Decrypt</Button>
           {/if}
         </div>
       {/each}
     {/if}
   </div>
-</div>
-
-<style>
-  .results {
-    margin-top: 14px;
-  }
-
-  .recent-chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    margin-top: 10px;
-  }
-
-  .chip {
-    background: transparent;
-    border: 1px solid var(--border);
-    color: var(--muted);
-    border-radius: 999px;
-    padding: 4px 10px;
-    font-size: 11.5px;
-    font-family: ui-monospace, monospace;
-    cursor: pointer;
-  }
-
-  .chip:hover {
-    color: var(--text);
-    border-color: var(--accent);
-  }
-</style>
+</Card>

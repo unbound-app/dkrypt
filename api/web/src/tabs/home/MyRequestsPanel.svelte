@@ -1,5 +1,9 @@
 <script lang="ts">
   import { fetchJobStatus } from '../../lib/api';
+  import Badge from '../../lib/components/ui/Badge.svelte';
+  import Button from '../../lib/components/ui/Button.svelte';
+  import Card from '../../lib/components/ui/Card.svelte';
+  import { buttonVariants } from '../../lib/components/ui/variants';
   import { dismissDecrypt, myDecryptsState, updateDecrypt } from '../../lib/decrypts.svelte';
 
   let pollTimer: ReturnType<typeof setTimeout> | undefined;
@@ -25,44 +29,44 @@
   });
 </script>
 
-<div class="panel">
-  <h2>My requests</h2>
-  <table>
-    <thead>
-      <tr>
-        <th>App</th>
-        <th>Status</th>
-        <th></th>
-      </tr>
-    </thead>
-    <tbody>
-      {#each myDecryptsState.items as d (d.id)}
-        <tr>
-          <td>{d.trackName}</td>
-          <td>
-            {#if d.status === 'done'}
-              <span class="badge done">done</span>
-            {:else if d.status === 'failed'}
-              <span class="badge failed">failed</span> <span class="muted">{d.error ?? ''}</span>
-            {:else if d.status === 'running'}
-              <span class="badge running">running</span> <span class="muted">{d.progress ?? ''}</span>
-            {:else}
-              <span class="badge queued">queued</span>
-              <span class="muted">{d.queue ? `position ${d.queue.position} of ${d.queue.total}` : ''}</span>
-            {/if}
-          </td>
-          <td>
-            {#if d.status === 'done'}
-              <a class="action small" href="/v1/dashboard/jobs/{d.id}/file">Download</a>
-            {:else}
-              <button class="action small secondary" onclick={() => dismissDecrypt(d.id)}>Dismiss</button>
-            {/if}
-          </td>
-        </tr>
-      {/each}
-    </tbody>
-  </table>
+<Card title="My requests">
   {#if myDecryptsState.items.length === 0}
-    <div class="muted">Nothing queued yet - search above.</div>
+    <div class="text-sm text-muted">Nothing queued yet - search above.</div>
+  {:else}
+    <table>
+      <thead>
+        <tr>
+          <th>App</th>
+          <th>Status</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {#each myDecryptsState.items as d (d.id)}
+          <tr>
+            <td>{d.trackName}</td>
+            <td>
+              {#if d.status === 'done'}
+                <Badge variant="success">done</Badge>
+              {:else if d.status === 'failed'}
+                <Badge variant="destructive">failed</Badge> <span class="text-muted">{d.error ?? ''}</span>
+              {:else if d.status === 'running'}
+                <Badge>running</Badge> <span class="text-muted">{d.progress ?? ''}</span>
+              {:else}
+                <Badge>queued</Badge>
+                <span class="text-muted">{d.queue ? `position ${d.queue.position} of ${d.queue.total}` : ''}</span>
+              {/if}
+            </td>
+            <td>
+              {#if d.status === 'done'}
+                <a class={buttonVariants('default', 'sm')} href="/v1/dashboard/jobs/{d.id}/file">Download</a>
+              {:else}
+                <Button size="sm" variant="secondary" onclick={() => dismissDecrypt(d.id)}>Dismiss</Button>
+              {/if}
+            </td>
+          </tr>
+        {/each}
+      </tbody>
+    </table>
   {/if}
-</div>
+</Card>
