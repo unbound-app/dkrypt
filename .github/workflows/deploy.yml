@@ -1,0 +1,60 @@
+name: CI & Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+
+  # Runs only for pushes to main (never for pull_request, including from
+  # forks) on the self-hosted runner physically on the homelab. It reuses
+  # the existing persistent checkout/.env/docker state at
+  # /home/adrian/ipadecrypt-service instead of a fresh actions/checkout,
+  # since that's where the real secrets and Docker volumes already live.
+  deploy:
+    name: Deploy to homelab
+    needs: typecheck
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, homelab]
+    timeout-minutes: 15
+    concurrency:
+      group: deploy-homelab
+      cancel-in-progress: false
+    steps:
+      - name: Pull and rebuild
+        run: |
+          set -e
+          cd /home/adrian/ipadecrypt-service
+          git fetch origin main
+          git merge --ff-only origin/main
+          docker compose build api
+          docker compose up -d api
+
+      - name: Wait for health
+        run: |
+          set -e
+          for i in $(seq 1 15); do
+            if curl -sf -o /dev/null http://127.0.0.1:8080/; then
+              echo "healthy"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "service did not become healthy in time" >&2
+          docker compose -f /home/adrian/ipadecrypt-service/docker-compose.yml logs --tail 50 api
+          exit 1
