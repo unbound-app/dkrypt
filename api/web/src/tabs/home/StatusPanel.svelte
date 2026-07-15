@@ -39,7 +39,7 @@
   <dl class="text-sm">
     <div class="border-border flex items-center gap-2.5 border-t py-2">
       <dt class="w-24 shrink-0 text-xs text-muted">Watching</dt>
-      <dd class="min-w-0 flex-1 truncate font-mono text-[13px]" title={overview?.settings.watchBundleId || '-'}>
+      <dd class="min-w-0 flex-1 truncate font-mono text-[11px]" title={overview?.settings.watchBundleId || '-'}>
         {overview?.settings.watchBundleId || '-'}
       </dd>
     </div>
