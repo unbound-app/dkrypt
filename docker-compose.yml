@@ -18,8 +18,8 @@ services:
 
 volumes:
   ipadecrypt-config:
-    name: ipadecrypt-service_ipadecrypt-config
+    name: dkrypt_ipadecrypt-config
   ipa-tmp:
-    name: ipadecrypt-service_ipa-tmp
+    name: dkrypt_ipa-tmp
   ipadecrypt-state:
-    name: ipadecrypt-service_ipadecrypt-state
+    name: dkrypt_ipadecrypt-state
