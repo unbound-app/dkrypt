@@ -7,6 +7,49 @@ import { getUserRole } from '../store/state.js';
 
 export const authRouter = Router();
 
+// Per-IP login lockout: after LOCKOUT_AFTER consecutive failures, each
+// further attempt is rejected with a growing delay instead of being
+// checked at all. Entries reset on success or after FAILURE_WINDOW_MS of
+// no attempts; a periodic sweep bounds the map's size.
+const LOCKOUT_AFTER = 5;
+const MAX_LOCKOUT_MS = 5 * 60_000;
+const FAILURE_WINDOW_MS = 15 * 60_000;
+
+interface LoginAttempts {
+  failures: number;
+  lockedUntil: number;
+  lastAttemptAt: number;
+}
+
+const loginAttempts = new Map<string, LoginAttempts>();
+
+function loginLockoutMs(key: string): number {
+  const entry = loginAttempts.get(key);
+  if (!entry) return 0;
+  if (Date.now() - entry.lastAttemptAt > FAILURE_WINDOW_MS) {
+    loginAttempts.delete(key);
+    return 0;
+  }
+  return Math.max(0, entry.lockedUntil - Date.now());
+}
+
+function recordLoginFailure(key: string): void {
+  const entry = loginAttempts.get(key) ?? { failures: 0, lockedUntil: 0, lastAttemptAt: 0 };
+  entry.failures += 1;
+  entry.lastAttemptAt = Date.now();
+  if (entry.failures >= LOCKOUT_AFTER) {
+    entry.lockedUntil = Date.now() + Math.min(2 ** (entry.failures - LOCKOUT_AFTER) * 1000, MAX_LOCKOUT_MS);
+  }
+  loginAttempts.set(key, entry);
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of loginAttempts) {
+    if (now - entry.lastAttemptAt > FAILURE_WINDOW_MS) loginAttempts.delete(key);
+  }
+}, 60_000).unref();
+
 authRouter.get('/v1/auth/session', (req, res) => {
   const session = getSession(req);
   res.json({
@@ -19,11 +62,21 @@ authRouter.get('/v1/auth/session', (req, res) => {
 });
 
 authRouter.post('/v1/auth/login', (req, res) => {
+  const key = req.ip ?? 'unknown';
+  const lockedForMs = loginLockoutMs(key);
+  if (lockedForMs > 0) {
+    res.status(429).json({ error: `too many failed attempts - try again in ${Math.ceil(lockedForMs / 1000)}s` });
+    return;
+  }
+
   const password = typeof req.body?.password === 'string' ? req.body.password : '';
   if (!password || !checkRootPassword(password)) {
+    recordLoginFailure(key);
     res.status(401).json({ error: 'invalid password' });
     return;
   }
+
+  loginAttempts.delete(key);
   setSessionCookie(res, { sub: 'root', role: 'admin' });
   res.json({ ok: true });
 });

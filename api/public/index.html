@@ -423,7 +423,12 @@ async function loginRoot() {
   const res = await fetch('/v1/auth/login', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }),
   });
-  if (res.ok) { await init(); } else { document.getElementById('login-error').textContent = 'Wrong password.'; }
+  if (res.ok) {
+    await init();
+    return;
+  }
+  const data = await res.json().catch(() => ({}));
+  document.getElementById('login-error').textContent = res.status === 429 ? data.error : 'Wrong password.';
 }
 
 async function logout() {

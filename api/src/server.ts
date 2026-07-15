@@ -14,6 +14,9 @@ import { startStateFlusher } from './store/state.js';
 const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 
 const app = express();
+// Caddy is the only thing that can reach the app directly (see
+// docker-compose.yml), so its X-Forwarded-For can be trusted for req.ip.
+app.set('trust proxy', 'loopback');
 app.use(express.json());
 
 // Every route requires auth (see auth.ts / session.ts) - the deliberate
