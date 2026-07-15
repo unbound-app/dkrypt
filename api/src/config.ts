@@ -18,10 +18,8 @@ function optionalInt(name: string, fallback: number): number {
 
 export const config = {
   port: optionalInt('PORT', 8080),
-  // With network_mode: host (needed to reach the device's iproxy'd SSH
-  // port), the app would otherwise bind 0.0.0.0 and be reachable from the
-  // whole LAN. Bind to loopback explicitly to keep the old "localhost
-  // only, reached via Caddy" boundary.
+  // Bind to loopback explicitly, since network_mode: host would otherwise
+  // expose the app on the whole LAN rather than just via Caddy.
   bindHost: optional('BIND_HOST', '127.0.0.1'),
 
   // auth
@@ -29,14 +27,13 @@ export const config = {
   downloadSigningSecret: required('DOWNLOAD_SIGNING_SECRET'),
   publicBaseUrl: optional('PUBLIC_BASE_URL', 'http://localhost:8080'),
 
-  // admin dashboard - separate password from API_KEY so dashboard access
-  // and programmatic API access can be rotated independently. This is the
-  // root/recovery login; normal users sign in via GitHub OAuth below.
+  // admin dashboard - the root/recovery login, kept separate from API_KEY
+  // so the two can be rotated independently; normal users sign in via
+  // GitHub OAuth below.
   adminPassword: required('ADMIN_PASSWORD'),
   stateDir: optional('STATE_DIR', '/data/state'),
 
-  // GitHub OAuth for dashboard login (in addition to the root password).
-  // Leave both blank to disable the "Sign in with GitHub" option entirely.
+  // GitHub OAuth for dashboard login. Leave both blank to disable it.
   githubOauthClientId: optional('GITHUB_OAUTH_CLIENT_ID', ''),
   githubOauthClientSecret: optional('GITHUB_OAUTH_CLIENT_SECRET', ''),
 

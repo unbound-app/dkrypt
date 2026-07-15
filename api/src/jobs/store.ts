@@ -12,10 +12,8 @@ import type { Job, JobSource } from './types.js';
 
 const jobs = new Map<string, Job>();
 
-// The jailbroken device is a single physical resource driven over SSH by
-// the ipadecrypt CLI - it cannot run two decrypts concurrently. Every job,
-// whether from the manual endpoint or the scheduler, goes through this one
-// FIFO queue so they never collide on the device.
+// The device can't run two decrypts concurrently, so every job - manual or
+// scheduled - goes through this one FIFO queue.
 const queue: string[] = [];
 let workerRunning = false;
 
@@ -30,10 +28,9 @@ function findActiveJobForBundle(bundleId: string): Job | undefined {
 
 /**
  * Creates a new job for bundleId, or returns the already in-flight one for
- * that bundle. Scheduler jobs jump ahead of anything dashboard-queued (but
- * never ahead of a job already running - the device can't be interrupted
- * mid-decrypt) since the automated release watch matters more than someone
- * poking around the dashboard for fun.
+ * that bundle. Scheduler jobs jump ahead of anything dashboard-queued, but
+ * never ahead of a job already running (the device can't be interrupted
+ * mid-decrypt).
  */
 export function enqueueDecryptJob(bundleId: string, source: JobSource): Job {
   const existing = findActiveJobForBundle(bundleId);
@@ -168,10 +165,8 @@ export async function reclaimJobFile(job: Job): Promise<void> {
 }
 
 /**
- * Background sweep: finished jobs whose file was never downloaded get
- * reclaimed after FILE_TTL_MINUTES; anything else (queued/running edge
- * cases, failed jobs) is pruned after JOB_RETENTION_MINUTES so the map
- * doesn't grow unbounded.
+ * Reclaims undownloaded files after FILE_TTL_MINUTES and prunes finished
+ * jobs after JOB_RETENTION_MINUTES.
  */
 export function startJobSweeper(): void {
   const intervalMs = 60_000;

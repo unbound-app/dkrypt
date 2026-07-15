@@ -9,13 +9,9 @@ export const decryptRouter = Router();
 const BUNDLE_ID_RE = /^[A-Za-z0-9.-]{3,200}$/;
 
 /**
- * GET /v1/decrypt?bundleId=com.example.app
- *
- * Enqueues (or joins an already in-flight) decrypt job for bundleId, then
- * holds the connection open and streams the IPA back directly once ready -
- * matching the simple "one URL, get the file" shape. Decryption can take
- * a long time, so if it isn't done within JOB_MAX_WAIT_SECONDS this falls
- * back to a 202 with a status/file URL to poll instead of hanging forever.
+ * Enqueues (or joins an in-flight) decrypt job and streams the IPA back
+ * directly once ready. Falls back to a 202 with a status/file URL to poll
+ * if it isn't done within JOB_MAX_WAIT_SECONDS.
  */
 decryptRouter.get('/v1/decrypt', requireApiKey, async (req, res) => {
   const bundleId = req.query.bundleId;
@@ -50,12 +46,7 @@ decryptRouter.get('/v1/jobs/:id', requireApiKey, (req, res) => {
   res.json(jobSummary(job));
 });
 
-/**
- * GET /v1/jobs/:id/file - stream the decrypted IPA.
- *
- * Accepts either the master API key or a short-lived signed token so the
- * GitHub Actions runner can fetch it without holding the master key.
- */
+/** Streams the decrypted IPA; see requireApiKeyOrSignedToken for the dual-auth reasoning. */
 decryptRouter.get('/v1/jobs/:id/file', requireApiKeyOrSignedToken, async (req, res) => {
   const job = getJob(req.params.id);
   if (!job) {

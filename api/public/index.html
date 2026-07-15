@@ -685,11 +685,7 @@ function loadingRow(colspan) {
   return `<tr><td colspan="${colspan}" class="muted">Loading…</td></tr>`;
 }
 
-/**
- * Shows a "Loading…" placeholder only on the very first render of a table.
- * On background refreshes the old rows stay put until the new ones are
- * ready, so polling swaps content in place instead of flashing empty first.
- */
+/** Only placeholders an empty table - background refreshes swap content in place instead of flashing empty. */
 function showLoadingIfEmpty(tbody, colspan) {
   if (!tbody.children.length) tbody.innerHTML = loadingRow(colspan);
 }
@@ -1043,9 +1039,7 @@ async function init() {
   if (data.loggedIn) showApp(); else showLogin();
 }
 
-// Polls faster (2.5s) while a job is actually running and you're watching
-// the Overview tab, and backs off to 10s otherwise - loadOverview() calls
-// this again each time with the freshly-fetched active-job count.
+// Polls faster while a job is actually running, backs off to 10s otherwise.
 let overviewPollTimer = null;
 function scheduleOverviewPoll(activeCount) {
   clearTimeout(overviewPollTimer);

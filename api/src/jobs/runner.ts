@@ -8,11 +8,8 @@ const log = scopedLogger('jobs');
 import type { Job } from './types.js';
 
 /**
- * Runs `ipadecrypt decrypt <bundleId>` to completion, writing the output IPA
- * under config.outputDir. --from-appstore is passed so we always grab the
- * current App Store build rather than getting stuck on the interactive
- * "installed vs fresh" prompt when the app happens to already be on the
- * device from a previous run.
+ * --from-appstore avoids getting stuck on the "installed vs fresh" prompt
+ * when the app is already on the device.
  */
 export async function runDecrypt(job: Job): Promise<void> {
   await mkdir(config.outputDir, { recursive: true });

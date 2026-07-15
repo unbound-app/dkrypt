@@ -5,16 +5,12 @@ import { log } from './logger.js';
 import { clearAppleAuthAlert, setAppleAuthAlert } from './store/state.js';
 
 /**
- * Drives `ipadecrypt bootstrap` as a plain piped child process to redo just
- * the Apple ID sign-in step. This works headlessly because ipadecrypt's
- * Prompt/PromptPassword helpers fall back to plain stdin reads when stdin
- * isn't a TTY - confirmed against upstream's tui.go. The device-connection
- * step (which DOES use an interactive arrow-key Select widget, and can't be
- * driven this way) is never reached because we only clear the `apple.*`
- * config fields, leaving `device.*` populated so bootstrap skips step 2.
- *
- * There's no way to proactively check Apple session validity outside of
- * this - `ipadecrypt versions` is an interactive TUI, not scriptable either.
+ * Drives `ipadecrypt bootstrap` headlessly to redo just the Apple ID
+ * sign-in step: its prompts fall back to plain stdin reads when stdin isn't
+ * a TTY. The device-connection step uses an interactive widget that can't
+ * be driven this way, but it's never reached because only the `apple.*`
+ * config fields are cleared, leaving `device.*` populated so bootstrap
+ * skips straight past it.
  */
 interface RunnerState {
   child: ChildProcessWithoutNullStreams;

@@ -50,7 +50,6 @@ export async function streamJobFile(job: Job, req: Request, res: Response): Prom
     stream.pipe(res);
   });
 
-  // Single-use: once the file has gone out over the wire, reclaim the disk
-  // space immediately rather than waiting for the TTL sweeper.
+  // Reclaim immediately rather than waiting for the TTL sweeper.
   await reclaimJobFile(job);
 }

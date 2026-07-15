@@ -64,10 +64,9 @@ dashboardRouter.get('/v1/dashboard/logs', (_req, res) => {
   res.json({ logs: getRecentLogs() });
 });
 
-// --- decrypt-from-the-dashboard: open to every role, since it can't be
-// automated (unlike settings/keys) - it's just a nice-to-have. Shares the
-// exact same queue as the API/scheduler, so a dashboard-queued job can
-// still get bumped behind a scheduler job that arrives after it. ---
+// --- decrypt-from-the-dashboard: open to every role. Shares the same
+// queue as the API/scheduler, so a job queued here can still get bumped
+// behind a scheduler job that arrives after it. ---
 
 const BUNDLE_ID_RE = /^[A-Za-z0-9.-]{3,200}$/;
 
@@ -122,11 +121,7 @@ dashboardRouter.get('/v1/dashboard/keys/mine', (_req, res) => {
   res.json({ keys: listApiKeysForOwner(sub) });
 });
 
-/**
- * Admins get their key instantly (they're already fully trusted - there's
- * no one else to approve it); everyone else lands as 'pending' until an
- * admin approves it on this same tab.
- */
+/** Admins get their key instantly; everyone else lands as 'pending' until an admin approves it. */
 dashboardRouter.post('/v1/dashboard/keys/request', (req, res) => {
   const { sub, role } = res.locals.session;
   const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';

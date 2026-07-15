@@ -21,11 +21,9 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
 
-  # Runs only for pushes to main (never for pull_request, including from
-  # forks) on the self-hosted runner physically on the homelab. It reuses
-  # the existing persistent checkout/.env/docker state at
-  # /home/adrian/ipadecrypt-service instead of a fresh actions/checkout,
-  # since that's where the real secrets and Docker volumes already live.
+  # Runs on push to main only (never pull_request), against the existing
+  # checkout at /home/adrian/ipadecrypt-service rather than a fresh
+  # actions/checkout, since that's where .env and the Docker volumes live.
   deploy:
     name: Deploy to homelab
     needs: typecheck

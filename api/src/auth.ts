@@ -16,9 +16,9 @@ export function requireApiKey(req: Request, res: Response, next: NextFunction): 
 }
 
 /**
- * File downloads accept EITHER a valid API key OR a short-lived signed
- * `?token=` scoped to that specific job. The signed token exists so the
- * GitHub Actions runner can fetch the IPA without holding an API key.
+ * File downloads accept a valid API key or a short-lived signed `?token=`
+ * scoped to that job, so the GitHub Actions runner can fetch an IPA
+ * without holding an API key.
  */
 export function requireApiKeyOrSignedToken(req: Request, res: Response, next: NextFunction): void {
   const header = req.header('authorization') ?? '';

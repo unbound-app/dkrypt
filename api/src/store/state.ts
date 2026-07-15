@@ -7,7 +7,8 @@ export type Role = 'admin' | 'member';
 export type ApiKeyStatus = 'pending' | 'approved' | 'denied';
 
 export interface AllowedUser {
-  username: string; // lowercase github login
+  /** Lowercase github login. */
+  username: string;
   role: Role;
   addedAt: number;
 }
@@ -15,7 +16,8 @@ export interface AllowedUser {
 export interface ApiKeyRecord {
   id: string;
   name: string;
-  ownerId: string; // 'root' or a github username
+  /** 'root' or a github username. */
+  ownerId: string;
   status: ApiKeyStatus;
   hash?: string;
   /** Plaintext secret, present only between approval/regeneration and the owner's first reveal. */

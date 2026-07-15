@@ -7,7 +7,8 @@ const COOKIE_NAME = 'session';
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 
 export interface Session {
-  sub: string; // 'root' or a github username
+  /** 'root' or a github username. */
+  sub: string;
   role: Role;
 }
 

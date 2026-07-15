@@ -1,12 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { config } from '../config.js';
 
-/**
- * Short-lived, job-scoped download tokens let the GitHub Actions runner
- * fetch a decrypted IPA without holding the master API_KEY. Signature
- * covers jobId + expiry so a token can't be replayed for another job or
- * past its TTL.
- */
+/** Signature covers jobId + expiry so a token can't be replayed for another job or past its TTL. */
 export function signDownloadToken(jobId: string, expiresAtMs: number): string {
   const payload = `${jobId}.${expiresAtMs}`;
   const sig = createHmac('sha256', config.downloadSigningSecret).update(payload).digest('hex');

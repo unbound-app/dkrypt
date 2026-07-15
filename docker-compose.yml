@@ -3,12 +3,8 @@ services:
     build: ./api
     container_name: ipadecrypt-service
     restart: unless-stopped
-    # Host networking so the container can reach the jailbroken device's
-    # SSH port the same way the host does - typically a USB-tethered
-    # `iproxy ... 2222:22` bound to 127.0.0.1, which a container on the
-    # default bridge network cannot see at all. This trades away network
-    # isolation for that reachability; BIND_HOST below claws back the
-    # equivalent of the old "published on localhost only" behavior.
+    # Needed to reach the device's iproxy'd SSH port on 127.0.0.1; BIND_HOST
+    # below claws back the loopback-only exposure this would otherwise lose.
     network_mode: host
     env_file:
       - .env
@@ -16,41 +12,16 @@ services:
       PORT: 8080
       BIND_HOST: 127.0.0.1
     volumes:
-      # Persists the ipadecrypt App Store login + device SSH config across
-      # restarts. Bootstrap it once with:
+      # ipadecrypt App Store login + device SSH config. Bootstrap once with:
       #   docker compose run --rm -it api ipadecrypt bootstrap
       - ipadecrypt-config:/root/.ipadecrypt
-      # Scratch space for decrypted IPAs in flight. Safe to wipe.
       - ipa-tmp:/data/tmp
-      # Admin dashboard state: issued API keys, dashboard-editable scheduler
-      # settings, job history, the Apple-auth alert flag.
       - ipadecrypt-state:/data/state
-      # The device-dedicated key already trusted by the jailbroken device
-      # (see the host's `Host ipad` entry in ~/.ssh/config) - mounted at
-      # ipadecrypt's default key path so SSH-key auth in `bootstrap` finds
-      # it without a custom path. Read-only; this key is scoped to the
-      # device only, not the host's general-purpose SSH identity.
+      # Device-dedicated key already trusted by the jailbroken device,
+      # read-only, mounted at ipadecrypt's default key path.
       - ${HOME}/.ssh/id_ed25519_ipad:/root/.ssh/id_ed25519:ro
-
-  # Optional: uncomment to run Caddy as a container instead of on the host.
-  # `api` uses network_mode: host (see above), so there's no compose
-  # network to share - give `caddy` network_mode: host too and it can
-  # reverse_proxy 127.0.0.1:8080 exactly like a host-installed Caddy would.
-  #
-  # caddy:
-  #   image: caddy:2-alpine
-  #   restart: unless-stopped
-  #   network_mode: host
-  #   volumes:
-  #     - ./Caddyfile:/etc/caddy/Caddyfile:ro
-  #     - caddy-data:/data
-  #     - caddy-config:/config
-  #   depends_on:
-  #     - api
 
 volumes:
   ipadecrypt-config:
   ipa-tmp:
   ipadecrypt-state:
-  # caddy-data:
-  # caddy-config:
