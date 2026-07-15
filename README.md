@@ -30,7 +30,7 @@ can only run one `ipadecrypt decrypt` at a time.
    docker compose build
    ```
 4. **Bootstrap ipadecrypt once, interactively** (App Store login + device
-   SSH details - persisted in the `ipadecrypt-config` volume). The `api`
+   SSH details - persisted in the `appstore-config` volume). The `api`
    service has a fixed `container_name`, so if it's already running,
    `docker compose run` needs an explicit different name to avoid clashing
    with it:
@@ -188,7 +188,7 @@ fail with a message telling you to SSH in and run
 `docker compose exec api ipadecrypt versions <any-bundle-id>` once,
 press Enter to accept Apple's rate-limit warning, and then Ctrl-C out -
 that's a one-time per-install step (the acceptance is persisted in the
-`ipadecrypt-config` volume), same as `ipadecrypt bootstrap`.
+`appstore-config` volume), same as `ipadecrypt bootstrap`.
 
 ## Notes / limitations
 

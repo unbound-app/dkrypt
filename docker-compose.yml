@@ -11,15 +11,15 @@ services:
       PORT: 8080
       BIND_HOST: 127.0.0.1
     volumes:
-      - ipadecrypt-config:/root/.ipadecrypt
+      - appstore-config:/root/.ipadecrypt
       - ipa-tmp:/data/tmp
-      - ipadecrypt-state:/data/state
+      - state:/data/state
       - ${HOME}/.ssh/id_ed25519_ipad:/root/.ssh/id_ed25519:ro
 
 volumes:
-  ipadecrypt-config:
-    name: dkrypt_ipadecrypt-config
+  appstore-config:
+    name: dkrypt_appstore-config
   ipa-tmp:
     name: dkrypt_ipa-tmp
-  ipadecrypt-state:
-    name: dkrypt_ipadecrypt-state
+  state:
+    name: dkrypt_state
