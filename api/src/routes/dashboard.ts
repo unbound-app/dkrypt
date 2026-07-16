@@ -460,11 +460,11 @@ dashboardRouter.put('/v1/dashboard/me/prefs', (req, res) => {
   res.json(updateUserPrefs(res.locals.session.sub, patch));
 });
 
-dashboardRouter.get('/v1/dashboard/apple-auth/status', canManageSettings, (_req, res) => {
+dashboardRouter.get('/v1/dashboard/apple-auth/status', canManageSettings, canManageUsers, (_req, res) => {
   res.json(getAppleAuthStatus());
 });
 
-dashboardRouter.post('/v1/dashboard/apple-auth/start', canManageSettings, (_req, res) => {
+dashboardRouter.post('/v1/dashboard/apple-auth/start', canManageSettings, canManageUsers, (_req, res) => {
   if (isAppleAuthRunning()) {
     res.status(409).json({ error: 'already running' });
     return;
@@ -477,7 +477,7 @@ dashboardRouter.post('/v1/dashboard/apple-auth/start', canManageSettings, (_req,
   }
 });
 
-dashboardRouter.post('/v1/dashboard/apple-auth/input', canManageSettings, (req, res) => {
+dashboardRouter.post('/v1/dashboard/apple-auth/input', canManageSettings, canManageUsers, (req, res) => {
   const value = typeof req.body?.value === 'string' ? req.body.value : '';
   try {
     sendAppleAuthInput(value);
@@ -487,7 +487,7 @@ dashboardRouter.post('/v1/dashboard/apple-auth/input', canManageSettings, (req, 
   }
 });
 
-dashboardRouter.post('/v1/dashboard/apple-auth/cancel', canManageSettings, (_req, res) => {
+dashboardRouter.post('/v1/dashboard/apple-auth/cancel', canManageSettings, canManageUsers, (_req, res) => {
   cancelAppleAuth();
   res.json({ ok: true });
 });

@@ -118,16 +118,20 @@ rather than picking from a fixed tier:
 - **manageKeys** - approve/deny pending key requests, view the full key
   list across every user, bulk-revoke, and their own key requests
   auto-approve instead of queuing.
-- **manageSettings** - the Scheduler and Apple Auth settings sub-tabs
-  (watch/dispatch config, cron, webhook, manual dispatch trigger, Apple ID
-  re-authentication).
+- **manageSettings** - the Scheduler settings sub-tab (watch/dispatch
+  config, cron, webhook, manual dispatch trigger).
 - **manageUsers** - the Users settings sub-tab: add/remove people from the
   allowlist and change their permissions. A user can't remove their own
   `manageUsers` - get another user with it to do that, or fall back to
   `ADMIN_PASSWORD`.
 
+Apple ID re-authentication needs **both** `manageSettings` and
+`manageUsers` - the same combination the old `admin` role uniquely had -
+since it puts real Apple ID credentials through the pipeline and shouldn't
+be reachable by a settings-only or users-only grant.
+
 The Users tab presents these as a checklist plus quick presets (Viewer /
-Contributor / Manager / Admin) that just fill the checkboxes - any custom
+Member / Manager / Admin) that just fill the checkboxes - any custom
 combination is still one edit away.
 
 Per-account preferences (currently just light/dark theme) are synced
@@ -165,7 +169,7 @@ Tabs:
     to change their permissions or remove them. A user can't remove their
     own `manageUsers` permission - get someone else with it to do that, or
     fall back to `ADMIN_PASSWORD`.
-  - *Apple Auth* (`manageSettings`) - re-runs just the App Store sign-in step of `ipadecrypt
+  - *Apple Auth* (`manageSettings` + `manageUsers`) - re-runs just the App Store sign-in step of `ipadecrypt
     bootstrap` (email/password, and a 2FA code if Apple asks for one) as
     a piped child process, streaming its prompts to the page so you don't
     need to SSH in for routine re-auth. It deliberately can't drive the

@@ -11,13 +11,13 @@
   const FIELDS: { key: keyof Permissions; label: string; description: string }[] = [
     { key: 'decrypt', label: 'Decrypt apps', description: 'Queue decrypts and request their own API keys' },
     { key: 'manageKeys', label: 'Manage API keys', description: "Approve or deny requests, revoke anyone's key" },
-    { key: 'manageSettings', label: 'Manage settings', description: 'Scheduler, dispatch, and Apple ID re-authentication' },
+    { key: 'manageSettings', label: 'Manage settings', description: 'Scheduler and dispatch configuration' },
     { key: 'manageUsers', label: 'Manage users', description: 'Add or remove people, change their permissions' },
   ];
 
   const PRESETS: { label: string; permissions: Permissions }[] = [
     { label: 'Viewer', permissions: { decrypt: false, manageKeys: false, manageSettings: false, manageUsers: false } },
-    { label: 'Contributor', permissions: { decrypt: true, manageKeys: false, manageSettings: false, manageUsers: false } },
+    { label: 'Member', permissions: { decrypt: true, manageKeys: false, manageSettings: false, manageUsers: false } },
     { label: 'Manager', permissions: { decrypt: true, manageKeys: true, manageSettings: false, manageUsers: false } },
     { label: 'Admin', permissions: { decrypt: true, manageKeys: true, manageSettings: true, manageUsers: true } },
   ];
