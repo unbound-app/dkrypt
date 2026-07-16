@@ -1,11 +1,27 @@
 import { setTheme, themeState, type Theme } from './ui.svelte';
 
-export type Role = 'admin' | 'operator' | 'member' | 'viewer';
+export interface Permissions {
+  decrypt: boolean;
+  manageKeys: boolean;
+  manageSettings: boolean;
+  manageUsers: boolean;
+}
+
+export const VIEWER_PERMISSIONS: Permissions = { decrypt: false, manageKeys: false, manageSettings: false, manageUsers: false };
+export const ADMIN_PERMISSIONS: Permissions = { decrypt: true, manageKeys: true, manageSettings: true, manageUsers: true };
+
+export function permissionsSummary(p?: Permissions): string {
+  if (!p) return '';
+  const values = Object.values(p);
+  if (values.every(Boolean)) return 'admin';
+  if (values.every((v) => !v)) return 'viewer';
+  return 'custom';
+}
 
 export interface SessionInfo {
   loggedIn: boolean;
   sub?: string;
-  role?: Role;
+  permissions?: Permissions;
   expiresAt?: number;
   githubOauthEnabled: boolean;
   publicBaseUrl?: string;

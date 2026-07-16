@@ -3,7 +3,7 @@ import { Router } from 'express';
 import { config, githubOauthEnabled } from '../config.js';
 import { log } from '../logger.js';
 import { checkRootPassword, clearSessionCookie, getSession, requireSession, setSessionCookie } from '../session.js';
-import { getUserRole } from '../store/state.js';
+import { ADMIN_PERMISSIONS, getUserPermissions } from '../store/state.js';
 
 export const authRouter = Router();
 
@@ -51,7 +51,7 @@ authRouter.get('/v1/auth/session', (req, res) => {
   res.json({
     loggedIn: !!session,
     sub: session?.sub,
-    role: session?.role,
+    permissions: session?.permissions,
     expiresAt: session?.exp,
     githubOauthEnabled,
     publicBaseUrl: config.publicBaseUrl,
@@ -64,7 +64,7 @@ authRouter.post('/v1/auth/refresh', requireSession, (req, res) => {
     res.status(401).json({ error: 'not signed in' });
     return;
   }
-  const expiresAt = setSessionCookie(res, { sub: session.sub, role: session.role });
+  const expiresAt = setSessionCookie(res, { sub: session.sub, permissions: session.permissions });
   res.json({ ok: true, expiresAt });
 });
 
@@ -84,7 +84,7 @@ authRouter.post('/v1/auth/login', (req, res) => {
   }
 
   loginAttempts.delete(key);
-  setSessionCookie(res, { sub: 'root', role: 'admin' });
+  setSessionCookie(res, { sub: 'root', permissions: ADMIN_PERMISSIONS });
   res.json({ ok: true });
 });
 
@@ -164,15 +164,15 @@ authRouter.get('/v1/auth/github/callback', async (req, res) => {
     if (!userRes.ok) throw new Error(`GET /user failed: HTTP ${userRes.status}`);
     const user = (await userRes.json()) as { login: string };
 
-    const role = getUserRole(user.login);
-    if (!role) {
+    const permissions = getUserPermissions(user.login);
+    if (!permissions) {
       log.warn('github oauth login rejected - not on allowlist', { login: user.login });
       res.redirect(`/?auth_error=not_allowed&user=${encodeURIComponent(user.login)}`);
       return;
     }
 
-    setSessionCookie(res, { sub: user.login.toLowerCase(), role });
-    log.info('github oauth login succeeded', { login: user.login, role });
+    setSessionCookie(res, { sub: user.login.toLowerCase(), permissions });
+    log.info('github oauth login succeeded', { login: user.login, permissions });
     res.redirect('/');
   } catch (err) {
     log.error('github oauth callback failed', { error: String(err) });

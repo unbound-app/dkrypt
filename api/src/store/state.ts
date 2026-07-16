@@ -5,12 +5,34 @@ import { config } from '../config.js';
 import { emitHistoryAdded } from '../events.js';
 import type { TestFlightJobSource } from '../jobs/types.js';
 
-export type Role = 'admin' | 'operator' | 'member' | 'viewer';
 export type ApiKeyStatus = 'pending' | 'approved' | 'denied';
+
+export interface Permissions {
+  decrypt: boolean;
+  manageKeys: boolean;
+  manageSettings: boolean;
+  manageUsers: boolean;
+}
+
+export const VIEWER_PERMISSIONS: Permissions = { decrypt: false, manageKeys: false, manageSettings: false, manageUsers: false };
+export const ADMIN_PERMISSIONS: Permissions = { decrypt: true, manageKeys: true, manageSettings: true, manageUsers: true };
+
+function legacyRoleToPermissions(role: string): Permissions {
+  switch (role) {
+    case 'admin':
+      return { ...ADMIN_PERMISSIONS };
+    case 'operator':
+      return { decrypt: true, manageKeys: true, manageSettings: false, manageUsers: false };
+    case 'member':
+      return { decrypt: true, manageKeys: false, manageSettings: false, manageUsers: false };
+    default:
+      return { ...VIEWER_PERMISSIONS };
+  }
+}
 
 export interface AllowedUser {
   username: string;
-  role: Role;
+  permissions: Permissions;
   addedAt: number;
 }
 
@@ -62,7 +84,7 @@ export interface UserPrefs {
 }
 
 interface PersistedState {
-  version: 2;
+  version: 3;
   apiKeys: ApiKeyRecord[];
   allowedUsers: AllowedUser[];
   settings: Partial<SchedulerSettings>;
@@ -77,7 +99,7 @@ const statePath = path.join(config.stateDir, 'state.json');
 
 function defaultState(): PersistedState {
   return {
-    version: 2,
+    version: 3,
     apiKeys: [],
     allowedUsers: [],
     settings: {},
@@ -88,7 +110,21 @@ function defaultState(): PersistedState {
 }
 
 function migrate(raw: Record<string, unknown>): PersistedState {
-  if (raw.version === 2) return { ...defaultState(), ...raw } as PersistedState;
+  if (raw.version === 3) return { ...defaultState(), ...raw } as PersistedState;
+
+  if (raw.version === 2) {
+    const legacyUsers = Array.isArray(raw.allowedUsers) ? (raw.allowedUsers as Record<string, unknown>[]) : [];
+    return {
+      ...defaultState(),
+      ...raw,
+      version: 3,
+      allowedUsers: legacyUsers.map((u) => ({
+        username: u.username as string,
+        permissions: legacyRoleToPermissions(String(u.role ?? '')),
+        addedAt: u.addedAt as number,
+      })),
+    } as PersistedState;
+  }
 
   const legacyKeys = Array.isArray(raw.apiKeys) ? (raw.apiKeys as Record<string, unknown>[]) : [];
   return {
@@ -148,28 +184,28 @@ export function listAllowedUsers(): AllowedUser[] {
   return state.allowedUsers;
 }
 
-export function getUserRole(username: string): Role | undefined {
-  return state.allowedUsers.find((u) => u.username === username.toLowerCase())?.role;
+export function getUserPermissions(username: string): Permissions | undefined {
+  return state.allowedUsers.find((u) => u.username === username.toLowerCase())?.permissions;
 }
 
-export function addAllowedUser(username: string, role: Role): AllowedUser {
+export function addAllowedUser(username: string, permissions: Permissions): AllowedUser {
   const lower = username.toLowerCase();
   const existing = state.allowedUsers.find((u) => u.username === lower);
   if (existing) {
-    existing.role = role;
+    existing.permissions = permissions;
     persistNow();
     return existing;
   }
-  const record: AllowedUser = { username: lower, role, addedAt: Date.now() };
+  const record: AllowedUser = { username: lower, permissions, addedAt: Date.now() };
   state.allowedUsers.push(record);
   persistNow();
   return record;
 }
 
-export function updateAllowedUserRole(username: string, role: Role): AllowedUser | undefined {
+export function updateAllowedUserPermissions(username: string, permissions: Permissions): AllowedUser | undefined {
   const existing = state.allowedUsers.find((u) => u.username === username.toLowerCase());
   if (!existing) return undefined;
-  existing.role = role;
+  existing.permissions = permissions;
   persistNow();
   return existing;
 }

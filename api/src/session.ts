@@ -1,15 +1,26 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { NextFunction, Request, Response } from 'express';
 import { config } from './config.js';
-import type { Role } from './store/state.js';
+import type { Permissions } from './store/state.js';
 
 const COOKIE_NAME = 'session';
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 
 export interface Session {
   sub: string;
-  role: Role;
+  permissions: Permissions;
   exp: number;
+}
+
+function isPermissions(value: unknown): value is Permissions {
+  if (typeof value !== 'object' || value === null) return false;
+  const p = value as Record<string, unknown>;
+  return (
+    typeof p.decrypt === 'boolean' &&
+    typeof p.manageKeys === 'boolean' &&
+    typeof p.manageSettings === 'boolean' &&
+    typeof p.manageUsers === 'boolean'
+  );
 }
 
 function safeEqualStr(a: string, b: string): boolean {
@@ -36,7 +47,8 @@ function deserialize(cookieValue: string): Session | undefined {
   try {
     const parsed = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as Session;
     if (Date.now() > parsed.exp) return undefined;
-    return { sub: parsed.sub, role: parsed.role, exp: parsed.exp };
+    if (typeof parsed.sub !== 'string' || !isPermissions(parsed.permissions)) return undefined;
+    return { sub: parsed.sub, permissions: parsed.permissions, exp: parsed.exp };
   } catch {
     return undefined;
   }
@@ -87,19 +99,15 @@ export function requireSession(req: Request, res: Response, next: NextFunction):
   next();
 }
 
-export function requireAdmin(req: Request, res: Response, next: NextFunction): void {
-  requireRole('admin')(req, res, next);
-}
-
-export function requireRole(...roles: Role[]) {
+export function requirePermission(...perms: (keyof Permissions)[]) {
   return (req: Request, res: Response, next: NextFunction): void => {
     const session = getSession(req);
     if (!session) {
       res.status(401).json({ error: 'unauthorized' });
       return;
     }
-    if (!roles.includes(session.role)) {
-      res.status(403).json({ error: `requires one of these roles: ${roles.join(', ')}` });
+    if (!perms.some((p) => session.permissions[p])) {
+      res.status(403).json({ error: `requires one of these permissions: ${perms.join(', ')}` });
       return;
     }
     res.locals.session = session;

@@ -14,6 +14,7 @@
 
   async function poll(): Promise<void> {
     clearTimeout(pollTimer);
+    if (document.hidden) return;
     const pending = myDecryptsState.items.filter((d) => d.status !== 'done' && d.status !== 'failed');
     if (pending.length === 0) return;
 
@@ -27,9 +28,17 @@
     pollTimer = setTimeout(poll, 2500);
   }
 
+  function onVisibilityChange(): void {
+    if (!document.hidden) void poll();
+  }
+
   $effect(() => {
     void poll();
-    return () => clearTimeout(pollTimer);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      clearTimeout(pollTimer);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
   });
 
   async function retry(d: TrackedDecrypt): Promise<void> {

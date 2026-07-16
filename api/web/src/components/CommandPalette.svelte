@@ -22,7 +22,9 @@
       { id: 'logs', label: 'Go to Logs', run: () => setActiveTab('logs') },
       { id: 'docs', label: 'Go to Docs', run: () => setActiveTab('docs') },
     ];
-    if (sessionState.role === 'admin') base.push({ id: 'settings', label: 'Go to Settings', run: () => setActiveTab('settings') });
+    if (sessionState.permissions?.manageSettings || sessionState.permissions?.manageUsers) {
+      base.push({ id: 'settings', label: 'Go to Settings', run: () => setActiveTab('settings') });
+    }
     base.push({ id: 'theme', label: 'Toggle light / dark theme', run: () => setTheme(themeState.value === 'dark' ? 'light' : 'dark') });
     base.push({ id: 'shortcuts', label: 'Show keyboard shortcuts', run: () => openHelp() });
     base.push({ id: 'logout', label: 'Log out', run: () => void logout() });

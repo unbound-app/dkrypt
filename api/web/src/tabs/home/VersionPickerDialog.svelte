@@ -24,14 +24,19 @@
     loadedFor = bundleId;
     versions = null;
     error = '';
-    void fetchAppVersions(bundleId).then((data) => {
-      if ('error' in data) {
-        error = data.error;
+    fetchAppVersions(bundleId)
+      .then((data) => {
+        if ('error' in data) {
+          error = data.error;
+          versions = [];
+        } else {
+          versions = data.versions;
+        }
+      })
+      .catch(() => {
+        error = 'Failed to load version history - try again.';
         versions = [];
-      } else {
-        versions = data.versions;
-      }
-    });
+      });
   });
 
   function label(v: AppVersionEntry): string {

@@ -107,18 +107,28 @@ Two ways in:
   add them first (chicken-and-egg: add yourself via `ADMIN_PASSWORD`
   first).
 
-Four roles, enforced server-side (the UI just hides what a role can't do):
+Access is four independent, additive permissions, enforced server-side (the
+UI just hides what a user can't do). A newly-added user starts with none of
+them - pure read-only - and gains capabilities as an admin grants them,
+rather than picking from a fixed tier:
 
-- **admin** - everything below, plus the Settings tab (Scheduler, Users,
-  Apple Auth).
-- **operator** - everything admin can do *except* the Settings tab: queues
-  decrypts, and manages API keys for everyone (approve/deny pending
-  requests, view the full key list, bulk-revoke, own requests auto-approve).
-- **member** - Home, API Keys, Logs, and Docs, and manages their *own* API
-  keys (request, reveal-once, regenerate, revoke) - but a request sits as
-  `pending` until an admin or operator approves it on the API Keys tab.
-- **viewer** - read-only: Home, Logs, and Docs, but can't queue a decrypt,
-  and has no API Keys tab (nothing to request or manage).
+- **decrypt** - queue decrypts, and manage their own API keys (request,
+  reveal-once, regenerate, revoke) - a request sits as `pending` until
+  someone with `manageKeys` approves it on the API Keys tab.
+- **manageKeys** - approve/deny pending key requests, view the full key
+  list across every user, bulk-revoke, and their own key requests
+  auto-approve instead of queuing.
+- **manageSettings** - the Scheduler and Apple Auth settings sub-tabs
+  (watch/dispatch config, cron, webhook, manual dispatch trigger, Apple ID
+  re-authentication).
+- **manageUsers** - the Users settings sub-tab: add/remove people from the
+  allowlist and change their permissions. A user can't remove their own
+  `manageUsers` - get another user with it to do that, or fall back to
+  `ADMIN_PASSWORD`.
+
+The Users tab presents these as a checklist plus quick presets (Viewer /
+Contributor / Manager / Admin) that just fill the checkboxes - any custom
+combination is still one edit away.
 
 Per-account preferences (currently just light/dark theme) are synced
 server-side, not just `localStorage` - switching browsers or devices keeps
@@ -133,26 +143,29 @@ Tabs:
   version history and lets you decrypt an older release instead of the
   current one (`ipadecrypt decrypt --external-version-id`) - see
   **Decrypting a specific version** below.
-- **API Keys** (not shown to viewers) - request/reveal/regenerate/revoke
-  your own keys; admins and operators additionally see all pending
-  requests (approve/deny), the full key list across every user, and can
-  create an auto-approved key directly (e.g. for a CI runner). Keys are
-  stored hashed - the plaintext is only ever shown once, right after
-  approval/regeneration. The root `API_KEY` from `.env` always works too
-  and isn't managed here.
+- **API Keys** (needs `decrypt` or `manageKeys`) - request/reveal/
+  regenerate/revoke your own keys; anyone with `manageKeys` additionally
+  sees all pending requests (approve/deny), the full key list across every
+  user, and can create an auto-approved key directly (e.g. for a CI
+  runner). Keys are stored hashed - the plaintext is only ever shown once,
+  right after approval/regeneration. The root `API_KEY` from `.env` always
+  works too and isn't managed here.
 - **Logs** - a live feed of scheduler/job log lines, filterable by scope
   (all/scheduler/jobs) and level (info/warning/error).
 - **Docs** - copy-pasteable curl examples for using an API key, filled in
   with this instance's actual `PUBLIC_BASE_URL`.
-- **Settings** (admin) - three sub-tabs:
-  - *Scheduler* - edit the watch bundle ID, watch/dispatch repos, workflow
-    file, poll cron, and notification webhook URL live, no restart
-    needed. `GH_TOKEN` and `API_KEY` stay env-only, not editable here.
-  - *Users* - the GitHub OAuth allowlist: add a username with a role, or
-    open the Manage dialog on an existing entry to change their role or
-    remove them. An admin can't change their own role or remove themselves
-    - get another admin to do it, or fall back to `ADMIN_PASSWORD`.
-  - *Apple Auth* - re-runs just the App Store sign-in step of `ipadecrypt
+- **Settings** (needs `manageSettings` or `manageUsers`) - sub-tabs shown
+  depend on which of the two you have:
+  - *Scheduler* (`manageSettings`) - edit the watch bundle ID,
+    watch/dispatch repos, workflow file, poll cron, and notification
+    webhook URL live, no restart needed. `GH_TOKEN` and `API_KEY` stay
+    env-only, not editable here.
+  - *Users* (`manageUsers`) - the GitHub OAuth allowlist: add a username
+    with a permission set, or open the Manage dialog on an existing entry
+    to change their permissions or remove them. A user can't remove their
+    own `manageUsers` permission - get someone else with it to do that, or
+    fall back to `ADMIN_PASSWORD`.
+  - *Apple Auth* (`manageSettings`) - re-runs just the App Store sign-in step of `ipadecrypt
     bootstrap` (email/password, and a 2FA code if Apple asks for one) as
     a piped child process, streaming its prompts to the page so you don't
     need to SSH in for routine re-auth. It deliberately can't drive the

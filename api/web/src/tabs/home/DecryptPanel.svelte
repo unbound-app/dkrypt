@@ -1,12 +1,12 @@
 <script lang="ts">
-  import { FlaskConical, History } from 'lucide-svelte';
+  import { FlaskConical, History, X } from 'lucide-svelte';
   import { queueDecrypt, queueTestFlightDecrypt, searchApps, type AppStoreSearchResult, type TFBuild } from '../../lib/api';
   import Badge from '../../lib/components/ui/Badge.svelte';
   import Button from '../../lib/components/ui/Button.svelte';
   import Card from '../../lib/components/ui/Card.svelte';
   import Input from '../../lib/components/ui/Input.svelte';
   import { statusToBadgeVariant } from '../../lib/components/ui/variants';
-  import { addDecrypt, myDecryptsState, pushRecentBundleId, recentBundleIdsState } from '../../lib/decrypts.svelte';
+  import { addDecrypt, myDecryptsState, pushRecentBundleId, recentBundleIdsState, removeRecentBundleId } from '../../lib/decrypts.svelte';
   import { debounce } from '../../lib/format';
   import { liveState } from '../../lib/live.svelte';
   import { sessionState } from '../../lib/session.svelte';
@@ -70,7 +70,7 @@
     debouncedSearch(term);
   }
 
-  const canDecrypt = $derived(sessionState.role !== 'viewer');
+  const canDecrypt = $derived(!!sessionState.permissions?.decrypt);
 
   let versionsOpen = $state(false);
   let versionsBundleId = $state('');
@@ -171,12 +171,17 @@
   {#if !term.trim() && recentBundleIdsState.items.length > 0}
     <div class="mt-2.5 flex flex-wrap gap-1.5">
       {#each recentBundleIdsState.items as bundleId (bundleId)}
-        <button
-          class="border-border text-muted hover:text-text hover:border-accent cursor-pointer rounded-full border px-2.5 py-1 font-mono text-[11.5px]"
-          onclick={() => pickRecent(bundleId)}
-        >
-          {bundleId}
-        </button>
+        <span class="border-border text-muted hover:text-text hover:border-accent inline-flex items-center gap-1 rounded-full border pr-1 pl-2.5 py-1 font-mono text-[11.5px]">
+          <button class="cursor-pointer" onclick={() => pickRecent(bundleId)}>{bundleId}</button>
+          <button
+            class="text-muted hover:text-err cursor-pointer rounded-full p-0.5"
+            onclick={() => removeRecentBundleId(bundleId)}
+            aria-label="Remove {bundleId} from recents"
+            title="Remove from recents"
+          >
+            <X class="h-3 w-3" />
+          </button>
+        </span>
       {/each}
     </div>
   {/if}

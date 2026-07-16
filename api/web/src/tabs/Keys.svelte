@@ -36,14 +36,19 @@
   let statusFilter = $state('all');
   let selected = $state<Set<string>>(new Set());
   let submitting = $state(false);
-  let busyIds = $state<Set<string>>(new Set());
+  let busyActions = $state<Set<string>>(new Set());
   let bulkRevoking = $state(false);
 
-  function setBusy(id: string, busy: boolean): void {
-    const next = new Set(busyIds);
-    if (busy) next.add(id);
-    else next.delete(id);
-    busyIds = next;
+  function setBusy(action: string, id: string, busy: boolean): void {
+    const key = `${action}:${id}`;
+    const next = new Set(busyActions);
+    if (busy) next.add(key);
+    else next.delete(key);
+    busyActions = next;
+  }
+
+  function isBusy(action: string, id: string): boolean {
+    return busyActions.has(`${action}:${id}`);
   }
 
   const STATUS_OPTIONS = [
@@ -61,7 +66,7 @@
     { value: '90', label: 'In 90 days' },
   ];
 
-  const isKeyManager = $derived(sessionState.role === 'admin' || sessionState.role === 'operator');
+  const isKeyManager = $derived(!!sessionState.permissions?.manageKeys);
 
   async function loadAll(): Promise<void> {
     mine = (await fetchMyKeys()).keys;
@@ -101,56 +106,56 @@
   }
 
   async function doReveal(id: string): Promise<void> {
-    setBusy(id, true);
+    setBusy('reveal', id, true);
     try {
       const { ok, data } = await revealKey(id);
       if (!ok) return;
       revealedKey = data.key;
       void loadAll();
     } finally {
-      setBusy(id, false);
+      setBusy('reveal', id, false);
     }
   }
 
   async function doRegenerate(id: string): Promise<void> {
     if (!(await confirmDialog('Regenerate this key? The old secret stops working immediately.'))) return;
-    setBusy(id, true);
+    setBusy('regenerate', id, true);
     try {
       const { ok } = await regenerateKey(id);
       if (ok) void loadAll();
     } finally {
-      setBusy(id, false);
+      setBusy('regenerate', id, false);
     }
   }
 
   async function doRevoke(id: string): Promise<void> {
     if (!(await confirmDialog("Revoke this key? Anything using it will lose access immediately."))) return;
-    setBusy(id, true);
+    setBusy('revoke', id, true);
     try {
       const { ok } = await revokeKey(id);
       if (ok) void loadAll();
     } finally {
-      setBusy(id, false);
+      setBusy('revoke', id, false);
     }
   }
 
   async function doApprove(id: string): Promise<void> {
-    setBusy(id, true);
+    setBusy('approve', id, true);
     try {
       const { ok } = await approveKey(id);
       if (ok) void loadAll();
     } finally {
-      setBusy(id, false);
+      setBusy('approve', id, false);
     }
   }
 
   async function doDeny(id: string): Promise<void> {
-    setBusy(id, true);
+    setBusy('deny', id, true);
     try {
       const { ok } = await denyKey(id);
       if (ok) void loadAll();
     } finally {
-      setBusy(id, false);
+      setBusy('deny', id, false);
     }
   }
 
@@ -231,12 +236,12 @@
                 <td>
                   <div class="flex flex-wrap gap-1.5">
                     {#if k.hasUnrevealedSecret}
-                      <Button size="sm" loading={busyIds.has(k.id)} onclick={() => doReveal(k.id)}>Reveal</Button>
+                      <Button size="sm" loading={isBusy('reveal', k.id)} onclick={() => doReveal(k.id)}>Reveal</Button>
                     {/if}
                     {#if k.status === 'approved'}
-                      <Button size="sm" variant="secondary" loading={busyIds.has(k.id)} onclick={() => doRegenerate(k.id)}>Regenerate</Button>
+                      <Button size="sm" variant="secondary" loading={isBusy('regenerate', k.id)} onclick={() => doRegenerate(k.id)}>Regenerate</Button>
                     {/if}
-                    <Button size="sm" variant="destructive" loading={busyIds.has(k.id)} onclick={() => doRevoke(k.id)}>Revoke</Button>
+                    <Button size="sm" variant="destructive" loading={isBusy('revoke', k.id)} onclick={() => doRevoke(k.id)}>Revoke</Button>
                   </div>
                 </td>
               </tr>
@@ -278,8 +283,8 @@
                   <td class="text-muted"><RelativeTime ms={k.createdAt} /></td>
                   <td>
                     <div class="flex gap-1.5">
-                      <Button size="sm" loading={busyIds.has(k.id)} onclick={() => doApprove(k.id)}>Approve</Button>
-                      <Button size="sm" variant="destructive" loading={busyIds.has(k.id)} onclick={() => doDeny(k.id)}>Deny</Button>
+                      <Button size="sm" loading={isBusy('approve', k.id)} onclick={() => doApprove(k.id)}>Approve</Button>
+                      <Button size="sm" variant="destructive" loading={isBusy('deny', k.id)} onclick={() => doDeny(k.id)}>Deny</Button>
                     </div>
                   </td>
                 </tr>
@@ -339,7 +344,7 @@
                   </td>
                   <td class="text-muted"><RelativeTime ms={k.createdAt} /></td>
                   <td class="text-muted"><RelativeTime ms={k.lastUsedAt} /></td>
-                  <td><Button size="sm" variant="destructive" loading={busyIds.has(k.id)} onclick={() => doRevoke(k.id)}>Revoke</Button></td>
+                  <td><Button size="sm" variant="destructive" loading={isBusy('revoke', k.id)} onclick={() => doRevoke(k.id)}>Revoke</Button></td>
                 </tr>
               {/each}
             {/if}

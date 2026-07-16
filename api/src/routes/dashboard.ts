@@ -15,7 +15,7 @@ import { getRecentLogs } from '../logger.js';
 import { sendTestNotification } from '../notify.js';
 import { applySchedule, checkForTestFlightUpdate, checkForUpdate, triggerTickNow } from '../scheduler/index.js';
 import { searchApps } from '../scheduler/itunes.js';
-import { requireAdmin, requireRole, requireSession } from '../session.js';
+import { requirePermission, requireSession } from '../session.js';
 import { getDeviceHealth, listBuilds, listTrains } from '../testflight.js';
 import { listAppVersions } from '../versions.js';
 import {
@@ -37,20 +37,22 @@ import {
   listAllowedUsers,
   listApiKeysForOwner,
   listPendingApiKeys,
+  type Permissions,
   regenerateApiKey,
-  type Role,
   removeAllowedUser,
   requestApiKey,
   revealApiKeySecret,
   revokeApiKey,
-  updateAllowedUserRole,
+  updateAllowedUserPermissions,
   updateSettings,
   updateUserPrefs,
 } from '../store/state.js';
 
-const ROLES: Role[] = ['admin', 'operator', 'member', 'viewer'];
-const canManageKeys = requireRole('admin', 'operator');
-const canDecrypt = requireRole('admin', 'operator', 'member');
+const PERMISSION_KEYS: (keyof Permissions)[] = ['decrypt', 'manageKeys', 'manageSettings', 'manageUsers'];
+const canManageKeys = requirePermission('manageKeys');
+const canDecrypt = requirePermission('decrypt');
+const canManageSettings = requirePermission('manageSettings');
+const canManageUsers = requirePermission('manageUsers');
 
 export const dashboardRouter = Router();
 
@@ -262,7 +264,7 @@ dashboardRouter.get('/v1/dashboard/keys/mine', (_req, res) => {
 const EXPIRY_OPTIONS = new Set([1, 7, 30, 90]);
 
 dashboardRouter.post('/v1/dashboard/keys/request', canDecrypt, (req, res) => {
-  const { sub, role } = res.locals.session;
+  const { sub, permissions } = res.locals.session;
   const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
   if (!name) {
     res.status(400).json({ error: 'name is required' });
@@ -273,7 +275,7 @@ dashboardRouter.post('/v1/dashboard/keys/request', canDecrypt, (req, res) => {
     ? req.body.expiresInDays
     : undefined;
 
-  if (role === 'admin' || role === 'operator') {
+  if (permissions.manageKeys) {
     res.status(201).json(createApiKey(name, sub, expiresInDays));
     return;
   }
@@ -302,8 +304,8 @@ dashboardRouter.post('/v1/dashboard/keys/:id/regenerate', (req, res) => {
 });
 
 dashboardRouter.delete('/v1/dashboard/keys/:id', (req, res) => {
-  const { sub, role } = res.locals.session;
-  const ok = revokeApiKey(req.params.id, sub, role === 'admin' || role === 'operator');
+  const { sub, permissions } = res.locals.session;
+  const ok = revokeApiKey(req.params.id, sub, permissions.manageKeys);
   if (!ok) {
     res.status(404).json({ error: 'key not found or not yours' });
     return;
@@ -312,9 +314,9 @@ dashboardRouter.delete('/v1/dashboard/keys/:id', (req, res) => {
 });
 
 dashboardRouter.post('/v1/dashboard/keys/bulk-revoke', (req, res) => {
-  const { sub, role } = res.locals.session;
+  const { sub, permissions } = res.locals.session;
   const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter((id: unknown) => typeof id === 'string') : [];
-  const revoked = ids.filter((id: string) => revokeApiKey(id, sub, role === 'admin' || role === 'operator'));
+  const revoked = ids.filter((id: string) => revokeApiKey(id, sub, permissions.manageKeys));
   res.json({ revoked });
 });
 
@@ -350,7 +352,7 @@ dashboardRouter.get('/v1/dashboard/settings', (_req, res) => {
 
 const SETTINGS_FIELDS = ['watchBundleId', 'watchAppRepo', 'ghDispatchRepo', 'ghWorkflowFile', 'pollCron', 'notifyWebhookUrl'] as const;
 
-dashboardRouter.put('/v1/dashboard/settings', requireAdmin, (req, res) => {
+dashboardRouter.put('/v1/dashboard/settings', canManageSettings, (req, res) => {
   const body = req.body ?? {};
   const patch: Record<string, string> = {};
 
@@ -368,57 +370,69 @@ dashboardRouter.put('/v1/dashboard/settings', requireAdmin, (req, res) => {
   res.json(updated);
 });
 
-dashboardRouter.get('/v1/dashboard/settings/validate-cron', requireAdmin, (req, res) => {
+dashboardRouter.get('/v1/dashboard/settings/validate-cron', canManageSettings, (req, res) => {
   const expr = typeof req.query.expr === 'string' ? req.query.expr : '';
   res.json({ valid: expr !== '' && validateCronExpr(expr) });
 });
 
-dashboardRouter.post('/v1/dashboard/settings/test-webhook', requireAdmin, async (_req, res) => {
+dashboardRouter.post('/v1/dashboard/settings/test-webhook', canManageSettings, async (_req, res) => {
   const result = await sendTestNotification();
   res.status(result.ok ? 200 : 400).json(result);
 });
 
-dashboardRouter.get('/v1/dashboard/settings/preview-dispatch', requireAdmin, async (_req, res) => {
+dashboardRouter.get('/v1/dashboard/settings/preview-dispatch', canManageSettings, async (_req, res) => {
   const settings = getEffectiveSettings();
   const [appStore, testflight] = await Promise.all([checkForUpdate(settings), checkForTestFlightUpdate(settings)]);
   res.json({ ...appStore, testflight });
 });
 
-dashboardRouter.post('/v1/dashboard/settings/trigger-dispatch', requireAdmin, async (_req, res) => {
+dashboardRouter.post('/v1/dashboard/settings/trigger-dispatch', canManageSettings, async (_req, res) => {
   const result = await triggerTickNow();
   res.status(result.ok ? 202 : 409).json(result);
 });
 
-dashboardRouter.post('/v1/dashboard/auth-alert/clear', requireAdmin, (_req, res) => {
+dashboardRouter.post('/v1/dashboard/auth-alert/clear', canManageSettings, (_req, res) => {
   clearAppleAuthAlert();
   res.json({ ok: true });
 });
 
-dashboardRouter.get('/v1/dashboard/users', requireAdmin, (_req, res) => {
+function parsePermissions(body: unknown): Permissions | undefined {
+  if (typeof body !== 'object' || body === null) return undefined;
+  const b = body as Record<string, unknown>;
+  if (!PERMISSION_KEYS.every((k) => typeof b[k] === 'boolean')) return undefined;
+  return {
+    decrypt: b.decrypt as boolean,
+    manageKeys: b.manageKeys as boolean,
+    manageSettings: b.manageSettings as boolean,
+    manageUsers: b.manageUsers as boolean,
+  };
+}
+
+dashboardRouter.get('/v1/dashboard/users', canManageUsers, (_req, res) => {
   res.json({ users: listAllowedUsers() });
 });
 
-dashboardRouter.post('/v1/dashboard/users', requireAdmin, (req, res) => {
+dashboardRouter.post('/v1/dashboard/users', canManageUsers, (req, res) => {
   const username = typeof req.body?.username === 'string' ? req.body.username.trim() : '';
-  const role = ROLES.includes(req.body?.role) ? (req.body.role as Role) : undefined;
-  if (!username || !role) {
-    res.status(400).json({ error: `username and role (${ROLES.join('|')}) are required` });
+  const permissions = parsePermissions(req.body?.permissions);
+  if (!username || !permissions) {
+    res.status(400).json({ error: `username and permissions (${PERMISSION_KEYS.join(', ')}) are required` });
     return;
   }
-  res.status(201).json(addAllowedUser(username, role));
+  res.status(201).json(addAllowedUser(username, permissions));
 });
 
-dashboardRouter.patch('/v1/dashboard/users/:username', requireAdmin, (req, res) => {
-  const role = ROLES.includes(req.body?.role) ? (req.body.role as Role) : undefined;
-  if (!role) {
-    res.status(400).json({ error: `role (${ROLES.join('|')}) is required` });
+dashboardRouter.patch('/v1/dashboard/users/:username', canManageUsers, (req, res) => {
+  const permissions = parsePermissions(req.body?.permissions);
+  if (!permissions) {
+    res.status(400).json({ error: `permissions (${PERMISSION_KEYS.join(', ')}) are required` });
     return;
   }
-  if (req.params.username.toLowerCase() === res.locals.session.sub.toLowerCase() && role !== 'admin') {
-    res.status(400).json({ error: "you can't change your own role away from admin" });
+  if (req.params.username.toLowerCase() === res.locals.session.sub.toLowerCase() && !permissions.manageUsers) {
+    res.status(400).json({ error: "you can't remove your own ability to manage users" });
     return;
   }
-  const updated = updateAllowedUserRole(req.params.username, role);
+  const updated = updateAllowedUserPermissions(req.params.username, permissions);
   if (!updated) {
     res.status(404).json({ error: 'not on the allowlist' });
     return;
@@ -426,7 +440,7 @@ dashboardRouter.patch('/v1/dashboard/users/:username', requireAdmin, (req, res) 
   res.json(updated);
 });
 
-dashboardRouter.delete('/v1/dashboard/users/:username', requireAdmin, (req, res) => {
+dashboardRouter.delete('/v1/dashboard/users/:username', canManageUsers, (req, res) => {
   const ok = removeAllowedUser(req.params.username);
   if (!ok) {
     res.status(404).json({ error: 'not on the allowlist' });
@@ -446,11 +460,11 @@ dashboardRouter.put('/v1/dashboard/me/prefs', (req, res) => {
   res.json(updateUserPrefs(res.locals.session.sub, patch));
 });
 
-dashboardRouter.get('/v1/dashboard/apple-auth/status', requireAdmin, (_req, res) => {
+dashboardRouter.get('/v1/dashboard/apple-auth/status', canManageSettings, (_req, res) => {
   res.json(getAppleAuthStatus());
 });
 
-dashboardRouter.post('/v1/dashboard/apple-auth/start', requireAdmin, (_req, res) => {
+dashboardRouter.post('/v1/dashboard/apple-auth/start', canManageSettings, (_req, res) => {
   if (isAppleAuthRunning()) {
     res.status(409).json({ error: 'already running' });
     return;
@@ -463,7 +477,7 @@ dashboardRouter.post('/v1/dashboard/apple-auth/start', requireAdmin, (_req, res)
   }
 });
 
-dashboardRouter.post('/v1/dashboard/apple-auth/input', requireAdmin, (req, res) => {
+dashboardRouter.post('/v1/dashboard/apple-auth/input', canManageSettings, (req, res) => {
   const value = typeof req.body?.value === 'string' ? req.body.value : '';
   try {
     sendAppleAuthInput(value);
@@ -473,7 +487,7 @@ dashboardRouter.post('/v1/dashboard/apple-auth/input', requireAdmin, (req, res) 
   }
 });
 
-dashboardRouter.post('/v1/dashboard/apple-auth/cancel', requireAdmin, (_req, res) => {
+dashboardRouter.post('/v1/dashboard/apple-auth/cancel', canManageSettings, (_req, res) => {
   cancelAppleAuth();
   res.json({ ok: true });
 });

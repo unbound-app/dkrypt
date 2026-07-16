@@ -1,13 +1,19 @@
-import { markLoggedOut, type Role } from './session.svelte';
+import { markLoggedOut, type Permissions } from './session.svelte';
 import { showToast } from './ui.svelte';
 
-export type { Role };
+export type { Permissions };
 
 async function request(path: string, opts: RequestInit = {}): Promise<Response> {
-  const res = await fetch(path, {
-    ...opts,
-    headers: { 'Content-Type': 'application/json', ...(opts.headers ?? {}) },
-  });
+  let res: Response;
+  try {
+    res = await fetch(path, {
+      ...opts,
+      headers: { 'Content-Type': 'application/json', ...(opts.headers ?? {}) },
+    });
+  } catch {
+    showToast("Couldn't reach the server - check your connection", 'error');
+    throw new Error('network error');
+  }
   if (res.status === 401) {
     markLoggedOut();
     throw new Error('unauthorized');
@@ -127,7 +133,7 @@ export interface ApiKeyRecord {
 
 export interface AllowedUser {
   username: string;
-  role: Role;
+  permissions: Permissions;
   addedAt: number;
 }
 
@@ -328,19 +334,19 @@ export function fetchUsers(): Promise<{ users: AllowedUser[] }> {
   return apiJson('/v1/dashboard/users');
 }
 
-export function addUser(username: string, role: Role): Promise<{ ok: boolean }> {
-  return apiAction('/v1/dashboard/users', { method: 'POST', body: JSON.stringify({ username, role }) }, `${username} added`);
+export function addUser(username: string, permissions: Permissions): Promise<{ ok: boolean }> {
+  return apiAction('/v1/dashboard/users', { method: 'POST', body: JSON.stringify({ username, permissions }) }, `${username} added`);
 }
 
 export function removeUser(username: string): Promise<{ ok: boolean }> {
   return apiAction(`/v1/dashboard/users/${encodeURIComponent(username)}`, { method: 'DELETE' }, `${username} removed`);
 }
 
-export function updateUserRole(username: string, role: Role): Promise<{ ok: boolean }> {
+export function updateUserPermissions(username: string, permissions: Permissions): Promise<{ ok: boolean }> {
   return apiAction(
     `/v1/dashboard/users/${encodeURIComponent(username)}`,
-    { method: 'PATCH', body: JSON.stringify({ role }) },
-    `${username} is now ${role}`,
+    { method: 'PATCH', body: JSON.stringify({ permissions }) },
+    `${username}'s permissions updated`,
   );
 }
 

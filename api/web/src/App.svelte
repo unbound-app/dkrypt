@@ -12,7 +12,7 @@
   import Tabs from './lib/components/ui/Tabs.svelte';
   import { buttonVariants } from './lib/components/ui/variants';
   import { connectLive, disconnectLive } from './lib/live.svelte';
-  import { logout, pushThemePref, refreshSession, sessionState, type Role } from './lib/session.svelte';
+  import { logout, permissionsSummary, pushThemePref, refreshSession, sessionState, type Permissions } from './lib/session.svelte';
   import { initTheme, openHelp, openPalette, setActiveTab, setTheme, tabState, themeState, type TabId } from './lib/ui.svelte';
 
   const REPO_URL = 'https://github.com/unbound-app/dkrypt';
@@ -26,16 +26,28 @@
   initTheme();
 
   let homeRef: Home | undefined = $state();
+  let loggingOut = $state(false);
 
-  const TABS: { id: TabId; label: string; roles?: Role[] }[] = [
+  const TABS: { id: TabId; label: string; requires?: (keyof Permissions)[] }[] = [
     { id: 'home', label: 'Home' },
-    { id: 'keys', label: 'API Keys', roles: ['admin', 'operator', 'member'] },
+    { id: 'keys', label: 'API Keys', requires: ['decrypt', 'manageKeys'] },
     { id: 'logs', label: 'Logs' },
     { id: 'docs', label: 'Docs' },
-    { id: 'settings', label: 'Settings', roles: ['admin'] },
+    { id: 'settings', label: 'Settings', requires: ['manageSettings', 'manageUsers'] },
   ];
 
-  const visibleTabs = $derived(TABS.filter((t) => !t.roles || (sessionState.role && t.roles.includes(sessionState.role))));
+  const visibleTabs = $derived(
+    TABS.filter((t) => !t.requires || t.requires.some((p) => sessionState.permissions?.[p])),
+  );
+
+  async function doLogout(): Promise<void> {
+    loggingOut = true;
+    try {
+      await logout();
+    } finally {
+      loggingOut = false;
+    }
+  }
 
   $effect(() => {
     void refreshSession();
@@ -123,8 +135,8 @@
             <Sun class="h-4 w-4" />
           {/if}
         </Button>
-        <span class="max-w-[40vw] truncate text-[13px] text-muted sm:max-w-[55vw]">{sessionState.sub} ({sessionState.role})</span>
-        <Button variant="secondary" size="sm" onclick={() => void logout()}>Log out</Button>
+        <span class="max-w-[40vw] truncate text-[13px] text-muted sm:max-w-[55vw]">{sessionState.sub} ({permissionsSummary(sessionState.permissions)})</span>
+        <Button variant="secondary" size="sm" loading={loggingOut} onclick={doLogout}>Log out</Button>
       </div>
     </header>
     <main class="mx-auto max-w-[1120px] p-6">
@@ -145,7 +157,7 @@
       <div class:hidden={tabState.active !== 'docs'}>
         <Docs />
       </div>
-      {#if sessionState.role === 'admin'}
+      {#if sessionState.permissions?.manageSettings || sessionState.permissions?.manageUsers}
         <div class:hidden={tabState.active !== 'settings'}>
           <Settings />
         </div>

@@ -57,3 +57,9 @@ export function pushRecentBundleId(bundleId: string): void {
   recentBundleIdsState.items = items;
   localStorage.setItem('recentBundleIds', JSON.stringify(items));
 }
+
+export function removeRecentBundleId(bundleId: string): void {
+  const items = recentBundleIdsState.items.filter((b) => b !== bundleId);
+  recentBundleIdsState.items = items;
+  localStorage.setItem('recentBundleIds', JSON.stringify(items));
+}

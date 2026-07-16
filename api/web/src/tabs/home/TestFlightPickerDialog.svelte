@@ -32,14 +32,19 @@
     error = '';
     expandedTrain = '';
     builds = null;
-    void fetchTestFlightTrains(appId).then((data) => {
-      if ('error' in data) {
-        error = data.error;
+    fetchTestFlightTrains(appId)
+      .then((data) => {
+        if ('error' in data) {
+          error = data.error;
+          trains = [];
+        } else {
+          trains = data.trains;
+        }
+      })
+      .catch(() => {
+        error = 'Failed to load TestFlight trains - try again.';
         trains = [];
-      } else {
-        trains = data.trains;
-      }
-    });
+      });
   });
 
   async function toggleTrain(trainVersion: string): Promise<void> {
@@ -50,12 +55,17 @@
     expandedTrain = trainVersion;
     builds = null;
     buildsError = '';
-    const data = await fetchTestFlightBuilds(appId, trainVersion);
-    if ('error' in data) {
-      buildsError = data.error;
+    try {
+      const data = await fetchTestFlightBuilds(appId, trainVersion);
+      if ('error' in data) {
+        buildsError = data.error;
+        builds = [];
+      } else {
+        builds = data.builds;
+      }
+    } catch {
+      buildsError = 'Failed to load builds - try again.';
       builds = [];
-    } else {
-      builds = data.builds;
     }
   }
 

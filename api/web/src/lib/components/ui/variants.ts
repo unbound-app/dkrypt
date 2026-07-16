@@ -39,7 +39,6 @@ export function statusToBadgeVariant(status: string): BadgeVariant {
   switch (status) {
     case 'done':
     case 'approved':
-    case 'admin':
       return 'success';
     case 'failed':
     case 'denied':
@@ -47,7 +46,6 @@ export function statusToBadgeVariant(status: string): BadgeVariant {
     case 'running':
     case 'queued':
     case 'pending':
-    case 'member':
       return 'default';
     default:
       return 'secondary';
