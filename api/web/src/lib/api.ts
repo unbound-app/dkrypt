@@ -66,7 +66,6 @@ export interface ActiveJob {
 
 export interface SchedulerSettings {
   watchBundleId: string;
-  watchAppId: string;
   watchAppRepo: string;
   ghDispatchRepo: string;
   ghWorkflowFile: string;

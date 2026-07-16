@@ -1,11 +1,12 @@
 interface ItunesLookupResult {
   version: string;
   bundleId: string;
+  trackId: number;
 }
 
 interface ItunesLookupResponse {
   resultCount: number;
-  results: Array<{ version: string; bundleId: string }>;
+  results: Array<{ version: string; bundleId: string; trackId: number }>;
 }
 
 export async function lookupCurrentVersion(bundleId: string): Promise<ItunesLookupResult> {
@@ -17,7 +18,7 @@ export async function lookupCurrentVersion(bundleId: string): Promise<ItunesLook
   const result = body.results[0];
   if (body.resultCount < 1 || !result) throw new Error(`itunes lookup returned no results for ${bundleId}`);
 
-  return { version: result.version, bundleId: result.bundleId };
+  return { version: result.version, bundleId: result.bundleId, trackId: result.trackId };
 }
 
 export interface ItunesSearchResult {

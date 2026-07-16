@@ -39,7 +39,6 @@ export const config = {
   jobRetentionMinutes: optionalInt('JOB_RETENTION_MINUTES', 60),
 
   watchBundleId: optional('WATCH_BUNDLE_ID', ''),
-  watchAppId: optional('WATCH_APP_ID', ''),
   watchAppRepo: optional('WATCH_APP_REPO', ''),
   ghDispatchRepo: optional('GH_DISPATCH_REPO', ''),
   ghWorkflowFile: optional('GH_WORKFLOW_FILE', 'remote-ipa-update.yml'),

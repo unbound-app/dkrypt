@@ -228,9 +228,10 @@ for `ipadecrypt` (reads the device host/port/key straight out of
   match, not "newer than" - if your release tags diverge from the App
   Store version scheme this will need adjusting in `api/src/util/
   version.ts`.
-- If `WATCH_APP_ID` (the app's numeric App Store ID, not its bundle ID) is
-  also set, the scheduler separately watches TestFlight for new builds
-  too, matching tags shaped `v{shortVersion}_{buildNumber}` (e.g.
-  `v1.0.0_106191`) - a different, exact-string match against the *raw*
-  tag name, not the normalized App Store comparison above. Needs
-  `tfauto` installed (see **TestFlight builds**).
+- The scheduler also always watches TestFlight for new builds of
+  `WATCH_BUNDLE_ID` (its numeric App Store ID is resolved automatically
+  via the same iTunes lookup, no separate config), matching tags shaped
+  `v{shortVersion}_{buildNumber}` (e.g. `v1.0.0_106191`) - a different,
+  exact-string match against the *raw* tag name, not the normalized App
+  Store comparison above. Fails silently (logged, not fatal) if `tfauto`
+  isn't installed on the device - see **TestFlight builds**.

@@ -342,7 +342,7 @@ dashboardRouter.get('/v1/dashboard/settings', (_req, res) => {
   res.json(getEffectiveSettings());
 });
 
-const SETTINGS_FIELDS = ['watchBundleId', 'watchAppId', 'watchAppRepo', 'ghDispatchRepo', 'ghWorkflowFile', 'pollCron', 'notifyWebhookUrl'] as const;
+const SETTINGS_FIELDS = ['watchBundleId', 'watchAppRepo', 'ghDispatchRepo', 'ghWorkflowFile', 'pollCron', 'notifyWebhookUrl'] as const;
 
 dashboardRouter.put('/v1/dashboard/settings', requireAdmin, (req, res) => {
   const body = req.body ?? {};

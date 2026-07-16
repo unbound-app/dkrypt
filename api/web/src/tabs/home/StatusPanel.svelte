@@ -46,7 +46,6 @@
         iDevice {health.reachable ? 'online' : 'unreachable'}
       </Badge>
       {#if health.reachable}
-        <Badge variant="secondary">Screen {health.darkEnabled ? 'dark' : 'on'}</Badge>
         <Badge variant={health.testFlightRunning ? 'default' : 'secondary'}>TestFlight {health.testFlightRunning ? 'running' : 'idle'}</Badge>
       {/if}
     {:else}

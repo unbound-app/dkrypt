@@ -12,7 +12,6 @@
 
   let form = $state<SchedulerSettings>({
     watchBundleId: '',
-    watchAppId: '',
     watchAppRepo: '',
     ghDispatchRepo: '',
     ghWorkflowFile: '',
@@ -91,11 +90,8 @@
 </script>
 
 <Card title="Automated watch → GitHub dispatch">
-  <label for="s-watchBundleId" class="mb-1 block text-xs text-muted">Watch bundle ID</label>
+  <label for="s-watchBundleId" class="mb-1 block text-xs text-muted">Watch bundle ID (also drives the TestFlight watch, resolved automatically)</label>
   <Input id="s-watchBundleId" bind:value={form.watchBundleId} />
-
-  <label for="s-watchAppId" class="mt-3 mb-1 block text-xs text-muted">Watch App Store app ID (numeric, optional - enables TestFlight watching)</label>
-  <Input id="s-watchAppId" bind:value={form.watchAppId} placeholder="e.g. 985746746" />
 
   <label for="s-watchAppRepo" class="mt-3 mb-1 block text-xs text-muted">Watch app repo (releases tracked here)</label>
   <Input id="s-watchAppRepo" bind:value={form.watchAppRepo} />

@@ -75,12 +75,15 @@ export interface TestFlightUpdateCheck {
 }
 
 export async function checkForTestFlightUpdate(settings: SchedulerSettings): Promise<TestFlightUpdateCheck> {
-  if (!settings.watchAppId) {
-    return { wouldDispatch: false, reason: 'no TestFlight app ID configured' };
+  if (!settings.watchBundleId) {
+    return { wouldDispatch: false, reason: 'no watch bundle ID configured' };
   }
-  const appId = Number.parseInt(settings.watchAppId, 10);
-  if (!Number.isInteger(appId) || appId <= 0) {
-    return { wouldDispatch: false, reason: 'watchAppId is not a valid app id' };
+
+  let appId: number;
+  try {
+    appId = (await lookupCurrentVersion(settings.watchBundleId)).trackId;
+  } catch (err) {
+    return { wouldDispatch: false, reason: `iTunes lookup failed: ${String(err)}` };
   }
 
   let trains: Awaited<ReturnType<typeof listTrains>>;
@@ -227,8 +230,6 @@ async function tickAppStore(settings: SchedulerSettings): Promise<void> {
 }
 
 async function tickTestFlight(settings: SchedulerSettings): Promise<void> {
-  if (!settings.watchAppId) return;
-
   const check = await checkForTestFlightUpdate(settings);
   if (!check.wouldDispatch || !check.build) {
     if (check.alreadyReleased) {
@@ -254,7 +255,7 @@ async function tickTestFlight(settings: SchedulerSettings): Promise<void> {
 async function tick(): Promise<void> {
   recordSchedulerRun();
   const settings = getEffectiveSettings();
-  log.info('scheduler tick', { bundleId: settings.watchBundleId, appRepo: settings.watchAppRepo, watchAppId: settings.watchAppId });
+  log.info('scheduler tick', { bundleId: settings.watchBundleId, appRepo: settings.watchAppRepo });
 
   await tickAppStore(settings);
   await tickTestFlight(settings);
