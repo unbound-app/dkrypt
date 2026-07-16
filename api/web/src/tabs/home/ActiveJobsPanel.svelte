@@ -9,6 +9,7 @@
   import { statusToBadgeVariant } from '../../lib/components/ui/variants';
   import { fmtDurationApprox } from '../../lib/format';
   import { liveState } from '../../lib/live.svelte';
+  import { scrollFade } from '../../lib/scrollFade';
 
   const jobs = $derived(liveState.overview?.activeJobs ?? []);
   const loaded = $derived(liveState.overview !== null);
@@ -29,7 +30,7 @@
 </script>
 
 <Card title="Active jobs">
-  <div class="overflow-x-auto">
+  <div class="scroll-fade-x overflow-x-auto" use:scrollFade>
     <table class="min-w-[560px]">
       <thead>
         <tr>

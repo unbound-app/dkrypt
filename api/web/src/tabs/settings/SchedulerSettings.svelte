@@ -9,8 +9,17 @@
   import { confirmDialog, showToast } from '../../lib/ui.svelte';
 
   const REPO_RE = /^[\w.-]+\/[\w.-]+$/;
+  const WEBHOOK_URL_RE = /^https?:\/\/.+/;
 
   let form = $state<SchedulerSettings>({
+    watchBundleId: '',
+    watchAppRepo: '',
+    ghDispatchRepo: '',
+    ghWorkflowFile: '',
+    pollCron: '',
+    notifyWebhookUrl: '',
+  });
+  let savedForm = $state<SchedulerSettings>({
     watchBundleId: '',
     watchAppRepo: '',
     ghDispatchRepo: '',
@@ -23,10 +32,12 @@
   let previewResult = $state<UpdateCheck | null>(null);
   let previewing = $state(false);
   let triggering = $state(false);
+  let saving = $state(false);
 
   $effect(() => {
     void fetchSettings().then((s) => {
       form = { ...s };
+      savedForm = { ...s };
     });
   });
 
@@ -46,7 +57,10 @@
   const repoErrors = $derived({
     watchAppRepo: form.watchAppRepo && !REPO_RE.test(form.watchAppRepo) ? 'Expected owner/repo' : '',
     ghDispatchRepo: form.ghDispatchRepo && !REPO_RE.test(form.ghDispatchRepo) ? 'Expected owner/repo' : '',
+    notifyWebhookUrl: form.notifyWebhookUrl && !WEBHOOK_URL_RE.test(form.notifyWebhookUrl) ? 'Expected a full http(s):// URL' : '',
   });
+
+  const hasUnsavedChanges = $derived(JSON.stringify(form) !== JSON.stringify(savedForm));
 
   function wouldDisableScheduler(): boolean {
     if (!liveState.overview?.schedulerEnabled) return false;
@@ -58,15 +72,23 @@
       showToast('Poll cron is not a valid cron expression', 'error');
       return;
     }
-    if (repoErrors.watchAppRepo || repoErrors.ghDispatchRepo) {
-      showToast('Fix the repo fields before saving', 'error');
+    if (repoErrors.watchAppRepo || repoErrors.ghDispatchRepo || repoErrors.notifyWebhookUrl) {
+      showToast('Fix the invalid fields before saving', 'error');
       return;
     }
     if (wouldDisableScheduler()) {
       if (!(await confirmDialog('This will disable the scheduler (a required field is empty). Save anyway?'))) return;
     }
-    const { ok, data } = await saveSettings(form);
-    if (ok) form = { ...data };
+    saving = true;
+    try {
+      const { ok, data } = await saveSettings(form);
+      if (ok) {
+        form = { ...data };
+        savedForm = { ...data };
+      }
+    } finally {
+      saving = false;
+    }
   }
 
   async function runTestWebhook(): Promise<void> {
@@ -141,9 +163,15 @@
     <Input id="s-notifyWebhookUrl" bind:value={form.notifyWebhookUrl} />
     <Button variant="secondary" loading={testingWebhook} onclick={runTestWebhook}>Test</Button>
   </div>
+  {#if repoErrors.notifyWebhookUrl}
+    <div class="mt-1 text-xs text-err">{repoErrors.notifyWebhookUrl}</div>
+  {/if}
 
-  <div class="mt-4 flex flex-wrap gap-2">
-    <Button onclick={save}>Save</Button>
+  <div class="mt-4 flex flex-wrap items-center gap-2">
+    <Button loading={saving} onclick={save}>Save</Button>
+    {#if hasUnsavedChanges}
+      <span class="text-xs text-warn">Unsaved changes</span>
+    {/if}
     <Button variant="secondary" loading={previewing} onclick={runPreview}>{previewing ? 'Checking…' : 'Preview next dispatch'}</Button>
     <Button variant="secondary" loading={triggering} onclick={runTrigger}>{triggering ? 'Triggering…' : 'Trigger dispatch now'}</Button>
   </div>

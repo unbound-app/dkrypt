@@ -10,6 +10,7 @@
   import Card from '../../lib/components/ui/Card.svelte';
   import Dialog from '../../lib/components/ui/Dialog.svelte';
   import Input from '../../lib/components/ui/Input.svelte';
+  import { scrollFade } from '../../lib/scrollFade';
   import { sessionState, VIEWER_PERMISSIONS, type Permissions } from '../../lib/session.svelte';
   import { confirmDialog } from '../../lib/ui.svelte';
 
@@ -112,7 +113,7 @@
   </Card>
 
   <Card title="Allowlist">
-    <div class="overflow-x-auto">
+    <div class="scroll-fade-x overflow-x-auto" use:scrollFade>
       <table class="min-w-[480px]">
         <thead>
           <tr>

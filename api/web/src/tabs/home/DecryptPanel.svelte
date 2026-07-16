@@ -70,6 +70,12 @@
     debouncedSearch(term);
   }
 
+  function clearSearch(): void {
+    term = '';
+    onInput();
+    inputEl?.focus();
+  }
+
   const canDecrypt = $derived(!!sessionState.permissions?.decrypt);
 
   let versionsOpen = $state(false);
@@ -160,13 +166,26 @@
 </script>
 
 <Card title="Decrypt an app">
-  <Input
-    bind:ref={inputEl}
-    bind:value={term}
-    oninput={onInput}
-    onkeydown={onKeydown}
-    placeholder="Search the App Store to decrypt… (press / to focus)"
-  />
+  <div class="relative">
+    <Input
+      bind:ref={inputEl}
+      bind:value={term}
+      oninput={onInput}
+      onkeydown={onKeydown}
+      placeholder="Search the App Store to decrypt… (press / to focus)"
+      class={term ? 'pr-8' : ''}
+    />
+    {#if term}
+      <button
+        class="text-muted hover:text-text absolute top-1/2 right-2.5 -translate-y-1/2 cursor-pointer"
+        onclick={clearSearch}
+        aria-label="Clear search"
+        title="Clear search"
+      >
+        <X class="h-3.5 w-3.5" />
+      </button>
+    {/if}
+  </div>
 
   {#if !term.trim() && recentBundleIdsState.items.length > 0}
     <div class="mt-2.5 flex flex-wrap gap-1.5">

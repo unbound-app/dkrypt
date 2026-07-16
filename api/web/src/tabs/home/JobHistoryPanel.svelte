@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { History } from 'lucide-svelte';
+  import { History, X } from 'lucide-svelte';
   import EmptyState from '../../components/EmptyState.svelte';
   import RelativeTime from '../../components/RelativeTime.svelte';
   import SkeletonRows from '../../components/SkeletonRows.svelte';
@@ -7,10 +7,12 @@
   import Badge from '../../lib/components/ui/Badge.svelte';
   import Button from '../../lib/components/ui/Button.svelte';
   import Card from '../../lib/components/ui/Card.svelte';
+  import Input from '../../lib/components/ui/Input.svelte';
   import { statusToBadgeVariant } from '../../lib/components/ui/variants';
   import { addDecrypt, pushRecentBundleId } from '../../lib/decrypts.svelte';
-  import { fmtSize } from '../../lib/format';
+  import { debounce, fmtSize } from '../../lib/format';
   import { liveState } from '../../lib/live.svelte';
+  import { scrollFade } from '../../lib/scrollFade';
   import { showToast } from '../../lib/ui.svelte';
 
   const PAGE_SIZE = 15;
@@ -21,9 +23,12 @@
   let loadingMore = $state(false);
   let seenIds = new Set<string>();
   let requeueing = $state<Set<string>>(new Set());
+  let searchText = $state('');
+  let activeQuery = $state('');
 
-  async function loadInitial(): Promise<void> {
-    const data = await fetchJobHistory(0, PAGE_SIZE);
+  async function loadInitial(query: string): Promise<void> {
+    loaded = false;
+    const data = await fetchJobHistory(0, PAGE_SIZE, query || undefined);
     entries = data.history;
     total = data.total;
     seenIds = new Set(entries.map((e) => e.id));
@@ -33,7 +38,7 @@
   async function loadMore(): Promise<void> {
     loadingMore = true;
     try {
-      const data = await fetchJobHistory(entries.length, PAGE_SIZE);
+      const data = await fetchJobHistory(entries.length, PAGE_SIZE, activeQuery || undefined);
       const additions = data.history.filter((e) => !seenIds.has(e.id));
       for (const e of additions) seenIds.add(e.id);
       entries = [...entries, ...additions];
@@ -43,13 +48,31 @@
     }
   }
 
+  const debouncedSearch = debounce((query: string) => {
+    activeQuery = query;
+    void loadInitial(query);
+  }, 300);
+
+  let hasSearched = false;
+
   $effect(() => {
-    void loadInitial();
+    const query = searchText.trim();
+    if (!hasSearched) {
+      hasSearched = true;
+      activeQuery = query;
+      void loadInitial(query);
+    } else {
+      debouncedSearch(query);
+    }
   });
+
+  function clearSearch(): void {
+    searchText = '';
+  }
 
   $effect(() => {
     for (const h of liveState.historyAdditions) {
-      if (!seenIds.has(h.id)) {
+      if (!seenIds.has(h.id) && (!activeQuery || h.bundleId.toLowerCase().includes(activeQuery.toLowerCase()))) {
         entries = [h, ...entries];
         seenIds.add(h.id);
         total += 1;
@@ -102,10 +125,24 @@
 </script>
 
 <Card title="Job history">
+  <div class="relative mb-3.5 max-w-xs">
+    <Input placeholder="Search by bundle ID…" bind:value={searchText} class="pr-8" />
+    {#if searchText}
+      <button
+        class="text-muted hover:text-text absolute top-1/2 right-2 -translate-y-1/2 cursor-pointer"
+        onclick={clearSearch}
+        aria-label="Clear search"
+        title="Clear search"
+      >
+        <X class="h-3.5 w-3.5" />
+      </button>
+    {/if}
+  </div>
+
   {#if loaded && entries.length === 0}
-    <EmptyState icon={History} message="No decrypts yet." />
+    <EmptyState icon={History} message={activeQuery ? `No decrypts match "${activeQuery}".` : 'No decrypts yet.'} />
   {:else}
-    <div class="max-h-[600px] overflow-auto">
+    <div class="scroll-fade-x max-h-[600px] overflow-auto" use:scrollFade>
       <table class="min-w-[640px]">
         <thead>
           <tr>

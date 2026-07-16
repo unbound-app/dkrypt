@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ScrollText } from 'lucide-svelte';
+  import { ScrollText, X } from 'lucide-svelte';
   import CopyButton from '../components/CopyButton.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import RelativeTime from '../components/RelativeTime.svelte';
@@ -119,7 +119,19 @@
       {/each}
     </div>
     <Select items={LEVEL_OPTIONS} bind:value={levelFilter} class="w-36" />
-    <Input class="w-44" placeholder="Search logs…" bind:value={searchText} />
+    <div class="relative w-44">
+      <Input placeholder="Search logs…" bind:value={searchText} class={searchText ? 'pr-8' : ''} />
+      {#if searchText}
+        <button
+          class="text-muted hover:text-text absolute top-1/2 right-2.5 -translate-y-1/2 cursor-pointer"
+          onclick={() => (searchText = '')}
+          aria-label="Clear search"
+          title="Clear search"
+        >
+          <X class="h-3.5 w-3.5" />
+        </button>
+      {/if}
+    </div>
     <label class="ml-auto flex items-center gap-1.5 text-xs text-muted">
       <input type="checkbox" bind:checked={autoScroll} />
       Auto-scroll to newest

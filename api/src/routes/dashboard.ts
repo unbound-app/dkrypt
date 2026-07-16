@@ -116,7 +116,8 @@ dashboardRouter.get('/v1/dashboard/events', (req, res) => {
 dashboardRouter.get('/v1/dashboard/jobs', (req, res) => {
   const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit ?? '15'), 10) || 15, 1), 100);
   const offset = Math.max(Number.parseInt(String(req.query.offset ?? '0'), 10) || 0, 0);
-  const { entries, total } = getJobHistoryPage(offset, limit);
+  const q = typeof req.query.q === 'string' && req.query.q.trim() ? req.query.q.trim().slice(0, 200) : undefined;
+  const { entries, total } = getJobHistoryPage(offset, limit, q);
   res.json({ history: entries, total });
 });
 

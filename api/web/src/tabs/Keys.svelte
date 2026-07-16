@@ -24,6 +24,7 @@
   import Select from '../lib/components/ui/Select.svelte';
   import { statusToBadgeVariant } from '../lib/components/ui/variants';
   import { fmtUntil } from '../lib/format';
+  import { scrollFade } from '../lib/scrollFade';
   import { sessionState } from '../lib/session.svelte';
   import { confirmDialog, showToast } from '../lib/ui.svelte';
 
@@ -205,7 +206,7 @@
   </Card>
 
   <Card title="My keys">
-    <div class="overflow-x-auto">
+    <div class="scroll-fade-x overflow-x-auto" use:scrollFade>
       <table class="min-w-[480px]">
         <thead>
           <tr>
@@ -257,7 +258,7 @@
 
   {#if isKeyManager}
     <Card title="Pending requests">
-      <div class="overflow-x-auto">
+      <div class="scroll-fade-x overflow-x-auto" use:scrollFade>
         <table class="min-w-[480px]">
           <thead>
             <tr>
@@ -305,7 +306,7 @@
         {/if}
       {/snippet}
       <Select items={STATUS_OPTIONS} bind:value={statusFilter} class="mb-3 w-44" />
-      <div class="overflow-x-auto">
+      <div class="scroll-fade-x overflow-x-auto" use:scrollFade>
         <table class="min-w-[620px]">
           <thead>
             <tr>

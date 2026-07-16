@@ -173,8 +173,9 @@ export function fetchDeviceHealth(): Promise<DeviceHealth> {
   return apiJson('/v1/dashboard/device/health');
 }
 
-export function fetchJobHistory(offset: number, limit: number): Promise<{ history: JobHistoryEntry[]; total: number }> {
-  return apiJson(`/v1/dashboard/jobs?offset=${offset}&limit=${limit}`);
+export function fetchJobHistory(offset: number, limit: number, q?: string): Promise<{ history: JobHistoryEntry[]; total: number }> {
+  const query = q ? `&q=${encodeURIComponent(q)}` : '';
+  return apiJson(`/v1/dashboard/jobs?offset=${offset}&limit=${limit}${query}`);
 }
 
 export function fetchLogs(): Promise<{ logs: LogEntry[] }> {

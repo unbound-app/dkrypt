@@ -384,8 +384,11 @@ export function recordJobHistory(entry: JobHistoryEntry): void {
   emitHistoryAdded(entry);
 }
 
-export function getJobHistoryPage(offset: number, limit: number): { entries: JobHistoryEntry[]; total: number } {
-  return { entries: state.jobHistory.slice(offset, offset + limit), total: state.jobHistory.length };
+export function getJobHistoryPage(offset: number, limit: number, bundleIdSearch?: string): { entries: JobHistoryEntry[]; total: number } {
+  const filtered = bundleIdSearch
+    ? state.jobHistory.filter((e) => e.bundleId.toLowerCase().includes(bundleIdSearch.toLowerCase()))
+    : state.jobHistory;
+  return { entries: filtered.slice(offset, offset + limit), total: filtered.length };
 }
 
 export function getAverageJobDurationMs(bundleId: string): number | undefined {

@@ -7,19 +7,23 @@
 
   const overview = $derived(liveState.overview);
 
-  let volume = $state<number[] | null>(null);
+  function fmtDayLabel(dateStr: string): string {
+    return new Date(dateStr).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  }
+
+  let volume = $state<{ label: string; value: number }[] | null>(null);
   let health = $state<DeviceHealth | null>(null);
 
   $effect(() => {
     void fetchJobVolume(14).then((r) => {
-      volume = r.days.map((d) => d.count);
+      volume = r.days.map((d) => ({ label: fmtDayLabel(d.date), value: d.count }));
     });
   });
 
   $effect(() => {
     if (liveState.historyAdditions.length > 0) {
       void fetchJobVolume(14).then((r) => {
-        volume = r.days.map((d) => d.count);
+        volume = r.days.map((d) => ({ label: fmtDayLabel(d.date), value: d.count }));
       });
     }
   });
@@ -31,7 +35,7 @@
     return () => clearInterval(interval);
   });
 
-  const total = $derived(volume?.reduce((a, b) => a + b, 0) ?? 0);
+  const total = $derived(volume?.reduce((a, d) => a + d.value, 0) ?? 0);
   const activeJobs = $derived(overview?.activeJobs.length ?? 0);
 </script>
 
@@ -69,7 +73,7 @@
   {#if volume}
     <div class="border-border mt-1 border-t pt-3">
       <div class="mb-1.5 text-xs text-muted">{total} decrypt{total === 1 ? '' : 's'} · last 14 days</div>
-      <Sparkline data={volume} width={280} />
+      <Sparkline data={volume} width={280} ariaLabel="{total} decrypts over the last 14 days" />
     </div>
   {/if}
 </Card>
