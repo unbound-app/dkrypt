@@ -117,9 +117,7 @@ async function waitForBridgeReady(conn: Client, timeoutMs = 20_000): Promise<voi
     try {
       const response = await sendBridgeRequestRaw(conn, { action: 'status' }, 3_000);
       if (response?.hasInstaller && response?.hasCatalogManager) return;
-    } catch {
-      // not ready yet, keep polling
-    }
+    } catch {}
     await new Promise((r) => setTimeout(r, 1_000));
   }
   throw new Error('tfauto bridge did not become ready within timeout');
@@ -206,12 +204,12 @@ async function readInstalledBundleVersion(conn: Client, infoPlistPath: string): 
   return match?.[1];
 }
 
-/**
- * Installs a specific TestFlight build and waits for it to actually land on disk
- * (the bridge's completion callback only signals the install request was accepted,
- * not that the download+apply finished - see project memory for why).
- */
+const SAFE_BUNDLE_ID_RE = /^[A-Za-z0-9.-]{1,200}$/;
+
 export async function installBuild(appId: number, build: TFBuild, waitTimeoutMs = 5 * 60_000): Promise<void> {
+  if (!SAFE_BUNDLE_ID_RE.test(build.bundleId)) {
+    throw new Error(`refusing to install build with unsafe bundleId: ${JSON.stringify(build.bundleId)}`);
+  }
   await ensureTestFlightRunning();
   await withSSH(async (conn) => {
     await sendBridgeRequestRaw(conn, { action: 'install', appId, build });

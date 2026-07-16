@@ -27,7 +27,6 @@ export async function listReleaseVersions(repo: string): Promise<Set<string>> {
   return new Set(releases.map((r) => normalizeVersion(r.tag_name)));
 }
 
-/** Raw, unnormalized tag names - needed for exact `v{shortVersion}_{buildNumber}` TestFlight tag matching. */
 export async function listReleaseTagNames(repo: string): Promise<Set<string>> {
   const releases = await listReleases(repo);
   return new Set(releases.map((r) => r.tag_name));
