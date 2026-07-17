@@ -108,6 +108,7 @@ export interface AppleAuthAlert {
 }
 
 export interface SchedulerRunOutcome {
+  ok: boolean;
   triggered: boolean;
   reason: string;
   runUrl?: string;
@@ -288,6 +289,31 @@ export function fetchJobVolume(days = 14): Promise<{ days: { date: string; count
   return apiJson(`/v1/dashboard/jobs/volume?days=${days}`);
 }
 
+export interface InsightsAppStats {
+  bundleId: string;
+  totalRuns: number;
+  doneCount: number;
+  failedCount: number;
+  successRate: number;
+  totalSizeBytes: number;
+}
+
+export interface InsightsSummary {
+  totalRuns: number;
+  doneCount: number;
+  failedCount: number;
+  successRate: number;
+  totalSizeBytes: number;
+  manualCount: number;
+  schedulerCount: number;
+  topApps: InsightsAppStats[];
+  trend: { date: string; count: number }[];
+}
+
+export function fetchInsights(): Promise<InsightsSummary> {
+  return apiJson('/v1/dashboard/insights');
+}
+
 export function searchApps(term: string): Promise<{ results: AppStoreSearchResult[] } | { error: string }> {
   return apiJson(`/v1/dashboard/search?q=${encodeURIComponent(term)}`);
 }
@@ -413,6 +439,7 @@ export function testWebhook(url?: string): Promise<{ ok: boolean; data: { ok: bo
 }
 
 export interface TestFlightUpdateCheck {
+  ok: boolean;
   appId?: number;
   latestTag?: string;
   alreadyReleased?: boolean;
@@ -421,6 +448,7 @@ export interface TestFlightUpdateCheck {
 }
 
 export interface UpdateCheck {
+  ok: boolean;
   itunesVersion?: string;
   normalizedVersion?: string;
   alreadyReleased?: boolean;

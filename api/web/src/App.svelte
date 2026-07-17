@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Moon, Rows2, Rows3, Sun } from 'lucide-svelte';
+  import { Moon, Monitor, Rows2, Rows3, Sun } from 'lucide-svelte';
   import { Toaster } from 'svelte-sonner';
   import AlertBanner from './components/AlertBanner.svelte';
   import CommandPalette from './components/CommandPalette.svelte';
@@ -15,6 +15,7 @@
   import Dialog from './lib/components/ui/Dialog.svelte';
   import Tabs from './lib/components/ui/Tabs.svelte';
   import { buttonVariants } from './lib/components/ui/variants';
+  import { KOFI_URL, REPO_URL } from './lib/constants';
   import { myDecryptsState } from './lib/decrypts.svelte';
   import { connectLive, disconnectLive, liveState } from './lib/live.svelte';
   import {
@@ -39,14 +40,14 @@
     setDensity,
     setTheme,
     tabState,
+    themePrefState,
     themeState,
     type TabId,
   } from './lib/ui.svelte';
 
-  const REPO_URL = 'https://github.com/unbound-app/dkrypt';
-  const KOFI_URL = 'https://ko-fi.com/castdrian';
   import Docs from './tabs/Docs.svelte';
   import Home from './tabs/Home.svelte';
+  import Insights from './tabs/Insights.svelte';
   import Keys from './tabs/Keys.svelte';
   import Logs from './tabs/Logs.svelte';
   import Settings from './tabs/Settings.svelte';
@@ -69,6 +70,7 @@
     { id: 'home', label: 'Home' },
     { id: 'keys', label: 'API Keys', requires: ['decrypt', 'viewApiKeys', 'approveApiKeys', 'revokeApiKeys'] },
     { id: 'logs', label: 'Logs', requires: ['viewLogs'] },
+    { id: 'insights', label: 'Insights' },
     { id: 'docs', label: 'Docs' },
     {
       id: 'settings',
@@ -145,8 +147,10 @@
     }
   }
 
-  function toggleTheme(): void {
-    const next = themeState.value === 'light' ? 'dark' : 'light';
+  const THEME_CYCLE = ['dark', 'light', 'auto'] as const;
+
+  function cycleTheme(): void {
+    const next = THEME_CYCLE[(THEME_CYCLE.indexOf(themePrefState.value) + 1) % THEME_CYCLE.length];
     setTheme(next);
     void pushThemePref(next);
   }
@@ -160,7 +164,7 @@
 
 <svelte:window onkeydown={onKeydown} />
 
-<Toaster theme={themeState.value ?? 'dark'} richColors position="bottom-right" />
+<Toaster theme={themeState.value} richColors position="bottom-right" />
 
 {#if !sessionState.loggedIn}
   <Login />
@@ -199,11 +203,19 @@
             />
           </svg>
         </a>
-        <Button variant="secondary" size="icon" onclick={toggleTheme} aria-label="Toggle theme" title="Toggle theme">
-          {#if themeState.value === 'light'}
-            <Moon class="h-4 w-4" />
-          {:else}
+        <Button
+          variant="secondary"
+          size="icon"
+          onclick={cycleTheme}
+          aria-label="Theme: {themePrefState.value} (click to cycle)"
+          title="Theme: {themePrefState.value} (click to cycle)"
+        >
+          {#if themePrefState.value === 'auto'}
+            <Monitor class="h-4 w-4" />
+          {:else if themePrefState.value === 'light'}
             <Sun class="h-4 w-4" />
+          {:else}
+            <Moon class="h-4 w-4" />
           {/if}
         </Button>
         <Button
@@ -249,6 +261,9 @@
           <Logs />
         </div>
       {/if}
+      <div class:hidden={tabState.active !== 'insights'}>
+        <Insights />
+      </div>
       <div class:hidden={tabState.active !== 'docs'}>
         <Docs />
       </div>

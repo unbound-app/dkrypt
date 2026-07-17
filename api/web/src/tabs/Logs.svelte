@@ -10,6 +10,7 @@
   import Input from '../lib/components/ui/Input.svelte';
   import Select from '../lib/components/ui/Select.svelte';
   import type { BadgeVariant } from '../lib/components/ui/variants';
+  import { csvCell, downloadBlob } from '../lib/format';
   import { liveState } from '../lib/live.svelte';
   import { cn } from '../lib/utils';
 
@@ -109,21 +110,6 @@
     }
     return merged;
   });
-
-  function downloadBlob(content: string, filename: string, type: string): void {
-    const blob = new Blob([content], { type });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
-  function csvCell(value: unknown): string {
-    const str = value === undefined || value === null ? '' : String(value);
-    return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
-  }
 
   function exportCsv(): void {
     const rows = ['ts,level,scope,message,meta'];

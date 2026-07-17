@@ -14,8 +14,8 @@
     pushRecentBundleId,
     recentBundleIdsState,
     removeRecentBundleId,
-    starredBundleIdsState,
-    toggleStarredBundleId,
+    starredAppsState,
+    toggleStarredApp,
   } from '../../lib/decrypts.svelte';
   import { debounce } from '../../lib/format';
   import { liveState } from '../../lib/live.svelte';
@@ -180,6 +180,17 @@
     void runSearch(bundleId);
   }
 
+  // Starred apps already carry the full search result - no need to re-run a live search, just
+  // show that one row directly so Decrypt/Version/TestFlight are immediately clickable.
+  function showStarredApp(app: AppStoreSearchResult): void {
+    searchToken++;
+    debouncedSearch.cancel();
+    loading = false;
+    results = [app];
+    searched = true;
+    highlighted = -1;
+  }
+
   export function focusSearch(): void {
     inputEl?.focus();
   }
@@ -214,15 +225,15 @@
     {/if}
   </div>
 
-  {#if !term.trim() && starredBundleIdsState.items.length > 0}
+  {#if !term.trim() && starredAppsState.items.length > 0}
     <div class="mt-2.5 flex flex-wrap gap-1.5">
-      {#each starredBundleIdsState.items as bundleId (bundleId)}
-        <span class="border-border text-muted hover:text-text hover:border-accent inline-flex items-center gap-1 rounded-full border pr-1 pl-2.5 py-1 font-mono text-[11.5px]">
-          <button class="cursor-pointer" onclick={() => pickRecent(bundleId)}>{bundleId}</button>
+      {#each starredAppsState.items as app (app.bundleId)}
+        <span class="border-border text-muted hover:text-text hover:border-accent inline-flex items-center gap-1 rounded-full border pr-1 pl-2.5 py-1 text-[12px]">
+          <button class="cursor-pointer" onclick={() => showStarredApp(app)} title={app.bundleId}>{app.trackName}</button>
           <button
             class="text-warn hover:text-err cursor-pointer rounded-full p-0.5"
-            onclick={() => toggleStarredBundleId(bundleId)}
-            aria-label="Unstar {bundleId}"
+            onclick={() => toggleStarredApp(app)}
+            aria-label="Unstar {app.trackName}"
             title="Unstar"
           >
             <Star class="h-3 w-3" fill="currentColor" />
@@ -271,7 +282,7 @@
             <div class="flex items-center gap-1.5">
               <button
                 class={cn('cursor-pointer rounded-md p-1.5', isStarredBundleId(r.bundleId) ? 'text-warn' : 'text-muted hover:text-text')}
-                onclick={() => toggleStarredBundleId(r.bundleId)}
+                onclick={() => toggleStarredApp(r)}
                 aria-label={isStarredBundleId(r.bundleId) ? `Unstar ${r.bundleId}` : `Star ${r.bundleId}`}
                 title={isStarredBundleId(r.bundleId) ? 'Unstar' : 'Star'}
               >

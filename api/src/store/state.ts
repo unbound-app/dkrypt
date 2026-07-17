@@ -199,7 +199,7 @@ interface AppleAuthAlert {
 }
 
 export interface UserPrefs {
-  theme?: 'dark' | 'light';
+  theme?: 'dark' | 'light' | 'auto';
   density?: 'comfortable' | 'compact';
 }
 
@@ -215,6 +215,7 @@ export interface AuditLogEntry {
 }
 
 export interface SchedulerRunOutcome {
+  ok: boolean;
   triggered: boolean;
   reason: string;
   runUrl?: string;
@@ -797,6 +798,67 @@ export function getDailyVolume(days: number): { date: string; count: number }[] 
     if (buckets.has(key)) buckets.set(key, (buckets.get(key) ?? 0) + 1);
   }
   return [...buckets.entries()].map(([date, count]) => ({ date, count }));
+}
+
+export interface InsightsAppStats {
+  bundleId: string;
+  totalRuns: number;
+  doneCount: number;
+  failedCount: number;
+  successRate: number;
+  totalSizeBytes: number;
+}
+
+export interface InsightsSummary {
+  totalRuns: number;
+  doneCount: number;
+  failedCount: number;
+  successRate: number;
+  totalSizeBytes: number;
+  manualCount: number;
+  schedulerCount: number;
+  topApps: InsightsAppStats[];
+  trend: { date: string; count: number }[];
+}
+
+export function getInsightsSummary(topAppsLimit = 5, trendDays = 14): InsightsSummary {
+  const runs = state.jobHistory;
+  const doneCount = runs.filter((j) => j.status === 'done').length;
+  const failedCount = runs.filter((j) => j.status === 'failed').length;
+  const totalSizeBytes = runs.reduce((sum, j) => sum + (j.sizeBytes ?? 0), 0);
+
+  const byBundle = new Map<string, InsightsAppStats>();
+  for (const j of runs) {
+    const entry = byBundle.get(j.bundleId) ?? {
+      bundleId: j.bundleId,
+      totalRuns: 0,
+      doneCount: 0,
+      failedCount: 0,
+      successRate: 0,
+      totalSizeBytes: 0,
+    };
+    entry.totalRuns += 1;
+    if (j.status === 'done') entry.doneCount += 1;
+    else entry.failedCount += 1;
+    entry.totalSizeBytes += j.sizeBytes ?? 0;
+    byBundle.set(j.bundleId, entry);
+  }
+  const topApps = [...byBundle.values()]
+    .map((a) => ({ ...a, successRate: a.totalRuns > 0 ? a.doneCount / a.totalRuns : 0 }))
+    .sort((a, b) => b.totalRuns - a.totalRuns)
+    .slice(0, topAppsLimit);
+
+  return {
+    totalRuns: runs.length,
+    doneCount,
+    failedCount,
+    successRate: runs.length > 0 ? doneCount / runs.length : 0,
+    totalSizeBytes,
+    manualCount: runs.filter((j) => j.source === 'manual').length,
+    schedulerCount: runs.filter((j) => j.source === 'scheduler').length,
+    topApps,
+    trend: getDailyVolume(trendDays),
+  };
 }
 
 export function recordSchedulerRun(): void {

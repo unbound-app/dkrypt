@@ -72,15 +72,19 @@
           {#each jobs as j (j.id)}
             <tr>
               <td data-label="Bundle ID" class="max-w-40 truncate" title={j.bundleId}>{j.bundleId}</td>
-              <td data-label="Version" class="max-w-32 truncate" title={j.versionLabel}>
-                {#if j.versionLabel}
-                  {j.versionLabel}
-                {:else}
-                  <span class="text-muted">-</span>
-                {/if}
-                {#if j.testflight}
-                  <Badge variant="secondary">TF</Badge>
-                {/if}
+              <td data-label="Version" class="max-w-32">
+                <div class="flex min-w-0 items-center gap-1" title={j.versionLabel}>
+                  <span class="truncate">
+                    {#if j.versionLabel}
+                      {j.versionLabel}
+                    {:else}
+                      <span class="text-muted">-</span>
+                    {/if}
+                  </span>
+                  {#if j.testflight}
+                    <Badge variant="secondary" class="shrink-0">TF</Badge>
+                  {/if}
+                </div>
               </td>
               <td data-label="Source">{j.source}</td>
               <td data-label="Queued by" class="text-muted">{j.queuedBy ?? '-'}</td>

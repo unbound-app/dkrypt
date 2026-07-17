@@ -1,13 +1,27 @@
 <script lang="ts">
+  import { Circle, CircleCheck, TriangleAlert } from 'lucide-svelte';
   import RelativeTime from '../../components/RelativeTime.svelte';
   import Sparkline from '../../components/Sparkline.svelte';
-  import { fetchDeviceHealth, fetchDeviceHealthHistory, fetchJobVolume, type DeviceHealth, type HourlyHealthBucket } from '../../lib/api';
+  import { fetchDeviceHealth, fetchDeviceHealthHistory, fetchJobVolume, type DeviceHealth, type HourlyHealthBucket, type SchedulerRunOutcome } from '../../lib/api';
   import Badge from '../../lib/components/ui/Badge.svelte';
   import Card from '../../lib/components/ui/Card.svelte';
   import { fmtBytesGB, fmtUntil } from '../../lib/format';
   import { liveState } from '../../lib/live.svelte';
 
   const overview = $derived(liveState.overview);
+
+  type RunState = 'dispatched' | 'upToDate' | 'failed';
+
+  function runState(outcome: SchedulerRunOutcome): RunState {
+    if (!outcome.ok) return 'failed';
+    return outcome.triggered ? 'dispatched' : 'upToDate';
+  }
+
+  const RUN_STATE_LABEL: Record<RunState, string> = {
+    dispatched: 'Dispatched',
+    upToDate: 'Up to date',
+    failed: 'Check failed',
+  };
 
   // Neither the disk gauge nor the "next run in" label update on their own between overview
   // pushes (the server only sends one on job/history changes) - this tick forces a re-render.
@@ -18,7 +32,11 @@
   });
   const nextRunLabel = $derived.by(() => {
     void now;
-    return overview?.nextSchedulerRunAt ? fmtUntil(overview.nextSchedulerRunAt) : undefined;
+    if (!overview?.nextSchedulerRunAt) return undefined;
+    // A brief "in the past" window is expected right as a tick fires and before the resulting
+    // overview refresh arrives - "expired" reads like something is broken, so soften it.
+    if (overview.nextSchedulerRunAt <= Date.now()) return 'due any moment';
+    return fmtUntil(overview.nextSchedulerRunAt);
   });
 
   const diskColor = $derived.by(() => {
@@ -135,7 +153,7 @@
     {#if nextRunLabel}
       <div class="border-border flex items-center gap-2.5 border-t py-2">
         <dt class="w-24 shrink-0 text-xs text-muted">Next run</dt>
-        <dd class="min-w-0 flex-1 truncate text-[13px]">in {nextRunLabel}</dd>
+        <dd class="min-w-0 flex-1 truncate text-[13px]">{nextRunLabel === 'due any moment' ? nextRunLabel : `in ${nextRunLabel}`}</dd>
       </div>
     {/if}
   </dl>
@@ -158,28 +176,39 @@
   {/if}
   {#if overview?.schedulerRunHistory?.length}
     <div class="border-border mt-3 border-t pt-3">
-      <div class="mb-1.5 text-xs text-muted">Last {overview.schedulerRunHistory.length} scheduler runs</div>
-      <div class="flex flex-col gap-1">
+      <div class="mb-1.5 text-xs text-muted">Recent scheduler checks</div>
+      <div class="flex flex-col gap-1.5">
         {#each overview.schedulerRunHistory as run (run.ts)}
-          <div class="flex items-center gap-1.5 text-xs">
-            <span class="w-16 shrink-0 text-muted"><RelativeTime ms={run.ts} /></span>
-            {#if run.appStore.runUrl}
-              <a href={run.appStore.runUrl} target="_blank" rel="noopener noreferrer" title="{run.appStore.reason} - view run on GitHub">
-                <Badge variant="default" class="hover:opacity-80">App Store ↗</Badge>
-              </a>
-            {:else}
-              <Badge variant={run.appStore.triggered ? 'default' : 'secondary'} title={run.appStore.reason}>App Store</Badge>
-            {/if}
-            {#if run.testflight.runUrl}
-              <a href={run.testflight.runUrl} target="_blank" rel="noopener noreferrer" title="{run.testflight.reason} - view run on GitHub">
-                <Badge variant="default" class="hover:opacity-80">TestFlight ↗</Badge>
-              </a>
-            {:else}
-              <Badge variant={run.testflight.triggered ? 'default' : 'secondary'} title={run.testflight.reason}>TestFlight</Badge>
-            {/if}
+          <div class="border-border rounded-md border px-2.5 py-2 text-xs">
+            <div class="mb-1 text-muted"><RelativeTime ms={run.ts} /></div>
+            <div class="flex flex-col gap-1">
+              {@render sourceRow('App Store', run.appStore)}
+              {@render sourceRow('TestFlight', run.testflight)}
+            </div>
           </div>
         {/each}
       </div>
     </div>
   {/if}
 </Card>
+
+{#snippet sourceRow(label: string, outcome: SchedulerRunOutcome)}
+  {@const state = runState(outcome)}
+  <div class="flex items-center gap-1.5">
+    {#if state === 'dispatched'}
+      <CircleCheck class="text-ok h-3.5 w-3.5 shrink-0" />
+    {:else if state === 'failed'}
+      <TriangleAlert class="text-err h-3.5 w-3.5 shrink-0" />
+    {:else}
+      <Circle class="text-muted h-3.5 w-3.5 shrink-0" />
+    {/if}
+    <span class="text-muted w-16 shrink-0">{label}</span>
+    {#if outcome.runUrl}
+      <a href={outcome.runUrl} target="_blank" rel="noopener noreferrer" class="hover:underline" title="{outcome.reason} - view run on GitHub">
+        Dispatched ↗
+      </a>
+    {:else}
+      <span class="truncate" title={outcome.reason}>{RUN_STATE_LABEL[state]}</span>
+    {/if}
+  </div>
+{/snippet}

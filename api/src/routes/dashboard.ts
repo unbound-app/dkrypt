@@ -41,6 +41,7 @@ import {
   getDeviceHealthHourlyBuckets,
   getDeviceUptimePercent,
   getEffectiveSettings,
+  getInsightsSummary,
   getJobHistoryPage,
   getLastSchedulerRunAt,
   getSchedulerConfigIssues,
@@ -212,6 +213,12 @@ dashboardRouter.get('/v1/dashboard/jobs/stats/:bundleId', (req, res) => {
 dashboardRouter.get('/v1/dashboard/jobs/volume', (req, res) => {
   const days = Math.min(Math.max(Number.parseInt(String(req.query.days ?? '14'), 10) || 14, 1), 90);
   res.json({ days: getDailyVolume(days) });
+});
+
+dashboardRouter.get('/v1/dashboard/insights', (req, res) => {
+  const topAppsLimit = Math.min(Math.max(Number.parseInt(String(req.query.topApps ?? '5'), 10) || 5, 1), 25);
+  const trendDays = Math.min(Math.max(Number.parseInt(String(req.query.trendDays ?? '14'), 10) || 14, 1), 90);
+  res.json(getInsightsSummary(topAppsLimit, trendDays));
 });
 
 const BUNDLE_ID_RE = /^[A-Za-z0-9.-]{3,200}$/;
@@ -643,8 +650,8 @@ dashboardRouter.get('/v1/dashboard/me/prefs', (_req, res) => {
 
 dashboardRouter.put('/v1/dashboard/me/prefs', (req, res) => {
   const body = req.body ?? {};
-  const patch: { theme?: 'dark' | 'light'; density?: 'comfortable' | 'compact' } = {};
-  if (body.theme === 'dark' || body.theme === 'light') patch.theme = body.theme;
+  const patch: { theme?: 'dark' | 'light' | 'auto'; density?: 'comfortable' | 'compact' } = {};
+  if (body.theme === 'dark' || body.theme === 'light' || body.theme === 'auto') patch.theme = body.theme;
   if (body.density === 'comfortable' || body.density === 'compact') patch.density = body.density;
   res.json(updateUserPrefs(res.locals.session.sub, patch));
 });

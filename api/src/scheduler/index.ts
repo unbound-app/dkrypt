@@ -1,5 +1,6 @@
 import cron from 'node-cron';
 import { config } from '../config.js';
+import { emitJobsChanged } from '../events.js';
 import type { Job } from '../jobs/types.js';
 import { enqueueDecryptJob, reclaimJobFile, waitForJob } from '../jobs/store.js';
 import { scopedLogger } from '../logger.js';
@@ -28,6 +29,7 @@ function sleep(ms: number): Promise<void> {
 const SCHEDULER_JOB_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 
 export interface UpdateCheck {
+  ok: boolean;
   itunesVersion?: string;
   normalizedVersion?: string;
   alreadyReleased?: boolean;
@@ -40,7 +42,7 @@ export async function checkForUpdate(settings: SchedulerSettings): Promise<Updat
   try {
     itunesVersion = (await lookupCurrentVersion(settings.watchBundleId)).version;
   } catch (err) {
-    return { wouldDispatch: false, reason: `iTunes lookup failed: ${String(err)}` };
+    return { ok: false, wouldDispatch: false, reason: `iTunes lookup failed: ${String(err)}` };
   }
 
   const normalizedVersion = normalizeVersion(itunesVersion);
@@ -49,12 +51,13 @@ export async function checkForUpdate(settings: SchedulerSettings): Promise<Updat
   try {
     releaseVersions = await listReleaseVersions(settings.watchAppRepo);
   } catch (err) {
-    return { itunesVersion, normalizedVersion, wouldDispatch: false, reason: `failed to list releases: ${String(err)}` };
+    return { ok: false, itunesVersion, normalizedVersion, wouldDispatch: false, reason: `failed to list releases: ${String(err)}` };
   }
 
   const alreadyReleased = [...releaseVersions].some((v) => compareVersions(v, normalizedVersion) === 0);
   if (alreadyReleased) {
     return {
+      ok: true,
       itunesVersion,
       normalizedVersion,
       alreadyReleased: true,
@@ -64,6 +67,7 @@ export async function checkForUpdate(settings: SchedulerSettings): Promise<Updat
   }
 
   return {
+    ok: true,
     itunesVersion,
     normalizedVersion,
     alreadyReleased: false,
@@ -73,6 +77,7 @@ export async function checkForUpdate(settings: SchedulerSettings): Promise<Updat
 }
 
 export interface TestFlightUpdateCheck {
+  ok: boolean;
   appId?: number;
   latestTag?: string;
   build?: TFBuild;
@@ -83,21 +88,21 @@ export interface TestFlightUpdateCheck {
 
 export async function checkForTestFlightUpdate(settings: SchedulerSettings): Promise<TestFlightUpdateCheck> {
   if (!settings.watchBundleId) {
-    return { wouldDispatch: false, reason: 'no watch bundle ID configured' };
+    return { ok: true, wouldDispatch: false, reason: 'no watch bundle ID configured' };
   }
 
   let appId: number;
   try {
     appId = (await lookupCurrentVersion(settings.watchBundleId)).trackId;
   } catch (err) {
-    return { wouldDispatch: false, reason: `iTunes lookup failed: ${String(err)}` };
+    return { ok: false, wouldDispatch: false, reason: `iTunes lookup failed: ${String(err)}` };
   }
 
   let trains: Awaited<ReturnType<typeof listTrains>>;
   try {
     trains = await listTrains(appId);
   } catch (err) {
-    return { appId, wouldDispatch: false, reason: `TestFlight trains lookup failed: ${String(err)}` };
+    return { ok: false, appId, wouldDispatch: false, reason: `TestFlight trains lookup failed: ${String(err)}` };
   }
 
   let latestBuild: TFBuild | undefined;
@@ -117,7 +122,7 @@ export async function checkForTestFlightUpdate(settings: SchedulerSettings): Pro
   }
 
   if (!latestBuild) {
-    return { appId, wouldDispatch: false, reason: 'no TestFlight builds found for this app' };
+    return { ok: true, appId, wouldDispatch: false, reason: 'no TestFlight builds found for this app' };
   }
 
   const latestTag = `v${latestBuild.cfBundleShortVersion}_${latestBuild.cfBundleVersion}`;
@@ -126,11 +131,12 @@ export async function checkForTestFlightUpdate(settings: SchedulerSettings): Pro
   try {
     tagNames = await listReleaseTagNames(settings.watchAppRepo);
   } catch (err) {
-    return { appId, latestTag, build: latestBuild, wouldDispatch: false, reason: `failed to list releases: ${String(err)}` };
+    return { ok: false, appId, latestTag, build: latestBuild, wouldDispatch: false, reason: `failed to list releases: ${String(err)}` };
   }
 
   if (tagNames.has(latestTag)) {
     return {
+      ok: true,
       appId,
       latestTag,
       build: latestBuild,
@@ -141,6 +147,7 @@ export async function checkForTestFlightUpdate(settings: SchedulerSettings): Pro
   }
 
   return {
+    ok: true,
     appId,
     latestTag,
     build: latestBuild,
@@ -182,7 +189,7 @@ async function decryptAndDispatch(
   settings: SchedulerSettings,
   isTestflight: boolean,
   versionLabel: string,
-): Promise<{ runUrl?: string }> {
+): Promise<{ ok: boolean; runUrl?: string }> {
   const finished = await waitForJob(job, SCHEDULER_JOB_TIMEOUT_MS);
 
   if (finished.status !== 'done') {
@@ -192,7 +199,7 @@ async function decryptAndDispatch(
       status: finished.status,
       error: finished.error,
     });
-    return {};
+    return { ok: false };
   }
 
   try {
@@ -213,7 +220,7 @@ async function decryptAndDispatch(
         { name: 'Repo', value: settings.ghDispatchRepo, inline: true },
       ],
     });
-    return { runUrl: run?.html_url };
+    return { ok: true, runUrl: run?.html_url };
   } catch (err) {
     log.error('dispatch/poll failed', { error: String(err), isTestflight });
     await notify('dispatchFailure', `⚠️ Dispatch failed for ${settings.watchBundleId}`, {
@@ -225,7 +232,7 @@ async function decryptAndDispatch(
         { name: 'Error', value: `\`\`\`${String(err)}\`\`\`` },
       ],
     });
-    return {};
+    return { ok: false };
   } finally {
     await reclaimJobFile(finished);
   }
@@ -242,15 +249,15 @@ async function tickAppStore(settings: SchedulerSettings): Promise<SchedulerRunOu
     } else {
       log.error(check.reason, { bundleId: settings.watchBundleId });
     }
-    return { triggered: false, reason: check.reason };
+    return { ok: check.ok, triggered: false, reason: check.reason };
   }
 
   const normalized = check.normalizedVersion as string;
   log.info('no matching release found, decrypting', { bundleId: settings.watchBundleId, version: normalized });
 
   const job = enqueueDecryptJob(settings.watchBundleId, 'scheduler', undefined, undefined, normalized);
-  const { runUrl } = await decryptAndDispatch(job, settings, false, `v${normalized}`);
-  return { triggered: true, reason: check.reason, runUrl };
+  const { ok, runUrl } = await decryptAndDispatch(job, settings, false, `v${normalized}`);
+  return { ok, triggered: true, reason: check.reason, runUrl };
 }
 
 async function tickTestFlight(settings: SchedulerSettings): Promise<SchedulerRunOutcome> {
@@ -264,7 +271,7 @@ async function tickTestFlight(settings: SchedulerSettings): Promise<SchedulerRun
     } else {
       log.error(check.reason, { bundleId: settings.watchBundleId });
     }
-    return { triggered: false, reason: check.reason };
+    return { ok: check.ok, triggered: false, reason: check.reason };
   }
 
   log.info('no matching release found for latest TestFlight build, installing and decrypting', {
@@ -273,8 +280,8 @@ async function tickTestFlight(settings: SchedulerSettings): Promise<SchedulerRun
   });
 
   const job = enqueueDecryptJob(settings.watchBundleId, 'scheduler', undefined, { appId: check.appId as number, build: check.build });
-  const { runUrl } = await decryptAndDispatch(job, settings, true, check.latestTag as string);
-  return { triggered: true, reason: check.reason, runUrl };
+  const { ok, runUrl } = await decryptAndDispatch(job, settings, true, check.latestTag as string);
+  return { ok, triggered: true, reason: check.reason, runUrl };
 }
 
 let tickInProgress = false;
@@ -295,6 +302,10 @@ async function tick(): Promise<void> {
     recordSchedulerRunOutcome({ appStore, testflight });
   } finally {
     tickInProgress = false;
+    // Push a fresh overview to every connected dashboard even when nothing got dispatched -
+    // otherwise nextSchedulerRunAt (computed at push time) only ever refreshes on an actual job
+    // change, and drifts into showing a past/"expired" time until the next real decrypt happens.
+    emitJobsChanged();
   }
 }
 

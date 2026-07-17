@@ -1,4 +1,4 @@
-import { densityState, setDensity, setTheme, themeState, type Density, type Theme } from './ui.svelte';
+import { densityState, setDensity, setTheme, themePrefState, type Density, type ThemePref } from './ui.svelte';
 
 export interface Permissions {
   decrypt: boolean;
@@ -158,12 +158,12 @@ export async function refreshSession(): Promise<SessionInfo> {
 async function syncThemeFromServer(): Promise<void> {
   const res = await fetch('/v1/dashboard/me/prefs');
   if (!res.ok) return;
-  const prefs = (await res.json()) as { theme?: Theme; density?: Density };
-  if (prefs.theme && prefs.theme !== themeState.value) setTheme(prefs.theme);
+  const prefs = (await res.json()) as { theme?: ThemePref; density?: Density };
+  if (prefs.theme && prefs.theme !== themePrefState.value) setTheme(prefs.theme);
   if (prefs.density && prefs.density !== densityState.value) setDensity(prefs.density);
 }
 
-export async function pushThemePref(theme: Theme): Promise<void> {
+export async function pushThemePref(theme: ThemePref): Promise<void> {
   if (!sessionState.loggedIn) return;
   await fetch('/v1/dashboard/me/prefs', {
     method: 'PUT',

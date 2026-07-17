@@ -192,6 +192,16 @@
     white-space: normal !important;
   }
 
+  /* Desktop truncation sometimes lives on a child (a button/span) rather than the <td> itself, so
+     that needs resetting too - otherwise the mobile card view would still clip a long bundle ID or
+     version string. Scoped to .truncate specifically so it doesn't touch button/badge wrapping. */
+  .responsive-table td .truncate {
+    max-width: none !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+    white-space: normal !important;
+  }
+
   .responsive-table td:not([data-label])::before,
   .responsive-table td[data-label='']::before {
     content: none;

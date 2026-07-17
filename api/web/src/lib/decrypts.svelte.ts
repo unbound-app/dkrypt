@@ -1,4 +1,4 @@
-import type { TFBuild } from './api';
+import type { AppStoreSearchResult, TFBuild } from './api';
 
 export interface TrackedDecrypt {
   id: string;
@@ -81,26 +81,32 @@ export function removeRecentBundleId(bundleId: string): void {
   localStorage.setItem('recentBundleIds', JSON.stringify(items));
 }
 
-function loadStarredBundleIds(): string[] {
+// Stores the full search result, not just the bundle ID - that's what lets a starred chip show
+// the app's real name and jump straight to a decrypt-ready row instead of re-running a search.
+// Uses a new key (not the old bare-string-array 'starredBundleIds') since the shape changed; any
+// old-format entries just silently fail the type guard below and are dropped.
+function loadStarredApps(): AppStoreSearchResult[] {
   try {
-    return JSON.parse(localStorage.getItem('starredBundleIds') ?? '[]') as string[];
+    const raw: unknown = JSON.parse(localStorage.getItem('starredApps') ?? '[]');
+    if (!Array.isArray(raw)) return [];
+    return raw.filter(
+      (a): a is AppStoreSearchResult => !!a && typeof a === 'object' && typeof a.bundleId === 'string' && typeof a.trackName === 'string',
+    );
   } catch {
     return [];
   }
 }
 
-export const starredBundleIdsState = $state<{ items: string[] }>({ items: loadStarredBundleIds() });
+export const starredAppsState = $state<{ items: AppStoreSearchResult[] }>({ items: loadStarredApps() });
 
 export function isStarredBundleId(bundleId: string): boolean {
-  return starredBundleIdsState.items.includes(bundleId);
+  return starredAppsState.items.some((a) => a.bundleId === bundleId);
 }
 
-export function toggleStarredBundleId(bundleId: string): void {
-  const items = isStarredBundleId(bundleId)
-    ? starredBundleIdsState.items.filter((b) => b !== bundleId)
-    : [bundleId, ...starredBundleIdsState.items];
-  starredBundleIdsState.items = items;
-  localStorage.setItem('starredBundleIds', JSON.stringify(items));
+export function toggleStarredApp(app: AppStoreSearchResult): void {
+  const items = isStarredBundleId(app.bundleId) ? starredAppsState.items.filter((a) => a.bundleId !== app.bundleId) : [app, ...starredAppsState.items];
+  starredAppsState.items = items;
+  localStorage.setItem('starredApps', JSON.stringify(items));
 }
 
 // Keep tabs in sync - without this, two open dashboard tabs drift apart as each queues/dismisses
@@ -109,6 +115,6 @@ if (typeof window !== 'undefined') {
   window.addEventListener('storage', (e) => {
     if (e.key === 'myDecrypts') myDecryptsState.items = loadDecrypts();
     else if (e.key === 'recentBundleIds') recentBundleIdsState.items = loadRecentBundleIds();
-    else if (e.key === 'starredBundleIds') starredBundleIdsState.items = loadStarredBundleIds();
+    else if (e.key === 'starredApps') starredAppsState.items = loadStarredApps();
   });
 }

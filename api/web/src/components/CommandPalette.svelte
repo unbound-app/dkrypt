@@ -1,7 +1,7 @@
 <script lang="ts">
   import { fetchJobHistory, fetchMyKeys } from '../lib/api';
   import { logout, sessionState } from '../lib/session.svelte';
-  import { closePalette, jumpToHistoryBundleId, openHelp, paletteState, setActiveTab, setTheme, themeState } from '../lib/ui.svelte';
+  import { closePalette, jumpToHistoryBundleId, openHelp, paletteState, setActiveTab, setTheme, themePrefState } from '../lib/ui.svelte';
   import Dialog from '../lib/components/ui/Dialog.svelte';
   import Input from '../lib/components/ui/Input.svelte';
   import { cn } from '../lib/utils';
@@ -47,7 +47,12 @@
     ) {
       base.push({ id: 'settings', label: 'Go to Settings', run: () => setActiveTab('settings') });
     }
-    base.push({ id: 'theme', label: 'Toggle light / dark theme', run: () => setTheme(themeState.value === 'dark' ? 'light' : 'dark') });
+    const THEME_CYCLE = ['dark', 'light', 'auto'] as const;
+    base.push({
+      id: 'theme',
+      label: 'Cycle theme (dark / light / auto)',
+      run: () => setTheme(THEME_CYCLE[(THEME_CYCLE.indexOf(themePrefState.value) + 1) % THEME_CYCLE.length]),
+    });
     base.push({ id: 'shortcuts', label: 'Show keyboard shortcuts', run: () => openHelp() });
     base.push({ id: 'logout', label: 'Log out', run: () => void logout() });
 

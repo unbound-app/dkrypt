@@ -1,11 +1,21 @@
-import { afterEach, describe, expect, mock, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { notify, sendTestNotification } from './notify.js';
 import { updateSettings } from './store/state.js';
 
 const originalFetch = global.fetch;
+const originalSetTimeout = global.setTimeout;
+
+beforeEach(() => {
+  // The retry path sleeps for real between attempts - fire immediately so retry tests stay fast.
+  global.setTimeout = ((fn: () => void) => {
+    fn();
+    return 0 as unknown as ReturnType<typeof setTimeout>;
+  }) as typeof setTimeout;
+});
 
 afterEach(() => {
   global.fetch = originalFetch;
+  global.setTimeout = originalSetTimeout;
   updateSettings({
     notifyWebhookUrl: '',
     notifyFormat: 'embed',
@@ -100,6 +110,45 @@ describe('notify', () => {
     expect(text).toContain('Decrypted & dispatched');
     expect(text).toContain('all good');
     expect(text).toContain('App: com.example.app');
+  });
+
+  test('retries once after a failed attempt and succeeds', async () => {
+    updateSettings({ notifyWebhookUrl: 'https://example.test/webhook' });
+    let calls = 0;
+    const fetchMock = mock(() => {
+      calls += 1;
+      if (calls === 1) return Promise.resolve(new Response('server error', { status: 500 }));
+      return Promise.resolve(new Response('{}', { status: 200 }));
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    await notify('dispatchSuccess', 'x', { title: 'x', color: 0 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  test('gives up after the retry also fails', async () => {
+    updateSettings({ notifyWebhookUrl: 'https://example.test/webhook' });
+    const fetchMock = mock(() => Promise.resolve(new Response('nope', { status: 500 })));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    await notify('dispatchSuccess', 'x', { title: 'x', color: 0 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  test('respects a Discord 429 retry_after before retrying', async () => {
+    updateSettings({ notifyWebhookUrl: 'https://example.test/webhook' });
+    let calls = 0;
+    const fetchMock = mock(() => {
+      calls += 1;
+      if (calls === 1) {
+        return Promise.resolve(new Response(JSON.stringify({ retry_after: 0.5 }), { status: 429 }));
+      }
+      return Promise.resolve(new Response('{}', { status: 200 }));
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    await notify('dispatchSuccess', 'x', { title: 'x', color: 0 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
 

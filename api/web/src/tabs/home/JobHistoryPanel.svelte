@@ -12,10 +12,10 @@
   import Input from '../../lib/components/ui/Input.svelte';
   import { buttonVariants, statusToBadgeVariant } from '../../lib/components/ui/variants';
   import { addDecrypt, pushRecentBundleId } from '../../lib/decrypts.svelte';
-  import { debounce, fmtSize } from '../../lib/format';
+  import { csvCell, debounce, downloadBlob, fmtSize } from '../../lib/format';
   import { liveState } from '../../lib/live.svelte';
   import { scrollFade } from '../../lib/scrollFade';
-  import { historyJumpState, showToast } from '../../lib/ui.svelte';
+  import { confirmDialog, historyJumpState, showToast } from '../../lib/ui.svelte';
 
   const PAGE_SIZE = 15;
 
@@ -32,6 +32,8 @@
   let activeQuery = $state('');
   let sourceFilter = $state<SourceFilter>('all');
   let statusFilter = $state<StatusFilter>('all');
+  let selected = $state<Set<string>>(new Set());
+  let bulkRequeueing = $state(false);
 
   function matchesFilters(h: JobHistoryEntry): boolean {
     return (
@@ -43,6 +45,7 @@
 
   async function loadInitial(query: string): Promise<void> {
     loaded = false;
+    selected = new Set();
     const data = await fetchJobHistory(
       0,
       PAGE_SIZE,
@@ -152,6 +155,48 @@
     }
   }
 
+  function toggleSelect(id: string): void {
+    const next = new Set(selected);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    selected = next;
+  }
+
+  function toggleSelectAll(): void {
+    selected = selected.size === entries.length ? new Set() : new Set(entries.map((e) => e.id));
+  }
+
+  async function bulkDecryptAgain(): Promise<void> {
+    const targets = entries.filter((e) => selected.has(e.id));
+    if (targets.length === 0) return;
+    if (!(await confirmDialog(`Queue ${targets.length} decrypt(s) again?`))) return;
+    bulkRequeueing = true;
+    try {
+      for (const entry of targets) await decryptAgain(entry);
+      selected = new Set();
+    } finally {
+      bulkRequeueing = false;
+    }
+  }
+
+  function bulkExportCsv(): void {
+    const targets = entries.filter((e) => selected.has(e.id));
+    const rows = ['bundleId,version,source,queuedBy,status,size,finishedAt,error'];
+    for (const j of targets) {
+      rows.push(
+        [j.bundleId, j.versionLabel ?? '', j.source, j.queuedBy ?? '', j.status, j.sizeBytes ?? '', new Date(j.finishedAt).toISOString(), j.error ?? '']
+          .map(csvCell)
+          .join(','),
+      );
+    }
+    downloadBlob(rows.join('\n'), 'dkrypt-job-history-selected.csv', 'text/csv');
+  }
+
+  function bulkExportJson(): void {
+    const targets = entries.filter((e) => selected.has(e.id));
+    downloadBlob(JSON.stringify(targets, null, 2), 'dkrypt-job-history-selected.json', 'application/json');
+  }
+
   function dayLabel(ms: number): string {
     const d = new Date(ms);
     const today = new Date();
@@ -180,7 +225,12 @@
 
 <Card title="Job history">
   {#snippet headerExtra()}
-    <div class="flex gap-1.5">
+    <div class="flex flex-wrap items-center gap-1.5">
+      {#if selected.size > 0}
+        <Button size="sm" loading={bulkRequeueing} onclick={bulkDecryptAgain}>Decrypt {selected.size} again</Button>
+        <Button size="sm" variant="secondary" onclick={bulkExportCsv}>Export {selected.size} CSV</Button>
+        <Button size="sm" variant="secondary" onclick={bulkExportJson}>Export {selected.size} JSON</Button>
+      {/if}
       <a href={jobHistoryExportUrl('csv')} download class={buttonVariants('secondary', 'sm')}>Export CSV</a>
       <a href={jobHistoryExportUrl('json')} download class={buttonVariants('secondary', 'sm')}>Export JSON</a>
     </div>
@@ -223,6 +273,7 @@
       <table class="responsive-table sm:min-w-[720px]">
         <thead>
           <tr>
+            <th><input type="checkbox" checked={entries.length > 0 && selected.size === entries.length} onchange={toggleSelectAll} /></th>
             <th>Bundle ID</th>
             <th>Version</th>
             <th>Source</th>
@@ -236,30 +287,39 @@
         </thead>
         <tbody>
           {#if !loaded}
-            <SkeletonRows rows={4} colspan={9} />
+            <SkeletonRows rows={4} colspan={10} />
           {:else}
             {#each grouped as g (g.label)}
               <tr class="table-row-header bg-panel sticky top-0 z-10">
-                <td colspan="9" class="border-b-0! py-1.5 text-xs font-semibold text-muted">{g.label}</td>
+                <td colspan="10" class="border-b-0! py-1.5 text-xs font-semibold text-muted">{g.label}</td>
               </tr>
               {#each g.items as j (j.id)}
                 <tr>
-                  <td data-label="Bundle ID" class="max-w-40 truncate">
-                    <button class="cursor-pointer hover:text-accent hover:underline" title="View stats for {j.bundleId}" onclick={() => openStats(j.bundleId)}>
+                  <td data-label="Select"><input type="checkbox" checked={selected.has(j.id)} onchange={() => toggleSelect(j.id)} /></td>
+                  <td data-label="Bundle ID" class="max-w-40">
+                    <button
+                      class="block max-w-full truncate cursor-pointer text-left hover:text-accent hover:underline"
+                      title="View stats for {j.bundleId}"
+                      onclick={() => openStats(j.bundleId)}
+                    >
                       {j.bundleId}
                     </button>
                   </td>
-                  <td data-label="Version" class="max-w-36 truncate" title={j.versionLabel ?? ''}>
-                    {#if j.versionLabel}
-                      {j.versionLabel}
-                    {:else}
-                      <span class="text-muted">-</span>
-                    {/if}
-                    {#if j.testflight}
-                      <Badge variant="secondary" class="ml-1">TF</Badge>
-                    {:else if j.externalVersionId}
-                      <Badge variant="secondary" class="ml-1" title="pinned to external version id {j.externalVersionId}">pinned</Badge>
-                    {/if}
+                  <td data-label="Version" class="max-w-36">
+                    <div class="flex min-w-0 items-center gap-1" title={j.versionLabel ?? ''}>
+                      <span class="truncate">
+                        {#if j.versionLabel}
+                          {j.versionLabel}
+                        {:else}
+                          <span class="text-muted">-</span>
+                        {/if}
+                      </span>
+                      {#if j.testflight}
+                        <Badge variant="secondary" class="shrink-0">TF</Badge>
+                      {:else if j.externalVersionId}
+                        <Badge variant="secondary" class="shrink-0" title="pinned to external version id {j.externalVersionId}">pinned</Badge>
+                      {/if}
+                    </div>
                   </td>
                   <td data-label="Source">{j.source}</td>
                   <td data-label="Queued by" class="text-muted">{j.queuedBy ?? '-'}</td>

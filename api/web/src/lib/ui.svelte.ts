@@ -1,32 +1,44 @@
 import { toast } from 'svelte-sonner';
 
 export type Theme = 'dark' | 'light';
+export type ThemePref = Theme | 'auto';
 
-function readStoredTheme(): Theme | null {
+function readStoredThemePref(): ThemePref {
   const stored = localStorage.getItem('theme');
-  return stored === 'dark' || stored === 'light' ? stored : null;
+  return stored === 'dark' || stored === 'light' ? stored : 'auto';
 }
 
 function systemTheme(): Theme {
   return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
 }
 
-export const themeState = $state<{ value: Theme | null }>({ value: readStoredTheme() });
+// themePrefState is the user's actual choice (including 'auto'); themeState is always the
+// resolved dark/light value - most of the app only cares about the latter and never needs to
+// know whether it came from an explicit choice or the OS setting.
+export const themePrefState = $state<{ value: ThemePref }>({ value: readStoredThemePref() });
+export const themeState = $state<{ value: Theme }>({
+  value: themePrefState.value === 'auto' ? systemTheme() : themePrefState.value,
+});
 
-export function setTheme(theme: Theme): void {
-  themeState.value = theme;
-  localStorage.setItem('theme', theme);
-  document.documentElement.setAttribute('data-theme', theme);
+export function setTheme(pref: ThemePref): void {
+  themePrefState.value = pref;
+  if (pref === 'auto') localStorage.removeItem('theme');
+  else localStorage.setItem('theme', pref);
+
+  const resolved = pref === 'auto' ? systemTheme() : pref;
+  themeState.value = resolved;
+  document.documentElement.setAttribute('data-theme', resolved);
 }
 
 export function initTheme(): void {
-  document.documentElement.setAttribute('data-theme', themeState.value ?? systemTheme());
+  document.documentElement.setAttribute('data-theme', themeState.value);
 
-  if (!themeState.value) {
-    window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
-      if (!themeState.value) document.documentElement.setAttribute('data-theme', systemTheme());
-    });
-  }
+  window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
+    if (themePrefState.value !== 'auto') return;
+    const resolved = systemTheme();
+    themeState.value = resolved;
+    document.documentElement.setAttribute('data-theme', resolved);
+  });
 }
 
 export type Density = 'comfortable' | 'compact';
@@ -126,7 +138,7 @@ export function jumpToHistoryBundleId(bundleId: string): void {
   setActiveTab('home');
 }
 
-export type TabId = 'home' | 'keys' | 'logs' | 'docs' | 'settings';
+export type TabId = 'home' | 'keys' | 'logs' | 'insights' | 'docs' | 'settings';
 
 export const tabState = $state<{ active: TabId; settingsSubtab: string }>({
   active: (localStorage.getItem('activeTab') as TabId | null) ?? 'home',

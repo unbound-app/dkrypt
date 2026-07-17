@@ -1,4 +1,5 @@
 <script lang="ts">
+  import DonationNudge from '../components/DonationNudge.svelte';
   import ActiveJobsPanel from './home/ActiveJobsPanel.svelte';
   import DecryptPanel from './home/DecryptPanel.svelte';
   import JobHistoryPanel from './home/JobHistoryPanel.svelte';
@@ -15,6 +16,7 @@
 <div class="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
   <div class="flex flex-col gap-4">
     <DecryptPanel bind:this={decryptPanel} />
+    <DonationNudge />
     <MyRequestsPanel />
     <ActiveJobsPanel />
     <JobHistoryPanel />
