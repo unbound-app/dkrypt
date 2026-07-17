@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { validate as validateCronExpr } from 'node-cron';
+import { config } from '../config.js';
 import {
   cancelAppleAuth,
   getAppleAuthStatus,
@@ -17,6 +18,9 @@ import { applySchedule, checkForTestFlightUpdate, checkForUpdate, triggerTickNow
 import { searchApps } from '../scheduler/itunes.js';
 import { requirePermission, requireSession } from '../session.js';
 import { getDeviceHealth, listBuilds, listTrains } from '../testflight.js';
+import { nextCronRunAt } from '../util/cron.js';
+import { getDiskUsage } from '../util/diskUsage.js';
+import { buildSignedFileUrl } from '../util/signedUrl.js';
 import { listAppVersions } from '../versions.js';
 import {
   addAllowedUser,
@@ -26,9 +30,12 @@ import {
   createApiKey,
   denyApiKey,
   getAllJobHistory,
+  getApiKeyById,
+  getApiKeyUsage,
   getAppleAuthAlert,
   getAuditLog,
   getAverageJobDurationMs,
+  getBundleStats,
   getDailyVolume,
   getEffectiveSettings,
   getJobHistoryPage,
@@ -43,6 +50,7 @@ import {
   listPendingApiKeys,
   PERMISSION_KEYS,
   type Permissions,
+  recordUserActivity,
   regenerateApiKey,
   removeAllowedUser,
   requestApiKey,
@@ -67,14 +75,22 @@ const canManageUsers = requirePermission('manageUsers');
 export const dashboardRouter = Router();
 
 dashboardRouter.use(requireSession);
+dashboardRouter.use((_req, res, next) => {
+  recordUserActivity(res.locals.session.sub);
+  next();
+});
 
 function buildOverview() {
+  const schedulerEnabled = isSchedulerEnabled();
+  const settings = getEffectiveSettings();
   return {
-    schedulerEnabled: isSchedulerEnabled(),
-    settings: getEffectiveSettings(),
+    schedulerEnabled,
+    settings,
     appleAuthAlert: getAppleAuthAlert(),
     lastSchedulerRunAt: getLastSchedulerRunAt(),
+    nextSchedulerRunAt: schedulerEnabled ? nextCronRunAt(settings.pollCron) : undefined,
     schedulerRunHistory: getSchedulerRunHistory(10),
+    disk: getDiskUsage(config.outputDir),
     activeJobs: getActiveJobs().map((j) => ({
       id: j.id,
       bundleId: j.bundleId,
@@ -128,7 +144,9 @@ dashboardRouter.get('/v1/dashboard/jobs', (req, res) => {
   const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit ?? '15'), 10) || 15, 1), 100);
   const offset = Math.max(Number.parseInt(String(req.query.offset ?? '0'), 10) || 0, 0);
   const q = typeof req.query.q === 'string' && req.query.q.trim() ? req.query.q.trim().slice(0, 200) : undefined;
-  const { entries, total } = getJobHistoryPage(offset, limit, q);
+  const source = req.query.source === 'manual' || req.query.source === 'scheduler' ? req.query.source : undefined;
+  const status = req.query.status === 'done' || req.query.status === 'failed' ? req.query.status : undefined;
+  const { entries, total } = getJobHistoryPage(offset, limit, q, source, status);
   res.json({ history: entries, total });
 });
 
@@ -176,6 +194,10 @@ dashboardRouter.get('/v1/dashboard/jobs/export', (req, res) => {
 
 dashboardRouter.get('/v1/dashboard/jobs/eta/:bundleId', (req, res) => {
   res.json({ avgMs: getAverageJobDurationMs(req.params.bundleId) ?? null });
+});
+
+dashboardRouter.get('/v1/dashboard/jobs/stats/:bundleId', (req, res) => {
+  res.json(getBundleStats(req.params.bundleId));
 });
 
 dashboardRouter.get('/v1/dashboard/jobs/volume', (req, res) => {
@@ -306,6 +328,26 @@ dashboardRouter.get('/v1/dashboard/jobs/:id/file', async (req, res) => {
   await streamJobFile(job, req, res);
 });
 
+const SHARE_TTL_MIN = 1;
+const SHARE_TTL_MAX = 1440;
+
+dashboardRouter.post('/v1/dashboard/jobs/:id/share', (req, res) => {
+  const job = getJob(req.params.id);
+  if (!job) {
+    res.status(404).json({ error: 'job not found' });
+    return;
+  }
+  if (job.status !== 'done' || !job.filePath) {
+    res.status(409).json({ error: 'job is not finished yet' });
+    return;
+  }
+
+  const requested = Number.parseInt(String(req.body?.ttlMinutes ?? config.fileTtlMinutes), 10);
+  const ttlMinutes = Number.isFinite(requested) ? Math.min(Math.max(requested, SHARE_TTL_MIN), SHARE_TTL_MAX) : config.fileTtlMinutes;
+
+  res.json({ url: buildSignedFileUrl(job.id, ttlMinutes), expiresAt: Date.now() + ttlMinutes * 60_000 });
+});
+
 dashboardRouter.get('/v1/dashboard/keys/mine', (_req, res) => {
   const { sub } = res.locals.session;
   res.json({ keys: listApiKeysForOwner(sub) });
@@ -382,6 +424,21 @@ dashboardRouter.post('/v1/dashboard/keys/bulk-revoke', (req, res) => {
   const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter((id: unknown) => typeof id === 'string') : [];
   const revoked = ids.filter((id: string) => revokeApiKey(id, sub, permissions.revokeApiKeys));
   res.json({ revoked });
+});
+
+dashboardRouter.get('/v1/dashboard/keys/:id/usage', (req, res) => {
+  const key = getApiKeyById(req.params.id);
+  if (!key) {
+    res.status(404).json({ error: 'key not found' });
+    return;
+  }
+  const { sub, permissions } = res.locals.session;
+  if (key.ownerId !== sub && !permissions.viewApiKeys) {
+    res.status(403).json({ error: "not your key" });
+    return;
+  }
+  const days = Math.min(Math.max(Number.parseInt(String(req.query.days ?? '14'), 10) || 14, 1), 90);
+  res.json({ usage: getApiKeyUsage(req.params.id, days) });
 });
 
 dashboardRouter.get('/v1/dashboard/keys/pending', canApproveApiKeys, (_req, res) => {

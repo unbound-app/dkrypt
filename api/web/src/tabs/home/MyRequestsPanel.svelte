@@ -4,11 +4,13 @@
   import CopyButton from '../../components/CopyButton.svelte';
   import EmptyState from '../../components/EmptyState.svelte';
   import RelativeTime from '../../components/RelativeTime.svelte';
+  import ShareLinkDialog from '../../components/ShareLinkDialog.svelte';
   import Badge from '../../lib/components/ui/Badge.svelte';
   import Button from '../../lib/components/ui/Button.svelte';
   import Card from '../../lib/components/ui/Card.svelte';
   import { buttonVariants } from '../../lib/components/ui/variants';
   import { addDecrypt, dismissDecrypt, myDecryptsState, pushRecentBundleId, updateDecrypt, type TrackedDecrypt } from '../../lib/decrypts.svelte';
+  import { notifyJobFinished } from '../../lib/notifications';
   import { confirmDialog, showToast } from '../../lib/ui.svelte';
 
   let pollTimer: ReturnType<typeof setTimeout> | undefined;
@@ -23,6 +25,13 @@
     for (const d of pending) {
       try {
         const data = await fetchJobStatus(d.id);
+        if (d.status !== data.status && (data.status === 'done' || data.status === 'failed')) {
+          const label = d.versionLabel ? `${d.trackName} (${d.versionLabel})` : d.trackName;
+          notifyJobFinished(
+            data.status === 'done' ? 'Decrypt finished' : 'Decrypt failed',
+            data.status === 'done' ? `${label} is ready to download.` : `${label} failed: ${data.error ?? 'unknown error'}`,
+          );
+        }
         updateDecrypt(d.id, { status: data.status, progress: data.progress, queue: data.queue, error: data.error });
       } catch {}
     }
@@ -69,6 +78,14 @@
       next.delete(d.id);
       retrying = next;
     }
+  }
+
+  let shareOpen = $state(false);
+  let shareJobId = $state('');
+
+  function openShare(id: string): void {
+    shareJobId = id;
+    shareOpen = true;
   }
 
   async function dismiss(d: TrackedDecrypt): Promise<void> {
@@ -133,6 +150,7 @@
               <div class="flex gap-1.5">
                 {#if d.status === 'done'}
                   <a class={buttonVariants('default', 'sm')} href="/v1/dashboard/jobs/{d.id}/file">Download</a>
+                  <Button size="sm" variant="secondary" onclick={() => openShare(d.id)}>Share</Button>
                   <Button size="sm" variant="secondary" onclick={() => dismiss(d)}>Dismiss</Button>
                 {:else if d.status === 'failed'}
                   <Button size="sm" loading={retrying.has(d.id)} onclick={() => retry(d)}>Retry</Button>
@@ -148,3 +166,5 @@
     </table>
   {/if}
 </Card>
+
+<ShareLinkDialog open={shareOpen} jobId={shareJobId} onOpenChange={(v) => (shareOpen = v)} />

@@ -40,6 +40,10 @@ export function fmtUntil(ms?: number): string {
   return `${day}d`;
 }
 
+export function fmtBytesGB(bytes: number): string {
+  return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+}
+
 export function fmtCountdown(ms: number): string {
   const totalSec = Math.max(0, Math.round(ms / 1000));
   const h = Math.floor(totalSec / 3600);

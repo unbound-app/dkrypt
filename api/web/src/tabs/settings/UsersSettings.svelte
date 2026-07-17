@@ -135,12 +135,13 @@
             <th>Username</th>
             <th>Permissions</th>
             <th>Added</th>
+            <th>Last active</th>
             {#if canManage}<th></th>{/if}
           </tr>
         </thead>
         <tbody>
           {#if users === null}
-            <SkeletonRows rows={3} colspan={canManage ? 4 : 3} />
+            <SkeletonRows rows={3} colspan={canManage ? 5 : 4} />
           {:else}
             {#each filteredUsers as u (u.username)}
               {@const isSelf = u.username === (sessionState.sub ?? '').toLowerCase()}
@@ -159,6 +160,13 @@
                   </div>
                 </td>
                 <td class="text-muted"><RelativeTime ms={u.addedAt} /></td>
+                <td class="text-muted">
+                  {#if u.lastActiveAt}
+                    <RelativeTime ms={u.lastActiveAt} />
+                  {:else}
+                    never
+                  {/if}
+                </td>
                 {#if canManage}
                   <td>
                     {#if !isSelf}

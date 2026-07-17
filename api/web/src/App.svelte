@@ -6,6 +6,7 @@
   import ConfirmModal from './components/ConfirmModal.svelte';
   import ConnectionBanner from './components/ConnectionBanner.svelte';
   import Login from './components/Login.svelte';
+  import NotificationBell from './components/NotificationBell.svelte';
   import SessionExpiryBanner from './components/SessionExpiryBanner.svelte';
   import ShortcutsHelp from './components/ShortcutsHelp.svelte';
   import Badge from './lib/components/ui/Badge.svelte';
@@ -13,9 +14,11 @@
   import Dialog from './lib/components/ui/Dialog.svelte';
   import Tabs from './lib/components/ui/Tabs.svelte';
   import { buttonVariants } from './lib/components/ui/variants';
-  import { connectLive, disconnectLive } from './lib/live.svelte';
+  import { myDecryptsState } from './lib/decrypts.svelte';
+  import { connectLive, disconnectLive, liveState } from './lib/live.svelte';
   import {
     logout,
+    logoutEverywhere,
     PERMISSION_META,
     permissionsSummary,
     pushThemePref,
@@ -23,7 +26,7 @@
     sessionState,
     type Permissions,
   } from './lib/session.svelte';
-  import { initTheme, openHelp, openPalette, setActiveTab, setTheme, tabState, themeState, type TabId } from './lib/ui.svelte';
+  import { confirmDialog, initTheme, openHelp, openPalette, setActiveTab, setTheme, tabState, themeState, type TabId } from './lib/ui.svelte';
 
   const REPO_URL = 'https://github.com/unbound-app/dkrypt';
   const KOFI_URL = 'https://ko-fi.com/castdrian';
@@ -37,6 +40,7 @@
 
   let homeRef: Home | undefined = $state();
   let loggingOut = $state(false);
+  let loggingOutEverywhere = $state(false);
   let myPermsOpen = $state(false);
 
   const myGrantedPermissions = $derived(
@@ -70,6 +74,17 @@
     }
   }
 
+  async function doLogoutEverywhere(): Promise<void> {
+    if (!(await confirmDialog('Sign out every device and browser signed in as you, including this one?', { confirmLabel: 'Log out everywhere' })))
+      return;
+    loggingOutEverywhere = true;
+    try {
+      await logoutEverywhere();
+    } finally {
+      loggingOutEverywhere = false;
+    }
+  }
+
   $effect(() => {
     void refreshSession();
   });
@@ -81,6 +96,19 @@
 
   $effect(() => {
     if (sessionState.loggedIn && !visibleTabs.some((t) => t.id === tabState.active)) setActiveTab('home');
+  });
+
+  const BASE_TITLE = 'dkrypt';
+
+  $effect(() => {
+    if (!sessionState.loggedIn) {
+      document.title = BASE_TITLE;
+      return;
+    }
+    const active = liveState.overview?.activeJobs.length ?? 0;
+    const failed = myDecryptsState.items.filter((d) => d.status === 'failed').length;
+    const count = active + failed;
+    document.title = count > 0 ? `(${count}) ${BASE_TITLE}` : BASE_TITLE;
   });
 
   function onKeydown(e: KeyboardEvent): void {
@@ -156,6 +184,7 @@
             <Sun class="h-4 w-4" />
           {/if}
         </Button>
+        <NotificationBell />
         <button
           type="button"
           class="max-w-[40vw] cursor-pointer truncate text-[13px] text-muted hover:text-text sm:max-w-[55vw]"
@@ -212,4 +241,10 @@
       {/each}
     </div>
   {/if}
+  <div class="border-border mt-4 border-t pt-4">
+    <Button variant="destructive" size="sm" class="w-full" loading={loggingOutEverywhere} onclick={doLogoutEverywhere}>
+      Log out everywhere
+    </Button>
+    <div class="mt-1.5 text-xs text-muted">Signs out every session for {sessionState.sub}, including this one.</div>
+  </div>
 </Dialog>

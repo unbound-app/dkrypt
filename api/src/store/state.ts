@@ -137,6 +137,8 @@ export interface AllowedUser {
   username: string;
   permissions: Permissions;
   addedAt: number;
+  sessionVersion?: number;
+  lastActiveAt?: number;
 }
 
 export interface ApiKeyRecord {
@@ -214,6 +216,11 @@ export interface SchedulerRunEntry {
   testflight: SchedulerRunOutcome;
 }
 
+export interface ApiKeyUsageBucket {
+  date: string;
+  count: number;
+}
+
 interface PersistedState {
   version: 5;
   apiKeys: ApiKeyRecord[];
@@ -225,11 +232,14 @@ interface PersistedState {
   userPrefs: Record<string, UserPrefs>;
   auditLog: AuditLogEntry[];
   schedulerRunHistory: SchedulerRunEntry[];
+  rootSessionVersion: number;
+  apiKeyUsage: Record<string, ApiKeyUsageBucket[]>;
 }
 
 const MAX_HISTORY = 100;
 const MAX_AUDIT_LOG = 200;
 const MAX_SCHEDULER_RUNS = 20;
+const MAX_USAGE_DAYS = 30;
 const statePath = path.join(config.stateDir, 'state.json');
 
 function defaultState(): PersistedState {
@@ -243,6 +253,8 @@ function defaultState(): PersistedState {
     userPrefs: {},
     auditLog: [],
     schedulerRunHistory: [],
+    rootSessionVersion: 0,
+    apiKeyUsage: {},
   };
 }
 
@@ -351,6 +363,39 @@ export function listAllowedUsers(): AllowedUser[] {
 
 export function getUserPermissions(username: string): Permissions | undefined {
   return state.allowedUsers.find((u) => u.username === username.toLowerCase())?.permissions;
+}
+
+export function getSessionVersion(username: string): number {
+  if (username === 'root') return state.rootSessionVersion;
+  return state.allowedUsers.find((u) => u.username === username.toLowerCase())?.sessionVersion ?? 0;
+}
+
+// Bumping invalidates every cookie signed with the previous version, including the one making
+// this request - the caller is expected to also clear its own cookie so it doesn't just 401 on refresh.
+export function bumpSessionVersion(username: string): void {
+  if (username === 'root') {
+    state.rootSessionVersion += 1;
+    persistNow();
+    return;
+  }
+  const user = state.allowedUsers.find((u) => u.username === username.toLowerCase());
+  if (!user) return;
+  user.sessionVersion = (user.sessionVersion ?? 0) + 1;
+  persistNow();
+}
+
+const ACTIVITY_THROTTLE_MS = 60_000;
+
+// Lazily persisted (dirty flag, not persistNow) since this fires on nearly every dashboard
+// request - an immediate disk write per request would be needless I/O for a homelab-scale app.
+export function recordUserActivity(username: string): void {
+  if (username === 'root') return;
+  const user = state.allowedUsers.find((u) => u.username === username.toLowerCase());
+  if (!user) return;
+  const now = Date.now();
+  if (user.lastActiveAt && now - user.lastActiveAt < ACTIVITY_THROTTLE_MS) return;
+  user.lastActiveAt = now;
+  dirty = true;
 }
 
 // True if applying this change would leave nobody on the allowlist able to grant access back
@@ -526,6 +571,11 @@ export function revealApiKeySecret(id: string, requesterId: string): string | un
   return secret;
 }
 
+export function getApiKeyById(id: string): ReturnType<typeof redact> | undefined {
+  const record = state.apiKeys.find((k) => k.id === id);
+  return record ? redact(record) : undefined;
+}
+
 export function listApiKeysForOwner(ownerId: string) {
   return state.apiKeys.filter((k) => k.ownerId === ownerId).map(redact);
 }
@@ -549,8 +599,36 @@ export function revokeApiKey(id: string, requesterId: string, requesterIsAdmin: 
   if (!requesterIsAdmin && record.ownerId !== requesterId) return false;
 
   state.apiKeys = state.apiKeys.filter((k) => k.id !== id);
+  delete state.apiKeyUsage[id];
   persistNow();
   return true;
+}
+
+function recordApiKeyUsage(id: string): void {
+  const today = new Date().toISOString().slice(0, 10);
+  const buckets = state.apiKeyUsage[id] ?? [];
+  const last = buckets[buckets.length - 1];
+  if (last && last.date === today) {
+    last.count += 1;
+  } else {
+    buckets.push({ date: today, count: 1 });
+    if (buckets.length > MAX_USAGE_DAYS) buckets.shift();
+  }
+  state.apiKeyUsage[id] = buckets;
+  dirty = true;
+}
+
+export function getApiKeyUsage(id: string, days: number): ApiKeyUsageBucket[] {
+  const buckets = new Map((state.apiKeyUsage[id] ?? []).map((b) => [b.date, b.count]));
+  const now = new Date();
+  const out: ApiKeyUsageBucket[] = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(now);
+    d.setDate(d.getDate() - i);
+    const date = d.toISOString().slice(0, 10);
+    out.push({ date, count: buckets.get(date) ?? 0 });
+  }
+  return out;
 }
 
 export function verifyApiKey(candidate: string): ApiKeyAuthResult | undefined {
@@ -562,6 +640,7 @@ export function verifyApiKey(candidate: string): ApiKeyAuthResult | undefined {
   if (record.expiresAt && Date.now() > record.expiresAt) return undefined;
 
   record.lastUsedAt = Date.now();
+  recordApiKeyUsage(record.id);
   dirty = true;
   return { allowedBundleIds: record.allowedBundleIds };
 }
@@ -604,10 +683,19 @@ export function recordJobHistory(entry: JobHistoryEntry): void {
   emitHistoryAdded(entry);
 }
 
-export function getJobHistoryPage(offset: number, limit: number, bundleIdSearch?: string): { entries: JobHistoryEntry[]; total: number } {
-  const filtered = bundleIdSearch
-    ? state.jobHistory.filter((e) => e.bundleId.toLowerCase().includes(bundleIdSearch.toLowerCase()))
-    : state.jobHistory;
+export function getJobHistoryPage(
+  offset: number,
+  limit: number,
+  bundleIdSearch?: string,
+  source?: 'manual' | 'scheduler',
+  status?: 'done' | 'failed',
+): { entries: JobHistoryEntry[]; total: number } {
+  const filtered = state.jobHistory.filter(
+    (e) =>
+      (!bundleIdSearch || e.bundleId.toLowerCase().includes(bundleIdSearch.toLowerCase())) &&
+      (!source || e.source === source) &&
+      (!status || e.status === status),
+  );
   return { entries: filtered.slice(offset, offset + limit), total: filtered.length };
 }
 
@@ -621,6 +709,31 @@ export function getAverageJobDurationMs(bundleId: string): number | undefined {
     .map((j) => j.finishedAt - (j.startedAt as number));
   if (durations.length === 0) return undefined;
   return durations.reduce((a, b) => a + b, 0) / durations.length;
+}
+
+export interface BundleStats {
+  bundleId: string;
+  totalRuns: number;
+  doneCount: number;
+  failedCount: number;
+  successRate: number;
+  avgDurationMs?: number;
+  lastRunAt?: number;
+}
+
+export function getBundleStats(bundleId: string): BundleStats {
+  const runs = state.jobHistory.filter((j) => j.bundleId === bundleId);
+  const doneCount = runs.filter((j) => j.status === 'done').length;
+  const failedCount = runs.filter((j) => j.status === 'failed').length;
+  return {
+    bundleId,
+    totalRuns: runs.length,
+    doneCount,
+    failedCount,
+    successRate: runs.length > 0 ? doneCount / runs.length : 0,
+    avgDurationMs: getAverageJobDurationMs(bundleId),
+    lastRunAt: runs.length > 0 ? Math.max(...runs.map((j) => j.finishedAt)) : undefined,
+  };
 }
 
 export function getDailyVolume(days: number): { date: string; count: number }[] {

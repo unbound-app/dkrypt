@@ -3,7 +3,7 @@ import { Router } from 'express';
 import { config, githubOauthEnabled } from '../config.js';
 import { log } from '../logger.js';
 import { checkRootPassword, clearSessionCookie, getSession, requireSession, setSessionCookie } from '../session.js';
-import { ADMIN_PERMISSIONS, getUserPermissions } from '../store/state.js';
+import { ADMIN_PERMISSIONS, bumpSessionVersion, getUserPermissions } from '../store/state.js';
 
 export const authRouter = Router();
 
@@ -101,6 +101,17 @@ authRouter.post('/v1/auth/login', (req, res) => {
 });
 
 authRouter.post('/v1/auth/logout', (_req, res) => {
+  clearSessionCookie(res);
+  res.json({ ok: true });
+});
+
+authRouter.post('/v1/auth/logout-everywhere', requireSession, (req, res) => {
+  const session = getSession(req);
+  if (!session) {
+    res.status(401).json({ error: 'not signed in' });
+    return;
+  }
+  bumpSessionVersion(session.sub);
   clearSessionCookie(res);
   res.json({ ok: true });
 });

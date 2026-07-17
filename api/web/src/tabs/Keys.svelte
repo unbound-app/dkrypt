@@ -2,6 +2,7 @@
   import { PackageSearch } from 'lucide-svelte';
   import CopyButton from '../components/CopyButton.svelte';
   import EmptyState from '../components/EmptyState.svelte';
+  import KeyUsageDialog from '../components/KeyUsageDialog.svelte';
   import RelativeTime from '../components/RelativeTime.svelte';
   import SkeletonRows from '../components/SkeletonRows.svelte';
   import {
@@ -58,6 +59,24 @@
 
   function isBusy(action: string, id: string): boolean {
     return busyActions.has(`${action}:${id}`);
+  }
+
+  const STALE_MS = 90 * 24 * 60 * 60 * 1000;
+
+  function isStale(k: ApiKeyRecord): boolean {
+    if (k.status !== 'approved') return false;
+    const lastActivity = k.lastUsedAt ?? k.createdAt;
+    return Date.now() - lastActivity > STALE_MS;
+  }
+
+  let usageOpen = $state(false);
+  let usageKeyId = $state('');
+  let usageKeyName = $state('');
+
+  function openUsage(k: ApiKeyRecord): void {
+    usageKeyId = k.id;
+    usageKeyName = k.name;
+    usageOpen = true;
   }
 
   const STATUS_OPTIONS = [
@@ -289,6 +308,9 @@
                     {#if k.expiresAt}
                       <Badge variant="secondary">expires {fmtUntil(k.expiresAt)}</Badge>
                     {/if}
+                    {#if isStale(k)}
+                      <Badge variant="secondary" title="Not used in 90+ days">unused 90+d</Badge>
+                    {/if}
                   </div>
                 </td>
                 <td class="max-w-40 truncate text-muted" title={k.allowedBundleIds?.join(', ') ?? ''}>
@@ -306,6 +328,7 @@
                       <Button size="sm" loading={isBusy('reveal', k.id)} onclick={() => doReveal(k.id)}>Reveal</Button>
                     {/if}
                     {#if k.status === 'approved'}
+                      <Button size="sm" variant="secondary" onclick={() => openUsage(k)}>Usage</Button>
                       <Button size="sm" variant="secondary" loading={isBusy('regenerate', k.id)} onclick={() => doRegenerate(k.id)}>Regenerate</Button>
                     {/if}
                     <Button size="sm" variant="destructive" loading={isBusy('revoke', k.id)} onclick={() => doRevoke(k.id)}>Revoke</Button>
@@ -393,12 +416,13 @@
               <th>Scope</th>
               <th>Created</th>
               <th>Last used</th>
+              <th></th>
               {#if canRevokeAny}<th></th>{/if}
             </tr>
           </thead>
           <tbody>
             {#if all === null}
-              <SkeletonRows rows={3} colspan={canRevokeAny ? 9 : 7} />
+              <SkeletonRows rows={3} colspan={canRevokeAny ? 10 : 8} />
             {:else}
               {#each filteredAll as k (k.id)}
                 <tr>
@@ -419,6 +443,9 @@
                       {#if k.expiresAt}
                         <Badge variant="secondary">{fmtUntil(k.expiresAt)}</Badge>
                       {/if}
+                      {#if isStale(k)}
+                        <Badge variant="secondary" title="Not used in 90+ days">unused 90+d</Badge>
+                      {/if}
                     </div>
                   </td>
                   <td class="max-w-32 truncate text-muted" title={k.allowedBundleIds?.join(', ') ?? ''}>
@@ -430,6 +457,11 @@
                   </td>
                   <td class="text-muted"><RelativeTime ms={k.createdAt} /></td>
                   <td class="text-muted"><RelativeTime ms={k.lastUsedAt} /></td>
+                  <td>
+                    {#if k.status === 'approved'}
+                      <Button size="sm" variant="secondary" onclick={() => openUsage(k)}>Usage</Button>
+                    {/if}
+                  </td>
                   {#if canRevokeAny}
                     <td><Button size="sm" variant="destructive" loading={isBusy('revoke', k.id)} onclick={() => doRevoke(k.id)}>Revoke</Button></td>
                   {/if}
@@ -452,3 +484,5 @@
     </Card>
   {/if}
 </div>
+
+<KeyUsageDialog open={usageOpen} keyId={usageKeyId} keyName={usageKeyName} onOpenChange={(v) => (usageOpen = v)} />

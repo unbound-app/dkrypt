@@ -1,7 +1,9 @@
 <script lang="ts">
   import { History, X } from 'lucide-svelte';
+  import BundleStatsDialog from '../../components/BundleStatsDialog.svelte';
   import EmptyState from '../../components/EmptyState.svelte';
   import RelativeTime from '../../components/RelativeTime.svelte';
+  import ShareLinkDialog from '../../components/ShareLinkDialog.svelte';
   import SkeletonRows from '../../components/SkeletonRows.svelte';
   import { fetchJobHistory, jobHistoryExportUrl, queueDecrypt, queueTestFlightDecrypt, type JobHistoryEntry } from '../../lib/api';
   import Badge from '../../lib/components/ui/Badge.svelte';
@@ -17,6 +19,9 @@
 
   const PAGE_SIZE = 15;
 
+  type SourceFilter = 'all' | 'manual' | 'scheduler';
+  type StatusFilter = 'all' | 'done' | 'failed';
+
   let entries = $state<JobHistoryEntry[]>([]);
   let total = $state(0);
   let loaded = $state(false);
@@ -25,10 +30,26 @@
   let requeueing = $state<Set<string>>(new Set());
   let searchText = $state('');
   let activeQuery = $state('');
+  let sourceFilter = $state<SourceFilter>('all');
+  let statusFilter = $state<StatusFilter>('all');
+
+  function matchesFilters(h: JobHistoryEntry): boolean {
+    return (
+      (!activeQuery || h.bundleId.toLowerCase().includes(activeQuery.toLowerCase())) &&
+      (sourceFilter === 'all' || h.source === sourceFilter) &&
+      (statusFilter === 'all' || h.status === statusFilter)
+    );
+  }
 
   async function loadInitial(query: string): Promise<void> {
     loaded = false;
-    const data = await fetchJobHistory(0, PAGE_SIZE, query || undefined);
+    const data = await fetchJobHistory(
+      0,
+      PAGE_SIZE,
+      query || undefined,
+      sourceFilter === 'all' ? undefined : sourceFilter,
+      statusFilter === 'all' ? undefined : statusFilter,
+    );
     entries = data.history;
     total = data.total;
     seenIds = new Set(entries.map((e) => e.id));
@@ -38,7 +59,13 @@
   async function loadMore(): Promise<void> {
     loadingMore = true;
     try {
-      const data = await fetchJobHistory(entries.length, PAGE_SIZE, activeQuery || undefined);
+      const data = await fetchJobHistory(
+        entries.length,
+        PAGE_SIZE,
+        activeQuery || undefined,
+        sourceFilter === 'all' ? undefined : sourceFilter,
+        statusFilter === 'all' ? undefined : statusFilter,
+      );
       const additions = data.history.filter((e) => !seenIds.has(e.id));
       for (const e of additions) seenIds.add(e.id);
       entries = [...entries, ...additions];
@@ -57,6 +84,8 @@
 
   $effect(() => {
     const query = searchText.trim();
+    sourceFilter;
+    statusFilter;
     if (!hasSearched) {
       hasSearched = true;
       activeQuery = query;
@@ -72,13 +101,29 @@
 
   $effect(() => {
     for (const h of liveState.historyAdditions) {
-      if (!seenIds.has(h.id) && (!activeQuery || h.bundleId.toLowerCase().includes(activeQuery.toLowerCase()))) {
+      if (!seenIds.has(h.id) && matchesFilters(h)) {
         entries = [h, ...entries];
         seenIds.add(h.id);
         total += 1;
       }
     }
   });
+
+  let shareOpen = $state(false);
+  let shareJobId = $state('');
+
+  function openShare(id: string): void {
+    shareJobId = id;
+    shareOpen = true;
+  }
+
+  let statsOpen = $state(false);
+  let statsBundleId = $state('');
+
+  function openStats(bundleId: string): void {
+    statsBundleId = bundleId;
+    statsOpen = true;
+  }
 
   async function decryptAgain(entry: JobHistoryEntry): Promise<void> {
     const { bundleId, testflight, externalVersionId, versionLabel } = entry;
@@ -131,22 +176,39 @@
       <a href={jobHistoryExportUrl('json')} download class={buttonVariants('secondary', 'sm')}>Export JSON</a>
     </div>
   {/snippet}
-  <div class="relative mb-3.5 max-w-xs">
-    <Input placeholder="Search by bundle ID…" bind:value={searchText} class="pr-8" />
-    {#if searchText}
-      <button
-        class="text-muted hover:text-text absolute top-1/2 right-2 -translate-y-1/2 cursor-pointer"
-        onclick={clearSearch}
-        aria-label="Clear search"
-        title="Clear search"
-      >
-        <X class="h-3.5 w-3.5" />
-      </button>
-    {/if}
+  <div class="mb-3 flex flex-wrap items-center gap-2.5">
+    <div class="relative max-w-xs flex-1">
+      <Input placeholder="Search by bundle ID…" bind:value={searchText} class="pr-8" />
+      {#if searchText}
+        <button
+          class="text-muted hover:text-text absolute top-1/2 right-2 -translate-y-1/2 cursor-pointer"
+          onclick={clearSearch}
+          aria-label="Clear search"
+          title="Clear search"
+        >
+          <X class="h-3.5 w-3.5" />
+        </button>
+      {/if}
+    </div>
+    <div class="flex flex-wrap gap-1">
+      <Button variant={statusFilter === 'all' ? 'default' : 'secondary'} size="sm" onclick={() => (statusFilter = 'all')}>All</Button>
+      <Button variant={statusFilter === 'done' ? 'default' : 'secondary'} size="sm" onclick={() => (statusFilter = 'done')}>Done</Button>
+      <Button variant={statusFilter === 'failed' ? 'default' : 'secondary'} size="sm" onclick={() => (statusFilter = 'failed')}>Failed</Button>
+    </div>
+    <div class="flex flex-wrap gap-1">
+      <Button variant={sourceFilter === 'all' ? 'default' : 'secondary'} size="sm" onclick={() => (sourceFilter = 'all')}>Any source</Button>
+      <Button variant={sourceFilter === 'manual' ? 'default' : 'secondary'} size="sm" onclick={() => (sourceFilter = 'manual')}>Manual</Button>
+      <Button variant={sourceFilter === 'scheduler' ? 'default' : 'secondary'} size="sm" onclick={() => (sourceFilter = 'scheduler')}>
+        Scheduler
+      </Button>
+    </div>
   </div>
 
   {#if loaded && entries.length === 0}
-    <EmptyState icon={History} message={activeQuery ? `No decrypts match "${activeQuery}".` : 'No decrypts yet.'} />
+    <EmptyState
+      icon={History}
+      message={activeQuery || sourceFilter !== 'all' || statusFilter !== 'all' ? 'No decrypts match these filters.' : 'No decrypts yet.'}
+    />
   {:else}
     <div class="scroll-fade-x max-h-[600px] overflow-auto" use:scrollFade>
       <table class="min-w-[640px]">
@@ -172,7 +234,11 @@
               </tr>
               {#each g.items as j (j.id)}
                 <tr>
-                  <td class="max-w-40 truncate" title={j.bundleId}>{j.bundleId}</td>
+                  <td class="max-w-40 truncate">
+                    <button class="cursor-pointer hover:text-accent hover:underline" title="View stats for {j.bundleId}" onclick={() => openStats(j.bundleId)}>
+                      {j.bundleId}
+                    </button>
+                  </td>
                   <td class="max-w-36 truncate" title={j.versionLabel ?? ''}>
                     {#if j.versionLabel}
                       {j.versionLabel}
@@ -191,9 +257,14 @@
                   <td class="text-muted"><RelativeTime ms={j.finishedAt} /></td>
                   <td class="max-w-52 truncate text-muted" title={j.error ?? ''}>{j.error ?? ''}</td>
                   <td>
-                    <Button size="sm" variant="secondary" loading={requeueing.has(j.id)} onclick={() => decryptAgain(j)}>
-                      Decrypt again
-                    </Button>
+                    <div class="flex flex-wrap gap-1.5">
+                      <Button size="sm" variant="secondary" loading={requeueing.has(j.id)} onclick={() => decryptAgain(j)}>
+                        Decrypt again
+                      </Button>
+                      {#if j.status === 'done'}
+                        <Button size="sm" variant="secondary" onclick={() => openShare(j.id)}>Share</Button>
+                      {/if}
+                    </div>
                   </td>
                 </tr>
               {/each}
@@ -211,3 +282,6 @@
     </div>
   {/if}
 </Card>
+
+<ShareLinkDialog open={shareOpen} jobId={shareJobId} onOpenChange={(v) => (shareOpen = v)} />
+<BundleStatsDialog open={statsOpen} bundleId={statsBundleId} onOpenChange={(v) => (statsOpen = v)} />

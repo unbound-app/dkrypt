@@ -4,9 +4,29 @@
   import { fetchDeviceHealth, fetchJobVolume, type DeviceHealth } from '../../lib/api';
   import Badge from '../../lib/components/ui/Badge.svelte';
   import Card from '../../lib/components/ui/Card.svelte';
+  import { fmtBytesGB, fmtUntil } from '../../lib/format';
   import { liveState } from '../../lib/live.svelte';
 
   const overview = $derived(liveState.overview);
+
+  // Neither the disk gauge nor the "next run in" label update on their own between overview
+  // pushes (the server only sends one on job/history changes) - this tick forces a re-render.
+  let now = $state(Date.now());
+  $effect(() => {
+    const interval = setInterval(() => (now = Date.now()), 30_000);
+    return () => clearInterval(interval);
+  });
+  const nextRunLabel = $derived.by(() => {
+    void now;
+    return overview?.nextSchedulerRunAt ? fmtUntil(overview.nextSchedulerRunAt) : undefined;
+  });
+
+  const diskColor = $derived.by(() => {
+    const pct = overview?.disk?.usedPercent ?? 0;
+    if (pct >= 0.9) return 'bg-err';
+    if (pct >= 0.75) return 'bg-warn';
+    return 'bg-accent';
+  });
 
   function fmtDayLabel(dateStr: string): string {
     return new Date(dateStr).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
@@ -70,7 +90,24 @@
         {overview?.settings.pollCron || '-'}
       </dd>
     </div>
+    {#if nextRunLabel}
+      <div class="border-border flex items-center gap-2.5 border-t py-2">
+        <dt class="w-24 shrink-0 text-xs text-muted">Next run</dt>
+        <dd class="min-w-0 flex-1 truncate text-[13px]">in {nextRunLabel}</dd>
+      </div>
+    {/if}
   </dl>
+  {#if overview?.disk}
+    <div class="border-border mt-1 border-t pt-3">
+      <div class="mb-1.5 flex items-center justify-between text-xs text-muted">
+        <span>Staging disk</span>
+        <span>{fmtBytesGB(overview.disk.usedBytes)} / {fmtBytesGB(overview.disk.totalBytes)}</span>
+      </div>
+      <div class="bg-panel-muted h-1.5 w-full overflow-hidden rounded-full">
+        <div class="h-full rounded-full {diskColor}" style="width: {Math.min(100, overview.disk.usedPercent * 100)}%"></div>
+      </div>
+    </div>
+  {/if}
   {#if volume}
     <div class="border-border mt-1 border-t pt-3">
       <div class="mb-1.5 text-xs text-muted">{total} decrypt{total === 1 ? '' : 's'} · last 14 days</div>

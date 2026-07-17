@@ -111,12 +111,21 @@ export interface SchedulerRunEntry {
   testflight: SchedulerRunOutcome;
 }
 
+export interface DiskUsage {
+  totalBytes: number;
+  freeBytes: number;
+  usedBytes: number;
+  usedPercent: number;
+}
+
 export interface OverviewPayload {
   schedulerEnabled: boolean;
   settings: SchedulerSettings;
   appleAuthAlert: AppleAuthAlert;
   lastSchedulerRunAt?: number;
+  nextSchedulerRunAt?: number;
   schedulerRunHistory: SchedulerRunEntry[];
+  disk?: DiskUsage;
   activeJobs: ActiveJob[];
 }
 
@@ -152,6 +161,7 @@ export interface AllowedUser {
   username: string;
   permissions: Permissions;
   addedAt: number;
+  lastActiveAt?: number;
 }
 
 export interface AuditLogEntry {
@@ -199,9 +209,44 @@ export function fetchDeviceHealth(): Promise<DeviceHealth> {
   return apiJson('/v1/dashboard/device/health');
 }
 
-export function fetchJobHistory(offset: number, limit: number, q?: string): Promise<{ history: JobHistoryEntry[]; total: number }> {
+export function fetchJobHistory(
+  offset: number,
+  limit: number,
+  q?: string,
+  source?: 'manual' | 'scheduler',
+  status?: 'done' | 'failed',
+): Promise<{ history: JobHistoryEntry[]; total: number }> {
   const query = q ? `&q=${encodeURIComponent(q)}` : '';
-  return apiJson(`/v1/dashboard/jobs?offset=${offset}&limit=${limit}${query}`);
+  const sourceQuery = source ? `&source=${source}` : '';
+  const statusQuery = status ? `&status=${status}` : '';
+  return apiJson(`/v1/dashboard/jobs?offset=${offset}&limit=${limit}${query}${sourceQuery}${statusQuery}`);
+}
+
+export interface BundleStats {
+  bundleId: string;
+  totalRuns: number;
+  doneCount: number;
+  failedCount: number;
+  successRate: number;
+  avgDurationMs?: number;
+  lastRunAt?: number;
+}
+
+export function fetchBundleStats(bundleId: string): Promise<BundleStats> {
+  return apiJson(`/v1/dashboard/jobs/stats/${encodeURIComponent(bundleId)}`);
+}
+
+export function shareJobFile(id: string, ttlMinutes?: number): Promise<{ ok: boolean; data: { url: string; expiresAt: number } }> {
+  return apiAction(`/v1/dashboard/jobs/${id}/share`, { method: 'POST', body: JSON.stringify({ ttlMinutes }) });
+}
+
+export interface ApiKeyUsageBucket {
+  date: string;
+  count: number;
+}
+
+export function fetchKeyUsage(id: string, days = 14): Promise<{ usage: ApiKeyUsageBucket[] }> {
+  return apiJson(`/v1/dashboard/keys/${id}/usage?days=${days}`);
 }
 
 export function fetchLogs(): Promise<{ logs: LogEntry[] }> {

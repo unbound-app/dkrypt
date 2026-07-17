@@ -29,9 +29,25 @@ export function initTheme(): void {
   }
 }
 
+export interface ToastHistoryEntry {
+  id: string;
+  message: string;
+  type: 'success' | 'error';
+  ts: number;
+}
+
+const MAX_TOAST_HISTORY = 20;
+
+export const toastHistoryState = $state<{ items: ToastHistoryEntry[] }>({ items: [] });
+
+export function clearToastHistory(): void {
+  toastHistoryState.items = [];
+}
+
 export function showToast(message: string, type: 'success' | 'error' = 'success'): void {
   if (type === 'error') toast.error(message);
   else toast.success(message);
+  toastHistoryState.items = [{ id: crypto.randomUUID(), message, type, ts: Date.now() }, ...toastHistoryState.items].slice(0, MAX_TOAST_HISTORY);
 }
 
 interface ConfirmState {

@@ -135,6 +135,28 @@
     filtered;
     if (autoScroll && stickToTop && listEl) listEl.scrollTop = 0;
   });
+
+  // Tracks the newest entry the user has actually seen at the top of the list - used to show a
+  // "jump to latest" pill when they're scrolled away (or auto-scroll is off) and more arrive.
+  let pinnedTopKey = $state<string | undefined>(undefined);
+
+  $effect(() => {
+    if (stickToTop) pinnedTopKey = filtered[0] ? entryKey(filtered[0]) : undefined;
+  });
+
+  $effect(() => {
+    scopeFilter;
+    levelFilter;
+    searchText;
+    pinnedTopKey = filtered[0] ? entryKey(filtered[0]) : undefined;
+  });
+
+  const hasNewer = $derived(!stickToTop && filtered.length > 0 && entryKey(filtered[0]) !== pinnedTopKey);
+
+  function jumpToLatest(): void {
+    if (listEl) listEl.scrollTop = 0;
+    pinnedTopKey = filtered[0] ? entryKey(filtered[0]) : undefined;
+  }
 </script>
 
 <Card title="Scheduler &amp; job logs">
@@ -176,21 +198,31 @@
       {/each}
     </div>
   {:else}
-    <div class="flex max-h-[560px] flex-col gap-1.5 overflow-y-auto" bind:this={listEl} onscroll={onListScroll}>
-      {#each filtered as l (entryKey(l))}
-        <div class={`border-border bg-panel-muted flex items-baseline gap-2 rounded-md border border-l-[3px] px-2.5 py-2 text-[12.5px] ${LEVEL_BORDER[l.level]}`}>
-          <span class="shrink-0 font-mono text-[11.5px] whitespace-nowrap text-muted"><RelativeTime ms={l.ts} /></span>
-          <Badge variant={LEVEL_BADGE[l.level]} class="shrink-0">{l.level}</Badge>
-          <Badge variant="secondary" class="shrink-0">{l.scope}</Badge>
-          <span class="min-w-0 flex-1 truncate" title="{l.message} {fmtLogMeta(l.meta)}">
-            {l.message}
-            {#if l.meta}
-              <span class="font-mono text-[11px] text-muted">{fmtLogMeta(l.meta)}</span>
-            {/if}
-          </span>
-          <CopyButton text={JSON.stringify(l, null, 2)} label="JSON" />
-        </div>
-      {/each}
+    <div class="relative">
+      {#if hasNewer}
+        <button
+          class="border-accent bg-accent text-accent-contrast absolute top-2 left-1/2 z-10 -translate-x-1/2 cursor-pointer rounded-full border px-3 py-1 text-xs font-medium shadow-lg"
+          onclick={jumpToLatest}
+        >
+          New log lines - jump to latest
+        </button>
+      {/if}
+      <div class="flex max-h-[560px] flex-col gap-1.5 overflow-y-auto" bind:this={listEl} onscroll={onListScroll}>
+        {#each filtered as l (entryKey(l))}
+          <div class={`border-border bg-panel-muted flex items-baseline gap-2 rounded-md border border-l-[3px] px-2.5 py-2 text-[12.5px] ${LEVEL_BORDER[l.level]}`}>
+            <span class="shrink-0 font-mono text-[11.5px] whitespace-nowrap text-muted"><RelativeTime ms={l.ts} /></span>
+            <Badge variant={LEVEL_BADGE[l.level]} class="shrink-0">{l.level}</Badge>
+            <Badge variant="secondary" class="shrink-0">{l.scope}</Badge>
+            <span class="min-w-0 flex-1 truncate" title="{l.message} {fmtLogMeta(l.meta)}">
+              {l.message}
+              {#if l.meta}
+                <span class="font-mono text-[11px] text-muted">{fmtLogMeta(l.meta)}</span>
+              {/if}
+            </span>
+            <CopyButton text={JSON.stringify(l, null, 2)} label="JSON" />
+          </div>
+        {/each}
+      </div>
     </div>
     {#if filtered.length === 0}
       <EmptyState icon={ScrollText} message="No log entries yet." />

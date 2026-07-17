@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { NextFunction, Request, Response } from 'express';
 import { config } from './config.js';
-import { PERMISSION_KEYS, type Permissions } from './store/state.js';
+import { getSessionVersion, PERMISSION_KEYS, type Permissions } from './store/state.js';
 
 const COOKIE_NAME = 'session';
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
@@ -10,6 +10,7 @@ export interface Session {
   sub: string;
   permissions: Permissions;
   exp: number;
+  ver: number;
 }
 
 function isPermissions(value: unknown): value is Permissions {
@@ -43,7 +44,9 @@ function deserialize(cookieValue: string): Session | undefined {
     const parsed = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as Session;
     if (Date.now() > parsed.exp) return undefined;
     if (typeof parsed.sub !== 'string' || !isPermissions(parsed.permissions)) return undefined;
-    return { sub: parsed.sub, permissions: parsed.permissions, exp: parsed.exp };
+    // A version mismatch means "log out everywhere" fired since this cookie was issued.
+    if ((parsed.ver ?? 0) !== getSessionVersion(parsed.sub)) return undefined;
+    return { sub: parsed.sub, permissions: parsed.permissions, exp: parsed.exp, ver: parsed.ver ?? 0 };
   } catch {
     return undefined;
   }
@@ -66,11 +69,12 @@ export function checkRootPassword(candidate: string): boolean {
   return safeEqualStr(candidate, config.adminPassword);
 }
 
-export function setSessionCookie(res: Response, session: Omit<Session, 'exp'>): number {
+export function setSessionCookie(res: Response, session: Omit<Session, 'exp' | 'ver'>): number {
   const expiresAtMs = Date.now() + SESSION_TTL_MS;
+  const withVer: Omit<Session, 'exp'> = { ...session, ver: getSessionVersion(session.sub) };
   res.setHeader(
     'Set-Cookie',
-    `${COOKIE_NAME}=${serialize(session, expiresAtMs)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${SESSION_TTL_MS / 1000}`,
+    `${COOKIE_NAME}=${serialize(withVer, expiresAtMs)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${SESSION_TTL_MS / 1000}`,
   );
   return expiresAtMs;
 }

@@ -198,6 +198,11 @@ export async function logout(): Promise<void> {
   await refreshSession();
 }
 
+export async function logoutEverywhere(): Promise<void> {
+  await fetch('/v1/auth/logout-everywhere', { method: 'POST' });
+  await refreshSession();
+}
+
 export function markLoggedOut(): void {
   sessionState.loggedIn = false;
 }

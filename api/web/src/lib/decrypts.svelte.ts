@@ -81,11 +81,34 @@ export function removeRecentBundleId(bundleId: string): void {
   localStorage.setItem('recentBundleIds', JSON.stringify(items));
 }
 
+function loadStarredBundleIds(): string[] {
+  try {
+    return JSON.parse(localStorage.getItem('starredBundleIds') ?? '[]') as string[];
+  } catch {
+    return [];
+  }
+}
+
+export const starredBundleIdsState = $state<{ items: string[] }>({ items: loadStarredBundleIds() });
+
+export function isStarredBundleId(bundleId: string): boolean {
+  return starredBundleIdsState.items.includes(bundleId);
+}
+
+export function toggleStarredBundleId(bundleId: string): void {
+  const items = isStarredBundleId(bundleId)
+    ? starredBundleIdsState.items.filter((b) => b !== bundleId)
+    : [bundleId, ...starredBundleIdsState.items];
+  starredBundleIdsState.items = items;
+  localStorage.setItem('starredBundleIds', JSON.stringify(items));
+}
+
 // Keep tabs in sync - without this, two open dashboard tabs drift apart as each queues/dismisses
 // decrypts independently, and only the tab that made the last write wins on next reload.
 if (typeof window !== 'undefined') {
   window.addEventListener('storage', (e) => {
     if (e.key === 'myDecrypts') myDecryptsState.items = loadDecrypts();
     else if (e.key === 'recentBundleIds') recentBundleIdsState.items = loadRecentBundleIds();
+    else if (e.key === 'starredBundleIds') starredBundleIdsState.items = loadStarredBundleIds();
   });
 }

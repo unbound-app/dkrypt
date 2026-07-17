@@ -1,14 +1,24 @@
 <script lang="ts">
-  import { FlaskConical, History, X } from 'lucide-svelte';
+  import { FlaskConical, History, Star, X } from 'lucide-svelte';
   import { queueDecrypt, queueTestFlightDecrypt, searchApps, type AppStoreSearchResult, type TFBuild } from '../../lib/api';
   import Badge from '../../lib/components/ui/Badge.svelte';
   import Button from '../../lib/components/ui/Button.svelte';
   import Card from '../../lib/components/ui/Card.svelte';
   import Input from '../../lib/components/ui/Input.svelte';
   import { statusToBadgeVariant } from '../../lib/components/ui/variants';
-  import { addDecrypt, myDecryptsState, pushRecentBundleId, recentBundleIdsState, removeRecentBundleId } from '../../lib/decrypts.svelte';
+  import {
+    addDecrypt,
+    isStarredBundleId,
+    myDecryptsState,
+    pushRecentBundleId,
+    recentBundleIdsState,
+    removeRecentBundleId,
+    starredBundleIdsState,
+    toggleStarredBundleId,
+  } from '../../lib/decrypts.svelte';
   import { debounce } from '../../lib/format';
   import { liveState } from '../../lib/live.svelte';
+  import { requestNotificationPermission } from '../../lib/notifications';
   import { sessionState } from '../../lib/session.svelte';
   import { showToast } from '../../lib/ui.svelte';
   import { cn } from '../../lib/utils';
@@ -97,6 +107,7 @@
 
   async function queue(bundleId: string, trackName: string, externalVersionId?: string, versionLabel?: string): Promise<void> {
     if (!canDecrypt) return;
+    requestNotificationPermission();
     queueing = new Set(queueing).add(bundleId);
     try {
       const { ok, data } = await queueDecrypt(bundleId, externalVersionId, versionLabel);
@@ -130,6 +141,7 @@
 
   async function decryptTestFlightBuild(bundleId: string, appId: number, build: TFBuild, label: string): Promise<void> {
     if (!canDecrypt) return;
+    requestNotificationPermission();
     testflightOpen = false;
     const { ok, data } = await queueTestFlightDecrypt(bundleId, appId, build);
     if (!ok) return;
@@ -194,6 +206,24 @@
     {/if}
   </div>
 
+  {#if !term.trim() && starredBundleIdsState.items.length > 0}
+    <div class="mt-2.5 flex flex-wrap gap-1.5">
+      {#each starredBundleIdsState.items as bundleId (bundleId)}
+        <span class="border-border text-muted hover:text-text hover:border-accent inline-flex items-center gap-1 rounded-full border pr-1 pl-2.5 py-1 font-mono text-[11.5px]">
+          <button class="cursor-pointer" onclick={() => pickRecent(bundleId)}>{bundleId}</button>
+          <button
+            class="text-warn hover:text-err cursor-pointer rounded-full p-0.5"
+            onclick={() => toggleStarredBundleId(bundleId)}
+            aria-label="Unstar {bundleId}"
+            title="Unstar"
+          >
+            <Star class="h-3 w-3" fill="currentColor" />
+          </button>
+        </span>
+      {/each}
+    </div>
+  {/if}
+
   {#if !term.trim() && recentBundleIdsState.items.length > 0}
     <div class="mt-2.5 flex flex-wrap gap-1.5">
       {#each recentBundleIdsState.items as bundleId (bundleId)}
@@ -231,6 +261,14 @@
             <Badge variant="destructive" title="ipadecrypt only supports free apps">Paid</Badge>
           {:else}
             <div class="flex items-center gap-1.5">
+              <button
+                class={cn('cursor-pointer rounded-md p-1.5', isStarredBundleId(r.bundleId) ? 'text-warn' : 'text-muted hover:text-text')}
+                onclick={() => toggleStarredBundleId(r.bundleId)}
+                aria-label={isStarredBundleId(r.bundleId) ? `Unstar ${r.bundleId}` : `Star ${r.bundleId}`}
+                title={isStarredBundleId(r.bundleId) ? 'Unstar' : 'Star'}
+              >
+                <Star class="h-3.5 w-3.5" fill={isStarredBundleId(r.bundleId) ? 'currentColor' : 'none'} />
+              </button>
               {#if canDecrypt}
                 <Button
                   size="sm"
