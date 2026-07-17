@@ -37,6 +37,7 @@
     if (sessionState.permissions?.viewLogs) {
       base.push({ id: 'logs', label: 'Go to Logs', run: () => setActiveTab('logs') });
     }
+    base.push({ id: 'insights', label: 'Go to Insights', run: () => setActiveTab('insights') });
     base.push({ id: 'docs', label: 'Go to Docs', run: () => setActiveTab('docs') });
     if (
       sessionState.permissions?.manageScheduler ||
