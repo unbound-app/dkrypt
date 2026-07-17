@@ -315,7 +315,7 @@ export interface DeviceHealth {
 }
 
 function parseIoregValue(output: string, key: string): string | undefined {
-  return new RegExp(`"${key}"\\s*=\\s*([^\\n]+)`).exec(output)?.[1]?.trim();
+  return new RegExp(`"${key}" = ([^\\n]+)`).exec(output)?.[1]?.trim();
 }
 
 interface BatteryStatus {
@@ -329,10 +329,12 @@ interface BatteryStatus {
 // the same fallback locations here rather than assuming the bare command resolves.
 const IOREG_CANDIDATES = ['ioreg', '/usr/sbin/ioreg', '/cores/binpack/usr/sbin/ioreg', '/cores/binpack/usr/bin/ioreg'];
 
+const IOREG_BATTERY_CLASS = 'AppleARMPMUCharger';
+
 async function runIoreg(conn: Client): Promise<string | undefined> {
   for (const bin of IOREG_CANDIDATES) {
-    const { stdout, stderr, code } = await execCommand(conn, `${bin} -rn AppleSmartBattery -w 0 2>&1`);
-    if (code === 0 && stdout.includes('AppleSmartBattery')) return stdout;
+    const { stdout, stderr, code } = await execCommand(conn, `${bin} -rc ${IOREG_BATTERY_CLASS} -w 0 2>&1`);
+    if (code === 0 && stdout.includes(IOREG_BATTERY_CLASS)) return stdout;
     log.warn('ioreg candidate did not produce battery data', { bin, code, output: (stdout || stderr).slice(0, 200) });
   }
   return undefined;
@@ -351,7 +353,7 @@ async function queryBatteryStatus(conn: Client): Promise<BatteryStatus | undefin
   const temperature = Number(parseIoregValue(stdout, 'Temperature'));
 
   if (!Number.isFinite(currentCapacity) || !maxCapacity) {
-    log.warn('ioreg output did not contain the expected AppleSmartBattery fields', { sample: stdout.slice(0, 500) });
+    log.warn('ioreg output did not contain the expected AppleARMPMUCharger fields', { sample: stdout.slice(0, 500) });
   }
 
   return {
