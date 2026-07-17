@@ -116,13 +116,26 @@
       return;
     dismissDecrypt(d.id);
   }
+
+  const finishedCount = $derived(myDecryptsState.items.filter((d) => d.status === 'done' || d.status === 'failed').length);
+
+  function clearFinished(): void {
+    for (const d of myDecryptsState.items) {
+      if (d.status === 'done' || d.status === 'failed') dismissDecrypt(d.id);
+    }
+  }
 </script>
 
 <Card title="My requests">
+  {#snippet headerExtra()}
+    {#if finishedCount > 0}
+      <Button size="sm" variant="secondary" onclick={clearFinished}>Clear finished ({finishedCount})</Button>
+    {/if}
+  {/snippet}
   {#if myDecryptsState.items.length === 0}
     <EmptyState icon={PackageSearch} message="Nothing queued yet - search above." />
   {:else}
-    <table>
+    <table class="responsive-table">
       <thead>
         <tr>
           <th>App</th>
@@ -135,13 +148,13 @@
       <tbody>
         {#each myDecryptsState.items as d (d.id)}
           <tr>
-            <td>
+            <td data-label="App">
               {d.trackName}
               {#if d.versionLabel}
                 <span class="text-muted text-xs">({d.versionLabel})</span>
               {/if}
             </td>
-            <td>
+            <td data-label="Status">
               {#if d.status === 'done'}
                 <Badge variant="success">done</Badge>
               {:else if d.status === 'failed'}
@@ -153,15 +166,15 @@
                 <span class="text-muted">{d.queue ? `position ${d.queue.position} of ${d.queue.total}` : ''}</span>
               {/if}
             </td>
-            <td class="text-muted"><RelativeTime ms={d.createdAt} /></td>
-            <td>
+            <td data-label="Queued" class="text-muted"><RelativeTime ms={d.createdAt} /></td>
+            <td data-label="Job ID">
               <div class="flex items-center gap-1.5">
                 <code title={d.id}>{d.id.slice(0, 8)}</code>
                 <CopyButton text={d.id} />
               </div>
             </td>
             <td>
-              <div class="flex gap-1.5">
+              <div class="flex flex-wrap justify-end gap-1.5">
                 {#if d.status === 'done'}
                   <a class={buttonVariants('default', 'sm')} href="/v1/dashboard/jobs/{d.id}/file">Download</a>
                   <Button size="sm" variant="secondary" onclick={() => openShare(d.id)}>Share</Button>

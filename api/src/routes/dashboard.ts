@@ -38,6 +38,7 @@ import {
   getAverageJobDurationMs,
   getBundleStats,
   getDailyVolume,
+  getDeviceBatteryHourlyBuckets,
   getDeviceHealthHourlyBuckets,
   getDeviceUptimePercent,
   getEffectiveSettings,
@@ -281,6 +282,11 @@ dashboardRouter.get('/v1/dashboard/device/health', async (_req, res) => {
 dashboardRouter.get('/v1/dashboard/device/health-history', (req, res) => {
   const hours = Math.min(Math.max(Number.parseInt(String(req.query.hours ?? '24'), 10) || 24, 1), 168);
   res.json({ buckets: getDeviceHealthHourlyBuckets(hours), uptimePercent: getDeviceUptimePercent(hours) ?? null });
+});
+
+dashboardRouter.get('/v1/dashboard/device/battery-history', (req, res) => {
+  const hours = Math.min(Math.max(Number.parseInt(String(req.query.hours ?? '24'), 10) || 24, 1), 168);
+  res.json({ buckets: getDeviceBatteryHourlyBuckets(hours) });
 });
 
 dashboardRouter.get('/v1/dashboard/testflight/:appId/trains', async (req, res) => {

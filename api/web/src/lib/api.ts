@@ -237,6 +237,15 @@ export function fetchDeviceHealthHistory(hours = 24): Promise<{ buckets: HourlyH
   return apiJson(`/v1/dashboard/device/health-history?hours=${hours}`);
 }
 
+export interface HourlyBatteryBucket {
+  hourStart: number;
+  batteryPercent: number | null;
+}
+
+export function fetchDeviceBatteryHistory(hours = 24): Promise<{ buckets: HourlyBatteryBucket[] }> {
+  return apiJson(`/v1/dashboard/device/battery-history?hours=${hours}`);
+}
+
 export function fetchJobHistory(
   offset: number,
   limit: number,
@@ -258,6 +267,7 @@ export interface BundleStats {
   successRate: number;
   avgDurationMs?: number;
   lastRunAt?: number;
+  failureBreakdown: { category: string; count: number }[];
 }
 
 export function fetchBundleStats(bundleId: string): Promise<BundleStats> {

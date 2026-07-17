@@ -66,6 +66,14 @@
     ),
   );
 
+  type NotifPermission = NotificationPermission | 'unsupported';
+  let notifPermission = $state<NotifPermission>(typeof Notification === 'undefined' ? 'unsupported' : Notification.permission);
+
+  async function enableNotifications(): Promise<void> {
+    if (typeof Notification === 'undefined') return;
+    notifPermission = await Notification.requestPermission();
+  }
+
   const TABS: { id: TabId; label: string; requires?: (keyof Permissions)[] }[] = [
     { id: 'home', label: 'Home' },
     { id: 'keys', label: 'API Keys', requires: ['decrypt', 'viewApiKeys', 'approveApiKeys', 'revokeApiKeys'] },
@@ -292,6 +300,21 @@
       {/each}
     </div>
   {/if}
+  <div class="border-border mt-4 border-t pt-4">
+    <div class="flex items-center justify-between gap-3">
+      <div class="text-[13px]">Desktop notifications</div>
+      {#if notifPermission === 'granted'}
+        <Badge variant="success">Enabled</Badge>
+      {:else if notifPermission === 'denied'}
+        <Badge variant="destructive" title="Blocked at the browser level - re-enable it in your browser's site settings">Blocked</Badge>
+      {:else if notifPermission === 'unsupported'}
+        <Badge variant="secondary">Not supported</Badge>
+      {:else}
+        <Button size="sm" variant="secondary" onclick={enableNotifications}>Enable</Button>
+      {/if}
+    </div>
+    <div class="mt-1.5 text-xs text-muted">Get notified when your queued decrypts finish, even in a background tab.</div>
+  </div>
   <div class="border-border mt-4 border-t pt-4">
     <Button variant="destructive" size="sm" class="w-full" loading={loggingOutEverywhere} onclick={doLogoutEverywhere}>
       Log out everywhere

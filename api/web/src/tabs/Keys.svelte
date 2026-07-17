@@ -28,7 +28,7 @@
   import { fmtUntil } from '../lib/format';
   import { scrollFade } from '../lib/scrollFade';
   import { sessionState } from '../lib/session.svelte';
-  import { confirmDialog, showToast } from '../lib/ui.svelte';
+  import { confirmDialog, keyUsageJumpState, showToast } from '../lib/ui.svelte';
 
   const PAGE_SIZE = 25;
 
@@ -127,6 +127,15 @@
 
   $effect(() => {
     void loadAll();
+  });
+
+  $effect(() => {
+    const keyId = keyUsageJumpState.keyId;
+    if (!keyId) return;
+    const match = mine?.find((k) => k.id === keyId) ?? all?.find((k) => k.id === keyId);
+    if (!match) return;
+    openUsage(match);
+    keyUsageJumpState.keyId = null;
   });
 
   function parseScope(raw: string): string[] | undefined {

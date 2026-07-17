@@ -138,6 +138,15 @@ export function jumpToHistoryBundleId(bundleId: string): void {
   setActiveTab('home');
 }
 
+// Consumed by Keys - lets the command palette open a specific key's Usage dialog directly
+// instead of just landing on the API Keys tab and making you find the row yourself.
+export const keyUsageJumpState = $state<{ keyId: string | null }>({ keyId: null });
+
+export function jumpToKeyUsage(keyId: string): void {
+  keyUsageJumpState.keyId = keyId;
+  setActiveTab('keys');
+}
+
 export type TabId = 'home' | 'keys' | 'logs' | 'insights' | 'docs' | 'settings';
 
 export const tabState = $state<{ active: TabId; settingsSubtab: string }>({

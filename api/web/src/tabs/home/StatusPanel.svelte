@@ -2,7 +2,16 @@
   import { BatteryCharging, BatteryMedium, Circle, CircleCheck, TriangleAlert } from 'lucide-svelte';
   import RelativeTime from '../../components/RelativeTime.svelte';
   import Sparkline from '../../components/Sparkline.svelte';
-  import { fetchDeviceHealth, fetchDeviceHealthHistory, fetchJobVolume, type DeviceHealth, type HourlyHealthBucket, type SchedulerRunOutcome } from '../../lib/api';
+  import {
+    fetchDeviceBatteryHistory,
+    fetchDeviceHealth,
+    fetchDeviceHealthHistory,
+    fetchJobVolume,
+    type DeviceHealth,
+    type HourlyBatteryBucket,
+    type HourlyHealthBucket,
+    type SchedulerRunOutcome,
+  } from '../../lib/api';
   import Badge from '../../lib/components/ui/Badge.svelte';
   import Card from '../../lib/components/ui/Card.svelte';
   import { fmtBytesGB, fmtUntil } from '../../lib/format';
@@ -101,6 +110,30 @@
     return `${time}: ${Math.round(bucket.reachablePercent * 100)}% reachable`;
   }
 
+  let batteryHistory = $state<HourlyBatteryBucket[] | null>(null);
+
+  $effect(() => {
+    const load = () => void fetchDeviceBatteryHistory(24).then((r) => (batteryHistory = r.buckets));
+    load();
+    const interval = setInterval(load, 60_000);
+    return () => clearInterval(interval);
+  });
+
+  function batteryBucketColor(pct: number | null): string {
+    if (pct === null) return 'bg-panel-muted';
+    if (pct <= 20) return 'bg-err';
+    if (pct <= 40) return 'bg-warn';
+    return 'bg-ok';
+  }
+
+  function batteryBucketTitle(bucket: HourlyBatteryBucket): string {
+    const time = new Date(bucket.hourStart).toLocaleString(undefined, { hour: 'numeric', month: 'short', day: 'numeric' });
+    if (bucket.batteryPercent === null) return `${time}: no data`;
+    return `${time}: ${bucket.batteryPercent}%`;
+  }
+
+  const hasBatteryHistory = $derived(batteryHistory?.some((b) => b.batteryPercent !== null) ?? false);
+
   const total = $derived(volume?.reduce((a, d) => a + d.value, 0) ?? 0);
   const activeJobs = $derived(overview?.activeJobs.length ?? 0);
 </script>
@@ -146,6 +179,16 @@
       <div class="flex gap-0.5">
         {#each healthHistory as bucket (bucket.hourStart)}
           <div class="h-4 flex-1 rounded-sm {bucketColor(bucket.reachablePercent)}" title={bucketTitle(bucket)}></div>
+        {/each}
+      </div>
+    </div>
+  {/if}
+  {#if hasBatteryHistory}
+    <div class="mb-3.5">
+      <div class="mb-1.5 text-xs text-muted">Battery · last 24h</div>
+      <div class="flex gap-0.5">
+        {#each batteryHistory ?? [] as bucket (bucket.hourStart)}
+          <div class="h-4 flex-1 rounded-sm {batteryBucketColor(bucket.batteryPercent)}" title={batteryBucketTitle(bucket)}></div>
         {/each}
       </div>
     </div>

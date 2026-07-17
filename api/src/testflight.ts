@@ -324,14 +324,35 @@ interface BatteryStatus {
   batteryTemperatureC?: number;
 }
 
+// Plain `ioreg` isn't reliably on PATH over SSH on every jailbreak setup - readInstalledBundleVersion
+// above hits the same problem with plutil and works around it with an explicit binpack path, so try
+// the same fallback locations here rather than assuming the bare command resolves.
+const IOREG_CANDIDATES = ['ioreg', '/usr/sbin/ioreg', '/cores/binpack/usr/sbin/ioreg', '/cores/binpack/usr/bin/ioreg'];
+
+async function runIoreg(conn: Client): Promise<string | undefined> {
+  for (const bin of IOREG_CANDIDATES) {
+    const { stdout, stderr, code } = await execCommand(conn, `${bin} -rn AppleSmartBattery -w 0 2>&1`);
+    if (code === 0 && stdout.includes('AppleSmartBattery')) return stdout;
+    log.warn('ioreg candidate did not produce battery data', { bin, code, output: (stdout || stderr).slice(0, 200) });
+  }
+  return undefined;
+}
+
 async function queryBatteryStatus(conn: Client): Promise<BatteryStatus | undefined> {
-  const { stdout, code } = await execCommand(conn, 'ioreg -rn AppleSmartBattery -w0');
-  if (code !== 0 || !stdout) return undefined;
+  const stdout = await runIoreg(conn);
+  if (!stdout) {
+    log.warn('ioreg is not available on the device via any known path - battery telemetry disabled');
+    return undefined;
+  }
 
   const currentCapacity = Number(parseIoregValue(stdout, 'CurrentCapacity'));
   const maxCapacity = Number(parseIoregValue(stdout, 'MaxCapacity'));
   const isCharging = parseIoregValue(stdout, 'IsCharging');
   const temperature = Number(parseIoregValue(stdout, 'Temperature'));
+
+  if (!Number.isFinite(currentCapacity) || !maxCapacity) {
+    log.warn('ioreg output did not contain the expected AppleSmartBattery fields', { sample: stdout.slice(0, 500) });
+  }
 
   return {
     batteryPercent: Number.isFinite(currentCapacity) && maxCapacity ? Math.round((currentCapacity / maxCapacity) * 100) : undefined,
@@ -349,7 +370,10 @@ async function computeDeviceHealth(): Promise<DeviceHealth> {
       const [tfRunning, sbStatus, battery] = await Promise.all([
         isTestFlightRunning(conn),
         sendBridgeRequestRawTo(conn, SB_REQUEST_PATH, SB_RESPONSE_PATH, { action: 'screen_status' }, 8_000).catch(() => undefined),
-        queryBatteryStatus(conn).catch(() => undefined),
+        queryBatteryStatus(conn).catch((err: unknown) => {
+          log.warn('battery query threw', { error: String(err) });
+          return undefined;
+        }),
       ]);
       return {
         reachable: true,
@@ -408,7 +432,7 @@ export function startDeviceHealthPoller(): void {
   setInterval(() => {
     void getDeviceHealth()
       .then((health) => {
-        recordDeviceHealthCheck(health.reachable);
+        recordDeviceHealthCheck(health.reachable, health.batteryPercent);
         return checkOfflineAlert(health.reachable);
       })
       .catch((err) => log.warn('device health poll failed', { error: String(err) }));

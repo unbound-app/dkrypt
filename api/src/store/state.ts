@@ -242,6 +242,7 @@ export interface ApiKeyUsageBucket {
 export interface DeviceHealthCheck {
   ts: number;
   reachable: boolean;
+  batteryPercent?: number;
 }
 
 interface PersistedState {
@@ -833,6 +834,7 @@ export interface BundleStats {
   successRate: number;
   avgDurationMs?: number;
   lastRunAt?: number;
+  failureBreakdown: { category: string; count: number }[];
 }
 
 export function getBundleStats(bundleId: string): BundleStats {
@@ -847,6 +849,7 @@ export function getBundleStats(bundleId: string): BundleStats {
     successRate: runs.length > 0 ? doneCount / runs.length : 0,
     avgDurationMs: getAverageJobDurationMs(bundleId),
     lastRunAt: runs.length > 0 ? Math.max(...runs.map((j) => j.finishedAt)) : undefined,
+    failureBreakdown: getFailureBreakdown(runs),
   };
 }
 
@@ -958,8 +961,8 @@ export function getSchedulerRunHistory(limit = 10): SchedulerRunEntry[] {
   return state.schedulerRunHistory.slice(0, limit);
 }
 
-export function recordDeviceHealthCheck(reachable: boolean): void {
-  state.deviceHealthHistory.push({ ts: Date.now(), reachable });
+export function recordDeviceHealthCheck(reachable: boolean, batteryPercent?: number): void {
+  state.deviceHealthHistory.push({ ts: Date.now(), reachable, batteryPercent });
   if (state.deviceHealthHistory.length > MAX_DEVICE_HEALTH_CHECKS) state.deviceHealthHistory.shift();
   persistNow();
 }
@@ -986,6 +989,25 @@ export function getDeviceUptimePercent(hours = 24): number | undefined {
   const recent = state.deviceHealthHistory.filter((c) => c.ts >= cutoff);
   if (recent.length === 0) return undefined;
   return recent.filter((c) => c.reachable).length / recent.length;
+}
+
+export interface HourlyBatteryBucket {
+  hourStart: number;
+  batteryPercent: number | null;
+}
+
+export function getDeviceBatteryHourlyBuckets(hours = 24): HourlyBatteryBucket[] {
+  const now = Date.now();
+  const buckets: HourlyBatteryBucket[] = [];
+  for (let i = hours - 1; i >= 0; i--) {
+    const hourStart = now - i * 3_600_000;
+    const hourEnd = hourStart + 3_600_000;
+    const readings = state.deviceHealthHistory
+      .filter((c) => c.ts >= hourStart && c.ts < hourEnd && c.batteryPercent !== undefined)
+      .map((c) => c.batteryPercent as number);
+    buckets.push({ hourStart, batteryPercent: readings.length > 0 ? Math.round(readings.reduce((a, b) => a + b, 0) / readings.length) : null });
+  }
+  return buckets;
 }
 
 export function getAppleAuthAlert(): AppleAuthAlert {

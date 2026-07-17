@@ -1,7 +1,7 @@
 <script lang="ts">
   import { fetchJobHistory, fetchMyKeys } from '../lib/api';
   import { logout, sessionState } from '../lib/session.svelte';
-  import { closePalette, jumpToHistoryBundleId, openHelp, paletteState, setActiveTab, setTheme, themePrefState } from '../lib/ui.svelte';
+  import { closePalette, jumpToHistoryBundleId, jumpToKeyUsage, openHelp, paletteState, setActiveTab, setTheme, themePrefState } from '../lib/ui.svelte';
   import Dialog from '../lib/components/ui/Dialog.svelte';
   import Input from '../lib/components/ui/Input.svelte';
   import { cn } from '../lib/utils';
@@ -17,7 +17,7 @@
   let selected = $state(0);
   let inputEl: HTMLInputElement | undefined = $state();
   let recentBundleIds = $state<string[]>([]);
-  let myKeyNames = $state<string[]>([]);
+  let myKeys = $state<{ id: string; name: string }[]>([]);
 
   $effect(() => {
     if (!paletteState.open) return;
@@ -25,7 +25,7 @@
       recentBundleIds = [...new Set(r.history.map((h) => h.bundleId))];
     });
     void fetchMyKeys().then((r) => {
-      myKeyNames = r.keys.map((k) => k.name);
+      myKeys = r.keys.map((k) => ({ id: k.id, name: k.name }));
     });
   });
 
@@ -65,8 +65,8 @@
         run: () => jumpToHistoryBundleId(bundleId),
       });
     }
-    for (const name of myKeyNames) {
-      base.push({ id: `key-${name}`, label: `Go to API key "${name}"`, keywords: name, run: () => setActiveTab('keys') });
+    for (const key of myKeys) {
+      base.push({ id: `key-${key.id}`, label: `View usage for API key "${key.name}"`, keywords: key.name, run: () => jumpToKeyUsage(key.id) });
     }
 
     return base;
