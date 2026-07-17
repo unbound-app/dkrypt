@@ -34,7 +34,11 @@
     <ChevronDown class="text-muted h-4 w-4 shrink-0" />
   </SelectPrimitive.Trigger>
   <SelectPrimitive.Portal>
-    <SelectPrimitive.Content class="border-border bg-panel z-50 min-w-40 overflow-hidden rounded-md border shadow-lg" sideOffset={4}>
+    <SelectPrimitive.Content
+      class="border-border bg-panel z-50 overflow-hidden rounded-md border shadow-lg"
+      style="width: var(--bits-floating-anchor-width); min-width: max(var(--bits-floating-anchor-width), 10rem);"
+      sideOffset={4}
+    >
       <SelectPrimitive.Viewport class="p-1">
         {#each items as item (item.value)}
           <SelectPrimitive.Item

@@ -48,14 +48,13 @@ function flattenEmbed(embed: NotifyEmbed): string {
 }
 
 // Discord embed limits: title 256, description 4096, field name 256, field value 1024, 25 fields max.
-function buildPayload(content: string, embed: NotifyEmbed, format: SchedulerSettings['notifyFormat']): Record<string, unknown> {
+function buildPayload(embed: NotifyEmbed, format: SchedulerSettings['notifyFormat']): Record<string, unknown> {
   if (format === 'plain') {
     const text = truncate(flattenEmbed(embed), 2000);
     return { content: text, text };
   }
 
   return {
-    content: truncate(content, 2000),
     embeds: [
       {
         title: truncate(embed.title, 256),
@@ -91,11 +90,10 @@ async function retryDelayMs(res: Response): Promise<number> {
 
 async function postWebhook(
   url: string,
-  content: string,
   embed: NotifyEmbed,
   format: SchedulerSettings['notifyFormat'],
 ): Promise<{ ok: boolean; status?: number; error?: string }> {
-  const body = JSON.stringify(buildPayload(content, embed, format));
+  const body = JSON.stringify(buildPayload(embed, format));
 
   for (let attempt = 0; attempt <= 1; attempt++) {
     try {
@@ -119,11 +117,11 @@ async function postWebhook(
   return { ok: false };
 }
 
-export async function notify(event: NotifyEvent, content: string, embed: NotifyEmbed): Promise<void> {
+export async function notify(event: NotifyEvent, embed: NotifyEmbed): Promise<void> {
   const settings = getEffectiveSettings();
   if (!settings.notifyWebhookUrl || !settings[EVENT_SETTING_KEY[event]]) return;
 
-  const result = await postWebhook(settings.notifyWebhookUrl, content, embed, settings.notifyFormat);
+  const result = await postWebhook(settings.notifyWebhookUrl, embed, settings.notifyFormat);
   if (!result.ok) log.warn('notify webhook failed', { event, status: result.status, error: result.error });
 }
 
@@ -134,7 +132,6 @@ export async function sendTestNotification(urlOverride?: string): Promise<{ ok: 
 
   const result = await postWebhook(
     url,
-    '🔔 Test notification',
     {
       title: 'Test notification',
       description: 'This is what a notification from dkrypt looks like.',

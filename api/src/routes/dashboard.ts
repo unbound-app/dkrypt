@@ -415,7 +415,7 @@ dashboardRouter.post('/v1/dashboard/keys/request', canDecrypt, (req, res) => {
   }
 
   const record = requestApiKey(name, sub, expiresInDays, allowedBundleIds);
-  void notify('keyRequest', '🔑 New API key request', {
+  void notify('keyRequest', {
     title: 'New API key request',
     description: `**${sub}** requested a new key ("${name}") - approve it on the API Keys tab.`,
     color: EMBED_COLOR.info,

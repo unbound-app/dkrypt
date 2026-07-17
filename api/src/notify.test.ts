@@ -31,7 +31,7 @@ describe('notify', () => {
     const fetchMock = mock(() => Promise.resolve(new Response('{}', { status: 200 })));
     global.fetch = fetchMock as unknown as typeof fetch;
 
-    await notify('keyRequest', 'hello', { title: 'x', color: 0 });
+    await notify('keyRequest', { title: 'x', color: 0 });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -40,11 +40,11 @@ describe('notify', () => {
     const fetchMock = mock(() => Promise.resolve(new Response('{}', { status: 200 })));
     global.fetch = fetchMock as unknown as typeof fetch;
 
-    await notify('keyRequest', 'hello', { title: 'x', color: 0 });
+    await notify('keyRequest', { title: 'x', color: 0 });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  test('posts a Discord-shaped embed payload for an enabled event', async () => {
+  test('posts a Discord-shaped embed payload for an enabled event, with no separate content line', async () => {
     updateSettings({ notifyWebhookUrl: 'https://example.test/webhook', notifyOnDispatchSuccess: true });
     let capturedBody: Record<string, unknown> | undefined;
     const fetchMock = mock((_url: string, init?: RequestInit) => {
@@ -53,14 +53,14 @@ describe('notify', () => {
     });
     global.fetch = fetchMock as unknown as typeof fetch;
 
-    await notify('dispatchSuccess', '✅ done', {
+    await notify('dispatchSuccess', {
       title: 'Decrypted & dispatched',
       color: 0x3ecf8e,
       fields: [{ name: 'App', value: 'com.example.app', inline: true }],
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(capturedBody?.content).toBe('✅ done');
+    expect(capturedBody?.content).toBeUndefined();
     const embeds = capturedBody?.embeds as Record<string, unknown>[];
     expect(embeds).toHaveLength(1);
     expect(embeds[0].title).toBe('Decrypted & dispatched');
@@ -77,7 +77,7 @@ describe('notify', () => {
     });
     global.fetch = fetchMock as unknown as typeof fetch;
 
-    await notify('appleAuthAlert', 'x', {
+    await notify('appleAuthAlert', {
       title: 'x',
       color: 0,
       fields: [{ name: 'Error', value: 'a'.repeat(2000) }],
@@ -97,7 +97,7 @@ describe('notify', () => {
     });
     global.fetch = fetchMock as unknown as typeof fetch;
 
-    await notify('dispatchSuccess', '✅ done', {
+    await notify('dispatchSuccess', {
       title: 'Decrypted & dispatched',
       description: 'all good',
       color: 0x3ecf8e,
@@ -122,7 +122,7 @@ describe('notify', () => {
     });
     global.fetch = fetchMock as unknown as typeof fetch;
 
-    await notify('dispatchSuccess', 'x', { title: 'x', color: 0 });
+    await notify('dispatchSuccess', { title: 'x', color: 0 });
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
@@ -131,7 +131,7 @@ describe('notify', () => {
     const fetchMock = mock(() => Promise.resolve(new Response('nope', { status: 500 })));
     global.fetch = fetchMock as unknown as typeof fetch;
 
-    await notify('dispatchSuccess', 'x', { title: 'x', color: 0 });
+    await notify('dispatchSuccess', { title: 'x', color: 0 });
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
@@ -147,7 +147,7 @@ describe('notify', () => {
     });
     global.fetch = fetchMock as unknown as typeof fetch;
 
-    await notify('dispatchSuccess', 'x', { title: 'x', color: 0 });
+    await notify('dispatchSuccess', { title: 'x', color: 0 });
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

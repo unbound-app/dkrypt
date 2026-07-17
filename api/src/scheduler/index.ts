@@ -210,7 +210,7 @@ async function decryptAndDispatch(
 
     const run = await pollRunToCompletion(settings.ghDispatchRepo, settings.ghWorkflowFile, dispatchedAt);
     const source = isTestflight ? 'TestFlight' : 'App Store';
-    await notify('dispatchSuccess', `✅ Dispatched ${settings.watchBundleId}`, {
+    await notify('dispatchSuccess', {
       title: 'Decrypted & dispatched',
       color: EMBED_COLOR.ok,
       fields: [
@@ -223,7 +223,7 @@ async function decryptAndDispatch(
     return { ok: true, runUrl: run?.html_url };
   } catch (err) {
     log.error('dispatch/poll failed', { error: String(err), isTestflight });
-    await notify('dispatchFailure', `⚠️ Dispatch failed for ${settings.watchBundleId}`, {
+    await notify('dispatchFailure', {
       title: 'Dispatch failed',
       color: EMBED_COLOR.err,
       fields: [

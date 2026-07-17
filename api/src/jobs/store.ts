@@ -180,7 +180,7 @@ async function runWorker(): Promise<void> {
 
         if (looksLikeAppleAuthFailure(job.error)) {
           setAppleAuthAlert(job.error);
-          void notify('appleAuthAlert', '⚠️ App Store auth may need attention', {
+          void notify('appleAuthAlert', {
             title: 'Possible App Store auth issue',
             description: `Decrypting **${job.bundleId}** failed with what looks like an authentication issue - it may need re-bootstrapping.`,
             color: EMBED_COLOR.warn,
