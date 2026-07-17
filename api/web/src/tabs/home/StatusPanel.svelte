@@ -205,7 +205,7 @@
     {/if}
     <Badge variant={activeJobs > 0 ? 'default' : 'secondary'}>{activeJobs} active job{activeJobs === 1 ? '' : 's'}</Badge>
   </div>
-  <div class="mb-3.5 flex flex-wrap items-center gap-1.5">
+  <div class="mb-1.5 flex flex-wrap items-center gap-1.5">
     {#if health}
       {@const h = health}
       <Badge variant={h.reachable ? 'success' : 'destructive'} title={h.error ?? undefined}>
@@ -213,6 +213,15 @@
       </Badge>
       {#if h.reachable}
         <Badge variant={h.testFlightRunning ? 'default' : 'secondary'}>TestFlight {h.testFlightRunning ? 'running' : 'idle'}</Badge>
+      {/if}
+    {:else}
+      <Badge variant="secondary">iDevice …</Badge>
+    {/if}
+  </div>
+  {#if health}
+    {@const h = health}
+    {#if h.reachable && (h.batteryPercent !== undefined || h.batteryTemperatureC !== undefined)}
+      <div class="mb-3.5 flex flex-wrap items-center gap-1.5">
         {#if h.batteryPercent !== undefined}
           <Popover>
             {#snippet trigger()}
@@ -247,11 +256,9 @@
             {/if}
           </Badge>
         {/if}
-      {/if}
-    {:else}
-      <Badge variant="secondary">iDevice …</Badge>
+      </div>
     {/if}
-  </div>
+  {/if}
   {#if healthHistory}
     <div class="mb-3.5">
       <div class="mb-1.5 flex items-center justify-between text-xs text-muted">
