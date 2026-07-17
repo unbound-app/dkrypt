@@ -4,10 +4,18 @@
   import Button from '../../lib/components/ui/Button.svelte';
   import Card from '../../lib/components/ui/Card.svelte';
   import Input from '../../lib/components/ui/Input.svelte';
+  import Switch from '../../lib/components/ui/Switch.svelte';
   import { debounce } from '../../lib/format';
   import { liveState } from '../../lib/live.svelte';
   import { sessionState } from '../../lib/session.svelte';
   import { confirmDialog, showToast } from '../../lib/ui.svelte';
+
+  const NOTIFY_EVENTS: { key: keyof SchedulerSettings; label: string; description: string }[] = [
+    { key: 'notifyOnKeyRequest', label: 'API key requests', description: 'A user without approveApiKeys requests a new key' },
+    { key: 'notifyOnDispatchSuccess', label: 'Dispatch succeeded', description: 'The scheduler decrypted and dispatched a new version' },
+    { key: 'notifyOnDispatchFailure', label: 'Dispatch failed', description: 'A scheduled decrypt, dispatch, or workflow-run poll failed' },
+    { key: 'notifyOnAppleAuthAlert', label: 'App Store auth issues', description: 'A decrypt failed in a way that looks like an auth problem' },
+  ];
 
   const REPO_RE = /^[\w.-]+\/[\w.-]+$/;
   const WEBHOOK_URL_RE = /^https?:\/\/.+/;
@@ -15,22 +23,21 @@
   const canManageScheduler = $derived(!!sessionState.permissions?.manageScheduler);
   const canTriggerDispatch = $derived(!!sessionState.permissions?.triggerDispatch);
 
-  let form = $state<SchedulerSettings>({
+  const DEFAULT_FORM: SchedulerSettings = {
     watchBundleId: '',
     watchAppRepo: '',
     ghDispatchRepo: '',
     ghWorkflowFile: '',
     pollCron: '',
     notifyWebhookUrl: '',
-  });
-  let savedForm = $state<SchedulerSettings>({
-    watchBundleId: '',
-    watchAppRepo: '',
-    ghDispatchRepo: '',
-    ghWorkflowFile: '',
-    pollCron: '',
-    notifyWebhookUrl: '',
-  });
+    notifyOnKeyRequest: true,
+    notifyOnDispatchSuccess: true,
+    notifyOnDispatchFailure: true,
+    notifyOnAppleAuthAlert: true,
+  };
+
+  let form = $state<SchedulerSettings>({ ...DEFAULT_FORM });
+  let savedForm = $state<SchedulerSettings>({ ...DEFAULT_FORM });
   let cronValid = $state<boolean | null>(null);
   let testingWebhook = $state(false);
   let previewResult = $state<UpdateCheck | null>(null);
@@ -186,6 +193,24 @@
   {#if repoErrors.notifyWebhookUrl}
     <div class="mt-1 text-xs text-err">{repoErrors.notifyWebhookUrl}</div>
   {/if}
+
+  <div class="mt-3 mb-1 text-xs text-muted">Notify on</div>
+  <div class="border-border divide-border divide-y rounded-lg border">
+    {#each NOTIFY_EVENTS as event (event.key)}
+      <div class="flex items-center gap-3 px-3 py-2">
+        <div class="min-w-0 flex-1">
+          <div class="text-[13px] text-text">{event.label}</div>
+          <div class="text-[11px] text-muted">{event.description}</div>
+        </div>
+        <Switch
+          checked={form[event.key] as boolean}
+          disabled={!canManageScheduler}
+          onCheckedChange={(checked) => (form = { ...form, [event.key]: checked })}
+          aria-label={event.label}
+        />
+      </div>
+    {/each}
+  </div>
 
   <div class="mt-4 flex flex-wrap items-center gap-2">
     {#if canManageScheduler}

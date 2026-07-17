@@ -13,7 +13,7 @@ import { jobSummary, streamJobFile } from '../jobs/http.js';
 import { cancelQueuedJob, enqueueDecryptJob, getActiveJobs, getJob } from '../jobs/store.js';
 import type { LogEntry } from '../logger.js';
 import { getRecentLogs } from '../logger.js';
-import { notify, sendTestNotification } from '../notify.js';
+import { EMBED_COLOR, notify, sendTestNotification } from '../notify.js';
 import { applySchedule, checkForTestFlightUpdate, checkForUpdate, triggerTickNow } from '../scheduler/index.js';
 import { searchApps } from '../scheduler/itunes.js';
 import { requirePermission, requireSession } from '../session.js';
@@ -58,6 +58,7 @@ import {
   requestApiKey,
   revealApiKeySecret,
   revokeApiKey,
+  type SchedulerSettings,
   updateAllowedUserPermissions,
   updateSettings,
   updateUserPrefs,
@@ -398,7 +399,11 @@ dashboardRouter.post('/v1/dashboard/keys/request', canDecrypt, (req, res) => {
   }
 
   const record = requestApiKey(name, sub, expiresInDays, allowedBundleIds);
-  void notify(`🔑 dkrypt: **${sub}** requested a new API key ("${name}") - approve it on the API Keys tab.`);
+  void notify('keyRequest', '🔑 New API key request', {
+    title: 'New API key request',
+    description: `**${sub}** requested a new key ("${name}") - approve it on the API Keys tab.`,
+    color: EMBED_COLOR.info,
+  });
   res.status(201).json(record);
 });
 
@@ -493,14 +498,18 @@ dashboardRouter.get('/v1/dashboard/settings', (_req, res) => {
   res.json(getEffectiveSettings());
 });
 
-const SETTINGS_FIELDS = ['watchBundleId', 'watchAppRepo', 'ghDispatchRepo', 'ghWorkflowFile', 'pollCron', 'notifyWebhookUrl'] as const;
+const SETTINGS_STRING_FIELDS = ['watchBundleId', 'watchAppRepo', 'ghDispatchRepo', 'ghWorkflowFile', 'pollCron', 'notifyWebhookUrl'] as const;
+const SETTINGS_BOOL_FIELDS = ['notifyOnKeyRequest', 'notifyOnDispatchSuccess', 'notifyOnDispatchFailure', 'notifyOnAppleAuthAlert'] as const;
 
 dashboardRouter.put('/v1/dashboard/settings', canManageScheduler, (req, res) => {
   const body = req.body ?? {};
-  const patch: Record<string, string> = {};
+  const patch: Partial<SchedulerSettings> = {};
 
-  for (const field of SETTINGS_FIELDS) {
+  for (const field of SETTINGS_STRING_FIELDS) {
     if (typeof body[field] === 'string') patch[field] = body[field].trim();
+  }
+  for (const field of SETTINGS_BOOL_FIELDS) {
+    if (typeof body[field] === 'boolean') patch[field] = body[field];
   }
 
   if (typeof patch.pollCron === 'string' && patch.pollCron !== '' && !validateCronExpr(patch.pollCron)) {

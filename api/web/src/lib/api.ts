@@ -94,6 +94,10 @@ export interface SchedulerSettings {
   ghWorkflowFile: string;
   pollCron: string;
   notifyWebhookUrl: string;
+  notifyOnKeyRequest: boolean;
+  notifyOnDispatchSuccess: boolean;
+  notifyOnDispatchFailure: boolean;
+  notifyOnAppleAuthAlert: boolean;
 }
 
 export interface AppleAuthAlert {

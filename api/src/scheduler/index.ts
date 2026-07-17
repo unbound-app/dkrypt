@@ -5,7 +5,7 @@ import { enqueueDecryptJob, reclaimJobFile, waitForJob } from '../jobs/store.js'
 import { scopedLogger } from '../logger.js';
 
 const log = scopedLogger('scheduler');
-import { notify } from '../notify.js';
+import { EMBED_COLOR, notify } from '../notify.js';
 import {
   getEffectiveSettings,
   isSchedulerEnabled,
@@ -206,10 +206,27 @@ async function decryptAndDispatch(
 
     await pollRunToCompletion(settings.ghDispatchRepo, settings.ghWorkflowFile, dispatchedAt);
     const source = isTestflight ? 'TestFlight' : 'App Store';
-    await notify(`✅ dkrypt: **${settings.watchBundleId}** ${versionLabel} (${source}) decrypted and dispatched to \`${settings.ghDispatchRepo}\`.`);
+    await notify('dispatchSuccess', `✅ Dispatched ${settings.watchBundleId}`, {
+      title: 'Decrypted & dispatched',
+      color: EMBED_COLOR.ok,
+      fields: [
+        { name: 'App', value: settings.watchBundleId, inline: true },
+        { name: 'Version', value: versionLabel, inline: true },
+        { name: 'Source', value: source, inline: true },
+        { name: 'Repo', value: settings.ghDispatchRepo, inline: true },
+      ],
+    });
   } catch (err) {
     log.error('dispatch/poll failed', { error: String(err), isTestflight });
-    await notify(`⚠️ dkrypt: dispatch/poll failed for **${settings.watchBundleId}** ${versionLabel}: ${String(err)}`);
+    await notify('dispatchFailure', `⚠️ Dispatch failed for ${settings.watchBundleId}`, {
+      title: 'Dispatch failed',
+      color: EMBED_COLOR.err,
+      fields: [
+        { name: 'App', value: settings.watchBundleId, inline: true },
+        { name: 'Version', value: versionLabel, inline: true },
+        { name: 'Error', value: `\`\`\`${String(err)}\`\`\`` },
+      ],
+    });
   } finally {
     await reclaimJobFile(finished);
   }

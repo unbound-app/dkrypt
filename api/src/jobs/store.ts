@@ -5,7 +5,7 @@ import { emitJobsChanged } from '../events.js';
 import { scopedLogger } from '../logger.js';
 
 const log = scopedLogger('jobs');
-import { notify } from '../notify.js';
+import { EMBED_COLOR, notify } from '../notify.js';
 import { clearAppleAuthAlert, recordJobHistory, setAppleAuthAlert } from '../store/state.js';
 import { looksLikeAppleAuthFailure } from '../util/appleAuth.js';
 import { runDecrypt } from './runner.js';
@@ -180,9 +180,12 @@ async function runWorker(): Promise<void> {
 
         if (looksLikeAppleAuthFailure(job.error)) {
           setAppleAuthAlert(job.error);
-          void notify(
-            `⚠️ dkrypt: decrypting **${job.bundleId}** failed with what looks like an App Store auth issue - it may need re-bootstrapping.\n\`${job.error}\``,
-          );
+          void notify('appleAuthAlert', '⚠️ App Store auth may need attention', {
+            title: 'Possible App Store auth issue',
+            description: `Decrypting **${job.bundleId}** failed with what looks like an authentication issue - it may need re-bootstrapping.`,
+            color: EMBED_COLOR.warn,
+            fields: [{ name: 'Error', value: `\`\`\`${job.error}\`\`\`` }],
+          });
         }
       }
 

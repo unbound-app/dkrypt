@@ -169,6 +169,10 @@ export interface SchedulerSettings {
   ghWorkflowFile: string;
   pollCron: string;
   notifyWebhookUrl: string;
+  notifyOnKeyRequest: boolean;
+  notifyOnDispatchSuccess: boolean;
+  notifyOnDispatchFailure: boolean;
+  notifyOnAppleAuthAlert: boolean;
 }
 
 export interface JobHistoryEntry {
@@ -665,6 +669,10 @@ export function getEffectiveSettings(): SchedulerSettings {
     ghWorkflowFile: state.settings.ghWorkflowFile ?? config.ghWorkflowFile,
     pollCron: state.settings.pollCron ?? config.pollCron,
     notifyWebhookUrl: state.settings.notifyWebhookUrl ?? config.notifyWebhookUrl,
+    notifyOnKeyRequest: state.settings.notifyOnKeyRequest ?? true,
+    notifyOnDispatchSuccess: state.settings.notifyOnDispatchSuccess ?? true,
+    notifyOnDispatchFailure: state.settings.notifyOnDispatchFailure ?? true,
+    notifyOnAppleAuthAlert: state.settings.notifyOnAppleAuthAlert ?? true,
   };
 }
 
