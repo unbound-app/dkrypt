@@ -44,7 +44,7 @@
 <Dialog {open} {onOpenChange} class="max-w-sm">
   <div class="mb-1 text-sm font-medium">Share download link</div>
   <div class="mb-3 text-xs text-muted">
-    Anyone with this link can download the file without signing in - the first download consumes it, same as the button on this page.
+    Anyone with this link can download once, no sign-in required.
   </div>
   <label for="share-ttl" class="mb-1 block text-xs text-muted">Expires</label>
   <Select id="share-ttl" items={TTL_OPTIONS} bind:value={ttlMinutes} class="w-full" onValueChange={generate} />

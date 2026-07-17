@@ -87,7 +87,7 @@
 </script>
 
 <Card title="Apple ID re-authentication">
-  <div class="mb-2.5 text-sm text-muted">Redoes the App Store sign-in only - the device connection isn't touched.</div>
+  <div class="mb-2.5 text-sm text-muted">Only re-does App Store sign-in, not the device connection.</div>
 
   {#if step !== 'idle'}
     <div class="mb-4 flex gap-1.5">

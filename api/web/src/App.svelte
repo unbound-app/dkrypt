@@ -306,7 +306,7 @@
       {#if notifPermission === 'granted'}
         <Badge variant="success">Enabled</Badge>
       {:else if notifPermission === 'denied'}
-        <Badge variant="destructive" title="Blocked at the browser level - re-enable it in your browser's site settings">Blocked</Badge>
+        <Badge variant="destructive" title="Blocked by your browser - check site settings">Blocked</Badge>
       {:else if notifPermission === 'unsupported'}
         <Badge variant="secondary">Not supported</Badge>
       {:else}

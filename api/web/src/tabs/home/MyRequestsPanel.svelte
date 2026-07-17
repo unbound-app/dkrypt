@@ -108,7 +108,7 @@
       return;
     }
     if (
-      !(await confirmDialog("This only stops tracking it here - the decrypt keeps running on the server. Dismiss anyway?", {
+      !(await confirmDialog('This just hides it here - the decrypt keeps running. Dismiss?', {
         variant: 'default',
         confirmLabel: 'Dismiss',
       }))

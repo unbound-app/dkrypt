@@ -103,13 +103,13 @@ export const PERMISSION_META: PermissionMeta[] = [
   {
     key: 'triggerDispatch',
     label: 'Trigger dispatch',
-    description: 'Manually run a check, preview the next dispatch, test the webhook, dismiss auth alerts',
+    description: 'Run scheduler checks/previews, test webhook, dismiss auth alerts',
     group: 'Scheduler & Dispatch',
   },
   {
     key: 'manageAppleAuth',
     label: 'Apple ID re-authentication',
-    description: 'Run the App Store sign-in flow - real Apple ID credentials pass through this',
+    description: 'Runs Apple sign-in with real credentials',
     group: 'Apple Authentication',
   },
   { key: 'viewLogs', label: 'View logs', description: 'See the live scheduler/job log feed', group: 'Logs' },

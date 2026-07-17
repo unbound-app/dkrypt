@@ -22,9 +22,9 @@
   <div class="border-accent/30 bg-accent/10 mb-4 flex items-center gap-2.5 rounded-lg border px-3.5 py-2.5 text-[13px]">
     <Coffee class="text-accent h-4 w-4 shrink-0" />
     <div class="min-w-0 flex-1">
-      dkrypt is free to use, no ads - if it's useful to you, consider
+      dkrypt is free and ad-free - consider
       <a href={KOFI_URL} target="_blank" rel="noopener noreferrer" class="text-accent underline underline-offset-2 hover:no-underline">
-        supporting the maintainer on Ko-fi
+        supporting the maintainer
       </a>.
     </div>
     <button class="text-muted hover:text-text cursor-pointer" onclick={dismiss} aria-label="Dismiss" title="Dismiss">

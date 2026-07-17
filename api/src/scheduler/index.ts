@@ -51,7 +51,7 @@ export async function checkForUpdate(settings: SchedulerSettings): Promise<Updat
   try {
     releaseVersions = await listReleaseVersions(settings.watchAppRepo);
   } catch (err) {
-    return { ok: false, itunesVersion, normalizedVersion, wouldDispatch: false, reason: `failed to list releases: ${String(err)}` };
+    return { ok: false, itunesVersion, normalizedVersion, wouldDispatch: false, reason: `Failed to list releases: ${String(err)}` };
   }
 
   const alreadyReleased = [...releaseVersions].some((v) => compareVersions(v, normalizedVersion) === 0);
@@ -62,7 +62,7 @@ export async function checkForUpdate(settings: SchedulerSettings): Promise<Updat
       normalizedVersion,
       alreadyReleased: true,
       wouldDispatch: false,
-      reason: `iTunes version ${normalizedVersion} already has a matching release`,
+      reason: `${normalizedVersion} already released`,
     };
   }
 
@@ -72,7 +72,7 @@ export async function checkForUpdate(settings: SchedulerSettings): Promise<Updat
     normalizedVersion,
     alreadyReleased: false,
     wouldDispatch: true,
-    reason: `no release matches iTunes version ${normalizedVersion} - would decrypt and dispatch`,
+    reason: `${normalizedVersion} not yet released - would dispatch`,
   };
 }
 
@@ -88,7 +88,7 @@ export interface TestFlightUpdateCheck {
 
 export async function checkForTestFlightUpdate(settings: SchedulerSettings): Promise<TestFlightUpdateCheck> {
   if (!settings.watchBundleId) {
-    return { ok: true, wouldDispatch: false, reason: 'no watch bundle ID configured' };
+    return { ok: true, wouldDispatch: false, reason: 'No watch bundle ID configured' };
   }
 
   let appId: number;
@@ -122,7 +122,7 @@ export async function checkForTestFlightUpdate(settings: SchedulerSettings): Pro
   }
 
   if (!latestBuild) {
-    return { ok: true, appId, wouldDispatch: false, reason: 'no TestFlight builds found for this app' };
+    return { ok: true, appId, wouldDispatch: false, reason: 'No TestFlight builds found' };
   }
 
   const latestTag = `v${latestBuild.cfBundleShortVersion}_${latestBuild.cfBundleVersion}`;
@@ -131,7 +131,7 @@ export async function checkForTestFlightUpdate(settings: SchedulerSettings): Pro
   try {
     tagNames = await listReleaseTagNames(settings.watchAppRepo);
   } catch (err) {
-    return { ok: false, appId, latestTag, build: latestBuild, wouldDispatch: false, reason: `failed to list releases: ${String(err)}` };
+    return { ok: false, appId, latestTag, build: latestBuild, wouldDispatch: false, reason: `Failed to list releases: ${String(err)}` };
   }
 
   if (tagNames.has(latestTag)) {
@@ -142,7 +142,7 @@ export async function checkForTestFlightUpdate(settings: SchedulerSettings): Pro
       build: latestBuild,
       alreadyReleased: true,
       wouldDispatch: false,
-      reason: `TestFlight build ${latestTag} already has a matching release`,
+      reason: `${latestTag} already released`,
     };
   }
 
@@ -153,7 +153,7 @@ export async function checkForTestFlightUpdate(settings: SchedulerSettings): Pro
     build: latestBuild,
     alreadyReleased: false,
     wouldDispatch: true,
-    reason: `no release matches TestFlight build ${latestTag} - would install, decrypt and dispatch`,
+    reason: `${latestTag} not yet released - would dispatch`,
   };
 }
 

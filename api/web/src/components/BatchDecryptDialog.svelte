@@ -102,8 +102,7 @@
 <Dialog {open} onOpenChange={(v) => !v && close()} class="max-w-md">
   <div class="mb-1 text-sm font-medium">Batch decrypt</div>
   <div class="mb-3 text-xs text-muted">
-    One bundle ID per line, or comma-separated - optionally {'`bundleId@externalVersionId`'} to pin a specific release. Up to {MAX_BUNDLE_IDS} at
-    once.
+    One bundle ID per line (optionally {'`id@version`'}), up to {MAX_BUNDLE_IDS} at once.
   </div>
 
   {#if results.length === 0}

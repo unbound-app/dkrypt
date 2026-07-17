@@ -22,7 +22,7 @@
   let prioritizing = $state<Set<string>>(new Set());
 
   async function cancel(id: string, status: 'queued' | 'running'): Promise<void> {
-    if (status === 'running' && !(await confirmDialog('This kills the in-progress decrypt on the device. Cancel it anyway?', { confirmLabel: 'Cancel job' }))) {
+    if (status === 'running' && !(await confirmDialog("Cancel this decrypt? It's already running on the device.", { confirmLabel: 'Cancel job' }))) {
       return;
     }
     cancelling = new Set(cancelling).add(id);

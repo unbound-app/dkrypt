@@ -361,7 +361,7 @@
     {/if}
     <span class="text-muted w-16 shrink-0">{label}</span>
     {#if outcome.runUrl}
-      <a href={outcome.runUrl} target="_blank" rel="noopener noreferrer" class="hover:underline" title="{outcome.reason} - view run on GitHub">
+      <a href={outcome.runUrl} target="_blank" rel="noopener noreferrer" class="hover:underline" title={outcome.reason} aria-label="{outcome.reason} - view run on GitHub">
         Dispatched ↗
       </a>
     {:else}

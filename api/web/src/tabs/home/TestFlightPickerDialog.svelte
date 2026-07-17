@@ -86,7 +86,7 @@
   <div class="mb-3 text-sm font-medium">{trackName} - TestFlight builds</div>
 
   {#if trains === null}
-    <div class="text-sm text-muted">Loading beta trains from TestFlight (this may launch TestFlight on the device)…</div>
+    <div class="text-sm text-muted">Loading TestFlight builds (may open TestFlight on device)…</div>
   {:else if error}
     <div class="text-err mb-2.5 text-[13px]">{error}</div>
     <Button size="sm" variant="secondary" onclick={retry}>Try again</Button>

@@ -64,7 +64,7 @@
     <div class="text-sm text-muted">No version history found.</div>
   {:else}
     {#if versions.some((v) => !v.displayVersion)}
-      <div class="text-muted mb-3 text-xs">Some versions have no known version number yet and are listed by their opaque App Store ID.</div>
+      <div class="text-muted mb-3 text-xs">Unlabeled versions are listed by App Store ID.</div>
     {/if}
     <div class="max-h-[50vh] overflow-y-auto">
       {#each versions as v (v.externalVersionId)}

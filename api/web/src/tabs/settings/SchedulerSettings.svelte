@@ -177,7 +177,7 @@
   async function runTrigger(): Promise<void> {
     if (
       !(await confirmDialog(
-        'This runs the same check the scheduler would on its own cron tick, right now - if there\'s a new version, it decrypts and dispatches for real. Continue?',
+        "Run a live check now? If there's a new version, it'll decrypt and dispatch for real.",
         { variant: 'default', confirmLabel: 'Trigger now' },
       ))
     )
@@ -242,7 +242,7 @@
     disabled={!canManageScheduler}
     class="w-full"
   />
-  <div class="mt-1 text-xs text-muted">Each retry waits longer than the last (30s, then 60s, then 120s, ...) before trying again.</div>
+  <div class="mt-1 text-xs text-muted">Retries back off: 30s, 60s, 120s…</div>
 
   <label for="s-notifyWebhookUrl" class="mt-3 mb-1 block text-xs text-muted">Notification webhook URL (Discord-compatible, optional)</label>
   <div class="flex gap-2">

@@ -54,10 +54,10 @@
 
   async function restore(): Promise<void> {
     if (!selectedFile || !preview) return;
-    const confirmed = await confirmDialog(
-      `Restore from "${selectedFile.name}"? This replaces ${preview.users} user(s), ${preview.apiKeys} API key(s), scheduler settings, ${preview.jobHistory} job history entries, and ${preview.auditLog} audit log entries with what's in the file - anything added since it was exported is gone.`,
-      { confirmLabel: 'Restore', variant: 'destructive' },
-    );
+    const confirmed = await confirmDialog(`Restore "${selectedFile.name}"? This overwrites all current data - anything added since export is lost.`, {
+      confirmLabel: 'Restore',
+      variant: 'destructive',
+    });
     if (!confirmed) return;
 
     restoring = true;

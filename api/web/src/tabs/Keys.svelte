@@ -207,7 +207,7 @@
   }
 
   async function doRevoke(id: string): Promise<void> {
-    if (!(await confirmDialog("Revoke this key? Anything using it will lose access immediately."))) return;
+    if (!(await confirmDialog('Revoke this key? Access is cut off immediately.'))) return;
     setBusy('revoke', id, true);
     try {
       const { ok } = await revokeKey(id);
@@ -293,7 +293,7 @@
     <div class="mt-1 text-xs text-muted">Comma-separated. Leave blank for a key that can decrypt anything.</div>
     <label for="key-daily-limit" class="mt-3 mb-1 block text-xs text-muted">Daily request limit (optional)</label>
     <Input id="key-daily-limit" type="number" min="1" placeholder="e.g. 100" bind:value={keyDailyLimit} />
-    <div class="mt-1 text-xs text-muted">Leave blank for no limit. Requests past the limit get a 429 until the next day.</div>
+    <div class="mt-1 text-xs text-muted">Blank = no limit. Over-limit requests get a 429 until the next day.</div>
     <Button class="mt-3" loading={submitting} onclick={submitRequest}>{canApprove ? 'Create' : 'Request'}</Button>
     {#if revealedKey}
       <div class="border-accent bg-panel-muted mt-3 rounded-md border p-2.5 text-xs break-all">
