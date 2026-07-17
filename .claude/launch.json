@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dkrypt-api",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "cd api && bun src/server.ts"],
+      "port": 8080
+    },
+    {
+      "name": "dkrypt-web",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "cd api/web && npx vite --port 5173"],
+      "port": 5173
+    }
+  ]
+}

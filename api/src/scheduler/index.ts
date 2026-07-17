@@ -257,7 +257,7 @@ async function tickAppStore(settings: SchedulerSettings): Promise<SchedulerRunOu
 
   const job = enqueueDecryptJob(settings.watchBundleId, 'scheduler', undefined, undefined, normalized);
   const { ok, runUrl } = await decryptAndDispatch(job, settings, false, `v${normalized}`);
-  return { ok, triggered: true, reason: check.reason, runUrl };
+  return { ok, triggered: true, reason: ok ? `Dispatched ${normalized}` : `Failed to decrypt/dispatch ${normalized}`, runUrl };
 }
 
 async function tickTestFlight(settings: SchedulerSettings): Promise<SchedulerRunOutcome> {
@@ -281,7 +281,8 @@ async function tickTestFlight(settings: SchedulerSettings): Promise<SchedulerRun
 
   const job = enqueueDecryptJob(settings.watchBundleId, 'scheduler', undefined, { appId: check.appId as number, build: check.build });
   const { ok, runUrl } = await decryptAndDispatch(job, settings, true, check.latestTag as string);
-  return { ok, triggered: true, reason: check.reason, runUrl };
+  const tag = check.latestTag as string;
+  return { ok, triggered: true, reason: ok ? `Dispatched ${tag}` : `Failed to decrypt/dispatch ${tag}`, runUrl };
 }
 
 const RETRY_BASE_DELAY_MS = 30_000;
