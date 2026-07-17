@@ -2,7 +2,15 @@ import { config } from './config.js';
 import { log } from './logger.js';
 import { getEffectiveSettings, type SchedulerSettings } from './store/state.js';
 
-export type NotifyEvent = 'keyRequest' | 'dispatchSuccess' | 'dispatchFailure' | 'appleAuthAlert' | 'keyExpiringSoon' | 'deviceOffline';
+export type NotifyEvent =
+  | 'keyRequest'
+  | 'dispatchSuccess'
+  | 'dispatchFailure'
+  | 'appleAuthAlert'
+  | 'keyExpiringSoon'
+  | 'deviceOffline'
+  | 'deviceBatteryHot'
+  | 'deviceBatteryLow';
 
 const EVENT_SETTING_KEY: Record<NotifyEvent, keyof SchedulerSettings> = {
   keyRequest: 'notifyOnKeyRequest',
@@ -11,6 +19,8 @@ const EVENT_SETTING_KEY: Record<NotifyEvent, keyof SchedulerSettings> = {
   appleAuthAlert: 'notifyOnAppleAuthAlert',
   keyExpiringSoon: 'notifyOnKeyExpiringSoon',
   deviceOffline: 'notifyOnDeviceOffline',
+  deviceBatteryHot: 'notifyOnDeviceBatteryHot',
+  deviceBatteryLow: 'notifyOnDeviceBatteryLow',
 };
 
 // Matches the dashboard's own CSS custom properties (--color-accent/ok/warn/err) so a notification

@@ -101,8 +101,12 @@ export interface SchedulerSettings {
   notifyOnAppleAuthAlert: boolean;
   notifyOnKeyExpiringSoon: boolean;
   notifyOnDeviceOffline: boolean;
+  notifyOnDeviceBatteryHot: boolean;
+  notifyOnDeviceBatteryLow: boolean;
   schedulerRetryCount: number;
   deviceOfflineAlertMinutes: number;
+  batteryHotAlertC: number;
+  batteryLowAlertPercent: number;
 }
 
 export interface AppleAuthAlert {
@@ -221,11 +225,15 @@ export interface DeviceHealth {
   batteryPercent?: number;
   batteryCharging?: boolean;
   batteryTemperatureC?: number;
+  batteryCycleCount?: number;
+  batteryHealthPercent?: number;
+  batteryDesignCapacityMah?: number;
+  batteryMaxCapacityMah?: number;
   checkedAt: number;
 }
 
-export function fetchDeviceHealth(): Promise<DeviceHealth> {
-  return apiJson('/v1/dashboard/device/health');
+export function fetchDeviceHealth(force = false): Promise<DeviceHealth> {
+  return apiJson(`/v1/dashboard/device/health${force ? '?force=true' : ''}`);
 }
 
 export interface HourlyHealthBucket {
@@ -244,6 +252,15 @@ export interface HourlyBatteryBucket {
 
 export function fetchDeviceBatteryHistory(hours = 24): Promise<{ buckets: HourlyBatteryBucket[] }> {
   return apiJson(`/v1/dashboard/device/battery-history?hours=${hours}`);
+}
+
+export interface HourlyTemperatureBucket {
+  hourStart: number;
+  batteryTemperatureC: number | null;
+}
+
+export function fetchDeviceTemperatureHistory(hours = 24): Promise<{ buckets: HourlyTemperatureBucket[] }> {
+  return apiJson(`/v1/dashboard/device/temperature-history?hours=${hours}`);
 }
 
 export function fetchJobHistory(

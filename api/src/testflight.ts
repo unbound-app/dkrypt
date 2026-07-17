@@ -311,6 +311,10 @@ export interface DeviceHealth {
   batteryPercent?: number;
   batteryCharging?: boolean;
   batteryTemperatureC?: number;
+  batteryCycleCount?: number;
+  batteryHealthPercent?: number;
+  batteryDesignCapacityMah?: number;
+  batteryMaxCapacityMah?: number;
   checkedAt: number;
 }
 
@@ -322,6 +326,10 @@ interface BatteryStatus {
   batteryPercent?: number;
   batteryCharging?: boolean;
   batteryTemperatureC?: number;
+  batteryCycleCount?: number;
+  batteryHealthPercent?: number;
+  batteryDesignCapacityMah?: number;
+  batteryMaxCapacityMah?: number;
 }
 
 // Plain `ioreg` isn't reliably on PATH over SSH on every jailbreak setup - readInstalledBundleVersion
@@ -351,6 +359,9 @@ async function queryBatteryStatus(conn: Client): Promise<BatteryStatus | undefin
   const maxCapacity = Number(parseIoregValue(stdout, 'MaxCapacity'));
   const isCharging = parseIoregValue(stdout, 'IsCharging');
   const temperature = Number(parseIoregValue(stdout, 'Temperature'));
+  const cycleCount = Number(parseIoregValue(stdout, 'CycleCount'));
+  const designCapacity = Number(parseIoregValue(stdout, 'DesignCapacity'));
+  const rawMaxCapacity = Number(parseIoregValue(stdout, 'AppleRawMaxCapacity'));
 
   if (!Number.isFinite(currentCapacity) || !maxCapacity) {
     log.warn('ioreg output did not contain the expected AppleARMPMUCharger fields', { sample: stdout.slice(0, 500) });
@@ -360,6 +371,13 @@ async function queryBatteryStatus(conn: Client): Promise<BatteryStatus | undefin
     batteryPercent: Number.isFinite(currentCapacity) && maxCapacity ? Math.round((currentCapacity / maxCapacity) * 100) : undefined,
     batteryCharging: isCharging === undefined ? undefined : isCharging === 'Yes',
     batteryTemperatureC: Number.isFinite(temperature) ? temperature / 100 : undefined,
+    batteryCycleCount: Number.isFinite(cycleCount) ? cycleCount : undefined,
+    batteryHealthPercent:
+      Number.isFinite(designCapacity) && designCapacity > 0 && Number.isFinite(rawMaxCapacity)
+        ? Math.round((rawMaxCapacity / designCapacity) * 100)
+        : undefined,
+    batteryDesignCapacityMah: Number.isFinite(designCapacity) ? designCapacity : undefined,
+    batteryMaxCapacityMah: Number.isFinite(rawMaxCapacity) ? rawMaxCapacity : undefined,
   };
 }
 
@@ -386,6 +404,10 @@ async function computeDeviceHealth(): Promise<DeviceHealth> {
         batteryPercent: battery?.batteryPercent,
         batteryCharging: battery?.batteryCharging,
         batteryTemperatureC: battery?.batteryTemperatureC,
+        batteryCycleCount: battery?.batteryCycleCount,
+        batteryHealthPercent: battery?.batteryHealthPercent,
+        batteryDesignCapacityMah: battery?.batteryDesignCapacityMah,
+        batteryMaxCapacityMah: battery?.batteryMaxCapacityMah,
         checkedAt: Date.now(),
       };
     });
@@ -428,6 +450,46 @@ async function checkOfflineAlert(reachable: boolean): Promise<void> {
   });
 }
 
+let batteryHotAlertSentAt: number | undefined;
+
+async function checkBatteryHotAlert(tempC: number | undefined): Promise<void> {
+  if (tempC === undefined) return;
+  const settings = getEffectiveSettings();
+
+  if (tempC < settings.batteryHotAlertC - 3) {
+    batteryHotAlertSentAt = undefined;
+    return;
+  }
+  if (tempC < settings.batteryHotAlertC || batteryHotAlertSentAt !== undefined) return;
+
+  batteryHotAlertSentAt = Date.now();
+  await notify('deviceBatteryHot', {
+    title: 'iDevice running hot',
+    description: `Battery temperature reached ${tempC.toFixed(1)}°C (alert threshold ${settings.batteryHotAlertC}°C).`,
+    color: EMBED_COLOR.warn,
+  });
+}
+
+let batteryLowAlertSentAt: number | undefined;
+
+async function checkBatteryLowAlert(percent: number | undefined, charging: boolean | undefined): Promise<void> {
+  if (percent === undefined) return;
+  const settings = getEffectiveSettings();
+
+  if (charging || percent > settings.batteryLowAlertPercent + 5) {
+    batteryLowAlertSentAt = undefined;
+    return;
+  }
+  if (percent > settings.batteryLowAlertPercent || batteryLowAlertSentAt !== undefined) return;
+
+  batteryLowAlertSentAt = Date.now();
+  await notify('deviceBatteryLow', {
+    title: 'iDevice battery low',
+    description: `Battery at ${percent}% and not charging (alert threshold ${settings.batteryLowAlertPercent}%).`,
+    color: EMBED_COLOR.warn,
+  });
+}
+
 function warnOnMissingTelemetry(health: DeviceHealth): void {
   if (!health.reachable) return;
   const missing = (
@@ -450,8 +512,12 @@ export function startDeviceHealthPoller(): void {
     void getDeviceHealth()
       .then((health) => {
         warnOnMissingTelemetry(health);
-        recordDeviceHealthCheck(health.reachable, health.batteryPercent);
-        return checkOfflineAlert(health.reachable);
+        recordDeviceHealthCheck(health.reachable, health.batteryPercent, health.batteryTemperatureC);
+        return Promise.all([
+          checkOfflineAlert(health.reachable),
+          checkBatteryHotAlert(health.batteryTemperatureC),
+          checkBatteryLowAlert(health.batteryPercent, health.batteryCharging),
+        ]);
       })
       .catch((err) => log.warn('device health poll failed', { error: String(err) }));
 

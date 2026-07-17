@@ -1,19 +1,22 @@
 <script lang="ts">
-  import { BatteryCharging, BatteryMedium, Circle, CircleCheck, Thermometer, TriangleAlert } from 'lucide-svelte';
+  import { BatteryCharging, BatteryMedium, Circle, CircleCheck, RefreshCw, Thermometer, TriangleAlert, Zap } from 'lucide-svelte';
   import RelativeTime from '../../components/RelativeTime.svelte';
   import Sparkline from '../../components/Sparkline.svelte';
   import {
     fetchDeviceBatteryHistory,
     fetchDeviceHealth,
     fetchDeviceHealthHistory,
+    fetchDeviceTemperatureHistory,
     fetchJobVolume,
     type DeviceHealth,
     type HourlyBatteryBucket,
     type HourlyHealthBucket,
+    type HourlyTemperatureBucket,
     type SchedulerRunOutcome,
   } from '../../lib/api';
   import Badge from '../../lib/components/ui/Badge.svelte';
   import Card from '../../lib/components/ui/Card.svelte';
+  import Popover from '../../lib/components/ui/Popover.svelte';
   import { fmtBytesGB, fmtUntil } from '../../lib/format';
   import { liveState } from '../../lib/live.svelte';
 
@@ -67,6 +70,16 @@
 
   let volume = $state<{ label: string; value: number }[] | null>(null);
   let health = $state<DeviceHealth | null>(null);
+  let refreshingHealth = $state(false);
+
+  async function refreshHealth(): Promise<void> {
+    refreshingHealth = true;
+    try {
+      health = await fetchDeviceHealth(true);
+    } finally {
+      refreshingHealth = false;
+    }
+  }
 
   $effect(() => {
     void fetchJobVolume(14).then((r) => {
@@ -140,12 +153,53 @@
 
   const hasBatteryHistory = $derived(batteryHistory?.some((b) => b.batteryPercent !== null) ?? false);
 
+  let temperatureHistory = $state<HourlyTemperatureBucket[] | null>(null);
+
+  $effect(() => {
+    const load = () => void fetchDeviceTemperatureHistory(24).then((r) => (temperatureHistory = r.buckets));
+    load();
+    const interval = setInterval(load, 60_000);
+    return () => clearInterval(interval);
+  });
+
+  function temperatureBucketColor(tempC: number | null): string {
+    if (tempC === null) return 'bg-panel-muted';
+    if (tempC >= 42) return 'bg-err';
+    if (tempC >= 37) return 'bg-warn';
+    return 'bg-ok';
+  }
+
+  function temperatureBucketTitle(bucket: HourlyTemperatureBucket): string {
+    const time = new Date(bucket.hourStart).toLocaleString(undefined, { hour: 'numeric', month: 'short', day: 'numeric' });
+    if (bucket.batteryTemperatureC === null) return `${time}: no data`;
+    return `${time}: ${bucket.batteryTemperatureC.toFixed(1)}°C`;
+  }
+
+  const hasTemperatureHistory = $derived(temperatureHistory?.some((b) => b.batteryTemperatureC !== null) ?? false);
+
   const total = $derived(volume?.reduce((a, d) => a + d.value, 0) ?? 0);
   const activeJobs = $derived(overview?.activeJobs.length ?? 0);
 </script>
 
 <Card title="Status">
-  <div class="mb-3.5 flex flex-wrap items-center gap-1.5">
+  {#snippet headerExtra()}
+    {#if health}
+      <div class="flex items-center gap-1.5 text-xs text-muted">
+        <span>Checked <RelativeTime ms={health.checkedAt} /></span>
+        <button
+          type="button"
+          class="hover:text-text disabled:opacity-50"
+          disabled={refreshingHealth}
+          onclick={refreshHealth}
+          aria-label="Refresh device status"
+          title="Refresh device status"
+        >
+          <RefreshCw class="h-3.5 w-3.5 {refreshingHealth ? 'animate-spin' : ''}" />
+        </button>
+      </div>
+    {/if}
+  {/snippet}
+  <div class="mb-1.5 flex flex-wrap items-center gap-1.5">
     {#if overview}
       <Badge variant={overview.schedulerEnabled ? 'success' : 'secondary'}>Scheduler {overview.schedulerEnabled ? 'on' : 'off'}</Badge>
     {/if}
@@ -157,26 +211,51 @@
       {#if health.reachable}
         <Badge variant={health.testFlightRunning ? 'default' : 'secondary'}>TestFlight {health.testFlightRunning ? 'running' : 'idle'}</Badge>
       {/if}
-      {#if health.reachable && health.batteryPercent !== undefined}
-        <Badge variant={health.batteryPercent <= 20 && !health.batteryCharging ? 'destructive' : 'secondary'}>
-          {#if health.batteryCharging}
-            <BatteryCharging class="mr-1 inline h-3 w-3" />
-          {:else}
-            <BatteryMedium class="mr-1 inline h-3 w-3" />
-          {/if}
-          {health.batteryPercent}%
-        </Badge>
-      {/if}
-      {#if health.reachable && health.batteryTemperatureC !== undefined}
-        <Badge variant={thermalBadgeVariant(health.batteryTemperatureC)}>
-          <Thermometer class="mr-1 inline h-3 w-3" />
-          {health.batteryTemperatureC.toFixed(1)}°C
-        </Badge>
-      {/if}
     {:else}
       <Badge variant="secondary">iDevice …</Badge>
     {/if}
   </div>
+  {#if health}
+    {@const h = health}
+    {#if h.reachable && (h.batteryPercent !== undefined || h.batteryTemperatureC !== undefined)}
+      <div class="mb-3.5 flex flex-wrap items-center gap-1.5">
+        {#if h.batteryPercent !== undefined}
+          <Popover>
+            {#snippet trigger()}
+              <Badge variant={h.batteryPercent !== undefined && h.batteryPercent <= 20 && !h.batteryCharging ? 'destructive' : 'secondary'}>
+                {#if h.batteryCharging}
+                  <BatteryCharging class="mr-1 inline h-3 w-3" />
+                {:else}
+                  <BatteryMedium class="mr-1 inline h-3 w-3" />
+                {/if}
+                {h.batteryPercent}%
+              </Badge>
+            {/snippet}
+            <div class="flex flex-col gap-1 whitespace-nowrap">
+              {#if h.batteryHealthPercent !== undefined}
+                <div><span class="text-muted">Battery health</span> · {h.batteryHealthPercent}%</div>
+              {/if}
+              {#if h.batteryCycleCount !== undefined}
+                <div><span class="text-muted">Cycle count</span> · {h.batteryCycleCount}</div>
+              {/if}
+              {#if h.batteryMaxCapacityMah !== undefined && h.batteryDesignCapacityMah !== undefined}
+                <div><span class="text-muted">Capacity</span> · {h.batteryMaxCapacityMah} / {h.batteryDesignCapacityMah} mAh</div>
+              {/if}
+            </div>
+          </Popover>
+        {/if}
+        {#if h.batteryTemperatureC !== undefined}
+          <Badge variant={thermalBadgeVariant(h.batteryTemperatureC)}>
+            <Thermometer class="mr-1 inline h-3 w-3" />
+            {h.batteryTemperatureC.toFixed(1)}°C
+            {#if h.batteryCharging}
+              <Zap class="ml-1 inline h-3 w-3" />
+            {/if}
+          </Badge>
+        {/if}
+      </div>
+    {/if}
+  {/if}
   {#if healthHistory}
     <div class="mb-3.5">
       <div class="mb-1.5 flex items-center justify-between text-xs text-muted">
@@ -198,6 +277,16 @@
       <div class="flex gap-0.5">
         {#each batteryHistory ?? [] as bucket (bucket.hourStart)}
           <div class="h-4 flex-1 rounded-sm {batteryBucketColor(bucket.batteryPercent)}" title={batteryBucketTitle(bucket)}></div>
+        {/each}
+      </div>
+    </div>
+  {/if}
+  {#if hasTemperatureHistory}
+    <div class="mb-3.5">
+      <div class="mb-1.5 text-xs text-muted">Temperature · last 24h</div>
+      <div class="flex gap-0.5">
+        {#each temperatureHistory ?? [] as bucket (bucket.hourStart)}
+          <div class="h-4 flex-1 rounded-sm {temperatureBucketColor(bucket.batteryTemperatureC)}" title={temperatureBucketTitle(bucket)}></div>
         {/each}
       </div>
     </div>

@@ -23,6 +23,8 @@
     { key: 'notifyOnAppleAuthAlert', label: 'App Store auth issues', description: 'A decrypt failed in a way that looks like an auth problem' },
     { key: 'notifyOnKeyExpiringSoon', label: 'API key expiring soon', description: 'An approved key has 7 days or less left before it expires' },
     { key: 'notifyOnDeviceOffline', label: 'iDevice unreachable', description: 'The iDevice stays unreachable past the alert threshold below' },
+    { key: 'notifyOnDeviceBatteryHot', label: 'iDevice battery hot', description: 'Battery temperature reaches the alert threshold below' },
+    { key: 'notifyOnDeviceBatteryLow', label: 'iDevice battery low', description: 'Battery drops to the alert threshold below while not charging' },
   ];
 
   const RETRY_OPTIONS = [
@@ -39,6 +41,22 @@
     { value: '30', label: '30 minutes' },
     { value: '60', label: '1 hour' },
     { value: '180', label: '3 hours' },
+  ];
+
+  const BATTERY_HOT_ALERT_OPTIONS = [
+    { value: '40', label: '40°C' },
+    { value: '42', label: '42°C' },
+    { value: '45', label: '45°C' },
+    { value: '48', label: '48°C' },
+    { value: '50', label: '50°C' },
+  ];
+
+  const BATTERY_LOW_ALERT_OPTIONS = [
+    { value: '5', label: '5%' },
+    { value: '10', label: '10%' },
+    { value: '15', label: '15%' },
+    { value: '20', label: '20%' },
+    { value: '30', label: '30%' },
   ];
 
   const REPO_RE = /^[\w.-]+\/[\w.-]+$/;
@@ -61,8 +79,12 @@
     notifyOnAppleAuthAlert: true,
     notifyOnKeyExpiringSoon: true,
     notifyOnDeviceOffline: true,
+    notifyOnDeviceBatteryHot: true,
+    notifyOnDeviceBatteryLow: true,
     schedulerRetryCount: 0,
     deviceOfflineAlertMinutes: 15,
+    batteryHotAlertC: 45,
+    batteryLowAlertPercent: 10,
   };
 
   let form = $state<SchedulerSettings>({ ...DEFAULT_FORM });
@@ -250,6 +272,26 @@
     items={OFFLINE_ALERT_OPTIONS}
     value={String(form.deviceOfflineAlertMinutes)}
     onValueChange={(v) => (form = { ...form, deviceOfflineAlertMinutes: Number(v) })}
+    disabled={!canManageScheduler}
+    class="w-full"
+  />
+
+  <label for="s-batteryHot" class="mt-3 mb-1 block text-xs text-muted">Battery hot alert threshold</label>
+  <Select
+    id="s-batteryHot"
+    items={BATTERY_HOT_ALERT_OPTIONS}
+    value={String(form.batteryHotAlertC)}
+    onValueChange={(v) => (form = { ...form, batteryHotAlertC: Number(v) })}
+    disabled={!canManageScheduler}
+    class="w-full"
+  />
+
+  <label for="s-batteryLow" class="mt-3 mb-1 block text-xs text-muted">Battery low alert threshold (while not charging)</label>
+  <Select
+    id="s-batteryLow"
+    items={BATTERY_LOW_ALERT_OPTIONS}
+    value={String(form.batteryLowAlertPercent)}
+    onValueChange={(v) => (form = { ...form, batteryLowAlertPercent: Number(v) })}
     disabled={!canManageScheduler}
     class="w-full"
   />

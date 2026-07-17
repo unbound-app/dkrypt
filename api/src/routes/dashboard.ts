@@ -40,6 +40,7 @@ import {
   getDailyVolume,
   getDeviceBatteryHourlyBuckets,
   getDeviceHealthHourlyBuckets,
+  getDeviceTemperatureHourlyBuckets,
   getDeviceUptimePercent,
   getEffectiveSettings,
   getInsightsSummary,
@@ -287,6 +288,11 @@ dashboardRouter.get('/v1/dashboard/device/health-history', (req, res) => {
 dashboardRouter.get('/v1/dashboard/device/battery-history', (req, res) => {
   const hours = Math.min(Math.max(Number.parseInt(String(req.query.hours ?? '24'), 10) || 24, 1), 168);
   res.json({ buckets: getDeviceBatteryHourlyBuckets(hours) });
+});
+
+dashboardRouter.get('/v1/dashboard/device/temperature-history', (req, res) => {
+  const hours = Math.min(Math.max(Number.parseInt(String(req.query.hours ?? '24'), 10) || 24, 1), 168);
+  res.json({ buckets: getDeviceTemperatureHourlyBuckets(hours) });
 });
 
 dashboardRouter.get('/v1/dashboard/testflight/:appId/trains', async (req, res) => {
@@ -545,10 +551,16 @@ const SETTINGS_BOOL_FIELDS = [
   'notifyOnAppleAuthAlert',
   'notifyOnKeyExpiringSoon',
   'notifyOnDeviceOffline',
+  'notifyOnDeviceBatteryHot',
+  'notifyOnDeviceBatteryLow',
 ] as const;
 const MAX_SCHEDULER_RETRY_COUNT = 5;
 const MIN_DEVICE_OFFLINE_ALERT_MINUTES = 5;
 const MAX_DEVICE_OFFLINE_ALERT_MINUTES = 180;
+const MIN_BATTERY_HOT_ALERT_C = 30;
+const MAX_BATTERY_HOT_ALERT_C = 60;
+const MIN_BATTERY_LOW_ALERT_PERCENT = 5;
+const MAX_BATTERY_LOW_ALERT_PERCENT = 50;
 
 dashboardRouter.put('/v1/dashboard/settings', canManageScheduler, (req, res) => {
   const body = req.body ?? {};
@@ -570,6 +582,15 @@ dashboardRouter.put('/v1/dashboard/settings', canManageScheduler, (req, res) => 
     patch.deviceOfflineAlertMinutes = Math.min(
       Math.max(Math.round(body.deviceOfflineAlertMinutes), MIN_DEVICE_OFFLINE_ALERT_MINUTES),
       MAX_DEVICE_OFFLINE_ALERT_MINUTES,
+    );
+  }
+  if (typeof body.batteryHotAlertC === 'number') {
+    patch.batteryHotAlertC = Math.min(Math.max(Math.round(body.batteryHotAlertC), MIN_BATTERY_HOT_ALERT_C), MAX_BATTERY_HOT_ALERT_C);
+  }
+  if (typeof body.batteryLowAlertPercent === 'number') {
+    patch.batteryLowAlertPercent = Math.min(
+      Math.max(Math.round(body.batteryLowAlertPercent), MIN_BATTERY_LOW_ALERT_PERCENT),
+      MAX_BATTERY_LOW_ALERT_PERCENT,
     );
   }
 
