@@ -11,6 +11,7 @@
   import Select from '../lib/components/ui/Select.svelte';
   import type { BadgeVariant } from '../lib/components/ui/variants';
   import { liveState } from '../lib/live.svelte';
+  import { cn } from '../lib/utils';
 
   const LEVEL_BORDER: Record<LogEntry['level'], string> = {
     info: 'border-l-accent',
@@ -21,6 +22,7 @@
   let scopeFilter = $state(localStorage.getItem('logScopeFilter') ?? 'all');
   let levelFilter = $state(localStorage.getItem('logLevelFilter') ?? 'all');
   let searchText = $state('');
+  let regexMode = $state(localStorage.getItem('logRegexMode') === 'true');
   let autoScroll = $state(localStorage.getItem('logAutoScroll') !== 'false');
   let initialLogs = $state<LogEntry[] | null>(null);
   let listEl: HTMLDivElement | undefined = $state();
@@ -59,6 +61,30 @@
   $effect(() => {
     localStorage.setItem('logAutoScroll', String(autoScroll));
   });
+  $effect(() => {
+    localStorage.setItem('logRegexMode', String(regexMode));
+  });
+
+  const regexError = $derived.by(() => {
+    if (!regexMode || !searchText.trim()) return null;
+    try {
+      new RegExp(searchText);
+      return null;
+    } catch (e) {
+      return e instanceof Error ? e.message : String(e);
+    }
+  });
+
+  function matchesSearch(l: LogEntry): boolean {
+    const q = searchText.trim();
+    if (!q) return true;
+    if (regexMode) {
+      if (regexError) return false;
+      const re = new RegExp(q, 'i');
+      return re.test(l.message) || re.test(fmtLogMeta(l.meta));
+    }
+    return l.message.toLowerCase().includes(q.toLowerCase()) || fmtLogMeta(l.meta).toLowerCase().includes(q.toLowerCase());
+  }
 
   function entryKey(l: LogEntry): string {
     return `${l.ts}-${l.scope}-${l.level}-${l.message}`;
@@ -122,12 +148,7 @@
 
   const filtered = $derived(
     combined.filter(
-      (l) =>
-        (scopeFilter === 'all' || l.scope === scopeFilter) &&
-        (levelFilter === 'all' || l.level === levelFilter) &&
-        (searchText.trim() === '' ||
-          l.message.toLowerCase().includes(searchText.trim().toLowerCase()) ||
-          fmtLogMeta(l.meta).toLowerCase().includes(searchText.trim().toLowerCase())),
+      (l) => (scopeFilter === 'all' || l.scope === scopeFilter) && (levelFilter === 'all' || l.level === levelFilter) && matchesSearch(l),
     ),
   );
 
@@ -168,19 +189,39 @@
       {/each}
     </div>
     <Select items={LEVEL_OPTIONS} bind:value={levelFilter} class="w-36" />
-    <div class="relative w-44">
-      <Input placeholder="Search logs…" bind:value={searchText} class={searchText ? 'pr-8' : ''} />
-      {#if searchText}
-        <button
-          class="text-muted hover:text-text absolute top-1/2 right-2.5 -translate-y-1/2 cursor-pointer"
-          onclick={() => (searchText = '')}
-          aria-label="Clear search"
-          title="Clear search"
-        >
-          <X class="h-3.5 w-3.5" />
-        </button>
+    <div>
+      <div class="relative w-44">
+        <Input
+          placeholder={regexMode ? 'Search logs (regex)…' : 'Search logs…'}
+          bind:value={searchText}
+          class={cn(searchText ? 'pr-8' : '', regexError ? 'border-err!' : '')}
+        />
+        {#if searchText}
+          <button
+            class="text-muted hover:text-text absolute top-1/2 right-2.5 -translate-y-1/2 cursor-pointer"
+            onclick={() => (searchText = '')}
+            aria-label="Clear search"
+            title="Clear search"
+          >
+            <X class="h-3.5 w-3.5" />
+          </button>
+        {/if}
+      </div>
+      {#if regexError}
+        <div class="mt-1 text-xs text-err">{regexError}</div>
       {/if}
     </div>
+    <button
+      class={cn(
+        'h-9 shrink-0 cursor-pointer rounded-md border px-2.5 font-mono text-xs',
+        regexMode ? 'border-accent bg-accent/15 text-accent' : 'border-border text-muted hover:text-text',
+      )}
+      onclick={() => (regexMode = !regexMode)}
+      aria-pressed={regexMode}
+      title={regexMode ? 'Regex search on - click for plain substring search' : 'Plain substring search - click for regex'}
+    >
+      .*
+    </button>
     <div class="ml-auto flex items-center gap-2.5">
       <Button variant="secondary" size="sm" onclick={exportCsv}>Export CSV</Button>
       <Button variant="secondary" size="sm" onclick={exportJson}>Export JSON</Button>

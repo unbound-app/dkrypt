@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Moon, Sun } from 'lucide-svelte';
+  import { Moon, Rows2, Rows3, Sun } from 'lucide-svelte';
   import { Toaster } from 'svelte-sonner';
   import AlertBanner from './components/AlertBanner.svelte';
   import CommandPalette from './components/CommandPalette.svelte';
@@ -8,6 +8,7 @@
   import Login from './components/Login.svelte';
   import NotificationBell from './components/NotificationBell.svelte';
   import SessionExpiryBanner from './components/SessionExpiryBanner.svelte';
+  import SetupBanner from './components/SetupBanner.svelte';
   import ShortcutsHelp from './components/ShortcutsHelp.svelte';
   import Badge from './lib/components/ui/Badge.svelte';
   import Button from './lib/components/ui/Button.svelte';
@@ -21,12 +22,26 @@
     logoutEverywhere,
     PERMISSION_META,
     permissionsSummary,
+    pushDensityPref,
     pushThemePref,
     refreshSession,
     sessionState,
     type Permissions,
   } from './lib/session.svelte';
-  import { confirmDialog, initTheme, openHelp, openPalette, setActiveTab, setTheme, tabState, themeState, type TabId } from './lib/ui.svelte';
+  import {
+    confirmDialog,
+    densityState,
+    initDensity,
+    initTheme,
+    openHelp,
+    openPalette,
+    setActiveTab,
+    setDensity,
+    setTheme,
+    tabState,
+    themeState,
+    type TabId,
+  } from './lib/ui.svelte';
 
   const REPO_URL = 'https://github.com/unbound-app/dkrypt';
   const KOFI_URL = 'https://ko-fi.com/castdrian';
@@ -37,6 +52,7 @@
   import Settings from './tabs/Settings.svelte';
 
   initTheme();
+  initDensity();
 
   let homeRef: Home | undefined = $state();
   let loggingOut = $state(false);
@@ -134,6 +150,12 @@
     setTheme(next);
     void pushThemePref(next);
   }
+
+  function toggleDensity(): void {
+    const next = densityState.value === 'compact' ? 'comfortable' : 'compact';
+    setDensity(next);
+    void pushDensityPref(next);
+  }
 </script>
 
 <svelte:window onkeydown={onKeydown} />
@@ -184,6 +206,19 @@
             <Sun class="h-4 w-4" />
           {/if}
         </Button>
+        <Button
+          variant="secondary"
+          size="icon"
+          onclick={toggleDensity}
+          aria-label="Toggle compact table rows"
+          title={densityState.value === 'compact' ? 'Switch to comfortable rows' : 'Switch to compact rows'}
+        >
+          {#if densityState.value === 'compact'}
+            <Rows2 class="h-4 w-4" />
+          {:else}
+            <Rows3 class="h-4 w-4" />
+          {/if}
+        </Button>
         <NotificationBell />
         <button
           type="button"
@@ -200,6 +235,7 @@
       <SessionExpiryBanner />
       <ConnectionBanner />
       <AlertBanner />
+      <SetupBanner />
       <Tabs items={visibleTabs.map((t) => ({ id: t.id, label: t.label }))} value={tabState.active} onValueChange={(v) => setActiveTab(v as TabId)} class="mb-5" />
 
       <div class:hidden={tabState.active !== 'home'}>

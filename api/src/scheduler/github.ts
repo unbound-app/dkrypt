@@ -47,11 +47,12 @@ export async function dispatchIpaUpdate(dispatchRepo: string, ipaUrl: string, is
   }
 }
 
-interface WorkflowRun {
+export interface WorkflowRun {
   id: number;
   status: string;
   conclusion: string | null;
   created_at: string;
+  html_url: string;
 }
 
 interface WorkflowRunsResponse {

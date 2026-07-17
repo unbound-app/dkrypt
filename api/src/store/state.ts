@@ -169,6 +169,7 @@ export interface SchedulerSettings {
   ghWorkflowFile: string;
   pollCron: string;
   notifyWebhookUrl: string;
+  notifyFormat: 'embed' | 'plain';
   notifyOnKeyRequest: boolean;
   notifyOnDispatchSuccess: boolean;
   notifyOnDispatchFailure: boolean;
@@ -199,6 +200,7 @@ interface AppleAuthAlert {
 
 export interface UserPrefs {
   theme?: 'dark' | 'light';
+  density?: 'comfortable' | 'compact';
 }
 
 export type AuditAction = 'user.add' | 'user.update' | 'user.remove' | 'state.import';
@@ -215,6 +217,7 @@ export interface AuditLogEntry {
 export interface SchedulerRunOutcome {
   triggered: boolean;
   reason: string;
+  runUrl?: string;
 }
 
 export interface SchedulerRunEntry {
@@ -226,6 +229,11 @@ export interface SchedulerRunEntry {
 export interface ApiKeyUsageBucket {
   date: string;
   count: number;
+}
+
+export interface DeviceHealthCheck {
+  ts: number;
+  reachable: boolean;
 }
 
 interface PersistedState {
@@ -241,12 +249,14 @@ interface PersistedState {
   schedulerRunHistory: SchedulerRunEntry[];
   rootSessionVersion: number;
   apiKeyUsage: Record<string, ApiKeyUsageBucket[]>;
+  deviceHealthHistory: DeviceHealthCheck[];
 }
 
 const MAX_HISTORY = 100;
 const MAX_AUDIT_LOG = 200;
 const MAX_SCHEDULER_RUNS = 20;
 const MAX_USAGE_DAYS = 30;
+const MAX_DEVICE_HEALTH_CHECKS = 288; // 24h at a 5-minute poll interval
 const statePath = path.join(config.stateDir, 'state.json');
 
 function defaultState(): PersistedState {
@@ -262,6 +272,7 @@ function defaultState(): PersistedState {
     schedulerRunHistory: [],
     rootSessionVersion: 0,
     apiKeyUsage: {},
+    deviceHealthHistory: [],
   };
 }
 
@@ -669,6 +680,7 @@ export function getEffectiveSettings(): SchedulerSettings {
     ghWorkflowFile: state.settings.ghWorkflowFile ?? config.ghWorkflowFile,
     pollCron: state.settings.pollCron ?? config.pollCron,
     notifyWebhookUrl: state.settings.notifyWebhookUrl ?? config.notifyWebhookUrl,
+    notifyFormat: state.settings.notifyFormat ?? 'embed',
     notifyOnKeyRequest: state.settings.notifyOnKeyRequest ?? true,
     notifyOnDispatchSuccess: state.settings.notifyOnDispatchSuccess ?? true,
     notifyOnDispatchFailure: state.settings.notifyOnDispatchFailure ?? true,
@@ -685,6 +697,30 @@ export function updateSettings(patch: Partial<SchedulerSettings>): SchedulerSett
 export function isSchedulerEnabled(): boolean {
   const s = getEffectiveSettings();
   return s.watchBundleId !== '' && s.watchAppRepo !== '' && s.ghDispatchRepo !== '' && config.ghToken !== '';
+}
+
+// Distinguishes "intentionally left blank" (nothing set at all - not worth nagging about) from a
+// likely mistake: some but not all of the three required fields set, or all three set but the
+// env-only GH_TOKEN missing so the scheduler silently never runs despite looking configured.
+export function getSchedulerConfigIssues(): string[] {
+  const s = getEffectiveSettings();
+  const fieldsSet = [s.watchBundleId, s.watchAppRepo, s.ghDispatchRepo].filter(Boolean).length;
+  const issues: string[] = [];
+
+  if (fieldsSet > 0 && fieldsSet < 3) {
+    const missing = [
+      !s.watchBundleId && 'watch bundle ID',
+      !s.watchAppRepo && 'watch app repo',
+      !s.ghDispatchRepo && 'GitHub dispatch repo',
+    ].filter((v): v is string => typeof v === 'string');
+    issues.push(`Scheduler is partially configured - still missing ${missing.join(', ')}.`);
+  }
+
+  if (fieldsSet === 3 && config.ghToken === '') {
+    issues.push('Watch/dispatch repos are configured but GH_TOKEN is not set - the scheduler will never actually run.');
+  }
+
+  return issues;
 }
 
 export function recordJobHistory(entry: JobHistoryEntry): void {
@@ -780,6 +816,36 @@ export function recordSchedulerRunOutcome(outcome: Omit<SchedulerRunEntry, 'ts'>
 
 export function getSchedulerRunHistory(limit = 10): SchedulerRunEntry[] {
   return state.schedulerRunHistory.slice(0, limit);
+}
+
+export function recordDeviceHealthCheck(reachable: boolean): void {
+  state.deviceHealthHistory.push({ ts: Date.now(), reachable });
+  if (state.deviceHealthHistory.length > MAX_DEVICE_HEALTH_CHECKS) state.deviceHealthHistory.shift();
+  persistNow();
+}
+
+export interface HourlyHealthBucket {
+  hourStart: number;
+  reachablePercent: number | null;
+}
+
+export function getDeviceHealthHourlyBuckets(hours = 24): HourlyHealthBucket[] {
+  const now = Date.now();
+  const buckets: HourlyHealthBucket[] = [];
+  for (let i = hours - 1; i >= 0; i--) {
+    const hourStart = now - i * 3_600_000;
+    const hourEnd = hourStart + 3_600_000;
+    const checks = state.deviceHealthHistory.filter((c) => c.ts >= hourStart && c.ts < hourEnd);
+    buckets.push({ hourStart, reachablePercent: checks.length > 0 ? checks.filter((c) => c.reachable).length / checks.length : null });
+  }
+  return buckets;
+}
+
+export function getDeviceUptimePercent(hours = 24): number | undefined {
+  const cutoff = Date.now() - hours * 3_600_000;
+  const recent = state.deviceHealthHistory.filter((c) => c.ts >= cutoff);
+  if (recent.length === 0) return undefined;
+  return recent.filter((c) => c.reachable).length / recent.length;
 }
 
 export function getAppleAuthAlert(): AppleAuthAlert {

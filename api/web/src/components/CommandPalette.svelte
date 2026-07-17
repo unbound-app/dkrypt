@@ -1,6 +1,7 @@
 <script lang="ts">
+  import { fetchJobHistory, fetchMyKeys } from '../lib/api';
   import { logout, sessionState } from '../lib/session.svelte';
-  import { closePalette, openHelp, paletteState, setActiveTab, setTheme, themeState } from '../lib/ui.svelte';
+  import { closePalette, jumpToHistoryBundleId, openHelp, paletteState, setActiveTab, setTheme, themeState } from '../lib/ui.svelte';
   import Dialog from '../lib/components/ui/Dialog.svelte';
   import Input from '../lib/components/ui/Input.svelte';
   import { cn } from '../lib/utils';
@@ -8,12 +9,25 @@
   interface Command {
     id: string;
     label: string;
+    keywords?: string;
     run: () => void;
   }
 
   let query = $state('');
   let selected = $state(0);
   let inputEl: HTMLInputElement | undefined = $state();
+  let recentBundleIds = $state<string[]>([]);
+  let myKeyNames = $state<string[]>([]);
+
+  $effect(() => {
+    if (!paletteState.open) return;
+    void fetchJobHistory(0, 8).then((r) => {
+      recentBundleIds = [...new Set(r.history.map((h) => h.bundleId))];
+    });
+    void fetchMyKeys().then((r) => {
+      myKeyNames = r.keys.map((k) => k.name);
+    });
+  });
 
   const commands = $derived.by((): Command[] => {
     const base: Command[] = [
@@ -36,12 +50,27 @@
     base.push({ id: 'theme', label: 'Toggle light / dark theme', run: () => setTheme(themeState.value === 'dark' ? 'light' : 'dark') });
     base.push({ id: 'shortcuts', label: 'Show keyboard shortcuts', run: () => openHelp() });
     base.push({ id: 'logout', label: 'Log out', run: () => void logout() });
+
+    for (const bundleId of recentBundleIds) {
+      base.push({
+        id: `job-${bundleId}`,
+        label: `Jump to ${bundleId} in Job History`,
+        keywords: bundleId,
+        run: () => jumpToHistoryBundleId(bundleId),
+      });
+    }
+    for (const name of myKeyNames) {
+      base.push({ id: `key-${name}`, label: `Go to API key "${name}"`, keywords: name, run: () => setActiveTab('keys') });
+    }
+
     return base;
   });
 
-  const filtered = $derived(
-    query.trim() === '' ? commands : commands.filter((c) => c.label.toLowerCase().includes(query.trim().toLowerCase())),
-  );
+  const filtered = $derived.by(() => {
+    const q = query.trim().toLowerCase();
+    if (q === '') return commands;
+    return commands.filter((c) => c.label.toLowerCase().includes(q) || c.keywords?.toLowerCase().includes(q));
+  });
 
   $effect(() => {
     filtered;

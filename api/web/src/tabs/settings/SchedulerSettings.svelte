@@ -4,11 +4,17 @@
   import Button from '../../lib/components/ui/Button.svelte';
   import Card from '../../lib/components/ui/Card.svelte';
   import Input from '../../lib/components/ui/Input.svelte';
+  import Select from '../../lib/components/ui/Select.svelte';
   import Switch from '../../lib/components/ui/Switch.svelte';
   import { debounce } from '../../lib/format';
   import { liveState } from '../../lib/live.svelte';
   import { sessionState } from '../../lib/session.svelte';
   import { confirmDialog, showToast } from '../../lib/ui.svelte';
+
+  const FORMAT_OPTIONS = [
+    { value: 'embed', label: 'Rich embed (Discord)' },
+    { value: 'plain', label: 'Plain text (Slack / generic)' },
+  ];
 
   const NOTIFY_EVENTS: { key: keyof SchedulerSettings; label: string; description: string }[] = [
     { key: 'notifyOnKeyRequest', label: 'API key requests', description: 'A user without approveApiKeys requests a new key' },
@@ -30,6 +36,7 @@
     ghWorkflowFile: '',
     pollCron: '',
     notifyWebhookUrl: '',
+    notifyFormat: 'embed',
     notifyOnKeyRequest: true,
     notifyOnDispatchSuccess: true,
     notifyOnDispatchFailure: true,
@@ -193,6 +200,16 @@
   {#if repoErrors.notifyWebhookUrl}
     <div class="mt-1 text-xs text-err">{repoErrors.notifyWebhookUrl}</div>
   {/if}
+
+  <label for="s-notifyFormat" class="mt-3 mb-1 block text-xs text-muted">Webhook format</label>
+  <Select
+    id="s-notifyFormat"
+    items={FORMAT_OPTIONS}
+    value={form.notifyFormat}
+    onValueChange={(v) => (form = { ...form, notifyFormat: v as SchedulerSettings['notifyFormat'] })}
+    disabled={!canManageScheduler}
+    class="w-full"
+  />
 
   <div class="mt-3 mb-1 text-xs text-muted">Notify on</div>
   <div class="border-border divide-border divide-y rounded-lg border">

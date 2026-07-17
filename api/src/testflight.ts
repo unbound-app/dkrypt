@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { Client } from 'ssh2';
 import { config } from './config.js';
 import { scopedLogger } from './logger.js';
+import { recordDeviceHealthCheck } from './store/state.js';
 
 const log = scopedLogger('testflight');
 
@@ -338,4 +339,16 @@ export async function getDeviceHealth(): Promise<DeviceHealth> {
   const value = await computeDeviceHealth();
   healthCache = { at: Date.now(), value };
   return value;
+}
+
+const HEALTH_POLL_INTERVAL_MS = 5 * 60_000;
+
+// Independent of whether anyone has the dashboard open (the 20s cache above only gets refreshed
+// by an actual dashboard request) - this is what builds the reachability-over-time history.
+export function startDeviceHealthPoller(): void {
+  setInterval(() => {
+    void getDeviceHealth()
+      .then((health) => recordDeviceHealthCheck(health.reachable))
+      .catch((err) => log.warn('device health poll failed', { error: String(err) }));
+  }, HEALTH_POLL_INTERVAL_MS).unref();
 }

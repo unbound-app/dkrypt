@@ -18,7 +18,7 @@ import type { TFBuild } from '../testflight.js';
 import { listBuilds, listTrains } from '../testflight.js';
 import { buildSignedFileUrl } from '../util/signedUrl.js';
 import { compareVersions, normalizeVersion } from '../util/version.js';
-import { dispatchIpaUpdate, findDispatchedRun, getRun, listReleaseTagNames, listReleaseVersions } from './github.js';
+import { dispatchIpaUpdate, findDispatchedRun, getRun, listReleaseTagNames, listReleaseVersions, type WorkflowRun } from './github.js';
 import { lookupCurrentVersion } from './itunes.js';
 
 function sleep(ms: number): Promise<void> {
@@ -150,34 +150,31 @@ export async function checkForTestFlightUpdate(settings: SchedulerSettings): Pro
   };
 }
 
-async function pollRunToCompletion(dispatchRepo: string, workflowFile: string, dispatchedAt: Date): Promise<void> {
+async function pollRunToCompletion(dispatchRepo: string, workflowFile: string, dispatchedAt: Date): Promise<WorkflowRun | undefined> {
   const deadline = Date.now() + config.runPollTimeoutMinutes * 60_000;
 
-  let runId: number | undefined;
-  while (Date.now() < deadline && runId === undefined) {
-    const run = await findDispatchedRun(dispatchRepo, workflowFile, dispatchedAt);
-    if (run) {
-      runId = run.id;
-      break;
-    }
-    await sleep(config.runPollIntervalSeconds * 1000);
+  let run: WorkflowRun | undefined;
+  while (Date.now() < deadline && !run) {
+    run = await findDispatchedRun(dispatchRepo, workflowFile, dispatchedAt);
+    if (!run) await sleep(config.runPollIntervalSeconds * 1000);
   }
 
-  if (runId === undefined) {
+  if (!run) {
     log.warn('gave up waiting for the dispatched workflow run to appear', { dispatchRepo, workflowFile });
-    return;
+    return undefined;
   }
 
   while (Date.now() < deadline) {
-    const run = await getRun(dispatchRepo, runId);
+    run = await getRun(dispatchRepo, run.id);
     if (run.status === 'completed') {
-      log.info('dispatched workflow run completed', { runId, conclusion: run.conclusion });
-      return;
+      log.info('dispatched workflow run completed', { runId: run.id, conclusion: run.conclusion });
+      return run;
     }
     await sleep(config.runPollIntervalSeconds * 1000);
   }
 
-  log.warn('dispatched workflow run did not complete before timeout', { runId });
+  log.warn('dispatched workflow run did not complete before timeout', { runId: run.id });
+  return run;
 }
 
 async function decryptAndDispatch(
@@ -185,7 +182,7 @@ async function decryptAndDispatch(
   settings: SchedulerSettings,
   isTestflight: boolean,
   versionLabel: string,
-): Promise<void> {
+): Promise<{ runUrl?: string }> {
   const finished = await waitForJob(job, SCHEDULER_JOB_TIMEOUT_MS);
 
   if (finished.status !== 'done') {
@@ -195,7 +192,7 @@ async function decryptAndDispatch(
       status: finished.status,
       error: finished.error,
     });
-    return;
+    return {};
   }
 
   try {
@@ -204,7 +201,7 @@ async function decryptAndDispatch(
     await dispatchIpaUpdate(settings.ghDispatchRepo, ipaUrl, isTestflight);
     log.info('dispatched ipa-update', { dispatchRepo: settings.ghDispatchRepo, bundleId: settings.watchBundleId, isTestflight });
 
-    await pollRunToCompletion(settings.ghDispatchRepo, settings.ghWorkflowFile, dispatchedAt);
+    const run = await pollRunToCompletion(settings.ghDispatchRepo, settings.ghWorkflowFile, dispatchedAt);
     const source = isTestflight ? 'TestFlight' : 'App Store';
     await notify('dispatchSuccess', `✅ Dispatched ${settings.watchBundleId}`, {
       title: 'Decrypted & dispatched',
@@ -216,6 +213,7 @@ async function decryptAndDispatch(
         { name: 'Repo', value: settings.ghDispatchRepo, inline: true },
       ],
     });
+    return { runUrl: run?.html_url };
   } catch (err) {
     log.error('dispatch/poll failed', { error: String(err), isTestflight });
     await notify('dispatchFailure', `⚠️ Dispatch failed for ${settings.watchBundleId}`, {
@@ -227,6 +225,7 @@ async function decryptAndDispatch(
         { name: 'Error', value: `\`\`\`${String(err)}\`\`\`` },
       ],
     });
+    return {};
   } finally {
     await reclaimJobFile(finished);
   }
@@ -250,8 +249,8 @@ async function tickAppStore(settings: SchedulerSettings): Promise<SchedulerRunOu
   log.info('no matching release found, decrypting', { bundleId: settings.watchBundleId, version: normalized });
 
   const job = enqueueDecryptJob(settings.watchBundleId, 'scheduler', undefined, undefined, normalized);
-  await decryptAndDispatch(job, settings, false, `v${normalized}`);
-  return { triggered: true, reason: check.reason };
+  const { runUrl } = await decryptAndDispatch(job, settings, false, `v${normalized}`);
+  return { triggered: true, reason: check.reason, runUrl };
 }
 
 async function tickTestFlight(settings: SchedulerSettings): Promise<SchedulerRunOutcome> {
@@ -274,8 +273,8 @@ async function tickTestFlight(settings: SchedulerSettings): Promise<SchedulerRun
   });
 
   const job = enqueueDecryptJob(settings.watchBundleId, 'scheduler', undefined, { appId: check.appId as number, build: check.build });
-  await decryptAndDispatch(job, settings, true, check.latestTag as string);
-  return { triggered: true, reason: check.reason };
+  const { runUrl } = await decryptAndDispatch(job, settings, true, check.latestTag as string);
+  return { triggered: true, reason: check.reason, runUrl };
 }
 
 let tickInProgress = false;

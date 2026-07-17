@@ -14,18 +14,19 @@
     onValueChange?: (value: string) => void;
     class?: string;
     id?: string;
+    disabled?: boolean;
   }
 
-  let { items, value = $bindable(), onValueChange, class: className, id }: Props = $props();
+  let { items, value = $bindable(), onValueChange, class: className, id, disabled = false }: Props = $props();
 
   const selectedLabel = $derived(items.find((i) => i.value === value)?.label ?? '');
 </script>
 
-<SelectPrimitive.Root type="single" bind:value {onValueChange}>
+<SelectPrimitive.Root type="single" bind:value {onValueChange} {disabled}>
   <SelectPrimitive.Trigger
     {id}
     class={cn(
-      'flex h-9 items-center justify-between gap-2 rounded-md border border-border bg-panel-muted px-3 text-sm text-text focus:border-accent focus:outline-none',
+      'flex h-9 items-center justify-between gap-2 rounded-md border border-border bg-panel-muted px-3 text-sm text-text focus:border-accent focus:outline-none disabled:cursor-not-allowed disabled:opacity-50',
       className,
     )}
   >

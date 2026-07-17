@@ -37,8 +37,23 @@ function truncate(s: string, max: number): string {
   return s.length > max ? `${s.slice(0, max - 1)}…` : s;
 }
 
+// A flat rendering of the embed as markdown-ish plain text - `content` is read by Discord (and
+// most generic JSON webhook loggers), `text` is what Slack's incoming-webhook format expects;
+// sending both in one body covers all three without needing the user to pick a specific target.
+function flattenEmbed(embed: NotifyEmbed): string {
+  const lines = [`**${embed.title}**`];
+  if (embed.description) lines.push(embed.description);
+  for (const f of embed.fields ?? []) lines.push(`${f.name}: ${f.value.replace(/```/g, '')}`);
+  return lines.join('\n');
+}
+
 // Discord embed limits: title 256, description 4096, field name 256, field value 1024, 25 fields max.
-function buildPayload(content: string, embed: NotifyEmbed): Record<string, unknown> {
+function buildPayload(content: string, embed: NotifyEmbed, format: SchedulerSettings['notifyFormat']): Record<string, unknown> {
+  if (format === 'plain') {
+    const text = truncate(flattenEmbed(embed), 2000);
+    return { content: text, text };
+  }
+
   return {
     content: truncate(content, 2000),
     embeds: [
@@ -56,12 +71,17 @@ function buildPayload(content: string, embed: NotifyEmbed): Record<string, unkno
   };
 }
 
-async function postWebhook(url: string, content: string, embed: NotifyEmbed): Promise<{ ok: boolean; status?: number; error?: string }> {
+async function postWebhook(
+  url: string,
+  content: string,
+  embed: NotifyEmbed,
+  format: SchedulerSettings['notifyFormat'],
+): Promise<{ ok: boolean; status?: number; error?: string }> {
   try {
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(buildPayload(content, embed)),
+      body: JSON.stringify(buildPayload(content, embed, format)),
     });
     if (!res.ok) return { ok: false, status: res.status };
     return { ok: true };
@@ -74,18 +94,24 @@ export async function notify(event: NotifyEvent, content: string, embed: NotifyE
   const settings = getEffectiveSettings();
   if (!settings.notifyWebhookUrl || !settings[EVENT_SETTING_KEY[event]]) return;
 
-  const result = await postWebhook(settings.notifyWebhookUrl, content, embed);
+  const result = await postWebhook(settings.notifyWebhookUrl, content, embed, settings.notifyFormat);
   if (!result.ok) log.warn('notify webhook failed', { event, status: result.status, error: result.error });
 }
 
 export async function sendTestNotification(urlOverride?: string): Promise<{ ok: boolean; error?: string }> {
-  const url = urlOverride || getEffectiveSettings().notifyWebhookUrl;
+  const settings = getEffectiveSettings();
+  const url = urlOverride || settings.notifyWebhookUrl;
   if (!url) return { ok: false, error: 'no webhook URL configured' };
 
-  const result = await postWebhook(url, '🔔 Test notification', {
-    title: 'Test notification',
-    description: 'This is what a notification from dkrypt looks like.',
-    color: EMBED_COLOR.info,
-  });
+  const result = await postWebhook(
+    url,
+    '🔔 Test notification',
+    {
+      title: 'Test notification',
+      description: 'This is what a notification from dkrypt looks like.',
+      color: EMBED_COLOR.info,
+    },
+    settings.notifyFormat,
+  );
   return result.ok ? { ok: true } : { ok: false, error: result.error ?? `webhook returned HTTP ${result.status}` };
 }

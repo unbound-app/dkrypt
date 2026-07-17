@@ -84,6 +84,15 @@
     @apply hover:bg-panel-muted/60;
   }
 
+  [data-density='compact'] table {
+    @apply text-[12px];
+  }
+
+  [data-density='compact'] th,
+  [data-density='compact'] td {
+    @apply py-1;
+  }
+
   code {
     @apply bg-panel-muted rounded px-1.5 py-0.5 font-mono text-xs;
   }

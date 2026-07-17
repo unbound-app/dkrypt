@@ -8,6 +8,7 @@ afterEach(() => {
   global.fetch = originalFetch;
   updateSettings({
     notifyWebhookUrl: '',
+    notifyFormat: 'embed',
     notifyOnKeyRequest: true,
     notifyOnDispatchSuccess: true,
     notifyOnDispatchFailure: true,
@@ -75,6 +76,30 @@ describe('notify', () => {
     const embeds = capturedBody?.embeds as Record<string, unknown>[];
     const value = (embeds[0].fields as Record<string, unknown>[])[0].value as string;
     expect(value.length).toBe(1024);
+  });
+
+  test('sends a flat content+text payload with no embeds when notifyFormat is plain', async () => {
+    updateSettings({ notifyWebhookUrl: 'https://example.test/webhook', notifyFormat: 'plain' });
+    let capturedBody: Record<string, unknown> | undefined;
+    const fetchMock = mock((_url: string, init?: RequestInit) => {
+      capturedBody = JSON.parse(init?.body as string);
+      return Promise.resolve(new Response('{}', { status: 200 }));
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    await notify('dispatchSuccess', '✅ done', {
+      title: 'Decrypted & dispatched',
+      description: 'all good',
+      color: 0x3ecf8e,
+      fields: [{ name: 'App', value: 'com.example.app' }],
+    });
+
+    expect(capturedBody?.embeds).toBeUndefined();
+    expect(capturedBody?.content).toBe(capturedBody?.text);
+    const text = capturedBody?.content as string;
+    expect(text).toContain('Decrypted & dispatched');
+    expect(text).toContain('all good');
+    expect(text).toContain('App: com.example.app');
   });
 });
 

@@ -15,7 +15,7 @@
   import { debounce, fmtSize } from '../../lib/format';
   import { liveState } from '../../lib/live.svelte';
   import { scrollFade } from '../../lib/scrollFade';
-  import { showToast } from '../../lib/ui.svelte';
+  import { historyJumpState, showToast } from '../../lib/ui.svelte';
 
   const PAGE_SIZE = 15;
 
@@ -79,6 +79,15 @@
     activeQuery = query;
     void loadInitial(query);
   }, 300);
+
+  $effect(() => {
+    if (historyJumpState.bundleId) {
+      searchText = historyJumpState.bundleId;
+      sourceFilter = 'all';
+      statusFilter = 'all';
+      historyJumpState.bundleId = null;
+    }
+  });
 
   let hasSearched = false;
 

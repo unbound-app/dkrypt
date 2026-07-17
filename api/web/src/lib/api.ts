@@ -94,6 +94,7 @@ export interface SchedulerSettings {
   ghWorkflowFile: string;
   pollCron: string;
   notifyWebhookUrl: string;
+  notifyFormat: 'embed' | 'plain';
   notifyOnKeyRequest: boolean;
   notifyOnDispatchSuccess: boolean;
   notifyOnDispatchFailure: boolean;
@@ -109,6 +110,7 @@ export interface AppleAuthAlert {
 export interface SchedulerRunOutcome {
   triggered: boolean;
   reason: string;
+  runUrl?: string;
 }
 
 export interface SchedulerRunEntry {
@@ -131,6 +133,7 @@ export interface OverviewPayload {
   lastSchedulerRunAt?: number;
   nextSchedulerRunAt?: number;
   schedulerRunHistory: SchedulerRunEntry[];
+  configIssues: string[];
   disk?: DiskUsage;
   activeJobs: ActiveJob[];
 }
@@ -214,6 +217,15 @@ export interface DeviceHealth {
 
 export function fetchDeviceHealth(): Promise<DeviceHealth> {
   return apiJson('/v1/dashboard/device/health');
+}
+
+export interface HourlyHealthBucket {
+  hourStart: number;
+  reachablePercent: number | null;
+}
+
+export function fetchDeviceHealthHistory(hours = 24): Promise<{ buckets: HourlyHealthBucket[]; uptimePercent: number | null }> {
+  return apiJson(`/v1/dashboard/device/health-history?hours=${hours}`);
 }
 
 export function fetchJobHistory(

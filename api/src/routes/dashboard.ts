@@ -38,9 +38,12 @@ import {
   getAverageJobDurationMs,
   getBundleStats,
   getDailyVolume,
+  getDeviceHealthHourlyBuckets,
+  getDeviceUptimePercent,
   getEffectiveSettings,
   getJobHistoryPage,
   getLastSchedulerRunAt,
+  getSchedulerConfigIssues,
   getSchedulerRunHistory,
   getUserPrefs,
   importBackup,
@@ -93,6 +96,7 @@ function buildOverview() {
     lastSchedulerRunAt: getLastSchedulerRunAt(),
     nextSchedulerRunAt: schedulerEnabled ? nextCronRunAt(settings.pollCron) : undefined,
     schedulerRunHistory: getSchedulerRunHistory(10),
+    configIssues: getSchedulerConfigIssues(),
     disk: getDiskUsage(config.outputDir),
     activeJobs: getActiveJobs().map((j) => ({
       id: j.id,
@@ -265,6 +269,11 @@ dashboardRouter.get('/v1/dashboard/versions/:bundleId', async (req, res) => {
 dashboardRouter.get('/v1/dashboard/device/health', async (_req, res) => {
   const health = await getDeviceHealth();
   res.json(health);
+});
+
+dashboardRouter.get('/v1/dashboard/device/health-history', (req, res) => {
+  const hours = Math.min(Math.max(Number.parseInt(String(req.query.hours ?? '24'), 10) || 24, 1), 168);
+  res.json({ buckets: getDeviceHealthHourlyBuckets(hours), uptimePercent: getDeviceUptimePercent(hours) ?? null });
 });
 
 dashboardRouter.get('/v1/dashboard/testflight/:appId/trains', async (req, res) => {
@@ -511,6 +520,9 @@ dashboardRouter.put('/v1/dashboard/settings', canManageScheduler, (req, res) => 
   for (const field of SETTINGS_BOOL_FIELDS) {
     if (typeof body[field] === 'boolean') patch[field] = body[field];
   }
+  if (body.notifyFormat === 'embed' || body.notifyFormat === 'plain') {
+    patch.notifyFormat = body.notifyFormat;
+  }
 
   if (typeof patch.pollCron === 'string' && patch.pollCron !== '' && !validateCronExpr(patch.pollCron)) {
     res.status(400).json({ error: 'pollCron is not a valid cron expression' });
@@ -631,8 +643,9 @@ dashboardRouter.get('/v1/dashboard/me/prefs', (_req, res) => {
 
 dashboardRouter.put('/v1/dashboard/me/prefs', (req, res) => {
   const body = req.body ?? {};
-  const patch: { theme?: 'dark' | 'light' } = {};
+  const patch: { theme?: 'dark' | 'light'; density?: 'comfortable' | 'compact' } = {};
   if (body.theme === 'dark' || body.theme === 'light') patch.theme = body.theme;
+  if (body.density === 'comfortable' || body.density === 'compact') patch.density = body.density;
   res.json(updateUserPrefs(res.locals.session.sub, patch));
 });
 

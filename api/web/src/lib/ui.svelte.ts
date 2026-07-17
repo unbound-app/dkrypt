@@ -29,6 +29,24 @@ export function initTheme(): void {
   }
 }
 
+export type Density = 'comfortable' | 'compact';
+
+function readStoredDensity(): Density {
+  return localStorage.getItem('density') === 'compact' ? 'compact' : 'comfortable';
+}
+
+export const densityState = $state<{ value: Density }>({ value: readStoredDensity() });
+
+export function setDensity(density: Density): void {
+  densityState.value = density;
+  localStorage.setItem('density', density);
+  document.documentElement.setAttribute('data-density', density);
+}
+
+export function initDensity(): void {
+  document.documentElement.setAttribute('data-density', densityState.value);
+}
+
 export interface ToastHistoryEntry {
   id: string;
   message: string;
@@ -97,6 +115,15 @@ export function openHelp(): void {
 
 export function closeHelp(): void {
   helpState.open = false;
+}
+
+// Consumed by JobHistoryPanel - lets the command palette jump straight to a bundle ID's history
+// without prop-drilling a search-setter through Home.
+export const historyJumpState = $state<{ bundleId: string | null }>({ bundleId: null });
+
+export function jumpToHistoryBundleId(bundleId: string): void {
+  historyJumpState.bundleId = bundleId;
+  setActiveTab('home');
 }
 
 export type TabId = 'home' | 'keys' | 'logs' | 'docs' | 'settings';

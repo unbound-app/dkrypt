@@ -1,7 +1,7 @@
 <script lang="ts">
   import RelativeTime from '../../components/RelativeTime.svelte';
   import Sparkline from '../../components/Sparkline.svelte';
-  import { fetchDeviceHealth, fetchJobVolume, type DeviceHealth } from '../../lib/api';
+  import { fetchDeviceHealth, fetchDeviceHealthHistory, fetchJobVolume, type DeviceHealth, type HourlyHealthBucket } from '../../lib/api';
   import Badge from '../../lib/components/ui/Badge.svelte';
   import Card from '../../lib/components/ui/Card.svelte';
   import { fmtBytesGB, fmtUntil } from '../../lib/format';
@@ -56,6 +56,33 @@
     return () => clearInterval(interval);
   });
 
+  let healthHistory = $state<HourlyHealthBucket[] | null>(null);
+  let uptimePercent = $state<number | null>(null);
+
+  $effect(() => {
+    const load = () =>
+      void fetchDeviceHealthHistory(24).then((r) => {
+        healthHistory = r.buckets;
+        uptimePercent = r.uptimePercent;
+      });
+    load();
+    const interval = setInterval(load, 60_000);
+    return () => clearInterval(interval);
+  });
+
+  function bucketColor(pct: number | null): string {
+    if (pct === null) return 'bg-panel-muted';
+    if (pct >= 0.95) return 'bg-ok';
+    if (pct > 0) return 'bg-warn';
+    return 'bg-err';
+  }
+
+  function bucketTitle(bucket: HourlyHealthBucket): string {
+    const time = new Date(bucket.hourStart).toLocaleString(undefined, { hour: 'numeric', month: 'short', day: 'numeric' });
+    if (bucket.reachablePercent === null) return `${time}: no data`;
+    return `${time}: ${Math.round(bucket.reachablePercent * 100)}% reachable`;
+  }
+
   const total = $derived(volume?.reduce((a, d) => a + d.value, 0) ?? 0);
   const activeJobs = $derived(overview?.activeJobs.length ?? 0);
 </script>
@@ -77,6 +104,21 @@
       <Badge variant="secondary">iDevice …</Badge>
     {/if}
   </div>
+  {#if healthHistory}
+    <div class="mb-3.5">
+      <div class="mb-1.5 flex items-center justify-between text-xs text-muted">
+        <span>Device reachability · last 24h</span>
+        {#if uptimePercent !== null}
+          <span>{Math.round(uptimePercent * 100)}% uptime</span>
+        {/if}
+      </div>
+      <div class="flex gap-0.5">
+        {#each healthHistory as bucket (bucket.hourStart)}
+          <div class="h-4 flex-1 rounded-sm {bucketColor(bucket.reachablePercent)}" title={bucketTitle(bucket)}></div>
+        {/each}
+      </div>
+    </div>
+  {/if}
   <dl class="text-sm">
     <div class="border-border flex items-center gap-2.5 border-t py-2">
       <dt class="w-24 shrink-0 text-xs text-muted">Watching</dt>
@@ -121,8 +163,20 @@
         {#each overview.schedulerRunHistory as run (run.ts)}
           <div class="flex items-center gap-1.5 text-xs">
             <span class="w-16 shrink-0 text-muted"><RelativeTime ms={run.ts} /></span>
-            <Badge variant={run.appStore.triggered ? 'default' : 'secondary'} title={run.appStore.reason}>App Store</Badge>
-            <Badge variant={run.testflight.triggered ? 'default' : 'secondary'} title={run.testflight.reason}>TestFlight</Badge>
+            {#if run.appStore.runUrl}
+              <a href={run.appStore.runUrl} target="_blank" rel="noopener noreferrer" title="{run.appStore.reason} - view run on GitHub">
+                <Badge variant="default" class="hover:opacity-80">App Store ↗</Badge>
+              </a>
+            {:else}
+              <Badge variant={run.appStore.triggered ? 'default' : 'secondary'} title={run.appStore.reason}>App Store</Badge>
+            {/if}
+            {#if run.testflight.runUrl}
+              <a href={run.testflight.runUrl} target="_blank" rel="noopener noreferrer" title="{run.testflight.reason} - view run on GitHub">
+                <Badge variant="default" class="hover:opacity-80">TestFlight ↗</Badge>
+              </a>
+            {:else}
+              <Badge variant={run.testflight.triggered ? 'default' : 'secondary'} title={run.testflight.reason}>TestFlight</Badge>
+            {/if}
           </div>
         {/each}
       </div>
