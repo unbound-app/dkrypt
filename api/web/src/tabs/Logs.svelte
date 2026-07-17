@@ -169,9 +169,9 @@
 <Card title="Scheduler &amp; job logs">
   <div class="mb-3.5 flex flex-wrap items-center gap-2.5">
     <div class="flex flex-wrap gap-1">
-      <Button variant={scopeFilter === 'all' ? 'default' : 'secondary'} size="sm" onclick={() => (scopeFilter = 'all')}>All</Button>
+      <Button variant={scopeFilter === 'all' ? 'default' : 'secondary'} onclick={() => (scopeFilter = 'all')}>All</Button>
       {#each scopes as scope (scope)}
-        <Button variant={scopeFilter === scope ? 'default' : 'secondary'} size="sm" onclick={() => (scopeFilter = scope)}>{scope}</Button>
+        <Button variant={scopeFilter === scope ? 'default' : 'secondary'} onclick={() => (scopeFilter = scope)}>{scope}</Button>
       {/each}
     </div>
     <Select items={LEVEL_OPTIONS} bind:value={levelFilter} class="w-36" />
@@ -209,8 +209,8 @@
       .*
     </button>
     <div class="ml-auto flex items-center gap-2.5">
-      <Button variant="secondary" size="sm" onclick={exportCsv}>Export CSV</Button>
-      <Button variant="secondary" size="sm" onclick={exportJson}>Export JSON</Button>
+      <Button variant="secondary" onclick={exportCsv}>Export CSV</Button>
+      <Button variant="secondary" onclick={exportJson}>Export JSON</Button>
       <label class="flex items-center gap-1.5 text-xs text-muted">
         <input type="checkbox" bind:checked={autoScroll} />
         Auto-scroll to newest

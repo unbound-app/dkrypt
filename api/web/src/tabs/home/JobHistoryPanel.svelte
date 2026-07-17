@@ -250,14 +250,14 @@
       {/if}
     </div>
     <div class="flex flex-wrap gap-1">
-      <Button variant={statusFilter === 'all' ? 'default' : 'secondary'} size="sm" onclick={() => (statusFilter = 'all')}>All</Button>
-      <Button variant={statusFilter === 'done' ? 'default' : 'secondary'} size="sm" onclick={() => (statusFilter = 'done')}>Done</Button>
-      <Button variant={statusFilter === 'failed' ? 'default' : 'secondary'} size="sm" onclick={() => (statusFilter = 'failed')}>Failed</Button>
+      <Button variant={statusFilter === 'all' ? 'default' : 'secondary'} onclick={() => (statusFilter = 'all')}>All</Button>
+      <Button variant={statusFilter === 'done' ? 'default' : 'secondary'} onclick={() => (statusFilter = 'done')}>Done</Button>
+      <Button variant={statusFilter === 'failed' ? 'default' : 'secondary'} onclick={() => (statusFilter = 'failed')}>Failed</Button>
     </div>
     <div class="flex flex-wrap gap-1">
-      <Button variant={sourceFilter === 'all' ? 'default' : 'secondary'} size="sm" onclick={() => (sourceFilter = 'all')}>Any source</Button>
-      <Button variant={sourceFilter === 'manual' ? 'default' : 'secondary'} size="sm" onclick={() => (sourceFilter = 'manual')}>Manual</Button>
-      <Button variant={sourceFilter === 'scheduler' ? 'default' : 'secondary'} size="sm" onclick={() => (sourceFilter = 'scheduler')}>
+      <Button variant={sourceFilter === 'all' ? 'default' : 'secondary'} onclick={() => (sourceFilter = 'all')}>Any source</Button>
+      <Button variant={sourceFilter === 'manual' ? 'default' : 'secondary'} onclick={() => (sourceFilter = 'manual')}>Manual</Button>
+      <Button variant={sourceFilter === 'scheduler' ? 'default' : 'secondary'} onclick={() => (sourceFilter = 'scheduler')}>
         Scheduler
       </Button>
     </div>
