@@ -13,7 +13,7 @@ import { decryptRouter } from './routes/decrypt.js';
 import { healthRouter } from './routes/health.js';
 import { startScheduler } from './scheduler/index.js';
 import { startApiKeySweeper, startStateFlusher } from './store/state.js';
-import { startDeviceHealthPoller } from './testflight.js';
+import { startDeviceHealthPoller } from './deviceHealth.js';
 
 const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 
