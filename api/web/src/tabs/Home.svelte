@@ -5,7 +5,6 @@
   import DecryptPanel from './home/DecryptPanel.svelte';
   import JobHistoryPanel from './home/JobHistoryPanel.svelte';
   import MyRequestsPanel from './home/MyRequestsPanel.svelte';
-  import StatusPanel from './home/StatusPanel.svelte';
 
   let decryptPanel: DecryptPanel | undefined = $state();
 
@@ -25,17 +24,12 @@
   });
 </script>
 
-<div class="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
-  <div class="flex flex-col gap-4">
-    <DecryptPanel bind:this={decryptPanel} />
-    <DonationNudge />
-    <div class="grid grid-cols-1 gap-4 2xl:grid-cols-2">
-      <MyRequestsPanel />
-      <ActiveJobsPanel />
-    </div>
-    <JobHistoryPanel />
+<div class="flex flex-col gap-4">
+  <DecryptPanel bind:this={decryptPanel} />
+  <DonationNudge />
+  <div class="grid grid-cols-1 gap-4 2xl:grid-cols-2">
+    <MyRequestsPanel />
+    <ActiveJobsPanel />
   </div>
-  <div class="flex flex-col gap-4">
-    <StatusPanel />
-  </div>
+  <JobHistoryPanel />
 </div>

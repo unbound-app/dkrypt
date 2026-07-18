@@ -388,10 +388,12 @@
     <dl class="text-sm">
       {#each overview.watches as w (w.id)}
         <div class="border-border flex items-center gap-2.5 border-t py-2">
-          <dt class="w-24 shrink-0 text-xs text-muted truncate" title={w.name ?? 'Watching'}>{w.name ?? 'Watching'}</dt>
-          <dd class="min-w-0 flex-1 truncate font-mono text-[11px]" title={w.bundleId || '-'}>
-            {w.bundleId || '-'}
-          </dd>
+          <div class="min-w-0 flex-1">
+            <div class="truncate text-[13px]" title={w.name || w.bundleId}>{w.name || w.bundleId}</div>
+            {#if w.name}
+              <div class="truncate font-mono text-[10.5px] text-muted" title={w.bundleId || '-'}>{w.bundleId || '-'}</div>
+            {/if}
+          </div>
           <Badge variant={w.schedulable ? 'success' : 'secondary'} class="shrink-0">{w.schedulable ? 'on' : 'off'}</Badge>
         </div>
       {/each}

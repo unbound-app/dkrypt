@@ -104,6 +104,7 @@ export interface SchedulerSettings {
   notifyOnDiskFull: boolean;
   notifyOnDeviceStorageLow: boolean;
   notifyOnTestFlightBridgeDown: boolean;
+  notifyOnJobCompleted: boolean;
   schedulerRetryCount: number;
   deviceOfflineAlertMinutes: number;
   batteryHotAlertC: number;
@@ -111,8 +112,6 @@ export interface SchedulerSettings {
   diskFullAlertPercent: number;
   deviceStorageAlertPercent: number;
   testFlightBridgeAlertMinutes: number;
-  jobWebhookUrl: string;
-  jobWebhookEnabled: boolean;
   jobHistoryRetentionDays: number;
 }
 
@@ -120,8 +119,7 @@ export interface AppWatch {
   id: string;
   name?: string;
   bundleId: string;
-  appRepo: string;
-  ghDispatchRepo: string;
+  repo: string;
   ghWorkflowFile: string;
   pollCron: string;
   enabled: boolean;
@@ -351,8 +349,7 @@ export function fetchWatches(): Promise<{ watches: AppWatch[] }> {
 export interface WatchInput {
   name?: string;
   bundleId: string;
-  appRepo: string;
-  ghDispatchRepo: string;
+  repo: string;
   ghWorkflowFile: string;
   pollCron: string;
   enabled?: boolean;

@@ -81,26 +81,20 @@ describe('exportBackup / importBackup', () => {
 
 describe('getWatchConfigIssues', () => {
   test('reports nothing for a fully unconfigured watch', () => {
-    expect(getWatchConfigIssues({ id: 'x', bundleId: '', appRepo: '', ghDispatchRepo: '', ghWorkflowFile: '', pollCron: '', enabled: true, createdAt: 0, updatedAt: 0 })).toEqual([]);
+    expect(getWatchConfigIssues({ id: 'x', bundleId: '', repo: '', ghWorkflowFile: '', pollCron: '', enabled: true, createdAt: 0, updatedAt: 0 })).toEqual([]);
   });
 
   test('flags a partially-filled watch as a likely mistake', () => {
-    const { watch } = createWatch(
-      { bundleId: 'com.example.app', appRepo: '', ghDispatchRepo: '', ghWorkflowFile: '', pollCron: '0 * * * *' },
-      'tester',
-    );
+    const { watch } = createWatch({ bundleId: 'com.example.app', repo: '', ghWorkflowFile: '', pollCron: '0 * * * *' }, 'tester');
     const issues = getWatchConfigIssues(watch!);
     expect(issues.length).toBe(1);
     expect(issues[0]).toMatch(/partially configured/);
-    expect(issues[0]).toMatch(/watch app repo/);
+    expect(issues[0]).toMatch(/repo/);
   });
 
-  test('flags a missing GH_TOKEN once all three repo fields are set', () => {
+  test('flags a missing GH_TOKEN once the repo is set', () => {
     // test/setup.ts never sets GH_TOKEN, so config.ghToken is '' here.
-    const { watch } = createWatch(
-      { bundleId: 'com.example.app2', appRepo: 'me/app', ghDispatchRepo: 'me/dispatch', ghWorkflowFile: '', pollCron: '0 * * * *' },
-      'tester',
-    );
+    const { watch } = createWatch({ bundleId: 'com.example.app2', repo: 'me/app', ghWorkflowFile: '', pollCron: '0 * * * *' }, 'tester');
     const issues = getWatchConfigIssues(watch!);
     expect(issues.some((i) => i.includes('GH_TOKEN'))).toBe(true);
   });
@@ -108,22 +102,16 @@ describe('getWatchConfigIssues', () => {
 
 describe('watch CRUD', () => {
   test('rejects a second enabled watch targeting the same bundle ID', () => {
-    const first = createWatch(
-      { bundleId: 'com.example.collide', appRepo: 'me/app', ghDispatchRepo: 'me/dispatch', ghWorkflowFile: '', pollCron: '0 * * * *' },
-      'tester',
-    );
+    const first = createWatch({ bundleId: 'com.example.collide', repo: 'me/app', ghWorkflowFile: '', pollCron: '0 * * * *' }, 'tester');
     expect(first.ok).toBe(true);
 
-    const second = createWatch(
-      { bundleId: 'com.example.collide', appRepo: 'me/app2', ghDispatchRepo: 'me/dispatch2', ghWorkflowFile: '', pollCron: '0 * * * *' },
-      'tester',
-    );
+    const second = createWatch({ bundleId: 'com.example.collide', repo: 'me/app2', ghWorkflowFile: '', pollCron: '0 * * * *' }, 'tester');
     expect(second.ok).toBe(false);
     expect(second.error).toMatch(/already targets/);
 
     // A disabled watch on the same bundle ID is fine - only *enabled* watches can't collide.
     const disabled = createWatch(
-      { bundleId: 'com.example.collide', appRepo: 'me/app3', ghDispatchRepo: 'me/dispatch3', ghWorkflowFile: '', pollCron: '0 * * * *', enabled: false },
+      { bundleId: 'com.example.collide', repo: 'me/app3', ghWorkflowFile: '', pollCron: '0 * * * *', enabled: false },
       'tester',
     );
     expect(disabled.ok).toBe(true);
@@ -133,8 +121,8 @@ describe('watch CRUD', () => {
   });
 
   test('updateWatch still enforces the collision rule against other enabled watches', () => {
-    const a = createWatch({ bundleId: 'com.example.a', appRepo: '', ghDispatchRepo: '', ghWorkflowFile: '', pollCron: '0 * * * *' }, 'tester');
-    const b = createWatch({ bundleId: 'com.example.b', appRepo: '', ghDispatchRepo: '', ghWorkflowFile: '', pollCron: '0 * * * *' }, 'tester');
+    const a = createWatch({ bundleId: 'com.example.a', repo: '', ghWorkflowFile: '', pollCron: '0 * * * *' }, 'tester');
+    const b = createWatch({ bundleId: 'com.example.b', repo: '', ghWorkflowFile: '', pollCron: '0 * * * *' }, 'tester');
     expect(a.ok && b.ok).toBe(true);
 
     const result = updateWatch(b.watch!.id, { bundleId: 'com.example.a' }, 'tester');

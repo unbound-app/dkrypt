@@ -58,6 +58,7 @@
 
   import Docs from './tabs/Docs.svelte';
   import Home from './tabs/Home.svelte';
+  import StatusPanel from './tabs/home/StatusPanel.svelte';
   import Insights from './tabs/Insights.svelte';
   import Keys from './tabs/Keys.svelte';
   import Logs from './tabs/Logs.svelte';
@@ -451,30 +452,37 @@
       <ConnectionBanner />
       <AlertBanner />
       <SetupBanner />
-      <Tabs items={visibleTabs.map((t) => ({ id: t.id, label: t.label }))} value={tabState.active} onValueChange={(v) => setActiveTab(v as TabId)} class="mb-5" />
+      <div class="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
+        <div class="min-w-0">
+          <Tabs items={visibleTabs.map((t) => ({ id: t.id, label: t.label }))} value={tabState.active} onValueChange={(v) => setActiveTab(v as TabId)} class="mb-5" />
 
-      <div class:hidden={tabState.active !== 'home'}>
-        <Home bind:this={homeRef} />
-      </div>
-      <div class:hidden={tabState.active !== 'keys'}>
-        <Keys />
-      </div>
-      {#if sessionState.permissions?.viewLogs}
-        <div class:hidden={tabState.active !== 'logs'}>
-          <Logs />
+          <div class:hidden={tabState.active !== 'home'}>
+            <Home bind:this={homeRef} />
+          </div>
+          <div class:hidden={tabState.active !== 'keys'}>
+            <Keys />
+          </div>
+          {#if sessionState.permissions?.viewLogs}
+            <div class:hidden={tabState.active !== 'logs'}>
+              <Logs />
+            </div>
+          {/if}
+          <div class:hidden={tabState.active !== 'insights'}>
+            <Insights />
+          </div>
+          <div class:hidden={tabState.active !== 'docs'}>
+            <Docs />
+          </div>
+          {#if sessionState.permissions?.manageScheduler || sessionState.permissions?.triggerDispatch || sessionState.permissions?.manageAppleAuth || sessionState.permissions?.viewUsers || sessionState.permissions?.manageUsers}
+            <div class:hidden={tabState.active !== 'settings'}>
+              <Settings />
+            </div>
+          {/if}
         </div>
-      {/if}
-      <div class:hidden={tabState.active !== 'insights'}>
-        <Insights />
-      </div>
-      <div class:hidden={tabState.active !== 'docs'}>
-        <Docs />
-      </div>
-      {#if sessionState.permissions?.manageScheduler || sessionState.permissions?.triggerDispatch || sessionState.permissions?.manageAppleAuth || sessionState.permissions?.viewUsers || sessionState.permissions?.manageUsers}
-        <div class:hidden={tabState.active !== 'settings'}>
-          <Settings />
+        <div class="flex flex-col gap-4 lg:sticky lg:top-6">
+          <StatusPanel />
         </div>
-      {/if}
+      </div>
     </main>
   </div>
 {/if}

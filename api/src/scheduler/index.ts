@@ -52,7 +52,7 @@ export async function checkForUpdate(watch: AppWatch): Promise<UpdateCheck> {
 
   let releaseVersions: Set<string>;
   try {
-    releaseVersions = await listReleaseVersions(watch.appRepo);
+    releaseVersions = await listReleaseVersions(watch.repo);
   } catch (err) {
     return { ok: false, itunesVersion, normalizedVersion, wouldDispatch: false, reason: `Failed to list releases: ${String(err)}` };
   }
@@ -132,7 +132,7 @@ export async function checkForTestFlightUpdate(watch: AppWatch): Promise<TestFli
 
   let tagNames: Set<string>;
   try {
-    tagNames = await listReleaseTagNames(watch.appRepo);
+    tagNames = await listReleaseTagNames(watch.repo);
   } catch (err) {
     return { ok: false, appId, latestTag, build: latestBuild, wouldDispatch: false, reason: `Failed to list releases: ${String(err)}` };
   }
@@ -205,7 +205,7 @@ function trackRunCompletion(
 ): () => Promise<Partial<SchedulerRunOutcome>> {
   return async () => {
     try {
-      const run = await pollRunToCompletion(watch.ghDispatchRepo, watch.ghWorkflowFile, dispatchedAt);
+      const run = await pollRunToCompletion(watch.repo, watch.ghWorkflowFile, dispatchedAt);
       if (!run) {
         return { runStatus: 'timed_out', reason: `Dispatched ${versionLabel} - gave up waiting for the workflow run to appear/complete` };
       }
@@ -250,8 +250,8 @@ async function decryptAndDispatch(job: Job, watch: AppWatch, isTestflight: boole
   const dispatchedAt = new Date();
   try {
     const ipaUrl = buildSignedFileUrl(finished.id, config.fileTtlMinutes);
-    await dispatchIpaUpdate(watch.ghDispatchRepo, ipaUrl, isTestflight);
-    log.info('dispatched ipa-update', { dispatchRepo: watch.ghDispatchRepo, bundleId: watch.bundleId, isTestflight });
+    await dispatchIpaUpdate(watch.repo, ipaUrl, isTestflight);
+    log.info('dispatched ipa-update', { dispatchRepo: watch.repo, bundleId: watch.bundleId, isTestflight });
   } catch (err) {
     log.error('dispatch failed', { error: String(err), isTestflight });
     await notify('dispatchFailure', {
@@ -358,7 +358,7 @@ async function tick(watch: AppWatch): Promise<void> {
   try {
     recordSchedulerRun();
     const settings: SchedulerSettings = getEffectiveSettings();
-    log.info('scheduler tick', { watchId: watch.id, bundleId: watch.bundleId, appRepo: watch.appRepo });
+    log.info('scheduler tick', { watchId: watch.id, bundleId: watch.bundleId, repo: watch.repo });
 
     const appStore = await tickWithRetry(tickAppStore, watch, settings.schedulerRetryCount, 'App Store');
     const testflight = await tickWithRetry(tickTestFlight, watch, settings.schedulerRetryCount, 'TestFlight');
@@ -425,7 +425,7 @@ export function applyWatchSchedules(): void {
       void tick(watch).catch((err) => log.error('scheduler tick threw', { watchId: watch.id, error: String(err) }));
     });
     scheduledTasks.set(watch.id, { task, cronExpr: watch.pollCron });
-    log.info('watch (re)scheduled', { watchId: watch.id, cron: watch.pollCron, bundleId: watch.bundleId, appRepo: watch.appRepo });
+    log.info('watch (re)scheduled', { watchId: watch.id, cron: watch.pollCron, bundleId: watch.bundleId, repo: watch.repo });
   }
 
   if (eligibleIds.size === 0) {

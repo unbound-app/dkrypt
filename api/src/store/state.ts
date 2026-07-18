@@ -185,6 +185,7 @@ export interface SchedulerSettings {
   notifyOnDiskFull: boolean;
   notifyOnDeviceStorageLow: boolean;
   notifyOnTestFlightBridgeDown: boolean;
+  notifyOnJobCompleted: boolean;
   schedulerRetryCount: number;
   deviceOfflineAlertMinutes: number;
   batteryHotAlertC: number;
@@ -192,8 +193,6 @@ export interface SchedulerSettings {
   diskFullAlertPercent: number;
   deviceStorageAlertPercent: number;
   testFlightBridgeAlertMinutes: number;
-  jobWebhookUrl: string;
-  jobWebhookEnabled: boolean;
   jobHistoryRetentionDays: number;
 }
 
@@ -201,8 +200,7 @@ export interface AppWatch {
   id: string;
   name?: string;
   bundleId: string;
-  appRepo: string;
-  ghDispatchRepo: string;
+  repo: string;
   ghWorkflowFile: string;
   pollCron: string;
   enabled: boolean;
@@ -965,6 +963,7 @@ export function getEffectiveSettings(): SchedulerSettings {
     notifyOnDiskFull: state.settings.notifyOnDiskFull ?? true,
     notifyOnDeviceStorageLow: state.settings.notifyOnDeviceStorageLow ?? true,
     notifyOnTestFlightBridgeDown: state.settings.notifyOnTestFlightBridgeDown ?? true,
+    notifyOnJobCompleted: state.settings.notifyOnJobCompleted ?? false,
     schedulerRetryCount: state.settings.schedulerRetryCount ?? 0,
     deviceOfflineAlertMinutes: state.settings.deviceOfflineAlertMinutes ?? 15,
     batteryHotAlertC: state.settings.batteryHotAlertC ?? 45,
@@ -972,8 +971,6 @@ export function getEffectiveSettings(): SchedulerSettings {
     diskFullAlertPercent: state.settings.diskFullAlertPercent ?? 90,
     deviceStorageAlertPercent: state.settings.deviceStorageAlertPercent ?? 90,
     testFlightBridgeAlertMinutes: state.settings.testFlightBridgeAlertMinutes ?? 15,
-    jobWebhookUrl: state.settings.jobWebhookUrl ?? '',
-    jobWebhookEnabled: state.settings.jobWebhookEnabled ?? false,
     jobHistoryRetentionDays: state.settings.jobHistoryRetentionDays ?? 0,
   };
 }
@@ -1013,8 +1010,10 @@ function getLegacySingleWatchFields(): Omit<AppWatch, 'id' | 'name' | 'enabled' 
   if (!bundleId) return undefined;
   return {
     bundleId,
-    appRepo: legacy.watchAppRepo || config.watchAppRepo,
-    ghDispatchRepo: legacy.ghDispatchRepo || config.ghDispatchRepo,
+    // WATCH_APP_REPO and GH_DISPATCH_REPO used to be two separate fields (releases tracked
+    // here vs. owns the workflow) - in practice they're always the same repo, so watches now
+    // have just one. Prefer whichever legacy field is actually set.
+    repo: legacy.watchAppRepo || legacy.ghDispatchRepo || config.watchAppRepo || config.ghDispatchRepo,
     ghWorkflowFile: legacy.ghWorkflowFile || config.ghWorkflowFile,
     pollCron: legacy.pollCron || config.pollCron,
   };
@@ -1052,8 +1051,7 @@ function materializeWatches(): void {
 export interface CreateWatchInput {
   name?: string;
   bundleId: string;
-  appRepo: string;
-  ghDispatchRepo: string;
+  repo: string;
   ghWorkflowFile: string;
   pollCron: string;
   enabled?: boolean;
@@ -1069,8 +1067,7 @@ export function createWatch(input: CreateWatchInput, actor: string): { ok: boole
     id: randomUUID(),
     name: input.name,
     bundleId: input.bundleId,
-    appRepo: input.appRepo,
-    ghDispatchRepo: input.ghDispatchRepo,
+    repo: input.repo,
     ghWorkflowFile: input.ghWorkflowFile,
     pollCron: input.pollCron,
     enabled: input.enabled ?? true,
@@ -1111,26 +1108,22 @@ export function deleteWatch(id: string, actor: string): boolean {
 }
 
 export function isWatchSchedulable(watch: AppWatch): boolean {
-  return watch.enabled && watch.bundleId !== '' && watch.appRepo !== '' && watch.ghDispatchRepo !== '' && config.ghToken !== '';
+  return watch.enabled && watch.bundleId !== '' && watch.repo !== '' && config.ghToken !== '';
 }
 
 // Distinguishes "intentionally left blank" from a likely mistake: some but not all required
 // fields set, or all set but the env-only GH_TOKEN missing so the watch silently never runs.
 export function getWatchConfigIssues(watch: AppWatch): string[] {
-  const fieldsSet = [watch.bundleId, watch.appRepo, watch.ghDispatchRepo].filter(Boolean).length;
+  const fieldsSet = [watch.bundleId, watch.repo].filter(Boolean).length;
   const issues: string[] = [];
 
-  if (fieldsSet > 0 && fieldsSet < 3) {
-    const missing = [
-      !watch.bundleId && 'watch bundle ID',
-      !watch.appRepo && 'watch app repo',
-      !watch.ghDispatchRepo && 'GitHub dispatch repo',
-    ].filter((v): v is string => typeof v === 'string');
+  if (fieldsSet > 0 && fieldsSet < 2) {
+    const missing = [!watch.bundleId && 'watch bundle ID', !watch.repo && 'repo'].filter((v): v is string => typeof v === 'string');
     issues.push(`Watch is partially configured - still missing ${missing.join(', ')}.`);
   }
 
-  if (fieldsSet === 3 && config.ghToken === '') {
-    issues.push('Watch/dispatch repos are configured but GH_TOKEN is not set - this watch will never actually run.');
+  if (fieldsSet === 2 && config.ghToken === '') {
+    issues.push('Repo is configured but GH_TOKEN is not set - this watch will never actually run.');
   }
 
   return issues;

@@ -140,8 +140,8 @@ others (checking a stronger switch auto-checks the weaker one it needs):
   requests auto-approve instead of queuing.
 - **revokeApiKeys** - revoke or bulk-revoke any user's key, not just their
   own.
-- **manageScheduler** - *configure* the scheduler: watch/dispatch repos,
-  workflow file, poll cron, notification webhook URL.
+- **manageScheduler** - *configure* the scheduler: watches (bundle ID,
+  repo, workflow file, poll cron), notification webhook URL.
 - **triggerDispatch** - *operate* the scheduler without being able to
   reconfigure it: manually trigger a check, preview the next dispatch,
   send a test webhook notification, dismiss App Store auth-failure
@@ -236,15 +236,19 @@ Tabs:
   `manageAppleAuth`, `viewUsers`, or `manageUsers`) - sub-tabs shown
   depend on which you have:
   - *Scheduler* (`manageScheduler` and/or `triggerDispatch`) - manage the
-    watch list (see **Multiple watches** below) and the global notification
-    webhook, job-completion webhook, and alert thresholds live, no restart
-    needed, if you have `manageScheduler` (fields are read-only otherwise).
-    The per-watch preview/trigger actions and the test-webhook/dismiss-alert
+    watch list (see **Multiple watches** below) in a compact card, and a
+    "Notifications & alerts" card summarizing the one webhook URL, which
+    events post to it (including "every decrypt finishes", not just
+    scheduled updates - one webhook, just more toggles, not a second URL to
+    configure), retry/retention settings, and alert thresholds, with an
+    **Edit** button opening the full form in a dialog - live, no restart
+    needed, if you have `manageScheduler` (read-only otherwise). The
+    per-watch preview/trigger actions and the test-webhook/dismiss-alert
     actions need `triggerDispatch` instead - an operator can have one
     without the other. `GH_TOKEN` and `API_KEY` stay env-only, not editable
-    here. A "Recent webhook deliveries" panel at the bottom shows the last
-    30 attempts (scheduler notifications and job-completion webhooks alike)
-    with their target host, success/failure, and error if any.
+    here. A "Recent webhook deliveries" panel below shows the last 10
+    attempts with their event, target host, success/failure, and error if
+    any.
   - *Devices* (`manageScheduler`) - manage the device pool (see **Multiple
     devices** below).
   - *Users* (`viewUsers` or `manageUsers`) - the GitHub OAuth allowlist:
@@ -320,21 +324,24 @@ interactively, per the Setup steps above).
 ## Multiple watches
 
 **Settings → Scheduler → Watches** manages a list of independently-scheduled
-watches, each with its own bundle ID, app repo, GitHub dispatch repo,
-workflow file, and poll cron - add as many as you need. Each ticks entirely
-on its own schedule (no shared global tick), and each is also always watched
-for new TestFlight builds the same way the single legacy watch was (its
-numeric App Store ID resolved automatically, no separate config). Two
-*enabled* watches can't target the same bundle ID (a disabled one can, so
-you can keep an old config around without it colliding).
+watches, each with its own bundle ID, repo (releases are checked against
+this repo, and it's also where the dispatch workflow lives - in practice
+these were always the same repo, so there's just one field), workflow file,
+and poll cron - add as many as you need. Each ticks entirely on its own
+schedule (no shared global tick), and each is also always watched for new
+TestFlight builds the same way the single legacy watch was (its numeric App
+Store ID resolved automatically, no separate config). Two *enabled* watches
+can't target the same bundle ID (a disabled one can, so you can keep an old
+config around without it colliding).
 
 Existing single-watch installs (the `WATCH_BUNDLE_ID` / `WATCH_APP_REPO` /
 `GH_DISPATCH_REPO` / `GH_WORKFLOW_FILE` / `POLL_CRON` env vars) keep working
 unmodified - they're treated as one implicit watch until you explicitly add
 a watch of your own or edit that implicit one from the dashboard, at which
-point it's materialized into a real, editable entry. `GH_TOKEN` stays a
-single env-only credential shared by every watch (it needs access to all of
-their dispatch repos).
+point it's materialized into a real, editable entry (preferring
+`WATCH_APP_REPO`, falling back to `GH_DISPATCH_REPO`, for the merged repo
+field). `GH_TOKEN` stays a single env-only credential shared by every watch
+(it needs access to all of their repos).
 
 ## Multiple devices
 
@@ -379,7 +386,7 @@ for `ipadecrypt` (reads the device host/port/key straight out of
   FIFO) per device - restarting the container drops any in-flight/queued
   jobs.
 - Version matching for the automated App Store watch compares the iTunes
-  Lookup API `version` field against release tags in a watch's app repo,
+  Lookup API `version` field against release tags in a watch's repo,
   normalizing a leading `v` (`v334.0` vs `334.0`). It looks for an *exact*
   match, not "newer than" - if your release tags diverge from the App
   Store version scheme this will need adjusting in `api/src/util/

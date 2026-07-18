@@ -504,8 +504,7 @@ dashboardRouter.get('/v1/dashboard/watches', canManageScheduler, (_req, res) => 
 interface WatchInput {
   name?: string;
   bundleId: string;
-  appRepo: string;
-  ghDispatchRepo: string;
+  repo: string;
   ghWorkflowFile: string;
   pollCron: string;
   enabled?: boolean;
@@ -519,8 +518,7 @@ function parseWatchInput(body: unknown): WatchInput | undefined {
   return {
     name: typeof b.name === 'string' ? b.name.trim() || undefined : undefined,
     bundleId,
-    appRepo: typeof b.appRepo === 'string' ? b.appRepo.trim() : '',
-    ghDispatchRepo: typeof b.ghDispatchRepo === 'string' ? b.ghDispatchRepo.trim() : '',
+    repo: typeof b.repo === 'string' ? b.repo.trim() : '',
     ghWorkflowFile: typeof b.ghWorkflowFile === 'string' ? b.ghWorkflowFile.trim() : 'remote-ipa-update.yml',
     pollCron: typeof b.pollCron === 'string' ? b.pollCron.trim() : '0 * * * *',
     enabled: typeof b.enabled === 'boolean' ? b.enabled : undefined,
@@ -552,8 +550,7 @@ dashboardRouter.patch('/v1/dashboard/watches/:id', canManageScheduler, (req, res
   const patch: Partial<WatchInput> = {};
   if (typeof body.name === 'string') patch.name = body.name.trim() || undefined;
   if (typeof body.bundleId === 'string' && body.bundleId.trim()) patch.bundleId = body.bundleId.trim();
-  if (typeof body.appRepo === 'string') patch.appRepo = body.appRepo.trim();
-  if (typeof body.ghDispatchRepo === 'string') patch.ghDispatchRepo = body.ghDispatchRepo.trim();
+  if (typeof body.repo === 'string') patch.repo = body.repo.trim();
   if (typeof body.ghWorkflowFile === 'string') patch.ghWorkflowFile = body.ghWorkflowFile.trim();
   if (typeof body.pollCron === 'string') patch.pollCron = body.pollCron.trim();
   if (typeof body.enabled === 'boolean') patch.enabled = body.enabled;
@@ -926,7 +923,7 @@ dashboardRouter.get('/v1/dashboard/settings', (_req, res) => {
   res.json(getEffectiveSettings());
 });
 
-const SETTINGS_STRING_FIELDS = ['notifyWebhookUrl', 'jobWebhookUrl'] as const;
+const SETTINGS_STRING_FIELDS = ['notifyWebhookUrl'] as const;
 const SETTINGS_BOOL_FIELDS = [
   'notifyOnKeyRequest',
   'notifyOnDispatchSuccess',
@@ -939,7 +936,7 @@ const SETTINGS_BOOL_FIELDS = [
   'notifyOnDiskFull',
   'notifyOnDeviceStorageLow',
   'notifyOnTestFlightBridgeDown',
-  'jobWebhookEnabled',
+  'notifyOnJobCompleted',
 ] as const;
 const MAX_SCHEDULER_RETRY_COUNT = 5;
 const MIN_DEVICE_OFFLINE_ALERT_MINUTES = 5;

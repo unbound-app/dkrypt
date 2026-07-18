@@ -14,7 +14,8 @@ export type NotifyEvent =
   | 'deviceBatteryLow'
   | 'diskFull'
   | 'deviceStorageLow'
-  | 'testFlightBridgeDown';
+  | 'testFlightBridgeDown'
+  | 'jobCompleted';
 
 const EVENT_SETTING_KEY: Record<NotifyEvent, keyof SchedulerSettings> = {
   keyRequest: 'notifyOnKeyRequest',
@@ -28,6 +29,7 @@ const EVENT_SETTING_KEY: Record<NotifyEvent, keyof SchedulerSettings> = {
   diskFull: 'notifyOnDiskFull',
   deviceStorageLow: 'notifyOnDeviceStorageLow',
   testFlightBridgeDown: 'notifyOnTestFlightBridgeDown',
+  jobCompleted: 'notifyOnJobCompleted',
 };
 
 // Matches the dashboard's own CSS custom properties (--color-accent/ok/warn/err) so a notification
@@ -115,7 +117,15 @@ async function postWebhook(
   event: string,
 ): Promise<{ ok: boolean; status?: number; error?: string }> {
   const result = await postJsonWithRetry(url, buildPayload(embed, format));
-  recordWebhookDelivery({ kind: 'scheduler', event, targetHost: targetHost(url), ok: result.ok, status: result.status, error: result.error, durationMs: result.durationMs });
+  recordWebhookDelivery({
+    kind: event === 'jobCompleted' ? 'job' : 'scheduler',
+    event,
+    targetHost: targetHost(url),
+    ok: result.ok,
+    status: result.status,
+    error: result.error,
+    durationMs: result.durationMs,
+  });
   return result;
 }
 

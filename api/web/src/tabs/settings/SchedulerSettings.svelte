@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Plus } from 'lucide-svelte';
+  import { Plus, X } from 'lucide-svelte';
   import EmptyState from '../../components/EmptyState.svelte';
   import RelativeTime from '../../components/RelativeTime.svelte';
   import {
@@ -37,6 +37,7 @@
   ];
 
   const NOTIFY_EVENTS: { key: keyof SchedulerSettings; label: string; description: string }[] = [
+    { key: 'notifyOnJobCompleted', label: 'Every decrypt finishes', description: 'Every job, done or failed - not just scheduled updates' },
     { key: 'notifyOnKeyRequest', label: 'API key requests', description: 'A user without approveApiKeys requests a new key' },
     { key: 'notifyOnDispatchSuccess', label: 'Dispatch succeeded', description: 'A watch decrypted and dispatched a new version' },
     { key: 'notifyOnDispatchFailure', label: 'Dispatch failed', description: 'A scheduled decrypt, dispatch, or workflow-run poll failed' },
@@ -129,8 +130,7 @@
   const DEFAULT_WATCH_FORM: WatchInput = {
     name: '',
     bundleId: '',
-    appRepo: '',
-    ghDispatchRepo: '',
+    repo: '',
     ghWorkflowFile: 'remote-ipa-update.yml',
     pollCron: '0 * * * *',
     enabled: true,
@@ -162,8 +162,7 @@
   });
 
   const watchRepoErrors = $derived({
-    appRepo: watchForm.appRepo && !REPO_RE.test(watchForm.appRepo) ? 'Expected owner/repo' : '',
-    ghDispatchRepo: watchForm.ghDispatchRepo && !REPO_RE.test(watchForm.ghDispatchRepo) ? 'Expected owner/repo' : '',
+    repo: watchForm.repo && !REPO_RE.test(watchForm.repo) ? 'Expected owner/repo' : '',
   });
 
   function openAddWatch(): void {
@@ -174,7 +173,7 @@
 
   function openEditWatch(w: AppWatch): void {
     editingWatchId = w.id;
-    watchForm = { name: w.name ?? '', bundleId: w.bundleId, appRepo: w.appRepo, ghDispatchRepo: w.ghDispatchRepo, ghWorkflowFile: w.ghWorkflowFile, pollCron: w.pollCron, enabled: w.enabled };
+    watchForm = { name: w.name ?? '', bundleId: w.bundleId, repo: w.repo, ghWorkflowFile: w.ghWorkflowFile, pollCron: w.pollCron, enabled: w.enabled };
     watchDialogOpen = true;
   }
 
@@ -187,7 +186,7 @@
       showToast('Poll cron is not a valid cron expression', 'error');
       return;
     }
-    if (watchRepoErrors.appRepo || watchRepoErrors.ghDispatchRepo) {
+    if (watchRepoErrors.repo) {
       showToast('Fix the invalid fields before saving', 'error');
       return;
     }
@@ -227,6 +226,12 @@
     }
   }
 
+  function dismissPreview(id: string): void {
+    const next = { ...previewByWatch };
+    delete next[id];
+    previewByWatch = next;
+  }
+
   async function runTriggerWatch(id: string): Promise<void> {
     if (!(await confirmDialog("Run a live check now? If there's a new version, it'll decrypt and dispatch for real.", { variant: 'default', confirmLabel: 'Trigger now' })))
       return;
@@ -258,6 +263,7 @@
     notifyOnDiskFull: true,
     notifyOnDeviceStorageLow: true,
     notifyOnTestFlightBridgeDown: true,
+    notifyOnJobCompleted: false,
     schedulerRetryCount: 0,
     deviceOfflineAlertMinutes: 15,
     batteryHotAlertC: 45,
@@ -265,13 +271,12 @@
     diskFullAlertPercent: 90,
     deviceStorageAlertPercent: 90,
     testFlightBridgeAlertMinutes: 15,
-    jobWebhookUrl: '',
-    jobWebhookEnabled: false,
     jobHistoryRetentionDays: 0,
   };
 
   let form = $state<SchedulerSettings>({ ...DEFAULT_FORM });
   let savedForm = $state<SchedulerSettings>({ ...DEFAULT_FORM });
+  let settingsDialogOpen = $state(false);
   let testingWebhook = $state(false);
   let saving = $state(false);
   let deliveries = $state<WebhookDeliveryEntry[] | null>(null);
@@ -284,7 +289,7 @@
   });
 
   function loadDeliveries(): void {
-    void fetchWebhookDeliveries(30).then((r) => (deliveries = r.deliveries));
+    void fetchWebhookDeliveries(10).then((r) => (deliveries = r.deliveries));
   }
 
   $effect(() => {
@@ -293,15 +298,19 @@
     return () => clearInterval(interval);
   });
 
+  function openSettingsDialog(): void {
+    form = { ...savedForm };
+    settingsDialogOpen = true;
+  }
+
   const repoErrors = $derived({
     notifyWebhookUrl: form.notifyWebhookUrl && !WEBHOOK_URL_RE.test(form.notifyWebhookUrl) ? 'Expected a full http(s):// URL' : '',
-    jobWebhookUrl: form.jobWebhookUrl && !WEBHOOK_URL_RE.test(form.jobWebhookUrl) ? 'Expected a full http(s):// URL' : '',
   });
 
-  const hasUnsavedChanges = $derived(JSON.stringify(form) !== JSON.stringify(savedForm));
+  const enabledAlertCount = $derived(NOTIFY_EVENTS.filter((e) => savedForm[e.key]).length);
 
   async function save(): Promise<void> {
-    if (repoErrors.notifyWebhookUrl || repoErrors.jobWebhookUrl) {
+    if (repoErrors.notifyWebhookUrl) {
       showToast('Fix the invalid fields before saving', 'error');
       return;
     }
@@ -311,6 +320,7 @@
       if (ok) {
         form = { ...data };
         savedForm = { ...data };
+        settingsDialogOpen = false;
       }
     } finally {
       saving = false;
@@ -364,8 +374,7 @@
             </div>
             <div class="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 font-mono text-[11px] text-muted">
               <span title={w.bundleId}>{w.bundleId}</span>
-              <span title={w.appRepo}>{w.appRepo || '-'}</span>
-              <span title={w.ghDispatchRepo}>{w.ghDispatchRepo || '-'}</span>
+              <span title={w.repo}>{w.repo || '-'}</span>
               <span title="poll cron">{w.pollCron}</span>
             </div>
             {#if w.configIssues.length > 0}
@@ -373,13 +382,24 @@
             {/if}
             {#if previewByWatch[w.id]}
               {@const p = previewByWatch[w.id]}
-              <div class="border-border bg-panel-muted mt-2 rounded-md border p-2.5 text-xs">
-                <div class={p?.wouldDispatch ? 'text-ok' : 'text-muted'}>{p?.reason}</div>
-                {#if p?.testflight}
-                  <div class="border-border mt-1.5 border-t pt-1.5">
-                    <div class={p.testflight.wouldDispatch ? 'text-ok' : 'text-muted'}>{p.testflight.reason}</div>
-                  </div>
-                {/if}
+              <div class="border-border bg-panel-muted mt-2 flex items-start gap-2 rounded-md border p-2.5 text-xs">
+                <div class="min-w-0 flex-1">
+                  <div class={p?.wouldDispatch ? 'text-ok' : 'text-muted'}>{p?.reason}</div>
+                  {#if p?.testflight}
+                    <div class="border-border mt-1.5 border-t pt-1.5">
+                      <div class={p.testflight.wouldDispatch ? 'text-ok' : 'text-muted'}>{p.testflight.reason}</div>
+                    </div>
+                  {/if}
+                </div>
+                <button
+                  type="button"
+                  class="text-muted hover:text-text shrink-0 cursor-pointer"
+                  onclick={() => dismissPreview(w.id)}
+                  aria-label="Dismiss preview"
+                  title="Dismiss"
+                >
+                  <X class="h-3.5 w-3.5" />
+                </button>
               </div>
             {/if}
           </div>
@@ -388,14 +408,153 @@
     {/if}
   </Card>
 
-  <Card title="Automated watch → GitHub dispatch">
+  <Card title="Notifications & alerts">
+    {#snippet headerExtra()}
+      <Button size="sm" variant="secondary" onclick={openSettingsDialog}>{canManageScheduler ? 'Edit' : 'View'}</Button>
+    {/snippet}
+    <dl class="flex flex-col gap-2 text-sm">
+      <div class="flex items-center justify-between gap-3">
+        <dt class="text-muted">Webhook</dt>
+        <dd>
+          {#if savedForm.notifyWebhookUrl}
+            <Badge variant="success">Configured</Badge>
+          {:else}
+            <Badge variant="secondary">Not set</Badge>
+          {/if}
+        </dd>
+      </div>
+      <div class="flex items-center justify-between gap-3">
+        <dt class="text-muted">Alerts enabled</dt>
+        <dd>{enabledAlertCount} / {NOTIFY_EVENTS.length}</dd>
+      </div>
+      <div class="flex items-center justify-between gap-3">
+        <dt class="text-muted">Retry on failure</dt>
+        <dd>{RETRY_OPTIONS.find((o) => o.value === String(savedForm.schedulerRetryCount))?.label}</dd>
+      </div>
+      <div class="flex items-center justify-between gap-3">
+        <dt class="text-muted">Job history retention</dt>
+        <dd class="text-right">{RETENTION_OPTIONS.find((o) => o.value === String(savedForm.jobHistoryRetentionDays))?.label}</dd>
+      </div>
+    </dl>
+  </Card>
+
+  {#if deliveries !== null}
+    <Card title="Recent webhook deliveries">
+      {#if deliveries.length === 0}
+        <EmptyState message="No webhook deliveries yet." />
+      {:else}
+        <div class="flex flex-col gap-1.5">
+          {#each deliveries as d (d.id)}
+            <div class="border-border flex items-center gap-2.5 rounded-md border px-2.5 py-2 text-xs">
+              <span class="w-14 shrink-0 text-muted"><RelativeTime ms={d.ts} /></span>
+              <Badge variant={d.ok ? 'success' : 'destructive'} class="shrink-0">{d.ok ? 'ok' : 'failed'}</Badge>
+              <span class="shrink-0 font-mono">{d.event}</span>
+              <span class="min-w-0 flex-1 truncate text-muted" title={d.targetHost}>{d.targetHost}</span>
+              {#if d.error}
+                <span class="max-w-40 truncate text-err" title={d.error}>{d.error}</span>
+              {:else if d.status}
+                <span class="text-muted">{d.status}</span>
+              {/if}
+            </div>
+          {/each}
+        </div>
+      {/if}
+    </Card>
+  {/if}
+</div>
+
+{#if canManageScheduler}
+  <Dialog open={watchDialogOpen} onOpenChange={(v) => (watchDialogOpen = v)} class="max-w-md">
+    <div class="mb-3 text-sm font-medium">{editingWatchId ? 'Edit watch' : 'Add watch'}</div>
+    <div class="max-h-[60vh] overflow-y-auto pr-0.5">
+      <label for="w-name" class="mb-1 block text-xs text-muted">Name (optional)</label>
+      <Input id="w-name" placeholder="e.g. Main app" bind:value={watchForm.name} />
+
+      <label for="w-bundleId" class="mt-3 mb-1 block text-xs text-muted">Watch bundle ID</label>
+      <Input id="w-bundleId" bind:value={watchForm.bundleId} />
+
+      <label for="w-repo" class="mt-3 mb-1 block text-xs text-muted">Repo (releases tracked here, and where the dispatch workflow lives)</label>
+      <Input id="w-repo" bind:value={watchForm.repo} />
+      {#if watchRepoErrors.repo}
+        <div class="mt-1 text-xs text-err">{watchRepoErrors.repo}</div>
+      {/if}
+
+      <label for="w-ghWorkflowFile" class="mt-3 mb-1 block text-xs text-muted">Workflow file</label>
+      <Input id="w-ghWorkflowFile" bind:value={watchForm.ghWorkflowFile} />
+
+      <label for="w-pollCron" class="mt-3 mb-1 block text-xs text-muted">Poll cron</label>
+      <Input id="w-pollCron" bind:value={watchForm.pollCron} />
+      {#if watchCronValid === false}
+        <div class="mt-1 text-xs text-err">Not a valid cron expression</div>
+      {/if}
+      <div class="mt-1.5 flex flex-wrap gap-1.5">
+        {#each CRON_PRESETS as p (p.expr)}
+          <button
+            type="button"
+            class="border-border text-muted hover:text-text hover:border-accent cursor-pointer rounded-full border px-2.5 py-1 text-[12px]"
+            onclick={() => applyCronPreset(p.expr)}
+          >
+            {p.label}
+          </button>
+        {/each}
+      </div>
+    </div>
+    <Button class="mt-3.5 w-full" loading={savingWatch} onclick={saveWatch}>{editingWatchId ? 'Save' : 'Add'}</Button>
+  </Dialog>
+{/if}
+
+<Dialog open={settingsDialogOpen} onOpenChange={(v) => (settingsDialogOpen = v)} class="max-w-md">
+  <div class="mb-3 text-sm font-medium">Notifications & alerts</div>
+  <div class="max-h-[70vh] overflow-y-auto pr-0.5">
     {#if !canManageScheduler}
       <div class="border-border bg-panel-muted mb-3.5 rounded-md border p-2.5 text-xs text-muted">
         You can operate the scheduler but not change its configuration - fields below are read-only.
       </div>
     {/if}
 
-    <label for="s-retryCount" class="mb-1 block text-xs text-muted">Retry a failed check before recording/notifying failure</label>
+    <label for="s-notifyWebhookUrl" class="mb-1 block text-xs text-muted">Webhook URL (Discord/Slack-compatible, optional)</label>
+    <div class="flex gap-2">
+      <Input id="s-notifyWebhookUrl" bind:value={form.notifyWebhookUrl} disabled={!canManageScheduler} />
+      {#if canTriggerDispatch}
+        <Button variant="secondary" loading={testingWebhook} onclick={runTestWebhook}>Test</Button>
+      {/if}
+    </div>
+    <div class="mt-1 text-xs text-muted">
+      One webhook for everything below - test sends to whatever's currently typed above, saved or not.
+    </div>
+    {#if repoErrors.notifyWebhookUrl}
+      <div class="mt-1 text-xs text-err">{repoErrors.notifyWebhookUrl}</div>
+    {/if}
+
+    <label for="s-notifyFormat" class="mt-3 mb-1 block text-xs text-muted">Webhook format</label>
+    <Select
+      id="s-notifyFormat"
+      items={FORMAT_OPTIONS}
+      value={form.notifyFormat}
+      onValueChange={(v) => (form = { ...form, notifyFormat: v as SchedulerSettings['notifyFormat'] })}
+      disabled={!canManageScheduler}
+      class="w-full"
+    />
+
+    <div class="mt-3 mb-1 text-xs text-muted">Notify on</div>
+    <div class="border-border divide-border divide-y rounded-lg border">
+      {#each NOTIFY_EVENTS as event (event.key)}
+        <div class="flex items-center gap-3 px-3 py-2">
+          <div class="min-w-0 flex-1">
+            <div class="text-[13px] text-text">{event.label}</div>
+            <div class="text-[11px] text-muted">{event.description}</div>
+          </div>
+          <Switch
+            checked={form[event.key] as boolean}
+            disabled={!canManageScheduler}
+            onCheckedChange={(checked) => (form = { ...form, [event.key]: checked })}
+            aria-label={event.label}
+          />
+        </div>
+      {/each}
+    </div>
+
+    <label for="s-retryCount" class="mt-3 mb-1 block text-xs text-muted">Retry a failed check before recording/notifying failure</label>
     <Select
       id="s-retryCount"
       items={RETRY_OPTIONS}
@@ -415,38 +574,6 @@
       disabled={!canManageScheduler}
       class="w-full"
     />
-
-    <label for="s-notifyWebhookUrl" class="mt-3 mb-1 block text-xs text-muted">Notification webhook URL (Discord-compatible, optional)</label>
-    <div class="flex gap-2">
-      <Input id="s-notifyWebhookUrl" bind:value={form.notifyWebhookUrl} disabled={!canManageScheduler} />
-      {#if canTriggerDispatch}
-        <Button variant="secondary" loading={testingWebhook} onclick={runTestWebhook}>Test</Button>
-      {/if}
-    </div>
-    <div class="mt-1 text-xs text-muted">Test sends to whatever's currently typed above, saved or not.</div>
-    {#if repoErrors.notifyWebhookUrl}
-      <div class="mt-1 text-xs text-err">{repoErrors.notifyWebhookUrl}</div>
-    {/if}
-
-    <label for="s-notifyFormat" class="mt-3 mb-1 block text-xs text-muted">Webhook format</label>
-    <Select
-      id="s-notifyFormat"
-      items={FORMAT_OPTIONS}
-      value={form.notifyFormat}
-      onValueChange={(v) => (form = { ...form, notifyFormat: v as SchedulerSettings['notifyFormat'] })}
-      disabled={!canManageScheduler}
-      class="w-full"
-    />
-
-    <label for="s-jobWebhookUrl" class="mt-3 mb-1 block text-xs text-muted">Job completion webhook URL (fires for every decrypt, not just scheduled updates)</label>
-    <div class="flex items-center gap-2">
-      <Input id="s-jobWebhookUrl" bind:value={form.jobWebhookUrl} disabled={!canManageScheduler} class="flex-1" />
-      <Switch checked={form.jobWebhookEnabled} disabled={!canManageScheduler} onCheckedChange={(v) => (form = { ...form, jobWebhookEnabled: v })} aria-label="Enable job completion webhook" />
-    </div>
-    <div class="mt-1 text-xs text-muted">Posts a plain JSON body ({'{ event, job }'}) - separate from the Discord/Slack notification webhook above.</div>
-    {#if repoErrors.jobWebhookUrl}
-      <div class="mt-1 text-xs text-err">{repoErrors.jobWebhookUrl}</div>
-    {/if}
 
     <label for="s-offlineMinutes" class="mt-3 mb-1 block text-xs text-muted">iDevice offline alert threshold</label>
     <Select
@@ -507,101 +634,9 @@
       disabled={!canManageScheduler}
       class="w-full"
     />
+  </div>
 
-    <div class="mt-3 mb-1 text-xs text-muted">Notify on</div>
-    <div class="border-border divide-border divide-y rounded-lg border">
-      {#each NOTIFY_EVENTS as event (event.key)}
-        <div class="flex items-center gap-3 px-3 py-2">
-          <div class="min-w-0 flex-1">
-            <div class="text-[13px] text-text">{event.label}</div>
-            <div class="text-[11px] text-muted">{event.description}</div>
-          </div>
-          <Switch
-            checked={form[event.key] as boolean}
-            disabled={!canManageScheduler}
-            onCheckedChange={(checked) => (form = { ...form, [event.key]: checked })}
-            aria-label={event.label}
-          />
-        </div>
-      {/each}
-    </div>
-
-    <div class="mt-4 flex flex-wrap items-center gap-2">
-      {#if canManageScheduler}
-        <Button loading={saving} onclick={save}>Save</Button>
-        {#if hasUnsavedChanges}
-          <span class="text-xs text-warn">Unsaved changes</span>
-        {/if}
-      {/if}
-    </div>
-  </Card>
-
-  <Card title="Recent webhook deliveries">
-    {#if !deliveries || deliveries.length === 0}
-      <EmptyState message="No webhook deliveries yet." />
-    {:else}
-      <div class="flex flex-col gap-1.5">
-        {#each deliveries as d (d.id)}
-          <div class="border-border flex items-center gap-2.5 rounded-md border px-2.5 py-2 text-xs">
-            <span class="w-14 shrink-0 text-muted"><RelativeTime ms={d.ts} /></span>
-            <Badge variant={d.ok ? 'success' : 'destructive'} class="shrink-0">{d.ok ? 'ok' : 'failed'}</Badge>
-            <Badge variant="secondary" class="shrink-0">{d.kind}</Badge>
-            <span class="shrink-0 font-mono">{d.event}</span>
-            <span class="min-w-0 flex-1 truncate text-muted" title={d.targetHost}>{d.targetHost}</span>
-            {#if d.error}
-              <span class="max-w-40 truncate text-err" title={d.error}>{d.error}</span>
-            {:else if d.status}
-              <span class="text-muted">{d.status}</span>
-            {/if}
-          </div>
-        {/each}
-      </div>
-    {/if}
-  </Card>
-</div>
-
-{#if canManageScheduler}
-  <Dialog open={watchDialogOpen} onOpenChange={(v) => (watchDialogOpen = v)} class="max-w-md">
-    <div class="mb-3 text-sm font-medium">{editingWatchId ? 'Edit watch' : 'Add watch'}</div>
-    <div class="max-h-[60vh] overflow-y-auto pr-0.5">
-      <label for="w-name" class="mb-1 block text-xs text-muted">Name (optional)</label>
-      <Input id="w-name" placeholder="e.g. Main app" bind:value={watchForm.name} />
-
-      <label for="w-bundleId" class="mt-3 mb-1 block text-xs text-muted">Watch bundle ID</label>
-      <Input id="w-bundleId" bind:value={watchForm.bundleId} />
-
-      <label for="w-appRepo" class="mt-3 mb-1 block text-xs text-muted">Watch app repo (releases tracked here)</label>
-      <Input id="w-appRepo" bind:value={watchForm.appRepo} />
-      {#if watchRepoErrors.appRepo}
-        <div class="mt-1 text-xs text-err">{watchRepoErrors.appRepo}</div>
-      {/if}
-
-      <label for="w-ghDispatchRepo" class="mt-3 mb-1 block text-xs text-muted">GitHub dispatch repo (owns the workflow)</label>
-      <Input id="w-ghDispatchRepo" bind:value={watchForm.ghDispatchRepo} />
-      {#if watchRepoErrors.ghDispatchRepo}
-        <div class="mt-1 text-xs text-err">{watchRepoErrors.ghDispatchRepo}</div>
-      {/if}
-
-      <label for="w-ghWorkflowFile" class="mt-3 mb-1 block text-xs text-muted">Workflow file</label>
-      <Input id="w-ghWorkflowFile" bind:value={watchForm.ghWorkflowFile} />
-
-      <label for="w-pollCron" class="mt-3 mb-1 block text-xs text-muted">Poll cron</label>
-      <Input id="w-pollCron" bind:value={watchForm.pollCron} />
-      {#if watchCronValid === false}
-        <div class="mt-1 text-xs text-err">Not a valid cron expression</div>
-      {/if}
-      <div class="mt-1.5 flex flex-wrap gap-1.5">
-        {#each CRON_PRESETS as p (p.expr)}
-          <button
-            type="button"
-            class="border-border text-muted hover:text-text hover:border-accent cursor-pointer rounded-full border px-2.5 py-1 text-[12px]"
-            onclick={() => applyCronPreset(p.expr)}
-          >
-            {p.label}
-          </button>
-        {/each}
-      </div>
-    </div>
-    <Button class="mt-3.5 w-full" loading={savingWatch} onclick={saveWatch}>{editingWatchId ? 'Save' : 'Add'}</Button>
-  </Dialog>
-{/if}
+  {#if canManageScheduler}
+    <Button class="mt-3.5 w-full" loading={saving} onclick={save}>Save</Button>
+  {/if}
+</Dialog>
