@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ChevronDown } from 'lucide-svelte';
+  import { ChevronDown, RefreshCw } from 'lucide-svelte';
   import { fetchTestFlightBuilds, fetchTestFlightTrains, type TFBuild, type TFTrain } from '../../lib/api';
   import Badge from '../../lib/components/ui/Badge.svelte';
   import Button from '../../lib/components/ui/Button.svelte';
@@ -29,26 +29,32 @@
   let loadingTrain = $state('');
   let buildsError = $state('');
 
-  function load(id: number): void {
+  let refreshingTrains = $state(false);
+
+  function load(id: number, force = false): void {
     loadedFor = id;
-    trains = null;
     error = '';
     expandedTrain = '';
     buildsCache = {};
     loadingTrain = '';
     buildsError = '';
+    if (force) refreshingTrains = true;
+    else trains = null;
     fetchTestFlightTrains(id)
       .then((data) => {
         if ('error' in data) {
           error = data.error;
-          trains = [];
+          if (!force) trains = [];
         } else {
           trains = data.trains;
         }
       })
       .catch(() => {
         error = 'Failed to load TestFlight trains - try again.';
-        trains = [];
+        if (!force) trains = [];
+      })
+      .finally(() => {
+        refreshingTrains = false;
       });
   }
 
@@ -59,6 +65,10 @@
 
   function retry(): void {
     load(appId);
+  }
+
+  function refresh(): void {
+    load(appId, true);
   }
 
   async function loadBuilds(trainVersion: string): Promise<void> {
@@ -102,7 +112,21 @@
 </script>
 
 <Dialog {open} {onOpenChange} class="max-w-lg">
-  <div class="mb-3 text-sm font-medium">{trackName} - TestFlight builds</div>
+  <div class="mb-3 flex items-center justify-between gap-2">
+    <div class="text-sm font-medium">{trackName} - TestFlight builds</div>
+    {#if trains !== null}
+      <button
+        type="button"
+        class="text-muted hover:text-text cursor-pointer disabled:opacity-50"
+        disabled={refreshingTrains}
+        onclick={refresh}
+        aria-label="Refresh TestFlight builds"
+        title="Refresh TestFlight builds"
+      >
+        <RefreshCw class="h-3.5 w-3.5 {refreshingTrains ? 'animate-spin' : ''}" />
+      </button>
+    {/if}
+  </div>
 
   {#if trains === null}
     <div class="text-sm text-muted">Loading TestFlight builds (may open TestFlight on device)…</div>

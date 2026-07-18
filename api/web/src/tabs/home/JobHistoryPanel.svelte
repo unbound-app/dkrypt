@@ -368,7 +368,7 @@
                   <td data-label="Select"><input type="checkbox" checked={selected.has(j.id)} onchange={() => toggleSelect(j.id)} /></td>
                   <td data-label="Bundle ID" class="max-w-40">
                     <button
-                      class="block max-w-full truncate cursor-pointer text-left hover:text-accent hover:underline"
+                      class="block max-w-full truncate cursor-pointer text-left font-mono text-[11px] hover:text-accent hover:underline"
                       title="View stats for {j.bundleId}"
                       onclick={() => openStats(j.bundleId)}
                     >

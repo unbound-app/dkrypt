@@ -29,7 +29,7 @@
   <div class="flex flex-col gap-4">
     <DecryptPanel bind:this={decryptPanel} />
     <DonationNudge />
-    <div class="grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
+    <div class="grid grid-cols-1 gap-4 2xl:grid-cols-2">
       <MyRequestsPanel />
       <ActiveJobsPanel />
     </div>

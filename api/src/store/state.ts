@@ -187,10 +187,16 @@ export interface SchedulerSettings {
   notifyOnDeviceOffline: boolean;
   notifyOnDeviceBatteryHot: boolean;
   notifyOnDeviceBatteryLow: boolean;
+  notifyOnDiskFull: boolean;
+  notifyOnDeviceStorageLow: boolean;
+  notifyOnTestFlightBridgeDown: boolean;
   schedulerRetryCount: number;
   deviceOfflineAlertMinutes: number;
   batteryHotAlertC: number;
   batteryLowAlertPercent: number;
+  diskFullAlertPercent: number;
+  deviceStorageAlertPercent: number;
+  testFlightBridgeAlertMinutes: number;
 }
 
 export interface JobHistoryEntry {
@@ -261,6 +267,7 @@ export interface DeviceHealthCheck {
   reachable: boolean;
   batteryPercent?: number;
   batteryTemperatureC?: number;
+  storageUsedPercent?: number;
 }
 
 export interface PushSubscriptionRecord {
@@ -849,10 +856,16 @@ export function getEffectiveSettings(): SchedulerSettings {
     notifyOnDeviceOffline: state.settings.notifyOnDeviceOffline ?? true,
     notifyOnDeviceBatteryHot: state.settings.notifyOnDeviceBatteryHot ?? true,
     notifyOnDeviceBatteryLow: state.settings.notifyOnDeviceBatteryLow ?? true,
+    notifyOnDiskFull: state.settings.notifyOnDiskFull ?? true,
+    notifyOnDeviceStorageLow: state.settings.notifyOnDeviceStorageLow ?? true,
+    notifyOnTestFlightBridgeDown: state.settings.notifyOnTestFlightBridgeDown ?? true,
     schedulerRetryCount: state.settings.schedulerRetryCount ?? 0,
     deviceOfflineAlertMinutes: state.settings.deviceOfflineAlertMinutes ?? 15,
     batteryHotAlertC: state.settings.batteryHotAlertC ?? 45,
     batteryLowAlertPercent: state.settings.batteryLowAlertPercent ?? 10,
+    diskFullAlertPercent: state.settings.diskFullAlertPercent ?? 90,
+    deviceStorageAlertPercent: state.settings.deviceStorageAlertPercent ?? 90,
+    testFlightBridgeAlertMinutes: state.settings.testFlightBridgeAlertMinutes ?? 15,
   };
 }
 
@@ -1084,8 +1097,13 @@ export function getSchedulerRunHistory(limit = 10): SchedulerRunEntry[] {
   return state.schedulerRunHistory.slice(0, limit);
 }
 
-export function recordDeviceHealthCheck(reachable: boolean, batteryPercent?: number, batteryTemperatureC?: number): void {
-  state.deviceHealthHistory.push({ ts: Date.now(), reachable, batteryPercent, batteryTemperatureC });
+export function recordDeviceHealthCheck(
+  reachable: boolean,
+  batteryPercent?: number,
+  batteryTemperatureC?: number,
+  storageUsedPercent?: number,
+): void {
+  state.deviceHealthHistory.push({ ts: Date.now(), reachable, batteryPercent, batteryTemperatureC, storageUsedPercent });
   if (state.deviceHealthHistory.length > MAX_DEVICE_HEALTH_CHECKS) state.deviceHealthHistory.shift();
   persistNow();
 }
@@ -1151,6 +1169,25 @@ export function getDeviceTemperatureHourlyBuckets(hours = 24): HourlyTemperature
       hourStart,
       batteryTemperatureC: readings.length > 0 ? Math.round((readings.reduce((a, b) => a + b, 0) / readings.length) * 10) / 10 : null,
     });
+  }
+  return buckets;
+}
+
+export interface HourlyStorageBucket {
+  hourStart: number;
+  storageUsedPercent: number | null;
+}
+
+export function getDeviceStorageHourlyBuckets(hours = 24): HourlyStorageBucket[] {
+  const now = Date.now();
+  const buckets: HourlyStorageBucket[] = [];
+  for (let i = hours - 1; i >= 0; i--) {
+    const hourStart = now - i * 3_600_000;
+    const hourEnd = hourStart + 3_600_000;
+    const readings = state.deviceHealthHistory
+      .filter((c) => c.ts >= hourStart && c.ts < hourEnd && c.storageUsedPercent !== undefined)
+      .map((c) => c.storageUsedPercent as number);
+    buckets.push({ hourStart, storageUsedPercent: readings.length > 0 ? Math.round(readings.reduce((a, b) => a + b, 0) / readings.length) : null });
   }
   return buckets;
 }

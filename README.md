@@ -265,6 +265,19 @@ Discord-webhook-shaped notification. If it turns out sessions expire
 more/less often than expected, this is the place to tighten the detection
 (`api/src/util/appleAuth.ts`).
 
+**Health monitoring & alerts**: the Status card tracks iDevice reachability,
+battery (percent/temperature/health), and iDevice storage over the last
+24h, alongside the host's own staging disk usage. Each has a
+`manageScheduler`-configurable webhook alert threshold (device offline,
+battery hot/low, iDevice storage low, staging disk full) with hysteresis
+(a few percent/degrees of dead-band before it'll re-arm) so it fires once
+per incident instead of flapping. A separate alert
+(`notifyOnTestFlightBridgeDown`) covers the tfauto SpringBoard bridge -
+it only fires on a regression from a previously-confirmed-working state,
+never for a setup that's never had tfauto installed at all (see
+**TestFlight builds** below), so it stays silent for anyone not using
+that companion tweak.
+
 **Decrypting a specific version**: `ipadecrypt decrypt` supports pinning
 to a historical release via `--external-version-id`, and this service
 exposes it (`GET /v1/dashboard/versions/:bundleId` in the dashboard, the

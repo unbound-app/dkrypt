@@ -10,7 +10,10 @@ export type NotifyEvent =
   | 'keyExpiringSoon'
   | 'deviceOffline'
   | 'deviceBatteryHot'
-  | 'deviceBatteryLow';
+  | 'deviceBatteryLow'
+  | 'diskFull'
+  | 'deviceStorageLow'
+  | 'testFlightBridgeDown';
 
 const EVENT_SETTING_KEY: Record<NotifyEvent, keyof SchedulerSettings> = {
   keyRequest: 'notifyOnKeyRequest',
@@ -21,6 +24,9 @@ const EVENT_SETTING_KEY: Record<NotifyEvent, keyof SchedulerSettings> = {
   deviceOffline: 'notifyOnDeviceOffline',
   deviceBatteryHot: 'notifyOnDeviceBatteryHot',
   deviceBatteryLow: 'notifyOnDeviceBatteryLow',
+  diskFull: 'notifyOnDiskFull',
+  deviceStorageLow: 'notifyOnDeviceStorageLow',
+  testFlightBridgeDown: 'notifyOnTestFlightBridgeDown',
 };
 
 // Matches the dashboard's own CSS custom properties (--color-accent/ok/warn/err) so a notification
@@ -49,6 +55,12 @@ function truncate(s: string, max: number): string {
   return s.length > max ? `${s.slice(0, max - 1)}…` : s;
 }
 
+const WEBHOOK_USERNAME = 'dkrypt';
+// A rasterized copy of the app's lock-icon favicon - Discord (and most webhook receivers) don't
+// reliably render SVG for author/avatar/footer images, so this points at favicon.png rather than
+// favicon.svg directly.
+const WEBHOOK_AVATAR_URL = `${config.publicBaseUrl}/favicon.png`;
+
 // A flat rendering of the embed as markdown-ish plain text - `content` is read by Discord (and
 // most generic JSON webhook loggers), `text` is what Slack's incoming-webhook format expects;
 // sending both in one body covers all three without needing the user to pick a specific target.
@@ -60,13 +72,18 @@ function flattenEmbed(embed: NotifyEmbed): string {
 }
 
 // Discord embed limits: title 256, description 4096, field name 256, field value 1024, 25 fields max.
+// `username`/`avatar_url` (Discord) and `username`/`icon_url` (Slack's incoming-webhook equivalent)
+// override the webhook's default bot identity - sent on both branches so either receiver picks up
+// whichever pair of keys it actually reads.
 function buildPayload(embed: NotifyEmbed, format: SchedulerSettings['notifyFormat']): Record<string, unknown> {
   if (format === 'plain') {
     const text = truncate(flattenEmbed(embed), 2000);
-    return { content: text, text };
+    return { content: text, text, username: WEBHOOK_USERNAME, icon_url: WEBHOOK_AVATAR_URL };
   }
 
   return {
+    username: WEBHOOK_USERNAME,
+    avatar_url: WEBHOOK_AVATAR_URL,
     embeds: [
       {
         title: truncate(embed.title, 256),
@@ -75,7 +92,7 @@ function buildPayload(embed: NotifyEmbed, format: SchedulerSettings['notifyForma
         fields: embed.fields
           ?.slice(0, 25)
           .map((f) => ({ name: truncate(f.name, 256), value: truncate(f.value, 1024), inline: f.inline })),
-        footer: { text: 'dkrypt', icon_url: `${config.publicBaseUrl}/og-image.png` },
+        footer: { text: 'dkrypt', icon_url: WEBHOOK_AVATAR_URL },
         timestamp: new Date().toISOString(),
       },
     ],

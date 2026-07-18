@@ -171,7 +171,7 @@
       <tbody>
         {#each myDecryptsState.items as d (d.id)}
           <tr data-job-id={d.id} class={d.id === highlightedId ? 'bg-accent/15 transition-colors duration-1000' : 'transition-colors duration-1000'}>
-            <td data-label="App">
+            <td data-label="App" class="max-w-40 truncate">
               {d.trackName}
               {#if d.versionLabel}
                 <span class="text-muted text-xs">({d.versionLabel})</span>

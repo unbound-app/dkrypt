@@ -40,6 +40,11 @@ app.get('/favicon.svg', (_req, res) =>
 app.get('/og-image.png', (_req, res) =>
   res.set('Cache-Control', 'public, max-age=86400').sendFile(path.join(publicDir, 'og-image.png')),
 );
+// A rasterized copy of favicon.svg - Discord/Slack webhook embeds don't reliably render SVG for
+// author/footer icons, so notify.ts points there instead of the SVG or the (unrelated) og-image.
+app.get('/favicon.png', (_req, res) =>
+  res.set('Cache-Control', 'public, max-age=86400').sendFile(path.join(publicDir, 'favicon.png')),
+);
 app.get('/manifest.webmanifest', (_req, res) =>
   res.set('Cache-Control', 'public, max-age=86400').sendFile(path.join(publicDir, 'manifest.webmanifest')),
 );

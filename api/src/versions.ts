@@ -211,9 +211,9 @@ const CACHE_TTL_MS = 5 * 60_000;
 const resultCache = new Map<string, { at: number; entries: AppVersionEntry[] }>();
 const inFlight = new Map<string, Promise<AppVersionEntry[]>>();
 
-export function listAppVersions(bundleId: string): Promise<AppVersionEntry[]> {
+export function listAppVersions(bundleId: string, force = false): Promise<AppVersionEntry[]> {
   const cached = resultCache.get(bundleId);
-  if (cached && Date.now() - cached.at < CACHE_TTL_MS) return Promise.resolve(cached.entries);
+  if (!force && cached && Date.now() - cached.at < CACHE_TTL_MS) return Promise.resolve(cached.entries);
 
   const existing = inFlight.get(bundleId);
   if (existing) return existing;

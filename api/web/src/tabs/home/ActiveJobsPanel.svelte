@@ -112,7 +112,7 @@
         {:else}
           {#each jobs as j (j.id)}
             <tr>
-              <td data-label="Bundle ID" class="max-w-40 truncate" title={j.bundleId}>{j.bundleId}</td>
+              <td data-label="Bundle ID" class="max-w-40 truncate font-mono text-[11px]" title={j.bundleId}>{j.bundleId}</td>
               <td data-label="Version" class="max-w-32">
                 <div class="flex min-w-0 items-center gap-1" title={j.versionLabel}>
                   <span class="truncate">

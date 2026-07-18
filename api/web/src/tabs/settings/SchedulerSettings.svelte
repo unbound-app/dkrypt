@@ -25,6 +25,13 @@
     { key: 'notifyOnDeviceOffline', label: 'iDevice unreachable', description: 'The iDevice stays unreachable past the alert threshold below' },
     { key: 'notifyOnDeviceBatteryHot', label: 'iDevice battery hot', description: 'Battery temperature reaches the alert threshold below' },
     { key: 'notifyOnDeviceBatteryLow', label: 'iDevice battery low', description: 'Battery drops to the alert threshold below while not charging' },
+    { key: 'notifyOnDiskFull', label: 'Staging disk full', description: 'The host staging disk (OUTPUT_DIR) reaches the alert threshold below' },
+    { key: 'notifyOnDeviceStorageLow', label: 'iDevice storage low', description: "The iDevice's own storage reaches the alert threshold below" },
+    {
+      key: 'notifyOnTestFlightBridgeDown',
+      label: 'TestFlight bridge unresponsive',
+      description: 'The tfauto bridge stops responding past the alert threshold below (only if it was working before)',
+    },
   ];
 
   const RETRY_OPTIONS = [
@@ -57,6 +64,22 @@
     { value: '15', label: '15%' },
     { value: '20', label: '20%' },
     { value: '30', label: '30%' },
+  ];
+
+  const STORAGE_ALERT_OPTIONS = [
+    { value: '75', label: '75%' },
+    { value: '80', label: '80%' },
+    { value: '90', label: '90%' },
+    { value: '95', label: '95%' },
+    { value: '99', label: '99%' },
+  ];
+
+  const TESTFLIGHT_BRIDGE_ALERT_OPTIONS = [
+    { value: '5', label: '5 minutes' },
+    { value: '15', label: '15 minutes' },
+    { value: '30', label: '30 minutes' },
+    { value: '60', label: '1 hour' },
+    { value: '180', label: '3 hours' },
   ];
 
   const CRON_PRESETS: { label: string; expr: string }[] = [
@@ -93,10 +116,16 @@
     notifyOnDeviceOffline: true,
     notifyOnDeviceBatteryHot: true,
     notifyOnDeviceBatteryLow: true,
+    notifyOnDiskFull: true,
+    notifyOnDeviceStorageLow: true,
+    notifyOnTestFlightBridgeDown: true,
     schedulerRetryCount: 0,
     deviceOfflineAlertMinutes: 15,
     batteryHotAlertC: 45,
     batteryLowAlertPercent: 10,
+    diskFullAlertPercent: 90,
+    deviceStorageAlertPercent: 90,
+    testFlightBridgeAlertMinutes: 15,
   };
 
   let form = $state<SchedulerSettings>({ ...DEFAULT_FORM });
@@ -317,6 +346,36 @@
     items={BATTERY_LOW_ALERT_OPTIONS}
     value={String(form.batteryLowAlertPercent)}
     onValueChange={(v) => (form = { ...form, batteryLowAlertPercent: Number(v) })}
+    disabled={!canManageScheduler}
+    class="w-full"
+  />
+
+  <label for="s-diskFull" class="mt-3 mb-1 block text-xs text-muted">Staging disk full alert threshold</label>
+  <Select
+    id="s-diskFull"
+    items={STORAGE_ALERT_OPTIONS}
+    value={String(form.diskFullAlertPercent)}
+    onValueChange={(v) => (form = { ...form, diskFullAlertPercent: Number(v) })}
+    disabled={!canManageScheduler}
+    class="w-full"
+  />
+
+  <label for="s-deviceStorage" class="mt-3 mb-1 block text-xs text-muted">iDevice storage alert threshold</label>
+  <Select
+    id="s-deviceStorage"
+    items={STORAGE_ALERT_OPTIONS}
+    value={String(form.deviceStorageAlertPercent)}
+    onValueChange={(v) => (form = { ...form, deviceStorageAlertPercent: Number(v) })}
+    disabled={!canManageScheduler}
+    class="w-full"
+  />
+
+  <label for="s-bridgeDown" class="mt-3 mb-1 block text-xs text-muted">TestFlight bridge unresponsive alert threshold</label>
+  <Select
+    id="s-bridgeDown"
+    items={TESTFLIGHT_BRIDGE_ALERT_OPTIONS}
+    value={String(form.testFlightBridgeAlertMinutes)}
+    onValueChange={(v) => (form = { ...form, testFlightBridgeAlertMinutes: Number(v) })}
     disabled={!canManageScheduler}
     class="w-full"
   />

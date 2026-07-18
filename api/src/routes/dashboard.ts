@@ -43,6 +43,7 @@ import {
   getDailyVolume,
   getDeviceBatteryHourlyBuckets,
   getDeviceHealthHourlyBuckets,
+  getDeviceStorageHourlyBuckets,
   getDeviceTemperatureHourlyBuckets,
   getDeviceUptimePercent,
   getEffectiveSettings,
@@ -293,7 +294,7 @@ dashboardRouter.get('/v1/dashboard/versions/:bundleId', async (req, res) => {
   }
 
   try {
-    const versions = await listAppVersions(bundleId);
+    const versions = await listAppVersions(bundleId, req.query.force === 'true');
     res.json({ versions });
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
@@ -318,6 +319,11 @@ dashboardRouter.get('/v1/dashboard/device/battery-history', (req, res) => {
 dashboardRouter.get('/v1/dashboard/device/temperature-history', (req, res) => {
   const hours = Math.min(Math.max(Number.parseInt(String(req.query.hours ?? '24'), 10) || 24, 1), 168);
   res.json({ buckets: getDeviceTemperatureHourlyBuckets(hours) });
+});
+
+dashboardRouter.get('/v1/dashboard/device/storage-history', (req, res) => {
+  const hours = Math.min(Math.max(Number.parseInt(String(req.query.hours ?? '24'), 10) || 24, 1), 168);
+  res.json({ buckets: getDeviceStorageHourlyBuckets(hours) });
 });
 
 dashboardRouter.get('/v1/dashboard/testflight/:appId/trains', async (req, res) => {
@@ -631,6 +637,9 @@ const SETTINGS_BOOL_FIELDS = [
   'notifyOnDeviceOffline',
   'notifyOnDeviceBatteryHot',
   'notifyOnDeviceBatteryLow',
+  'notifyOnDiskFull',
+  'notifyOnDeviceStorageLow',
+  'notifyOnTestFlightBridgeDown',
 ] as const;
 const MAX_SCHEDULER_RETRY_COUNT = 5;
 const MIN_DEVICE_OFFLINE_ALERT_MINUTES = 5;
@@ -639,6 +648,12 @@ const MIN_BATTERY_HOT_ALERT_C = 30;
 const MAX_BATTERY_HOT_ALERT_C = 60;
 const MIN_BATTERY_LOW_ALERT_PERCENT = 5;
 const MAX_BATTERY_LOW_ALERT_PERCENT = 50;
+const MIN_DISK_FULL_ALERT_PERCENT = 50;
+const MAX_DISK_FULL_ALERT_PERCENT = 99;
+const MIN_DEVICE_STORAGE_ALERT_PERCENT = 50;
+const MAX_DEVICE_STORAGE_ALERT_PERCENT = 99;
+const MIN_TESTFLIGHT_BRIDGE_ALERT_MINUTES = 5;
+const MAX_TESTFLIGHT_BRIDGE_ALERT_MINUTES = 180;
 
 dashboardRouter.put('/v1/dashboard/settings', canManageScheduler, (req, res) => {
   const body = req.body ?? {};
@@ -669,6 +684,21 @@ dashboardRouter.put('/v1/dashboard/settings', canManageScheduler, (req, res) => 
     patch.batteryLowAlertPercent = Math.min(
       Math.max(Math.round(body.batteryLowAlertPercent), MIN_BATTERY_LOW_ALERT_PERCENT),
       MAX_BATTERY_LOW_ALERT_PERCENT,
+    );
+  }
+  if (typeof body.diskFullAlertPercent === 'number') {
+    patch.diskFullAlertPercent = Math.min(Math.max(Math.round(body.diskFullAlertPercent), MIN_DISK_FULL_ALERT_PERCENT), MAX_DISK_FULL_ALERT_PERCENT);
+  }
+  if (typeof body.deviceStorageAlertPercent === 'number') {
+    patch.deviceStorageAlertPercent = Math.min(
+      Math.max(Math.round(body.deviceStorageAlertPercent), MIN_DEVICE_STORAGE_ALERT_PERCENT),
+      MAX_DEVICE_STORAGE_ALERT_PERCENT,
+    );
+  }
+  if (typeof body.testFlightBridgeAlertMinutes === 'number') {
+    patch.testFlightBridgeAlertMinutes = Math.min(
+      Math.max(Math.round(body.testFlightBridgeAlertMinutes), MIN_TESTFLIGHT_BRIDGE_ALERT_MINUTES),
+      MAX_TESTFLIGHT_BRIDGE_ALERT_MINUTES,
     );
   }
 

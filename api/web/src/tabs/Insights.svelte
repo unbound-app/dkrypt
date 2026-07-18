@@ -165,7 +165,7 @@
             <tr>
               <td data-label="Bundle ID" class="max-w-56">
                 <button
-                  class="block max-w-full truncate cursor-pointer text-left hover:text-accent hover:underline"
+                  class="block max-w-full truncate cursor-pointer text-left font-mono text-[11px] hover:text-accent hover:underline"
                   title="View stats for {app.bundleId}"
                   onclick={() => openStats(app.bundleId)}
                 >

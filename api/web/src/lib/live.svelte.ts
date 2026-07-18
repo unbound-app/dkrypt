@@ -6,7 +6,9 @@ export const liveState = $state<{
   historyAdditions: JobHistoryEntry[];
   appleAuthStatus: AppleAuthStatus | null;
   connected: boolean;
-}>({ overview: null, logs: [], historyAdditions: [], appleAuthStatus: null, connected: false });
+  disconnectedAt: number | null;
+  reconnectAttempts: number;
+}>({ overview: null, logs: [], historyAdditions: [], appleAuthStatus: null, connected: false, disconnectedAt: null, reconnectAttempts: 0 });
 
 let source: EventSource | null = null;
 
@@ -17,11 +19,15 @@ export function connectLive(): void {
 
   source.onopen = () => {
     liveState.connected = true;
+    liveState.disconnectedAt = null;
+    liveState.reconnectAttempts = 0;
   };
 
   source.addEventListener('overview', (e) => {
     liveState.overview = JSON.parse((e as MessageEvent).data) as OverviewPayload;
     liveState.connected = true;
+    liveState.disconnectedAt = null;
+    liveState.reconnectAttempts = 0;
   });
 
   source.addEventListener('log', (e) => {
@@ -38,8 +44,13 @@ export function connectLive(): void {
     liveState.appleAuthStatus = JSON.parse((e as MessageEvent).data) as AppleAuthStatus;
   });
 
+  // The browser retries automatically on its own backoff - onerror fires once per failed attempt
+  // (the initial drop counts as the first), which is what lets the banner show how long it's been
+  // down and roughly how hard it's trying, instead of just a static "reconnecting…".
   source.onerror = () => {
     liveState.connected = false;
+    if (liveState.disconnectedAt === null) liveState.disconnectedAt = Date.now();
+    liveState.reconnectAttempts += 1;
   };
 }
 
@@ -51,6 +62,8 @@ export function disconnectLive(): void {
   liveState.historyAdditions = [];
   liveState.appleAuthStatus = null;
   liveState.connected = false;
+  liveState.disconnectedAt = null;
+  liveState.reconnectAttempts = 0;
 }
 
 // Force a fresh connection attempt right now instead of waiting on the browser's own EventSource

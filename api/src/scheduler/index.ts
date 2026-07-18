@@ -210,7 +210,7 @@ function trackRunCompletion(
 
       const succeeded = run.conclusion === 'success';
       await notify(succeeded ? 'dispatchSuccess' : 'dispatchFailure', {
-        title: succeeded ? 'Workflow run succeeded' : 'Workflow run failed',
+        title: succeeded ? 'Decrypted & dispatched' : 'Dispatched, but the workflow failed',
         color: succeeded ? EMBED_COLOR.ok : EMBED_COLOR.err,
         fields: [
           { name: 'App', value: settings.watchBundleId, inline: true },

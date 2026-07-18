@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { RefreshCw } from 'lucide-svelte';
   import { fetchAppVersions, type AppVersionEntry } from '../../lib/api';
   import Badge from '../../lib/components/ui/Badge.svelte';
   import Button from '../../lib/components/ui/Button.svelte';
@@ -19,23 +20,28 @@
   let versions = $state<AppVersionEntry[] | null>(null);
   let error = $state('');
   let loadedFor = $state('');
+  let refreshing = $state(false);
 
-  function load(id: string): void {
+  function load(id: string, force = false): void {
     loadedFor = id;
-    versions = null;
     error = '';
-    fetchAppVersions(id)
+    if (force) refreshing = true;
+    else versions = null;
+    fetchAppVersions(id, force)
       .then((data) => {
         if ('error' in data) {
           error = data.error;
-          versions = [];
+          if (!force) versions = [];
         } else {
           versions = data.versions;
         }
       })
       .catch(() => {
         error = 'Failed to load version history - try again.';
-        versions = [];
+        if (!force) versions = [];
+      })
+      .finally(() => {
+        refreshing = false;
       });
   }
 
@@ -46,6 +52,10 @@
 
   function retry(): void {
     load(bundleId);
+  }
+
+  function refresh(): void {
+    load(bundleId, true);
   }
 
   function label(v: AppVersionEntry): string {
@@ -62,7 +72,21 @@
 </script>
 
 <Dialog {open} {onOpenChange} class="max-w-lg">
-  <div class="mb-3 text-sm font-medium">{trackName} - version history</div>
+  <div class="mb-3 flex items-center justify-between gap-2">
+    <div class="text-sm font-medium">{trackName} - version history</div>
+    {#if versions !== null}
+      <button
+        type="button"
+        class="text-muted hover:text-text cursor-pointer disabled:opacity-50"
+        disabled={refreshing}
+        onclick={refresh}
+        aria-label="Refresh version list"
+        title="Refresh version list"
+      >
+        <RefreshCw class="h-3.5 w-3.5 {refreshing ? 'animate-spin' : ''}" />
+      </button>
+    {/if}
+  </div>
 
   {#if versions === null}
     <div class="text-sm text-muted">Loading version list from the App Store…</div>

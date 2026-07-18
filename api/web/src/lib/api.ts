@@ -105,10 +105,16 @@ export interface SchedulerSettings {
   notifyOnDeviceOffline: boolean;
   notifyOnDeviceBatteryHot: boolean;
   notifyOnDeviceBatteryLow: boolean;
+  notifyOnDiskFull: boolean;
+  notifyOnDeviceStorageLow: boolean;
+  notifyOnTestFlightBridgeDown: boolean;
   schedulerRetryCount: number;
   deviceOfflineAlertMinutes: number;
   batteryHotAlertC: number;
   batteryLowAlertPercent: number;
+  diskFullAlertPercent: number;
+  deviceStorageAlertPercent: number;
+  testFlightBridgeAlertMinutes: number;
 }
 
 export interface AppleAuthAlert {
@@ -227,6 +233,7 @@ export interface DeviceHealth {
   reachable: boolean;
   error?: string;
   testFlightRunning?: boolean;
+  testFlightBridgeReachable?: boolean;
   darkEnabled?: boolean;
   screenIsOn?: boolean;
   backlightState?: number;
@@ -237,6 +244,10 @@ export interface DeviceHealth {
   batteryHealthPercent?: number;
   batteryDesignCapacityMah?: number;
   batteryMaxCapacityMah?: number;
+  storageTotalBytes?: number;
+  storageUsedBytes?: number;
+  storageFreeBytes?: number;
+  storageUsedPercent?: number;
   checkedAt: number;
 }
 
@@ -269,6 +280,15 @@ export interface HourlyTemperatureBucket {
 
 export function fetchDeviceTemperatureHistory(hours = 24): Promise<{ buckets: HourlyTemperatureBucket[] }> {
   return apiJson(`/v1/dashboard/device/temperature-history?hours=${hours}`);
+}
+
+export interface HourlyStorageBucket {
+  hourStart: number;
+  storageUsedPercent: number | null;
+}
+
+export function fetchDeviceStorageHistory(hours = 24): Promise<{ buckets: HourlyStorageBucket[] }> {
+  return apiJson(`/v1/dashboard/device/storage-history?hours=${hours}`);
 }
 
 export function fetchJobHistory(
@@ -409,8 +429,8 @@ export interface AppVersionEntry {
   releaseDate?: string;
 }
 
-export function fetchAppVersions(bundleId: string): Promise<{ versions: AppVersionEntry[] } | { error: string }> {
-  return apiJson(`/v1/dashboard/versions/${encodeURIComponent(bundleId)}`);
+export function fetchAppVersions(bundleId: string, force = false): Promise<{ versions: AppVersionEntry[] } | { error: string }> {
+  return apiJson(`/v1/dashboard/versions/${encodeURIComponent(bundleId)}${force ? '?force=true' : ''}`);
 }
 
 export function fetchJobStatus(id: string): Promise<JobSummary> {

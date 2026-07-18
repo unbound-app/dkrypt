@@ -6,11 +6,13 @@
     fetchDeviceBatteryHistory,
     fetchDeviceHealth,
     fetchDeviceHealthHistory,
+    fetchDeviceStorageHistory,
     fetchDeviceTemperatureHistory,
     fetchJobVolume,
     type DeviceHealth,
     type HourlyBatteryBucket,
     type HourlyHealthBucket,
+    type HourlyStorageBucket,
     type HourlyTemperatureBucket,
     type SchedulerRunOutcome,
   } from '../../lib/api';
@@ -193,6 +195,37 @@
 
   const hasTemperatureHistory = $derived(temperatureHistory?.some((b) => b.batteryTemperatureC !== null) ?? false);
 
+  let storageHistory = $state<HourlyStorageBucket[] | null>(null);
+
+  $effect(() => {
+    const load = () => void fetchDeviceStorageHistory(24).then((r) => (storageHistory = r.buckets));
+    load();
+    const interval = setInterval(load, 60_000);
+    return () => clearInterval(interval);
+  });
+
+  function storageBucketColor(pct: number | null): string {
+    if (pct === null) return 'bg-panel-muted';
+    if (pct >= 90) return 'bg-err';
+    if (pct >= 75) return 'bg-warn';
+    return 'bg-ok';
+  }
+
+  function storageBucketTitle(bucket: HourlyStorageBucket): string {
+    const time = new Date(bucket.hourStart).toLocaleString(undefined, { hour: 'numeric', month: 'short', day: 'numeric' });
+    if (bucket.storageUsedPercent === null) return `${time}: no data`;
+    return `${time}: ${bucket.storageUsedPercent}% used`;
+  }
+
+  const hasStorageHistory = $derived(storageHistory?.some((b) => b.storageUsedPercent !== null) ?? false);
+
+  const deviceStorageColor = $derived.by(() => {
+    const pct = health?.storageUsedPercent ?? 0;
+    if (pct >= 0.9) return 'bg-err';
+    if (pct >= 0.75) return 'bg-warn';
+    return 'bg-accent';
+  });
+
   const total = $derived(volume?.reduce((a, d) => a + d.value, 0) ?? 0);
   const volumeDeltaPct = $derived(volume ? trendDelta(volume.map((d) => d.value)) : null);
 
@@ -210,6 +243,8 @@
     if (!health.reachable) worsen('err', 'iDevice unreachable');
     if (overview?.disk && overview.disk.usedPercent >= 0.9) worsen('err', 'Staging disk nearly full');
     else if (overview?.disk && overview.disk.usedPercent >= 0.75) worsen('warn', 'Staging disk filling up');
+    if (health.storageUsedPercent !== undefined && health.storageUsedPercent >= 0.9) worsen('err', 'iDevice storage nearly full');
+    else if (health.storageUsedPercent !== undefined && health.storageUsedPercent >= 0.75) worsen('warn', 'iDevice storage filling up');
     if (health.batteryTemperatureC !== undefined && health.batteryTemperatureC >= 42) worsen('err', 'Battery hot');
     else if (health.batteryTemperatureC !== undefined && health.batteryTemperatureC >= 37) worsen('warn', 'Battery warm');
     if (health.batteryPercent !== undefined && health.batteryPercent <= 20 && !health.batteryCharging) worsen('err', 'Battery critically low');
@@ -382,6 +417,33 @@
       </div>
       <div class="bg-panel-muted h-1.5 w-full overflow-hidden rounded-full">
         <div class="h-full rounded-full {diskColor}" style="width: {Math.min(100, overview.disk.usedPercent * 100)}%"></div>
+      </div>
+    </div>
+  {/if}
+  {#if health?.storageUsedPercent !== undefined}
+    <div class="border-border mt-3 border-t pt-3">
+      <div class="mb-1.5 flex items-center justify-between text-xs text-muted">
+        <span>iDevice storage</span>
+        <span>
+          {#if health.storageUsedBytes !== undefined && health.storageTotalBytes !== undefined}
+            {fmtBytesGB(health.storageUsedBytes)} / {fmtBytesGB(health.storageTotalBytes)}
+          {:else}
+            {Math.round(health.storageUsedPercent * 100)}%
+          {/if}
+        </span>
+      </div>
+      <div class="bg-panel-muted h-1.5 w-full overflow-hidden rounded-full">
+        <div class="h-full rounded-full {deviceStorageColor}" style="width: {Math.min(100, health.storageUsedPercent * 100)}%"></div>
+      </div>
+    </div>
+  {/if}
+  {#if hasStorageHistory}
+    <div class="border-border mt-3 border-t pt-3">
+      <div class="mb-1.5 text-xs text-muted">iDevice storage · last 24h</div>
+      <div class="flex gap-0.5">
+        {#each storageHistory ?? [] as bucket (bucket.hourStart)}
+          <div class="h-4 flex-1 rounded-sm {storageBucketColor(bucket.storageUsedPercent)}" title={storageBucketTitle(bucket)}></div>
+        {/each}
       </div>
     </div>
   {/if}

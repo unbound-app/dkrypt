@@ -19,7 +19,7 @@
 </script>
 
 <Dialog {open} {onOpenChange} class="max-w-sm">
-  <div class="mb-3 truncate text-sm font-medium" title={bundleId}>{bundleId}</div>
+  <div class="mb-3 truncate font-mono text-[13px] font-medium" title={bundleId}>{bundleId}</div>
   {#if !stats}
     <div class="text-sm text-muted">Loading…</div>
   {:else if stats.totalRuns === 0}
