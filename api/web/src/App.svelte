@@ -26,6 +26,8 @@
     permissionsSummary,
     pushAccentPref,
     pushDensityPref,
+    fetchNotificationPrefs,
+    pushNotificationPrefs,
     pushThemePref,
     refreshSession,
     sessionBits,
@@ -91,14 +93,28 @@
   let pushEnabled = $state(false);
   let enablingPush = $state(false);
   let sendingTestPush = $state(false);
+  let pushOnSuccess = $state(true);
+  let pushOnFailure = $state(true);
 
   void registerServiceWorker();
 
   $effect(() => {
     if (sessionState.loggedIn && pushSupported()) {
       void getExistingPushSubscription().then((sub) => (pushEnabled = !!sub));
+      void fetchNotificationPrefs().then((prefs) => {
+        pushOnSuccess = prefs.pushOnSuccess ?? true;
+        pushOnFailure = prefs.pushOnFailure ?? true;
+      });
     }
   });
+
+  async function togglePushOnSuccess(): Promise<void> {
+    await pushNotificationPrefs({ pushOnSuccess });
+  }
+
+  async function togglePushOnFailure(): Promise<void> {
+    await pushNotificationPrefs({ pushOnFailure });
+  }
 
   async function enableNotifications(): Promise<void> {
     if (typeof Notification === 'undefined') return;
@@ -432,6 +448,16 @@
                   <div class="mt-2 flex gap-2">
                     <Button size="sm" variant="secondary" loading={sendingTestPush} onclick={sendTestPush}>Send test</Button>
                     <Button size="sm" variant="secondary" loading={enablingPush} onclick={disableNotifications}>Disable push</Button>
+                  </div>
+                  <div class="mt-2.5 flex flex-col gap-1.5 text-xs text-muted">
+                    <label class="inline-flex items-center gap-1.5">
+                      <input type="checkbox" bind:checked={pushOnSuccess} onchange={togglePushOnSuccess} />
+                      Notify me on successful decrypts
+                    </label>
+                    <label class="inline-flex items-center gap-1.5">
+                      <input type="checkbox" bind:checked={pushOnFailure} onchange={togglePushOnFailure} />
+                      Notify me on failed decrypts
+                    </label>
                   </div>
                 {/if}
               </div>

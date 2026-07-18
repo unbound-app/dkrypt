@@ -1,4 +1,5 @@
 import { markLoggedOut, type Role } from './session.svelte';
+import { liveState } from './live.svelte';
 import { showToast } from './ui.svelte';
 
 export type { Role };
@@ -35,6 +36,12 @@ export async function apiAction<T = Record<string, unknown>>(
   opts: RequestInit,
   successMsg?: string,
 ): Promise<{ ok: boolean; data: T }> {
+  const method = String(opts.method ?? 'GET').toUpperCase();
+  if (method !== 'GET' && liveState.overview !== null && !liveState.connected) {
+    showToast('Live connection is down - reconnect before making changes', 'error');
+    return { ok: false, data: {} as T };
+  }
+
   const res = await request(path, opts);
   let data = {} as T;
   try {
@@ -208,6 +215,19 @@ export interface JobHistoryEntry {
   deviceId?: string;
   ipaMetadata?: IpaMetadata;
   ipaInfoPlist?: Record<string, unknown>;
+}
+
+export interface JobTimelineEvent {
+  at: number;
+  label: string;
+  status: 'queued' | 'running' | 'done' | 'failed';
+}
+
+export interface JobTimeline {
+  id: string;
+  bundleId: string;
+  status: 'queued' | 'running' | 'done' | 'failed';
+  events: JobTimelineEvent[];
 }
 
 export interface ApiKeyRecord {
@@ -430,11 +450,19 @@ export function fetchJobHistory(
   q?: string,
   source?: 'manual' | 'scheduler',
   status?: 'done' | 'failed',
+  opts?: { queuedBy?: string; deviceId?: string; errorQ?: string; fromTs?: number; toTs?: number },
 ): Promise<{ history: JobHistoryEntry[]; total: number }> {
   const query = q ? `&q=${encodeURIComponent(q)}` : '';
   const sourceQuery = source ? `&source=${source}` : '';
   const statusQuery = status ? `&status=${status}` : '';
-  return apiJson(`/v1/dashboard/jobs?offset=${offset}&limit=${limit}${query}${sourceQuery}${statusQuery}`);
+  const queuedByQuery = opts?.queuedBy ? `&queuedBy=${encodeURIComponent(opts.queuedBy)}` : '';
+  const deviceIdQuery = opts?.deviceId ? `&deviceId=${encodeURIComponent(opts.deviceId)}` : '';
+  const errorQuery = opts?.errorQ ? `&errorQ=${encodeURIComponent(opts.errorQ)}` : '';
+  const fromTsQuery = Number.isFinite(opts?.fromTs) ? `&fromTs=${opts?.fromTs}` : '';
+  const toTsQuery = Number.isFinite(opts?.toTs) ? `&toTs=${opts?.toTs}` : '';
+  return apiJson(
+    `/v1/dashboard/jobs?offset=${offset}&limit=${limit}${query}${sourceQuery}${statusQuery}${queuedByQuery}${deviceIdQuery}${errorQuery}${fromTsQuery}${toTsQuery}`,
+  );
 }
 
 export interface BundleStats {
@@ -550,8 +578,12 @@ export function queueDecrypt(
   bundleId: string,
   externalVersionId?: string,
   versionLabel?: string,
+  preferPrimary = false,
 ): Promise<{ ok: boolean; data: JobSummary }> {
-  return apiAction('/v1/dashboard/decrypt', { method: 'POST', body: JSON.stringify({ bundleId, externalVersionId, versionLabel }) });
+  return apiAction('/v1/dashboard/decrypt', {
+    method: 'POST',
+    body: JSON.stringify({ bundleId, externalVersionId, versionLabel, preferPrimary }),
+  });
 }
 
 export interface AppVersionEntry {
@@ -594,8 +626,21 @@ export function fetchTestFlightBuilds(appId: number, trainVersion: string): Prom
   return apiJson(`/v1/dashboard/testflight/${appId}/builds?trainVersion=${encodeURIComponent(trainVersion)}`);
 }
 
-export function queueTestFlightDecrypt(bundleId: string, appId: number, build: TFBuild): Promise<{ ok: boolean; data: JobSummary }> {
-  return apiAction('/v1/dashboard/testflight/decrypt', { method: 'POST', body: JSON.stringify({ bundleId, appId, build }) });
+export function queueTestFlightDecrypt(
+  bundleId: string,
+  appId: number,
+  build: TFBuild,
+  preferPrimary = false,
+): Promise<{ ok: boolean; data: JobSummary }> {
+  return apiAction('/v1/dashboard/testflight/decrypt', { method: 'POST', body: JSON.stringify({ bundleId, appId, build, preferPrimary }) });
+}
+
+export function retryJob(id: string, preferPrimary = false): Promise<{ ok: boolean; data: JobSummary }> {
+  return apiAction(`/v1/dashboard/jobs/${encodeURIComponent(id)}/retry`, { method: 'POST', body: JSON.stringify({ preferPrimary }) });
+}
+
+export function fetchJobTimeline(id: string): Promise<JobTimeline> {
+  return apiJson(`/v1/dashboard/jobs/${encodeURIComponent(id)}/timeline`);
 }
 
 export function clearAuthAlert(): Promise<{ ok: boolean }> {
@@ -752,6 +797,16 @@ export function backupExportUrl(): string {
 
 export function importBackup(payload: unknown): Promise<{ ok: boolean; data: { error?: string } }> {
   return apiAction('/v1/dashboard/backup/import', { method: 'POST', body: JSON.stringify(payload) }, 'Backup restored');
+}
+
+export interface BackupPreviewSummary {
+  exportedAt?: number;
+  incoming: { users: number; roles: number; apiKeys: number; watches: number; devices: number; jobHistory: number; auditLog: number };
+  current: { users: number; roles: number; apiKeys: number; watches: number; devices: number; jobHistory: number; auditLog: number };
+}
+
+export function previewBackup(payload: unknown): Promise<{ ok: boolean; data: BackupPreviewSummary | { error?: string } }> {
+  return apiAction('/v1/dashboard/backup/preview', { method: 'POST', body: JSON.stringify(payload) });
 }
 
 export interface AppleAuthStatus {

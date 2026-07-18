@@ -1,38 +1,18 @@
 <script lang="ts">
   import { Download, TriangleAlert, Upload } from 'lucide-svelte';
-  import { backupExportUrl, importBackup } from '../../lib/api';
+  import { backupExportUrl, importBackup, previewBackup, type BackupPreviewSummary } from '../../lib/api';
   import Button from '../../lib/components/ui/Button.svelte';
   import Card from '../../lib/components/ui/Card.svelte';
   import { buttonVariants } from '../../lib/components/ui/variants';
   import { fmtTime } from '../../lib/format';
   import { confirmDialog } from '../../lib/ui.svelte';
 
-  interface BackupPreview {
-    exportedAt?: number;
-    users: number;
-    apiKeys: number;
-    jobHistory: number;
-    auditLog: number;
-  }
-
   let fileInput: HTMLInputElement | undefined = $state();
   let selectedFile: File | null = $state(null);
   let restoring = $state(false);
   let parsedPayload: unknown = null;
-  let preview = $state<BackupPreview | null>(null);
+  let preview = $state<BackupPreviewSummary | null>(null);
   let previewError = $state('');
-
-  function summarize(payload: unknown): BackupPreview | null {
-    if (typeof payload !== 'object' || payload === null) return null;
-    const b = payload as Record<string, unknown>;
-    return {
-      exportedAt: typeof b.exportedAt === 'number' ? b.exportedAt : undefined,
-      users: Array.isArray(b.allowedUsers) ? b.allowedUsers.length : 0,
-      apiKeys: Array.isArray(b.apiKeys) ? b.apiKeys.length : 0,
-      jobHistory: Array.isArray(b.jobHistory) ? b.jobHistory.length : 0,
-      auditLog: Array.isArray(b.auditLog) ? b.auditLog.length : 0,
-    };
-  }
 
   async function onFileChange(): Promise<void> {
     selectedFile = fileInput?.files?.[0] ?? null;
@@ -48,8 +28,12 @@
       previewError = 'That file is not valid JSON';
       return;
     }
-    preview = summarize(parsedPayload);
-    if (!preview) previewError = "That file doesn't look like a dkrypt backup";
+    const { ok, data } = await previewBackup(parsedPayload);
+    if (!ok) {
+      previewError = (data as { error?: string }).error ?? "That file doesn't look like a valid dkrypt backup";
+      return;
+    }
+    preview = data as BackupPreviewSummary;
   }
 
   async function restore(): Promise<void> {
@@ -111,10 +95,13 @@
           <div class="mb-1.5 text-muted">Exported {fmtTime(preview.exportedAt)}</div>
         {/if}
         <div class="flex flex-wrap gap-x-4 gap-y-1">
-          <span>{preview.users} user{preview.users === 1 ? '' : 's'}</span>
-          <span>{preview.apiKeys} API key{preview.apiKeys === 1 ? '' : 's'}</span>
-          <span>{preview.jobHistory} job history entr{preview.jobHistory === 1 ? 'y' : 'ies'}</span>
-          <span>{preview.auditLog} audit log entr{preview.auditLog === 1 ? 'y' : 'ies'}</span>
+          <span>Users {preview.current.users} → {preview.incoming.users}</span>
+          <span>Roles {preview.current.roles} → {preview.incoming.roles}</span>
+          <span>API keys {preview.current.apiKeys} → {preview.incoming.apiKeys}</span>
+          <span>Watches {preview.current.watches} → {preview.incoming.watches}</span>
+          <span>Devices {preview.current.devices} → {preview.incoming.devices}</span>
+          <span>Job history {preview.current.jobHistory} → {preview.incoming.jobHistory}</span>
+          <span>Audit log {preview.current.auditLog} → {preview.incoming.auditLog}</span>
         </div>
       </div>
     {/if}

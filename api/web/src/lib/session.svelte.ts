@@ -79,6 +79,27 @@ async function syncThemeFromServer(): Promise<void> {
   if (prefs.accent && prefs.accent !== accentState.value) setAccent(prefs.accent);
 }
 
+export interface NotificationPrefs {
+  pushOnSuccess?: boolean;
+  pushOnFailure?: boolean;
+}
+
+export async function fetchNotificationPrefs(): Promise<NotificationPrefs> {
+  const res = await fetch('/v1/dashboard/me/prefs');
+  if (!res.ok) return {};
+  const prefs = (await res.json()) as NotificationPrefs;
+  return prefs;
+}
+
+export async function pushNotificationPrefs(patch: NotificationPrefs): Promise<void> {
+  if (!sessionState.loggedIn) return;
+  await fetch('/v1/dashboard/me/prefs', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  });
+}
+
 export async function pushThemePref(theme: ThemePref): Promise<void> {
   if (!sessionState.loggedIn) return;
   await fetch('/v1/dashboard/me/prefs', {

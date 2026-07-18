@@ -35,6 +35,7 @@
   let inputEl: HTMLInputElement | undefined = $state();
   let searchToken = 0;
   let queueing = $state<Set<string>>(new Set());
+  let preferPrimary = $state(false);
 
   const statusByBundle = $derived.by(() => {
     const map = new Map<string, string>();
@@ -96,6 +97,9 @@
   }
 
   const canDecrypt = $derived(sessionHasPermission(PermissionFlag.requestDecrypt));
+  const queueDepth = $derived(liveState.overview?.activeJobs.length ?? 0);
+  const primaryDevice = $derived(liveState.overview?.devices.find((d) => d.isPrimary) ?? liveState.overview?.devices[0]);
+  const diskUsedPct = $derived(liveState.overview?.disk?.usedPercent);
 
   let versionsOpen = $state(false);
   let versionsBundleId = $state('');
@@ -112,7 +116,7 @@
     requestNotificationPermission();
     queueing = new Set(queueing).add(bundleId);
     try {
-      const { ok, data } = await queueDecrypt(bundleId, externalVersionId, versionLabel);
+      const { ok, data } = await queueDecrypt(bundleId, externalVersionId, versionLabel, preferPrimary);
       if (!ok) return;
       addDecrypt({ id: data.id, bundleId, trackName, versionLabel, externalVersionId, status: data.status, progress: data.progress, queue: data.queue });
       pushRecentBundleId(bundleId);
@@ -145,7 +149,7 @@
     if (!canDecrypt) return;
     requestNotificationPermission();
     testflightOpen = false;
-    const { ok, data } = await queueTestFlightDecrypt(bundleId, appId, build);
+    const { ok, data } = await queueTestFlightDecrypt(bundleId, appId, build, preferPrimary);
     if (!ok) return;
     addDecrypt({
       id: data.id,
@@ -235,6 +239,28 @@
     {/if}
   </div>
 
+  <div class="mt-2.5 flex flex-wrap items-center gap-2 text-xs text-muted">
+    <span>Queue: {queueDepth} active</span>
+    {#if primaryDevice}
+      <span>Primary: {primaryDevice.name}</span>
+    {/if}
+    {#if diskUsedPct !== undefined}
+      <span>Disk used: {Math.round(diskUsedPct)}%</span>
+    {/if}
+  </div>
+
+  {#if canDecrypt}
+    <div class="mt-2.5 flex flex-wrap items-center gap-2 sm:hidden">
+      <Button size="sm" variant="secondary" onclick={() => (batchOpen = true)}>Batch decrypt</Button>
+      <label class="inline-flex items-center gap-1.5 text-xs text-muted">
+        <input type="checkbox" bind:checked={preferPrimary} />
+        Prefer primary device
+      </label>
+    </div>
+  {:else}
+    <div class="mt-2.5 text-xs text-muted sm:hidden">View-only access. Ask an admin for decrypt permission.</div>
+  {/if}
+
   {#if !term.trim() && starredAppsState.items.length > 0}
     <div class="mt-2.5 flex flex-wrap gap-1.5">
       {#each starredAppsState.items as app (app.bundleId)}
@@ -317,6 +343,10 @@
                 >
                   <FlaskConical class="h-3.5 w-3.5" />
                 </Button>
+                <label class="hidden items-center gap-1 text-[11px] text-muted md:inline-flex">
+                  <input type="checkbox" bind:checked={preferPrimary} />
+                  Primary
+                </label>
               {/if}
               {#if statusByBundle.has(r.bundleId)}
                 {@const status = statusByBundle.get(r.bundleId) ?? ''}

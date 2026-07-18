@@ -7,7 +7,7 @@ import { scopedLogger } from '../logger.js';
 const log = scopedLogger('jobs');
 import { EMBED_COLOR, notify } from '../notify.js';
 import { sendPushToUser } from '../push.js';
-import { clearAppleAuthAlert, getEffectiveDevices, recordJobHistory, setAppleAuthAlert, type DeviceRecord } from '../store/state.js';
+import { clearAppleAuthAlert, getEffectiveDevices, getUserPrefs, recordJobHistory, setAppleAuthAlert, type DeviceRecord } from '../store/state.js';
 import { looksLikeAppleAuthFailure } from '../util/appleAuth.js';
 import { runDecrypt } from './runner.js';
 import type { Job, JobSource, TestFlightJobSource } from './types.js';
@@ -51,6 +51,7 @@ export function enqueueDecryptJob(
   versionLabel?: string,
   queuedBy?: string,
   priority = 0,
+  preferredDeviceId?: string,
 ): Job {
   const existing = findActiveJobForBundle(bundleId, externalVersionId, testflight?.build.id);
   if (existing) return existing;
@@ -65,6 +66,7 @@ export function enqueueDecryptJob(
     versionLabel: resolvedLabel,
     source,
     queuedBy,
+    preferredDeviceId,
     priority,
     status: 'queued',
     progress: 'queued',
@@ -196,14 +198,27 @@ export function prioritizeQueuedJob(id: string): boolean {
 // either fail outright or silently grab whatever unrelated app happens to be installed there.
 // App Store jobs have no such constraint and can go to any enabled device.
 function isDispatchable(job: Job, device: DeviceRecord, primary: DeviceRecord): boolean {
+  if (job.preferredDeviceId && job.preferredDeviceId !== device.id) return false;
   if (job.testflight) return device.id === primary.id;
   return true;
 }
 
+function queuedByActiveCount(username: string): number {
+  let count = 0;
+  for (const job of jobs.values()) {
+    if (job.status !== 'running') continue;
+    if (job.queuedBy?.toLowerCase() === username.toLowerCase()) count += 1;
+  }
+  return count;
+}
+
 function takeNextDispatchableJobId(device: DeviceRecord, primary: DeviceRecord): string | undefined {
+  const cap = config.userConcurrencyCap;
   for (let i = 0; i < queue.length; i++) {
     const job = jobs.get(queue[i]);
-    if (job && isDispatchable(job, device, primary)) {
+    if (!job || !isDispatchable(job, device, primary)) continue;
+    if (cap > 0 && job.queuedBy && queuedByActiveCount(job.queuedBy) >= cap) continue;
+    if (job) {
       queue.splice(i, 1);
       return job.id;
     }
@@ -268,6 +283,12 @@ async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
   emitJobsChanged();
 
   if (job.queuedBy) {
+    const prefs = getUserPrefs(job.queuedBy);
+    const shouldSend = job.status === 'done' ? (prefs.pushOnSuccess ?? true) : (prefs.pushOnFailure ?? true);
+    if (!shouldSend) {
+      settle(job);
+      return;
+    }
     const label = job.versionLabel ? `${job.bundleId} (${job.versionLabel})` : job.bundleId;
     void sendPushToUser(job.queuedBy, {
       title: job.status === 'done' ? 'Decrypt finished' : 'Decrypt failed',

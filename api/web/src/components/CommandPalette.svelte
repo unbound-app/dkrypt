@@ -19,11 +19,13 @@
   import Input from '../lib/components/ui/Input.svelte';
   import { liveState } from '../lib/live.svelte';
   import { cn } from '../lib/utils';
+  import { rankCommands } from '../lib/commandSearch';
 
   interface Command {
     id: string;
     label: string;
     keywords?: string;
+    category?: string;
     run: () => void;
   }
 
@@ -32,9 +34,26 @@
   let inputEl: HTMLInputElement | undefined = $state();
   let recentBundleIds = $state<string[]>([]);
   let myKeys = $state<{ id: string; name: string }[]>([]);
+  let recentIds = $state<string[]>([]);
+  const RECENT_KEY = 'commandPaletteRecent';
+
+  function loadRecents(): string[] {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(RECENT_KEY) ?? '[]') as string[];
+      return Array.isArray(parsed) ? parsed.filter((v) => typeof v === 'string') : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function saveRecent(id: string): void {
+    recentIds = [id, ...recentIds.filter((x) => x !== id)].slice(0, 20);
+    localStorage.setItem(RECENT_KEY, JSON.stringify(recentIds));
+  }
 
   $effect(() => {
     if (!paletteState.open) return;
+    recentIds = loadRecents();
     void fetchJobHistory(0, 8).then((r) => {
       recentBundleIds = [...new Set(r.history.map((h) => h.bundleId))];
     });
@@ -58,30 +77,31 @@
 
   const commands = $derived.by((): Command[] => {
     const base: Command[] = [
-      { id: 'home', label: 'Go to Home', run: () => setActiveTab('home') },
-      { id: 'keys', label: 'Go to API Keys', run: () => setActiveTab('keys') },
+      { id: 'home', label: 'Go to Home', category: 'Navigation', run: () => setActiveTab('home') },
+      { id: 'keys', label: 'Go to API Keys', category: 'Navigation', run: () => setActiveTab('keys') },
     ];
     if (sessionHasPermission(PermissionFlag.viewLogs)) {
-      base.push({ id: 'logs', label: 'Go to Logs', run: () => setActiveTab('logs') });
+      base.push({ id: 'logs', label: 'Go to Logs', category: 'Navigation', run: () => setActiveTab('logs') });
     }
-    base.push({ id: 'insights', label: 'Go to Insights', run: () => setActiveTab('insights') });
-    base.push({ id: 'docs', label: 'Go to Docs', run: () => setActiveTab('docs') });
+    base.push({ id: 'insights', label: 'Go to Insights', category: 'Navigation', run: () => setActiveTab('insights') });
+    base.push({ id: 'docs', label: 'Go to Docs', category: 'Navigation', run: () => setActiveTab('docs') });
     if (sessionCanSeeSettings()) {
-      base.push({ id: 'settings', label: 'Go to Settings', run: () => setActiveTab('settings') });
+      base.push({ id: 'settings', label: 'Go to Settings', category: 'Navigation', run: () => setActiveTab('settings') });
     }
     const THEME_CYCLE = ['dark', 'light', 'auto'] as const;
     base.push({
       id: 'theme',
       label: 'Cycle theme (dark / light / auto)',
+      category: 'Preferences',
       run: () => setTheme(THEME_CYCLE[(THEME_CYCLE.indexOf(themePrefState.value) + 1) % THEME_CYCLE.length]),
     });
-    base.push({ id: 'shortcuts', label: 'Show keyboard shortcuts', run: () => openHelp() });
+    base.push({ id: 'shortcuts', label: 'Show keyboard shortcuts', category: 'Help', run: () => openHelp() });
 
     if (sessionHasPermission(PermissionFlag.requestDecrypt)) {
-      base.push({ id: 'batch-decrypt', label: 'Open batch decrypt', run: () => requestOpenBatch() });
+      base.push({ id: 'batch-decrypt', label: 'Open batch decrypt', category: 'Actions', run: () => requestOpenBatch() });
       const activeCount = liveState.overview?.activeJobs.length ?? 0;
       if (activeCount > 0) {
-        base.push({ id: 'cancel-all', label: `Cancel all ${activeCount} active job(s)`, run: () => void cancelAllJobs() });
+        base.push({ id: 'cancel-all', label: `Cancel all ${activeCount} active job(s)`, category: 'Actions', run: () => void cancelAllJobs() });
       }
     }
     if (sessionHasPermission(PermissionFlag.triggerDispatch)) {
@@ -90,26 +110,44 @@
         base.push({
           id: `trigger-dispatch-${w.id}`,
           label: `Trigger dispatch now: ${w.name ?? w.bundleId}`,
+          category: 'Actions',
           keywords: w.bundleId,
           run: () => void runTriggerWatchDispatch(w.id),
         });
       }
     }
-    base.push({ id: 'export-history-csv', label: 'Export job history as CSV', run: () => window.open(jobHistoryExportUrl('csv'), '_blank') });
-    base.push({ id: 'export-history-json', label: 'Export job history as JSON', run: () => window.open(jobHistoryExportUrl('json'), '_blank') });
+    base.push({
+      id: 'export-history-csv',
+      label: 'Export job history as CSV',
+      category: 'Exports',
+      run: () => window.open(jobHistoryExportUrl('csv'), '_blank'),
+    });
+    base.push({
+      id: 'export-history-json',
+      label: 'Export job history as JSON',
+      category: 'Exports',
+      run: () => window.open(jobHistoryExportUrl('json'), '_blank'),
+    });
 
-    base.push({ id: 'logout', label: 'Log out', run: () => void logout() });
+    base.push({ id: 'logout', label: 'Log out', category: 'Session', run: () => void logout() });
 
     for (const bundleId of recentBundleIds) {
       base.push({
         id: `job-${bundleId}`,
         label: `Jump to ${bundleId} in Job History`,
+        category: 'Navigation',
         keywords: bundleId,
         run: () => jumpToHistoryBundleId(bundleId),
       });
     }
     for (const key of myKeys) {
-      base.push({ id: `key-${key.id}`, label: `View usage for API key "${key.name}"`, keywords: key.name, run: () => jumpToKeyUsage(key.id) });
+      base.push({
+        id: `key-${key.id}`,
+        label: `View usage for API key "${key.name}"`,
+        category: 'Navigation',
+        keywords: key.name,
+        run: () => jumpToKeyUsage(key.id),
+      });
     }
 
     return base;
@@ -117,8 +155,7 @@
 
   const filtered = $derived.by(() => {
     const q = query.trim().toLowerCase();
-    if (q === '') return commands;
-    return commands.filter((c) => c.label.toLowerCase().includes(q) || c.keywords?.toLowerCase().includes(q));
+    return rankCommands(commands, q, recentIds);
   });
 
   $effect(() => {
@@ -131,6 +168,7 @@
   });
 
   function run(cmd: Command): void {
+    saveRecent(cmd.id);
     cmd.run();
     close();
   }
@@ -165,7 +203,10 @@
         class={cn('cursor-pointer rounded-md px-3 py-2.5 text-left text-sm text-text', i === selected && 'bg-accent/15')}
         onclick={() => run(cmd)}
       >
-        {cmd.label}
+        <div>{cmd.label}</div>
+        {#if cmd.category}
+          <div class="text-[11px] text-muted">{cmd.category}</div>
+        {/if}
       </button>
     {/each}
     {#if filtered.length === 0}

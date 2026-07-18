@@ -18,6 +18,7 @@ export interface Job {
   versionLabel?: string;
   source: JobSource;
   queuedBy?: string;
+  preferredDeviceId?: string;
   priority: number;
   status: JobStatus;
   progress: string;

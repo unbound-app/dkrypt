@@ -185,6 +185,8 @@ export interface UserPrefs {
   theme?: 'dark' | 'light' | 'auto';
   density?: 'comfortable' | 'compact';
   accent?: string;
+  pushOnSuccess?: boolean;
+  pushOnFailure?: boolean;
 }
 
 export type AuditAction =
@@ -1486,15 +1488,36 @@ export function recordJobHistory(entry: JobHistoryEntry): void {
 export function getJobHistoryPage(
   offset: number,
   limit: number,
-  bundleIdSearch?: string,
-  source?: 'manual' | 'scheduler',
-  status?: 'done' | 'failed',
+  filters?: {
+    bundleIdSearch?: string;
+    source?: 'manual' | 'scheduler';
+    status?: 'done' | 'failed';
+    queuedBy?: string;
+    deviceId?: string;
+    errorSearch?: string;
+    fromTs?: number;
+    toTs?: number;
+  },
 ): { entries: JobHistoryEntry[]; total: number } {
+  const bundleIdSearch = filters?.bundleIdSearch?.toLowerCase();
+  const source = filters?.source;
+  const status = filters?.status;
+  const queuedBy = filters?.queuedBy?.toLowerCase();
+  const deviceId = filters?.deviceId;
+  const errorSearch = filters?.errorSearch?.toLowerCase();
+  const fromTs = filters?.fromTs;
+  const toTs = filters?.toTs;
+
   const filtered = state.jobHistory.filter(
     (e) =>
-      (!bundleIdSearch || e.bundleId.toLowerCase().includes(bundleIdSearch.toLowerCase())) &&
+      (!bundleIdSearch || e.bundleId.toLowerCase().includes(bundleIdSearch)) &&
       (!source || e.source === source) &&
-      (!status || e.status === status),
+      (!status || e.status === status) &&
+      (!queuedBy || (e.queuedBy ?? '').toLowerCase().includes(queuedBy)) &&
+      (!deviceId || (e.deviceId ?? '') === deviceId) &&
+      (!errorSearch || (e.error ?? '').toLowerCase().includes(errorSearch)) &&
+      (!fromTs || e.finishedAt >= fromTs) &&
+      (!toTs || e.finishedAt <= toTs),
   );
   return { entries: filtered.slice(offset, offset + limit), total: filtered.length };
 }
@@ -1992,14 +2015,27 @@ function isSchedulerRunEntryShape(value: unknown): value is SchedulerRunEntry {
   return typeof e.ts === 'number' && typeof e.appStore === 'object' && typeof e.testflight === 'object';
 }
 
-export interface ImportBackupResult {
-  ok: boolean;
-  error?: string;
+interface ValidatedBackupPayload {
+  backupVersion: number;
+  exportedAt?: number;
+  allowedUsers: AllowedUser[];
+  roles: Role[];
+  apiKeys: ApiKeyRecord[];
+  settings: Partial<SchedulerSettings>;
+  watches: AppWatch[];
+  devices: DeviceRecord[];
+  jobHistory: JobHistoryEntry[];
+  appleAuthAlert: AppleAuthAlert;
+  lastSchedulerRunAt?: number;
+  userPrefs: Record<string, UserPrefs>;
+  auditLog: AuditLogEntry[];
+  schedulerRunHistory: SchedulerRunEntry[];
+  rootSessionVersion: number;
+  apiKeyUsage: Record<string, ApiKeyUsageBucket[]>;
+  apiKeyBundleUsage?: Record<string, Record<string, number>>;
 }
 
-// All-or-nothing: a backup that's missing or has a malformed field is rejected outright rather
-// than partially applied, so a bad file can't leave the server in a half-restored state.
-export function importBackup(raw: unknown, actor: string): ImportBackupResult {
+function validateBackupPayload(raw: unknown): { ok: true; payload: ValidatedBackupPayload } | { ok: false; error: string } {
   if (typeof raw !== 'object' || raw === null) return { ok: false, error: 'not a valid backup file' };
   const b = raw as Record<string, unknown>;
 
@@ -2050,35 +2086,122 @@ export function importBackup(raw: unknown, actor: string): ImportBackupResult {
     return { ok: false, error: 'rootSessionVersion is missing or malformed' };
   }
 
-  state.allowedUsers = b.allowedUsers as AllowedUser[];
-  state.roles = b.roles as Role[];
-  state.apiKeys = (b.apiKeys as ApiKeyRecord[]).map((k) => ({ ...k, pendingReveal: undefined }));
-  state.settings = b.settings as Partial<SchedulerSettings>;
-  state.watches = b.watches as AppWatch[];
-  state.devices = b.devices as DeviceRecord[];
-  state.jobHistory = (b.jobHistory as JobHistoryEntry[]).slice(0, MAX_HISTORY);
-  state.auditLog = (b.auditLog as AuditLogEntry[]).slice(0, MAX_AUDIT_LOG);
+  return {
+    ok: true,
+    payload: {
+      backupVersion: b.backupVersion as number,
+      exportedAt: typeof b.exportedAt === 'number' ? b.exportedAt : undefined,
+      allowedUsers: b.allowedUsers as AllowedUser[],
+      roles: b.roles as Role[],
+      apiKeys: b.apiKeys as ApiKeyRecord[],
+      settings: b.settings as Partial<SchedulerSettings>,
+      watches: b.watches as AppWatch[],
+      devices: b.devices as DeviceRecord[],
+      jobHistory: b.jobHistory as JobHistoryEntry[],
+      appleAuthAlert: b.appleAuthAlert as AppleAuthAlert,
+      lastSchedulerRunAt: typeof b.lastSchedulerRunAt === 'number' ? b.lastSchedulerRunAt : undefined,
+      userPrefs: b.userPrefs as Record<string, UserPrefs>,
+      auditLog: b.auditLog as AuditLogEntry[],
+      schedulerRunHistory: b.schedulerRunHistory as SchedulerRunEntry[],
+      rootSessionVersion: b.rootSessionVersion as number,
+      apiKeyUsage: b.apiKeyUsage as Record<string, ApiKeyUsageBucket[]>,
+      apiKeyBundleUsage:
+        typeof b.apiKeyBundleUsage === 'object' && b.apiKeyBundleUsage !== null
+          ? (b.apiKeyBundleUsage as Record<string, Record<string, number>>)
+          : undefined,
+    },
+  };
+}
+
+export interface BackupPreviewSummary {
+  exportedAt?: number;
+  incoming: {
+    users: number;
+    roles: number;
+    apiKeys: number;
+    watches: number;
+    devices: number;
+    jobHistory: number;
+    auditLog: number;
+  };
+  current: {
+    users: number;
+    roles: number;
+    apiKeys: number;
+    watches: number;
+    devices: number;
+    jobHistory: number;
+    auditLog: number;
+  };
+}
+
+export function previewBackup(raw: unknown): { ok: true; summary: BackupPreviewSummary } | { ok: false; error: string } {
+  const validated = validateBackupPayload(raw);
+  if (!validated.ok) return validated;
+  const { payload } = validated;
+  return {
+    ok: true,
+    summary: {
+      exportedAt: payload.exportedAt,
+      incoming: {
+        users: payload.allowedUsers.length,
+        roles: payload.roles.length,
+        apiKeys: payload.apiKeys.length,
+        watches: payload.watches.length,
+        devices: payload.devices.length,
+        jobHistory: payload.jobHistory.length,
+        auditLog: payload.auditLog.length,
+      },
+      current: {
+        users: state.allowedUsers.length,
+        roles: state.roles.length,
+        apiKeys: state.apiKeys.length,
+        watches: state.watches.length,
+        devices: state.devices.length,
+        jobHistory: state.jobHistory.length,
+        auditLog: state.auditLog.length,
+      },
+    },
+  };
+}
+
+export interface ImportBackupResult {
+  ok: boolean;
+  error?: string;
+}
+
+// All-or-nothing: a backup that's missing or has a malformed field is rejected outright rather
+// than partially applied, so a bad file can't leave the server in a half-restored state.
+export function importBackup(raw: unknown, actor: string): ImportBackupResult {
+  const validated = validateBackupPayload(raw);
+  if (!validated.ok) return { ok: false, error: validated.error };
+  const b = validated.payload;
+
+  state.allowedUsers = b.allowedUsers;
+  state.roles = b.roles;
+  state.apiKeys = b.apiKeys.map((k) => ({ ...k, pendingReveal: undefined }));
+  state.settings = b.settings;
+  state.watches = b.watches;
+  state.devices = b.devices;
+  state.jobHistory = b.jobHistory.slice(0, MAX_HISTORY);
+  state.auditLog = b.auditLog.slice(0, MAX_AUDIT_LOG);
   // Backfill ids for entries from a backup exported before SchedulerRunEntry had one.
-  state.schedulerRunHistory = (b.schedulerRunHistory as SchedulerRunEntry[])
+  state.schedulerRunHistory = b.schedulerRunHistory
     .slice(0, MAX_SCHEDULER_RUNS)
     .map((e) => ({ ...e, id: e.id ?? randomUUID() }));
-  state.userPrefs = b.userPrefs as Record<string, UserPrefs>;
-  state.apiKeyUsage = b.apiKeyUsage as Record<string, ApiKeyUsageBucket[]>;
-  state.appleAuthAlert = b.appleAuthAlert as AppleAuthAlert;
+  state.userPrefs = b.userPrefs;
+  state.apiKeyUsage = b.apiKeyUsage;
+  state.appleAuthAlert = b.appleAuthAlert;
   state.rootSessionVersion = b.rootSessionVersion;
-  if (typeof b.lastSchedulerRunAt === 'number') state.lastSchedulerRunAt = b.lastSchedulerRunAt;
-  // Optional (not strictly validated) so a backup exported before this field existed still
-  // imports cleanly instead of being rejected outright.
-  state.apiKeyBundleUsage = typeof b.apiKeyBundleUsage === 'object' && b.apiKeyBundleUsage !== null
-    ? (b.apiKeyBundleUsage as Record<string, Record<string, number>>)
-    : {};
+  if (b.lastSchedulerRunAt) state.lastSchedulerRunAt = b.lastSchedulerRunAt;
+  state.apiKeyBundleUsage = b.apiKeyBundleUsage ?? {};
 
   persistNow();
   recordAudit(
     actor,
     'state.import',
     'server state',
-    `restored from backup exported ${typeof b.exportedAt === 'number' ? new Date(b.exportedAt).toISOString() : 'unknown time'}`,
+    `restored from backup exported ${b.exportedAt ? new Date(b.exportedAt).toISOString() : 'unknown time'}`,
   );
   return { ok: true };
 }

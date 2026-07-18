@@ -6,7 +6,16 @@
   import RelativeTime from '../../components/RelativeTime.svelte';
   import ShareLinkDialog from '../../components/ShareLinkDialog.svelte';
   import SkeletonRows from '../../components/SkeletonRows.svelte';
-  import { fetchJobHistory, jobHistoryExportUrl, queueDecrypt, queueTestFlightDecrypt, type JobHistoryEntry } from '../../lib/api';
+  import {
+    fetchJobHistory,
+    fetchJobTimeline,
+    jobHistoryExportUrl,
+    queueDecrypt,
+    queueTestFlightDecrypt,
+    retryJob,
+    type JobHistoryEntry,
+    type JobTimeline,
+  } from '../../lib/api';
   import Badge from '../../lib/components/ui/Badge.svelte';
   import Button from '../../lib/components/ui/Button.svelte';
   import Card from '../../lib/components/ui/Card.svelte';
@@ -18,7 +27,7 @@
   import { scrollFade } from '../../lib/scrollFade';
   import { createSavedViews } from '../../lib/savedViews.svelte';
   import { sessionState } from '../../lib/session.svelte';
-  import { confirmDialog, historyJumpState, showToast, tabState } from '../../lib/ui.svelte';
+  import { confirmDialog, historyJumpState, setActiveTab, setSettingsSubtab, showToast, tabState } from '../../lib/ui.svelte';
   import { getQueryParam, setQueryParams } from '../../lib/urlState';
 
   const PAGE_SIZE = 15;
@@ -31,6 +40,9 @@
     query: string;
     source: SourceFilter;
     status: StatusFilter;
+    queuedBy: string;
+    deviceId: string;
+    errorQ: string;
   }
 
   let entries = $state<JobHistoryEntry[]>([]);
@@ -43,21 +55,38 @@
   let activeQuery = $state('');
   let sourceFilter = $state<SourceFilter>((getQueryParam('hsource') as SourceFilter | undefined) ?? (localStorage.getItem('jobHistorySourceFilter') as SourceFilter | null) ?? 'all');
   let statusFilter = $state<StatusFilter>((getQueryParam('hstatus') as StatusFilter | undefined) ?? (localStorage.getItem('jobHistoryStatusFilter') as StatusFilter | null) ?? 'all');
+  let queuedByFilter = $state(getQueryParam('hqueuedBy') ?? localStorage.getItem('jobHistoryQueuedByFilter') ?? '');
+  let deviceFilter = $state(getQueryParam('hdevice') ?? localStorage.getItem('jobHistoryDeviceFilter') ?? '');
+  let errorFilter = $state(getQueryParam('herror') ?? localStorage.getItem('jobHistoryErrorFilter') ?? '');
   let selected = $state<Set<string>>(new Set());
   let bulkRequeueing = $state(false);
   const savedViews = createSavedViews<FilterPreset>('jobHistoryFilterPresets');
   let newPresetName = $state('');
+  let timelineById = $state<Record<string, JobTimeline>>({});
+  let timelineOpenId = $state<string | null>(null);
+  let timelineLoading = $state<Set<string>>(new Set());
 
   function applyPreset(p: FilterPreset): void {
     searchText = p.query;
     sourceFilter = p.source;
     statusFilter = p.status;
+    queuedByFilter = p.queuedBy;
+    deviceFilter = p.deviceId;
+    errorFilter = p.errorQ;
   }
 
   function savePreset(): void {
     const name = newPresetName.trim();
     if (!name) return;
-    savedViews.save({ name, query: searchText.trim(), source: sourceFilter, status: statusFilter });
+    savedViews.save({
+      name,
+      query: searchText.trim(),
+      source: sourceFilter,
+      status: statusFilter,
+      queuedBy: queuedByFilter.trim(),
+      deviceId: deviceFilter.trim(),
+      errorQ: errorFilter.trim(),
+    });
     newPresetName = '';
   }
 
@@ -67,14 +96,24 @@
 
   $effect(() => {
     if (tabState.active !== 'home') return;
-    setQueryParams({ hq: searchText.trim() || undefined, hsource: sourceFilter === 'all' ? undefined : sourceFilter, hstatus: statusFilter === 'all' ? undefined : statusFilter });
+    setQueryParams({
+      hq: searchText.trim() || undefined,
+      hsource: sourceFilter === 'all' ? undefined : sourceFilter,
+      hstatus: statusFilter === 'all' ? undefined : statusFilter,
+      hqueuedBy: queuedByFilter.trim() || undefined,
+      hdevice: deviceFilter.trim() || undefined,
+      herror: errorFilter.trim() || undefined,
+    });
   });
 
   function matchesFilters(h: JobHistoryEntry): boolean {
     return (
       (!activeQuery || h.bundleId.toLowerCase().includes(activeQuery.toLowerCase())) &&
       (sourceFilter === 'all' || h.source === sourceFilter) &&
-      (statusFilter === 'all' || h.status === statusFilter)
+      (statusFilter === 'all' || h.status === statusFilter) &&
+      (!queuedByFilter.trim() || (h.queuedBy ?? '').toLowerCase().includes(queuedByFilter.trim().toLowerCase())) &&
+      (!deviceFilter.trim() || (h.deviceId ?? '').toLowerCase().includes(deviceFilter.trim().toLowerCase())) &&
+      (!errorFilter.trim() || (h.error ?? '').toLowerCase().includes(errorFilter.trim().toLowerCase()))
     );
   }
 
@@ -87,6 +126,11 @@
       query || undefined,
       sourceFilter === 'all' ? undefined : sourceFilter,
       statusFilter === 'all' ? undefined : statusFilter,
+      {
+        queuedBy: queuedByFilter.trim() || undefined,
+        deviceId: deviceFilter.trim() || undefined,
+        errorQ: errorFilter.trim() || undefined,
+      },
     );
     entries = data.history;
     total = data.total;
@@ -103,6 +147,11 @@
         activeQuery || undefined,
         sourceFilter === 'all' ? undefined : sourceFilter,
         statusFilter === 'all' ? undefined : statusFilter,
+        {
+          queuedBy: queuedByFilter.trim() || undefined,
+          deviceId: deviceFilter.trim() || undefined,
+          errorQ: errorFilter.trim() || undefined,
+        },
       );
       const additions = data.history.filter((e) => !seenIds.has(e.id));
       for (const e of additions) seenIds.add(e.id);
@@ -133,6 +182,9 @@
     const query = searchText.trim();
     sourceFilter;
     statusFilter;
+    queuedByFilter;
+    deviceFilter;
+    errorFilter;
     if (!hasSearched) {
       hasSearched = true;
       activeQuery = query;
@@ -150,6 +202,15 @@
   });
   $effect(() => {
     localStorage.setItem('jobHistoryStatusFilter', statusFilter);
+  });
+  $effect(() => {
+    localStorage.setItem('jobHistoryQueuedByFilter', queuedByFilter);
+  });
+  $effect(() => {
+    localStorage.setItem('jobHistoryDeviceFilter', deviceFilter);
+  });
+  $effect(() => {
+    localStorage.setItem('jobHistoryErrorFilter', errorFilter);
   });
 
   function clearSearch(): void {
@@ -204,6 +265,64 @@
       next.delete(entry.id);
       requeueing = next;
     }
+  }
+
+  async function retryOnPrimary(entry: JobHistoryEntry): Promise<void> {
+    requeueing = new Set(requeueing).add(entry.id);
+    try {
+      const { ok, data } = await retryJob(entry.id, true);
+      if (!ok) return;
+      addDecrypt({
+        id: data.id,
+        bundleId: entry.bundleId,
+        trackName: entry.bundleId,
+        versionLabel: entry.versionLabel,
+        externalVersionId: entry.externalVersionId,
+        testflight: entry.testflight,
+        status: data.status,
+        progress: data.progress,
+        queue: data.queue,
+      });
+      pushRecentBundleId(entry.bundleId);
+      showToast(`Retried ${entry.bundleId} on primary device`, 'success');
+    } finally {
+      const next = new Set(requeueing);
+      next.delete(entry.id);
+      requeueing = next;
+    }
+  }
+
+  async function toggleTimeline(jobId: string): Promise<void> {
+    if (timelineOpenId === jobId) {
+      timelineOpenId = null;
+      return;
+    }
+    timelineOpenId = jobId;
+    if (timelineById[jobId]) return;
+    const next = new Set(timelineLoading);
+    next.add(jobId);
+    timelineLoading = next;
+    try {
+      timelineById = { ...timelineById, [jobId]: await fetchJobTimeline(jobId) };
+    } finally {
+      const done = new Set(timelineLoading);
+      done.delete(jobId);
+      timelineLoading = done;
+    }
+  }
+
+  function openRemediation(error: string | undefined): void {
+    const text = (error ?? '').toLowerCase();
+    setActiveTab('settings');
+    if (text.includes('auth') || text.includes('password') || text.includes('apple')) {
+      setSettingsSubtab('apple');
+      return;
+    }
+    if (text.includes('disk') || text.includes('storage') || text.includes('space')) {
+      setSettingsSubtab('devices');
+      return;
+    }
+    setSettingsSubtab('scheduler');
   }
 
   function toggleSelect(id: string): void {
@@ -314,6 +433,12 @@
     </div>
   </div>
 
+  <div class="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
+    <Input placeholder="Queued by username…" bind:value={queuedByFilter} />
+    <Input placeholder="Device id…" bind:value={deviceFilter} />
+    <Input placeholder="Error contains…" bind:value={errorFilter} />
+  </div>
+
   <div class="mb-3 flex flex-wrap items-center gap-1.5">
     {#each savedViews.presets as p (p.name)}
       <span class="border-border text-muted hover:text-text hover:border-accent inline-flex items-center gap-1 rounded-full border pr-1 pl-2.5 py-1 text-[12px]">
@@ -337,7 +462,11 @@
   {#if loaded && entries.length === 0}
     <EmptyState
       icon={History}
-      message={activeQuery || sourceFilter !== 'all' || statusFilter !== 'all' ? 'No decrypts match these filters.' : 'No decrypts yet.'}
+      message={
+        activeQuery || sourceFilter !== 'all' || statusFilter !== 'all' || queuedByFilter || deviceFilter || errorFilter
+          ? 'No decrypts match these filters.'
+          : 'No decrypts yet.'
+      }
     />
   {:else}
     <div class="scroll-fade-x max-h-[600px] overflow-auto" use:scrollFade>
@@ -403,6 +532,15 @@
                       <Button size="sm" variant="secondary" loading={requeueing.has(j.id)} onclick={() => decryptAgain(j)}>
                         Decrypt again
                       </Button>
+                      {#if j.status === 'failed'}
+                        <Button size="sm" variant="secondary" loading={requeueing.has(j.id)} onclick={() => retryOnPrimary(j)}>
+                          Retry on primary
+                        </Button>
+                        <Button size="sm" variant="secondary" onclick={() => openRemediation(j.error)}>Fix guidance</Button>
+                      {/if}
+                      <Button size="sm" variant="secondary" loading={timelineLoading.has(j.id)} onclick={() => toggleTimeline(j.id)}>
+                        {timelineOpenId === j.id ? 'Hide timeline' : 'Timeline'}
+                      </Button>
                       {#if j.status === 'done'}
                         <Button size="sm" variant="secondary" onclick={() => openShare(j.id)}>Share</Button>
                       {/if}
@@ -412,6 +550,25 @@
                     </div>
                   </td>
                 </tr>
+                {#if timelineOpenId === j.id}
+                  <tr class="bg-panel-muted/40">
+                    <td colspan="10" class="py-2.5">
+                      {#if timelineById[j.id]}
+                        <div class="flex flex-wrap items-center gap-2 text-xs">
+                          {#each timelineById[j.id].events as ev (ev.at + ev.label)}
+                            <span class="border-border inline-flex items-center gap-1 rounded-full border px-2 py-1">
+                              <Badge variant={statusToBadgeVariant(ev.status)}>{ev.status}</Badge>
+                              <span>{ev.label}</span>
+                              <span class="text-muted">(<RelativeTime ms={ev.at} />)</span>
+                            </span>
+                          {/each}
+                        </div>
+                      {:else}
+                        <div class="text-xs text-muted">Loading timeline…</div>
+                      {/if}
+                    </td>
+                  </tr>
+                {/if}
               {/each}
             {/each}
           {/if}

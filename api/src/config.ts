@@ -47,6 +47,7 @@ export const config = {
   runPollIntervalSeconds: optionalInt('RUN_POLL_INTERVAL_SECONDS', 15),
   runPollTimeoutMinutes: optionalInt('RUN_POLL_TIMEOUT_MINUTES', 30),
   notifyWebhookUrl: optional('NOTIFY_WEBHOOK_URL', ''),
+  userConcurrencyCap: optionalInt('USER_CONCURRENCY_CAP', 0),
 };
 
 export const githubOauthEnabled = config.githubOauthClientId !== '' && config.githubOauthClientSecret !== '';

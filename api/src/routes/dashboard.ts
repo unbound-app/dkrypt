@@ -85,6 +85,7 @@ import {
   listPendingApiKeys,
   listRoles,
   listShareLinksForJob,
+  previewBackup,
   recordShareLink,
   recordUserActivity,
   regenerateApiKey,
@@ -233,7 +234,21 @@ dashboardRouter.get('/v1/dashboard/jobs', (req, res) => {
   const q = typeof req.query.q === 'string' && req.query.q.trim() ? req.query.q.trim().slice(0, 200) : undefined;
   const source = req.query.source === 'manual' || req.query.source === 'scheduler' ? req.query.source : undefined;
   const status = req.query.status === 'done' || req.query.status === 'failed' ? req.query.status : undefined;
-  const { entries, total } = getJobHistoryPage(offset, limit, q, source, status);
+  const queuedBy = typeof req.query.queuedBy === 'string' && req.query.queuedBy.trim() ? req.query.queuedBy.trim().slice(0, 120) : undefined;
+  const deviceId = typeof req.query.deviceId === 'string' && req.query.deviceId.trim() ? req.query.deviceId.trim().slice(0, 64) : undefined;
+  const errorQ = typeof req.query.errorQ === 'string' && req.query.errorQ.trim() ? req.query.errorQ.trim().slice(0, 200) : undefined;
+  const fromTs = Number.parseInt(String(req.query.fromTs ?? ''), 10);
+  const toTs = Number.parseInt(String(req.query.toTs ?? ''), 10);
+  const { entries, total } = getJobHistoryPage(offset, limit, {
+    bundleIdSearch: q,
+    source,
+    status,
+    queuedBy,
+    deviceId,
+    errorSearch: errorQ,
+    fromTs: Number.isFinite(fromTs) ? fromTs : undefined,
+    toTs: Number.isFinite(toTs) ? toTs : undefined,
+  });
   res.json({ history: entries, total });
 });
 
@@ -374,6 +389,9 @@ dashboardRouter.post('/v1/dashboard/decrypt', canDecrypt, (req, res) => {
 
   const versionLabel = typeof req.body?.versionLabel === 'string' ? req.body.versionLabel.trim().slice(0, 64) || undefined : undefined;
 
+  const preferPrimary = req.body?.preferPrimary === true;
+  const preferredDeviceId = preferPrimary ? getPrimaryDevice().id : undefined;
+
   const job = enqueueDecryptJob(
     bundleId,
     'manual',
@@ -382,6 +400,7 @@ dashboardRouter.post('/v1/dashboard/decrypt', canDecrypt, (req, res) => {
     versionLabel,
     res.locals.session.sub,
     getUserPriority(res.locals.session.sub),
+    preferredDeviceId,
   );
   res.status(202).json(jobSummary(job));
 });
@@ -664,6 +683,9 @@ dashboardRouter.post('/v1/dashboard/testflight/decrypt', canDecrypt, (req, res) 
     return;
   }
 
+  const preferPrimary = req.body?.preferPrimary === true;
+  const preferredDeviceId = preferPrimary ? getPrimaryDevice().id : undefined;
+
   const job = enqueueDecryptJob(
     bundleId,
     'manual',
@@ -672,6 +694,7 @@ dashboardRouter.post('/v1/dashboard/testflight/decrypt', canDecrypt, (req, res) 
     undefined,
     res.locals.session.sub,
     getUserPriority(res.locals.session.sub),
+    preferredDeviceId,
   );
   res.status(202).json(jobSummary(job));
 });
@@ -701,6 +724,49 @@ dashboardRouter.post('/v1/dashboard/jobs/:id/prioritize', canDecrypt, (req, res)
     return;
   }
   res.json({ ok: true });
+});
+
+dashboardRouter.post('/v1/dashboard/jobs/:id/retry', canDecrypt, (req, res) => {
+  const entry = getJobHistoryEntryById(req.params.id);
+  if (!entry) {
+    res.status(404).json({ error: 'job history entry not found' });
+    return;
+  }
+
+  const preferPrimary = req.body?.preferPrimary === true;
+  const preferredDeviceId = preferPrimary ? getPrimaryDevice().id : undefined;
+  const job = enqueueDecryptJob(
+    entry.bundleId,
+    'manual',
+    entry.externalVersionId,
+    entry.testflight,
+    entry.versionLabel,
+    res.locals.session.sub,
+    getUserPriority(res.locals.session.sub),
+    preferredDeviceId,
+  );
+  res.status(202).json(jobSummary(job));
+});
+
+dashboardRouter.get('/v1/dashboard/jobs/:id/timeline', (req, res) => {
+  const active = getJob(req.params.id);
+  if (active) {
+    const events = [{ at: active.createdAt, label: 'Queued', status: 'queued' }];
+    if (active.startedAt) events.push({ at: active.startedAt, label: `Started on ${active.deviceId ?? 'unknown device'}`, status: 'running' });
+    if (active.finishedAt) events.push({ at: active.finishedAt, label: active.status === 'done' ? 'Finished' : `Failed: ${active.error ?? 'unknown error'}`, status: active.status });
+    res.json({ id: active.id, bundleId: active.bundleId, status: active.status, events });
+    return;
+  }
+
+  const entry = getJobHistoryEntryById(req.params.id);
+  if (!entry) {
+    res.status(404).json({ error: 'job not found' });
+    return;
+  }
+  const events = [{ at: entry.createdAt, label: 'Queued', status: 'queued' }];
+  if (entry.startedAt) events.push({ at: entry.startedAt, label: `Started on ${entry.deviceId ?? 'unknown device'}`, status: 'running' });
+  events.push({ at: entry.finishedAt, label: entry.status === 'done' ? 'Finished' : `Failed: ${entry.error ?? 'unknown error'}`, status: entry.status });
+  res.json({ id: entry.id, bundleId: entry.bundleId, status: entry.status, events });
 });
 
 dashboardRouter.get('/v1/dashboard/jobs/:id/file', async (req, res) => {
@@ -1228,6 +1294,15 @@ dashboardRouter.post('/v1/dashboard/backup/import', canManageBackup, (req, res) 
   res.json({ ok: true });
 });
 
+dashboardRouter.post('/v1/dashboard/backup/preview', canManageBackup, (req, res) => {
+  const result = previewBackup(req.body);
+  if (!result.ok) {
+    res.status(400).json({ error: result.error });
+    return;
+  }
+  res.json(result.summary);
+});
+
 dashboardRouter.get('/v1/dashboard/me/prefs', (_req, res) => {
   res.json(getUserPrefs(res.locals.session.sub));
 });
@@ -1273,10 +1348,18 @@ dashboardRouter.post('/v1/dashboard/push/test', async (_req, res) => {
 
 dashboardRouter.put('/v1/dashboard/me/prefs', (req, res) => {
   const body = req.body ?? {};
-  const patch: { theme?: 'dark' | 'light' | 'auto'; density?: 'comfortable' | 'compact'; accent?: string } = {};
+  const patch: {
+    theme?: 'dark' | 'light' | 'auto';
+    density?: 'comfortable' | 'compact';
+    accent?: string;
+    pushOnSuccess?: boolean;
+    pushOnFailure?: boolean;
+  } = {};
   if (body.theme === 'dark' || body.theme === 'light' || body.theme === 'auto') patch.theme = body.theme;
   if (body.density === 'comfortable' || body.density === 'compact') patch.density = body.density;
   if (typeof body.accent === 'string' && /^[a-z-]{1,32}$/.test(body.accent)) patch.accent = body.accent;
+  if (typeof body.pushOnSuccess === 'boolean') patch.pushOnSuccess = body.pushOnSuccess;
+  if (typeof body.pushOnFailure === 'boolean') patch.pushOnFailure = body.pushOnFailure;
   res.json(updateUserPrefs(res.locals.session.sub, patch));
 });
 
