@@ -8,7 +8,9 @@
   import {
     approveKey,
     bulkApproveKeys,
+    bulkExtendKeyExpiry,
     bulkRevokeKeys,
+    bulkSetKeyDailyLimit,
     denyKey,
     fetchAllKeys,
     fetchMyKeys,
@@ -277,6 +279,40 @@
     }
   }
 
+  let bulkExtendDays = $state('30');
+  let bulkExtending = $state(false);
+
+  async function bulkExtend(): Promise<void> {
+    const days = Number(bulkExtendDays);
+    if (selected.size === 0 || !Number.isFinite(days) || days <= 0) return;
+    bulkExtending = true;
+    try {
+      await bulkExtendKeyExpiry([...selected], days);
+      selected = new Set();
+      void loadAll();
+    } finally {
+      bulkExtending = false;
+    }
+  }
+
+  let bulkDailyLimit = $state('');
+  let bulkSettingLimit = $state(false);
+
+  async function bulkSetLimit(): Promise<void> {
+    if (selected.size === 0) return;
+    const trimmed = bulkDailyLimit.trim();
+    const limit = trimmed ? Number(trimmed) : null;
+    if (trimmed && (!Number.isFinite(limit) || (limit as number) <= 0)) return;
+    bulkSettingLimit = true;
+    try {
+      await bulkSetKeyDailyLimit([...selected], limit);
+      selected = new Set();
+      void loadAll();
+    } finally {
+      bulkSettingLimit = false;
+    }
+  }
+
   async function bulkApprove(): Promise<void> {
     if (selectedPending.size === 0) return;
     bulkApproving = true;
@@ -438,8 +474,22 @@
   {#if canViewAll}
     <Card title="All keys">
       {#snippet headerExtra()}
-        {#if canRevokeAny && selected.size > 0}
-          <Button size="sm" variant="destructive" loading={bulkRevoking} onclick={bulkRevoke}>Revoke {selected.size} selected</Button>
+        {#if selected.size > 0}
+          <div class="flex flex-wrap items-center gap-1.5">
+            {#if canApprove}
+              <div class="flex items-center gap-1">
+                <Input type="number" min="1" bind:value={bulkExtendDays} class="h-8 w-16 text-xs" aria-label="Days to extend expiry" />
+                <Button size="sm" variant="secondary" loading={bulkExtending} onclick={bulkExtend}>Extend expiry</Button>
+              </div>
+              <div class="flex items-center gap-1">
+                <Input type="number" min="1" placeholder="blank = clear" bind:value={bulkDailyLimit} class="h-8 w-28 text-xs" aria-label="New daily limit" />
+                <Button size="sm" variant="secondary" loading={bulkSettingLimit} onclick={bulkSetLimit}>Set daily limit</Button>
+              </div>
+            {/if}
+            {#if canRevokeAny}
+              <Button size="sm" variant="destructive" loading={bulkRevoking} onclick={bulkRevoke}>Revoke {selected.size} selected</Button>
+            {/if}
+          </div>
         {/if}
       {/snippet}
       <div class="mb-3 flex flex-wrap gap-2">

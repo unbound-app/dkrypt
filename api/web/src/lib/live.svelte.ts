@@ -5,10 +5,11 @@ export const liveState = $state<{
   logs: LogEntry[];
   historyAdditions: JobHistoryEntry[];
   appleAuthStatus: AppleAuthStatus | null;
+  onlineUsers: string[];
   connected: boolean;
   disconnectedAt: number | null;
   reconnectAttempts: number;
-}>({ overview: null, logs: [], historyAdditions: [], appleAuthStatus: null, connected: false, disconnectedAt: null, reconnectAttempts: 0 });
+}>({ overview: null, logs: [], historyAdditions: [], appleAuthStatus: null, onlineUsers: [], connected: false, disconnectedAt: null, reconnectAttempts: 0 });
 
 let source: EventSource | null = null;
 
@@ -44,6 +45,10 @@ export function connectLive(): void {
     liveState.appleAuthStatus = JSON.parse((e as MessageEvent).data) as AppleAuthStatus;
   });
 
+  source.addEventListener('presence', (e) => {
+    liveState.onlineUsers = JSON.parse((e as MessageEvent).data) as string[];
+  });
+
   // The browser retries automatically on its own backoff - onerror fires once per failed attempt
   // (the initial drop counts as the first), which is what lets the banner show how long it's been
   // down and roughly how hard it's trying, instead of just a static "reconnecting…".
@@ -61,6 +66,7 @@ export function disconnectLive(): void {
   liveState.logs = [];
   liveState.historyAdditions = [];
   liveState.appleAuthStatus = null;
+  liveState.onlineUsers = [];
   liveState.connected = false;
   liveState.disconnectedAt = null;
   liveState.reconnectAttempts = 0;

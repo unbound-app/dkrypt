@@ -10,13 +10,12 @@
   import Input from '../lib/components/ui/Input.svelte';
   import Select from '../lib/components/ui/Select.svelte';
   import type { BadgeVariant } from '../lib/components/ui/variants';
-  import { loadFilterPresets, saveFilterPresets } from '../lib/filterPresets';
   import { csvCell, downloadBlob } from '../lib/format';
   import { liveState } from '../lib/live.svelte';
+  import { createSavedViews } from '../lib/savedViews.svelte';
+  import { tabState } from '../lib/ui.svelte';
+  import { getQueryParam, setQueryParams } from '../lib/urlState';
   import { cn } from '../lib/utils';
-
-  const PRESETS_KEY = 'logFilterPresets';
-  const MAX_PRESETS = 10;
 
   interface LogFilterPreset {
     name: string;
@@ -32,15 +31,15 @@
     error: 'border-l-err',
   };
 
-  let scopeFilter = $state(localStorage.getItem('logScopeFilter') ?? 'all');
-  let levelFilter = $state(localStorage.getItem('logLevelFilter') ?? 'all');
-  let searchText = $state(localStorage.getItem('logSearchText') ?? '');
+  let scopeFilter = $state(getQueryParam('scope') ?? localStorage.getItem('logScopeFilter') ?? 'all');
+  let levelFilter = $state(getQueryParam('level') ?? localStorage.getItem('logLevelFilter') ?? 'all');
+  let searchText = $state(getQueryParam('q') ?? localStorage.getItem('logSearchText') ?? '');
   let regexMode = $state(localStorage.getItem('logRegexMode') === 'true');
   let autoScroll = $state(localStorage.getItem('logAutoScroll') !== 'false');
   let initialLogs = $state<LogEntry[] | null>(null);
   let listEl: HTMLDivElement | undefined = $state();
   let stickToTop = $state(true);
-  let presets = $state<LogFilterPreset[]>(loadFilterPresets<LogFilterPreset>(PRESETS_KEY));
+  const savedViews = createSavedViews<LogFilterPreset>('logFilterPresets');
   let newPresetName = $state('');
 
   function applyPreset(p: LogFilterPreset): void {
@@ -53,16 +52,18 @@
   function savePreset(): void {
     const name = newPresetName.trim();
     if (!name) return;
-    const preset: LogFilterPreset = { name, scope: scopeFilter, level: levelFilter, query: searchText.trim(), regex: regexMode };
-    presets = [...presets.filter((p) => p.name !== name), preset].slice(-MAX_PRESETS);
-    saveFilterPresets(PRESETS_KEY, presets);
+    savedViews.save({ name, scope: scopeFilter, level: levelFilter, query: searchText.trim(), regex: regexMode });
     newPresetName = '';
   }
 
   function removePreset(name: string): void {
-    presets = presets.filter((p) => p.name !== name);
-    saveFilterPresets(PRESETS_KEY, presets);
+    savedViews.remove(name);
   }
+
+  $effect(() => {
+    if (tabState.active !== 'logs') return;
+    setQueryParams({ scope: scopeFilter === 'all' ? undefined : scopeFilter, level: levelFilter === 'all' ? undefined : levelFilter, q: searchText.trim() || undefined });
+  });
 
   function onListScroll(): void {
     if (!listEl) return;
@@ -257,7 +258,7 @@
   </div>
 
   <div class="mb-3.5 flex flex-wrap items-center gap-1.5">
-    {#each presets as p (p.name)}
+    {#each savedViews.presets as p (p.name)}
       <span class="border-border text-muted hover:text-text hover:border-accent inline-flex items-center gap-1 rounded-full border pr-1 pl-2.5 py-1 text-[12px]">
         <button class="cursor-pointer" onclick={() => applyPreset(p)}>{p.name}</button>
         <button

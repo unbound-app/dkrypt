@@ -4,7 +4,7 @@
   import { sessionState } from '../lib/session.svelte';
   import { setActiveTab, setSettingsSubtab } from '../lib/ui.svelte';
 
-  const issues = $derived(liveState.overview?.configIssues ?? []);
+  const issues = $derived((liveState.overview?.watches ?? []).flatMap((w) => w.configIssues));
 
   function goToScheduler(): void {
     setActiveTab('settings');

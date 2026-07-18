@@ -4,11 +4,13 @@
   import { setSettingsSubtab, tabState } from '../lib/ui.svelte';
   import AppleAuthSettings from './settings/AppleAuthSettings.svelte';
   import BackupSettings from './settings/BackupSettings.svelte';
+  import DevicesSettings from './settings/DevicesSettings.svelte';
   import SchedulerSettings from './settings/SchedulerSettings.svelte';
   import UsersSettings from './settings/UsersSettings.svelte';
 
   const ALL_SUBTABS: { id: string; label: string; requires: (keyof Permissions)[] }[] = [
     { id: 'scheduler', label: 'Scheduler', requires: ['manageScheduler', 'triggerDispatch'] },
+    { id: 'devices', label: 'Devices', requires: ['manageScheduler'] },
     { id: 'users', label: 'Users', requires: ['viewUsers', 'manageUsers'] },
     { id: 'apple', label: 'Apple Auth', requires: ['manageAppleAuth'] },
     { id: 'backup', label: 'Backup', requires: ['manageUsers'] },
@@ -32,6 +34,11 @@
 {#if hasAccess(['manageScheduler', 'triggerDispatch'])}
   <div class:hidden={tabState.settingsSubtab !== 'scheduler'}>
     <SchedulerSettings />
+  </div>
+{/if}
+{#if hasAccess(['manageScheduler'])}
+  <div class:hidden={tabState.settingsSubtab !== 'devices'}>
+    <DevicesSettings />
   </div>
 {/if}
 {#if hasAccess(['viewUsers', 'manageUsers'])}

@@ -21,6 +21,8 @@
   import { liveState } from '../../lib/live.svelte';
 
   const overview = $derived(liveState.overview);
+  const primaryDeviceId = $derived(overview?.devices.find((d) => d.isPrimary)?.id ?? overview?.devices[0]?.id);
+  const otherDevices = $derived(overview?.devices.filter((d) => d.id !== primaryDeviceId) ?? []);
 
   type RunState = 'inProgress' | 'succeeded' | 'failed' | 'timedOut' | 'upToDate' | 'checkFailed';
 
@@ -58,13 +60,20 @@
     const interval = setInterval(() => (now = Date.now()), 30_000);
     return () => clearInterval(interval);
   });
+  // Soonest next run across every schedulable watch, not just one - a single-watch install sees
+  // exactly the same "next run" label it always did, multi-watch installs see the closest one.
+  const nextRunAt = $derived.by(() => {
+    const times = (overview?.watches ?? []).map((w) => w.nextRunAt).filter((t): t is number => t !== undefined);
+    return times.length > 0 ? Math.min(...times) : undefined;
+  });
+
   const nextRunLabel = $derived.by(() => {
     void now;
-    if (!overview?.nextSchedulerRunAt) return undefined;
+    if (!nextRunAt) return undefined;
     // A brief "in the past" window is expected right as a tick fires and before the resulting
     // overview refresh arrives - "expired" reads like something is broken, so soften it.
-    if (overview.nextSchedulerRunAt <= Date.now()) return 'due any moment';
-    return fmtUntil(overview.nextSchedulerRunAt);
+    if (nextRunAt <= Date.now()) return 'due any moment';
+    return fmtUntil(nextRunAt);
   });
 
   const diskColor = $derived.by(() => {
@@ -89,9 +98,10 @@
   let refreshingHealth = $state(false);
 
   async function refreshHealth(): Promise<void> {
+    if (!primaryDeviceId) return;
     refreshingHealth = true;
     try {
-      health = await fetchDeviceHealth(true);
+      health = await fetchDeviceHealth(primaryDeviceId, true);
     } finally {
       refreshingHealth = false;
     }
@@ -112,7 +122,9 @@
   });
 
   $effect(() => {
-    const load = () => void fetchDeviceHealth().then((h) => (health = h));
+    const deviceId = primaryDeviceId;
+    if (!deviceId) return;
+    const load = () => void fetchDeviceHealth(deviceId).then((h) => (health = h));
     load();
     const interval = setInterval(load, 20_000);
     return () => clearInterval(interval);
@@ -122,8 +134,10 @@
   let uptimePercent = $state<number | null>(null);
 
   $effect(() => {
+    const deviceId = primaryDeviceId;
+    if (!deviceId) return;
     const load = () =>
-      void fetchDeviceHealthHistory(24).then((r) => {
+      void fetchDeviceHealthHistory(deviceId, 24).then((r) => {
         healthHistory = r.buckets;
         uptimePercent = r.uptimePercent;
       });
@@ -148,7 +162,9 @@
   let batteryHistory = $state<HourlyBatteryBucket[] | null>(null);
 
   $effect(() => {
-    const load = () => void fetchDeviceBatteryHistory(24).then((r) => (batteryHistory = r.buckets));
+    const deviceId = primaryDeviceId;
+    if (!deviceId) return;
+    const load = () => void fetchDeviceBatteryHistory(deviceId, 24).then((r) => (batteryHistory = r.buckets));
     load();
     const interval = setInterval(load, 60_000);
     return () => clearInterval(interval);
@@ -172,7 +188,9 @@
   let temperatureHistory = $state<HourlyTemperatureBucket[] | null>(null);
 
   $effect(() => {
-    const load = () => void fetchDeviceTemperatureHistory(24).then((r) => (temperatureHistory = r.buckets));
+    const deviceId = primaryDeviceId;
+    if (!deviceId) return;
+    const load = () => void fetchDeviceTemperatureHistory(deviceId, 24).then((r) => (temperatureHistory = r.buckets));
     load();
     const interval = setInterval(load, 60_000);
     return () => clearInterval(interval);
@@ -286,6 +304,9 @@
     {:else}
       <Badge variant="secondary">iDevice …</Badge>
     {/if}
+    {#each otherDevices as d (d.id)}
+      <Badge variant={d.enabled ? 'secondary' : 'secondary'} title="{d.name} - {d.enabled ? 'enabled' : 'disabled'}">{d.name}</Badge>
+    {/each}
   </div>
   {#if health}
     {@const h = health}
@@ -363,26 +384,25 @@
       </div>
     </div>
   {/if}
-  <dl class="text-sm">
-    <div class="border-border flex items-center gap-2.5 border-t py-2">
-      <dt class="w-24 shrink-0 text-xs text-muted">Watching</dt>
-      <dd class="min-w-0 flex-1 truncate font-mono text-[11px]" title={overview?.settings.watchBundleId || '-'}>
-        {overview?.settings.watchBundleId || '-'}
-      </dd>
-    </div>
-    <div class="border-border flex items-center gap-2.5 border-t py-2">
-      <dt class="w-24 shrink-0 text-xs text-muted">Poll cron</dt>
-      <dd class="min-w-0 flex-1 truncate font-mono text-[13px]" title={overview?.settings.pollCron || '-'}>
-        {overview?.settings.pollCron || '-'}
-      </dd>
-    </div>
-    {#if nextRunLabel}
-      <div class="border-border flex items-center gap-2.5 border-t py-2">
-        <dt class="w-24 shrink-0 text-xs text-muted">Next run</dt>
-        <dd class="min-w-0 flex-1 truncate text-[13px]">{nextRunLabel === 'due any moment' ? nextRunLabel : `in ${nextRunLabel}`}</dd>
-      </div>
-    {/if}
-  </dl>
+  {#if overview?.watches.length}
+    <dl class="text-sm">
+      {#each overview.watches as w (w.id)}
+        <div class="border-border flex items-center gap-2.5 border-t py-2">
+          <dt class="w-24 shrink-0 text-xs text-muted truncate" title={w.name ?? 'Watching'}>{w.name ?? 'Watching'}</dt>
+          <dd class="min-w-0 flex-1 truncate font-mono text-[11px]" title={w.bundleId || '-'}>
+            {w.bundleId || '-'}
+          </dd>
+          <Badge variant={w.schedulable ? 'success' : 'secondary'} class="shrink-0">{w.schedulable ? 'on' : 'off'}</Badge>
+        </div>
+      {/each}
+      {#if nextRunLabel}
+        <div class="border-border flex items-center gap-2.5 border-t py-2">
+          <dt class="w-24 shrink-0 text-xs text-muted">Next run</dt>
+          <dd class="min-w-0 flex-1 truncate text-[13px]">{nextRunLabel === 'due any moment' ? nextRunLabel : `in ${nextRunLabel}`}</dd>
+        </div>
+      {/if}
+    </dl>
+  {/if}
   {#if overview?.disk}
     <div class="border-border mt-1 border-t pt-3">
       <div class="mb-1.5 flex items-center justify-between text-xs text-muted">

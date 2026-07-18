@@ -87,14 +87,10 @@ export interface ActiveJob {
   queuedBy?: string;
   priority?: number;
   createdAt: number;
+  deviceId?: string;
 }
 
 export interface SchedulerSettings {
-  watchBundleId: string;
-  watchAppRepo: string;
-  ghDispatchRepo: string;
-  ghWorkflowFile: string;
-  pollCron: string;
   notifyWebhookUrl: string;
   notifyFormat: 'embed' | 'plain';
   notifyOnKeyRequest: boolean;
@@ -115,6 +111,35 @@ export interface SchedulerSettings {
   diskFullAlertPercent: number;
   deviceStorageAlertPercent: number;
   testFlightBridgeAlertMinutes: number;
+  jobWebhookUrl: string;
+  jobWebhookEnabled: boolean;
+  jobHistoryRetentionDays: number;
+}
+
+export interface AppWatch {
+  id: string;
+  name?: string;
+  bundleId: string;
+  appRepo: string;
+  ghDispatchRepo: string;
+  ghWorkflowFile: string;
+  pollCron: string;
+  enabled: boolean;
+  createdAt: number;
+  updatedAt: number;
+  nextRunAt?: number;
+  schedulable: boolean;
+  configIssues: string[];
+}
+
+export interface DeviceRecord {
+  id: string;
+  name: string;
+  rootDir: string;
+  enabled: boolean;
+  isPrimary?: boolean;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface AppleAuthAlert {
@@ -136,6 +161,8 @@ export interface SchedulerRunOutcome {
 export interface SchedulerRunEntry {
   id: string;
   ts: number;
+  watchId?: string;
+  bundleId?: string;
   appStore: SchedulerRunOutcome;
   testflight: SchedulerRunOutcome;
 }
@@ -150,13 +177,20 @@ export interface DiskUsage {
 export interface OverviewPayload {
   schedulerEnabled: boolean;
   settings: SchedulerSettings;
+  watches: AppWatch[];
+  devices: DeviceRecord[];
   appleAuthAlert: AppleAuthAlert;
   lastSchedulerRunAt?: number;
-  nextSchedulerRunAt?: number;
   schedulerRunHistory: SchedulerRunEntry[];
-  configIssues: string[];
   disk?: DiskUsage;
   activeJobs: ActiveJob[];
+}
+
+export interface IpaMetadata {
+  bundleVersion?: string;
+  shortVersion?: string;
+  minOsVersion?: string;
+  executable?: string;
 }
 
 export interface JobHistoryEntry {
@@ -173,6 +207,9 @@ export interface JobHistoryEntry {
   createdAt: number;
   startedAt?: number;
   finishedAt: number;
+  deviceId?: string;
+  ipaMetadata?: IpaMetadata;
+  ipaInfoPlist?: Record<string, unknown>;
 }
 
 export interface ApiKeyRecord {
@@ -251,8 +288,8 @@ export interface DeviceHealth {
   checkedAt: number;
 }
 
-export function fetchDeviceHealth(force = false): Promise<DeviceHealth> {
-  return apiJson(`/v1/dashboard/device/health${force ? '?force=true' : ''}`);
+export function fetchDeviceHealth(deviceId: string, force = false): Promise<DeviceHealth> {
+  return apiJson(`/v1/dashboard/devices/${encodeURIComponent(deviceId)}/health${force ? '?force=true' : ''}`);
 }
 
 export interface HourlyHealthBucket {
@@ -260,8 +297,8 @@ export interface HourlyHealthBucket {
   reachablePercent: number | null;
 }
 
-export function fetchDeviceHealthHistory(hours = 24): Promise<{ buckets: HourlyHealthBucket[]; uptimePercent: number | null }> {
-  return apiJson(`/v1/dashboard/device/health-history?hours=${hours}`);
+export function fetchDeviceHealthHistory(deviceId: string, hours = 24): Promise<{ buckets: HourlyHealthBucket[]; uptimePercent: number | null }> {
+  return apiJson(`/v1/dashboard/devices/${encodeURIComponent(deviceId)}/health-history?hours=${hours}`);
 }
 
 export interface HourlyBatteryBucket {
@@ -269,8 +306,8 @@ export interface HourlyBatteryBucket {
   batteryPercent: number | null;
 }
 
-export function fetchDeviceBatteryHistory(hours = 24): Promise<{ buckets: HourlyBatteryBucket[] }> {
-  return apiJson(`/v1/dashboard/device/battery-history?hours=${hours}`);
+export function fetchDeviceBatteryHistory(deviceId: string, hours = 24): Promise<{ buckets: HourlyBatteryBucket[] }> {
+  return apiJson(`/v1/dashboard/devices/${encodeURIComponent(deviceId)}/battery-history?hours=${hours}`);
 }
 
 export interface HourlyTemperatureBucket {
@@ -278,8 +315,8 @@ export interface HourlyTemperatureBucket {
   batteryTemperatureC: number | null;
 }
 
-export function fetchDeviceTemperatureHistory(hours = 24): Promise<{ buckets: HourlyTemperatureBucket[] }> {
-  return apiJson(`/v1/dashboard/device/temperature-history?hours=${hours}`);
+export function fetchDeviceTemperatureHistory(deviceId: string, hours = 24): Promise<{ buckets: HourlyTemperatureBucket[] }> {
+  return apiJson(`/v1/dashboard/devices/${encodeURIComponent(deviceId)}/temperature-history?hours=${hours}`);
 }
 
 export interface HourlyStorageBucket {
@@ -287,8 +324,93 @@ export interface HourlyStorageBucket {
   storageUsedPercent: number | null;
 }
 
-export function fetchDeviceStorageHistory(hours = 24): Promise<{ buckets: HourlyStorageBucket[] }> {
-  return apiJson(`/v1/dashboard/device/storage-history?hours=${hours}`);
+export function fetchDeviceStorageHistory(deviceId: string, hours = 24): Promise<{ buckets: HourlyStorageBucket[] }> {
+  return apiJson(`/v1/dashboard/devices/${encodeURIComponent(deviceId)}/storage-history?hours=${hours}`);
+}
+
+export function fetchDevices(): Promise<{ devices: DeviceRecord[] }> {
+  return apiJson('/v1/dashboard/devices');
+}
+
+export function createDevice(name: string, rootDir: string): Promise<{ ok: boolean; data: DeviceRecord }> {
+  return apiAction('/v1/dashboard/devices', { method: 'POST', body: JSON.stringify({ name, rootDir }) }, 'Device added');
+}
+
+export function updateDevice(id: string, patch: Partial<Pick<DeviceRecord, 'name' | 'rootDir' | 'enabled' | 'isPrimary'>>): Promise<{ ok: boolean; data: DeviceRecord }> {
+  return apiAction(`/v1/dashboard/devices/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) }, 'Device updated');
+}
+
+export function deleteDevice(id: string): Promise<{ ok: boolean }> {
+  return apiAction(`/v1/dashboard/devices/${encodeURIComponent(id)}`, { method: 'DELETE' }, 'Device removed');
+}
+
+export function fetchWatches(): Promise<{ watches: AppWatch[] }> {
+  return apiJson('/v1/dashboard/watches');
+}
+
+export interface WatchInput {
+  name?: string;
+  bundleId: string;
+  appRepo: string;
+  ghDispatchRepo: string;
+  ghWorkflowFile: string;
+  pollCron: string;
+  enabled?: boolean;
+}
+
+export function createWatch(input: WatchInput): Promise<{ ok: boolean; data: AppWatch }> {
+  return apiAction('/v1/dashboard/watches', { method: 'POST', body: JSON.stringify(input) }, 'Watch added');
+}
+
+export function updateWatch(id: string, patch: Partial<WatchInput>): Promise<{ ok: boolean; data: AppWatch }> {
+  return apiAction(`/v1/dashboard/watches/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) }, 'Watch updated');
+}
+
+export function deleteWatch(id: string): Promise<{ ok: boolean }> {
+  return apiAction(`/v1/dashboard/watches/${encodeURIComponent(id)}`, { method: 'DELETE' }, 'Watch removed');
+}
+
+export function previewWatchDispatch(id: string): Promise<UpdateCheck> {
+  return apiJson(`/v1/dashboard/watches/${encodeURIComponent(id)}/preview-dispatch`);
+}
+
+export function triggerWatchDispatch(id: string): Promise<{ ok: boolean; data: { ok: boolean; error?: string } }> {
+  return apiAction(`/v1/dashboard/watches/${encodeURIComponent(id)}/trigger-dispatch`, { method: 'POST' });
+}
+
+export interface WebhookDeliveryEntry {
+  id: string;
+  ts: number;
+  kind: 'scheduler' | 'job';
+  event: string;
+  targetHost: string;
+  ok: boolean;
+  status?: number;
+  error?: string;
+  durationMs: number;
+}
+
+export function fetchWebhookDeliveries(limit = 100): Promise<{ deliveries: WebhookDeliveryEntry[] }> {
+  return apiJson(`/v1/dashboard/webhooks?limit=${limit}`);
+}
+
+export interface JobDiffSide {
+  id: string;
+  versionLabel?: string;
+  sizeBytes?: number;
+  finishedAt: number;
+  metadata?: IpaMetadata;
+}
+
+export interface JobDiffResult {
+  a: JobDiffSide;
+  b: JobDiffSide;
+  sizeDeltaBytes: number;
+  plistDiff: { key: string; before: unknown; after: unknown }[];
+}
+
+export function fetchJobDiff(bundleId: string, a: string, b: string): Promise<JobDiffResult> {
+  return apiJson(`/v1/dashboard/jobs/diff?bundleId=${encodeURIComponent(bundleId)}&a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`);
 }
 
 export function fetchJobHistory(
@@ -510,6 +632,14 @@ export function bulkRevokeKeys(ids: string[]): Promise<{ ok: boolean; data: { re
   return apiAction('/v1/dashboard/keys/bulk-revoke', { method: 'POST', body: JSON.stringify({ ids }) }, 'Keys revoked');
 }
 
+export function bulkExtendKeyExpiry(ids: string[], days: number): Promise<{ ok: boolean; data: { extended: string[] } }> {
+  return apiAction('/v1/dashboard/keys/bulk-extend-expiry', { method: 'POST', body: JSON.stringify({ ids, days }) }, 'Expiry extended');
+}
+
+export function bulkSetKeyDailyLimit(ids: string[], dailyLimit: number | null): Promise<{ ok: boolean; data: { updated: string[] } }> {
+  return apiAction('/v1/dashboard/keys/bulk-set-daily-limit', { method: 'POST', body: JSON.stringify({ ids, dailyLimit }) }, 'Daily limit updated');
+}
+
 export function approveKey(id: string): Promise<{ ok: boolean }> {
   return apiAction(`/v1/dashboard/keys/${id}/approve`, { method: 'POST' }, 'Key approved');
 }
@@ -559,14 +689,6 @@ export interface UpdateCheck {
   wouldDispatch: boolean;
   reason: string;
   testflight?: TestFlightUpdateCheck;
-}
-
-export function previewDispatch(): Promise<UpdateCheck> {
-  return apiJson('/v1/dashboard/settings/preview-dispatch');
-}
-
-export function triggerDispatch(): Promise<{ ok: boolean; data: { ok: boolean; error?: string } }> {
-  return apiAction('/v1/dashboard/settings/trigger-dispatch', { method: 'POST' });
 }
 
 export function fetchUsers(): Promise<{ users: AllowedUser[] }> {

@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { Moon, Monitor, Rows2, Rows3, Sun } from 'lucide-svelte';
+  import { DropdownMenu } from 'bits-ui';
+  import { LogOut, Monitor, Moon, Rows2, Rows3, Sun, Volume2, VolumeX } from 'lucide-svelte';
   import { Toaster } from 'svelte-sonner';
   import AlertBanner from './components/AlertBanner.svelte';
   import CommandPalette from './components/CommandPalette.svelte';
@@ -12,7 +13,6 @@
   import ShortcutsHelp from './components/ShortcutsHelp.svelte';
   import Badge from './lib/components/ui/Badge.svelte';
   import Button from './lib/components/ui/Button.svelte';
-  import Dialog from './lib/components/ui/Dialog.svelte';
   import Tabs from './lib/components/ui/Tabs.svelte';
   import { buttonVariants } from './lib/components/ui/variants';
   import { KOFI_URL, REPO_URL } from './lib/constants';
@@ -24,6 +24,7 @@
     logoutEverywhere,
     PERMISSION_META,
     permissionsSummary,
+    pushAccentPref,
     pushDensityPref,
     pushThemePref,
     refreshSession,
@@ -32,16 +33,23 @@
   } from './lib/session.svelte';
   import { testPush } from './lib/api';
   import {
+    ACCENT_PRESETS,
+    accentState,
     confirmDialog,
     densityState,
+    initAccent,
     initDensity,
     initTheme,
+    initUrlTabSync,
     openHelp,
     openPalette,
+    setAccent,
     setActiveTab,
     setDensity,
+    setSoundEnabled,
     setTheme,
     showToast,
+    soundEnabledState,
     tabState,
     themePrefState,
     themeState,
@@ -57,11 +65,19 @@
 
   initTheme();
   initDensity();
+  initAccent();
+  initUrlTabSync();
 
   let homeRef: Home | undefined = $state();
   let loggingOut = $state(false);
   let loggingOutEverywhere = $state(false);
-  let myPermsOpen = $state(false);
+  let accountMenuOpen = $state(false);
+
+  const otherOnlineUsers = $derived(liveState.onlineUsers.filter((u) => u !== sessionState.sub));
+
+  function initials(name: string): string {
+    return name.slice(0, 2).toUpperCase();
+  }
 
   const myGrantedPermissions = $derived(
     PERMISSION_META.filter((f) => sessionState.permissions?.[f.key] && !f.impliedBy?.some((k) => sessionState.permissions?.[k])).map(
@@ -235,6 +251,11 @@
     setDensity(next);
     void pushDensityPref(next);
   }
+
+  function chooseAccent(id: string): void {
+    setAccent(id);
+    void pushAccentPref(id);
+  }
 </script>
 
 <svelte:window onkeydown={onKeydown} />
@@ -307,15 +328,122 @@
           {/if}
         </Button>
         <NotificationBell />
-        <button
-          type="button"
-          class="max-w-[40vw] cursor-pointer truncate text-[13px] text-muted hover:text-text sm:max-w-[55vw]"
-          onclick={() => (myPermsOpen = true)}
-          title="View your permissions"
-        >
-          {sessionState.sub} ({permissionsSummary(sessionState.permissions)})
-        </button>
-        <Button variant="secondary" size="sm" loading={loggingOut} onclick={doLogout}>Log out</Button>
+        <DropdownMenu.Root bind:open={accountMenuOpen}>
+          <DropdownMenu.Trigger
+            class="border-border hover:border-accent relative h-8 w-8 shrink-0 cursor-pointer overflow-hidden rounded-full border"
+            aria-label="Account menu"
+            title={sessionState.sub}
+          >
+            {#if sessionState.sub === 'root'}
+              <div class="bg-panel-muted text-muted flex h-full w-full items-center justify-center text-[11px] font-medium">
+                {initials(sessionState.sub)}
+              </div>
+            {:else}
+              <img src="https://github.com/{sessionState.sub}.png?size=64" alt="" class="h-full w-full object-cover" />
+            {/if}
+            {#if otherOnlineUsers.length > 0}
+              <span class="bg-ok border-panel absolute -right-0.5 -bottom-0.5 h-2.5 w-2.5 rounded-full border-2"></span>
+            {/if}
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Portal>
+            <DropdownMenu.Content
+              class="border-border bg-panel z-50 w-72 rounded-xl border p-3 shadow-2xl"
+              sideOffset={8}
+              align="end"
+            >
+              <div class="mb-1 truncate text-sm font-medium">{sessionState.sub}</div>
+              <div class="mb-3 text-xs text-muted">{permissionsSummary(sessionState.permissions)}</div>
+              {#if myGrantedPermissions.length > 0}
+                <div class="mb-3 flex flex-wrap gap-1.5">
+                  {#each myGrantedPermissions as label (label)}
+                    <Badge variant="default">{label}</Badge>
+                  {/each}
+                </div>
+              {/if}
+
+              {#if otherOnlineUsers.length > 0}
+                <div class="border-border mb-3 border-t pt-3">
+                  <div class="mb-1.5 text-[11px] text-muted">{otherOnlineUsers.length} other{otherOnlineUsers.length === 1 ? '' : 's'} online</div>
+                  <div class="flex flex-wrap gap-1">
+                    {#each otherOnlineUsers as u (u)}
+                      <Badge variant="secondary" title={u}>{u}</Badge>
+                    {/each}
+                  </div>
+                </div>
+              {/if}
+
+              <div class="border-border mb-3 border-t pt-3">
+                <div class="mb-1.5 flex items-center justify-between gap-3">
+                  <div class="text-[13px]">Job-completion sound</div>
+                  <Button
+                    variant="secondary"
+                    size="icon"
+                    onclick={() => setSoundEnabled(!soundEnabledState.value)}
+                    aria-label="Toggle job-completion sound"
+                    title={soundEnabledState.value ? 'Sound on - click to mute' : 'Sound off - click to enable'}
+                  >
+                    {#if soundEnabledState.value}
+                      <Volume2 class="h-4 w-4" />
+                    {:else}
+                      <VolumeX class="h-4 w-4" />
+                    {/if}
+                  </Button>
+                </div>
+                <div class="mb-1.5 text-[11px] text-muted">Accent color</div>
+                <div class="flex flex-wrap gap-1.5">
+                  {#each ACCENT_PRESETS as preset (preset.id)}
+                    <button
+                      type="button"
+                      class="h-5 w-5 cursor-pointer rounded-full border-2"
+                      style="background-color: {themeState.value === 'light' ? preset.light : preset.dark}; border-color: {accentState.value === preset.id ? 'var(--color-text)' : 'transparent'};"
+                      onclick={() => chooseAccent(preset.id)}
+                      aria-label="Accent: {preset.label}"
+                      title={preset.label}
+                    ></button>
+                  {/each}
+                </div>
+              </div>
+
+              <div class="border-border mb-3 border-t pt-3">
+                <div class="flex items-center justify-between gap-3">
+                  <div class="text-[13px]">Notifications</div>
+                  {#if notifPermission === 'granted' && pushEnabled}
+                    <Badge variant="success">Enabled</Badge>
+                  {:else if notifPermission === 'denied'}
+                    <Badge variant="destructive" title="Blocked by your browser - check site settings">Blocked</Badge>
+                  {:else if notifPermission === 'unsupported'}
+                    <Badge variant="secondary">Not supported</Badge>
+                  {:else}
+                    <Button size="sm" variant="secondary" loading={enablingPush} onclick={enableNotifications}>Enable</Button>
+                  {/if}
+                </div>
+                <div class="mt-1.5 text-xs text-muted">
+                  {#if pushSupported()}
+                    Get notified when your queued decrypts finish - even in a background tab, or with the browser closed entirely.
+                  {:else}
+                    Get notified when your queued decrypts finish, even in a background tab. Push (works with the browser closed) isn't supported here.
+                  {/if}
+                </div>
+                {#if notifPermission === 'granted' && pushEnabled}
+                  <div class="mt-2 flex gap-2">
+                    <Button size="sm" variant="secondary" loading={sendingTestPush} onclick={sendTestPush}>Send test</Button>
+                    <Button size="sm" variant="secondary" loading={enablingPush} onclick={disableNotifications}>Disable push</Button>
+                  </div>
+                {/if}
+              </div>
+
+              <div class="border-border flex flex-col gap-1.5 border-t pt-3">
+                <Button variant="secondary" size="sm" class="w-full justify-start" loading={loggingOut} onclick={doLogout}>
+                  <LogOut class="h-3.5 w-3.5" />
+                  Log out
+                </Button>
+                <Button variant="destructive" size="sm" class="w-full" loading={loggingOutEverywhere} onclick={doLogoutEverywhere}>
+                  Log out everywhere
+                </Button>
+              </div>
+            </DropdownMenu.Content>
+          </DropdownMenu.Portal>
+        </DropdownMenu.Root>
       </div>
     </header>
     <main class="mx-auto max-w-[1680px] px-4 py-6 lg:px-6">
@@ -354,50 +482,3 @@
 <ConfirmModal />
 <CommandPalette />
 <ShortcutsHelp />
-
-<Dialog open={myPermsOpen} onOpenChange={(v) => (myPermsOpen = v)} class="max-w-sm">
-  <div class="mb-3 text-sm font-medium">Your permissions</div>
-  <div class="mb-3 text-xs text-muted">Signed in as {sessionState.sub}</div>
-  {#if myGrantedPermissions.length === 0}
-    <div class="text-sm text-muted">Read-only - no permissions granted yet.</div>
-  {:else}
-    <div class="flex flex-wrap gap-1.5">
-      {#each myGrantedPermissions as label (label)}
-        <Badge variant="default">{label}</Badge>
-      {/each}
-    </div>
-  {/if}
-  <div class="border-border mt-4 border-t pt-4">
-    <div class="flex items-center justify-between gap-3">
-      <div class="text-[13px]">Notifications</div>
-      {#if notifPermission === 'granted' && pushEnabled}
-        <Badge variant="success">Enabled</Badge>
-      {:else if notifPermission === 'denied'}
-        <Badge variant="destructive" title="Blocked by your browser - check site settings">Blocked</Badge>
-      {:else if notifPermission === 'unsupported'}
-        <Badge variant="secondary">Not supported</Badge>
-      {:else}
-        <Button size="sm" variant="secondary" loading={enablingPush} onclick={enableNotifications}>Enable</Button>
-      {/if}
-    </div>
-    <div class="mt-1.5 text-xs text-muted">
-      {#if pushSupported()}
-        Get notified when your queued decrypts finish - even in a background tab, or with the browser closed entirely.
-      {:else}
-        Get notified when your queued decrypts finish, even in a background tab. Push (works with the browser closed) isn't supported here.
-      {/if}
-    </div>
-    {#if notifPermission === 'granted' && pushEnabled}
-      <div class="mt-2 flex gap-2">
-        <Button size="sm" variant="secondary" loading={sendingTestPush} onclick={sendTestPush}>Send test</Button>
-        <Button size="sm" variant="secondary" loading={enablingPush} onclick={disableNotifications}>Disable push</Button>
-      </div>
-    {/if}
-  </div>
-  <div class="border-border mt-4 border-t pt-4">
-    <Button variant="destructive" size="sm" class="w-full" loading={loggingOutEverywhere} onclick={doLogoutEverywhere}>
-      Log out everywhere
-    </Button>
-    <div class="mt-1.5 text-xs text-muted">Signs out every session for {sessionState.sub}, including this one.</div>
-  </div>
-</Dialog>

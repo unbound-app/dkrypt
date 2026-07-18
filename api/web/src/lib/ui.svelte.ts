@@ -1,4 +1,5 @@
 import { toast } from 'svelte-sonner';
+import { getQueryParam, setQueryParams } from './urlState';
 
 export type Theme = 'dark' | 'light';
 export type ThemePref = Theme | 'auto';
@@ -28,6 +29,7 @@ export function setTheme(pref: ThemePref): void {
   const resolved = pref === 'auto' ? systemTheme() : pref;
   themeState.value = resolved;
   document.documentElement.setAttribute('data-theme', resolved);
+  applyAccent(accentState.value);
 }
 
 export function initTheme(): void {
@@ -38,7 +40,51 @@ export function initTheme(): void {
     const resolved = systemTheme();
     themeState.value = resolved;
     document.documentElement.setAttribute('data-theme', resolved);
+    applyAccent(accentState.value);
   });
+}
+
+export interface AccentPreset {
+  id: string;
+  label: string;
+  dark: string;
+  light: string;
+}
+
+// White --color-accent-contrast (set in app.css) needs to stay legible against every preset here -
+// avoid pale/yellow hues that would need a dark contrast color instead.
+export const ACCENT_PRESETS: AccentPreset[] = [
+  { id: 'blue', label: 'Blue', dark: '#5b8cff', light: '#3b66d6' },
+  { id: 'teal', label: 'Teal', dark: '#2dd4bf', light: '#0d9488' },
+  { id: 'purple', label: 'Purple', dark: '#a78bfa', light: '#7c3aed' },
+  { id: 'pink', label: 'Pink', dark: '#f472b6', light: '#db2777' },
+  { id: 'orange', label: 'Orange', dark: '#fb923c', light: '#ea580c' },
+  { id: 'green', label: 'Green', dark: '#4ade80', light: '#16a34a' },
+];
+
+function readStoredAccent(): string {
+  const stored = localStorage.getItem('accent');
+  return stored && ACCENT_PRESETS.some((p) => p.id === stored) ? stored : 'blue';
+}
+
+export const accentState = $state<{ value: string }>({ value: readStoredAccent() });
+
+// --color-accent is theme-scoped in app.css ([data-theme='dark'/'light'] { --color-accent: ... })
+// - an inline style on the root element outranks both, so it has to be kept in sync with the
+// resolved theme itself (see the two applyAccent() calls above) rather than set once.
+function applyAccent(id: string): void {
+  const preset = ACCENT_PRESETS.find((p) => p.id === id) ?? ACCENT_PRESETS[0];
+  document.documentElement.style.setProperty('--color-accent', themeState.value === 'light' ? preset.light : preset.dark);
+}
+
+export function setAccent(id: string): void {
+  accentState.value = id;
+  localStorage.setItem('accent', id);
+  applyAccent(id);
+}
+
+export function initAccent(): void {
+  applyAccent(accentState.value);
 }
 
 export type Density = 'comfortable' | 'compact';
@@ -57,6 +103,14 @@ export function setDensity(density: Density): void {
 
 export function initDensity(): void {
   document.documentElement.setAttribute('data-density', densityState.value);
+}
+
+// Defaults off - an existing install shouldn't suddenly start making noise after an upgrade.
+export const soundEnabledState = $state<{ value: boolean }>({ value: localStorage.getItem('soundEnabled') === 'true' });
+
+export function setSoundEnabled(enabled: boolean): void {
+  soundEnabledState.value = enabled;
+  localStorage.setItem('soundEnabled', String(enabled));
 }
 
 export interface ToastHistoryEntry {
@@ -97,9 +151,14 @@ export function clearToastHistory(): void {
 // immediate result of something the user just clicked (Queued X, Settings saved, Key created) -
 // they're already looking right at it, so re-surfacing it as an "unread notification" later is
 // just noise. Errors default to tracked since they're worth being able to review after the fact.
-export function showToast(message: string, type: 'success' | 'error' = 'success', options?: { track?: boolean }): void {
-  if (type === 'error') toast.error(message);
-  else toast.success(message);
+export function showToast(
+  message: string,
+  type: 'success' | 'error' = 'success',
+  options?: { track?: boolean; action?: { label: string; onClick: () => void } },
+): void {
+  const toastOptions = options?.action ? { action: options.action } : undefined;
+  if (type === 'error') toast.error(message, toastOptions);
+  else toast.success(message, toastOptions);
 
   const track = options?.track ?? type === 'error';
   if (!track) return;
@@ -186,19 +245,40 @@ export function requestOpenBatch(): void {
 
 export type TabId = 'home' | 'keys' | 'logs' | 'insights' | 'docs' | 'settings';
 
+const VALID_TAB_IDS: TabId[] = ['home', 'keys', 'logs', 'insights', 'docs', 'settings'];
+
+function readInitialTab(): TabId {
+  const fromUrl = getQueryParam('tab');
+  if (fromUrl && VALID_TAB_IDS.includes(fromUrl as TabId)) return fromUrl as TabId;
+  return (localStorage.getItem('activeTab') as TabId | null) ?? 'home';
+}
+
 export const tabState = $state<{ active: TabId; settingsSubtab: string }>({
-  active: (localStorage.getItem('activeTab') as TabId | null) ?? 'home',
-  settingsSubtab: localStorage.getItem('activeSettingsSubtab') ?? 'scheduler',
+  active: readInitialTab(),
+  settingsSubtab: getQueryParam('stab') ?? localStorage.getItem('activeSettingsSubtab') ?? 'scheduler',
 });
 
 export function setActiveTab(tab: TabId): void {
   tabState.active = tab;
   localStorage.setItem('activeTab', tab);
+  setQueryParams({ tab, stab: tab === 'settings' ? tabState.settingsSubtab : undefined });
   window.scrollTo(0, 0);
 }
 
 export function setSettingsSubtab(subtab: string): void {
   tabState.settingsSubtab = subtab;
   localStorage.setItem('activeSettingsSubtab', subtab);
+  setQueryParams({ stab: subtab });
   window.scrollTo(0, 0);
+}
+
+// Follows external navigation (typing a URL, hitting back/forward, opening a shared link) - the
+// app itself only ever uses replaceState, so this only fires for navigation it didn't cause.
+export function initUrlTabSync(): void {
+  window.addEventListener('popstate', () => {
+    const tab = getQueryParam('tab');
+    if (tab && VALID_TAB_IDS.includes(tab as TabId) && tab !== tabState.active) tabState.active = tab as TabId;
+    const stab = getQueryParam('stab');
+    if (stab && stab !== tabState.settingsSubtab) tabState.settingsSubtab = stab;
+  });
 }

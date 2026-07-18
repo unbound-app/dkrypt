@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { cancelJob, fetchJobHistory, fetchMyKeys, jobHistoryExportUrl, triggerDispatch } from '../lib/api';
+  import { cancelJob, fetchJobHistory, fetchMyKeys, jobHistoryExportUrl, triggerWatchDispatch } from '../lib/api';
   import { logout, sessionState } from '../lib/session.svelte';
   import {
     closePalette,
@@ -49,8 +49,8 @@
     await Promise.all(jobs.map((j) => cancelJob(j.id)));
   }
 
-  async function runTriggerDispatch(): Promise<void> {
-    const { ok, data } = await triggerDispatch();
+  async function runTriggerWatchDispatch(watchId: string): Promise<void> {
+    const { ok, data } = await triggerWatchDispatch(watchId);
     if (ok) showToast('Dispatch check triggered - watch Active Jobs / Logs for progress', 'success');
     else showToast(data.error ?? 'Failed to trigger', 'error');
   }
@@ -90,7 +90,15 @@
       }
     }
     if (sessionState.permissions?.triggerDispatch) {
-      base.push({ id: 'trigger-dispatch', label: 'Trigger scheduler dispatch now', run: () => void runTriggerDispatch() });
+      for (const w of liveState.overview?.watches ?? []) {
+        if (!w.schedulable) continue;
+        base.push({
+          id: `trigger-dispatch-${w.id}`,
+          label: `Trigger dispatch now: ${w.name ?? w.bundleId}`,
+          keywords: w.bundleId,
+          run: () => void runTriggerWatchDispatch(w.id),
+        });
+      }
     }
     base.push({ id: 'export-history-csv', label: 'Export job history as CSV', run: () => window.open(jobHistoryExportUrl('csv'), '_blank') });
     base.push({ id: 'export-history-json', label: 'Export job history as JSON', run: () => window.open(jobHistoryExportUrl('json'), '_blank') });

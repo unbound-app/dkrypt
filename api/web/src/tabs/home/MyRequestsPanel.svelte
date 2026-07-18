@@ -19,7 +19,8 @@
     type TrackedDecrypt,
   } from '../../lib/decrypts.svelte';
   import { notifyJobFinished } from '../../lib/notifications';
-  import { confirmDialog, showToast } from '../../lib/ui.svelte';
+  import { playChime } from '../../lib/sound';
+  import { showToast, soundEnabledState } from '../../lib/ui.svelte';
 
   let pollTimer: ReturnType<typeof setTimeout> | undefined;
   let retrying = $state<Set<string>>(new Set());
@@ -39,6 +40,7 @@
             data.status === 'done' ? 'Decrypt finished' : 'Decrypt failed',
             data.status === 'done' ? `${label} is ready to download.` : `${label} failed: ${data.error ?? 'unknown error'}`,
           );
+          if (soundEnabledState.value) playChime();
         }
         updateDecrypt(d.id, { status: data.status, progress: data.progress, queue: data.queue, error: data.error });
       } catch {}
@@ -110,19 +112,12 @@
     }
   }
 
-  async function dismiss(d: TrackedDecrypt): Promise<void> {
-    if (d.status === 'done' || d.status === 'failed') {
-      dismissDecrypt(d.id);
-      return;
-    }
-    if (
-      !(await confirmDialog('This just hides it here - the decrypt keeps running. Dismiss?', {
-        variant: 'default',
-        confirmLabel: 'Dismiss',
-      }))
-    )
-      return;
+  // Dismiss only ever touches local myDecryptsState (the job itself keeps running server-side
+  // either way, even for a still-in-flight one) - trivially and fully reversible, so an undo
+  // toast replaces what used to be a confirm-dialog gate for the still-running case.
+  function dismiss(d: TrackedDecrypt): void {
     dismissDecrypt(d.id);
+    showToast('Dismissed', 'success', { action: { label: 'Undo', onClick: () => addDecrypt(d) } });
   }
 
   let highlightedId = $state<string | null>(null);

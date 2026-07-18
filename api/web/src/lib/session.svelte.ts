@@ -1,4 +1,4 @@
-import { densityState, setDensity, setTheme, themePrefState, type Density, type ThemePref } from './ui.svelte';
+import { accentState, densityState, setAccent, setDensity, setTheme, themePrefState, type Density, type ThemePref } from './ui.svelte';
 
 export interface Permissions {
   decrypt: boolean;
@@ -158,9 +158,10 @@ export async function refreshSession(): Promise<SessionInfo> {
 async function syncThemeFromServer(): Promise<void> {
   const res = await fetch('/v1/dashboard/me/prefs');
   if (!res.ok) return;
-  const prefs = (await res.json()) as { theme?: ThemePref; density?: Density };
+  const prefs = (await res.json()) as { theme?: ThemePref; density?: Density; accent?: string };
   if (prefs.theme && prefs.theme !== themePrefState.value) setTheme(prefs.theme);
   if (prefs.density && prefs.density !== densityState.value) setDensity(prefs.density);
+  if (prefs.accent && prefs.accent !== accentState.value) setAccent(prefs.accent);
 }
 
 export async function pushThemePref(theme: ThemePref): Promise<void> {
@@ -178,6 +179,15 @@ export async function pushDensityPref(density: Density): Promise<void> {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ density }),
+  });
+}
+
+export async function pushAccentPref(accent: string): Promise<void> {
+  if (!sessionState.loggedIn) return;
+  await fetch('/v1/dashboard/me/prefs', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ accent }),
   });
 }
 

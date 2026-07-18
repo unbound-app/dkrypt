@@ -180,6 +180,11 @@
     void runSearch(bundleId);
   }
 
+  function removeRecent(bundleId: string): void {
+    removeRecentBundleId(bundleId);
+    showToast('Removed from recents', 'success', { action: { label: 'Undo', onClick: () => pushRecentBundleId(bundleId) } });
+  }
+
   // Starred apps already carry the full search result - no need to re-run a live search, just
   // show that one row directly so Decrypt/Version/TestFlight are immediately clickable.
   function showStarredApp(app: AppStoreSearchResult): void {
@@ -254,7 +259,7 @@
           <button class="cursor-pointer" onclick={() => pickRecent(bundleId)}>{bundleId}</button>
           <button
             class="text-muted hover:text-err cursor-pointer rounded-full p-0.5"
-            onclick={() => removeRecentBundleId(bundleId)}
+            onclick={() => removeRecent(bundleId)}
             aria-label="Remove {bundleId} from recents"
             title="Remove from recents"
           >

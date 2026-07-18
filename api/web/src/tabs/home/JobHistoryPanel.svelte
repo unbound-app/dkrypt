@@ -13,16 +13,15 @@
   import Input from '../../lib/components/ui/Input.svelte';
   import { buttonVariants, statusToBadgeVariant } from '../../lib/components/ui/variants';
   import { addDecrypt, pushRecentBundleId } from '../../lib/decrypts.svelte';
-  import { loadFilterPresets, saveFilterPresets } from '../../lib/filterPresets';
   import { csvCell, debounce, downloadBlob, fmtSize } from '../../lib/format';
   import { liveState } from '../../lib/live.svelte';
   import { scrollFade } from '../../lib/scrollFade';
+  import { createSavedViews } from '../../lib/savedViews.svelte';
   import { sessionState } from '../../lib/session.svelte';
-  import { confirmDialog, historyJumpState, showToast } from '../../lib/ui.svelte';
+  import { confirmDialog, historyJumpState, showToast, tabState } from '../../lib/ui.svelte';
+  import { getQueryParam, setQueryParams } from '../../lib/urlState';
 
   const PAGE_SIZE = 15;
-  const PRESETS_KEY = 'jobHistoryFilterPresets';
-  const MAX_PRESETS = 10;
 
   type SourceFilter = 'all' | 'manual' | 'scheduler';
   type StatusFilter = 'all' | 'done' | 'failed';
@@ -40,13 +39,13 @@
   let loadingMore = $state(false);
   let seenIds = new Set<string>();
   let requeueing = $state<Set<string>>(new Set());
-  let searchText = $state(localStorage.getItem('jobHistorySearchText') ?? '');
+  let searchText = $state(getQueryParam('hq') ?? localStorage.getItem('jobHistorySearchText') ?? '');
   let activeQuery = $state('');
-  let sourceFilter = $state<SourceFilter>((localStorage.getItem('jobHistorySourceFilter') as SourceFilter | null) ?? 'all');
-  let statusFilter = $state<StatusFilter>((localStorage.getItem('jobHistoryStatusFilter') as StatusFilter | null) ?? 'all');
+  let sourceFilter = $state<SourceFilter>((getQueryParam('hsource') as SourceFilter | undefined) ?? (localStorage.getItem('jobHistorySourceFilter') as SourceFilter | null) ?? 'all');
+  let statusFilter = $state<StatusFilter>((getQueryParam('hstatus') as StatusFilter | undefined) ?? (localStorage.getItem('jobHistoryStatusFilter') as StatusFilter | null) ?? 'all');
   let selected = $state<Set<string>>(new Set());
   let bulkRequeueing = $state(false);
-  let presets = $state<FilterPreset[]>(loadFilterPresets<FilterPreset>(PRESETS_KEY));
+  const savedViews = createSavedViews<FilterPreset>('jobHistoryFilterPresets');
   let newPresetName = $state('');
 
   function applyPreset(p: FilterPreset): void {
@@ -58,16 +57,18 @@
   function savePreset(): void {
     const name = newPresetName.trim();
     if (!name) return;
-    const preset: FilterPreset = { name, query: searchText.trim(), source: sourceFilter, status: statusFilter };
-    presets = [...presets.filter((p) => p.name !== name), preset].slice(-MAX_PRESETS);
-    saveFilterPresets(PRESETS_KEY, presets);
+    savedViews.save({ name, query: searchText.trim(), source: sourceFilter, status: statusFilter });
     newPresetName = '';
   }
 
   function removePreset(name: string): void {
-    presets = presets.filter((p) => p.name !== name);
-    saveFilterPresets(PRESETS_KEY, presets);
+    savedViews.remove(name);
   }
+
+  $effect(() => {
+    if (tabState.active !== 'home') return;
+    setQueryParams({ hq: searchText.trim() || undefined, hsource: sourceFilter === 'all' ? undefined : sourceFilter, hstatus: statusFilter === 'all' ? undefined : statusFilter });
+  });
 
   function matchesFilters(h: JobHistoryEntry): boolean {
     return (
@@ -314,7 +315,7 @@
   </div>
 
   <div class="mb-3 flex flex-wrap items-center gap-1.5">
-    {#each presets as p (p.name)}
+    {#each savedViews.presets as p (p.name)}
       <span class="border-border text-muted hover:text-text hover:border-accent inline-flex items-center gap-1 rounded-full border pr-1 pl-2.5 py-1 text-[12px]">
         <button class="cursor-pointer" onclick={() => applyPreset(p)}>{p.name}</button>
         <button
