@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
+import path from 'node:path';
 import { Client } from 'ssh2';
-import { config } from './config.js';
 import { scopedLogger } from './logger.js';
 
 const log = scopedLogger('idevice');
@@ -26,26 +26,38 @@ interface RawIpadecryptConfig {
   };
 }
 
-let cachedAuth: DeviceAuth | undefined;
+// Keyed by device root dir (the ipadecrypt --root-dir a device was bootstrapped against) so
+// each registered device's connection info is cached and invalidated independently.
+const authCache = new Map<string, DeviceAuth>();
 
-async function loadDeviceAuth(): Promise<DeviceAuth> {
-  if (cachedAuth) return cachedAuth;
-  const raw = JSON.parse(await readFile(config.ipadecryptConfigPath, 'utf8')) as RawIpadecryptConfig;
+async function loadDeviceAuth(rootDir: string): Promise<DeviceAuth> {
+  const cached = authCache.get(rootDir);
+  if (cached) return cached;
+  const configPath = path.join(rootDir, 'config.json');
+  const raw = JSON.parse(await readFile(configPath, 'utf8')) as RawIpadecryptConfig;
   const device = raw.device;
   if (!device?.host || !device.port || !device.user || !device.auth?.keyPath) {
-    throw new Error('ipadecrypt config is missing device connection info (host/port/user/auth.keyPath)');
+    throw new Error(`ipadecrypt config at ${configPath} is missing device connection info (host/port/user/auth.keyPath)`);
   }
-  cachedAuth = { host: device.host, port: device.port, user: device.user, keyPath: device.auth.keyPath };
-  return cachedAuth;
+  const auth: DeviceAuth = { host: device.host, port: device.port, user: device.user, keyPath: device.auth.keyPath };
+  authCache.set(rootDir, auth);
+  return auth;
 }
 
-export async function withSSH<T>(fn: (conn: Client) => Promise<T>): Promise<T> {
-  const auth = await loadDeviceAuth();
+// Throws if the given root dir's config.json can't be read or is missing device connection
+// info - used to validate a device's root dir before it's accepted into the dashboard.
+export async function validateDeviceRootDir(rootDir: string): Promise<void> {
+  authCache.delete(rootDir);
+  await loadDeviceAuth(rootDir);
+}
+
+export async function withSSH<T>(rootDir: string, fn: (conn: Client) => Promise<T>): Promise<T> {
+  const auth = await loadDeviceAuth(rootDir);
   let privateKey: Buffer;
   try {
     privateKey = await readFile(auth.keyPath);
   } catch (err) {
-    cachedAuth = undefined;
+    authCache.delete(rootDir);
     throw err;
   }
   const conn = new Client();
@@ -57,7 +69,7 @@ export async function withSSH<T>(fn: (conn: Client) => Promise<T>): Promise<T> {
     });
     return await fn(conn);
   } catch (err) {
-    cachedAuth = undefined;
+    authCache.delete(rootDir);
     throw err;
   } finally {
     conn.end();

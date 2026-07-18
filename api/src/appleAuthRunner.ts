@@ -1,9 +1,10 @@
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 import { config } from './config.js';
 import { emitAppleAuthChanged } from './events.js';
 import { log } from './logger.js';
-import { clearAppleAuthAlert, setAppleAuthAlert } from './store/state.js';
+import { clearAppleAuthAlert, getPrimaryDevice, setAppleAuthAlert } from './store/state.js';
 
 interface RunnerState {
   child: ChildProcessWithoutNullStreams;
@@ -56,9 +57,10 @@ function lastLines(state: RunnerState, n: number): string[] {
 }
 
 function clearAppleFieldsInConfig(): void {
-  const raw = JSON.parse(readFileSync(config.ipadecryptConfigPath, 'utf8')) as Record<string, unknown>;
+  const configPath = path.join(getPrimaryDevice().rootDir, 'config.json');
+  const raw = JSON.parse(readFileSync(configPath, 'utf8')) as Record<string, unknown>;
   raw.apple = {};
-  writeFileSync(config.ipadecryptConfigPath, JSON.stringify(raw, null, 2));
+  writeFileSync(configPath, JSON.stringify(raw, null, 2));
 }
 
 export function isAppleAuthRunning(): boolean {
@@ -78,7 +80,7 @@ export function getAppleAuthStatus() {
 export function startAppleReauth(): void {
   if (isAppleAuthRunning()) throw new Error('a re-authentication is already running');
 
-  const child = spawn(config.ipadecryptBin, ['bootstrap'], { stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(config.ipadecryptBin, ['--root-dir', getPrimaryDevice().rootDir, 'bootstrap'], { stdio: ['pipe', 'pipe', 'pipe'] });
   const state: RunnerState = { child, headLines: [], recentLines: [], totalLineCount: 0, waitingForInput: false, finished: false, lastEmitAt: 0 };
   current = state;
   emitAppleAuthChanged();

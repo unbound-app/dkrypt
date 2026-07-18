@@ -1,14 +1,26 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { randomUUID } from 'node:crypto';
+import { describe, expect, test } from 'bun:test';
 import {
   addAllowedUser,
+  createDevice,
+  createWatch,
+  deleteDevice,
+  deleteWatch,
   exportBackup,
+  getAllJobHistory,
   getDeviceHealthHourlyBuckets,
   getDeviceUptimePercent,
-  getSchedulerConfigIssues,
+  getEffectiveDevices,
+  getWatchConfigIssues,
+  getWebhookDeliveryLog,
   importBackup,
   listAllowedUsers,
   recordDeviceHealthCheck,
+  recordJobHistory,
+  recordWebhookDelivery,
+  updateDevice,
   updateSettings,
+  updateWatch,
   VIEWER_PERMISSIONS,
 } from './state.js';
 
@@ -17,7 +29,7 @@ describe('exportBackup / importBackup', () => {
     addAllowedUser('roundtrip-user', { ...VIEWER_PERMISSIONS, decrypt: true }, 'tester');
     const backup = exportBackup();
 
-    expect(backup.backupVersion).toBe(1);
+    expect(backup.backupVersion).toBe(2);
     expect(backup.allowedUsers.some((u) => u.username === 'roundtrip-user')).toBe(true);
 
     const result = importBackup(backup, 'tester');
@@ -67,18 +79,17 @@ describe('exportBackup / importBackup', () => {
   });
 });
 
-describe('getSchedulerConfigIssues', () => {
-  afterEach(() => {
-    updateSettings({ watchBundleId: '', watchAppRepo: '', ghDispatchRepo: '' });
+describe('getWatchConfigIssues', () => {
+  test('reports nothing for a fully unconfigured watch', () => {
+    expect(getWatchConfigIssues({ id: 'x', bundleId: '', appRepo: '', ghDispatchRepo: '', ghWorkflowFile: '', pollCron: '', enabled: true, createdAt: 0, updatedAt: 0 })).toEqual([]);
   });
 
-  test('reports nothing when the scheduler is intentionally left unconfigured', () => {
-    expect(getSchedulerConfigIssues()).toEqual([]);
-  });
-
-  test('flags a partially-filled config as a likely mistake', () => {
-    updateSettings({ watchBundleId: 'com.example.app', watchAppRepo: '', ghDispatchRepo: '' });
-    const issues = getSchedulerConfigIssues();
+  test('flags a partially-filled watch as a likely mistake', () => {
+    const { watch } = createWatch(
+      { bundleId: 'com.example.app', appRepo: '', ghDispatchRepo: '', ghWorkflowFile: '', pollCron: '0 * * * *' },
+      'tester',
+    );
+    const issues = getWatchConfigIssues(watch!);
     expect(issues.length).toBe(1);
     expect(issues[0]).toMatch(/partially configured/);
     expect(issues[0]).toMatch(/watch app repo/);
@@ -86,30 +97,132 @@ describe('getSchedulerConfigIssues', () => {
 
   test('flags a missing GH_TOKEN once all three repo fields are set', () => {
     // test/setup.ts never sets GH_TOKEN, so config.ghToken is '' here.
-    updateSettings({ watchBundleId: 'com.example.app', watchAppRepo: 'me/app', ghDispatchRepo: 'me/dispatch' });
-    const issues = getSchedulerConfigIssues();
+    const { watch } = createWatch(
+      { bundleId: 'com.example.app2', appRepo: 'me/app', ghDispatchRepo: 'me/dispatch', ghWorkflowFile: '', pollCron: '0 * * * *' },
+      'tester',
+    );
+    const issues = getWatchConfigIssues(watch!);
     expect(issues.some((i) => i.includes('GH_TOKEN'))).toBe(true);
+  });
+});
+
+describe('watch CRUD', () => {
+  test('rejects a second enabled watch targeting the same bundle ID', () => {
+    const first = createWatch(
+      { bundleId: 'com.example.collide', appRepo: 'me/app', ghDispatchRepo: 'me/dispatch', ghWorkflowFile: '', pollCron: '0 * * * *' },
+      'tester',
+    );
+    expect(first.ok).toBe(true);
+
+    const second = createWatch(
+      { bundleId: 'com.example.collide', appRepo: 'me/app2', ghDispatchRepo: 'me/dispatch2', ghWorkflowFile: '', pollCron: '0 * * * *' },
+      'tester',
+    );
+    expect(second.ok).toBe(false);
+    expect(second.error).toMatch(/already targets/);
+
+    // A disabled watch on the same bundle ID is fine - only *enabled* watches can't collide.
+    const disabled = createWatch(
+      { bundleId: 'com.example.collide', appRepo: 'me/app3', ghDispatchRepo: 'me/dispatch3', ghWorkflowFile: '', pollCron: '0 * * * *', enabled: false },
+      'tester',
+    );
+    expect(disabled.ok).toBe(true);
+
+    deleteWatch(first.watch!.id, 'tester');
+    deleteWatch(disabled.watch!.id, 'tester');
+  });
+
+  test('updateWatch still enforces the collision rule against other enabled watches', () => {
+    const a = createWatch({ bundleId: 'com.example.a', appRepo: '', ghDispatchRepo: '', ghWorkflowFile: '', pollCron: '0 * * * *' }, 'tester');
+    const b = createWatch({ bundleId: 'com.example.b', appRepo: '', ghDispatchRepo: '', ghWorkflowFile: '', pollCron: '0 * * * *' }, 'tester');
+    expect(a.ok && b.ok).toBe(true);
+
+    const result = updateWatch(b.watch!.id, { bundleId: 'com.example.a' }, 'tester');
+    expect(result.ok).toBe(false);
+
+    deleteWatch(a.watch!.id, 'tester');
+    deleteWatch(b.watch!.id, 'tester');
+  });
+});
+
+describe('device CRUD primary invariant', () => {
+  test('exactly one enabled device stays primary through add/update/delete', () => {
+    // getEffectiveDevices() always implies at least one device (env-var-backed 'default'), so the
+    // very first explicit createDevice() call materializes THAT as primary first, and the newly
+    // added device joins as non-primary - this is what keeps an existing single-device install's
+    // primary device stable the moment someone adds a second one, rather than silently reassigning it.
+    const a = createDevice({ name: 'device-a', rootDir: '/tmp/device-a' }, 'tester');
+    expect(a.isPrimary).toBeFalsy();
+    expect(getEffectiveDevices().find((d) => d.id === 'default')?.isPrimary).toBe(true);
+
+    const b = createDevice({ name: 'device-b', rootDir: '/tmp/device-b' }, 'tester');
+    expect(b.isPrimary).toBeFalsy();
+
+    updateDevice(b.id, { isPrimary: true }, 'tester');
+    const afterPromote = getEffectiveDevices();
+    expect(afterPromote.find((d) => d.id === 'default')?.isPrimary).toBeFalsy();
+    expect(afterPromote.find((d) => d.id === a.id)?.isPrimary).toBeFalsy();
+    expect(afterPromote.find((d) => d.id === b.id)?.isPrimary).toBe(true);
+
+    // Deleting the primary device promotes the next enabled one rather than leaving zero primaries.
+    deleteDevice(b.id, 'tester');
+    expect(getEffectiveDevices().some((d) => d.isPrimary)).toBe(true);
+
+    deleteDevice(a.id, 'tester');
+    deleteDevice('default', 'tester');
+  });
+});
+
+describe('job history retention', () => {
+  test('jobHistoryRetentionDays filters out entries older than the window on the next write', () => {
+    updateSettings({ jobHistoryRetentionDays: 1 });
+    try {
+      const old = { id: randomUUID(), bundleId: 'com.example.old', status: 'done' as const, source: 'manual' as const, createdAt: 0, finishedAt: Date.now() - 2 * 86_400_000 };
+      recordJobHistory(old);
+      const fresh = { id: randomUUID(), bundleId: 'com.example.fresh', status: 'done' as const, source: 'manual' as const, createdAt: Date.now(), finishedAt: Date.now() };
+      recordJobHistory(fresh);
+
+      // The stale entry was purged by the write that added the fresh one, not just excluded from a query.
+      const all = getAllJobHistory();
+      expect(all.some((e) => e.id === old.id)).toBe(false);
+      expect(all.some((e) => e.id === fresh.id)).toBe(true);
+    } finally {
+      updateSettings({ jobHistoryRetentionDays: 0 });
+    }
+  });
+});
+
+describe('webhook delivery log', () => {
+  test('records deliveries newest-first and exposes kind/event/targetHost', () => {
+    recordWebhookDelivery({ kind: 'scheduler', event: 'dispatchSuccess', targetHost: 'discord.com', ok: true, status: 200, durationMs: 12 });
+    recordWebhookDelivery({ kind: 'job', event: 'job.completed', targetHost: 'example.com', ok: false, error: 'timeout', durationMs: 500 });
+
+    const log = getWebhookDeliveryLog(2);
+    expect(log[0].kind).toBe('job');
+    expect(log[0].ok).toBe(false);
+    expect(log[1].kind).toBe('scheduler');
+    expect(log[1].targetHost).toBe('discord.com');
   });
 });
 
 describe('device health history', () => {
   test('returns undefined uptime before any check has ever been recorded', () => {
-    expect(getDeviceUptimePercent(24)).toBeUndefined();
+    expect(getDeviceUptimePercent('unused-device')).toBeUndefined();
   });
 
   test('buckets checks by hour and computes an overall uptime percent', () => {
-    recordDeviceHealthCheck(true);
-    recordDeviceHealthCheck(true);
-    recordDeviceHealthCheck(false);
+    recordDeviceHealthCheck('device-a', true);
+    recordDeviceHealthCheck('device-a', true);
+    recordDeviceHealthCheck('device-a', false);
 
     // Which of the two hourly buckets the checks land in depends on where "now" falls relative to
     // the hour boundary, so only assert the bucket structure here - getDeviceUptimePercent below
     // filters by raw timestamp instead of a bucket index, which is what's actually load-bearing.
-    const buckets = getDeviceHealthHourlyBuckets(2);
+    const buckets = getDeviceHealthHourlyBuckets('device-a', 2);
     expect(buckets).toHaveLength(2);
     expect(buckets.some((b) => b.reachablePercent !== null)).toBe(true);
 
-    const uptime = getDeviceUptimePercent(2);
+    const uptime = getDeviceUptimePercent('device-a', 2);
     expect(uptime).toBeCloseTo(2 / 3);
   });
 });

@@ -26,6 +26,9 @@ export interface Job {
   childProcess?: ChildProcess;
   filePath?: string;
   fileSizeBytes?: number;
+  deviceId?: string;
+  ipaMetadata?: { bundleVersion?: string; shortVersion?: string; minOsVersion?: string; executable?: string };
+  ipaInfoPlist?: Record<string, unknown>;
   createdAt: number;
   startedAt?: number;
   finishedAt?: number;

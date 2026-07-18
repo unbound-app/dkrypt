@@ -32,7 +32,7 @@ export const config = {
 
   ipadecryptBin: optional('IPADECRYPT_BIN', 'ipadecrypt'),
   outputDir: optional('OUTPUT_DIR', '/data/tmp'),
-  ipadecryptConfigPath: optional('IPADECRYPT_CONFIG_PATH', '/root/.ipadecrypt/config.json'),
+  ipadecryptRootDir: optional('IPADECRYPT_ROOT_DIR', '/root/.ipadecrypt'),
 
   jobMaxWaitSeconds: optionalInt('JOB_MAX_WAIT_SECONDS', 1800),
   fileTtlMinutes: optionalInt('FILE_TTL_MINUTES', 15),

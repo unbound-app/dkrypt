@@ -172,11 +172,6 @@ export interface ApiKeyAuthResult {
 }
 
 export interface SchedulerSettings {
-  watchBundleId: string;
-  watchAppRepo: string;
-  ghDispatchRepo: string;
-  ghWorkflowFile: string;
-  pollCron: string;
   notifyWebhookUrl: string;
   notifyFormat: 'embed' | 'plain';
   notifyOnKeyRequest: boolean;
@@ -197,6 +192,53 @@ export interface SchedulerSettings {
   diskFullAlertPercent: number;
   deviceStorageAlertPercent: number;
   testFlightBridgeAlertMinutes: number;
+  jobWebhookUrl: string;
+  jobWebhookEnabled: boolean;
+  jobHistoryRetentionDays: number;
+}
+
+export interface AppWatch {
+  id: string;
+  name?: string;
+  bundleId: string;
+  appRepo: string;
+  ghDispatchRepo: string;
+  ghWorkflowFile: string;
+  pollCron: string;
+  enabled: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface DeviceRecord {
+  id: string;
+  name: string;
+  rootDir: string;
+  enabled: boolean;
+  isPrimary?: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type WebhookDeliveryKind = 'scheduler' | 'job';
+
+export interface WebhookDeliveryEntry {
+  id: string;
+  ts: number;
+  kind: WebhookDeliveryKind;
+  event: string;
+  targetHost: string;
+  ok: boolean;
+  status?: number;
+  error?: string;
+  durationMs: number;
+}
+
+export interface IpaMetadata {
+  bundleVersion?: string;
+  shortVersion?: string;
+  minOsVersion?: string;
+  executable?: string;
 }
 
 export interface JobHistoryEntry {
@@ -213,6 +255,9 @@ export interface JobHistoryEntry {
   createdAt: number;
   startedAt?: number;
   finishedAt: number;
+  deviceId?: string;
+  ipaMetadata?: IpaMetadata;
+  ipaInfoPlist?: Record<string, unknown>;
 }
 
 interface AppleAuthAlert {
@@ -224,9 +269,21 @@ interface AppleAuthAlert {
 export interface UserPrefs {
   theme?: 'dark' | 'light' | 'auto';
   density?: 'comfortable' | 'compact';
+  accent?: string;
 }
 
-export type AuditAction = 'user.add' | 'user.update' | 'user.remove' | 'state.import' | 'settings.update';
+export type AuditAction =
+  | 'user.add'
+  | 'user.update'
+  | 'user.remove'
+  | 'state.import'
+  | 'settings.update'
+  | 'watch.add'
+  | 'watch.update'
+  | 'watch.remove'
+  | 'device.add'
+  | 'device.update'
+  | 'device.remove';
 
 export interface AuditLogEntry {
   id: string;
@@ -253,6 +310,8 @@ export interface SchedulerRunOutcome {
 export interface SchedulerRunEntry {
   id: string;
   ts: number;
+  watchId?: string;
+  bundleId?: string;
   appStore: SchedulerRunOutcome;
   testflight: SchedulerRunOutcome;
 }
@@ -287,10 +346,12 @@ export interface ShareLinkRecord {
 }
 
 interface PersistedState {
-  version: 5;
+  version: 6;
   apiKeys: ApiKeyRecord[];
   allowedUsers: AllowedUser[];
   settings: Partial<SchedulerSettings>;
+  watches: AppWatch[];
+  devices: DeviceRecord[];
   jobHistory: JobHistoryEntry[];
   appleAuthAlert: AppleAuthAlert;
   lastSchedulerRunAt?: number;
@@ -299,11 +360,12 @@ interface PersistedState {
   schedulerRunHistory: SchedulerRunEntry[];
   rootSessionVersion: number;
   apiKeyUsage: Record<string, ApiKeyUsageBucket[]>;
-  deviceHealthHistory: DeviceHealthCheck[];
+  deviceHealthHistory: Record<string, DeviceHealthCheck[]>;
   pushSubscriptions: Record<string, PushSubscriptionRecord[]>;
   vapidKeys?: VapidKeys;
   apiKeyBundleUsage: Record<string, Record<string, number>>;
   shareLinks: ShareLinkRecord[];
+  webhookDeliveryLog: WebhookDeliveryEntry[];
 }
 
 const MAX_HISTORY = 100;
@@ -311,15 +373,18 @@ const MAX_AUDIT_LOG = 200;
 const MAX_SCHEDULER_RUNS = 20;
 const MAX_SHARE_LINKS = 200;
 const MAX_USAGE_DAYS = 30;
-const MAX_DEVICE_HEALTH_CHECKS = 288; // 24h at a 5-minute poll interval
+const MAX_DEVICE_HEALTH_CHECKS = 288; // 24h at a 5-minute poll interval, per device
+const MAX_WEBHOOK_LOG = 200;
 const statePath = path.join(config.stateDir, 'state.json');
 
 function defaultState(): PersistedState {
   return {
-    version: 5,
+    version: 6,
     apiKeys: [],
     allowedUsers: [],
     settings: {},
+    watches: [],
+    devices: [],
     jobHistory: [],
     appleAuthAlert: { suspected: false },
     userPrefs: {},
@@ -327,20 +392,41 @@ function defaultState(): PersistedState {
     schedulerRunHistory: [],
     rootSessionVersion: 0,
     apiKeyUsage: {},
-    deviceHealthHistory: [],
+    deviceHealthHistory: {},
     pushSubscriptions: {},
     apiKeyBundleUsage: {},
     shareLinks: [],
+    webhookDeliveryLog: [],
   };
 }
 
+// Every legacy branch below produces a v5-shaped object (as it always has); this final hop
+// carries any of them the rest of the way to v6 so the multi-watch/multi-device/webhook-log
+// additions only need to be handled in one place.
+function migrateV5ToV6(v5: Record<string, unknown>): PersistedState {
+  const legacyHealthHistory = v5.deviceHealthHistory;
+  return {
+    ...defaultState(),
+    ...v5,
+    version: 6,
+    watches: Array.isArray(v5.watches) ? (v5.watches as AppWatch[]) : [],
+    devices: Array.isArray(v5.devices) ? (v5.devices as DeviceRecord[]) : [],
+    webhookDeliveryLog: Array.isArray(v5.webhookDeliveryLog) ? (v5.webhookDeliveryLog as WebhookDeliveryEntry[]) : [],
+    deviceHealthHistory: Array.isArray(legacyHealthHistory)
+      ? { default: (legacyHealthHistory as DeviceHealthCheck[]).slice(-MAX_DEVICE_HEALTH_CHECKS) }
+      : typeof legacyHealthHistory === 'object' && legacyHealthHistory !== null
+        ? (legacyHealthHistory as Record<string, DeviceHealthCheck[]>)
+        : {},
+  } as PersistedState;
+}
+
 function migrate(raw: Record<string, unknown>): PersistedState {
-  if (raw.version === 5) return { ...defaultState(), ...raw } as PersistedState;
+  if (raw.version === 6) return { ...defaultState(), ...raw } as PersistedState;
+  if (raw.version === 5) return migrateV5ToV6(raw);
 
   if (raw.version === 4) {
     const v4Users = Array.isArray(raw.allowedUsers) ? (raw.allowedUsers as Record<string, unknown>[]) : [];
-    return {
-      ...defaultState(),
+    return migrateV5ToV6({
       ...raw,
       version: 5,
       allowedUsers: v4Users.map((u) => ({
@@ -348,13 +434,12 @@ function migrate(raw: Record<string, unknown>): PersistedState {
         permissions: migratePermissionsV4(u.permissions as LegacyV4Permissions),
         addedAt: u.addedAt as number,
       })),
-    } as PersistedState;
+    });
   }
 
   if (raw.version === 3) {
     const v3Users = Array.isArray(raw.allowedUsers) ? (raw.allowedUsers as Record<string, unknown>[]) : [];
-    return {
-      ...defaultState(),
+    return migrateV5ToV6({
       ...raw,
       version: 5,
       allowedUsers: v3Users.map((u) => ({
@@ -362,13 +447,12 @@ function migrate(raw: Record<string, unknown>): PersistedState {
         permissions: migratePermissionsV3(u.permissions as LegacyV3Permissions),
         addedAt: u.addedAt as number,
       })),
-    } as PersistedState;
+    });
   }
 
   if (raw.version === 2) {
     const legacyUsers = Array.isArray(raw.allowedUsers) ? (raw.allowedUsers as Record<string, unknown>[]) : [];
-    return {
-      ...defaultState(),
+    return migrateV5ToV6({
       ...raw,
       version: 5,
       allowedUsers: legacyUsers.map((u) => ({
@@ -376,12 +460,11 @@ function migrate(raw: Record<string, unknown>): PersistedState {
         permissions: legacyRoleToPermissions(String(u.role ?? '')),
         addedAt: u.addedAt as number,
       })),
-    } as PersistedState;
+    });
   }
 
   const legacyKeys = Array.isArray(raw.apiKeys) ? (raw.apiKeys as Record<string, unknown>[]) : [];
-  return {
-    ...defaultState(),
+  return migrateV5ToV6({
     apiKeys: legacyKeys.map((k) => ({
       id: k.id as string,
       name: k.name as string,
@@ -395,7 +478,7 @@ function migrate(raw: Record<string, unknown>): PersistedState {
     settings: (raw.settings as Partial<SchedulerSettings>) ?? {},
     jobHistory: (raw.jobHistory as JobHistoryEntry[]) ?? [],
     appleAuthAlert: (raw.appleAuthAlert as AppleAuthAlert) ?? { suspected: false },
-  };
+  });
 }
 
 function normalizeLegacySchedulerRunOutcome(raw: unknown): SchedulerRunOutcome {
@@ -711,6 +794,34 @@ export function revokeApiKey(id: string, requesterId: string, requesterIsAdmin: 
   return true;
 }
 
+// Extends (or, for an already-expired/never-expiring key, sets) expiresAt by `days` from now -
+// same semantics as creating a key with expiresInDays, just applied to existing keys in bulk.
+export function bulkExtendApiKeyExpiry(ids: string[], days: number): string[] {
+  const extended: string[] = [];
+  const newExpiresAt = Date.now() + days * 86_400_000;
+  for (const id of ids) {
+    const record = state.apiKeys.find((k) => k.id === id);
+    if (!record) continue;
+    record.expiresAt = newExpiresAt;
+    record.expiryNotifiedAt = undefined;
+    extended.push(id);
+  }
+  if (extended.length > 0) persistNow();
+  return extended;
+}
+
+export function bulkSetApiKeyDailyLimit(ids: string[], dailyLimit: number | undefined): string[] {
+  const updated: string[] = [];
+  for (const id of ids) {
+    const record = state.apiKeys.find((k) => k.id === id);
+    if (!record) continue;
+    record.dailyLimit = dailyLimit;
+    updated.push(id);
+  }
+  if (updated.length > 0) persistNow();
+  return updated;
+}
+
 function todayUsageCount(id: string): number {
   const today = new Date().toISOString().slice(0, 10);
   const buckets = state.apiKeyUsage[id] ?? [];
@@ -841,11 +952,6 @@ export function startApiKeySweeper(): void {
 
 export function getEffectiveSettings(): SchedulerSettings {
   return {
-    watchBundleId: state.settings.watchBundleId ?? config.watchBundleId,
-    watchAppRepo: state.settings.watchAppRepo ?? config.watchAppRepo,
-    ghDispatchRepo: state.settings.ghDispatchRepo ?? config.ghDispatchRepo,
-    ghWorkflowFile: state.settings.ghWorkflowFile ?? config.ghWorkflowFile,
-    pollCron: state.settings.pollCron ?? config.pollCron,
     notifyWebhookUrl: state.settings.notifyWebhookUrl ?? config.notifyWebhookUrl,
     notifyFormat: state.settings.notifyFormat ?? 'embed',
     notifyOnKeyRequest: state.settings.notifyOnKeyRequest ?? true,
@@ -866,6 +972,9 @@ export function getEffectiveSettings(): SchedulerSettings {
     diskFullAlertPercent: state.settings.diskFullAlertPercent ?? 90,
     deviceStorageAlertPercent: state.settings.deviceStorageAlertPercent ?? 90,
     testFlightBridgeAlertMinutes: state.settings.testFlightBridgeAlertMinutes ?? 15,
+    jobWebhookUrl: state.settings.jobWebhookUrl ?? '',
+    jobWebhookEnabled: state.settings.jobWebhookEnabled ?? false,
+    jobHistoryRetentionDays: state.settings.jobHistoryRetentionDays ?? 0,
   };
 }
 
@@ -886,38 +995,260 @@ export function updateSettings(patch: Partial<SchedulerSettings>, actor?: string
   return after;
 }
 
-export function isSchedulerEnabled(): boolean {
-  const s = getEffectiveSettings();
-  return s.watchBundleId !== '' && s.watchAppRepo !== '' && s.ghDispatchRepo !== '' && config.ghToken !== '';
+// --- App watches (multi-app scheduler) ---------------------------------------------------
+
+// Legacy single-watch env vars / pre-multi-watch settings fields, kept only as the fallback
+// source for the synthetic 'default' watch below - never written to directly anymore.
+interface LegacySingleWatchSettings {
+  watchBundleId?: string;
+  watchAppRepo?: string;
+  ghDispatchRepo?: string;
+  ghWorkflowFile?: string;
+  pollCron?: string;
 }
 
-// Distinguishes "intentionally left blank" (nothing set at all - not worth nagging about) from a
-// likely mistake: some but not all of the three required fields set, or all three set but the
-// env-only GH_TOKEN missing so the scheduler silently never runs despite looking configured.
-export function getSchedulerConfigIssues(): string[] {
-  const s = getEffectiveSettings();
-  const fieldsSet = [s.watchBundleId, s.watchAppRepo, s.ghDispatchRepo].filter(Boolean).length;
+function getLegacySingleWatchFields(): Omit<AppWatch, 'id' | 'name' | 'enabled' | 'createdAt' | 'updatedAt'> | undefined {
+  const legacy = state.settings as LegacySingleWatchSettings;
+  const bundleId = legacy.watchBundleId || config.watchBundleId;
+  if (!bundleId) return undefined;
+  return {
+    bundleId,
+    appRepo: legacy.watchAppRepo || config.watchAppRepo,
+    ghDispatchRepo: legacy.ghDispatchRepo || config.ghDispatchRepo,
+    ghWorkflowFile: legacy.ghWorkflowFile || config.ghWorkflowFile,
+    pollCron: legacy.pollCron || config.pollCron,
+  };
+}
+
+// Recomputed live (not baked into state.json at migration time) so an existing single-watch
+// install keeps tracking .env edits exactly like it does today via getEffectiveSettings().
+export function getEffectiveWatches(): AppWatch[] {
+  if (state.watches.length > 0) return state.watches;
+  const legacy = getLegacySingleWatchFields();
+  return legacy ? [{ id: 'default', enabled: true, createdAt: 0, updatedAt: 0, ...legacy }] : [];
+}
+
+export function listWatches(): AppWatch[] {
+  return getEffectiveWatches();
+}
+
+export function getWatch(id: string): AppWatch | undefined {
+  return getEffectiveWatches().find((w) => w.id === id);
+}
+
+function hasEnabledWatchWithBundleId(bundleId: string, excludeId?: string): boolean {
+  return getEffectiveWatches().some((w) => w.enabled && w.bundleId === bundleId && w.id !== excludeId);
+}
+
+// Turns the synthetic 'default' watch (env-var-backed, never actually stored) into a real
+// array entry on first edit, so "edit the existing single watch" transparently upgrades a
+// fresh install to explicit multi-watch state without the caller needing to know the difference.
+function materializeWatches(): void {
+  if (state.watches.length > 0) return;
+  const legacy = getLegacySingleWatchFields();
+  if (legacy) state.watches = [{ id: 'default', enabled: true, createdAt: 0, updatedAt: 0, ...legacy }];
+}
+
+export interface CreateWatchInput {
+  name?: string;
+  bundleId: string;
+  appRepo: string;
+  ghDispatchRepo: string;
+  ghWorkflowFile: string;
+  pollCron: string;
+  enabled?: boolean;
+}
+
+export function createWatch(input: CreateWatchInput, actor: string): { ok: boolean; watch?: AppWatch; error?: string } {
+  materializeWatches();
+  if (input.enabled !== false && hasEnabledWatchWithBundleId(input.bundleId)) {
+    return { ok: false, error: `another enabled watch already targets ${input.bundleId}` };
+  }
+  const now = Date.now();
+  const watch: AppWatch = {
+    id: randomUUID(),
+    name: input.name,
+    bundleId: input.bundleId,
+    appRepo: input.appRepo,
+    ghDispatchRepo: input.ghDispatchRepo,
+    ghWorkflowFile: input.ghWorkflowFile,
+    pollCron: input.pollCron,
+    enabled: input.enabled ?? true,
+    createdAt: now,
+    updatedAt: now,
+  };
+  state.watches.push(watch);
+  persistNow();
+  recordAudit(actor, 'watch.add', watch.id, watch.bundleId);
+  return { ok: true, watch };
+}
+
+export function updateWatch(id: string, patch: Partial<CreateWatchInput>, actor: string): { ok: boolean; watch?: AppWatch; error?: string } {
+  materializeWatches();
+  const watch = state.watches.find((w) => w.id === id);
+  if (!watch) return { ok: false, error: 'watch not found' };
+  const nextBundleId = patch.bundleId ?? watch.bundleId;
+  const nextEnabled = patch.enabled ?? watch.enabled;
+  if (nextEnabled && hasEnabledWatchWithBundleId(nextBundleId, id)) {
+    return { ok: false, error: `another enabled watch already targets ${nextBundleId}` };
+  }
+  Object.assign(watch, patch, { updatedAt: Date.now() });
+  persistNow();
+  recordAudit(actor, 'watch.update', watch.id, watch.bundleId);
+  return { ok: true, watch };
+}
+
+export function deleteWatch(id: string, actor: string): boolean {
+  materializeWatches();
+  const before = state.watches.length;
+  state.watches = state.watches.filter((w) => w.id !== id);
+  const changed = state.watches.length !== before;
+  if (changed) {
+    persistNow();
+    recordAudit(actor, 'watch.remove', id);
+  }
+  return changed;
+}
+
+export function isWatchSchedulable(watch: AppWatch): boolean {
+  return watch.enabled && watch.bundleId !== '' && watch.appRepo !== '' && watch.ghDispatchRepo !== '' && config.ghToken !== '';
+}
+
+// Distinguishes "intentionally left blank" from a likely mistake: some but not all required
+// fields set, or all set but the env-only GH_TOKEN missing so the watch silently never runs.
+export function getWatchConfigIssues(watch: AppWatch): string[] {
+  const fieldsSet = [watch.bundleId, watch.appRepo, watch.ghDispatchRepo].filter(Boolean).length;
   const issues: string[] = [];
 
   if (fieldsSet > 0 && fieldsSet < 3) {
     const missing = [
-      !s.watchBundleId && 'watch bundle ID',
-      !s.watchAppRepo && 'watch app repo',
-      !s.ghDispatchRepo && 'GitHub dispatch repo',
+      !watch.bundleId && 'watch bundle ID',
+      !watch.appRepo && 'watch app repo',
+      !watch.ghDispatchRepo && 'GitHub dispatch repo',
     ].filter((v): v is string => typeof v === 'string');
-    issues.push(`Scheduler is partially configured - still missing ${missing.join(', ')}.`);
+    issues.push(`Watch is partially configured - still missing ${missing.join(', ')}.`);
   }
 
   if (fieldsSet === 3 && config.ghToken === '') {
-    issues.push('Watch/dispatch repos are configured but GH_TOKEN is not set - the scheduler will never actually run.');
+    issues.push('Watch/dispatch repos are configured but GH_TOKEN is not set - this watch will never actually run.');
   }
 
   return issues;
 }
 
+// --- Device pool ---------------------------------------------------------------------------
+
+export function getEffectiveDevices(): DeviceRecord[] {
+  if (state.devices.length > 0) return state.devices;
+  return [{ id: 'default', name: 'default', rootDir: config.ipadecryptRootDir, enabled: true, isPrimary: true, createdAt: 0, updatedAt: 0 }];
+}
+
+export function listDevices(): DeviceRecord[] {
+  return getEffectiveDevices();
+}
+
+export function getDevice(id: string): DeviceRecord | undefined {
+  return getEffectiveDevices().find((d) => d.id === id);
+}
+
+// Falls back to the first enabled device if none is explicitly flagged primary (shouldn't
+// normally happen given updateDevice's invariant below, but keeps this total rather than
+// possibly-undefined for every single-device call site).
+export function getPrimaryDevice(): DeviceRecord {
+  const devices = getEffectiveDevices().filter((d) => d.enabled);
+  return devices.find((d) => d.isPrimary) ?? devices[0] ?? getEffectiveDevices()[0];
+}
+
+function materializeDevices(): void {
+  if (state.devices.length > 0) return;
+  state.devices = [
+    { id: 'default', name: 'default', rootDir: config.ipadecryptRootDir, enabled: true, isPrimary: true, createdAt: 0, updatedAt: 0 },
+  ];
+}
+
+export interface CreateDeviceInput {
+  name: string;
+  rootDir: string;
+  enabled?: boolean;
+  isPrimary?: boolean;
+}
+
+function clearOtherPrimaries(exceptId?: string): void {
+  for (const d of state.devices) if (d.id !== exceptId) d.isPrimary = false;
+}
+
+export function createDevice(input: CreateDeviceInput, actor: string): DeviceRecord {
+  materializeDevices();
+  const now = Date.now();
+  const makePrimary = input.isPrimary || !state.devices.some((d) => d.isPrimary);
+  const device: DeviceRecord = {
+    id: randomUUID(),
+    name: input.name,
+    rootDir: input.rootDir,
+    enabled: input.enabled ?? true,
+    isPrimary: makePrimary,
+    createdAt: now,
+    updatedAt: now,
+  };
+  if (makePrimary) clearOtherPrimaries();
+  state.devices.push(device);
+  persistNow();
+  recordAudit(actor, 'device.add', device.id, device.name);
+  return device;
+}
+
+export function updateDevice(id: string, patch: Partial<CreateDeviceInput>, actor: string): { ok: boolean; device?: DeviceRecord; error?: string } {
+  materializeDevices();
+  const device = state.devices.find((d) => d.id === id);
+  if (!device) return { ok: false, error: 'device not found' };
+  Object.assign(device, patch, { updatedAt: Date.now() });
+  if (patch.isPrimary) clearOtherPrimaries(device.id);
+  // Never leave zero primaries among enabled devices - promote the first remaining one.
+  if (!state.devices.some((d) => d.enabled && d.isPrimary)) {
+    const fallback = state.devices.find((d) => d.enabled);
+    if (fallback) fallback.isPrimary = true;
+  }
+  persistNow();
+  recordAudit(actor, 'device.update', device.id, device.name);
+  return { ok: true, device };
+}
+
+export function deleteDevice(id: string, actor: string): boolean {
+  materializeDevices();
+  const before = state.devices.length;
+  state.devices = state.devices.filter((d) => d.id !== id);
+  const changed = state.devices.length !== before;
+  if (changed) {
+    if (!state.devices.some((d) => d.enabled && d.isPrimary)) {
+      const fallback = state.devices.find((d) => d.enabled);
+      if (fallback) fallback.isPrimary = true;
+    }
+    persistNow();
+    recordAudit(actor, 'device.remove', id);
+  }
+  return changed;
+}
+
+// --- Webhook delivery log -------------------------------------------------------------------
+
+export function recordWebhookDelivery(entry: Omit<WebhookDeliveryEntry, 'id' | 'ts'>): void {
+  state.webhookDeliveryLog.unshift({ id: randomUUID(), ts: Date.now(), ...entry });
+  if (state.webhookDeliveryLog.length > MAX_WEBHOOK_LOG) state.webhookDeliveryLog.length = MAX_WEBHOOK_LOG;
+  persistNow();
+}
+
+export function getWebhookDeliveryLog(limit = 100): WebhookDeliveryEntry[] {
+  return state.webhookDeliveryLog.slice(0, limit);
+}
+
 export function recordJobHistory(entry: JobHistoryEntry): void {
   state.jobHistory.unshift(entry);
   if (state.jobHistory.length > MAX_HISTORY) state.jobHistory.length = MAX_HISTORY;
+  const retentionDays = getEffectiveSettings().jobHistoryRetentionDays;
+  if (retentionDays > 0) {
+    const cutoff = Date.now() - retentionDays * 86_400_000;
+    state.jobHistory = state.jobHistory.filter((e) => e.finishedAt >= cutoff);
+  }
   persistNow();
   emitHistoryAdded(entry);
 }
@@ -940,6 +1271,10 @@ export function getJobHistoryPage(
 
 export function getAllJobHistory(): JobHistoryEntry[] {
   return state.jobHistory;
+}
+
+export function getJobHistoryEntryById(id: string): JobHistoryEntry | undefined {
+  return state.jobHistory.find((e) => e.id === id);
 }
 
 export function getAverageJobDurationMs(bundleId: string): number | undefined {
@@ -1093,19 +1428,33 @@ export function updateSchedulerRunOutcome(entryId: string, source: 'appStore' | 
   persistNow();
 }
 
-export function getSchedulerRunHistory(limit = 10): SchedulerRunEntry[] {
-  return state.schedulerRunHistory.slice(0, limit);
+// Backfills watchId/bundleId on entries recorded before multi-watch existed - they were always
+// about the single implicit watch, so this stays accurate as long as that watch still resolves.
+export function getSchedulerRunHistory(limit = 10, watchId?: string): SchedulerRunEntry[] {
+  const legacyWatch = getEffectiveWatches()[0];
+  const filled = state.schedulerRunHistory.map((e) =>
+    e.watchId ? e : { ...e, watchId: legacyWatch?.id, bundleId: legacyWatch?.bundleId },
+  );
+  const filtered = watchId ? filled.filter((e) => e.watchId === watchId) : filled;
+  return filtered.slice(0, limit);
 }
 
 export function recordDeviceHealthCheck(
+  deviceId: string,
   reachable: boolean,
   batteryPercent?: number,
   batteryTemperatureC?: number,
   storageUsedPercent?: number,
 ): void {
-  state.deviceHealthHistory.push({ ts: Date.now(), reachable, batteryPercent, batteryTemperatureC, storageUsedPercent });
-  if (state.deviceHealthHistory.length > MAX_DEVICE_HEALTH_CHECKS) state.deviceHealthHistory.shift();
+  const history = state.deviceHealthHistory[deviceId] ?? [];
+  history.push({ ts: Date.now(), reachable, batteryPercent, batteryTemperatureC, storageUsedPercent });
+  if (history.length > MAX_DEVICE_HEALTH_CHECKS) history.shift();
+  state.deviceHealthHistory[deviceId] = history;
   persistNow();
+}
+
+function historyFor(deviceId: string): DeviceHealthCheck[] {
+  return state.deviceHealthHistory[deviceId] ?? [];
 }
 
 export interface HourlyHealthBucket {
@@ -1113,21 +1462,22 @@ export interface HourlyHealthBucket {
   reachablePercent: number | null;
 }
 
-export function getDeviceHealthHourlyBuckets(hours = 24): HourlyHealthBucket[] {
+export function getDeviceHealthHourlyBuckets(deviceId: string, hours = 24): HourlyHealthBucket[] {
   const now = Date.now();
+  const history = historyFor(deviceId);
   const buckets: HourlyHealthBucket[] = [];
   for (let i = hours - 1; i >= 0; i--) {
     const hourStart = now - i * 3_600_000;
     const hourEnd = hourStart + 3_600_000;
-    const checks = state.deviceHealthHistory.filter((c) => c.ts >= hourStart && c.ts < hourEnd);
+    const checks = history.filter((c) => c.ts >= hourStart && c.ts < hourEnd);
     buckets.push({ hourStart, reachablePercent: checks.length > 0 ? checks.filter((c) => c.reachable).length / checks.length : null });
   }
   return buckets;
 }
 
-export function getDeviceUptimePercent(hours = 24): number | undefined {
+export function getDeviceUptimePercent(deviceId: string, hours = 24): number | undefined {
   const cutoff = Date.now() - hours * 3_600_000;
-  const recent = state.deviceHealthHistory.filter((c) => c.ts >= cutoff);
+  const recent = historyFor(deviceId).filter((c) => c.ts >= cutoff);
   if (recent.length === 0) return undefined;
   return recent.filter((c) => c.reachable).length / recent.length;
 }
@@ -1137,13 +1487,14 @@ export interface HourlyBatteryBucket {
   batteryPercent: number | null;
 }
 
-export function getDeviceBatteryHourlyBuckets(hours = 24): HourlyBatteryBucket[] {
+export function getDeviceBatteryHourlyBuckets(deviceId: string, hours = 24): HourlyBatteryBucket[] {
   const now = Date.now();
+  const history = historyFor(deviceId);
   const buckets: HourlyBatteryBucket[] = [];
   for (let i = hours - 1; i >= 0; i--) {
     const hourStart = now - i * 3_600_000;
     const hourEnd = hourStart + 3_600_000;
-    const readings = state.deviceHealthHistory
+    const readings = history
       .filter((c) => c.ts >= hourStart && c.ts < hourEnd && c.batteryPercent !== undefined)
       .map((c) => c.batteryPercent as number);
     buckets.push({ hourStart, batteryPercent: readings.length > 0 ? Math.round(readings.reduce((a, b) => a + b, 0) / readings.length) : null });
@@ -1156,13 +1507,14 @@ export interface HourlyTemperatureBucket {
   batteryTemperatureC: number | null;
 }
 
-export function getDeviceTemperatureHourlyBuckets(hours = 24): HourlyTemperatureBucket[] {
+export function getDeviceTemperatureHourlyBuckets(deviceId: string, hours = 24): HourlyTemperatureBucket[] {
   const now = Date.now();
+  const history = historyFor(deviceId);
   const buckets: HourlyTemperatureBucket[] = [];
   for (let i = hours - 1; i >= 0; i--) {
     const hourStart = now - i * 3_600_000;
     const hourEnd = hourStart + 3_600_000;
-    const readings = state.deviceHealthHistory
+    const readings = history
       .filter((c) => c.ts >= hourStart && c.ts < hourEnd && c.batteryTemperatureC !== undefined)
       .map((c) => c.batteryTemperatureC as number);
     buckets.push({
@@ -1178,13 +1530,14 @@ export interface HourlyStorageBucket {
   storageUsedPercent: number | null;
 }
 
-export function getDeviceStorageHourlyBuckets(hours = 24): HourlyStorageBucket[] {
+export function getDeviceStorageHourlyBuckets(deviceId: string, hours = 24): HourlyStorageBucket[] {
   const now = Date.now();
+  const history = historyFor(deviceId);
   const buckets: HourlyStorageBucket[] = [];
   for (let i = hours - 1; i >= 0; i--) {
     const hourStart = now - i * 3_600_000;
     const hourEnd = hourStart + 3_600_000;
-    const readings = state.deviceHealthHistory
+    const readings = history
       .filter((c) => c.ts >= hourStart && c.ts < hourEnd && c.storageUsedPercent !== undefined)
       .map((c) => c.storageUsedPercent as number);
     buckets.push({ hourStart, storageUsedPercent: readings.length > 0 ? Math.round(readings.reduce((a, b) => a + b, 0) / readings.length) : null });
@@ -1285,7 +1638,7 @@ export function updateUserPrefs(username: string, patch: Partial<UserPrefs>): Us
   return updated;
 }
 
-const BACKUP_VERSION = 1;
+const BACKUP_VERSION = 2;
 
 export interface BackupPayload {
   backupVersion: typeof BACKUP_VERSION;
@@ -1293,6 +1646,8 @@ export interface BackupPayload {
   allowedUsers: AllowedUser[];
   apiKeys: ApiKeyRecord[];
   settings: Partial<SchedulerSettings>;
+  watches: AppWatch[];
+  devices: DeviceRecord[];
   jobHistory: JobHistoryEntry[];
   appleAuthAlert: AppleAuthAlert;
   lastSchedulerRunAt?: number;
@@ -1314,6 +1669,8 @@ export function exportBackup(): BackupPayload {
     allowedUsers: state.allowedUsers,
     apiKeys: state.apiKeys.map((k) => ({ ...k, pendingReveal: undefined })),
     settings: state.settings,
+    watches: getEffectiveWatches(),
+    devices: getEffectiveDevices(),
     jobHistory: state.jobHistory,
     appleAuthAlert: state.appleAuthAlert,
     lastSchedulerRunAt: state.lastSchedulerRunAt,
@@ -1348,6 +1705,18 @@ function isApiKeyRecordShape(value: unknown): value is ApiKeyRecord {
     (k.status === 'pending' || k.status === 'approved' || k.status === 'denied') &&
     typeof k.createdAt === 'number'
   );
+}
+
+function isAppWatchShape(value: unknown): value is AppWatch {
+  if (typeof value !== 'object' || value === null) return false;
+  const w = value as Record<string, unknown>;
+  return typeof w.id === 'string' && typeof w.bundleId === 'string' && typeof w.enabled === 'boolean';
+}
+
+function isDeviceRecordShape(value: unknown): value is DeviceRecord {
+  if (typeof value !== 'object' || value === null) return false;
+  const d = value as Record<string, unknown>;
+  return typeof d.id === 'string' && typeof d.name === 'string' && typeof d.rootDir === 'string' && typeof d.enabled === 'boolean';
 }
 
 function isJobHistoryEntryShape(value: unknown): value is JobHistoryEntry {
@@ -1402,6 +1771,12 @@ export function importBackup(raw: unknown, actor: string): ImportBackupResult {
   if (typeof b.settings !== 'object' || b.settings === null) {
     return { ok: false, error: 'settings is missing or malformed' };
   }
+  if (!Array.isArray(b.watches) || !b.watches.every(isAppWatchShape)) {
+    return { ok: false, error: 'watches is missing or malformed' };
+  }
+  if (!Array.isArray(b.devices) || !b.devices.every(isDeviceRecordShape)) {
+    return { ok: false, error: 'devices is missing or malformed' };
+  }
   if (!Array.isArray(b.jobHistory) || !b.jobHistory.every(isJobHistoryEntryShape)) {
     return { ok: false, error: 'jobHistory is missing or malformed' };
   }
@@ -1431,6 +1806,8 @@ export function importBackup(raw: unknown, actor: string): ImportBackupResult {
   state.allowedUsers = b.allowedUsers as AllowedUser[];
   state.apiKeys = (b.apiKeys as ApiKeyRecord[]).map((k) => ({ ...k, pendingReveal: undefined }));
   state.settings = b.settings as Partial<SchedulerSettings>;
+  state.watches = b.watches as AppWatch[];
+  state.devices = b.devices as DeviceRecord[];
   state.jobHistory = (b.jobHistory as JobHistoryEntry[]).slice(0, MAX_HISTORY);
   state.auditLog = (b.auditLog as AuditLogEntry[]).slice(0, MAX_AUDIT_LOG);
   // Backfill ids for entries from a backup exported before SchedulerRunEntry had one.

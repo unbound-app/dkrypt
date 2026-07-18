@@ -8,8 +8,10 @@ import { scopedLogger } from '../logger.js';
 const log = scopedLogger('scheduler');
 import { EMBED_COLOR, notify } from '../notify.js';
 import {
+  type AppWatch,
   getEffectiveSettings,
-  isSchedulerEnabled,
+  getEffectiveWatches,
+  isWatchSchedulable,
   recordSchedulerRun,
   recordSchedulerRunOutcome,
   type SchedulerRunOutcome,
@@ -38,10 +40,10 @@ export interface UpdateCheck {
   reason: string;
 }
 
-export async function checkForUpdate(settings: SchedulerSettings): Promise<UpdateCheck> {
+export async function checkForUpdate(watch: AppWatch): Promise<UpdateCheck> {
   let itunesVersion: string;
   try {
-    itunesVersion = (await lookupCurrentVersion(settings.watchBundleId)).version;
+    itunesVersion = (await lookupCurrentVersion(watch.bundleId)).version;
   } catch (err) {
     return { ok: false, wouldDispatch: false, reason: `iTunes lookup failed: ${String(err)}` };
   }
@@ -50,7 +52,7 @@ export async function checkForUpdate(settings: SchedulerSettings): Promise<Updat
 
   let releaseVersions: Set<string>;
   try {
-    releaseVersions = await listReleaseVersions(settings.watchAppRepo);
+    releaseVersions = await listReleaseVersions(watch.appRepo);
   } catch (err) {
     return { ok: false, itunesVersion, normalizedVersion, wouldDispatch: false, reason: `Failed to list releases: ${String(err)}` };
   }
@@ -87,14 +89,14 @@ export interface TestFlightUpdateCheck {
   reason: string;
 }
 
-export async function checkForTestFlightUpdate(settings: SchedulerSettings): Promise<TestFlightUpdateCheck> {
-  if (!settings.watchBundleId) {
+export async function checkForTestFlightUpdate(watch: AppWatch): Promise<TestFlightUpdateCheck> {
+  if (!watch.bundleId) {
     return { ok: true, wouldDispatch: false, reason: 'No watch bundle ID configured' };
   }
 
   let appId: number;
   try {
-    appId = (await lookupCurrentVersion(settings.watchBundleId)).trackId;
+    appId = (await lookupCurrentVersion(watch.bundleId)).trackId;
   } catch (err) {
     return { ok: false, wouldDispatch: false, reason: `iTunes lookup failed: ${String(err)}` };
   }
@@ -130,7 +132,7 @@ export async function checkForTestFlightUpdate(settings: SchedulerSettings): Pro
 
   let tagNames: Set<string>;
   try {
-    tagNames = await listReleaseTagNames(settings.watchAppRepo);
+    tagNames = await listReleaseTagNames(watch.appRepo);
   } catch (err) {
     return { ok: false, appId, latestTag, build: latestBuild, wouldDispatch: false, reason: `Failed to list releases: ${String(err)}` };
   }
@@ -196,14 +198,14 @@ interface DispatchResult {
 
 function trackRunCompletion(
   finished: Job,
-  settings: SchedulerSettings,
+  watch: AppWatch,
   versionLabel: string,
   source: 'App Store' | 'TestFlight',
   dispatchedAt: Date,
 ): () => Promise<Partial<SchedulerRunOutcome>> {
   return async () => {
     try {
-      const run = await pollRunToCompletion(settings.ghDispatchRepo, settings.ghWorkflowFile, dispatchedAt);
+      const run = await pollRunToCompletion(watch.ghDispatchRepo, watch.ghWorkflowFile, dispatchedAt);
       if (!run) {
         return { runStatus: 'timed_out', reason: `Dispatched ${versionLabel} - gave up waiting for the workflow run to appear/complete` };
       }
@@ -213,7 +215,7 @@ function trackRunCompletion(
         title: succeeded ? 'Decrypted & dispatched' : 'Dispatched, but the workflow failed',
         color: succeeded ? EMBED_COLOR.ok : EMBED_COLOR.err,
         fields: [
-          { name: 'App', value: settings.watchBundleId, inline: true },
+          { name: 'App', value: watch.bundleId, inline: true },
           { name: 'Version', value: versionLabel, inline: true },
           { name: 'Source', value: source, inline: true },
           { name: 'Run', value: run.html_url },
@@ -232,17 +234,12 @@ function trackRunCompletion(
   };
 }
 
-async function decryptAndDispatch(
-  job: Job,
-  settings: SchedulerSettings,
-  isTestflight: boolean,
-  versionLabel: string,
-): Promise<DispatchResult> {
+async function decryptAndDispatch(job: Job, watch: AppWatch, isTestflight: boolean, versionLabel: string): Promise<DispatchResult> {
   const finished = await waitForJob(job, SCHEDULER_JOB_TIMEOUT_MS);
 
   if (finished.status !== 'done') {
     log.error('scheduled decrypt did not complete successfully', {
-      bundleId: settings.watchBundleId,
+      bundleId: watch.bundleId,
       isTestflight,
       status: finished.status,
       error: finished.error,
@@ -253,15 +250,15 @@ async function decryptAndDispatch(
   const dispatchedAt = new Date();
   try {
     const ipaUrl = buildSignedFileUrl(finished.id, config.fileTtlMinutes);
-    await dispatchIpaUpdate(settings.ghDispatchRepo, ipaUrl, isTestflight);
-    log.info('dispatched ipa-update', { dispatchRepo: settings.ghDispatchRepo, bundleId: settings.watchBundleId, isTestflight });
+    await dispatchIpaUpdate(watch.ghDispatchRepo, ipaUrl, isTestflight);
+    log.info('dispatched ipa-update', { dispatchRepo: watch.ghDispatchRepo, bundleId: watch.bundleId, isTestflight });
   } catch (err) {
     log.error('dispatch failed', { error: String(err), isTestflight });
     await notify('dispatchFailure', {
       title: 'Dispatch failed',
       color: EMBED_COLOR.err,
       fields: [
-        { name: 'App', value: settings.watchBundleId, inline: true },
+        { name: 'App', value: watch.bundleId, inline: true },
         { name: 'Version', value: versionLabel, inline: true },
         { name: 'Error', value: `\`\`\`${String(err)}\`\`\`` },
       ],
@@ -272,67 +269,62 @@ async function decryptAndDispatch(
 
   return {
     outcome: { ok: true, triggered: true, reason: `Dispatched ${versionLabel} - waiting on workflow run`, runStatus: 'dispatched' },
-    trackCompletion: trackRunCompletion(finished, settings, versionLabel, isTestflight ? 'TestFlight' : 'App Store', dispatchedAt),
+    trackCompletion: trackRunCompletion(finished, watch, versionLabel, isTestflight ? 'TestFlight' : 'App Store', dispatchedAt),
   };
 }
 
-async function tickAppStore(settings: SchedulerSettings): Promise<DispatchResult> {
-  const check = await checkForUpdate(settings);
+async function tickAppStore(watch: AppWatch): Promise<DispatchResult> {
+  const check = await checkForUpdate(watch);
   if (!check.wouldDispatch) {
     if (check.alreadyReleased) {
-      log.info('itunes version already has a matching release, nothing to do', {
-        bundleId: settings.watchBundleId,
-        version: check.normalizedVersion,
-      });
+      log.info('itunes version already has a matching release, nothing to do', { bundleId: watch.bundleId, version: check.normalizedVersion });
     } else {
-      log.error(check.reason, { bundleId: settings.watchBundleId });
+      log.error(check.reason, { bundleId: watch.bundleId });
     }
     return { outcome: { ok: check.ok, triggered: false, reason: check.reason } };
   }
 
   const normalized = check.normalizedVersion as string;
-  log.info('no matching release found, decrypting', { bundleId: settings.watchBundleId, version: normalized });
+  log.info('no matching release found, decrypting', { bundleId: watch.bundleId, version: normalized });
 
-  const job = enqueueDecryptJob(settings.watchBundleId, 'scheduler', undefined, undefined, normalized);
-  return decryptAndDispatch(job, settings, false, `v${normalized}`);
+  const job = enqueueDecryptJob(watch.bundleId, 'scheduler', undefined, undefined, normalized);
+  return decryptAndDispatch(job, watch, false, `v${normalized}`);
 }
 
-async function tickTestFlight(settings: SchedulerSettings): Promise<DispatchResult> {
-  const check = await checkForTestFlightUpdate(settings);
+async function tickTestFlight(watch: AppWatch): Promise<DispatchResult> {
+  const check = await checkForTestFlightUpdate(watch);
   if (!check.wouldDispatch || !check.build) {
     if (check.alreadyReleased) {
-      log.info('TestFlight build already has a matching release, nothing to do', {
-        bundleId: settings.watchBundleId,
-        tag: check.latestTag,
-      });
+      log.info('TestFlight build already has a matching release, nothing to do', { bundleId: watch.bundleId, tag: check.latestTag });
     } else {
-      log.error(check.reason, { bundleId: settings.watchBundleId });
+      log.error(check.reason, { bundleId: watch.bundleId });
     }
     return { outcome: { ok: check.ok, triggered: false, reason: check.reason } };
   }
 
   log.info('no matching release found for latest TestFlight build, installing and decrypting', {
-    bundleId: settings.watchBundleId,
+    bundleId: watch.bundleId,
     tag: check.latestTag,
   });
 
-  const job = enqueueDecryptJob(settings.watchBundleId, 'scheduler', undefined, { appId: check.appId as number, build: check.build });
-  return decryptAndDispatch(job, settings, true, check.latestTag as string);
+  const job = enqueueDecryptJob(watch.bundleId, 'scheduler', undefined, { appId: check.appId as number, build: check.build });
+  return decryptAndDispatch(job, watch, true, check.latestTag as string);
 }
 
 const RETRY_BASE_DELAY_MS = 30_000;
 
 async function tickWithRetry(
-  fn: (settings: SchedulerSettings) => Promise<DispatchResult>,
-  settings: SchedulerSettings,
+  fn: (watch: AppWatch) => Promise<DispatchResult>,
+  watch: AppWatch,
+  retryCount: number,
   label: string,
 ): Promise<DispatchResult> {
-  let result = await fn(settings);
-  for (let attempt = 1; attempt <= settings.schedulerRetryCount && !result.outcome.ok; attempt++) {
+  let result = await fn(watch);
+  for (let attempt = 1; attempt <= retryCount && !result.outcome.ok; attempt++) {
     const delayMs = RETRY_BASE_DELAY_MS * 2 ** (attempt - 1);
-    log.warn('scheduler check failed, retrying', { source: label, attempt, maxRetries: settings.schedulerRetryCount, delayMs, reason: result.outcome.reason });
+    log.warn('scheduler check failed, retrying', { source: label, watchId: watch.id, attempt, maxRetries: retryCount, delayMs, reason: result.outcome.reason });
     await sleep(delayMs);
-    result = await fn(settings);
+    result = await fn(watch);
   }
   return result;
 }
@@ -355,27 +347,32 @@ async function trackAndUpdate(
   }
 }
 
-let tickInProgress = false;
+const tickInProgress = new Set<string>();
 
-async function tick(): Promise<void> {
-  if (tickInProgress) {
-    log.info('scheduler tick already in progress, skipping');
+async function tick(watch: AppWatch): Promise<void> {
+  if (tickInProgress.has(watch.id)) {
+    log.info('scheduler tick already in progress for this watch, skipping', { watchId: watch.id });
     return;
   }
-  tickInProgress = true;
+  tickInProgress.add(watch.id);
   try {
     recordSchedulerRun();
-    const settings = getEffectiveSettings();
-    log.info('scheduler tick', { bundleId: settings.watchBundleId, appRepo: settings.watchAppRepo });
+    const settings: SchedulerSettings = getEffectiveSettings();
+    log.info('scheduler tick', { watchId: watch.id, bundleId: watch.bundleId, appRepo: watch.appRepo });
 
-    const appStore = await tickWithRetry(tickAppStore, settings, 'App Store');
-    const testflight = await tickWithRetry(tickTestFlight, settings, 'TestFlight');
-    const entryId = recordSchedulerRunOutcome({ appStore: appStore.outcome, testflight: testflight.outcome });
+    const appStore = await tickWithRetry(tickAppStore, watch, settings.schedulerRetryCount, 'App Store');
+    const testflight = await tickWithRetry(tickTestFlight, watch, settings.schedulerRetryCount, 'TestFlight');
+    const entryId = recordSchedulerRunOutcome({
+      watchId: watch.id,
+      bundleId: watch.bundleId,
+      appStore: appStore.outcome,
+      testflight: testflight.outcome,
+    });
 
     if (appStore.trackCompletion) void trackAndUpdate(entryId, 'appStore', appStore.trackCompletion);
     if (testflight.trackCompletion) void trackAndUpdate(entryId, 'testflight', testflight.trackCompletion);
   } finally {
-    tickInProgress = false;
+    tickInProgress.delete(watch.id);
     // Push a fresh overview to every connected dashboard even when nothing got dispatched -
     // otherwise nextSchedulerRunAt (computed at push time) only ever refreshes on an actual job
     // change, and drifts into showing a past/"expired" time until the next real decrypt happens.
@@ -383,52 +380,59 @@ async function tick(): Promise<void> {
   }
 }
 
-export function isTickInProgress(): boolean {
-  return tickInProgress;
+export function isTickInProgress(watchId: string): boolean {
+  return tickInProgress.has(watchId);
 }
 
-export async function triggerTickNow(): Promise<{ ok: boolean; error?: string }> {
-  if (tickInProgress) {
-    return { ok: false, error: 'a scheduler tick is already in progress' };
+export async function triggerTickNow(watchId: string): Promise<{ ok: boolean; error?: string }> {
+  const watch = getEffectiveWatches().find((w) => w.id === watchId);
+  if (!watch) return { ok: false, error: 'watch not found' };
+  if (tickInProgress.has(watchId)) {
+    return { ok: false, error: 'a scheduler tick is already in progress for this watch' };
   }
-  if (!isSchedulerEnabled()) {
-    return { ok: false, error: 'scheduler is not enabled (missing required settings)' };
+  if (!isWatchSchedulable(watch)) {
+    return { ok: false, error: 'watch is not schedulable (missing required fields, or GH_TOKEN unset)' };
   }
-  void tick().catch((err) => log.error('manually triggered tick threw', { error: String(err) }));
+  void tick(watch).catch((err) => log.error('manually triggered tick threw', { watchId, error: String(err) }));
   return { ok: true };
 }
 
-let currentTask: cron.ScheduledTask | undefined;
-let currentCronExpr: string | undefined;
+const scheduledTasks = new Map<string, { task: cron.ScheduledTask; cronExpr: string }>();
 
-export function applySchedule(): void {
-  if (!isSchedulerEnabled()) {
-    if (currentTask) {
-      currentTask.stop();
-      currentTask = undefined;
-      currentCronExpr = undefined;
+// Reconciles the live cron schedule against getEffectiveWatches(): schedules/reschedules every
+// enabled+schedulable watch whose cron changed or isn't yet scheduled, and stops any watch that's
+// no longer eligible. Each watch ticks entirely independently (its own tickInProgress entry, its
+// own cron.ScheduledTask), so two watches never block or interleave with each other's timing.
+export function applyWatchSchedules(): void {
+  const watches = getEffectiveWatches();
+  const eligibleIds = new Set(watches.filter(isWatchSchedulable).map((w) => w.id));
+
+  for (const [watchId, scheduled] of scheduledTasks) {
+    if (!eligibleIds.has(watchId)) {
+      scheduled.task.stop();
+      scheduledTasks.delete(watchId);
+      log.info('watch no longer schedulable, stopped', { watchId });
     }
-    log.info('scheduler disabled: set a watch bundle ID, app repo, dispatch repo and GH_TOKEN to enable it');
-    return;
   }
 
-  const settings = getEffectiveSettings();
-  if (currentCronExpr === settings.pollCron && currentTask) return;
+  for (const watch of watches) {
+    if (!isWatchSchedulable(watch)) continue;
+    const existing = scheduledTasks.get(watch.id);
+    if (existing && existing.cronExpr === watch.pollCron) continue;
 
-  if (currentTask) currentTask.stop();
+    if (existing) existing.task.stop();
+    const task = cron.schedule(watch.pollCron, () => {
+      void tick(watch).catch((err) => log.error('scheduler tick threw', { watchId: watch.id, error: String(err) }));
+    });
+    scheduledTasks.set(watch.id, { task, cronExpr: watch.pollCron });
+    log.info('watch (re)scheduled', { watchId: watch.id, cron: watch.pollCron, bundleId: watch.bundleId, appRepo: watch.appRepo });
+  }
 
-  currentCronExpr = settings.pollCron;
-  currentTask = cron.schedule(settings.pollCron, () => {
-    void tick().catch((err) => log.error('scheduler tick threw', { error: String(err) }));
-  });
-
-  log.info('scheduler (re)scheduled', {
-    cron: settings.pollCron,
-    bundleId: settings.watchBundleId,
-    appRepo: settings.watchAppRepo,
-  });
+  if (eligibleIds.size === 0) {
+    log.info('no schedulable watches: add a bundle ID, app repo, dispatch repo and set GH_TOKEN to enable one');
+  }
 }
 
 export function startScheduler(): void {
-  applySchedule();
+  applyWatchSchedules();
 }

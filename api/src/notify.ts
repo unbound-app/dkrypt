@@ -1,6 +1,7 @@
 import { config } from './config.js';
 import { log } from './logger.js';
-import { getEffectiveSettings, type SchedulerSettings } from './store/state.js';
+import { getEffectiveSettings, recordWebhookDelivery, type SchedulerSettings } from './store/state.js';
+import { postJsonWithRetry } from './util/webhookRetry.js';
 
 export type NotifyEvent =
   | 'keyRequest'
@@ -99,74 +100,47 @@ function buildPayload(embed: NotifyEmbed, format: SchedulerSettings['notifyForma
   };
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-const RETRY_DELAY_MS = 2000;
-const MAX_RETRY_DELAY_MS = 10_000;
-
-// Discord's 429 body includes a retry_after (seconds) that's usually far more accurate than a
-// blind fixed delay - fall back to the fixed delay for a non-Discord receiver or a malformed body.
-async function retryDelayMs(res: Response): Promise<number> {
-  if (res.status !== 429) return RETRY_DELAY_MS;
+function targetHost(url: string): string {
   try {
-    const body = (await res.clone().json()) as { retry_after?: number };
-    if (typeof body.retry_after === 'number') return Math.min(body.retry_after * 1000, MAX_RETRY_DELAY_MS);
-  } catch {}
-  return RETRY_DELAY_MS;
+    return new URL(url).host;
+  } catch {
+    return 'invalid-url';
+  }
 }
 
 async function postWebhook(
   url: string,
   embed: NotifyEmbed,
   format: SchedulerSettings['notifyFormat'],
+  event: string,
 ): Promise<{ ok: boolean; status?: number; error?: string }> {
-  const body = JSON.stringify(buildPayload(embed, format));
-
-  for (let attempt = 0; attempt <= 1; attempt++) {
-    try {
-      const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
-      if (res.ok) return { ok: true };
-      if (attempt === 0) {
-        await sleep(await retryDelayMs(res));
-        continue;
-      }
-      return { ok: false, status: res.status };
-    } catch (err) {
-      if (attempt === 0) {
-        await sleep(RETRY_DELAY_MS);
-        continue;
-      }
-      return { ok: false, error: String(err) };
-    }
-  }
-
-  // Unreachable - the loop always returns on its second (last) iteration.
-  return { ok: false };
+  const result = await postJsonWithRetry(url, buildPayload(embed, format));
+  recordWebhookDelivery({ kind: 'scheduler', event, targetHost: targetHost(url), ok: result.ok, status: result.status, error: result.error, durationMs: result.durationMs });
+  return result;
 }
 
 export async function notify(event: NotifyEvent, embed: NotifyEmbed): Promise<void> {
   const settings = getEffectiveSettings();
   if (!settings.notifyWebhookUrl || !settings[EVENT_SETTING_KEY[event]]) return;
 
-  const result = await postWebhook(settings.notifyWebhookUrl, embed, settings.notifyFormat);
+  const result = await postWebhook(settings.notifyWebhookUrl, embed, settings.notifyFormat, event);
   if (!result.ok) log.warn('notify webhook failed', { event, status: result.status, error: result.error });
 }
 
+// Test sends bypass the event-toggle checks (and the delivery log, since it's not a "real"
+// notification) so the Settings "Test" button always reflects the URL currently typed in,
+// whether or not it's been saved yet.
 export async function sendTestNotification(urlOverride?: string): Promise<{ ok: boolean; error?: string }> {
   const settings = getEffectiveSettings();
   const url = urlOverride || settings.notifyWebhookUrl;
   if (!url) return { ok: false, error: 'no webhook URL configured' };
 
-  const result = await postWebhook(
+  const result = await postJsonWithRetry(
     url,
-    {
-      title: 'Test notification',
-      description: 'This is what a notification from dkrypt looks like.',
-      color: EMBED_COLOR.info,
-    },
-    settings.notifyFormat,
+    buildPayload(
+      { title: 'Test notification', description: 'This is what a notification from dkrypt looks like.', color: EMBED_COLOR.info },
+      settings.notifyFormat,
+    ),
   );
   return result.ok ? { ok: true } : { ok: false, error: result.error ?? `webhook returned HTTP ${result.status}` };
 }

@@ -7,7 +7,7 @@ import { scopedLogger } from '../logger.js';
 const log = scopedLogger('jobs');
 import { EMBED_COLOR, notify } from '../notify.js';
 import { sendPushToUser } from '../push.js';
-import { clearAppleAuthAlert, recordJobHistory, setAppleAuthAlert } from '../store/state.js';
+import { clearAppleAuthAlert, getEffectiveDevices, recordJobHistory, setAppleAuthAlert, type DeviceRecord } from '../store/state.js';
 import { looksLikeAppleAuthFailure } from '../util/appleAuth.js';
 import { runDecrypt } from './runner.js';
 import type { Job, JobSource, TestFlightJobSource } from './types.js';
@@ -15,7 +15,7 @@ import type { Job, JobSource, TestFlightJobSource } from './types.js';
 const jobs = new Map<string, Job>();
 
 const queue: string[] = [];
-let workerRunning = false;
+const busyDeviceIds = new Set<string>();
 
 function findActiveJobForBundle(
   bundleId: string,
@@ -81,7 +81,7 @@ export function enqueueDecryptJob(
   log.info('job queued', { jobId: job.id, bundleId, externalVersionId, source, priority });
   emitJobsChanged();
 
-  void runWorker();
+  pumpWorkers();
   return job;
 }
 
@@ -97,8 +97,8 @@ export function getQueueInfo(jobId: string): { position: number; total: number }
   const job = jobs.get(jobId);
   if (!job || job.status === 'done' || job.status === 'failed') return undefined;
 
-  const runningId = [...jobs.values()].find((j) => j.status === 'running')?.id;
-  const ordered = runningId ? [runningId, ...queue] : queue;
+  const runningIds = [...jobs.values()].filter((j) => j.status === 'running').map((j) => j.id);
+  const ordered = [...runningIds, ...queue];
   const idx = ordered.indexOf(jobId);
   return { position: idx === -1 ? ordered.length : idx + 1, total: ordered.length };
 }
@@ -136,6 +136,9 @@ function toHistoryEntry(job: Job) {
     createdAt: job.createdAt,
     startedAt: job.startedAt,
     finishedAt: job.finishedAt ?? Date.now(),
+    deviceId: job.deviceId,
+    ipaMetadata: job.ipaMetadata,
+    ipaInfoPlist: job.ipaInfoPlist,
   };
 }
 
@@ -188,60 +191,91 @@ export function prioritizeQueuedJob(id: string): boolean {
   return true;
 }
 
-async function runWorker(): Promise<void> {
-  if (workerRunning) return;
-  workerRunning = true;
+// TestFlight jobs are pinned to the primary device: installBuild() installs the app on one
+// specific physical device via the tfauto bridge, so decrypting from a different device would
+// either fail outright or silently grab whatever unrelated app happens to be installed there.
+// App Store jobs have no such constraint and can go to any enabled device.
+function isDispatchable(job: Job, device: DeviceRecord, primary: DeviceRecord): boolean {
+  if (job.testflight) return device.id === primary.id;
+  return true;
+}
+
+function takeNextDispatchableJobId(device: DeviceRecord, primary: DeviceRecord): string | undefined {
+  for (let i = 0; i < queue.length; i++) {
+    const job = jobs.get(queue[i]);
+    if (job && isDispatchable(job, device, primary)) {
+      queue.splice(i, 1);
+      return job.id;
+    }
+  }
+  return undefined;
+}
+
+// Fans queued jobs out across every enabled, currently-idle device. The whole dispatch pass is
+// synchronous (no `await` before each fire-and-forget runOneJob call), so Node's single-threaded
+// event loop can't interleave two dispatch passes mid-loop - no lock needed beyond busyDeviceIds.
+function pumpWorkers(): void {
+  const devices = getEffectiveDevices().filter((d) => d.enabled);
+  if (devices.length === 0) return;
+  const primary = devices.find((d) => d.isPrimary) ?? devices[0];
+
+  for (const device of devices) {
+    if (busyDeviceIds.has(device.id)) continue;
+    const jobId = takeNextDispatchableJobId(device, primary);
+    if (!jobId) continue;
+    const job = jobs.get(jobId);
+    if (!job) continue;
+
+    busyDeviceIds.add(device.id);
+    void runOneJob(device, job).finally(() => {
+      busyDeviceIds.delete(device.id);
+      pumpWorkers();
+    });
+  }
+}
+
+async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
+  job.status = 'running';
+  job.startedAt = Date.now();
+  job.deviceId = device.id;
+  log.info('job started', { jobId: job.id, bundleId: job.bundleId, deviceId: device.id });
+  emitJobsChanged();
 
   try {
-    let nextId: string | undefined;
-    while ((nextId = queue.shift())) {
-      const job = jobs.get(nextId);
-      if (!job) continue;
+    await runDecrypt(job, device);
+    job.status = 'done';
+    job.finishedAt = Date.now();
+    log.info('job done', { jobId: job.id, bundleId: job.bundleId, deviceId: device.id, sizeBytes: job.fileSizeBytes });
+    clearAppleAuthAlert();
+  } catch (err) {
+    job.status = 'failed';
+    job.finishedAt = Date.now();
+    job.error = err instanceof Error ? err.message : String(err);
+    log.error('job failed', { jobId: job.id, bundleId: job.bundleId, deviceId: device.id, error: job.error });
 
-      job.status = 'running';
-      job.startedAt = Date.now();
-      log.info('job started', { jobId: job.id, bundleId: job.bundleId });
-      emitJobsChanged();
-
-      try {
-        await runDecrypt(job);
-        job.status = 'done';
-        job.finishedAt = Date.now();
-        log.info('job done', { jobId: job.id, bundleId: job.bundleId, sizeBytes: job.fileSizeBytes });
-        clearAppleAuthAlert();
-      } catch (err) {
-        job.status = 'failed';
-        job.finishedAt = Date.now();
-        job.error = err instanceof Error ? err.message : String(err);
-        log.error('job failed', { jobId: job.id, bundleId: job.bundleId, error: job.error });
-
-        if (looksLikeAppleAuthFailure(job.error)) {
-          setAppleAuthAlert(job.error);
-          void notify('appleAuthAlert', {
-            title: 'Possible App Store auth issue',
-            description: `Decrypting **${job.bundleId}** failed with what looks like an authentication issue - it may need re-bootstrapping.`,
-            color: EMBED_COLOR.warn,
-            fields: [{ name: 'Error', value: `\`\`\`${job.error}\`\`\`` }],
-          });
-        }
-      }
-
-      recordJobHistory(toHistoryEntry(job));
-      emitJobsChanged();
-
-      if (job.queuedBy) {
-        const label = job.versionLabel ? `${job.bundleId} (${job.versionLabel})` : job.bundleId;
-        void sendPushToUser(job.queuedBy, {
-          title: job.status === 'done' ? 'Decrypt finished' : 'Decrypt failed',
-          body: job.status === 'done' ? `${label} is ready to download.` : `${label} failed: ${job.error ?? 'unknown error'}`,
-        });
-      }
-
-      settle(job);
+    if (looksLikeAppleAuthFailure(job.error)) {
+      setAppleAuthAlert(job.error);
+      void notify('appleAuthAlert', {
+        title: 'Possible App Store auth issue',
+        description: `Decrypting **${job.bundleId}** failed with what looks like an authentication issue - it may need re-bootstrapping.`,
+        color: EMBED_COLOR.warn,
+        fields: [{ name: 'Error', value: `\`\`\`${job.error}\`\`\`` }],
+      });
     }
-  } finally {
-    workerRunning = false;
   }
+
+  recordJobHistory(toHistoryEntry(job));
+  emitJobsChanged();
+
+  if (job.queuedBy) {
+    const label = job.versionLabel ? `${job.bundleId} (${job.versionLabel})` : job.bundleId;
+    void sendPushToUser(job.queuedBy, {
+      title: job.status === 'done' ? 'Decrypt finished' : 'Decrypt failed',
+      body: job.status === 'done' ? `${label} is ready to download.` : `${label} failed: ${job.error ?? 'unknown error'}`,
+    });
+  }
+
+  settle(job);
 }
 
 async function cleanupJob(job: Job): Promise<void> {

@@ -8,17 +8,18 @@ import {
   sendAppleAuthInput,
   startAppleReauth,
 } from '../appleAuthRunner.js';
-import { dashboardEvents } from '../events.js';
+import { dashboardEvents, emitJobsChanged, getOnlineUsernames, registerPresence, unregisterPresence } from '../events.js';
 import { jobSummary, streamJobFile } from '../jobs/http.js';
 import { cancelJob, enqueueDecryptJob, getActiveJobs, getJob, prioritizeQueuedJob } from '../jobs/store.js';
 import type { LogEntry } from '../logger.js';
 import { getRecentLogs } from '../logger.js';
 import { EMBED_COLOR, notify, sendTestNotification } from '../notify.js';
 import { getVapidPublicKey, sendPushToUser } from '../push.js';
-import { applySchedule, checkForTestFlightUpdate, checkForUpdate, triggerTickNow } from '../scheduler/index.js';
+import { applyWatchSchedules, checkForTestFlightUpdate, checkForUpdate, triggerTickNow } from '../scheduler/index.js';
 import { searchApps } from '../scheduler/itunes.js';
 import { requirePermission, requireSession } from '../session.js';
 import { getDeviceHealth } from '../deviceHealth.js';
+import { validateDeviceRootDir } from '../idevice.js';
 import { listBuilds, listTrains } from '../testflight.js';
 import { nextCronRunAt } from '../util/cron.js';
 import { getDiskUsage } from '../util/diskUsage.js';
@@ -28,10 +29,18 @@ import {
   addAllowedUser,
   addPushSubscription,
   approveApiKey,
+  type AppWatch,
   bulkApproveApiKeys,
+  bulkExtendApiKeyExpiry,
+  bulkSetApiKeyDailyLimit,
   clearAppleAuthAlert,
   createApiKey,
+  createDevice,
+  createWatch,
+  deleteDevice,
+  deleteWatch,
   denyApiKey,
+  type DeviceRecord,
   exportBackup,
   getAllJobHistory,
   getApiKeyById,
@@ -42,21 +51,28 @@ import {
   getAverageJobDurationMs,
   getBundleStats,
   getDailyVolume,
+  getDevice,
   getDeviceBatteryHourlyBuckets,
   getDeviceHealthHourlyBuckets,
   getDeviceStorageHourlyBuckets,
   getDeviceTemperatureHourlyBuckets,
   getDeviceUptimePercent,
+  getEffectiveDevices,
   getEffectiveSettings,
+  getEffectiveWatches,
   getInsightsSummary,
+  getJobHistoryEntryById,
   getJobHistoryPage,
   getLastSchedulerRunAt,
-  getSchedulerConfigIssues,
+  getPrimaryDevice,
   getSchedulerRunHistory,
   getUserPrefs,
   getUserPriority,
+  getWatch,
+  getWatchConfigIssues,
+  getWebhookDeliveryLog,
   importBackup,
-  isSchedulerEnabled,
+  isWatchSchedulable,
   type JobHistoryEntry,
   listAllApiKeysPage,
   listAllowedUsers,
@@ -78,8 +94,10 @@ import {
   setApiKeyPriority,
   setUserPriority,
   updateAllowedUserPermissions,
+  updateDevice,
   updateSettings,
   updateUserPrefs,
+  updateWatch,
   wouldOrphanManageUsers,
 } from '../store/state.js';
 
@@ -102,16 +120,22 @@ dashboardRouter.use((_req, res, next) => {
 });
 
 function buildOverview() {
-  const schedulerEnabled = isSchedulerEnabled();
+  const watches = getEffectiveWatches().map((w) => ({
+    ...w,
+    nextRunAt: isWatchSchedulable(w) ? nextCronRunAt(w.pollCron) : undefined,
+    schedulable: isWatchSchedulable(w),
+    configIssues: getWatchConfigIssues(w),
+  }));
+  const devices = getEffectiveDevices().map((d) => ({ ...d }));
   const settings = getEffectiveSettings();
   return {
-    schedulerEnabled,
+    schedulerEnabled: watches.some((w) => w.schedulable),
     settings,
+    watches,
+    devices,
     appleAuthAlert: getAppleAuthAlert(),
     lastSchedulerRunAt: getLastSchedulerRunAt(),
-    nextSchedulerRunAt: schedulerEnabled ? nextCronRunAt(settings.pollCron) : undefined,
     schedulerRunHistory: getSchedulerRunHistory(10),
-    configIssues: getSchedulerConfigIssues(),
     disk: getDiskUsage(config.outputDir),
     activeJobs: getActiveJobs().map((j) => ({
       id: j.id,
@@ -120,6 +144,7 @@ function buildOverview() {
       status: j.status,
       progress: j.progress,
       versionLabel: j.versionLabel,
+      deviceId: j.deviceId,
       testflight: j.testflight
         ? { appId: j.testflight.appId, buildId: j.testflight.build.id, version: j.testflight.build.cfBundleShortVersion, buildNumber: j.testflight.build.cfBundleVersion }
         : undefined,
@@ -146,14 +171,20 @@ dashboardRouter.get('/v1/dashboard/events', (req, res) => {
 
   sendEvent('overview', buildOverview());
 
+  const { sub } = res.locals.session;
+  registerPresence(sub);
+  sendEvent('presence', getOnlineUsernames());
+
   const onJobsChanged = () => sendEvent('overview', buildOverview());
   const onLogAdded = (entry: LogEntry) => sendEvent('log', entry);
   const onHistoryAdded = (entry: JobHistoryEntry) => sendEvent('history', entry);
   const onAppleAuthChanged = () => sendEvent('appleAuth', getAppleAuthStatus());
+  const onPresenceChanged = (usernames: string[]) => sendEvent('presence', usernames);
 
   dashboardEvents.on('jobsChanged', onJobsChanged);
   if (res.locals.session.permissions.viewLogs) dashboardEvents.on('logAdded', onLogAdded);
   dashboardEvents.on('historyAdded', onHistoryAdded);
+  dashboardEvents.on('presenceChanged', onPresenceChanged);
   if (res.locals.session.permissions.manageAppleAuth) {
     sendEvent('appleAuth', getAppleAuthStatus());
     dashboardEvents.on('appleAuthChanged', onAppleAuthChanged);
@@ -163,9 +194,11 @@ dashboardRouter.get('/v1/dashboard/events', (req, res) => {
 
   req.on('close', () => {
     clearInterval(heartbeat);
+    unregisterPresence(sub);
     dashboardEvents.off('jobsChanged', onJobsChanged);
     dashboardEvents.off('logAdded', onLogAdded);
     dashboardEvents.off('historyAdded', onHistoryAdded);
+    dashboardEvents.off('presenceChanged', onPresenceChanged);
     dashboardEvents.off('appleAuthChanged', onAppleAuthChanged);
   });
 });
@@ -184,6 +217,11 @@ dashboardRouter.get('/v1/dashboard/logs', canViewLogs, (_req, res) => {
   res.json({ logs: getRecentLogs() });
 });
 
+dashboardRouter.get('/v1/dashboard/webhooks', canViewLogs, (req, res) => {
+  const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit ?? '100'), 10) || 100, 1), 200);
+  res.json({ deliveries: getWebhookDeliveryLog(limit) });
+});
+
 const HISTORY_CSV_COLUMNS = [
   'id',
   'bundleId',
@@ -194,6 +232,7 @@ const HISTORY_CSV_COLUMNS = [
   'error',
   'sizeBytes',
   'source',
+  'deviceId',
   'createdAt',
   'startedAt',
   'finishedAt',
@@ -234,6 +273,42 @@ dashboardRouter.get('/v1/dashboard/jobs/stats/:bundleId', (req, res) => {
 dashboardRouter.get('/v1/dashboard/jobs/volume', (req, res) => {
   const days = Math.min(Math.max(Number.parseInt(String(req.query.days ?? '14'), 10) || 14, 1), 90);
   res.json({ days: getDailyVolume(days) });
+});
+
+// Shallow key-by-key diff of two historical decrypts of the same bundle - built from the
+// Info.plist fields captured at decrypt time (Part 7), so no re-download/re-parse needed here.
+dashboardRouter.get('/v1/dashboard/jobs/diff', (req, res) => {
+  const bundleId = typeof req.query.bundleId === 'string' ? req.query.bundleId : '';
+  const aId = typeof req.query.a === 'string' ? req.query.a : '';
+  const bId = typeof req.query.b === 'string' ? req.query.b : '';
+  const a = getJobHistoryEntryById(aId);
+  const b = getJobHistoryEntryById(bId);
+  if (!a || !b) {
+    res.status(404).json({ error: 'one or both job history entries not found' });
+    return;
+  }
+  if (a.bundleId !== bundleId || b.bundleId !== bundleId) {
+    res.status(400).json({ error: 'both entries must belong to bundleId' });
+    return;
+  }
+
+  const plistA = a.ipaInfoPlist ?? {};
+  const plistB = b.ipaInfoPlist ?? {};
+  const keys = new Set([...Object.keys(plistA), ...Object.keys(plistB)]);
+  const plistDiff: { key: string; before: unknown; after: unknown }[] = [];
+  for (const key of keys) {
+    if (JSON.stringify(plistA[key]) !== JSON.stringify(plistB[key])) {
+      plistDiff.push({ key, before: plistA[key], after: plistB[key] });
+    }
+  }
+  plistDiff.sort((x, y) => x.key.localeCompare(y.key));
+
+  res.json({
+    a: { id: a.id, versionLabel: a.versionLabel, sizeBytes: a.sizeBytes, finishedAt: a.finishedAt, metadata: a.ipaMetadata },
+    b: { id: b.id, versionLabel: b.versionLabel, sizeBytes: b.sizeBytes, finishedAt: b.finishedAt, metadata: b.ipaMetadata },
+    sizeDeltaBytes: (b.sizeBytes ?? 0) - (a.sizeBytes ?? 0),
+    plistDiff,
+  });
 });
 
 dashboardRouter.get('/v1/dashboard/insights', (req, res) => {
@@ -302,29 +377,226 @@ dashboardRouter.get('/v1/dashboard/versions/:bundleId', async (req, res) => {
   }
 });
 
-dashboardRouter.get('/v1/dashboard/device/health', async (req, res) => {
-  const health = await getDeviceHealth(req.query.force === 'true');
+function serializeDevice(d: DeviceRecord) {
+  return d;
+}
+
+dashboardRouter.get('/v1/dashboard/devices', canManageScheduler, (_req, res) => {
+  res.json({ devices: getEffectiveDevices().map(serializeDevice) });
+});
+
+interface DeviceInput {
+  name: string;
+  rootDir: string;
+  enabled?: boolean;
+  isPrimary?: boolean;
+}
+
+function parseDeviceInput(body: unknown): DeviceInput | undefined {
+  if (typeof body !== 'object' || body === null) return undefined;
+  const b = body as Record<string, unknown>;
+  const name = typeof b.name === 'string' ? b.name.trim() : '';
+  const rootDir = typeof b.rootDir === 'string' ? b.rootDir.trim() : '';
+  if (!name || !rootDir) return undefined;
+  return {
+    name,
+    rootDir,
+    enabled: typeof b.enabled === 'boolean' ? b.enabled : undefined,
+    isPrimary: typeof b.isPrimary === 'boolean' ? b.isPrimary : undefined,
+  };
+}
+
+dashboardRouter.post('/v1/dashboard/devices', canManageScheduler, async (req, res) => {
+  const input = parseDeviceInput(req.body);
+  if (!input) {
+    res.status(400).json({ error: 'name and rootDir are required' });
+    return;
+  }
+  try {
+    await validateDeviceRootDir(input.rootDir);
+  } catch (err) {
+    res.status(400).json({ error: `couldn't read a valid ipadecrypt config at that root dir: ${err instanceof Error ? err.message : String(err)}` });
+    return;
+  }
+  const device = createDevice(input, res.locals.session.sub);
+  emitJobsChanged();
+  res.status(201).json(device);
+});
+
+dashboardRouter.patch('/v1/dashboard/devices/:id', canManageScheduler, async (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const patch: Partial<DeviceInput> = {};
+  if (typeof body.name === 'string' && body.name.trim()) patch.name = body.name.trim();
+  if (typeof body.rootDir === 'string' && body.rootDir.trim()) patch.rootDir = body.rootDir.trim();
+  if (typeof body.enabled === 'boolean') patch.enabled = body.enabled;
+  if (typeof body.isPrimary === 'boolean') patch.isPrimary = body.isPrimary;
+
+  if (patch.rootDir) {
+    try {
+      await validateDeviceRootDir(patch.rootDir);
+    } catch (err) {
+      res.status(400).json({ error: `couldn't read a valid ipadecrypt config at that root dir: ${err instanceof Error ? err.message : String(err)}` });
+      return;
+    }
+  }
+
+  const result = updateDevice(req.params.id, patch, res.locals.session.sub);
+  if (!result.ok) {
+    res.status(404).json({ error: result.error });
+    return;
+  }
+  emitJobsChanged();
+  res.json(result.device);
+});
+
+dashboardRouter.delete('/v1/dashboard/devices/:id', canManageScheduler, (req, res) => {
+  const ok = deleteDevice(req.params.id, res.locals.session.sub);
+  if (!ok) {
+    res.status(404).json({ error: 'device not found' });
+    return;
+  }
+  emitJobsChanged();
+  res.json({ ok: true });
+});
+
+function requireDevice(id: string): DeviceRecord | undefined {
+  return getDevice(id) ?? (id === 'primary' ? getPrimaryDevice() : undefined);
+}
+
+dashboardRouter.get('/v1/dashboard/devices/:id/health', async (req, res) => {
+  const device = requireDevice(req.params.id);
+  if (!device) {
+    res.status(404).json({ error: 'device not found' });
+    return;
+  }
+  const health = await getDeviceHealth(device.id, req.query.force === 'true');
   res.json(health);
 });
 
-dashboardRouter.get('/v1/dashboard/device/health-history', (req, res) => {
+dashboardRouter.get('/v1/dashboard/devices/:id/health-history', (req, res) => {
   const hours = Math.min(Math.max(Number.parseInt(String(req.query.hours ?? '24'), 10) || 24, 1), 168);
-  res.json({ buckets: getDeviceHealthHourlyBuckets(hours), uptimePercent: getDeviceUptimePercent(hours) ?? null });
+  res.json({ buckets: getDeviceHealthHourlyBuckets(req.params.id, hours), uptimePercent: getDeviceUptimePercent(req.params.id, hours) ?? null });
 });
 
-dashboardRouter.get('/v1/dashboard/device/battery-history', (req, res) => {
+dashboardRouter.get('/v1/dashboard/devices/:id/battery-history', (req, res) => {
   const hours = Math.min(Math.max(Number.parseInt(String(req.query.hours ?? '24'), 10) || 24, 1), 168);
-  res.json({ buckets: getDeviceBatteryHourlyBuckets(hours) });
+  res.json({ buckets: getDeviceBatteryHourlyBuckets(req.params.id, hours) });
 });
 
-dashboardRouter.get('/v1/dashboard/device/temperature-history', (req, res) => {
+dashboardRouter.get('/v1/dashboard/devices/:id/temperature-history', (req, res) => {
   const hours = Math.min(Math.max(Number.parseInt(String(req.query.hours ?? '24'), 10) || 24, 1), 168);
-  res.json({ buckets: getDeviceTemperatureHourlyBuckets(hours) });
+  res.json({ buckets: getDeviceTemperatureHourlyBuckets(req.params.id, hours) });
 });
 
-dashboardRouter.get('/v1/dashboard/device/storage-history', (req, res) => {
+dashboardRouter.get('/v1/dashboard/devices/:id/storage-history', (req, res) => {
   const hours = Math.min(Math.max(Number.parseInt(String(req.query.hours ?? '24'), 10) || 24, 1), 168);
-  res.json({ buckets: getDeviceStorageHourlyBuckets(hours) });
+  res.json({ buckets: getDeviceStorageHourlyBuckets(req.params.id, hours) });
+});
+
+function serializeWatch(w: AppWatch) {
+  return { ...w, schedulable: isWatchSchedulable(w), configIssues: getWatchConfigIssues(w) };
+}
+
+dashboardRouter.get('/v1/dashboard/watches', canManageScheduler, (_req, res) => {
+  res.json({ watches: getEffectiveWatches().map(serializeWatch) });
+});
+
+interface WatchInput {
+  name?: string;
+  bundleId: string;
+  appRepo: string;
+  ghDispatchRepo: string;
+  ghWorkflowFile: string;
+  pollCron: string;
+  enabled?: boolean;
+}
+
+function parseWatchInput(body: unknown): WatchInput | undefined {
+  if (typeof body !== 'object' || body === null) return undefined;
+  const b = body as Record<string, unknown>;
+  const bundleId = typeof b.bundleId === 'string' ? b.bundleId.trim() : '';
+  if (!bundleId) return undefined;
+  return {
+    name: typeof b.name === 'string' ? b.name.trim() || undefined : undefined,
+    bundleId,
+    appRepo: typeof b.appRepo === 'string' ? b.appRepo.trim() : '',
+    ghDispatchRepo: typeof b.ghDispatchRepo === 'string' ? b.ghDispatchRepo.trim() : '',
+    ghWorkflowFile: typeof b.ghWorkflowFile === 'string' ? b.ghWorkflowFile.trim() : 'remote-ipa-update.yml',
+    pollCron: typeof b.pollCron === 'string' ? b.pollCron.trim() : '0 * * * *',
+    enabled: typeof b.enabled === 'boolean' ? b.enabled : undefined,
+  };
+}
+
+dashboardRouter.post('/v1/dashboard/watches', canManageScheduler, (req, res) => {
+  const input = parseWatchInput(req.body);
+  if (!input) {
+    res.status(400).json({ error: 'bundleId is required' });
+    return;
+  }
+  if (input.pollCron && !validateCronExpr(input.pollCron)) {
+    res.status(400).json({ error: 'pollCron is not a valid cron expression' });
+    return;
+  }
+  const result = createWatch(input, res.locals.session.sub);
+  if (!result.ok) {
+    res.status(409).json({ error: result.error });
+    return;
+  }
+  applyWatchSchedules();
+  emitJobsChanged();
+  res.status(201).json(serializeWatch(result.watch as AppWatch));
+});
+
+dashboardRouter.patch('/v1/dashboard/watches/:id', canManageScheduler, (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const patch: Partial<WatchInput> = {};
+  if (typeof body.name === 'string') patch.name = body.name.trim() || undefined;
+  if (typeof body.bundleId === 'string' && body.bundleId.trim()) patch.bundleId = body.bundleId.trim();
+  if (typeof body.appRepo === 'string') patch.appRepo = body.appRepo.trim();
+  if (typeof body.ghDispatchRepo === 'string') patch.ghDispatchRepo = body.ghDispatchRepo.trim();
+  if (typeof body.ghWorkflowFile === 'string') patch.ghWorkflowFile = body.ghWorkflowFile.trim();
+  if (typeof body.pollCron === 'string') patch.pollCron = body.pollCron.trim();
+  if (typeof body.enabled === 'boolean') patch.enabled = body.enabled;
+
+  if (patch.pollCron && !validateCronExpr(patch.pollCron)) {
+    res.status(400).json({ error: 'pollCron is not a valid cron expression' });
+    return;
+  }
+
+  const result = updateWatch(req.params.id, patch, res.locals.session.sub);
+  if (!result.ok) {
+    res.status(result.error === 'watch not found' ? 404 : 409).json({ error: result.error });
+    return;
+  }
+  applyWatchSchedules();
+  emitJobsChanged();
+  res.json(serializeWatch(result.watch as AppWatch));
+});
+
+dashboardRouter.delete('/v1/dashboard/watches/:id', canManageScheduler, (req, res) => {
+  const ok = deleteWatch(req.params.id, res.locals.session.sub);
+  if (!ok) {
+    res.status(404).json({ error: 'watch not found' });
+    return;
+  }
+  applyWatchSchedules();
+  emitJobsChanged();
+  res.json({ ok: true });
+});
+
+dashboardRouter.get('/v1/dashboard/watches/:id/preview-dispatch', canTriggerDispatch, async (req, res) => {
+  const watch = getWatch(req.params.id);
+  if (!watch) {
+    res.status(404).json({ error: 'watch not found' });
+    return;
+  }
+  const [appStore, testflight] = await Promise.all([checkForUpdate(watch), checkForTestFlightUpdate(watch)]);
+  res.json({ ...appStore, testflight });
+});
+
+dashboardRouter.post('/v1/dashboard/watches/:id/trigger-dispatch', canTriggerDispatch, async (req, res) => {
+  const result = await triggerTickNow(req.params.id);
+  res.status(result.ok ? 202 : 409).json(result);
 });
 
 dashboardRouter.get('/v1/dashboard/testflight/:appId/trains', async (req, res) => {
@@ -544,6 +816,32 @@ dashboardRouter.post('/v1/dashboard/keys/bulk-revoke', (req, res) => {
   res.json({ revoked });
 });
 
+const MIN_EXPIRY_EXTEND_DAYS = 1;
+const MAX_EXPIRY_EXTEND_DAYS = 3650;
+
+dashboardRouter.post('/v1/dashboard/keys/bulk-extend-expiry', canApproveApiKeys, (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter((id: unknown) => typeof id === 'string') : [];
+  const days = typeof req.body?.days === 'number' ? Math.round(req.body.days) : undefined;
+  if (!days || days < MIN_EXPIRY_EXTEND_DAYS || days > MAX_EXPIRY_EXTEND_DAYS) {
+    res.status(400).json({ error: `days must be between ${MIN_EXPIRY_EXTEND_DAYS} and ${MAX_EXPIRY_EXTEND_DAYS}` });
+    return;
+  }
+  const extended = bulkExtendApiKeyExpiry(ids, days);
+  res.json({ extended });
+});
+
+dashboardRouter.post('/v1/dashboard/keys/bulk-set-daily-limit', canApproveApiKeys, (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter((id: unknown) => typeof id === 'string') : [];
+  const raw = req.body?.dailyLimit;
+  const dailyLimit = raw === null ? undefined : parseDailyLimit(raw);
+  if (raw !== null && dailyLimit === undefined) {
+    res.status(400).json({ error: 'dailyLimit must be a number, or null to clear it' });
+    return;
+  }
+  const updated = bulkSetApiKeyDailyLimit(ids, dailyLimit);
+  res.json({ updated });
+});
+
 dashboardRouter.get('/v1/dashboard/keys/:id/usage', (req, res) => {
   const key = getApiKeyById(req.params.id);
   if (!key) {
@@ -628,7 +926,7 @@ dashboardRouter.get('/v1/dashboard/settings', (_req, res) => {
   res.json(getEffectiveSettings());
 });
 
-const SETTINGS_STRING_FIELDS = ['watchBundleId', 'watchAppRepo', 'ghDispatchRepo', 'ghWorkflowFile', 'pollCron', 'notifyWebhookUrl'] as const;
+const SETTINGS_STRING_FIELDS = ['notifyWebhookUrl', 'jobWebhookUrl'] as const;
 const SETTINGS_BOOL_FIELDS = [
   'notifyOnKeyRequest',
   'notifyOnDispatchSuccess',
@@ -641,6 +939,7 @@ const SETTINGS_BOOL_FIELDS = [
   'notifyOnDiskFull',
   'notifyOnDeviceStorageLow',
   'notifyOnTestFlightBridgeDown',
+  'jobWebhookEnabled',
 ] as const;
 const MAX_SCHEDULER_RETRY_COUNT = 5;
 const MIN_DEVICE_OFFLINE_ALERT_MINUTES = 5;
@@ -655,6 +954,7 @@ const MIN_DEVICE_STORAGE_ALERT_PERCENT = 50;
 const MAX_DEVICE_STORAGE_ALERT_PERCENT = 99;
 const MIN_TESTFLIGHT_BRIDGE_ALERT_MINUTES = 5;
 const MAX_TESTFLIGHT_BRIDGE_ALERT_MINUTES = 180;
+const MAX_JOB_HISTORY_RETENTION_DAYS = 365;
 
 dashboardRouter.put('/v1/dashboard/settings', canManageScheduler, (req, res) => {
   const body = req.body ?? {};
@@ -702,14 +1002,11 @@ dashboardRouter.put('/v1/dashboard/settings', canManageScheduler, (req, res) => 
       MAX_TESTFLIGHT_BRIDGE_ALERT_MINUTES,
     );
   }
-
-  if (typeof patch.pollCron === 'string' && patch.pollCron !== '' && !validateCronExpr(patch.pollCron)) {
-    res.status(400).json({ error: 'pollCron is not a valid cron expression' });
-    return;
+  if (typeof body.jobHistoryRetentionDays === 'number') {
+    patch.jobHistoryRetentionDays = Math.min(Math.max(Math.round(body.jobHistoryRetentionDays), 0), MAX_JOB_HISTORY_RETENTION_DAYS);
   }
 
   const updated = updateSettings(patch, res.locals.session.sub);
-  applySchedule();
   res.json(updated);
 });
 
@@ -722,17 +1019,6 @@ dashboardRouter.post('/v1/dashboard/settings/test-webhook', canTriggerDispatch, 
   const url = typeof req.body?.url === 'string' && req.body.url.trim() ? req.body.url.trim() : undefined;
   const result = await sendTestNotification(url);
   res.status(result.ok ? 200 : 400).json(result);
-});
-
-dashboardRouter.get('/v1/dashboard/settings/preview-dispatch', canTriggerDispatch, async (_req, res) => {
-  const settings = getEffectiveSettings();
-  const [appStore, testflight] = await Promise.all([checkForUpdate(settings), checkForTestFlightUpdate(settings)]);
-  res.json({ ...appStore, testflight });
-});
-
-dashboardRouter.post('/v1/dashboard/settings/trigger-dispatch', canTriggerDispatch, async (_req, res) => {
-  const result = await triggerTickNow();
-  res.status(result.ok ? 202 : 409).json(result);
 });
 
 dashboardRouter.post('/v1/dashboard/auth-alert/clear', canTriggerDispatch, (_req, res) => {
@@ -815,7 +1101,8 @@ dashboardRouter.post('/v1/dashboard/backup/import', canManageUsers, (req, res) =
     res.status(400).json({ error: result.error });
     return;
   }
-  applySchedule();
+  applyWatchSchedules();
+  emitJobsChanged();
   res.json({ ok: true });
 });
 
@@ -864,9 +1151,10 @@ dashboardRouter.post('/v1/dashboard/push/test', async (_req, res) => {
 
 dashboardRouter.put('/v1/dashboard/me/prefs', (req, res) => {
   const body = req.body ?? {};
-  const patch: { theme?: 'dark' | 'light' | 'auto'; density?: 'comfortable' | 'compact' } = {};
+  const patch: { theme?: 'dark' | 'light' | 'auto'; density?: 'comfortable' | 'compact'; accent?: string } = {};
   if (body.theme === 'dark' || body.theme === 'light' || body.theme === 'auto') patch.theme = body.theme;
   if (body.density === 'comfortable' || body.density === 'compact') patch.density = body.density;
+  if (typeof body.accent === 'string' && /^[a-z-]{1,32}$/.test(body.accent)) patch.accent = body.accent;
   res.json(updateUserPrefs(res.locals.session.sub, patch));
 });
 

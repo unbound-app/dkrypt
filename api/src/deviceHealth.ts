@@ -3,7 +3,7 @@ import { config } from './config.js';
 import { execCommand, isTestFlightRunning, sendSpringBoardBridgeRequest, tryIoregCandidates, withSSH } from './idevice.js';
 import { scopedLogger } from './logger.js';
 import { EMBED_COLOR, notify } from './notify.js';
-import { getEffectiveSettings, recordDeviceHealthCheck } from './store/state.js';
+import { getEffectiveDevices, getEffectiveSettings, recordDeviceHealthCheck, type DeviceRecord } from './store/state.js';
 import { getDiskUsage } from './util/diskUsage.js';
 
 const log = scopedLogger('idevice');
@@ -133,22 +133,28 @@ async function queryDeviceStorage(conn: Client): Promise<DeviceStorage | undefin
 }
 
 const HEALTH_CACHE_TTL_MS = 20_000;
-let healthCache: { at: number; value: DeviceHealth } | undefined;
+const healthCache = new Map<string, { at: number; value: DeviceHealth }>();
 
-async function computeDeviceHealth(): Promise<DeviceHealth> {
+// The SpringBoard bridge (screen status, dark mode, TestFlight bridge reachability) is only
+// queried for the primary device - tfauto only ever targets one physical device at a time, so
+// asking a non-primary device for bridge status would just measure whether tfauto happens to
+// also be installed there, not anything meaningful about that device's own health.
+async function computeDeviceHealth(device: DeviceRecord, isPrimary: boolean): Promise<DeviceHealth> {
   try {
-    return await withSSH(async (conn) => {
+    return await withSSH(device.rootDir, async (conn) => {
       const [tfRunning, sbStatusResult, battery, storage] = await Promise.all([
         isTestFlightRunning(conn),
-        sendSpringBoardBridgeRequest(conn, { action: 'screen_status' }, 8_000)
-          .then((value) => ({ ok: true as const, value }))
-          .catch(() => ({ ok: false as const, value: undefined })),
+        isPrimary
+          ? sendSpringBoardBridgeRequest(conn, { action: 'screen_status' }, 8_000)
+              .then((value) => ({ ok: true as const, value }))
+              .catch(() => ({ ok: false as const, value: undefined }))
+          : Promise.resolve({ ok: false as const, value: undefined }),
         queryBatteryStatus(conn).catch((err: unknown) => {
-          log.warn('battery query threw', { error: String(err) });
+          log.warn('battery query threw', { deviceId: device.id, error: String(err) });
           return undefined;
         }),
         queryDeviceStorage(conn).catch((err: unknown) => {
-          log.warn('storage query threw', { error: String(err) });
+          log.warn('storage query threw', { deviceId: device.id, error: String(err) });
           return undefined;
         }),
       ]);
@@ -156,7 +162,7 @@ async function computeDeviceHealth(): Promise<DeviceHealth> {
       return {
         reachable: true,
         testFlightRunning: tfRunning,
-        testFlightBridgeReachable: sbStatusResult.ok,
+        testFlightBridgeReachable: isPrimary ? sbStatusResult.ok : undefined,
         darkEnabled: sbStatus?.darkEnabled,
         screenIsOn: sbStatus?.screenIsOn,
         backlightState: sbStatus?.backlightState,
@@ -179,101 +185,130 @@ async function computeDeviceHealth(): Promise<DeviceHealth> {
   }
 }
 
-export async function getDeviceHealth(force = false): Promise<DeviceHealth> {
-  if (!force && healthCache && Date.now() - healthCache.at < HEALTH_CACHE_TTL_MS) return healthCache.value;
-  const value = await computeDeviceHealth();
-  healthCache = { at: Date.now(), value };
+function isPrimaryDeviceId(deviceId: string): boolean {
+  const devices = getEffectiveDevices().filter((d) => d.enabled);
+  const primary = devices.find((d) => d.isPrimary) ?? devices[0];
+  return primary?.id === deviceId;
+}
+
+export async function getDeviceHealth(deviceId: string, force = false): Promise<DeviceHealth> {
+  const cached = healthCache.get(deviceId);
+  if (!force && cached && Date.now() - cached.at < HEALTH_CACHE_TTL_MS) return cached.value;
+  const device = getEffectiveDevices().find((d) => d.id === deviceId);
+  if (!device) return { reachable: false, error: 'device not found', checkedAt: Date.now() };
+  const value = await computeDeviceHealth(device, isPrimaryDeviceId(deviceId));
+  healthCache.set(deviceId, { at: Date.now(), value });
   return value;
 }
 
 const HEALTH_POLL_INTERVAL_MS = 5 * 60_000;
 
-let unreachableSince: number | undefined;
-let offlineAlertSentAt: number | undefined;
+interface DeviceAlertState {
+  unreachableSince?: number;
+  offlineAlertSentAt?: number;
+  batteryHotAlertSentAt?: number;
+  batteryLowAlertSentAt?: number;
+  deviceStorageAlertSentAt?: number;
+  bridgeEverReachable: boolean;
+  bridgeUnreachableSince?: number;
+  bridgeDownAlertSentAt?: number;
+}
 
-async function checkOfflineAlert(reachable: boolean): Promise<void> {
+const alertStates = new Map<string, DeviceAlertState>();
+
+function alertStateFor(deviceId: string): DeviceAlertState {
+  let s = alertStates.get(deviceId);
+  if (!s) {
+    s = { bridgeEverReachable: false };
+    alertStates.set(deviceId, s);
+  }
+  return s;
+}
+
+async function checkOfflineAlert(device: DeviceRecord, reachable: boolean): Promise<void> {
+  const s = alertStateFor(device.id);
   if (reachable) {
-    unreachableSince = undefined;
-    offlineAlertSentAt = undefined;
+    s.unreachableSince = undefined;
+    s.offlineAlertSentAt = undefined;
     return;
   }
 
-  if (unreachableSince === undefined) unreachableSince = Date.now();
-  if (offlineAlertSentAt !== undefined) return;
+  if (s.unreachableSince === undefined) s.unreachableSince = Date.now();
+  if (s.offlineAlertSentAt !== undefined) return;
 
   const settings = getEffectiveSettings();
   const thresholdMs = settings.deviceOfflineAlertMinutes * 60_000;
-  if (Date.now() - unreachableSince < thresholdMs) return;
+  if (Date.now() - s.unreachableSince < thresholdMs) return;
 
-  offlineAlertSentAt = Date.now();
+  s.offlineAlertSentAt = Date.now();
   await notify('deviceOffline', {
     title: 'iDevice unreachable',
-    description: `The iDevice has been unreachable for at least ${settings.deviceOfflineAlertMinutes} minutes - decrypts and the scheduler can't run until it's back.`,
+    description: `${device.name} has been unreachable for at least ${settings.deviceOfflineAlertMinutes} minutes - decrypts assigned to it can't run until it's back.`,
     color: EMBED_COLOR.err,
   });
 }
 
-let batteryHotAlertSentAt: number | undefined;
-
-async function checkBatteryHotAlert(tempC: number | undefined): Promise<void> {
+async function checkBatteryHotAlert(device: DeviceRecord, tempC: number | undefined): Promise<void> {
   if (tempC === undefined) return;
+  const s = alertStateFor(device.id);
   const settings = getEffectiveSettings();
 
   if (tempC < settings.batteryHotAlertC - 3) {
-    batteryHotAlertSentAt = undefined;
+    s.batteryHotAlertSentAt = undefined;
     return;
   }
-  if (tempC < settings.batteryHotAlertC || batteryHotAlertSentAt !== undefined) return;
+  if (tempC < settings.batteryHotAlertC || s.batteryHotAlertSentAt !== undefined) return;
 
-  batteryHotAlertSentAt = Date.now();
+  s.batteryHotAlertSentAt = Date.now();
   await notify('deviceBatteryHot', {
     title: 'iDevice running hot',
-    description: `Battery temperature reached ${tempC.toFixed(1)}°C (alert threshold ${settings.batteryHotAlertC}°C).`,
+    description: `${device.name}'s battery temperature reached ${tempC.toFixed(1)}°C (alert threshold ${settings.batteryHotAlertC}°C).`,
     color: EMBED_COLOR.warn,
   });
 }
 
-let batteryLowAlertSentAt: number | undefined;
-
-async function checkBatteryLowAlert(percent: number | undefined, charging: boolean | undefined): Promise<void> {
+async function checkBatteryLowAlert(device: DeviceRecord, percent: number | undefined, charging: boolean | undefined): Promise<void> {
   if (percent === undefined) return;
+  const s = alertStateFor(device.id);
   const settings = getEffectiveSettings();
 
   if (charging || percent > settings.batteryLowAlertPercent + 5) {
-    batteryLowAlertSentAt = undefined;
+    s.batteryLowAlertSentAt = undefined;
     return;
   }
-  if (percent > settings.batteryLowAlertPercent || batteryLowAlertSentAt !== undefined) return;
+  if (percent > settings.batteryLowAlertPercent || s.batteryLowAlertSentAt !== undefined) return;
 
-  batteryLowAlertSentAt = Date.now();
+  s.batteryLowAlertSentAt = Date.now();
   await notify('deviceBatteryLow', {
     title: 'iDevice battery low',
-    description: `Battery at ${percent}% and not charging (alert threshold ${settings.batteryLowAlertPercent}%).`,
+    description: `${device.name}'s battery is at ${percent}% and not charging (alert threshold ${settings.batteryLowAlertPercent}%).`,
     color: EMBED_COLOR.warn,
   });
 }
 
-let deviceStorageAlertSentAt: number | undefined;
-
-async function checkDeviceStorageAlert(usedPercent: number | undefined): Promise<void> {
+async function checkDeviceStorageAlert(device: DeviceRecord, usedPercent: number | undefined): Promise<void> {
   if (usedPercent === undefined) return;
+  const s = alertStateFor(device.id);
   const settings = getEffectiveSettings();
   const percent = usedPercent * 100;
 
   if (percent < settings.deviceStorageAlertPercent - 5) {
-    deviceStorageAlertSentAt = undefined;
+    s.deviceStorageAlertSentAt = undefined;
     return;
   }
-  if (percent < settings.deviceStorageAlertPercent || deviceStorageAlertSentAt !== undefined) return;
+  if (percent < settings.deviceStorageAlertPercent || s.deviceStorageAlertSentAt !== undefined) return;
 
-  deviceStorageAlertSentAt = Date.now();
+  s.deviceStorageAlertSentAt = Date.now();
   await notify('deviceStorageLow', {
     title: 'iDevice storage running low',
-    description: `The iDevice's storage is ${Math.round(percent)}% full (alert threshold ${settings.deviceStorageAlertPercent}%) - decrypts and TestFlight installs need room to work in.`,
+    description: `${device.name}'s storage is ${Math.round(percent)}% full (alert threshold ${settings.deviceStorageAlertPercent}%) - decrypts and TestFlight installs need room to work in.`,
     color: EMBED_COLOR.warn,
   });
 }
 
+// Watches the server's own staging disk (OUTPUT_DIR), not any particular iDevice's storage -
+// stays a single global check rather than one per device, since it has nothing to do with
+// which iDevice is being polled.
 let diskFullAlertSentAt: number | undefined;
 
 async function checkDiskFullAlert(): Promise<void> {
@@ -296,71 +331,73 @@ async function checkDiskFullAlert(): Promise<void> {
   });
 }
 
-let bridgeEverReachable = false;
-let bridgeUnreachableSince: number | undefined;
-let bridgeDownAlertSentAt: number | undefined;
-
-async function checkTestFlightBridgeAlert(reachable: boolean): Promise<void> {
+async function checkTestFlightBridgeAlert(device: DeviceRecord, reachable: boolean): Promise<void> {
+  const s = alertStateFor(device.id);
   if (reachable) {
-    bridgeEverReachable = true;
-    bridgeUnreachableSince = undefined;
-    bridgeDownAlertSentAt = undefined;
+    s.bridgeEverReachable = true;
+    s.bridgeUnreachableSince = undefined;
+    s.bridgeDownAlertSentAt = undefined;
     return;
   }
-  if (!bridgeEverReachable) return;
+  if (!s.bridgeEverReachable) return;
 
-  if (bridgeUnreachableSince === undefined) bridgeUnreachableSince = Date.now();
-  if (bridgeDownAlertSentAt !== undefined) return;
+  if (s.bridgeUnreachableSince === undefined) s.bridgeUnreachableSince = Date.now();
+  if (s.bridgeDownAlertSentAt !== undefined) return;
 
   const settings = getEffectiveSettings();
   const thresholdMs = settings.testFlightBridgeAlertMinutes * 60_000;
-  if (Date.now() - bridgeUnreachableSince < thresholdMs) return;
+  if (Date.now() - s.bridgeUnreachableSince < thresholdMs) return;
 
-  bridgeDownAlertSentAt = Date.now();
+  s.bridgeDownAlertSentAt = Date.now();
   await notify('testFlightBridgeDown', {
     title: 'TestFlight bridge unresponsive',
-    description: `The tfauto SpringBoard bridge has stopped responding for at least ${settings.testFlightBridgeAlertMinutes} minutes - TestFlight installs and the scheduler's TestFlight watch can't run until it recovers (a respring or tweak crash usually fixes it).`,
+    description: `The tfauto SpringBoard bridge on ${device.name} has stopped responding for at least ${settings.testFlightBridgeAlertMinutes} minutes - TestFlight installs and the scheduler's TestFlight watch can't run until it recovers (a respring or tweak crash usually fixes it).`,
     color: EMBED_COLOR.warn,
   });
 }
 
-function warnOnMissingTelemetry(health: DeviceHealth): void {
+function warnOnMissingTelemetry(device: DeviceRecord, health: DeviceHealth): void {
   if (!health.reachable) return;
   const missing = (
     [
       ['testFlightRunning', health.testFlightRunning],
-      ['screenIsOn', health.screenIsOn],
       ['batteryPercent', health.batteryPercent],
       ['batteryTemperatureC', health.batteryTemperatureC],
     ] as const
   )
     .filter(([, value]) => value === undefined)
     .map(([key]) => key);
-  if (missing.length > 0) log.warn('device is reachable but missing expected telemetry fields', { missing });
+  if (missing.length > 0) log.warn('device is reachable but missing expected telemetry fields', { deviceId: device.id, missing });
+}
+
+async function pollOneDevice(device: DeviceRecord, isPrimary: boolean): Promise<void> {
+  const health = await computeDeviceHealth(device, isPrimary);
+  healthCache.set(device.id, { at: Date.now(), value: health });
+  warnOnMissingTelemetry(device, health);
+  recordDeviceHealthCheck(
+    device.id,
+    health.reachable,
+    health.batteryPercent,
+    health.batteryTemperatureC,
+    health.storageUsedPercent !== undefined ? Math.round(health.storageUsedPercent * 100) : undefined,
+  );
+  await Promise.all([
+    checkOfflineAlert(device, health.reachable),
+    checkBatteryHotAlert(device, health.batteryTemperatureC),
+    checkBatteryLowAlert(device, health.batteryPercent, health.batteryCharging),
+    checkDeviceStorageAlert(device, health.storageUsedPercent),
+    ...(isPrimary ? [checkTestFlightBridgeAlert(device, health.testFlightBridgeReachable ?? false)] : []),
+  ]);
 }
 
 export function startDeviceHealthPoller(): void {
-  const poll = () =>
-    void getDeviceHealth()
-      .then((health) => {
-        warnOnMissingTelemetry(health);
-        recordDeviceHealthCheck(
-          health.reachable,
-          health.batteryPercent,
-          health.batteryTemperatureC,
-          health.storageUsedPercent !== undefined ? Math.round(health.storageUsedPercent * 100) : undefined,
-        );
-        return Promise.all([
-          checkOfflineAlert(health.reachable),
-          checkBatteryHotAlert(health.batteryTemperatureC),
-          checkBatteryLowAlert(health.batteryPercent, health.batteryCharging),
-          checkDeviceStorageAlert(health.storageUsedPercent),
-          checkTestFlightBridgeAlert(health.testFlightBridgeReachable ?? false),
-          checkDiskFullAlert(),
-        ]);
-      })
-      .catch((err) => log.warn('device health poll failed', { error: String(err) }));
+  const poll = async () => {
+    const devices = getEffectiveDevices().filter((d) => d.enabled);
+    const primary = devices.find((d) => d.isPrimary) ?? devices[0];
+    await Promise.all(devices.map((d) => pollOneDevice(d, d.id === primary?.id).catch((err) => log.warn('device health poll failed', { deviceId: d.id, error: String(err) }))));
+    await checkDiskFullAlert().catch((err) => log.warn('disk full check failed', { error: String(err) }));
+  };
 
-  poll();
-  setInterval(poll, HEALTH_POLL_INTERVAL_MS).unref();
+  void poll();
+  setInterval(() => void poll(), HEALTH_POLL_INTERVAL_MS).unref();
 }

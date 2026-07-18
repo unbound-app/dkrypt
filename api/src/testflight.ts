@@ -7,6 +7,14 @@ import {
   sendTestFlightBridgeRequest,
   withSSH,
 } from './idevice.js';
+import { getPrimaryDevice } from './store/state.js';
+
+// TestFlight installs go through the tfauto SpringBoard bridge, which only ever targets one
+// physical device at a time - not fanned out across the device pool. It always resolves to
+// whichever device is currently flagged primary.
+function primaryRootDir(): string {
+  return getPrimaryDevice().rootDir;
+}
 
 const log = scopedLogger('testflight');
 
@@ -47,7 +55,7 @@ async function waitForBridgeReady(conn: Client, timeoutMs = 20_000): Promise<voi
 }
 
 export async function ensureTestFlightRunning(): Promise<void> {
-  await withSSH(async (conn) => {
+  await withSSH(primaryRootDir(), async (conn) => {
     if (await isTestFlightRunning(conn)) {
       log.info('TestFlight already running');
       return;
@@ -61,7 +69,7 @@ export async function ensureTestFlightRunning(): Promise<void> {
 
 export async function listTrains(appId: number): Promise<TFTrain[]> {
   await ensureTestFlightRunning();
-  return withSSH(async (conn) => {
+  return withSSH(primaryRootDir(), async (conn) => {
     const response = await sendTestFlightBridgeRequest(conn, { action: 'list_trains', appId });
     return response.data as TFTrain[];
   });
@@ -69,7 +77,7 @@ export async function listTrains(appId: number): Promise<TFTrain[]> {
 
 export async function listBuilds(appId: number, trainVersion: string): Promise<TFBuild[]> {
   await ensureTestFlightRunning();
-  return withSSH(async (conn) => {
+  return withSSH(primaryRootDir(), async (conn) => {
     const response = await sendTestFlightBridgeRequest(conn, { action: 'list_builds', appId, trainVersion });
     return response.data as TFBuild[];
   });
@@ -113,7 +121,7 @@ export async function installBuild(
   report('ensuring TestFlight is running');
   await ensureTestFlightRunning();
 
-  await withSSH(async (conn) => {
+  await withSSH(primaryRootDir(), async (conn) => {
     report('sending install request to TestFlight');
     await sendTestFlightBridgeRequest(conn, { action: 'install', appId, build });
     report('TestFlight accepted the install request, waiting for it to land');

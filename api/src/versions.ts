@@ -4,12 +4,19 @@ import path from 'node:path';
 import { config } from './config.js';
 import { scopedLogger } from './logger.js';
 import { lookupCurrentVersion } from './scheduler/itunes.js';
+import { getPrimaryDevice } from './store/state.js';
 
 const log = scopedLogger('versions');
 
-const ipadecryptRoot = path.dirname(config.ipadecryptConfigPath);
-const versionsLogPath = path.join(ipadecryptRoot, 'logs', 'versions.log');
-const versionsCacheDir = path.join(ipadecryptRoot, 'cache', 'versions');
+// Version browsing always runs against the primary device's ipadecrypt root - it's a metadata
+// lookup (App Store version history), not a decrypt, so it doesn't need per-job device routing.
+function versionsLogPath(): string {
+  return path.join(getPrimaryDevice().rootDir, 'logs', 'versions.log');
+}
+
+function versionsCacheDir(): string {
+  return path.join(getPrimaryDevice().rootDir, 'cache', 'versions');
+}
 
 export interface AppVersionEntry {
   externalVersionId: string;
@@ -40,7 +47,7 @@ interface VersionsCacheFile {
 async function readLastListVersionsRecord(bundleId: string): Promise<VersionsLogRecord | undefined> {
   let text: string;
   try {
-    text = await readFile(versionsLogPath, 'utf8');
+    text = await readFile(versionsLogPath(), 'utf8');
   } catch {
     return undefined;
   }
@@ -60,7 +67,7 @@ async function readLastListVersionsRecord(bundleId: string): Promise<VersionsLog
 
 async function readVersionsCache(bundleId: string): Promise<VersionsCacheFile | undefined> {
   try {
-    const text = await readFile(path.join(versionsCacheDir, `${bundleId}.json`), 'utf8');
+    const text = await readFile(path.join(versionsCacheDir(), `${bundleId}.json`), 'utf8');
     return JSON.parse(text) as VersionsCacheFile;
   } catch {
     return undefined;
@@ -80,7 +87,7 @@ function runIpadecryptVersions(bundleId: string): Promise<void> {
   }
 
   return new Promise((resolve) => {
-    const innerCommand = `${config.ipadecryptBin} versions ${bundleId} --log-responses`;
+    const innerCommand = `${config.ipadecryptBin} --root-dir ${getPrimaryDevice().rootDir} versions ${bundleId} --log-responses`;
     const child = spawn('script', ['-qec', innerCommand, '/dev/null'], {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
