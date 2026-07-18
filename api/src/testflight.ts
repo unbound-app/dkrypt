@@ -7,6 +7,7 @@ import { getEffectiveSettings, recordDeviceHealthCheck } from './store/state.js'
 import { getDiskUsage } from './util/diskUsage.js';
 
 const log = scopedLogger('testflight');
+const deviceLog = scopedLogger('idevice');
 
 const REQUEST_PATH = '/tmp/tfauto-request.json';
 const RESPONSE_PATH = '/tmp/tfauto-response.json';
@@ -357,7 +358,7 @@ async function runIoreg(conn: Client): Promise<string | undefined> {
 async function queryBatteryStatus(conn: Client): Promise<BatteryStatus | undefined> {
   const stdout = await runIoreg(conn);
   if (!stdout) {
-    log.warn('ioreg is not available on the device via any known path - battery telemetry disabled');
+    deviceLog.warn('ioreg is not available on the device via any known path - battery telemetry disabled');
     return undefined;
   }
 
@@ -370,7 +371,7 @@ async function queryBatteryStatus(conn: Client): Promise<BatteryStatus | undefin
   const rawMaxCapacity = Number(parseIoregValue(stdout, 'AppleRawMaxCapacity'));
 
   if (!Number.isFinite(currentCapacity) || !maxCapacity) {
-    log.warn('ioreg output did not contain the expected AppleARMPMUCharger fields', { sample: stdout.slice(0, 500) });
+    deviceLog.warn('ioreg output did not contain the expected AppleARMPMUCharger fields', { sample: stdout.slice(0, 500) });
   }
 
   return {
@@ -400,23 +401,38 @@ interface DeviceStorage {
 async function queryDeviceStorage(conn: Client): Promise<DeviceStorage | undefined> {
   const { stdout, code } = await execCommand(conn, 'df -k /private/var 2>&1');
   if (code !== 0) {
-    log.warn('df query failed', { code, output: stdout.slice(0, 200) });
+    deviceLog.warn('device storage df query failed', { code, output: stdout.slice(0, 200) });
     return undefined;
   }
 
   const lines = stdout.trim().split('\n').filter(Boolean);
-  const last = lines[lines.length - 1];
-  const tokens = last?.trim().split(/\s+/) ?? [];
-  if (tokens.length < 5) {
-    log.warn('df output did not look like the expected columns', { sample: last?.slice(0, 200) });
+  let parsed: { totalKb: number; usedKb: number; freeKb: number } | undefined;
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i].trim();
+    const match = line.match(/(?:^|\s)(\d+)\s+(\d+)\s+(\d+)\s+\d+%\b/);
+    if (!match) continue;
+    parsed = {
+      totalKb: Number(match[1]),
+      usedKb: Number(match[2]),
+      freeKb: Number(match[3]),
+    };
+    break;
+  }
+
+  if (!parsed) {
+    deviceLog.warn('device storage df output did not contain expected numeric columns', {
+      sample: lines[lines.length - 1]?.slice(0, 200),
+    });
     return undefined;
   }
 
-  const totalBytes = Number(tokens[tokens.length - 5]) * 1024;
-  const usedBytes = Number(tokens[tokens.length - 4]) * 1024;
-  const freeBytes = Number(tokens[tokens.length - 3]) * 1024;
+  const totalBytes = parsed.totalKb * 1024;
+  const usedBytes = parsed.usedKb * 1024;
+  const freeBytes = parsed.freeKb * 1024;
   if (!Number.isFinite(totalBytes) || !Number.isFinite(usedBytes) || !Number.isFinite(freeBytes) || totalBytes <= 0) {
-    log.warn('df output did not contain parseable numbers', { sample: last?.slice(0, 200) });
+    deviceLog.warn('device storage df output did not contain parseable numbers', {
+      sample: lines[lines.length - 1]?.slice(0, 200),
+    });
     return undefined;
   }
 
@@ -435,11 +451,11 @@ async function computeDeviceHealth(): Promise<DeviceHealth> {
           .then((value) => ({ ok: true as const, value }))
           .catch(() => ({ ok: false as const, value: undefined })),
         queryBatteryStatus(conn).catch((err: unknown) => {
-          log.warn('battery query threw', { error: String(err) });
+          deviceLog.warn('battery query threw', { error: String(err) });
           return undefined;
         }),
         queryDeviceStorage(conn).catch((err: unknown) => {
-          log.warn('storage query threw', { error: String(err) });
+          deviceLog.warn('storage query threw', { error: String(err) });
           return undefined;
         }),
       ]);
