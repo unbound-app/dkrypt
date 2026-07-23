@@ -154,9 +154,9 @@ export function clearToastHistory(): void {
 export function showToast(
   message: string,
   type: 'success' | 'error' = 'success',
-  options?: { track?: boolean; action?: { label: string; onClick: () => void } },
+  options?: { track?: boolean; action?: { label: string; onClick: () => void }; id?: string },
 ): void {
-  const toastOptions = options?.action ? { action: options.action } : undefined;
+  const toastOptions = options?.action || options?.id ? { action: options.action, id: options.id } : undefined;
   if (type === 'error') toast.error(message, toastOptions);
   else toast.success(message, toastOptions);
 

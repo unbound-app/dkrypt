@@ -12,7 +12,7 @@ async function request(path: string, opts: RequestInit = {}): Promise<Response> 
       headers: { 'Content-Type': 'application/json', ...(opts.headers ?? {}) },
     });
   } catch {
-    showToast("Couldn't reach the server - check your connection", 'error');
+    showToast("Couldn't reach the server - check your connection", 'error', { id: 'network-error', track: false });
     throw new Error('network error');
   }
   if (res.status === 401) {
