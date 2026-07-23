@@ -54,9 +54,10 @@ function deserialize(cookieValue: string): Session | undefined {
     const parsed = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as unknown;
     if (!isSessionPayload(parsed)) return undefined;
     if (Date.now() > parsed.exp) return undefined;
+    const sub = parsed.sub === 'root' ? parsed.sub : resolveAuthUserId(parsed.sub);
     // A version mismatch means "log out everywhere" fired since this cookie was issued.
-    if ((parsed.ver ?? 0) !== getSessionVersion(parsed.sub)) return undefined;
-    return { sub: parsed.sub, permissions: parseBits(parsed.permissions), exp: parsed.exp, ver: parsed.ver ?? 0 };
+    if ((parsed.ver ?? 0) !== getSessionVersion(sub)) return undefined;
+    return { sub, permissions: parseBits(parsed.permissions), exp: parsed.exp, ver: parsed.ver ?? 0 };
   } catch {
     return undefined;
   }
