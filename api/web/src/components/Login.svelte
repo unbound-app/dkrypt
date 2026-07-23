@@ -61,22 +61,15 @@
   class="flex min-h-screen flex-col items-center justify-center p-6"
   style="background: radial-gradient(circle at 50% 15%, color-mix(in srgb, var(--color-panel) 60%, var(--color-bg)) 0%, var(--color-bg) 60%);"
 >
-  <div class="mb-8 max-w-2xl text-center">
-    <div class="text-accent mb-3 text-sm font-semibold tracking-wide uppercase">Authorized app workflows</div>
-    <h1 class="text-3xl font-semibold tracking-tight sm:text-4xl">Managed decrypt processing for teams and developers</h1>
-    <p class="mt-4 text-sm leading-6 text-muted">
-      Queue authorized iOS application decrypts, follow processing status, retrieve results, and integrate approved workflows through API access.
-    </p>
-  </div>
+  <h1 class="mb-8 text-3xl font-semibold tracking-tight sm:text-4xl">dkrypt</h1>
 
   <div class="grid w-full max-w-[800px] items-stretch gap-4 md:grid-cols-[1fr_380px]">
     <Card class="flex flex-col justify-between px-7 py-8 text-left">
       <div>
-        <h2 class="text-lg font-semibold">Built for controlled access</h2>
-        <div class="mt-4 flex flex-col gap-3 text-sm leading-6 text-muted">
-          <p>Every new account starts in viewer mode with no decrypt or API access.</p>
-          <p>Monthly plans add standard or high-priority decrypt processing, with optional API key access.</p>
-          <p>Subscriptions are billed securely by Paddle in EUR and can be managed from your account.</p>
+        <div class="flex flex-col gap-3 text-sm leading-6 text-muted">
+          <p>Submit iOS app decrypt requests, follow their status, and retrieve completed results.</p>
+          <p>Every new account starts in viewer mode. Monthly plans add decrypt processing, priority, and optional API access.</p>
+          <p>Plans start at €5 per month and are billed securely by Paddle.</p>
         </div>
       </div>
       <a
@@ -91,8 +84,7 @@
     <div class="bg-accent shadow-accent/35 mx-auto mb-5 flex h-[60px] w-[60px] items-center justify-center rounded-2xl shadow-xl">
       <Lock class="h-7 w-7 text-white" />
     </div>
-    <h2 class="mb-1.5 text-[19px] font-semibold">dkrypt</h2>
-    <div class="mb-6.5 text-[13px] text-muted">Sign in to manage decrypts, keys, and settings.</div>
+    <h2 class="mb-6.5 text-[19px] font-semibold">Sign in</h2>
 
     {#if sessionState.githubOauthEnabled}
       <a
