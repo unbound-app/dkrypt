@@ -16,8 +16,8 @@
       <Card>
         <h2 class="text-base font-semibold">Product and privacy support</h2>
         <p class="mt-2 text-sm leading-6 text-muted">
-          For account, service, or privacy questions, use a private contact option listed on the
-          <a class="text-accent" href="https://github.com/castdrian" target="_blank" rel="noopener noreferrer">maintainer profile</a>.
+          For account, service, or privacy questions, email
+          <a class="text-accent" href="mailto:contact@dylib.dev">contact@dylib.dev</a>.
         </p>
       </Card>
       <Card>
@@ -30,8 +30,8 @@
       <Card>
         <h2 class="text-base font-semibold">Security reports</h2>
         <p class="mt-2 text-sm leading-6 text-muted">
-          Do not post credentials or vulnerability details publicly. Use a private contact option listed on the
-          <a class="text-accent" href="https://github.com/castdrian" target="_blank" rel="noopener noreferrer">maintainer profile</a>.
+          Do not post credentials or vulnerability details publicly. Send sensitive reports to
+          <a class="text-accent" href="mailto:contact@dylib.dev">contact@dylib.dev</a>.
         </p>
       </Card>
     </div>
