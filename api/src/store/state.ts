@@ -79,10 +79,31 @@ export interface AllowedUser {
 
 export interface DiscordRolePerk {
   id: string;
+  guildId: string;
+  guildName?: string;
+  guildIcon: string | null;
   discordRoleId: string;
   discordRoleName?: string;
+  discordRoleColor: number;
   appRoleId: string;
   createdAt: number;
+}
+
+export interface DiscordGuildConfiguration {
+  id: string;
+  name: string;
+  icon: string | null;
+}
+
+export interface DiscordGuildRoleConfiguration {
+  id: string;
+  name: string;
+  color: number;
+}
+
+export interface DiscordGuildMembership {
+  guildId: string;
+  roleIds: string[] | undefined;
 }
 
 export interface BackupScheduleSettings {
@@ -326,7 +347,7 @@ export interface ShareLinkRecord {
 }
 
 interface PersistedState {
-  version: 8;
+  version: 9;
   apiKeys: ApiKeyRecord[];
   allowedUsers: AllowedUser[];
   roles: Role[];
@@ -348,7 +369,7 @@ interface PersistedState {
   shareLinks: ShareLinkRecord[];
   webhookDeliveryLog: WebhookDeliveryEntry[];
   discordRolePerks: DiscordRolePerk[];
-  discordGuildId?: string;
+  discordGuilds: DiscordGuildConfiguration[];
   backupSchedule: BackupScheduleSettings;
   backupHistory: BackupHistoryEntry[];
   activeSessions: ActiveSessionRecord[];
@@ -366,7 +387,7 @@ const backupsDir = path.join(config.stateDir, 'backups');
 
 function defaultState(): PersistedState {
   return {
-    version: 8,
+    version: 9,
     apiKeys: [],
     allowedUsers: [],
     roles: [seedDefaultRole(Date.now())],
@@ -386,6 +407,7 @@ function defaultState(): PersistedState {
     shareLinks: [],
     webhookDeliveryLog: [],
     discordRolePerks: [],
+    discordGuilds: [],
     backupSchedule: { enabled: false, cron: '0 3 * * *', retentionCount: 14 },
     backupHistory: [],
     activeSessions: [],
@@ -568,7 +590,7 @@ function migrateV5ToV6(v5: Record<string, unknown>): Record<string, unknown> {
 // Converts every allowedUsers[].permissions boolean flag set into a role assignment. Users with
 // an identical old flag set share a single generated role (named after the closest built-in
 // preset when one matches exactly) instead of getting one bespoke role each.
-function migrateV6ToV8(v6: Record<string, unknown>): PersistedState {
+function migrateV6ToV8(v6: Record<string, unknown>): Record<string, unknown> {
   const now = Date.now();
   const roles: Role[] = [seedDefaultRole(now)];
   const roleIdByBits = new Map<string, string>();
@@ -604,10 +626,10 @@ function migrateV6ToV8(v6: Record<string, unknown>): PersistedState {
     priority: u.priority as number | undefined,
   }));
 
-  return { ...defaultState(), ...v6, version: 8, roles, allowedUsers } as PersistedState;
+  return { ...defaultState(), ...v6, version: 8, roles, allowedUsers };
 }
 
-function migrateV7ToV8(v7: Record<string, unknown>): PersistedState {
+function migrateV7ToV8(v7: Record<string, unknown>): Record<string, unknown> {
   const roles = Array.isArray(v7.roles)
     ? (v7.roles as Role[]).map((role) => {
         const permissions = parseBits(role.permissions);
@@ -617,18 +639,35 @@ function migrateV7ToV8(v7: Record<string, unknown>): PersistedState {
         return { ...role, permissions: serializeBits(migratedPermissions) };
       })
     : [seedDefaultRole(Date.now())];
-  return { ...defaultState(), ...v7, version: 8, roles } as PersistedState;
+  return { ...defaultState(), ...v7, version: 8, roles };
+}
+
+function migrateV8ToV9(v8: Record<string, unknown>): PersistedState {
+  const legacyGuildId = typeof v8.discordGuildId === 'string' ? v8.discordGuildId : undefined;
+  const { discordGuildId: _legacyGuildId, ...rest } = v8;
+  const discordGuilds = legacyGuildId ? [{ id: legacyGuildId, name: legacyGuildId, icon: null }] : [];
+  const discordRolePerks = Array.isArray(v8.discordRolePerks) && legacyGuildId
+    ? (v8.discordRolePerks as Omit<DiscordRolePerk, 'guildId' | 'guildName' | 'guildIcon' | 'discordRoleColor'>[]).map((perk) => ({
+        ...perk,
+        guildId: legacyGuildId,
+        guildName: legacyGuildId,
+        guildIcon: null,
+        discordRoleColor: 0,
+      }))
+    : [];
+  return { ...defaultState(), ...rest, version: 9, discordGuilds, discordRolePerks } as PersistedState;
 }
 
 function migrate(raw: Record<string, unknown>): PersistedState {
-  if (raw.version === 8) return { ...defaultState(), ...raw } as PersistedState;
-  if (raw.version === 7) return migrateV7ToV8(raw);
-  if (raw.version === 6) return migrateV6ToV8(raw);
-  if (raw.version === 5) return migrateV6ToV8(migrateV5ToV6(raw));
+  if (raw.version === 9) return { ...defaultState(), ...raw } as PersistedState;
+  if (raw.version === 8) return migrateV8ToV9(raw);
+  if (raw.version === 7) return migrateV8ToV9(migrateV7ToV8(raw));
+  if (raw.version === 6) return migrateV8ToV9(migrateV6ToV8(raw));
+  if (raw.version === 5) return migrateV8ToV9(migrateV6ToV8(migrateV5ToV6(raw)));
 
   if (raw.version === 4) {
     const v4Users = Array.isArray(raw.allowedUsers) ? (raw.allowedUsers as Record<string, unknown>[]) : [];
-    return migrateV6ToV8(
+    return migrateV8ToV9(migrateV6ToV8(
       migrateV5ToV6({
         ...raw,
         version: 5,
@@ -638,12 +677,12 @@ function migrate(raw: Record<string, unknown>): PersistedState {
           addedAt: u.addedAt as number,
         })),
       }),
-    );
+    ));
   }
 
   if (raw.version === 3) {
     const v3Users = Array.isArray(raw.allowedUsers) ? (raw.allowedUsers as Record<string, unknown>[]) : [];
-    return migrateV6ToV8(
+    return migrateV8ToV9(migrateV6ToV8(
       migrateV5ToV6({
         ...raw,
         version: 5,
@@ -653,12 +692,12 @@ function migrate(raw: Record<string, unknown>): PersistedState {
           addedAt: u.addedAt as number,
         })),
       }),
-    );
+    ));
   }
 
   if (raw.version === 2) {
     const legacyUsers = Array.isArray(raw.allowedUsers) ? (raw.allowedUsers as Record<string, unknown>[]) : [];
-    return migrateV6ToV8(
+    return migrateV8ToV9(migrateV6ToV8(
       migrateV5ToV6({
         ...raw,
         version: 5,
@@ -668,11 +707,11 @@ function migrate(raw: Record<string, unknown>): PersistedState {
           addedAt: u.addedAt as number,
         })),
       }),
-    );
+    ));
   }
 
   const legacyKeys = Array.isArray(raw.apiKeys) ? (raw.apiKeys as Record<string, unknown>[]) : [];
-  return migrateV6ToV8(
+  return migrateV8ToV9(migrateV6ToV8(
     migrateV5ToV6({
       apiKeys: legacyKeys.map((k) => ({
         id: k.id as string,
@@ -688,7 +727,7 @@ function migrate(raw: Record<string, unknown>): PersistedState {
       jobHistory: (raw.jobHistory as JobHistoryEntry[]) ?? [],
       appleAuthAlert: (raw.appleAuthAlert as AppleAuthAlert) ?? { suspected: false },
     }),
-  );
+  ));
 }
 
 function normalizeLegacySchedulerRunOutcome(raw: unknown): SchedulerRunOutcome {
@@ -937,25 +976,50 @@ export function addAllowedUser(username: string, roleIds: string[], actor: strin
   return record;
 }
 
-export function getDiscordGuildId(): string | undefined {
-  return state.discordGuildId;
+export function getDiscordGuilds(): DiscordGuildConfiguration[] {
+  return state.discordGuilds;
 }
 
-export function setDiscordGuildId(guildId: string | undefined, actor: string): void {
-  state.discordGuildId = guildId || undefined;
+export function getDiscordGuildIds(): string[] {
+  return state.discordGuilds.map((guild) => guild.id);
+}
+
+export function setDiscordGuilds(guilds: DiscordGuildConfiguration[], actor: string): void {
+  state.discordGuilds = [...new Map(guilds.filter((guild) => guild.id).map((guild) => [guild.id, guild])).values()];
+  const selectedGuildIds = new Set(state.discordGuilds.map((guild) => guild.id));
+  state.discordRolePerks = state.discordRolePerks.filter((perk) => selectedGuildIds.has(perk.guildId));
   persistNow();
-  recordAudit(actor, 'role.update', 'discord-guild', guildId ? `set to ${guildId}` : 'cleared');
+  recordAudit(actor, 'role.update', 'discord-guilds', state.discordGuilds.length ? `set to ${state.discordGuilds.map((guild) => guild.id).join(', ')}` : 'cleared');
+}
+
+export function setDiscordGuildIds(guildIds: string[], actor: string): void {
+  setDiscordGuilds(guildIds.map((id) => ({ id, name: id, icon: null })), actor);
 }
 
 export function getDiscordRolePerks(): DiscordRolePerk[] {
   return state.discordRolePerks;
 }
 
-export function createDiscordRolePerk(discordRoleId: string, discordRoleName: string | undefined, appRoleId: string, actor: string): DiscordRolePerk {
-  const perk: DiscordRolePerk = { id: randomUUID(), discordRoleId, discordRoleName, appRoleId, createdAt: Date.now() };
+export function createDiscordRolePerk(
+  guild: DiscordGuildConfiguration,
+  discordRole: DiscordGuildRoleConfiguration,
+  appRoleId: string,
+  actor: string,
+): DiscordRolePerk {
+  const perk: DiscordRolePerk = {
+    id: randomUUID(),
+    guildId: guild.id,
+    guildName: guild.name,
+    guildIcon: guild.icon,
+    discordRoleId: discordRole.id,
+    discordRoleName: discordRole.name,
+    discordRoleColor: discordRole.color,
+    appRoleId,
+    createdAt: Date.now(),
+  };
   state.discordRolePerks.push(perk);
   persistNow();
-  recordAudit(actor, 'role.update', appRoleId, `Discord role perk added: ${discordRoleName ?? discordRoleId}`);
+  recordAudit(actor, 'role.update', appRoleId, `Discord role perk added: ${discordRole.name}`);
   return perk;
 }
 
@@ -974,20 +1038,31 @@ export function deleteDiscordRolePerk(id: string, actor: string): boolean {
 // couldn't be determined, e.g. bot/guild misconfigured) - grants app roles mapped from held
 // Discord roles and revokes ones from Discord roles no longer held, without touching roleIds a
 // human admin assigned directly (tracked separately via discordPerkRoleIds).
-export function syncDiscordPerkRoles(userId: string, discordRoleIds: string[] | undefined): void {
-  if (discordRoleIds === undefined) return;
+export function syncDiscordPerkRoles(userId: string, memberships: DiscordGuildMembership[]): void {
   const user = state.allowedUsers.find((u) => u.username === userId.toLowerCase());
   if (!user) return;
 
+  const roleIdsByGuild = new Map(memberships.map((membership) => [membership.guildId, membership.roleIds]));
   const grantedAppRoleIds = [
-    ...new Set(state.discordRolePerks.filter((p) => discordRoleIds.includes(p.discordRoleId)).map((p) => p.appRoleId)),
+    ...new Set(
+      state.discordRolePerks
+        .filter((perk) => roleIdsByGuild.get(perk.guildId)?.includes(perk.discordRoleId))
+        .map((perk) => perk.appRoleId),
+    ),
   ];
+  const unverifiedAppRoleIds = new Set(
+    state.discordRolePerks
+      .filter((perk) => roleIdsByGuild.get(perk.guildId) === undefined)
+      .map((perk) => perk.appRoleId),
+  );
   const previouslyGranted = user.discordPerkRoleIds ?? [];
   if (grantedAppRoleIds.length === 0 && previouslyGranted.length === 0) return;
 
-  const withoutStalePerks = user.roleIds.filter((id) => !previouslyGranted.includes(id) || grantedAppRoleIds.includes(id));
-  user.roleIds = sanitizeRoleIds([...withoutStalePerks, ...grantedAppRoleIds]);
-  user.discordPerkRoleIds = grantedAppRoleIds;
+  const retainedAppRoleIds = previouslyGranted.filter((id) => unverifiedAppRoleIds.has(id));
+  const nextDiscordPerkRoleIds = [...new Set([...grantedAppRoleIds, ...retainedAppRoleIds])];
+  const withoutStalePerks = user.roleIds.filter((id) => !previouslyGranted.includes(id) || nextDiscordPerkRoleIds.includes(id));
+  user.roleIds = sanitizeRoleIds([...withoutStalePerks, ...nextDiscordPerkRoleIds]);
+  user.discordPerkRoleIds = nextDiscordPerkRoleIds;
   persistNow();
 }
 

@@ -863,13 +863,17 @@ export interface DiscordGuildRole {
 
 export interface DiscordRolePerk {
   id: string;
+  guildId: string;
+  guildName?: string;
+  guildIcon: string | null;
   discordRoleId: string;
   discordRoleName?: string;
+  discordRoleColor: number;
   appRoleId: string;
   createdAt: number;
 }
 
-export function fetchDiscordStatus(): Promise<{ botEnabled: boolean; guildId?: string }> {
+export function fetchDiscordStatus(): Promise<{ botEnabled: boolean; guilds: DiscordGuildSummary[] }> {
   return apiJson('/v1/dashboard/discord/status');
 }
 
@@ -877,22 +881,37 @@ export function fetchDiscordGuilds(): Promise<{ guilds: DiscordGuildSummary[] }>
   return apiJson('/v1/dashboard/discord/guilds');
 }
 
-export function setDiscordGuild(guildId: string): Promise<{ ok: boolean; data: { guildId?: string } }> {
-  return apiAction('/v1/dashboard/discord/guild', { method: 'POST', body: JSON.stringify({ guildId }) }, 'Discord guild set');
+export function setDiscordGuilds(guilds: DiscordGuildSummary[]): Promise<{ ok: boolean; data: { guilds: DiscordGuildSummary[] } }> {
+  return apiAction('/v1/dashboard/discord/guilds', { method: 'POST', body: JSON.stringify({ guilds }) }, 'Discord guilds updated');
 }
 
-export function fetchDiscordGuildRoles(): Promise<{ roles: DiscordGuildRole[] }> {
-  return apiJson('/v1/dashboard/discord/roles');
+export function fetchDiscordGuildRoles(guildId: string): Promise<{ roles: DiscordGuildRole[] }> {
+  return apiJson(`/v1/dashboard/discord/roles?guildId=${encodeURIComponent(guildId)}`);
 }
 
 export function fetchDiscordRolePerks(): Promise<{ perks: DiscordRolePerk[] }> {
   return apiJson('/v1/dashboard/discord/perks');
 }
 
-export function createDiscordRolePerk(discordRoleId: string, discordRoleName: string | undefined, appRoleId: string): Promise<{ ok: boolean; data: DiscordRolePerk }> {
+export function createDiscordRolePerk(
+  guild: DiscordGuildSummary,
+  discordRole: DiscordGuildRole,
+  appRoleId: string,
+): Promise<{ ok: boolean; data: DiscordRolePerk }> {
   return apiAction(
     '/v1/dashboard/discord/perks',
-    { method: 'POST', body: JSON.stringify({ discordRoleId, discordRoleName, appRoleId }) },
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        guildId: guild.id,
+        guildName: guild.name,
+        guildIcon: guild.icon,
+        discordRoleId: discordRole.id,
+        discordRoleName: discordRole.name,
+        discordRoleColor: discordRole.color,
+        appRoleId,
+      }),
+    },
     'Discord role perk added',
   );
 }

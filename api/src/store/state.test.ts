@@ -12,6 +12,7 @@ import {
   addAllowedUser,
   createApiKey,
   createDevice,
+  createDiscordRolePerk,
   createRole,
   createWatch,
   deleteDevice,
@@ -20,6 +21,8 @@ import {
   getAllJobHistory,
   getDeviceHealthHourlyBuckets,
   getDeviceUptimePercent,
+  getDiscordGuildIds,
+  getDiscordRolePerks,
   getEffectiveDevices,
   getWatchConfigIssues,
   getWebhookDeliveryLog,
@@ -28,12 +31,63 @@ import {
   recordDeviceHealthCheck,
   recordJobHistory,
   recordWebhookDelivery,
+  setDiscordGuildIds,
+  syncDiscordPerkRoles,
   updateAllowedUserRoles,
   updateDevice,
   updateSettings,
   updateWatch,
   verifyApiKey,
 } from './state.js';
+
+describe('Discord role perks', () => {
+  test('syncs guild-scoped perks from multiple guilds', () => {
+    const userId = `discord:${randomUUID()}`;
+    const firstGuildId = randomUUID();
+    const secondGuildId = randomUUID();
+    const firstDiscordRoleId = randomUUID();
+    const secondDiscordRoleId = randomUUID();
+    const firstAppRole = createRole({ name: `First perk ${randomUUID()}`, color: '#5865f2', permissions: '0' }, 'tester');
+    const secondAppRole = createRole({ name: `Second perk ${randomUUID()}`, color: '#57f287', permissions: '0' }, 'tester');
+
+    addAllowedUser(userId, [], 'tester');
+    setDiscordGuildIds([firstGuildId, secondGuildId], 'tester');
+    createDiscordRolePerk(
+      { id: firstGuildId, name: 'First guild', icon: 'first-icon' },
+      { id: firstDiscordRoleId, name: 'First Discord role', color: 0x5865f2 },
+      firstAppRole.id,
+      'tester',
+    );
+    createDiscordRolePerk(
+      { id: secondGuildId, name: 'Second guild', icon: null },
+      { id: secondDiscordRoleId, name: 'Second Discord role', color: 0x57f287 },
+      secondAppRole.id,
+      'tester',
+    );
+
+    expect(getDiscordGuildIds()).toEqual([firstGuildId, secondGuildId]);
+    expect(getDiscordRolePerks()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ guildId: firstGuildId, guildName: 'First guild', guildIcon: 'first-icon', discordRoleColor: 0x5865f2 }),
+        expect.objectContaining({ guildId: secondGuildId, guildName: 'Second guild', guildIcon: null, discordRoleColor: 0x57f287 }),
+      ]),
+    );
+
+    syncDiscordPerkRoles(userId, [
+      { guildId: firstGuildId, roleIds: [firstDiscordRoleId] },
+      { guildId: secondGuildId, roleIds: [] },
+    ]);
+    expect(listAllowedUsers().find((user) => user.username === userId)?.roleIds).toContain(firstAppRole.id);
+    expect(listAllowedUsers().find((user) => user.username === userId)?.roleIds).not.toContain(secondAppRole.id);
+
+    syncDiscordPerkRoles(userId, [
+      { guildId: firstGuildId, roleIds: [] },
+      { guildId: secondGuildId, roleIds: [secondDiscordRoleId] },
+    ]);
+    expect(listAllowedUsers().find((user) => user.username === userId)?.roleIds).not.toContain(firstAppRole.id);
+    expect(listAllowedUsers().find((user) => user.username === userId)?.roleIds).toContain(secondAppRole.id);
+  });
+});
 
 describe('exportBackup / importBackup', () => {
   test('round-trips the allowlist through export and import', () => {

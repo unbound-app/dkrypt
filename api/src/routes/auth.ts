@@ -15,7 +15,7 @@ import { PermissionFlag, serializeBits } from '../permissions.js';
 import { checkRootPassword, clearSessionCookie, getSession, requireSession, sessionOptsFromReq, setSessionCookie } from '../session.js';
 import {
   bumpSessionVersion,
-  getDiscordGuildId,
+  getDiscordGuildIds,
   getUserEffectivePermissions,
   listAllowedUsers,
   listSessionsForUser,
@@ -435,9 +435,12 @@ authRouter.get('/v1/auth/discord/callback', async (req, res) => {
       discoveredIdentities,
     });
     const userId = profile.userId;
-    const guildId = getDiscordGuildId();
-    if (discordBotEnabled && guildId) {
-      syncDiscordPerkRoles(userId, await fetchMemberRoleIds(guildId, user.id));
+    const guildIds = getDiscordGuildIds();
+    if (discordBotEnabled && guildIds.length > 0) {
+      syncDiscordPerkRoles(
+        userId,
+        await Promise.all(guildIds.map(async (guildId) => ({ guildId, roleIds: await fetchMemberRoleIds(guildId, user.id) }))),
+      );
     }
     const permissions = getUserEffectivePermissions(userId) ?? 0n;
     setSessionCookie(res, { sub: userId, permissions }, sessionOptsFromReq(req));

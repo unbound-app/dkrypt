@@ -67,7 +67,7 @@ import {
   getBundleStats,
   getDailyVolume,
   getDevice,
-  getDiscordGuildId,
+  getDiscordGuilds,
   getDiscordRolePerks,
   getDeviceBatteryHourlyBuckets,
   getDeviceHealthHourlyBuckets,
@@ -115,7 +115,7 @@ import {
   type SchedulerSettings,
   setApiKeyAllowTestFlight,
   setBackupSchedule,
-  setDiscordGuildId,
+  setDiscordGuilds,
   setApiKeyMaxConcurrent,
   setApiKeyPriority,
   setUserPriority,
@@ -1291,22 +1291,41 @@ dashboardRouter.post('/v1/dashboard/roles/reorder', canManageRoles, (req, res) =
 });
 
 dashboardRouter.get('/v1/dashboard/discord/status', canManageRoles, (_req, res) => {
-  res.json({ botEnabled: discordBotEnabled, guildId: getDiscordGuildId() });
+  res.json({ botEnabled: discordBotEnabled, guilds: getDiscordGuilds() });
 });
 
 dashboardRouter.get('/v1/dashboard/discord/guilds', canManageRoles, async (_req, res) => {
   res.json({ guilds: await fetchBotGuilds() });
 });
 
-dashboardRouter.post('/v1/dashboard/discord/guild', canManageRoles, (req, res) => {
-  const guildId = typeof req.body?.guildId === 'string' ? req.body.guildId.trim() : '';
-  setDiscordGuildId(guildId || undefined, res.locals.session.sub);
-  res.json({ ok: true, guildId: getDiscordGuildId() });
+dashboardRouter.post('/v1/dashboard/discord/guilds', canManageRoles, (req, res) => {
+  const rawGuilds: unknown = req.body?.guilds;
+  const guildRecords: { id: string; name: string; icon: string | null }[] | undefined = Array.isArray(rawGuilds)
+    ? ((rawGuilds
+        .filter((guild: unknown): guild is { id: string; name: string; icon: string | null } => {
+          const candidate = guild as Record<string, unknown>;
+          return (
+            typeof guild === 'object' &&
+            guild !== null &&
+            typeof candidate.id === 'string' &&
+            typeof candidate.name === 'string' &&
+            (typeof candidate.icon === 'string' || candidate.icon === null)
+          );
+        }) as { id: string; name: string; icon: string | null }[])
+        .map((guild) => ({ id: guild.id.trim(), name: guild.name.trim(), icon: guild.icon }))
+        .filter((guild) => guild.id && guild.name))
+    : undefined;
+  if (!guildRecords) {
+    res.status(400).json({ error: 'guilds must be an array of Discord guilds' });
+    return;
+  }
+  setDiscordGuilds(guildRecords, res.locals.session.sub);
+  res.json({ ok: true, guilds: getDiscordGuilds() });
 });
 
-dashboardRouter.get('/v1/dashboard/discord/roles', canManageRoles, async (_req, res) => {
-  const guildId = getDiscordGuildId();
-  if (!guildId) {
+dashboardRouter.get('/v1/dashboard/discord/roles', canManageRoles, async (req, res) => {
+  const guildId = typeof req.query.guildId === 'string' ? req.query.guildId : '';
+  if (!getDiscordGuilds().some((guild) => guild.id === guildId)) {
     res.json({ roles: [] });
     return;
   }
@@ -1318,14 +1337,29 @@ dashboardRouter.get('/v1/dashboard/discord/perks', canManageRoles, (_req, res) =
 });
 
 dashboardRouter.post('/v1/dashboard/discord/perks', canManageRoles, (req, res) => {
+  const guildId = typeof req.body?.guildId === 'string' ? req.body.guildId.trim() : '';
+  const guildName = typeof req.body?.guildName === 'string' ? req.body.guildName.trim() : '';
+  const guildIcon = typeof req.body?.guildIcon === 'string' ? req.body.guildIcon : null;
   const discordRoleId = typeof req.body?.discordRoleId === 'string' ? req.body.discordRoleId.trim() : '';
-  const discordRoleName = typeof req.body?.discordRoleName === 'string' ? req.body.discordRoleName.trim() || undefined : undefined;
+  const discordRoleName = typeof req.body?.discordRoleName === 'string' ? req.body.discordRoleName.trim() : '';
+  const discordRoleColor = typeof req.body?.discordRoleColor === 'number' && Number.isInteger(req.body.discordRoleColor) ? req.body.discordRoleColor : -1;
   const appRoleId = typeof req.body?.appRoleId === 'string' ? req.body.appRoleId.trim() : '';
-  if (!discordRoleId || !appRoleId) {
-    res.status(400).json({ error: 'discordRoleId and appRoleId are required' });
+  if (!guildId || !guildName || !discordRoleId || !discordRoleName || discordRoleColor < 0 || !appRoleId) {
+    res.status(400).json({ error: 'guild and Discord role details plus appRoleId are required' });
     return;
   }
-  res.status(201).json(createDiscordRolePerk(discordRoleId, discordRoleName, appRoleId, res.locals.session.sub));
+  if (!getDiscordGuilds().some((guild) => guild.id === guildId)) {
+    res.status(400).json({ error: 'guild is not selected for Discord role perks' });
+    return;
+  }
+  res.status(201).json(
+    createDiscordRolePerk(
+      { id: guildId, name: guildName, icon: guildIcon },
+      { id: discordRoleId, name: discordRoleName, color: discordRoleColor },
+      appRoleId,
+      res.locals.session.sub,
+    ),
+  );
 });
 
 dashboardRouter.delete('/v1/dashboard/discord/perks/:id', canManageRoles, (req, res) => {

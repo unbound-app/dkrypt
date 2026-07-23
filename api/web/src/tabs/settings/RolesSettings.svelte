@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ArrowDown, ArrowUp, Plus, Shield } from 'lucide-svelte';
+  import { ArrowDown, ArrowUp, Plus, Shield, X } from 'lucide-svelte';
   import EmptyState from '../../components/EmptyState.svelte';
   import PermissionEditor from '../../components/PermissionEditor.svelte';
   import {
@@ -14,9 +14,10 @@
     fetchRoles,
     fetchUsers,
     reorderRoles,
-    setDiscordGuild,
+    setDiscordGuilds,
     updateRole,
     type AllowedUser,
+    type DiscordGuildSummary,
     type DiscordGuildRole,
     type DiscordRolePerk,
     type Role,
@@ -131,39 +132,61 @@
   // --- Discord role perks ------------------------------------------------------------------
 
   let discordBotEnabled = $state(false);
-  let discordGuildId = $state<string | undefined>(undefined);
-  let discordGuilds = $state<{ value: string; label: string }[] | null>(null);
+  let discordGuilds = $state<DiscordGuildSummary[] | null>(null);
+  let selectedDiscordGuilds = $state<DiscordGuildSummary[]>([]);
   let discordRoles = $state<DiscordGuildRole[] | null>(null);
   let discordPerks = $state<DiscordRolePerk[] | null>(null);
   let savingGuild = $state(false);
   let addingPerk = $state(false);
   let deletingPerkId = $state<string | null>(null);
+  let perkGuildId = $state('');
   let perkDiscordRoleId = $state('');
   let perkAppRoleId = $state('');
 
   async function loadDiscordStatus(): Promise<void> {
     const status = await fetchDiscordStatus();
     discordBotEnabled = status.botEnabled;
-    discordGuildId = status.guildId;
     if (!discordBotEnabled) return;
-    if (!discordGuildId) {
-      const { guilds } = await fetchDiscordGuilds();
-      discordGuilds = guilds.map((g) => ({ value: g.id, label: g.name }));
-      return;
-    }
-    const [rolesRes, perksRes] = await Promise.all([fetchDiscordGuildRoles(), fetchDiscordRolePerks()]);
-    discordRoles = rolesRes.roles;
+    const [guildsRes, perksRes] = await Promise.all([fetchDiscordGuilds(), fetchDiscordRolePerks()]);
+    discordGuilds = guildsRes.guilds;
+    selectedDiscordGuilds = status.guilds;
     discordPerks = perksRes.perks;
+    if (!selectedDiscordGuilds.some((guild) => guild.id === perkGuildId)) {
+      perkGuildId = selectedDiscordGuilds[0]?.id ?? '';
+    }
+    await loadDiscordRoles(perkGuildId);
   }
 
   $effect(() => {
     if (canManageRoles) void loadDiscordStatus();
   });
 
+  async function loadDiscordRoles(guildId: string): Promise<void> {
+    if (!guildId) {
+      discordRoles = [];
+      return;
+    }
+    discordRoles = null;
+    const { roles } = await fetchDiscordGuildRoles(guildId);
+    if (guildId === perkGuildId) discordRoles = roles;
+  }
+
   async function pickGuild(guildId: string): Promise<void> {
+    const guild = discordGuilds?.find((item) => item.id === guildId);
+    if (!guild || selectedDiscordGuilds.some((item) => item.id === guild.id)) return;
     savingGuild = true;
     try {
-      const { ok } = await setDiscordGuild(guildId);
+      const { ok } = await setDiscordGuilds([...selectedDiscordGuilds, guild]);
+      if (ok) void loadDiscordStatus();
+    } finally {
+      savingGuild = false;
+    }
+  }
+
+  async function removeGuild(guildId: string): Promise<void> {
+    savingGuild = true;
+    try {
+      const { ok } = await setDiscordGuilds(selectedDiscordGuilds.filter((guild) => guild.id !== guildId));
       if (ok) void loadDiscordStatus();
     } finally {
       savingGuild = false;
@@ -173,19 +196,17 @@
   const assignableRoles = $derived((roles ?? []).filter((r) => !r.isDefault));
   const perkAppRoleOptions = $derived([{ value: '', label: 'Dashboard role…' }, ...assignableRoles.map((r) => ({ value: r.id, label: r.name }))]);
 
-  function discordRoleName(id: string): string {
-    return discordRoles?.find((r) => r.id === id)?.name ?? id;
-  }
-
   function appRoleName(id: string): string {
     return roles?.find((r) => r.id === id)?.name ?? id;
   }
 
   async function addPerk(): Promise<void> {
-    if (!perkDiscordRoleId || !perkAppRoleId) return;
+    const guild = selectedDiscordGuilds.find((item) => item.id === perkGuildId);
+    const discordRole = discordRoles?.find((item) => item.id === perkDiscordRoleId);
+    if (!guild || !discordRole || !perkAppRoleId) return;
     addingPerk = true;
     try {
-      const { ok } = await createDiscordRolePerk(perkDiscordRoleId, discordRoleName(perkDiscordRoleId), perkAppRoleId);
+      const { ok } = await createDiscordRolePerk(guild, discordRole, perkAppRoleId);
       if (ok) {
         perkDiscordRoleId = '';
         perkAppRoleId = '';
@@ -205,6 +226,22 @@
       deletingPerkId = null;
     }
   }
+
+  function guildIconUrl(guild: DiscordGuildSummary): string | undefined {
+    if (!guild.icon) return undefined;
+    return `https://cdn.discordapp.com/icons/${guild.id}/${guild.icon}.${guild.icon.startsWith('a_') ? 'gif' : 'png'}?size=64`;
+  }
+
+  function discordRoleColor(color: number): string {
+    return `#${color.toString(16).padStart(6, '0')}`;
+  }
+
+  const availableDiscordGuildOptions = $derived(
+    (discordGuilds ?? [])
+      .filter((guild) => !selectedDiscordGuilds.some((selected) => selected.id === guild.id))
+      .map((guild) => ({ value: guild.id, label: guild.name })),
+  );
+  const selectedDiscordGuildOptions = $derived(selectedDiscordGuilds.map((guild) => ({ value: guild.id, label: guild.name })));
 </script>
 
 <Card title="Roles">
@@ -293,21 +330,52 @@
 {#if canManageRoles && discordBotEnabled}
   <Card title="Discord role perks" class="mt-4">
     <div class="mb-3 text-sm text-muted">
-      Anyone who holds a mapped role in your Discord guild is automatically granted the matching dashboard role, checked on every
+      Anyone who holds a mapped role in any selected Discord guild is automatically granted the matching dashboard role, checked on every
       Discord login.
     </div>
-    {#if !discordGuildId}
-      {#if discordGuilds === null}
-        <div class="skeleton bg-panel-muted h-10 w-full rounded-lg"></div>
-      {:else if discordGuilds.length === 0}
-        <EmptyState message="The bot isn't in any guild yet - invite it to your server first." />
-      {:else}
-        <div class="flex items-center gap-2">
-          <SearchSelect items={discordGuilds} value="" onValueChange={(v) => v && void pickGuild(v)} placeholder="Search guilds…" class="w-full" />
+    {#if discordGuilds === null}
+      <div class="skeleton bg-panel-muted h-10 w-full rounded-lg"></div>
+    {:else if discordGuilds.length === 0}
+      <EmptyState message="The bot isn't in any guild yet - invite it to your server first." />
+    {:else}
+      {#if selectedDiscordGuilds.length > 0}
+        <div class="mb-3 flex flex-wrap gap-2">
+          {#each selectedDiscordGuilds as guild (guild.id)}
+            <div class="border-border bg-panel-muted flex items-center gap-2 rounded-md border py-1.5 pr-1.5 pl-2 text-xs">
+              {#if guildIconUrl(guild)}
+                <img class="h-5 w-5 rounded-full" src={guildIconUrl(guild)} alt="" />
+              {:else}
+                <span class="bg-accent/15 text-accent flex h-5 w-5 items-center justify-center rounded-full font-semibold">{guild.name.slice(0, 1)}</span>
+              {/if}
+              <span class="font-medium">{guild.name}</span>
+              <button
+                type="button"
+                class="text-muted hover:text-text rounded p-0.5"
+                aria-label="Remove {guild.name}"
+                disabled={savingGuild}
+                onclick={() => void removeGuild(guild.id)}
+              >
+                <X class="h-3.5 w-3.5" />
+              </button>
+            </div>
+          {/each}
+        </div>
+      {/if}
+      {#if availableDiscordGuildOptions.length > 0}
+        <div class="mb-4 flex items-center gap-2">
+          <SearchSelect
+            items={availableDiscordGuildOptions}
+            value=""
+            onValueChange={(value) => value && void pickGuild(value)}
+            placeholder={selectedDiscordGuilds.length ? 'Add another guild…' : 'Search guilds…'}
+            class="w-full"
+            disabled={savingGuild}
+          />
           {#if savingGuild}<span class="text-xs text-muted">Saving…</span>{/if}
         </div>
       {/if}
-    {:else}
+
+      {#if selectedDiscordGuilds.length > 0}
       <div class="mb-3 flex flex-col gap-1.5">
         {#if discordPerks === null}
           <div class="skeleton bg-panel-muted h-10 w-full rounded-lg"></div>
@@ -316,7 +384,14 @@
         {:else}
           {#each discordPerks as perk (perk.id)}
             <div class="border-border flex items-center gap-2.5 rounded-md border px-2.5 py-2 text-xs">
-              <span class="font-mono">{perk.discordRoleName ?? discordRoleName(perk.discordRoleId)}</span>
+              {#if guildIconUrl({ id: perk.guildId, name: perk.guildName ?? perk.guildId, icon: perk.guildIcon })}
+                <img class="h-5 w-5 rounded-full" src={guildIconUrl({ id: perk.guildId, name: perk.guildName ?? perk.guildId, icon: perk.guildIcon })} alt="" />
+              {:else}
+                <span class="bg-accent/15 text-accent flex h-5 w-5 items-center justify-center rounded-full font-semibold">{(perk.guildName ?? perk.guildId).slice(0, 1)}</span>
+              {/if}
+              <span class="max-w-28 truncate text-muted">{perk.guildName ?? perk.guildId}</span>
+              <span class="h-2.5 w-2.5 shrink-0 rounded-full border border-black/20" style="background-color: {discordRoleColor(perk.discordRoleColor)}"></span>
+              <span class="font-medium">{perk.discordRoleName ?? perk.discordRoleId}</span>
               <span class="text-muted">grants</span>
               <span class="font-medium">{appRoleName(perk.appRoleId)}</span>
               <Button
@@ -334,6 +409,16 @@
       </div>
       {#if discordRoles && discordRoles.length > 0 && assignableRoles.length > 0}
         <div class="flex flex-wrap items-center gap-1.5">
+          <SearchSelect
+            items={selectedDiscordGuildOptions}
+            bind:value={perkGuildId}
+            onValueChange={(value) => {
+              perkDiscordRoleId = '';
+              void loadDiscordRoles(value);
+            }}
+            placeholder="Discord guild…"
+            class="w-44"
+          />
           <SearchSelect items={discordRoles.map((r) => ({ value: r.id, label: r.name }))} bind:value={perkDiscordRoleId} placeholder="Search Discord roles…" class="w-48" />
           <span class="text-xs text-muted">grants</span>
           <Select items={perkAppRoleOptions} bind:value={perkAppRoleId} class="w-40" />
@@ -341,6 +426,11 @@
         </div>
       {:else if assignableRoles.length === 0}
         <div class="text-xs text-muted">Add a non-default dashboard role above before mapping Discord perks to it.</div>
+      {:else if discordRoles && discordRoles.length === 0}
+        <div class="text-xs text-muted">This guild has no assignable Discord roles.</div>
+      {/if}
+      {:else}
+        <div class="text-xs text-muted">Select at least one guild to map its Discord roles.</div>
       {/if}
     {/if}
   </Card>
