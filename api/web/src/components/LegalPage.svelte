@@ -17,9 +17,8 @@
         <p class="document-date">Last updated: 23 July 2026</p>
 
         <p>
-          These Terms of Service govern your access to and use of dkrypt. The seller and service operator is Unbound, trading as dkrypt
-          (“Unbound,” “dkrypt,” “we,” “us,” or “our”). By creating an account, accessing the service, or continuing to use it, you agree
-          to these terms.
+          These Terms of Service govern your access to and use of dkrypt. The service is offered as dkrypt (“dkrypt,” “we,” “us,” or
+          “our”). By creating an account, accessing the service, or continuing to use it, you agree to these terms.
         </p>
 
         <h2>1. The service</h2>
@@ -116,8 +115,8 @@
 
         <h2>12. Contact</h2>
         <p>
-          Questions about these terms may be sent to
-          <a href="mailto:contact@unbound.rip">contact@unbound.rip</a>. Billing questions may also be submitted through
+          Questions about these terms may be submitted through the <a href="/contact">dkrypt contact page</a>. Billing questions may also
+          be submitted through
           <a href="https://paddle.net" target="_blank" rel="noopener noreferrer">Paddle Buyer Support</a>.
         </p>
       </article>
@@ -128,8 +127,8 @@
         <p class="document-date">Last updated: 23 July 2026</p>
 
         <p>
-          This notice explains how Unbound, operator of dkrypt (“we,” “us,” or “our”), handles personal data when you visit or use dkrypt.
-          For questions or privacy requests, contact <a href="mailto:contact@unbound.rip">contact@unbound.rip</a>.
+          This notice explains how dkrypt (“we,” “us,” or “our”) handles personal data when you visit or use the service. For questions or
+          privacy requests, use the <a href="/contact">dkrypt contact page</a>.
         </p>
 
         <h2>1. Data we collect</h2>
@@ -214,8 +213,8 @@
         <h2>9. Your rights</h2>
         <p>
           Depending on your location, you may have rights to access, correct, delete, restrict, object to, or obtain a portable copy of your
-          personal data, withdraw consent, and complain to a supervisory authority. Contact
-          <a href="mailto:contact@unbound.rip">contact@unbound.rip</a> to make a request. We may need to verify your identity.
+          personal data, withdraw consent, and complain to a supervisory authority. Use the <a href="/contact">dkrypt contact page</a> to
+          make a request. We may need to verify your identity.
         </p>
 
         <h2>10. Children</h2>
@@ -264,9 +263,8 @@
 
         <h2>3. Technical problems and non-delivery</h2>
         <p>
-          If a persistent technical defect prevents access to paid features, contact
-          <a href="mailto:contact@unbound.rip">contact@unbound.rip</a> so we can try to resolve it. If the issue cannot be resolved, request a
-          refund through Paddle and describe the problem.
+          If a persistent technical defect prevents access to paid features, use the <a href="/contact">dkrypt contact page</a> so we can
+          try to resolve it. If the issue cannot be resolved, request a refund through Paddle and describe the problem.
         </p>
 
         <h2>4. Cancellations</h2>
@@ -285,8 +283,8 @@
 
         <h2>6. Contact</h2>
         <p>
-          For product support, contact <a href="mailto:contact@unbound.rip">contact@unbound.rip</a>. For refund status or payment questions,
-          contact <a href="https://paddle.net" target="_blank" rel="noopener noreferrer">Paddle Buyer Support</a>.
+          For product support, use the <a href="/contact">dkrypt contact page</a>. For refund status or payment questions, contact
+          <a href="https://paddle.net" target="_blank" rel="noopener noreferrer">Paddle Buyer Support</a>.
         </p>
       </article>
     {/if}
