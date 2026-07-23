@@ -14,6 +14,7 @@ import {
 } from './identity.js';
 import { PermissionFlag, serializeBits } from './permissions.js';
 import {
+  addAllowedUser,
   createApiKey,
   createRole,
   listAllowedUsers,
@@ -38,6 +39,70 @@ function identity(
 }
 
 describe('resolveOauthAccount', () => {
+  test('merges a Discord GitHub connection into a legacy GitHub account immediately', () => {
+    const discordId = randomUUID();
+    const githubId = randomUUID();
+    const discordUserId = `discord:${discordId}`;
+    const connectedGithubIdentity = identity('github', githubId, 'discord_connection');
+    const legacyGithubUserId = connectedGithubIdentity.username.toLowerCase();
+    const role = createRole(
+      {
+        name: `Connected legacy role ${randomUUID()}`,
+        color: '#5865f2',
+        permissions: serializeBits(PermissionFlag.viewLogs),
+      },
+      'tester',
+    );
+    addAllowedUser(legacyGithubUserId, [role.id], 'tester');
+    createApiKey('connected legacy key', legacyGithubUserId);
+
+    const merged = resolveOauthAccount({
+      fallbackUserId: discordUserId,
+      identity: identity('discord', discordId),
+      discoveredIdentities: [connectedGithubIdentity],
+    });
+
+    expect(merged.userId).toBe(legacyGithubUserId);
+    expect(getLinkedAuthProviders(legacyGithubUserId).sort()).toEqual(['discord', 'github']);
+    expect(listAllowedUsers().some((user) => user.username === discordUserId)).toBe(false);
+    expect(listAllowedUsers().find((user) => user.username === legacyGithubUserId)?.roleIds).toContain(role.id);
+    expect(listApiKeysForOwner(legacyGithubUserId)).toHaveLength(1);
+  });
+
+  test('merges a linked OAuth profile into a legacy GitHub account', () => {
+    const discordId = randomUUID();
+    const githubId = randomUUID();
+    const discordUserId = `discord:${discordId}`;
+    const legacyGithubUserId = `legacy-${randomUUID()}`;
+
+    resolveOauthAccount({
+      fallbackUserId: discordUserId,
+      identity: identity('discord', discordId),
+      discoveredIdentities: [identity('github', githubId, 'discord_connection')],
+    });
+    const role = createRole(
+      {
+        name: `Legacy role ${randomUUID()}`,
+        color: '#5865f2',
+        permissions: serializeBits(PermissionFlag.viewLogs),
+      },
+      'tester',
+    );
+    addAllowedUser(legacyGithubUserId, [role.id], 'tester');
+    createApiKey('legacy key', legacyGithubUserId);
+
+    const merged = resolveOauthAccount({
+      fallbackUserId: legacyGithubUserId,
+      identity: identity('github', githubId),
+    });
+
+    expect(merged.userId).toBe(legacyGithubUserId);
+    expect(getLinkedAuthProviders(legacyGithubUserId).sort()).toEqual(['discord', 'github']);
+    expect(listAllowedUsers().some((user) => user.username === discordUserId)).toBe(false);
+    expect(listAllowedUsers().find((user) => user.username === legacyGithubUserId)?.roleIds).toContain(role.id);
+    expect(listApiKeysForOwner(legacyGithubUserId)).toHaveLength(1);
+  });
+
   test('links a later GitHub login to a Discord-first account', () => {
     const discordId = randomUUID();
     const githubId = randomUUID();

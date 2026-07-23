@@ -451,6 +451,13 @@
                 {/if}
               {/if}
               <div class="mb-3 text-xs text-muted">{permissionsSummary(sessionBits())}</div>
+              {#if sessionState.linkedProviders?.length}
+                <div class="mb-3 text-xs text-muted">
+                  Connected: {sessionState.linkedProviders
+                    .map((provider) => (provider === 'github' ? 'GitHub' : 'Discord'))
+                    .join(' · ')}
+                </div>
+              {/if}
               {#if myGrantedPermissions.length > 0}
                 <div class="mb-3 flex flex-wrap gap-1.5">
                   {#each myGrantedPermissions as label (label)}

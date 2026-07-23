@@ -3,11 +3,12 @@ import {
   type AuthIdentity,
   type AuthProfile,
   findAuthProfileByIdentity,
+  getAuthProfile,
   mergeAuthProfiles,
   upsertAuthIdentity,
 } from './identity.js';
 import { mergeActiveJobOwner } from './jobs/store.js';
-import { addAllowedUser, getUserEffectivePermissions, mergeUserAccounts } from './store/state.js';
+import { addAllowedUser, getUserEffectivePermissions, listAllowedUsers, mergeUserAccounts } from './store/state.js';
 
 export interface ResolveOauthAccountInput {
   identity: AuthIdentity;
@@ -20,6 +21,16 @@ function uniqueProfiles(profiles: Array<AuthProfile | undefined>): AuthProfile[]
     (profile, index, all): profile is AuthProfile =>
       !!profile && all.findIndex((candidate) => candidate?.userId === profile.userId) === index,
   );
+}
+
+function findLegacyGithubUserId(identities: AuthIdentity[]): string | undefined {
+  const allowedUsers = listAllowedUsers();
+  for (const identity of identities) {
+    if (identity.provider !== 'github') continue;
+    const userId = identity.username.toLowerCase();
+    if (allowedUsers.some((user) => user.username === userId) && !getAuthProfile(userId)) return userId;
+  }
+  return undefined;
 }
 
 export function resolveOauthAccount(input: ResolveOauthAccountInput): AuthProfile {
@@ -35,7 +46,12 @@ export function resolveOauthAccount(input: ResolveOauthAccountInput): AuthProfil
         ) ?? discoveredProfiles[0]
       : undefined;
   const targetProfile = connectedGithubProfile ?? primaryProfile ?? discoveredProfiles[0];
-  const targetUserId = targetProfile?.userId ?? input.fallbackUserId;
+  const legacyGithubUserId = findLegacyGithubUserId([input.identity, ...discoveredIdentities]);
+  const fallbackLegacyAccountExists =
+    getUserEffectivePermissions(input.fallbackUserId) !== undefined && !getAuthProfile(input.fallbackUserId);
+  const targetUserId =
+    legacyGithubUserId ??
+    (fallbackLegacyAccountExists ? input.fallbackUserId : (targetProfile?.userId ?? input.fallbackUserId));
 
   const profilesToMerge = uniqueProfiles([primaryProfile, ...discoveredProfiles]).filter(
     (profile) => profile.userId !== targetUserId,
