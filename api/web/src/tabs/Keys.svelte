@@ -11,6 +11,7 @@
     bulkExtendKeyExpiry,
     bulkRevokeKeys,
     bulkSetKeyDailyLimit,
+    createKey,
     denyKey,
     fetchAllKeys,
     fetchMyKeys,
@@ -107,16 +108,17 @@
     { value: '90', label: 'In 90 days' },
   ];
 
-  const canApprove = $derived(sessionHasPermission(PermissionFlag.approveApiKeys));
-  const canCreateImmediately = $derived(sessionState.apiKeysAutoApprove ?? canApprove);
-  const canViewAll = $derived(sessionHasAnyPermission([PermissionFlag.viewApiKeys, PermissionFlag.approveApiKeys, PermissionFlag.revokeApiKeys, PermissionFlag.manageApiKeyExpiry, PermissionFlag.manageApiKeyDailyLimits, PermissionFlag.manageApiKeyConcurrency, PermissionFlag.manageApiKeyTestFlight, PermissionFlag.manageApiKeyPriority]));
-  const canRevokeAny = $derived(sessionHasPermission(PermissionFlag.revokeApiKeys));
-  const canViewUsage = $derived(sessionHasPermission(PermissionFlag.viewApiKeyUsage));
-  const canManageExpiry = $derived(sessionHasPermission(PermissionFlag.manageApiKeyExpiry));
-  const canManageDailyLimits = $derived(sessionHasPermission(PermissionFlag.manageApiKeyDailyLimits));
-  const canManagePriority = $derived(sessionHasPermission(PermissionFlag.manageApiKeyPriority));
-  const canManageConcurrency = $derived(sessionHasPermission(PermissionFlag.manageApiKeyConcurrency));
-  const canManageTestFlight = $derived(sessionHasPermission(PermissionFlag.manageApiKeyTestFlight));
+  const canManage = $derived(sessionHasPermission(PermissionFlag.manageApiKeys));
+  const canCreate = $derived(sessionHasPermission(PermissionFlag.createApiKeys));
+  const canRequest = $derived(sessionHasPermission(PermissionFlag.requestApiKeys));
+  const canViewAll = $derived(sessionHasAnyPermission([PermissionFlag.viewApiKeys, PermissionFlag.manageApiKeys]));
+  const canRevokeAny = $derived(canManage);
+  const canViewUsage = $derived(canViewAll || canCreate);
+  const canManageExpiry = $derived(canManage);
+  const canManageDailyLimits = $derived(canManage);
+  const canManagePriority = $derived(canManage);
+  const canManageConcurrency = $derived(canManage);
+  const canManageTestFlight = $derived(canManage);
 
   async function loadAllKeysPage(): Promise<void> {
     const data = await fetchAllKeys(0, PAGE_SIZE, allSearch);
@@ -145,7 +147,7 @@
 
   async function loadAll(): Promise<void> {
     mine = (await fetchMyKeys()).keys;
-    if (canApprove) pending = (await fetchPendingKeys()).keys;
+    if (canManage) pending = (await fetchPendingKeys()).keys;
     if (canViewAll) await loadAllKeysPage();
   }
 
@@ -177,12 +179,14 @@
     try {
       const expiresInDays = keyExpiry === 'never' ? undefined : Number(keyExpiry);
       const dailyLimit = keyDailyLimit.trim() ? Number(keyDailyLimit) : undefined;
-      const { ok, data } = await requestKey(name, expiresInDays, parseScope(keyScope), dailyLimit);
+      const { ok, data } = canCreate
+        ? await createKey(name, expiresInDays, parseScope(keyScope), dailyLimit)
+        : await requestKey(name, expiresInDays, parseScope(keyScope), dailyLimit);
       if (!ok) return;
       keyName = '';
       keyScope = '';
       keyDailyLimit = '';
-      if (data.key) {
+      if (canCreate && data.key) {
         revealedKey = data.key;
         showToast('Key created', 'success');
       } else {
@@ -370,9 +374,10 @@
 </script>
 
 <div class="flex flex-col gap-4">
-  <Card title={canCreateImmediately ? 'Get a key' : 'Request a key'}>
+  {#if canCreate || canRequest}
+  <Card title={canCreate ? 'Create API key' : 'Request API key'}>
     <div class="mb-2.5 text-sm text-muted">
-      {canCreateImmediately ? "You get it instantly - no approval needed." : 'Needs approval from an admin before it works.'}
+      {canCreate ? 'This key is created immediately and is ready to use.' : 'This request needs approval from someone with Manage API keys before it works.'}
     </div>
     <label for="key-name" class="mb-1 block text-xs text-muted">Name</label>
     <Input id="key-name" placeholder="e.g. laptop, ci-runner" bind:value={keyName} />
@@ -384,7 +389,7 @@
     <label for="key-daily-limit" class="mt-3 mb-1 block text-xs text-muted">Daily request limit (optional)</label>
     <Input id="key-daily-limit" type="number" min="1" placeholder="e.g. 100" bind:value={keyDailyLimit} />
     <div class="mt-1 text-xs text-muted">Blank = no limit. Over-limit requests get a 429 until the next day.</div>
-    <Button class="mt-3" loading={submitting} onclick={submitRequest}>{canCreateImmediately ? 'Create' : 'Request'}</Button>
+    <Button class="mt-3" loading={submitting} onclick={submitRequest}>{canCreate ? 'Create key' : 'Request key'}</Button>
     {#if revealedKey}
       <div class="border-accent bg-panel-muted mt-3 rounded-md border p-2.5 text-xs break-all">
         Save this now, it won't be shown again:<br />
@@ -396,6 +401,7 @@
       </div>
     {/if}
   </Card>
+  {/if}
 
   <Card title="My keys">
     <div class="scroll-fade-x overflow-x-auto" use:scrollFade>
@@ -463,7 +469,7 @@
     {/if}
   </Card>
 
-  {#if canApprove}
+  {#if canManage}
     <Card title="Pending requests">
       {#snippet headerExtra()}
         {#if selectedPending.size > 0}

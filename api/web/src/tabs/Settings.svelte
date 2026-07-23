@@ -11,10 +11,10 @@
   import UsersSettings from './settings/UsersSettings.svelte';
 
   const ALL_SUBTABS: { id: string; label: string; requires: bigint[] }[] = [
-    { id: 'scheduler', label: 'Automation', requires: [PermissionFlag.viewScheduler, PermissionFlag.manageWatches, PermissionFlag.manageSchedulerSettings, PermissionFlag.triggerDispatch] },
+    { id: 'scheduler', label: 'Automation', requires: [PermissionFlag.viewAutomation, PermissionFlag.manageAutomation] },
     { id: 'devices', label: 'Devices', requires: [PermissionFlag.viewDevices, PermissionFlag.manageDevices] },
     { id: 'users', label: 'Users', requires: [PermissionFlag.viewUsers, PermissionFlag.manageUsers] },
-    { id: 'roles', label: 'Roles', requires: [PermissionFlag.viewRoles, PermissionFlag.manageRoles, PermissionFlag.viewDiscordPerks, PermissionFlag.manageDiscordPerks] },
+    { id: 'roles', label: 'Roles', requires: [PermissionFlag.viewRoles, PermissionFlag.manageRoles] },
     { id: 'apple', label: 'Apple Auth', requires: [PermissionFlag.manageAppleAuth] },
     { id: 'backup', label: 'Backup', requires: [PermissionFlag.viewBackup, PermissionFlag.manageBackup] },
   ];
@@ -34,7 +34,7 @@
 
 <Tabs items={visibleSubtabs} value={tabState.settingsSubtab} onValueChange={setSettingsSubtab} class="mb-5" />
 
-{#if hasAccess([PermissionFlag.viewScheduler, PermissionFlag.manageWatches, PermissionFlag.manageSchedulerSettings, PermissionFlag.triggerDispatch])}
+{#if hasAccess([PermissionFlag.viewAutomation, PermissionFlag.manageAutomation])}
   <div class:hidden={tabState.settingsSubtab !== 'scheduler'}>
     <SchedulerSettings />
   </div>
@@ -49,7 +49,7 @@
     <UsersSettings />
   </div>
 {/if}
-{#if hasAccess([PermissionFlag.viewRoles, PermissionFlag.manageRoles, PermissionFlag.viewDiscordPerks, PermissionFlag.manageDiscordPerks])}
+{#if hasAccess([PermissionFlag.viewRoles, PermissionFlag.manageRoles])}
   <div class:hidden={tabState.settingsSubtab !== 'roles'}>
     <RolesSettings />
   </div>

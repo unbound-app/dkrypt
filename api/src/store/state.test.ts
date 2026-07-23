@@ -194,7 +194,7 @@ describe('API subscription entitlement', () => {
     const role = createRole({
       name: `API ${randomUUID()}`,
       color: '#5865f2',
-      permissions: serializeBits(PermissionFlag.accessApi),
+      permissions: serializeBits(PermissionFlag.createApiKeys),
     }, 'tester');
     updateAllowedUserRoles(username, [role.id], 'tester');
 

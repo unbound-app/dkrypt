@@ -45,7 +45,7 @@
         {#if sessionHasPermission(PermissionFlag.manageAppleAuth)}
           <Button size="sm" loading={startingReauth} onclick={startReauth}>Start re-auth</Button>
         {/if}
-        {#if sessionHasPermission(PermissionFlag.triggerDispatch)}
+        {#if sessionHasPermission(PermissionFlag.manageAutomation)}
           <Button variant="secondary" size="sm" loading={dismissing} onclick={dismiss}>Dismiss</Button>
         {/if}
       </div>

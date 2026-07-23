@@ -159,7 +159,7 @@
   {#if canManageBackup}
   <Card title="Export">
     <div class="mb-3 text-sm text-muted">
-      Downloads the allowlist, API keys (metadata and hashes, not their plaintext), scheduler settings, job history,
+      Downloads member role assignments, API keys (metadata and hashes, not their plaintext), scheduler settings, job history,
       and audit log as one JSON file. Treat it like a set of password hashes - it's not directly usable by an
       attacker, but it's not something to post publicly either.
     </div>

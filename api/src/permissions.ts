@@ -31,6 +31,11 @@ export const PermissionFlag = {
   manageApiKeyConcurrency: 1n << 26n,
   manageApiKeyTestFlight: 1n << 27n,
   manageApiKeyPriority: 1n << 28n,
+  requestApiKeys: 1n << 29n,
+  createApiKeys: 1n << 30n,
+  manageApiKeys: 1n << 31n,
+  viewAutomation: 1n << 32n,
+  manageAutomation: 1n << 33n,
 } as const;
 
 export type PermissionFlagKey = keyof typeof PermissionFlag;

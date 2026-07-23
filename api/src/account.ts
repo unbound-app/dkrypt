@@ -8,7 +8,7 @@ import {
   upsertAuthIdentity,
 } from './identity.js';
 import { mergeActiveJobOwner } from './jobs/store.js';
-import { addAllowedUser, getUserEffectivePermissions, listAllowedUsers, mergeUserAccounts } from './store/state.js';
+import { listAllowedUsers, mergeUserAccounts } from './store/state.js';
 
 export interface ResolveOauthAccountInput {
   identity: AuthIdentity;
@@ -48,7 +48,7 @@ export function resolveOauthAccount(input: ResolveOauthAccountInput): AuthProfil
   const targetProfile = connectedGithubProfile ?? primaryProfile ?? discoveredProfiles[0];
   const legacyGithubUserId = findLegacyGithubUserId([input.identity, ...discoveredIdentities]);
   const fallbackLegacyAccountExists =
-    getUserEffectivePermissions(input.fallbackUserId) !== undefined && !getAuthProfile(input.fallbackUserId);
+    listAllowedUsers().some((user) => user.username === input.fallbackUserId.toLowerCase()) && !getAuthProfile(input.fallbackUserId);
   const targetUserId =
     legacyGithubUserId ??
     (fallbackLegacyAccountExists ? input.fallbackUserId : (targetProfile?.userId ?? input.fallbackUserId));
@@ -63,9 +63,6 @@ export function resolveOauthAccount(input: ResolveOauthAccountInput): AuthProfil
     mergeAuthProfiles(targetUserId, profile.userId);
   }
 
-  if (getUserEffectivePermissions(targetUserId) === undefined) {
-    addAllowedUser(targetUserId, [], `oauth:${input.identity.provider}`);
-  }
   const profile = upsertAuthIdentity(targetUserId, input.identity);
   for (const identity of discoveredIdentities) upsertAuthIdentity(targetUserId, identity);
   return profile;

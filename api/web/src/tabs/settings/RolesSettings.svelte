@@ -35,8 +35,8 @@
 
   const canViewRoles = $derived(sessionHasAnyPermission([PermissionFlag.viewRoles, PermissionFlag.manageRoles]));
   const canManageRoles = $derived(sessionHasPermission(PermissionFlag.manageRoles));
-  const canViewDiscordPerks = $derived(sessionHasAnyPermission([PermissionFlag.viewDiscordPerks, PermissionFlag.manageDiscordPerks]));
-  const canManageDiscordPerks = $derived(sessionHasPermission(PermissionFlag.manageDiscordPerks));
+  const canViewDiscordPerks = $derived(sessionHasAnyPermission([PermissionFlag.viewRoles, PermissionFlag.manageRoles]));
+  const canManageDiscordPerks = $derived(sessionHasPermission(PermissionFlag.manageRoles));
 
   const COLOR_PRESETS = ['#99aab5', '#1abc9c', '#3498db', '#9b59b6', '#e91e63', '#f1c40f', '#e67e22', '#e74c3c', '#5865f2', '#2ecc71'];
 
@@ -269,8 +269,8 @@
     {/if}
   {/snippet}
   <div class="mb-3 text-sm text-muted">
-    Every added user automatically holds <strong>@everyone</strong>. Build additional roles out of individual permission bits, then
-    assign them to people on the Users tab - a user's effective access is the union of every role they hold.
+    Every signed-in user automatically holds <strong>@everyone</strong>. Build additional roles from permission groups, then
+    assign them to members on the Users tab - a member's effective access is the union of every role they hold.
   </div>
   {#if roles === null}
     <div class="flex flex-col gap-2">

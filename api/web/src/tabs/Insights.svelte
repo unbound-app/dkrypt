@@ -34,7 +34,7 @@
   let topAppsLimit = $state('5');
 
   const canViewScheduler = $derived(
-    sessionHasAnyPermission([PermissionFlag.manageWatches, PermissionFlag.manageDevices, PermissionFlag.manageSchedulerSettings, PermissionFlag.triggerDispatch]),
+    sessionHasAnyPermission([PermissionFlag.viewAutomation, PermissionFlag.manageAutomation, PermissionFlag.manageDevices]),
   );
   let watchHealth = $state<WatchHealthSummary[] | null>(null);
 

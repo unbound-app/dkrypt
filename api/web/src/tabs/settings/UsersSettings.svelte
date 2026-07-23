@@ -63,7 +63,7 @@
   }
 
   const filteredUsers = $derived(
-    (users ?? []).filter((u) => u.username.includes(userSearch.trim().toLowerCase())),
+    (users ?? []).filter((u) => `${u.username} ${u.displayName ?? ''}`.toLowerCase().includes(userSearch.trim().toLowerCase())),
   );
 
   let selectedUsers = $state<Set<string>>(new Set());
@@ -191,7 +191,7 @@
 
   async function removeManaged(): Promise<void> {
     if (!manageUser) return;
-    if (!(await confirmDialog(`Remove ${manageUser.username} from the allowlist? Any API keys they own are revoked too.`))) return;
+    if (!(await confirmDialog(`Remove every dashboard role from ${manageUser.username}? They can still sign in but will only retain the default permissions.`))) return;
     removing = true;
     try {
       const { ok } = await removeUser(manageUser.username);
@@ -206,7 +206,7 @@
 </script>
 
 <div class="flex flex-col gap-4">
-  <Card title="Allowlist">
+  <Card title="Members">
     {#snippet headerExtra()}
       {#if canManage}
         <Button size="sm" onclick={openAdd}>
@@ -235,7 +235,7 @@
             {#if canManage}
               <th><input type="checkbox" checked={selectableUsers.length > 0 && selectedUsers.size === selectableUsers.length} onchange={toggleSelectAllUsers} /></th>
             {/if}
-            <th>Username</th>
+            <th>Member</th>
             <th>Roles</th>
             <th>Added</th>
             <th>Last active</th>
@@ -256,7 +256,15 @@
                     {/if}
                   </td>
                 {/if}
-                <td>{u.username}{#if isSelf}<span class="ml-1.5 text-xs text-muted">(you)</span>{/if}</td>
+                <td>
+                  <div class="flex min-w-0 items-center gap-2">
+                    {#if u.avatarUrl}<img src={u.avatarUrl} alt="" class="h-6 w-6 shrink-0 rounded-full object-cover" />{/if}
+                    <div class="min-w-0">
+                      <div class="truncate">{u.displayName ?? u.username}{#if isSelf}<span class="ml-1.5 text-xs text-muted">(you)</span>{/if}</div>
+                      {#if u.displayName}<div class="truncate text-xs text-muted">{u.username}</div>{/if}
+                    </div>
+                  </div>
+                </td>
                 <td>
                   <div class="flex flex-wrap gap-1">
                     {#if u.roleIds.length === 0}
@@ -295,7 +303,7 @@
       </table>
     </div>
     {#if users !== null && users.length === 0}
-      <EmptyState icon={UserX} message="No allowed users yet." />
+    <EmptyState icon={UserX} message="No members have role assignments yet." />
     {:else if users !== null && filteredUsers.length === 0}
       <EmptyState icon={UserX} message={`No users match "${userSearch}".`} />
     {/if}
@@ -343,7 +351,7 @@
 
 {#if canManage}
   <Dialog open={addOpen} onOpenChange={(v) => (addOpen = v)} class="max-w-md">
-    <div class="mb-3 text-sm font-medium">Add an allowed GitHub user</div>
+    <div class="mb-3 text-sm font-medium">Assign roles to a member</div>
     <label for="user-username" class="mb-1 block text-xs text-muted">GitHub username</label>
     <Input id="user-username" placeholder="e.g. octocat" bind:value={username} />
     <div class="mt-3 max-h-[46vh] overflow-y-auto pr-0.5">
@@ -393,7 +401,7 @@
         Save roles
       </Button>
       <div class="border-border mt-4 border-t pt-4">
-        <Button variant="destructive" class="w-full" loading={removing} onclick={removeManaged}>Remove from allowlist</Button>
+        <Button variant="destructive" class="w-full" loading={removing} onclick={removeManaged}>Remove role assignments</Button>
       </div>
     {/if}
   </Dialog>

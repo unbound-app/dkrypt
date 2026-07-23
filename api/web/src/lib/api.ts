@@ -253,6 +253,8 @@ export interface ApiKeyRecord {
 
 export interface AllowedUser {
   username: string;
+  displayName?: string;
+  avatarUrl?: string;
   roleIds: string[];
   addedAt: number;
   lastActiveAt?: number;
@@ -708,6 +710,18 @@ export function requestKey(
   dailyLimit?: number,
 ): Promise<{ ok: boolean; data: { key?: string; expiresAt?: number } }> {
   return apiAction('/v1/dashboard/keys/request', {
+    method: 'POST',
+    body: JSON.stringify({ name, expiresInDays, allowedBundleIds, dailyLimit }),
+  });
+}
+
+export function createKey(
+  name: string,
+  expiresInDays?: number,
+  allowedBundleIds?: string[],
+  dailyLimit?: number,
+): Promise<{ ok: boolean; data: { key?: string; expiresAt?: number } }> {
+  return apiAction('/v1/dashboard/keys/create', {
     method: 'POST',
     body: JSON.stringify({ name, expiresInDays, allowedBundleIds, dailyLimit }),
   });

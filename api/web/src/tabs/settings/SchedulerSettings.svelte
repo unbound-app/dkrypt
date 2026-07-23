@@ -123,9 +123,9 @@
   const REPO_RE = /^[\w.-]+\/[\w.-]+$/;
   const WEBHOOK_URL_RE = /^https?:\/\/.+/;
 
-  const canManageWatches = $derived(sessionHasPermission(PermissionFlag.manageWatches));
-  const canManageSchedulerSettings = $derived(sessionHasPermission(PermissionFlag.manageSchedulerSettings));
-  const canTriggerDispatch = $derived(sessionHasPermission(PermissionFlag.triggerDispatch));
+  const canManageWatches = $derived(sessionHasPermission(PermissionFlag.manageAutomation));
+  const canManageSchedulerSettings = $derived(sessionHasPermission(PermissionFlag.manageAutomation));
+  const canTriggerDispatch = $derived(sessionHasPermission(PermissionFlag.manageAutomation));
 
   // --- Watches ---------------------------------------------------------------------------
 

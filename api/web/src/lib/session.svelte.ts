@@ -25,7 +25,6 @@ export interface SessionInfo {
   avatarUrl?: string;
   identities?: { provider: 'github' | 'discord'; username: string; displayName: string; avatarUrl?: string }[];
   linkedProviders?: ('github' | 'discord')[];
-  apiKeysAutoApprove?: boolean;
   // Decimal-string-serialized bigint bitfield, as returned by the API - parse with sessionBits().
   permissions?: string;
   expiresAt?: number;
@@ -56,21 +55,17 @@ export function sessionPermissionLabels(): string[] {
 // Settings subtab list, and the command palette so "can they see Settings at all" is defined once.
 export function sessionCanSeeSettings(): boolean {
   return sessionHasAnyPermission([
-    PermissionFlag.manageWatches,
+    PermissionFlag.viewAutomation,
     PermissionFlag.manageDevices,
-    PermissionFlag.manageSchedulerSettings,
-    PermissionFlag.triggerDispatch,
+    PermissionFlag.manageAutomation,
     PermissionFlag.manageAppleAuth,
     PermissionFlag.viewUsers,
     PermissionFlag.manageUsers,
     PermissionFlag.manageRoles,
     PermissionFlag.manageBackup,
-    PermissionFlag.viewScheduler,
     PermissionFlag.viewDevices,
     PermissionFlag.viewRoles,
-    PermissionFlag.viewDiscordPerks,
     PermissionFlag.viewBackup,
-    PermissionFlag.manageDiscordPerks,
   ]);
 }
 

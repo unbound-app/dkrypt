@@ -186,7 +186,7 @@
     {
       id: 'keys',
       label: 'API Keys',
-      requires: [PermissionFlag.accessApi, PermissionFlag.viewApiKeys, PermissionFlag.viewApiKeyUsage, PermissionFlag.approveApiKeys, PermissionFlag.revokeApiKeys, PermissionFlag.manageApiKeyExpiry, PermissionFlag.manageApiKeyDailyLimits, PermissionFlag.manageApiKeyConcurrency, PermissionFlag.manageApiKeyTestFlight, PermissionFlag.manageApiKeyPriority],
+      requires: [PermissionFlag.requestApiKeys, PermissionFlag.createApiKeys, PermissionFlag.viewApiKeys, PermissionFlag.manageApiKeys],
     },
     { id: 'logs', label: 'Logs', requires: [PermissionFlag.viewLogs] },
     { id: 'insights', label: 'Insights' },

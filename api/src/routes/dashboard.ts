@@ -2,7 +2,6 @@ import { Router } from 'express';
 import { validate as validateCronExpr } from 'node-cron';
 import { config, discordBotEnabled } from '../config.js';
 import { fetchBotGuilds, fetchGuildRoles } from '../discord.js';
-import { canCreateApiKeyImmediately, getBillingEntitlements } from '../billing.js';
 import {
   cancelAppleAuth,
   getAppleAuthStatus,
@@ -18,6 +17,7 @@ import { getRecentLogs } from '../logger.js';
 import { EMBED_COLOR, notify, sendTestNotification } from '../notify.js';
 import { getVapidPublicKey, sendPushToUser } from '../push.js';
 import { hasPermission, isSubsetPermission, parseBits, PermissionFlag } from '../permissions.js';
+import { listAuthProfiles } from '../identity.js';
 import { applyBackupSchedule, applyWatchSchedules, checkForTestFlightUpdate, checkForUpdate, triggerTickNow } from '../scheduler/index.js';
 import { searchApps } from '../scheduler/itunes.js';
 import { requirePermission, requireSession } from '../session.js';
@@ -129,41 +129,37 @@ import {
 } from '../store/state.js';
 
 const canDecrypt = requirePermission(PermissionFlag.requestDecrypt);
-const canAccessApi = requirePermission(PermissionFlag.accessApi);
-const canRevokeOwnedOrAnyApiKeys = requirePermission(PermissionFlag.accessApi, PermissionFlag.revokeApiKeys);
+const canRequestApiKeys = requirePermission(PermissionFlag.requestApiKeys);
+const canAccessApi = requirePermission(PermissionFlag.createApiKeys);
+const canViewOwnApiKeys = requirePermission(PermissionFlag.requestApiKeys, PermissionFlag.createApiKeys);
+const canManageOrUseApiKeys = requirePermission(PermissionFlag.requestApiKeys, PermissionFlag.createApiKeys, PermissionFlag.manageApiKeys);
+const canRevokeOwnedOrAnyApiKeys = requirePermission(PermissionFlag.createApiKeys, PermissionFlag.manageApiKeys);
 const canViewApiKeys = requirePermission(
   PermissionFlag.viewApiKeys,
-  PermissionFlag.approveApiKeys,
-  PermissionFlag.revokeApiKeys,
-  PermissionFlag.manageApiKeyExpiry,
-  PermissionFlag.manageApiKeyDailyLimits,
-  PermissionFlag.manageApiKeyConcurrency,
-  PermissionFlag.manageApiKeyTestFlight,
-  PermissionFlag.manageApiKeyPriority,
-  PermissionFlag.manageApiKeyLimits,
+  PermissionFlag.manageApiKeys,
 );
-const canApproveApiKeys = requirePermission(PermissionFlag.approveApiKeys);
-const canManageApiKeyExpiry = requirePermission(PermissionFlag.manageApiKeyExpiry, PermissionFlag.manageApiKeyLimits);
-const canManageApiKeyDailyLimits = requirePermission(PermissionFlag.manageApiKeyDailyLimits, PermissionFlag.manageApiKeyLimits);
-const canManageApiKeyConcurrency = requirePermission(PermissionFlag.manageApiKeyConcurrency, PermissionFlag.manageApiKeyLimits);
-const canManageApiKeyTestFlight = requirePermission(PermissionFlag.manageApiKeyTestFlight, PermissionFlag.manageApiKeyLimits);
-const canManageApiKeyPriority = requirePermission(PermissionFlag.manageApiKeyPriority, PermissionFlag.manageApiKeyLimits);
-const canViewScheduler = requirePermission(PermissionFlag.viewScheduler, PermissionFlag.manageWatches, PermissionFlag.manageSchedulerSettings, PermissionFlag.triggerDispatch);
+const canApproveApiKeys = requirePermission(PermissionFlag.manageApiKeys);
+const canManageApiKeyExpiry = requirePermission(PermissionFlag.manageApiKeys);
+const canManageApiKeyDailyLimits = requirePermission(PermissionFlag.manageApiKeys);
+const canManageApiKeyConcurrency = requirePermission(PermissionFlag.manageApiKeys);
+const canManageApiKeyTestFlight = requirePermission(PermissionFlag.manageApiKeys);
+const canManageApiKeyPriority = requirePermission(PermissionFlag.manageApiKeys);
+const canViewScheduler = requirePermission(PermissionFlag.viewAutomation, PermissionFlag.manageAutomation);
 const canViewDevices = requirePermission(PermissionFlag.viewDevices, PermissionFlag.manageDevices);
-const canManageWatches = requirePermission(PermissionFlag.manageWatches);
+const canManageWatches = requirePermission(PermissionFlag.manageAutomation);
 const canManageDevices = requirePermission(PermissionFlag.manageDevices);
-const canManageSchedulerSettings = requirePermission(PermissionFlag.manageSchedulerSettings);
+const canManageSchedulerSettings = requirePermission(PermissionFlag.manageAutomation);
 // pollCron lives on both watches and (legacy) scheduler settings, so either side can validate one.
-const canValidateCron = requirePermission(PermissionFlag.manageSchedulerSettings, PermissionFlag.manageWatches);
-const canTriggerDispatch = requirePermission(PermissionFlag.triggerDispatch);
+const canValidateCron = requirePermission(PermissionFlag.manageAutomation);
+const canTriggerDispatch = requirePermission(PermissionFlag.manageAutomation);
 const canManageAppleAuth = requirePermission(PermissionFlag.manageAppleAuth);
 const canViewLogs = requirePermission(PermissionFlag.viewLogs);
 const canViewUsers = requirePermission(PermissionFlag.viewUsers, PermissionFlag.manageUsers);
 const canViewRoles = requirePermission(PermissionFlag.viewRoles, PermissionFlag.manageRoles);
 const canManageUsers = requirePermission(PermissionFlag.manageUsers);
 const canManageRoles = requirePermission(PermissionFlag.manageRoles);
-const canViewDiscordPerks = requirePermission(PermissionFlag.viewDiscordPerks, PermissionFlag.manageDiscordPerks);
-const canManageDiscordPerks = requirePermission(PermissionFlag.manageDiscordPerks);
+const canViewDiscordPerks = requirePermission(PermissionFlag.viewRoles, PermissionFlag.manageRoles);
+const canManageDiscordPerks = requirePermission(PermissionFlag.manageRoles);
 const canViewBackup = requirePermission(PermissionFlag.viewBackup, PermissionFlag.manageBackup);
 const canManageBackup = requirePermission(PermissionFlag.manageBackup);
 
@@ -183,7 +179,7 @@ const deviceOrExternalRateLimit = rateLimitPerUser(10, 60_000);
 const jobDiffRateLimit = rateLimitPerUser(30, 60_000);
 
 function buildOverview(permissions: bigint) {
-  const canViewAutomation = hasPermission(permissions, PermissionFlag.viewScheduler) || hasPermission(permissions, PermissionFlag.manageWatches) || hasPermission(permissions, PermissionFlag.manageSchedulerSettings) || hasPermission(permissions, PermissionFlag.triggerDispatch);
+  const canViewAutomation = hasPermission(permissions, PermissionFlag.viewAutomation) || hasPermission(permissions, PermissionFlag.manageAutomation);
   const canViewDeviceData = hasPermission(permissions, PermissionFlag.viewDevices) || hasPermission(permissions, PermissionFlag.manageDevices);
   const watches = canViewAutomation ? getEffectiveWatches().map((w) => ({
     ...w,
@@ -865,7 +861,7 @@ dashboardRouter.post('/v1/dashboard/jobs/:id/share/revoke-all', (req, res) => {
   res.json({ ok: true, revoked });
 });
 
-dashboardRouter.get('/v1/dashboard/keys/mine', canAccessApi, (_req, res) => {
+dashboardRouter.get('/v1/dashboard/keys/mine', canViewOwnApiKeys, (_req, res) => {
   const { sub } = res.locals.session;
   res.json({ keys: listApiKeysForOwner(sub) });
 });
@@ -890,8 +886,8 @@ function parseAllowedBundleIds(body: unknown): string[] | undefined {
   return ids.length > 0 ? [...new Set(ids)] : undefined;
 }
 
-dashboardRouter.post('/v1/dashboard/keys/request', canAccessApi, (req, res) => {
-  const { sub, permissions } = res.locals.session;
+dashboardRouter.post('/v1/dashboard/keys/request', canRequestApiKeys, (req, res) => {
+  const { sub } = res.locals.session;
   const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
   if (!name) {
     res.status(400).json({ error: 'name is required' });
@@ -905,11 +901,6 @@ dashboardRouter.post('/v1/dashboard/keys/request', canAccessApi, (req, res) => {
   const dailyLimit = parseDailyLimit(req.body?.dailyLimit);
   const allowTestFlight = typeof req.body?.allowTestFlight === 'boolean' ? req.body.allowTestFlight : undefined;
 
-  if (canCreateApiKeyImmediately(permissions, getBillingEntitlements(sub))) {
-    res.status(201).json(createApiKey(name, sub, expiresInDays, allowedBundleIds, dailyLimit, allowTestFlight));
-    return;
-  }
-
   const record = requestApiKey(name, sub, expiresInDays, allowedBundleIds, dailyLimit, allowTestFlight);
   void notify('keyRequest', {
     title: 'New API key request',
@@ -919,7 +910,23 @@ dashboardRouter.post('/v1/dashboard/keys/request', canAccessApi, (req, res) => {
   res.status(201).json(record);
 });
 
-dashboardRouter.post('/v1/dashboard/keys/:id/reveal', canAccessApi, (req, res) => {
+dashboardRouter.post('/v1/dashboard/keys/create', canAccessApi, (req, res) => {
+  const { sub } = res.locals.session;
+  const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+  if (!name) {
+    res.status(400).json({ error: 'name is required' });
+    return;
+  }
+  const expiresInDays = typeof req.body?.expiresInDays === 'number' && EXPIRY_OPTIONS.has(req.body.expiresInDays)
+    ? req.body.expiresInDays
+    : undefined;
+  const allowedBundleIds = parseAllowedBundleIds(req.body?.allowedBundleIds);
+  const dailyLimit = parseDailyLimit(req.body?.dailyLimit);
+  const allowTestFlight = typeof req.body?.allowTestFlight === 'boolean' ? req.body.allowTestFlight : undefined;
+  res.status(201).json(createApiKey(name, sub, expiresInDays, allowedBundleIds, dailyLimit, allowTestFlight));
+});
+
+dashboardRouter.post('/v1/dashboard/keys/:id/reveal', canManageOrUseApiKeys, (req, res) => {
   const { sub } = res.locals.session;
   const secret = revealApiKeySecret(req.params.id, sub);
   if (!secret) {
@@ -929,7 +936,7 @@ dashboardRouter.post('/v1/dashboard/keys/:id/reveal', canAccessApi, (req, res) =
   res.json({ key: secret });
 });
 
-dashboardRouter.post('/v1/dashboard/keys/:id/regenerate', canAccessApi, (req, res) => {
+dashboardRouter.post('/v1/dashboard/keys/:id/regenerate', canManageOrUseApiKeys, (req, res) => {
   const { sub } = res.locals.session;
   const graceMinutesRaw = req.body?.graceMinutes;
   const graceMinutes = typeof graceMinutesRaw === 'number' && Number.isFinite(graceMinutesRaw) && graceMinutesRaw > 0 ? graceMinutesRaw : 0;
@@ -941,9 +948,9 @@ dashboardRouter.post('/v1/dashboard/keys/:id/regenerate', canAccessApi, (req, re
   res.json({ ok: true, key: getApiKeyById(req.params.id) });
 });
 
-dashboardRouter.delete('/v1/dashboard/keys/:id', canAccessApi, (req, res) => {
+dashboardRouter.delete('/v1/dashboard/keys/:id', canManageOrUseApiKeys, (req, res) => {
   const { sub, permissions } = res.locals.session;
-  const ok = revokeApiKey(req.params.id, sub, hasPermission(permissions, PermissionFlag.revokeApiKeys));
+  const ok = revokeApiKey(req.params.id, sub, hasPermission(permissions, PermissionFlag.manageApiKeys));
   if (!ok) {
     res.status(404).json({ error: 'key not found or not yours' });
     return;
@@ -954,7 +961,7 @@ dashboardRouter.delete('/v1/dashboard/keys/:id', canAccessApi, (req, res) => {
 dashboardRouter.post('/v1/dashboard/keys/bulk-revoke', canRevokeOwnedOrAnyApiKeys, (req, res) => {
   const { sub, permissions } = res.locals.session;
   const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter((id: unknown) => typeof id === 'string') : [];
-  const canRevokeAny = hasPermission(permissions, PermissionFlag.revokeApiKeys);
+  const canRevokeAny = hasPermission(permissions, PermissionFlag.manageApiKeys);
   const revoked = ids.filter((id: string) => revokeApiKey(id, sub, canRevokeAny));
   res.json({ revoked });
 });
@@ -985,14 +992,14 @@ dashboardRouter.post('/v1/dashboard/keys/bulk-set-daily-limit', canManageApiKeyD
   res.json({ updated });
 });
 
-dashboardRouter.get('/v1/dashboard/keys/:id/usage', requirePermission(PermissionFlag.viewApiKeyUsage), (req, res) => {
+dashboardRouter.get('/v1/dashboard/keys/:id/usage', requirePermission(PermissionFlag.createApiKeys, PermissionFlag.viewApiKeys, PermissionFlag.manageApiKeys), (req, res) => {
   const key = getApiKeyById(req.params.id);
   if (!key) {
     res.status(404).json({ error: 'key not found' });
     return;
   }
   const { sub, permissions } = res.locals.session;
-  if (key.ownerId !== sub && !hasPermission(permissions, PermissionFlag.viewApiKeys)) {
+  if (key.ownerId !== sub && !hasPermission(permissions, PermissionFlag.viewApiKeys) && !hasPermission(permissions, PermissionFlag.manageApiKeys)) {
     res.status(403).json({ error: "not your key" });
     return;
   }
@@ -1000,14 +1007,14 @@ dashboardRouter.get('/v1/dashboard/keys/:id/usage', requirePermission(Permission
   res.json({ usage: getApiKeyUsage(req.params.id, days) });
 });
 
-dashboardRouter.get('/v1/dashboard/keys/:id/bundle-usage', requirePermission(PermissionFlag.viewApiKeyUsage), (req, res) => {
+dashboardRouter.get('/v1/dashboard/keys/:id/bundle-usage', requirePermission(PermissionFlag.createApiKeys, PermissionFlag.viewApiKeys, PermissionFlag.manageApiKeys), (req, res) => {
   const key = getApiKeyById(req.params.id);
   if (!key) {
     res.status(404).json({ error: 'key not found' });
     return;
   }
   const { sub, permissions } = res.locals.session;
-  if (key.ownerId !== sub && !hasPermission(permissions, PermissionFlag.viewApiKeys)) {
+  if (key.ownerId !== sub && !hasPermission(permissions, PermissionFlag.viewApiKeys) && !hasPermission(permissions, PermissionFlag.manageApiKeys)) {
     res.status(403).json({ error: "not your key" });
     return;
   }
@@ -1212,7 +1219,33 @@ function canGrantBits(actorBits: bigint, targetBits: bigint): boolean {
 }
 
 dashboardRouter.get('/v1/dashboard/users', canViewUsers, (_req, res) => {
-  res.json({ users: listAllowedUsers() });
+  const assignments = new Map(listAllowedUsers().map((user) => [user.username, user]));
+  const users = listAuthProfiles().map((profile) => {
+    const assignment = assignments.get(profile.userId);
+    return {
+      username: profile.userId,
+      displayName: profile.displayName,
+      avatarUrl: profile.avatarUrl,
+      roleIds: assignment?.roleIds ?? [],
+      addedAt: assignment?.addedAt ?? Date.parse(profile.updatedAt),
+      lastActiveAt: assignment?.lastActiveAt,
+      priority: assignment?.priority,
+    };
+  });
+  for (const assignment of assignments.values()) {
+    if (!users.some((user) => user.username === assignment.username)) {
+      users.push({
+        username: assignment.username,
+        displayName: '',
+        avatarUrl: '',
+        roleIds: assignment.roleIds,
+        addedAt: assignment.addedAt,
+        lastActiveAt: assignment.lastActiveAt,
+        priority: assignment.priority,
+      });
+    }
+  }
+  res.json({ users });
 });
 
 dashboardRouter.get('/v1/dashboard/audit-log', canViewUsers, (req, res) => {

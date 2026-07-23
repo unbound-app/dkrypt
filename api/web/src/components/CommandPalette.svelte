@@ -118,7 +118,7 @@
         base.push({ id: 'cancel-all', label: `Cancel all ${activeCount} active job(s)`, category: 'Actions', run: () => void cancelAllJobs() });
       }
     }
-    if (sessionHasPermission(PermissionFlag.triggerDispatch)) {
+    if (sessionHasPermission(PermissionFlag.manageAutomation)) {
       for (const w of liveState.overview?.watches ?? []) {
         if (!w.schedulable) continue;
         base.push({

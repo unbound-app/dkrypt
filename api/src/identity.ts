@@ -145,6 +145,10 @@ export function getAuthProfile(userId: string): AuthProfile | undefined {
   return state.profiles.find((profile) => profile.userId === userId || profile.aliases?.includes(userId));
 }
 
+export function listAuthProfiles(): AuthProfile[] {
+  return state.profiles.map((profile) => structuredClone(profile));
+}
+
 export function findAuthProfileByIdentity(provider: AuthProvider, providerId: string): AuthProfile | undefined {
   return state.profiles.find((profile) =>
     (profile.identities ?? [legacyIdentity(profile)]).some(

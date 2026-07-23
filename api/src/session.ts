@@ -120,7 +120,7 @@ export function getSession(req: Request): Session | undefined {
   if (!session || session.sub === 'root') return session;
   const sub = resolveAuthUserId(session.sub);
   const permissions = getUserEffectivePermissions(sub);
-  return permissions === undefined ? undefined : { ...session, sub, permissions };
+  return { ...session, sub, permissions };
 }
 
 export function requireSession(req: Request, res: Response, next: NextFunction): void {

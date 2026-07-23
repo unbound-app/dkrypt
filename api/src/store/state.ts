@@ -347,7 +347,7 @@ export interface ShareLinkRecord {
 }
 
 interface PersistedState {
-  version: 10;
+  version: 11;
   apiKeys: ApiKeyRecord[];
   allowedUsers: AllowedUser[];
   roles: Role[];
@@ -387,7 +387,7 @@ const backupsDir = path.join(config.stateDir, 'backups');
 
 function defaultState(): PersistedState {
   return {
-    version: 10,
+    version: 11,
     apiKeys: [],
     allowedUsers: [],
     roles: [seedDefaultRole(Date.now())],
@@ -673,24 +673,45 @@ function upgradePermissionBits(bits: bigint): bigint {
   return migrated;
 }
 
-function migrateV9ToV10(v9: Record<string, unknown> | PersistedState): PersistedState {
+function consolidatePermissionBits(bits: bigint): bigint {
+  let migrated = bits;
+  if ((bits & PermissionFlag.accessApi) !== 0n) migrated |= PermissionFlag.requestApiKeys | PermissionFlag.createApiKeys;
+  const legacyManagesAllApiKeys = (bits & (PermissionFlag.approveApiKeys | PermissionFlag.revokeApiKeys | PermissionFlag.manageApiKeyLimits)) === (PermissionFlag.approveApiKeys | PermissionFlag.revokeApiKeys | PermissionFlag.manageApiKeyLimits);
+  if (legacyManagesAllApiKeys) migrated |= PermissionFlag.manageApiKeys;
+  if ((bits & (PermissionFlag.viewScheduler | PermissionFlag.manageWatches | PermissionFlag.manageSchedulerSettings | PermissionFlag.triggerDispatch)) !== 0n) migrated |= PermissionFlag.viewAutomation;
+  const legacyManagesAllAutomation = (bits & (PermissionFlag.manageWatches | PermissionFlag.manageSchedulerSettings | PermissionFlag.triggerDispatch)) === (PermissionFlag.manageWatches | PermissionFlag.manageSchedulerSettings | PermissionFlag.triggerDispatch);
+  if (legacyManagesAllAutomation) migrated |= PermissionFlag.manageAutomation;
+  return migrated;
+}
+
+function migrateV9ToV10(v9: Record<string, unknown> | PersistedState): Record<string, unknown> {
   const roles = Array.isArray(v9.roles)
     ? (v9.roles as Role[]).map((role) => ({ ...role, permissions: serializeBits(upgradePermissionBits(parseBits(role.permissions))) }))
     : [seedDefaultRole(Date.now())];
-  return { ...defaultState(), ...v9, version: 10, roles } as PersistedState;
+  return { ...defaultState(), ...v9, version: 10, roles };
+}
+
+function migrateV10ToV11(v10: Record<string, unknown>): PersistedState {
+  const v10State = migrateV9ToV10(v10);
+  return {
+    ...v10State,
+    version: 11,
+    roles: (v10State.roles as Role[]).map((role) => ({ ...role, permissions: serializeBits(consolidatePermissionBits(parseBits(role.permissions))) })),
+  } as PersistedState;
 }
 
 function migrate(raw: Record<string, unknown>): PersistedState {
-  if (raw.version === 10) return { ...defaultState(), ...raw } as PersistedState;
-  if (raw.version === 9) return migrateV9ToV10(raw);
-  if (raw.version === 8) return migrateV9ToV10(migrateV8ToV9(raw));
-  if (raw.version === 7) return migrateV9ToV10(migrateV8ToV9(migrateV7ToV8(raw)));
-  if (raw.version === 6) return migrateV9ToV10(migrateV8ToV9(migrateV6ToV8(raw)));
-  if (raw.version === 5) return migrateV9ToV10(migrateV8ToV9(migrateV6ToV8(migrateV5ToV6(raw))));
+  if (raw.version === 11) return { ...defaultState(), ...raw } as PersistedState;
+  if (raw.version === 10) return migrateV10ToV11(raw);
+  if (raw.version === 9) return migrateV10ToV11(raw);
+  if (raw.version === 8) return migrateV10ToV11(migrateV8ToV9(raw));
+  if (raw.version === 7) return migrateV10ToV11(migrateV8ToV9(migrateV7ToV8(raw)));
+  if (raw.version === 6) return migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(raw)));
+  if (raw.version === 5) return migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(migrateV5ToV6(raw))));
 
   if (raw.version === 4) {
     const v4Users = Array.isArray(raw.allowedUsers) ? (raw.allowedUsers as Record<string, unknown>[]) : [];
-    return migrateV9ToV10(migrateV8ToV9(migrateV6ToV8(
+    return migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(
       migrateV5ToV6({
         ...raw,
         version: 5,
@@ -705,7 +726,7 @@ function migrate(raw: Record<string, unknown>): PersistedState {
 
   if (raw.version === 3) {
     const v3Users = Array.isArray(raw.allowedUsers) ? (raw.allowedUsers as Record<string, unknown>[]) : [];
-    return migrateV9ToV10(migrateV8ToV9(migrateV6ToV8(
+    return migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(
       migrateV5ToV6({
         ...raw,
         version: 5,
@@ -720,7 +741,7 @@ function migrate(raw: Record<string, unknown>): PersistedState {
 
   if (raw.version === 2) {
     const legacyUsers = Array.isArray(raw.allowedUsers) ? (raw.allowedUsers as Record<string, unknown>[]) : [];
-    return migrateV9ToV10(migrateV8ToV9(migrateV6ToV8(
+    return migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(
       migrateV5ToV6({
         ...raw,
         version: 5,
@@ -734,7 +755,7 @@ function migrate(raw: Record<string, unknown>): PersistedState {
   }
 
   const legacyKeys = Array.isArray(raw.apiKeys) ? (raw.apiKeys as Record<string, unknown>[]) : [];
-  return migrateV9ToV10(migrateV8ToV9(migrateV6ToV8(
+  return migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(
     migrateV5ToV6({
       apiKeys: legacyKeys.map((k) => ({
         id: k.id as string,
@@ -823,14 +844,13 @@ export function getRole(id: string): Role | undefined {
   return state.roles.find((r) => r.id === id);
 }
 
-export function getUserEffectivePermissions(username: string): bigint | undefined {
+export function getUserEffectivePermissions(username: string): bigint {
   const user = state.allowedUsers.find((u) => u.username === username.toLowerCase());
-  if (!user) return undefined;
-  const billing = getBillingEntitlements(user.username);
+  const billing = getBillingEntitlements(username.toLowerCase());
   const billingBits =
     (billing.decrypt ? PermissionFlag.requestDecrypt : 0n) |
-    (billing.api ? PermissionFlag.accessApi : 0n);
-  return effectiveBitsForRoleIds(user.roleIds, state.roles) | billingBits;
+    (billing.api ? PermissionFlag.createApiKeys : 0n);
+  return effectiveBitsForRoleIds(user?.roleIds ?? [], state.roles) | billingBits;
 }
 
 export function getSessionVersion(username: string): number {
@@ -1062,8 +1082,11 @@ export function deleteDiscordRolePerk(id: string, actor: string): boolean {
 // Discord roles and revokes ones from Discord roles no longer held, without touching roleIds a
 // human admin assigned directly (tracked separately via discordPerkRoleIds).
 export function syncDiscordPerkRoles(userId: string, memberships: DiscordGuildMembership[]): void {
-  const user = state.allowedUsers.find((u) => u.username === userId.toLowerCase());
-  if (!user) return;
+  let user = state.allowedUsers.find((u) => u.username === userId.toLowerCase());
+  if (!user) {
+    user = { username: userId.toLowerCase(), roleIds: [], addedAt: Date.now() };
+    state.allowedUsers.push(user);
+  }
 
   const roleIdsByGuild = new Map(memberships.map((membership) => [membership.guildId, membership.roleIds]));
   const grantedAppRoleIds = [
@@ -1233,20 +1256,15 @@ export function reorderRoles(orderedIds: string[], actor: string): boolean {
 // username is ever re-added later.
 export function removeAllowedUser(username: string, actor: string): boolean {
   const lower = username.toLowerCase();
-  const before = state.allowedUsers.length;
-  state.allowedUsers = state.allowedUsers.filter((u) => u.username !== lower);
-  const changed = state.allowedUsers.length !== before;
+  const user = state.allowedUsers.find((u) => u.username === lower);
+  if (!user) return false;
+  const changed = user.roleIds.length > 0 || (user.priority ?? 0) !== 0 || (user.discordPerkRoleIds?.length ?? 0) > 0;
+  user.roleIds = [];
+  user.discordPerkRoleIds = [];
+  user.priority = 0;
   if (changed) {
-    const orphanedKeyIds = state.apiKeys.filter((k) => k.ownerId === lower).map((k) => k.id);
-    if (orphanedKeyIds.length > 0) {
-      state.apiKeys = state.apiKeys.filter((k) => k.ownerId !== lower);
-      for (const id of orphanedKeyIds) {
-        delete state.apiKeyUsage[id];
-        delete state.apiKeyBundleUsage[id];
-      }
-    }
     persistNow();
-    recordAudit(actor, 'user.remove', lower, orphanedKeyIds.length > 0 ? `also revoked ${orphanedKeyIds.length} owned key(s)` : undefined);
+    recordAudit(actor, 'user.remove', lower, 'role assignments cleared');
   }
   return changed;
 }
@@ -1499,7 +1517,7 @@ export function verifyApiKey(candidate: string, ip?: string): ApiKeyAuthResult |
   if (record.expiresAt && Date.now() > record.expiresAt) return undefined;
   if (record.ownerId !== 'root') {
     const permissions = getUserEffectivePermissions(record.ownerId);
-    if (permissions === undefined || !hasPermission(permissions, PermissionFlag.accessApi)) return undefined;
+    if (!hasPermission(permissions, PermissionFlag.createApiKeys)) return undefined;
   }
   if (record.dailyLimit && todayUsageCount(record.id) >= record.dailyLimit) return 'rate-limited';
 
@@ -2799,7 +2817,7 @@ export function importBackup(raw: unknown, actor: string): ImportBackupResult {
   const b = validated.payload;
 
   state.allowedUsers = b.allowedUsers;
-  state.roles = b.roles.map((role) => ({ ...role, permissions: serializeBits(upgradePermissionBits(parseBits(role.permissions))) }));
+  state.roles = b.roles.map((role) => ({ ...role, permissions: serializeBits(consolidatePermissionBits(upgradePermissionBits(parseBits(role.permissions)))) }));
   state.apiKeys = b.apiKeys.map((k) => ({ ...k, pendingReveal: undefined }));
   state.settings = b.settings;
   state.watches = b.watches;

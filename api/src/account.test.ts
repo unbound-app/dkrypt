@@ -19,7 +19,6 @@ import {
   createRole,
   listAllowedUsers,
   listApiKeysForOwner,
-  updateAllowedUserRoles,
 } from './store/state.js';
 
 function identity(
@@ -121,7 +120,7 @@ describe('resolveOauthAccount', () => {
     expect(discordProfile.userId).toBe(discordUserId);
     expect(githubProfile.userId).toBe(discordUserId);
     expect(getLinkedAuthProviders(discordUserId).sort()).toEqual(['discord', 'github']);
-    expect(listAllowedUsers().filter((user) => user.username === discordUserId)).toHaveLength(1);
+    expect(listAllowedUsers().filter((user) => user.username === discordUserId)).toHaveLength(0);
   });
 
   test('merges independently used Discord and GitHub accounts', () => {
@@ -148,7 +147,7 @@ describe('resolveOauthAccount', () => {
       },
       'tester',
     );
-    updateAllowedUserRoles(discordUserId, [role.id], 'tester');
+    addAllowedUser(discordUserId, [role.id], 'tester');
     createApiKey('merged key', discordUserId);
     upsertBillingCustomer({
       customerId: `ctm_${randomUUID()}`,
