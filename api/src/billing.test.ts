@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { type BillingSubscription, resolveBillingEntitlements } from './billing.js';
+import {
+  type BillingSubscription,
+  canCreateApiKeyImmediately,
+  resolveBillingEntitlements,
+} from './billing.js';
+import { PermissionFlag } from './permissions.js';
 
 function subscription(planId: BillingSubscription['planId'], status = 'active'): BillingSubscription {
   return {
@@ -58,5 +63,18 @@ describe('resolveBillingEntitlements', () => {
       api: false,
       priority: 0,
     });
+  });
+});
+
+describe('canCreateApiKeyImmediately', () => {
+  test('auto-approves paid API plans and API-key approvers', () => {
+    const viewer = resolveBillingEntitlements([]);
+    const priority = resolveBillingEntitlements([subscription('priority')]);
+    const api = resolveBillingEntitlements([subscription('api')]);
+
+    expect(canCreateApiKeyImmediately(0n, viewer)).toBe(false);
+    expect(canCreateApiKeyImmediately(0n, priority)).toBe(false);
+    expect(canCreateApiKeyImmediately(0n, api)).toBe(true);
+    expect(canCreateApiKeyImmediately(PermissionFlag.approveApiKeys, viewer)).toBe(true);
   });
 });

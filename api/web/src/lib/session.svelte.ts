@@ -24,6 +24,7 @@ export interface SessionInfo {
   displayName?: string;
   avatarUrl?: string;
   linkedProviders?: ('github' | 'discord')[];
+  apiKeysAutoApprove?: boolean;
   // Decimal-string-serialized bigint bitfield, as returned by the API - parse with sessionBits().
   permissions?: string;
   expiresAt?: number;

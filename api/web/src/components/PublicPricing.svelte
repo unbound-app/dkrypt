@@ -21,7 +21,7 @@
     },
     {
       name: 'API',
-      price: '€10',
+      price: '€15',
       description: 'Dashboard decrypts and API key access with standard priority.',
       api: true,
       priority: false,

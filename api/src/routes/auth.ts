@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { Router } from 'express';
 import { resolveOauthAccount } from '../account.js';
+import { canCreateApiKeyImmediately, getBillingEntitlements } from '../billing.js';
 import { config, discordOauthEnabled, githubOauthEnabled } from '../config.js';
 import {
   type AuthIdentity,
@@ -57,12 +58,17 @@ setInterval(() => {
 authRouter.get('/v1/auth/session', (req, res) => {
   const session = getSession(req);
   const profile = session ? getAuthProfile(session.sub) : undefined;
+  const billingEntitlements = session ? getBillingEntitlements(session.sub) : undefined;
   res.json({
     loggedIn: !!session,
     sub: session?.sub,
     displayName: profile?.displayName,
     avatarUrl: profile?.avatarUrl,
     linkedProviders: session ? getLinkedAuthProviders(session.sub) : [],
+    apiKeysAutoApprove:
+      !!session &&
+      !!billingEntitlements &&
+      canCreateApiKeyImmediately(session.permissions, billingEntitlements),
     permissions: session ? serializeBits(session.permissions) : undefined,
     expiresAt: session?.exp,
     githubOauthEnabled,

@@ -13,7 +13,7 @@ const paddle = new Paddle(apiKey, { environment });
 const tiers = [
   { key: 'regular', name: 'dkrypt Regular', amount: '500' },
   { key: 'priority', name: 'dkrypt Priority', amount: '1000' },
-  { key: 'api', name: 'dkrypt API', amount: '1000' },
+  { key: 'api', name: 'dkrypt API', amount: '1500' },
   { key: 'priority_api', name: 'dkrypt Priority API', amount: '2000' },
 ] as const;
 

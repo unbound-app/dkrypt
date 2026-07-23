@@ -108,6 +108,7 @@
   ];
 
   const canApprove = $derived(sessionHasPermission(PermissionFlag.approveApiKeys));
+  const canCreateImmediately = $derived(sessionState.apiKeysAutoApprove ?? canApprove);
   const canViewAll = $derived(sessionHasPermission(PermissionFlag.viewApiKeys));
   const canRevokeAny = $derived(sessionHasPermission(PermissionFlag.revokeApiKeys));
 
@@ -363,9 +364,9 @@
 </script>
 
 <div class="flex flex-col gap-4">
-  <Card title={canApprove ? 'Get a key' : 'Request a key'}>
+  <Card title={canCreateImmediately ? 'Get a key' : 'Request a key'}>
     <div class="mb-2.5 text-sm text-muted">
-      {canApprove ? "You get it instantly - no approval needed." : 'Needs approval from an admin before it works.'}
+      {canCreateImmediately ? "You get it instantly - no approval needed." : 'Needs approval from an admin before it works.'}
     </div>
     <label for="key-name" class="mb-1 block text-xs text-muted">Name</label>
     <Input id="key-name" placeholder="e.g. laptop, ci-runner" bind:value={keyName} />
@@ -377,7 +378,7 @@
     <label for="key-daily-limit" class="mt-3 mb-1 block text-xs text-muted">Daily request limit (optional)</label>
     <Input id="key-daily-limit" type="number" min="1" placeholder="e.g. 100" bind:value={keyDailyLimit} />
     <div class="mt-1 text-xs text-muted">Blank = no limit. Over-limit requests get a 429 until the next day.</div>
-    <Button class="mt-3" loading={submitting} onclick={submitRequest}>{canApprove ? 'Create' : 'Request'}</Button>
+    <Button class="mt-3" loading={submitting} onclick={submitRequest}>{canCreateImmediately ? 'Create' : 'Request'}</Button>
     {#if revealedKey}
       <div class="border-accent bg-panel-muted mt-3 rounded-md border p-2.5 text-xs break-all">
         Save this now, it won't be shown again:<br />

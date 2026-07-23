@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { config } from './config.js';
+import { hasPermission, PermissionFlag } from './permissions.js';
 
 export type PlanId = 'viewer' | 'regular' | 'priority' | 'api' | 'priority_api';
 
@@ -70,7 +71,7 @@ const planDefinitions = [
     id: 'api',
     name: 'API',
     description: 'Dashboard decrypts and API key access with standard priority.',
-    amount: 10,
+    amount: 15,
     currency: 'EUR',
     priceId: config.paddleApiPriceId,
     decrypt: true,
@@ -177,6 +178,13 @@ export function getBillingSubscriptionIds(userId: string): string[] {
 
 export function getBillingEntitlements(userId: string): BillingEntitlements {
   return resolveBillingEntitlements(state.subscriptions.filter((subscription) => subscription.userId === userId));
+}
+
+export function canCreateApiKeyImmediately(
+  permissions: bigint,
+  entitlements: BillingEntitlements,
+): boolean {
+  return hasPermission(permissions, PermissionFlag.approveApiKeys) || entitlements.api;
 }
 
 export function mergeBillingAccounts(targetUserId: string, sourceUserId: string): void {

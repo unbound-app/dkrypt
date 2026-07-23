@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { validate as validateCronExpr } from 'node-cron';
 import { config } from '../config.js';
+import { canCreateApiKeyImmediately, getBillingEntitlements } from '../billing.js';
 import {
   cancelAppleAuth,
   getAppleAuthStatus,
@@ -865,7 +866,7 @@ dashboardRouter.post('/v1/dashboard/keys/request', canAccessApi, (req, res) => {
   const dailyLimit = parseDailyLimit(req.body?.dailyLimit);
   const allowTestFlight = typeof req.body?.allowTestFlight === 'boolean' ? req.body.allowTestFlight : undefined;
 
-  if (hasPermission(permissions, PermissionFlag.approveApiKeys)) {
+  if (canCreateApiKeyImmediately(permissions, getBillingEntitlements(sub))) {
     res.status(201).json(createApiKey(name, sub, expiresInDays, allowedBundleIds, dailyLimit, allowTestFlight));
     return;
   }

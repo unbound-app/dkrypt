@@ -174,7 +174,7 @@ The **Plans** tab offers four monthly EUR subscriptions:
 
 - **Regular (€5)** - dashboard decrypts at standard priority.
 - **Priority (€10)** - dashboard decrypts at high priority.
-- **API (€10)** - dashboard decrypts and API keys at standard priority.
+- **API (€15)** - dashboard decrypts and API keys at standard priority.
 - **Priority API (€20)** - dashboard decrypts and API keys at high priority.
 
 Paddle webhooks are the source of truth for access. Active, trialing, and
@@ -191,7 +191,8 @@ others (checking a stronger switch auto-checks the weaker one it needs):
 - **decrypt** - queue dashboard decrypts and manage their own jobs.
 - **API access** - create and use their own API keys (request, reveal-once,
   regenerate, revoke) - a request sits as `pending` until someone with
-  `approveApiKeys` approves it on the API Keys tab.
+  `approveApiKeys` approves it on the API Keys tab, while paid API plans
+  create keys immediately.
 - **viewApiKeys** - see the full key list across every user (implied by
   `approveApiKeys` and `revokeApiKeys`).
 - **approveApiKeys** - approve/deny pending key requests; their own key

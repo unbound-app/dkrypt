@@ -35,7 +35,7 @@ const pageContent: Record<string, string> = {
         <p>Dashboard decrypt access with standard queue priority.</p>
         <h2>Priority — €10/month</h2>
         <p>Dashboard decrypt access with high queue priority.</p>
-        <h2>API — €10/month</h2>
+        <h2>API — €15/month</h2>
         <p>Dashboard decrypts and API key access with standard queue priority.</p>
         <h2>Priority API — €20/month</h2>
         <p>Dashboard decrypts and API key access with high queue priority.</p>

@@ -32,4 +32,13 @@ describe('renderPublicPage', () => {
     expect(activationIndex).toBeLessThan(fallbackIndex);
     expect(rendered).not.toContain('<div data-app-fallback hidden');
   });
+
+  test('renders distinct monthly prices for every paid tier', () => {
+    const rendered = renderPublicPage(shell, '/pricing');
+
+    expect(rendered).toContain('Regular — €5/month');
+    expect(rendered).toContain('Priority — €10/month');
+    expect(rendered).toContain('API — €15/month');
+    expect(rendered).toContain('Priority API — €20/month');
+  });
 });
