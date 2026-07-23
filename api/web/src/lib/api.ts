@@ -957,6 +957,28 @@ export function backupSnapshotDownloadUrl(id: string): string {
   return `/v1/dashboard/backup/history/${encodeURIComponent(id)}/download`;
 }
 
+export interface ActiveSessionInfo {
+  id: string;
+  sub: string;
+  createdAt: number;
+  lastSeenAt: number;
+  userAgent?: string;
+  ip?: string;
+  current: boolean;
+}
+
+export function fetchSessions(): Promise<ActiveSessionInfo[]> {
+  return apiJson('/v1/auth/sessions');
+}
+
+export function revokeSession(id: string): Promise<{ ok: boolean }> {
+  return apiAction(`/v1/auth/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }, 'Session signed out');
+}
+
+export function revokeOtherSessions(): Promise<{ ok: boolean; data: { revoked: number } }> {
+  return apiAction('/v1/auth/sessions/revoke-others', { method: 'POST' }, 'Other sessions signed out');
+}
+
 export interface AppleAuthStatus {
   running: boolean;
   waitingForInput?: boolean;

@@ -14,7 +14,7 @@ import { dashboardRouter } from './routes/dashboard.js';
 import { decryptRouter } from './routes/decrypt.js';
 import { healthRouter } from './routes/health.js';
 import { startScheduler } from './scheduler/index.js';
-import { startApiKeySweeper, startStateFlusher } from './store/state.js';
+import { startApiKeySweeper, startSessionSweeper, startStateFlusher } from './store/state.js';
 import { startDeviceHealthPoller } from './deviceHealth.js';
 import { renderPublicPage } from './publicPages.js';
 
@@ -78,6 +78,7 @@ startJobSweeper();
 startStateFlusher();
 startLogFlusher();
 startApiKeySweeper();
+startSessionSweeper();
 startScheduler();
 startDeviceHealthPoller();
 startKeyExpiryPoller();

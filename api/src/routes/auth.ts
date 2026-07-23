@@ -12,8 +12,17 @@ import {
 } from '../identity.js';
 import { log } from '../logger.js';
 import { PermissionFlag, serializeBits } from '../permissions.js';
-import { checkRootPassword, clearSessionCookie, getSession, requireSession, setSessionCookie } from '../session.js';
-import { bumpSessionVersion, getDiscordGuildId, getUserEffectivePermissions, listAllowedUsers, syncDiscordPerkRoles } from '../store/state.js';
+import { checkRootPassword, clearSessionCookie, getSession, requireSession, sessionOptsFromReq, setSessionCookie } from '../session.js';
+import {
+  bumpSessionVersion,
+  getDiscordGuildId,
+  getUserEffectivePermissions,
+  listAllowedUsers,
+  listSessionsForUser,
+  revokeOtherSessionRecords,
+  revokeSessionRecord,
+  syncDiscordPerkRoles,
+} from '../store/state.js';
 
 export const authRouter = Router();
 
@@ -113,7 +122,7 @@ authRouter.post('/v1/auth/refresh', requireSession, (req, res) => {
     return;
   }
 
-  const expiresAt = setSessionCookie(res, { sub: session.sub, permissions });
+  const expiresAt = setSessionCookie(res, { sub: session.sub, permissions }, { sid: session.sid });
   res.json({ ok: true, expiresAt });
 });
 
@@ -135,11 +144,13 @@ authRouter.post('/v1/auth/login', (req, res) => {
   }
 
   loginAttempts.delete(key);
-  setSessionCookie(res, { sub: 'root', permissions: PermissionFlag.administrator });
+  setSessionCookie(res, { sub: 'root', permissions: PermissionFlag.administrator }, sessionOptsFromReq(req));
   res.json({ ok: true });
 });
 
-authRouter.post('/v1/auth/logout', (_req, res) => {
+authRouter.post('/v1/auth/logout', (req, res) => {
+  const session = getSession(req);
+  if (session) revokeSessionRecord(session.sid, session.sub);
   clearSessionCookie(res);
   res.json({ ok: true });
 });
@@ -153,6 +164,40 @@ authRouter.post('/v1/auth/logout-everywhere', requireSession, (req, res) => {
   bumpSessionVersion(session.sub);
   clearSessionCookie(res);
   res.json({ ok: true });
+});
+
+authRouter.get('/v1/auth/sessions', requireSession, (req, res) => {
+  const session = getSession(req);
+  if (!session) {
+    res.status(401).json({ error: 'not signed in' });
+    return;
+  }
+  res.json(listSessionsForUser(session.sub).map((s) => ({ ...s, current: s.id === session.sid })));
+});
+
+authRouter.delete('/v1/auth/sessions/:id', requireSession, (req, res) => {
+  const session = getSession(req);
+  if (!session) {
+    res.status(401).json({ error: 'not signed in' });
+    return;
+  }
+  const ok = revokeSessionRecord(req.params.id, session.sub);
+  if (!ok) {
+    res.status(404).json({ error: 'session not found' });
+    return;
+  }
+  if (req.params.id === session.sid) clearSessionCookie(res);
+  res.json({ ok: true });
+});
+
+authRouter.post('/v1/auth/sessions/revoke-others', requireSession, (req, res) => {
+  const session = getSession(req);
+  if (!session) {
+    res.status(401).json({ error: 'not signed in' });
+    return;
+  }
+  const revoked = revokeOtherSessionRecords(session.sub, session.sid);
+  res.json({ ok: true, revoked });
 });
 
 const GITHUB_OAUTH_STATE_COOKIE = 'github_oauth_state';
@@ -271,7 +316,7 @@ authRouter.get('/v1/auth/github/callback', async (req, res) => {
     });
     const userId = profile.userId;
     const permissions = getUserEffectivePermissions(userId) ?? 0n;
-    setSessionCookie(res, { sub: userId, permissions });
+    setSessionCookie(res, { sub: userId, permissions }, sessionOptsFromReq(req));
     log.info('github oauth login succeeded', { login: user.login, permissions: serializeBits(permissions) });
     res.redirect('/');
   } catch (err) {
@@ -395,7 +440,7 @@ authRouter.get('/v1/auth/discord/callback', async (req, res) => {
       syncDiscordPerkRoles(userId, await fetchMemberRoleIds(guildId, user.id));
     }
     const permissions = getUserEffectivePermissions(userId) ?? 0n;
-    setSessionCookie(res, { sub: userId, permissions });
+    setSessionCookie(res, { sub: userId, permissions }, sessionOptsFromReq(req));
     log.info('discord oauth login succeeded', { username: user.username, permissions: serializeBits(permissions) });
     res.redirect('/');
   } catch (err) {

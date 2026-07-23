@@ -14,6 +14,7 @@
   import ContactPage from './components/ContactPage.svelte';
   import PublicPricing from './components/PublicPricing.svelte';
   import SessionExpiryBanner from './components/SessionExpiryBanner.svelte';
+  import SessionsDialog from './components/SessionsDialog.svelte';
   import SetupBanner from './components/SetupBanner.svelte';
   import ShortcutsHelp from './components/ShortcutsHelp.svelte';
   import Badge from './lib/components/ui/Badge.svelte';
@@ -95,6 +96,7 @@
   let homeRef: Home | undefined = $state();
   let loggingOut = $state(false);
   let loggingOutEverywhere = $state(false);
+  let sessionsDialogOpen = $state(false);
   let accountMenuOpen = $state(false);
   let editingProfileName = $state(false);
   let profileNameDraft = $state('');
@@ -572,6 +574,18 @@
               {/if}
 
               <div class="border-border flex flex-col gap-1.5 border-t pt-3">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  class="w-full justify-start"
+                  onclick={() => {
+                    accountMenuOpen = false;
+                    sessionsDialogOpen = true;
+                  }}
+                >
+                  <Monitor class="h-3.5 w-3.5" />
+                  Manage sessions
+                </Button>
                 <Button variant="secondary" size="sm" class="w-full justify-start" loading={loggingOut} onclick={doLogout}>
                   <LogOut class="h-3.5 w-3.5" />
                   Log out
@@ -632,3 +646,4 @@
 <ConfirmModal />
 <CommandPalette />
 <ShortcutsHelp />
+<SessionsDialog open={sessionsDialogOpen} onOpenChange={(v) => (sessionsDialogOpen = v)} />

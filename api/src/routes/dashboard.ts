@@ -102,6 +102,7 @@ import {
   recordAudit,
   recordShareLink,
   recordUserActivity,
+  touchSessionRecord,
   regenerateApiKey,
   removeAllowedUser,
   removePushSubscription,
@@ -162,6 +163,7 @@ export const dashboardRouter = Router();
 dashboardRouter.use(requireSession);
 dashboardRouter.use((_req, res, next) => {
   recordUserActivity(res.locals.session.sub);
+  touchSessionRecord(res.locals.session.sid);
   next();
 });
 
