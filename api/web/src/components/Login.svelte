@@ -69,7 +69,7 @@
         <div class="flex flex-col gap-3 text-sm leading-6 text-muted">
           <p>Submit iOS app decrypt requests, follow their status, and retrieve completed results.</p>
           <p>Every new account starts in viewer mode. Monthly plans add decrypt processing, priority, and optional API access.</p>
-          <p>Plans start at €5 per month and are billed securely by Paddle.</p>
+          <p>Plans start at €5 per month and renew monthly until canceled.</p>
         </div>
       </div>
       <a

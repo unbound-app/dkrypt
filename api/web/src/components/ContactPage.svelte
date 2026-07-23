@@ -24,8 +24,8 @@
       <Card>
         <h2 class="text-base font-semibold">Billing and refunds</h2>
         <p class="mt-2 text-sm leading-6 text-muted">
-          Use the manage-subscription link in your Paddle receipt or visit
-          <a class="text-accent" href="https://paddle.net" target="_blank" rel="noopener noreferrer">Paddle Buyer Support</a>.
+          Use the manage-subscription link in your purchase receipt or visit
+          <a class="text-accent" href="https://paddle.net" target="_blank" rel="noopener noreferrer">billing support</a>.
         </p>
       </Card>
       <Card>

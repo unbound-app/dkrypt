@@ -126,7 +126,7 @@
         showToast(data.error ?? 'Plan change failed', 'error');
         return;
       }
-      showToast('Plan change accepted. Paddle is updating your access…', 'success');
+      showToast('Plan change accepted. Your access is being updated…', 'success');
       setTimeout(() => void refreshAfterCheckout(), 1000);
     } finally {
       openingPlan = undefined;
@@ -182,7 +182,7 @@
           {/if}
         </div>
         <p class="max-w-2xl text-sm text-muted">
-          Every account starts as a viewer. Paid access is activated from signed Paddle webhooks after checkout.
+          Every account starts as a viewer. Paid access is activated from verified billing events after checkout.
         </p>
       </div>
       {#if billing}
@@ -210,7 +210,7 @@
     <Card class="py-12 text-center">
       <LockKeyhole class="mx-auto mb-3 h-8 w-8 text-muted" />
       <div class="font-medium">Billing is not configured</div>
-      <div class="mt-1 text-sm text-muted">Add the Paddle environment values to enable checkout.</div>
+      <div class="mt-1 text-sm text-muted">Add the billing environment values to enable checkout.</div>
     </Card>
   {:else}
     <div class="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-4">
@@ -278,7 +278,7 @@
     {/if}
 
     <Card class="text-center text-xs leading-5 text-muted">
-      Plans renew monthly until canceled. Paddle is the merchant of record and calculates applicable tax at checkout.
+      Plans renew monthly until canceled. Applicable tax is calculated at checkout.
       <div class="mt-3">
         <LegalLinks />
       </div>

@@ -94,7 +94,7 @@
     </div>
 
     <Card class="mx-auto mt-8 max-w-3xl text-sm leading-6 text-muted">
-      Plans renew monthly until canceled. Paddle is the merchant of record and handles payment processing, taxes, receipts, cancellations, and refunds. Prices are shown in EUR; applicable tax is calculated at checkout. You can cancel from the billing portal at any time, effective at the end of the current billing period.
+      Plans renew monthly until canceled. Prices are shown in EUR; applicable tax is calculated at checkout. You can cancel from the billing portal at any time, effective at the end of the current billing period.
     </Card>
   </main>
   <PublicPageFooter />
