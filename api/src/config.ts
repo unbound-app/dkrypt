@@ -33,6 +33,7 @@ export const config = {
   githubOauthClientSecret: optional('GITHUB_OAUTH_CLIENT_SECRET', ''),
   discordOauthClientId: optional('DISCORD_OAUTH_CLIENT_ID', ''),
   discordOauthClientSecret: optional('DISCORD_OAUTH_CLIENT_SECRET', ''),
+  discordBotToken: optional('DISCORD_BOT_TOKEN', ''),
 
   paddleEnvironment,
   paddleApiKey: optional(
@@ -83,6 +84,7 @@ export const config = {
 
 export const githubOauthEnabled = config.githubOauthClientId !== '' && config.githubOauthClientSecret !== '';
 export const discordOauthEnabled = config.discordOauthClientId !== '' && config.discordOauthClientSecret !== '';
+export const discordBotEnabled = config.discordBotToken !== '';
 export const paddleEnabled =
   config.paddleClientToken !== '' &&
   config.paddleRegularPriceId !== '' &&

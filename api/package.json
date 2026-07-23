@@ -17,10 +17,12 @@
     "typecheck:web": "cd web && bun install --frozen-lockfile && bun run typecheck"
   },
   "dependencies": {
+    "@discordjs/rest": "^2.6.3",
     "@paddle/paddle-node-sdk": "^3.8.0",
     "adm-zip": "^0.6.0",
     "bplist-parser": "^0.3.2",
     "cron-parser": "^5",
+    "discord-api-types": "^0.38.50",
     "express": "^4.21.2",
     "node-cron": "^3.0.3",
     "plist": "^5.0.0",

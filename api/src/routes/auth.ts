@@ -2,7 +2,8 @@ import { randomBytes } from 'node:crypto';
 import { Router } from 'express';
 import { resolveOauthAccount } from '../account.js';
 import { canCreateApiKeyImmediately, getBillingEntitlements } from '../billing.js';
-import { config, discordOauthEnabled, githubOauthEnabled } from '../config.js';
+import { config, discordBotEnabled, discordOauthEnabled, githubOauthEnabled } from '../config.js';
+import { fetchMemberRoleIds } from '../discord.js';
 import {
   type AuthIdentity,
   getAuthProfile,
@@ -12,7 +13,7 @@ import {
 import { log } from '../logger.js';
 import { PermissionFlag, serializeBits } from '../permissions.js';
 import { checkRootPassword, clearSessionCookie, getSession, requireSession, setSessionCookie } from '../session.js';
-import { bumpSessionVersion, getUserEffectivePermissions, listAllowedUsers } from '../store/state.js';
+import { bumpSessionVersion, getDiscordGuildId, getUserEffectivePermissions, listAllowedUsers, syncDiscordPerkRoles } from '../store/state.js';
 
 export const authRouter = Router();
 
@@ -389,6 +390,10 @@ authRouter.get('/v1/auth/discord/callback', async (req, res) => {
       discoveredIdentities,
     });
     const userId = profile.userId;
+    const guildId = getDiscordGuildId();
+    if (discordBotEnabled && guildId) {
+      syncDiscordPerkRoles(userId, await fetchMemberRoleIds(guildId, user.id));
+    }
     const permissions = getUserEffectivePermissions(userId) ?? 0n;
     setSessionCookie(res, { sub: userId, permissions });
     log.info('discord oauth login succeeded', { username: user.username, permissions: serializeBits(permissions) });

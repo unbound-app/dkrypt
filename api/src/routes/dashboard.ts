@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { validate as validateCronExpr } from 'node-cron';
-import { config } from '../config.js';
+import { config, discordBotEnabled } from '../config.js';
+import { fetchBotGuilds, fetchGuildRoles } from '../discord.js';
 import { canCreateApiKeyImmediately, getBillingEntitlements } from '../billing.js';
 import {
   cancelAppleAuth,
@@ -38,10 +39,12 @@ import {
   clearAppleAuthAlert,
   createApiKey,
   createDevice,
+  createDiscordRolePerk,
   createRole,
   createWatch,
   DEFAULT_ROLE_ID,
   deleteDevice,
+  deleteDiscordRolePerk,
   deleteRole,
   deleteWatch,
   denyApiKey,
@@ -58,6 +61,8 @@ import {
   getBundleStats,
   getDailyVolume,
   getDevice,
+  getDiscordGuildId,
+  getDiscordRolePerks,
   getDeviceBatteryHourlyBuckets,
   getDeviceHealthHourlyBuckets,
   getDeviceStorageHourlyBuckets,
@@ -100,6 +105,7 @@ import {
   revokeShareLink,
   type SchedulerSettings,
   setApiKeyAllowTestFlight,
+  setDiscordGuildId,
   setApiKeyMaxConcurrent,
   setApiKeyPriority,
   setUserPriority,
@@ -1260,6 +1266,53 @@ dashboardRouter.post('/v1/dashboard/roles/reorder', canManageRoles, (req, res) =
     return;
   }
   res.json({ roles: listRoles() });
+});
+
+dashboardRouter.get('/v1/dashboard/discord/status', canManageRoles, (_req, res) => {
+  res.json({ botEnabled: discordBotEnabled, guildId: getDiscordGuildId() });
+});
+
+dashboardRouter.get('/v1/dashboard/discord/guilds', canManageRoles, async (_req, res) => {
+  res.json({ guilds: await fetchBotGuilds() });
+});
+
+dashboardRouter.post('/v1/dashboard/discord/guild', canManageRoles, (req, res) => {
+  const guildId = typeof req.body?.guildId === 'string' ? req.body.guildId.trim() : '';
+  setDiscordGuildId(guildId || undefined, res.locals.session.sub);
+  res.json({ ok: true, guildId: getDiscordGuildId() });
+});
+
+dashboardRouter.get('/v1/dashboard/discord/roles', canManageRoles, async (_req, res) => {
+  const guildId = getDiscordGuildId();
+  if (!guildId) {
+    res.json({ roles: [] });
+    return;
+  }
+  res.json({ roles: await fetchGuildRoles(guildId) });
+});
+
+dashboardRouter.get('/v1/dashboard/discord/perks', canManageRoles, (_req, res) => {
+  res.json({ perks: getDiscordRolePerks() });
+});
+
+dashboardRouter.post('/v1/dashboard/discord/perks', canManageRoles, (req, res) => {
+  const discordRoleId = typeof req.body?.discordRoleId === 'string' ? req.body.discordRoleId.trim() : '';
+  const discordRoleName = typeof req.body?.discordRoleName === 'string' ? req.body.discordRoleName.trim() || undefined : undefined;
+  const appRoleId = typeof req.body?.appRoleId === 'string' ? req.body.appRoleId.trim() : '';
+  if (!discordRoleId || !appRoleId) {
+    res.status(400).json({ error: 'discordRoleId and appRoleId are required' });
+    return;
+  }
+  res.status(201).json(createDiscordRolePerk(discordRoleId, discordRoleName, appRoleId, res.locals.session.sub));
+});
+
+dashboardRouter.delete('/v1/dashboard/discord/perks/:id', canManageRoles, (req, res) => {
+  const ok = deleteDiscordRolePerk(req.params.id, res.locals.session.sub);
+  if (!ok) {
+    res.status(404).json({ error: 'perk not found' });
+    return;
+  }
+  res.json({ ok: true });
 });
 
 dashboardRouter.post('/v1/dashboard/users', canManageUsers, (req, res) => {

@@ -186,7 +186,7 @@
 
   async function removeManaged(): Promise<void> {
     if (!manageUser) return;
-    if (!(await confirmDialog(`Remove ${manageUser.username} from the allowlist?`))) return;
+    if (!(await confirmDialog(`Remove ${manageUser.username} from the allowlist? Any API keys they own are revoked too.`))) return;
     removing = true;
     try {
       const { ok } = await removeUser(manageUser.username);

@@ -843,6 +843,59 @@ export function reorderRoles(roleIds: string[]): Promise<{ ok: boolean; data: { 
   return apiAction<{ roles: Role[] }>('/v1/dashboard/roles/reorder', { method: 'POST', body: JSON.stringify({ roleIds }) }, 'Role order updated');
 }
 
+export interface DiscordGuildSummary {
+  id: string;
+  name: string;
+  icon: string | null;
+}
+
+export interface DiscordGuildRole {
+  id: string;
+  name: string;
+  color: number;
+  position: number;
+}
+
+export interface DiscordRolePerk {
+  id: string;
+  discordRoleId: string;
+  discordRoleName?: string;
+  appRoleId: string;
+  createdAt: number;
+}
+
+export function fetchDiscordStatus(): Promise<{ botEnabled: boolean; guildId?: string }> {
+  return apiJson('/v1/dashboard/discord/status');
+}
+
+export function fetchDiscordGuilds(): Promise<{ guilds: DiscordGuildSummary[] }> {
+  return apiJson('/v1/dashboard/discord/guilds');
+}
+
+export function setDiscordGuild(guildId: string): Promise<{ ok: boolean; data: { guildId?: string } }> {
+  return apiAction('/v1/dashboard/discord/guild', { method: 'POST', body: JSON.stringify({ guildId }) }, 'Discord guild set');
+}
+
+export function fetchDiscordGuildRoles(): Promise<{ roles: DiscordGuildRole[] }> {
+  return apiJson('/v1/dashboard/discord/roles');
+}
+
+export function fetchDiscordRolePerks(): Promise<{ perks: DiscordRolePerk[] }> {
+  return apiJson('/v1/dashboard/discord/perks');
+}
+
+export function createDiscordRolePerk(discordRoleId: string, discordRoleName: string | undefined, appRoleId: string): Promise<{ ok: boolean; data: DiscordRolePerk }> {
+  return apiAction(
+    '/v1/dashboard/discord/perks',
+    { method: 'POST', body: JSON.stringify({ discordRoleId, discordRoleName, appRoleId }) },
+    'Discord role perk added',
+  );
+}
+
+export function deleteDiscordRolePerk(id: string): Promise<{ ok: boolean }> {
+  return apiAction(`/v1/dashboard/discord/perks/${encodeURIComponent(id)}`, { method: 'DELETE' }, 'Discord role perk removed');
+}
+
 export function backupExportUrl(): string {
   return '/v1/dashboard/backup/export';
 }

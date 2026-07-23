@@ -2,12 +2,31 @@
   import { ArrowDown, ArrowUp, Plus, Shield } from 'lucide-svelte';
   import EmptyState from '../../components/EmptyState.svelte';
   import PermissionEditor from '../../components/PermissionEditor.svelte';
-  import { createRole, deleteRole, fetchRoles, fetchUsers, reorderRoles, updateRole, type AllowedUser, type Role } from '../../lib/api';
+  import {
+    createDiscordRolePerk,
+    createRole,
+    deleteDiscordRolePerk,
+    deleteRole,
+    fetchDiscordGuildRoles,
+    fetchDiscordGuilds,
+    fetchDiscordRolePerks,
+    fetchDiscordStatus,
+    fetchRoles,
+    fetchUsers,
+    reorderRoles,
+    setDiscordGuild,
+    updateRole,
+    type AllowedUser,
+    type DiscordGuildRole,
+    type DiscordRolePerk,
+    type Role,
+  } from '../../lib/api';
   import Badge from '../../lib/components/ui/Badge.svelte';
   import Button from '../../lib/components/ui/Button.svelte';
   import Card from '../../lib/components/ui/Card.svelte';
   import Dialog from '../../lib/components/ui/Dialog.svelte';
   import Input from '../../lib/components/ui/Input.svelte';
+  import Select from '../../lib/components/ui/Select.svelte';
   import { parseBits, permissionLabels, PermissionFlag, serializeBits } from '../../lib/permissions';
   import { sessionHasPermission } from '../../lib/session.svelte';
   import { confirmDialog } from '../../lib/ui.svelte';
@@ -107,6 +126,85 @@
       reordering = false;
     }
   }
+
+  // --- Discord role perks ------------------------------------------------------------------
+
+  let discordBotEnabled = $state(false);
+  let discordGuildId = $state<string | undefined>(undefined);
+  let discordGuilds = $state<{ value: string; label: string }[] | null>(null);
+  let discordRoles = $state<DiscordGuildRole[] | null>(null);
+  let discordPerks = $state<DiscordRolePerk[] | null>(null);
+  let savingGuild = $state(false);
+  let addingPerk = $state(false);
+  let deletingPerkId = $state<string | null>(null);
+  let perkDiscordRoleId = $state('');
+  let perkAppRoleId = $state('');
+
+  async function loadDiscordStatus(): Promise<void> {
+    const status = await fetchDiscordStatus();
+    discordBotEnabled = status.botEnabled;
+    discordGuildId = status.guildId;
+    if (!discordBotEnabled) return;
+    if (!discordGuildId) {
+      const { guilds } = await fetchDiscordGuilds();
+      discordGuilds = guilds.map((g) => ({ value: g.id, label: g.name }));
+      return;
+    }
+    const [rolesRes, perksRes] = await Promise.all([fetchDiscordGuildRoles(), fetchDiscordRolePerks()]);
+    discordRoles = rolesRes.roles;
+    discordPerks = perksRes.perks;
+  }
+
+  $effect(() => {
+    if (canManageRoles) void loadDiscordStatus();
+  });
+
+  async function pickGuild(guildId: string): Promise<void> {
+    savingGuild = true;
+    try {
+      const { ok } = await setDiscordGuild(guildId);
+      if (ok) void loadDiscordStatus();
+    } finally {
+      savingGuild = false;
+    }
+  }
+
+  const assignableRoles = $derived((roles ?? []).filter((r) => !r.isDefault));
+  const perkDiscordRoleOptions = $derived([{ value: '', label: 'Discord role…' }, ...(discordRoles ?? []).map((r) => ({ value: r.id, label: r.name }))]);
+  const perkAppRoleOptions = $derived([{ value: '', label: 'Dashboard role…' }, ...assignableRoles.map((r) => ({ value: r.id, label: r.name }))]);
+
+  function discordRoleName(id: string): string {
+    return discordRoles?.find((r) => r.id === id)?.name ?? id;
+  }
+
+  function appRoleName(id: string): string {
+    return roles?.find((r) => r.id === id)?.name ?? id;
+  }
+
+  async function addPerk(): Promise<void> {
+    if (!perkDiscordRoleId || !perkAppRoleId) return;
+    addingPerk = true;
+    try {
+      const { ok } = await createDiscordRolePerk(perkDiscordRoleId, discordRoleName(perkDiscordRoleId), perkAppRoleId);
+      if (ok) {
+        perkDiscordRoleId = '';
+        perkAppRoleId = '';
+        void loadDiscordStatus();
+      }
+    } finally {
+      addingPerk = false;
+    }
+  }
+
+  async function removePerk(perk: DiscordRolePerk): Promise<void> {
+    deletingPerkId = perk.id;
+    try {
+      const { ok } = await deleteDiscordRolePerk(perk.id);
+      if (ok) discordPerks = (discordPerks ?? []).filter((p) => p.id !== perk.id);
+    } finally {
+      deletingPerkId = null;
+    }
+  }
 </script>
 
 <Card title="Roles">
@@ -189,6 +287,67 @@
     {/if}
   {/if}
 </Card>
+
+{#if canManageRoles && discordBotEnabled}
+  <Card title="Discord role perks" class="mt-4">
+    <div class="mb-3 text-sm text-muted">
+      Anyone who holds a mapped role in your Discord guild is automatically granted the matching dashboard role, checked on every
+      Discord login.
+    </div>
+    {#if !discordGuildId}
+      {#if discordGuilds === null}
+        <div class="skeleton bg-panel-muted h-10 w-full rounded-lg"></div>
+      {:else if discordGuilds.length === 0}
+        <EmptyState message="The bot isn't in any guild yet - invite it to your server first." />
+      {:else}
+        <div class="flex items-center gap-2">
+          <Select
+            items={[{ value: '', label: 'Pick a guild…' }, ...discordGuilds]}
+            value=""
+            onValueChange={(v) => v && void pickGuild(v)}
+            class="w-full"
+          />
+          {#if savingGuild}<span class="text-xs text-muted">Saving…</span>{/if}
+        </div>
+      {/if}
+    {:else}
+      <div class="mb-3 flex flex-col gap-1.5">
+        {#if discordPerks === null}
+          <div class="skeleton bg-panel-muted h-10 w-full rounded-lg"></div>
+        {:else if discordPerks.length === 0}
+          <EmptyState message="No perks configured yet." />
+        {:else}
+          {#each discordPerks as perk (perk.id)}
+            <div class="border-border flex items-center gap-2.5 rounded-md border px-2.5 py-2 text-xs">
+              <span class="font-mono">{perk.discordRoleName ?? discordRoleName(perk.discordRoleId)}</span>
+              <span class="text-muted">grants</span>
+              <span class="font-medium">{appRoleName(perk.appRoleId)}</span>
+              <Button
+                size="sm"
+                variant="destructive"
+                class="ml-auto"
+                loading={deletingPerkId === perk.id}
+                onclick={() => void removePerk(perk)}
+              >
+                Remove
+              </Button>
+            </div>
+          {/each}
+        {/if}
+      </div>
+      {#if discordRoles && discordRoles.length > 0 && assignableRoles.length > 0}
+        <div class="flex flex-wrap items-center gap-1.5">
+          <Select items={perkDiscordRoleOptions} bind:value={perkDiscordRoleId} class="w-40" />
+          <span class="text-xs text-muted">grants</span>
+          <Select items={perkAppRoleOptions} bind:value={perkAppRoleId} class="w-40" />
+          <Button size="sm" loading={addingPerk} disabled={!perkDiscordRoleId || !perkAppRoleId} onclick={addPerk}>Add</Button>
+        </div>
+      {:else if assignableRoles.length === 0}
+        <div class="text-xs text-muted">Add a non-default dashboard role above before mapping Discord perks to it.</div>
+      {/if}
+    {/if}
+  </Card>
+{/if}
 
 {#if canManageRoles}
   <Dialog open={dialogOpen} onOpenChange={(v) => (dialogOpen = v)} class="max-w-md">

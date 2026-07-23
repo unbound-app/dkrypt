@@ -72,6 +72,17 @@ export interface AllowedUser {
   sessionVersion?: number;
   lastActiveAt?: number;
   priority?: number;
+  // Which of roleIds were granted by Discord role sync, tracked separately from manual/billing
+  // grants so a later sync can prune exactly what it previously added without touching the rest.
+  discordPerkRoleIds?: string[];
+}
+
+export interface DiscordRolePerk {
+  id: string;
+  discordRoleId: string;
+  discordRoleName?: string;
+  appRoleId: string;
+  createdAt: number;
 }
 
 export interface ApiKeyRecord {
@@ -308,6 +319,8 @@ interface PersistedState {
   apiKeyBundleUsage: Record<string, Record<string, number>>;
   shareLinks: ShareLinkRecord[];
   webhookDeliveryLog: WebhookDeliveryEntry[];
+  discordRolePerks: DiscordRolePerk[];
+  discordGuildId?: string;
 }
 
 const MAX_HISTORY = 100;
@@ -340,6 +353,7 @@ function defaultState(): PersistedState {
     apiKeyBundleUsage: {},
     shareLinks: [],
     webhookDeliveryLog: [],
+    discordRolePerks: [],
   };
 }
 
@@ -826,6 +840,60 @@ export function addAllowedUser(username: string, roleIds: string[], actor: strin
   return record;
 }
 
+export function getDiscordGuildId(): string | undefined {
+  return state.discordGuildId;
+}
+
+export function setDiscordGuildId(guildId: string | undefined, actor: string): void {
+  state.discordGuildId = guildId || undefined;
+  persistNow();
+  recordAudit(actor, 'role.update', 'discord-guild', guildId ? `set to ${guildId}` : 'cleared');
+}
+
+export function getDiscordRolePerks(): DiscordRolePerk[] {
+  return state.discordRolePerks;
+}
+
+export function createDiscordRolePerk(discordRoleId: string, discordRoleName: string | undefined, appRoleId: string, actor: string): DiscordRolePerk {
+  const perk: DiscordRolePerk = { id: randomUUID(), discordRoleId, discordRoleName, appRoleId, createdAt: Date.now() };
+  state.discordRolePerks.push(perk);
+  persistNow();
+  recordAudit(actor, 'role.update', appRoleId, `Discord role perk added: ${discordRoleName ?? discordRoleId}`);
+  return perk;
+}
+
+export function deleteDiscordRolePerk(id: string, actor: string): boolean {
+  const before = state.discordRolePerks.length;
+  state.discordRolePerks = state.discordRolePerks.filter((p) => p.id !== id);
+  const changed = state.discordRolePerks.length !== before;
+  if (changed) {
+    persistNow();
+    recordAudit(actor, 'role.update', id, 'Discord role perk removed');
+  }
+  return changed;
+}
+
+// Called on every Discord login with the user's current guild role ids (or undefined if they
+// couldn't be determined, e.g. bot/guild misconfigured) - grants app roles mapped from held
+// Discord roles and revokes ones from Discord roles no longer held, without touching roleIds a
+// human admin assigned directly (tracked separately via discordPerkRoleIds).
+export function syncDiscordPerkRoles(userId: string, discordRoleIds: string[] | undefined): void {
+  if (discordRoleIds === undefined) return;
+  const user = state.allowedUsers.find((u) => u.username === userId.toLowerCase());
+  if (!user) return;
+
+  const grantedAppRoleIds = [
+    ...new Set(state.discordRolePerks.filter((p) => discordRoleIds.includes(p.discordRoleId)).map((p) => p.appRoleId)),
+  ];
+  const previouslyGranted = user.discordPerkRoleIds ?? [];
+  if (grantedAppRoleIds.length === 0 && previouslyGranted.length === 0) return;
+
+  const withoutStalePerks = user.roleIds.filter((id) => !previouslyGranted.includes(id) || grantedAppRoleIds.includes(id));
+  user.roleIds = sanitizeRoleIds([...withoutStalePerks, ...grantedAppRoleIds]);
+  user.discordPerkRoleIds = grantedAppRoleIds;
+  persistNow();
+}
+
 export function mergeUserAccounts(targetUsername: string, sourceUsername: string, actor: string): boolean {
   const targetId = targetUsername.toLowerCase();
   const sourceId = sourceUsername.toLowerCase();
@@ -964,13 +1032,26 @@ export function reorderRoles(orderedIds: string[], actor: string): boolean {
   return true;
 }
 
+// Revokes the removed user's API keys outright rather than leaving them owned-but-inert - a key
+// authored by a since-removed user already fails auth (verifyApiKey checks the owner's current
+// permissions), but leaving the record around means it would silently reactivate if that same
+// username is ever re-added later.
 export function removeAllowedUser(username: string, actor: string): boolean {
+  const lower = username.toLowerCase();
   const before = state.allowedUsers.length;
-  state.allowedUsers = state.allowedUsers.filter((u) => u.username !== username.toLowerCase());
+  state.allowedUsers = state.allowedUsers.filter((u) => u.username !== lower);
   const changed = state.allowedUsers.length !== before;
   if (changed) {
+    const orphanedKeyIds = state.apiKeys.filter((k) => k.ownerId === lower).map((k) => k.id);
+    if (orphanedKeyIds.length > 0) {
+      state.apiKeys = state.apiKeys.filter((k) => k.ownerId !== lower);
+      for (const id of orphanedKeyIds) {
+        delete state.apiKeyUsage[id];
+        delete state.apiKeyBundleUsage[id];
+      }
+    }
     persistNow();
-    recordAudit(actor, 'user.remove', username.toLowerCase());
+    recordAudit(actor, 'user.remove', lower, orphanedKeyIds.length > 0 ? `also revoked ${orphanedKeyIds.length} owned key(s)` : undefined);
   }
   return changed;
 }

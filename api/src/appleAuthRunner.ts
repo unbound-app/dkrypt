@@ -16,8 +16,10 @@ interface RunnerState {
   totalLineCount: number;
   waitingForInput: boolean;
   finished: boolean;
+  timedOut: boolean;
   success?: boolean;
   idleTimer?: ReturnType<typeof setTimeout>;
+  overallTimer?: ReturnType<typeof setTimeout>;
   lastEmitAt: number;
 }
 
@@ -28,6 +30,9 @@ let current: RunnerState | undefined;
 const IDLE_MS = 600;
 const HEAD_LINES = 60;
 const TAIL_LINES = 240;
+// Backstop for a hung child that never produces output (and so never trips the idle-input
+// detector) and never exits - without this, isAppleAuthRunning() would stay true forever.
+const OVERALL_TIMEOUT_MS = 10 * 60_000;
 
 function stripAnsi(s: string): string {
   return s.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '').replace(/\r/g, '');
@@ -81,9 +86,22 @@ export function startAppleReauth(): void {
   if (isAppleAuthRunning()) throw new Error('a re-authentication is already running');
 
   const child = spawn(config.ipadecryptBin, ['--root-dir', getPrimaryDevice().rootDir, 'bootstrap'], { stdio: ['pipe', 'pipe', 'pipe'] });
-  const state: RunnerState = { child, headLines: [], recentLines: [], totalLineCount: 0, waitingForInput: false, finished: false, lastEmitAt: 0 };
+  const state: RunnerState = { child, headLines: [], recentLines: [], totalLineCount: 0, waitingForInput: false, finished: false, timedOut: false, lastEmitAt: 0 };
   current = state;
   emitAppleAuthChanged();
+
+  state.overallTimer = setTimeout(() => {
+    if (state.finished) return;
+    log.error('apple re-authentication timed out, killing the process', { timeoutMs: OVERALL_TIMEOUT_MS });
+    pushLine(state, `timed out after ${Math.round(OVERALL_TIMEOUT_MS / 60_000)} minutes with no result - killing the process`);
+    state.timedOut = true;
+    state.child.kill();
+    state.finished = true;
+    state.waitingForInput = false;
+    state.success = false;
+    setAppleAuthAlert('re-authentication timed out - it may need to be retried, or the device checked directly');
+    emitAppleAuthChanged();
+  }, OVERALL_TIMEOUT_MS);
 
   // Only wipe the previous App Store session once the process has actually spawned - if spawn
   // fails (e.g. missing binary), 'spawn' never fires and the working config is left untouched
