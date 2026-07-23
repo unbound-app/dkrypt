@@ -1,11 +1,12 @@
 <script lang="ts">
   import { DropdownMenu } from 'bits-ui';
-  import { LogOut, Monitor, Moon, Pencil, Rows2, Rows3, Sun, Volume2, VolumeX } from 'lucide-svelte';
+  import { Download, LogOut, Monitor, Moon, Pencil, Rows2, Rows3, Sun, Volume2, VolumeX } from 'lucide-svelte';
   import { Toaster } from 'svelte-sonner';
   import AlertBanner from './components/AlertBanner.svelte';
   import CommandPalette from './components/CommandPalette.svelte';
   import ConfirmModal from './components/ConfirmModal.svelte';
   import ConnectionBanner from './components/ConnectionBanner.svelte';
+  import UpdateAvailableBanner from './components/UpdateAvailableBanner.svelte';
   import HeaderOnlineUsers from './components/HeaderOnlineUsers.svelte';
   import Login from './components/Login.svelte';
   import LegalPage from './components/LegalPage.svelte';
@@ -24,6 +25,7 @@
   import { myDecryptsState } from './lib/decrypts.svelte';
   import { connectLive, disconnectLive, liveState } from './lib/live.svelte';
   import { disablePush, enablePush, getExistingPushSubscription, pushSupported, registerServiceWorker } from './lib/push';
+  import { initInstallPromptWatcher, initPwaUpdateWatcher, promptPwaInstall, pwaState } from './lib/pwa.svelte';
   import { PermissionFlag } from './lib/permissions';
   import {
     logout,
@@ -115,7 +117,10 @@
   let pushOnFailure = $state(true);
   let pushOnAlerts = $state(true);
 
-  void registerServiceWorker();
+  void registerServiceWorker().then((registration) => {
+    if (registration) initPwaUpdateWatcher(registration);
+  });
+  initInstallPromptWatcher();
 
   $effect(() => {
     if (sessionState.loggedIn && pushSupported()) {
@@ -557,6 +562,15 @@
                 {/if}
               </div>
 
+              {#if pwaState.canInstall}
+                <div class="border-border mb-3 border-t pt-3">
+                  <Button variant="secondary" size="sm" class="w-full justify-start" onclick={() => void promptPwaInstall()}>
+                    <Download class="h-3.5 w-3.5" />
+                    Install app
+                  </Button>
+                </div>
+              {/if}
+
               <div class="border-border flex flex-col gap-1.5 border-t pt-3">
                 <Button variant="secondary" size="sm" class="w-full justify-start" loading={loggingOut} onclick={doLogout}>
                   <LogOut class="h-3.5 w-3.5" />
@@ -574,6 +588,7 @@
     <main class="mx-auto max-w-[1680px] px-4 py-6 lg:px-6">
       <SessionExpiryBanner />
       <ConnectionBanner />
+      <UpdateAvailableBanner />
       <AlertBanner />
       <SetupBanner />
       <div class="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
