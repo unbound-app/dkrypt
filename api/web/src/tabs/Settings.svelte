@@ -11,12 +11,12 @@
   import UsersSettings from './settings/UsersSettings.svelte';
 
   const ALL_SUBTABS: { id: string; label: string; requires: bigint[] }[] = [
-    { id: 'scheduler', label: 'Automation', requires: [PermissionFlag.manageWatches, PermissionFlag.manageSchedulerSettings, PermissionFlag.triggerDispatch] },
-    { id: 'devices', label: 'Devices', requires: [PermissionFlag.manageDevices] },
+    { id: 'scheduler', label: 'Automation', requires: [PermissionFlag.viewScheduler, PermissionFlag.manageWatches, PermissionFlag.manageSchedulerSettings, PermissionFlag.triggerDispatch] },
+    { id: 'devices', label: 'Devices', requires: [PermissionFlag.viewDevices, PermissionFlag.manageDevices] },
     { id: 'users', label: 'Users', requires: [PermissionFlag.viewUsers, PermissionFlag.manageUsers] },
-    { id: 'roles', label: 'Roles', requires: [PermissionFlag.viewUsers, PermissionFlag.manageUsers, PermissionFlag.manageRoles] },
+    { id: 'roles', label: 'Roles', requires: [PermissionFlag.viewRoles, PermissionFlag.manageRoles, PermissionFlag.viewDiscordPerks, PermissionFlag.manageDiscordPerks] },
     { id: 'apple', label: 'Apple Auth', requires: [PermissionFlag.manageAppleAuth] },
-    { id: 'backup', label: 'Backup', requires: [PermissionFlag.manageBackup] },
+    { id: 'backup', label: 'Backup', requires: [PermissionFlag.viewBackup, PermissionFlag.manageBackup] },
   ];
 
   function hasAccess(requires: bigint[]): boolean {
@@ -34,12 +34,12 @@
 
 <Tabs items={visibleSubtabs} value={tabState.settingsSubtab} onValueChange={setSettingsSubtab} class="mb-5" />
 
-{#if hasAccess([PermissionFlag.manageWatches, PermissionFlag.manageSchedulerSettings, PermissionFlag.triggerDispatch])}
+{#if hasAccess([PermissionFlag.viewScheduler, PermissionFlag.manageWatches, PermissionFlag.manageSchedulerSettings, PermissionFlag.triggerDispatch])}
   <div class:hidden={tabState.settingsSubtab !== 'scheduler'}>
     <SchedulerSettings />
   </div>
 {/if}
-{#if hasAccess([PermissionFlag.manageDevices])}
+{#if hasAccess([PermissionFlag.viewDevices, PermissionFlag.manageDevices])}
   <div class:hidden={tabState.settingsSubtab !== 'devices'}>
     <DevicesSettings />
   </div>
@@ -49,7 +49,7 @@
     <UsersSettings />
   </div>
 {/if}
-{#if hasAccess([PermissionFlag.viewUsers, PermissionFlag.manageUsers, PermissionFlag.manageRoles])}
+{#if hasAccess([PermissionFlag.viewRoles, PermissionFlag.manageRoles, PermissionFlag.viewDiscordPerks, PermissionFlag.manageDiscordPerks])}
   <div class:hidden={tabState.settingsSubtab !== 'roles'}>
     <RolesSettings />
   </div>
@@ -59,7 +59,7 @@
     <AppleAuthSettings />
   </div>
 {/if}
-{#if hasAccess([PermissionFlag.manageBackup])}
+{#if hasAccess([PermissionFlag.viewBackup, PermissionFlag.manageBackup])}
   <div class:hidden={tabState.settingsSubtab !== 'backup'}>
     <BackupSettings />
   </div>

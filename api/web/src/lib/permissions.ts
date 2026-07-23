@@ -20,6 +20,18 @@ export const PermissionFlag = {
   manageRoles: 1n << 14n,
   manageBackup: 1n << 15n,
   accessApi: 1n << 16n,
+  viewRoles: 1n << 17n,
+  viewDiscordPerks: 1n << 18n,
+  manageDiscordPerks: 1n << 19n,
+  viewScheduler: 1n << 20n,
+  viewDevices: 1n << 21n,
+  viewBackup: 1n << 22n,
+  viewApiKeyUsage: 1n << 23n,
+  manageApiKeyExpiry: 1n << 24n,
+  manageApiKeyDailyLimits: 1n << 25n,
+  manageApiKeyConcurrency: 1n << 26n,
+  manageApiKeyTestFlight: 1n << 27n,
+  manageApiKeyPriority: 1n << 28n,
 } as const;
 
 export type PermissionFlagKey = keyof typeof PermissionFlag;
@@ -54,7 +66,7 @@ export function parseBits(value: string | undefined | null): bigint {
   }
 }
 
-export type PermissionGroup = 'General' | 'API Keys' | 'Scheduler & Dispatch' | 'Apple Authentication' | 'Users & Roles';
+export type PermissionGroup = 'General' | 'API Keys' | 'Automation & Devices' | 'Apple Authentication' | 'Members & Roles' | 'Backups';
 
 export interface PermissionMeta {
   key: PermissionFlagKey;
@@ -66,23 +78,34 @@ export interface PermissionMeta {
 // Single source of truth for the role editor's copy/grouping. No implied-permission coupling
 // here - Administrator is the one bit that shortcuts every check, everything else is independent.
 export const PERMISSION_META: PermissionMeta[] = [
-  { key: 'administrator', label: 'Administrator', description: 'Bypasses every other permission check - full, unrestricted access', group: 'General' },
-  { key: 'requestDecrypt', label: 'Decrypt apps', description: 'Queue decrypts and manage their own jobs', group: 'General' },
-  { key: 'viewLogs', label: 'View logs', description: 'See the live scheduler/job log feed and webhook delivery log', group: 'General' },
-  { key: 'viewApiKeys', label: 'View all keys', description: 'See every key across every user, not just their own', group: 'API Keys' },
-  { key: 'approveApiKeys', label: 'Approve requests', description: 'Approve or deny pending key requests; their own requests auto-approve', group: 'API Keys' },
-  { key: 'revokeApiKeys', label: "Revoke anyone's key", description: "Revoke or bulk-revoke any user's key, not just their own", group: 'API Keys' },
-  { key: 'manageApiKeyLimits', label: 'Manage key limits', description: 'Bulk-extend expiry and set daily limits/priority on keys', group: 'API Keys' },
-  { key: 'accessApi', label: 'Use the API', description: 'Create personal API keys and use API endpoints', group: 'API Keys' },
-  { key: 'manageWatches', label: 'Manage watches', description: 'Create, edit, and delete app watches', group: 'Scheduler & Dispatch' },
-  { key: 'manageDevices', label: 'Manage devices', description: 'Create, edit, and delete devices in the decrypt pool', group: 'Scheduler & Dispatch' },
-  { key: 'manageSchedulerSettings', label: 'Manage scheduler settings', description: 'Edit notification settings and the poll cron', group: 'Scheduler & Dispatch' },
-  { key: 'triggerDispatch', label: 'Trigger dispatch', description: 'Run scheduler checks/previews, test webhook, dismiss auth alerts', group: 'Scheduler & Dispatch' },
-  { key: 'manageAppleAuth', label: 'Apple ID re-authentication', description: 'Runs Apple sign-in with real credentials', group: 'Apple Authentication' },
-  { key: 'viewUsers', label: 'View allowlist', description: 'See who has access, their roles, and the audit log', group: 'Users & Roles' },
-  { key: 'manageUsers', label: 'Manage allowlist', description: "Add or remove people, assign roles to them", group: 'Users & Roles' },
-  { key: 'manageRoles', label: 'Manage roles', description: 'Create, edit, delete, and reorder roles and what they grant', group: 'Users & Roles' },
-  { key: 'manageBackup', label: 'Manage backups', description: 'Export and import a full server state backup', group: 'Users & Roles' },
+  { key: 'administrator', label: 'Administrator', description: 'Grants every current and future dashboard permission. This bypasses every individual permission check and should be limited to fully trusted operators.', group: 'General' },
+  { key: 'requestDecrypt', label: 'Request and manage own decrypts', description: 'Submit manual and TestFlight decrypt requests, then cancel, prioritize, retry, download, and share only jobs owned by this account.', group: 'General' },
+  { key: 'viewLogs', label: 'View operational logs', description: 'Read the live scheduler and job log stream plus webhook delivery records. This does not grant permission to change automation or webhook settings.', group: 'General' },
+  { key: 'accessApi', label: 'Use personal API keys', description: 'Create, reveal, regenerate, revoke, and use API keys owned by this account. It never exposes or changes another user’s keys.', group: 'API Keys' },
+  { key: 'viewApiKeys', label: 'View every API key', description: 'Read the full key inventory, including ownership, status, configuration, and activity metadata. Secrets are never returned by this permission.', group: 'API Keys' },
+  { key: 'viewApiKeyUsage', label: 'View API-key usage', description: 'Read request and bundle usage metrics for keys visible to the account. This does not allow changing a key or its limits.', group: 'API Keys' },
+  { key: 'approveApiKeys', label: 'Approve or deny API-key requests', description: 'Review pending key requests and change their status to approved or denied. It does not grant access to edit approved-key limits.', group: 'API Keys' },
+  { key: 'revokeApiKeys', label: 'Revoke any API key', description: 'Revoke one or many keys belonging to any user. It does not allow creating keys, editing limits, or approving requests.', group: 'API Keys' },
+  { key: 'manageApiKeyExpiry', label: 'Set API-key expiry', description: 'Set or bulk-extend the expiration time of approved keys. This permission does not alter quotas, concurrency, or API-key status.', group: 'API Keys' },
+  { key: 'manageApiKeyDailyLimits', label: 'Set API-key daily limits', description: 'Set the maximum number of API requests a key may make per day. It does not change expiry, concurrency, or TestFlight access.', group: 'API Keys' },
+  { key: 'manageApiKeyConcurrency', label: 'Set API-key concurrency', description: 'Set the maximum number of simultaneous decrypt requests allowed for a key. It does not change daily quotas or priority.', group: 'API Keys' },
+  { key: 'manageApiKeyTestFlight', label: 'Set API-key TestFlight access', description: 'Allow or block TestFlight requests for individual API keys. It does not grant access to other key settings.', group: 'API Keys' },
+  { key: 'manageApiKeyPriority', label: 'Set API-key priority', description: 'Set a key’s queue priority for API-originated decrypt requests. It does not grant the ability to manage user queue priority.', group: 'API Keys' },
+  { key: 'viewScheduler', label: 'View automation', description: 'Read watch configuration, scheduler state, and dispatch health without changing watches, devices, settings, or running a dispatch.', group: 'Automation & Devices' },
+  { key: 'manageWatches', label: 'Manage app watches', description: 'Create, edit, and delete watched apps and their polling configuration. It does not grant access to scheduler-wide notification settings.', group: 'Automation & Devices' },
+  { key: 'viewDevices', label: 'View devices', description: 'Read decrypt-pool device configuration and health without adding, editing, removing, or operating devices.', group: 'Automation & Devices' },
+  { key: 'manageDevices', label: 'Manage devices', description: 'Create, edit, and delete decrypt-pool devices. It does not change automation configuration or Apple authentication.', group: 'Automation & Devices' },
+  { key: 'manageSchedulerSettings', label: 'Manage scheduler settings', description: 'Change scheduler-wide notification delivery, polling, retry, alert, and retention settings. It does not create watches or trigger dispatches.', group: 'Automation & Devices' },
+  { key: 'triggerDispatch', label: 'Run automation actions', description: 'Preview and trigger watch dispatches, test a webhook, and dismiss Apple-auth alerts. It does not modify saved configuration.', group: 'Automation & Devices' },
+  { key: 'manageAppleAuth', label: 'Manage Apple authentication', description: 'Start, complete, and cancel Apple ID reauthentication using the configured credentials. It does not grant device or watch management.', group: 'Apple Authentication' },
+  { key: 'viewUsers', label: 'View members', description: 'Read the allowlist, member details, and audit log. It does not grant the ability to add members, change roles, or alter any record.', group: 'Members & Roles' },
+  { key: 'manageUsers', label: 'Manage members', description: 'Add allowlisted users, remove them, assign their dashboard roles, and set their manual queue priority. It does not grant role-definition access.', group: 'Members & Roles' },
+  { key: 'viewRoles', label: 'View dashboard roles', description: 'Read role names, colors, membership counts, and granted permissions. It does not permit creating, editing, deleting, or reordering roles.', group: 'Members & Roles' },
+  { key: 'manageRoles', label: 'Manage dashboard roles', description: 'Create, edit, delete, and reorder dashboard roles. A user can only grant permissions they already hold unless they also hold this permission.', group: 'Members & Roles' },
+  { key: 'viewDiscordPerks', label: 'View Discord role perks', description: 'Read selected Discord guilds, discovered Discord roles, and existing Discord-to-dashboard role mappings. It does not change those mappings.', group: 'Members & Roles' },
+  { key: 'manageDiscordPerks', label: 'Manage Discord role perks', description: 'Select Discord guilds and create or remove Discord-to-dashboard role mappings. It does not permit editing dashboard role permissions.', group: 'Members & Roles' },
+  { key: 'viewBackup', label: 'View backups', description: 'Read backup schedules and history and download existing backup files. It does not create, delete, import, or change retention.', group: 'Backups' },
+  { key: 'manageBackup', label: 'Manage backups', description: 'Export or import server state, create or delete backup snapshots, and change backup schedules and retention. It does not grant member or role management.', group: 'Backups' },
 ];
 
 export function permissionLabels(bits: bigint): string[] {

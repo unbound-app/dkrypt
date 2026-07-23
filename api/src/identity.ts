@@ -201,6 +201,12 @@ export function getLinkedAuthProviders(userId: string): AuthProvider[] {
   return [...new Set((profile.identities ?? [legacyIdentity(profile)]).map((identity) => identity.provider))];
 }
 
+export function getLinkedAuthIdentities(userId: string): Array<Pick<AuthIdentity, 'provider' | 'username' | 'displayName' | 'avatarUrl'>> {
+  const profile = getAuthProfile(userId);
+  if (!profile) return [];
+  return (profile.identities ?? [legacyIdentity(profile)]).map(({ provider, username, displayName, avatarUrl }) => ({ provider, username, displayName, avatarUrl }));
+}
+
 export function exportIdentitySnapshot(): IdentitySnapshot {
   return structuredClone(state);
 }

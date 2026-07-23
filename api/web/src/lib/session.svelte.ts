@@ -23,6 +23,7 @@ export interface SessionInfo {
   sub?: string;
   displayName?: string;
   avatarUrl?: string;
+  identities?: { provider: 'github' | 'discord'; username: string; displayName: string; avatarUrl?: string }[];
   linkedProviders?: ('github' | 'discord')[];
   apiKeysAutoApprove?: boolean;
   // Decimal-string-serialized bigint bitfield, as returned by the API - parse with sessionBits().
@@ -64,6 +65,12 @@ export function sessionCanSeeSettings(): boolean {
     PermissionFlag.manageUsers,
     PermissionFlag.manageRoles,
     PermissionFlag.manageBackup,
+    PermissionFlag.viewScheduler,
+    PermissionFlag.viewDevices,
+    PermissionFlag.viewRoles,
+    PermissionFlag.viewDiscordPerks,
+    PermissionFlag.viewBackup,
+    PermissionFlag.manageDiscordPerks,
   ]);
 }
 

@@ -21,10 +21,11 @@
   import Input from '../../lib/components/ui/Input.svelte';
   import { PermissionFlag } from '../../lib/permissions';
   import { scrollFade } from '../../lib/scrollFade';
-  import { sessionHasPermission, sessionState } from '../../lib/session.svelte';
+  import { sessionHasAnyPermission, sessionHasPermission, sessionState } from '../../lib/session.svelte';
   import { confirmDialog } from '../../lib/ui.svelte';
 
   const canManage = $derived(sessionHasPermission(PermissionFlag.manageUsers));
+  const canViewRoles = $derived(sessionHasAnyPermission([PermissionFlag.viewRoles, PermissionFlag.manageRoles]));
 
   let addOpen = $state(false);
   let username = $state('');
@@ -108,7 +109,11 @@
   });
 
   async function load(): Promise<void> {
-    const [u, r, a] = await Promise.all([fetchUsers(), fetchRoles(), fetchAuditLog(200)]);
+    const [u, r, a] = await Promise.all([
+      fetchUsers(),
+      canViewRoles ? fetchRoles() : Promise.resolve({ roles: [] }),
+      fetchAuditLog(200),
+    ]);
     users = u.users;
     roles = r.roles;
     auditLog = a.entries;

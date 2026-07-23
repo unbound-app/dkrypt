@@ -30,10 +30,13 @@
   import SearchSelect from '../../lib/components/ui/SearchSelect.svelte';
   import Select from '../../lib/components/ui/Select.svelte';
   import { parseBits, permissionLabels, PermissionFlag, serializeBits } from '../../lib/permissions';
-  import { sessionHasPermission } from '../../lib/session.svelte';
+  import { sessionHasAnyPermission, sessionHasPermission } from '../../lib/session.svelte';
   import { confirmDialog } from '../../lib/ui.svelte';
 
+  const canViewRoles = $derived(sessionHasAnyPermission([PermissionFlag.viewRoles, PermissionFlag.manageRoles]));
   const canManageRoles = $derived(sessionHasPermission(PermissionFlag.manageRoles));
+  const canViewDiscordPerks = $derived(sessionHasAnyPermission([PermissionFlag.viewDiscordPerks, PermissionFlag.manageDiscordPerks]));
+  const canManageDiscordPerks = $derived(sessionHasPermission(PermissionFlag.manageDiscordPerks));
 
   const COLOR_PRESETS = ['#99aab5', '#1abc9c', '#3498db', '#9b59b6', '#e91e63', '#f1c40f', '#e67e22', '#e74c3c', '#5865f2', '#2ecc71'];
 
@@ -52,7 +55,10 @@
   }
 
   async function load(): Promise<void> {
-    const [r, u] = await Promise.all([fetchRoles(), fetchUsers()]);
+    const [r, u] = await Promise.all([
+      canViewRoles ? fetchRoles() : Promise.resolve({ roles: [] }),
+      sessionHasAnyPermission([PermissionFlag.viewUsers, PermissionFlag.manageUsers]) ? fetchUsers() : Promise.resolve({ users: [] }),
+    ]);
     roles = r.roles;
     users = u.users;
   }
@@ -158,7 +164,7 @@
   }
 
   $effect(() => {
-    if (canManageRoles) void loadDiscordStatus();
+    if (canViewDiscordPerks) void loadDiscordStatus();
   });
 
   async function loadDiscordRoles(guildId: string): Promise<void> {
@@ -174,6 +180,7 @@
   async function pickGuild(guildId: string): Promise<void> {
     const guild = discordGuilds?.find((item) => item.id === guildId);
     if (!guild || selectedDiscordGuilds.some((item) => item.id === guild.id)) return;
+    if (!(await confirmDialog(`Add ${guild.name} as a Discord role-perk guild? Its configured Discord roles can then grant dashboard roles on sign-in.`, { confirmLabel: 'Add guild' }))) return;
     savingGuild = true;
     try {
       const { ok } = await setDiscordGuilds([...selectedDiscordGuilds, guild]);
@@ -184,6 +191,8 @@
   }
 
   async function removeGuild(guildId: string): Promise<void> {
+    const guild = selectedDiscordGuilds.find((item) => item.id === guildId);
+    if (!guild || !(await confirmDialog(`Remove ${guild.name} from Discord role perks? Its mappings will stop granting dashboard roles on future Discord sign-ins.`, { variant: 'destructive', confirmLabel: 'Remove guild' }))) return;
     savingGuild = true;
     try {
       const { ok } = await setDiscordGuilds(selectedDiscordGuilds.filter((guild) => guild.id !== guildId));
@@ -194,16 +203,21 @@
   }
 
   const assignableRoles = $derived((roles ?? []).filter((r) => !r.isDefault));
-  const perkAppRoleOptions = $derived([{ value: '', label: 'Dashboard role…' }, ...assignableRoles.map((r) => ({ value: r.id, label: r.name }))]);
+  const perkAppRoleOptions = $derived(assignableRoles.map((r) => ({ value: r.id, label: r.name, color: r.color })));
 
   function appRoleName(id: string): string {
     return roles?.find((r) => r.id === id)?.name ?? id;
+  }
+
+  function appRoleColor(id: string): string | undefined {
+    return roles?.find((r) => r.id === id)?.color;
   }
 
   async function addPerk(): Promise<void> {
     const guild = selectedDiscordGuilds.find((item) => item.id === perkGuildId);
     const discordRole = discordRoles?.find((item) => item.id === perkDiscordRoleId);
     if (!guild || !discordRole || !perkAppRoleId) return;
+    if (!(await confirmDialog(`Map the Discord role ${discordRole.name} to the dashboard role ${appRoleName(perkAppRoleId)}? Members receive that dashboard role when they sign in with Discord.`, { confirmLabel: 'Create mapping' }))) return;
     addingPerk = true;
     try {
       const { ok } = await createDiscordRolePerk(guild, discordRole, perkAppRoleId);
@@ -218,6 +232,7 @@
   }
 
   async function removePerk(perk: DiscordRolePerk): Promise<void> {
+    if (!(await confirmDialog(`Remove the mapping from ${perk.discordRoleName ?? perk.discordRoleId} to ${appRoleName(perk.appRoleId)}? Future Discord sign-ins will no longer receive that dashboard role from this perk.`, { variant: 'destructive', confirmLabel: 'Remove mapping' }))) return;
     deletingPerkId = perk.id;
     try {
       const { ok } = await deleteDiscordRolePerk(perk.id);
@@ -327,7 +342,7 @@
   {/if}
 </Card>
 
-{#if canManageRoles && discordBotEnabled}
+{#if canViewDiscordPerks && discordBotEnabled}
   <Card title="Discord role perks" class="mt-4">
     <div class="mb-3 text-sm text-muted">
       Anyone who holds a mapped role in any selected Discord guild is automatically granted the matching dashboard role, checked on every
@@ -352,7 +367,7 @@
                 type="button"
                 class="text-muted hover:text-text rounded p-0.5"
                 aria-label="Remove {guild.name}"
-                disabled={savingGuild}
+                disabled={savingGuild || !canManageDiscordPerks}
                 onclick={() => void removeGuild(guild.id)}
               >
                 <X class="h-3.5 w-3.5" />
@@ -361,7 +376,7 @@
           {/each}
         </div>
       {/if}
-      {#if availableDiscordGuildOptions.length > 0}
+      {#if canManageDiscordPerks && availableDiscordGuildOptions.length > 0}
         <div class="mb-4 flex items-center gap-2">
           <SearchSelect
             items={availableDiscordGuildOptions}
@@ -393,21 +408,24 @@
               <span class="h-2.5 w-2.5 shrink-0 rounded-full border border-black/20" style="background-color: {discordRoleColor(perk.discordRoleColor)}"></span>
               <span class="font-medium">{perk.discordRoleName ?? perk.discordRoleId}</span>
               <span class="text-muted">grants</span>
+              {#if appRoleColor(perk.appRoleId)}<span class="h-2.5 w-2.5 shrink-0 rounded-full" style="background-color: {appRoleColor(perk.appRoleId)}"></span>{/if}
               <span class="font-medium">{appRoleName(perk.appRoleId)}</span>
-              <Button
-                size="sm"
-                variant="destructive"
-                class="ml-auto"
-                loading={deletingPerkId === perk.id}
-                onclick={() => void removePerk(perk)}
-              >
-                Remove
-              </Button>
+              {#if canManageDiscordPerks}
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  class="ml-auto"
+                  loading={deletingPerkId === perk.id}
+                  onclick={() => void removePerk(perk)}
+                >
+                  Remove
+                </Button>
+              {/if}
             </div>
           {/each}
         {/if}
       </div>
-      {#if discordRoles && discordRoles.length > 0 && assignableRoles.length > 0}
+      {#if canManageDiscordPerks && discordRoles && discordRoles.length > 0 && assignableRoles.length > 0}
         <div class="flex flex-wrap items-center gap-1.5">
           <SearchSelect
             items={selectedDiscordGuildOptions}
@@ -421,7 +439,7 @@
           />
           <SearchSelect items={discordRoles.map((r) => ({ value: r.id, label: r.name }))} bind:value={perkDiscordRoleId} placeholder="Search Discord roles…" class="w-48" />
           <span class="text-xs text-muted">grants</span>
-          <Select items={perkAppRoleOptions} bind:value={perkAppRoleId} class="w-40" />
+          <Select items={perkAppRoleOptions} bind:value={perkAppRoleId} placeholder="Dashboard role…" class="w-48 shrink-0" />
           <Button size="sm" loading={addingPerk} disabled={!perkDiscordRoleId || !perkAppRoleId} onclick={addPerk}>Add</Button>
         </div>
       {:else if assignableRoles.length === 0}

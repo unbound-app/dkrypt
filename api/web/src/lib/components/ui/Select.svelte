@@ -6,6 +6,7 @@
   interface Item {
     value: string;
     label: string;
+    color?: string;
   }
 
   interface Props {
@@ -13,13 +14,14 @@
     value: string;
     onValueChange?: (value: string) => void;
     class?: string;
+    placeholder?: string;
     id?: string;
     disabled?: boolean;
   }
 
-  let { items, value = $bindable(), onValueChange, class: className, id, disabled = false }: Props = $props();
+  let { items, value = $bindable(), onValueChange, class: className, placeholder = 'Select…', id, disabled = false }: Props = $props();
 
-  const selectedLabel = $derived(items.find((i) => i.value === value)?.label ?? '');
+  const selectedItem = $derived(items.find((i) => i.value === value));
 </script>
 
 <SelectPrimitive.Root type="single" bind:value {onValueChange} {disabled}>
@@ -30,7 +32,10 @@
       className,
     )}
   >
-    <span class="truncate">{selectedLabel}</span>
+    <span class="flex min-w-0 items-center gap-2 truncate">
+      {#if selectedItem?.color}<span class="h-2.5 w-2.5 shrink-0 rounded-full" style="background-color: {selectedItem.color}"></span>{/if}
+      <span class="truncate">{selectedItem?.label ?? placeholder}</span>
+    </span>
     <ChevronDown class="text-muted h-4 w-4 shrink-0" />
   </SelectPrimitive.Trigger>
   <SelectPrimitive.Portal>
@@ -47,7 +52,10 @@
             class="data-highlighted:bg-panel-muted flex cursor-pointer items-center justify-between rounded-sm px-2 py-1.5 text-sm text-text"
           >
             {#snippet children({ selected })}
-              {item.label}
+              <span class="flex min-w-0 items-center gap-2">
+                {#if item.color}<span class="h-2.5 w-2.5 shrink-0 rounded-full" style="background-color: {item.color}"></span>{/if}
+                <span class="truncate">{item.label}</span>
+              </span>
               {#if selected}<Check class="text-accent h-4 w-4" />{/if}
             {/snippet}
           </SelectPrimitive.Item>

@@ -347,7 +347,7 @@ export interface ShareLinkRecord {
 }
 
 interface PersistedState {
-  version: 9;
+  version: 10;
   apiKeys: ApiKeyRecord[];
   allowedUsers: AllowedUser[];
   roles: Role[];
@@ -387,7 +387,7 @@ const backupsDir = path.join(config.stateDir, 'backups');
 
 function defaultState(): PersistedState {
   return {
-    version: 9,
+    version: 10,
     apiKeys: [],
     allowedUsers: [],
     roles: [seedDefaultRole(Date.now())],
@@ -642,7 +642,7 @@ function migrateV7ToV8(v7: Record<string, unknown>): Record<string, unknown> {
   return { ...defaultState(), ...v7, version: 8, roles };
 }
 
-function migrateV8ToV9(v8: Record<string, unknown>): PersistedState {
+function migrateV8ToV9(v8: Record<string, unknown>): Record<string, unknown> {
   const legacyGuildId = typeof v8.discordGuildId === 'string' ? v8.discordGuildId : undefined;
   const { discordGuildId: _legacyGuildId, ...rest } = v8;
   const discordGuilds = legacyGuildId ? [{ id: legacyGuildId, name: legacyGuildId, icon: null }] : [];
@@ -655,19 +655,42 @@ function migrateV8ToV9(v8: Record<string, unknown>): PersistedState {
         discordRoleColor: 0,
       }))
     : [];
-  return { ...defaultState(), ...rest, version: 9, discordGuilds, discordRolePerks } as PersistedState;
+  return { ...defaultState(), ...rest, version: 9, discordGuilds, discordRolePerks };
+}
+
+function upgradePermissionBits(bits: bigint): bigint {
+  let migrated = bits;
+  if ((bits & PermissionFlag.viewUsers) !== 0n) migrated |= PermissionFlag.viewRoles;
+  if ((bits & PermissionFlag.manageUsers) !== 0n) migrated |= PermissionFlag.viewUsers;
+  if ((bits & PermissionFlag.manageRoles) !== 0n) migrated |= PermissionFlag.viewRoles | PermissionFlag.viewDiscordPerks | PermissionFlag.manageDiscordPerks;
+  if ((bits & PermissionFlag.manageWatches) !== 0n || (bits & PermissionFlag.manageSchedulerSettings) !== 0n || (bits & PermissionFlag.triggerDispatch) !== 0n) migrated |= PermissionFlag.viewScheduler;
+  if ((bits & PermissionFlag.manageDevices) !== 0n) migrated |= PermissionFlag.viewDevices;
+  if ((bits & PermissionFlag.manageBackup) !== 0n) migrated |= PermissionFlag.viewBackup;
+  if ((bits & (PermissionFlag.viewApiKeys | PermissionFlag.accessApi)) !== 0n) migrated |= PermissionFlag.viewApiKeyUsage;
+  if ((bits & PermissionFlag.manageApiKeyLimits) !== 0n) {
+    migrated |= PermissionFlag.manageApiKeyExpiry | PermissionFlag.manageApiKeyDailyLimits | PermissionFlag.manageApiKeyConcurrency | PermissionFlag.manageApiKeyTestFlight | PermissionFlag.manageApiKeyPriority;
+  }
+  return migrated;
+}
+
+function migrateV9ToV10(v9: Record<string, unknown> | PersistedState): PersistedState {
+  const roles = Array.isArray(v9.roles)
+    ? (v9.roles as Role[]).map((role) => ({ ...role, permissions: serializeBits(upgradePermissionBits(parseBits(role.permissions))) }))
+    : [seedDefaultRole(Date.now())];
+  return { ...defaultState(), ...v9, version: 10, roles } as PersistedState;
 }
 
 function migrate(raw: Record<string, unknown>): PersistedState {
-  if (raw.version === 9) return { ...defaultState(), ...raw } as PersistedState;
-  if (raw.version === 8) return migrateV8ToV9(raw);
-  if (raw.version === 7) return migrateV8ToV9(migrateV7ToV8(raw));
-  if (raw.version === 6) return migrateV8ToV9(migrateV6ToV8(raw));
-  if (raw.version === 5) return migrateV8ToV9(migrateV6ToV8(migrateV5ToV6(raw)));
+  if (raw.version === 10) return { ...defaultState(), ...raw } as PersistedState;
+  if (raw.version === 9) return migrateV9ToV10(raw);
+  if (raw.version === 8) return migrateV9ToV10(migrateV8ToV9(raw));
+  if (raw.version === 7) return migrateV9ToV10(migrateV8ToV9(migrateV7ToV8(raw)));
+  if (raw.version === 6) return migrateV9ToV10(migrateV8ToV9(migrateV6ToV8(raw)));
+  if (raw.version === 5) return migrateV9ToV10(migrateV8ToV9(migrateV6ToV8(migrateV5ToV6(raw))));
 
   if (raw.version === 4) {
     const v4Users = Array.isArray(raw.allowedUsers) ? (raw.allowedUsers as Record<string, unknown>[]) : [];
-    return migrateV8ToV9(migrateV6ToV8(
+    return migrateV9ToV10(migrateV8ToV9(migrateV6ToV8(
       migrateV5ToV6({
         ...raw,
         version: 5,
@@ -677,12 +700,12 @@ function migrate(raw: Record<string, unknown>): PersistedState {
           addedAt: u.addedAt as number,
         })),
       }),
-    ));
+    )));
   }
 
   if (raw.version === 3) {
     const v3Users = Array.isArray(raw.allowedUsers) ? (raw.allowedUsers as Record<string, unknown>[]) : [];
-    return migrateV8ToV9(migrateV6ToV8(
+    return migrateV9ToV10(migrateV8ToV9(migrateV6ToV8(
       migrateV5ToV6({
         ...raw,
         version: 5,
@@ -692,12 +715,12 @@ function migrate(raw: Record<string, unknown>): PersistedState {
           addedAt: u.addedAt as number,
         })),
       }),
-    ));
+    )));
   }
 
   if (raw.version === 2) {
     const legacyUsers = Array.isArray(raw.allowedUsers) ? (raw.allowedUsers as Record<string, unknown>[]) : [];
-    return migrateV8ToV9(migrateV6ToV8(
+    return migrateV9ToV10(migrateV8ToV9(migrateV6ToV8(
       migrateV5ToV6({
         ...raw,
         version: 5,
@@ -707,11 +730,11 @@ function migrate(raw: Record<string, unknown>): PersistedState {
           addedAt: u.addedAt as number,
         })),
       }),
-    ));
+    )));
   }
 
   const legacyKeys = Array.isArray(raw.apiKeys) ? (raw.apiKeys as Record<string, unknown>[]) : [];
-  return migrateV8ToV9(migrateV6ToV8(
+  return migrateV9ToV10(migrateV8ToV9(migrateV6ToV8(
     migrateV5ToV6({
       apiKeys: legacyKeys.map((k) => ({
         id: k.id as string,
@@ -727,7 +750,7 @@ function migrate(raw: Record<string, unknown>): PersistedState {
       jobHistory: (raw.jobHistory as JobHistoryEntry[]) ?? [],
       appleAuthAlert: (raw.appleAuthAlert as AppleAuthAlert) ?? { suspected: false },
     }),
-  ));
+  )));
 }
 
 function normalizeLegacySchedulerRunOutcome(raw: unknown): SchedulerRunOutcome {
@@ -2776,7 +2799,7 @@ export function importBackup(raw: unknown, actor: string): ImportBackupResult {
   const b = validated.payload;
 
   state.allowedUsers = b.allowedUsers;
-  state.roles = b.roles;
+  state.roles = b.roles.map((role) => ({ ...role, permissions: serializeBits(upgradePermissionBits(parseBits(role.permissions))) }));
   state.apiKeys = b.apiKeys.map((k) => ({ ...k, pendingReveal: undefined }));
   state.settings = b.settings;
   state.watches = b.watches;

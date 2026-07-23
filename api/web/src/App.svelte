@@ -186,7 +186,7 @@
     {
       id: 'keys',
       label: 'API Keys',
-      requires: [PermissionFlag.accessApi, PermissionFlag.viewApiKeys, PermissionFlag.approveApiKeys, PermissionFlag.revokeApiKeys],
+      requires: [PermissionFlag.accessApi, PermissionFlag.viewApiKeys, PermissionFlag.viewApiKeyUsage, PermissionFlag.approveApiKeys, PermissionFlag.revokeApiKeys, PermissionFlag.manageApiKeyExpiry, PermissionFlag.manageApiKeyDailyLimits, PermissionFlag.manageApiKeyConcurrency, PermissionFlag.manageApiKeyTestFlight, PermissionFlag.manageApiKeyPriority],
     },
     { id: 'logs', label: 'Logs', requires: [PermissionFlag.viewLogs] },
     { id: 'insights', label: 'Insights' },
@@ -464,11 +464,17 @@
                 {/if}
               {/if}
               <div class="mb-3 text-xs text-muted">{permissionsSummary(sessionBits())}</div>
-              {#if sessionState.linkedProviders?.length}
-                <div class="mb-3 text-xs text-muted">
-                  Connected: {sessionState.linkedProviders
-                    .map((provider) => (provider === 'github' ? 'GitHub' : 'Discord'))
-                    .join(' · ')}
+              {#if sessionState.identities?.length}
+                <div class="mb-3 flex flex-col gap-1.5">
+                  {#each sessionState.identities as identity (`${identity.provider}:${identity.username}`)}
+                    <div class="flex min-w-0 items-center gap-2 text-xs text-muted">
+                      {#if identity.avatarUrl}
+                        <img src={identity.avatarUrl} alt="" class="h-5 w-5 shrink-0 rounded-full object-cover" />
+                      {/if}
+                      <span class="font-medium text-text">{identity.provider === 'github' ? 'GitHub' : 'Discord'}</span>
+                      <span class="truncate">{identity.displayName} · @{identity.username}</span>
+                    </div>
+                  {/each}
                 </div>
               {/if}
               {#if myGrantedPermissions.length > 0}

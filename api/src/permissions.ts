@@ -19,6 +19,18 @@ export const PermissionFlag = {
   manageRoles: 1n << 14n,
   manageBackup: 1n << 15n,
   accessApi: 1n << 16n,
+  viewRoles: 1n << 17n,
+  viewDiscordPerks: 1n << 18n,
+  manageDiscordPerks: 1n << 19n,
+  viewScheduler: 1n << 20n,
+  viewDevices: 1n << 21n,
+  viewBackup: 1n << 22n,
+  viewApiKeyUsage: 1n << 23n,
+  manageApiKeyExpiry: 1n << 24n,
+  manageApiKeyDailyLimits: 1n << 25n,
+  manageApiKeyConcurrency: 1n << 26n,
+  manageApiKeyTestFlight: 1n << 27n,
+  manageApiKeyPriority: 1n << 28n,
 } as const;
 
 export type PermissionFlagKey = keyof typeof PermissionFlag;

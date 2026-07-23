@@ -34,7 +34,7 @@
   import { debounce, fmtUntil } from '../lib/format';
   import { scrollFade } from '../lib/scrollFade';
   import { PermissionFlag } from '../lib/permissions';
-  import { sessionHasPermission, sessionState } from '../lib/session.svelte';
+  import { sessionHasAnyPermission, sessionHasPermission, sessionState } from '../lib/session.svelte';
   import { confirmDialog, keyUsageJumpState, showToast } from '../lib/ui.svelte';
 
   const PAGE_SIZE = 25;
@@ -109,8 +109,14 @@
 
   const canApprove = $derived(sessionHasPermission(PermissionFlag.approveApiKeys));
   const canCreateImmediately = $derived(sessionState.apiKeysAutoApprove ?? canApprove);
-  const canViewAll = $derived(sessionHasPermission(PermissionFlag.viewApiKeys));
+  const canViewAll = $derived(sessionHasAnyPermission([PermissionFlag.viewApiKeys, PermissionFlag.approveApiKeys, PermissionFlag.revokeApiKeys, PermissionFlag.manageApiKeyExpiry, PermissionFlag.manageApiKeyDailyLimits, PermissionFlag.manageApiKeyConcurrency, PermissionFlag.manageApiKeyTestFlight, PermissionFlag.manageApiKeyPriority]));
   const canRevokeAny = $derived(sessionHasPermission(PermissionFlag.revokeApiKeys));
+  const canViewUsage = $derived(sessionHasPermission(PermissionFlag.viewApiKeyUsage));
+  const canManageExpiry = $derived(sessionHasPermission(PermissionFlag.manageApiKeyExpiry));
+  const canManageDailyLimits = $derived(sessionHasPermission(PermissionFlag.manageApiKeyDailyLimits));
+  const canManagePriority = $derived(sessionHasPermission(PermissionFlag.manageApiKeyPriority));
+  const canManageConcurrency = $derived(sessionHasPermission(PermissionFlag.manageApiKeyConcurrency));
+  const canManageTestFlight = $derived(sessionHasPermission(PermissionFlag.manageApiKeyTestFlight));
 
   async function loadAllKeysPage(): Promise<void> {
     const data = await fetchAllKeys(0, PAGE_SIZE, allSearch);
@@ -440,7 +446,7 @@
                       <Button size="sm" loading={isBusy('reveal', k.id)} onclick={() => doReveal(k.id)}>Reveal</Button>
                     {/if}
                     {#if k.status === 'approved'}
-                      <Button size="sm" variant="secondary" onclick={() => openUsage(k)}>Usage</Button>
+                      {#if canViewUsage}<Button size="sm" variant="secondary" onclick={() => openUsage(k)}>Usage</Button>{/if}
                       <Button size="sm" variant="secondary" loading={isBusy('regenerate', k.id)} onclick={() => doRegenerate(k.id)}>Regenerate</Button>
                     {/if}
                     <Button size="sm" variant="destructive" loading={isBusy('revoke', k.id)} onclick={() => doRevoke(k.id)}>Revoke</Button>
@@ -513,14 +519,14 @@
       {#snippet headerExtra()}
         {#if selected.size > 0}
           <div class="flex flex-wrap items-center gap-1.5">
-            {#if canApprove}
+            {#if canManageExpiry || canManageDailyLimits}
               <div class="flex items-center gap-1">
                 <Input type="number" min="1" bind:value={bulkExtendDays} class="h-8 w-16 text-xs" aria-label="Days to extend expiry" />
-                <Button size="sm" variant="secondary" loading={bulkExtending} onclick={bulkExtend}>Extend expiry</Button>
+                {#if canManageExpiry}<Button size="sm" variant="secondary" loading={bulkExtending} onclick={bulkExtend}>Extend expiry</Button>{/if}
               </div>
               <div class="flex items-center gap-1">
                 <Input type="number" min="1" placeholder="blank = clear" bind:value={bulkDailyLimit} class="h-8 w-28 text-xs" aria-label="New daily limit" />
-                <Button size="sm" variant="secondary" loading={bulkSettingLimit} onclick={bulkSetLimit}>Set daily limit</Button>
+                {#if canManageDailyLimits}<Button size="sm" variant="secondary" loading={bulkSettingLimit} onclick={bulkSetLimit}>Set daily limit</Button>{/if}
               </div>
             {/if}
             {#if canRevokeAny}
@@ -543,9 +549,9 @@
               <th>Owner</th>
               <th>Status</th>
               <th>Scope</th>
-              {#if canApprove}<th>Priority</th>{/if}
-              {#if canApprove}<th>Max concurrent</th>{/if}
-              {#if canApprove}<th>TestFlight</th>{/if}
+              {#if canManagePriority}<th>Priority</th>{/if}
+              {#if canManageConcurrency}<th>Max concurrent</th>{/if}
+              {#if canManageTestFlight}<th>TestFlight</th>{/if}
               <th>Created</th>
               <th>Last used</th>
               <th></th>
@@ -554,7 +560,7 @@
           </thead>
           <tbody>
             {#if all === null}
-              <SkeletonRows rows={3} colspan={8 + (canRevokeAny ? 2 : 0) + (canApprove ? 3 : 0)} />
+              <SkeletonRows rows={3} colspan={8 + (canRevokeAny ? 2 : 0) + (canManagePriority ? 1 : 0) + (canManageConcurrency ? 1 : 0) + (canManageTestFlight ? 1 : 0)} />
             {:else}
               {#each filteredAll as k (k.id)}
                 <tr>
@@ -599,7 +605,7 @@
                       <span class="text-muted">unrestricted</span>
                     {/if}
                   </td>
-                  {#if canApprove}
+                  {#if canManagePriority}
                     <td data-label="Priority">
                       <input
                         type="number"
@@ -613,7 +619,7 @@
                       />
                     </td>
                   {/if}
-                  {#if canApprove}
+                  {#if canManageConcurrency}
                     <td data-label="Max concurrent">
                       <input
                         type="number"
@@ -627,7 +633,7 @@
                       />
                     </td>
                   {/if}
-                  {#if canApprove}
+                  {#if canManageTestFlight}
                     <td data-label="TestFlight">
                       <Switch
                         checked={k.allowTestFlight ?? true}
@@ -641,7 +647,7 @@
                   <td data-label="Last used" class="text-muted"><RelativeTime ms={k.lastUsedAt} /></td>
                   <td>
                     {#if k.status === 'approved'}
-                      <Button size="sm" variant="secondary" onclick={() => openUsage(k)}>Usage</Button>
+                      {#if canViewUsage}<Button size="sm" variant="secondary" onclick={() => openUsage(k)}>Usage</Button>{/if}
                     {/if}
                   </td>
                   {#if canRevokeAny}

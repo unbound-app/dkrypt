@@ -23,7 +23,11 @@
   import Switch from '../../lib/components/ui/Switch.svelte';
   import { buttonVariants } from '../../lib/components/ui/variants';
   import { debounce, fmtRelative, fmtSize, fmtTime } from '../../lib/format';
+  import { PermissionFlag } from '../../lib/permissions';
+  import { sessionHasPermission } from '../../lib/session.svelte';
   import { confirmDialog } from '../../lib/ui.svelte';
+
+  const canManageBackup = $derived(sessionHasPermission(PermissionFlag.manageBackup));
 
   let fileInput: HTMLInputElement | undefined = $state();
   let selectedFile: File | null = $state(null);
@@ -152,6 +156,7 @@
 </script>
 
 <div class="flex flex-col gap-4">
+  {#if canManageBackup}
   <Card title="Export">
     <div class="mb-3 text-sm text-muted">
       Downloads the allowlist, API keys (metadata and hashes, not their plaintext), scheduler settings, job history,
@@ -163,13 +168,14 @@
       Download backup
     </a>
   </Card>
+  {/if}
 
   <Card title="Scheduled backups">
     <div class="mb-3 text-sm text-muted">Automatically write a snapshot to disk on a schedule, kept as history below.</div>
     {#if schedule}
       <div class="flex items-center justify-between gap-3 border-b border-border pb-3">
         <div class="text-[13px] text-text">Enable scheduled backups</div>
-        <Switch checked={schedule.enabled} disabled={savingSchedule} onCheckedChange={(checked) => void saveSchedule({ enabled: checked })} />
+        <Switch checked={schedule.enabled} disabled={savingSchedule || !canManageBackup} onCheckedChange={(checked) => void saveSchedule({ enabled: checked })} />
       </div>
       <div class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div>
@@ -178,7 +184,7 @@
             id="backup-cron"
             bind:value={schedule.cron}
             onblur={() => void saveSchedule({ cron: schedule?.cron })}
-            disabled={savingSchedule}
+            disabled={savingSchedule || !canManageBackup}
           />
           {#if cronValid === false}
             <div class="mt-1 text-xs text-err">Not a valid cron expression</div>
@@ -193,13 +199,14 @@
             max="90"
             bind:value={schedule.retentionCount}
             onblur={() => void saveSchedule({ retentionCount: Number(schedule?.retentionCount) })}
-            disabled={savingSchedule}
+            disabled={savingSchedule || !canManageBackup}
           />
         </div>
       </div>
     {/if}
   </Card>
 
+  {#if canManageBackup}
   <Card title="Restore">
     <div class="mb-3 flex items-start gap-2.5 rounded-lg border border-warn/40 bg-warn/10 px-3.5 py-3 text-[13px] text-warn">
       <TriangleAlert class="mt-0.5 h-4 w-4 shrink-0" />
@@ -235,13 +242,14 @@
     {/if}
     <Button class="mt-3" variant="destructive" disabled={!selectedFile || !preview} loading={restoring} onclick={restore}>Restore from backup</Button>
   </Card>
+  {/if}
 
   <Card title="Backup history">
     {#snippet headerExtra()}
-      <Button size="sm" variant="secondary" loading={creatingSnapshot} onclick={runBackupNow}>
+      {#if canManageBackup}<Button size="sm" variant="secondary" loading={creatingSnapshot} onclick={runBackupNow}>
         <RefreshCw class="h-4 w-4" />
         Back up now
-      </Button>
+      </Button>{/if}
     {/snippet}
     {#if loadingHistory}
       <div class="py-6 text-center text-sm text-muted">Loading...</div>
@@ -260,9 +268,11 @@
                 <Download class="h-3.5 w-3.5" />
                 Download
               </a>
-              <Button size="sm" variant="destructive" loading={deletingId === entry.id} onclick={() => removeSnapshot(entry)}>
-                <Trash2 class="h-3.5 w-3.5" />
-              </Button>
+              {#if canManageBackup}
+                <Button size="sm" variant="destructive" loading={deletingId === entry.id} onclick={() => removeSnapshot(entry)}>
+                  <Trash2 class="h-3.5 w-3.5" />
+                </Button>
+              {/if}
             </div>
           </div>
         {/each}

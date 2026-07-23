@@ -135,16 +135,21 @@ const canViewApiKeys = requirePermission(
   PermissionFlag.viewApiKeys,
   PermissionFlag.approveApiKeys,
   PermissionFlag.revokeApiKeys,
+  PermissionFlag.manageApiKeyExpiry,
+  PermissionFlag.manageApiKeyDailyLimits,
+  PermissionFlag.manageApiKeyConcurrency,
+  PermissionFlag.manageApiKeyTestFlight,
+  PermissionFlag.manageApiKeyPriority,
   PermissionFlag.manageApiKeyLimits,
 );
 const canApproveApiKeys = requirePermission(PermissionFlag.approveApiKeys);
-const canManageApiKeyLimits = requirePermission(PermissionFlag.manageApiKeyLimits);
-const canViewScheduler = requirePermission(
-  PermissionFlag.manageWatches,
-  PermissionFlag.manageDevices,
-  PermissionFlag.manageSchedulerSettings,
-  PermissionFlag.triggerDispatch,
-);
+const canManageApiKeyExpiry = requirePermission(PermissionFlag.manageApiKeyExpiry, PermissionFlag.manageApiKeyLimits);
+const canManageApiKeyDailyLimits = requirePermission(PermissionFlag.manageApiKeyDailyLimits, PermissionFlag.manageApiKeyLimits);
+const canManageApiKeyConcurrency = requirePermission(PermissionFlag.manageApiKeyConcurrency, PermissionFlag.manageApiKeyLimits);
+const canManageApiKeyTestFlight = requirePermission(PermissionFlag.manageApiKeyTestFlight, PermissionFlag.manageApiKeyLimits);
+const canManageApiKeyPriority = requirePermission(PermissionFlag.manageApiKeyPriority, PermissionFlag.manageApiKeyLimits);
+const canViewScheduler = requirePermission(PermissionFlag.viewScheduler, PermissionFlag.manageWatches, PermissionFlag.manageSchedulerSettings, PermissionFlag.triggerDispatch);
+const canViewDevices = requirePermission(PermissionFlag.viewDevices, PermissionFlag.manageDevices);
 const canManageWatches = requirePermission(PermissionFlag.manageWatches);
 const canManageDevices = requirePermission(PermissionFlag.manageDevices);
 const canManageSchedulerSettings = requirePermission(PermissionFlag.manageSchedulerSettings);
@@ -153,9 +158,13 @@ const canValidateCron = requirePermission(PermissionFlag.manageSchedulerSettings
 const canTriggerDispatch = requirePermission(PermissionFlag.triggerDispatch);
 const canManageAppleAuth = requirePermission(PermissionFlag.manageAppleAuth);
 const canViewLogs = requirePermission(PermissionFlag.viewLogs);
-const canViewUsers = requirePermission(PermissionFlag.viewUsers, PermissionFlag.manageUsers, PermissionFlag.manageRoles);
+const canViewUsers = requirePermission(PermissionFlag.viewUsers, PermissionFlag.manageUsers);
+const canViewRoles = requirePermission(PermissionFlag.viewRoles, PermissionFlag.manageRoles);
 const canManageUsers = requirePermission(PermissionFlag.manageUsers);
 const canManageRoles = requirePermission(PermissionFlag.manageRoles);
+const canViewDiscordPerks = requirePermission(PermissionFlag.viewDiscordPerks, PermissionFlag.manageDiscordPerks);
+const canManageDiscordPerks = requirePermission(PermissionFlag.manageDiscordPerks);
+const canViewBackup = requirePermission(PermissionFlag.viewBackup, PermissionFlag.manageBackup);
 const canManageBackup = requirePermission(PermissionFlag.manageBackup);
 
 export const dashboardRouter = Router();
@@ -173,23 +182,25 @@ dashboardRouter.use((_req, res, next) => {
 const deviceOrExternalRateLimit = rateLimitPerUser(10, 60_000);
 const jobDiffRateLimit = rateLimitPerUser(30, 60_000);
 
-function buildOverview() {
-  const watches = getEffectiveWatches().map((w) => ({
+function buildOverview(permissions: bigint) {
+  const canViewAutomation = hasPermission(permissions, PermissionFlag.viewScheduler) || hasPermission(permissions, PermissionFlag.manageWatches) || hasPermission(permissions, PermissionFlag.manageSchedulerSettings) || hasPermission(permissions, PermissionFlag.triggerDispatch);
+  const canViewDeviceData = hasPermission(permissions, PermissionFlag.viewDevices) || hasPermission(permissions, PermissionFlag.manageDevices);
+  const watches = canViewAutomation ? getEffectiveWatches().map((w) => ({
     ...w,
     nextRunAt: isWatchSchedulable(w) ? nextCronRunAt(w.pollCron) : undefined,
     schedulable: isWatchSchedulable(w),
     configIssues: getWatchConfigIssues(w),
-  }));
-  const devices = getEffectiveDevices().map((d) => ({ ...d }));
+  })) : [];
+  const devices = canViewDeviceData ? getEffectiveDevices().map((d) => ({ ...d })) : [];
   const settings = getEffectiveSettings();
   return {
     schedulerEnabled: watches.some((w) => w.schedulable),
-    settings,
+    settings: canViewAutomation ? settings : { ...settings, notifyWebhookUrl: '' },
     watches,
     devices,
-    appleAuthAlert: getAppleAuthAlert(),
-    lastSchedulerRunAt: getLastSchedulerRunAt(),
-    schedulerRunHistory: getSchedulerRunHistory(10),
+    appleAuthAlert: hasPermission(permissions, PermissionFlag.manageAppleAuth) ? getAppleAuthAlert() : { suspected: false },
+    lastSchedulerRunAt: canViewAutomation ? getLastSchedulerRunAt() : undefined,
+    schedulerRunHistory: canViewAutomation ? getSchedulerRunHistory(10) : [],
     disk: getDiskUsage(config.outputDir),
     activeJobs: getActiveJobs().map((j) => ({
       id: j.id,
@@ -210,7 +221,7 @@ function buildOverview() {
 }
 
 dashboardRouter.get('/v1/dashboard/overview', (_req, res) => {
-  res.json(buildOverview());
+  res.json(buildOverview(res.locals.session.permissions));
 });
 
 dashboardRouter.get('/v1/dashboard/events', (req, res) => {
@@ -223,13 +234,13 @@ dashboardRouter.get('/v1/dashboard/events', (req, res) => {
     res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   };
 
-  sendEvent('overview', buildOverview());
+  sendEvent('overview', buildOverview(res.locals.session.permissions));
 
   const { sub } = res.locals.session;
   registerPresence(sub);
   sendEvent('presence', getOnlineUsernames());
 
-  const onJobsChanged = () => sendEvent('overview', buildOverview());
+  const onJobsChanged = () => sendEvent('overview', buildOverview(res.locals.session.permissions));
   const onLogAdded = (entry: LogEntry) => sendEvent('log', entry);
   const onHistoryAdded = (entry: JobHistoryEntry) => sendEvent('history', entry);
   const onAppleAuthChanged = () => sendEvent('appleAuth', getAppleAuthStatus());
@@ -453,7 +464,7 @@ function serializeDevice(d: DeviceRecord) {
   return d;
 }
 
-dashboardRouter.get('/v1/dashboard/devices', canManageDevices, (_req, res) => {
+dashboardRouter.get('/v1/dashboard/devices', canViewDevices, (_req, res) => {
   res.json({ devices: getEffectiveDevices().map(serializeDevice) });
 });
 
@@ -535,7 +546,7 @@ function requireDevice(id: string): DeviceRecord | undefined {
   return getDevice(id) ?? (id === 'primary' ? getPrimaryDevice() : undefined);
 }
 
-dashboardRouter.get('/v1/dashboard/devices/:id/health', async (req, res) => {
+dashboardRouter.get('/v1/dashboard/devices/:id/health', canViewDevices, async (req, res) => {
   const device = requireDevice(req.params.id);
   if (!device) {
     res.status(404).json({ error: 'device not found' });
@@ -545,22 +556,22 @@ dashboardRouter.get('/v1/dashboard/devices/:id/health', async (req, res) => {
   res.json(health);
 });
 
-dashboardRouter.get('/v1/dashboard/devices/:id/health-history', (req, res) => {
+dashboardRouter.get('/v1/dashboard/devices/:id/health-history', canViewDevices, (req, res) => {
   const hours = Math.min(Math.max(Number.parseInt(String(req.query.hours ?? '24'), 10) || 24, 1), 168);
   res.json({ buckets: getDeviceHealthHourlyBuckets(req.params.id, hours), uptimePercent: getDeviceUptimePercent(req.params.id, hours) ?? null });
 });
 
-dashboardRouter.get('/v1/dashboard/devices/:id/battery-history', (req, res) => {
+dashboardRouter.get('/v1/dashboard/devices/:id/battery-history', canViewDevices, (req, res) => {
   const hours = Math.min(Math.max(Number.parseInt(String(req.query.hours ?? '24'), 10) || 24, 1), 168);
   res.json({ buckets: getDeviceBatteryHourlyBuckets(req.params.id, hours) });
 });
 
-dashboardRouter.get('/v1/dashboard/devices/:id/temperature-history', (req, res) => {
+dashboardRouter.get('/v1/dashboard/devices/:id/temperature-history', canViewDevices, (req, res) => {
   const hours = Math.min(Math.max(Number.parseInt(String(req.query.hours ?? '24'), 10) || 24, 1), 168);
   res.json({ buckets: getDeviceTemperatureHourlyBuckets(req.params.id, hours) });
 });
 
-dashboardRouter.get('/v1/dashboard/devices/:id/storage-history', (req, res) => {
+dashboardRouter.get('/v1/dashboard/devices/:id/storage-history', canViewDevices, (req, res) => {
   const hours = Math.min(Math.max(Number.parseInt(String(req.query.hours ?? '24'), 10) || 24, 1), 168);
   res.json({ buckets: getDeviceStorageHourlyBuckets(req.params.id, hours) });
 });
@@ -951,7 +962,7 @@ dashboardRouter.post('/v1/dashboard/keys/bulk-revoke', canRevokeOwnedOrAnyApiKey
 const MIN_EXPIRY_EXTEND_DAYS = 1;
 const MAX_EXPIRY_EXTEND_DAYS = 3650;
 
-dashboardRouter.post('/v1/dashboard/keys/bulk-extend-expiry', canManageApiKeyLimits, (req, res) => {
+dashboardRouter.post('/v1/dashboard/keys/bulk-extend-expiry', canManageApiKeyExpiry, (req, res) => {
   const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter((id: unknown) => typeof id === 'string') : [];
   const days = typeof req.body?.days === 'number' ? Math.round(req.body.days) : undefined;
   if (!days || days < MIN_EXPIRY_EXTEND_DAYS || days > MAX_EXPIRY_EXTEND_DAYS) {
@@ -962,7 +973,7 @@ dashboardRouter.post('/v1/dashboard/keys/bulk-extend-expiry', canManageApiKeyLim
   res.json({ extended });
 });
 
-dashboardRouter.post('/v1/dashboard/keys/bulk-set-daily-limit', canManageApiKeyLimits, (req, res) => {
+dashboardRouter.post('/v1/dashboard/keys/bulk-set-daily-limit', canManageApiKeyDailyLimits, (req, res) => {
   const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter((id: unknown) => typeof id === 'string') : [];
   const raw = req.body?.dailyLimit;
   const dailyLimit = raw === null ? undefined : parseDailyLimit(raw);
@@ -974,7 +985,7 @@ dashboardRouter.post('/v1/dashboard/keys/bulk-set-daily-limit', canManageApiKeyL
   res.json({ updated });
 });
 
-dashboardRouter.get('/v1/dashboard/keys/:id/usage', (req, res) => {
+dashboardRouter.get('/v1/dashboard/keys/:id/usage', requirePermission(PermissionFlag.viewApiKeyUsage), (req, res) => {
   const key = getApiKeyById(req.params.id);
   if (!key) {
     res.status(404).json({ error: 'key not found' });
@@ -989,7 +1000,7 @@ dashboardRouter.get('/v1/dashboard/keys/:id/usage', (req, res) => {
   res.json({ usage: getApiKeyUsage(req.params.id, days) });
 });
 
-dashboardRouter.get('/v1/dashboard/keys/:id/bundle-usage', (req, res) => {
+dashboardRouter.get('/v1/dashboard/keys/:id/bundle-usage', requirePermission(PermissionFlag.viewApiKeyUsage), (req, res) => {
   const key = getApiKeyById(req.params.id);
   if (!key) {
     res.status(404).json({ error: 'key not found' });
@@ -1031,7 +1042,7 @@ dashboardRouter.post('/v1/dashboard/keys/bulk-approve', canApproveApiKeys, (req,
   res.json({ approved });
 });
 
-dashboardRouter.patch('/v1/dashboard/keys/:id/priority', canManageApiKeyLimits, (req, res) => {
+dashboardRouter.patch('/v1/dashboard/keys/:id/priority', canManageApiKeyPriority, (req, res) => {
   const priority = typeof req.body?.priority === 'number' ? req.body.priority : undefined;
   if (priority === undefined || !Number.isFinite(priority)) {
     res.status(400).json({ error: 'priority (a number) is required' });
@@ -1045,7 +1056,7 @@ dashboardRouter.patch('/v1/dashboard/keys/:id/priority', canManageApiKeyLimits, 
   res.json({ ok: true, priority: updated.priority });
 });
 
-dashboardRouter.patch('/v1/dashboard/keys/:id/max-concurrent', canManageApiKeyLimits, (req, res) => {
+dashboardRouter.patch('/v1/dashboard/keys/:id/max-concurrent', canManageApiKeyConcurrency, (req, res) => {
   const raw = req.body?.maxConcurrent;
   const maxConcurrent = raw === null || raw === undefined ? undefined : Number(raw);
   if (maxConcurrent !== undefined && (!Number.isFinite(maxConcurrent) || maxConcurrent <= 0)) {
@@ -1060,7 +1071,7 @@ dashboardRouter.patch('/v1/dashboard/keys/:id/max-concurrent', canManageApiKeyLi
   res.json({ ok: true, maxConcurrent: updated.maxConcurrent });
 });
 
-dashboardRouter.patch('/v1/dashboard/keys/:id/allow-testflight', canManageApiKeyLimits, (req, res) => {
+dashboardRouter.patch('/v1/dashboard/keys/:id/allow-testflight', canManageApiKeyTestFlight, (req, res) => {
   const allowTestFlight = req.body?.allowTestFlight;
   if (typeof allowTestFlight !== 'boolean') {
     res.status(400).json({ error: 'allowTestFlight (boolean) is required' });
@@ -1083,7 +1094,7 @@ dashboardRouter.post('/v1/dashboard/keys/:id/deny', canApproveApiKeys, (req, res
   res.json({ ok: true });
 });
 
-dashboardRouter.get('/v1/dashboard/settings', (_req, res) => {
+dashboardRouter.get('/v1/dashboard/settings', canViewScheduler, (_req, res) => {
   res.json(getEffectiveSettings());
 });
 
@@ -1209,7 +1220,7 @@ dashboardRouter.get('/v1/dashboard/audit-log', canViewUsers, (req, res) => {
   res.json({ entries: getAuditLog(limit) });
 });
 
-dashboardRouter.get('/v1/dashboard/roles', canViewUsers, (_req, res) => {
+dashboardRouter.get('/v1/dashboard/roles', canViewRoles, (_req, res) => {
   res.json({ roles: listRoles() });
 });
 
@@ -1290,15 +1301,15 @@ dashboardRouter.post('/v1/dashboard/roles/reorder', canManageRoles, (req, res) =
   res.json({ roles: listRoles() });
 });
 
-dashboardRouter.get('/v1/dashboard/discord/status', canManageRoles, (_req, res) => {
+dashboardRouter.get('/v1/dashboard/discord/status', canViewDiscordPerks, (_req, res) => {
   res.json({ botEnabled: discordBotEnabled, guilds: getDiscordGuilds() });
 });
 
-dashboardRouter.get('/v1/dashboard/discord/guilds', canManageRoles, async (_req, res) => {
+dashboardRouter.get('/v1/dashboard/discord/guilds', canViewDiscordPerks, async (_req, res) => {
   res.json({ guilds: await fetchBotGuilds() });
 });
 
-dashboardRouter.post('/v1/dashboard/discord/guilds', canManageRoles, (req, res) => {
+dashboardRouter.post('/v1/dashboard/discord/guilds', canManageDiscordPerks, (req, res) => {
   const rawGuilds: unknown = req.body?.guilds;
   const guildRecords: { id: string; name: string; icon: string | null }[] | undefined = Array.isArray(rawGuilds)
     ? ((rawGuilds
@@ -1323,7 +1334,7 @@ dashboardRouter.post('/v1/dashboard/discord/guilds', canManageRoles, (req, res) 
   res.json({ ok: true, guilds: getDiscordGuilds() });
 });
 
-dashboardRouter.get('/v1/dashboard/discord/roles', canManageRoles, async (req, res) => {
+dashboardRouter.get('/v1/dashboard/discord/roles', canViewDiscordPerks, async (req, res) => {
   const guildId = typeof req.query.guildId === 'string' ? req.query.guildId : '';
   if (!getDiscordGuilds().some((guild) => guild.id === guildId)) {
     res.json({ roles: [] });
@@ -1332,11 +1343,11 @@ dashboardRouter.get('/v1/dashboard/discord/roles', canManageRoles, async (req, r
   res.json({ roles: await fetchGuildRoles(guildId) });
 });
 
-dashboardRouter.get('/v1/dashboard/discord/perks', canManageRoles, (_req, res) => {
+dashboardRouter.get('/v1/dashboard/discord/perks', canViewDiscordPerks, (_req, res) => {
   res.json({ perks: getDiscordRolePerks() });
 });
 
-dashboardRouter.post('/v1/dashboard/discord/perks', canManageRoles, (req, res) => {
+dashboardRouter.post('/v1/dashboard/discord/perks', canManageDiscordPerks, (req, res) => {
   const guildId = typeof req.body?.guildId === 'string' ? req.body.guildId.trim() : '';
   const guildName = typeof req.body?.guildName === 'string' ? req.body.guildName.trim() : '';
   const guildIcon = typeof req.body?.guildIcon === 'string' ? req.body.guildIcon : null;
@@ -1352,6 +1363,15 @@ dashboardRouter.post('/v1/dashboard/discord/perks', canManageRoles, (req, res) =
     res.status(400).json({ error: 'guild is not selected for Discord role perks' });
     return;
   }
+  const targetRole = listRoles().find((role) => role.id === appRoleId && !role.isDefault);
+  if (!targetRole) {
+    res.status(400).json({ error: 'appRoleId must reference a non-default dashboard role' });
+    return;
+  }
+  if (!canGrantBits(res.locals.session.permissions, effectiveBitsForRoleIds([appRoleId], listRoles()))) {
+    res.status(403).json({ error: "you can't map a Discord role to permissions you don't have yourself" });
+    return;
+  }
   res.status(201).json(
     createDiscordRolePerk(
       { id: guildId, name: guildName, icon: guildIcon },
@@ -1362,7 +1382,7 @@ dashboardRouter.post('/v1/dashboard/discord/perks', canManageRoles, (req, res) =
   );
 });
 
-dashboardRouter.delete('/v1/dashboard/discord/perks/:id', canManageRoles, (req, res) => {
+dashboardRouter.delete('/v1/dashboard/discord/perks/:id', canManageDiscordPerks, (req, res) => {
   const ok = deleteDiscordRolePerk(req.params.id, res.locals.session.sub);
   if (!ok) {
     res.status(404).json({ error: 'perk not found' });
@@ -1457,7 +1477,7 @@ dashboardRouter.post('/v1/dashboard/backup/preview', canManageBackup, (req, res)
   res.json(result.summary);
 });
 
-dashboardRouter.get('/v1/dashboard/backup/schedule', canManageBackup, (_req, res) => {
+dashboardRouter.get('/v1/dashboard/backup/schedule', canViewBackup, (_req, res) => {
   res.json(getBackupSchedule());
 });
 
@@ -1480,7 +1500,7 @@ dashboardRouter.post('/v1/dashboard/backup/schedule', canManageBackup, (req, res
   res.json(schedule);
 });
 
-dashboardRouter.get('/v1/dashboard/backup/history', canManageBackup, (_req, res) => {
+dashboardRouter.get('/v1/dashboard/backup/history', canViewBackup, (_req, res) => {
   res.json(getBackupHistory());
 });
 
@@ -1490,7 +1510,7 @@ dashboardRouter.post('/v1/dashboard/backup/history', canManageBackup, (_req, res
   res.json(entry);
 });
 
-dashboardRouter.get('/v1/dashboard/backup/history/:id/download', canManageBackup, (req, res) => {
+dashboardRouter.get('/v1/dashboard/backup/history/:id/download', canViewBackup, (req, res) => {
   const filePath = getBackupSnapshotPath(req.params.id);
   if (!filePath) {
     res.status(404).json({ error: 'backup snapshot not found' });

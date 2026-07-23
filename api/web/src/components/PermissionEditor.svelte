@@ -8,7 +8,7 @@
 
   let { value = $bindable() }: Props = $props();
 
-  const GROUP_ORDER: PermissionGroup[] = ['General', 'API Keys', 'Scheduler & Dispatch', 'Apple Authentication', 'Users & Roles'];
+  const GROUP_ORDER: PermissionGroup[] = ['General', 'API Keys', 'Automation & Devices', 'Apple Authentication', 'Members & Roles', 'Backups'];
 
   const groups = GROUP_ORDER.map((title) => ({ title, fields: PERMISSION_META.filter((f) => f.group === title) })).filter(
     (g) => g.fields.length > 0,
@@ -31,7 +31,7 @@
         <div class="flex items-center gap-3 py-1.5">
           <div class="min-w-0 flex-1">
             <div class="text-[13px] text-text" class:font-semibold={isAdminBit}>{f.label}</div>
-            <div class="truncate text-[11px] text-muted" title={f.description}>
+            <div class="text-[11px] leading-4 text-muted">
               {impliedByAdmin ? 'Granted by Administrator' : f.description}
             </div>
           </div>

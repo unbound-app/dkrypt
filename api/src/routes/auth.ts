@@ -7,6 +7,7 @@ import { fetchMemberRoleIds } from '../discord.js';
 import {
   type AuthIdentity,
   getAuthProfile,
+  getLinkedAuthIdentities,
   getLinkedAuthProviders,
   setAuthDisplayName,
 } from '../identity.js';
@@ -74,6 +75,7 @@ authRouter.get('/v1/auth/session', (req, res) => {
     sub: session?.sub,
     displayName: profile?.displayName,
     avatarUrl: profile?.avatarUrl,
+    identities: session ? getLinkedAuthIdentities(session.sub) : [],
     linkedProviders: session ? getLinkedAuthProviders(session.sub) : [],
     apiKeysAutoApprove:
       !!session &&
