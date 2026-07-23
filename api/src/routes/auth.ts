@@ -1,10 +1,11 @@
 import { randomBytes } from 'node:crypto';
 import { Router } from 'express';
-import { config, githubOauthEnabled } from '../config.js';
+import { config, discordOauthEnabled, githubOauthEnabled } from '../config.js';
+import { getAuthProfile, upsertAuthProfile } from '../identity.js';
 import { log } from '../logger.js';
 import { PermissionFlag, serializeBits } from '../permissions.js';
 import { checkRootPassword, clearSessionCookie, getSession, requireSession, setSessionCookie } from '../session.js';
-import { bumpSessionVersion, getUserEffectivePermissions } from '../store/state.js';
+import { addAllowedUser, bumpSessionVersion, getUserEffectivePermissions, listAllowedUsers } from '../store/state.js';
 
 export const authRouter = Router();
 
@@ -49,12 +50,16 @@ setInterval(() => {
 
 authRouter.get('/v1/auth/session', (req, res) => {
   const session = getSession(req);
+  const profile = session ? getAuthProfile(session.sub) : undefined;
   res.json({
     loggedIn: !!session,
     sub: session?.sub,
+    displayName: profile?.displayName,
+    avatarUrl: profile?.avatarUrl,
     permissions: session ? serializeBits(session.permissions) : undefined,
     expiresAt: session?.exp,
     githubOauthEnabled,
+    discordOauthEnabled,
     publicBaseUrl: config.publicBaseUrl,
   });
 });
@@ -117,7 +122,19 @@ authRouter.post('/v1/auth/logout-everywhere', requireSession, (req, res) => {
   res.json({ ok: true });
 });
 
-const OAUTH_STATE_COOKIE = 'oauth_state';
+const GITHUB_OAUTH_STATE_COOKIE = 'github_oauth_state';
+const DISCORD_OAUTH_STATE_COOKIE = 'discord_oauth_state';
+
+function oauthCookie(name: string, value: string, maxAge: number): string {
+  const secure = config.publicBaseUrl.startsWith('https://') ? '; Secure' : '';
+  return `${name}=${value}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAge}${secure}`;
+}
+
+function oauthUserId(provider: 'github' | 'discord', providerId: string, username: string): string {
+  const stableId = `${provider}:${providerId}`;
+  const legacy = listAllowedUsers().find((user) => user.username === username.toLowerCase());
+  return legacy?.username ?? stableId;
+}
 
 authRouter.get('/v1/auth/github/login', (_req, res) => {
   if (!githubOauthEnabled) {
@@ -126,13 +143,13 @@ authRouter.get('/v1/auth/github/login', (_req, res) => {
   }
 
   const state = randomBytes(16).toString('hex');
-  res.setHeader('Set-Cookie', `${OAUTH_STATE_COOKIE}=${state}; HttpOnly; SameSite=Lax; Path=/; Max-Age=600`);
+  res.setHeader('Set-Cookie', oauthCookie(GITHUB_OAUTH_STATE_COOKIE, state, 600));
 
   const redirectUri = `${config.publicBaseUrl}/v1/auth/github/callback`;
   const url = new URL('https://github.com/login/oauth/authorize');
   url.searchParams.set('client_id', config.githubOauthClientId);
   url.searchParams.set('redirect_uri', redirectUri);
-  url.searchParams.set('scope', 'read:user');
+  url.searchParams.set('scope', 'read:user user:email');
   url.searchParams.set('state', state);
 
   res.redirect(url.toString());
@@ -157,8 +174,8 @@ authRouter.get('/v1/auth/github/callback', async (req, res) => {
 
   const code = typeof req.query.code === 'string' ? req.query.code : '';
   const state = typeof req.query.state === 'string' ? req.query.state : '';
-  const cookieState = parseCookieHeader(req.header('cookie'))[OAUTH_STATE_COOKIE];
-  res.setHeader('Set-Cookie', `${OAUTH_STATE_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`);
+  const cookieState = parseCookieHeader(req.header('cookie'))[GITHUB_OAUTH_STATE_COOKIE];
+  res.setHeader('Set-Cookie', oauthCookie(GITHUB_OAUTH_STATE_COOKIE, '', 0));
 
   if (!code || !state || !cookieState || state !== cookieState) {
     log.warn('github oauth state mismatch', { hasCode: !!code, hasState: !!state, hasCookieState: !!cookieState });
@@ -186,20 +203,130 @@ authRouter.get('/v1/auth/github/callback', async (req, res) => {
       headers: { Authorization: `Bearer ${tokenBody.access_token}`, Accept: 'application/vnd.github+json' },
     });
     if (!userRes.ok) throw new Error(`GET /user failed: HTTP ${userRes.status}`);
-    const user = (await userRes.json()) as { login: string };
+    const user = (await userRes.json()) as {
+      id: number;
+      login: string;
+      name?: string | null;
+      email?: string | null;
+      avatar_url?: string;
+    };
 
-    const permissions = getUserEffectivePermissions(user.login);
-    if (permissions === undefined) {
-      log.warn('github oauth login rejected - not on allowlist', { login: user.login });
-      res.redirect(`/?auth_error=not_allowed&user=${encodeURIComponent(user.login)}`);
-      return;
+    let email = user.email ?? undefined;
+    if (!email) {
+      const emailsRes = await fetch('https://api.github.com/user/emails', {
+        headers: { Authorization: `Bearer ${tokenBody.access_token}`, Accept: 'application/vnd.github+json' },
+      });
+      if (emailsRes.ok) {
+        const emails = (await emailsRes.json()) as { email: string; primary: boolean; verified: boolean }[];
+        email = emails.find((candidate) => candidate.primary && candidate.verified)?.email;
+      }
     }
 
-    setSessionCookie(res, { sub: user.login.toLowerCase(), permissions });
+    const userId = oauthUserId('github', String(user.id), user.login);
+    if (getUserEffectivePermissions(userId) === undefined) addAllowedUser(userId, [], 'oauth:github');
+    upsertAuthProfile({
+      userId,
+      provider: 'github',
+      providerId: String(user.id),
+      username: user.login,
+      displayName: user.name || user.login,
+      email,
+      avatarUrl: user.avatar_url,
+      updatedAt: new Date().toISOString(),
+    });
+    const permissions = getUserEffectivePermissions(userId) ?? 0n;
+    setSessionCookie(res, { sub: userId, permissions });
     log.info('github oauth login succeeded', { login: user.login, permissions: serializeBits(permissions) });
     res.redirect('/');
   } catch (err) {
     log.error('github oauth callback failed', { error: String(err) });
     res.redirect('/?auth_error=failed');
+  }
+});
+
+authRouter.get('/v1/auth/discord/login', (_req, res) => {
+  if (!discordOauthEnabled) {
+    res.status(404).json({ error: 'Discord OAuth is not configured' });
+    return;
+  }
+
+  const state = randomBytes(16).toString('hex');
+  res.setHeader('Set-Cookie', oauthCookie(DISCORD_OAUTH_STATE_COOKIE, state, 600));
+
+  const redirectUri = `${config.publicBaseUrl}/v1/auth/discord/callback`;
+  const url = new URL('https://discord.com/oauth2/authorize');
+  url.searchParams.set('client_id', config.discordOauthClientId);
+  url.searchParams.set('redirect_uri', redirectUri);
+  url.searchParams.set('response_type', 'code');
+  url.searchParams.set('scope', 'identify email');
+  url.searchParams.set('state', state);
+  res.redirect(url.toString());
+});
+
+authRouter.get('/v1/auth/discord/callback', async (req, res) => {
+  if (!discordOauthEnabled) {
+    res.redirect('/?auth_error=discord_disabled');
+    return;
+  }
+
+  const code = typeof req.query.code === 'string' ? req.query.code : '';
+  const state = typeof req.query.state === 'string' ? req.query.state : '';
+  const cookieState = parseCookieHeader(req.header('cookie'))[DISCORD_OAUTH_STATE_COOKIE];
+  res.setHeader('Set-Cookie', oauthCookie(DISCORD_OAUTH_STATE_COOKIE, '', 0));
+
+  if (!code || !state || !cookieState || state !== cookieState) {
+    log.warn('discord oauth state mismatch', { hasCode: !!code, hasState: !!state, hasCookieState: !!cookieState });
+    res.redirect('/?auth_error=state_mismatch');
+    return;
+  }
+
+  try {
+    const redirectUri = `${config.publicBaseUrl}/v1/auth/discord/callback`;
+    const tokenBody = new URLSearchParams({
+      client_id: config.discordOauthClientId,
+      client_secret: config.discordOauthClientSecret,
+      grant_type: 'authorization_code',
+      code,
+      redirect_uri: redirectUri,
+    });
+    const tokenRes = await fetch('https://discord.com/api/oauth2/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: tokenBody,
+    });
+    const token = (await tokenRes.json()) as { access_token?: string; error?: string };
+    if (!token.access_token) throw new Error(token.error ?? 'no access_token in response');
+
+    const userRes = await fetch('https://discord.com/api/users/@me', {
+      headers: { Authorization: `Bearer ${token.access_token}` },
+    });
+    if (!userRes.ok) throw new Error(`GET /users/@me failed: HTTP ${userRes.status}`);
+    const user = (await userRes.json()) as {
+      id: string;
+      username: string;
+      global_name?: string | null;
+      email?: string;
+      avatar?: string | null;
+    };
+
+    const userId = oauthUserId('discord', user.id, `discord:${user.username}`);
+    if (getUserEffectivePermissions(userId) === undefined) addAllowedUser(userId, [], 'oauth:discord');
+    upsertAuthProfile({
+      userId,
+      provider: 'discord',
+      providerId: user.id,
+      username: user.username,
+      displayName: user.global_name || user.username,
+      email: user.email,
+      avatarUrl: user.avatar ? `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png` : undefined,
+      updatedAt: new Date().toISOString(),
+    });
+    const permissions = getUserEffectivePermissions(userId) ?? 0n;
+    setSessionCookie(res, { sub: userId, permissions });
+    log.info('discord oauth login succeeded', { username: user.username, permissions: serializeBits(permissions) });
+    res.redirect('/');
+  } catch (err) {
+    log.error('discord oauth callback failed', { error: String(err) });
+    res.redirect('/?auth_error=discord_failed');
   }
 });

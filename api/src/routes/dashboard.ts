@@ -111,6 +111,8 @@ import {
 } from '../store/state.js';
 
 const canDecrypt = requirePermission(PermissionFlag.requestDecrypt);
+const canAccessApi = requirePermission(PermissionFlag.accessApi);
+const canRevokeOwnedOrAnyApiKeys = requirePermission(PermissionFlag.accessApi, PermissionFlag.revokeApiKeys);
 const canViewApiKeys = requirePermission(
   PermissionFlag.viewApiKeys,
   PermissionFlag.approveApiKeys,
@@ -819,7 +821,7 @@ dashboardRouter.post('/v1/dashboard/jobs/share/:linkId/revoke', (req, res) => {
   res.json({ ok: true });
 });
 
-dashboardRouter.get('/v1/dashboard/keys/mine', (_req, res) => {
+dashboardRouter.get('/v1/dashboard/keys/mine', canAccessApi, (_req, res) => {
   const { sub } = res.locals.session;
   res.json({ keys: listApiKeysForOwner(sub) });
 });
@@ -844,7 +846,7 @@ function parseAllowedBundleIds(body: unknown): string[] | undefined {
   return ids.length > 0 ? [...new Set(ids)] : undefined;
 }
 
-dashboardRouter.post('/v1/dashboard/keys/request', canDecrypt, (req, res) => {
+dashboardRouter.post('/v1/dashboard/keys/request', canAccessApi, (req, res) => {
   const { sub, permissions } = res.locals.session;
   const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
   if (!name) {
@@ -872,7 +874,7 @@ dashboardRouter.post('/v1/dashboard/keys/request', canDecrypt, (req, res) => {
   res.status(201).json(record);
 });
 
-dashboardRouter.post('/v1/dashboard/keys/:id/reveal', (req, res) => {
+dashboardRouter.post('/v1/dashboard/keys/:id/reveal', canAccessApi, (req, res) => {
   const { sub } = res.locals.session;
   const secret = revealApiKeySecret(req.params.id, sub);
   if (!secret) {
@@ -882,7 +884,7 @@ dashboardRouter.post('/v1/dashboard/keys/:id/reveal', (req, res) => {
   res.json({ key: secret });
 });
 
-dashboardRouter.post('/v1/dashboard/keys/:id/regenerate', (req, res) => {
+dashboardRouter.post('/v1/dashboard/keys/:id/regenerate', canAccessApi, (req, res) => {
   const { sub } = res.locals.session;
   const graceMinutesRaw = req.body?.graceMinutes;
   const graceMinutes = typeof graceMinutesRaw === 'number' && Number.isFinite(graceMinutesRaw) && graceMinutesRaw > 0 ? graceMinutesRaw : 0;
@@ -894,7 +896,7 @@ dashboardRouter.post('/v1/dashboard/keys/:id/regenerate', (req, res) => {
   res.json({ ok: true, key: getApiKeyById(req.params.id) });
 });
 
-dashboardRouter.delete('/v1/dashboard/keys/:id', (req, res) => {
+dashboardRouter.delete('/v1/dashboard/keys/:id', canAccessApi, (req, res) => {
   const { sub, permissions } = res.locals.session;
   const ok = revokeApiKey(req.params.id, sub, hasPermission(permissions, PermissionFlag.revokeApiKeys));
   if (!ok) {
@@ -904,7 +906,7 @@ dashboardRouter.delete('/v1/dashboard/keys/:id', (req, res) => {
   res.json({ ok: true });
 });
 
-dashboardRouter.post('/v1/dashboard/keys/bulk-revoke', (req, res) => {
+dashboardRouter.post('/v1/dashboard/keys/bulk-revoke', canRevokeOwnedOrAnyApiKeys, (req, res) => {
   const { sub, permissions } = res.locals.session;
   const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter((id: unknown) => typeof id === 'string') : [];
   const canRevokeAny = hasPermission(permissions, PermissionFlag.revokeApiKeys);

@@ -40,8 +40,9 @@ primary device, even in a multi-device pool - see **Multiple devices**.
 2. Copy `.env.example` to `.env` and fill it in. Required: `API_KEY`,
    `DOWNLOAD_SIGNING_SECRET`, `PUBLIC_BASE_URL`, `ADMIN_PASSWORD`. Fill in
    the `WATCH_*` / `GH_*` vars too if you want the automated side (leave
-   them blank to disable it), and `GITHUB_OAUTH_*` if you want other people
-   to log into the dashboard without sharing `ADMIN_PASSWORD`.
+   them blank to disable it), configure `GITHUB_OAUTH_*` and/or
+   `DISCORD_OAUTH_*` for user sign-in, and add the Paddle values for paid
+   subscriptions.
 3. Build the image:
 
    ```sh
@@ -69,6 +70,43 @@ To add a second (or third...) physical device later, bootstrap it the same
 way against a distinct root dir (`ipadecrypt --root-dir /data/devices/b
 bootstrap`, run interactively, same as step 4) and register that root dir
 from **Settings → Devices** - see **Multiple devices** below.
+
+## SaaS authentication and billing
+
+Create OAuth applications with these callbacks:
+
+- GitHub: `<PUBLIC_BASE_URL>/v1/auth/github/callback`
+- Discord: `<PUBLIC_BASE_URL>/v1/auth/discord/callback`
+
+Set their client IDs and secrets in the root `.env`. The first successful
+OAuth login automatically creates a viewer account.
+
+The Paddle sandbox catalog is reproducible with:
+
+```sh
+cd api
+bun run paddle:seed
+```
+
+The command uses `PADDLE_SANDBOX_API_KEY` or `PADDLE_API_KEY` from the shell
+and prints the four product and price IDs plus a browser-safe client token.
+The committed sandbox IDs are already listed in `.env.example`.
+
+Use `PADDLE_ENV=production bun run paddle:seed` with
+`PADDLE_LIVE_API_KEY` to create or verify the separate live catalog.
+
+After deploying the webhook route at a public HTTPS URL, create or update its
+Paddle notification destination:
+
+```sh
+cd api
+PADDLE_ENV=production PADDLE_WEBHOOK_URL=https://ipa.dylib.dev/v1/paddle/webhook bun run paddle:webhook
+```
+
+Copy the returned `endpointSecretKey` to `PADDLE_WEBHOOK_SECRET` in the root
+`.env`, then restart the service. Shell profile variables are available to
+the setup scripts but are not automatically inherited by Docker Compose, so
+the container still needs `PADDLE_API_KEY` in its env file.
 
 ## Fronting with Caddy
 
@@ -126,13 +164,23 @@ Two ways in:
 
 - **Root password** (`ADMIN_PASSWORD`) - always logs in as an implicit
   admin. Your recovery path if everything else is locked out.
-- **Sign in with GitHub** - only shown if `GITHUB_OAUTH_CLIENT_ID` /
-  `GITHUB_OAUTH_CLIENT_SECRET` are set (see `.env.example` for how to
-  register the OAuth App). A successful GitHub login only grants access if
-  that username is on the **Settings → Users** sub-tab's allowlist -
-  registering the OAuth app doesn't let just anyone in, an admin has to
-  add them first (chicken-and-egg: add yourself via `ADMIN_PASSWORD`
-  first).
+- **Sign in with GitHub or Discord** - each OAuth provider is shown when its
+  client ID and secret are configured. The first successful login creates a
+  viewer account automatically. Viewer accounts cannot queue decrypts or
+  create and use API keys until a Paddle subscription or an administrative
+  role grants those capabilities.
+
+The **Plans** tab offers four monthly EUR subscriptions:
+
+- **Regular (€5)** - dashboard decrypts at standard priority.
+- **Priority (€10)** - dashboard decrypts at high priority.
+- **API (€10)** - dashboard decrypts and API keys at standard priority.
+- **Priority API (€20)** - dashboard decrypts and API keys at high priority.
+
+Paddle webhooks are the source of truth for access. Active, trialing, and
+past-due subscriptions retain access; paused and canceled subscriptions do
+not. A scheduled cancellation keeps access until Paddle changes the
+subscription status to canceled.
 
 Access is ten independent, additive permissions, enforced server-side (the
 UI just hides what a user can't do). A newly-added user starts with none
@@ -140,9 +188,10 @@ of them - pure read-only - and gains capabilities one at a time as an
 admin grants them, rather than picking from a fixed tier. A few imply
 others (checking a stronger switch auto-checks the weaker one it needs):
 
-- **decrypt** - queue decrypts, and manage their own API keys (request,
-  reveal-once, regenerate, revoke) - a request sits as `pending` until
-  someone with `approveApiKeys` approves it on the API Keys tab.
+- **decrypt** - queue dashboard decrypts and manage their own jobs.
+- **API access** - create and use their own API keys (request, reveal-once,
+  regenerate, revoke) - a request sits as `pending` until someone with
+  `approveApiKeys` approves it on the API Keys tab.
 - **viewApiKeys** - see the full key list across every user (implied by
   `approveApiKeys` and `revokeApiKeys`).
 - **approveApiKeys** - approve/deny pending key requests; their own key
@@ -260,7 +309,7 @@ Tabs:
     any.
   - *Devices* (`manageScheduler`) - manage the device pool (see **Multiple
     devices** below).
-  - *Users* (`viewUsers` or `manageUsers`) - the GitHub OAuth allowlist:
+  - *Users* (`viewUsers` or `manageUsers`) - OAuth accounts and manually-added users:
     `viewUsers` alone gets a read-only list plus the audit log below it
     (who added/updated/removed which user, and what changed);
     `manageUsers` additionally lets you add a username with a permission

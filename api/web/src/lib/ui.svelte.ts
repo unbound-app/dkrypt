@@ -243,9 +243,9 @@ export function requestOpenBatch(): void {
   setActiveTab('home');
 }
 
-export type TabId = 'home' | 'keys' | 'logs' | 'insights' | 'docs' | 'settings';
+export type TabId = 'home' | 'billing' | 'keys' | 'logs' | 'insights' | 'docs' | 'settings';
 
-const VALID_TAB_IDS: TabId[] = ['home', 'keys', 'logs', 'insights', 'docs', 'settings'];
+const VALID_TAB_IDS: TabId[] = ['home', 'billing', 'keys', 'logs', 'insights', 'docs', 'settings'];
 
 function readInitialTab(): TabId {
   const fromUrl = getQueryParam('tab');

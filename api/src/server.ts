@@ -9,6 +9,7 @@ import { startJobWebhookDispatcher } from './jobWebhook.js';
 import { startKeyExpiryPoller } from './keyExpiryPoller.js';
 import { log, startLogFlusher } from './logger.js';
 import { authRouter } from './routes/auth.js';
+import { billingRouter, paddleWebhookRouter } from './routes/billing.js';
 import { dashboardRouter } from './routes/dashboard.js';
 import { decryptRouter } from './routes/decrypt.js';
 import { healthRouter } from './routes/health.js';
@@ -20,6 +21,8 @@ const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 
 
 const app = express();
 app.set('trust proxy', 'loopback');
+app.use('/v1/paddle/webhook', express.raw({ type: 'application/json', limit: '1mb' }));
+app.use(paddleWebhookRouter);
 // Default 100kb is too tight for a full-state backup restore once job history/audit log grow.
 app.use(express.json({ limit: '5mb' }));
 
@@ -56,6 +59,7 @@ app.get('/sw.js', (_req, res) => res.type('application/javascript').sendFile(pat
 app.use(healthRouter);
 app.use(decryptRouter);
 app.use(authRouter);
+app.use(billingRouter);
 app.use(dashboardRouter);
 
 app.use((_req, res) => {

@@ -11,10 +11,13 @@
     "dev": "bun --watch src/server.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "bun test",
+    "paddle:seed": "bun scripts/seed-paddle-catalog.ts",
+    "paddle:webhook": "bun scripts/configure-paddle-webhook.ts",
     "build:web": "cd web && bun install --frozen-lockfile && bun run build",
     "typecheck:web": "cd web && bun install --frozen-lockfile && bun run typecheck"
   },
   "dependencies": {
+    "@paddle/paddle-node-sdk": "^3.8.0",
     "adm-zip": "^0.6.0",
     "bplist-parser": "^0.3.2",
     "cron-parser": "^5",

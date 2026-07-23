@@ -64,6 +64,7 @@
   } from './lib/ui.svelte';
 
   import Docs from './tabs/Docs.svelte';
+  import Billing from './tabs/Billing.svelte';
   import Home from './tabs/Home.svelte';
   import StatusPanel from './tabs/home/StatusPanel.svelte';
   import Insights from './tabs/Insights.svelte';
@@ -152,10 +153,11 @@
 
   const TABS: { id: TabId; label: string; requires?: bigint[] }[] = [
     { id: 'home', label: 'Home' },
+    { id: 'billing', label: 'Plans' },
     {
       id: 'keys',
       label: 'API Keys',
-      requires: [PermissionFlag.requestDecrypt, PermissionFlag.viewApiKeys, PermissionFlag.approveApiKeys, PermissionFlag.revokeApiKeys],
+      requires: [PermissionFlag.accessApi, PermissionFlag.viewApiKeys, PermissionFlag.approveApiKeys, PermissionFlag.revokeApiKeys],
     },
     { id: 'logs', label: 'Logs', requires: [PermissionFlag.viewLogs] },
     { id: 'insights', label: 'Insights' },
@@ -216,7 +218,7 @@
     document.title = count > 0 ? `(${count}) ${BASE_TITLE}` : BASE_TITLE;
   });
 
-  const TAB_JUMP_KEYS: Record<string, TabId> = { h: 'home', k: 'keys', l: 'logs', i: 'insights', d: 'docs', s: 'settings' };
+  const TAB_JUMP_KEYS: Record<string, TabId> = { h: 'home', b: 'billing', k: 'keys', l: 'logs', i: 'insights', d: 'docs', s: 'settings' };
   let awaitingTabJump = $state(false);
   let tabJumpTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -354,14 +356,14 @@
           <DropdownMenu.Trigger
             class="border-border hover:border-accent relative h-8 w-8 shrink-0 cursor-pointer overflow-hidden rounded-full border"
             aria-label="Account menu"
-            title={sessionState.sub}
+            title={sessionState.displayName ?? sessionState.sub}
           >
-            {#if sessionState.sub === 'root'}
-              <div class="bg-panel-muted text-muted flex h-full w-full items-center justify-center text-[11px] font-medium">
-                {initials(sessionState.sub)}
-              </div>
+            {#if sessionState.avatarUrl}
+              <img src={sessionState.avatarUrl} alt="" class="h-full w-full object-cover" />
             {:else}
-              <img src="https://github.com/{sessionState.sub}.png?size=64" alt="" class="h-full w-full object-cover" />
+              <div class="bg-panel-muted text-muted flex h-full w-full items-center justify-center text-[11px] font-medium">
+                {initials(sessionState.displayName ?? sessionState.sub ?? '')}
+              </div>
             {/if}
             {#if otherOnlineUsers.length > 0}
               <span class="bg-ok border-panel absolute -right-0.5 -bottom-0.5 h-2.5 w-2.5 rounded-full border-2"></span>
@@ -373,7 +375,10 @@
               sideOffset={8}
               align="end"
             >
-              <div class="mb-1 truncate text-sm font-medium">{sessionState.sub}</div>
+              <div class="mb-1 truncate text-sm font-medium">{sessionState.displayName ?? sessionState.sub}</div>
+              {#if sessionState.displayName && sessionState.displayName !== sessionState.sub}
+                <div class="mb-1 truncate text-xs text-muted">{sessionState.sub}</div>
+              {/if}
               <div class="mb-3 text-xs text-muted">{permissionsSummary(sessionBits())}</div>
               {#if myGrantedPermissions.length > 0}
                 <div class="mb-3 flex flex-wrap gap-1.5">
@@ -489,6 +494,9 @@
 
           <div class:hidden={tabState.active !== 'home'}>
             <Home bind:this={homeRef} />
+          </div>
+          <div class:hidden={tabState.active !== 'billing'}>
+            <Billing />
           </div>
           <div class:hidden={tabState.active !== 'keys'}>
             <Keys />

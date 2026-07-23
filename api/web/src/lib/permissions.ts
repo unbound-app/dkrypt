@@ -19,6 +19,7 @@ export const PermissionFlag = {
   manageUsers: 1n << 13n,
   manageRoles: 1n << 14n,
   manageBackup: 1n << 15n,
+  accessApi: 1n << 16n,
 } as const;
 
 export type PermissionFlagKey = keyof typeof PermissionFlag;
@@ -66,12 +67,13 @@ export interface PermissionMeta {
 // here - Administrator is the one bit that shortcuts every check, everything else is independent.
 export const PERMISSION_META: PermissionMeta[] = [
   { key: 'administrator', label: 'Administrator', description: 'Bypasses every other permission check - full, unrestricted access', group: 'General' },
-  { key: 'requestDecrypt', label: 'Decrypt apps', description: 'Queue decrypts, request their own API key, cancel/prioritize their own jobs', group: 'General' },
+  { key: 'requestDecrypt', label: 'Decrypt apps', description: 'Queue decrypts and manage their own jobs', group: 'General' },
   { key: 'viewLogs', label: 'View logs', description: 'See the live scheduler/job log feed and webhook delivery log', group: 'General' },
   { key: 'viewApiKeys', label: 'View all keys', description: 'See every key across every user, not just their own', group: 'API Keys' },
   { key: 'approveApiKeys', label: 'Approve requests', description: 'Approve or deny pending key requests; their own requests auto-approve', group: 'API Keys' },
   { key: 'revokeApiKeys', label: "Revoke anyone's key", description: "Revoke or bulk-revoke any user's key, not just their own", group: 'API Keys' },
   { key: 'manageApiKeyLimits', label: 'Manage key limits', description: 'Bulk-extend expiry and set daily limits/priority on keys', group: 'API Keys' },
+  { key: 'accessApi', label: 'Use the API', description: 'Create personal API keys and use API endpoints', group: 'API Keys' },
   { key: 'manageWatches', label: 'Manage watches', description: 'Create, edit, and delete app watches', group: 'Scheduler & Dispatch' },
   { key: 'manageDevices', label: 'Manage devices', description: 'Create, edit, and delete devices in the decrypt pool', group: 'Scheduler & Dispatch' },
   { key: 'manageSchedulerSettings', label: 'Manage scheduler settings', description: 'Edit notification settings and the poll cron', group: 'Scheduler & Dispatch' },

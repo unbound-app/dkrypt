@@ -1,8 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, test } from 'bun:test';
+import {
+  getBillingCustomerId,
+  replaceBillingSnapshot,
+  upsertBillingCustomer,
+  upsertBillingSubscription,
+} from '../billing.js';
+import { getAuthProfile, replaceIdentitySnapshot, upsertAuthProfile } from '../identity.js';
 import { PermissionFlag, serializeBits } from '../permissions.js';
 import {
   addAllowedUser,
+  createApiKey,
   createDevice,
   createRole,
   createWatch,
@@ -20,9 +28,11 @@ import {
   recordDeviceHealthCheck,
   recordJobHistory,
   recordWebhookDelivery,
+  updateAllowedUserRoles,
   updateDevice,
   updateSettings,
   updateWatch,
+  verifyApiKey,
 } from './state.js';
 
 describe('exportBackup / importBackup', () => {
@@ -31,7 +41,7 @@ describe('exportBackup / importBackup', () => {
     addAllowedUser('roundtrip-user', [role.id], 'tester');
     const backup = exportBackup();
 
-    expect(backup.backupVersion).toBe(3);
+    expect(backup.backupVersion).toBe(4);
     expect(backup.allowedUsers.some((u) => u.username === 'roundtrip-user')).toBe(true);
 
     const result = importBackup(backup, 'tester');
@@ -78,6 +88,63 @@ describe('exportBackup / importBackup', () => {
     const reExported = exportBackup();
     const key = reExported.apiKeys.find((k) => k.id === 'k1');
     expect(key?.pendingReveal).toBeUndefined();
+  });
+
+  test('round-trips OAuth profiles and Paddle subscriptions', () => {
+    const userId = `github:${randomUUID()}`;
+    upsertAuthProfile({
+      userId,
+      provider: 'github',
+      providerId: randomUUID(),
+      username: 'billing-user',
+      displayName: 'Billing User',
+      email: 'billing@example.com',
+      updatedAt: new Date().toISOString(),
+    });
+    upsertBillingCustomer({
+      customerId: 'ctm_backup',
+      email: 'billing@example.com',
+      userId,
+      updatedAt: new Date().toISOString(),
+    });
+    upsertBillingSubscription({
+      subscriptionId: 'sub_backup',
+      customerId: 'ctm_backup',
+      userId,
+      status: 'active',
+      planId: 'api',
+      priceId: 'pri_backup',
+      productId: 'pro_backup',
+      occurredAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    const backup = exportBackup();
+
+    replaceIdentitySnapshot({ profiles: [] });
+    replaceBillingSnapshot({ customers: [], subscriptions: [] });
+    expect(importBackup(backup, 'tester').ok).toBe(true);
+
+    expect(getAuthProfile(userId)?.email).toBe('billing@example.com');
+    expect(getBillingCustomerId(userId)).toBe('ctm_backup');
+  });
+});
+
+describe('API subscription entitlement', () => {
+  test('rejects a stored user key until the owner has API permission', () => {
+    const username = `api-viewer-${randomUUID()}`;
+    addAllowedUser(username, [], 'tester');
+    const created = createApiKey('subscription-gated', username);
+
+    expect(verifyApiKey(created.key)).toBeUndefined();
+
+    const role = createRole({
+      name: `API ${randomUUID()}`,
+      color: '#5865f2',
+      permissions: serializeBits(PermissionFlag.accessApi),
+    }, 'tester');
+    updateAllowedUserRoles(username, [role.id], 'tester');
+
+    expect(verifyApiKey(created.key)).toMatchObject({ ownerId: username });
   });
 });
 

@@ -18,6 +18,7 @@ export const PermissionFlag = {
   manageUsers: 1n << 13n,
   manageRoles: 1n << 14n,
   manageBackup: 1n << 15n,
+  accessApi: 1n << 16n,
 } as const;
 
 export type PermissionFlagKey = keyof typeof PermissionFlag;

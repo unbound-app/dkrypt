@@ -21,14 +21,17 @@ export function permissionsSummary(bits: bigint): string {
 export interface SessionInfo {
   loggedIn: boolean;
   sub?: string;
+  displayName?: string;
+  avatarUrl?: string;
   // Decimal-string-serialized bigint bitfield, as returned by the API - parse with sessionBits().
   permissions?: string;
   expiresAt?: number;
   githubOauthEnabled: boolean;
+  discordOauthEnabled: boolean;
   publicBaseUrl?: string;
 }
 
-export const sessionState = $state<SessionInfo>({ loggedIn: false, githubOauthEnabled: false });
+export const sessionState = $state<SessionInfo>({ loggedIn: false, githubOauthEnabled: false, discordOauthEnabled: false });
 
 export function sessionBits(): bigint {
   return parseBits(sessionState.permissions);

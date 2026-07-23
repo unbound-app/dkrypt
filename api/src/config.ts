@@ -16,6 +16,8 @@ function optionalInt(name: string, fallback: number): number {
   return n;
 }
 
+const paddleEnvironment = optional('PADDLE_ENV', 'sandbox');
+
 export const config = {
   port: optionalInt('PORT', 8080),
   bindHost: optional('BIND_HOST', '127.0.0.1'),
@@ -29,6 +31,35 @@ export const config = {
 
   githubOauthClientId: optional('GITHUB_OAUTH_CLIENT_ID', ''),
   githubOauthClientSecret: optional('GITHUB_OAUTH_CLIENT_SECRET', ''),
+  discordOauthClientId: optional('DISCORD_OAUTH_CLIENT_ID', ''),
+  discordOauthClientSecret: optional('DISCORD_OAUTH_CLIENT_SECRET', ''),
+
+  paddleEnvironment,
+  paddleApiKey: optional(
+    'PADDLE_API_KEY',
+    optional(paddleEnvironment === 'production' ? 'PADDLE_LIVE_API_KEY' : 'PADDLE_SANDBOX_API_KEY', ''),
+  ),
+  paddleClientToken: optional(
+    'PADDLE_CLIENT_TOKEN',
+    paddleEnvironment === 'sandbox' ? 'test_929a0f86f31a93f2db87364231f' : '',
+  ),
+  paddleWebhookSecret: optional('PADDLE_WEBHOOK_SECRET', ''),
+  paddleRegularPriceId: optional(
+    'PADDLE_REGULAR_PRICE_ID',
+    paddleEnvironment === 'sandbox' ? 'pri_01ky77t7x5111gkpmyp9626s74' : '',
+  ),
+  paddlePriorityPriceId: optional(
+    'PADDLE_PRIORITY_PRICE_ID',
+    paddleEnvironment === 'sandbox' ? 'pri_01ky77t8gy88z082pan4jst041' : '',
+  ),
+  paddleApiPriceId: optional(
+    'PADDLE_API_PRICE_ID',
+    paddleEnvironment === 'sandbox' ? 'pri_01ky77t9ae7k5b2sgsmxxpb2fx' : '',
+  ),
+  paddlePriorityApiPriceId: optional(
+    'PADDLE_PRIORITY_API_PRICE_ID',
+    paddleEnvironment === 'sandbox' ? 'pri_01ky77t9ynrhz0je61qwvm15rg' : '',
+  ),
 
   ipadecryptBin: optional('IPADECRYPT_BIN', 'ipadecrypt'),
   outputDir: optional('OUTPUT_DIR', '/data/tmp'),
@@ -51,3 +82,10 @@ export const config = {
 };
 
 export const githubOauthEnabled = config.githubOauthClientId !== '' && config.githubOauthClientSecret !== '';
+export const discordOauthEnabled = config.discordOauthClientId !== '' && config.discordOauthClientSecret !== '';
+export const paddleEnabled =
+  config.paddleClientToken !== '' &&
+  config.paddleRegularPriceId !== '' &&
+  config.paddlePriorityPriceId !== '' &&
+  config.paddleApiPriceId !== '' &&
+  config.paddlePriorityApiPriceId !== '';

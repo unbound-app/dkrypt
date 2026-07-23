@@ -5,6 +5,7 @@
     "": {
       "name": "dkrypt-api",
       "dependencies": {
+        "@paddle/paddle-node-sdk": "^3.8.0",
         "adm-zip": "^0.6.0",
         "bplist-parser": "^0.3.2",
         "cron-parser": "^5",
@@ -26,6 +27,8 @@
     },
   },
   "packages": {
+    "@paddle/paddle-node-sdk": ["@paddle/paddle-node-sdk@3.8.0", "", {}, "sha512-4RS6AhZisloYaT2jiFgx9hwm22qwLRUx4EgIVb1gS3bS96lhDBQWq8BC1/Zow2i3CuxMkehXQUc3qKSBS77ozA=="],
+
     "@types/adm-zip": ["@types/adm-zip@0.5.8", "", { "dependencies": { "@types/node": "*" } }, "sha512-RVVH7QvZYbN+ihqZ4kX/dMiowf6o+Jk1fNwiSdx0NahBJLU787zkULhGhJM8mf/obmLGmgdMM0bXsQTmyfbR7Q=="],
 
     "@types/body-parser": ["@types/body-parser@1.19.6", "", { "dependencies": { "@types/connect": "*", "@types/node": "*" } }, "sha512-HLFeCYgz89uk22N5Qg3dvGvsv46B8GLvKKo1zKG4NybA8U2DiEO3w9lqGg29t/tfLRJpJ6iQxnVw4OnB7MoM9g=="],

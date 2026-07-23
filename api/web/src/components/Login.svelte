@@ -9,7 +9,7 @@
   let password = $state('');
   let loginError = $state('');
   let attemptsRemaining = $state<number | undefined>(undefined);
-  let detailsOpen = $state(!sessionState.githubOauthEnabled);
+  let detailsOpen = $state(!sessionState.githubOauthEnabled && !sessionState.discordOauthEnabled);
   let oauthError = $state('');
   let submitting = $state(false);
   let showPassword = $state(false);
@@ -21,9 +21,10 @@
 
   const OAUTH_ERROR_MESSAGES: Record<string, string | ((user: string | null) => string)> = {
     state_mismatch: 'Sign-in session expired - please try again.',
-    not_allowed: (user) => `GitHub user ${user ?? ''} isn't on the allowlist for this dashboard. Ask an admin to add you.`,
     disabled: "GitHub sign-in isn't configured.",
     failed: 'GitHub sign-in failed - check the server logs.',
+    discord_disabled: "Discord sign-in isn't configured.",
+    discord_failed: 'Discord sign-in failed - check the server logs.',
   };
 
   $effect(() => {
@@ -79,6 +80,17 @@
         Sign in with GitHub
       </a>
     {/if}
+    {#if sessionState.discordOauthEnabled}
+      <a
+        href="/v1/auth/discord/login"
+        class="mt-3 flex w-full items-center justify-center gap-2.5 rounded-md bg-[#5865f2] px-4 py-2.5 text-sm font-medium text-white no-underline hover:opacity-90"
+      >
+        <svg width="19" height="15" viewBox="0 0 127.14 96.36" fill="currentColor" aria-hidden="true">
+          <path d="M107.7 8.07A105.2 105.2 0 0 0 81.47 0a72.1 72.1 0 0 0-3.36 6.83 97.7 97.7 0 0 0-29.11 0A72.4 72.4 0 0 0 45.64 0 105.9 105.9 0 0 0 19.4 8.09C2.79 32.65-1.71 56.6.54 80.21a105.7 105.7 0 0 0 32.17 16.15 77.7 77.7 0 0 0 6.89-11.11 68.4 68.4 0 0 1-10.85-5.18c.91-.66 1.8-1.34 2.66-2a75.6 75.6 0 0 0 64.32 0c.87.71 1.76 1.39 2.66 2a68.7 68.7 0 0 1-10.87 5.19 77.1 77.1 0 0 0 6.89 11.1 105.3 105.3 0 0 0 32.17-16.15c2.64-27.38-4.51-51.11-18.88-72.14ZM42.45 65.69C32.82 65.69 24.89 56.8 24.89 45.9s7.75-19.79 17.56-19.79S60.18 35.08 60 45.9c0 10.9-7.75 19.79-17.55 19.79Zm42.24 0c-9.63 0-17.55-8.89-17.55-19.79s7.74-19.79 17.55-19.79 17.72 8.97 17.55 19.79c0 10.9-7.74 19.79-17.55 19.79Z" />
+        </svg>
+        Sign in with Discord
+      </a>
+    {/if}
     {#if oauthError}
       <div class="mt-3.5 text-[12.5px] text-err">{oauthError}</div>
     {/if}
@@ -87,7 +99,7 @@
       <summary
         class={cn(
           'flex cursor-pointer list-none items-center justify-center gap-1 pt-2.5 text-center text-[12.5px] text-muted select-none hover:text-text',
-          !sessionState.githubOauthEnabled && 'hidden',
+          !sessionState.githubOauthEnabled && !sessionState.discordOauthEnabled && 'hidden',
         )}
       >
         Sign in with root password

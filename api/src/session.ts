@@ -2,7 +2,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { NextFunction, Request, Response } from 'express';
 import { config } from './config.js';
 import { hasAnyPermission, parseBits, serializeBits } from './permissions.js';
-import { getSessionVersion } from './store/state.js';
+import { getSessionVersion, getUserEffectivePermissions } from './store/state.js';
 
 const COOKIE_NAME = 'session';
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
@@ -94,7 +94,10 @@ export function clearSessionCookie(res: Response): void {
 
 export function getSession(req: Request): Session | undefined {
   const value = parseCookies(req)[COOKIE_NAME];
-  return value ? deserialize(value) : undefined;
+  const session = value ? deserialize(value) : undefined;
+  if (!session || session.sub === 'root') return session;
+  const permissions = getUserEffectivePermissions(session.sub);
+  return permissions === undefined ? undefined : { ...session, permissions };
 }
 
 export function requireSession(req: Request, res: Response, next: NextFunction): void {

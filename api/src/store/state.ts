@@ -3,7 +3,20 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { generateVAPIDKeys, type VapidKeys } from 'web-push';
 import { config } from '../config.js';
+import {
+  exportBillingSnapshot,
+  getBillingEntitlements,
+  isBillingSnapshot,
+  replaceBillingSnapshot,
+  type BillingSnapshot,
+} from '../billing.js';
 import { emitHistoryAdded } from '../events.js';
+import {
+  exportIdentitySnapshot,
+  isIdentitySnapshot,
+  replaceIdentitySnapshot,
+  type IdentitySnapshot,
+} from '../identity.js';
 import type { TestFlightJobSource } from '../jobs/types.js';
 import { categorizeFailure } from '../util/failureCategory.js';
 import { combineBits, hasPermission, parseBits, PermissionFlag, serializeBits } from '../permissions.js';
@@ -269,7 +282,7 @@ export interface ShareLinkRecord {
 }
 
 interface PersistedState {
-  version: 7;
+  version: 8;
   apiKeys: ApiKeyRecord[];
   allowedUsers: AllowedUser[];
   roles: Role[];
@@ -303,7 +316,7 @@ const statePath = path.join(config.stateDir, 'state.json');
 
 function defaultState(): PersistedState {
   return {
-    version: 7,
+    version: 8,
     apiKeys: [],
     allowedUsers: [],
     roles: [seedDefaultRole(Date.now())],
@@ -438,7 +451,7 @@ function migratePermissionsV4(old: LegacyV4Permissions): LegacyPermissions {
 function legacyBooleansToBits(p: LegacyPermissions): bigint {
   if (Object.values(p).every(Boolean)) return PermissionFlag.administrator;
   let bits = 0n;
-  if (p.decrypt) bits |= PermissionFlag.requestDecrypt;
+  if (p.decrypt) bits |= PermissionFlag.requestDecrypt | PermissionFlag.accessApi;
   if (p.viewApiKeys) bits |= PermissionFlag.viewApiKeys;
   if (p.approveApiKeys) bits |= PermissionFlag.approveApiKeys | PermissionFlag.manageApiKeyLimits;
   if (p.revokeApiKeys) bits |= PermissionFlag.revokeApiKeys;
@@ -452,9 +465,10 @@ function legacyBooleansToBits(p: LegacyPermissions): bigint {
 }
 
 const PRESET_ROLE_BITS: Record<string, bigint> = {
-  Member: PermissionFlag.requestDecrypt,
+  Member: PermissionFlag.requestDecrypt | PermissionFlag.accessApi,
   'Key Manager': combineBits([
     PermissionFlag.requestDecrypt,
+    PermissionFlag.accessApi,
     PermissionFlag.viewApiKeys,
     PermissionFlag.approveApiKeys,
     PermissionFlag.manageApiKeyLimits,
@@ -462,6 +476,7 @@ const PRESET_ROLE_BITS: Record<string, bigint> = {
   ]),
   'Ops Admin': combineBits([
     PermissionFlag.requestDecrypt,
+    PermissionFlag.accessApi,
     PermissionFlag.manageWatches,
     PermissionFlag.manageDevices,
     PermissionFlag.manageSchedulerSettings,
@@ -478,7 +493,7 @@ function presetNameForBits(bits: bigint): string | undefined {
 // Every legacy branch below produces a v5-shaped object (as it always has); this hop carries any
 // of them the rest of the way to v6 so the multi-watch/multi-device/webhook-log additions only
 // need to be handled in one place. It's an intermediate shape, not the final persisted one - its
-// `allowedUsers` still carry the old boolean Permissions object, which migrateV6ToV7 below
+// `allowedUsers` still carry the old boolean Permissions object, which migrateV6ToV8 below
 // translates into role bitfields.
 function migrateV5ToV6(v5: Record<string, unknown>): Record<string, unknown> {
   const legacyHealthHistory = v5.deviceHealthHistory;
@@ -499,7 +514,7 @@ function migrateV5ToV6(v5: Record<string, unknown>): Record<string, unknown> {
 // Converts every allowedUsers[].permissions boolean flag set into a role assignment. Users with
 // an identical old flag set share a single generated role (named after the closest built-in
 // preset when one matches exactly) instead of getting one bespoke role each.
-function migrateV6ToV7(v6: Record<string, unknown>): PersistedState {
+function migrateV6ToV8(v6: Record<string, unknown>): PersistedState {
   const now = Date.now();
   const roles: Role[] = [seedDefaultRole(now)];
   const roleIdByBits = new Map<string, string>();
@@ -535,17 +550,31 @@ function migrateV6ToV7(v6: Record<string, unknown>): PersistedState {
     priority: u.priority as number | undefined,
   }));
 
-  return { ...defaultState(), ...v6, version: 7, roles, allowedUsers } as PersistedState;
+  return { ...defaultState(), ...v6, version: 8, roles, allowedUsers } as PersistedState;
+}
+
+function migrateV7ToV8(v7: Record<string, unknown>): PersistedState {
+  const roles = Array.isArray(v7.roles)
+    ? (v7.roles as Role[]).map((role) => {
+        const permissions = parseBits(role.permissions);
+        const migratedPermissions = hasPermission(permissions, PermissionFlag.requestDecrypt)
+          ? permissions | PermissionFlag.accessApi
+          : permissions;
+        return { ...role, permissions: serializeBits(migratedPermissions) };
+      })
+    : [seedDefaultRole(Date.now())];
+  return { ...defaultState(), ...v7, version: 8, roles } as PersistedState;
 }
 
 function migrate(raw: Record<string, unknown>): PersistedState {
-  if (raw.version === 7) return { ...defaultState(), ...raw } as PersistedState;
-  if (raw.version === 6) return migrateV6ToV7(raw);
-  if (raw.version === 5) return migrateV6ToV7(migrateV5ToV6(raw));
+  if (raw.version === 8) return { ...defaultState(), ...raw } as PersistedState;
+  if (raw.version === 7) return migrateV7ToV8(raw);
+  if (raw.version === 6) return migrateV6ToV8(raw);
+  if (raw.version === 5) return migrateV6ToV8(migrateV5ToV6(raw));
 
   if (raw.version === 4) {
     const v4Users = Array.isArray(raw.allowedUsers) ? (raw.allowedUsers as Record<string, unknown>[]) : [];
-    return migrateV6ToV7(
+    return migrateV6ToV8(
       migrateV5ToV6({
         ...raw,
         version: 5,
@@ -560,7 +589,7 @@ function migrate(raw: Record<string, unknown>): PersistedState {
 
   if (raw.version === 3) {
     const v3Users = Array.isArray(raw.allowedUsers) ? (raw.allowedUsers as Record<string, unknown>[]) : [];
-    return migrateV6ToV7(
+    return migrateV6ToV8(
       migrateV5ToV6({
         ...raw,
         version: 5,
@@ -575,7 +604,7 @@ function migrate(raw: Record<string, unknown>): PersistedState {
 
   if (raw.version === 2) {
     const legacyUsers = Array.isArray(raw.allowedUsers) ? (raw.allowedUsers as Record<string, unknown>[]) : [];
-    return migrateV6ToV7(
+    return migrateV6ToV8(
       migrateV5ToV6({
         ...raw,
         version: 5,
@@ -589,7 +618,7 @@ function migrate(raw: Record<string, unknown>): PersistedState {
   }
 
   const legacyKeys = Array.isArray(raw.apiKeys) ? (raw.apiKeys as Record<string, unknown>[]) : [];
-  return migrateV6ToV7(
+  return migrateV6ToV8(
     migrateV5ToV6({
       apiKeys: legacyKeys.map((k) => ({
         id: k.id as string,
@@ -681,7 +710,11 @@ export function getRole(id: string): Role | undefined {
 export function getUserEffectivePermissions(username: string): bigint | undefined {
   const user = state.allowedUsers.find((u) => u.username === username.toLowerCase());
   if (!user) return undefined;
-  return effectiveBitsForRoleIds(user.roleIds, state.roles);
+  const billing = getBillingEntitlements(user.username);
+  const billingBits =
+    (billing.decrypt ? PermissionFlag.requestDecrypt : 0n) |
+    (billing.api ? PermissionFlag.accessApi : 0n);
+  return effectiveBitsForRoleIds(user.roleIds, state.roles) | billingBits;
 }
 
 export function getSessionVersion(username: string): number {
@@ -1122,12 +1155,22 @@ export function verifyApiKey(candidate: string): ApiKeyAuthResult | undefined | 
   });
   if (!record) return undefined;
   if (record.expiresAt && Date.now() > record.expiresAt) return undefined;
+  if (record.ownerId !== 'root') {
+    const permissions = getUserEffectivePermissions(record.ownerId);
+    if (permissions === undefined || !hasPermission(permissions, PermissionFlag.accessApi)) return undefined;
+  }
   if (record.dailyLimit && todayUsageCount(record.id) >= record.dailyLimit) return 'rate-limited';
 
   record.lastUsedAt = Date.now();
   recordApiKeyUsage(record.id);
   dirty = true;
-  return { allowedBundleIds: record.allowedBundleIds, ownerId: record.ownerId, priority: record.priority ?? 0, keyId: record.id };
+  const billingPriority = record.ownerId === 'root' ? 0 : getBillingEntitlements(record.ownerId).priority;
+  return {
+    allowedBundleIds: record.allowedBundleIds,
+    ownerId: record.ownerId,
+    priority: billingPriority > 0 ? Math.max(record.priority ?? 0, billingPriority) : (record.priority ?? 0),
+    keyId: record.id,
+  };
 }
 
 const MAX_TRACKED_BUNDLES_PER_KEY = 100;
@@ -1159,7 +1202,9 @@ export function getApiKeyBundleUsage(id: string, limit = 10): { bundleId: string
 // root always sits at the neutral default since it isn't a row in allowedUsers.
 export function getUserPriority(username: string): number {
   if (username === 'root') return 0;
-  return state.allowedUsers.find((u) => u.username === username.toLowerCase())?.priority ?? 0;
+  const manualPriority = state.allowedUsers.find((u) => u.username === username.toLowerCase())?.priority ?? 0;
+  const billingPriority = getBillingEntitlements(username.toLowerCase()).priority;
+  return billingPriority > 0 ? Math.max(manualPriority, billingPriority) : manualPriority;
 }
 
 const MIN_PRIORITY = -5;
@@ -1960,7 +2005,7 @@ export function updateUserPrefs(username: string, patch: Partial<UserPrefs>): Us
   return updated;
 }
 
-const BACKUP_VERSION = 3;
+const BACKUP_VERSION = 4;
 
 export interface BackupPayload {
   backupVersion: typeof BACKUP_VERSION;
@@ -1980,6 +2025,8 @@ export interface BackupPayload {
   rootSessionVersion: number;
   apiKeyUsage: Record<string, ApiKeyUsageBucket[]>;
   apiKeyBundleUsage: Record<string, Record<string, number>>;
+  billing: BillingSnapshot;
+  identities: IdentitySnapshot;
 }
 
 // The API key `hash` is a one-way SHA-256, safe to carry in a backup (restoring it is what keeps
@@ -2004,6 +2051,8 @@ export function exportBackup(): BackupPayload {
     rootSessionVersion: state.rootSessionVersion,
     apiKeyUsage: state.apiKeyUsage,
     apiKeyBundleUsage: state.apiKeyBundleUsage,
+    billing: exportBillingSnapshot(),
+    identities: exportIdentitySnapshot(),
   };
 }
 
@@ -2102,14 +2151,16 @@ interface ValidatedBackupPayload {
   rootSessionVersion: number;
   apiKeyUsage: Record<string, ApiKeyUsageBucket[]>;
   apiKeyBundleUsage?: Record<string, Record<string, number>>;
+  billing: BillingSnapshot;
+  identities: IdentitySnapshot;
 }
 
 function validateBackupPayload(raw: unknown): { ok: true; payload: ValidatedBackupPayload } | { ok: false; error: string } {
   if (typeof raw !== 'object' || raw === null) return { ok: false, error: 'not a valid backup file' };
   const b = raw as Record<string, unknown>;
 
-  if (b.backupVersion !== BACKUP_VERSION) {
-    return { ok: false, error: `unsupported backup version (expected ${BACKUP_VERSION})` };
+  if (b.backupVersion !== 3 && b.backupVersion !== BACKUP_VERSION) {
+    return { ok: false, error: `unsupported backup version (expected 3 or ${BACKUP_VERSION})` };
   }
   if (!Array.isArray(b.allowedUsers) || !b.allowedUsers.every(isAllowedUserShape)) {
     return { ok: false, error: 'allowedUsers is missing or malformed' };
@@ -2154,6 +2205,12 @@ function validateBackupPayload(raw: unknown): { ok: true; payload: ValidatedBack
   if (typeof b.rootSessionVersion !== 'number') {
     return { ok: false, error: 'rootSessionVersion is missing or malformed' };
   }
+  if (b.backupVersion === BACKUP_VERSION && !isBillingSnapshot(b.billing)) {
+    return { ok: false, error: 'billing is missing or malformed' };
+  }
+  if (b.backupVersion === BACKUP_VERSION && !isIdentitySnapshot(b.identities)) {
+    return { ok: false, error: 'identities is missing or malformed' };
+  }
 
   return {
     ok: true,
@@ -2178,6 +2235,8 @@ function validateBackupPayload(raw: unknown): { ok: true; payload: ValidatedBack
         typeof b.apiKeyBundleUsage === 'object' && b.apiKeyBundleUsage !== null
           ? (b.apiKeyBundleUsage as Record<string, Record<string, number>>)
           : undefined,
+      billing: isBillingSnapshot(b.billing) ? b.billing : { customers: [], subscriptions: [] },
+      identities: isIdentitySnapshot(b.identities) ? b.identities : { profiles: [] },
     },
   };
 }
@@ -2264,6 +2323,8 @@ export function importBackup(raw: unknown, actor: string): ImportBackupResult {
   state.rootSessionVersion = b.rootSessionVersion;
   if (b.lastSchedulerRunAt) state.lastSchedulerRunAt = b.lastSchedulerRunAt;
   state.apiKeyBundleUsage = b.apiKeyBundleUsage ?? {};
+  replaceBillingSnapshot(b.billing);
+  replaceIdentitySnapshot(b.identities);
 
   persistNow();
   recordAudit(
