@@ -233,7 +233,7 @@ export function prioritizeQueuedJob(id: string): boolean {
 }
 
 // TestFlight jobs are pinned to the primary device: installBuild() installs the app on one
-// specific physical device via the tfauto bridge, so decrypting from a different device would
+// specific physical device via the autoinstall bridge, so decrypting from a different device would
 // either fail outright or silently grab whatever unrelated app happens to be installed there.
 // App Store jobs have no such constraint and can go to any enabled device.
 function isDispatchable(job: Job, device: DeviceRecord, primary: DeviceRecord): boolean {

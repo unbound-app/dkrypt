@@ -191,12 +191,12 @@ async function sendBridgeRequestRawTo(
       const raw = await readRemoteFileIfExists(conn, responsePath);
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (parsed.ok === false) throw new Error(`tfauto bridge error: ${parsed.error}`);
+        if (parsed.ok === false) throw new Error(`autoinstall bridge error: ${parsed.error}`);
         return parsed;
       }
       await new Promise((r) => setTimeout(r, 500));
     }
-    throw new Error(`tfauto bridge request timed out: ${JSON.stringify(request)}`);
+    throw new Error(`autoinstall bridge request timed out: ${JSON.stringify(request)}`);
   });
 }
 

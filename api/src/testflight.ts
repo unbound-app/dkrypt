@@ -9,7 +9,7 @@ import {
 } from './idevice.js';
 import { getPrimaryDevice } from './store/state.js';
 
-// TestFlight installs go through the tfauto SpringBoard bridge, which only ever targets one
+// TestFlight installs go through the autoinstall SpringBoard bridge, which only ever targets one
 // physical device at a time - not fanned out across the device pool. It always resolves to
 // whichever device is currently flagged primary.
 function primaryRootDir(): string {
@@ -38,7 +38,7 @@ export interface TFBuild {
 async function launchTestFlight(conn: Client): Promise<void> {
   const response = await sendSpringBoardBridgeRequest(conn, { action: 'launch_app', bundleId: 'com.apple.TestFlight' });
   if (response?.launchResult !== 0) {
-    throw new Error(`tfauto SpringBoard launch_app failed: ${JSON.stringify(response)}`);
+    throw new Error(`autoinstall SpringBoard launch_app failed: ${JSON.stringify(response)}`);
   }
 }
 
@@ -51,7 +51,7 @@ async function waitForBridgeReady(conn: Client, timeoutMs = 20_000): Promise<voi
     } catch {}
     await new Promise((r) => setTimeout(r, 1_000));
   }
-  throw new Error('tfauto bridge did not become ready within timeout');
+  throw new Error('autoinstall bridge did not become ready within timeout');
 }
 
 export async function ensureTestFlightRunning(): Promise<void> {
@@ -60,7 +60,7 @@ export async function ensureTestFlightRunning(): Promise<void> {
       log.info('TestFlight already running');
       return;
     }
-    log.info('launching TestFlight autonomously via tfauto SpringBoard bridge');
+    log.info('launching TestFlight autonomously via autoinstall SpringBoard bridge');
     await launchTestFlight(conn);
     await new Promise((r) => setTimeout(r, 3_000));
     await waitForBridgeReady(conn);

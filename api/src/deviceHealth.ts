@@ -137,8 +137,8 @@ const HEALTH_CACHE_TTL_MS = 20_000;
 const healthCache = new Map<string, { at: number; value: DeviceHealth }>();
 
 // The SpringBoard bridge (screen status, dark mode, TestFlight bridge reachability) is only
-// queried for the primary device - tfauto only ever targets one physical device at a time, so
-// asking a non-primary device for bridge status would just measure whether tfauto happens to
+// queried for the primary device - autoinstall only ever targets one physical device at a time, so
+// asking a non-primary device for bridge status would just measure whether autoinstall happens to
 // also be installed there, not anything meaningful about that device's own health.
 async function computeDeviceHealth(device: DeviceRecord, isPrimary: boolean): Promise<DeviceHealth> {
   try {
@@ -355,7 +355,7 @@ async function checkTestFlightBridgeAlert(device: DeviceRecord, reachable: boole
   s.bridgeDownAlertSentAt = Date.now();
   await notify('testFlightBridgeDown', {
     title: 'TestFlight bridge unresponsive',
-    description: `The tfauto SpringBoard bridge on ${device.name} has stopped responding for at least ${settings.testFlightBridgeAlertMinutes} minutes - TestFlight installs and the scheduler's TestFlight watch can't run until it recovers (a respring or tweak crash usually fixes it).`,
+    description: `The autoinstall SpringBoard bridge on ${device.name} has stopped responding for at least ${settings.testFlightBridgeAlertMinutes} minutes - TestFlight installs and the scheduler's TestFlight watch can't run until it recovers (a respring or tweak crash usually fixes it).`,
     color: EMBED_COLOR.warn,
   });
 }
