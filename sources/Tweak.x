@@ -50,8 +50,8 @@
 - (BOOL)setProperty:(id)value forKey:(NSString *)key;
 @end
 
-static void tfautoLog(NSString *line) {
-    NSString *path = @"/tmp/tfauto.log";
+static void autoinstallLog(NSString *line) {
+    NSString *path = @"/tmp/autoinstall.log";
     NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
     formatter.dateFormat = @"yyyy-MM-dd HH:mm:ss.SSS";
     NSString *entry = [NSString stringWithFormat:@"[%@] %@\n", [formatter stringFromDate:[NSDate date]], line];
@@ -81,9 +81,9 @@ static BOOL isSpringBoard(void) {
 
 #pragma mark - SpringBoard side: SSH-toggleable dark-but-awake state + launch-on-demand
 
-static NSString * const kDarkFlagPath = @"/var/mobile/Library/Preferences/dev.adrian.tfauto-dark.flag";
-static NSString * const kSBRequestPath = @"/tmp/tfauto-sb-request.json";
-static NSString * const kSBResponsePath = @"/tmp/tfauto-sb-response.json";
+static NSString * const kDarkFlagPath = @"/var/mobile/Library/Preferences/dev.adrian.autoinstall-dark.flag";
+static NSString * const kSBRequestPath = @"/tmp/autoinstall-sb-request.json";
+static NSString * const kSBResponsePath = @"/tmp/autoinstall-sb-response.json";
 
 typedef int (*SBSLaunchFn)(CFStringRef, unsigned char);
 
@@ -116,11 +116,11 @@ static id<SBBacklightControllerProtocol> backlightController(void) {
 static BOOL setBrightnessFactor(NSNumber *factor) {
     id<BrightnessSystemClientProtocol> bsc = brightnessClient();
     if (!bsc) {
-        tfautoLog(@"setBrightnessFactor: _brightnessSystemClient not found");
+        autoinstallLog(@"setBrightnessFactor: _brightnessSystemClient not found");
         return NO;
     }
     BOOL result = [bsc setProperty:factor forKey:@"DisplayBrightnessFactor"];
-    tfautoLog([NSString stringWithFormat:@"setBrightnessFactor: DisplayBrightnessFactor=%@ result=%d", factor, result]);
+    autoinstallLog([NSString stringWithFormat:@"setBrightnessFactor: DisplayBrightnessFactor=%@ result=%d", factor, result]);
     return result;
 }
 
@@ -128,9 +128,9 @@ static void applyDark(void) {
     @try {
         [backlightController() preventIdleSleep];
         setBrightnessFactor(@(0));
-        tfautoLog(@"applyDark: preventIdleSleep + DisplayBrightnessFactor=0");
+        autoinstallLog(@"applyDark: preventIdleSleep + DisplayBrightnessFactor=0");
     } @catch (NSException *exception) {
-        tfautoLog([NSString stringWithFormat:@"applyDark: EXCEPTION name=%@ reason=%@", exception.name, exception.reason]);
+        autoinstallLog([NSString stringWithFormat:@"applyDark: EXCEPTION name=%@ reason=%@", exception.name, exception.reason]);
     }
 }
 
@@ -138,9 +138,9 @@ static void removeDark(void) {
     @try {
         setBrightnessFactor(@(1));
         [backlightController() allowIdleSleep];
-        tfautoLog(@"removeDark: DisplayBrightnessFactor=1 + allowIdleSleep");
+        autoinstallLog(@"removeDark: DisplayBrightnessFactor=1 + allowIdleSleep");
     } @catch (NSException *exception) {
-        tfautoLog([NSString stringWithFormat:@"removeDark: EXCEPTION name=%@ reason=%@", exception.name, exception.reason]);
+        autoinstallLog([NSString stringWithFormat:@"removeDark: EXCEPTION name=%@ reason=%@", exception.name, exception.reason]);
     }
 }
 
@@ -173,7 +173,7 @@ static NSDictionary *screenStatusDict(void) {
 
 static void handleSpringBoardRequest(NSDictionary *req) {
     NSString *action = req[@"action"];
-    tfautoLog([NSString stringWithFormat:@"sb-bridge: handling action=%@ req=%@", action, req]);
+    autoinstallLog([NSString stringWithFormat:@"sb-bridge: handling action=%@ req=%@", action, req]);
 
     @try {
         if ([action isEqualToString:@"dark_on"]) {
@@ -198,7 +198,7 @@ static void handleSpringBoardRequest(NSDictionary *req) {
             }
             if (isDarkFlagSet()) applyDark();
             int rc = sbsLaunchApplication(bundleId);
-            tfautoLog([NSString stringWithFormat:@"launch_app: SBSLaunchApplicationWithIdentifier(%@)=%d", bundleId, rc]);
+            autoinstallLog([NSString stringWithFormat:@"launch_app: SBSLaunchApplicationWithIdentifier(%@)=%d", bundleId, rc]);
             NSMutableDictionary *resp = [screenStatusDict() mutableCopy];
             resp[@"ok"] = rc == 0 ? @YES : @NO;
             resp[@"launchResult"] = @(rc);
@@ -213,7 +213,7 @@ static void handleSpringBoardRequest(NSDictionary *req) {
 
         writeJSONFile(kSBResponsePath, @{@"ok": @NO, @"error": [NSString stringWithFormat:@"unknown action: %@", action]});
     } @catch (NSException *exception) {
-        tfautoLog([NSString stringWithFormat:@"sb-bridge: EXCEPTION name=%@ reason=%@", exception.name, exception.reason]);
+        autoinstallLog([NSString stringWithFormat:@"sb-bridge: EXCEPTION name=%@ reason=%@", exception.name, exception.reason]);
         writeJSONFile(kSBResponsePath, @{@"ok": @NO, @"error": [NSString stringWithFormat:@"exception: %@ %@", exception.name, exception.reason]});
     }
 }
@@ -222,7 +222,7 @@ static dispatch_queue_t gSBBridgeQueue = nil;
 static dispatch_source_t gSBBridgeTimer = nil;
 
 static void startSpringBoardSide(void) {
-    gSBBridgeQueue = dispatch_queue_create("dev.adrian.tfauto.sb-bridge", DISPATCH_QUEUE_SERIAL);
+    gSBBridgeQueue = dispatch_queue_create("dev.adrian.autoinstall.sb-bridge", DISPATCH_QUEUE_SERIAL);
     gSBBridgeTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, gSBBridgeQueue);
     dispatch_source_set_timer(gSBBridgeTimer, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), NSEC_PER_SEC, NSEC_PER_MSEC * 200);
     dispatch_source_set_event_handler(gSBBridgeTimer, ^{
@@ -236,17 +236,17 @@ static void startSpringBoardSide(void) {
         NSError *err = nil;
         NSDictionary *req = [NSJSONSerialization JSONObjectWithData:data options:0 error:&err];
         if (!req) {
-            tfautoLog([NSString stringWithFormat:@"sb-bridge: bad request json: %@", err]);
+            autoinstallLog([NSString stringWithFormat:@"sb-bridge: bad request json: %@", err]);
             return;
         }
         handleSpringBoardRequest(req);
     });
     dispatch_resume(gSBBridgeTimer);
-    tfautoLog(@"sb-bridge: request-file watcher started");
+    autoinstallLog(@"sb-bridge: request-file watcher started");
 
     if (isDarkFlagSet()) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(15 * NSEC_PER_SEC)), gSBBridgeQueue, ^{
-            tfautoLog(@"sb: dark flag set, re-applying dark state (deferred 15s past boot)");
+            autoinstallLog(@"sb: dark flag set, re-applying dark state (deferred 15s past boot)");
             applyDark();
         });
     }
@@ -260,18 +260,18 @@ static UIBackgroundTaskIdentifier gBackgroundTaskId = 0;
 
 static void beginBackgroundKeepAlive(void) {
     if (gBackgroundTaskId != UIBackgroundTaskInvalid) return;
-    gBackgroundTaskId = [[UIApplication sharedApplication] beginBackgroundTaskWithName:@"tfauto-install" expirationHandler:^{
-        tfautoLog([NSString stringWithFormat:@"background task %lu expired", (unsigned long)gBackgroundTaskId]);
+    gBackgroundTaskId = [[UIApplication sharedApplication] beginBackgroundTaskWithName:@"autoinstall-install" expirationHandler:^{
+        autoinstallLog([NSString stringWithFormat:@"background task %lu expired", (unsigned long)gBackgroundTaskId]);
         [[UIApplication sharedApplication] endBackgroundTask:gBackgroundTaskId];
         gBackgroundTaskId = UIBackgroundTaskInvalid;
     }];
-    tfautoLog([NSString stringWithFormat:@"began background task id=%lu remaining=%f", (unsigned long)gBackgroundTaskId,
+    autoinstallLog([NSString stringWithFormat:@"began background task id=%lu remaining=%f", (unsigned long)gBackgroundTaskId,
         [[UIApplication sharedApplication] backgroundTimeRemaining]]);
 }
 
 static void endBackgroundKeepAlive(void) {
     if (gBackgroundTaskId == UIBackgroundTaskInvalid) return;
-    tfautoLog([NSString stringWithFormat:@"ending background task id=%lu", (unsigned long)gBackgroundTaskId]);
+    autoinstallLog([NSString stringWithFormat:@"ending background task id=%lu", (unsigned long)gBackgroundTaskId]);
     [[UIApplication sharedApplication] endBackgroundTask:gBackgroundTaskId];
     gBackgroundTaskId = UIBackgroundTaskInvalid;
 }
@@ -279,7 +279,7 @@ static void endBackgroundKeepAlive(void) {
 %hook TFAppBuild
 
 + (id)buildFromDictionary:(NSDictionary *)dict {
-    tfautoLog([NSString stringWithFormat:@"+[TFAppBuild buildFromDictionary:] %@", dict]);
+    autoinstallLog([NSString stringWithFormat:@"+[TFAppBuild buildFromDictionary:] %@", dict]);
     return %orig;
 }
 
@@ -290,19 +290,19 @@ static void endBackgroundKeepAlive(void) {
 - (id)initWithNetworkManager:(id)networkManager nanoDeviceConnection:(id)nanoDeviceConnection {
     id result = %orig;
     gCatalogManager = result;
-    tfautoLog([NSString stringWithFormat:@"stashed TFAppCatalogManager (initWithNetworkManager:) %@", result]);
+    autoinstallLog([NSString stringWithFormat:@"stashed TFAppCatalogManager (initWithNetworkManager:) %@", result]);
     return result;
 }
 
 - (id)initWithAppCatalog:(id)appCatalog networkManager:(id)networkManager nanoDeviceConnection:(id)nanoDeviceConnection {
     id result = %orig;
     gCatalogManager = result;
-    tfautoLog([NSString stringWithFormat:@"stashed TFAppCatalogManager (initWithAppCatalog:) %@", result]);
+    autoinstallLog([NSString stringWithFormat:@"stashed TFAppCatalogManager (initWithAppCatalog:) %@", result]);
     return result;
 }
 
 - (id)getAllAppsWithRefresh:(BOOL)refresh completionBlock:(id)block {
-    tfautoLog([NSString stringWithFormat:@"-[TFAppCatalogManager getAllAppsWithRefresh:] refresh=%d", refresh]);
+    autoinstallLog([NSString stringWithFormat:@"-[TFAppCatalogManager getAllAppsWithRefresh:] refresh=%d", refresh]);
     return %orig;
 }
 
@@ -313,19 +313,19 @@ static void endBackgroundKeepAlive(void) {
 + (id)installerWithInstallManager:(id)installManager nanoInstallManager:(id)nanoInstallManager {
     id result = %orig;
     gInstaller = result;
-    tfautoLog([NSString stringWithFormat:@"stashed TFAppInstaller (installerWithInstallManager:) %@", result]);
+    autoinstallLog([NSString stringWithFormat:@"stashed TFAppInstaller (installerWithInstallManager:) %@", result]);
     return result;
 }
 
 - (id)initWithInstallManager:(id)installManager nanoInstallManager:(id)nanoInstallManager {
     id result = %orig;
     gInstaller = result;
-    tfautoLog([NSString stringWithFormat:@"stashed TFAppInstaller (initWithInstallManager:) %@", result]);
+    autoinstallLog([NSString stringWithFormat:@"stashed TFAppInstaller (initWithInstallManager:) %@", result]);
     return result;
 }
 
 - (id)requestInstall:(id)installable installationMode:(NSInteger)mode alertDelegate:(id)delegate withBackgroundTaskMaster:(id)master completionBlock:(id)block {
-    tfautoLog([NSString stringWithFormat:@"-[TFAppInstaller requestInstall:] mode=%ld installable=%@", (long)mode, installable]);
+    autoinstallLog([NSString stringWithFormat:@"-[TFAppInstaller requestInstall:] mode=%ld installable=%@", (long)mode, installable]);
     return %orig;
 }
 
@@ -335,7 +335,7 @@ static void endBackgroundKeepAlive(void) {
 
 - (id)initWithApp:(id)app build:(id)build buildGroup:(id)buildGroup preinstalledState:(NSInteger)a parentInstalledState:(NSInteger)b canAutoUpdate:(BOOL)c allowReinstallSameVersion:(BOOL)d variant:(id)variant {
     id result = %orig;
-    tfautoLog([NSString stringWithFormat:@"-[TFInstallableBundle initWithApp:build:buildGroup:...variant:] app=%@ build=%@ buildGroup=%@ variant=%@ -> %@",
+    autoinstallLog([NSString stringWithFormat:@"-[TFInstallableBundle initWithApp:build:buildGroup:...variant:] app=%@ build=%@ buildGroup=%@ variant=%@ -> %@",
         app, build, buildGroup, variant, result]);
     return result;
 }
@@ -347,30 +347,30 @@ static void endBackgroundKeepAlive(void) {
 - (id)initWithURLResponse:(NSURLResponse *)response data:(NSData *)data error:(NSError *)error {
     NSString *body = data ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : nil;
     if (body.length > 6000) body = [body substringToIndex:6000];
-    tfautoLog([NSString stringWithFormat:@"-[TFNetworkManagerResponse initWithURLResponse:data:error:] url=%@ error=%@\nbody=%@",
+    autoinstallLog([NSString stringWithFormat:@"-[TFNetworkManagerResponse initWithURLResponse:data:error:] url=%@ error=%@\nbody=%@",
         response.URL, error, body]);
     return %orig;
 }
 
 %end
 
-static NSString * const kRequestPath = @"/tmp/tfauto-request.json";
-static NSString * const kResponsePath = @"/tmp/tfauto-response.json";
-static NSString * const kInstallStatusPath = @"/tmp/tfauto-install-status.json";
+static NSString * const kRequestPath = @"/tmp/autoinstall-request.json";
+static NSString * const kResponsePath = @"/tmp/autoinstall-response.json";
+static NSString * const kInstallStatusPath = @"/tmp/autoinstall-install-status.json";
 
 static void fetchJSON(NSString *urlString, void (^completion)(id json, NSString *error)) {
     NSURL *url = [NSURL URLWithString:urlString];
     Class<TFNetworkManagerProtocol> cls = (Class<TFNetworkManagerProtocol>)objc_getClass("TFNetworkManager");
     id<TFNetworkManagerProtocol> manager = [cls shared];
-    tfautoLog([NSString stringWithFormat:@"fetchJSON: cls=%@ manager=%@ url=%@", cls, manager, url]);
+    autoinstallLog([NSString stringWithFormat:@"fetchJSON: cls=%@ manager=%@ url=%@", cls, manager, url]);
 
     id enqueued = [manager enqueueDataTaskWithURL:url completionHandler:^(id response) {
-        tfautoLog([NSString stringWithFormat:@"fetchJSON: completion fired, response=%@", response]);
+        autoinstallLog([NSString stringWithFormat:@"fetchJSON: completion fired, response=%@", response]);
         @try {
             id<TFNetworkManagerResponseProtocol> typedResponse = response;
             NSError *error = [typedResponse error];
             id data = [typedResponse data];
-            tfautoLog([NSString stringWithFormat:@"fetchJSON: error=%@ data=%@", error, data]);
+            autoinstallLog([NSString stringWithFormat:@"fetchJSON: error=%@ data=%@", error, data]);
             if (error) {
                 completion(nil, error.localizedDescription);
                 return;
@@ -381,11 +381,11 @@ static void fetchJSON(NSString *urlString, void (^completion)(id json, NSString 
             }
             completion(data, nil);
         } @catch (NSException *exception) {
-            tfautoLog([NSString stringWithFormat:@"fetchJSON: EXCEPTION name=%@ reason=%@", exception.name, exception.reason]);
+            autoinstallLog([NSString stringWithFormat:@"fetchJSON: EXCEPTION name=%@ reason=%@", exception.name, exception.reason]);
             completion(nil, [NSString stringWithFormat:@"exception: %@", exception.reason]);
         }
     }];
-    tfautoLog([NSString stringWithFormat:@"fetchJSON: enqueued=%@", enqueued]);
+    autoinstallLog([NSString stringWithFormat:@"fetchJSON: enqueued=%@", enqueued]);
 }
 
 static NSString *describeClass(NSString *className) {
@@ -414,12 +414,12 @@ static NSString *describeClass(NSString *className) {
 
 static void handleRequest(NSDictionary *req) {
     NSString *action = req[@"action"];
-    tfautoLog([NSString stringWithFormat:@"bridge: handling action=%@ req=%@", action, req]);
+    autoinstallLog([NSString stringWithFormat:@"bridge: handling action=%@ req=%@", action, req]);
 
     if ([action isEqualToString:@"probe"]) {
         NSString *className = req[@"class"];
         NSString *desc = describeClass(className);
-        tfautoLog(desc);
+        autoinstallLog(desc);
         writeJSONFile(kResponsePath, @{@"ok": @YES, @"description": desc});
         return;
     }
@@ -432,7 +432,7 @@ static void handleRequest(NSDictionary *req) {
             return;
         }
         NSString *desc = describeClass(NSStringFromClass([obj class]));
-        tfautoLog(desc);
+        autoinstallLog(desc);
         writeJSONFile(kResponsePath, @{@"ok": @YES, @"description": desc, @"class": NSStringFromClass([obj class])});
         return;
     }
@@ -485,19 +485,19 @@ static void handleRequest(NSDictionary *req) {
                 return;
             }
 
-            tfautoLog([NSString stringWithFormat:@"install: app=%@ build=%@ installable=%@", app, build, installable]);
+            autoinstallLog([NSString stringWithFormat:@"install: app=%@ build=%@ installable=%@", app, build, installable]);
 
             void (^completion)(void) = ^{
-                tfautoLog(@"install: completionBlock fired");
+                autoinstallLog(@"install: completionBlock fired");
                 writeJSONFile(kInstallStatusPath, @{@"ok": @YES});
             };
 
             id<TFAppInstallerProtocol> installer = gInstaller;
             id result = [installer requestInstall:installable installationMode:0 alertDelegate:nil withBackgroundTaskMaster:nil completionBlock:completion];
-            tfautoLog([NSString stringWithFormat:@"install: requestInstall: returned %@", result]);
+            autoinstallLog([NSString stringWithFormat:@"install: requestInstall: returned %@", result]);
             writeJSONFile(kResponsePath, @{@"ok": @YES, @"requested": @YES});
         } @catch (NSException *exception) {
-            tfautoLog([NSString stringWithFormat:@"install: EXCEPTION name=%@ reason=%@", exception.name, exception.reason]);
+            autoinstallLog([NSString stringWithFormat:@"install: EXCEPTION name=%@ reason=%@", exception.name, exception.reason]);
             writeJSONFile(kResponsePath, @{@"ok": @NO, @"error": [NSString stringWithFormat:@"exception: %@ %@", exception.name, exception.reason]});
         }
         return;
@@ -554,7 +554,7 @@ static dispatch_queue_t gBridgeQueue = nil;
 static dispatch_source_t gBridgeTimer = nil;
 
 static void startTestFlightSide(void) {
-    gBridgeQueue = dispatch_queue_create("dev.adrian.tfauto.bridge", DISPATCH_QUEUE_SERIAL);
+    gBridgeQueue = dispatch_queue_create("dev.adrian.autoinstall.bridge", DISPATCH_QUEUE_SERIAL);
     gBridgeTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, gBridgeQueue);
     dispatch_source_set_timer(gBridgeTimer, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), NSEC_PER_SEC, NSEC_PER_MSEC * 200);
     dispatch_source_set_event_handler(gBridgeTimer, ^{
@@ -568,19 +568,19 @@ static void startTestFlightSide(void) {
         NSError *err = nil;
         NSDictionary *req = [NSJSONSerialization JSONObjectWithData:data options:0 error:&err];
         if (!req) {
-            tfautoLog([NSString stringWithFormat:@"bridge: bad request json: %@", err]);
+            autoinstallLog([NSString stringWithFormat:@"bridge: bad request json: %@", err]);
             return;
         }
         handleRequest(req);
     });
     dispatch_resume(gBridgeTimer);
-    tfautoLog(@"bridge: request-file watcher started");
+    autoinstallLog(@"bridge: request-file watcher started");
 }
 
 #pragma mark - App Store side: SKUIItemStateCenter probe (validation only, no purchase calls yet)
 
-static NSString * const kASRequestPath = @"/tmp/tfauto-as-request.json";
-static NSString * const kASResponsePath = @"/tmp/tfauto-as-response.json";
+static NSString * const kASRequestPath = @"/tmp/autoinstall-as-request.json";
+static NSString * const kASResponsePath = @"/tmp/autoinstall-as-response.json";
 
 static NSString *describeSelectorPresence(NSString *className, NSArray<NSString *> *classSelectors, NSArray<NSString *> *instanceSelectors) {
     Class cls = objc_getClass([className UTF8String]);
@@ -600,7 +600,7 @@ static NSString *describeSelectorPresence(NSString *className, NSArray<NSString 
 
 static void handleAppStoreRequest(NSDictionary *req) {
     NSString *action = req[@"action"];
-    tfautoLog([NSString stringWithFormat:@"as-bridge: handling action=%@ req=%@", action, req]);
+    autoinstallLog([NSString stringWithFormat:@"as-bridge: handling action=%@ req=%@", action, req]);
 
     if ([action isEqualToString:@"probe_skui"]) {
         NSMutableString *out = [NSMutableString string];
@@ -608,7 +608,7 @@ static void handleAppStoreRequest(NSDictionary *req) {
         [out appendString:describeSelectorPresence(@"SKUIItem", @[], @[@"initWithLookupDictionary:", @"setValue:forKey:"])];
         [out appendString:describeSelectorPresence(@"SKUIItemOffer", @[], @[@"initWithLookupDictionary:"])];
         [out appendString:describeSelectorPresence(@"SKUIClientContext", @[@"defaultContext"], @[])];
-        tfautoLog(out);
+        autoinstallLog(out);
         writeJSONFile(kASResponsePath, @{@"ok": @YES, @"description": out});
         return;
     }
@@ -620,7 +620,7 @@ static dispatch_queue_t gASBridgeQueue = nil;
 static dispatch_source_t gASBridgeTimer = nil;
 
 static void startAppStoreSide(void) {
-    gASBridgeQueue = dispatch_queue_create("dev.adrian.tfauto.as-bridge", DISPATCH_QUEUE_SERIAL);
+    gASBridgeQueue = dispatch_queue_create("dev.adrian.autoinstall.as-bridge", DISPATCH_QUEUE_SERIAL);
     gASBridgeTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, gASBridgeQueue);
     dispatch_source_set_timer(gASBridgeTimer, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), NSEC_PER_SEC, NSEC_PER_MSEC * 200);
     dispatch_source_set_event_handler(gASBridgeTimer, ^{
@@ -634,18 +634,18 @@ static void startAppStoreSide(void) {
         NSError *err = nil;
         NSDictionary *req = [NSJSONSerialization JSONObjectWithData:data options:0 error:&err];
         if (!req) {
-            tfautoLog([NSString stringWithFormat:@"as-bridge: bad request json: %@", err]);
+            autoinstallLog([NSString stringWithFormat:@"as-bridge: bad request json: %@", err]);
             return;
         }
         handleAppStoreRequest(req);
     });
     dispatch_resume(gASBridgeTimer);
-    tfautoLog(@"as-bridge: request-file watcher started (probe-only)");
+    autoinstallLog(@"as-bridge: request-file watcher started (probe-only)");
 }
 
 %ctor {
     NSString *bundleId = [[NSBundle mainBundle] bundleIdentifier];
-    tfautoLog([NSString stringWithFormat:@"tfauto loaded into pid %d bundle %@",
+    autoinstallLog([NSString stringWithFormat:@"autoinstall loaded into pid %d bundle %@",
         [[NSProcessInfo processInfo] processIdentifier], bundleId]);
 
     if (isSpringBoard()) {

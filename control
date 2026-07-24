@@ -1,7 +1,7 @@
-Name: tfauto
-Description: TestFlight build browse/install bridge for dkrypt, plus SSH-toggleable dark-screen/no-sleep control
-Version: 0.1.0
-Package: dev.adrian.tfauto
+Name: autoinstall
+Description: TestFlight and App Store browse/install bridge for dkrypt, plus SSH-toggleable dark-screen/no-sleep control
+Version: 0.2.0
+Package: dev.adrian.autoinstall
 Architecture: iphoneos-arm64
 Maintainer: Adrian Castro
 Author: Adrian Castro
