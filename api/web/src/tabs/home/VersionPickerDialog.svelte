@@ -1,11 +1,11 @@
 <script lang="ts">
   import { RefreshCw } from 'lucide-svelte';
-  import { fetchAppVersions, type AppVersionEntry } from '../../lib/api';
-  import Badge from '../../lib/components/ui/Badge.svelte';
-  import Button from '../../lib/components/ui/Button.svelte';
-  import Dialog from '../../lib/components/ui/Dialog.svelte';
-  import Input from '../../lib/components/ui/Input.svelte';
-  import { fmtTime } from '../../lib/format';
+  import { fetchAppVersions, type AppVersionEntry } from '#lib/api';
+  import Badge from '#lib/components/ui/Badge.svelte';
+  import Button from '#lib/components/ui/Button.svelte';
+  import Dialog from '#lib/components/ui/Dialog.svelte';
+  import Input from '#lib/components/ui/Input.svelte';
+  import { fmtTime } from '#lib/format';
 
   interface Props {
     open: boolean;

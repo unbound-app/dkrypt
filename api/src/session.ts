@@ -1,9 +1,9 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { NextFunction, Request, Response } from 'express';
-import { config } from './config.js';
-import { resolveAuthUserId } from './identity.js';
-import { hasAnyPermission, parseBits, serializeBits } from './permissions.js';
-import { createSessionRecord, getSessionVersion, getUserEffectivePermissions, isSessionRecordActive } from './store/state.js';
+import { config } from '#config.js';
+import { resolveAuthUserId } from '#identity.js';
+import { hasAnyPermission, parseBits, serializeBits } from '#permissions.js';
+import { createSessionRecord, getSessionVersion, getUserEffectivePermissions, isSessionRecordActive } from '#store/state.js';
 
 const COOKIE_NAME = 'session';
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;

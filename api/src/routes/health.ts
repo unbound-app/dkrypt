@@ -1,6 +1,6 @@
 import { Router } from 'express';
-import { requireApiKey } from '../auth.js';
-import { getEffectiveWatches, isWatchSchedulable } from '../store/state.js';
+import { requireApiKey } from '#auth.js';
+import { getEffectiveWatches, isWatchSchedulable } from '#store/state.js';
 
 export const healthRouter = Router();
 

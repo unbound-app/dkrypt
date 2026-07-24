@@ -3,8 +3,8 @@ import {
   type BillingSubscription,
   canCreateApiKeyImmediately,
   resolveBillingEntitlements,
-} from './billing.js';
-import { PermissionFlag } from './permissions.js';
+} from '#billing.js';
+import { PermissionFlag } from '#permissions.js';
 
 function subscription(planId: BillingSubscription['planId'], status = 'active'): BillingSubscription {
   return {

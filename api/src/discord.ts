@@ -1,7 +1,7 @@
 import { REST } from '@discordjs/rest';
 import { Routes, type APIGuild, type APIGuildMember, type APIRole } from 'discord-api-types/v10';
-import { config, discordBotEnabled } from './config.js';
-import { scopedLogger } from './logger.js';
+import { config, discordBotEnabled } from '#config.js';
+import { scopedLogger } from '#logger.js';
 
 const log = scopedLogger('discord');
 

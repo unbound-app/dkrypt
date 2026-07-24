@@ -1,10 +1,10 @@
 <script lang="ts">
   import { Rocket, X } from 'lucide-svelte';
-  import { fetchInsights } from '../lib/api';
-  import { liveState } from '../lib/live.svelte';
-  import { PermissionFlag } from '../lib/permissions';
-  import { sessionHasPermission } from '../lib/session.svelte';
-  import { setActiveTab, setSettingsSubtab } from '../lib/ui.svelte';
+  import { fetchInsights } from '#lib/api';
+  import { liveState } from '#lib/live.svelte';
+  import { PermissionFlag } from '#lib/permissions';
+  import { sessionHasPermission } from '#lib/session.svelte';
+  import { setActiveTab, setSettingsSubtab } from '#lib/ui.svelte';
 
   const DISMISSED_KEY = 'onboardingDismissed';
   let dismissed = $state(localStorage.getItem(DISMISSED_KEY) === 'true');

@@ -1,12 +1,12 @@
 import type { Request, Response } from 'express';
 import { createReadStream } from 'node:fs';
-import { config } from '../config.js';
-import { scopedLogger } from '../logger.js';
+import { config } from '#config.js';
+import { scopedLogger } from '#logger.js';
 
 const log = scopedLogger('jobs');
-import { latestActiveShareLinkExpiry } from '../store/state.js';
-import { getQueueInfo } from './store.js';
-import type { Job } from './types.js';
+import { latestActiveShareLinkExpiry } from '#store/state.js';
+import { getQueueInfo } from '#jobs/store.js';
+import type { Job } from '#jobs/types.js';
 
 export function jobSummary(job: Job) {
   const fileExpiresAt =

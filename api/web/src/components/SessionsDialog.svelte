@@ -1,10 +1,10 @@
 <script lang="ts">
   import { LogOut, Monitor } from 'lucide-svelte';
-  import { fetchSessions, revokeOtherSessions, revokeSession, type ActiveSessionInfo } from '../lib/api';
-  import Badge from '../lib/components/ui/Badge.svelte';
-  import Button from '../lib/components/ui/Button.svelte';
-  import Dialog from '../lib/components/ui/Dialog.svelte';
-  import { fmtRelative, fmtTime } from '../lib/format';
+  import { fetchSessions, revokeOtherSessions, revokeSession, type ActiveSessionInfo } from '#lib/api';
+  import Badge from '#lib/components/ui/Badge.svelte';
+  import Button from '#lib/components/ui/Button.svelte';
+  import Dialog from '#lib/components/ui/Dialog.svelte';
+  import { fmtRelative, fmtTime } from '#lib/format';
 
   let { open = $bindable(), onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void } = $props();
 

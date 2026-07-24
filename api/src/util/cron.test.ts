@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { nextCronRunAt } from './cron.js';
+import { nextCronRunAt } from '#util/cron.js';
 
 describe('nextCronRunAt', () => {
   test('returns a future timestamp for a valid expression', () => {

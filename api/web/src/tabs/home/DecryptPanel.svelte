@@ -1,12 +1,12 @@
 <script lang="ts">
   import { FlaskConical, History, Star, X } from 'lucide-svelte';
-  import BatchDecryptDialog from '../../components/BatchDecryptDialog.svelte';
-  import { queueDecrypt, queueTestFlightDecrypt, searchApps, type AppStoreSearchResult, type TFBuild } from '../../lib/api';
-  import Badge from '../../lib/components/ui/Badge.svelte';
-  import Button from '../../lib/components/ui/Button.svelte';
-  import Card from '../../lib/components/ui/Card.svelte';
-  import Input from '../../lib/components/ui/Input.svelte';
-  import { statusToBadgeVariant } from '../../lib/components/ui/variants';
+  import BatchDecryptDialog from '#components/BatchDecryptDialog.svelte';
+  import { queueDecrypt, queueTestFlightDecrypt, searchApps, type AppStoreSearchResult, type TFBuild } from '#lib/api';
+  import Badge from '#lib/components/ui/Badge.svelte';
+  import Button from '#lib/components/ui/Button.svelte';
+  import Card from '#lib/components/ui/Card.svelte';
+  import Input from '#lib/components/ui/Input.svelte';
+  import { statusToBadgeVariant } from '#lib/components/ui/variants';
   import {
     addDecrypt,
     isStarredBundleId,
@@ -16,16 +16,16 @@
     removeRecentBundleId,
     starredAppsState,
     toggleStarredApp,
-  } from '../../lib/decrypts.svelte';
-  import { debounce } from '../../lib/format';
-  import { liveState } from '../../lib/live.svelte';
-  import { requestNotificationPermission } from '../../lib/notifications';
-  import { PermissionFlag } from '../../lib/permissions';
-  import { sessionHasPermission } from '../../lib/session.svelte';
-  import { showToast } from '../../lib/ui.svelte';
-  import { cn } from '../../lib/utils';
-  import TestFlightPickerDialog from './TestFlightPickerDialog.svelte';
-  import VersionPickerDialog from './VersionPickerDialog.svelte';
+  } from '#lib/decrypts.svelte';
+  import { debounce } from '#lib/format';
+  import { liveState } from '#lib/live.svelte';
+  import { requestNotificationPermission } from '#lib/notifications';
+  import { PermissionFlag } from '#lib/permissions';
+  import { sessionHasPermission } from '#lib/session.svelte';
+  import { showToast } from '#lib/ui.svelte';
+  import { cn } from '#lib/utils';
+  import TestFlightPickerDialog from '#tabs/home/TestFlightPickerDialog.svelte';
+  import VersionPickerDialog from '#tabs/home/VersionPickerDialog.svelte';
 
   let term = $state('');
   let results = $state<AppStoreSearchResult[]>([]);

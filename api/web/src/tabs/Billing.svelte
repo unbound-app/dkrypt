@@ -2,12 +2,12 @@
   import { initializePaddle, type Environments, type Paddle } from '@paddle/paddle-js';
   import { Check, Gauge, KeyRound, LoaderCircle, LockKeyhole, X, Zap } from 'lucide-svelte';
   import { onMount } from 'svelte';
-  import Badge from '../lib/components/ui/Badge.svelte';
-  import Button from '../lib/components/ui/Button.svelte';
-  import Card from '../lib/components/ui/Card.svelte';
-  import LegalLinks from '../components/LegalLinks.svelte';
-  import { refreshSession, sessionState } from '../lib/session.svelte';
-  import { showToast } from '../lib/ui.svelte';
+  import Badge from '#lib/components/ui/Badge.svelte';
+  import Button from '#lib/components/ui/Button.svelte';
+  import Card from '#lib/components/ui/Card.svelte';
+  import LegalLinks from '#components/LegalLinks.svelte';
+  import { refreshSession, sessionState } from '#lib/session.svelte';
+  import { showToast } from '#lib/ui.svelte';
 
   type PlanId = 'viewer' | 'regular' | 'priority' | 'api' | 'priority_api';
 

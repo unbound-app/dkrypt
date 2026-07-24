@@ -1,6 +1,6 @@
 <script lang="ts">
-  import Switch from '../lib/components/ui/Switch.svelte';
-  import { hasPermission, PERMISSION_META, PermissionFlag, type PermissionFlagKey, type PermissionGroup } from '../lib/permissions';
+  import Switch from '#lib/components/ui/Switch.svelte';
+  import { hasPermission, PERMISSION_META, PermissionFlag, type PermissionFlagKey, type PermissionGroup } from '#lib/permissions';
 
   interface Props {
     value: bigint;

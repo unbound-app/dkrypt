@@ -1,14 +1,14 @@
 <script lang="ts">
   import { PackageSearch } from 'lucide-svelte';
-  import { cancelJob, fetchJobStatus, queueDecrypt, queueTestFlightDecrypt, shareJobFile } from '../../lib/api';
-  import CopyButton from '../../components/CopyButton.svelte';
-  import EmptyState from '../../components/EmptyState.svelte';
-  import RelativeTime from '../../components/RelativeTime.svelte';
-  import ShareLinkDialog from '../../components/ShareLinkDialog.svelte';
-  import Badge from '../../lib/components/ui/Badge.svelte';
-  import Button from '../../lib/components/ui/Button.svelte';
-  import Card from '../../lib/components/ui/Card.svelte';
-  import { buttonVariants } from '../../lib/components/ui/variants';
+  import { cancelJob, fetchJobStatus, queueDecrypt, queueTestFlightDecrypt, shareJobFile } from '#lib/api';
+  import CopyButton from '#components/CopyButton.svelte';
+  import EmptyState from '#components/EmptyState.svelte';
+  import RelativeTime from '#components/RelativeTime.svelte';
+  import ShareLinkDialog from '#components/ShareLinkDialog.svelte';
+  import Badge from '#lib/components/ui/Badge.svelte';
+  import Button from '#lib/components/ui/Button.svelte';
+  import Card from '#lib/components/ui/Card.svelte';
+  import { buttonVariants } from '#lib/components/ui/variants';
   import {
     addDecrypt,
     dismissDecrypt,
@@ -17,11 +17,11 @@
     pushRecentBundleId,
     updateDecrypt,
     type TrackedDecrypt,
-  } from '../../lib/decrypts.svelte';
-  import { fmtUntil } from '../../lib/format';
-  import { notifyJobFinished } from '../../lib/notifications';
-  import { playChime } from '../../lib/sound';
-  import { densityState, showToast, soundEnabledState } from '../../lib/ui.svelte';
+  } from '#lib/decrypts.svelte';
+  import { fmtUntil } from '#lib/format';
+  import { notifyJobFinished } from '#lib/notifications';
+  import { playChime } from '#lib/sound';
+  import { densityState, showToast, soundEnabledState } from '#lib/ui.svelte';
 
   let pollTimer: ReturnType<typeof setTimeout> | undefined;
   let retrying = $state<Set<string>>(new Set());

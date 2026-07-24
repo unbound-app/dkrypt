@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { buildSignedFileUrl, signDownloadToken, verifyDownloadToken } from './signedUrl.js';
+import { buildSignedFileUrl, signDownloadToken, verifyDownloadToken } from '#util/signedUrl.js';
 
 describe('signDownloadToken / verifyDownloadToken', () => {
   test('a freshly signed token verifies for its own job', () => {

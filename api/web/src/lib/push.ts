@@ -1,4 +1,4 @@
-import { fetchPushPublicKey, subscribePush, unsubscribePush } from './api';
+import { fetchPushPublicKey, subscribePush, unsubscribePush } from '#lib/api';
 
 function urlBase64ToUint8Array(base64: string): Uint8Array<ArrayBuffer> {
   const padding = '='.repeat((4 - (base64.length % 4)) % 4);

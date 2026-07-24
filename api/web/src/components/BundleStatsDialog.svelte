@@ -1,10 +1,10 @@
 <script lang="ts">
-  import { fetchBundleStats, fetchJobDiff, fetchJobHistory, type BundleStats, type JobDiffResult, type JobHistoryEntry } from '../lib/api';
-  import Badge from '../lib/components/ui/Badge.svelte';
-  import Button from '../lib/components/ui/Button.svelte';
-  import Dialog from '../lib/components/ui/Dialog.svelte';
-  import { fmtBytesGB, fmtDurationApprox } from '../lib/format';
-  import RelativeTime from './RelativeTime.svelte';
+  import { fetchBundleStats, fetchJobDiff, fetchJobHistory, type BundleStats, type JobDiffResult, type JobHistoryEntry } from '#lib/api';
+  import Badge from '#lib/components/ui/Badge.svelte';
+  import Button from '#lib/components/ui/Button.svelte';
+  import Dialog from '#lib/components/ui/Dialog.svelte';
+  import { fmtBytesGB, fmtDurationApprox } from '#lib/format';
+  import RelativeTime from '#components/RelativeTime.svelte';
 
   let { open = $bindable(), bundleId, onOpenChange }: { open: boolean; bundleId: string; onOpenChange: (open: boolean) => void } = $props();
 

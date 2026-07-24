@@ -1,4 +1,4 @@
-import { loadFilterPresets, saveFilterPresets } from './filterPresets';
+import { loadFilterPresets, saveFilterPresets } from '#lib/filterPresets';
 
 export function createSavedViews<T extends { name: string }>(storageKey: string, maxPresets = 10) {
   let presets = $state<T[]>(loadFilterPresets<T>(storageKey));

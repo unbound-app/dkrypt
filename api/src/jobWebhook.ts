@@ -1,6 +1,6 @@
-import { dashboardEvents } from './events.js';
-import { EMBED_COLOR, notify } from './notify.js';
-import { type JobHistoryEntry } from './store/state.js';
+import { dashboardEvents } from '#events.js';
+import { EMBED_COLOR, notify } from '#notify.js';
+import { type JobHistoryEntry } from '#store/state.js';
 
 function label(entry: JobHistoryEntry): string {
   return entry.versionLabel ? `${entry.bundleId} (${entry.versionLabel})` : entry.bundleId;

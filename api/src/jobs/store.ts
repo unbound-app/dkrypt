@@ -1,15 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import { rm } from 'node:fs/promises';
-import { config } from '../config.js';
-import { emitJobsChanged } from '../events.js';
-import { scopedLogger } from '../logger.js';
+import { config } from '#config.js';
+import { emitJobsChanged } from '#events.js';
+import { scopedLogger } from '#logger.js';
 
 const log = scopedLogger('jobs');
-import { sendPushToUser } from '../push.js';
-import { getApiKeyById, getEffectiveDevices, getUserPrefs, isBundleWatched, latestActiveShareLinkExpiry, recordJobHistory, type DeviceRecord } from '../store/state.js';
-import { uninstallFromPrimaryDevice } from '../appStoreInstall.js';
-import { runDecrypt } from './runner.js';
-import type { Job, JobSource, TestFlightJobSource } from './types.js';
+import { sendPushToUser } from '#push.js';
+import { getApiKeyById, getEffectiveDevices, getUserPrefs, isBundleWatched, latestActiveShareLinkExpiry, recordJobHistory, type DeviceRecord } from '#store/state.js';
+import { uninstallFromPrimaryDevice } from '#appStoreInstall.js';
+import { runDecrypt } from '#jobs/runner.js';
+import type { Job, JobSource, TestFlightJobSource } from '#jobs/types.js';
 
 const jobs = new Map<string, Job>();
 

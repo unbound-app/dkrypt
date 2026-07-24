@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { config } from './config.js';
-import { hasPermission, PermissionFlag } from './permissions.js';
+import { config } from '#config.js';
+import { hasPermission, PermissionFlag } from '#permissions.js';
 
 export type PlanId = 'viewer' | 'regular' | 'priority' | 'api' | 'priority_api';
 

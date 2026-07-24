@@ -5,9 +5,9 @@ import {
   replaceBillingSnapshot,
   upsertBillingCustomer,
   upsertBillingSubscription,
-} from '../billing.js';
-import { getAuthProfile, replaceIdentitySnapshot, upsertAuthProfile } from '../identity.js';
-import { PermissionFlag, serializeBits } from '../permissions.js';
+} from '#billing.js';
+import { getAuthProfile, replaceIdentitySnapshot, upsertAuthProfile } from '#identity.js';
+import { PermissionFlag, serializeBits } from '#permissions.js';
 import {
   addAllowedUser,
   createApiKey,
@@ -38,7 +38,7 @@ import {
   updateSettings,
   updateWatch,
   verifyApiKey,
-} from './state.js';
+} from '#store/state.js';
 
 describe('Discord role perks', () => {
   test('syncs guild-scoped perks from multiple guilds', () => {

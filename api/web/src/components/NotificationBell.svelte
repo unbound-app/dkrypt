@@ -1,10 +1,10 @@
 <script lang="ts">
   import { Popover } from 'bits-ui';
   import { Bell } from 'lucide-svelte';
-  import { buttonVariants } from '../lib/components/ui/variants';
-  import { clearToastHistory, toastHistoryState } from '../lib/ui.svelte';
-  import { cn } from '../lib/utils';
-  import RelativeTime from './RelativeTime.svelte';
+  import { buttonVariants } from '#lib/components/ui/variants';
+  import { clearToastHistory, toastHistoryState } from '#lib/ui.svelte';
+  import { cn } from '#lib/utils';
+  import RelativeTime from '#components/RelativeTime.svelte';
 
   const LAST_VIEWED_KEY = 'notificationsLastViewedAt';
 

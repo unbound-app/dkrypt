@@ -1,5 +1,5 @@
 import { toast } from 'svelte-sonner';
-import { getQueryParam, setQueryParams } from './urlState';
+import { getQueryParam, setQueryParams } from '#lib/urlState';
 
 export type Theme = 'dark' | 'light';
 export type ThemePref = Theme | 'auto';

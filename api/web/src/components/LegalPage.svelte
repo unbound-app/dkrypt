@@ -1,6 +1,6 @@
 <script lang="ts">
-  import PublicPageFooter from './PublicPageFooter.svelte';
-  import PublicPageHeader from './PublicPageHeader.svelte';
+  import PublicPageFooter from '#components/PublicPageFooter.svelte';
+  import PublicPageHeader from '#components/PublicPageHeader.svelte';
 
   type LegalDocument = 'terms' | 'privacy' | 'refund';
 

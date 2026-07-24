@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, test } from 'bun:test';
-import { renderPublicPage } from './publicPages.js';
+import { renderPublicPage } from '#publicPages.js';
 
 const shell = '<html><body><div id="app-root"></div></body></html>';
 const browserShell = readFileSync(new URL('../web/index.html', import.meta.url), 'utf8');

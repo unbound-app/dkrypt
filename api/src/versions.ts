@@ -1,10 +1,10 @@
 import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { config } from './config.js';
-import { scopedLogger } from './logger.js';
-import { lookupCurrentVersion } from './scheduler/itunes.js';
-import { getPrimaryDevice } from './store/state.js';
+import { config } from '#config.js';
+import { scopedLogger } from '#logger.js';
+import { lookupCurrentVersion } from '#scheduler/itunes.js';
+import { getPrimaryDevice } from '#store/state.js';
 
 const log = scopedLogger('versions');
 

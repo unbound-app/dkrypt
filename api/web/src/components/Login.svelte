@@ -1,11 +1,11 @@
 <script lang="ts">
   import { ChevronDown, Eye, EyeOff, Lock } from 'lucide-svelte';
-  import Button from '../lib/components/ui/Button.svelte';
-  import Card from '../lib/components/ui/Card.svelte';
-  import Input from '../lib/components/ui/Input.svelte';
-  import { loginRoot, sessionState } from '../lib/session.svelte';
-  import { cn } from '../lib/utils';
-  import LegalLinks from './LegalLinks.svelte';
+  import Button from '#lib/components/ui/Button.svelte';
+  import Card from '#lib/components/ui/Card.svelte';
+  import Input from '#lib/components/ui/Input.svelte';
+  import { loginRoot, sessionState } from '#lib/session.svelte';
+  import { cn } from '#lib/utils';
+  import LegalLinks from '#components/LegalLinks.svelte';
 
   let password = $state('');
   let loginError = $state('');

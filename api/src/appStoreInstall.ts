@@ -8,10 +8,10 @@ import {
   sendSpringBoardBridgeRequest,
   uninstallInstalledApp,
   withSSH,
-} from './idevice.js';
-import { scopedLogger } from './logger.js';
-import { lookupCurrentVersion } from './scheduler/itunes.js';
-import { getPrimaryDevice } from './store/state.js';
+} from '#idevice.js';
+import { scopedLogger } from '#logger.js';
+import { lookupCurrentVersion } from '#scheduler/itunes.js';
+import { getPrimaryDevice } from '#store/state.js';
 
 const log = scopedLogger('appstore');
 

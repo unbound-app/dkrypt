@@ -1,9 +1,9 @@
 <script lang="ts">
   import { TriangleAlert } from 'lucide-svelte';
-  import { liveState } from '../lib/live.svelte';
-  import { PermissionFlag } from '../lib/permissions';
-  import { sessionHasPermission } from '../lib/session.svelte';
-  import { setActiveTab, setSettingsSubtab } from '../lib/ui.svelte';
+  import { liveState } from '#lib/live.svelte';
+  import { PermissionFlag } from '#lib/permissions';
+  import { sessionHasPermission } from '#lib/session.svelte';
+  import { setActiveTab, setSettingsSubtab } from '#lib/ui.svelte';
 
   const issues = $derived((liveState.overview?.watches ?? []).flatMap((w) => w.configIssues));
 

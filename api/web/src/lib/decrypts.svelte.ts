@@ -1,4 +1,4 @@
-import type { AppStoreSearchResult, TFBuild } from './api';
+import type { AppStoreSearchResult, TFBuild } from '#lib/api';
 
 export interface TrackedDecrypt {
   id: string;

@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { fetchKeyBundleUsage, fetchKeyUsage, type ApiKeyBundleUsage, type ApiKeyUsageBucket } from '../lib/api';
-  import Dialog from '../lib/components/ui/Dialog.svelte';
-  import Sparkline from './Sparkline.svelte';
+  import { fetchKeyBundleUsage, fetchKeyUsage, type ApiKeyBundleUsage, type ApiKeyUsageBucket } from '#lib/api';
+  import Dialog from '#lib/components/ui/Dialog.svelte';
+  import Sparkline from '#components/Sparkline.svelte';
 
   let {
     open = $bindable(),

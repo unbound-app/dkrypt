@@ -1,7 +1,7 @@
 <script lang="ts">
-  import Button from '../lib/components/ui/Button.svelte';
-  import Dialog from '../lib/components/ui/Dialog.svelte';
-  import { confirmState, resolveConfirm } from '../lib/ui.svelte';
+  import Button from '#lib/components/ui/Button.svelte';
+  import Dialog from '#lib/components/ui/Dialog.svelte';
+  import { confirmState, resolveConfirm } from '#lib/ui.svelte';
 </script>
 
 <Dialog open={confirmState.open} onOpenChange={(open) => !open && resolveConfirm(false)}>

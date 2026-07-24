@@ -3,6 +3,10 @@
     "target": "ESNext",
     "module": "ESNext",
     "moduleResolution": "bundler",
+    "baseUrl": ".",
+    "paths": {
+      "#*": ["./src/*"]
+    },
     "lib": ["ESNext"],
     "types": ["bun-types"],
     "strict": true,

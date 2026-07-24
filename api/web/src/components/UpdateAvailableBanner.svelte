@@ -1,7 +1,7 @@
 <script lang="ts">
   import { RefreshCw } from 'lucide-svelte';
-  import Button from '../lib/components/ui/Button.svelte';
-  import { applyPwaUpdate, pwaState } from '../lib/pwa.svelte';
+  import Button from '#lib/components/ui/Button.svelte';
+  import { applyPwaUpdate, pwaState } from '#lib/pwa.svelte';
 </script>
 
 {#if pwaState.updateAvailable}

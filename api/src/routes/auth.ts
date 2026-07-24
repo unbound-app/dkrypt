@@ -1,18 +1,18 @@
 import { randomBytes } from 'node:crypto';
 import { Router } from 'express';
-import { resolveOauthAccount } from '../account.js';
-import { config, discordBotEnabled, discordOauthEnabled, githubOauthEnabled } from '../config.js';
-import { fetchMemberRoleIds } from '../discord.js';
+import { resolveOauthAccount } from '#account.js';
+import { config, discordBotEnabled, discordOauthEnabled, githubOauthEnabled } from '#config.js';
+import { fetchMemberRoleIds } from '#discord.js';
 import {
   type AuthIdentity,
   getAuthProfile,
   getLinkedAuthIdentities,
   getLinkedAuthProviders,
   setAuthDisplayName,
-} from '../identity.js';
-import { log } from '../logger.js';
-import { PermissionFlag, serializeBits } from '../permissions.js';
-import { checkRootPassword, clearSessionCookie, getSession, requireSession, sessionOptsFromReq, setSessionCookie } from '../session.js';
+} from '#identity.js';
+import { log } from '#logger.js';
+import { PermissionFlag, serializeBits } from '#permissions.js';
+import { checkRootPassword, clearSessionCookie, getSession, requireSession, sessionOptsFromReq, setSessionCookie } from '#session.js';
 import {
   bumpSessionVersion,
   getDiscordGuildIds,
@@ -22,7 +22,7 @@ import {
   revokeOtherSessionRecords,
   revokeSessionRecord,
   syncDiscordPerkRoles,
-} from '../store/state.js';
+} from '#store/state.js';
 
 export const authRouter = Router();
 

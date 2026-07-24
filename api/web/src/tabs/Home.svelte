@@ -1,11 +1,11 @@
 <script lang="ts">
-  import DonationNudge from '../components/DonationNudge.svelte';
-  import OnboardingBanner from '../components/OnboardingBanner.svelte';
-  import { batchDecryptJumpState } from '../lib/ui.svelte';
-  import ActiveJobsPanel from './home/ActiveJobsPanel.svelte';
-  import DecryptPanel from './home/DecryptPanel.svelte';
-  import JobHistoryPanel from './home/JobHistoryPanel.svelte';
-  import MyRequestsPanel from './home/MyRequestsPanel.svelte';
+  import DonationNudge from '#components/DonationNudge.svelte';
+  import OnboardingBanner from '#components/OnboardingBanner.svelte';
+  import { batchDecryptJumpState } from '#lib/ui.svelte';
+  import ActiveJobsPanel from '#tabs/home/ActiveJobsPanel.svelte';
+  import DecryptPanel from '#tabs/home/DecryptPanel.svelte';
+  import JobHistoryPanel from '#tabs/home/JobHistoryPanel.svelte';
+  import MyRequestsPanel from '#tabs/home/MyRequestsPanel.svelte';
 
   let decryptPanel: DecryptPanel | undefined = $state();
 

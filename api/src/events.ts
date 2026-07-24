@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
-import type { LogEntry } from './logger.js';
-import type { JobHistoryEntry } from './store/state.js';
+import type { LogEntry } from '#logger.js';
+import type { JobHistoryEntry } from '#store/state.js';
 
 export const dashboardEvents = new EventEmitter();
 dashboardEvents.setMaxListeners(0);

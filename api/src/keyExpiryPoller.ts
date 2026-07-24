@@ -1,5 +1,5 @@
-import { EMBED_COLOR, notify } from './notify.js';
-import { claimExpiringApiKeysToNotify } from './store/state.js';
+import { EMBED_COLOR, notify } from '#notify.js';
+import { claimExpiringApiKeysToNotify } from '#store/state.js';
 
 const POLL_INTERVAL_MS = 60 * 60_000;
 

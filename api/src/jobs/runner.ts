@@ -1,16 +1,16 @@
 import { spawn } from 'node:child_process';
 import { mkdir, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { config } from '../config.js';
-import { emitJobsChanged } from '../events.js';
-import { scopedLogger } from '../logger.js';
-import type { DeviceRecord } from '../store/state.js';
-import { installFromAppStore } from '../appStoreInstall.js';
-import { installBuild } from '../testflight.js';
-import { extractIpaMetadata } from '../util/ipaMetadata.js';
+import { config } from '#config.js';
+import { emitJobsChanged } from '#events.js';
+import { scopedLogger } from '#logger.js';
+import type { DeviceRecord } from '#store/state.js';
+import { installFromAppStore } from '#appStoreInstall.js';
+import { installBuild } from '#testflight.js';
+import { extractIpaMetadata } from '#util/ipaMetadata.js';
 
 const log = scopedLogger('jobs');
-import type { Job } from './types.js';
+import type { Job } from '#jobs/types.js';
 
 export async function runDecrypt(job: Job, device: DeviceRecord): Promise<void> {
   await mkdir(config.outputDir, { recursive: true });

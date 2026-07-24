@@ -1,6 +1,6 @@
-import { config } from '../config.js';
-import { describeHttpError } from '../util/httpError.js';
-import { normalizeVersion } from '../util/version.js';
+import { config } from '#config.js';
+import { describeHttpError } from '#util/httpError.js';
+import { normalizeVersion } from '#util/version.js';
 
 const GITHUB_API = 'https://api.github.com';
 

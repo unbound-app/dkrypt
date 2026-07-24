@@ -1,7 +1,7 @@
 <script lang="ts">
   import { ArrowDown, ArrowUp, Plus, Shield, X } from 'lucide-svelte';
-  import EmptyState from '../../components/EmptyState.svelte';
-  import PermissionEditor from '../../components/PermissionEditor.svelte';
+  import EmptyState from '#components/EmptyState.svelte';
+  import PermissionEditor from '#components/PermissionEditor.svelte';
   import {
     createDiscordRolePerk,
     createRole,
@@ -21,17 +21,17 @@
     type DiscordGuildRole,
     type DiscordRolePerk,
     type Role,
-  } from '../../lib/api';
-  import Badge from '../../lib/components/ui/Badge.svelte';
-  import Button from '../../lib/components/ui/Button.svelte';
-  import Card from '../../lib/components/ui/Card.svelte';
-  import Dialog from '../../lib/components/ui/Dialog.svelte';
-  import Input from '../../lib/components/ui/Input.svelte';
-  import SearchSelect from '../../lib/components/ui/SearchSelect.svelte';
-  import Select from '../../lib/components/ui/Select.svelte';
-  import { parseBits, permissionLabels, PermissionFlag, serializeBits } from '../../lib/permissions';
-  import { sessionHasAnyPermission, sessionHasPermission } from '../../lib/session.svelte';
-  import { confirmDialog } from '../../lib/ui.svelte';
+  } from '#lib/api';
+  import Badge from '#lib/components/ui/Badge.svelte';
+  import Button from '#lib/components/ui/Button.svelte';
+  import Card from '#lib/components/ui/Card.svelte';
+  import Dialog from '#lib/components/ui/Dialog.svelte';
+  import Input from '#lib/components/ui/Input.svelte';
+  import SearchSelect from '#lib/components/ui/SearchSelect.svelte';
+  import Select from '#lib/components/ui/Select.svelte';
+  import { parseBits, permissionLabels, PermissionFlag, serializeBits } from '#lib/permissions';
+  import { sessionHasAnyPermission, sessionHasPermission } from '#lib/session.svelte';
+  import { confirmDialog } from '#lib/ui.svelte';
 
   const canViewRoles = $derived(sessionHasAnyPermission([PermissionFlag.viewRoles, PermissionFlag.manageRoles]));
   const canManageRoles = $derived(sessionHasPermission(PermissionFlag.manageRoles));

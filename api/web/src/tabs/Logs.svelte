@@ -1,21 +1,21 @@
 <script lang="ts">
   import { ScrollText, X } from 'lucide-svelte';
-  import CopyButton from '../components/CopyButton.svelte';
-  import EmptyState from '../components/EmptyState.svelte';
-  import RelativeTime from '../components/RelativeTime.svelte';
-  import { fetchLogs, type LogEntry } from '../lib/api';
-  import Badge from '../lib/components/ui/Badge.svelte';
-  import Button from '../lib/components/ui/Button.svelte';
-  import Card from '../lib/components/ui/Card.svelte';
-  import Input from '../lib/components/ui/Input.svelte';
-  import Select from '../lib/components/ui/Select.svelte';
-  import type { BadgeVariant } from '../lib/components/ui/variants';
-  import { csvCell, downloadBlob } from '../lib/format';
-  import { liveState } from '../lib/live.svelte';
-  import { createSavedViews } from '../lib/savedViews.svelte';
-  import { tabState } from '../lib/ui.svelte';
-  import { getQueryParam, setQueryParams } from '../lib/urlState';
-  import { cn } from '../lib/utils';
+  import CopyButton from '#components/CopyButton.svelte';
+  import EmptyState from '#components/EmptyState.svelte';
+  import RelativeTime from '#components/RelativeTime.svelte';
+  import { fetchLogs, type LogEntry } from '#lib/api';
+  import Badge from '#lib/components/ui/Badge.svelte';
+  import Button from '#lib/components/ui/Button.svelte';
+  import Card from '#lib/components/ui/Card.svelte';
+  import Input from '#lib/components/ui/Input.svelte';
+  import Select from '#lib/components/ui/Select.svelte';
+  import type { BadgeVariant } from '#lib/components/ui/variants';
+  import { csvCell, downloadBlob } from '#lib/format';
+  import { liveState } from '#lib/live.svelte';
+  import { createSavedViews } from '#lib/savedViews.svelte';
+  import { tabState } from '#lib/ui.svelte';
+  import { getQueryParam, setQueryParams } from '#lib/urlState';
+  import { cn } from '#lib/utils';
 
   interface LogFilterPreset {
     name: string;

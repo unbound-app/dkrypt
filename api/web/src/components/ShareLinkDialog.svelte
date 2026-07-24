@@ -1,13 +1,13 @@
 <script lang="ts">
-  import CopyButton from './CopyButton.svelte';
-  import RelativeTime from './RelativeTime.svelte';
-  import { fetchJobStatus, fetchShareLinks, revokeAllShareLinks, revokeShareLink, shareJobFile, type ShareLinkRecord } from '../lib/api';
-  import { updateDecrypt } from '../lib/decrypts.svelte';
-  import Badge from '../lib/components/ui/Badge.svelte';
-  import Button from '../lib/components/ui/Button.svelte';
-  import Dialog from '../lib/components/ui/Dialog.svelte';
-  import Select from '../lib/components/ui/Select.svelte';
-  import { fmtUntil } from '../lib/format';
+  import CopyButton from '#components/CopyButton.svelte';
+  import RelativeTime from '#components/RelativeTime.svelte';
+  import { fetchJobStatus, fetchShareLinks, revokeAllShareLinks, revokeShareLink, shareJobFile, type ShareLinkRecord } from '#lib/api';
+  import { updateDecrypt } from '#lib/decrypts.svelte';
+  import Badge from '#lib/components/ui/Badge.svelte';
+  import Button from '#lib/components/ui/Button.svelte';
+  import Dialog from '#lib/components/ui/Dialog.svelte';
+  import Select from '#lib/components/ui/Select.svelte';
+  import { fmtUntil } from '#lib/format';
 
   let { open = $bindable(), jobId, onOpenChange }: { open: boolean; jobId: string; onOpenChange: (open: boolean) => void } = $props();
 

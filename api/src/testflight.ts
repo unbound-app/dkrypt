@@ -1,13 +1,13 @@
 import { Client } from 'ssh2';
-import { scopedLogger } from './logger.js';
+import { scopedLogger } from '#logger.js';
 import {
   execCommand,
   isTestFlightRunning,
   sendSpringBoardBridgeRequest,
   sendTestFlightBridgeRequest,
   withSSH,
-} from './idevice.js';
-import { getPrimaryDevice } from './store/state.js';
+} from '#idevice.js';
+import { getPrimaryDevice } from '#store/state.js';
 
 function primaryRootDir(): string {
   return getPrimaryDevice().rootDir;

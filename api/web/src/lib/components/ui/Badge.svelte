@@ -1,8 +1,8 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
   import type { HTMLAttributes } from 'svelte/elements';
-  import { cn } from '../../utils';
-  import { badgeVariantClasses, type BadgeVariant } from './variants';
+  import { cn } from '#lib/utils';
+  import { badgeVariantClasses, type BadgeVariant } from '#lib/components/ui/variants';
 
   interface Props extends HTMLAttributes<HTMLSpanElement> {
     variant?: BadgeVariant;

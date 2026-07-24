@@ -1,6 +1,6 @@
 import webpush from 'web-push';
-import { scopedLogger } from './logger.js';
-import { getOrCreateVapidKeys, getPushSubscriptions, getUserPrefs, getUsersWithPushSubscriptions, removePushSubscription } from './store/state.js';
+import { scopedLogger } from '#logger.js';
+import { getOrCreateVapidKeys, getPushSubscriptions, getUserPrefs, getUsersWithPushSubscriptions, removePushSubscription } from '#store/state.js';
 
 const log = scopedLogger('push');
 

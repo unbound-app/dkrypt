@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Wrench } from 'lucide-svelte';
-  import { liveState } from '../lib/live.svelte';
+  import { liveState } from '#lib/live.svelte';
 
   const maintenance = $derived(liveState.overview?.maintenance);
 </script>

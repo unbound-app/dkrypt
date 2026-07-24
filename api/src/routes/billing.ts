@@ -20,12 +20,12 @@ import {
   planForPrice,
   upsertBillingCustomer,
   upsertBillingSubscription,
-} from '../billing.js';
-import { config, paddleEnabled } from '../config.js';
-import { getAuthProfile, resolveAuthUserId } from '../identity.js';
-import { log } from '../logger.js';
-import { getPaddle } from '../paddle.js';
-import { requireSession } from '../session.js';
+} from '#billing.js';
+import { config, paddleEnabled } from '#config.js';
+import { getAuthProfile, resolveAuthUserId } from '#identity.js';
+import { log } from '#logger.js';
+import { getPaddle } from '#paddle.js';
+import { requireSession } from '#session.js';
 
 type SubscriptionEvent = SubscriptionCreatedEvent | SubscriptionUpdatedEvent | SubscriptionCanceledEvent;
 type CustomerEvent = CustomerCreatedEvent | CustomerUpdatedEvent;

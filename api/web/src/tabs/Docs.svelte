@@ -1,7 +1,7 @@
 <script lang="ts">
-  import CopyButton from '../components/CopyButton.svelte';
-  import Card from '../lib/components/ui/Card.svelte';
-  import { sessionState } from '../lib/session.svelte';
+  import CopyButton from '#components/CopyButton.svelte';
+  import Card from '#lib/components/ui/Card.svelte';
+  import { sessionState } from '#lib/session.svelte';
 
   const base = $derived(sessionState.publicBaseUrl ?? location.origin);
 

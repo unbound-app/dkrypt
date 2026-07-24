@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Download, RefreshCw, Trash2, TriangleAlert, Upload } from 'lucide-svelte';
   import { onMount } from 'svelte';
-  import EmptyState from '../../components/EmptyState.svelte';
+  import EmptyState from '#components/EmptyState.svelte';
   import {
     backupExportUrl,
     backupSnapshotDownloadUrl,
@@ -16,16 +16,16 @@
     type BackupHistoryEntry,
     type BackupPreviewSummary,
     type BackupScheduleSettings,
-  } from '../../lib/api';
-  import Button from '../../lib/components/ui/Button.svelte';
-  import Card from '../../lib/components/ui/Card.svelte';
-  import Input from '../../lib/components/ui/Input.svelte';
-  import Switch from '../../lib/components/ui/Switch.svelte';
-  import { buttonVariants } from '../../lib/components/ui/variants';
-  import { debounce, fmtRelative, fmtSize, fmtTime } from '../../lib/format';
-  import { PermissionFlag } from '../../lib/permissions';
-  import { sessionHasPermission } from '../../lib/session.svelte';
-  import { confirmDialog } from '../../lib/ui.svelte';
+  } from '#lib/api';
+  import Button from '#lib/components/ui/Button.svelte';
+  import Card from '#lib/components/ui/Card.svelte';
+  import Input from '#lib/components/ui/Input.svelte';
+  import Switch from '#lib/components/ui/Switch.svelte';
+  import { buttonVariants } from '#lib/components/ui/variants';
+  import { debounce, fmtRelative, fmtSize, fmtTime } from '#lib/format';
+  import { PermissionFlag } from '#lib/permissions';
+  import { sessionHasPermission } from '#lib/session.svelte';
+  import { confirmDialog } from '#lib/ui.svelte';
 
   const canManageBackup = $derived(sessionHasPermission(PermissionFlag.manageBackup));
 

@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { fmtCountdown } from '../lib/format';
-  import { refreshSessionTtl, sessionState } from '../lib/session.svelte';
-  import Button from '../lib/components/ui/Button.svelte';
-  import { showToast } from '../lib/ui.svelte';
+  import { fmtCountdown } from '#lib/format';
+  import { refreshSessionTtl, sessionState } from '#lib/session.svelte';
+  import Button from '#lib/components/ui/Button.svelte';
+  import { showToast } from '#lib/ui.svelte';
 
   const WARN_WINDOW_MS = 5 * 60_000;
 

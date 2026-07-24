@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { config } from './config.js';
-import { emitLogAdded } from './events.js';
+import { config } from '#config.js';
+import { emitLogAdded } from '#events.js';
 
 export type LogLevel = 'info' | 'warn' | 'error';
 

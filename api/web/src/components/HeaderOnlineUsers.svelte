@@ -1,9 +1,9 @@
 <script lang="ts">
   import { Users } from 'lucide-svelte';
-  import Badge from '../lib/components/ui/Badge.svelte';
-  import Popover from '../lib/components/ui/Popover.svelte';
-  import { liveState } from '../lib/live.svelte';
-  import { sessionState } from '../lib/session.svelte';
+  import Badge from '#lib/components/ui/Badge.svelte';
+  import Popover from '#lib/components/ui/Popover.svelte';
+  import { liveState } from '#lib/live.svelte';
+  import { sessionState } from '#lib/session.svelte';
 
   const users = $derived(liveState.onlineUsers);
 </script>

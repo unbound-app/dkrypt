@@ -1,5 +1,5 @@
-import { hasPermission, parseBits, PermissionFlag, permissionLabels } from './permissions';
-import { accentState, densityState, setAccent, setDensity, setTheme, themePrefState, type Density, type ThemePref } from './ui.svelte';
+import { hasPermission, parseBits, PermissionFlag, permissionLabels } from '#lib/permissions';
+import { accentState, densityState, setAccent, setDensity, setTheme, themePrefState, type Density, type ThemePref } from '#lib/ui.svelte';
 
 export interface Role {
   id: string;

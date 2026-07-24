@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { fmtRelative, fmtTime } from '../lib/format';
+  import { fmtRelative, fmtTime } from '#lib/format';
 
   let { ms }: { ms?: number } = $props();
 </script>

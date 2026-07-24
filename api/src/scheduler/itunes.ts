@@ -1,4 +1,4 @@
-import { describeHttpError } from '../util/httpError.js';
+import { describeHttpError } from '#util/httpError.js';
 
 interface ItunesLookupResult {
   version: string;

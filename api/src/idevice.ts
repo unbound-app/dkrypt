@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { Client } from 'ssh2';
-import { scopedLogger } from './logger.js';
+import { scopedLogger } from '#logger.js';
 
 const log = scopedLogger('idevice');
 

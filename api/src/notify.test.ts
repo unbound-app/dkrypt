@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
-import { notify, sendTestNotification } from './notify.js';
-import { updateSettings } from './store/state.js';
+import { notify, sendTestNotification } from '#notify.js';
+import { updateSettings } from '#store/state.js';
 
 const originalFetch = global.fetch;
 const originalSetTimeout = global.setTimeout;

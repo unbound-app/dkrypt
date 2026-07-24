@@ -1,19 +1,19 @@
 <script lang="ts">
   import { PackageOpen } from 'lucide-svelte';
-  import CopyButton from '../../components/CopyButton.svelte';
-  import EmptyState from '../../components/EmptyState.svelte';
-  import SkeletonRows from '../../components/SkeletonRows.svelte';
-  import { cancelJob, fetchJobEta, prioritizeJob } from '../../lib/api';
-  import Badge from '../../lib/components/ui/Badge.svelte';
-  import Button from '../../lib/components/ui/Button.svelte';
-  import Card from '../../lib/components/ui/Card.svelte';
-  import { statusToBadgeVariant } from '../../lib/components/ui/variants';
-  import { fmtDurationApprox } from '../../lib/format';
-  import { liveState } from '../../lib/live.svelte';
-  import { scrollFade } from '../../lib/scrollFade';
-  import { PermissionFlag } from '../../lib/permissions';
-  import { sessionHasPermission } from '../../lib/session.svelte';
-  import { confirmDialog, densityState } from '../../lib/ui.svelte';
+  import CopyButton from '#components/CopyButton.svelte';
+  import EmptyState from '#components/EmptyState.svelte';
+  import SkeletonRows from '#components/SkeletonRows.svelte';
+  import { cancelJob, fetchJobEta, prioritizeJob } from '#lib/api';
+  import Badge from '#lib/components/ui/Badge.svelte';
+  import Button from '#lib/components/ui/Button.svelte';
+  import Card from '#lib/components/ui/Card.svelte';
+  import { statusToBadgeVariant } from '#lib/components/ui/variants';
+  import { fmtDurationApprox } from '#lib/format';
+  import { liveState } from '#lib/live.svelte';
+  import { scrollFade } from '#lib/scrollFade';
+  import { PermissionFlag } from '#lib/permissions';
+  import { sessionHasPermission } from '#lib/session.svelte';
+  import { confirmDialog, densityState } from '#lib/ui.svelte';
 
   const jobs = $derived(liveState.overview?.activeJobs ?? []);
   const loaded = $derived(liveState.overview !== null);

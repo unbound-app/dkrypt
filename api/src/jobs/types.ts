@@ -1,5 +1,5 @@
 import type { ChildProcess } from 'node:child_process';
-import type { TFBuild } from '../testflight.js';
+import type { TFBuild } from '#testflight.js';
 
 export type JobStatus = 'queued' | 'running' | 'done' | 'failed';
 

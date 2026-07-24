@@ -1,4 +1,4 @@
-import type { JobHistoryEntry, LogEntry, OverviewPayload } from './api';
+import type { JobHistoryEntry, LogEntry, OverviewPayload } from '#lib/api';
 
 export const liveState = $state<{
   overview: OverviewPayload | null;

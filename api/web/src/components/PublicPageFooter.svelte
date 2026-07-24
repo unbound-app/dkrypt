@@ -1,5 +1,5 @@
 <script lang="ts">
-  import LegalLinks from './LegalLinks.svelte';
+  import LegalLinks from '#components/LegalLinks.svelte';
 </script>
 
 <footer class="border-border mt-14 border-t">

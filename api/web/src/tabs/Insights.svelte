@@ -1,18 +1,18 @@
 <script lang="ts">
   import { BarChart3, TriangleAlert } from 'lucide-svelte';
-  import BundleStatsDialog from '../components/BundleStatsDialog.svelte';
-  import EmptyState from '../components/EmptyState.svelte';
-  import Sparkline from '../components/Sparkline.svelte';
-  import { fetchInsights, fetchWatchHealth, type InsightsSummary, type WatchHealthSummary } from '../lib/api';
-  import Badge from '../lib/components/ui/Badge.svelte';
-  import Button from '../lib/components/ui/Button.svelte';
-  import Card from '../lib/components/ui/Card.svelte';
-  import Select from '../lib/components/ui/Select.svelte';
-  import { csvCell, downloadBlob, fmtBytesGB, fmtDurationApprox, trendDelta } from '../lib/format';
-  import { liveState } from '../lib/live.svelte';
-  import { PermissionFlag } from '../lib/permissions';
-  import { sessionHasAnyPermission } from '../lib/session.svelte';
-  import RelativeTime from '../components/RelativeTime.svelte';
+  import BundleStatsDialog from '#components/BundleStatsDialog.svelte';
+  import EmptyState from '#components/EmptyState.svelte';
+  import Sparkline from '#components/Sparkline.svelte';
+  import { fetchInsights, fetchWatchHealth, type InsightsSummary, type WatchHealthSummary } from '#lib/api';
+  import Badge from '#lib/components/ui/Badge.svelte';
+  import Button from '#lib/components/ui/Button.svelte';
+  import Card from '#lib/components/ui/Card.svelte';
+  import Select from '#lib/components/ui/Select.svelte';
+  import { csvCell, downloadBlob, fmtBytesGB, fmtDurationApprox, trendDelta } from '#lib/format';
+  import { liveState } from '#lib/live.svelte';
+  import { PermissionFlag } from '#lib/permissions';
+  import { sessionHasAnyPermission } from '#lib/session.svelte';
+  import RelativeTime from '#components/RelativeTime.svelte';
 
   const TREND_DAYS_OPTIONS = [
     { value: '7', label: 'Last 7 days' },

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Popover as PopoverPrimitive } from 'bits-ui';
   import type { Snippet } from 'svelte';
-  import { cn } from '../../utils';
+  import { cn } from '#lib/utils';
 
   interface Props {
     trigger?: Snippet;

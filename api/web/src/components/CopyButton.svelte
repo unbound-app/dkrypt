@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Check, Copy } from 'lucide-svelte';
-  import { showToast } from '../lib/ui.svelte';
-  import { cn } from '../lib/utils';
+  import { showToast } from '#lib/ui.svelte';
+  import { cn } from '#lib/utils';
 
   let { text, label }: { text: string; label?: string } = $props();
   let copied = $state(false);

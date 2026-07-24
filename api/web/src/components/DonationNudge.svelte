@@ -1,9 +1,9 @@
 <script lang="ts">
   import { Coffee, X } from 'lucide-svelte';
-  import { KOFI_URL } from '../lib/constants';
-  import { myDecryptsState } from '../lib/decrypts.svelte';
-  import { liveState } from '../lib/live.svelte';
-  import { sessionState } from '../lib/session.svelte';
+  import { KOFI_URL } from '#lib/constants';
+  import { myDecryptsState } from '#lib/decrypts.svelte';
+  import { liveState } from '#lib/live.svelte';
+  import { sessionState } from '#lib/session.svelte';
 
   let dismissed = $state(localStorage.getItem('donationNudgeDismissed') === 'true');
 

@@ -1,8 +1,8 @@
 <script lang="ts">
   import { Plus, ScrollText, UserX } from 'lucide-svelte';
-  import EmptyState from '../../components/EmptyState.svelte';
-  import RelativeTime from '../../components/RelativeTime.svelte';
-  import SkeletonRows from '../../components/SkeletonRows.svelte';
+  import EmptyState from '#components/EmptyState.svelte';
+  import RelativeTime from '#components/RelativeTime.svelte';
+  import SkeletonRows from '#components/SkeletonRows.svelte';
   import {
     addUser,
     type AuditLogEntry,
@@ -13,16 +13,16 @@
     updateUserRoles,
     type AllowedUser,
     type Role,
-  } from '../../lib/api';
-  import Badge from '../../lib/components/ui/Badge.svelte';
-  import Button from '../../lib/components/ui/Button.svelte';
-  import Card from '../../lib/components/ui/Card.svelte';
-  import Dialog from '../../lib/components/ui/Dialog.svelte';
-  import Input from '../../lib/components/ui/Input.svelte';
-  import { PermissionFlag } from '../../lib/permissions';
-  import { scrollFade } from '../../lib/scrollFade';
-  import { sessionHasAnyPermission, sessionHasPermission, sessionState } from '../../lib/session.svelte';
-  import { confirmDialog } from '../../lib/ui.svelte';
+  } from '#lib/api';
+  import Badge from '#lib/components/ui/Badge.svelte';
+  import Button from '#lib/components/ui/Button.svelte';
+  import Card from '#lib/components/ui/Card.svelte';
+  import Dialog from '#lib/components/ui/Dialog.svelte';
+  import Input from '#lib/components/ui/Input.svelte';
+  import { PermissionFlag } from '#lib/permissions';
+  import { scrollFade } from '#lib/scrollFade';
+  import { sessionHasAnyPermission, sessionHasPermission, sessionState } from '#lib/session.svelte';
+  import { confirmDialog } from '#lib/ui.svelte';
 
   const canManage = $derived(sessionHasPermission(PermissionFlag.manageUsers));
   const canViewRoles = $derived(sessionHasAnyPermission([PermissionFlag.viewRoles, PermissionFlag.manageRoles]));

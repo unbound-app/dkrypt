@@ -1,12 +1,12 @@
 import type { Response } from 'express';
 import { Router } from 'express';
-import { config } from '../config.js';
-import { requireApiKey, requireApiKeyOrSignedToken, requireTestFlightScope } from '../auth.js';
-import { blockDuringMaintenance } from '../maintenance.js';
-import { jobSummary, streamJobFile } from '../jobs/http.js';
-import { enqueueDecryptJob, getJob, waitForJob } from '../jobs/store.js';
-import { recordApiKeyBundleUsage } from '../store/state.js';
-import { listBuilds, listTrains } from '../testflight.js';
+import { config } from '#config.js';
+import { requireApiKey, requireApiKeyOrSignedToken, requireTestFlightScope } from '#auth.js';
+import { blockDuringMaintenance } from '#maintenance.js';
+import { jobSummary, streamJobFile } from '#jobs/http.js';
+import { enqueueDecryptJob, getJob, waitForJob } from '#jobs/store.js';
+import { recordApiKeyBundleUsage } from '#store/state.js';
+import { listBuilds, listTrains } from '#testflight.js';
 
 export const decryptRouter = Router();
 

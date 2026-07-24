@@ -2,8 +2,8 @@
   import { LoaderCircle } from 'lucide-svelte';
   import type { Snippet } from 'svelte';
   import type { HTMLButtonAttributes } from 'svelte/elements';
-  import { cn } from '../../utils';
-  import { buttonSizeClasses, buttonVariantClasses, buttonBase, type ButtonSize, type ButtonVariant } from './variants';
+  import { cn } from '#lib/utils';
+  import { buttonSizeClasses, buttonVariantClasses, buttonBase, type ButtonSize, type ButtonVariant } from '#lib/components/ui/variants';
 
   interface Props extends HTMLButtonAttributes {
     variant?: ButtonVariant;

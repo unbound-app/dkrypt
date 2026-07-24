@@ -1,4 +1,4 @@
-import { mergeBillingAccounts } from './billing.js';
+import { mergeBillingAccounts } from '#billing.js';
 import {
   type AuthIdentity,
   type AuthProfile,
@@ -6,9 +6,9 @@ import {
   getAuthProfile,
   mergeAuthProfiles,
   upsertAuthIdentity,
-} from './identity.js';
-import { mergeActiveJobOwner } from './jobs/store.js';
-import { listAllowedUsers, mergeUserAccounts } from './store/state.js';
+} from '#identity.js';
+import { mergeActiveJobOwner } from '#jobs/store.js';
+import { listAllowedUsers, mergeUserAccounts } from '#store/state.js';
 
 export interface ResolveOauthAccountInput {
   identity: AuthIdentity;

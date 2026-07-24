@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Plus, X } from 'lucide-svelte';
-  import EmptyState from '../../components/EmptyState.svelte';
-  import RelativeTime from '../../components/RelativeTime.svelte';
+  import EmptyState from '#components/EmptyState.svelte';
+  import RelativeTime from '#components/RelativeTime.svelte';
   import {
     createWatch,
     deleteWatch,
@@ -18,19 +18,19 @@
     type UpdateCheck,
     type WatchInput,
     type WebhookDeliveryEntry,
-  } from '../../lib/api';
-  import Badge from '../../lib/components/ui/Badge.svelte';
-  import Button from '../../lib/components/ui/Button.svelte';
-  import Card from '../../lib/components/ui/Card.svelte';
-  import Dialog from '../../lib/components/ui/Dialog.svelte';
-  import Input from '../../lib/components/ui/Input.svelte';
-  import Select from '../../lib/components/ui/Select.svelte';
-  import Switch from '../../lib/components/ui/Switch.svelte';
-  import { debounce } from '../../lib/format';
-  import { liveState } from '../../lib/live.svelte';
-  import { PermissionFlag } from '../../lib/permissions';
-  import { sessionHasPermission } from '../../lib/session.svelte';
-  import { confirmDialog, showToast } from '../../lib/ui.svelte';
+  } from '#lib/api';
+  import Badge from '#lib/components/ui/Badge.svelte';
+  import Button from '#lib/components/ui/Button.svelte';
+  import Card from '#lib/components/ui/Card.svelte';
+  import Dialog from '#lib/components/ui/Dialog.svelte';
+  import Input from '#lib/components/ui/Input.svelte';
+  import Select from '#lib/components/ui/Select.svelte';
+  import Switch from '#lib/components/ui/Switch.svelte';
+  import { debounce } from '#lib/format';
+  import { liveState } from '#lib/live.svelte';
+  import { PermissionFlag } from '#lib/permissions';
+  import { sessionHasPermission } from '#lib/session.svelte';
+  import { confirmDialog, showToast } from '#lib/ui.svelte';
 
   const FORMAT_OPTIONS = [
     { value: 'embed', label: 'Rich embed (Discord)' },

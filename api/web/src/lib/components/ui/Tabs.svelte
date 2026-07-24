@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Tabs as TabsPrimitive } from 'bits-ui';
-  import { scrollFade } from '../../scrollFade';
-  import { cn } from '../../utils';
+  import { scrollFade } from '#lib/scrollFade';
+  import { cn } from '#lib/utils';
 
   interface TabItem {
     id: string;

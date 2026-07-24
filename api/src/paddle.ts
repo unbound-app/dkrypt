@@ -1,5 +1,5 @@
 import { Environment, Paddle } from '@paddle/paddle-node-sdk';
-import { config } from './config.js';
+import { config } from '#config.js';
 
 let paddle: Paddle | undefined;
 

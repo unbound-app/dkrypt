@@ -1,8 +1,8 @@
 <script lang="ts">
   import { WifiOff } from 'lucide-svelte';
-  import { liveState, reconnectLive } from '../lib/live.svelte';
-  import Button from '../lib/components/ui/Button.svelte';
-  import RelativeTime from './RelativeTime.svelte';
+  import { liveState, reconnectLive } from '#lib/live.svelte';
+  import Button from '#lib/components/ui/Button.svelte';
+  import RelativeTime from '#components/RelativeTime.svelte';
 
   const showWarning = $derived(liveState.overview !== null && !liveState.connected);
 </script>

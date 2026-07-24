@@ -1,14 +1,14 @@
 <script lang="ts">
-  import Tabs from '../lib/components/ui/Tabs.svelte';
-  import { PermissionFlag } from '../lib/permissions';
-  import { sessionHasAnyPermission } from '../lib/session.svelte';
-  import { setSettingsSubtab, tabState } from '../lib/ui.svelte';
-  import BackupSettings from './settings/BackupSettings.svelte';
-  import DevicesSettings from './settings/DevicesSettings.svelte';
-  import RolesSettings from './settings/RolesSettings.svelte';
-  import SchedulerSettings from './settings/SchedulerSettings.svelte';
-  import ShareLinksSettings from './settings/ShareLinksSettings.svelte';
-  import UsersSettings from './settings/UsersSettings.svelte';
+  import Tabs from '#lib/components/ui/Tabs.svelte';
+  import { PermissionFlag } from '#lib/permissions';
+  import { sessionHasAnyPermission } from '#lib/session.svelte';
+  import { setSettingsSubtab, tabState } from '#lib/ui.svelte';
+  import BackupSettings from '#tabs/settings/BackupSettings.svelte';
+  import DevicesSettings from '#tabs/settings/DevicesSettings.svelte';
+  import RolesSettings from '#tabs/settings/RolesSettings.svelte';
+  import SchedulerSettings from '#tabs/settings/SchedulerSettings.svelte';
+  import ShareLinksSettings from '#tabs/settings/ShareLinksSettings.svelte';
+  import UsersSettings from '#tabs/settings/UsersSettings.svelte';
 
   const ALL_SUBTABS: { id: string; label: string; requires: bigint[] }[] = [
     { id: 'scheduler', label: 'Automation', requires: [PermissionFlag.viewAutomation, PermissionFlag.manageAutomation] },

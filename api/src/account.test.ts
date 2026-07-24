@@ -1,25 +1,25 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, test } from 'bun:test';
-import { resolveOauthAccount } from './account.js';
+import { resolveOauthAccount } from '#account.js';
 import {
   getBillingCustomerId,
   getBillingEntitlements,
   upsertBillingCustomer,
   upsertBillingSubscription,
-} from './billing.js';
+} from '#billing.js';
 import {
   type AuthIdentity,
   getLinkedAuthProviders,
   setAuthDisplayName,
-} from './identity.js';
-import { PermissionFlag, serializeBits } from './permissions.js';
+} from '#identity.js';
+import { PermissionFlag, serializeBits } from '#permissions.js';
 import {
   addAllowedUser,
   createApiKey,
   createRole,
   listAllowedUsers,
   listApiKeysForOwner,
-} from './store/state.js';
+} from '#store/state.js';
 
 function identity(
   provider: 'github' | 'discord',

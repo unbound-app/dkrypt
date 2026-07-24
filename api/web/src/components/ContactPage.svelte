@@ -1,7 +1,7 @@
 <script lang="ts">
-  import Card from '../lib/components/ui/Card.svelte';
-  import PublicPageFooter from './PublicPageFooter.svelte';
-  import PublicPageHeader from './PublicPageHeader.svelte';
+  import Card from '#lib/components/ui/Card.svelte';
+  import PublicPageFooter from '#components/PublicPageFooter.svelte';
+  import PublicPageHeader from '#components/PublicPageHeader.svelte';
 </script>
 
 <div class="min-h-screen">

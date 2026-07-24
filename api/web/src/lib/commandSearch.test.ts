@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { rankCommands, scoreCommand, type SearchableCommand } from './commandSearch';
+import { rankCommands, scoreCommand, type SearchableCommand } from '#lib/commandSearch';
 
 const COMMANDS: SearchableCommand[] = [
   { id: 'home', label: 'Go to Home' },

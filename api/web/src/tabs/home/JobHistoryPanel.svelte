@@ -1,11 +1,11 @@
 <script lang="ts">
   import { History, X } from 'lucide-svelte';
-  import BundleStatsDialog from '../../components/BundleStatsDialog.svelte';
-  import CopyButton from '../../components/CopyButton.svelte';
-  import EmptyState from '../../components/EmptyState.svelte';
-  import RelativeTime from '../../components/RelativeTime.svelte';
-  import ShareLinkDialog from '../../components/ShareLinkDialog.svelte';
-  import SkeletonRows from '../../components/SkeletonRows.svelte';
+  import BundleStatsDialog from '#components/BundleStatsDialog.svelte';
+  import CopyButton from '#components/CopyButton.svelte';
+  import EmptyState from '#components/EmptyState.svelte';
+  import RelativeTime from '#components/RelativeTime.svelte';
+  import ShareLinkDialog from '#components/ShareLinkDialog.svelte';
+  import SkeletonRows from '#components/SkeletonRows.svelte';
   import {
     fetchJobHistory,
     fetchJobTimeline,
@@ -15,20 +15,20 @@
     retryJob,
     type JobHistoryEntry,
     type JobTimeline,
-  } from '../../lib/api';
-  import Badge from '../../lib/components/ui/Badge.svelte';
-  import Button from '../../lib/components/ui/Button.svelte';
-  import Card from '../../lib/components/ui/Card.svelte';
-  import Input from '../../lib/components/ui/Input.svelte';
-  import { buttonVariants, statusToBadgeVariant } from '../../lib/components/ui/variants';
-  import { addDecrypt, pushRecentBundleId } from '../../lib/decrypts.svelte';
-  import { csvCell, debounce, downloadBlob, fmtSize } from '../../lib/format';
-  import { liveState } from '../../lib/live.svelte';
-  import { scrollFade } from '../../lib/scrollFade';
-  import { createSavedViews } from '../../lib/savedViews.svelte';
-  import { sessionState } from '../../lib/session.svelte';
-  import { confirmDialog, historyJumpState, setActiveTab, setSettingsSubtab, showToast, tabState } from '../../lib/ui.svelte';
-  import { getQueryParam, setQueryParams } from '../../lib/urlState';
+  } from '#lib/api';
+  import Badge from '#lib/components/ui/Badge.svelte';
+  import Button from '#lib/components/ui/Button.svelte';
+  import Card from '#lib/components/ui/Card.svelte';
+  import Input from '#lib/components/ui/Input.svelte';
+  import { buttonVariants, statusToBadgeVariant } from '#lib/components/ui/variants';
+  import { addDecrypt, pushRecentBundleId } from '#lib/decrypts.svelte';
+  import { csvCell, debounce, downloadBlob, fmtSize } from '#lib/format';
+  import { liveState } from '#lib/live.svelte';
+  import { scrollFade } from '#lib/scrollFade';
+  import { createSavedViews } from '#lib/savedViews.svelte';
+  import { sessionState } from '#lib/session.svelte';
+  import { confirmDialog, historyJumpState, setActiveTab, setSettingsSubtab, showToast, tabState } from '#lib/ui.svelte';
+  import { getQueryParam, setQueryParams } from '#lib/urlState';
 
   const PAGE_SIZE = 15;
 

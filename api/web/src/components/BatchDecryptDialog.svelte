@@ -1,12 +1,12 @@
 <script lang="ts">
   import { LoaderCircle } from 'lucide-svelte';
-  import { queueDecrypt } from '../lib/api';
-  import Button from '../lib/components/ui/Button.svelte';
-  import Dialog from '../lib/components/ui/Dialog.svelte';
-  import { addDecrypt, pushRecentBundleId } from '../lib/decrypts.svelte';
-  import { requestNotificationPermission } from '../lib/notifications';
-  import { showToast } from '../lib/ui.svelte';
-  import { cn } from '../lib/utils';
+  import { queueDecrypt } from '#lib/api';
+  import Button from '#lib/components/ui/Button.svelte';
+  import Dialog from '#lib/components/ui/Dialog.svelte';
+  import { addDecrypt, pushRecentBundleId } from '#lib/decrypts.svelte';
+  import { requestNotificationPermission } from '#lib/notifications';
+  import { showToast } from '#lib/ui.svelte';
+  import { cn } from '#lib/utils';
 
   let { open = $bindable(), onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void } = $props();
 

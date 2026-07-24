@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { compareVersions, normalizeVersion } from './version.js';
+import { compareVersions, normalizeVersion } from '#util/version.js';
 
 describe('normalizeVersion', () => {
   test('strips a leading v', () => {

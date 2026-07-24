@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { config } from './config.js';
+import { config } from '#config.js';
 
 export type AuthProvider = 'github' | 'discord';
 

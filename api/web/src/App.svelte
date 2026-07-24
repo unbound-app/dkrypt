@@ -2,32 +2,32 @@
   import { DropdownMenu } from 'bits-ui';
   import { Download, LogOut, Monitor, Moon, Pencil, Rows2, Rows3, Sun, Volume2, VolumeX } from 'lucide-svelte';
   import { Toaster } from 'svelte-sonner';
-  import CommandPalette from './components/CommandPalette.svelte';
-  import ConfirmModal from './components/ConfirmModal.svelte';
-  import ConnectionBanner from './components/ConnectionBanner.svelte';
-  import MaintenanceBanner from './components/MaintenanceBanner.svelte';
-  import UpdateAvailableBanner from './components/UpdateAvailableBanner.svelte';
-  import HeaderOnlineUsers from './components/HeaderOnlineUsers.svelte';
-  import Login from './components/Login.svelte';
-  import LegalPage from './components/LegalPage.svelte';
-  import NotificationBell from './components/NotificationBell.svelte';
-  import ContactPage from './components/ContactPage.svelte';
-  import PublicPricing from './components/PublicPricing.svelte';
-  import SessionExpiryBanner from './components/SessionExpiryBanner.svelte';
-  import SessionsDialog from './components/SessionsDialog.svelte';
-  import SetupBanner from './components/SetupBanner.svelte';
-  import ShortcutsHelp from './components/ShortcutsHelp.svelte';
-  import Badge from './lib/components/ui/Badge.svelte';
-  import Button from './lib/components/ui/Button.svelte';
-  import Input from './lib/components/ui/Input.svelte';
-  import Tabs from './lib/components/ui/Tabs.svelte';
-  import { buttonVariants } from './lib/components/ui/variants';
-  import { KOFI_URL } from './lib/constants';
-  import { myDecryptsState } from './lib/decrypts.svelte';
-  import { connectLive, disconnectLive, liveState } from './lib/live.svelte';
-  import { disablePush, enablePush, getExistingPushSubscription, pushSupported, registerServiceWorker } from './lib/push';
-  import { initInstallPromptWatcher, initPwaUpdateWatcher, promptPwaInstall, pwaState } from './lib/pwa.svelte';
-  import { PermissionFlag } from './lib/permissions';
+  import CommandPalette from '#components/CommandPalette.svelte';
+  import ConfirmModal from '#components/ConfirmModal.svelte';
+  import ConnectionBanner from '#components/ConnectionBanner.svelte';
+  import MaintenanceBanner from '#components/MaintenanceBanner.svelte';
+  import UpdateAvailableBanner from '#components/UpdateAvailableBanner.svelte';
+  import HeaderOnlineUsers from '#components/HeaderOnlineUsers.svelte';
+  import Login from '#components/Login.svelte';
+  import LegalPage from '#components/LegalPage.svelte';
+  import NotificationBell from '#components/NotificationBell.svelte';
+  import ContactPage from '#components/ContactPage.svelte';
+  import PublicPricing from '#components/PublicPricing.svelte';
+  import SessionExpiryBanner from '#components/SessionExpiryBanner.svelte';
+  import SessionsDialog from '#components/SessionsDialog.svelte';
+  import SetupBanner from '#components/SetupBanner.svelte';
+  import ShortcutsHelp from '#components/ShortcutsHelp.svelte';
+  import Badge from '#lib/components/ui/Badge.svelte';
+  import Button from '#lib/components/ui/Button.svelte';
+  import Input from '#lib/components/ui/Input.svelte';
+  import Tabs from '#lib/components/ui/Tabs.svelte';
+  import { buttonVariants } from '#lib/components/ui/variants';
+  import { KOFI_URL } from '#lib/constants';
+  import { myDecryptsState } from '#lib/decrypts.svelte';
+  import { connectLive, disconnectLive, liveState } from '#lib/live.svelte';
+  import { disablePush, enablePush, getExistingPushSubscription, pushSupported, registerServiceWorker } from '#lib/push';
+  import { initInstallPromptWatcher, initPwaUpdateWatcher, promptPwaInstall, pwaState } from '#lib/pwa.svelte';
+  import { PermissionFlag } from '#lib/permissions';
   import {
     logout,
     logoutEverywhere,
@@ -45,8 +45,8 @@
     sessionPermissionLabels,
     sessionState,
     updateProfileDisplayName,
-  } from './lib/session.svelte';
-  import { testPush } from './lib/api';
+  } from '#lib/session.svelte';
+  import { testPush } from '#lib/api';
   import {
     ACCENT_PRESETS,
     accentState,
@@ -69,16 +69,16 @@
     themePrefState,
     themeState,
     type TabId,
-  } from './lib/ui.svelte';
+  } from '#lib/ui.svelte';
 
-  import Docs from './tabs/Docs.svelte';
-  import Billing from './tabs/Billing.svelte';
-  import Home from './tabs/Home.svelte';
-  import StatusPanel from './tabs/home/StatusPanel.svelte';
-  import Insights from './tabs/Insights.svelte';
-  import Keys from './tabs/Keys.svelte';
-  import Logs from './tabs/Logs.svelte';
-  import Settings from './tabs/Settings.svelte';
+  import Docs from '#tabs/Docs.svelte';
+  import Billing from '#tabs/Billing.svelte';
+  import Home from '#tabs/Home.svelte';
+  import StatusPanel from '#tabs/home/StatusPanel.svelte';
+  import Insights from '#tabs/Insights.svelte';
+  import Keys from '#tabs/Keys.svelte';
+  import Logs from '#tabs/Logs.svelte';
+  import Settings from '#tabs/Settings.svelte';
 
   initTheme();
   initDensity();

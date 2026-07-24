@@ -1,6 +1,6 @@
 <script lang="ts">
-  import Dialog from '../lib/components/ui/Dialog.svelte';
-  import { closeHelp, helpState } from '../lib/ui.svelte';
+  import Dialog from '#lib/components/ui/Dialog.svelte';
+  import { closeHelp, helpState } from '#lib/ui.svelte';
 
   const SHORTCUTS: { keys: string; description: string }[] = [
     { keys: '/', description: 'Focus the App Store search on Home' },

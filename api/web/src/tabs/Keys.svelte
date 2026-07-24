@@ -1,10 +1,10 @@
 <script lang="ts">
   import { PackageSearch } from 'lucide-svelte';
-  import CopyButton from '../components/CopyButton.svelte';
-  import EmptyState from '../components/EmptyState.svelte';
-  import KeyUsageDialog from '../components/KeyUsageDialog.svelte';
-  import RelativeTime from '../components/RelativeTime.svelte';
-  import SkeletonRows from '../components/SkeletonRows.svelte';
+  import CopyButton from '#components/CopyButton.svelte';
+  import EmptyState from '#components/EmptyState.svelte';
+  import KeyUsageDialog from '#components/KeyUsageDialog.svelte';
+  import RelativeTime from '#components/RelativeTime.svelte';
+  import SkeletonRows from '#components/SkeletonRows.svelte';
   import {
     approveKey,
     bulkApproveKeys,
@@ -24,19 +24,19 @@
     updateKeyMaxConcurrent,
     updateKeyPriority,
     type ApiKeyRecord,
-  } from '../lib/api';
-  import Badge from '../lib/components/ui/Badge.svelte';
-  import Button from '../lib/components/ui/Button.svelte';
-  import Card from '../lib/components/ui/Card.svelte';
-  import Input from '../lib/components/ui/Input.svelte';
-  import Select from '../lib/components/ui/Select.svelte';
-  import Switch from '../lib/components/ui/Switch.svelte';
-  import { statusToBadgeVariant } from '../lib/components/ui/variants';
-  import { debounce, fmtUntil } from '../lib/format';
-  import { scrollFade } from '../lib/scrollFade';
-  import { PermissionFlag } from '../lib/permissions';
-  import { sessionHasAnyPermission, sessionHasPermission, sessionState } from '../lib/session.svelte';
-  import { confirmDialog, keyUsageJumpState, showToast } from '../lib/ui.svelte';
+  } from '#lib/api';
+  import Badge from '#lib/components/ui/Badge.svelte';
+  import Button from '#lib/components/ui/Button.svelte';
+  import Card from '#lib/components/ui/Card.svelte';
+  import Input from '#lib/components/ui/Input.svelte';
+  import Select from '#lib/components/ui/Select.svelte';
+  import Switch from '#lib/components/ui/Switch.svelte';
+  import { statusToBadgeVariant } from '#lib/components/ui/variants';
+  import { debounce, fmtUntil } from '#lib/format';
+  import { scrollFade } from '#lib/scrollFade';
+  import { PermissionFlag } from '#lib/permissions';
+  import { sessionHasAnyPermission, sessionHasPermission, sessionState } from '#lib/session.svelte';
+  import { confirmDialog, keyUsageJumpState, showToast } from '#lib/ui.svelte';
 
   const PAGE_SIZE = 25;
 

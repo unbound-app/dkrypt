@@ -1,7 +1,7 @@
 import AdmZip from 'adm-zip';
 import { parseBuffer as parseBinaryPlist } from 'bplist-parser';
 import { parse as parseXmlPlist } from 'plist';
-import type { IpaMetadata } from '../store/state.js';
+import type { IpaMetadata } from '#store/state.js';
 
 export interface ExtractedIpaMetadata {
   summary: IpaMetadata;

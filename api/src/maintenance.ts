@@ -1,6 +1,6 @@
 import type { NextFunction, Request, Response } from 'express';
-import { peekPrimaryDeviceHealth } from './deviceHealth.js';
-import { getEffectiveSettings } from './store/state.js';
+import { peekPrimaryDeviceHealth } from '#deviceHealth.js';
+import { getEffectiveSettings } from '#store/state.js';
 
 export interface MaintenanceStatus {
   active: boolean;

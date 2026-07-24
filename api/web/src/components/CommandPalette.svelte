@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { cancelJob, fetchJobHistory, fetchMyKeys, jobHistoryExportUrl, triggerWatchDispatch } from '../lib/api';
-  import { PermissionFlag } from '../lib/permissions';
-  import { logout, sessionCanSeeSettings, sessionHasPermission } from '../lib/session.svelte';
+  import { cancelJob, fetchJobHistory, fetchMyKeys, jobHistoryExportUrl, triggerWatchDispatch } from '#lib/api';
+  import { PermissionFlag } from '#lib/permissions';
+  import { logout, sessionCanSeeSettings, sessionHasPermission } from '#lib/session.svelte';
   import {
     closePalette,
     confirmDialog,
@@ -15,12 +15,12 @@
     setTheme,
     showToast,
     themePrefState,
-  } from '../lib/ui.svelte';
-  import Dialog from '../lib/components/ui/Dialog.svelte';
-  import Input from '../lib/components/ui/Input.svelte';
-  import { liveState } from '../lib/live.svelte';
-  import { cn } from '../lib/utils';
-  import { rankCommands } from '../lib/commandSearch';
+  } from '#lib/ui.svelte';
+  import Dialog from '#lib/components/ui/Dialog.svelte';
+  import Input from '#lib/components/ui/Input.svelte';
+  import { liveState } from '#lib/live.svelte';
+  import { cn } from '#lib/utils';
+  import { rankCommands } from '#lib/commandSearch';
 
   interface Command {
     id: string;

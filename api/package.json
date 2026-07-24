@@ -6,6 +6,9 @@
   "engines": {
     "bun": ">=1.2"
   },
+  "imports": {
+    "#*": "./src/*"
+  },
   "scripts": {
     "start": "bun src/server.ts",
     "dev": "bun --watch src/server.ts",
