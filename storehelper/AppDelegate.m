@@ -1,6 +1,106 @@
 #import "AppDelegate.h"
 #import "AutoinstallRootViewController.h"
 #import <objc/runtime.h>
+#import <mach/mach_time.h>
+
+#pragma mark - IOHID synthetic-touch SPI (adapted from OwnGoalStudio/TrollVNC's STHIDEventGenerator).
+#pragma mark   Requires com.apple.private.hid.client.* entitlements in entitlements.plist - this is
+#pragma mark   why this lives in a standalone app rather than the injected tweak, which can't add
+#pragma mark   entitlements to an already-signed, already-running host process at runtime.
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef double IOHIDFloat;
+enum { kIOHIDEventOptionNone = 0 };
+typedef UInt32 IOOptionBits;
+typedef uint32_t IOHIDEventOptionBits;
+typedef uint32_t IOHIDEventField;
+typedef struct __IOHIDEventSystemClient *IOHIDEventSystemClientRef;
+typedef struct __IOHIDEvent *IOHIDEventRef;
+
+#define IOHIDEventFieldBase(type) (type << 16)
+enum { kIOHIDDigitizerEventTouch = 1 << 1, kIOHIDDigitizerEventIdentity = 1 << 5 };
+typedef uint32_t IOHIDDigitizerEventMask;
+enum { kIOHIDEventTypeNULL, kIOHIDEventTypeDigitizer = 11 };
+typedef uint32_t IOHIDEventType;
+enum { kIOHIDEventFieldIsBuiltIn = IOHIDEventFieldBase(kIOHIDEventTypeNULL) + 4 };
+enum {
+    kIOHIDEventFieldDigitizerX = IOHIDEventFieldBase(kIOHIDEventTypeDigitizer),
+    kIOHIDEventFieldDigitizerMajorRadius = kIOHIDEventFieldDigitizerX + 20,
+    kIOHIDEventFieldDigitizerMinorRadius,
+    kIOHIDEventFieldDigitizerIsDisplayIntegrated = kIOHIDEventFieldDigitizerMajorRadius + 5,
+};
+enum { kIOHIDDigitizerTransducerTypeHand = 3 };
+typedef uint32_t IOHIDDigitizerTransducerType;
+#define kGSEventPathInfoInRange (1 << 0)
+#define kGSEventPathInfoInTouch (1 << 1)
+
+IOHIDEventRef IOHIDEventCreateDigitizerEvent(CFAllocatorRef, uint64_t, IOHIDDigitizerTransducerType, uint32_t, uint32_t,
+                                             IOHIDDigitizerEventMask, uint32_t, IOHIDFloat, IOHIDFloat, IOHIDFloat,
+                                             IOHIDFloat, IOHIDFloat, boolean_t, boolean_t, IOOptionBits);
+IOHIDEventRef IOHIDEventCreateDigitizerFingerEvent(CFAllocatorRef, uint64_t, uint32_t, uint32_t,
+                                                   IOHIDDigitizerEventMask, IOHIDFloat, IOHIDFloat, IOHIDFloat,
+                                                   IOHIDFloat, IOHIDFloat, boolean_t, boolean_t, IOHIDEventOptionBits);
+void IOHIDEventSetIntegerValue(IOHIDEventRef, IOHIDEventField, CFIndex);
+void IOHIDEventSetFloatValue(IOHIDEventRef, IOHIDEventField, IOHIDFloat);
+void IOHIDEventSetSenderID(IOHIDEventRef, uint64_t);
+void IOHIDEventAppendEvent(IOHIDEventRef, IOHIDEventRef, IOOptionBits);
+IOHIDEventSystemClientRef IOHIDEventSystemClientCreate(CFAllocatorRef);
+void IOHIDEventSystemClientDispatchEvent(IOHIDEventSystemClientRef, IOHIDEventRef);
+
+#ifdef __cplusplus
+}
+#endif
+
+static IOHIDEventRef autoinstallCreateHandEvent(BOOL touching, CGPoint normalizedPoint) {
+    IOHIDDigitizerEventMask eventMask = kIOHIDDigitizerEventTouch | kIOHIDDigitizerEventIdentity;
+    uint64_t machTime = mach_absolute_time();
+
+    IOHIDEventRef eventRef = IOHIDEventCreateDigitizerEvent(kCFAllocatorDefault, machTime, kIOHIDDigitizerTransducerTypeHand,
+                                                            0, 0, eventMask, 0, 0, 0, 0, 0, 0, 0, touching, kIOHIDEventOptionNone);
+    IOHIDEventSetIntegerValue(eventRef, kIOHIDEventFieldIsBuiltIn, 1);
+    IOHIDEventSetIntegerValue(eventRef, kIOHIDEventFieldDigitizerIsDisplayIntegrated, 1);
+
+    IOHIDFloat pathMajorRadius = touching ? 5 : 0;
+    uint32_t pathProximity = touching ? (kGSEventPathInfoInTouch | kGSEventPathInfoInRange) : 0;
+
+    IOHIDEventRef subEvent = IOHIDEventCreateDigitizerFingerEvent(kCFAllocatorDefault, machTime, 2, 2, eventMask,
+        normalizedPoint.x, normalizedPoint.y, 0, 0, 90.0,
+        (pathProximity & kGSEventPathInfoInRange) != 0, (pathProximity & kGSEventPathInfoInTouch) != 0, kIOHIDEventOptionNone);
+    IOHIDEventSetFloatValue(subEvent, kIOHIDEventFieldDigitizerMinorRadius, pathMajorRadius);
+    IOHIDEventSetFloatValue(subEvent, kIOHIDEventFieldDigitizerMajorRadius, pathMajorRadius);
+    IOHIDEventAppendEvent(eventRef, subEvent, 0);
+    CFRelease(subEvent);
+
+    return eventRef;
+}
+
+static void autoinstallDispatchHIDEvent(IOHIDEventRef eventRef) {
+    static IOHIDEventSystemClientRef client = NULL;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        client = IOHIDEventSystemClientCreate(kCFAllocatorDefault);
+    });
+    IOHIDEventSetSenderID(eventRef, 0x8000000817319371);
+    IOHIDEventSystemClientDispatchEvent(client, eventRef);
+}
+
+static void autoinstallSynthesizeTap(CGPoint pointInPoints) {
+    CGSize screenSize = [UIScreen mainScreen].bounds.size;
+    CGPoint normalized = CGPointMake(pointInPoints.x / screenSize.width, pointInPoints.y / screenSize.height);
+
+    IOHIDEventRef down = autoinstallCreateHandEvent(YES, normalized);
+    autoinstallDispatchHIDEvent(down);
+    CFRelease(down);
+
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.08 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        IOHIDEventRef up = autoinstallCreateHandEvent(NO, normalized);
+        autoinstallDispatchHIDEvent(up);
+        CFRelease(up);
+    });
+}
 
 @protocol SKUIItemStateCenterProtocol <NSObject>
 + (instancetype)defaultCenter;
@@ -23,9 +123,9 @@
 @end
 
 static NSString * const kLogPath = @"/tmp/autoinstall-store.log";
-static NSString * const kRequestPath = @"/tmp/autoinstall-as-request.json";
-static NSString * const kResponsePath = @"/tmp/autoinstall-as-response.json";
-static NSString * const kInstallStatusPath = @"/tmp/autoinstall-as-install-status.json";
+static NSString * const kRequestPath = @"/tmp/autoinstall-taphelper-request.json";
+static NSString * const kResponsePath = @"/tmp/autoinstall-taphelper-response.json";
+static NSString * const kInstallStatusPath = @"/tmp/autoinstall-taphelper-install-status.json";
 
 static void storeLog(NSString *line) {
     NSString *entry = [NSString stringWithFormat:@"[%@] %@\n", [NSDate date], line];
@@ -129,6 +229,19 @@ static void handleRequest(NSDictionary *req) {
         return;
     }
 
+    if ([action isEqualToString:@"tap"]) {
+        NSNumber *x = req[@"x"];
+        NSNumber *y = req[@"y"];
+        if (!x || !y) {
+            writeJSONFile(kResponsePath, @{@"ok": @NO, @"error": @"missing x/y"});
+            return;
+        }
+        autoinstallSynthesizeTap(CGPointMake([x doubleValue], [y doubleValue]));
+        storeLog([NSString stringWithFormat:@"tap: synthesized at (%@, %@)", x, y]);
+        writeJSONFile(kResponsePath, @{@"ok": @YES});
+        return;
+    }
+
     writeJSONFile(kResponsePath, @{@"ok": @NO, @"error": [NSString stringWithFormat:@"unknown action: %@", action]});
 }
 
@@ -167,6 +280,17 @@ static void handleRequest(NSDictionary *req) {
     objc_setAssociatedObject(self, "bridgeTimer", timer, OBJC_ASSOCIATION_RETAIN);
 
     return YES;
+}
+
+// The bridge polling timer stops firing once iOS suspends the app's run loop in the background -
+// keep it alive with a background task assertion (standard ~30s-3min grace period) so taps can
+// still be dispatched while App Store, not this app, is the frontmost/visible app.
+- (void)applicationDidEnterBackground:(UIApplication *)application {
+    __block UIBackgroundTaskIdentifier taskId = UIBackgroundTaskInvalid;
+    taskId = [application beginBackgroundTaskWithName:@"autoinstall-taphelper" expirationHandler:^{
+        [application endBackgroundTask:taskId];
+    }];
+    storeLog([NSString stringWithFormat:@"entered background, started background task id=%lu", (unsigned long)taskId]);
 }
 
 @end

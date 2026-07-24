@@ -40,5 +40,20 @@
 	<array>
 		<string>/</string>
 	</array>
+	<key>com.apple.private.hid.client.event-dispatch</key>
+	<true/>
+	<key>com.apple.private.hid.client.event-filter</key>
+	<true/>
+	<key>com.apple.private.hid.client.event-monitor</key>
+	<true/>
+	<key>com.apple.private.hid.client.service-protected</key>
+	<true/>
+	<key>com.apple.private.hid.manager.client</key>
+	<true/>
+	<key>com.apple.security.iokit-user-client-class</key>
+	<array>
+		<string>IOHIDLibUserClient</string>
+		<string>IOHIDEventServiceFastPathUserClient</string>
+	</array>
 </dict>
 </plist>

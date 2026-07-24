@@ -9,7 +9,7 @@ include $(THEOS)/makefiles/common.mk
 
 APPLICATION_NAME = autoinstall
 autoinstall_FILES = main.m AppDelegate.m AutoinstallRootViewController.m
-autoinstall_FRAMEWORKS = UIKit Foundation
+autoinstall_FRAMEWORKS = UIKit Foundation IOKit
 autoinstall_PRIVATE_FRAMEWORKS = Preferences StoreKitUI
 autoinstall_CFLAGS = -fobjc-arc
 autoinstall_CODESIGN_FLAGS = -Sentitlements.plist

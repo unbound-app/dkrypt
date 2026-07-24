@@ -1,6 +1,6 @@
 Package: dev.adrian.autoinstall.store
 Name: autoinstall
-Version: 0.2.3
+Version: 0.3.1
 Architecture: iphoneos-arm64
 Description: Standalone App Store purchase-pipeline helper for dkrypt/autoinstall - drives the on-device StoreKitUI purchase flow the same way MuffinStore does, headlessly
 Maintainer: Adrian Castro
