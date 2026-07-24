@@ -2,6 +2,107 @@
 #import <UIKit/UIKit.h>
 #import <dlfcn.h>
 #import <objc/runtime.h>
+#import <mach/mach_time.h>
+
+#pragma mark - IOHID synthetic-touch SPI (adapted from OwnGoalStudio/TrollVNC's STHIDEventGenerator,
+#pragma mark   itself derived from WebKit's IOKitSPI.h - same mechanism XCTest UI automation uses)
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef double IOHIDFloat;
+enum { kIOHIDEventOptionNone = 0 };
+typedef UInt32 IOOptionBits;
+typedef uint32_t IOHIDEventOptionBits;
+typedef uint32_t IOHIDEventField;
+typedef struct __IOHIDEventSystemClient *IOHIDEventSystemClientRef;
+typedef struct __IOHIDEvent *IOHIDEventRef;
+
+#define IOHIDEventFieldBase(type) (type << 16)
+enum { kIOHIDDigitizerEventTouch = 1 << 1, kIOHIDDigitizerEventIdentity = 1 << 5 };
+typedef uint32_t IOHIDDigitizerEventMask;
+enum { kIOHIDEventTypeNULL, kIOHIDEventTypeDigitizer = 11 };
+typedef uint32_t IOHIDEventType;
+enum { kIOHIDEventFieldIsBuiltIn = IOHIDEventFieldBase(kIOHIDEventTypeNULL) + 4 };
+enum {
+    kIOHIDEventFieldDigitizerX = IOHIDEventFieldBase(kIOHIDEventTypeDigitizer),
+    kIOHIDEventFieldDigitizerMajorRadius = kIOHIDEventFieldDigitizerX + 20,
+    kIOHIDEventFieldDigitizerMinorRadius,
+    kIOHIDEventFieldDigitizerIsDisplayIntegrated = kIOHIDEventFieldDigitizerMajorRadius + 5,
+};
+enum { kIOHIDDigitizerTransducerTypeHand = 3 };
+typedef uint32_t IOHIDDigitizerTransducerType;
+#define kGSEventPathInfoInRange (1 << 0)
+#define kGSEventPathInfoInTouch (1 << 1)
+
+IOHIDEventRef IOHIDEventCreateDigitizerEvent(CFAllocatorRef, uint64_t, IOHIDDigitizerTransducerType, uint32_t, uint32_t,
+                                             IOHIDDigitizerEventMask, uint32_t, IOHIDFloat, IOHIDFloat, IOHIDFloat,
+                                             IOHIDFloat, IOHIDFloat, boolean_t, boolean_t, IOOptionBits);
+IOHIDEventRef IOHIDEventCreateDigitizerFingerEvent(CFAllocatorRef, uint64_t, uint32_t, uint32_t,
+                                                   IOHIDDigitizerEventMask, IOHIDFloat, IOHIDFloat, IOHIDFloat,
+                                                   IOHIDFloat, IOHIDFloat, boolean_t, boolean_t, IOHIDEventOptionBits);
+void IOHIDEventSetIntegerValue(IOHIDEventRef, IOHIDEventField, CFIndex);
+void IOHIDEventSetFloatValue(IOHIDEventRef, IOHIDEventField, IOHIDFloat);
+void IOHIDEventSetSenderID(IOHIDEventRef, uint64_t);
+void IOHIDEventAppendEvent(IOHIDEventRef, IOHIDEventRef, IOOptionBits);
+IOHIDEventSystemClientRef IOHIDEventSystemClientCreate(CFAllocatorRef);
+void IOHIDEventSystemClientDispatchEvent(IOHIDEventSystemClientRef, IOHIDEventRef);
+
+#ifdef __cplusplus
+}
+#endif
+
+static IOHIDEventRef autoinstallCreateHandEvent(BOOL touching, CGPoint normalizedPoint) {
+    IOHIDDigitizerEventMask eventMask = kIOHIDDigitizerEventTouch | kIOHIDDigitizerEventIdentity;
+    uint64_t machTime = mach_absolute_time();
+
+    IOHIDEventRef eventRef = IOHIDEventCreateDigitizerEvent(kCFAllocatorDefault, machTime, kIOHIDDigitizerTransducerTypeHand,
+                                                            0, 0, eventMask, 0, 0, 0, 0, 0, 0, 0, touching, kIOHIDEventOptionNone);
+    IOHIDEventSetIntegerValue(eventRef, kIOHIDEventFieldIsBuiltIn, 1);
+    IOHIDEventSetIntegerValue(eventRef, kIOHIDEventFieldDigitizerIsDisplayIntegrated, 1);
+
+    IOHIDFloat pathPressure = touching ? 0 : 0;
+    IOHIDFloat pathMajorRadius = touching ? 5 : 0;
+    uint32_t pathProximity = touching ? (kGSEventPathInfoInTouch | kGSEventPathInfoInRange) : 0;
+
+    IOHIDEventRef subEvent = IOHIDEventCreateDigitizerFingerEvent(kCFAllocatorDefault, machTime, 2, 2, eventMask,
+        normalizedPoint.x, normalizedPoint.y, 0, pathPressure, 90.0,
+        (pathProximity & kGSEventPathInfoInRange) != 0, (pathProximity & kGSEventPathInfoInTouch) != 0, kIOHIDEventOptionNone);
+    IOHIDEventSetFloatValue(subEvent, kIOHIDEventFieldDigitizerMinorRadius, pathMajorRadius);
+    IOHIDEventSetFloatValue(subEvent, kIOHIDEventFieldDigitizerMajorRadius, pathMajorRadius);
+    IOHIDEventAppendEvent(eventRef, subEvent, 0);
+    CFRelease(subEvent);
+
+    return eventRef;
+}
+
+static void autoinstallDispatchHIDEvent(IOHIDEventRef eventRef) {
+    static IOHIDEventSystemClientRef client = NULL;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        client = IOHIDEventSystemClientCreate(kCFAllocatorDefault);
+    });
+    IOHIDEventSetSenderID(eventRef, 0x8000000817319371);
+    IOHIDEventSystemClientDispatchEvent(client, eventRef);
+}
+
+// pointInPoints is in the same unit as [UIScreen mainScreen].bounds (points, not pixels) - normalization
+// only cares that numerator/denominator match units, so this avoids needing the private physical-pixel API.
+static void autoinstallSynthesizeTap(CGPoint pointInPoints) {
+    CGSize screenSize = [UIScreen mainScreen].bounds.size;
+    CGPoint normalized = CGPointMake(pointInPoints.x / screenSize.width, pointInPoints.y / screenSize.height);
+
+    IOHIDEventRef down = autoinstallCreateHandEvent(YES, normalized);
+    autoinstallDispatchHIDEvent(down);
+    CFRelease(down);
+
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.08 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        IOHIDEventRef up = autoinstallCreateHandEvent(NO, normalized);
+        autoinstallDispatchHIDEvent(up);
+        CFRelease(up);
+    });
+}
 
 @protocol TFURLSessionProtocol <NSObject>
 + (instancetype)session;
@@ -207,6 +308,21 @@ static void handleSpringBoardRequest(NSDictionary *req) {
             setDarkFlag(NO);
             removeDark();
             writeJSONFile(kSBResponsePath, screenStatusDict());
+            return;
+        }
+
+        if ([action isEqualToString:@"tap"]) {
+            NSNumber *x = req[@"x"];
+            NSNumber *y = req[@"y"];
+            if (!x || !y) {
+                writeJSONFile(kSBResponsePath, @{@"ok": @NO, @"error": @"missing x/y"});
+                return;
+            }
+            dispatch_sync(dispatch_get_main_queue(), ^{
+                autoinstallSynthesizeTap(CGPointMake([x doubleValue], [y doubleValue]));
+            });
+            autoinstallLog([NSString stringWithFormat:@"sb-bridge: tap synthesized at (%@, %@)", x, y]);
+            writeJSONFile(kSBResponsePath, @{@"ok": @YES});
             return;
         }
 
@@ -597,11 +713,38 @@ static void startTestFlightSide(void) {
     autoinstallLog(@"bridge: request-file watcher started");
 }
 
-#pragma mark - App Store side: SKUIItemStateCenter probe + purchase-pipeline install
+#pragma mark - App Store side: NSXPCConnection service-name logging (find who renders the purchase sheet)
 
-// UIAlertController is public UIKit, present in every process - only act on it when we're actually
-// injected into the App Store, never TestFlight/SpringBoard, or we'd auto-tap unrelated system alerts.
+// Also used by the UIAlertController hook further down - only act in the App Store process, never
+// TestFlight/SpringBoard, or we'd log/auto-tap unrelated things there.
 static BOOL gIsAppStoreProcess = NO;
+
+%hook NSXPCConnection
+
+- (id)initWithServiceName:(NSString *)serviceName {
+    if (gIsAppStoreProcess) {
+        autoinstallLog([NSString stringWithFormat:@"xpc: initWithServiceName: %@", serviceName]);
+    }
+    return %orig;
+}
+
+- (id)initWithMachServiceName:(NSString *)machServiceName options:(NSXPCConnectionOptions)options {
+    if (gIsAppStoreProcess) {
+        autoinstallLog([NSString stringWithFormat:@"xpc: initWithMachServiceName: %@ options=%lu", machServiceName, (unsigned long)options]);
+    }
+    return %orig;
+}
+
+- (void)resume {
+    if (gIsAppStoreProcess) {
+        autoinstallLog([NSString stringWithFormat:@"xpc: resume on connection %@ serviceName=%@", self, [self valueForKey:@"serviceName"]]);
+    }
+    %orig;
+}
+
+%end
+
+#pragma mark - App Store side: SKUIItemStateCenter probe + purchase-pipeline install
 
 %hook UIAlertController
 
@@ -711,6 +854,70 @@ static void handleAppStoreRequest(NSDictionary *req) {
         [matches sortUsingSelector:@selector(compare:)];
         autoinstallLog([NSString stringWithFormat:@"probe_classes(%@): %@", substring, matches]);
         writeJSONFile(kASResponsePath, @{@"ok": @YES, @"matches": matches});
+        return;
+    }
+
+    if ([action isEqualToString:@"tap"]) {
+        NSNumber *x = req[@"x"];
+        NSNumber *y = req[@"y"];
+        if (!x || !y) {
+            writeJSONFile(kASResponsePath, @{@"ok": @NO, @"error": @"missing x/y"});
+            return;
+        }
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            autoinstallSynthesizeTap(CGPointMake([x doubleValue], [y doubleValue]));
+        });
+        autoinstallLog([NSString stringWithFormat:@"tap: synthesized at (%@, %@)", x, y]);
+        writeJSONFile(kASResponsePath, @{@"ok": @YES});
+        return;
+    }
+
+    if ([action isEqualToString:@"find_view"]) {
+        NSString *substring = req[@"class"] ?: @"";
+        __block NSMutableArray *matches = [NSMutableArray array];
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            NSArray *windows = [[UIApplication sharedApplication] valueForKey:@"windows"];
+            void (^__block __weak weakWalk)(UIView *);
+            void (^walk)(UIView *);
+            weakWalk = walk = ^(UIView *view) {
+                NSString *className = NSStringFromClass([view class]);
+                if ([className rangeOfString:substring options:NSCaseInsensitiveSearch].location != NSNotFound) {
+                    CGRect absFrame = [view convertRect:view.bounds toView:nil];
+                    [matches addObject:@{
+                        @"class": className,
+                        @"x": @(CGRectGetMidX(absFrame)),
+                        @"y": @(CGRectGetMidY(absFrame)),
+                        @"width": @(absFrame.size.width),
+                        @"height": @(absFrame.size.height),
+                    }];
+                }
+                for (UIView *sub in view.subviews) weakWalk(sub);
+            };
+            for (UIWindow *w in windows) walk(w);
+        });
+        autoinstallLog([NSString stringWithFormat:@"find_view(%@): %@", substring, matches]);
+        writeJSONFile(kASResponsePath, @{@"ok": @YES, @"matches": matches});
+        return;
+    }
+
+    if ([action isEqualToString:@"dump_windows"]) {
+        __block NSString *dump = @"";
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            NSMutableString *out = [NSMutableString string];
+            NSArray *windows = [[UIApplication sharedApplication] valueForKey:@"windows"];
+            for (UIWindow *w in windows) {
+                [out appendFormat:@"=== window %@ (level=%f) ===\n", w, w.windowLevel];
+                @try {
+                    NSString *desc = [w performSelector:@selector(recursiveDescription)];
+                    [out appendString:desc ?: @"(nil)"];
+                } @catch (NSException *e) {
+                    [out appendFormat:@"EXCEPTION: %@", e.reason];
+                }
+                [out appendString:@"\n\n"];
+            }
+            dump = out;
+        });
+        writeJSONFile(kASResponsePath, @{@"ok": @YES, @"description": dump});
         return;
     }
 

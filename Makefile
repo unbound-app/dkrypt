@@ -10,6 +10,6 @@ include $(THEOS)/makefiles/common.mk
 TWEAK_NAME = autoinstall
 autoinstall_FILES = $(shell find sources -name "*.x*" -o -name "*.m*")
 autoinstall_CFLAGS = -fobjc-arc
-autoinstall_FRAMEWORKS = Foundation UIKit
+autoinstall_FRAMEWORKS = Foundation UIKit IOKit
 
 include $(THEOS_MAKE_PATH)/tweak.mk
