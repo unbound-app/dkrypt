@@ -1162,6 +1162,36 @@ static void handleAppStoreRequest(NSDictionary *req) {
         return;
     }
 
+    if ([action isEqualToString:@"dump_scenes"]) {
+        __block NSString *dump = @"";
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            NSMutableString *out = [NSMutableString string];
+            NSSet *scenes = [[UIApplication sharedApplication] connectedScenes];
+            [out appendFormat:@"connectedScenes count=%lu\n", (unsigned long)scenes.count];
+            for (id scene in scenes) {
+                [out appendFormat:@"=== scene %@ class=%@ activationState=%@ ===\n", scene, [scene class],
+                    [scene respondsToSelector:@selector(activationState)] ? @([(id)scene activationState]) : @"?"];
+                @try {
+                    NSArray *windows = [scene valueForKey:@"windows"];
+                    for (UIWindow *w in windows) {
+                        [out appendFormat:@"  window %@ level=%f hidden=%d rootVC=%@\n", w, w.windowLevel, w.hidden, w.rootViewController];
+                        UIViewController *vc = w.rootViewController;
+                        while (vc.presentedViewController) {
+                            vc = vc.presentedViewController;
+                            [out appendFormat:@"    presented: %@\n", [vc class]];
+                        }
+                    }
+                } @catch (NSException *e) {
+                    [out appendFormat:@"  EXCEPTION reading scene windows: %@\n", e.reason];
+                }
+            }
+            dump = out;
+        });
+        autoinstallLog([NSString stringWithFormat:@"dump_scenes:\n%@", dump]);
+        writeJSONFile(kASResponsePath, @{@"ok": @YES, @"description": dump});
+        return;
+    }
+
     if ([action isEqualToString:@"dump_windows"]) {
         __block NSString *dump = @"";
         dispatch_sync(dispatch_get_main_queue(), ^{
@@ -1245,11 +1275,18 @@ static void handleAppStoreRequest(NSDictionary *req) {
                 Class centerCls = objc_getClass("SKUIItemStateCenter");
                 Class contextCls = objc_getClass("SKUIClientContext");
                 id<SKUIItemStateCenterProtocol> center = [centerCls defaultCenter];
-                id<SKUIClientContextProtocol> clientContext = gAppStoreClientContext ?: [contextCls defaultContext];
+
+                NSString *contextMode = req[@"contextMode"] ?: @"fallback";
+                id<SKUIClientContextProtocol> clientContext = nil;
+                if ([contextMode isEqualToString:@"stashed"]) {
+                    clientContext = gAppStoreClientContext;
+                } else if ([contextMode isEqualToString:@"default"]) {
+                    clientContext = [contextCls defaultContext];
+                }
                 if (!clientContext) {
                     id fallbackConfig = [contextCls _fallbackConfigurationDictionary];
                     clientContext = [[contextCls alloc] initWithConfigurationDictionary:fallbackConfig];
-                    autoinstallLog([NSString stringWithFormat:@"as-install: no stashed/default context, fallbackConfig=%@, built: %@", fallbackConfig, clientContext]);
+                    autoinstallLog([NSString stringWithFormat:@"as-install: contextMode=%@ built fresh fallback, fallbackConfig=%@, built: %@", contextMode, fallbackConfig, clientContext]);
                 }
                 autoinstallLog([NSString stringWithFormat:@"as-install: centerCls=%@ center=%@ contextCls=%@ clientContext=%@ (stashed=%@)", centerCls, center, contextCls, clientContext, gAppStoreClientContext ? @"YES" : @"NO"]);
                 if (!center || !clientContext) {
