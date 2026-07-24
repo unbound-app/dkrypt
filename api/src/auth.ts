@@ -1,6 +1,6 @@
 import type { NextFunction, Request, Response } from 'express';
-import { isShareLinkExhausted, isShareLinkRevoked, recordShareLinkDownload, verifyApiKey } from './store/state.js';
-import { verifyDownloadToken } from './util/signedUrl.js';
+import { isShareLinkExhausted, isShareLinkExpired, isShareLinkRevoked, recordShareLinkDownload, shareLinkExistsForToken, verifyApiKey } from '#store/state.js';
+import { verifyTokenSignature } from '#util/signedUrl.js';
 
 export function requireApiKey(req: Request, res: Response, next: NextFunction): void {
   const header = req.header('authorization') ?? '';
@@ -53,18 +53,31 @@ export function requireApiKeyOrSignedToken(req: Request, res: Response, next: Ne
 
   const queryToken = req.query.token;
   const jobId = req.params.id;
-  if (typeof queryToken === 'string' && jobId && verifyDownloadToken(jobId, queryToken)) {
-    if (isShareLinkRevoked(jobId, queryToken)) {
-      res.status(401).json({ error: 'this share link has been revoked' });
-      return;
+  if (typeof queryToken === 'string' && jobId) {
+    const embeddedExpiresAtMs = verifyTokenSignature(jobId, queryToken);
+    if (embeddedExpiresAtMs !== undefined) {
+      if (shareLinkExistsForToken(jobId, queryToken)) {
+        if (isShareLinkRevoked(jobId, queryToken)) {
+          res.status(401).json({ error: 'this share link has been revoked' });
+          return;
+        }
+        if (isShareLinkExpired(jobId, queryToken)) {
+          res.status(401).json({ error: 'this share link has expired' });
+          return;
+        }
+        if (isShareLinkExhausted(jobId, queryToken)) {
+          res.status(410).json({ error: 'this share link has reached its download limit' });
+          return;
+        }
+        recordShareLinkDownload(jobId, queryToken);
+        next();
+        return;
+      }
+      if (Date.now() <= embeddedExpiresAtMs) {
+        next();
+        return;
+      }
     }
-    if (isShareLinkExhausted(jobId, queryToken)) {
-      res.status(410).json({ error: 'this share link has reached its download limit' });
-      return;
-    }
-    recordShareLinkDownload(jobId, queryToken);
-    next();
-    return;
   }
 
   res.status(401).json({ error: 'unauthorized' });

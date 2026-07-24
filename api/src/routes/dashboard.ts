@@ -1,29 +1,29 @@
 import { Router } from 'express';
 import { validate as validateCronExpr } from 'node-cron';
-import { config, discordBotEnabled } from '../config.js';
-import { fetchBotGuilds, fetchGuildRoles } from '../discord.js';
-import { dashboardEvents, emitJobsChanged, getOnlineUsernames, registerPresence, unregisterPresence } from '../events.js';
-import { getBillingEntitlements } from '../billing.js';
-import { blockDuringMaintenance, getMaintenanceStatus } from '../maintenance.js';
-import { jobSummary, streamJobFile } from '../jobs/http.js';
-import { cancelJob, enqueueDecryptJob, getActiveJobs, getJob, prioritizeQueuedJob } from '../jobs/store.js';
-import type { LogEntry } from '../logger.js';
-import { getRecentLogs } from '../logger.js';
-import { EMBED_COLOR, notify, sendTestNotification } from '../notify.js';
-import { getVapidPublicKey, sendPushToUser } from '../push.js';
-import { hasPermission, isSubsetPermission, parseBits, PermissionFlag } from '../permissions.js';
-import { listAuthProfiles } from '../identity.js';
-import { applyBackupSchedule, applyWatchSchedules, checkForTestFlightUpdate, checkForUpdate, triggerTickNow } from '../scheduler/index.js';
-import { searchApps } from '../scheduler/itunes.js';
-import { requirePermission, requireSession } from '../session.js';
-import { getDeviceHealth } from '../deviceHealth.js';
-import { validateDeviceRootDir } from '../idevice.js';
-import { listBuilds, listTrains } from '../testflight.js';
-import { nextCronRunAt } from '../util/cron.js';
-import { getDiskUsage } from '../util/diskUsage.js';
-import { rateLimitPerUser } from '../util/rateLimit.js';
-import { buildSignedFileUrlWithToken } from '../util/signedUrl.js';
-import { listAppVersions } from '../versions.js';
+import { config, discordBotEnabled } from '#config.js';
+import { fetchBotGuilds, fetchGuildRoles } from '#discord.js';
+import { dashboardEvents, emitJobsChanged, getOnlineUsernames, registerPresence, unregisterPresence } from '#events.js';
+import { getBillingEntitlements } from '#billing.js';
+import { blockDuringMaintenance, getMaintenanceStatus } from '#maintenance.js';
+import { jobSummary, streamJobFile } from '#jobs/http.js';
+import { cancelJob, enqueueDecryptJob, getActiveJobs, getJob, prioritizeQueuedJob } from '#jobs/store.js';
+import type { LogEntry } from '#logger.js';
+import { getRecentLogs } from '#logger.js';
+import { EMBED_COLOR, notify, sendTestNotification } from '#notify.js';
+import { getVapidPublicKey, sendPushToUser } from '#push.js';
+import { hasPermission, isSubsetPermission, parseBits, PermissionFlag } from '#permissions.js';
+import { listAuthProfiles } from '#identity.js';
+import { applyBackupSchedule, applyWatchSchedules, checkForTestFlightUpdate, checkForUpdate, triggerTickNow } from '#scheduler/index.js';
+import { searchApps } from '#scheduler/itunes.js';
+import { requirePermission, requireSession } from '#session.js';
+import { getDeviceHealth } from '#deviceHealth.js';
+import { validateDeviceRootDir } from '#idevice.js';
+import { listBuilds, listTrains } from '#testflight.js';
+import { nextCronRunAt } from '#util/cron.js';
+import { getDiskUsage } from '#util/diskUsage.js';
+import { rateLimitPerUser } from '#util/rateLimit.js';
+import { buildSignedFileUrlWithToken } from '#util/signedUrl.js';
+import { listAppVersions } from '#versions.js';
 import {
   addAllowedUser,
   addPushSubscription,
@@ -106,6 +106,7 @@ import {
   revokeApiKey,
   revokeAllShareLinksForJob,
   revokeShareLink,
+  updateShareLink,
   type SchedulerSettings,
   setApiKeyAllowTestFlight,
   setBackupSchedule,
@@ -120,7 +121,7 @@ import {
   updateUserPrefs,
   updateWatch,
   wouldOrphanPermission,
-} from '../store/state.js';
+} from '#store/state.js';
 
 const canDecrypt = requirePermission(PermissionFlag.requestDecrypt);
 const canRequestApiKeys = requirePermission(PermissionFlag.requestApiKeys);
@@ -849,6 +850,43 @@ dashboardRouter.post('/v1/dashboard/jobs/share/:linkId/revoke', (req, res) => {
 dashboardRouter.post('/v1/dashboard/jobs/:id/share/revoke-all', (req, res) => {
   const revoked = revokeAllShareLinksForJob(req.params.id);
   res.json({ ok: true, revoked });
+});
+
+dashboardRouter.patch('/v1/dashboard/jobs/share/:linkId', requirePermission(PermissionFlag.manageShareLinks), (req, res) => {
+  const body = req.body ?? {};
+  const updates: { expiresAt?: number; maxDownloads?: number | null } = {};
+
+  if (body.ttlMinutes !== undefined) {
+    const requested = Number.parseInt(String(body.ttlMinutes), 10);
+    if (!Number.isFinite(requested)) {
+      res.status(400).json({ error: 'invalid ttlMinutes' });
+      return;
+    }
+    const ttlMinutes = Math.min(Math.max(requested, SHARE_TTL_MIN), SHARE_TTL_MAX);
+    updates.expiresAt = Date.now() + ttlMinutes * 60_000;
+  }
+
+  if ('maxDownloads' in body) {
+    if (body.maxDownloads === null) {
+      updates.maxDownloads = null;
+    } else {
+      const requestedMax = Number.parseInt(String(body.maxDownloads), 10);
+      if (!Number.isFinite(requestedMax) || requestedMax <= 0) {
+        res.status(400).json({ error: 'invalid maxDownloads' });
+        return;
+      }
+      updates.maxDownloads = requestedMax;
+    }
+  }
+
+  const allowExtend = hasPermission(res.locals.session.permissions, PermissionFlag.extendShareLinks);
+  const result = updateShareLink(req.params.linkId, updates, allowExtend);
+  if (!result.ok) {
+    const status = result.error === 'share link not found' ? 404 : result.error?.includes('permission') ? 403 : 409;
+    res.status(status).json({ error: result.error });
+    return;
+  }
+  res.json({ ok: true, link: result.link });
 });
 
 dashboardRouter.get('/v1/dashboard/keys/mine', canViewOwnApiKeys, (_req, res) => {

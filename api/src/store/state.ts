@@ -2,24 +2,24 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypt
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { generateVAPIDKeys, type VapidKeys } from 'web-push';
-import { config } from '../config.js';
+import { config } from '#config.js';
 import {
   exportBillingSnapshot,
   getBillingEntitlements,
   isBillingSnapshot,
   replaceBillingSnapshot,
   type BillingSnapshot,
-} from '../billing.js';
-import { emitHistoryAdded } from '../events.js';
+} from '#billing.js';
+import { emitHistoryAdded } from '#events.js';
 import {
   exportIdentitySnapshot,
   isIdentitySnapshot,
   replaceIdentitySnapshot,
   type IdentitySnapshot,
-} from '../identity.js';
-import type { TestFlightJobSource } from '../jobs/types.js';
-import { categorizeFailure } from '../util/failureCategory.js';
-import { combineBits, hasPermission, parseBits, PermissionFlag, serializeBits } from '../permissions.js';
+} from '#identity.js';
+import type { TestFlightJobSource } from '#jobs/types.js';
+import { categorizeFailure } from '#util/failureCategory.js';
+import { combineBits, hasPermission, parseBits, PermissionFlag, serializeBits } from '#permissions.js';
 
 export type ApiKeyStatus = 'pending' | 'approved' | 'denied';
 
@@ -2331,6 +2331,32 @@ export function revokeShareLink(id: string): boolean {
   return true;
 }
 
+export interface UpdateShareLinkResult {
+  ok: boolean;
+  error?: string;
+  link?: ReturnType<typeof redactShareLink>;
+}
+
+export function updateShareLink(id: string, updates: { expiresAt?: number; maxDownloads?: number | null }, allowExtend: boolean): UpdateShareLinkResult {
+  const record = state.shareLinks.find((l) => l.id === id);
+  if (!record) return { ok: false, error: 'share link not found' };
+  if (record.revoked) return { ok: false, error: 'this share link has been revoked' };
+
+  if (updates.expiresAt !== undefined) {
+    if (updates.expiresAt > record.expiresAt && !allowExtend) {
+      return { ok: false, error: 'extending a share link’s expiry requires additional permission' };
+    }
+    record.expiresAt = updates.expiresAt;
+  }
+
+  if (updates.maxDownloads !== undefined) {
+    record.maxDownloads = updates.maxDownloads === null ? undefined : updates.maxDownloads;
+  }
+
+  persistNow();
+  return { ok: true, link: redactShareLink(record, true) };
+}
+
 export function revokeAllShareLinksForJob(jobId: string): number {
   const now = Date.now();
   let revoked = 0;
@@ -2346,6 +2372,15 @@ export function revokeAllShareLinksForJob(jobId: string): number {
 
 export function isShareLinkRevoked(jobId: string, token: string): boolean {
   return state.shareLinks.some((l) => l.jobId === jobId && l.token === token && l.revoked);
+}
+
+export function shareLinkExistsForToken(jobId: string, token: string): boolean {
+  return state.shareLinks.some((l) => l.jobId === jobId && l.token === token);
+}
+
+export function isShareLinkExpired(jobId: string, token: string): boolean {
+  const record = state.shareLinks.find((l) => l.jobId === jobId && l.token === token);
+  return record ? record.expiresAt <= Date.now() : false;
 }
 
 export function latestActiveShareLinkExpiry(jobId: string): number | undefined {

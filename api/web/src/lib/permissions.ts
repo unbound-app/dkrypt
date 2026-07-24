@@ -33,6 +33,7 @@ export const PermissionFlag = {
   manageApiKeys: 1n << 31n,
   viewAutomation: 1n << 32n,
   manageAutomation: 1n << 33n,
+  extendShareLinks: 1n << 34n,
 } as const;
 
 export type PermissionFlagKey = keyof typeof PermissionFlag;
@@ -80,7 +81,8 @@ export const PERMISSION_META: PermissionMeta[] = [
   { key: 'administrator', label: 'Administrator', description: 'Grants every current and future dashboard permission. This bypasses every individual permission check and should be limited to fully trusted operators.', group: 'General' },
   { key: 'requestDecrypt', label: 'Request and manage own decrypts', description: 'Submit manual and TestFlight decrypt requests, then cancel, prioritize, retry, download, and share only jobs owned by this account.', group: 'General' },
   { key: 'viewLogs', label: 'View operational logs', description: 'Read the live scheduler and job log stream plus webhook delivery records. This does not grant permission to change automation or webhook settings.', group: 'General' },
-  { key: 'manageShareLinks', label: 'Manage all share links', description: 'View, copy, and revoke every download share link issued by any user across all jobs, including their usage and download counts.', group: 'General' },
+  { key: 'manageShareLinks', label: 'Manage all share links', description: 'View, copy, revoke, and edit every download share link issued by any user across all jobs, including their download limit and expiry, and their usage and download counts.', group: 'General' },
+  { key: 'extendShareLinks', label: 'Extend share link expiry', description: 'Push a share link’s expiry further into the future than it currently is. Without this, a link’s expiry can only be shortened, not extended.', group: 'General' },
   { key: 'requestApiKeys', label: 'Request API keys', description: 'Submit a personal API-key request for approval. Requested keys remain unusable until someone with Manage API keys approves them.', group: 'API Keys' },
   { key: 'createApiKeys', label: 'Create API keys', description: 'Create, reveal, regenerate, revoke, and use personal API keys immediately. This bypasses the approval queue only for the account’s own keys.', group: 'API Keys' },
   { key: 'viewApiKeys', label: 'View API keys', description: 'Read every API key, including its owner, status, usage, and configuration. Key secrets are never exposed by this permission.', group: 'API Keys' },

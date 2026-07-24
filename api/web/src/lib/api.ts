@@ -1,6 +1,6 @@
-import { markLoggedOut, type Role } from './session.svelte';
-import { liveState } from './live.svelte';
-import { showToast } from './ui.svelte';
+import { markLoggedOut, type Role } from '#lib/session.svelte';
+import { liveState } from '#lib/live.svelte';
+import { showToast } from '#lib/ui.svelte';
 
 export type { Role };
 
@@ -532,6 +532,13 @@ export function revokeShareLink(linkId: string): Promise<{ ok: boolean }> {
 
 export function revokeAllShareLinks(jobId: string): Promise<{ ok: boolean; data: { revoked: number } }> {
   return apiAction(`/v1/dashboard/jobs/${jobId}/share/revoke-all`, { method: 'POST' }, 'Active links revoked');
+}
+
+export function updateShareLink(
+  linkId: string,
+  updates: { ttlMinutes?: number; maxDownloads?: number | null },
+): Promise<{ ok: boolean; data: { link?: ShareLinkRecord } }> {
+  return apiAction(`/v1/dashboard/jobs/share/${linkId}`, { method: 'PATCH', body: JSON.stringify(updates) }, 'Link updated');
 }
 
 export function cancelJob(id: string): Promise<{ ok: boolean }> {

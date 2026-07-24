@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { config } from '../config.js';
+import { config } from '#config.js';
 
 export function signDownloadToken(jobId: string, expiresAtMs: number): string {
   const payload = `${jobId}.${expiresAtMs}`;
@@ -7,12 +7,12 @@ export function signDownloadToken(jobId: string, expiresAtMs: number): string {
   return `${expiresAtMs}.${sig}`;
 }
 
-export function verifyDownloadToken(jobId: string, token: string): boolean {
+export function verifyTokenSignature(jobId: string, token: string): number | undefined {
   const [expiresAtStr, sig] = token.split('.');
-  if (!expiresAtStr || !sig) return false;
+  if (!expiresAtStr || !sig) return undefined;
 
   const expiresAtMs = Number.parseInt(expiresAtStr, 10);
-  if (Number.isNaN(expiresAtMs) || Date.now() > expiresAtMs) return false;
+  if (Number.isNaN(expiresAtMs)) return undefined;
 
   const expected = createHmac('sha256', config.downloadSigningSecret)
     .update(`${jobId}.${expiresAtMs}`)
@@ -20,8 +20,13 @@ export function verifyDownloadToken(jobId: string, token: string): boolean {
 
   const a = Buffer.from(sig);
   const b = Buffer.from(expected);
-  if (a.length !== b.length) return false;
-  return timingSafeEqual(a, b);
+  if (a.length !== b.length) return undefined;
+  return timingSafeEqual(a, b) ? expiresAtMs : undefined;
+}
+
+export function verifyDownloadToken(jobId: string, token: string): boolean {
+  const expiresAtMs = verifyTokenSignature(jobId, token);
+  return expiresAtMs !== undefined && Date.now() <= expiresAtMs;
 }
 
 export function buildSignedFileUrl(jobId: string, ttlMinutes: number): string {

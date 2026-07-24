@@ -33,6 +33,7 @@ export const PermissionFlag = {
   manageApiKeys: 1n << 31n,
   viewAutomation: 1n << 32n,
   manageAutomation: 1n << 33n,
+  extendShareLinks: 1n << 34n,
 } as const;
 
 export type PermissionFlagKey = keyof typeof PermissionFlag;
