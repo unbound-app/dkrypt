@@ -1,7 +1,7 @@
 <script lang="ts">
   import { BatteryCharging, BatteryMedium, Circle, CircleCheck, Globe, LoaderCircle, RefreshCw, Thermometer, TriangleAlert, Wifi, WifiOff, Zap } from 'lucide-svelte';
-  import RelativeTime from '../../components/RelativeTime.svelte';
-  import Sparkline from '../../components/Sparkline.svelte';
+  import RelativeTime from '#components/RelativeTime.svelte';
+  import Sparkline from '#components/Sparkline.svelte';
   import {
     fetchDeviceBatteryHistory,
     fetchDeviceHealth,
@@ -13,12 +13,12 @@
     type HourlyHealthBucket,
     type HourlyTemperatureBucket,
     type SchedulerRunOutcome,
-  } from '../../lib/api';
-  import Badge from '../../lib/components/ui/Badge.svelte';
-  import Card from '../../lib/components/ui/Card.svelte';
-  import Popover from '../../lib/components/ui/Popover.svelte';
-  import { fmtBytesGB, fmtUntil, trendDelta } from '../../lib/format';
-  import { liveState } from '../../lib/live.svelte';
+  } from '#lib/api';
+  import Badge from '#lib/components/ui/Badge.svelte';
+  import Card from '#lib/components/ui/Card.svelte';
+  import Popover from '#lib/components/ui/Popover.svelte';
+  import { fmtBytesGB, fmtUntil, trendDelta } from '#lib/format';
+  import { liveState } from '#lib/live.svelte';
 
   const overview = $derived(liveState.overview);
   const primaryDeviceId = $derived(overview?.devices.find((d) => d.isPrimary)?.id ?? overview?.devices[0]?.id);
@@ -326,24 +326,20 @@
         <div class="flex flex-col gap-1 whitespace-nowrap">
           {#if !h.reachable}
             <div class="text-err max-w-xs whitespace-normal">{h.error ?? 'unreachable'}</div>
+          {:else if h.screenIsOn !== undefined}
+            <div><span class="text-muted">Screen</span> · {h.darkEnabled ? 'dark (awake)' : h.screenIsOn ? 'on' : 'off'}</div>
           {:else}
-            {#if h.storageFreeBytes !== undefined && h.storageTotalBytes !== undefined}
-              <div><span class="text-muted">Storage free</span> · {fmtBytesGB(h.storageFreeBytes)} / {fmtBytesGB(h.storageTotalBytes)}</div>
-            {/if}
-            {#if h.screenIsOn !== undefined}
-              <div><span class="text-muted">Screen</span> · {h.darkEnabled ? 'dark (awake)' : h.screenIsOn ? 'on' : 'off'}</div>
-            {/if}
+            <div class="text-muted">No further detail available.</div>
           {/if}
-          <div><span class="text-muted">Checked</span> · <RelativeTime ms={h.checkedAt} /></div>
         </div>
       </Popover>
       {#if h.reachable}
         <Popover>
           {#snippet trigger()}
-            <Badge variant={h.testFlightRunning ? 'default' : 'secondary'}>TestFlight {h.testFlightRunning ? 'running' : 'idle'}</Badge>
+            <Badge variant={h.testFlightRunning ? 'default' : 'secondary'}>autoinstall {h.testFlightRunning ? 'running' : 'idle'}</Badge>
           {/snippet}
           <div class="flex flex-col gap-1 whitespace-nowrap">
-            <div><span class="text-muted">Process</span> · {h.testFlightRunning ? 'running' : 'not running'}</div>
+            <div><span class="text-muted">TestFlight</span> · {h.testFlightRunning ? 'running' : 'not running'}</div>
             {#if h.testFlightBridgeReachable !== undefined}
               <div><span class="text-muted">Bridge</span> · {h.testFlightBridgeReachable ? 'reachable' : 'unreachable'}</div>
             {/if}
@@ -401,7 +397,6 @@
             {/snippet}
             <div class="flex flex-col gap-1 whitespace-nowrap">
               <div><span class="text-muted">State</span> · {temp >= 42 ? 'hot' : temp >= 37 ? 'warm' : 'normal'}</div>
-              <div><span class="text-muted">Charging</span> · {h.batteryCharging ? 'yes' : 'no'}</div>
               <div class="text-muted">Warm ≥ 37°C · Hot ≥ 42°C</div>
             </div>
           </Popover>
