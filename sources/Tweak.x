@@ -714,6 +714,14 @@ static void handleAppStoreRequest(NSDictionary *req) {
         return;
     }
 
+    if ([action isEqualToString:@"probe"]) {
+        NSString *className = req[@"class"];
+        NSString *desc = describeClass(className);
+        autoinstallLog(desc);
+        writeJSONFile(kASResponsePath, @{@"ok": @YES, @"description": desc});
+        return;
+    }
+
     if ([action isEqualToString:@"probe_client_context"]) {
         NSString *desc = describeClass(@"SKUIClientContext");
         autoinstallLog(desc);
