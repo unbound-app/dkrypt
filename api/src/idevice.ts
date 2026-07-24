@@ -114,8 +114,14 @@ function writeRemoteFile(conn: Client, remotePath: string, content: string): Pro
     conn.sftp((err, sftp) => {
       if (err) return reject(err);
       const stream = sftp.createWriteStream(remotePath);
-      stream.on('close', () => resolve());
-      stream.on('error', reject);
+      stream.on('close', () => {
+        sftp.end();
+        resolve();
+      });
+      stream.on('error', (streamErr: Error) => {
+        sftp.end();
+        reject(streamErr);
+      });
       stream.end(content);
     });
   });
@@ -128,8 +134,12 @@ function readRemoteFileIfExists(conn: Client, remotePath: string): Promise<strin
       const chunks: Buffer[] = [];
       const stream = sftp.createReadStream(remotePath);
       stream.on('data', (chunk: Buffer) => chunks.push(chunk));
-      stream.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+      stream.on('end', () => {
+        sftp.end();
+        resolve(Buffer.concat(chunks).toString('utf8'));
+      });
       stream.on('error', (streamErr: NodeJS.ErrnoException) => {
+        sftp.end();
         if (streamErr.code === 'ENOENT' || streamErr.message?.includes('No such file')) {
           resolve(undefined);
         } else {
