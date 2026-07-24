@@ -50,29 +50,45 @@ export async function validateDeviceRootDir(rootDir: string): Promise<void> {
   await loadDeviceAuth(rootDir);
 }
 
+function makeSerialQueue() {
+  let queue: Promise<unknown> = Promise.resolve();
+  return function withLock<T>(fn: () => Promise<T>): Promise<T> {
+    const result = queue.then(fn, fn);
+    queue = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  };
+}
+
+const withSSHLock = makeSerialQueue();
+
 export async function withSSH<T>(rootDir: string, fn: (conn: Client) => Promise<T>): Promise<T> {
-  const auth = await loadDeviceAuth(rootDir);
-  let privateKey: Buffer;
-  try {
-    privateKey = await readFile(auth.keyPath);
-  } catch (err) {
-    authCache.delete(rootDir);
-    throw err;
-  }
-  const conn = new Client();
-  try {
-    await new Promise<void>((resolve, reject) => {
-      conn.on('ready', () => resolve());
-      conn.on('error', reject);
-      conn.connect({ host: auth.host, port: auth.port, username: auth.user, privateKey, readyTimeout: 15_000 });
-    });
-    return await fn(conn);
-  } catch (err) {
-    authCache.delete(rootDir);
-    throw err;
-  } finally {
-    conn.end();
-  }
+  return withSSHLock(async () => {
+    const auth = await loadDeviceAuth(rootDir);
+    let privateKey: Buffer;
+    try {
+      privateKey = await readFile(auth.keyPath);
+    } catch (err) {
+      authCache.delete(rootDir);
+      throw err;
+    }
+    const conn = new Client();
+    try {
+      await new Promise<void>((resolve, reject) => {
+        conn.on('ready', () => resolve());
+        conn.on('error', reject);
+        conn.connect({ host: auth.host, port: auth.port, username: auth.user, privateKey, readyTimeout: 15_000 });
+      });
+      return await fn(conn);
+    } catch (err) {
+      authCache.delete(rootDir);
+      throw err;
+    } finally {
+      conn.end();
+    }
+  });
 }
 
 export function execCommand(conn: Client, command: string): Promise<{ stdout: string; stderr: string; code: number | null }> {
@@ -173,16 +189,7 @@ export async function findInstalledAppStoreBundle(conn: Client, bundleId: string
   return line || undefined;
 }
 
-let bridgeQueue: Promise<unknown> = Promise.resolve();
-
-function withBridgeLock<T>(fn: () => Promise<T>): Promise<T> {
-  const result = bridgeQueue.then(fn, fn);
-  bridgeQueue = result.then(
-    () => undefined,
-    () => undefined,
-  );
-  return result;
-}
+const withBridgeLock = makeSerialQueue();
 
 async function sendBridgeRequestRawTo(
   conn: Client,
