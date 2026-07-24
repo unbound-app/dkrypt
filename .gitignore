@@ -2,3 +2,4 @@
 packages/
 *.deb
 .DS_Store
+HANDOFF.md
