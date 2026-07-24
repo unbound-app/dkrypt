@@ -16,7 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
   && rm -rf /var/lib/apt/lists/*
 
 COPY --from=ipadecrypt /go/bin/ipadecrypt /usr/local/bin/ipadecrypt
-COPY package.json bun.lock ./
+COPY package.json bun.lock tsconfig.json ./
 RUN bun install --production --frozen-lockfile
 COPY src ./src
 COPY --from=web /public ./public
