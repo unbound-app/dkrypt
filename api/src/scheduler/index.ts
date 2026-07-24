@@ -14,6 +14,7 @@ import {
   getBackupSchedule,
   getEffectiveSettings,
   getEffectiveWatches,
+  getSchedulerRunHistory,
   isWatchSchedulable,
   recordSchedulerRun,
   recordSchedulerRunOutcome,
@@ -500,7 +501,42 @@ export function applyBackupSchedule(): void {
   log.info('backup schedule (re)applied', { cron: schedule.cron });
 }
 
+async function reconcileStuckSchedulerRuns(): Promise<void> {
+  const entries = getSchedulerRunHistory(20);
+  const watches = getEffectiveWatches();
+
+  for (const entry of entries) {
+    const watch = watches.find((w) => w.id === entry.watchId);
+    if (!watch) continue;
+
+    for (const source of ['appStore', 'testflight'] as const) {
+      if (entry[source].runStatus !== 'dispatched') continue;
+      log.info('reconciling scheduler run left stuck as dispatched by a previous process', { entryId: entry.id, source, watchId: watch.id });
+      try {
+        const run = await pollRunToCompletion(watch.repo, watch.ghWorkflowFile, new Date(entry.ts));
+        if (!run) {
+          updateSchedulerRunOutcome(entry.id, source, {
+            runStatus: 'timed_out',
+            reason: `${entry[source].reason} - gave up waiting for the workflow run to appear/complete after a restart`,
+          });
+          continue;
+        }
+        const succeeded = run.conclusion === 'success';
+        updateSchedulerRunOutcome(entry.id, source, {
+          runStatus: succeeded ? 'succeeded' : 'failed',
+          runUrl: run.html_url,
+          reason: `${entry[source].reason} - workflow ${succeeded ? 'succeeded' : `failed (${run.conclusion})`}`,
+        });
+      } catch (err) {
+        log.warn('failed to reconcile stuck scheduler run', { entryId: entry.id, source, error: String(err) });
+      }
+    }
+  }
+  emitJobsChanged();
+}
+
 export function startScheduler(): void {
   applyWatchSchedules();
   applyBackupSchedule();
+  void reconcileStuckSchedulerRuns().catch((err) => log.error('scheduler run reconciliation threw', { error: String(err) }));
 }

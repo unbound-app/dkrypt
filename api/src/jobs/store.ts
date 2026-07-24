@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
+import path from 'node:path';
 import { config } from '#config.js';
 import { emitJobsChanged } from '#events.js';
 import { scopedLogger } from '#logger.js';
@@ -12,6 +14,31 @@ import { runDecrypt } from '#jobs/runner.js';
 import type { Job, JobSource, TestFlightJobSource } from '#jobs/types.js';
 
 const jobs = new Map<string, Job>();
+
+const donePath = path.join(config.stateDir, 'done-jobs.json');
+
+function persistDoneJobs(): void {
+  const done = [...jobs.values()]
+    .filter((j) => j.status === 'done')
+    .map(({ childProcess: _childProcess, waiters: _waiters, ...rest }) => rest);
+  writeFileSync(donePath, JSON.stringify(done));
+}
+
+function loadDoneJobs(): void {
+  if (!existsSync(donePath)) return;
+  try {
+    const restored = JSON.parse(readFileSync(donePath, 'utf8')) as Job[];
+    for (const job of restored) {
+      if (!job.filePath || !existsSync(job.filePath)) continue;
+      jobs.set(job.id, { ...job, waiters: [] });
+    }
+    log.info('restored completed jobs from previous process', { count: jobs.size });
+  } catch (err) {
+    log.warn('failed to restore done-jobs.json', { error: String(err) });
+  }
+}
+
+loadDoneJobs();
 
 const queue: string[] = [];
 const busyDeviceIds = new Set<string>();
@@ -295,6 +322,7 @@ async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
     job.status = 'done';
     job.finishedAt = Date.now();
     log.info('job done', { jobId: job.id, bundleId: job.bundleId, deviceId: device.id, sizeBytes: job.fileSizeBytes });
+    persistDoneJobs();
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const canRetry = !job.cancelledBy && (job.retryCount ?? 0) === 0;
@@ -351,6 +379,7 @@ async function cleanupJob(job: Job): Promise<void> {
   }
   jobs.delete(job.id);
   log.info('job cleaned up', { jobId: job.id, bundleId: job.bundleId });
+  persistDoneJobs();
 }
 
 export async function reclaimJobFile(job: Job): Promise<void> {
