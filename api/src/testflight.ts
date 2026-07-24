@@ -32,9 +32,9 @@ export interface TFBuild {
   [key: string]: unknown;
 }
 
-async function launchTestFlight(conn: Client): Promise<void> {
+async function launchTestFlight(conn: Client, wasRunning: boolean): Promise<void> {
   const response = await sendSpringBoardBridgeRequest(conn, { action: 'launch_app', bundleId: 'com.apple.TestFlight' });
-  if (response?.launchResult !== 0) {
+  if (!wasRunning && response?.launchResult !== 0) {
     throw new Error(`autoinstall SpringBoard launch_app failed: ${JSON.stringify(response)}`);
   }
 }
@@ -53,13 +53,14 @@ async function waitForBridgeReady(conn: Client, timeoutMs = 20_000): Promise<voi
 
 export async function ensureTestFlightRunning(): Promise<void> {
   await withSSH(primaryRootDir(), async (conn) => {
-    if (await isTestFlightRunning(conn)) {
-      log.info('TestFlight already running');
-      return;
-    }
-    log.info('launching TestFlight autonomously via autoinstall SpringBoard bridge');
-    await launchTestFlight(conn);
-    await new Promise((r) => setTimeout(r, 3_000));
+    const wasRunning = await isTestFlightRunning(conn);
+    log.info(
+      wasRunning
+        ? 'TestFlight already running, bringing to foreground to confirm the bridge is responsive'
+        : 'launching TestFlight autonomously via autoinstall SpringBoard bridge',
+    );
+    await launchTestFlight(conn, wasRunning);
+    await new Promise((r) => setTimeout(r, wasRunning ? 2_000 : 3_000));
     await waitForBridgeReady(conn);
   });
 }
