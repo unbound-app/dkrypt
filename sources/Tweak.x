@@ -35,6 +35,26 @@
 - (id)requestInstall:(id)installable installationMode:(NSInteger)mode alertDelegate:(id)delegate withBackgroundTaskMaster:(id)master completionBlock:(id)block;
 @end
 
+@protocol SKUIItemStateCenterProtocol <NSObject>
++ (instancetype)defaultCenter;
+- (id)_newPurchasesWithItems:(NSArray *)items;
+- (void)_performPurchases:(id)purchases hasBundlePurchase:(BOOL)hasBundlePurchase withClientContext:(id)context completionBlock:(void (^)(id arg1))block;
+@end
+
+@protocol SKUIItemProtocol <NSObject>
+- (instancetype)initWithLookupDictionary:(NSDictionary *)dict;
+@end
+
+@protocol SKUIItemOfferProtocol <NSObject>
+- (instancetype)initWithLookupDictionary:(NSDictionary *)dict;
+@end
+
+@protocol SKUIClientContextProtocol <NSObject>
++ (instancetype)defaultContext;
++ (id)_fallbackConfigurationDictionary;
+- (instancetype)initWithConfigurationDictionary:(NSDictionary *)dict;
+@end
+
 @protocol SBBacklightControllerProtocol <NSObject>
 + (instancetype)sharedInstance;
 - (BOOL)screenIsOn;
@@ -577,10 +597,78 @@ static void startTestFlightSide(void) {
     autoinstallLog(@"bridge: request-file watcher started");
 }
 
-#pragma mark - App Store side: SKUIItemStateCenter probe (validation only, no purchase calls yet)
+#pragma mark - App Store side: SKUIItemStateCenter probe + purchase-pipeline install
+
+// UIAlertController is public UIKit, present in every process - only act on it when we're actually
+// injected into the App Store, never TestFlight/SpringBoard, or we'd auto-tap unrelated system alerts.
+static BOOL gIsAppStoreProcess = NO;
+
+%hook UIAlertController
+
+- (void)addAction:(UIAlertAction *)action {
+    %orig;
+    if (!gIsAppStoreProcess) return;
+    NSString *title = [action.title lowercaseString] ?: @"";
+    NSArray *affirmativeWords = @[@"install", @"confirm", @"buy", @"get"];
+    for (NSString *word in affirmativeWords) {
+        if ([title containsString:word]) {
+            objc_setAssociatedObject(self, "autoinstallConfirmAction", action, OBJC_ASSOCIATION_RETAIN);
+            autoinstallLog([NSString stringWithFormat:@"alert: marked action '%@' as auto-confirm target", action.title]);
+            return;
+        }
+    }
+}
+
+- (void)viewDidAppear:(BOOL)animated {
+    %orig;
+    if (!gIsAppStoreProcess) return;
+    UIAlertAction *action = objc_getAssociatedObject(self, "autoinstallConfirmAction");
+    if (!action) return;
+    autoinstallLog([NSString stringWithFormat:@"alert: auto-confirming action '%@' in 0.4s", action.title]);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        @try {
+            void (^handler)(UIAlertAction *) = [action valueForKey:@"handler"];
+            if (handler) {
+                handler(action);
+                autoinstallLog(@"alert: handler invoked directly");
+            } else {
+                autoinstallLog(@"alert: no handler found via valueForKey:");
+            }
+        } @catch (NSException *e) {
+            autoinstallLog([NSString stringWithFormat:@"alert: EXCEPTION invoking handler: %@ %@", e.name, e.reason]);
+        }
+    });
+}
+
+%end
+
+// +[SKUIClientContext defaultContext] returns nil in the real App Store app (unlike in MuffinStore's
+// own standalone app, which presumably registers itself as the default during its own app lifecycle),
+// and a bare alloc/init context is empty enough that _performPurchases: silently no-ops on it instead
+// of throwing. Stash whatever live instance the App Store app's own code actually constructs instead -
+// same pattern as TFAppInstaller/TFAppCatalogManager below.
+static id gAppStoreClientContext = nil;
+
+%hook SKUIClientContext
+
+- (id)initWithConfigurationDictionary:(NSDictionary *)dict {
+    id result = %orig;
+    gAppStoreClientContext = result;
+    autoinstallLog([NSString stringWithFormat:@"stashed SKUIClientContext (initWithConfigurationDictionary:) %@", result]);
+    return result;
+}
+
+- (void)_setApplicationController:(id)controller {
+    %orig;
+    gAppStoreClientContext = self;
+    autoinstallLog([NSString stringWithFormat:@"stashed SKUIClientContext (_setApplicationController:) self=%@ controller=%@", self, controller]);
+}
+
+%end
 
 static NSString * const kASRequestPath = @"/tmp/autoinstall-as-request.json";
 static NSString * const kASResponsePath = @"/tmp/autoinstall-as-response.json";
+static NSString * const kASInstallStatusPath = @"/tmp/autoinstall-as-install-status.json";
 
 static NSString *describeSelectorPresence(NSString *className, NSArray<NSString *> *classSelectors, NSArray<NSString *> *instanceSelectors) {
     Class cls = objc_getClass([className UTF8String]);
@@ -602,6 +690,37 @@ static void handleAppStoreRequest(NSDictionary *req) {
     NSString *action = req[@"action"];
     autoinstallLog([NSString stringWithFormat:@"as-bridge: handling action=%@ req=%@", action, req]);
 
+    if ([action isEqualToString:@"status"]) {
+        writeJSONFile(kASResponsePath, @{@"ok": @YES, @"hasStashedClientContext": gAppStoreClientContext ? @YES : @NO});
+        return;
+    }
+
+    if ([action isEqualToString:@"probe_classes"]) {
+        NSString *substring = req[@"substring"] ?: @"ClientContext";
+        int count = objc_getClassList(NULL, 0);
+        Class *classes = (Class *)malloc(sizeof(Class) * count);
+        count = objc_getClassList(classes, count);
+        NSMutableArray *matches = [NSMutableArray array];
+        for (int i = 0; i < count; i++) {
+            NSString *name = NSStringFromClass(classes[i]);
+            if ([name rangeOfString:substring options:NSCaseInsensitiveSearch].location != NSNotFound) {
+                [matches addObject:name];
+            }
+        }
+        free(classes);
+        [matches sortUsingSelector:@selector(compare:)];
+        autoinstallLog([NSString stringWithFormat:@"probe_classes(%@): %@", substring, matches]);
+        writeJSONFile(kASResponsePath, @{@"ok": @YES, @"matches": matches});
+        return;
+    }
+
+    if ([action isEqualToString:@"probe_client_context"]) {
+        NSString *desc = describeClass(@"SKUIClientContext");
+        autoinstallLog(desc);
+        writeJSONFile(kASResponsePath, @{@"ok": @YES, @"description": desc});
+        return;
+    }
+
     if ([action isEqualToString:@"probe_skui"]) {
         NSMutableString *out = [NSMutableString string];
         [out appendString:describeSelectorPresence(@"SKUIItemStateCenter", @[@"defaultCenter"], @[@"_newPurchasesWithItems:", @"_performPurchases:hasBundlePurchase:withClientContext:completionBlock:", @"_performSoftwarePurchases:withClientContext:completionBlock:"])];
@@ -610,6 +729,72 @@ static void handleAppStoreRequest(NSDictionary *req) {
         [out appendString:describeSelectorPresence(@"SKUIClientContext", @[@"defaultContext"], @[])];
         autoinstallLog(out);
         writeJSONFile(kASResponsePath, @{@"ok": @YES, @"description": out});
+        return;
+    }
+
+    if ([action isEqualToString:@"install"]) {
+        NSNumber *adamId = req[@"adamId"];
+        NSNumber *versionId = req[@"versionId"];
+        if (!adamId) {
+            writeJSONFile(kASResponsePath, @{@"ok": @NO, @"error": @"missing adamId"});
+            return;
+        }
+
+        // StoreKitUI's singletons appear to require the main thread - defaultCenter/defaultContext
+        // returned nil when called from our background bridge queue, worked once dispatched here.
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            @try {
+                NSString *adamIdStr = [adamId stringValue];
+                NSString *offerString;
+                if (versionId && versionId.longLongValue != 0) {
+                    offerString = [NSString stringWithFormat:@"productType=C&price=0&salableAdamId=%@&pricingParameters=pricingParameter&appExtVrsId=%@&clientBuyId=1&installed=0&trolled=1", adamIdStr, [versionId stringValue]];
+                } else {
+                    offerString = [NSString stringWithFormat:@"productType=C&price=0&salableAdamId=%@&pricingParameters=pricingParameter&clientBuyId=1&installed=0&trolled=1", adamIdStr];
+                }
+
+                id<SKUIItemOfferProtocol> offer = [[objc_getClass("SKUIItemOffer") alloc] initWithLookupDictionary:@{@"buyParams": offerString}];
+                id<SKUIItemProtocol> item = [[objc_getClass("SKUIItem") alloc] initWithLookupDictionary:@{@"_itemOffer": adamIdStr}];
+                if (!offer || !item) {
+                    writeJSONFile(kASResponsePath, @{@"ok": @NO, @"error": @"initWithLookupDictionary: returned nil"});
+                    return;
+                }
+
+                [(id)item setValue:offer forKey:@"_itemOffer"];
+                [(id)item setValue:@"iosSoftware" forKey:@"_itemKindString"];
+                if (versionId && versionId.longLongValue != 0) {
+                    [(id)item setValue:versionId forKey:@"_versionIdentifier"];
+                }
+
+                Class centerCls = objc_getClass("SKUIItemStateCenter");
+                Class contextCls = objc_getClass("SKUIClientContext");
+                id<SKUIItemStateCenterProtocol> center = [centerCls defaultCenter];
+                id<SKUIClientContextProtocol> clientContext = gAppStoreClientContext ?: [contextCls defaultContext];
+                if (!clientContext) {
+                    id fallbackConfig = [contextCls _fallbackConfigurationDictionary];
+                    clientContext = [[contextCls alloc] initWithConfigurationDictionary:fallbackConfig];
+                    autoinstallLog([NSString stringWithFormat:@"as-install: no stashed/default context, fallbackConfig=%@, built: %@", fallbackConfig, clientContext]);
+                }
+                autoinstallLog([NSString stringWithFormat:@"as-install: centerCls=%@ center=%@ contextCls=%@ clientContext=%@ (stashed=%@)", centerCls, center, contextCls, clientContext, gAppStoreClientContext ? @"YES" : @"NO"]);
+                if (!center || !clientContext) {
+                    writeJSONFile(kASResponsePath, @{@"ok": @NO, @"error": [NSString stringWithFormat:@"defaultCenter=%@ defaultContext=%@ (nil check on main thread)", center, clientContext]});
+                    return;
+                }
+
+                id purchases = [center _newPurchasesWithItems:@[(id)item]];
+                autoinstallLog([NSString stringWithFormat:@"as-install: adamId=%@ versionId=%@ offerString=%@ purchases=%@", adamIdStr, versionId, offerString, purchases]);
+
+                void (^completion)(id) = ^(id arg1) {
+                    autoinstallLog([NSString stringWithFormat:@"as-install: completionBlock fired arg1=%@ class=%@", arg1, [arg1 class]]);
+                    writeJSONFile(kASInstallStatusPath, @{@"ok": @YES});
+                };
+
+                [center _performPurchases:purchases hasBundlePurchase:NO withClientContext:(id)clientContext completionBlock:completion];
+                writeJSONFile(kASResponsePath, @{@"ok": @YES, @"requested": @YES});
+            } @catch (NSException *exception) {
+                autoinstallLog([NSString stringWithFormat:@"as-install: EXCEPTION name=%@ reason=%@", exception.name, exception.reason]);
+                writeJSONFile(kASResponsePath, @{@"ok": @NO, @"error": [NSString stringWithFormat:@"exception: %@ %@", exception.name, exception.reason]});
+            }
+        });
         return;
     }
 
@@ -651,6 +836,7 @@ static void startAppStoreSide(void) {
     if (isSpringBoard()) {
         startSpringBoardSide();
     } else if ([bundleId isEqualToString:@"com.apple.AppStore"]) {
+        gIsAppStoreProcess = YES;
         startAppStoreSide();
     } else {
         startTestFlightSide();
