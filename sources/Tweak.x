@@ -104,6 +104,106 @@ static void autoinstallSynthesizeTap(CGPoint pointInPoints) {
     });
 }
 
+#pragma mark - Cross-process UI inspection (usable from ANY injected process that has a UIApplication)
+
+static NSString *autoinstallDumpScenes(void) {
+    NSMutableString *out = [NSMutableString string];
+    NSSet *scenes = [[UIApplication sharedApplication] connectedScenes];
+    [out appendFormat:@"connectedScenes count=%lu\n", (unsigned long)scenes.count];
+    for (id scene in scenes) {
+        NSNumber *state = [scene respondsToSelector:@selector(activationState)] ? @([(id)scene activationState]) : nil;
+        [out appendFormat:@"=== scene class=%@ state=%@ ===\n", [scene class], state ?: @"?"];
+        @try {
+            NSArray *windows = [scene valueForKey:@"windows"];
+            for (UIWindow *w in windows) {
+                [out appendFormat:@"  window %@ level=%f hidden=%d rootVC=%@\n", w, w.windowLevel, w.hidden, [w.rootViewController class]];
+                UIViewController *vc = w.rootViewController;
+                while (vc.presentedViewController) {
+                    vc = vc.presentedViewController;
+                    [out appendFormat:@"    presented: %@\n", [vc class]];
+                }
+            }
+        } @catch (NSException *e) {
+            [out appendFormat:@"  EXCEPTION reading scene windows: %@\n", e.reason];
+        }
+    }
+    return out;
+}
+
+static void autoinstallWalkAllViews(void (^visit)(UIView *view)) {
+    void (^__block __weak weakWalk)(UIView *);
+    void (^walk)(UIView *);
+    weakWalk = walk = ^(UIView *view) {
+        visit(view);
+        for (UIView *sub in view.subviews) weakWalk(sub);
+    };
+    NSSet *scenes = [[UIApplication sharedApplication] connectedScenes];
+    for (id scene in scenes) {
+        @try {
+            NSArray *windows = [scene valueForKey:@"windows"];
+            for (UIWindow *w in windows) walk(w);
+        } @catch (NSException *e) {}
+    }
+}
+
+static NSString *autoinstallViewLabel(UIView *view) {
+    NSString *label = view.accessibilityLabel ?: @"";
+    NSString *value = view.accessibilityValue ?: @"";
+    NSString *title = @"";
+    if ([view isKindOfClass:[UIButton class]]) {
+        title = [(UIButton *)view currentTitle] ?: @"";
+    }
+    return [NSString stringWithFormat:@"%@|%@|%@", label, value, title];
+}
+
+static NSArray *autoinstallFindViews(NSString *substr) {
+    NSMutableArray *matches = [NSMutableArray array];
+    autoinstallWalkAllViews(^(UIView *view) {
+        NSString *cls = NSStringFromClass([view class]);
+        NSString *label = autoinstallViewLabel(view);
+        NSString *hay = [NSString stringWithFormat:@"%@|%@", cls, label];
+        if ([hay rangeOfString:substr options:NSCaseInsensitiveSearch].location != NSNotFound) {
+            CGRect absFrame = [view convertRect:view.bounds toView:nil];
+            [matches addObject:@{
+                @"class": cls,
+                @"label": label,
+                @"isControl": @([view isKindOfClass:[UIControl class]]),
+                @"userInteraction": @(view.userInteractionEnabled),
+                @"x": @(CGRectGetMidX(absFrame)),
+                @"y": @(CGRectGetMidY(absFrame)),
+                @"w": @(absFrame.size.width),
+                @"h": @(absFrame.size.height),
+            }];
+        }
+    });
+    return matches;
+}
+
+// Trigger a view's action WITHOUT synthetic touch: prefer UIControl target-action, fall back to the
+// accessibility activation point (which standard + custom controls both wire up to their real handler).
+static NSArray *autoinstallActivateViews(NSString *substr) {
+    NSMutableArray *activated = [NSMutableArray array];
+    autoinstallWalkAllViews(^(UIView *view) {
+        NSString *cls = NSStringFromClass([view class]);
+        NSString *label = autoinstallViewLabel(view);
+        NSString *hay = [NSString stringWithFormat:@"%@|%@", cls, label];
+        if ([hay rangeOfString:substr options:NSCaseInsensitiveSearch].location == NSNotFound) return;
+        NSMutableDictionary *rec = [@{@"class": cls, @"label": label} mutableCopy];
+        @try {
+            if ([view isKindOfClass:[UIControl class]]) {
+                [(UIControl *)view sendActionsForControlEvents:UIControlEventTouchUpInside];
+                rec[@"via"] = @"sendActionsForControlEvents";
+            }
+            BOOL acc = [view accessibilityActivate];
+            rec[@"accessibilityActivate"] = @(acc);
+        } @catch (NSException *e) {
+            rec[@"exception"] = [NSString stringWithFormat:@"%@ %@", e.name, e.reason];
+        }
+        [activated addObject:rec];
+    });
+    return activated;
+}
+
 static NSString *autoinstallDescribeXPCInterface(NSXPCInterface *interface) {
     Protocol *proto = interface.protocol;
     NSString *protoName = proto ? NSStringFromProtocol(proto) : @"(unknown)";
@@ -161,6 +261,9 @@ static NSString *autoinstallDescribeXPCInterface(NSXPCInterface *interface) {
 - (id)_newPurchasesWithItems:(NSArray *)items;
 - (void)_performPurchases:(id)purchases hasBundlePurchase:(BOOL)hasBundlePurchase withClientContext:(id)context completionBlock:(void (^)(id arg1))block;
 - (void)_performSoftwarePurchases:(id)purchases withClientContext:(id)context completionBlock:(void (^)(id arg1))block;
+- (void)performActionForItem:(id)item offer:(id)offer clientContext:(id)context completionBlock:(void (^)(id arg1))block;
+- (void)purchaseItems:(id)items withClientContext:(id)context completionBlock:(void (^)(id arg1))block;
+- (id)addDownloads:(id)downloads;
 @end
 
 @protocol SKUIItemProtocol <NSObject>
@@ -765,6 +868,112 @@ static BOOL gIsAppStoreProcess = NO;
 // AMSPaymentSheetTask etc. live in appstored itself, a separate process from com.apple.AppStore.
 static BOOL gIsAppStoredProcess = NO;
 static BOOL gIsStoreKitDProcess = NO;
+static BOOL gIsPassbookProcess = NO;
+
+static id gStashedConfirmVC = nil;
+static BOOL gConfirmDoneThisSheet = NO;
+
+// SwiftUI exposes buttons as VIRTUAL accessibility elements (UIAccessibilityElement returned by
+// -accessibilityElements / -accessibilityElementAtIndex:), NOT as real UIView subviews - so a plain
+// subview walk finds nothing. Walk the accessibility tree instead, descending both AX children and
+// real subviews. visit() gets every element (view or UIAccessibilityElement).
+static void autoinstallWalkAX(id element, void (^visit)(id el)) {
+    if (!element) return;
+    visit(element);
+    @try {
+        NSArray *axKids = nil;
+        if ([element respondsToSelector:@selector(accessibilityElements)]) {
+            axKids = [element accessibilityElements];
+        }
+        if (axKids.count) {
+            for (id k in axKids) autoinstallWalkAX(k, visit);
+        } else if ([element respondsToSelector:@selector(accessibilityElementCount)]) {
+            NSInteger n = [element accessibilityElementCount];
+            if (n > 0 && n != NSNotFound) {
+                for (NSInteger i = 0; i < n; i++) autoinstallWalkAX([element accessibilityElementAtIndex:i], visit);
+            }
+        }
+        if ([element isKindOfClass:[UIView class]]) {
+            for (UIView *sub in [(UIView *)element subviews]) autoinstallWalkAX(sub, visit);
+        }
+    } @catch (NSException *e) {}
+}
+
+static NSArray *autoinstallDumpAXElements(id root) {
+    NSMutableArray *out = [NSMutableArray array];
+    autoinstallWalkAX(root, ^(id el) {
+        NSString *label = @"";
+        NSString *value = @"";
+        UIAccessibilityTraits traits = 0;
+        @try {
+            if ([el respondsToSelector:@selector(accessibilityLabel)]) label = [el accessibilityLabel] ?: @"";
+            if ([el respondsToSelector:@selector(accessibilityValue)]) value = [el accessibilityValue] ?: @"";
+            if ([el respondsToSelector:@selector(accessibilityTraits)]) traits = [el accessibilityTraits];
+        } @catch (NSException *e) {}
+        if (label.length || value.length || (traits & UIAccessibilityTraitButton)) {
+            [out addObject:@{
+                @"class": NSStringFromClass([el class]),
+                @"label": label,
+                @"value": value,
+                @"button": @((traits & UIAccessibilityTraitButton) != 0),
+            }];
+        }
+    });
+    return out;
+}
+
+// SwiftUI/UIKit only materialise their virtual accessibility elements when an accessibility client is
+// active. Turn on the same automation server XCUITest uses (libAccessibility SPI) so -accessibilityElements
+// actually returns the buttons; without this the AX tree is empty.
+static void autoinstallEnableAX(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        void *h = dlopen("/usr/lib/libAccessibility.dylib", RTLD_NOW);
+        if (!h) { autoinstallLog(@"AX: dlopen libAccessibility failed"); return; }
+        void (*setApp)(Boolean) = (void (*)(Boolean))dlsym(h, "_AXSApplicationAccessibilitySetEnabled");
+        void (*setAuto)(Boolean) = (void (*)(Boolean))dlsym(h, "_AXSSetAutomationEnabled");
+        if (setApp) setApp(true);
+        if (setAuto) setAuto(true);
+        autoinstallLog([NSString stringWithFormat:@"AX: automation enabled (setApp=%p setAuto=%p)", (void *)setApp, (void *)setAuto]);
+    });
+}
+
+static id autoinstallStashedRoot(void) {
+    if (!gStashedConfirmVC) return nil;
+    @try { return [(id)gStashedConfirmVC view]; } @catch (NSException *e) { return nil; }
+}
+
+static NSArray *autoinstallDumpLabeledElements(id vcOrView) {
+    id root = vcOrView;
+    if ([vcOrView isKindOfClass:[UIViewController class]]) root = [(UIViewController *)vcOrView view];
+    return autoinstallDumpAXElements(root);
+}
+
+static NSArray *autoinstallConfirmStashed(NSString *match) {
+    NSMutableArray *acted = [NSMutableArray array];
+    id root = autoinstallStashedRoot();
+    if (!root) return acted;
+    autoinstallWalkAX(root, ^(id el) {
+        NSString *label = @"";
+        @try { if ([el respondsToSelector:@selector(accessibilityLabel)]) label = [el accessibilityLabel] ?: @""; } @catch (NSException *e) {}
+        NSString *hay = [NSString stringWithFormat:@"%@|%@", NSStringFromClass([el class]), label];
+        if ([hay rangeOfString:match options:NSCaseInsensitiveSearch].location == NSNotFound) return;
+        NSMutableDictionary *rec = [@{@"class": NSStringFromClass([el class]), @"label": label} mutableCopy];
+        @try {
+            if ([el respondsToSelector:@selector(accessibilityActivate)]) {
+                rec[@"accessibilityActivate"] = @([el accessibilityActivate]);
+            }
+            if ([el isKindOfClass:[UIControl class]]) {
+                [(UIControl *)el sendActionsForControlEvents:UIControlEventTouchUpInside];
+                rec[@"sentControlEvents"] = @YES;
+            }
+        } @catch (NSException *e) {
+            rec[@"exception"] = [NSString stringWithFormat:@"%@ %@", e.name, e.reason];
+        }
+        [acted addObject:rec];
+    });
+    return acted;
+}
 
 %hook NSXPCConnection
 
@@ -1004,6 +1213,84 @@ static BOOL gIsStoreKitDProcess = NO;
             gIsAppStoreProcess, gIsAppStoredProcess, [stack componentsJoinedByString:@"\n"]]);
     }
     return result;
+}
+
+%end
+
+// The App Store install/purchase confirmation sheet is an AppStoreComponents "mini product page"
+// (ASCMiniProductPageViewController), rendered OUT-OF-PROCESS by PassbookUIService via scene hosting -
+// which is why neither the App Store process nor scene.windows enumeration ever showed it. Hook it in
+// Passbook, stash the live VC, and dump its own view tree + every UIControl so we can see the real
+// confirm button and its label/class, then drive it in-process (no HID, no synthetic touch).
+// Definitive: log the EXACT class of every view controller that appears in the candidate processes,
+// so we stop guessing the sheet's class. During a live install sheet, whichever process/class shows
+// up here is the real target.
+static NSString *autoinstallProcTag(void) {
+    if (gIsPassbookProcess) return @"PB";
+    if (gIsAppStoreProcess) return @"AS";
+    if (gIsAppStoredProcess) return @"ASD";
+    return @"?";
+}
+
+%hook UIViewController
+
+- (void)viewDidAppear:(BOOL)animated {
+    %orig;
+    if (gIsPassbookProcess || gIsAppStoreProcess || gIsAppStoredProcess) {
+        @try {
+            NSString *cls = NSStringFromClass([self class]);
+            autoinstallLog([NSString stringWithFormat:@"[%@] VC viewDidAppear: %@", autoinstallProcTag(), cls]);
+            // The SwiftUI content VC that actually holds the confirm button appears ~0.8s after the
+            // PassKit container - prefer it as the stash root (its view hosts the virtual AX elements).
+            if (gIsPassbookProcess && [cls rangeOfString:@"AuthorizationViewHostingController"].location != NSNotFound) {
+                gStashedConfirmVC = self;
+                autoinstallEnableAX();
+                NSArray *els = autoinstallDumpLabeledElements(self);
+                autoinstallLog([NSString stringWithFormat:@"[PB] stashed SwiftUI auth VC. AX elements:\n%@", els]);
+                if (!gConfirmDoneThisSheet && [[NSFileManager defaultManager] fileExistsAtPath:@"/tmp/autoinstall-autoconfirm.flag"]) {
+                    gConfirmDoneThisSheet = YES;
+                    NSString *match = [NSString stringWithContentsOfFile:@"/tmp/autoinstall-autoconfirm.flag" encoding:NSUTF8StringEncoding error:nil];
+                    match = [match stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+                    if (!match.length) match = @"install";
+                    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                        NSArray *acted = autoinstallConfirmStashed(match);
+                        autoinstallLog([NSString stringWithFormat:@"[PB] auto-confirm match=%@ acted=%@", match, acted]);
+                    });
+                }
+            }
+        } @catch (NSException *e) {}
+    }
+}
+
+%end
+
+// The real confirmation sheet: PassKit payment-authorization remote alert, SwiftUI content
+// (PaymentUIBase AuthorizationViewHostingController) hosted in PassbookUIService. Stash it and dump
+// its labeled/accessible elements so we can see the exact confirm button, then drive it via the
+// `confirm` bridge action. autoConfirm=1 flag file makes it fire automatically on appear.
+%hook PKPaymentAuthorizationRemoteAlertViewController
+
+- (void)handleButtonActions:(id)actions {
+    if (gIsPassbookProcess) {
+        autoinstallLog([NSString stringWithFormat:@"PB handleButtonActions: %@ class=%@", actions, [actions class]]);
+    }
+    %orig;
+}
+
+- (void)viewDidAppear:(BOOL)animated {
+    %orig;
+    if (!gIsPassbookProcess) return;
+    gStashedConfirmVC = self;
+    // A new sheet is appearing - clear the once-guard so the SwiftUI hook (below) confirms exactly
+    // once. This container's own .view has no confirm button (SwiftUI content loads ~0.8s later in a
+    // child hosting controller), so we don't auto-confirm here - only stash + dump for diagnostics.
+    gConfirmDoneThisSheet = NO;
+    @try {
+        NSArray *els = autoinstallDumpLabeledElements(self);
+        autoinstallLog([NSString stringWithFormat:@"PB PKPaymentAuthorizationRemoteAlertViewController viewDidAppear. labeled elements:\n%@", els]);
+    } @catch (NSException *e) {
+        autoinstallLog([NSString stringWithFormat:@"PB PKPaymentAuthorizationRemoteAlertViewController viewDidAppear EXCEPTION: %@ %@", e.name, e.reason]);
+    }
 }
 
 %end
@@ -1299,11 +1586,37 @@ static void handleAppStoreRequest(NSDictionary *req) {
 
                 void (^completion)(id) = ^(id arg1) {
                     autoinstallLog([NSString stringWithFormat:@"as-install: completionBlock fired arg1=%@ class=%@", arg1, [arg1 class]]);
+                    @try {
+                        id resp = [arg1 isKindOfClass:[NSArray class]] ? [(NSArray *)arg1 firstObject] : arg1;
+                        for (NSString *key in @[@"error", @"downloadIdentifiers", @"downloadsMetadata", @"cancelsPurchaseBatch", @"purchase"]) {
+                            @try {
+                                id v = [resp valueForKey:key];
+                                if (v) autoinstallLog([NSString stringWithFormat:@"as-install: response.%@ = %@", key, v]);
+                            } @catch (NSException *e) {}
+                        }
+                        @try {
+                            id metas = [resp valueForKey:@"downloadsMetadata"];
+                            id meta = [metas isKindOfClass:[NSArray class]] ? [(NSArray *)metas firstObject] : metas;
+                            for (NSString *mk in @[@"primaryAssetURL", @"title", @"itemName", @"downloadKey", @"purchaseDate"]) {
+                                @try {
+                                    id mv = [meta valueForKey:mk];
+                                    autoinstallLog([NSString stringWithFormat:@"as-install: downloadMeta.%@ = %@", mk, mv]);
+                                } @catch (NSException *e) {}
+                            }
+                        } @catch (NSException *e) {}
+                    } @catch (NSException *e) {
+                        autoinstallLog([NSString stringWithFormat:@"as-install: response introspection EXCEPTION: %@", e.reason]);
+                    }
                     writeJSONFile(kASInstallStatusPath, @{@"ok": @YES});
                 };
 
-                if ([req[@"method"] isEqualToString:@"software"]) {
+                NSString *method = req[@"method"] ?: @"purchases";
+                if ([method isEqualToString:@"software"]) {
                     [center _performSoftwarePurchases:purchases withClientContext:(id)clientContext completionBlock:completion];
+                } else if ([method isEqualToString:@"action"]) {
+                    [center performActionForItem:(id)item offer:(id)offer clientContext:(id)clientContext completionBlock:completion];
+                } else if ([method isEqualToString:@"items"]) {
+                    [center purchaseItems:@[(id)item] withClientContext:(id)clientContext completionBlock:completion];
                 } else {
                     [center _performPurchases:purchases hasBundlePurchase:NO withClientContext:(id)clientContext completionBlock:completion];
                 }
@@ -1384,6 +1697,64 @@ static void handleGenericProbeRequest(NSDictionary *req, NSString *responsePath,
         return;
     }
 
+    if ([action isEqualToString:@"dump_scenes"]) {
+        if (![objc_getClass("UIApplication") respondsToSelector:@selector(sharedApplication)] || ![UIApplication sharedApplication]) {
+            writeJSONFile(responsePath, @{@"ok": @NO, @"error": @"no UIApplication in this process"});
+            return;
+        }
+        __block NSString *dump = @"";
+        dispatch_sync(dispatch_get_main_queue(), ^{ dump = autoinstallDumpScenes(); });
+        autoinstallLog([NSString stringWithFormat:@"%@ dump_scenes:\n%@", logPrefix, dump]);
+        writeJSONFile(responsePath, @{@"ok": @YES, @"description": dump});
+        return;
+    }
+
+    if ([action isEqualToString:@"find_view"]) {
+        if (![UIApplication sharedApplication]) {
+            writeJSONFile(responsePath, @{@"ok": @NO, @"error": @"no UIApplication in this process"});
+            return;
+        }
+        NSString *substr = req[@"match"] ?: @"";
+        __block NSArray *matches = @[];
+        dispatch_sync(dispatch_get_main_queue(), ^{ matches = autoinstallFindViews(substr); });
+        autoinstallLog([NSString stringWithFormat:@"%@ find_view(%@): %@", logPrefix, substr, matches]);
+        writeJSONFile(responsePath, @{@"ok": @YES, @"matches": matches});
+        return;
+    }
+
+    if ([action isEqualToString:@"activate_view"]) {
+        if (![UIApplication sharedApplication]) {
+            writeJSONFile(responsePath, @{@"ok": @NO, @"error": @"no UIApplication in this process"});
+            return;
+        }
+        NSString *substr = req[@"match"] ?: @"";
+        __block NSArray *activated = @[];
+        dispatch_sync(dispatch_get_main_queue(), ^{ activated = autoinstallActivateViews(substr); });
+        autoinstallLog([NSString stringWithFormat:@"%@ activate_view(%@): %@", logPrefix, substr, activated]);
+        writeJSONFile(responsePath, @{@"ok": @YES, @"activated": activated});
+        return;
+    }
+
+    if ([action isEqualToString:@"dump_stashed"]) {
+        __block NSArray *els = @[];
+        __block BOOL has = NO;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            has = gStashedConfirmVC != nil;
+            if (has) els = autoinstallDumpLabeledElements([(id)gStashedConfirmVC view]);
+        });
+        writeJSONFile(responsePath, @{@"ok": @YES, @"stashed": @(has), @"stashedClass": has ? NSStringFromClass([gStashedConfirmVC class]) : @"", @"elements": els});
+        return;
+    }
+
+    if ([action isEqualToString:@"confirm"]) {
+        NSString *match = req[@"match"] ?: @"install";
+        __block NSArray *acted = @[];
+        dispatch_sync(dispatch_get_main_queue(), ^{ acted = autoinstallConfirmStashed(match); });
+        autoinstallLog([NSString stringWithFormat:@"%@ confirm(%@): %@", logPrefix, match, acted]);
+        writeJSONFile(responsePath, @{@"ok": @YES, @"acted": acted});
+        return;
+    }
+
     writeJSONFile(responsePath, @{@"ok": @NO, @"error": [NSString stringWithFormat:@"unknown action: %@", action]});
 }
 
@@ -1430,6 +1801,12 @@ static void startGenericProbeSide(NSString *requestPath, NSString *responsePath,
     } else if ([processName isEqualToString:@"storekitd"]) {
         gIsStoreKitDProcess = YES;
         startGenericProbeSide(@"/tmp/autoinstall-skd-request.json", @"/tmp/autoinstall-skd-response.json", @"skd");
+    } else if ([bundleId isEqualToString:@"com.apple.PassbookUIService"] || [processName isEqualToString:@"PassbookUIService"]) {
+        gIsPassbookProcess = YES;
+        autoinstallEnableAX();
+        startGenericProbeSide(@"/tmp/autoinstall-pb-request.json", @"/tmp/autoinstall-pb-response.json", @"pb");
+    } else if ([processName isEqualToString:@"coreauthd"]) {
+        startGenericProbeSide(@"/tmp/autoinstall-ca-request.json", @"/tmp/autoinstall-ca-response.json", @"ca");
     } else {
         startTestFlightSide();
     }

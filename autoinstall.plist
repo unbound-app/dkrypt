@@ -9,12 +9,15 @@
 			<string>com.apple.TestFlight</string>
 			<string>com.apple.springboard</string>
 			<string>com.apple.AppStore</string>
+			<string>com.apple.PassbookUIService</string>
 		</array>
 		<key>Executables</key>
 		<array>
 			<string>amsengagementd</string>
 			<string>appstored</string>
 			<string>storekitd</string>
+			<string>PassbookUIService</string>
+			<string>coreauthd</string>
 		</array>
 	</dict>
 </dict>
