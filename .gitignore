@@ -5,3 +5,4 @@ api/public/
 api/web/node_modules/
 api/web/dist/
 data/
+.DS_Store
