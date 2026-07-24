@@ -8,6 +8,7 @@
   import Badge from '#lib/components/ui/Badge.svelte';
   import Button from '#lib/components/ui/Button.svelte';
   import Card from '#lib/components/ui/Card.svelte';
+  import Dialog from '#lib/components/ui/Dialog.svelte';
   import Select from '#lib/components/ui/Select.svelte';
   import { PermissionFlag } from '#lib/permissions';
   import { sessionHasPermission } from '#lib/session.svelte';
@@ -15,10 +16,12 @@
   let allLinks = $state<ShareLinkRecord[] | null>(null);
   let loading = $state(false);
   let revoking = $state<Set<string>>(new Set());
-  let saving = $state<Set<string>>(new Set());
-  let managingId = $state<string | null>(null);
-  let editTtl = $state<Record<string, string>>({});
-  let editMaxDownloads = $state<Record<string, string>>({});
+  let saving = $state(false);
+
+  let manageOpen = $state(false);
+  let manageLink = $state<ShareLinkRecord | null>(null);
+  let manageTtl = $state('30');
+  let manageMaxDownloads = $state('0');
 
   const canExtend = $derived(sessionHasPermission(PermissionFlag.extendShareLinks));
 
@@ -82,33 +85,30 @@
     return TTL_OPTIONS.filter((o) => Number(o.value) <= remainingMin);
   }
 
-  function toggleManage(l: ShareLinkRecord): void {
-    if (managingId === l.id) {
-      managingId = null;
-      return;
-    }
-    managingId = l.id;
-    const allowed = ttlOptionsFor(l);
-    editTtl[l.id] = allowed.at(-1)?.value ?? TTL_OPTIONS[0].value;
-    editMaxDownloads[l.id] = String(l.maxDownloads ?? 0);
+  const manageTtlOptions = $derived(manageLink ? ttlOptionsFor(manageLink) : []);
+
+  function openManage(l: ShareLinkRecord): void {
+    manageLink = l;
+    manageTtl = ttlOptionsFor(l).at(-1)?.value ?? TTL_OPTIONS[0].value;
+    manageMaxDownloads = String(l.maxDownloads ?? 0);
+    manageOpen = true;
   }
 
-  async function saveManage(l: ShareLinkRecord): Promise<void> {
-    saving = new Set(saving).add(l.id);
+  async function saveManage(): Promise<void> {
+    if (!manageLink) return;
+    saving = true;
     try {
-      const maxDownloadsValue = Number(editMaxDownloads[l.id] ?? '0');
-      const { ok } = await updateShareLink(l.id, {
-        ttlMinutes: Number(editTtl[l.id]),
+      const maxDownloadsValue = Number(manageMaxDownloads);
+      const { ok } = await updateShareLink(manageLink.id, {
+        ttlMinutes: Number(manageTtl),
         maxDownloads: maxDownloadsValue > 0 ? maxDownloadsValue : null,
       });
       if (ok) {
-        managingId = null;
+        manageOpen = false;
         await load();
       }
     } finally {
-      const next = new Set(saving);
-      next.delete(l.id);
-      saving = next;
+      saving = false;
     }
   }
 </script>
@@ -134,7 +134,6 @@
     <div class="flex flex-col gap-2">
       {#each links as l (l.id)}
         {@const status = linkStatus(l)}
-        {@const allowedTtl = ttlOptionsFor(l)}
         <div class="border-border rounded-md border px-3 py-2.5 text-xs">
           <div class="flex items-start justify-between gap-3">
             <div class="min-w-0 flex-1">
@@ -159,7 +158,7 @@
               </div>
             </div>
             <div class="flex shrink-0 items-center gap-1.5">
-              <Button size="sm" variant="secondary" onclick={() => toggleManage(l)}>{managingId === l.id ? 'Close' : 'Manage'}</Button>
+              <Button size="sm" variant="secondary" onclick={() => openManage(l)}>Manage</Button>
               <Button size="sm" variant="destructive" loading={revoking.has(l.id)} onclick={() => revoke(l.id)}>Revoke</Button>
             </div>
           </div>
@@ -170,29 +169,36 @@
               <CopyButton text={l.url} label="Copy" />
             </div>
           {/if}
-
-          {#if managingId === l.id}
-            <div class="border-border mt-2.5 flex flex-wrap items-end gap-2 border-t pt-2.5">
-              <div>
-                <div class="mb-1 text-muted">New expiry</div>
-                {#if allowedTtl.length > 0}
-                  <Select items={allowedTtl} bind:value={editTtl[l.id]} class="w-36" />
-                {:else}
-                  <div class="text-muted italic">no shorter option available</div>
-                {/if}
-              </div>
-              <div>
-                <div class="mb-1 text-muted">Downloads</div>
-                <Select items={MAX_DOWNLOAD_OPTIONS} bind:value={editMaxDownloads[l.id]} class="w-36" />
-              </div>
-              <Button size="sm" loading={saving.has(l.id)} disabled={allowedTtl.length === 0} onclick={() => saveManage(l)}>Save</Button>
-            </div>
-            {#if !canExtend}
-              <div class="mt-1.5 text-muted italic">Only expiry times shorter than the current one are available without the extend permission.</div>
-            {/if}
-          {/if}
         </div>
       {/each}
     </div>
   {/if}
 </Card>
+
+<Dialog open={manageOpen} onOpenChange={(v) => (manageOpen = v)} class="max-w-md">
+  {#if manageLink}
+    <div class="mb-1 text-sm font-medium">Manage share link</div>
+    <div class="mb-3 truncate font-mono text-xs text-muted" title={manageLink.bundleId}>{manageLink.bundleId}</div>
+    <div class="flex gap-2">
+      <div class="flex-1">
+        <div class="mb-1 text-xs text-muted">New expiry</div>
+        {#if manageTtlOptions.length > 0}
+          <Select items={manageTtlOptions} bind:value={manageTtl} class="w-full" />
+        {:else}
+          <div class="text-xs text-muted italic">no shorter option available</div>
+        {/if}
+      </div>
+      <div class="flex-1">
+        <div class="mb-1 text-xs text-muted">Downloads</div>
+        <Select items={MAX_DOWNLOAD_OPTIONS} bind:value={manageMaxDownloads} class="w-full" />
+      </div>
+    </div>
+    {#if !canExtend}
+      <div class="mt-2 text-xs text-muted italic">Only expiry times shorter than the current one are available without the extend permission.</div>
+    {/if}
+    <div class="mt-4 flex gap-2">
+      <Button class="flex-1" loading={saving} disabled={manageTtlOptions.length === 0} onclick={saveManage}>Save</Button>
+      <Button variant="secondary" class="flex-1" onclick={() => (manageOpen = false)}>Cancel</Button>
+    </div>
+  {/if}
+</Dialog>

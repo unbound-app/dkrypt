@@ -22,7 +22,6 @@
 
   const overview = $derived(liveState.overview);
   const primaryDeviceId = $derived(overview?.devices.find((d) => d.isPrimary)?.id ?? overview?.devices[0]?.id);
-  const otherDevices = $derived(overview?.devices.filter((d) => d.id !== primaryDeviceId) ?? []);
 
   type RunState = 'inProgress' | 'succeeded' | 'failed' | 'timedOut' | 'upToDate' | 'checkFailed';
 
@@ -326,10 +325,14 @@
         <div class="flex flex-col gap-1 whitespace-nowrap">
           {#if !h.reachable}
             <div class="text-err max-w-xs whitespace-normal">{h.error ?? 'unreachable'}</div>
-          {:else if h.screenIsOn !== undefined}
-            <div><span class="text-muted">Screen</span> · {h.darkEnabled ? 'dark (awake)' : h.screenIsOn ? 'on' : 'off'}</div>
-          {:else}
-            <div class="text-muted">No further detail available.</div>
+          {/if}
+          {#if overview?.devices.length}
+            <div class="text-muted">Devices</div>
+            {#each overview.devices as d (d.id)}
+              <div>
+                {d.name}{d.id === primaryDeviceId ? ' (primary)' : ''} · {d.enabled ? 'enabled' : 'disabled'}
+              </div>
+            {/each}
           {/if}
         </div>
       </Popover>
@@ -350,9 +353,6 @@
     {:else}
       <Badge variant="secondary">iDevice …</Badge>
     {/if}
-    {#each otherDevices as d (d.id)}
-      <Badge variant="secondary" title="{d.name} - {d.enabled ? 'enabled' : 'disabled'}">{d.name}</Badge>
-    {/each}
   </div>
   {#if health}
     {@const h = health}
