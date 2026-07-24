@@ -10,6 +10,10 @@
 			<string>com.apple.springboard</string>
 			<string>com.apple.AppStore</string>
 		</array>
+		<key>Executables</key>
+		<array>
+			<string>amsengagementd</string>
+		</array>
 	</dict>
 </dict>
 </plist>

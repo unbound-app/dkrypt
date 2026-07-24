@@ -140,6 +140,7 @@ static void autoinstallSynthesizeTap(CGPoint pointInPoints) {
 + (instancetype)defaultCenter;
 - (id)_newPurchasesWithItems:(NSArray *)items;
 - (void)_performPurchases:(id)purchases hasBundlePurchase:(BOOL)hasBundlePurchase withClientContext:(id)context completionBlock:(void (^)(id arg1))block;
+- (void)_performSoftwarePurchases:(id)purchases withClientContext:(id)context completionBlock:(void (^)(id arg1))block;
 @end
 
 @protocol SKUIItemProtocol <NSObject>
@@ -742,6 +743,64 @@ static BOOL gIsAppStoreProcess = NO;
     %orig;
 }
 
+- (void)setRemoteObjectInterface:(NSXPCInterface *)interface {
+    if (gIsAppStoreProcess && interface) {
+        Protocol *proto = interface.protocol;
+        NSString *protoName = proto ? NSStringFromProtocol(proto) : @"(unknown)";
+        NSMutableString *methods = [NSMutableString string];
+        if (proto) {
+            unsigned int count = 0;
+            struct objc_method_description *descs = protocol_copyMethodDescriptionList(proto, YES, YES, &count);
+            for (unsigned int i = 0; i < count; i++) {
+                [methods appendFormat:@"  %@\n", NSStringFromSelector(descs[i].name)];
+            }
+            if (descs) free(descs);
+            descs = protocol_copyMethodDescriptionList(proto, NO, YES, &count);
+            for (unsigned int i = 0; i < count; i++) {
+                [methods appendFormat:@"  (optional) %@\n", NSStringFromSelector(descs[i].name)];
+            }
+            if (descs) free(descs);
+        }
+        autoinstallLog([NSString stringWithFormat:@"xpc: setRemoteObjectInterface: connection=%@ serviceName=%@ protocol=%@ methods:\n%@",
+            self, [self valueForKey:@"serviceName"], protoName, methods]);
+    }
+    %orig;
+}
+
+- (void)_sendInvocation:(NSInvocation *)invocation orArguments:(void **)args count:(NSUInteger)count
+        methodSignature:(NSMethodSignature *)sig selector:(SEL)sel withProxy:(id)proxy {
+    if (gIsAppStoreProcess) {
+        NSString *selName = NSStringFromSelector(sel);
+        autoinstallLog([NSString stringWithFormat:@"xpc-send-any: sel=%@", selName]);
+        if ([selName rangeOfString:@"purchaseWithRequest" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+            [selName rangeOfString:@"uiHostProxy" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+            [selName rangeOfString:@"submitRequest" options:NSCaseInsensitiveSearch].location != NSNotFound) {
+            @try {
+                autoinstallLog([NSString stringWithFormat:@"xpc-send: sel=%@ invocation=%@ sig=%@ proxy=%@ serviceName=%@",
+                    selName, invocation, sig, proxy, [self valueForKey:@"serviceName"]]);
+                if (invocation && sig) {
+                    NSUInteger numArgs = [sig numberOfArguments];
+                    for (NSUInteger i = 2; i < numArgs; i++) {
+                        const char *argType = [sig getArgumentTypeAtIndex:i];
+                        if (argType && argType[0] == '@') {
+                            __unsafe_unretained id argObj = nil;
+                            [invocation getArgument:&argObj atIndex:i];
+                            autoinstallLog([NSString stringWithFormat:@"  arg[%lu] = %@ class=%@",
+                                (unsigned long)i, argObj, [argObj class]]);
+                        } else {
+                            autoinstallLog([NSString stringWithFormat:@"  arg[%lu] type=%s (non-object, skipped)",
+                                (unsigned long)i, argType ?: "?"]);
+                        }
+                    }
+                }
+            } @catch (NSException *e) {
+                autoinstallLog([NSString stringWithFormat:@"xpc-send: EXCEPTION inspecting args: %@ %@", e.name, e.reason]);
+            }
+        }
+    }
+    %orig;
+}
+
 %end
 
 #pragma mark - App Store side: SKUIItemStateCenter probe + purchase-pipeline install
@@ -1003,7 +1062,11 @@ static void handleAppStoreRequest(NSDictionary *req) {
                     writeJSONFile(kASInstallStatusPath, @{@"ok": @YES});
                 };
 
-                [center _performPurchases:purchases hasBundlePurchase:NO withClientContext:(id)clientContext completionBlock:completion];
+                if ([req[@"method"] isEqualToString:@"software"]) {
+                    [center _performSoftwarePurchases:purchases withClientContext:(id)clientContext completionBlock:completion];
+                } else {
+                    [center _performPurchases:purchases hasBundlePurchase:NO withClientContext:(id)clientContext completionBlock:completion];
+                }
                 writeJSONFile(kASResponsePath, @{@"ok": @YES, @"requested": @YES});
             } @catch (NSException *exception) {
                 autoinstallLog([NSString stringWithFormat:@"as-install: EXCEPTION name=%@ reason=%@", exception.name, exception.reason]);
@@ -1043,16 +1106,86 @@ static void startAppStoreSide(void) {
     autoinstallLog(@"as-bridge: request-file watcher started (probe-only)");
 }
 
+#pragma mark - amsengagementd side: minimal probe bridge (AMSDPaymentConfirmationInterface investigation)
+
+static NSString * const kAMSRequestPath = @"/tmp/autoinstall-ams-request.json";
+static NSString * const kAMSResponsePath = @"/tmp/autoinstall-ams-response.json";
+
+static void handleAMSRequest(NSDictionary *req) {
+    NSString *action = req[@"action"];
+    autoinstallLog([NSString stringWithFormat:@"ams-bridge: handling action=%@ req=%@", action, req]);
+
+    if ([action isEqualToString:@"status"]) {
+        writeJSONFile(kAMSResponsePath, @{@"ok": @YES, @"running": @YES});
+        return;
+    }
+
+    if ([action isEqualToString:@"probe_classes"]) {
+        NSString *substring = req[@"substring"] ?: @"";
+        int count = objc_getClassList(NULL, 0);
+        Class *classes = (Class *)malloc(sizeof(Class) * count);
+        count = objc_getClassList(classes, count);
+        NSMutableArray *matches = [NSMutableArray array];
+        for (int i = 0; i < count; i++) {
+            NSString *name = NSStringFromClass(classes[i]);
+            if ([name rangeOfString:substring options:NSCaseInsensitiveSearch].location != NSNotFound) {
+                [matches addObject:name];
+            }
+        }
+        free(classes);
+        [matches sortUsingSelector:@selector(compare:)];
+        writeJSONFile(kAMSResponsePath, @{@"ok": @YES, @"matches": matches});
+        return;
+    }
+
+    if ([action isEqualToString:@"probe"]) {
+        NSString *className = req[@"class"];
+        NSString *desc = describeClass(className);
+        autoinstallLog(desc);
+        writeJSONFile(kAMSResponsePath, @{@"ok": @YES, @"description": desc});
+        return;
+    }
+
+    writeJSONFile(kAMSResponsePath, @{@"ok": @NO, @"error": [NSString stringWithFormat:@"unknown action: %@", action]});
+}
+
+static dispatch_queue_t gAMSBridgeQueue = nil;
+static dispatch_source_t gAMSBridgeTimer = nil;
+
+static void startAMSSide(void) {
+    gAMSBridgeQueue = dispatch_queue_create("dev.adrian.autoinstall.ams-bridge", DISPATCH_QUEUE_SERIAL);
+    gAMSBridgeTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, gAMSBridgeQueue);
+    dispatch_source_set_timer(gAMSBridgeTimer, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), NSEC_PER_SEC, NSEC_PER_MSEC * 200);
+    dispatch_source_set_event_handler(gAMSBridgeTimer, ^{
+        NSFileManager *fm = [NSFileManager defaultManager];
+        if (![fm fileExistsAtPath:kAMSRequestPath]) return;
+
+        NSData *data = [NSData dataWithContentsOfFile:kAMSRequestPath];
+        [fm removeItemAtPath:kAMSRequestPath error:nil];
+        if (!data) return;
+
+        NSError *err = nil;
+        NSDictionary *req = [NSJSONSerialization JSONObjectWithData:data options:0 error:&err];
+        if (!req) return;
+        handleAMSRequest(req);
+    });
+    dispatch_resume(gAMSBridgeTimer);
+    autoinstallLog(@"ams-bridge: request-file watcher started");
+}
+
 %ctor {
     NSString *bundleId = [[NSBundle mainBundle] bundleIdentifier];
-    autoinstallLog([NSString stringWithFormat:@"autoinstall loaded into pid %d bundle %@",
-        [[NSProcessInfo processInfo] processIdentifier], bundleId]);
+    NSString *processName = [[NSProcessInfo processInfo] processName];
+    autoinstallLog([NSString stringWithFormat:@"autoinstall loaded into pid %d bundle %@ process %@",
+        [[NSProcessInfo processInfo] processIdentifier], bundleId, processName]);
 
     if (isSpringBoard()) {
         startSpringBoardSide();
     } else if ([bundleId isEqualToString:@"com.apple.AppStore"]) {
         gIsAppStoreProcess = YES;
         startAppStoreSide();
+    } else if ([processName isEqualToString:@"amsengagementd"]) {
+        startAMSSide();
     } else {
         startTestFlightSide();
     }
