@@ -244,6 +244,7 @@
           {#if users === null}
             <SkeletonRows rows={3} colspan={canManage ? 6 : 4} />
           {:else}
+            {@const defaultRole = (roles ?? []).find((r) => r.isDefault)}
             {#each filteredUsers as u (u.username)}
               {@const isSelf = u.username === (sessionState.sub ?? '').toLowerCase()}
               <tr>
@@ -265,18 +266,19 @@
                 </td>
                 <td>
                   <div class="flex flex-wrap gap-1">
-                    {#if u.roleIds.length === 0}
-                      <Badge variant="secondary">@everyone only</Badge>
-                    {:else}
-                      {#each u.roleIds as id (id)}
-                        {@const role = roleById(id)}
-                        {#if role}
-                          <Badge style="background-color: {role.color}22; color: {role.color}; border: 1px solid {role.color}55">
-                            {role.name}
-                          </Badge>
-                        {/if}
-                      {/each}
+                    {#if defaultRole}
+                      <Badge style="background-color: {defaultRole.color}22; color: {defaultRole.color}; border: 1px solid {defaultRole.color}55">
+                        {defaultRole.name}
+                      </Badge>
                     {/if}
+                    {#each u.roleIds as id (id)}
+                      {@const role = roleById(id)}
+                      {#if role}
+                        <Badge style="background-color: {role.color}22; color: {role.color}; border: 1px solid {role.color}55">
+                          {role.name}
+                        </Badge>
+                      {/if}
+                    {/each}
                   </div>
                 </td>
                 <td class="text-muted"><RelativeTime ms={u.addedAt} /></td>
