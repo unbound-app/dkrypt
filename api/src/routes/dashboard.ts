@@ -1255,7 +1255,7 @@ dashboardRouter.get('/v1/dashboard/users', canViewUsers, (_req, res) => {
     if (!users.some((user) => user.username === assignment.username)) {
       users.push({
         username: assignment.username,
-        displayName: '',
+        displayName: assignment.username,
         avatarUrl: '',
         roleIds: assignment.roleIds,
         addedAt: assignment.addedAt,
