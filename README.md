@@ -9,8 +9,6 @@ It injects into several processes from a single package. The functional ones:
 - **`com.apple.AppStore`** — drives a real purchase/install through StoreKitUI's private `SKUIItemStateCenter` pipeline (the same one [MuffinStore](https://github.com/mineek/MuffinStore) uses), by App Store numeric id (`adamId`), with optional pinning to a specific historical version.
 - **`com.apple.PassbookUIService`** — where the App Store install confirmation sheet is actually rendered (a PassKit `PKPaymentAuthorizationRemoteAlertViewController` hosting a SwiftUI authorization view). This is what makes headless installs possible: the tweak confirms the "Install" button here in-process, no synthetic touch needed. See [Headless auto-confirm](#headless-auto-confirm-the-hard-part).
 
-A few daemons are also injected purely as introspection/injection targets (`appstored`, `amsengagementd`, `storekitd`, `coreauthd`) — each gets a minimal probe bridge, used while reverse-engineering the flow. They're harmless to leave in.
-
 ## Requirements
 
 - A rootless jailbreak with ElleKit (tested on palera1n, iOS 18.3.2).
@@ -48,18 +46,14 @@ Every injected side polls a request file every 200ms, writes a response file, an
 | `install` (`appId`, `build`) | Reconstructs the build via TestFlight's own model classes and drives a real install through the live `TFAppInstaller`. Only signals the request was *accepted* — poll the installed bundle's `Info.plist` for actual completion. |
 | `status` | Reports whether the installer/catalog manager are live, and current background-execution time remaining. |
 | `end_background_keepalive` | Releases the background-task assertion taken out during `install`. |
-| `probe` (`class`) / `probe_live` (`target`) | Runtime-introspection helpers (dump a class's method list, or describe a stashed object). Read-only, safe to leave in. |
 
 ### App Store side (`/tmp/autoinstall-as-request.json` → `/tmp/autoinstall-as-response.json`)
 
 | Action | Purpose |
 | --- | --- |
 | `install` (`adamId`, optional `versionId`) | Drives a real purchase/install through `SKUIItemStateCenter`. `adamId` is the App Store numeric track id. `versionId` (an `appExtVrsId`) pins a specific historical version — the same downgrade mechanism MuffinStore uses. Only signals the request was *accepted*; poll the on-device bundle for completion. |
-| `dump_scenes` / `dump_ax` | Dump the process's `UIWindowScene`s, or its full accessibility tree (labels + button traits). |
-| `find_view` / `activate_view` / `activate_ax` (`match`) | Find views/AX elements by class-or-label substring, or trigger a matching control (via `accessibilityActivate` and `sendActionsForControlEvents:`). `activate_ax` is what drives the real product-page "GET"/"re-download" button when going through the App Store's own UI. |
-| `probe` / `probe_classes` / `status` | Runtime-introspection helpers. Read-only. |
 
-The injected daemons (`appstored`, `amsengagementd`, `storekitd`, `coreauthd`) each expose a minimal probe bridge at `/tmp/autoinstall-<tag>-request.json` supporting `probe`, `probe_classes`, and (where the process has a UIApplication) `dump_scenes`/`find_view`/`activate_view`/`dump_stashed`/`confirm`.
+The PassbookUIService side has no bridge — it auto-confirms the sheet on its own (see below), keyed off the flag file, with nothing to poll.
 
 ## The App Store install call chain
 
