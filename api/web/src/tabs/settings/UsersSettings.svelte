@@ -190,14 +190,13 @@
 
   async function removeManaged(): Promise<void> {
     if (!manageUser) return;
-    if (!(await confirmDialog(`Remove every dashboard role from ${manageUser.username}? They can still sign in but will only retain the default permissions.`))) return;
+    const username = manageUser.username;
+    manageOpen = false;
+    if (!(await confirmDialog(`Remove every dashboard role from ${username}? They can still sign in but will only retain the default permissions.`))) return;
     removing = true;
     try {
-      const { ok } = await removeUser(manageUser.username);
-      if (ok) {
-        manageOpen = false;
-        void load();
-      }
+      await removeUser(username);
+      void load();
     } finally {
       removing = false;
     }
@@ -234,7 +233,7 @@
             {#if canManage}
               <th><input type="checkbox" checked={selectableUsers.length > 0 && selectedUsers.size === selectableUsers.length} onchange={toggleSelectAllUsers} /></th>
             {/if}
-            <th>Member</th>
+            <th>User</th>
             <th>Roles</th>
             <th>Added</th>
             <th>Last active</th>

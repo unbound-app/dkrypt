@@ -101,6 +101,7 @@
   let editingProfileName = $state(false);
   let profileNameDraft = $state('');
   let savingProfileName = $state(false);
+  let sessionChecked = $state(false);
 
   const otherOnlineUsers = $derived(liveState.onlineUsers.filter((u) => u !== sessionState.sub));
 
@@ -242,7 +243,9 @@
   }
 
   $effect(() => {
-    void refreshSession();
+    void refreshSession().finally(() => {
+      sessionChecked = true;
+    });
   });
 
   $effect(() => {
@@ -355,6 +358,8 @@
   <LegalPage document="refund" />
 {:else if publicPage === 'contact'}
   <ContactPage />
+{:else if !sessionChecked}
+  <div class="min-h-screen"></div>
 {:else if !sessionState.loggedIn}
   <Login />
 {:else}
