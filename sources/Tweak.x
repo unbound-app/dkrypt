@@ -938,6 +938,51 @@ static void autoinstallEnableAX(void) {
     });
 }
 
+static NSArray *autoinstallAllWindows(void) {
+    NSMutableArray *ws = [NSMutableArray array];
+    @try {
+        NSSet *scenes = [[UIApplication sharedApplication] connectedScenes];
+        for (id scene in scenes) {
+            @try { NSArray *windows = [scene valueForKey:@"windows"]; if (windows) [ws addObjectsFromArray:windows]; } @catch (NSException *e) {}
+        }
+    } @catch (NSException *e) {}
+    @try {
+        NSArray *appW = [[UIApplication sharedApplication] valueForKey:@"windows"];
+        for (id w in appW) if (![ws containsObject:w]) [ws addObject:w];
+    } @catch (NSException *e) {}
+    return ws;
+}
+
+static NSArray *autoinstallDumpAllAX(void) {
+    NSMutableArray *out = [NSMutableArray array];
+    for (UIWindow *w in autoinstallAllWindows()) [out addObjectsFromArray:autoinstallDumpAXElements(w)];
+    return out;
+}
+
+static NSArray *autoinstallActivateAX(NSString *match) {
+    NSMutableArray *acted = [NSMutableArray array];
+    for (UIWindow *w in autoinstallAllWindows()) {
+        autoinstallWalkAX(w, ^(id el) {
+            NSString *label = @"";
+            @try { if ([el respondsToSelector:@selector(accessibilityLabel)]) label = [el accessibilityLabel] ?: @""; } @catch (NSException *e) {}
+            if ([label rangeOfString:match options:NSCaseInsensitiveSearch].location == NSNotFound) return;
+            BOOL isCtrl = [el isKindOfClass:[UIControl class]];
+            NSMutableDictionary *rec = [@{@"class": NSStringFromClass([el class]), @"label": label, @"isControl": @(isCtrl)} mutableCopy];
+            @try { if ([el respondsToSelector:@selector(accessibilityActivate)]) rec[@"acc"] = @([el accessibilityActivate]); } @catch (NSException *e) { rec[@"exc"] = e.reason; }
+            @try {
+                if (isCtrl) {
+                    rec[@"enabled"] = @([(UIControl *)el isEnabled]);
+                    [(UIControl *)el sendActionsForControlEvents:UIControlEventTouchUpInside];
+                    [(UIControl *)el sendActionsForControlEvents:UIControlEventPrimaryActionTriggered];
+                    rec[@"sentActions"] = @YES;
+                }
+            } @catch (NSException *e) { rec[@"exc2"] = e.reason; }
+            [acted addObject:rec];
+        });
+    }
+    return acted;
+}
+
 static id autoinstallStashedRoot(void) {
     if (!gStashedConfirmVC) return nil;
     @try { return [(id)gStashedConfirmVC view]; } @catch (NSException *e) { return nil; }
@@ -1508,6 +1553,24 @@ static void handleAppStoreRequest(NSDictionary *req) {
         return;
     }
 
+    if ([action isEqualToString:@"dump_ax"]) {
+        autoinstallEnableAX();
+        __block NSArray *els = @[];
+        dispatch_sync(dispatch_get_main_queue(), ^{ els = autoinstallDumpAllAX(); });
+        writeJSONFile(kASResponsePath, @{@"ok": @YES, @"elements": els});
+        return;
+    }
+
+    if ([action isEqualToString:@"activate_ax"]) {
+        autoinstallEnableAX();
+        NSString *match = req[@"match"] ?: @"";
+        __block NSArray *acted = @[];
+        dispatch_sync(dispatch_get_main_queue(), ^{ acted = autoinstallActivateAX(match); });
+        autoinstallLog([NSString stringWithFormat:@"as activate_ax(%@): %@", match, acted]);
+        writeJSONFile(kASResponsePath, @{@"ok": @YES, @"acted": acted});
+        return;
+    }
+
     if ([action isEqualToString:@"probe_client_context"]) {
         NSString *desc = describeClass(@"SKUIClientContext");
         autoinstallLog(desc);
@@ -1792,6 +1855,7 @@ static void startGenericProbeSide(NSString *requestPath, NSString *responsePath,
         startSpringBoardSide();
     } else if ([bundleId isEqualToString:@"com.apple.AppStore"]) {
         gIsAppStoreProcess = YES;
+        autoinstallEnableAX();
         startAppStoreSide();
     } else if ([processName isEqualToString:@"amsengagementd"]) {
         startGenericProbeSide(@"/tmp/autoinstall-ams-request.json", @"/tmp/autoinstall-ams-response.json", @"ams");

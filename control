@@ -1,6 +1,6 @@
 Name: autoinstall
 Description: TestFlight and App Store browse/install bridge for dkrypt, plus SSH-toggleable dark-screen/no-sleep control
-Version: 0.32.0
+Version: 0.34.0
 Package: dev.adrian.autoinstall
 Architecture: iphoneos-arm64
 Maintainer: Adrian Castro
