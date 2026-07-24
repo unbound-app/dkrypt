@@ -577,12 +577,81 @@ static void startTestFlightSide(void) {
     tfautoLog(@"bridge: request-file watcher started");
 }
 
+#pragma mark - App Store side: SKUIItemStateCenter probe (validation only, no purchase calls yet)
+
+static NSString * const kASRequestPath = @"/tmp/tfauto-as-request.json";
+static NSString * const kASResponsePath = @"/tmp/tfauto-as-response.json";
+
+static NSString *describeSelectorPresence(NSString *className, NSArray<NSString *> *classSelectors, NSArray<NSString *> *instanceSelectors) {
+    Class cls = objc_getClass([className UTF8String]);
+    if (!cls) return [NSString stringWithFormat:@"%@: class NOT FOUND", className];
+
+    NSMutableString *out = [NSMutableString stringWithFormat:@"%@: class found\n", className];
+    for (NSString *sel in classSelectors) {
+        BOOL has = [object_getClass(cls) instancesRespondToSelector:NSSelectorFromString(sel)];
+        [out appendFormat:@"  +%@ -> %@\n", sel, has ? @"present" : @"MISSING"];
+    }
+    for (NSString *sel in instanceSelectors) {
+        BOOL has = [cls instancesRespondToSelector:NSSelectorFromString(sel)];
+        [out appendFormat:@"  -%@ -> %@\n", sel, has ? @"present" : @"MISSING"];
+    }
+    return out;
+}
+
+static void handleAppStoreRequest(NSDictionary *req) {
+    NSString *action = req[@"action"];
+    tfautoLog([NSString stringWithFormat:@"as-bridge: handling action=%@ req=%@", action, req]);
+
+    if ([action isEqualToString:@"probe_skui"]) {
+        NSMutableString *out = [NSMutableString string];
+        [out appendString:describeSelectorPresence(@"SKUIItemStateCenter", @[@"defaultCenter"], @[@"_newPurchasesWithItems:", @"_performPurchases:hasBundlePurchase:withClientContext:completionBlock:", @"_performSoftwarePurchases:withClientContext:completionBlock:"])];
+        [out appendString:describeSelectorPresence(@"SKUIItem", @[], @[@"initWithLookupDictionary:", @"setValue:forKey:"])];
+        [out appendString:describeSelectorPresence(@"SKUIItemOffer", @[], @[@"initWithLookupDictionary:"])];
+        [out appendString:describeSelectorPresence(@"SKUIClientContext", @[@"defaultContext"], @[])];
+        tfautoLog(out);
+        writeJSONFile(kASResponsePath, @{@"ok": @YES, @"description": out});
+        return;
+    }
+
+    writeJSONFile(kASResponsePath, @{@"ok": @NO, @"error": [NSString stringWithFormat:@"unknown action: %@", action]});
+}
+
+static dispatch_queue_t gASBridgeQueue = nil;
+static dispatch_source_t gASBridgeTimer = nil;
+
+static void startAppStoreSide(void) {
+    gASBridgeQueue = dispatch_queue_create("dev.adrian.tfauto.as-bridge", DISPATCH_QUEUE_SERIAL);
+    gASBridgeTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, gASBridgeQueue);
+    dispatch_source_set_timer(gASBridgeTimer, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), NSEC_PER_SEC, NSEC_PER_MSEC * 200);
+    dispatch_source_set_event_handler(gASBridgeTimer, ^{
+        NSFileManager *fm = [NSFileManager defaultManager];
+        if (![fm fileExistsAtPath:kASRequestPath]) return;
+
+        NSData *data = [NSData dataWithContentsOfFile:kASRequestPath];
+        [fm removeItemAtPath:kASRequestPath error:nil];
+        if (!data) return;
+
+        NSError *err = nil;
+        NSDictionary *req = [NSJSONSerialization JSONObjectWithData:data options:0 error:&err];
+        if (!req) {
+            tfautoLog([NSString stringWithFormat:@"as-bridge: bad request json: %@", err]);
+            return;
+        }
+        handleAppStoreRequest(req);
+    });
+    dispatch_resume(gASBridgeTimer);
+    tfautoLog(@"as-bridge: request-file watcher started (probe-only)");
+}
+
 %ctor {
+    NSString *bundleId = [[NSBundle mainBundle] bundleIdentifier];
     tfautoLog([NSString stringWithFormat:@"tfauto loaded into pid %d bundle %@",
-        [[NSProcessInfo processInfo] processIdentifier], [[NSBundle mainBundle] bundleIdentifier]]);
+        [[NSProcessInfo processInfo] processIdentifier], bundleId]);
 
     if (isSpringBoard()) {
         startSpringBoardSide();
+    } else if ([bundleId isEqualToString:@"com.apple.AppStore"]) {
+        startAppStoreSide();
     } else {
         startTestFlightSide();
     }

@@ -1,6 +1,6 @@
 THEOS_PACKAGE_SCHEME=rootless
 FINALPACKAGE=1
-INSTALL_TARGET_PROCESSES = TestFlight SpringBoard
+INSTALL_TARGET_PROCESSES = TestFlight SpringBoard AppStore
 
 ARCHS := arm64
 TARGET := iphone:clang:latest:15.0

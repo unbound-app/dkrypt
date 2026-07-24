@@ -8,6 +8,7 @@
 		<array>
 			<string>com.apple.TestFlight</string>
 			<string>com.apple.springboard</string>
+			<string>com.apple.AppStore</string>
 		</array>
 	</dict>
 </dict>
