@@ -5,10 +5,13 @@ import { scopedLogger } from './logger.js';
 
 const log = scopedLogger('idevice');
 
-const REQUEST_PATH = '/tmp/tfauto-request.json';
-const RESPONSE_PATH = '/tmp/tfauto-response.json';
-const SB_REQUEST_PATH = '/tmp/tfauto-sb-request.json';
-const SB_RESPONSE_PATH = '/tmp/tfauto-sb-response.json';
+const REQUEST_PATH = '/tmp/autoinstall-request.json';
+const RESPONSE_PATH = '/tmp/autoinstall-response.json';
+const SB_REQUEST_PATH = '/tmp/autoinstall-sb-request.json';
+const SB_RESPONSE_PATH = '/tmp/autoinstall-sb-response.json';
+const AS_REQUEST_PATH = '/tmp/autoinstall-as-request.json';
+const AS_RESPONSE_PATH = '/tmp/autoinstall-as-response.json';
+const AUTOCONFIRM_FLAG_PATH = '/tmp/autoinstall-autoconfirm.flag';
 
 interface DeviceAuth {
   host: string;
@@ -130,6 +133,37 @@ export async function isTestFlightRunning(conn: Client): Promise<boolean> {
   return stdout.trim().length > 0;
 }
 
+export async function isAppStoreRunning(conn: Client): Promise<boolean> {
+  const { stdout } = await execCommand(conn, "ps aux | grep -i 'AppStore.app/AppStore$' | grep -v grep");
+  return stdout.trim().length > 0;
+}
+
+// Arm/disarm the autoinstall tweak's headless purchase-sheet confirmation. The flag's contents are
+// the accessibility label of the sheet's primary button ("Install" covers free apps: first-time GET,
+// re-download, and update). MUST be cleared after an install or every future App Store sheet would be
+// auto-confirmed.
+export function armAppStoreAutoConfirm(conn: Client, label = 'Install'): Promise<void> {
+  return writeRemoteFile(conn, AUTOCONFIRM_FLAG_PATH, label);
+}
+
+export async function clearAppStoreAutoConfirm(conn: Client): Promise<void> {
+  await execCommand(conn, `rm -f ${AUTOCONFIRM_FLAG_PATH}`);
+}
+
+// A fully-installed App Store app is a .app (at container depth 2) whose Info.plist carries the
+// bundleId AND which has a SC_Info/ directory (the FairPlay license/signature files). The SC_Info
+// check is what distinguishes a completed install from the transient placeholder bundle that exists
+// mid-download. bundleId must be shell-safe (validated by the caller).
+export async function findInstalledAppStoreBundle(conn: Client, bundleId: string): Promise<string | undefined> {
+  const { stdout } = await execCommand(
+    conn,
+    `for d in /var/containers/Bundle/Application/*/*.app; do ` +
+      `if [ -d "$d/SC_Info" ] && grep -laq "${bundleId}" "$d/Info.plist" 2>/dev/null; then echo "$d"; break; fi; done`,
+  );
+  const line = stdout.trim().split('\n')[0];
+  return line || undefined;
+}
+
 let bridgeQueue: Promise<unknown> = Promise.resolve();
 
 function withBridgeLock<T>(fn: () => Promise<T>): Promise<T> {
@@ -172,6 +206,10 @@ export function sendTestFlightBridgeRequest(conn: Client, request: Record<string
 
 export function sendSpringBoardBridgeRequest(conn: Client, request: Record<string, unknown>, timeoutMs = 20_000): Promise<any> {
   return sendBridgeRequestRawTo(conn, SB_REQUEST_PATH, SB_RESPONSE_PATH, request, timeoutMs);
+}
+
+export function sendAppStoreBridgeRequest(conn: Client, request: Record<string, unknown>, timeoutMs = 20_000): Promise<any> {
+  return sendBridgeRequestRawTo(conn, AS_REQUEST_PATH, AS_RESPONSE_PATH, request, timeoutMs);
 }
 
 export async function tryIoregCandidates(conn: Client, ioregClass: string, candidates: string[]): Promise<string | undefined> {

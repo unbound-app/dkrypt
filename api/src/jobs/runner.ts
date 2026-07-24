@@ -5,6 +5,7 @@ import { config } from '../config.js';
 import { emitJobsChanged } from '../events.js';
 import { scopedLogger } from '../logger.js';
 import type { DeviceRecord } from '../store/state.js';
+import { installFromAppStore } from '../appStoreInstall.js';
 import { installBuild } from '../testflight.js';
 import { extractIpaMetadata } from '../util/ipaMetadata.js';
 
@@ -17,17 +18,23 @@ export async function runDecrypt(job: Job, device: DeviceRecord): Promise<void> 
   job.filePath = outputPath;
   job.deviceId = device.id;
 
+  const report = (message: string) => {
+    job.progress = message;
+    emitJobsChanged();
+  };
+
+  // Both TestFlight and App Store apps are now installed on-device first (App Store via the
+  // autoinstall purchase-sheet automation), then decrypted with --use-installed - so ipadecrypt's
+  // fragile Apple ID login (--from-appstore) is no longer used. For App Store apps, a numeric
+  // externalVersionId pins the install to that historical version (MuffinStore-style), and
+  // --use-installed then decrypts exactly what was installed.
   if (job.testflight) {
-    await installBuild(job.testflight.appId, job.testflight.build, (message) => {
-      job.progress = message;
-      emitJobsChanged();
-    });
+    await installBuild(job.testflight.appId, job.testflight.build, report);
+  } else {
+    await installFromAppStore(job.bundleId, { externalVersionId: job.externalVersionId, onProgress: report });
   }
 
-  const args = ['--root-dir', device.rootDir, 'decrypt', job.bundleId];
-  args.push(...(job.testflight ? ['--use-installed'] : ['--from-appstore']));
-  args.push('--output', outputPath);
-  if (job.externalVersionId) args.push('--external-version-id', job.externalVersionId);
+  const args = ['--root-dir', device.rootDir, 'decrypt', job.bundleId, '--use-installed', '--output', outputPath];
 
   await new Promise<void>((resolve, reject) => {
     const child = spawn(config.ipadecryptBin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
