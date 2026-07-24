@@ -104,6 +104,26 @@ static void autoinstallSynthesizeTap(CGPoint pointInPoints) {
     });
 }
 
+static NSString *autoinstallDescribeXPCInterface(NSXPCInterface *interface) {
+    Protocol *proto = interface.protocol;
+    NSString *protoName = proto ? NSStringFromProtocol(proto) : @"(unknown)";
+    NSMutableString *methods = [NSMutableString string];
+    if (proto) {
+        unsigned int count = 0;
+        struct objc_method_description *descs = protocol_copyMethodDescriptionList(proto, YES, YES, &count);
+        for (unsigned int i = 0; i < count; i++) {
+            [methods appendFormat:@"  %@\n", NSStringFromSelector(descs[i].name)];
+        }
+        if (descs) free(descs);
+        descs = protocol_copyMethodDescriptionList(proto, NO, YES, &count);
+        for (unsigned int i = 0; i < count; i++) {
+            [methods appendFormat:@"  (optional) %@\n", NSStringFromSelector(descs[i].name)];
+        }
+        if (descs) free(descs);
+    }
+    return [NSString stringWithFormat:@"protocol=%@ methods:\n%@", protoName, methods];
+}
+
 @protocol TFURLSessionProtocol <NSObject>
 + (instancetype)session;
 - (NSURLSessionDataTask *)dataTaskWithURL:(NSURL *)url completionHandler:(void (^)(NSData *data, NSURLResponse *response, NSError *error))completionHandler;
@@ -155,6 +175,11 @@ static void autoinstallSynthesizeTap(CGPoint pointInPoints) {
 + (instancetype)defaultContext;
 + (id)_fallbackConfigurationDictionary;
 - (instancetype)initWithConfigurationDictionary:(NSDictionary *)dict;
+@end
+
+@protocol LNConfirmationRequestProtocol <NSObject>
+- (void)respondWithConfirmation:(BOOL)confirmed;
+- (void)respondWithError:(NSError *)error;
 @end
 
 @protocol SBBacklightControllerProtocol <NSObject>
@@ -324,6 +349,24 @@ static void handleSpringBoardRequest(NSDictionary *req) {
             });
             autoinstallLog([NSString stringWithFormat:@"sb-bridge: tap synthesized at (%@, %@)", x, y]);
             writeJSONFile(kSBResponsePath, @{@"ok": @YES});
+            return;
+        }
+
+        if ([action isEqualToString:@"probe_classes"]) {
+            NSString *substring = req[@"substring"] ?: @"";
+            int count = objc_getClassList(NULL, 0);
+            Class *classes = (Class *)malloc(sizeof(Class) * count);
+            count = objc_getClassList(classes, count);
+            NSMutableArray *matches = [NSMutableArray array];
+            for (int i = 0; i < count; i++) {
+                NSString *name = NSStringFromClass(classes[i]);
+                if ([name rangeOfString:substring options:NSCaseInsensitiveSearch].location != NSNotFound) {
+                    [matches addObject:name];
+                }
+            }
+            free(classes);
+            [matches sortUsingSelector:@selector(compare:)];
+            writeJSONFile(kSBResponsePath, @{@"ok": @YES, @"matches": matches});
             return;
         }
 
@@ -719,6 +762,9 @@ static void startTestFlightSide(void) {
 // Also used by the UIAlertController hook further down - only act in the App Store process, never
 // TestFlight/SpringBoard, or we'd log/auto-tap unrelated things there.
 static BOOL gIsAppStoreProcess = NO;
+// AMSPaymentSheetTask etc. live in appstored itself, a separate process from com.apple.AppStore.
+static BOOL gIsAppStoredProcess = NO;
+static BOOL gIsStoreKitDProcess = NO;
 
 %hook NSXPCConnection
 
@@ -745,24 +791,28 @@ static BOOL gIsAppStoreProcess = NO;
 
 - (void)setRemoteObjectInterface:(NSXPCInterface *)interface {
     if (gIsAppStoreProcess && interface) {
-        Protocol *proto = interface.protocol;
-        NSString *protoName = proto ? NSStringFromProtocol(proto) : @"(unknown)";
-        NSMutableString *methods = [NSMutableString string];
-        if (proto) {
-            unsigned int count = 0;
-            struct objc_method_description *descs = protocol_copyMethodDescriptionList(proto, YES, YES, &count);
-            for (unsigned int i = 0; i < count; i++) {
-                [methods appendFormat:@"  %@\n", NSStringFromSelector(descs[i].name)];
-            }
-            if (descs) free(descs);
-            descs = protocol_copyMethodDescriptionList(proto, NO, YES, &count);
-            for (unsigned int i = 0; i < count; i++) {
-                [methods appendFormat:@"  (optional) %@\n", NSStringFromSelector(descs[i].name)];
-            }
-            if (descs) free(descs);
-        }
-        autoinstallLog([NSString stringWithFormat:@"xpc: setRemoteObjectInterface: connection=%@ serviceName=%@ protocol=%@ methods:\n%@",
-            self, [self valueForKey:@"serviceName"], protoName, methods]);
+        autoinstallLog([NSString stringWithFormat:@"xpc: setRemoteObjectInterface: connection=%@ serviceName=%@ %@",
+            self, [self valueForKey:@"serviceName"], autoinstallDescribeXPCInterface(interface)]);
+    }
+    %orig;
+}
+
+// The incoming/callback side - if submitRequest:delegate:withReplyHandler:'s delegate object is
+// wired up the standard NSXPCConnection way (exportedObject/exportedInterface, so the remote side
+// can call back into it), this captures both the exact class AND the exact protocol/method list
+// safely via normal Objective-C parameter passing - no raw pointer guessing needed.
+- (void)setExportedInterface:(NSXPCInterface *)interface {
+    if (gIsAppStoreProcess && interface) {
+        autoinstallLog([NSString stringWithFormat:@"xpc: setExportedInterface: connection=%@ serviceName=%@ %@",
+            self, [self valueForKey:@"serviceName"], autoinstallDescribeXPCInterface(interface)]);
+    }
+    %orig;
+}
+
+- (void)setExportedObject:(id)object {
+    if (gIsAppStoreProcess && object) {
+        autoinstallLog([NSString stringWithFormat:@"xpc: setExportedObject: connection=%@ serviceName=%@ object=%@ class=%@",
+            self, [self valueForKey:@"serviceName"], object, [object class]]);
     }
     %orig;
 }
@@ -803,7 +853,160 @@ static BOOL gIsAppStoreProcess = NO;
 
 %end
 
+// Per-parameter XPC proxy configuration - this is how a method like submitRequest:delegate:
+// withReplyHandler: declares that a specific ARGUMENT (not the whole connection) is itself an
+// XPC-proxied object conforming to some protocol, when that argument isn't wired up via the
+// simpler connection-level exportedInterface/exportedObject. Safe, standard parameter types only.
+%hook NSXPCInterface
+
+- (void)setInterface:(NSXPCInterface *)interface forSelector:(SEL)sel argumentIndex:(NSUInteger)arg ofReply:(BOOL)ofReply {
+    if (gIsAppStoreProcess) {
+        NSString *selName = NSStringFromSelector(sel);
+        if ([selName rangeOfString:@"submitRequest"].location != NSNotFound ||
+            [selName rangeOfString:@"purchaseWithRequest"].location != NSNotFound) {
+            autoinstallLog([NSString stringWithFormat:@"xpc-iface: setInterface:forSelector:%@ argumentIndex:%lu ofReply:%d -> %@",
+                selName, (unsigned long)arg, ofReply, autoinstallDescribeXPCInterface(interface)]);
+        }
+    }
+    %orig;
+}
+
+%end
+
 #pragma mark - App Store side: SKUIItemStateCenter probe + purchase-pipeline install
+
+%hook ASDRequestBroker
+
+- (id)submitRequest:(id)request withReplyHandler:(void (^)(id response))handler {
+    if (gIsAppStoreProcess) {
+        @try {
+            autoinstallLog([NSString stringWithFormat:@"ASDRequestBroker submitRequest: request=%@ class=%@", request, [request class]]);
+            NSString *fullDesc = [request respondsToSelector:@selector(debugDescription)] ? [request debugDescription] : [request description];
+            autoinstallLog([NSString stringWithFormat:@"ASDRequestBroker request full description:\n%@", fullDesc]);
+        } @catch (NSException *e) {
+            autoinstallLog([NSString stringWithFormat:@"ASDRequestBroker submitRequest: EXCEPTION describing request: %@ %@", e.name, e.reason]);
+        }
+    }
+    id result = %orig;
+    if (gIsAppStoreProcess) {
+        autoinstallLog([NSString stringWithFormat:@"ASDRequestBroker submitRequest: returned %@", result]);
+    }
+    return result;
+}
+
+%end
+
+// Lives in appstored, not the App Store app. This is the real orchestrator behind the purchase
+// confirmation sheet - _presentPaymentConfirmationWithPaymentRequest:purchaseResult: is the actual
+// presentation call. Experiment: suppress it entirely (don't call %orig) and see whether the
+// surrounding task/state-machine just proceeds anyway. Worst case matches the existing "nobody
+// tapped" hang we already see, so this is safe to try.
+%hook AMSPaymentSheetTask
+
+- (id)_presentPaymentConfirmationWithPaymentRequest:(id)paymentRequest purchaseResult:(id)purchaseResult {
+    if (gIsAppStoredProcess) {
+        @try {
+            autoinstallLog(@"AMSPaymentSheetTask _presentPaymentConfirmation: called");
+            NSString *reqDesc = [NSString stringWithFormat:@"paymentRequest class=%@", [paymentRequest class]];
+            autoinstallLog(reqDesc);
+            NSString *resDesc = [NSString stringWithFormat:@"purchaseResult class=%@", [purchaseResult class]];
+            autoinstallLog(resDesc);
+            id taskState = [(id)self valueForKey:@"state"];
+            NSString *stateDesc = [NSString stringWithFormat:@"self.state=%@", taskState];
+            autoinstallLog(stateDesc);
+        } @catch (NSException *e) {
+            autoinstallLog([NSString stringWithFormat:@"AMSPaymentSheetTask _presentPaymentConfirmation: EXCEPTION describing args: %@ %@", e.name, e.reason]);
+        }
+        autoinstallLog(@"AMSPaymentSheetTask _presentPaymentConfirmation: SUPPRESSING %orig, not presenting UI");
+        return nil;
+    }
+    return %orig;
+}
+
+%end
+
+// LNConfirmationRequest looks like a *generic* system confirmation-request object (not payment/
+// PassKit-specific like AMSPaymentSheetTask above, which never fired for this free-app install) -
+// respondWithConfirmation: is exactly the auto-confirm hook this whole session has been looking
+// for. Hook the designated initializer, stash the live instance, and immediately respond YES.
+%hook LNConfirmationRequest
+
+- (id)initWithIdentifier:(id)identifier parameterName:(id)parameterName value:(id)value dialog:(id)dialog viewSnippet:(id)viewSnippet {
+    id result = %orig;
+    if ((gIsAppStoredProcess || gIsStoreKitDProcess || isSpringBoard()) && result) {
+        @try {
+            autoinstallLog([NSString stringWithFormat:@"LNConfirmationRequest created: identifier=%@ parameterName=%@ value=%@ dialog=%@",
+                identifier, parameterName, value, dialog]);
+            dispatch_async(dispatch_get_main_queue(), ^{
+                @try {
+                    [(id<LNConfirmationRequestProtocol>)result respondWithConfirmation:YES];
+                    autoinstallLog(@"LNConfirmationRequest: respondWithConfirmation:YES sent");
+                } @catch (NSException *e) {
+                    autoinstallLog([NSString stringWithFormat:@"LNConfirmationRequest: EXCEPTION calling respondWithConfirmation:: %@ %@", e.name, e.reason]);
+                }
+            });
+        } @catch (NSException *e) {
+            autoinstallLog([NSString stringWithFormat:@"LNConfirmationRequest: EXCEPTION describing new instance: %@ %@", e.name, e.reason]);
+        }
+    }
+    return result;
+}
+
+%end
+
+// Two guesses (AMSPaymentSheetTask, LNConfirmationRequest) both failed to fire - stop guessing
+// class names and get a real call stack instead. SFShowPurchaseRequestSheetCommand is CONFIRMED
+// (via probe_classes) to be the right data class; hook its actual designated initializer and log
+// exactly who constructs it, in whichever process it happens.
+%hook SFShowPurchaseRequestSheetCommand
+
+- (id)initWithProtobuf:(id)protobuf {
+    id result = %orig;
+    if ((gIsAppStoreProcess || gIsAppStoredProcess || gIsStoreKitDProcess || isSpringBoard()) && result) {
+        NSArray *stack = [NSThread callStackSymbols];
+        autoinstallLog([NSString stringWithFormat:@"SFShowPurchaseRequestSheetCommand initWithProtobuf: called (appStore=%d appstored=%d). Call stack:\n%@",
+            gIsAppStoreProcess, gIsAppStoredProcess, [stack componentsJoinedByString:@"\n"]]);
+    }
+    return result;
+}
+
+- (id)initWithCoder:(NSCoder *)coder {
+    id result = %orig;
+    if ((gIsAppStoreProcess || gIsAppStoredProcess || gIsStoreKitDProcess || isSpringBoard()) && result) {
+        NSArray *stack = [NSThread callStackSymbols];
+        autoinstallLog([NSString stringWithFormat:@"SFShowPurchaseRequestSheetCommand initWithCoder: called (appStore=%d appstored=%d). Call stack:\n%@",
+            gIsAppStoreProcess, gIsAppStoredProcess, [stack componentsJoinedByString:@"\n"]]);
+    }
+    return result;
+}
+
+%end
+
+// Same call-stack technique on SSPaymentSheet (the data model, confirmed loaded in both processes)
+// in case the command class itself isn't what's directly constructed in this flow.
+%hook SSPaymentSheet
+
+- (id)initWithServerResponse:(id)serverResponse {
+    id result = %orig;
+    if ((gIsAppStoreProcess || gIsAppStoredProcess || gIsStoreKitDProcess || isSpringBoard()) && result) {
+        NSArray *stack = [NSThread callStackSymbols];
+        autoinstallLog([NSString stringWithFormat:@"SSPaymentSheet initWithServerResponse: called (appStore=%d appstored=%d). Call stack:\n%@",
+            gIsAppStoreProcess, gIsAppStoredProcess, [stack componentsJoinedByString:@"\n"]]);
+    }
+    return result;
+}
+
+- (id)initWithServerResponse:(id)serverResponse buyParams:(id)buyParams {
+    id result = %orig;
+    if ((gIsAppStoreProcess || gIsAppStoredProcess || gIsStoreKitDProcess || isSpringBoard()) && result) {
+        NSArray *stack = [NSThread callStackSymbols];
+        autoinstallLog([NSString stringWithFormat:@"SSPaymentSheet initWithServerResponse:buyParams: called (appStore=%d appstored=%d). Call stack:\n%@",
+            gIsAppStoreProcess, gIsAppStoredProcess, [stack componentsJoinedByString:@"\n"]]);
+    }
+    return result;
+}
+
+%end
 
 %hook UIAlertController
 
@@ -1106,17 +1309,15 @@ static void startAppStoreSide(void) {
     autoinstallLog(@"as-bridge: request-file watcher started (probe-only)");
 }
 
-#pragma mark - amsengagementd side: minimal probe bridge (AMSDPaymentConfirmationInterface investigation)
+#pragma mark - Generic probe-only bridge, reusable for any daemon we inject into (amsengagementd,
+#pragma mark   appstored, ...) - just class/method introspection, no state, safe by construction.
 
-static NSString * const kAMSRequestPath = @"/tmp/autoinstall-ams-request.json";
-static NSString * const kAMSResponsePath = @"/tmp/autoinstall-ams-response.json";
-
-static void handleAMSRequest(NSDictionary *req) {
+static void handleGenericProbeRequest(NSDictionary *req, NSString *responsePath, NSString *logPrefix) {
     NSString *action = req[@"action"];
-    autoinstallLog([NSString stringWithFormat:@"ams-bridge: handling action=%@ req=%@", action, req]);
+    autoinstallLog([NSString stringWithFormat:@"%@: handling action=%@ req=%@", logPrefix, action, req]);
 
     if ([action isEqualToString:@"status"]) {
-        writeJSONFile(kAMSResponsePath, @{@"ok": @YES, @"running": @YES});
+        writeJSONFile(responsePath, @{@"ok": @YES, @"running": @YES});
         return;
     }
 
@@ -1134,7 +1335,7 @@ static void handleAMSRequest(NSDictionary *req) {
         }
         free(classes);
         [matches sortUsingSelector:@selector(compare:)];
-        writeJSONFile(kAMSResponsePath, @{@"ok": @YES, @"matches": matches});
+        writeJSONFile(responsePath, @{@"ok": @YES, @"matches": matches});
         return;
     }
 
@@ -1142,35 +1343,35 @@ static void handleAMSRequest(NSDictionary *req) {
         NSString *className = req[@"class"];
         NSString *desc = describeClass(className);
         autoinstallLog(desc);
-        writeJSONFile(kAMSResponsePath, @{@"ok": @YES, @"description": desc});
+        writeJSONFile(responsePath, @{@"ok": @YES, @"description": desc});
         return;
     }
 
-    writeJSONFile(kAMSResponsePath, @{@"ok": @NO, @"error": [NSString stringWithFormat:@"unknown action: %@", action]});
+    writeJSONFile(responsePath, @{@"ok": @NO, @"error": [NSString stringWithFormat:@"unknown action: %@", action]});
 }
 
-static dispatch_queue_t gAMSBridgeQueue = nil;
-static dispatch_source_t gAMSBridgeTimer = nil;
-
-static void startAMSSide(void) {
-    gAMSBridgeQueue = dispatch_queue_create("dev.adrian.autoinstall.ams-bridge", DISPATCH_QUEUE_SERIAL);
-    gAMSBridgeTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, gAMSBridgeQueue);
-    dispatch_source_set_timer(gAMSBridgeTimer, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), NSEC_PER_SEC, NSEC_PER_MSEC * 200);
-    dispatch_source_set_event_handler(gAMSBridgeTimer, ^{
+static void startGenericProbeSide(NSString *requestPath, NSString *responsePath, NSString *logPrefix) {
+    dispatch_queue_t queue = dispatch_queue_create([[NSString stringWithFormat:@"dev.adrian.autoinstall.%@-bridge", logPrefix] UTF8String], DISPATCH_QUEUE_SERIAL);
+    dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, queue);
+    dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), NSEC_PER_SEC, NSEC_PER_MSEC * 200);
+    dispatch_source_set_event_handler(timer, ^{
         NSFileManager *fm = [NSFileManager defaultManager];
-        if (![fm fileExistsAtPath:kAMSRequestPath]) return;
+        if (![fm fileExistsAtPath:requestPath]) return;
 
-        NSData *data = [NSData dataWithContentsOfFile:kAMSRequestPath];
-        [fm removeItemAtPath:kAMSRequestPath error:nil];
+        NSData *data = [NSData dataWithContentsOfFile:requestPath];
+        [fm removeItemAtPath:requestPath error:nil];
         if (!data) return;
 
         NSError *err = nil;
         NSDictionary *req = [NSJSONSerialization JSONObjectWithData:data options:0 error:&err];
         if (!req) return;
-        handleAMSRequest(req);
+        handleGenericProbeRequest(req, responsePath, logPrefix);
     });
-    dispatch_resume(gAMSBridgeTimer);
-    autoinstallLog(@"ams-bridge: request-file watcher started");
+    dispatch_resume(timer);
+    static NSMutableArray *keepAliveTimers = nil;
+    if (!keepAliveTimers) keepAliveTimers = [NSMutableArray array];
+    [keepAliveTimers addObject:timer];
+    autoinstallLog([NSString stringWithFormat:@"%@-bridge: request-file watcher started", logPrefix]);
 }
 
 %ctor {
@@ -1185,7 +1386,13 @@ static void startAMSSide(void) {
         gIsAppStoreProcess = YES;
         startAppStoreSide();
     } else if ([processName isEqualToString:@"amsengagementd"]) {
-        startAMSSide();
+        startGenericProbeSide(@"/tmp/autoinstall-ams-request.json", @"/tmp/autoinstall-ams-response.json", @"ams");
+    } else if ([processName isEqualToString:@"appstored"]) {
+        gIsAppStoredProcess = YES;
+        startGenericProbeSide(@"/tmp/autoinstall-appstored-request.json", @"/tmp/autoinstall-appstored-response.json", @"appstored");
+    } else if ([processName isEqualToString:@"storekitd"]) {
+        gIsStoreKitDProcess = YES;
+        startGenericProbeSide(@"/tmp/autoinstall-skd-request.json", @"/tmp/autoinstall-skd-response.json", @"skd");
     } else {
         startTestFlightSide();
     }

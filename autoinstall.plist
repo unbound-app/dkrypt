@@ -13,6 +13,8 @@
 		<key>Executables</key>
 		<array>
 			<string>amsengagementd</string>
+			<string>appstored</string>
+			<string>storekitd</string>
 		</array>
 	</dict>
 </dict>
