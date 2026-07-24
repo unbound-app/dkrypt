@@ -1,13 +1,13 @@
 import cron from 'node-cron';
-import { config } from '../config.js';
-import { emitJobsChanged } from '../events.js';
-import type { Job } from '../jobs/types.js';
-import { enqueueDecryptJob, reclaimJobFile, waitForJob } from '../jobs/store.js';
-import { getMaintenanceStatus } from '../maintenance.js';
-import { scopedLogger } from '../logger.js';
+import { config } from '#config.js';
+import { emitJobsChanged } from '#events.js';
+import type { Job } from '#jobs/types.js';
+import { enqueueDecryptJob, reclaimJobFile, waitForJob } from '#jobs/store.js';
+import { getMaintenanceStatus } from '#maintenance.js';
+import { scopedLogger } from '#logger.js';
 
 const log = scopedLogger('scheduler');
-import { EMBED_COLOR, notify } from '../notify.js';
+import { EMBED_COLOR, notify } from '#notify.js';
 import {
   type AppWatch,
   createBackupSnapshot,
@@ -20,13 +20,14 @@ import {
   type SchedulerRunOutcome,
   type SchedulerSettings,
   updateSchedulerRunOutcome,
-} from '../store/state.js';
-import type { TFBuild } from '../testflight.js';
-import { listBuilds, listTrains } from '../testflight.js';
-import { buildSignedFileUrl } from '../util/signedUrl.js';
-import { compareVersions, normalizeVersion } from '../util/version.js';
-import { dispatchIpaUpdate, findDispatchedRun, getRun, listReleaseTagNames, listReleaseVersions, type WorkflowRun } from './github.js';
-import { lookupCurrentVersion } from './itunes.js';
+} from '#store/state.js';
+import type { TFBuild } from '#testflight.js';
+import { listBuilds, listTrains } from '#testflight.js';
+import { buildSignedFileUrl } from '#util/signedUrl.js';
+import { compareVersions, normalizeVersion } from '#util/version.js';
+import { listAppVersions } from '#versions.js';
+import { dispatchIpaUpdate, findDispatchedRun, getRun, listReleaseTagNames, listReleaseVersions, type WorkflowRun } from '#scheduler/github.js';
+import { lookupCurrentVersion } from '#scheduler/itunes.js';
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -293,9 +294,24 @@ async function tickAppStore(watch: AppWatch): Promise<DispatchResult> {
   }
 
   const normalized = check.normalizedVersion as string;
-  log.info('no matching release found, decrypting', { bundleId: watch.bundleId, version: normalized });
 
-  const job = enqueueDecryptJob(watch.bundleId, 'scheduler', undefined, undefined, normalized);
+  let externalVersionId: string;
+  try {
+    const versions = await listAppVersions(watch.bundleId);
+    const latest = versions.find((v) => v.isLatest);
+    if (!latest) throw new Error('no latest version entry in App Store version history');
+    externalVersionId = latest.externalVersionId;
+  } catch (err) {
+    log.error('failed to resolve the App Store external version id, refusing to dispatch to avoid decrypting the wrong build on device', {
+      bundleId: watch.bundleId,
+      error: String(err),
+    });
+    return { outcome: { ok: false, triggered: false, reason: `Failed to resolve App Store version id: ${String(err)}` } };
+  }
+
+  log.info('no matching release found, decrypting', { bundleId: watch.bundleId, version: normalized, externalVersionId });
+
+  const job = enqueueDecryptJob(watch.bundleId, 'scheduler', externalVersionId, undefined, normalized);
   return decryptAndDispatch(job, watch, false, `v${normalized}`);
 }
 
