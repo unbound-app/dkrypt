@@ -12,19 +12,25 @@ Written 2026-07-24 for whoever picks this up next (human or another AI agent/too
 2. **Done**: this repo renamed `tfauto` → `autoinstall` (package id, `TWEAK_NAME`, plist filename, all bridge/log/flag paths, README). Builds clean (`gmake clean package`). Two commits on branch `probe/appstore-skui`:
    - `edcbadd` — adds `com.apple.AppStore` as a third filter target with a **probe-only** bridge (`probe_skui` action, read-only, dumps whether `SKUIItemStateCenter`/`SKUIItem`/`SKUIItemOffer`/`SKUIClientContext` and their needed selectors exist on this device's iOS build — does not call any of them yet).
    - `fb28bf2` — the tfauto→autoinstall rename itself.
-   - Not merged to `main` yet (this repo has no real `main` history beyond the initial commit — it's local-only, never pushed anywhere, per earlier project research).
-3. **Not done yet, blocked**: the probe build (`packages/dev.adrian.autoinstall_0.2.0_iphoneos-arm64.deb`) is staged at `/tmp/autoinstall-probe.deb` on the device but **not installed**. Installing needs root (`sudo dpkg -i`), and this device's `mobile` user needs a password typed interactively for every `sudo` call — see "Device access" below for why passwordless sudo isn't set up despite real effort.
-4. **Not started**: the real App Store install-driving hook (beyond the probe), the `dkrypt`-side wiring, and retiring the Apple ID auth path. See "Next steps" below.
-
-## Immediate next step
-
-Someone with the device password needs to run, from a terminal (not scripted through an AI agent that won't handle credentials — see below):
-
-```bash
-ssh mobile@192.168.2.158 'sudo dpkg -i /tmp/autoinstall-probe.deb && sudo sbreload'
-```
-
-Then launch the App Store app on-device (check `ps aux | grep -i appstore` first; if resident, `sudo killall AppStore` before relaunching — SBS refuses a second launch request for an app it thinks is already alive, same behavior documented for TestFlight in the research memory below) and `uiopen --bundleid com.apple.AppStore`. Once running, write `{"action":"probe_skui"}` to `/tmp/autoinstall-as-request.json` on-device, read back `/tmp/autoinstall-as-response.json` (and `/tmp/autoinstall.log` for detail). That tells us whether MuffinStore's exact API surface still matches on this iOS version before investing in the real hook.
+   - Not merged to `main` yet (`main`, both locally and on the remote, still has only the original initial commit — correcting an earlier note from prior research that claimed this repo was never pushed anywhere; it has a real GitHub remote, `unbound-app/autoinstall` as of this session, renamed from `unbound-app/tfauto`).
+3. **Done**: probe build installed (`dev.adrian.autoinstall` 0.2.0, now `ii` in `dpkg -l` alongside the still-installed old `dev.adrian.tfauto` 0.1.0 — different package IDs mean dpkg treats them as separate packages, not an upgrade; the old one is deliberately left in place since `dkrypt`'s production TestFlight pipeline still points at its `/tmp/tfauto-*` paths, see the file-map section). Respring'd, App Store app launched via `uiopen --bundleid com.apple.AppStore`, tweak confirmed loaded (`/tmp/autoinstall.log`: `autoinstall loaded into pid ... bundle com.apple.AppStore`), `probe_skui` run.
+4. **Probe result, 2026-07-24, iOS 18.3.2: clean pass.** Every class/selector MuffinStore's call chain needs is present and responds:
+   ```
+   SKUIItemStateCenter: class found
+     +defaultCenter -> present
+     -_newPurchasesWithItems: -> present
+     -_performPurchases:hasBundlePurchase:withClientContext:completionBlock: -> present
+     -_performSoftwarePurchases:withClientContext:completionBlock: -> present
+   SKUIItem: class found
+     -initWithLookupDictionary: -> present
+   SKUIItemOffer: class found
+     -initWithLookupDictionary: -> present
+   SKUIClientContext: class found
+     +defaultContext -> present
+   ```
+   No naming/signature drift to work around — clear to move to next steps 3+ below (implementing the real `install` action) without further probing.
+5. **Also resolved this session**: passwordless `sudo` for `mobile` now genuinely works (verified from a fresh connection with no cached credential) — see "Device access" for the fix, in case it regresses.
+6. **Not started**: the real App Store install-driving hook (beyond the probe), the `dkrypt`-side wiring, and retiring the Apple ID auth path. See "Next steps" below.
 
 ## Device access
 
@@ -32,11 +38,12 @@ Then launch the App Store app on-device (check `ps aux | grep -i appstore` first
 - Directly reachable on the LAN at `mobile@192.168.2.158` (DHCP, may drift) — this Mac's `~/.ssh/id_ed25519` is now an authorized key there (added by the user mid-session today), so `ssh mobile@192.168.2.158` needs no password.
 - Also reachable via `homelab.local` → `iproxy` loopback tunnel at `127.0.0.1:2222` (what the `dkrypt` container itself uses) — SSH alias `ipad` in homelab's own `~/.ssh/config`, key `~/.ssh/id_ed25519_ipad` on homelab. Same device, different path.
 - **No root SSH exists** — `/var/root/.ssh/authorized_keys` doesn't exist on the device at all, confirmed directly. Only `mobile` has a key.
-- **`mobile` has sudo, but it prompts for a password every time.** An attempt to set up `NOPASSWD` via `/var/jb/etc/sudoers.d/mobile-nopasswd` (content: `mobile ALL=(ALL) NOPASSWD: ALL`, mode 440) did **not** take effect — `sudo -n true` still fails from a fresh session. This is a **real, unresolved mystery**, not abandoned because it's unsolvable, just deprioritized after a lot of failed attempts:
-  - `#includedir /var/jb/etc/sudoers.d` was already present (`grep -c sudoers.d /var/jb/etc/sudoers` returned 3 *before* anything was added), so a missing includedir isn't the cause.
-  - Nobody has actually read the drop-in file's contents back as root yet (`sudo cat /var/jb/etc/sudoers.d/mobile-nopasswd`) to confirm it saved correctly, or run `sudo visudo -c` for a real syntax check (see the dyld gotcha just below for why that crashes if you forget the env var). That's the obvious next diagnostic step, just never got done.
-  - Every apparent "it worked" during this session was actually sudo's normal ~5-minute per-session credential cache firing right after someone typed the password for something else, not the `NOPASSWD` rule itself — confirmed by testing from a *separate* fresh SSH connection, which still demanded a password every time.
-- **The device's root/sudo password is known to the user, not written anywhere in this repo or in dkrypt's config on purpose.** Whoever operates this device needs to type it interactively for privileged one-off commands until the sudoers issue above is actually solved. Do not ask an AI agent to type, echo, or pipe it — that's a hard boundary that held for the entire session this rename/probe work happened in, and printing it into this file would undo the point of holding it. `dkrypt`'s own container *does* store this device password (for `ipadecrypt`'s own SSH automation) at `/root/.ipadecrypt/config.json` → `.device.auth.password` inside the container on `homelab.local` — a human can retrieve it from there if needed, an AI agent should not be asked to extract and use it.
+- **`mobile` now has genuine passwordless sudo — solved 2026-07-24, verified from a fresh connection with zero cached credential.** The full root-cause chain, worth understanding in case it regresses:
+  1. A `NOPASSWD` drop-in at `/var/jb/etc/sudoers.d/mobile-nopasswd` (`mobile ALL=(ALL) NOPASSWD: ALL`, mode 440) looked like it should work — correct syntax, correct location, `#includedir /var/jb/etc/sudoers.d` was already present in the main file — but `sudo -n true` kept failing from any fresh session. Every apparent "it worked" during troubleshooting was actually sudo's ~5-minute per-session credential cache firing right after someone typed the password for something else, not the rule itself.
+  2. `sudo visudo -c` (real syntax+permission check across the whole sudoers chain — needs `DYLD_LIBRARY_PATH=/var/jb/usr/libexec/sudo` prefixed, see the dyld gotcha below, or it just crashes before checking anything) revealed the actual first problem: a **different**, pre-existing file, `/var/jb/etc/sudoers.d/procursus` (shipped by the jailbreak's own base bootstrap, not anything written for this project), had wrong permissions. Modern `sudo` refuses to trust an entire `sudoers.d` directory if *any* file in it has bad permissions — that one bad sibling was silently blocking every rule in the directory, ours included. Fixed with `sudo chmod 0440 /var/jb/etc/sudoers.d/procursus`.
+  3. After that fix, `sudo -n true` *still* failed. Reading `procursus`'s actual content (`sudo cat`) showed why: `%mobile ALL=(ALL) ALL` — a rule for the `mobile` group requiring a password, and since sudo evaluates included files in **alphabetical order with last-match-wins semantics**, `procursus` (p) sorts after `mobile-nopasswd` (m) and was silently overriding it every time. Fixed by renaming the drop-in file to `zz-mobile-nopasswd` so it sorts *after* `procursus` and wins.
+  - **Lesson for next time a "grant NOPASSWD" attempt on any similar rootless-jailbreak device doesn't take effect**: don't assume the rule itself is wrong. Check `sudo visudo -c` for permission problems on sibling files first, and if that's clean, check whether another file in the same `sudoers.d` sorts after yours and contains a conflicting rule — sudoers.d ordering is alphabetical, not "your file wins because it's more specific."
+- **The device's root/sudo password itself is known to the user, not written anywhere in this repo or in dkrypt's config on purpose** — and shouldn't need to be typed again now that passwordless sudo actually works. If it ever does: an AI agent should not be asked to type, echo, or pipe it — that boundary held for the entire session this was fixed in, and it's how the real bug (above) got found instead of being papered over. `dkrypt`'s own container separately stores this device's password (for `ipadecrypt`'s own SSH automation) at `/root/.ipadecrypt/config.json` → `.device.auth.password` inside the container on `homelab.local`, if a human ever needs it directly.
 
 ## Device gotchas (cost real time to find — don't rediscover)
 
@@ -82,8 +89,8 @@ Full detail in a much longer prior research memory: `/Users/adrian/.claude/proje
 
 ## Next steps, in order
 
-1. Get the probe deb installed (blocked on a human running the one-liner in "Immediate next step" — do not have an AI agent type the device password to unblock this).
-2. Run `probe_skui`, confirm `SKUIItemStateCenter`/`SKUIItem`/`SKUIItemOffer`/`SKUIClientContext` and their selectors exist. If a selector is missing, `probe`/`probe_live`-style introspection (see lessons above) on the actual live classes will find whatever replaced it.
+1. ~~Get the probe deb installed~~ — **done**.
+2. ~~Run `probe_skui`~~ — **done, clean pass**, see "Current state" above.
 3. Implement the real `install` action on the App Store bridge target, adapted from the call chain above, `@try`/`@catch`-wrapped. Test against a real (probably free/small) app first.
 4. Confirm the installed app's `Info.plist` reflects the requested version, then confirm `ipadecrypt decrypt <bundleId> --use-installed` works against it unchanged — same validation pattern already proven for TestFlight (see the research memory's "FULL LOOP VALIDATED" section).
 5. Wire `dkrypt`: a new `api/src/appStoreInstall.ts` mirroring `api/src/testflight.ts`'s shape, a generic job flag decoupled from TestFlight metadata (today `--use-installed` is gated behind `job.testflight` in `api/src/jobs/types.ts` — needs to also trigger for App-Store-sourced installs), and `api/src/jobs/runner.ts` branching updated accordingly.
@@ -91,5 +98,5 @@ Full detail in a much longer prior research memory: `/Users/adrian/.claude/proje
 
 ## Repo/file map for orientation
 
-- This tweak: `/Users/adrian/Developer/autoinstall` (Theos project — `Makefile`, `control`, `autoinstall.plist`, `sources/Tweak.x`). Build with `gmake clean package` (needs `$THEOS` set, already is on this Mac at `~/theos`). Local git repo, branch `probe/appstore-skui`, never pushed to a remote.
+- This tweak: `/Users/adrian/Developer/autoinstall` (Theos project — `Makefile`, `control`, `autoinstall.plist`, `sources/Tweak.x`). Build with `gmake clean package` (needs `$THEOS` set, already is on this Mac at `~/theos`). Remote: `github.com/unbound-app/autoinstall` (renamed from `unbound-app/tfauto` this session, GitHub keeps a redirect from the old URL). Work so far lives on branch `probe/appstore-skui`, pushed; `main` is unchanged upstream (still just the original initial commit) — merging is a separate decision, not done as part of this handoff.
 - `dkrypt` API: `/Users/adrian/Developer/dkrypt/api/src` — `jobs/runner.ts` (spawns `ipadecrypt`), `jobs/store.ts` (queue/retry/dispatch logic), `jobs/types.ts` (`Job` shape, `TestFlightJobSource`), `testflight.ts` (the existing tfauto/autoinstall bridge client, to be mirrored for App Store), `appleAuthRunner.ts` (the Apple ID bootstrap flow being retired), `idevice.ts` (low-level SSH + bridge request/response file plumbing — has the `/tmp/tfauto-*` path constants that **must be updated to `/tmp/autoinstall-*`** once this tweak actually replaces the deployed one for real TestFlight use, not just App Store probing).
