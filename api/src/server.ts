@@ -24,7 +24,7 @@ import { renderPublicPage } from '#publicPages.js';
 
 const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 
-export async function buildServer(): Promise<FastifyInstance> {
+export async function buildServer(options: { includePublicRoutes?: boolean } = {}): Promise<FastifyInstance> {
   const server = Fastify({ bodyLimit: 5 * 1024 * 1024, trustProxy: 'loopback' });
 
   server.addContentTypeParser('application/json', { parseAs: 'buffer' }, (request, body, done) => {
@@ -36,11 +36,13 @@ export async function buildServer(): Promise<FastifyInstance> {
     }
   });
 
-  await server.register(fastifyStatic, { root: publicDir, prefix: '/assets/', maxAge: '1y', immutable: true });
-  await server.register(scalarApiReference, {
-    routePrefix: '/reference',
-    configuration: { content: openApiDocument, theme: 'moon' },
-  });
+  if (options.includePublicRoutes !== false) {
+    await server.register(fastifyStatic, { root: publicDir, prefix: '/assets/', maxAge: '1y', immutable: true });
+    await server.register(scalarApiReference, {
+      routePrefix: '/reference',
+      configuration: { content: openApiDocument, theme: 'moon' },
+    });
+  }
 
   server.addHook('onSend', (request, reply, payload, done) => {
     if (!request.url.startsWith('/assets/') && !reply.hasHeader('Cache-Control')) reply.header('Cache-Control', 'no-store');
@@ -49,25 +51,27 @@ export async function buildServer(): Promise<FastifyInstance> {
 
   server.get('/openapi.json', () => openApiDocument);
 
-  const ogImageVersion = createHash('sha256').update(readFileSync(path.join(publicDir, 'og-image.png'))).digest('hex').slice(0, 10);
-  const indexHtml = readFileSync(path.join(publicDir, 'index.html'), 'utf8')
-    .replaceAll('__PUBLIC_BASE_URL__', config.publicBaseUrl)
-    .replaceAll('__OG_IMAGE_VERSION__', ogImageVersion);
+  if (options.includePublicRoutes !== false) {
+    const ogImageVersion = createHash('sha256').update(readFileSync(path.join(publicDir, 'og-image.png'))).digest('hex').slice(0, 10);
+    const indexHtml = readFileSync(path.join(publicDir, 'index.html'), 'utf8')
+      .replaceAll('__PUBLIC_BASE_URL__', config.publicBaseUrl)
+      .replaceAll('__OG_IMAGE_VERSION__', ogImageVersion);
 
-  for (const route of ['/', '/pricing', '/terms', '/privacy', '/refund-policy', '/contact']) {
-    server.get(route, (request, reply) => reply.type('text/html').send(renderPublicPage(indexHtml, request.url)));
+    for (const route of ['/', '/pricing', '/terms', '/privacy', '/refund-policy', '/contact']) {
+      server.get(route, (request, reply) => reply.type('text/html').send(renderPublicPage(indexHtml, request.url)));
+    }
+
+    server.get('/favicon.svg', (_request, reply) => reply.header('Cache-Control', 'public, max-age=86400').type('image/svg+xml').sendFile('favicon.svg'));
+    server.get('/favicon.png', (_request, reply) => reply.header('Cache-Control', 'public, max-age=86400').type('image/png').sendFile('favicon.png'));
+    server.get('/og-image.png', (_request, reply) => reply.header('Cache-Control', 'public, max-age=86400').type('image/png').sendFile('og-image.png'));
+    server.get('/manifest.webmanifest', (_request, reply) =>
+      reply.header('Cache-Control', 'public, max-age=86400').type('application/manifest+json').sendFile('manifest.webmanifest'),
+    );
+    server.get('/.well-known/apple-developer-merchantid-domain-association', (_request, reply) =>
+      reply.type('text/plain').sendFile('.well-known/apple-developer-merchantid-domain-association'),
+    );
+    server.get('/sw.js', (_request, reply) => reply.type('application/javascript').sendFile('sw.js'));
   }
-
-  server.get('/favicon.svg', (_request, reply) => reply.header('Cache-Control', 'public, max-age=86400').type('image/svg+xml').sendFile('favicon.svg'));
-  server.get('/favicon.png', (_request, reply) => reply.header('Cache-Control', 'public, max-age=86400').type('image/png').sendFile('favicon.png'));
-  server.get('/og-image.png', (_request, reply) => reply.header('Cache-Control', 'public, max-age=86400').type('image/png').sendFile('og-image.png'));
-  server.get('/manifest.webmanifest', (_request, reply) =>
-    reply.header('Cache-Control', 'public, max-age=86400').type('application/manifest+json').sendFile('manifest.webmanifest'),
-  );
-  server.get('/.well-known/apple-developer-merchantid-domain-association', (_request, reply) =>
-    reply.type('text/plain').sendFile('.well-known/apple-developer-merchantid-domain-association'),
-  );
-  server.get('/sw.js', (_request, reply) => reply.type('application/javascript').sendFile('sw.js'));
 
   registerRouter(server, paddleWebhookRouter);
   registerRouter(server, healthRouter);
