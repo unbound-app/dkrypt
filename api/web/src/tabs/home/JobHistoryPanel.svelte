@@ -1,11 +1,13 @@
 <script lang="ts">
-  import { History, X } from 'lucide-svelte';
+  import { History, MoreVertical, RotateCw, Share2, X } from 'lucide-svelte';
   import BundleStatsDialog from '#components/BundleStatsDialog.svelte';
   import CopyButton from '#components/CopyButton.svelte';
+  import Dialog from '#lib/components/ui/Dialog.svelte';
   import EmptyState from '#components/EmptyState.svelte';
   import RelativeTime from '#components/RelativeTime.svelte';
   import ShareLinkDialog from '#components/ShareLinkDialog.svelte';
   import SkeletonRows from '#components/SkeletonRows.svelte';
+  import SwipeRow from '#components/SwipeRow.svelte';
   import {
     fetchJobHistory,
     fetchJobTimeline,
@@ -307,6 +309,13 @@
     statsOpen = true;
   }
 
+  let openSwipeId = $state<string | null>(null);
+  let actionSheetEntry = $state<JobHistoryEntry | null>(null);
+
+  function closeActionSheet(): void {
+    actionSheetEntry = null;
+  }
+
   function curlFor(entry: JobHistoryEntry): string {
     const base = sessionState.publicBaseUrl ?? location.origin;
     const versionQuery = entry.externalVersionId ? `&externalVersionId=${entry.externalVersionId}` : '';
@@ -549,7 +558,7 @@
       {/snippet}
     </EmptyState>
   {:else}
-    <div class="scroll-fade-x max-h-[600px] overflow-auto" use:scrollFade>
+    <div class="scroll-fade-x hidden max-h-[600px] overflow-auto sm:block" use:scrollFade>
       <table class="responsive-table sm:min-w-[720px]">
         <thead>
           <tr>
@@ -655,6 +664,77 @@
         </tbody>
       </table>
     </div>
+
+    <div class="flex max-h-[600px] flex-col gap-2 overflow-y-auto sm:hidden">
+      {#if !loaded}
+        {#each Array(4) as _, i (i)}
+          <div class="skeleton bg-panel-muted h-20 rounded-lg"></div>
+        {/each}
+      {:else}
+        {#each grouped as g (g.label)}
+          <div class="text-muted mt-1 text-xs font-semibold first:mt-0">{g.label}</div>
+          {#each g.items as j (j.id)}
+            <SwipeRow
+              revealWidth={j.status === 'done' ? 136 : 68}
+              class="border-border border"
+              open={openSwipeId === j.id}
+              onOpenChange={(v) => (openSwipeId = v ? j.id : null)}
+            >
+              {#snippet actions()}
+                <button
+                  class="bg-accent text-accent-contrast flex w-17 cursor-pointer flex-col items-center justify-center gap-0.5 text-[10px]"
+                  disabled={requeueing.has(j.id)}
+                  onclick={() => {
+                    openSwipeId = null;
+                    void decryptAgain(j);
+                  }}
+                >
+                  <RotateCw class="h-4 w-4" />
+                  Again
+                </button>
+                {#if j.status === 'done'}
+                  <button
+                    class="bg-ok flex w-17 cursor-pointer flex-col items-center justify-center gap-0.5 text-[10px] text-white"
+                    onclick={() => {
+                      openSwipeId = null;
+                      openShare(j.id);
+                    }}
+                  >
+                    <Share2 class="h-4 w-4" />
+                    Share
+                  </button>
+                {/if}
+              {/snippet}
+              <div class="flex items-start justify-between gap-2 p-3">
+                <button class="min-w-0 flex-1 cursor-pointer text-left" onclick={() => openStats(j.bundleId)}>
+                  <div class="flex items-center gap-1.5">
+                    <span class="hover:text-accent truncate font-mono text-[12px]" title={j.bundleId}>{j.bundleId}</span>
+                    {#if j.testflight}<Badge variant="secondary" class="shrink-0">TF</Badge>{/if}
+                  </div>
+                  <div class="text-muted mt-0.5 truncate text-[11px]">
+                    {j.versionLabel ?? 'no version label'} · {j.source} · {fmtSize(j.sizeBytes)}
+                  </div>
+                  {#if j.error}
+                    <div class="text-err mt-1 truncate text-[11px]" title={j.error}>{j.error}</div>
+                  {/if}
+                </button>
+                <div class="flex shrink-0 flex-col items-end gap-1">
+                  <Badge variant={statusToBadgeVariant(j.status)}>{j.status}</Badge>
+                  <span class="text-muted text-[10.5px]"><RelativeTime ms={j.finishedAt} /></span>
+                  <button
+                    class="text-muted hover:text-text -mr-1 cursor-pointer p-1"
+                    onclick={() => (actionSheetEntry = j)}
+                    aria-label="More actions for {j.bundleId}"
+                  >
+                    <MoreVertical class="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+            </SwipeRow>
+          {/each}
+        {/each}
+      {/if}
+    </div>
   {/if}
   {#if loaded && entries.length < total}
     <div class="mt-3 flex justify-center">
@@ -667,3 +747,81 @@
 
 <ShareLinkDialog open={shareOpen} jobId={shareJobId} onOpenChange={(v) => (shareOpen = v)} />
 <BundleStatsDialog open={statsOpen} bundleId={statsBundleId} preselectIds={statsPreselectIds} onOpenChange={(v) => (statsOpen = v)} />
+
+<Dialog open={actionSheetEntry !== null} onOpenChange={(v) => !v && closeActionSheet()} class="max-w-xs">
+  {#if actionSheetEntry}
+    {@const j = actionSheetEntry}
+    <div class="mb-3 truncate font-mono text-[13px] font-medium" title={j.bundleId}>{j.bundleId}</div>
+    <div class="flex flex-col gap-1.5">
+      <Button
+        variant="secondary"
+        class="w-full justify-start"
+        loading={requeueing.has(j.id)}
+        onclick={() => {
+          closeActionSheet();
+          void decryptAgain(j);
+        }}
+      >
+        Decrypt again
+      </Button>
+      {#if j.status === 'failed'}
+        <Button
+          variant="secondary"
+          class="w-full justify-start"
+          loading={requeueing.has(j.id)}
+          onclick={() => {
+            closeActionSheet();
+            void retryOnPrimary(j);
+          }}
+        >
+          Retry on primary
+        </Button>
+        <Button
+          variant="secondary"
+          class="w-full justify-start"
+          onclick={() => {
+            closeActionSheet();
+            openRemediation(j.error);
+          }}
+        >
+          Fix guidance
+        </Button>
+      {/if}
+      {#if j.status === 'done'}
+        <Button
+          variant="secondary"
+          class="w-full justify-start"
+          onclick={() => {
+            closeActionSheet();
+            openShare(j.id);
+          }}
+        >
+          Share
+        </Button>
+      {/if}
+      <Button variant="secondary" class="w-full justify-start" loading={timelineLoading.has(j.id)} onclick={() => void toggleTimeline(j.id)}>
+        {timelineOpenId === j.id ? 'Hide timeline' : 'Timeline'}
+      </Button>
+      {#if timelineOpenId === j.id}
+        <div class="border-border rounded-md border p-2.5">
+          {#if timelineById[j.id]}
+            <div class="flex flex-col gap-1.5 text-xs">
+              {#each timelineById[j.id].events as ev (ev.at + ev.label)}
+                <div class="flex items-center gap-1.5">
+                  <Badge variant={statusToBadgeVariant(ev.status)}>{ev.status}</Badge>
+                  <span class="min-w-0 flex-1 truncate">{ev.label}</span>
+                  <span class="text-muted shrink-0"><RelativeTime ms={ev.at} /></span>
+                </div>
+              {/each}
+            </div>
+          {:else}
+            <div class="text-xs text-muted">Loading timeline…</div>
+          {/if}
+        </div>
+      {/if}
+      {#if !j.testflight}
+        <CopyButton text={curlFor(j)} label="Copy curl" />
+      {/if}
+    </div>
+  {/if}
+</Dialog>

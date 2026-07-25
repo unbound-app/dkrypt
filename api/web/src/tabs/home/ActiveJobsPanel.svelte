@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { GripVertical, PackageOpen } from 'lucide-svelte';
+  import { ArrowUp, GripVertical, PackageOpen, X } from 'lucide-svelte';
   import CopyButton from '#components/CopyButton.svelte';
   import EmptyState from '#components/EmptyState.svelte';
   import SkeletonRows from '#components/SkeletonRows.svelte';
+  import SwipeRow from '#components/SwipeRow.svelte';
   import { cancelJob, fetchJobEta, prioritizeJob, reorderQueue, type ActiveJob } from '#lib/api';
   import Badge from '#lib/components/ui/Badge.svelte';
   import Button from '#lib/components/ui/Button.svelte';
@@ -142,6 +143,13 @@
     dragOverId = null;
   }
 
+  let openSwipeId = $state<string | null>(null);
+
+  function cardRevealWidth(j: ActiveJob): number {
+    const canBump = j.status === 'queued' && queuedJobIds[0] !== j.id;
+    return canBump ? 136 : 68;
+  }
+
   let etaByBundle = $state<Record<string, number | null>>({});
   const fetchedBundles = new Set<string>();
 
@@ -188,7 +196,7 @@
       </span>
     {/if}
   {/snippet}
-  <div class="scroll-fade-x overflow-x-auto" use:scrollFade>
+  <div class="scroll-fade-x hidden overflow-x-auto sm:block" use:scrollFade>
     <table class="responsive-table sm:min-w-[640px]">
       <thead>
         <tr>
@@ -302,6 +310,78 @@
       </tbody>
     </table>
   </div>
+
+  <div class="flex flex-col gap-2 sm:hidden">
+    {#if !loaded}
+      {#each Array(2) as _, i (i)}
+        <div class="skeleton bg-panel-muted h-20 rounded-lg"></div>
+      {/each}
+    {:else}
+      {#each jobs as j (j.id)}
+        {@const canBump = j.status === 'queued' && queuedJobIds[0] !== j.id}
+        <SwipeRow
+          revealWidth={canCancel ? cardRevealWidth(j) : 0}
+          class="border-border border"
+          open={openSwipeId === j.id}
+          onOpenChange={(v) => (openSwipeId = v ? j.id : null)}
+        >
+          {#snippet actions()}
+            {#if canCancel}
+              {#if canBump}
+                <button
+                  class="bg-accent text-accent-contrast flex w-17 cursor-pointer flex-col items-center justify-center gap-0.5 text-[10px]"
+                  disabled={prioritizing.has(j.id)}
+                  onclick={() => {
+                    openSwipeId = null;
+                    void prioritize(j.id);
+                  }}
+                >
+                  <ArrowUp class="h-4 w-4" />
+                  Bump
+                </button>
+              {/if}
+              <button
+                class="bg-err flex w-17 cursor-pointer flex-col items-center justify-center gap-0.5 text-[10px] text-white"
+                disabled={cancelling.has(j.id)}
+                onclick={() => {
+                  openSwipeId = null;
+                  void cancel(j.id, j.status);
+                }}
+              >
+                <X class="h-4 w-4" />
+                Cancel
+              </button>
+            {/if}
+          {/snippet}
+          <div class="flex items-start justify-between gap-2 p-3">
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center gap-1.5">
+                <span class="truncate font-mono text-[12px]" title={j.bundleId}>{j.bundleId}</span>
+                {#if j.testflight}<Badge variant="secondary" class="shrink-0">TF</Badge>{/if}
+              </div>
+              <div class="text-muted mt-0.5 truncate text-[11px]" title={j.versionLabel}>
+                {j.versionLabel ?? 'no version label'} · {j.source}
+                {#if j.queuedBy}· {j.queuedBy}{/if}
+              </div>
+              {#if j.status === 'running'}
+                <div class="mt-1.5 flex items-center gap-2">
+                  <div class="progress-indeterminate bg-border relative h-1 w-8 shrink-0 overflow-hidden rounded-full after:bg-accent"></div>
+                  <span class="text-muted truncate text-[11px]" title={j.progress}>{j.progress}</span>
+                </div>
+              {:else}
+                <div class="text-muted mt-1 truncate text-[11px]" title={j.progress}>{j.progress}</div>
+              {/if}
+            </div>
+            <div class="flex shrink-0 flex-col items-end gap-1">
+              <Badge variant={statusToBadgeVariant(j.status)}>{j.status}</Badge>
+              {#if j.priority}<Badge variant="secondary" title="Queue priority">{j.priority > 0 ? '+' : ''}{j.priority}</Badge>{/if}
+            </div>
+          </div>
+        </SwipeRow>
+      {/each}
+    {/if}
+  </div>
+
   {#if loaded && jobs.length === 0}
     <EmptyState icon={PackageOpen} message="Nothing running.">
       {#snippet action()}
