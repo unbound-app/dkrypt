@@ -1,10 +1,21 @@
 import { markLoggedOut, type Role } from '#lib/session.svelte';
 import { liveState } from '#lib/live.svelte';
+import { rateLimitState } from '#lib/rateLimit.svelte';
 import { showToast } from '#lib/ui.svelte';
 
 export type { Role };
+export { rateLimitState, type RateLimitInfo } from '#lib/rateLimit.svelte';
 
-async function request(path: string, opts: RequestInit = {}): Promise<Response> {
+function captureRateLimitHeaders(bucket: string | undefined, res: Response): void {
+  if (!bucket) return;
+  const limit = res.headers.get('X-RateLimit-Limit');
+  const remaining = res.headers.get('X-RateLimit-Remaining');
+  const reset = res.headers.get('X-RateLimit-Reset');
+  if (limit === null || remaining === null || reset === null) return;
+  rateLimitState[bucket] = { limit: Number(limit), remaining: Number(remaining), resetAt: Number(reset) * 1000 };
+}
+
+async function request(path: string, opts: RequestInit = {}, bucket?: string): Promise<Response> {
   let res: Response;
   try {
     res = await fetch(path, {
@@ -15,6 +26,7 @@ async function request(path: string, opts: RequestInit = {}): Promise<Response> 
     showToast("Couldn't reach the server - check your connection", 'error', { id: 'network-error', track: false });
     throw new Error('network error');
   }
+  captureRateLimitHeaders(bucket, res);
   if (res.status === 401) {
     markLoggedOut();
     throw new Error('unauthorized');
@@ -22,8 +34,8 @@ async function request(path: string, opts: RequestInit = {}): Promise<Response> 
   return res;
 }
 
-export async function apiJson<T>(path: string, opts?: RequestInit): Promise<T> {
-  const res = await request(path, opts);
+export async function apiJson<T>(path: string, opts?: RequestInit, bucket?: string): Promise<T> {
+  const res = await request(path, opts, bucket);
   try {
     return (await res.json()) as T;
   } catch {
@@ -417,7 +429,7 @@ export function deleteWatch(id: string): Promise<{ ok: boolean }> {
 }
 
 export function previewWatchDispatch(id: string): Promise<UpdateCheck> {
-  return apiJson(`/v1/dashboard/watches/${encodeURIComponent(id)}/preview-dispatch`);
+  return apiJson(`/v1/dashboard/watches/${encodeURIComponent(id)}/preview-dispatch`, undefined, 'external');
 }
 
 export function triggerWatchDispatch(id: string): Promise<{ ok: boolean; data: { ok: boolean; error?: string } }> {
@@ -456,7 +468,11 @@ export interface JobDiffResult {
 }
 
 export function fetchJobDiff(bundleId: string, a: string, b: string): Promise<JobDiffResult> {
-  return apiJson(`/v1/dashboard/jobs/diff?bundleId=${encodeURIComponent(bundleId)}&a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`);
+  return apiJson(
+    `/v1/dashboard/jobs/diff?bundleId=${encodeURIComponent(bundleId)}&a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`,
+    undefined,
+    'jobDiff',
+  );
 }
 
 export function fetchJobHistory(
@@ -524,6 +540,10 @@ export function fetchShareLinks(jobId: string): Promise<{ links: ShareLinkRecord
 
 export function fetchAllShareLinks(): Promise<{ links: ShareLinkRecord[] }> {
   return apiJson('/v1/dashboard/share-links');
+}
+
+export function shareLinksExportUrl(format: 'csv' | 'json'): string {
+  return `/v1/dashboard/share-links/export?format=${format}`;
 }
 
 export function revokeShareLink(linkId: string): Promise<{ ok: boolean }> {
@@ -687,11 +707,11 @@ export interface TFBuild {
 }
 
 export function fetchTestFlightTrains(appId: number): Promise<{ trains: TFTrain[] } | { error: string }> {
-  return apiJson(`/v1/dashboard/testflight/${appId}/trains`);
+  return apiJson(`/v1/dashboard/testflight/${appId}/trains`, undefined, 'external');
 }
 
 export function fetchTestFlightBuilds(appId: number, trainVersion: string): Promise<{ builds: TFBuild[] } | { error: string }> {
-  return apiJson(`/v1/dashboard/testflight/${appId}/builds?trainVersion=${encodeURIComponent(trainVersion)}`);
+  return apiJson(`/v1/dashboard/testflight/${appId}/builds?trainVersion=${encodeURIComponent(trainVersion)}`, undefined, 'external');
 }
 
 export function queueTestFlightDecrypt(
@@ -845,6 +865,10 @@ export function fetchUsers(): Promise<{ users: AllowedUser[] }> {
 
 export function fetchAuditLog(limit = 100): Promise<{ entries: AuditLogEntry[] }> {
   return apiJson(`/v1/dashboard/audit-log?limit=${limit}`);
+}
+
+export function auditLogExportUrl(format: 'csv' | 'json'): string {
+  return `/v1/dashboard/audit-log/export?format=${format}`;
 }
 
 export function fetchRoles(): Promise<{ roles: Role[] }> {

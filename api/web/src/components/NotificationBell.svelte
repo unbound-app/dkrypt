@@ -26,7 +26,7 @@
   <Popover.Trigger class={cn(buttonVariants('secondary', 'icon'), 'relative')} aria-label="Notifications" title="Notifications">
     <Bell class="h-4 w-4" />
     {#if unseenCount > 0}
-      <span class="bg-err text-accent-contrast absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full text-[10px] font-medium">
+      <span class="bg-err absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full text-[10px] font-medium text-white">
         {unseenCount > 9 ? '9+' : unseenCount}
       </span>
     {/if}

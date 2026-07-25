@@ -34,7 +34,7 @@
   let scopeFilter = $state(getQueryParam('scope') ?? localStorage.getItem('logScopeFilter') ?? 'all');
   let levelFilter = $state(getQueryParam('level') ?? localStorage.getItem('logLevelFilter') ?? 'all');
   let searchText = $state(getQueryParam('q') ?? localStorage.getItem('logSearchText') ?? '');
-  let regexMode = $state(localStorage.getItem('logRegexMode') === 'true');
+  let regexMode = $state(getQueryParam('regex') === '1' || (getQueryParam('regex') === null && localStorage.getItem('logRegexMode') === 'true'));
   let autoScroll = $state(localStorage.getItem('logAutoScroll') !== 'false');
   let initialLogs = $state<LogEntry[] | null>(null);
   let listEl: HTMLDivElement | undefined = $state();
@@ -62,7 +62,12 @@
 
   $effect(() => {
     if (tabState.active !== 'logs') return;
-    setQueryParams({ scope: scopeFilter === 'all' ? undefined : scopeFilter, level: levelFilter === 'all' ? undefined : levelFilter, q: searchText.trim() || undefined });
+    setQueryParams({
+      scope: scopeFilter === 'all' ? undefined : scopeFilter,
+      level: levelFilter === 'all' ? undefined : levelFilter,
+      q: searchText.trim() || undefined,
+      regex: regexMode ? '1' : undefined,
+    });
   });
 
   function onListScroll(): void {

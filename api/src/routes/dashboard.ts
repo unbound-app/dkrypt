@@ -834,6 +834,39 @@ dashboardRouter.get('/v1/dashboard/share-links', requirePermission(PermissionFla
   res.json({ links: listAllShareLinks() });
 });
 
+const SHARE_LINK_CSV_COLUMNS = [
+  'id',
+  'jobId',
+  'bundleId',
+  'issuedBy',
+  'issuedAt',
+  'expiresAt',
+  'revoked',
+  'maxDownloads',
+  'downloadCount',
+  'usedAt',
+  'lastUsedAt',
+] as const;
+
+dashboardRouter.get('/v1/dashboard/share-links/export', requirePermission(PermissionFlag.manageShareLinks), (req, res) => {
+  const format = req.query.format === 'csv' ? 'csv' : 'json';
+  const links = listAllShareLinks();
+
+  if (format === 'json') {
+    res.setHeader('Content-Disposition', 'attachment; filename="dkrypt-share-links.json"');
+    res.json(links);
+    return;
+  }
+
+  const rows = [SHARE_LINK_CSV_COLUMNS.join(',')];
+  for (const l of links) {
+    rows.push(SHARE_LINK_CSV_COLUMNS.map((c) => csvCell(l[c])).join(','));
+  }
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', 'attachment; filename="dkrypt-share-links.csv"');
+  res.send(rows.join('\n'));
+});
+
 dashboardRouter.get('/v1/dashboard/jobs/:id/share', (req, res) => {
   res.json({ links: listShareLinksForJob(req.params.id, res.locals.session.sub) });
 });
@@ -1272,6 +1305,27 @@ dashboardRouter.get('/v1/dashboard/audit-log', canViewUsers, (req, res) => {
   res.json({ entries: getAuditLog(limit) });
 });
 
+const AUDIT_LOG_CSV_COLUMNS = ['id', 'ts', 'actor', 'action', 'target', 'detail'] as const;
+
+dashboardRouter.get('/v1/dashboard/audit-log/export', canViewUsers, (req, res) => {
+  const format = req.query.format === 'csv' ? 'csv' : 'json';
+  const entries = getAuditLog(200);
+
+  if (format === 'json') {
+    res.setHeader('Content-Disposition', 'attachment; filename="dkrypt-audit-log.json"');
+    res.json(entries);
+    return;
+  }
+
+  const rows = [AUDIT_LOG_CSV_COLUMNS.join(',')];
+  for (const e of entries) {
+    rows.push(AUDIT_LOG_CSV_COLUMNS.map((c) => csvCell(e[c])).join(','));
+  }
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', 'attachment; filename="dkrypt-audit-log.csv"');
+  res.send(rows.join('\n'));
+});
+
 dashboardRouter.get('/v1/dashboard/roles', canViewRoles, (_req, res) => {
   res.json({ roles: listRoles() });
 });
@@ -1629,15 +1683,19 @@ dashboardRouter.put('/v1/dashboard/me/prefs', (req, res) => {
     theme?: 'dark' | 'light' | 'auto';
     density?: 'comfortable' | 'compact';
     accent?: string;
+    sound?: boolean;
     pushOnSuccess?: boolean;
     pushOnFailure?: boolean;
     pushOnAlerts?: boolean;
+    pushOnKeyExpiry?: boolean;
   } = {};
   if (body.theme === 'dark' || body.theme === 'light' || body.theme === 'auto') patch.theme = body.theme;
   if (body.density === 'comfortable' || body.density === 'compact') patch.density = body.density;
   if (typeof body.accent === 'string' && /^[a-z-]{1,32}$/.test(body.accent)) patch.accent = body.accent;
+  if (typeof body.sound === 'boolean') patch.sound = body.sound;
   if (typeof body.pushOnSuccess === 'boolean') patch.pushOnSuccess = body.pushOnSuccess;
   if (typeof body.pushOnFailure === 'boolean') patch.pushOnFailure = body.pushOnFailure;
   if (typeof body.pushOnAlerts === 'boolean') patch.pushOnAlerts = body.pushOnAlerts;
+  if (typeof body.pushOnKeyExpiry === 'boolean') patch.pushOnKeyExpiry = body.pushOnKeyExpiry;
   res.json(updateUserPrefs(res.locals.session.sub, patch));
 });

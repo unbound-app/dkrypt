@@ -5,6 +5,7 @@
   import Button from '#lib/components/ui/Button.svelte';
   import Dialog from '#lib/components/ui/Dialog.svelte';
   import { fmtRelative, fmtTime } from '#lib/format';
+  import { confirmDialog } from '#lib/ui.svelte';
 
   let { open = $bindable(), onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void } = $props();
 
@@ -28,6 +29,7 @@
   }
 
   async function revoke(id: string): Promise<void> {
+    if (!(await confirmDialog('Sign out this session? It loses access immediately.'))) return;
     revoking = new Set(revoking).add(id);
     try {
       const { ok } = await revokeSession(id);
@@ -38,6 +40,8 @@
   }
 
   async function revokeAllOthers(): Promise<void> {
+    if (!(await confirmDialog(`Sign out ${otherCount} other session(s)? They lose access immediately - this device stays signed in.`, { confirmLabel: 'Sign out others' })))
+      return;
     revokingOthers = true;
     try {
       const { ok } = await revokeOtherSessions();

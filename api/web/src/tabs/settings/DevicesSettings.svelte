@@ -6,22 +6,56 @@
     createDevice,
     deleteDevice,
     fetchDeviceHealth,
+    fetchSettings,
+    saveSettings,
     updateDevice,
     type DeviceHealth,
     type DeviceRecord,
+    type SchedulerSettings,
   } from '#lib/api';
   import Badge from '#lib/components/ui/Badge.svelte';
   import Button from '#lib/components/ui/Button.svelte';
   import Card from '#lib/components/ui/Card.svelte';
   import Dialog from '#lib/components/ui/Dialog.svelte';
   import Input from '#lib/components/ui/Input.svelte';
+  import Switch from '#lib/components/ui/Switch.svelte';
   import { liveState } from '#lib/live.svelte';
   import { PermissionFlag } from '#lib/permissions';
-  import { sessionHasPermission } from '#lib/session.svelte';
+  import { sessionHasAnyPermission, sessionHasPermission } from '#lib/session.svelte';
   import { confirmDialog, showToast } from '#lib/ui.svelte';
 
   const canManageDevices = $derived(sessionHasPermission(PermissionFlag.manageDevices));
+  const canViewMaintenance = $derived(sessionHasAnyPermission([PermissionFlag.viewAutomation, PermissionFlag.manageAutomation]));
+  const canManageMaintenance = $derived(sessionHasPermission(PermissionFlag.manageAutomation));
   const devices = $derived(liveState.overview?.devices ?? []);
+  const maintenanceStatus = $derived(liveState.overview?.maintenance);
+
+  let maintenanceSettings = $state<SchedulerSettings | null>(null);
+  let togglingMaintenance = $state(false);
+
+  $effect(() => {
+    if (!canViewMaintenance) return;
+    void fetchSettings().then((s) => (maintenanceSettings = s));
+  });
+
+  async function toggleMaintenance(): Promise<void> {
+    if (!maintenanceSettings) return;
+    const enabling = !maintenanceSettings.maintenanceMode;
+    const confirmed = await confirmDialog(
+      enabling
+        ? 'Pause every decrypt request and API call right now? Anyone using the API will get blocked until this is turned off again.'
+        : "Resume decrypts and the API? If maintenance mode was auto-engaged, make sure the underlying device issue is actually resolved first - it'll just re-engage on its own if not.",
+      { variant: enabling ? 'destructive' : 'default', confirmLabel: enabling ? 'Pause everything' : 'Resume' },
+    );
+    if (!confirmed) return;
+    togglingMaintenance = true;
+    try {
+      const { ok, data } = await saveSettings({ ...maintenanceSettings, maintenanceMode: enabling });
+      if (ok) maintenanceSettings = data;
+    } finally {
+      togglingMaintenance = false;
+    }
+  }
 
   let health = $state<Record<string, DeviceHealth | undefined>>({});
 
@@ -95,6 +129,26 @@
     await updateDevice(d.id, { isPrimary: true });
   }
 </script>
+
+{#if canViewMaintenance}
+  <Card title="Maintenance mode" class="mb-4">
+    <div class="flex items-center justify-between gap-3">
+      <div class="min-w-0">
+        <div class="text-sm">Pause decrypts &amp; API</div>
+        <div class="text-xs text-muted">Blocks every decrypt request and API call. Also engages on its own when the primary device isn't in a usable state.</div>
+      </div>
+      <Switch
+        checked={maintenanceSettings?.maintenanceMode ?? false}
+        disabled={!canManageMaintenance || !maintenanceSettings || togglingMaintenance}
+        onCheckedChange={() => void toggleMaintenance()}
+        aria-label="Maintenance mode"
+      />
+    </div>
+    {#if maintenanceStatus?.auto && !maintenanceSettings?.maintenanceMode}
+      <div class="text-warn mt-2 text-xs">Auto-engaged: {maintenanceStatus.reason}.</div>
+    {/if}
+  </Card>
+{/if}
 
 <Card title="Device pool">
   {#snippet headerExtra()}

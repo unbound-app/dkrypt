@@ -288,6 +288,7 @@
   }
 
   async function doDeny(id: string): Promise<void> {
+    if (!(await confirmDialog('Deny this key request?'))) return;
     setBusy('deny', id, true);
     try {
       const { ok } = await denyKey(id);

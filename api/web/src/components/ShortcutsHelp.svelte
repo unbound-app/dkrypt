@@ -5,7 +5,7 @@
   const SHORTCUTS: { keys: string; description: string }[] = [
     { keys: '/', description: 'Focus the App Store search on Home' },
     { keys: 'b', description: 'Open batch decrypt (on Home)' },
-    { keys: 'g then h/k/l/i/d/s', description: 'Jump to Home/Keys/Logs/Insights/Docs/Settings' },
+    { keys: 'g then h/b/k/l/i/d/s', description: 'Jump to Home/Billing/Keys/Logs/Insights/Docs/Settings' },
     { keys: 'Ctrl/Cmd + K', description: 'Open the command palette' },
     { keys: 'Enter', description: 'Submit the focused form or search' },
     { keys: '↑ / ↓', description: 'Move through palette or search results' },

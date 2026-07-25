@@ -125,6 +125,27 @@
     return () => clearInterval(interval);
   });
 
+  let poolHealth = $state<Record<string, DeviceHealth | undefined>>({});
+
+  $effect(() => {
+    const devices = overview?.devices ?? [];
+    if (devices.length <= 1) return;
+    const load = () => {
+      for (const d of devices) void fetchDeviceHealth(d.id).then((h) => (poolHealth = { ...poolHealth, [d.id]: h }));
+    };
+    load();
+    const interval = setInterval(load, 30_000);
+    return () => clearInterval(interval);
+  });
+
+  const poolSummary = $derived.by(() => {
+    const devices = overview?.devices ?? [];
+    if (devices.length <= 1) return null;
+    const enabled = devices.filter((d) => d.enabled);
+    const healthy = enabled.filter((d) => poolHealth[d.id]?.reachable).length;
+    return { healthy, total: enabled.length };
+  });
+
   let healthHistory = $state<HourlyHealthBucket[] | null>(null);
   let uptimePercent = $state<number | null>(null);
 
@@ -336,17 +357,39 @@
           {/if}
         </div>
       </Popover>
+      {#if poolSummary}
+        <Popover>
+          {#snippet trigger()}
+            <Badge variant={poolSummary.healthy < poolSummary.total ? 'destructive' : 'success'}>
+              {poolSummary.healthy}/{poolSummary.total} devices healthy
+            </Badge>
+          {/snippet}
+          <div class="flex flex-col gap-1 whitespace-nowrap">
+            {#each (overview?.devices ?? []).filter((d) => d.enabled) as d (d.id)}
+              {@const dh = poolHealth[d.id]}
+              <div>
+                <span class={dh?.reachable ? 'text-ok' : dh ? 'text-err' : 'text-muted'}>{dh ? (dh.reachable ? 'online' : 'unreachable') : '…'}</span>
+                · {d.name}{d.id === primaryDeviceId ? ' (primary)' : ''}
+              </div>
+            {/each}
+          </div>
+        </Popover>
+      {/if}
       {#if h.reachable}
         <Popover>
           {#snippet trigger()}
-            <Badge variant={h.testFlightRunning ? 'default' : 'secondary'}>autoinstall {h.testFlightRunning ? 'running' : 'idle'}</Badge>
+            <Badge variant={h.testFlightBridgeReachable === false ? 'destructive' : 'secondary'}>
+              autoinstall bridge {h.testFlightBridgeReachable === undefined ? '…' : h.testFlightBridgeReachable ? 'reachable' : 'unreachable'}
+            </Badge>
           {/snippet}
           <div class="flex flex-col gap-1 whitespace-nowrap">
-            <div><span class="text-muted">TestFlight</span> · {h.testFlightRunning ? 'running' : 'not running'}</div>
             {#if h.testFlightBridgeReachable !== undefined}
               <div><span class="text-muted">Bridge</span> · {h.testFlightBridgeReachable ? 'reachable' : 'unreachable'}</div>
             {/if}
-            <div class="text-muted">Drives TestFlight & App Store installs.</div>
+            <div class="text-muted">
+              Drives on-device App Store & TestFlight installs - it foregrounds whichever app the current job needs, so "TestFlight
+              running" isn't a meaningful status on its own.
+            </div>
           </div>
         </Popover>
       {/if}

@@ -64,9 +64,28 @@ function readStoredAccent(): string {
 
 export const accentState = $state<{ value: string }>({ value: readStoredAccent() });
 
+function relativeLuminance(hex: string): number {
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+  const linear = (c: number) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+  return 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b);
+}
+
+function contrastRatio(hexA: string, hexB: string): number {
+  const [l1, l2] = [relativeLuminance(hexA), relativeLuminance(hexB)].sort((a, b) => b - a);
+  return (l1 + 0.05) / (l2 + 0.05);
+}
+
+function bestContrastText(bgHex: string): string {
+  const white = '#ffffff';
+  const nearBlack = '#14161a';
+  return contrastRatio(white, bgHex) >= contrastRatio(nearBlack, bgHex) ? white : nearBlack;
+}
+
 function applyAccent(id: string): void {
   const preset = ACCENT_PRESETS.find((p) => p.id === id) ?? ACCENT_PRESETS[0];
-  document.documentElement.style.setProperty('--color-accent', themeState.value === 'light' ? preset.light : preset.dark);
+  const accent = themeState.value === 'light' ? preset.light : preset.dark;
+  document.documentElement.style.setProperty('--color-accent', accent);
+  document.documentElement.style.setProperty('--color-accent-contrast', bestContrastText(accent));
 }
 
 export function setAccent(id: string): void {
@@ -214,6 +233,14 @@ export const keyUsageJumpState = $state<{ keyId: string | null }>({ keyId: null 
 export function jumpToKeyUsage(keyId: string): void {
   keyUsageJumpState.keyId = keyId;
   setActiveTab('keys');
+}
+
+export const userJumpState = $state<{ username: string | null }>({ username: null });
+
+export function jumpToUser(username: string): void {
+  userJumpState.username = username;
+  setActiveTab('settings');
+  setSettingsSubtab('users');
 }
 
 export const batchDecryptJumpState = $state<{ requested: boolean }>({ requested: false });

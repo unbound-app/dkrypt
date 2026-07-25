@@ -148,6 +148,7 @@
     </div>
     <ul class="list-disc space-y-1.5 pl-4 text-sm text-muted">
       <li><code>overview</code> - the full dashboard overview payload, sent on connect and whenever a job changes</li>
+      <li><code>presence</code> - the list of currently-online usernames, sent on connect and whenever it changes</li>
       <li><code>log</code> - one new log line, only sent to sessions with the <code>viewLogs</code> permission</li>
       <li><code>history</code> - one new job history entry as it's recorded</li>
     </ul>

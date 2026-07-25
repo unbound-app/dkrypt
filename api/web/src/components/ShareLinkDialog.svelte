@@ -8,6 +8,7 @@
   import Dialog from '#lib/components/ui/Dialog.svelte';
   import Select from '#lib/components/ui/Select.svelte';
   import { fmtUntil } from '#lib/format';
+  import { confirmDialog } from '#lib/ui.svelte';
 
   let { open = $bindable(), jobId, onOpenChange }: { open: boolean; jobId: string; onOpenChange: (open: boolean) => void } = $props();
 
@@ -61,6 +62,7 @@
   }
 
   async function revokeAll(): Promise<void> {
+    if (!(await confirmDialog(`Revoke ${activeCount} active share link(s)? Anyone holding one loses access immediately.`, { confirmLabel: 'Revoke all' }))) return;
     revokingAll = true;
     try {
       const { ok } = await revokeAllShareLinks(jobId);
@@ -74,6 +76,7 @@
   }
 
   async function revoke(linkId: string): Promise<void> {
+    if (!(await confirmDialog('Revoke this share link? It stops working immediately.'))) return;
     revoking = new Set(revoking).add(linkId);
     try {
       const { ok } = await revokeShareLink(linkId);

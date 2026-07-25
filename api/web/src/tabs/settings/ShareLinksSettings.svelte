@@ -4,14 +4,16 @@
   import CopyButton from '#components/CopyButton.svelte';
   import EmptyState from '#components/EmptyState.svelte';
   import RelativeTime from '#components/RelativeTime.svelte';
-  import { fetchAllShareLinks, revokeShareLink, updateShareLink, type ShareLinkRecord } from '#lib/api';
+  import { fetchAllShareLinks, revokeShareLink, shareLinksExportUrl, updateShareLink, type ShareLinkRecord } from '#lib/api';
   import Badge from '#lib/components/ui/Badge.svelte';
   import Button from '#lib/components/ui/Button.svelte';
   import Card from '#lib/components/ui/Card.svelte';
   import Dialog from '#lib/components/ui/Dialog.svelte';
   import Select from '#lib/components/ui/Select.svelte';
+  import { buttonVariants } from '#lib/components/ui/variants';
   import { PermissionFlag } from '#lib/permissions';
   import { sessionHasPermission } from '#lib/session.svelte';
+  import { confirmDialog } from '#lib/ui.svelte';
 
   let allLinks = $state<ShareLinkRecord[] | null>(null);
   let loading = $state(false);
@@ -52,6 +54,7 @@
   }
 
   async function revoke(linkId: string): Promise<void> {
+    if (!(await confirmDialog('Revoke this share link? It stops working immediately.'))) return;
     revoking = new Set(revoking).add(linkId);
     try {
       const { ok } = await revokeShareLink(linkId);
@@ -115,16 +118,20 @@
 
 <Card title="Share links">
   {#snippet headerExtra()}
-    <button
-      type="button"
-      class="text-muted hover:text-text disabled:opacity-50"
-      disabled={loading}
-      onclick={load}
-      aria-label="Refresh"
-      title="Refresh"
-    >
-      <RefreshCw class="h-3.5 w-3.5 {loading ? 'animate-spin' : ''}" />
-    </button>
+    <div class="flex items-center gap-2">
+      <a href={shareLinksExportUrl('csv')} download class={buttonVariants('secondary', 'sm')}>Export CSV</a>
+      <a href={shareLinksExportUrl('json')} download class={buttonVariants('secondary', 'sm')}>Export JSON</a>
+      <button
+        type="button"
+        class="text-muted hover:text-text disabled:opacity-50"
+        disabled={loading}
+        onclick={load}
+        aria-label="Refresh"
+        title="Refresh"
+      >
+        <RefreshCw class="h-3.5 w-3.5 {loading ? 'animate-spin' : ''}" />
+      </button>
+    </div>
   {/snippet}
   <div class="mb-3 text-xs text-muted">Every active download share link issued across all jobs. Revoked links are hidden. Copy, manage, or revoke any of them.</div>
 

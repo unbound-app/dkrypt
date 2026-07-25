@@ -5,6 +5,7 @@
   import SkeletonRows from '#components/SkeletonRows.svelte';
   import {
     addUser,
+    auditLogExportUrl,
     type AuditLogEntry,
     fetchAuditLog,
     fetchRoles,
@@ -19,10 +20,11 @@
   import Card from '#lib/components/ui/Card.svelte';
   import Dialog from '#lib/components/ui/Dialog.svelte';
   import Input from '#lib/components/ui/Input.svelte';
+  import { buttonVariants } from '#lib/components/ui/variants';
   import { PermissionFlag } from '#lib/permissions';
   import { scrollFade } from '#lib/scrollFade';
   import { sessionHasAnyPermission, sessionHasPermission, sessionState } from '#lib/session.svelte';
-  import { confirmDialog } from '#lib/ui.svelte';
+  import { confirmDialog, userJumpState } from '#lib/ui.svelte';
 
   const canManage = $derived(sessionHasPermission(PermissionFlag.manageUsers));
   const canViewRoles = $derived(sessionHasAnyPermission([PermissionFlag.viewRoles, PermissionFlag.manageRoles]));
@@ -163,6 +165,15 @@
     void load();
   }
 
+  $effect(() => {
+    const username = userJumpState.username;
+    if (!username) return;
+    const match = users?.find((u) => u.username === username);
+    if (!match) return;
+    openManage(match);
+    userJumpState.username = null;
+  });
+
   function toggleManageRole(id: string): void {
     manageRoleIds = manageRoleIds.includes(id) ? manageRoleIds.filter((r) => r !== id) : [...manageRoleIds, id];
   }
@@ -227,7 +238,7 @@
       </div>
     {/if}
     <div class="scroll-fade-x overflow-x-auto" use:scrollFade>
-      <table class="min-w-[480px]">
+      <table class="responsive-table sm:min-w-[480px]">
         <thead>
           <tr>
             {#if canManage}
@@ -249,13 +260,13 @@
               {@const isSelf = u.username === (sessionState.sub ?? '').toLowerCase()}
               <tr>
                 {#if canManage}
-                  <td>
+                  <td data-label="Select">
                     {#if !isSelf}
                       <input type="checkbox" checked={selectedUsers.has(u.username)} onchange={() => toggleSelectUser(u.username)} />
                     {/if}
                   </td>
                 {/if}
-                <td>
+                <td data-label="User">
                   <div class="flex min-w-0 items-center gap-2">
                     {#if u.avatarUrl}<img src={u.avatarUrl} alt="" class="h-6 w-6 shrink-0 rounded-full object-cover" />{/if}
                     <div class="min-w-0">
@@ -264,7 +275,7 @@
                     </div>
                   </div>
                 </td>
-                <td>
+                <td data-label="Roles">
                   <div class="flex flex-wrap gap-1">
                     {#if defaultRole}
                       <Badge style="background-color: {defaultRole.color}22; color: {defaultRole.color}; border: 1px solid {defaultRole.color}55">
@@ -281,8 +292,8 @@
                     {/each}
                   </div>
                 </td>
-                <td class="text-muted"><RelativeTime ms={u.addedAt} /></td>
-                <td class="text-muted">
+                <td data-label="Added" class="text-muted"><RelativeTime ms={u.addedAt} /></td>
+                <td data-label="Last active" class="text-muted">
                   {#if u.lastActiveAt}
                     <RelativeTime ms={u.lastActiveAt} />
                   {:else}
@@ -310,11 +321,17 @@
   </Card>
 
   <Card title="Audit log">
+    {#snippet headerExtra()}
+      <div class="flex items-center gap-2">
+        <a href={auditLogExportUrl('csv')} download class={buttonVariants('secondary', 'sm')}>Export CSV</a>
+        <a href={auditLogExportUrl('json')} download class={buttonVariants('secondary', 'sm')}>Export JSON</a>
+      </div>
+    {/snippet}
     {#if (auditLog?.length ?? 0) > 5}
       <Input placeholder="Search by actor, action, target, or detail…" bind:value={auditSearch} class="mb-3 max-w-xs" />
     {/if}
     <div class="scroll-fade-x max-h-80 overflow-auto" use:scrollFade>
-      <table class="min-w-[480px]">
+      <table class="responsive-table sm:min-w-[480px]">
         <thead>
           <tr>
             <th>When</th>
@@ -330,11 +347,11 @@
           {:else}
             {#each filteredAuditLog as entry (entry.id)}
               <tr>
-                <td class="text-muted"><RelativeTime ms={entry.ts} /></td>
-                <td>{entry.actor}</td>
-                <td><Badge variant="secondary">{AUDIT_ACTION_LABEL[entry.action]}</Badge></td>
-                <td>{entry.target}</td>
-                <td class="max-w-64 truncate font-mono text-xs text-muted" title={entry.detail ?? ''}>{entry.detail ?? ''}</td>
+                <td data-label="When" class="text-muted"><RelativeTime ms={entry.ts} /></td>
+                <td data-label="Actor">{entry.actor}</td>
+                <td data-label="Action"><Badge variant="secondary">{AUDIT_ACTION_LABEL[entry.action]}</Badge></td>
+                <td data-label="Target">{entry.target}</td>
+                <td data-label="Detail" class="max-w-64 truncate font-mono text-xs text-muted" title={entry.detail ?? ''}>{entry.detail ?? ''}</td>
               </tr>
             {/each}
           {/if}

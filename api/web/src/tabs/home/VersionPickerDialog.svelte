@@ -1,5 +1,6 @@
 <script lang="ts">
   import { RefreshCw } from 'lucide-svelte';
+  import EmptyState from '#components/EmptyState.svelte';
   import { fetchAppVersions, type AppVersionEntry } from '#lib/api';
   import Badge from '#lib/components/ui/Badge.svelte';
   import Button from '#lib/components/ui/Button.svelte';
@@ -94,7 +95,7 @@
     <div class="text-err mb-2.5 text-[13px]">{error}</div>
     <Button size="sm" variant="secondary" onclick={retry}>Try again</Button>
   {:else if versions.length === 0}
-    <div class="text-sm text-muted">No version history found.</div>
+    <EmptyState message="No version history found." />
   {:else}
     {#if versions.some((v) => !v.displayVersion)}
       <div class="text-muted mb-3 text-xs">Unlabeled versions are listed by App Store ID.</div>

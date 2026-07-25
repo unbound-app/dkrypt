@@ -251,9 +251,11 @@ export interface UserPrefs {
   theme?: 'dark' | 'light' | 'auto';
   density?: 'comfortable' | 'compact';
   accent?: string;
+  sound?: boolean;
   pushOnSuccess?: boolean;
   pushOnFailure?: boolean;
   pushOnAlerts?: boolean;
+  pushOnKeyExpiry?: boolean;
 }
 
 export type AuditAction =

@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { cancelJob, fetchJobHistory, fetchMyKeys, jobHistoryExportUrl, triggerWatchDispatch } from '#lib/api';
+  import { cancelJob, fetchJobHistory, fetchMyKeys, fetchUsers, jobHistoryExportUrl, triggerWatchDispatch } from '#lib/api';
+  import { debounce } from '#lib/format';
   import { PermissionFlag } from '#lib/permissions';
   import { logout, sessionCanSeeSettings, sessionHasPermission } from '#lib/session.svelte';
   import {
@@ -7,6 +8,7 @@
     confirmDialog,
     jumpToHistoryBundleId,
     jumpToKeyUsage,
+    jumpToUser,
     openHelp,
     paletteState,
     requestOpenBatch,
@@ -33,8 +35,10 @@
   let query = $state('');
   let selected = $state(0);
   let inputEl: HTMLInputElement | undefined = $state();
-  let recentBundleIds = $state<string[]>([]);
+  let recentJobs = $state<{ bundleId: string; deviceId?: string }[]>([]);
+  let queryJobs = $state<{ bundleId: string; deviceId?: string }[]>([]);
   let myKeys = $state<{ id: string; name: string }[]>([]);
+  let users = $state<{ username: string; displayName?: string }[]>([]);
   let recentIds = $state<string[]>([]);
   const RECENT_KEY = 'commandPaletteRecent';
 
@@ -56,11 +60,45 @@
     if (!paletteState.open) return;
     recentIds = loadRecents();
     void fetchJobHistory(0, 8).then((r) => {
-      recentBundleIds = [...new Set(r.history.map((h) => h.bundleId))];
+      const seen = new Set<string>();
+      const jobs: { bundleId: string; deviceId?: string }[] = [];
+      for (const h of r.history) {
+        if (seen.has(h.bundleId)) continue;
+        seen.add(h.bundleId);
+        jobs.push({ bundleId: h.bundleId, deviceId: h.deviceId });
+      }
+      recentJobs = jobs;
     });
     void fetchMyKeys().then((r) => {
       myKeys = r.keys.map((k) => ({ id: k.id, name: k.name }));
     });
+    if (sessionHasPermission(PermissionFlag.viewUsers) || sessionHasPermission(PermissionFlag.manageUsers)) {
+      void fetchUsers().then((r) => {
+        users = r.users.map((u) => ({ username: u.username, displayName: u.displayName }));
+      });
+    }
+  });
+
+  const searchJobHistory = debounce((q: string) => {
+    void fetchJobHistory(0, 5, q).then((r) => {
+      const seen = new Set<string>();
+      const jobs: { bundleId: string; deviceId?: string }[] = [];
+      for (const h of r.history) {
+        if (seen.has(h.bundleId)) continue;
+        seen.add(h.bundleId);
+        jobs.push({ bundleId: h.bundleId, deviceId: h.deviceId });
+      }
+      queryJobs = jobs;
+    });
+  }, 250);
+
+  $effect(() => {
+    const q = query.trim();
+    if (!paletteState.open || q.length < 2) {
+      queryJobs = [];
+      return;
+    }
+    searchJobHistory(q);
   });
 
   async function cancelAllJobs(): Promise<void> {
@@ -145,13 +183,19 @@
 
     base.push({ id: 'logout', label: 'Log out', category: 'Session', run: () => void logout() });
 
-    for (const bundleId of recentBundleIds) {
+    const devices = liveState.overview?.devices ?? [];
+    const showDevice = devices.length > 1;
+    const seenJobs = new Set<string>();
+    for (const job of [...recentJobs, ...queryJobs]) {
+      if (seenJobs.has(job.bundleId)) continue;
+      seenJobs.add(job.bundleId);
+      const deviceName = showDevice ? devices.find((d) => d.id === job.deviceId)?.name : undefined;
       base.push({
-        id: `job-${bundleId}`,
-        label: `Jump to ${bundleId} in Job History`,
+        id: `job-${job.bundleId}`,
+        label: `Jump to ${job.bundleId} in Job History${deviceName ? ` (${deviceName})` : ''}`,
         category: 'Navigation',
-        keywords: bundleId,
-        run: () => jumpToHistoryBundleId(bundleId),
+        keywords: job.bundleId,
+        run: () => jumpToHistoryBundleId(job.bundleId),
       });
     }
     for (const key of myKeys) {
@@ -161,6 +205,15 @@
         category: 'Navigation',
         keywords: key.name,
         run: () => jumpToKeyUsage(key.id),
+      });
+    }
+    for (const u of users) {
+      base.push({
+        id: `user-${u.username}`,
+        label: `Jump to user "${u.displayName || u.username}"`,
+        category: 'Navigation',
+        keywords: `${u.username} ${u.displayName ?? ''}`,
+        run: () => jumpToUser(u.username),
       });
     }
 

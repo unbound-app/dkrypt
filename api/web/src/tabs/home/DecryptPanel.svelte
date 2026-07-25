@@ -1,6 +1,7 @@
 <script lang="ts">
   import { FlaskConical, History, Star, X } from 'lucide-svelte';
   import BatchDecryptDialog from '#components/BatchDecryptDialog.svelte';
+  import EmptyState from '#components/EmptyState.svelte';
   import { queueDecrypt, queueTestFlightDecrypt, searchApps, type AppStoreSearchResult, type TFBuild } from '#lib/api';
   import Badge from '#lib/components/ui/Badge.svelte';
   import Button from '#lib/components/ui/Button.svelte';
@@ -299,7 +300,7 @@
     {#if loading}
       <div class="text-sm text-muted">Searching…</div>
     {:else if searched && results.length === 0}
-      <div class="text-sm text-muted">No results.</div>
+      <EmptyState message="No results." />
     {:else}
       {#each results as r, i (r.bundleId)}
         <div class={cn('border-border flex items-center gap-3 border-t py-2.5 first:border-t-0', i === highlighted && 'bg-accent/10 rounded-lg')}>

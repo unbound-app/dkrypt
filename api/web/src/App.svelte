@@ -11,11 +11,13 @@
   import Login from '#components/Login.svelte';
   import LegalPage from '#components/LegalPage.svelte';
   import NotificationBell from '#components/NotificationBell.svelte';
+  import WhatsNewButton from '#components/WhatsNewButton.svelte';
   import ContactPage from '#components/ContactPage.svelte';
   import PublicPricing from '#components/PublicPricing.svelte';
   import SessionExpiryBanner from '#components/SessionExpiryBanner.svelte';
   import SessionsDialog from '#components/SessionsDialog.svelte';
   import SetupBanner from '#components/SetupBanner.svelte';
+  import OnboardingTour from '#components/OnboardingTour.svelte';
   import ShortcutsHelp from '#components/ShortcutsHelp.svelte';
   import Badge from '#lib/components/ui/Badge.svelte';
   import Button from '#lib/components/ui/Button.svelte';
@@ -36,6 +38,7 @@
     pushDensityPref,
     fetchNotificationPrefs,
     pushNotificationPrefs,
+    pushSoundPref,
     pushThemePref,
     refreshSession,
     sessionBits,
@@ -119,6 +122,7 @@
   let pushOnSuccess = $state(true);
   let pushOnFailure = $state(true);
   let pushOnAlerts = $state(true);
+  let pushOnKeyExpiry = $state(true);
 
   void registerServiceWorker().then((registration) => {
     if (registration) initPwaUpdateWatcher(registration);
@@ -132,6 +136,7 @@
         pushOnSuccess = prefs.pushOnSuccess ?? true;
         pushOnFailure = prefs.pushOnFailure ?? true;
         pushOnAlerts = prefs.pushOnAlerts ?? true;
+        pushOnKeyExpiry = prefs.pushOnKeyExpiry ?? true;
       });
     }
   });
@@ -146,6 +151,10 @@
 
   async function togglePushOnAlerts(): Promise<void> {
     await pushNotificationPrefs({ pushOnAlerts });
+  }
+
+  async function togglePushOnKeyExpiry(): Promise<void> {
+    await pushNotificationPrefs({ pushOnKeyExpiry });
   }
 
   async function enableNotifications(): Promise<void> {
@@ -342,6 +351,12 @@
     setAccent(id);
     void pushAccentPref(id);
   }
+
+  function toggleSound(): void {
+    const next = !soundEnabledState.value;
+    setSoundEnabled(next);
+    void pushSoundPref(next);
+  }
 </script>
 
 <svelte:window onkeydown={onKeydown} />
@@ -364,6 +379,7 @@
   <Login />
 {:else}
   <div class="min-h-screen">
+    <MaintenanceBanner />
     <header class="border-border flex flex-wrap items-center justify-between gap-3 border-b px-6 py-4">
       <div class="flex items-center gap-3">
         <h1 class="text-[15px] font-semibold">dkrypt</h1>
@@ -412,6 +428,7 @@
             <Rows3 class="h-4 w-4" />
           {/if}
         </Button>
+        <WhatsNewButton />
         <NotificationBell />
         <DropdownMenu.Root bind:open={accountMenuOpen}>
           <DropdownMenu.Trigger
@@ -507,7 +524,7 @@
                   <Button
                     variant="secondary"
                     size="icon"
-                    onclick={() => setSoundEnabled(!soundEnabledState.value)}
+                    onclick={toggleSound}
                     aria-label="Toggle job-completion sound"
                     title={soundEnabledState.value ? 'Sound on - click to mute' : 'Sound off - click to enable'}
                   >
@@ -569,7 +586,11 @@
                     </label>
                     <label class="inline-flex items-center gap-1.5">
                       <input type="checkbox" bind:checked={pushOnAlerts} onchange={togglePushOnAlerts} />
-                      Notify me on device/system alerts (offline, battery, disk, Apple auth)
+                      Notify me on device/system alerts (offline, battery, disk, TestFlight bridge down)
+                    </label>
+                    <label class="inline-flex items-center gap-1.5">
+                      <input type="checkbox" bind:checked={pushOnKeyExpiry} onchange={togglePushOnKeyExpiry} />
+                      Notify me when an API key is expiring soon
                     </label>
                   </div>
                 {/if}
@@ -614,7 +635,6 @@
       <SessionExpiryBanner />
       <ConnectionBanner />
       <UpdateAvailableBanner />
-      <MaintenanceBanner />
       <SetupBanner />
       <div class="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
         <div class="min-w-0">
@@ -657,4 +677,5 @@
 <ConfirmModal />
 <CommandPalette />
 <ShortcutsHelp />
+<OnboardingTour />
 <SessionsDialog open={sessionsDialogOpen} onOpenChange={(v) => (sessionsDialogOpen = v)} />

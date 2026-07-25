@@ -1,5 +1,7 @@
 <script lang="ts">
   import { ChevronDown, RefreshCw } from 'lucide-svelte';
+  import EmptyState from '#components/EmptyState.svelte';
+  import RateLimitHint from '#components/RateLimitHint.svelte';
   import { fetchTestFlightBuilds, fetchTestFlightTrains, type TFBuild, type TFTrain } from '#lib/api';
   import Badge from '#lib/components/ui/Badge.svelte';
   import Button from '#lib/components/ui/Button.svelte';
@@ -144,6 +146,7 @@
       </button>
     {/if}
   </div>
+  <RateLimitHint bucket="external" />
 
   {#if trains === null}
     <div class="text-sm text-muted">Loading TestFlight builds (may open TestFlight on device)…</div>
@@ -151,7 +154,7 @@
     <div class="text-err mb-2.5 text-[13px]">{error}</div>
     <Button size="sm" variant="secondary" onclick={retry}>Try again</Button>
   {:else if trains.length === 0}
-    <div class="text-sm text-muted">No beta trains found - is this app in your TestFlight?</div>
+    <EmptyState message="No beta trains found - is this app in your TestFlight?" />
   {:else}
     {#if trains.length > 8}
       <Input placeholder="Search trains…" bind:value={search} class="mb-3" />

@@ -5,6 +5,7 @@
   import Dialog from '#lib/components/ui/Dialog.svelte';
   import { fmtBytesGB, fmtDurationApprox } from '#lib/format';
   import RelativeTime from '#components/RelativeTime.svelte';
+  import RateLimitHint from '#components/RateLimitHint.svelte';
 
   let { open = $bindable(), bundleId, onOpenChange }: { open: boolean; bundleId: string; onOpenChange: (open: boolean) => void } = $props();
 
@@ -120,6 +121,7 @@
             <Button size="sm" loading={diffing} onclick={compare}>Compare</Button>
           {/if}
         </div>
+        <RateLimitHint bucket="jobDiff" />
         <div class="flex max-h-40 flex-col gap-1 overflow-y-auto">
           {#each versions as v (v.id)}
             <label class="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-xs hover:bg-panel-muted">

@@ -49,7 +49,15 @@ export async function sendPushToUser(username: string, payload: PushPayload): Pr
   }
 }
 
-export async function sendPushToAllSubscribed(payload: PushPayload): Promise<void> {
-  const usernames = getUsersWithPushSubscriptions().filter((u) => getUserPrefs(u).pushOnAlerts ?? true);
+export type PushCategory = 'deviceAlert' | 'keyExpiry';
+
+const CATEGORY_PREF_KEY: Record<PushCategory, 'pushOnAlerts' | 'pushOnKeyExpiry'> = {
+  deviceAlert: 'pushOnAlerts',
+  keyExpiry: 'pushOnKeyExpiry',
+};
+
+export async function sendPushToAllSubscribed(payload: PushPayload, category: PushCategory): Promise<void> {
+  const prefKey = CATEGORY_PREF_KEY[category];
+  const usernames = getUsersWithPushSubscriptions().filter((u) => getUserPrefs(u)[prefKey] ?? true);
   await Promise.all(usernames.map((u) => sendPushToUser(u, payload)));
 }
