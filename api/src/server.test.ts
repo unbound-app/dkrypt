@@ -5,7 +5,7 @@ import { expect, test } from 'bun:test';
 import { buildServer } from '#server.js';
 
 async function signIn() {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildServer();
   const login = await server.inject({
     method: 'POST',
     url: '/v1/auth/login',
