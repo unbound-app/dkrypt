@@ -10,7 +10,7 @@ import { cancelJob, enqueueDecryptJob, getActiveJobs, getJob, prioritizeQueuedJo
 import type { LogEntry } from '#logger.js';
 import { getRecentLogs } from '#logger.js';
 import { EMBED_COLOR, notify, sendTestNotification } from '#notify.js';
-import { sendMailToUser } from '#mail.js';
+import { resolveNotifyEmail, sendMailToUser } from '#mail.js';
 import { getVapidPublicKey, sendPushToUser } from '#push.js';
 import { hasPermission, isSubsetPermission, parseBits, PermissionFlag } from '#permissions.js';
 import { getAuthProfile, listAuthProfiles } from '#identity.js';
@@ -1680,7 +1680,7 @@ dashboardRouter.delete('/v1/dashboard/backup/history/:id', canManageBackup, (req
 });
 
 dashboardRouter.get('/v1/dashboard/me/prefs', (_req, res) => {
-  res.json({ ...getUserPrefs(res.locals.session.sub), email: getAuthProfile(res.locals.session.sub)?.email });
+  res.json({ ...getUserPrefs(res.locals.session.sub), accountEmail: getAuthProfile(res.locals.session.sub)?.email });
 });
 
 dashboardRouter.get('/v1/dashboard/push/public-key', (_req, res) => {
@@ -1723,8 +1723,8 @@ dashboardRouter.post('/v1/dashboard/push/test', async (_req, res) => {
 });
 
 dashboardRouter.post('/v1/dashboard/email/test', async (_req, res) => {
-  if (!getAuthProfile(res.locals.session.sub)?.email) {
-    res.status(400).json({ error: 'no email address on file - sign in via GitHub or Discord to link one' });
+  if (!resolveNotifyEmail(res.locals.session.sub)) {
+    res.status(400).json({ error: 'set a notification email first' });
     return;
   }
   await sendMailToUser(res.locals.session.sub, {
@@ -1749,6 +1749,7 @@ dashboardRouter.put('/v1/dashboard/me/prefs', (req, res) => {
     emailOnFailure?: boolean;
     emailOnAlerts?: boolean;
     emailOnKeyExpiry?: boolean;
+    notifyEmail?: string;
     preferPrimaryDevice?: boolean;
   } = {};
   if (body.theme === 'dark' || body.theme === 'light' || body.theme === 'auto') patch.theme = body.theme;
@@ -1763,6 +1764,10 @@ dashboardRouter.put('/v1/dashboard/me/prefs', (req, res) => {
   if (typeof body.emailOnFailure === 'boolean') patch.emailOnFailure = body.emailOnFailure;
   if (typeof body.emailOnAlerts === 'boolean') patch.emailOnAlerts = body.emailOnAlerts;
   if (typeof body.emailOnKeyExpiry === 'boolean') patch.emailOnKeyExpiry = body.emailOnKeyExpiry;
+  if (typeof body.notifyEmail === 'string') {
+    const trimmed = body.notifyEmail.trim();
+    if (trimmed === '' || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) patch.notifyEmail = trimmed;
+  }
   if (typeof body.preferPrimaryDevice === 'boolean') patch.preferPrimaryDevice = body.preferPrimaryDevice;
   res.json(updateUserPrefs(res.locals.session.sub, patch));
 });

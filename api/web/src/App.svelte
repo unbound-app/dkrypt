@@ -142,7 +142,8 @@
   let pushOnFailure = $state(true);
   let pushOnAlerts = $state(true);
   let pushOnKeyExpiry = $state(true);
-  let userEmail = $state<string | undefined>(undefined);
+  let accountEmail = $state<string | undefined>(undefined);
+  let notifyEmail = $state('');
   let sendingTestEmail = $state(false);
   let emailOnSuccess = $state(false);
   let emailOnFailure = $state(false);
@@ -162,7 +163,8 @@
       pushOnFailure = prefs.pushOnFailure ?? true;
       pushOnAlerts = prefs.pushOnAlerts ?? true;
       pushOnKeyExpiry = prefs.pushOnKeyExpiry ?? true;
-      userEmail = prefs.email;
+      accountEmail = prefs.accountEmail;
+      notifyEmail = prefs.notifyEmail ?? '';
       emailOnSuccess = prefs.emailOnSuccess ?? false;
       emailOnFailure = prefs.emailOnFailure ?? false;
       emailOnAlerts = prefs.emailOnAlerts ?? false;
@@ -200,6 +202,10 @@
 
   async function toggleEmailOnKeyExpiry(): Promise<void> {
     await pushNotificationPrefs({ emailOnKeyExpiry });
+  }
+
+  async function saveNotifyEmail(): Promise<void> {
+    await pushNotificationPrefs({ notifyEmail: notifyEmail.trim() });
   }
 
   async function sendTestEmail(): Promise<void> {
@@ -618,87 +624,50 @@
                 <div class="flex items-center justify-between gap-3">
                   <div class="text-[13px]">Notifications</div>
                   {#if notifPermission === 'granted' && pushEnabled}
-                    <Badge variant="success">Enabled</Badge>
-                  {:else if notifPermission === 'denied'}
-                    <Badge variant="destructive" title="Blocked by your browser - check site settings">Blocked</Badge>
-                  {:else if notifPermission === 'unsupported'}
-                    <Badge variant="secondary">Not supported</Badge>
-                  {:else}
-                    <Button size="sm" variant="secondary" loading={enablingPush} onclick={enableNotifications}>Enable</Button>
-                  {/if}
-                </div>
-                <div class="mt-1.5 text-xs text-muted">
-                  {#if pushSupported()}
-                    Get notified when your queued decrypts finish - even in a background tab, or with the browser closed entirely.
-                  {:else}
-                    Get notified when your queued decrypts finish, even in a background tab. Push (works with the browser closed) isn't supported here.
-                  {/if}
-                </div>
-                {#if notifPermission === 'granted' && pushEnabled}
-                  <div class="mt-2 flex gap-2">
-                    <Button size="sm" variant="secondary" loading={sendingTestPush} onclick={sendTestPush}>Send test</Button>
                     <Button size="sm" variant="secondary" loading={enablingPush} onclick={disableNotifications}>Disable push</Button>
-                  </div>
-                  <div class="mt-2.5 flex flex-col gap-1.5 text-xs text-muted">
-                    <label class="inline-flex items-center gap-1.5">
-                      <input type="checkbox" bind:checked={pushOnSuccess} onchange={togglePushOnSuccess} />
-                      Notify me on successful decrypts
-                    </label>
-                    <label class="inline-flex items-center gap-1.5">
-                      <input type="checkbox" bind:checked={pushOnFailure} onchange={togglePushOnFailure} />
-                      Notify me on failed decrypts
-                    </label>
-                    <label class="inline-flex items-center gap-1.5">
-                      <input type="checkbox" bind:checked={pushOnAlerts} onchange={togglePushOnAlerts} />
-                      Notify me on device/system alerts (offline, battery, disk, TestFlight bridge down)
-                    </label>
-                    <label class="inline-flex items-center gap-1.5">
-                      <input type="checkbox" bind:checked={pushOnKeyExpiry} onchange={togglePushOnKeyExpiry} />
-                      Notify me when an API key is expiring soon
-                    </label>
-                  </div>
-                {/if}
-              </div>
+                  {:else if notifPermission === 'denied'}
+                    <Badge variant="destructive" title="Blocked by your browser - check site settings">Push blocked</Badge>
+                  {:else if notifPermission !== 'unsupported'}
+                    <Button size="sm" variant="secondary" loading={enablingPush} onclick={enableNotifications}>Enable push</Button>
+                  {/if}
+                </div>
 
-              <div class="border-border mb-3 border-t pt-3">
-                <div class="flex items-center justify-between gap-3">
-                  <div class="text-[13px]">Email notifications</div>
-                  {#if !userEmail}
-                    <Badge variant="secondary">No email on file</Badge>
-                  {:else if emailOnSuccess || emailOnFailure || emailOnAlerts || emailOnKeyExpiry}
-                    <Badge variant="success">Enabled</Badge>
-                  {/if}
+                <Input
+                  type="email"
+                  class="mt-2 h-8 text-xs"
+                  placeholder={accountEmail ?? 'Email address'}
+                  bind:value={notifyEmail}
+                  onblur={saveNotifyEmail}
+                />
+
+                <div class="mt-3 grid grid-cols-[1fr_auto_auto] items-center gap-x-3 gap-y-1.5 text-xs text-muted">
+                  <div></div>
+                  <div class="text-center">Push</div>
+                  <div class="text-center">Email</div>
+
+                  <div>Successful decrypts</div>
+                  <input class="justify-self-center" type="checkbox" bind:checked={pushOnSuccess} onchange={togglePushOnSuccess} />
+                  <input class="justify-self-center" type="checkbox" bind:checked={emailOnSuccess} onchange={toggleEmailOnSuccess} />
+
+                  <div>Failed decrypts</div>
+                  <input class="justify-self-center" type="checkbox" bind:checked={pushOnFailure} onchange={togglePushOnFailure} />
+                  <input class="justify-self-center" type="checkbox" bind:checked={emailOnFailure} onchange={toggleEmailOnFailure} />
+
+                  <div>Device/system alerts</div>
+                  <input class="justify-self-center" type="checkbox" bind:checked={pushOnAlerts} onchange={togglePushOnAlerts} />
+                  <input class="justify-self-center" type="checkbox" bind:checked={emailOnAlerts} onchange={toggleEmailOnAlerts} />
+
+                  <div>API key expiring soon</div>
+                  <input class="justify-self-center" type="checkbox" bind:checked={pushOnKeyExpiry} onchange={togglePushOnKeyExpiry} />
+                  <input class="justify-self-center" type="checkbox" bind:checked={emailOnKeyExpiry} onchange={toggleEmailOnKeyExpiry} />
                 </div>
-                <div class="mt-1.5 text-xs text-muted">
-                  {#if userEmail}
-                    Sent to {userEmail} from dkrypt@dylib.dev.
-                  {:else}
-                    Sign in via GitHub or Discord to link an email address for notifications.
+
+                <div class="mt-3 flex gap-2">
+                  {#if notifPermission === 'granted' && pushEnabled}
+                    <Button size="sm" variant="secondary" loading={sendingTestPush} onclick={sendTestPush}>Test push</Button>
                   {/if}
+                  <Button size="sm" variant="secondary" loading={sendingTestEmail} onclick={sendTestEmail}>Test email</Button>
                 </div>
-                {#if userEmail}
-                  <div class="mt-2 flex gap-2">
-                    <Button size="sm" variant="secondary" loading={sendingTestEmail} onclick={sendTestEmail}>Send test</Button>
-                  </div>
-                  <div class="mt-2.5 flex flex-col gap-1.5 text-xs text-muted">
-                    <label class="inline-flex items-center gap-1.5">
-                      <input type="checkbox" bind:checked={emailOnSuccess} onchange={toggleEmailOnSuccess} />
-                      Email me on successful decrypts
-                    </label>
-                    <label class="inline-flex items-center gap-1.5">
-                      <input type="checkbox" bind:checked={emailOnFailure} onchange={toggleEmailOnFailure} />
-                      Email me on failed decrypts
-                    </label>
-                    <label class="inline-flex items-center gap-1.5">
-                      <input type="checkbox" bind:checked={emailOnAlerts} onchange={toggleEmailOnAlerts} />
-                      Email me on device/system alerts (offline, battery, disk, TestFlight bridge down)
-                    </label>
-                    <label class="inline-flex items-center gap-1.5">
-                      <input type="checkbox" bind:checked={emailOnKeyExpiry} onchange={toggleEmailOnKeyExpiry} />
-                      Email me when an API key is expiring soon
-                    </label>
-                  </div>
-                {/if}
               </div>
 
               {#if pwaState.canInstall}

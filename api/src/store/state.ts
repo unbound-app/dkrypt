@@ -260,6 +260,7 @@ export interface UserPrefs {
   emailOnFailure?: boolean;
   emailOnAlerts?: boolean;
   emailOnKeyExpiry?: boolean;
+  notifyEmail?: string;
   preferPrimaryDevice?: boolean;
 }
 

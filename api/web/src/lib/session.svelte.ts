@@ -118,12 +118,13 @@ export interface NotificationPrefs {
   emailOnFailure?: boolean;
   emailOnAlerts?: boolean;
   emailOnKeyExpiry?: boolean;
+  notifyEmail?: string;
 }
 
-export async function fetchNotificationPrefs(): Promise<NotificationPrefs & { email?: string }> {
+export async function fetchNotificationPrefs(): Promise<NotificationPrefs & { accountEmail?: string }> {
   const res = await fetch('/v1/dashboard/me/prefs');
   if (!res.ok) return {};
-  const prefs = (await res.json()) as NotificationPrefs & { email?: string };
+  const prefs = (await res.json()) as NotificationPrefs & { accountEmail?: string };
   return prefs;
 }
 

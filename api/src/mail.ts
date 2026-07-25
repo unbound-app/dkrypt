@@ -26,11 +26,16 @@ export interface MailPayload {
   text: string;
 }
 
+export function resolveNotifyEmail(userId: string): string | undefined {
+  const custom = getUserPrefs(userId).notifyEmail?.trim();
+  return custom || getAuthProfile(userId)?.email;
+}
+
 export async function sendMailToUser(userId: string, payload: MailPayload): Promise<void> {
   const t = getTransporter();
   if (!t) return;
 
-  const email = getAuthProfile(userId)?.email;
+  const email = resolveNotifyEmail(userId);
   if (!email) return;
 
   try {
@@ -50,6 +55,6 @@ const CATEGORY_PREF_KEY: Record<MailCategory, 'emailOnAlerts' | 'emailOnKeyExpir
 export async function sendMailToAllSubscribed(payload: MailPayload, category: MailCategory): Promise<void> {
   if (!emailEnabled) return;
   const prefKey = CATEGORY_PREF_KEY[category];
-  const recipients = listAuthProfiles().filter((profile) => profile.email && (getUserPrefs(profile.userId)[prefKey] ?? false));
+  const recipients = listAuthProfiles().filter((profile) => resolveNotifyEmail(profile.userId) && (getUserPrefs(profile.userId)[prefKey] ?? false));
   await Promise.all(recipients.map((profile) => sendMailToUser(profile.userId, payload)));
 }
