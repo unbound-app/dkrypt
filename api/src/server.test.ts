@@ -56,6 +56,7 @@ test('Fastify sends the initial dashboard overview over SSE', async () => {
   try {
     const response = await fetch(`${baseUrl}/v1/dashboard/events`, { headers: { cookie }, signal: controller.signal });
     expect(response.status).toBe(200);
+    expect(response.headers.get('x-accel-buffering')).toBe('no');
     const chunk = await response.body?.getReader().read();
     expect(new TextDecoder().decode(chunk?.value)).toContain('event: overview');
   } finally {

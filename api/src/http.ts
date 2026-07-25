@@ -40,6 +40,7 @@ export class Response {
 
   setHeader(name: string, value: string): this {
     this.reply.header(name, value);
+    this.raw.setHeader(name, value);
     return this;
   }
 

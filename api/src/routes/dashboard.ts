@@ -213,11 +213,13 @@ dashboardRouter.get('/v1/dashboard/overview', (_req, res) => {
   res.json(buildOverview(res.locals.session.permissions, res.locals.session.sub));
 });
 
-dashboardRouter.get('/v1/dashboard/events', (req, res) => {
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
+dashboardRouter.get('/v1/dashboard/events', (_req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders();
+  res.raw.setTimeout(0);
 
   const sendEvent = (event: string, data: unknown) => {
     res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
@@ -239,9 +241,9 @@ dashboardRouter.get('/v1/dashboard/events', (req, res) => {
   dashboardEvents.on('historyAdded', onHistoryAdded);
   dashboardEvents.on('presenceChanged', onPresenceChanged);
 
-  const heartbeat = setInterval(() => res.write(': ping\n\n'), 25_000);
+  const heartbeat = setInterval(() => res.write(': ping\n\n'), 15_000);
 
-  req.on('close', () => {
+  res.raw.once('close', () => {
     clearInterval(heartbeat);
     unregisterPresence(sub);
     dashboardEvents.off('jobsChanged', onJobsChanged);
