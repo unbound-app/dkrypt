@@ -4,7 +4,7 @@
   import Button from '#lib/components/ui/Button.svelte';
   import RelativeTime from '#components/RelativeTime.svelte';
 
-  const showWarning = $derived(liveState.overview !== null && !liveState.connected);
+  const showWarning = $derived(liveState.disconnectedAt !== null && !liveState.connected);
 </script>
 
 {#if showWarning}
