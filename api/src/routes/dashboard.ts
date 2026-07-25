@@ -6,7 +6,7 @@ import { dashboardEvents, emitJobsChanged, getOnlineUsernames, registerPresence,
 import { getBillingEntitlements } from '#billing.js';
 import { blockDuringMaintenance, getMaintenanceStatus } from '#maintenance.js';
 import { jobSummary, streamJobFile } from '#jobs/http.js';
-import { cancelJob, enqueueDecryptJob, getActiveJobs, getJob, prioritizeQueuedJob } from '#jobs/store.js';
+import { cancelJob, enqueueDecryptJob, getActiveJobs, getJob, prioritizeQueuedJob, reorderQueue } from '#jobs/store.js';
 import type { LogEntry } from '#logger.js';
 import { getRecentLogs } from '#logger.js';
 import { EMBED_COLOR, notify, sendTestNotification } from '#notify.js';
@@ -31,6 +31,7 @@ import {
   type AppWatch,
   bulkApproveApiKeys,
   bulkExtendApiKeyExpiry,
+  bulkSetApiKeyAllowedBundleIds,
   bulkSetApiKeyDailyLimit,
   createApiKey,
   createBackupSnapshot,
@@ -259,6 +260,7 @@ dashboardRouter.get('/v1/dashboard/jobs', (req, res) => {
   const queuedBy = typeof req.query.queuedBy === 'string' && req.query.queuedBy.trim() ? req.query.queuedBy.trim().slice(0, 120) : undefined;
   const deviceId = typeof req.query.deviceId === 'string' && req.query.deviceId.trim() ? req.query.deviceId.trim().slice(0, 64) : undefined;
   const errorQ = typeof req.query.errorQ === 'string' && req.query.errorQ.trim() ? req.query.errorQ.trim().slice(0, 200) : undefined;
+  const failureCategory = typeof req.query.failureCategory === 'string' && req.query.failureCategory.trim() ? req.query.failureCategory.trim().slice(0, 64) : undefined;
   const fromTs = Number.parseInt(String(req.query.fromTs ?? ''), 10);
   const toTs = Number.parseInt(String(req.query.toTs ?? ''), 10);
   const { entries, total } = getJobHistoryPage(offset, limit, {
@@ -268,6 +270,7 @@ dashboardRouter.get('/v1/dashboard/jobs', (req, res) => {
     queuedBy,
     deviceId,
     errorSearch: errorQ,
+    failureCategory,
     fromTs: Number.isFinite(fromTs) ? fromTs : undefined,
     toTs: Number.isFinite(toTs) ? toTs : undefined,
   });
@@ -651,6 +654,27 @@ dashboardRouter.delete('/v1/dashboard/watches/:id', canManageWatches, (req, res)
   res.json({ ok: true });
 });
 
+dashboardRouter.post('/v1/dashboard/watches/preview-dispatch-draft', canManageWatches, deviceOrExternalRateLimit, async (req, res) => {
+  const bundleId = typeof req.body?.bundleId === 'string' ? req.body.bundleId.trim() : '';
+  const repo = typeof req.body?.repo === 'string' ? req.body.repo.trim() : '';
+  if (!BUNDLE_ID_RE.test(bundleId) || !repo) {
+    res.status(400).json({ error: 'bundleId and repo are required' });
+    return;
+  }
+  const draft: AppWatch = {
+    id: 'draft',
+    bundleId,
+    repo,
+    ghWorkflowFile: '',
+    pollCron: '',
+    enabled: true,
+    createdAt: 0,
+    updatedAt: 0,
+  };
+  const [appStore, testflight] = await Promise.all([checkForUpdate(draft), checkForTestFlightUpdate(draft)]);
+  res.json({ ...appStore, testflight });
+});
+
 dashboardRouter.get('/v1/dashboard/watches/:id/preview-dispatch', canTriggerDispatch, deviceOrExternalRateLimit, async (req, res) => {
   const watch = getWatch(req.params.id);
   if (!watch) {
@@ -751,6 +775,12 @@ dashboardRouter.post('/v1/dashboard/jobs/:id/prioritize', canDecrypt, (req, res)
     return;
   }
   res.json({ ok: true });
+});
+
+dashboardRouter.post('/v1/dashboard/jobs/reorder', canDecrypt, (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter((id: unknown) => typeof id === 'string') : [];
+  const ok = reorderQueue(ids);
+  res.json({ ok });
 });
 
 dashboardRouter.post('/v1/dashboard/jobs/:id/retry', canDecrypt, blockDuringMaintenance, (req, res) => {
@@ -1050,6 +1080,18 @@ dashboardRouter.post('/v1/dashboard/keys/bulk-set-daily-limit', canManageApiKeyD
     return;
   }
   const updated = bulkSetApiKeyDailyLimit(ids, dailyLimit);
+  res.json({ updated });
+});
+
+dashboardRouter.post('/v1/dashboard/keys/bulk-set-scope', canManageApiKeyDailyLimits, (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter((id: unknown) => typeof id === 'string') : [];
+  const raw = req.body?.allowedBundleIds;
+  if (raw !== null && raw !== undefined && !Array.isArray(raw)) {
+    res.status(400).json({ error: 'allowedBundleIds must be an array of bundle ids, or null to clear it' });
+    return;
+  }
+  const allowedBundleIds = raw === null || raw === undefined ? undefined : parseAllowedBundleIds(raw);
+  const updated = bulkSetApiKeyAllowedBundleIds(ids, allowedBundleIds);
   res.json({ updated });
 });
 
@@ -1688,6 +1730,7 @@ dashboardRouter.put('/v1/dashboard/me/prefs', (req, res) => {
     pushOnFailure?: boolean;
     pushOnAlerts?: boolean;
     pushOnKeyExpiry?: boolean;
+    preferPrimaryDevice?: boolean;
   } = {};
   if (body.theme === 'dark' || body.theme === 'light' || body.theme === 'auto') patch.theme = body.theme;
   if (body.density === 'comfortable' || body.density === 'compact') patch.density = body.density;
@@ -1697,5 +1740,6 @@ dashboardRouter.put('/v1/dashboard/me/prefs', (req, res) => {
   if (typeof body.pushOnFailure === 'boolean') patch.pushOnFailure = body.pushOnFailure;
   if (typeof body.pushOnAlerts === 'boolean') patch.pushOnAlerts = body.pushOnAlerts;
   if (typeof body.pushOnKeyExpiry === 'boolean') patch.pushOnKeyExpiry = body.pushOnKeyExpiry;
+  if (typeof body.preferPrimaryDevice === 'boolean') patch.preferPrimaryDevice = body.preferPrimaryDevice;
   res.json(updateUserPrefs(res.locals.session.sub, patch));
 });

@@ -1,6 +1,24 @@
 <script lang="ts">
   import { DropdownMenu } from 'bits-ui';
-  import { Download, LogOut, Monitor, Moon, Pencil, Rows2, Rows3, Sun, Volume2, VolumeX } from 'lucide-svelte';
+  import {
+    BarChart3,
+    BookOpen,
+    Download,
+    Home as HomeIcon,
+    KeyRound,
+    LogOut,
+    Monitor,
+    Moon,
+    Pencil,
+    Rows2,
+    Rows3,
+    ScrollText,
+    Settings as SettingsIcon,
+    Sun,
+    Volume2,
+    VolumeX,
+    Wallet,
+  } from 'lucide-svelte';
   import { Toaster } from 'svelte-sonner';
   import CommandPalette from '#components/CommandPalette.svelte';
   import ConfirmModal from '#components/ConfirmModal.svelte';
@@ -24,6 +42,7 @@
   import Input from '#lib/components/ui/Input.svelte';
   import Tabs from '#lib/components/ui/Tabs.svelte';
   import { buttonVariants } from '#lib/components/ui/variants';
+  import { cn } from '#lib/utils';
   import { KOFI_URL } from '#lib/constants';
   import { myDecryptsState } from '#lib/decrypts.svelte';
   import { connectLive, disconnectLive, liveState } from '#lib/live.svelte';
@@ -210,6 +229,16 @@
       return !t.requires || sessionHasAnyPermission(t.requires);
     }),
   );
+
+  const TAB_ICON: Record<TabId, typeof HomeIcon> = {
+    home: HomeIcon,
+    billing: Wallet,
+    keys: KeyRound,
+    logs: ScrollText,
+    insights: BarChart3,
+    docs: BookOpen,
+    settings: SettingsIcon,
+  };
 
   async function doLogout(): Promise<void> {
     loggingOut = true;
@@ -631,14 +660,19 @@
         </DropdownMenu.Root>
       </div>
     </header>
-    <main class="mx-auto max-w-[1680px] px-4 py-6 lg:px-6">
+    <main class="mx-auto max-w-[1680px] px-4 pt-6 pb-20 sm:pb-6 lg:px-6">
       <SessionExpiryBanner />
       <ConnectionBanner />
       <UpdateAvailableBanner />
       <SetupBanner />
       <div class="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
         <div class="min-w-0">
-          <Tabs items={visibleTabs.map((t) => ({ id: t.id, label: t.label }))} value={tabState.active} onValueChange={(v) => setActiveTab(v as TabId)} class="mb-5" />
+          <Tabs
+            items={visibleTabs.map((t) => ({ id: t.id, label: t.label }))}
+            value={tabState.active}
+            onValueChange={(v) => setActiveTab(v as TabId)}
+            class="mb-5 hidden sm:block"
+          />
 
           <div class:hidden={tabState.active !== 'home'}>
             <Home bind:this={homeRef} />
@@ -671,6 +705,26 @@
         </div>
       </div>
     </main>
+    <nav
+      class="border-border bg-panel fixed inset-x-0 bottom-0 z-40 flex border-t pb-[env(safe-area-inset-bottom)] sm:hidden"
+      aria-label="Primary"
+    >
+      {#each visibleTabs as t (t.id)}
+        {@const Icon = TAB_ICON[t.id]}
+        <button
+          type="button"
+          class={cn(
+            'flex flex-1 cursor-pointer flex-col items-center gap-0.5 py-2 text-[10.5px]',
+            tabState.active === t.id ? 'text-accent' : 'text-muted',
+          )}
+          onclick={() => setActiveTab(t.id)}
+          aria-current={tabState.active === t.id ? 'page' : undefined}
+        >
+          <Icon class="h-5 w-5" />
+          {t.label}
+        </button>
+      {/each}
+    </nav>
   </div>
 {/if}
 

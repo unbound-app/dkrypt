@@ -256,6 +256,7 @@ export interface UserPrefs {
   pushOnFailure?: boolean;
   pushOnAlerts?: boolean;
   pushOnKeyExpiry?: boolean;
+  preferPrimaryDevice?: boolean;
 }
 
 export type AuditAction =
@@ -1404,6 +1405,18 @@ export function bulkSetApiKeyDailyLimit(ids: string[], dailyLimit: number | unde
   return updated;
 }
 
+export function bulkSetApiKeyAllowedBundleIds(ids: string[], allowedBundleIds: string[] | undefined): string[] {
+  const updated: string[] = [];
+  for (const id of ids) {
+    const record = state.apiKeys.find((k) => k.id === id);
+    if (!record) continue;
+    record.allowedBundleIds = allowedBundleIds;
+    updated.push(id);
+  }
+  if (updated.length > 0) persistNow();
+  return updated;
+}
+
 function todayUsageCount(id: string): number {
   const today = new Date().toISOString().slice(0, 10);
   const buckets = state.apiKeyUsage[id] ?? [];
@@ -1854,6 +1867,7 @@ export function getJobHistoryPage(
     queuedBy?: string;
     deviceId?: string;
     errorSearch?: string;
+    failureCategory?: string;
     fromTs?: number;
     toTs?: number;
   },
@@ -1864,6 +1878,7 @@ export function getJobHistoryPage(
   const queuedBy = filters?.queuedBy?.toLowerCase();
   const deviceId = filters?.deviceId;
   const errorSearch = filters?.errorSearch?.toLowerCase();
+  const failureCategory = filters?.failureCategory;
   const fromTs = filters?.fromTs;
   const toTs = filters?.toTs;
 
@@ -1875,6 +1890,7 @@ export function getJobHistoryPage(
       (!queuedBy || (e.queuedBy ?? '').toLowerCase().includes(queuedBy)) &&
       (!deviceId || (e.deviceId ?? '') === deviceId) &&
       (!errorSearch || (e.error ?? '').toLowerCase().includes(errorSearch)) &&
+      (!failureCategory || (e.status === 'failed' && categorizeFailure(e.error) === failureCategory)) &&
       (!fromTs || e.finishedAt >= fromTs) &&
       (!toTs || e.finishedAt <= toTs),
   );
@@ -1947,6 +1963,7 @@ export interface InsightsAppStats {
   failedCount: number;
   successRate: number;
   totalSizeBytes: number;
+  avgDurationMs?: number;
 }
 
 export interface InsightsSummary {
@@ -1980,6 +1997,7 @@ export function getInsightsSummary(topAppsLimit = 5, trendDays = 14): InsightsSu
   const totalSizeBytes = runs.reduce((sum, j) => sum + (j.sizeBytes ?? 0), 0);
 
   const byBundle = new Map<string, InsightsAppStats>();
+  const durationsByBundle = new Map<string, number[]>();
   for (const j of runs) {
     const entry = byBundle.get(j.bundleId) ?? {
       bundleId: j.bundleId,
@@ -1994,9 +2012,19 @@ export function getInsightsSummary(topAppsLimit = 5, trendDays = 14): InsightsSu
     else entry.failedCount += 1;
     entry.totalSizeBytes += j.sizeBytes ?? 0;
     byBundle.set(j.bundleId, entry);
+
+    if (j.status === 'done' && j.startedAt) {
+      const durations = durationsByBundle.get(j.bundleId) ?? [];
+      durations.push(j.finishedAt - j.startedAt);
+      durationsByBundle.set(j.bundleId, durations);
+    }
   }
   const topApps = [...byBundle.values()]
-    .map((a) => ({ ...a, successRate: a.totalRuns > 0 ? a.doneCount / a.totalRuns : 0 }))
+    .map((a) => {
+      const durations = durationsByBundle.get(a.bundleId);
+      const avgDurationMs = durations && durations.length > 0 ? Math.round(durations.reduce((sum, d) => sum + d, 0) / durations.length) : undefined;
+      return { ...a, successRate: a.totalRuns > 0 ? a.doneCount / a.totalRuns : 0, avgDurationMs };
+    })
     .sort((a, b) => b.totalRuns - a.totalRuns)
     .slice(0, topAppsLimit);
 

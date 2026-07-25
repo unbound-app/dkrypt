@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { LoaderCircle } from 'lucide-svelte';
+  import { LoaderCircle, TriangleAlert } from 'lucide-svelte';
   import { queueDecrypt } from '#lib/api';
   import Button from '#lib/components/ui/Button.svelte';
   import Dialog from '#lib/components/ui/Dialog.svelte';
-  import { addDecrypt, pushRecentBundleId } from '#lib/decrypts.svelte';
+  import { addDecrypt, myDecryptsState, pushRecentBundleId } from '#lib/decrypts.svelte';
+  import { liveState } from '#lib/live.svelte';
   import { requestNotificationPermission } from '#lib/notifications';
   import { showToast } from '#lib/ui.svelte';
   import { cn } from '#lib/utils';
@@ -23,23 +24,37 @@
   let submitting = $state(false);
   let results = $state<{ bundleId: string; externalVersionId?: string; state: 'pending' | 'ok' | 'error'; error?: string }[]>([]);
 
-  function parseEntries(raw: string): BatchEntry[] {
+  function parseEntries(raw: string): { entries: BatchEntry[]; duplicateBundleIds: string[] } {
     const seen = new Set<string>();
+    const seenBundleIds = new Set<string>();
+    const duplicateBundleIds = new Set<string>();
     const entries: BatchEntry[] = [];
     for (const line of raw.split(/[\n,]/)) {
       const trimmed = line.trim();
       if (!trimmed) continue;
       const [bundleId, externalVersionId] = trimmed.split('@').map((s) => s.trim());
       const key = `${bundleId}@${externalVersionId ?? ''}`;
+      if (seenBundleIds.has(bundleId)) duplicateBundleIds.add(bundleId);
+      seenBundleIds.add(bundleId);
       if (seen.has(key)) continue;
       seen.add(key);
       entries.push({ bundleId, externalVersionId: externalVersionId || undefined });
       if (entries.length >= MAX_BUNDLE_IDS) break;
     }
-    return entries;
+    return { entries, duplicateBundleIds: [...duplicateBundleIds] };
   }
 
-  const parsed = $derived(parseEntries(text));
+  const parsedResult = $derived(parseEntries(text));
+  const parsed = $derived(parsedResult.entries);
+
+  const activeBundleIds = $derived.by(() => {
+    const set = new Set<string>();
+    for (const d of myDecryptsState.items) if (d.status === 'queued' || d.status === 'running') set.add(d.bundleId);
+    for (const j of liveState.overview?.activeJobs ?? []) set.add(j.bundleId);
+    return set;
+  });
+
+  const alreadyActiveInBatch = $derived(parsed.filter((e) => activeBundleIds.has(e.bundleId)).map((e) => e.bundleId));
 
   function close(): void {
     if (submitting) return;
@@ -114,6 +129,18 @@
       class="border-border bg-panel-muted focus:border-accent w-full rounded-md border px-3 py-2 font-mono text-xs text-text focus:outline-none disabled:opacity-60"
     ></textarea>
     <div class="mt-1.5 text-xs text-muted">{parsed.length} bundle ID{parsed.length === 1 ? '' : 's'} recognized</div>
+    {#if parsedResult.duplicateBundleIds.length > 0}
+      <div class="text-warn mt-1 flex items-start gap-1.5 text-xs">
+        <TriangleAlert class="mt-0.5 h-3.5 w-3.5 shrink-0" />
+        <span>Repeated in this batch: {parsedResult.duplicateBundleIds.join(', ')}</span>
+      </div>
+    {/if}
+    {#if alreadyActiveInBatch.length > 0}
+      <div class="text-warn mt-1 flex items-start gap-1.5 text-xs">
+        <TriangleAlert class="mt-0.5 h-3.5 w-3.5 shrink-0" />
+        <span>Already queued or running: {alreadyActiveInBatch.join(', ')}</span>
+      </div>
+    {/if}
     <Button class="mt-3 w-full" disabled={parsed.length === 0} loading={submitting} onclick={submit}>Queue all</Button>
   {:else}
     <div class="flex max-h-72 flex-col gap-1 overflow-y-auto">

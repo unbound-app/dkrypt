@@ -2,6 +2,7 @@ export interface ChangelogEntry {
   date: string;
   title: string;
   description: string;
+  link?: { tab: string; subtab?: string };
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
@@ -10,6 +11,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     title: 'Dashboard polish pass',
     description:
       'Maintenance mode now confirms before pausing everything and moved to Settings → Devices with a proper banner, rate limits are visible before you hit them, accent color contrast is fixed across every theme, and a handful of other UX cleanups.',
+    link: { tab: 'settings', subtab: 'devices' },
   },
   {
     date: '2026-07-24',
@@ -21,21 +23,25 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: '2026-07-24',
     title: 'Maintenance mode',
     description: "Decrypts and the API pause automatically when the primary device isn't in a usable state, with a manual override in Settings.",
+    link: { tab: 'settings', subtab: 'devices' },
   },
   {
     date: '2026-07-24',
     title: 'Share link management',
     description: 'View, copy, and revoke every share link that has been issued from the admin Share Links tab.',
+    link: { tab: 'settings', subtab: 'sharelinks' },
   },
   {
     date: '2026-07-23',
     title: 'Paid plans',
     description: 'Subscribe via Paddle to unlock TestFlight scoping, higher key limits, and priority queueing.',
+    link: { tab: 'billing' },
   },
   {
     date: '2026-07-23',
     title: 'Discord role perks',
     description: 'Link Discord roles to dashboard permissions, across more than one guild.',
+    link: { tab: 'settings', subtab: 'roles' },
   },
   {
     date: '2026-07-23',
@@ -46,6 +52,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: '2026-07-23',
     title: 'Scheduled backups',
     description: 'Automatic backup snapshots on a schedule, with history and one-click restore.',
+    link: { tab: 'settings', subtab: 'backup' },
   },
   {
     date: '2026-07-23',
@@ -56,11 +63,13 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: '2026-07-18',
     title: 'Role-based permissions',
     description: 'Discord-style bitfield roles replace the old boolean permission flags, with much finer-grained control.',
+    link: { tab: 'settings', subtab: 'roles' },
   },
   {
     date: '2026-07-18',
     title: 'Multi-device pools',
     description: 'Register more than one iDevice and spread App Store decrypts across the whole pool.',
+    link: { tab: 'settings', subtab: 'devices' },
   },
   {
     date: '2026-07-18',

@@ -251,6 +251,25 @@ export function prioritizeQueuedJob(id: string): boolean {
   return true;
 }
 
+export function reorderQueue(orderedIds: string[]): boolean {
+  const known = new Set(queue);
+  const requested = orderedIds.filter((id) => known.has(id));
+  if (requested.length === 0) return false;
+
+  const requestedSet = new Set(requested);
+  const remainder = queue.filter((id) => !requestedSet.has(id));
+  const next = [...requested, ...remainder];
+
+  const changed = next.some((id, i) => id !== queue[i]);
+  if (!changed) return false;
+
+  queue.length = 0;
+  queue.push(...next);
+  log.info('queue manually reordered', { orderedIds: requested });
+  emitJobsChanged();
+  return true;
+}
+
 function isDispatchable(job: Job, device: DeviceRecord, primary: DeviceRecord): boolean {
   if (job.preferredDeviceId && job.preferredDeviceId !== device.id) return false;
   if (job.testflight) return device.id === primary.id;

@@ -432,6 +432,14 @@ export function previewWatchDispatch(id: string): Promise<UpdateCheck> {
   return apiJson(`/v1/dashboard/watches/${encodeURIComponent(id)}/preview-dispatch`, undefined, 'external');
 }
 
+export function previewWatchDispatchDraft(bundleId: string, repo: string): Promise<UpdateCheck> {
+  return apiJson(
+    '/v1/dashboard/watches/preview-dispatch-draft',
+    { method: 'POST', body: JSON.stringify({ bundleId, repo }) },
+    'external',
+  );
+}
+
 export function triggerWatchDispatch(id: string): Promise<{ ok: boolean; data: { ok: boolean; error?: string } }> {
   return apiAction(`/v1/dashboard/watches/${encodeURIComponent(id)}/trigger-dispatch`, { method: 'POST' });
 }
@@ -481,7 +489,7 @@ export function fetchJobHistory(
   q?: string,
   source?: 'manual' | 'scheduler',
   status?: 'done' | 'failed',
-  opts?: { queuedBy?: string; deviceId?: string; errorQ?: string; fromTs?: number; toTs?: number },
+  opts?: { queuedBy?: string; deviceId?: string; errorQ?: string; failureCategory?: string; fromTs?: number; toTs?: number },
 ): Promise<{ history: JobHistoryEntry[]; total: number }> {
   const query = q ? `&q=${encodeURIComponent(q)}` : '';
   const sourceQuery = source ? `&source=${source}` : '';
@@ -489,10 +497,11 @@ export function fetchJobHistory(
   const queuedByQuery = opts?.queuedBy ? `&queuedBy=${encodeURIComponent(opts.queuedBy)}` : '';
   const deviceIdQuery = opts?.deviceId ? `&deviceId=${encodeURIComponent(opts.deviceId)}` : '';
   const errorQuery = opts?.errorQ ? `&errorQ=${encodeURIComponent(opts.errorQ)}` : '';
+  const failureCategoryQuery = opts?.failureCategory ? `&failureCategory=${encodeURIComponent(opts.failureCategory)}` : '';
   const fromTsQuery = Number.isFinite(opts?.fromTs) ? `&fromTs=${opts?.fromTs}` : '';
   const toTsQuery = Number.isFinite(opts?.toTs) ? `&toTs=${opts?.toTs}` : '';
   return apiJson(
-    `/v1/dashboard/jobs?offset=${offset}&limit=${limit}${query}${sourceQuery}${statusQuery}${queuedByQuery}${deviceIdQuery}${errorQuery}${fromTsQuery}${toTsQuery}`,
+    `/v1/dashboard/jobs?offset=${offset}&limit=${limit}${query}${sourceQuery}${statusQuery}${queuedByQuery}${deviceIdQuery}${errorQuery}${failureCategoryQuery}${fromTsQuery}${toTsQuery}`,
   );
 }
 
@@ -569,6 +578,10 @@ export function prioritizeJob(id: string): Promise<{ ok: boolean }> {
   return apiAction(`/v1/dashboard/jobs/${id}/prioritize`, { method: 'POST' }, 'Moved to front of queue').then((r) => ({ ok: r.ok }));
 }
 
+export function reorderQueue(ids: string[]): Promise<{ ok: boolean }> {
+  return apiAction('/v1/dashboard/jobs/reorder', { method: 'POST', body: JSON.stringify({ ids }) }).then((r) => ({ ok: r.ok }));
+}
+
 export interface ApiKeyUsageBucket {
   date: string;
   count: number;
@@ -610,6 +623,7 @@ export interface InsightsAppStats {
   failedCount: number;
   successRate: number;
   totalSizeBytes: number;
+  avgDurationMs?: number;
 }
 
 export interface InsightsSummary {
@@ -794,6 +808,10 @@ export function bulkExtendKeyExpiry(ids: string[], days: number): Promise<{ ok: 
 
 export function bulkSetKeyDailyLimit(ids: string[], dailyLimit: number | null): Promise<{ ok: boolean; data: { updated: string[] } }> {
   return apiAction('/v1/dashboard/keys/bulk-set-daily-limit', { method: 'POST', body: JSON.stringify({ ids, dailyLimit }) }, 'Daily limit updated');
+}
+
+export function bulkSetKeyScope(ids: string[], allowedBundleIds: string[] | null): Promise<{ ok: boolean; data: { updated: string[] } }> {
+  return apiAction('/v1/dashboard/keys/bulk-set-scope', { method: 'POST', body: JSON.stringify({ ids, allowedBundleIds }) }, 'Scope updated');
 }
 
 export function approveKey(id: string): Promise<{ ok: boolean }> {

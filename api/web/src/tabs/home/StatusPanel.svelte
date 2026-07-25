@@ -1,6 +1,7 @@
 <script lang="ts">
   import { BatteryCharging, BatteryMedium, Circle, CircleCheck, Globe, LoaderCircle, RefreshCw, Thermometer, TriangleAlert, Wifi, WifiOff, Zap } from 'lucide-svelte';
   import RelativeTime from '#components/RelativeTime.svelte';
+  import CopyButton from '#components/CopyButton.svelte';
   import Sparkline from '#components/Sparkline.svelte';
   import {
     fetchDeviceBatteryHistory,
@@ -278,6 +279,29 @@
   };
   const activeJobs = $derived(overview?.activeJobs.length ?? 0);
   const schedulableWatchCount = $derived(overview?.watches.filter((w) => w.schedulable).length ?? 0);
+
+  function debugBundleText(): string {
+    return JSON.stringify(
+      {
+        generatedAt: new Date().toISOString(),
+        health,
+        overview: overview
+          ? {
+              schedulerEnabled: overview.schedulerEnabled,
+              devices: overview.devices,
+              disk: overview.disk,
+              maintenance: overview.maintenance,
+              activeJobs: overview.activeJobs,
+              schedulerRunHistory: overview.schedulerRunHistory,
+            }
+          : undefined,
+        poolHealth,
+        uptimePercent,
+      },
+      null,
+      2,
+    );
+  }
 </script>
 
 <Card title="Status">
@@ -302,6 +326,7 @@
         >
           <RefreshCw class="h-3.5 w-3.5 {refreshingHealth ? 'animate-spin' : ''}" />
         </button>
+        <CopyButton text={debugBundleText()} title="Copy debug info (device health, queue, disk)" />
       </div>
     {/if}
   {/snippet}
@@ -378,18 +403,14 @@
       {#if h.reachable}
         <Popover>
           {#snippet trigger()}
-            <Badge variant={h.testFlightBridgeReachable === false ? 'destructive' : 'secondary'}>
-              autoinstall bridge {h.testFlightBridgeReachable === undefined ? '…' : h.testFlightBridgeReachable ? 'reachable' : 'unreachable'}
-            </Badge>
+            <Badge variant={h.testFlightRunning ? 'default' : 'secondary'}>autoinstall {h.testFlightRunning ? 'running' : 'idle'}</Badge>
           {/snippet}
           <div class="flex flex-col gap-1 whitespace-nowrap">
+            <div><span class="text-muted">TestFlight</span> · {h.testFlightRunning ? 'running' : 'not running'}</div>
             {#if h.testFlightBridgeReachable !== undefined}
               <div><span class="text-muted">Bridge</span> · {h.testFlightBridgeReachable ? 'reachable' : 'unreachable'}</div>
             {/if}
-            <div class="text-muted">
-              Drives on-device App Store & TestFlight installs - it foregrounds whichever app the current job needs, so "TestFlight
-              running" isn't a meaningful status on its own.
-            </div>
+            <div class="text-muted">Drives TestFlight & App Store installs.</div>
           </div>
         </Popover>
       {/if}

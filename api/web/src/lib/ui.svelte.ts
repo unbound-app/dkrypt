@@ -221,10 +221,15 @@ export function closeHelp(): void {
   helpState.open = false;
 }
 
-export const historyJumpState = $state<{ bundleId: string | null }>({ bundleId: null });
+export const historyJumpState = $state<{ bundleId: string | null; failureCategory: string | null }>({ bundleId: null, failureCategory: null });
 
 export function jumpToHistoryBundleId(bundleId: string): void {
   historyJumpState.bundleId = bundleId;
+  setActiveTab('home');
+}
+
+export function jumpToHistoryFailureCategory(category: string): void {
+  historyJumpState.failureCategory = category;
   setActiveTab('home');
 }
 
@@ -241,6 +246,13 @@ export function jumpToUser(username: string): void {
   userJumpState.username = username;
   setActiveTab('settings');
   setSettingsSubtab('users');
+}
+
+export const focusSearchJumpState = $state<{ requested: boolean }>({ requested: false });
+
+export function requestFocusSearch(): void {
+  focusSearchJumpState.requested = true;
+  setActiveTab('home');
 }
 
 export const batchDecryptJumpState = $state<{ requested: boolean }>({ requested: false });

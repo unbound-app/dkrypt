@@ -168,6 +168,22 @@ export async function pushSoundPref(sound: boolean): Promise<void> {
   });
 }
 
+export async function fetchPreferPrimaryDevicePref(): Promise<boolean> {
+  const res = await fetch('/v1/dashboard/me/prefs');
+  if (!res.ok) return false;
+  const prefs = (await res.json()) as { preferPrimaryDevice?: boolean };
+  return prefs.preferPrimaryDevice ?? false;
+}
+
+export async function pushPreferPrimaryDevicePref(preferPrimaryDevice: boolean): Promise<void> {
+  if (!sessionState.loggedIn) return;
+  await fetch('/v1/dashboard/me/prefs', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ preferPrimaryDevice }),
+  });
+}
+
 export async function loginRoot(password: string): Promise<{ ok: boolean; error?: string; attemptsRemaining?: number }> {
   const res = await fetch('/v1/auth/login', {
     method: 'POST',

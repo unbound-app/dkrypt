@@ -7,7 +7,12 @@
   import RelativeTime from '#components/RelativeTime.svelte';
   import RateLimitHint from '#components/RateLimitHint.svelte';
 
-  let { open = $bindable(), bundleId, onOpenChange }: { open: boolean; bundleId: string; onOpenChange: (open: boolean) => void } = $props();
+  let {
+    open = $bindable(),
+    bundleId,
+    preselectIds,
+    onOpenChange,
+  }: { open: boolean; bundleId: string; preselectIds?: string[]; onOpenChange: (open: boolean) => void } = $props();
 
   const VERSIONS_PAGE_SIZE = 20;
 
@@ -43,10 +48,16 @@
       versions = null;
       versionsOffset = 0;
       versionsHasMore = false;
-      selected = new Set();
       diff = null;
       void fetchBundleStats(bundleId).then((s) => (stats = s));
       void loadVersionsPage(0);
+
+      if (preselectIds && preselectIds.length === 2) {
+        selected = new Set(preselectIds);
+        void compare();
+      } else {
+        selected = new Set();
+      }
     }
   });
 

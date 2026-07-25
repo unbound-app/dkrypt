@@ -1,8 +1,9 @@
 <script lang="ts">
   import { FlaskConical, History, Star, X } from 'lucide-svelte';
   import BatchDecryptDialog from '#components/BatchDecryptDialog.svelte';
+  import CopyButton from '#components/CopyButton.svelte';
   import EmptyState from '#components/EmptyState.svelte';
-  import { queueDecrypt, queueTestFlightDecrypt, searchApps, type AppStoreSearchResult, type TFBuild } from '#lib/api';
+  import { fetchJobEta, queueDecrypt, queueTestFlightDecrypt, searchApps, type AppStoreSearchResult, type TFBuild } from '#lib/api';
   import Badge from '#lib/components/ui/Badge.svelte';
   import Button from '#lib/components/ui/Button.svelte';
   import Card from '#lib/components/ui/Card.svelte';
@@ -18,11 +19,11 @@
     starredAppsState,
     toggleStarredApp,
   } from '#lib/decrypts.svelte';
-  import { debounce } from '#lib/format';
+  import { debounce, fmtDurationApprox } from '#lib/format';
   import { liveState } from '#lib/live.svelte';
   import { requestNotificationPermission } from '#lib/notifications';
   import { PermissionFlag } from '#lib/permissions';
-  import { sessionHasPermission } from '#lib/session.svelte';
+  import { fetchPreferPrimaryDevicePref, pushPreferPrimaryDevicePref, sessionHasPermission, sessionState } from '#lib/session.svelte';
   import { showToast } from '#lib/ui.svelte';
   import { cn } from '#lib/utils';
   import TestFlightPickerDialog from '#tabs/home/TestFlightPickerDialog.svelte';
@@ -37,6 +38,14 @@
   let searchToken = 0;
   let queueing = $state<Set<string>>(new Set());
   let preferPrimary = $state(false);
+
+  $effect(() => {
+    if (sessionState.loggedIn) void fetchPreferPrimaryDevicePref().then((v) => (preferPrimary = v));
+  });
+
+  function onPreferPrimaryChange(): void {
+    void pushPreferPrimaryDevicePref(preferPrimary);
+  }
 
   const statusByBundle = $derived.by(() => {
     const map = new Map<string, string>();
@@ -200,6 +209,31 @@
     highlighted = -1;
   }
 
+  let etaByBundle = $state<Record<string, number | null>>({});
+  const fetchedEtaBundles = new Set<string>();
+
+  $effect(() => {
+    for (const r of results) {
+      if (fetchedEtaBundles.has(r.bundleId)) continue;
+      fetchedEtaBundles.add(r.bundleId);
+      fetchJobEta(r.bundleId)
+        .then((res) => {
+          etaByBundle[r.bundleId] = res.avgMs;
+        })
+        .catch(() => fetchedEtaBundles.delete(r.bundleId));
+    }
+  });
+
+  function decryptButtonTitle(bundleId: string): string | undefined {
+    const avg = etaByBundle[bundleId];
+    return avg ? `Usually takes ${fmtDurationApprox(avg)}` : undefined;
+  }
+
+  function curlFor(bundleId: string): string {
+    const base = sessionState.publicBaseUrl ?? location.origin;
+    return `curl -H "Authorization: Bearer <YOUR_API_KEY>" "${base}/v1/decrypt?bundleId=${bundleId}" -o ${bundleId}.ipa`;
+  }
+
   export function focusSearch(): void {
     inputEl?.focus();
   }
@@ -252,7 +286,7 @@
     <div class="mt-2.5 flex flex-wrap items-center gap-2 sm:hidden">
       <Button size="sm" variant="secondary" onclick={() => (batchOpen = true)}>Batch decrypt</Button>
       <label class="inline-flex items-center gap-1.5 text-xs text-muted">
-        <input type="checkbox" bind:checked={preferPrimary} />
+        <input type="checkbox" bind:checked={preferPrimary} onchange={onPreferPrimaryChange} />
         Prefer primary device
       </label>
     </div>
@@ -323,6 +357,7 @@
               >
                 <Star class="h-3.5 w-3.5" fill={isStarredBundleId(r.bundleId) ? 'currentColor' : 'none'} />
               </button>
+              <CopyButton text={curlFor(r.bundleId)} label="curl" />
               {#if canDecrypt}
                 <Button
                   size="sm"
@@ -343,7 +378,7 @@
                   <FlaskConical class="h-3.5 w-3.5" />
                 </Button>
                 <label class="hidden items-center gap-1 text-[11px] text-muted md:inline-flex">
-                  <input type="checkbox" bind:checked={preferPrimary} />
+                  <input type="checkbox" bind:checked={preferPrimary} onchange={onPreferPrimaryChange} />
                   Primary
                 </label>
               {/if}
@@ -351,7 +386,14 @@
                 {@const status = statusByBundle.get(r.bundleId) ?? ''}
                 <Badge variant={statusToBadgeVariant(status)}>{status}</Badge>
               {:else if canDecrypt}
-                <Button size="sm" loading={queueing.has(r.bundleId)} onclick={() => queue(r.bundleId, r.trackName)}>Decrypt</Button>
+                <Button
+                  size="sm"
+                  loading={queueing.has(r.bundleId)}
+                  onclick={() => queue(r.bundleId, r.trackName)}
+                  title={decryptButtonTitle(r.bundleId)}
+                >
+                  Decrypt
+                </Button>
               {:else}
                 <Badge variant="secondary" title="Viewers can't queue decrypts">view only</Badge>
               {/if}

@@ -6,6 +6,7 @@
   import Dialog from '#lib/components/ui/Dialog.svelte';
   import { fmtRelative, fmtTime } from '#lib/format';
   import { confirmDialog } from '#lib/ui.svelte';
+  import { cn } from '#lib/utils';
 
   let { open = $bindable(), onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void } = $props();
 
@@ -18,7 +19,8 @@
   });
 
   async function load(): Promise<void> {
-    sessions = await fetchSessions();
+    const result = await fetchSessions();
+    sessions = [...result].sort((a, b) => (a.current === b.current ? 0 : a.current ? -1 : 1));
   }
 
   function describeUserAgent(ua?: string): string {
@@ -70,13 +72,13 @@
     {/if}
     <div class="flex flex-col gap-1.5">
       {#each sessions as s (s.id)}
-        <div class="border-border flex items-center gap-2 rounded-md border px-2.5 py-2 text-xs">
-          <Monitor class="h-4 w-4 shrink-0 text-muted" />
+        <div class={cn('flex items-center gap-2 rounded-md border px-2.5 py-2 text-xs', s.current ? 'border-accent bg-accent/5' : 'border-border')}>
+          <Monitor class={cn('h-4 w-4 shrink-0', s.current ? 'text-accent' : 'text-muted')} />
           <div class="min-w-0 flex-1">
             <div class="flex items-center gap-1.5">
-              <span class="text-text">{describeUserAgent(s.userAgent)}</span>
+              <span class="text-text font-medium">{describeUserAgent(s.userAgent)}</span>
               {#if s.current}
-                <Badge variant="success">This device</Badge>
+                <Badge variant="default">This device</Badge>
               {/if}
             </div>
             <div class="text-muted" title={fmtTime(s.createdAt)}>

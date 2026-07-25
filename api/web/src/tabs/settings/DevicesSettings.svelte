@@ -72,6 +72,21 @@
     return () => clearInterval(interval);
   });
 
+  let testingId = $state<Set<string>>(new Set());
+
+  async function testConnection(d: DeviceRecord): Promise<void> {
+    testingId = new Set(testingId).add(d.id);
+    try {
+      const h = await fetchDeviceHealth(d.id, true);
+      health = { ...health, [d.id]: h };
+      showToast(h.reachable ? `${d.name} is reachable` : `${d.name} is unreachable${h.error ? `: ${h.error}` : ''}`, h.reachable ? 'success' : 'error');
+    } finally {
+      const next = new Set(testingId);
+      next.delete(d.id);
+      testingId = next;
+    }
+  }
+
   let dialogOpen = $state(false);
   let editingId = $state<string | null>(null);
   let formName = $state('');
@@ -109,8 +124,9 @@
     }
   }
 
-  async function remove(id: string): Promise<void> {
-    if (!(await confirmDialog('Remove this device? Any of its running/queued jobs will fail.'))) return;
+  async function remove(d: DeviceRecord): Promise<void> {
+    if (!(await confirmDialog(`Remove "${d.name}"? Any of its running/queued jobs will fail.`))) return;
+    const id = d.id;
     deletingId = new Set(deletingId).add(id);
     try {
       await deleteDevice(id);
@@ -180,13 +196,16 @@
               <Badge variant={h.reachable ? 'success' : 'destructive'}>{h.reachable ? 'online' : 'unreachable'}</Badge>
             {/if}
             <div class="ml-auto flex flex-wrap gap-1.5">
+              <Button size="sm" variant="secondary" loading={testingId.has(d.id)} onclick={() => void testConnection(d)}>
+                Test connection
+              </Button>
               {#if canManageDevices}
                 {#if !d.isPrimary}
                   <Button size="sm" variant="secondary" onclick={() => void makePrimary(d)}>Make primary</Button>
                 {/if}
                 <Button size="sm" variant="secondary" onclick={() => void toggleEnabled(d)}>{d.enabled ? 'Disable' : 'Enable'}</Button>
                 <Button size="sm" variant="secondary" onclick={() => openEdit(d)}>Edit</Button>
-                <Button size="sm" variant="destructive" loading={deletingId.has(d.id)} onclick={() => remove(d.id)}>Remove</Button>
+                <Button size="sm" variant="destructive" loading={deletingId.has(d.id)} onclick={() => remove(d)}>Remove</Button>
               {/if}
             </div>
           </div>

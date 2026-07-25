@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Popover } from 'bits-ui';
-  import { Bell } from 'lucide-svelte';
+  import { Bell, CircleCheck, CircleX } from 'lucide-svelte';
   import { buttonVariants } from '#lib/components/ui/variants';
   import { clearToastHistory, toastHistoryState } from '#lib/ui.svelte';
   import { cn } from '#lib/utils';
@@ -45,7 +45,11 @@
         <div class="flex max-h-72 flex-col gap-2 overflow-y-auto">
           {#each toastHistoryState.items as t (t.id)}
             <div class="flex items-start gap-2 text-xs">
-              <span class={cn('mt-1 h-1.5 w-1.5 shrink-0 rounded-full', t.type === 'error' ? 'bg-err' : 'bg-ok')}></span>
+              {#if t.type === 'error'}
+                <CircleX class="text-err mt-0.5 h-3.5 w-3.5 shrink-0" />
+              {:else}
+                <CircleCheck class="text-ok mt-0.5 h-3.5 w-3.5 shrink-0" />
+              {/if}
               <div class="min-w-0 flex-1">
                 <div class="text-text">{t.message}</div>
                 <div class="text-muted mt-0.5"><RelativeTime ms={t.ts} /></div>

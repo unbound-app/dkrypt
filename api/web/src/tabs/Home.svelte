@@ -1,7 +1,7 @@
 <script lang="ts">
   import DonationNudge from '#components/DonationNudge.svelte';
   import OnboardingBanner from '#components/OnboardingBanner.svelte';
-  import { batchDecryptJumpState } from '#lib/ui.svelte';
+  import { batchDecryptJumpState, focusSearchJumpState } from '#lib/ui.svelte';
   import ActiveJobsPanel from '#tabs/home/ActiveJobsPanel.svelte';
   import DecryptPanel from '#tabs/home/DecryptPanel.svelte';
   import JobHistoryPanel from '#tabs/home/JobHistoryPanel.svelte';
@@ -21,6 +21,13 @@
     if (batchDecryptJumpState.requested) {
       batchDecryptJumpState.requested = false;
       decryptPanel?.openBatch();
+    }
+  });
+
+  $effect(() => {
+    if (focusSearchJumpState.requested) {
+      focusSearchJumpState.requested = false;
+      decryptPanel?.focusSearch();
     }
   });
 </script>

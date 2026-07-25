@@ -27,7 +27,7 @@
   import { scrollFade } from '#lib/scrollFade';
   import { createSavedViews } from '#lib/savedViews.svelte';
   import { sessionState } from '#lib/session.svelte';
-  import { confirmDialog, historyJumpState, setActiveTab, setSettingsSubtab, showToast, tabState } from '#lib/ui.svelte';
+  import { confirmDialog, historyJumpState, requestFocusSearch, setActiveTab, setSettingsSubtab, showToast, tabState } from '#lib/ui.svelte';
   import { getQueryParam, setQueryParams } from '#lib/urlState';
 
   const PAGE_SIZE = 15;
@@ -43,6 +43,21 @@
     queuedBy: string;
     deviceId: string;
     errorQ: string;
+    failureCategory: string;
+  }
+
+  const CANCELLED_RE = /^cancelled by/i;
+  const TIMEOUT_RE = /timed? ?out/i;
+  const UNREACHABLE_RE = /ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EHOSTUNREACH|no route to host|not reachable|connection closed/i;
+  const DISK_RE = /ENOSPC|no space left/i;
+
+  function categorizeFailure(message: string | undefined): string {
+    if (!message) return 'Unknown';
+    if (CANCELLED_RE.test(message)) return 'Cancelled';
+    if (UNREACHABLE_RE.test(message)) return 'Device unreachable';
+    if (DISK_RE.test(message)) return 'Disk full';
+    if (TIMEOUT_RE.test(message)) return 'Timed out';
+    return 'Other';
   }
 
   let entries = $state<JobHistoryEntry[]>([]);
@@ -58,6 +73,7 @@
   let queuedByFilter = $state(getQueryParam('hqueuedBy') ?? localStorage.getItem('jobHistoryQueuedByFilter') ?? '');
   let deviceFilter = $state(getQueryParam('hdevice') ?? localStorage.getItem('jobHistoryDeviceFilter') ?? '');
   let errorFilter = $state(getQueryParam('herror') ?? localStorage.getItem('jobHistoryErrorFilter') ?? '');
+  let failureCategoryFilter = $state(getQueryParam('hcat') ?? localStorage.getItem('jobHistoryFailureCategoryFilter') ?? '');
   let selected = $state<Set<string>>(new Set());
   let bulkRequeueing = $state(false);
   const savedViews = createSavedViews<FilterPreset>('jobHistoryFilterPresets');
@@ -73,6 +89,7 @@
     queuedByFilter = p.queuedBy;
     deviceFilter = p.deviceId;
     errorFilter = p.errorQ;
+    failureCategoryFilter = p.failureCategory ?? '';
   }
 
   function savePreset(): void {
@@ -86,6 +103,7 @@
       queuedBy: queuedByFilter.trim(),
       deviceId: deviceFilter.trim(),
       errorQ: errorFilter.trim(),
+      failureCategory: failureCategoryFilter.trim(),
     });
     newPresetName = '';
   }
@@ -103,6 +121,7 @@
       hqueuedBy: queuedByFilter.trim() || undefined,
       hdevice: deviceFilter.trim() || undefined,
       herror: errorFilter.trim() || undefined,
+      hcat: failureCategoryFilter.trim() || undefined,
     });
   });
 
@@ -113,7 +132,8 @@
       (statusFilter === 'all' || h.status === statusFilter) &&
       (!queuedByFilter.trim() || (h.queuedBy ?? '').toLowerCase().includes(queuedByFilter.trim().toLowerCase())) &&
       (!deviceFilter.trim() || (h.deviceId ?? '').toLowerCase().includes(deviceFilter.trim().toLowerCase())) &&
-      (!errorFilter.trim() || (h.error ?? '').toLowerCase().includes(errorFilter.trim().toLowerCase()))
+      (!errorFilter.trim() || (h.error ?? '').toLowerCase().includes(errorFilter.trim().toLowerCase())) &&
+      (!failureCategoryFilter.trim() || (h.status === 'failed' && categorizeFailure(h.error) === failureCategoryFilter.trim()))
     );
   }
 
@@ -130,6 +150,7 @@
         queuedBy: queuedByFilter.trim() || undefined,
         deviceId: deviceFilter.trim() || undefined,
         errorQ: errorFilter.trim() || undefined,
+        failureCategory: failureCategoryFilter.trim() || undefined,
       },
     );
     entries = data.history;
@@ -151,6 +172,7 @@
           queuedBy: queuedByFilter.trim() || undefined,
           deviceId: deviceFilter.trim() || undefined,
           errorQ: errorFilter.trim() || undefined,
+          failureCategory: failureCategoryFilter.trim() || undefined,
         },
       );
       const additions = data.history.filter((e) => !seenIds.has(e.id));
@@ -176,6 +198,14 @@
     }
   });
 
+  $effect(() => {
+    if (historyJumpState.failureCategory) {
+      failureCategoryFilter = historyJumpState.failureCategory;
+      statusFilter = 'failed';
+      historyJumpState.failureCategory = null;
+    }
+  });
+
   let hasSearched = false;
 
   $effect(() => {
@@ -185,6 +215,7 @@
     queuedByFilter;
     deviceFilter;
     errorFilter;
+    failureCategoryFilter;
     if (!hasSearched) {
       hasSearched = true;
       activeQuery = query;
@@ -212,9 +243,26 @@
   $effect(() => {
     localStorage.setItem('jobHistoryErrorFilter', errorFilter);
   });
+  $effect(() => {
+    localStorage.setItem('jobHistoryFailureCategoryFilter', failureCategoryFilter);
+  });
 
   function clearSearch(): void {
     searchText = '';
+  }
+
+  const hasActiveFilters = $derived(
+    !!(activeQuery || sourceFilter !== 'all' || statusFilter !== 'all' || queuedByFilter || deviceFilter || errorFilter || failureCategoryFilter),
+  );
+
+  function clearAllFilters(): void {
+    searchText = '';
+    sourceFilter = 'all';
+    statusFilter = 'all';
+    queuedByFilter = '';
+    deviceFilter = '';
+    errorFilter = '';
+    failureCategoryFilter = '';
   }
 
   $effect(() => {
@@ -237,9 +285,25 @@
 
   let statsOpen = $state(false);
   let statsBundleId = $state('');
+  let statsPreselectIds = $state<string[] | undefined>(undefined);
 
   function openStats(bundleId: string): void {
     statsBundleId = bundleId;
+    statsPreselectIds = undefined;
+    statsOpen = true;
+  }
+
+  const compareCandidate = $derived.by(() => {
+    if (selected.size !== 2) return null;
+    const rows = entries.filter((e) => selected.has(e.id));
+    if (rows.length !== 2 || rows[0].bundleId !== rows[1].bundleId || rows.some((r) => r.status !== 'done')) return null;
+    return { bundleId: rows[0].bundleId, ids: rows.map((r) => r.id) };
+  });
+
+  function openCompare(): void {
+    if (!compareCandidate) return;
+    statsBundleId = compareCandidate.bundleId;
+    statsPreselectIds = compareCandidate.ids;
     statsOpen = true;
   }
 
@@ -314,11 +378,7 @@
   function openRemediation(error: string | undefined): void {
     const text = (error ?? '').toLowerCase();
     setActiveTab('settings');
-    if (text.includes('auth') || text.includes('password') || text.includes('apple')) {
-      setSettingsSubtab('apple');
-      return;
-    }
-    if (text.includes('disk') || text.includes('storage') || text.includes('space')) {
+    if (text.includes('disk') || text.includes('storage') || text.includes('space') || text.includes('auth') || text.includes('password') || text.includes('apple')) {
       setSettingsSubtab('devices');
       return;
     }
@@ -397,6 +457,9 @@
   {#snippet headerExtra()}
     <div class="flex flex-wrap items-center gap-1.5">
       {#if selected.size > 0}
+        {#if compareCandidate}
+          <Button size="sm" variant="secondary" onclick={openCompare}>Compare selected</Button>
+        {/if}
         <Button size="sm" loading={bulkRequeueing} onclick={bulkDecryptAgain}>Decrypt {selected.size} again</Button>
         <Button size="sm" variant="secondary" onclick={bulkExportCsv}>Export {selected.size} CSV</Button>
         <Button size="sm" variant="secondary" onclick={bulkExportJson}>Export {selected.size} JSON</Button>
@@ -439,6 +502,22 @@
     <Input placeholder="Error contains…" bind:value={errorFilter} />
   </div>
 
+  {#if failureCategoryFilter}
+    <div class="mb-3 flex items-center gap-1.5">
+      <span class="border-accent text-accent inline-flex items-center gap-1.5 rounded-full border pr-1 pl-2.5 py-1 text-[12px]">
+        Failure category: {failureCategoryFilter}
+        <button
+          class="hover:text-err cursor-pointer rounded-full p-0.5"
+          onclick={() => (failureCategoryFilter = '')}
+          aria-label="Clear failure category filter"
+          title="Clear failure category filter"
+        >
+          <X class="h-3 w-3" />
+        </button>
+      </span>
+    </div>
+  {/if}
+
   <div class="mb-3 flex flex-wrap items-center gap-1.5">
     {#each savedViews.presets as p (p.name)}
       <span class="border-border text-muted hover:text-text hover:border-accent inline-flex items-center gap-1 rounded-full border pr-1 pl-2.5 py-1 text-[12px]">
@@ -460,14 +539,15 @@
   </div>
 
   {#if loaded && entries.length === 0}
-    <EmptyState
-      icon={History}
-      message={
-        activeQuery || sourceFilter !== 'all' || statusFilter !== 'all' || queuedByFilter || deviceFilter || errorFilter
-          ? 'No decrypts match these filters.'
-          : 'No decrypts yet.'
-      }
-    />
+    <EmptyState icon={History} message={hasActiveFilters ? 'No decrypts match these filters.' : 'No decrypts yet.'}>
+      {#snippet action()}
+        {#if hasActiveFilters}
+          <Button size="sm" variant="secondary" onclick={clearAllFilters}>Clear filters</Button>
+        {:else}
+          <Button size="sm" variant="secondary" onclick={() => requestFocusSearch()}>Queue a decrypt</Button>
+        {/if}
+      {/snippet}
+    </EmptyState>
   {:else}
     <div class="scroll-fade-x max-h-[600px] overflow-auto" use:scrollFade>
       <table class="responsive-table sm:min-w-[720px]">
@@ -586,4 +666,4 @@
 </Card>
 
 <ShareLinkDialog open={shareOpen} jobId={shareJobId} onOpenChange={(v) => (shareOpen = v)} />
-<BundleStatsDialog open={statsOpen} bundleId={statsBundleId} onOpenChange={(v) => (statsOpen = v)} />
+<BundleStatsDialog open={statsOpen} bundleId={statsBundleId} preselectIds={statsPreselectIds} onOpenChange={(v) => (statsOpen = v)} />

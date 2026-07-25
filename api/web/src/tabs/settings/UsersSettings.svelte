@@ -20,6 +20,7 @@
   import Card from '#lib/components/ui/Card.svelte';
   import Dialog from '#lib/components/ui/Dialog.svelte';
   import Input from '#lib/components/ui/Input.svelte';
+  import Select from '#lib/components/ui/Select.svelte';
   import { buttonVariants } from '#lib/components/ui/variants';
   import { PermissionFlag } from '#lib/permissions';
   import { scrollFade } from '#lib/scrollFade';
@@ -84,10 +85,23 @@
     selectedUsers = selectedUsers.size === selectableUsers.length ? new Set() : new Set(selectableUsers.map((u) => u.username));
   }
 
-  async function applyRoleToSelected(role: Role): Promise<void> {
+  let bulkPreviewOpen = $state(false);
+  let bulkPreviewRole = $state<Role | null>(null);
+
+  function openBulkPreview(role: Role): void {
     if (selectedUsers.size === 0) return;
-    if (!(await confirmDialog(`Set "${role.name}" as the only role for ${selectedUsers.size} selected user(s)?`, { variant: 'default', confirmLabel: 'Apply' })))
-      return;
+    bulkPreviewRole = role;
+    bulkPreviewOpen = true;
+  }
+
+  const bulkPreviewUsers = $derived(
+    bulkPreviewRole ? (users ?? []).filter((u) => selectedUsers.has(u.username)) : [],
+  );
+
+  async function confirmBulkApply(): Promise<void> {
+    const role = bulkPreviewRole;
+    if (!role) return;
+    bulkPreviewOpen = false;
     bulkApplying = true;
     try {
       for (const username of selectedUsers) await updateUserRoles(username, [role.id]);
@@ -98,16 +112,31 @@
     }
   }
 
+  let auditActionFilter = $state('all');
+  let auditFromDate = $state('');
+  let auditToDate = $state('');
+
+  const AUDIT_ACTION_OPTIONS = [
+    { value: 'all', label: 'All actions' },
+    ...(Object.entries(AUDIT_ACTION_LABEL) as [AuditLogEntry['action'], string][]).map(([value, label]) => ({ value, label })),
+  ];
+
   const filteredAuditLog = $derived.by(() => {
     const needle = auditSearch.trim().toLowerCase();
-    if (!needle) return auditLog ?? [];
-    return (auditLog ?? []).filter(
-      (e) =>
+    const fromTs = auditFromDate ? new Date(auditFromDate).setHours(0, 0, 0, 0) : undefined;
+    const toTs = auditToDate ? new Date(auditToDate).setHours(23, 59, 59, 999) : undefined;
+    return (auditLog ?? []).filter((e) => {
+      if (auditActionFilter !== 'all' && e.action !== auditActionFilter) return false;
+      if (fromTs !== undefined && e.ts < fromTs) return false;
+      if (toTs !== undefined && e.ts > toTs) return false;
+      if (!needle) return true;
+      return (
         e.actor.toLowerCase().includes(needle) ||
         e.target.toLowerCase().includes(needle) ||
         AUDIT_ACTION_LABEL[e.action].toLowerCase().includes(needle) ||
-        (e.detail ?? '').toLowerCase().includes(needle),
-    );
+        (e.detail ?? '').toLowerCase().includes(needle)
+      );
+    });
   });
 
   async function load(): Promise<void> {
@@ -231,7 +260,7 @@
       <div class="mb-3 flex flex-wrap items-center gap-1.5">
         <span class="text-xs text-muted">Set role for {selectedUsers.size} selected:</span>
         {#each assignableRoles as role (role.id)}
-          <Button size="sm" variant="secondary" loading={bulkApplying} onclick={() => applyRoleToSelected(role)}>
+          <Button size="sm" variant="secondary" loading={bulkApplying} onclick={() => openBulkPreview(role)}>
             {role.name}
           </Button>
         {/each}
@@ -328,7 +357,18 @@
       </div>
     {/snippet}
     {#if (auditLog?.length ?? 0) > 5}
-      <Input placeholder="Search by actor, action, target, or detail…" bind:value={auditSearch} class="mb-3 max-w-xs" />
+      <div class="mb-3 flex flex-wrap items-center gap-2">
+        <Input placeholder="Search by actor, action, target, or detail…" bind:value={auditSearch} class="max-w-xs" />
+        <Select items={AUDIT_ACTION_OPTIONS} bind:value={auditActionFilter} class="w-44" />
+        <label class="flex items-center gap-1.5 text-xs text-muted">
+          From
+          <input type="date" bind:value={auditFromDate} class="border-border bg-panel-muted rounded-md border px-2 py-1 text-xs" />
+        </label>
+        <label class="flex items-center gap-1.5 text-xs text-muted">
+          To
+          <input type="date" bind:value={auditToDate} class="border-border bg-panel-muted rounded-md border px-2 py-1 text-xs" />
+        </label>
+      </div>
     {/if}
     <div class="scroll-fade-x max-h-80 overflow-auto" use:scrollFade>
       <table class="responsive-table sm:min-w-[480px]">
@@ -420,6 +460,46 @@
       <div class="border-border mt-4 border-t pt-4">
         <Button variant="destructive" class="w-full" loading={removing} onclick={removeManaged}>Remove role assignments</Button>
       </div>
+    {/if}
+  </Dialog>
+
+  <Dialog open={bulkPreviewOpen} onOpenChange={(v) => (bulkPreviewOpen = v)} class="max-w-md">
+    {#if bulkPreviewRole}
+      {@const role = bulkPreviewRole}
+      <div class="mb-1 text-sm font-medium">Set "{role.name}" as the only role</div>
+      <div class="mb-3 text-xs text-muted">
+        This replaces every role currently held by {bulkPreviewUsers.length} selected user{bulkPreviewUsers.length === 1 ? '' : 's'} - review what
+        changes before applying.
+      </div>
+      <div class="border-border flex max-h-[46vh] flex-col divide-y overflow-y-auto rounded-lg border">
+        {#each bulkPreviewUsers as u (u.username)}
+          <div class="flex flex-wrap items-center gap-2 px-3 py-2 text-xs">
+            <span class="shrink-0 font-medium">{u.displayName ?? u.username}</span>
+            <div class="flex flex-wrap items-center gap-1">
+              {#each u.roleIds as id (id)}
+                {@const current = roleById(id)}
+                {#if current}
+                  <Badge style="background-color: {current.color}22; color: {current.color}; border: 1px solid {current.color}55">
+                    {current.name}
+                  </Badge>
+                {/if}
+              {:else}
+                <span class="text-muted">(no roles)</span>
+              {/each}
+            </div>
+            <span class="text-muted">→</span>
+            <Badge style="background-color: {role.color}22; color: {role.color}; border: 1px solid {role.color}55">
+              {role.name}
+            </Badge>
+            {#if u.roleIds.length === 1 && u.roleIds[0] === role.id}
+              <Badge variant="secondary">no change</Badge>
+            {/if}
+          </div>
+        {/each}
+      </div>
+      <Button class="mt-3.5 w-full" loading={bulkApplying} onclick={confirmBulkApply}>
+        Apply to {bulkPreviewUsers.length} user{bulkPreviewUsers.length === 1 ? '' : 's'}
+      </Button>
     {/if}
   </Dialog>
 {/if}

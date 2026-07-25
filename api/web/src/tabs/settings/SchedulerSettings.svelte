@@ -8,6 +8,7 @@
     fetchSettings,
     fetchWebhookDeliveries,
     previewWatchDispatch,
+    previewWatchDispatchDraft,
     saveSettings,
     testWebhook,
     triggerWatchDispatch,
@@ -31,6 +32,9 @@
   import { PermissionFlag } from '#lib/permissions';
   import { sessionHasPermission } from '#lib/session.svelte';
   import { confirmDialog, showToast } from '#lib/ui.svelte';
+  import { exampleWebhookPayload } from '#lib/webhookExamples';
+  import Popover from '#lib/components/ui/Popover.svelte';
+  import CopyButton from '#components/CopyButton.svelte';
 
   const FORMAT_OPTIONS = [
     { value: 'embed', label: 'Rich embed (Discord)' },
@@ -169,6 +173,7 @@
   function openAddWatch(): void {
     editingWatchId = null;
     watchForm = { ...DEFAULT_WATCH_FORM };
+    draftPreview = null;
     watchDialogOpen = true;
   }
 
@@ -183,11 +188,25 @@
       enabled: w.enabled,
       webhookUrl: w.webhookUrl ?? '',
     };
+    draftPreview = null;
     watchDialogOpen = true;
   }
 
   function applyCronPreset(expr: string): void {
     watchForm = { ...watchForm, pollCron: expr };
+  }
+
+  let draftPreview = $state<UpdateCheck | null>(null);
+  let previewingDraft = $state(false);
+
+  async function previewDraft(): Promise<void> {
+    if (!watchForm.bundleId.trim() || !watchForm.repo.trim() || watchRepoErrors.repo) return;
+    previewingDraft = true;
+    try {
+      draftPreview = await previewWatchDispatchDraft(watchForm.bundleId.trim(), watchForm.repo.trim());
+    } finally {
+      previewingDraft = false;
+    }
   }
 
   async function saveWatch(): Promise<void> {
@@ -208,8 +227,9 @@
     }
   }
 
-  async function removeWatch(id: string): Promise<void> {
-    if (!(await confirmDialog('Remove this watch? Its scheduled checks stop immediately.'))) return;
+  async function removeWatch(w: AppWatch): Promise<void> {
+    if (!(await confirmDialog(`Remove "${w.name || w.bundleId}"? Its scheduled checks stop immediately.`))) return;
+    const id = w.id;
     deletingWatch = new Set(deletingWatch).add(id);
     try {
       await deleteWatch(id);
@@ -371,7 +391,7 @@
                 {#if canManageWatches}
                   <Switch checked={w.enabled} onCheckedChange={() => void toggleWatchEnabled(w)} aria-label="Enable {w.name || w.bundleId}" />
                   <Button size="sm" variant="secondary" onclick={() => openEditWatch(w)}>Edit</Button>
-                  <Button size="sm" variant="destructive" loading={deletingWatch.has(w.id)} onclick={() => removeWatch(w.id)}>Remove</Button>
+                  <Button size="sm" variant="destructive" loading={deletingWatch.has(w.id)} onclick={() => removeWatch(w)}>Remove</Button>
                 {/if}
                 {#if canTriggerDispatch}
                   <Button size="sm" variant="secondary" loading={previewingWatch.has(w.id)} onclick={() => runPreviewWatch(w.id)}>Preview</Button>
@@ -512,6 +532,26 @@
         <div class="mt-1 text-xs text-err">{watchRepoErrors.webhookUrl}</div>
       {/if}
       <div class="mt-1 text-[11px] text-muted">Send this watch's dispatch notifications to a different Discord/Slack channel.</div>
+
+      <Button
+        variant="secondary"
+        class="mt-3.5 w-full"
+        loading={previewingDraft}
+        disabled={!watchForm.bundleId.trim() || !watchForm.repo.trim() || !!watchRepoErrors.repo}
+        onclick={previewDraft}
+      >
+        Preview what this would do
+      </Button>
+      {#if draftPreview}
+        <div class="border-border bg-panel-muted mt-2 rounded-md border p-2.5 text-xs">
+          <div class={draftPreview.wouldDispatch ? 'text-ok' : 'text-muted'}>{draftPreview.reason}</div>
+          {#if draftPreview.testflight}
+            <div class="border-border mt-1.5 border-t pt-1.5">
+              <div class={draftPreview.testflight.wouldDispatch ? 'text-ok' : 'text-muted'}>{draftPreview.testflight.reason}</div>
+            </div>
+          {/if}
+        </div>
+      {/if}
     </div>
     <Button class="mt-3.5 w-full" loading={savingWatch} onclick={saveWatch}>{editingWatchId ? 'Save' : 'Add'}</Button>
   </Dialog>
@@ -558,6 +598,18 @@
             <div class="text-[13px] text-text">{event.label}</div>
             <div class="text-[11px] text-muted">{event.description}</div>
           </div>
+          <Popover>
+            {#snippet trigger()}
+              <span class="text-muted hover:text-text cursor-pointer text-[11px] underline-offset-2 hover:underline">payload</span>
+            {/snippet}
+            <div class="max-w-xs">
+              <div class="mb-1.5 text-[11px] text-muted">Example payload for this event ({form.notifyFormat})</div>
+              <pre class="bg-panel-muted max-h-64 max-w-72 overflow-auto rounded-md p-2 text-[10.5px] leading-snug whitespace-pre-wrap">{exampleWebhookPayload(event.key, form.notifyFormat)}</pre>
+              <div class="mt-1.5">
+                <CopyButton text={exampleWebhookPayload(event.key, form.notifyFormat)} label="Copy" />
+              </div>
+            </div>
+          </Popover>
           <Switch
             checked={form[event.key] as boolean}
             disabled={!canManageSchedulerSettings}

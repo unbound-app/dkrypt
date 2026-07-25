@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { PackageSearch } from 'lucide-svelte';
+  import { PackageSearch, TriangleAlert } from 'lucide-svelte';
   import CopyButton from '#components/CopyButton.svelte';
   import EmptyState from '#components/EmptyState.svelte';
   import KeyUsageDialog from '#components/KeyUsageDialog.svelte';
@@ -11,6 +11,7 @@
     bulkExtendKeyExpiry,
     bulkRevokeKeys,
     bulkSetKeyDailyLimit,
+    bulkSetKeyScope,
     createKey,
     denyKey,
     fetchAllKeys,
@@ -79,6 +80,18 @@
     return Date.now() - lastActivity > STALE_MS;
   }
 
+  const EXPIRING_SOON_MS = 7 * 24 * 60 * 60 * 1000;
+
+  const expiringSoonKeys = $derived.by(() => {
+    const seen = new Map<string, ApiKeyRecord>();
+    for (const k of [...(mine ?? []), ...(all ?? [])]) {
+      if (k.status !== 'approved' || !k.expiresAt) continue;
+      const untilExpiry = k.expiresAt - Date.now();
+      if (untilExpiry > 0 && untilExpiry <= EXPIRING_SOON_MS) seen.set(k.id, k);
+    }
+    return [...seen.values()].sort((a, b) => (a.expiresAt ?? 0) - (b.expiresAt ?? 0));
+  });
+
   let usageOpen = $state(false);
   let usageKeyId = $state('');
   let usageKeyName = $state('');
@@ -116,6 +129,7 @@
   const canViewUsage = $derived(canViewAll || canCreate);
   const canManageExpiry = $derived(canManage);
   const canManageDailyLimits = $derived(canManage);
+  const canManageScope = $derived(canManage);
   const canManagePriority = $derived(canManage);
   const canManageConcurrency = $derived(canManage);
   const canManageTestFlight = $derived(canManage);
@@ -201,6 +215,11 @@
   function curlExample(key: string): string {
     const base = sessionState.publicBaseUrl ?? location.origin;
     return `curl -H "Authorization: Bearer ${key}" "${base}/v1/decrypt?bundleId=com.example.app" -o app.ipa`;
+  }
+
+  function envExample(key: string): string {
+    const base = sessionState.publicBaseUrl ?? location.origin;
+    return `DKRYPT_API_KEY=${key}\nDKRYPT_BASE_URL=${base}`;
   }
 
   async function doReveal(id: string): Promise<void> {
@@ -361,6 +380,26 @@
     }
   }
 
+  let bulkScope = $state('');
+  let bulkSettingScope = $state(false);
+
+  async function bulkSetScope(): Promise<void> {
+    if (selected.size === 0) return;
+    const ids = bulkScope
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    bulkSettingScope = true;
+    try {
+      await bulkSetKeyScope([...selected], ids.length > 0 ? ids : null);
+      selected = new Set();
+      bulkScope = '';
+      void loadAll();
+    } finally {
+      bulkSettingScope = false;
+    }
+  }
+
   async function bulkApprove(): Promise<void> {
     if (selectedPending.size === 0) return;
     bulkApproving = true;
@@ -375,6 +414,29 @@
 </script>
 
 <div class="flex flex-col gap-4">
+  {#if expiringSoonKeys.length > 0}
+    <Card class="border-warn">
+      <div class="flex items-start gap-2.5">
+        <TriangleAlert class="text-warn mt-0.5 h-4 w-4 shrink-0" />
+        <div class="min-w-0 flex-1">
+          <div class="text-sm font-medium">
+            {expiringSoonKeys.length} key{expiringSoonKeys.length === 1 ? '' : 's'} expiring within 7 days
+          </div>
+          <div class="mt-1.5 flex flex-wrap gap-1.5">
+            {#each expiringSoonKeys as k (k.id)}
+              <button
+                class="border-warn text-warn hover:bg-warn/10 inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs"
+                onclick={() => openUsage(k)}
+                title="View usage for {k.name}"
+              >
+                {k.name} · {fmtUntil(k.expiresAt as number)}
+              </button>
+            {/each}
+          </div>
+        </div>
+      </div>
+    </Card>
+  {/if}
   {#if canCreate || canRequest}
   <Card title={canCreate ? 'Create API key' : 'Request API key'}>
     <div class="mb-2.5 text-sm text-muted">
@@ -396,8 +458,9 @@
         Save this now, it won't be shown again:<br />
         <code>{revealedKey}</code>
         <CopyButton text={revealedKey} />
-        <div class="mt-2">
+        <div class="mt-2 flex flex-wrap gap-1.5">
           <CopyButton text={curlExample(revealedKey)} label="Copy curl example" />
+          <CopyButton text={envExample(revealedKey)} label="Copy as .env" />
         </div>
       </div>
     {/if}
@@ -534,6 +597,10 @@
               <div class="flex items-center gap-1">
                 <Input type="number" min="1" placeholder="blank = clear" bind:value={bulkDailyLimit} class="h-8 w-28 text-xs" aria-label="New daily limit" />
                 {#if canManageDailyLimits}<Button size="sm" variant="secondary" loading={bulkSettingLimit} onclick={bulkSetLimit}>Set daily limit</Button>{/if}
+              </div>
+              <div class="flex items-center gap-1">
+                <Input placeholder="bundle ids, blank = unrestricted" bind:value={bulkScope} class="h-8 w-56 text-xs" aria-label="Bundle IDs to restrict selected keys to" />
+                {#if canManageScope}<Button size="sm" variant="secondary" loading={bulkSettingScope} onclick={bulkSetScope}>Set scope</Button>{/if}
               </div>
             {/if}
             {#if canRevokeAny}

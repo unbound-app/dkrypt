@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { BarChart3, TriangleAlert } from 'lucide-svelte';
+  import { BarChart3, TriangleAlert, X } from 'lucide-svelte';
   import BundleStatsDialog from '#components/BundleStatsDialog.svelte';
   import EmptyState from '#components/EmptyState.svelte';
   import Sparkline from '#components/Sparkline.svelte';
@@ -7,11 +7,14 @@
   import Badge from '#lib/components/ui/Badge.svelte';
   import Button from '#lib/components/ui/Button.svelte';
   import Card from '#lib/components/ui/Card.svelte';
+  import Input from '#lib/components/ui/Input.svelte';
   import Select from '#lib/components/ui/Select.svelte';
   import { csvCell, downloadBlob, fmtBytesGB, fmtDurationApprox, trendDelta } from '#lib/format';
   import { liveState } from '#lib/live.svelte';
   import { PermissionFlag } from '#lib/permissions';
+  import { createSavedViews } from '#lib/savedViews.svelte';
   import { sessionHasAnyPermission } from '#lib/session.svelte';
+  import { jumpToHistoryFailureCategory, requestFocusSearch } from '#lib/ui.svelte';
   import RelativeTime from '#components/RelativeTime.svelte';
 
   const TREND_DAYS_OPTIONS = [
@@ -29,9 +32,29 @@
     { value: '25', label: 'Top 25' },
   ];
 
+  interface InsightsPreset {
+    name: string;
+    trendDays: string;
+    topAppsLimit: string;
+  }
+
   let insights = $state<InsightsSummary | null>(null);
   let trendDays = $state('14');
   let topAppsLimit = $state('5');
+  const savedViews = createSavedViews<InsightsPreset>('insightsFilterPresets');
+  let newPresetName = $state('');
+
+  function applyPreset(p: InsightsPreset): void {
+    trendDays = p.trendDays;
+    topAppsLimit = p.topAppsLimit;
+  }
+
+  function savePreset(): void {
+    const name = newPresetName.trim();
+    if (!name) return;
+    savedViews.save({ name, trendDays, topAppsLimit });
+    newPresetName = '';
+  }
 
   const canViewScheduler = $derived(
     sessionHasAnyPermission([PermissionFlag.viewAutomation, PermissionFlag.manageAutomation, PermissionFlag.manageDevices]),
@@ -79,9 +102,13 @@
 
   function exportCsv(): void {
     if (!insights) return;
-    const rows = ['bundleId,totalRuns,doneCount,failedCount,successRate,totalSizeBytes'];
+    const rows = ['bundleId,totalRuns,doneCount,failedCount,successRate,avgDurationMs,totalSizeBytes'];
     for (const app of insights.topApps) {
-      rows.push([app.bundleId, app.totalRuns, app.doneCount, app.failedCount, app.successRate, app.totalSizeBytes].map(csvCell).join(','));
+      rows.push(
+        [app.bundleId, app.totalRuns, app.doneCount, app.failedCount, app.successRate, app.avgDurationMs ?? '', app.totalSizeBytes]
+          .map(csvCell)
+          .join(','),
+      );
     }
     downloadBlob(rows.join('\n'), 'dkrypt-insights.csv', 'text/csv');
   }
@@ -101,6 +128,27 @@
       </div>
     {/if}
   {/snippet}
+  {#if savedViews.presets.length > 0 || insights}
+    <div class="mb-3 flex flex-wrap items-center gap-1.5">
+      {#each savedViews.presets as p (p.name)}
+        <span class="border-border text-muted hover:text-text hover:border-accent inline-flex items-center gap-1 rounded-full border pr-1 pl-2.5 py-1 text-[12px]">
+          <button class="cursor-pointer" onclick={() => applyPreset(p)}>{p.name}</button>
+          <button
+            class="text-muted hover:text-err cursor-pointer rounded-full p-0.5"
+            onclick={() => savedViews.remove(p.name)}
+            aria-label="Delete preset {p.name}"
+            title="Delete preset"
+          >
+            <X class="h-3 w-3" />
+          </button>
+        </span>
+      {/each}
+      <div class="flex items-center gap-1.5">
+        <Input placeholder="Preset name…" bind:value={newPresetName} class="h-7 w-32 text-xs" />
+        <Button size="sm" variant="secondary" disabled={!newPresetName.trim()} onclick={savePreset}>Save view</Button>
+      </div>
+    </div>
+  {/if}
   {#if !insights}
     <div class="flex flex-col gap-1.5">
       {#each Array(4) as _, i (i)}
@@ -108,7 +156,11 @@
       {/each}
     </div>
   {:else if insights.totalRuns === 0}
-    <EmptyState icon={BarChart3} message="No decrypts yet - insights will show up once some have run." />
+    <EmptyState icon={BarChart3} message="No decrypts yet - insights will show up once some have run.">
+      {#snippet action()}
+        <Button size="sm" variant="secondary" onclick={() => requestFocusSearch()}>Queue a decrypt</Button>
+      {/snippet}
+    </EmptyState>
   {:else}
     <div class="mb-4 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
       <div class="border-border rounded-lg border p-3">
@@ -151,13 +203,17 @@
         <div class="mb-2 text-xs text-muted">Failure reasons</div>
         <div class="flex flex-col gap-1.5">
           {#each insights.failureBreakdown as f (f.category)}
-            <div class="flex items-center gap-2.5">
-              <span class="w-32 shrink-0 truncate text-xs" title={f.category}>{f.category}</span>
+            <button
+              class="flex w-full cursor-pointer items-center gap-2.5 text-left"
+              onclick={() => jumpToHistoryFailureCategory(f.category)}
+              title="View {f.category} failures in Job History"
+            >
+              <span class="w-32 shrink-0 truncate text-xs hover:text-accent hover:underline" title={f.category}>{f.category}</span>
               <div class="bg-panel-muted h-2 flex-1 overflow-hidden rounded-full">
                 <div class="bg-err h-full rounded-full" style="width: {(f.count / maxFailureCount) * 100}%"></div>
               </div>
               <span class="w-6 shrink-0 text-right text-xs text-muted">{f.count}</span>
-            </div>
+            </button>
           {/each}
         </div>
       </div>
@@ -174,6 +230,7 @@
             <th>Bundle ID</th>
             <th>Runs</th>
             <th>Success rate</th>
+            <th>Avg duration</th>
             <th>Size</th>
           </tr>
         </thead>
@@ -195,6 +252,7 @@
                   {Math.round(app.successRate * 100)}%
                 </Badge>
               </td>
+              <td data-label="Avg duration" class="text-muted">{app.avgDurationMs ? fmtDurationApprox(app.avgDurationMs) : '-'}</td>
               <td data-label="Size" class="text-muted">{fmtBytesGB(app.totalSizeBytes)}</td>
             </tr>
           {/each}

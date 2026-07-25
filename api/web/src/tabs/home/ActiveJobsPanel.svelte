@@ -1,9 +1,9 @@
 <script lang="ts">
-  import { PackageOpen } from 'lucide-svelte';
+  import { GripVertical, PackageOpen } from 'lucide-svelte';
   import CopyButton from '#components/CopyButton.svelte';
   import EmptyState from '#components/EmptyState.svelte';
   import SkeletonRows from '#components/SkeletonRows.svelte';
-  import { cancelJob, fetchJobEta, prioritizeJob } from '#lib/api';
+  import { cancelJob, fetchJobEta, prioritizeJob, reorderQueue, type ActiveJob } from '#lib/api';
   import Badge from '#lib/components/ui/Badge.svelte';
   import Button from '#lib/components/ui/Button.svelte';
   import Card from '#lib/components/ui/Card.svelte';
@@ -13,7 +13,7 @@
   import { scrollFade } from '#lib/scrollFade';
   import { PermissionFlag } from '#lib/permissions';
   import { sessionHasPermission } from '#lib/session.svelte';
-  import { confirmDialog, densityState } from '#lib/ui.svelte';
+  import { confirmDialog, densityState, requestFocusSearch } from '#lib/ui.svelte';
 
   const jobs = $derived(liveState.overview?.activeJobs ?? []);
   const loaded = $derived(liveState.overview !== null);
@@ -54,7 +54,12 @@
   async function bulkCancel(): Promise<void> {
     const ids = [...selected];
     if (ids.length === 0) return;
-    if (!(await confirmDialog(`Cancel ${ids.length} selected job(s)?`, { confirmLabel: 'Cancel jobs' }))) return;
+    const runningCount = jobs.filter((j) => ids.includes(j.id) && j.status === 'running').length;
+    const message =
+      runningCount > 0
+        ? `Cancel ${ids.length} selected job(s)? ${runningCount} of them ${runningCount === 1 ? 'is' : 'are'} already running on the device.`
+        : `Cancel ${ids.length} selected job(s)?`;
+    if (!(await confirmDialog(message, { confirmLabel: 'Cancel jobs' }))) return;
     bulkCancelling = true;
     try {
       await Promise.all(ids.map((id) => cancelJob(id)));
@@ -101,6 +106,41 @@
   }
 
   const queuedJobIds = $derived(jobs.filter((j) => j.status === 'queued').map((j) => j.id));
+
+  let draggingId = $state<string | null>(null);
+  let dragOverId = $state<string | null>(null);
+
+  function onRowDragStart(j: ActiveJob): void {
+    if (j.status !== 'queued') return;
+    draggingId = j.id;
+  }
+
+  function onRowDragOver(e: DragEvent, j: ActiveJob): void {
+    if (!draggingId || j.status !== 'queued' || j.id === draggingId) return;
+    e.preventDefault();
+    dragOverId = j.id;
+  }
+
+  function onRowDrop(e: DragEvent, target: ActiveJob): void {
+    e.preventDefault();
+    const dragged = draggingId;
+    draggingId = null;
+    dragOverId = null;
+    if (!dragged || target.status !== 'queued' || dragged === target.id) return;
+
+    const next = [...queuedJobIds];
+    const from = next.indexOf(dragged);
+    const to = next.indexOf(target.id);
+    if (from === -1 || to === -1) return;
+    next.splice(from, 1);
+    next.splice(to, 0, dragged);
+    void reorderQueue(next);
+  }
+
+  function onRowDragEnd(): void {
+    draggingId = null;
+    dragOverId = null;
+  }
 
   let etaByBundle = $state<Record<string, number | null>>({});
   const fetchedBundles = new Set<string>();
@@ -153,6 +193,7 @@
       <thead>
         <tr>
           {#if canCancel}
+            <th></th>
             <th><input type="checkbox" checked={jobs.length > 0 && selected.size === jobs.length} onchange={toggleSelectAll} aria-label="Select all active jobs" /></th>
           {/if}
           <th>Bundle ID</th>
@@ -167,11 +208,23 @@
       </thead>
       <tbody>
         {#if !loaded}
-          <SkeletonRows rows={2} colspan={canCancel ? 9 : 8} />
+          <SkeletonRows rows={2} colspan={canCancel ? 10 : 8} />
         {:else}
           {#each jobs as j (j.id)}
-            <tr>
+            <tr
+              class={dragOverId === j.id ? 'bg-accent/10' : ''}
+              draggable={canCancel && j.status === 'queued'}
+              ondragstart={() => onRowDragStart(j)}
+              ondragover={(e) => onRowDragOver(e, j)}
+              ondrop={(e) => onRowDrop(e, j)}
+              ondragend={onRowDragEnd}
+            >
               {#if canCancel}
+                <td class="cursor-grab active:cursor-grabbing">
+                  {#if j.status === 'queued'}
+                    <GripVertical class="text-muted h-3.5 w-3.5" />
+                  {/if}
+                </td>
                 <td data-label="Select"><input type="checkbox" checked={selected.has(j.id)} onchange={() => toggleSelect(j.id)} /></td>
               {/if}
               <td data-label="Bundle ID" class="max-w-40 truncate font-mono text-[11px]" title={j.bundleId}>{j.bundleId}</td>
@@ -250,6 +303,10 @@
     </table>
   </div>
   {#if loaded && jobs.length === 0}
-    <EmptyState icon={PackageOpen} message="Nothing running." />
+    <EmptyState icon={PackageOpen} message="Nothing running.">
+      {#snippet action()}
+        <Button size="sm" variant="secondary" onclick={() => requestFocusSearch()}>Queue a decrypt</Button>
+      {/snippet}
+    </EmptyState>
   {/if}
 </Card>

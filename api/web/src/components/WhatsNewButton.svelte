@@ -1,8 +1,9 @@
 <script lang="ts">
   import { Popover } from 'bits-ui';
   import { Sparkles } from 'lucide-svelte';
-  import { CHANGELOG } from '#lib/changelog';
+  import { CHANGELOG, type ChangelogEntry } from '#lib/changelog';
   import { buttonVariants } from '#lib/components/ui/variants';
+  import { setActiveTab, setSettingsSubtab, type TabId } from '#lib/ui.svelte';
   import { cn } from '#lib/utils';
 
   const LAST_VIEWED_KEY = 'changelogLastViewedDate';
@@ -20,6 +21,13 @@
       localStorage.setItem(LAST_VIEWED_KEY, latestDate);
     }
   }
+
+  function followLink(entry: ChangelogEntry): void {
+    if (!entry.link) return;
+    open = false;
+    setActiveTab(entry.link.tab as TabId);
+    if (entry.link.subtab) setSettingsSubtab(entry.link.subtab);
+  }
 </script>
 
 <Popover.Root bind:open {onOpenChange}>
@@ -36,7 +44,17 @@
         {#each CHANGELOG as entry (entry.date + entry.title)}
           <div class="text-xs">
             <div class="mb-0.5 flex items-center justify-between gap-2">
-              <span class="text-text font-medium">{entry.title}</span>
+              {#if entry.link}
+                <button
+                  class="text-text cursor-pointer font-medium hover:text-accent hover:underline"
+                  onclick={() => followLink(entry)}
+                  title="Go to this feature"
+                >
+                  {entry.title}
+                </button>
+              {:else}
+                <span class="text-text font-medium">{entry.title}</span>
+              {/if}
               <span class="text-muted shrink-0">{entry.date}</span>
             </div>
             <div class="text-muted leading-relaxed">{entry.description}</div>
