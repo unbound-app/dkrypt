@@ -220,7 +220,7 @@
               ondragend={onRowDragEnd}
             >
               {#if canCancel}
-                <td class="cursor-grab active:cursor-grabbing">
+                <td class="mobile-drag cursor-grab active:cursor-grabbing">
                   {#if j.status === 'queued'}
                     <GripVertical class="text-muted h-3.5 w-3.5" />
                   {/if}
@@ -278,7 +278,7 @@
                   </div>
                 {/if}
               </td>
-              <td>
+              <td data-label="Actions" class="mobile-actions">
                 {#if canCancel && (j.status === 'queued' || j.status === 'running')}
                   <div class="flex justify-end gap-1.5">
                     {#if j.status === 'queued'}

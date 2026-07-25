@@ -660,7 +660,7 @@
         </DropdownMenu.Root>
       </div>
     </header>
-    <main class="mx-auto max-w-[1680px] px-4 pt-6 pb-20 sm:pb-6 lg:px-6">
+    <main class="mx-auto max-w-[1680px] px-3 pt-4 pb-20 sm:px-4 sm:pt-6 sm:pb-6 lg:px-6">
       <SessionExpiryBanner />
       <ConnectionBanner />
       <UpdateAvailableBanner />
@@ -706,7 +706,7 @@
       </div>
     </main>
     <nav
-      class="border-border bg-panel fixed inset-x-0 bottom-0 z-40 flex border-t pb-[env(safe-area-inset-bottom)] sm:hidden"
+      class="border-border bg-panel fixed inset-x-0 bottom-0 z-40 flex overflow-x-auto border-t pb-[env(safe-area-inset-bottom)] sm:hidden"
       aria-label="Primary"
     >
       {#each visibleTabs as t (t.id)}
@@ -714,7 +714,7 @@
         <button
           type="button"
           class={cn(
-            'flex flex-1 cursor-pointer flex-col items-center gap-0.5 py-2 text-[10.5px]',
+            'flex min-w-13 flex-1 cursor-pointer flex-col items-center gap-0.5 py-2 text-[10.5px]',
             tabState.active === t.id ? 'text-accent' : 'text-muted',
           )}
           onclick={() => setActiveTab(t.id)}

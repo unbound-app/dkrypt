@@ -212,11 +212,11 @@
   }
 
   .responsive-table tbody tr {
-    @apply border-border bg-panel-muted/40 mb-2 rounded-lg border px-3 py-1;
+    @apply border-border bg-panel-muted/40 mb-2 rounded-lg border px-3 py-2;
   }
 
   .responsive-table td {
-    @apply items-center justify-between gap-3 border-b-0! py-1.5 text-right;
+    @apply items-start justify-between gap-3 border-b-0! py-1.5 text-right;
     display: flex;
     max-width: none !important;
     overflow: visible !important;
@@ -242,6 +242,22 @@
   .responsive-table td[data-label]::before {
     content: attr(data-label);
     @apply text-muted shrink-0 text-left text-[11px] font-semibold tracking-wide uppercase;
+  }
+
+  .responsive-table td.mobile-actions {
+    @apply block text-left;
+  }
+
+  .responsive-table td.mobile-actions::before {
+    @apply mb-2 block;
+  }
+
+  .responsive-table td.mobile-actions > div {
+    @apply justify-start;
+  }
+
+  .responsive-table td.mobile-drag {
+    @apply hidden;
   }
 
   .responsive-table tr.table-row-header {

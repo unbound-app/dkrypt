@@ -12,9 +12,9 @@
   let { title, class: className, children, headerExtra, ...rest }: Props = $props();
 </script>
 
-<div class={cn('rounded-xl border border-border bg-panel p-4.5', className)} {...rest}>
+<div class={cn('rounded-xl border border-border bg-panel p-3.5 sm:p-4.5', className)} {...rest}>
   {#if title || headerExtra}
-    <div class="mb-3 flex items-center justify-between gap-2">
+    <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
       {#if title}
         <h2 class="text-[13px] font-semibold tracking-wide text-muted uppercase">{title}</h2>
       {/if}
