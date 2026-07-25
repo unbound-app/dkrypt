@@ -1,4 +1,4 @@
-import type { NextFunction, Request, Response } from '#http.js';
+import type { NextFunction, Request, Response } from 'express';
 
 interface Bucket {
   count: number;

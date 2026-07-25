@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { Router } from '#http.js';
+import { Router } from 'express';
 import { resolveOauthAccount } from '#account.js';
 import { config, discordBotEnabled, discordOauthEnabled, githubOauthEnabled } from '#config.js';
 import { fetchMemberRoleIds } from '#discord.js';

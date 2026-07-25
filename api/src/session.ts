@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import type { NextFunction, Request, Response } from '#http.js';
+import type { NextFunction, Request, Response } from 'express';
 import { config } from '#config.js';
 import { resolveAuthUserId } from '#identity.js';
 import { hasAnyPermission, parseBits, serializeBits } from '#permissions.js';
