@@ -200,6 +200,10 @@
    horizontal-scroll table - each <td> needs a data-label attribute matching its column header,
    and group/section header rows should get the .table-row-header escape hatch below. */
 @media (max-width: 639px) {
+  pre {
+    max-width: 100%;
+  }
+
   .responsive-table thead {
     @apply hidden;
   }
@@ -222,6 +226,15 @@
     overflow: visible !important;
     text-overflow: clip !important;
     white-space: normal !important;
+  }
+
+  .responsive-table td > :last-child {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .responsive-table td code {
+    overflow-wrap: anywhere;
   }
 
   /* Desktop truncation sometimes lives on a child (a button/span) rather than the <td> itself, so

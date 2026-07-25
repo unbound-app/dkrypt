@@ -527,7 +527,7 @@
       </div>
 
       <label for="w-webhookUrl" class="mt-3 mb-1 block text-xs text-muted">Webhook override (optional)</label>
-      <Input id="w-webhookUrl" placeholder="blank = use the global webhook above" bind:value={watchForm.webhookUrl} />
+      <Input id="w-webhookUrl" placeholder="blank = use the default webhook" bind:value={watchForm.webhookUrl} />
       {#if watchRepoErrors.webhookUrl}
         <div class="mt-1 text-xs text-err">{watchRepoErrors.webhookUrl}</div>
       {/if}
