@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router } from '#http.js';
 import { validate as validateCronExpr } from 'node-cron';
 import { config, discordBotEnabled } from '#config.js';
 import { fetchBotGuilds, fetchGuildRoles } from '#discord.js';

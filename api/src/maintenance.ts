@@ -1,4 +1,4 @@
-import type { NextFunction, Request, Response } from 'express';
+import type { NextFunction, Request, Response } from '#http.js';
 import { peekPrimaryDeviceHealth } from '#deviceHealth.js';
 import { getEffectiveSettings } from '#store/state.js';
 
