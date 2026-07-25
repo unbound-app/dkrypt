@@ -1,9 +1,11 @@
 import { createHash } from 'node:crypto';
 import express from 'express';
+import { apiReference } from '@scalar/express-api-reference';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config } from '#config.js';
+import { openApiDocument } from '#openapi.js';
 import { startJobSweeper } from '#jobs/store.js';
 import { startJobWebhookDispatcher } from '#jobWebhook.js';
 import { startKeyExpiryPoller } from '#keyExpiryPoller.js';
@@ -26,6 +28,9 @@ app.use('/v1/paddle/webhook', express.raw({ type: 'application/json', limit: '1m
 app.use(paddleWebhookRouter);
 
 app.use(express.json({ limit: '5mb' }));
+
+app.get('/openapi.json', (_req, res) => res.json(openApiDocument));
+app.use('/reference', apiReference({ title: 'dkrypt API', theme: 'moon', url: '/openapi.json' }));
 
 app.use('/assets', express.static(path.join(publicDir, 'assets'), { maxAge: '1y', immutable: true }));
 
