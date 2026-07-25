@@ -8,7 +8,7 @@ import {
   type SubscriptionUpdatedEvent,
   type TransactionCompletedEvent,
 } from '@paddle/paddle-node-sdk';
-import { Router } from 'express';
+import { Router } from '#http.js';
 import {
   getBillingCustomerId,
   getBillingEntitlements,

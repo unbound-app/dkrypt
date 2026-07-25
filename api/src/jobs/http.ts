@@ -1,4 +1,4 @@
-import type { Request, Response } from 'express';
+import type { Request, Response } from '#http.js';
 import { createReadStream } from 'node:fs';
 import { config } from '#config.js';
 import { scopedLogger } from '#logger.js';
@@ -49,6 +49,7 @@ export async function streamJobFile(job: Job, req: Request, res: Response): Prom
   res.setHeader('Content-Disposition', `attachment; filename="${job.bundleId}.ipa"`);
   if (job.fileSizeBytes) res.setHeader('Content-Length', String(job.fileSizeBytes));
 
+  res.reply.hijack();
   const stream = createReadStream(job.filePath);
 
   await new Promise<void>((resolve) => {
@@ -61,6 +62,6 @@ export async function streamJobFile(job: Job, req: Request, res: Response): Prom
     stream.on('close', () => resolve());
     req.on('close', () => resolve());
 
-    stream.pipe(res);
+    stream.pipe(res.raw);
   });
 }
