@@ -49,7 +49,9 @@ jobs:
         run: |
           set -e
           for i in $(seq 1 15); do
-            if curl -sf -o /dev/null http://127.0.0.1:8080/; then
+            page=$(curl -sf http://127.0.0.1:8080/ || true)
+            asset=$(printf '%s' "$page" | grep -oE '/assets/[^" ]+\.js' | head -n 1)
+            if [ -n "$asset" ] && curl -sf -o /dev/null "http://127.0.0.1:8080$asset"; then
               echo "healthy"
               exit 0
             fi

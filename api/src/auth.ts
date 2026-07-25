@@ -1,4 +1,4 @@
-import type { NextFunction, Request, Response } from 'express';
+import type { NextFunction, Request, Response } from '#http.js';
 import { isShareLinkExhausted, isShareLinkExpired, isShareLinkRevoked, recordShareLinkDownload, shareLinkExistsForToken, verifyApiKey } from '#store/state.js';
 import { verifyTokenSignature } from '#util/signedUrl.js';
 

@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router } from '#http.js';
 import { requireApiKey } from '#auth.js';
 import { getEffectiveWatches, isWatchSchedulable } from '#store/state.js';
 
