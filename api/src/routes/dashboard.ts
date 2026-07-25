@@ -10,9 +10,10 @@ import { cancelJob, enqueueDecryptJob, getActiveJobs, getJob, prioritizeQueuedJo
 import type { LogEntry } from '#logger.js';
 import { getRecentLogs } from '#logger.js';
 import { EMBED_COLOR, notify, sendTestNotification } from '#notify.js';
+import { sendMailToUser } from '#mail.js';
 import { getVapidPublicKey, sendPushToUser } from '#push.js';
 import { hasPermission, isSubsetPermission, parseBits, PermissionFlag } from '#permissions.js';
-import { listAuthProfiles } from '#identity.js';
+import { getAuthProfile, listAuthProfiles } from '#identity.js';
 import { applyBackupSchedule, applyWatchSchedules, checkForTestFlightUpdate, checkForUpdate, triggerTickNow } from '#scheduler/index.js';
 import { searchApps } from '#scheduler/itunes.js';
 import { requirePermission, requireSession } from '#session.js';
@@ -1679,7 +1680,7 @@ dashboardRouter.delete('/v1/dashboard/backup/history/:id', canManageBackup, (req
 });
 
 dashboardRouter.get('/v1/dashboard/me/prefs', (_req, res) => {
-  res.json(getUserPrefs(res.locals.session.sub));
+  res.json({ ...getUserPrefs(res.locals.session.sub), email: getAuthProfile(res.locals.session.sub)?.email });
 });
 
 dashboardRouter.get('/v1/dashboard/push/public-key', (_req, res) => {
@@ -1721,6 +1722,18 @@ dashboardRouter.post('/v1/dashboard/push/test', async (_req, res) => {
   res.json({ ok: true });
 });
 
+dashboardRouter.post('/v1/dashboard/email/test', async (_req, res) => {
+  if (!getAuthProfile(res.locals.session.sub)?.email) {
+    res.status(400).json({ error: 'no email address on file - sign in via GitHub or Discord to link one' });
+    return;
+  }
+  await sendMailToUser(res.locals.session.sub, {
+    subject: 'dkrypt',
+    text: 'Email notifications are set up - you\'ll get one of these when your queued decrypts finish.',
+  });
+  res.json({ ok: true });
+});
+
 dashboardRouter.put('/v1/dashboard/me/prefs', (req, res) => {
   const body = req.body ?? {};
   const patch: {
@@ -1732,6 +1745,10 @@ dashboardRouter.put('/v1/dashboard/me/prefs', (req, res) => {
     pushOnFailure?: boolean;
     pushOnAlerts?: boolean;
     pushOnKeyExpiry?: boolean;
+    emailOnSuccess?: boolean;
+    emailOnFailure?: boolean;
+    emailOnAlerts?: boolean;
+    emailOnKeyExpiry?: boolean;
     preferPrimaryDevice?: boolean;
   } = {};
   if (body.theme === 'dark' || body.theme === 'light' || body.theme === 'auto') patch.theme = body.theme;
@@ -1742,6 +1759,10 @@ dashboardRouter.put('/v1/dashboard/me/prefs', (req, res) => {
   if (typeof body.pushOnFailure === 'boolean') patch.pushOnFailure = body.pushOnFailure;
   if (typeof body.pushOnAlerts === 'boolean') patch.pushOnAlerts = body.pushOnAlerts;
   if (typeof body.pushOnKeyExpiry === 'boolean') patch.pushOnKeyExpiry = body.pushOnKeyExpiry;
+  if (typeof body.emailOnSuccess === 'boolean') patch.emailOnSuccess = body.emailOnSuccess;
+  if (typeof body.emailOnFailure === 'boolean') patch.emailOnFailure = body.emailOnFailure;
+  if (typeof body.emailOnAlerts === 'boolean') patch.emailOnAlerts = body.emailOnAlerts;
+  if (typeof body.emailOnKeyExpiry === 'boolean') patch.emailOnKeyExpiry = body.emailOnKeyExpiry;
   if (typeof body.preferPrimaryDevice === 'boolean') patch.preferPrimaryDevice = body.preferPrimaryDevice;
   res.json(updateUserPrefs(res.locals.session.sub, patch));
 });

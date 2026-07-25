@@ -256,6 +256,10 @@ export interface UserPrefs {
   pushOnFailure?: boolean;
   pushOnAlerts?: boolean;
   pushOnKeyExpiry?: boolean;
+  emailOnSuccess?: boolean;
+  emailOnFailure?: boolean;
+  emailOnAlerts?: boolean;
+  emailOnKeyExpiry?: boolean;
   preferPrimaryDevice?: boolean;
 }
 

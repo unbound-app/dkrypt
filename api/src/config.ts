@@ -80,6 +80,12 @@ export const config = {
   runPollTimeoutMinutes: optionalInt('RUN_POLL_TIMEOUT_MINUTES', 30),
   notifyWebhookUrl: optional('NOTIFY_WEBHOOK_URL', ''),
   userConcurrencyCap: optionalInt('USER_CONCURRENCY_CAP', 0),
+
+  smtpHost: optional('SMTP_HOST', ''),
+  smtpPort: optionalInt('SMTP_PORT', 587),
+  smtpUser: optional('SMTP_USER', ''),
+  smtpPass: optional('SMTP_PASS', ''),
+  smtpFrom: optional('SMTP_FROM', 'dkrypt <dkrypt@dylib.dev>'),
 };
 
 export const githubOauthEnabled = config.githubOauthClientId !== '' && config.githubOauthClientSecret !== '';
@@ -91,3 +97,4 @@ export const paddleEnabled =
   config.paddlePriorityPriceId !== '' &&
   config.paddleApiPriceId !== '' &&
   config.paddlePriorityApiPriceId !== '';
+export const emailEnabled = config.smtpHost !== '' && config.smtpUser !== '' && config.smtpPass !== '';

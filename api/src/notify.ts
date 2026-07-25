@@ -1,5 +1,6 @@
 import { config } from '#config.js';
 import { log } from '#logger.js';
+import { sendMailToAllSubscribed, type MailCategory } from '#mail.js';
 import { sendPushToAllSubscribed, type PushCategory } from '#push.js';
 import { getEffectiveSettings, recordWebhookDelivery, type SchedulerSettings } from '#store/state.js';
 import { postJsonWithRetry } from '#util/webhookRetry.js';
@@ -127,6 +128,16 @@ const PUSH_EVENT_CATEGORY: Partial<Record<NotifyEvent, PushCategory>> = {
   testFlightBridgeDown: 'deviceAlert',
 };
 
+const MAIL_EVENT_CATEGORY: Partial<Record<NotifyEvent, MailCategory>> = {
+  keyExpiringSoon: 'keyExpiry',
+  deviceOffline: 'deviceAlert',
+  deviceBatteryHot: 'deviceAlert',
+  deviceBatteryLow: 'deviceAlert',
+  diskFull: 'deviceAlert',
+  deviceStorageLow: 'deviceAlert',
+  testFlightBridgeDown: 'deviceAlert',
+};
+
 export async function notify(event: NotifyEvent, embed: NotifyEmbed, webhookUrlOverride?: string): Promise<void> {
   const settings = getEffectiveSettings();
   if (!settings[EVENT_SETTING_KEY[event]]) return;
@@ -134,6 +145,11 @@ export async function notify(event: NotifyEvent, embed: NotifyEmbed, webhookUrlO
   const pushCategory = PUSH_EVENT_CATEGORY[event];
   if (pushCategory) {
     void sendPushToAllSubscribed({ title: embed.title, body: embed.description ?? embed.title }, pushCategory);
+  }
+
+  const mailCategory = MAIL_EVENT_CATEGORY[event];
+  if (mailCategory) {
+    void sendMailToAllSubscribed({ subject: embed.title, text: embed.description ?? embed.title }, mailCategory);
   }
 
   const url = webhookUrlOverride || settings.notifyWebhookUrl;

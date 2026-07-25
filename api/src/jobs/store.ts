@@ -7,6 +7,7 @@ import { emitJobsChanged } from '#events.js';
 import { scopedLogger } from '#logger.js';
 
 const log = scopedLogger('jobs');
+import { sendMailToUser } from '#mail.js';
 import { sendPushToUser } from '#push.js';
 import { getApiKeyById, getEffectiveDevices, getUserPrefs, isBundleWatched, latestActiveShareLinkExpiry, recordJobHistory, type DeviceRecord } from '#store/state.js';
 import { uninstallFromPrimaryDevice } from '#appStoreInstall.js';
@@ -375,16 +376,15 @@ async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
 
   if (job.queuedBy) {
     const prefs = getUserPrefs(job.queuedBy);
-    const shouldSend = job.status === 'done' ? (prefs.pushOnSuccess ?? true) : (prefs.pushOnFailure ?? true);
-    if (!shouldSend) {
-      settle(job);
-      return;
-    }
     const label = job.versionLabel ? `${job.bundleId} (${job.versionLabel})` : job.bundleId;
-    void sendPushToUser(job.queuedBy, {
-      title: job.status === 'done' ? 'Decrypt finished' : 'Decrypt failed',
-      body: job.status === 'done' ? `${label} is ready to download.` : `${label} failed: ${job.error ?? 'unknown error'}`,
-    });
+    const title = job.status === 'done' ? 'Decrypt finished' : 'Decrypt failed';
+    const body = job.status === 'done' ? `${label} is ready to download.` : `${label} failed: ${job.error ?? 'unknown error'}`;
+
+    const shouldPush = job.status === 'done' ? (prefs.pushOnSuccess ?? true) : (prefs.pushOnFailure ?? true);
+    if (shouldPush) void sendPushToUser(job.queuedBy, { title, body });
+
+    const shouldMail = job.status === 'done' ? (prefs.emailOnSuccess ?? false) : (prefs.emailOnFailure ?? false);
+    if (shouldMail) void sendMailToUser(job.queuedBy, { subject: title, text: body });
   }
 
   settle(job);

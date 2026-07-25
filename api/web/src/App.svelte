@@ -68,7 +68,7 @@
     sessionState,
     updateProfileDisplayName,
   } from '#lib/session.svelte';
-  import { testPush } from '#lib/api';
+  import { testEmail, testPush } from '#lib/api';
   import {
     ACCENT_PRESETS,
     accentState,
@@ -142,6 +142,12 @@
   let pushOnFailure = $state(true);
   let pushOnAlerts = $state(true);
   let pushOnKeyExpiry = $state(true);
+  let userEmail = $state<string | undefined>(undefined);
+  let sendingTestEmail = $state(false);
+  let emailOnSuccess = $state(false);
+  let emailOnFailure = $state(false);
+  let emailOnAlerts = $state(false);
+  let emailOnKeyExpiry = $state(false);
 
   void registerServiceWorker().then((registration) => {
     if (registration) initPwaUpdateWatcher(registration);
@@ -149,15 +155,19 @@
   initInstallPromptWatcher();
 
   $effect(() => {
-    if (sessionState.loggedIn && pushSupported()) {
-      void getExistingPushSubscription().then((sub) => (pushEnabled = !!sub));
-      void fetchNotificationPrefs().then((prefs) => {
-        pushOnSuccess = prefs.pushOnSuccess ?? true;
-        pushOnFailure = prefs.pushOnFailure ?? true;
-        pushOnAlerts = prefs.pushOnAlerts ?? true;
-        pushOnKeyExpiry = prefs.pushOnKeyExpiry ?? true;
-      });
-    }
+    if (!sessionState.loggedIn) return;
+    if (pushSupported()) void getExistingPushSubscription().then((sub) => (pushEnabled = !!sub));
+    void fetchNotificationPrefs().then((prefs) => {
+      pushOnSuccess = prefs.pushOnSuccess ?? true;
+      pushOnFailure = prefs.pushOnFailure ?? true;
+      pushOnAlerts = prefs.pushOnAlerts ?? true;
+      pushOnKeyExpiry = prefs.pushOnKeyExpiry ?? true;
+      userEmail = prefs.email;
+      emailOnSuccess = prefs.emailOnSuccess ?? false;
+      emailOnFailure = prefs.emailOnFailure ?? false;
+      emailOnAlerts = prefs.emailOnAlerts ?? false;
+      emailOnKeyExpiry = prefs.emailOnKeyExpiry ?? false;
+    });
   });
 
   async function togglePushOnSuccess(): Promise<void> {
@@ -174,6 +184,31 @@
 
   async function togglePushOnKeyExpiry(): Promise<void> {
     await pushNotificationPrefs({ pushOnKeyExpiry });
+  }
+
+  async function toggleEmailOnSuccess(): Promise<void> {
+    await pushNotificationPrefs({ emailOnSuccess });
+  }
+
+  async function toggleEmailOnFailure(): Promise<void> {
+    await pushNotificationPrefs({ emailOnFailure });
+  }
+
+  async function toggleEmailOnAlerts(): Promise<void> {
+    await pushNotificationPrefs({ emailOnAlerts });
+  }
+
+  async function toggleEmailOnKeyExpiry(): Promise<void> {
+    await pushNotificationPrefs({ emailOnKeyExpiry });
+  }
+
+  async function sendTestEmail(): Promise<void> {
+    sendingTestEmail = true;
+    try {
+      await testEmail();
+    } finally {
+      sendingTestEmail = false;
+    }
   }
 
   async function enableNotifications(): Promise<void> {
@@ -620,6 +655,47 @@
                     <label class="inline-flex items-center gap-1.5">
                       <input type="checkbox" bind:checked={pushOnKeyExpiry} onchange={togglePushOnKeyExpiry} />
                       Notify me when an API key is expiring soon
+                    </label>
+                  </div>
+                {/if}
+              </div>
+
+              <div class="border-border mb-3 border-t pt-3">
+                <div class="flex items-center justify-between gap-3">
+                  <div class="text-[13px]">Email notifications</div>
+                  {#if !userEmail}
+                    <Badge variant="secondary">No email on file</Badge>
+                  {:else if emailOnSuccess || emailOnFailure || emailOnAlerts || emailOnKeyExpiry}
+                    <Badge variant="success">Enabled</Badge>
+                  {/if}
+                </div>
+                <div class="mt-1.5 text-xs text-muted">
+                  {#if userEmail}
+                    Sent to {userEmail} from dkrypt@dylib.dev.
+                  {:else}
+                    Sign in via GitHub or Discord to link an email address for notifications.
+                  {/if}
+                </div>
+                {#if userEmail}
+                  <div class="mt-2 flex gap-2">
+                    <Button size="sm" variant="secondary" loading={sendingTestEmail} onclick={sendTestEmail}>Send test</Button>
+                  </div>
+                  <div class="mt-2.5 flex flex-col gap-1.5 text-xs text-muted">
+                    <label class="inline-flex items-center gap-1.5">
+                      <input type="checkbox" bind:checked={emailOnSuccess} onchange={toggleEmailOnSuccess} />
+                      Email me on successful decrypts
+                    </label>
+                    <label class="inline-flex items-center gap-1.5">
+                      <input type="checkbox" bind:checked={emailOnFailure} onchange={toggleEmailOnFailure} />
+                      Email me on failed decrypts
+                    </label>
+                    <label class="inline-flex items-center gap-1.5">
+                      <input type="checkbox" bind:checked={emailOnAlerts} onchange={toggleEmailOnAlerts} />
+                      Email me on device/system alerts (offline, battery, disk, TestFlight bridge down)
+                    </label>
+                    <label class="inline-flex items-center gap-1.5">
+                      <input type="checkbox" bind:checked={emailOnKeyExpiry} onchange={toggleEmailOnKeyExpiry} />
+                      Email me when an API key is expiring soon
                     </label>
                   </div>
                 {/if}

@@ -290,6 +290,15 @@ closed, not just while it's open in the foreground. Subscriptions are
 per-browser; a stale/expired one is dropped automatically the next time a
 push to it fails.
 
+**Email notifications**: set `SMTP_HOST`, `SMTP_USER`, and `SMTP_PASS` (see
+`.env.example`) to enable a second, email-based notification channel from
+`dkrypt@dylib.dev` (configurable via `SMTP_FROM`), covering the same events
+as push - decrypt success/failure, device/system alerts, and API key
+expiry. Sent to the email address linked via GitHub/Discord OAuth; unlike
+push, each category defaults to off and is opted into per-user from the
+same account menu section. Leave the SMTP env vars blank to disable email
+notifications entirely.
+
 Tabs:
 
 - **Home** - search the App Store and queue a decrypt, your own
