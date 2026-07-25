@@ -1,4 +1,4 @@
-import type { Request, Response } from '#http.js';
+import type { Request, Response } from 'express';
 import { createReadStream } from 'node:fs';
 import { config } from '#config.js';
 import { scopedLogger } from '#logger.js';
@@ -61,6 +61,6 @@ export async function streamJobFile(job: Job, req: Request, res: Response): Prom
     stream.on('close', () => resolve());
     req.on('close', () => resolve());
 
-    res.reply.send(stream);
+    stream.pipe(res);
   });
 }

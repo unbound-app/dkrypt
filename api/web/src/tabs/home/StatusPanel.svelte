@@ -406,6 +406,7 @@
             <Badge variant={h.testFlightRunning ? 'default' : 'secondary'}>autoinstall {h.testFlightRunning ? 'running' : 'idle'}</Badge>
           {/snippet}
           <div class="flex flex-col gap-1 whitespace-nowrap">
+            <div><span class="text-muted">TestFlight</span> · {h.testFlightRunning ? 'running' : 'not running'}</div>
             {#if h.testFlightBridgeReachable !== undefined}
               <div><span class="text-muted">Bridge</span> · {h.testFlightBridgeReachable ? 'reachable' : 'unreachable'}</div>
             {/if}

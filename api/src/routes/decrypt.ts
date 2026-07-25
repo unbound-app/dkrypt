@@ -1,5 +1,5 @@
-import type { Response } from '#http.js';
-import { Router } from '#http.js';
+import type { Response } from 'express';
+import { Router } from 'express';
 import { config } from '#config.js';
 import { requireApiKey, requireApiKeyOrSignedToken, requireTestFlightScope } from '#auth.js';
 import { blockDuringMaintenance } from '#maintenance.js';
