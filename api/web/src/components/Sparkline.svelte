@@ -10,7 +10,7 @@
   const barWidth = $derived(width / Math.max(1, data.length));
 </script>
 
-<svg {width} {height} viewBox="0 0 {width} {height}" role={ariaLabel ? 'img' : undefined} aria-label={ariaLabel} aria-hidden={ariaLabel ? undefined : 'true'}>
+<svg class="block max-w-full" {width} {height} viewBox="0 0 {width} {height}" role={ariaLabel ? 'img' : undefined} aria-label={ariaLabel} aria-hidden={ariaLabel ? undefined : 'true'}>
   {#each data as d, i (i)}
     {@const h = Math.max(1.5, (d.value / max) * height)}
     <rect x={i * barWidth + 0.5} y={height - h} width={Math.max(1, barWidth - 1)} height={h} rx="1" class="fill-accent" opacity={d.value === 0 ? 0.2 : 1}>

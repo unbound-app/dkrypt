@@ -16,7 +16,7 @@
   import { confirmDialog, densityState, requestFocusSearch } from '#lib/ui.svelte';
 
   const jobs = $derived(liveState.overview?.activeJobs ?? []);
-  const loaded = $derived(liveState.overview !== null);
+  const loaded = $derived(liveState.overviewLoaded);
   const canCancel = $derived(sessionHasPermission(PermissionFlag.requestDecrypt));
 
   let cancelling = $state<Set<string>>(new Set());

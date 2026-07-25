@@ -307,7 +307,7 @@
 <Card title="Status">
   {#snippet headerExtra()}
     {#if health}
-      <div class="flex items-center gap-1.5 text-xs text-muted">
+      <div class="flex min-w-0 flex-wrap items-center justify-end gap-1.5 text-xs text-muted">
         <span
           class="inline-flex items-center gap-1.5"
           title={overallHealth.reasons.length > 0 ? overallHealth.reasons.join(', ') : HEALTH_LABEL[overallHealth.level]}

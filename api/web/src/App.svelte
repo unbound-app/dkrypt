@@ -700,7 +700,7 @@
             </div>
           {/if}
         </div>
-        <div class="flex flex-col gap-4 lg:sticky lg:top-6">
+        <div class="min-w-0 flex flex-col gap-4 lg:sticky lg:top-6">
           <StatusPanel />
         </div>
       </div>
