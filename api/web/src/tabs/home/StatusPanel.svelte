@@ -409,7 +409,7 @@
             {#if h.testFlightBridgeReachable !== undefined}
               <div><span class="text-muted">Bridge</span> · {h.testFlightBridgeReachable ? 'reachable' : 'unreachable'}</div>
             {/if}
-            <div class="text-muted">Drives TestFlight & App Store installs.</div>
+            <div class="text-muted">Drives App Store & TestFlight installs.</div>
           </div>
         </Popover>
       {/if}
