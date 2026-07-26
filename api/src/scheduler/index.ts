@@ -1,4 +1,4 @@
-import cron from 'node-cron';
+import cron, { type ScheduledTask } from 'node-cron';
 import { config } from '#config.js';
 import { emitJobsChanged } from '#events.js';
 import type { Job } from '#jobs/types.js';
@@ -437,7 +437,7 @@ export async function triggerTickNow(watchId: string): Promise<{ ok: boolean; er
   return { ok: true };
 }
 
-const scheduledTasks = new Map<string, { task: cron.ScheduledTask; cronExpr: string }>();
+const scheduledTasks = new Map<string, { task: ScheduledTask; cronExpr: string }>();
 
 export function applyWatchSchedules(): void {
   const watches = getEffectiveWatches();
@@ -473,7 +473,7 @@ export function applyWatchSchedules(): void {
   }
 }
 
-let backupTask: cron.ScheduledTask | undefined;
+let backupTask: ScheduledTask | undefined;
 let backupTaskCron: string | undefined;
 
 export function applyBackupSchedule(): void {
