@@ -13,19 +13,27 @@ updates:
     directory: "/api"
     schedule:
       interval: "weekly"
-    groups:
-      api-dependencies:
-        patterns:
-          - "*"
+      groups:
+        api-dependencies:
+          patterns:
+            - "*"
+      ignore:
+        - dependency-name: "typescript"
+          update-types:
+            - "version-update:semver-major"
 
   - package-ecosystem: "bun"
     directory: "/api/web"
     schedule:
       interval: "weekly"
-    groups:
-      web-dependencies:
-        patterns:
-          - "*"
+      groups:
+        web-dependencies:
+          patterns:
+            - "*"
+      ignore:
+        - dependency-name: "typescript"
+          update-types:
+            - "version-update:semver-major"
 
   - package-ecosystem: "docker"
     directory: "/api"
