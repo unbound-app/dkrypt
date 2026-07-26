@@ -4,6 +4,7 @@ import {
   clearAppStoreAutoConfirm,
   findInstalledAppStoreBundle,
   isAppStoreRunning,
+  readInstalledBundleVersions,
   sendAppStoreBridgeRequest,
   sendSpringBoardBridgeRequest,
   uninstallInstalledApp,
@@ -43,14 +44,14 @@ export async function uninstallFromPrimaryDevice(bundleId: string): Promise<bool
 }
 
 export interface AppStoreInstallOptions {
-
   externalVersionId?: string;
+  expectedVersion?: string;
   onProgress?: (message: string) => void;
   waitTimeoutMs?: number;
 }
 
 export async function installFromAppStore(bundleId: string, options: AppStoreInstallOptions = {}): Promise<void> {
-  const { externalVersionId, onProgress, waitTimeoutMs = 5 * 60_000 } = options;
+  const { externalVersionId, expectedVersion, onProgress, waitTimeoutMs = 5 * 60_000 } = options;
 
   if (!SAFE_BUNDLE_ID_RE.test(bundleId)) {
     throw new Error(`refusing to install App Store app with unsafe bundleId: ${JSON.stringify(bundleId)}`);
@@ -66,15 +67,16 @@ export async function installFromAppStore(bundleId: string, options: AppStoreIns
   };
 
   report('resolving App Store id for bundle');
-  const { trackId } = await lookupCurrentVersion(bundleId);
+  const { trackId, version: latestVersion } = await lookupCurrentVersion(bundleId);
+  const targetVersion = expectedVersion ?? (versionId === undefined ? latestVersion : undefined);
 
   await withSSH(primaryRootDir(), async (conn) => {
-
-    if (!versionId) {
-      const existing = await findInstalledAppStoreBundle(conn, bundleId);
-      if (existing) {
-        report('app already installed on device, skipping App Store install');
-        return;
+    const existing = await findInstalledAppStoreBundle(conn, bundleId);
+    if (existing) {
+      report('removing the installed app before the App Store install');
+      const removed = await uninstallInstalledApp(conn, bundleId);
+      if (!removed) {
+        throw new Error(`failed to remove the existing ${bundleId} before installing from the App Store`);
       }
     }
 
@@ -100,6 +102,10 @@ export async function installFromAppStore(bundleId: string, options: AppStoreIns
       while (Date.now() < deadline) {
         const bundlePath = await findInstalledAppStoreBundle(conn, bundleId);
         if (bundlePath) {
+          const { shortVersion } = await readInstalledBundleVersions(conn, bundlePath);
+          if (targetVersion && shortVersion !== targetVersion) {
+            throw new Error(`installed ${bundleId} version ${shortVersion ?? 'unknown'}, expected App Store version ${targetVersion}`);
+          }
           report(`install complete in ${Math.round((Date.now() - start) / 1000)}s`);
           return;
         }

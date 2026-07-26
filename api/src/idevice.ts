@@ -199,6 +199,23 @@ export async function findInstalledAppStoreBundle(conn: Client, bundleId: string
   return line || undefined;
 }
 
+export interface InstalledBundleVersions {
+  shortVersion?: string;
+  buildVersion?: string;
+}
+
+export async function readInstalledBundleVersions(conn: Client, appPath: string): Promise<InstalledBundleVersions> {
+  const tmp = `/tmp/dkrypt-check-${Date.now()}.plist`;
+  try {
+    await execCommand(conn, `cp "${appPath}/Info.plist" ${tmp} && chmod 644 ${tmp} && /cores/binpack/usr/bin/plutil -convert xml1 ${tmp}`);
+    const { stdout } = await execCommand(conn, `cat ${tmp}`);
+    const valueFor = (key: string) => stdout.match(new RegExp(`<key>${key}</key>\\s*<string>([^<]+)</string>`))?.[1];
+    return { shortVersion: valueFor('CFBundleShortVersionString'), buildVersion: valueFor('CFBundleVersion') };
+  } finally {
+    await execCommand(conn, `rm -f ${tmp}`).catch(() => {});
+  }
+}
+
 const withBridgeLock = makeSerialQueue();
 
 async function sendBridgeRequestRawTo(

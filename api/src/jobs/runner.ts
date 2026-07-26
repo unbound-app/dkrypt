@@ -26,7 +26,11 @@ export async function runDecrypt(job: Job, device: DeviceRecord): Promise<void> 
   if (job.testflight) {
     await installBuild(job.testflight.appId, job.testflight.build, report);
   } else {
-    await installFromAppStore(job.bundleId, { externalVersionId: job.externalVersionId, onProgress: report });
+    await installFromAppStore(job.bundleId, {
+      externalVersionId: job.externalVersionId,
+      expectedVersion: job.versionLabel,
+      onProgress: report,
+    });
   }
 
   const args = ['--root-dir', device.rootDir, 'decrypt', job.bundleId, '--use-installed', '--output', outputPath];

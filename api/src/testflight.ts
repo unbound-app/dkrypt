@@ -3,6 +3,7 @@ import { scopedLogger } from '#logger.js';
 import {
   execCommand,
   isTestFlightRunning,
+  readInstalledBundleVersions,
   sendSpringBoardBridgeRequest,
   sendTestFlightBridgeRequest,
   withSSH,
@@ -90,15 +91,6 @@ async function findInstalledBundlePath(conn: Client, bundleId: string): Promise<
   return line || undefined;
 }
 
-async function readInstalledBundleVersion(conn: Client, infoPlistPath: string): Promise<string | undefined> {
-  const tmp = `/tmp/dkrypt-check-${Date.now()}.plist`;
-  await execCommand(conn, `cp "${infoPlistPath}" ${tmp} && chmod 644 ${tmp} && /cores/binpack/usr/bin/plutil -convert xml1 ${tmp}`);
-  const { stdout } = await execCommand(conn, `cat ${tmp}`);
-  await execCommand(conn, `rm -f ${tmp}`);
-  const match = stdout.match(/<key>CFBundleVersion<\/key>\s*<string>([^<]+)<\/string>/);
-  return match?.[1];
-}
-
 const SAFE_BUNDLE_ID_RE = /^[A-Za-z0-9.-]{1,200}$/;
 
 export async function installBuild(
@@ -130,8 +122,8 @@ export async function installBuild(
     while (Date.now() < deadline) {
       const bundlePath = await findInstalledBundlePath(conn, build.bundleId);
       if (bundlePath) {
-        const version = await readInstalledBundleVersion(conn, bundlePath);
-        if (version === build.cfBundleVersion) {
+        const { buildVersion } = await readInstalledBundleVersions(conn, bundlePath);
+        if (buildVersion === build.cfBundleVersion) {
           report(`install complete in ${Math.round((Date.now() - start) / 1000)}s`);
           return;
         }
