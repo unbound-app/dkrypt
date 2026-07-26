@@ -208,17 +208,21 @@
                 <span class="text-muted text-xs">({d.versionLabel})</span>
               {/if}
             </td>
-            <td data-label="Status">
-              {#if d.status === 'done'}
-                <Badge variant="success">done</Badge>
-              {:else if d.status === 'failed'}
-                <Badge variant="destructive">failed</Badge> <span class="text-muted">{d.error ?? ''}</span>
-              {:else if d.status === 'running'}
-                <Badge>running</Badge> <span class="text-muted">{d.progress ?? ''}</span>
-              {:else}
-                <Badge>queued</Badge>
-                <span class="text-muted">{d.queue ? `position ${d.queue.position} of ${d.queue.total}` : ''}</span>
-              {/if}
+            <td data-label="Status" class="min-w-0">
+              <div class="flex min-w-0 flex-wrap items-center justify-end gap-1.5 text-right">
+                {#if d.status === 'done'}
+                  <Badge variant="success">done</Badge>
+                {:else if d.status === 'failed'}
+                  <Badge variant="destructive">failed</Badge>
+                  <span class="min-w-0 break-words text-muted">{d.error ?? ''}</span>
+                {:else if d.status === 'running'}
+                  <Badge>running</Badge>
+                  <span class="min-w-0 break-words text-muted">{d.progress ?? ''}</span>
+                {:else}
+                  <Badge>queued</Badge>
+                  <span class="text-muted">{d.queue ? `position ${d.queue.position} of ${d.queue.total}` : ''}</span>
+                {/if}
+              </div>
             </td>
             <td data-label="Queued" class="text-muted"><RelativeTime ms={d.createdAt} /></td>
             <td data-label="Job ID">
@@ -233,7 +237,7 @@
                 </div>
               {/if}
             </td>
-            <td>
+            <td data-label="Actions" class="mobile-actions">
               <div class="flex flex-wrap justify-end gap-1.5">
                 {#if d.status === 'done'}
                   {@const expiresIn = expiresInMs(d)}

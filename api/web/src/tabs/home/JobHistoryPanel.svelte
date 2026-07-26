@@ -606,7 +606,7 @@
                   <td data-label="Status"><Badge variant={statusToBadgeVariant(j.status)}>{j.status}</Badge></td>
                   <td data-label="Size">{fmtSize(j.sizeBytes)}</td>
                   <td data-label="Finished" class="text-muted"><RelativeTime ms={j.finishedAt} /></td>
-                  <td data-label="Error" class="max-w-52 truncate text-muted" title={j.error ?? ''}>{j.error ?? ''}</td>
+                  <td data-label="Error" class="max-w-sm break-words text-xs leading-5 text-muted" title={j.error ?? ''}>{j.error ?? ''}</td>
                   <td data-label="Actions" class="mobile-actions">
                     <div class="flex flex-wrap justify-end gap-1.5">
                       <Button size="sm" variant="secondary" loading={requeueing.has(j.id)} onclick={() => decryptAgain(j)}>

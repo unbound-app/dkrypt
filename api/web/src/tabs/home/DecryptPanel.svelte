@@ -343,7 +343,7 @@
           {/if}
           <div class="min-w-0 flex-1">
             <div class="text-[13px]">{r.trackName}</div>
-            <div class="truncate text-xs text-muted" title={r.bundleId}>{r.bundleId} · v{r.version} · {r.sellerName}</div>
+            <div class="break-words text-xs leading-4 text-muted" title={r.bundleId}>{r.bundleId} · v{r.version} · {r.sellerName}</div>
           </div>
           {#if r.price > 0}
             <Badge variant="destructive" title="ipadecrypt only supports free apps">Paid</Badge>
