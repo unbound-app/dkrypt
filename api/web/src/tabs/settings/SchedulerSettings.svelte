@@ -469,7 +469,20 @@
             {/if}
             {#if previewProgressByWatch[w.id]}
               <div class="border-border bg-panel-muted mt-2 rounded-md border p-2.5 text-xs" aria-live="polite">
-                <div class="mb-1.5 font-medium">Preview activity</div>
+                <div class="mb-1.5 flex items-center gap-2 font-medium">
+                  <span>Preview activity</span>
+                  {#if previewByWatch[w.id]}
+                    <button
+                      type="button"
+                      class="text-muted hover:text-text ml-auto cursor-pointer"
+                      onclick={() => dismissPreview(w.id)}
+                      aria-label="Dismiss preview"
+                      title="Dismiss"
+                    >
+                      <X class="h-3.5 w-3.5" />
+                    </button>
+                  {/if}
+                </div>
                 <div class="flex flex-col gap-1.5 font-mono text-[11px]">
                   {#each previewProgressByWatch[w.id] as progress (progress.source)}
                     <div class="flex items-start gap-1.5">
@@ -485,28 +498,6 @@
                     </div>
                   {/each}
                 </div>
-              </div>
-            {/if}
-            {#if previewByWatch[w.id]}
-              {@const p = previewByWatch[w.id]}
-              <div class="border-border bg-panel-muted mt-2 flex items-start gap-2 rounded-md border p-2.5 text-xs">
-                <div class="min-w-0 flex-1">
-                  <div class={p?.wouldDispatch ? 'text-ok' : 'text-muted'}>{p?.reason}</div>
-                  {#if p?.testflight}
-                    <div class="border-border mt-1.5 border-t pt-1.5">
-                      <div class={p.testflight.wouldDispatch ? 'text-ok' : 'text-muted'}>{p.testflight.reason}</div>
-                    </div>
-                  {/if}
-                </div>
-                <button
-                  type="button"
-                  class="text-muted hover:text-text shrink-0 cursor-pointer"
-                  onclick={() => dismissPreview(w.id)}
-                  aria-label="Dismiss preview"
-                  title="Dismiss"
-                >
-                  <X class="h-3.5 w-3.5" />
-                </button>
               </div>
             {/if}
           </div>
