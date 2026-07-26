@@ -15,6 +15,7 @@ import { getVapidPublicKey, sendPushToUser } from '#push.js';
 import { hasPermission, isSubsetPermission, parseBits, PermissionFlag } from '#permissions.js';
 import { getAuthProfile, listAuthProfiles } from '#identity.js';
 import { applyBackupSchedule, applyWatchSchedules, checkForTestFlightUpdate, checkForUpdate, triggerTickNow } from '#scheduler/index.js';
+import { listDispatchRepos, listRepoWorkflows } from '#scheduler/github.js';
 import { lookupAppMetadata, searchApps } from '#scheduler/itunes.js';
 import { requirePermission, requireSession } from '#session.js';
 import { getDeviceHealth } from '#deviceHealth.js';
@@ -118,7 +119,6 @@ import {
   setApiKeyPriority,
   setUserPriority,
   upsertAppCatalogEntries,
-  upsertAppCatalogEntry,
   updateAllowedUserRoles,
   updateDevice,
   updateRole,
@@ -449,28 +449,6 @@ dashboardRouter.get('/v1/dashboard/apps/metadata', async (req, res) => {
   res.json({ entries: getAppCatalogEntries(bundleIds) });
 });
 
-dashboardRouter.post('/v1/dashboard/apps/metadata/refresh', canManageSchedulerSettings, async (req, res) => {
-  const bundleId = typeof req.body?.bundleId === 'string' ? req.body.bundleId.trim() : '';
-  if (!BUNDLE_ID_RE.test(bundleId)) {
-    res.status(400).json({ error: 'bundleId is required and must look like a bundle identifier' });
-    return;
-  }
-
-  try {
-    const metadata = await lookupAppMetadata(bundleId);
-    const entry = upsertAppCatalogEntry({
-      bundleId: metadata.bundleId,
-      displayName: metadata.trackName,
-      iconUrl: metadata.artworkUrl,
-      trackId: metadata.trackId,
-      sellerName: metadata.sellerName,
-    });
-    res.json({ ok: true, entry });
-  } catch (err) {
-    res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
-  }
-});
-
 const EXTERNAL_VERSION_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
 dashboardRouter.post('/v1/dashboard/decrypt', canDecrypt, blockDuringMaintenance, (req, res) => {
@@ -646,8 +624,41 @@ dashboardRouter.get('/v1/dashboard/watches/health', canViewScheduler, (_req, res
   res.json({ watches: getWatchHealthRollup() });
 });
 
+dashboardRouter.get('/v1/dashboard/github/repos', canManageWatches, async (_req, res) => {
+  if (!config.ghToken) {
+    res.status(409).json({ error: 'GH_TOKEN is not configured' });
+    return;
+  }
+
+  try {
+    const repos = await listDispatchRepos();
+    res.json({ repos });
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+dashboardRouter.get('/v1/dashboard/github/workflows', canManageWatches, async (req, res) => {
+  if (!config.ghToken) {
+    res.status(409).json({ error: 'GH_TOKEN is not configured' });
+    return;
+  }
+
+  const repo = typeof req.query.repo === 'string' ? req.query.repo.trim() : '';
+  if (!repo || !/^[\w.-]+\/[\w.-]+$/.test(repo)) {
+    res.status(400).json({ error: 'repo query must be owner/repo' });
+    return;
+  }
+
+  try {
+    const workflows = await listRepoWorkflows(repo);
+    res.json({ workflows });
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
 interface WatchInput {
-  name?: string;
   bundleId: string;
   repo: string;
   ghWorkflowFile: string;
@@ -662,7 +673,6 @@ function parseWatchInput(body: unknown): WatchInput | undefined {
   const bundleId = typeof b.bundleId === 'string' ? b.bundleId.trim() : '';
   if (!bundleId) return undefined;
   return {
-    name: typeof b.name === 'string' ? b.name.trim() || undefined : undefined,
     bundleId,
     repo: typeof b.repo === 'string' ? b.repo.trim() : '',
     ghWorkflowFile: typeof b.ghWorkflowFile === 'string' ? b.ghWorkflowFile.trim() : 'remote-ipa-update.yml',
@@ -695,7 +705,6 @@ dashboardRouter.post('/v1/dashboard/watches', canManageWatches, (req, res) => {
 dashboardRouter.patch('/v1/dashboard/watches/:id', canManageWatches, (req, res) => {
   const body = (req.body ?? {}) as Record<string, unknown>;
   const patch: Partial<WatchInput> = {};
-  if (typeof body.name === 'string') patch.name = body.name.trim() || undefined;
   if (typeof body.bundleId === 'string' && body.bundleId.trim()) patch.bundleId = body.bundleId.trim();
   if (typeof body.repo === 'string') patch.repo = body.repo.trim();
   if (typeof body.ghWorkflowFile === 'string') patch.ghWorkflowFile = body.ghWorkflowFile.trim();

@@ -333,7 +333,7 @@
 				if (!w.schedulable) continue;
 				base.push({
 					id: `trigger-dispatch-${w.id}`,
-					label: `Trigger dispatch now: ${w.name ?? w.bundleId}`,
+					label: `Trigger dispatch now: ${w.bundleId}`,
 					category: "Actions",
 					keywords: w.bundleId,
 					run: () => void runTriggerWatchDispatch(w.id),

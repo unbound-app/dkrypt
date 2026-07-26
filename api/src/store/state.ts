@@ -188,7 +188,6 @@ export interface SchedulerSettings {
 
 export interface AppWatch {
   id: string;
-  name?: string;
   bundleId: string;
   repo: string;
   ghWorkflowFile: string;
@@ -1738,7 +1737,6 @@ function materializeWatches(): void {
 }
 
 export interface CreateWatchInput {
-  name?: string;
   bundleId: string;
   repo: string;
   ghWorkflowFile: string;
@@ -1755,7 +1753,6 @@ export function createWatch(input: CreateWatchInput, actor: string): { ok: boole
   const now = Date.now();
   const watch: AppWatch = {
     id: randomUUID(),
-    name: input.name,
     bundleId: input.bundleId,
     repo: input.repo,
     ghWorkflowFile: input.ghWorkflowFile,
@@ -2191,7 +2188,6 @@ export function getSchedulerRunHistory(limit = 10, watchId?: string): SchedulerR
 
 export interface WatchHealthSummary {
   watchId: string;
-  name?: string;
   bundleId: string;
   schedulable: boolean;
   lastCheckAt?: number;
@@ -2212,7 +2208,6 @@ export function getWatchHealthRollup(): WatchHealthSummary[] {
     const last = entries[0];
     return {
       watchId: watch.id,
-      name: watch.name,
       bundleId: watch.bundleId,
       schedulable: isWatchSchedulable(watch),
       lastCheckAt: last?.ts,

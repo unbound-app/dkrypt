@@ -149,7 +149,6 @@ export interface MaintenanceStatus {
 
 export interface AppWatch {
   id: string;
-  name?: string;
   bundleId: string;
   repo: string;
   ghWorkflowFile: string;
@@ -421,13 +420,25 @@ export function fetchWatches(): Promise<{ watches: AppWatch[] }> {
 }
 
 export interface WatchInput {
-  name?: string;
   bundleId: string;
   repo: string;
   ghWorkflowFile: string;
   pollCron: string;
   enabled?: boolean;
   webhookUrl?: string;
+}
+
+export interface GithubRepoOption {
+  fullName: string;
+  isPrivate: boolean;
+  defaultBranch: string;
+}
+
+export interface GithubWorkflowOption {
+  id: number;
+  name: string;
+  path: string;
+  state: string;
 }
 
 export function createWatch(input: WatchInput): Promise<{ ok: boolean; data: AppWatch }> {
@@ -681,7 +692,6 @@ export function fetchInsights(trendDays = 14, topApps = 5): Promise<InsightsSumm
 
 export interface WatchHealthSummary {
   watchId: string;
-  name?: string;
   bundleId: string;
   schedulable: boolean;
   lastCheckAt?: number;
@@ -695,6 +705,14 @@ export function fetchWatchHealth(): Promise<{ watches: WatchHealthSummary[] }> {
   return apiJson('/v1/dashboard/watches/health');
 }
 
+export function fetchGithubRepos(): Promise<{ repos: GithubRepoOption[] }> {
+  return apiJson('/v1/dashboard/github/repos');
+}
+
+export function fetchGithubWorkflows(repo: string): Promise<{ workflows: GithubWorkflowOption[] }> {
+  return apiJson(`/v1/dashboard/github/workflows?repo=${encodeURIComponent(repo)}`);
+}
+
 export function searchApps(term: string): Promise<{ results: AppStoreSearchResult[] } | { error: string }> {
   return apiJson(`/v1/dashboard/search?q=${encodeURIComponent(term)}`);
 }
@@ -703,13 +721,6 @@ export function fetchAppCatalog(bundleIds: string[]): Promise<{ entries: AppCata
   const unique = [...new Set(bundleIds.map((bundleId) => bundleId.trim()).filter(Boolean))];
   if (unique.length === 0) return Promise.resolve({ entries: [] });
   return apiJson(`/v1/dashboard/apps/metadata?bundleIds=${encodeURIComponent(unique.join(','))}`);
-}
-
-export function refreshAppCatalogEntry(bundleId: string): Promise<{ ok: boolean; entry: AppCatalogEntry }> {
-  return apiAction('/v1/dashboard/apps/metadata/refresh', { method: 'POST', body: JSON.stringify({ bundleId }) }).then(({ ok, data }) => {
-    if (!ok) throw new Error('failed to refresh app metadata');
-    return data as { ok: boolean; entry: AppCatalogEntry };
-  });
 }
 
 export function queueDecrypt(

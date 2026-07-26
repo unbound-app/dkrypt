@@ -803,16 +803,14 @@
 				>
 					<div class="min-w-0 flex-1">
 						<div class="truncate text-[13px]" title={w.bundleId}>
-							{w.name || appDisplayName(w.bundleId)}
+							{appDisplayName(w.bundleId)}
 						</div>
-						{#if w.name}
-							<div
-								class="truncate font-mono text-[10.5px] text-muted"
-								title={w.bundleId || "-"}
-							>
-								{w.bundleId || "-"}
-							</div>
-						{/if}
+						<div
+							class="truncate font-mono text-[10.5px] text-muted"
+							title={w.bundleId || "-"}
+						>
+							{w.bundleId || "-"}
+						</div>
 					</div>
 					<Badge
 						variant={w.schedulable ? "success" : "secondary"}

@@ -17,10 +17,90 @@ interface Release {
   created_at: string;
 }
 
+interface GitHubRepo {
+  full_name: string;
+  private: boolean;
+  default_branch: string;
+  archived: boolean;
+  disabled: boolean;
+}
+
+interface GitHubWorkflow {
+  id: number;
+  name: string;
+  path: string;
+  state: string;
+}
+
+interface GitHubWorkflowsResponse {
+  workflows: GitHubWorkflow[];
+}
+
 async function listReleases(repo: string): Promise<Release[]> {
   const res = await fetch(`${GITHUB_API}/repos/${repo}/releases?per_page=100`, { headers: headers() });
   if (!res.ok) throw new Error(describeHttpError(`list releases failed for ${repo}`, res));
   return (await res.json()) as Release[];
+}
+
+export interface DispatchRepoOption {
+  fullName: string;
+  isPrivate: boolean;
+  defaultBranch: string;
+}
+
+export interface WorkflowOption {
+  id: number;
+  name: string;
+  path: string;
+  state: string;
+}
+
+export async function listDispatchRepos(): Promise<DispatchRepoOption[]> {
+  const repos: DispatchRepoOption[] = [];
+  let page = 1;
+
+  while (page <= 3) {
+    const res = await fetch(`${GITHUB_API}/user/repos?sort=updated&direction=desc&per_page=100&page=${page}`, { headers: headers() });
+    if (!res.ok) throw new Error(describeHttpError('list repos failed', res));
+
+    const batch = (await res.json()) as GitHubRepo[];
+    const active = batch.filter((repo) => !repo.archived && !repo.disabled);
+    repos.push(
+      ...active.map((repo) => ({
+        fullName: repo.full_name,
+        isPrivate: repo.private,
+        defaultBranch: repo.default_branch,
+      })),
+    );
+
+    if (batch.length < 100) break;
+    page += 1;
+  }
+
+  return repos;
+}
+
+export async function listRepoWorkflows(repo: string): Promise<WorkflowOption[]> {
+  const workflows: WorkflowOption[] = [];
+  let page = 1;
+
+  while (page <= 3) {
+    const res = await fetch(`${GITHUB_API}/repos/${repo}/actions/workflows?per_page=100&page=${page}`, { headers: headers() });
+    if (!res.ok) throw new Error(describeHttpError(`list workflows failed for ${repo}`, res));
+
+    const body = (await res.json()) as GitHubWorkflowsResponse;
+    workflows.push(...body.workflows.map((workflow) => ({
+      id: workflow.id,
+      name: workflow.name,
+      path: workflow.path,
+      state: workflow.state,
+    })));
+
+    if (body.workflows.length < 100) break;
+    page += 1;
+  }
+
+  return workflows;
 }
 
 export async function listReleaseVersions(repo: string): Promise<Set<string>> {

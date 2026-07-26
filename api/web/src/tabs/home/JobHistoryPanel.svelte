@@ -847,13 +847,30 @@
 											</div>
 										</div>
 									</div>
-									<div class="min-w-[12rem] flex-1">
+									<div
+										class="w-full shrink-0 self-start sm:w-[11.5rem]"
+									>
 										<div class="flex items-center gap-2">
-											<Badge
-												variant={statusToBadgeVariant(
-													j.status,
-												)}>{j.status}</Badge
-											>
+											{#if j.status === "failed"}
+												<button
+													type="button"
+													class="cursor-pointer"
+													onclick={() => openFailedDetails(j)}
+													title="Show failure details"
+												>
+													<Badge
+														variant={statusToBadgeVariant(
+															j.status,
+														)}>{j.status}</Badge
+													>
+												</button>
+											{:else}
+												<Badge
+													variant={statusToBadgeVariant(
+														j.status,
+													)}>{j.status}</Badge
+												>
+											{/if}
 											<span class="text-xs text-muted"
 												><RelativeTime
 													ms={j.finishedAt}
@@ -862,7 +879,7 @@
 										</div>
 									</div>
 									<div
-										class="flex shrink-0 items-center gap-1.5 self-start"
+										class="flex w-full shrink-0 items-center justify-start gap-1.5 self-start sm:w-[15rem] sm:justify-end"
 									>
 										{#if j.status === "failed"}
 											<Button
@@ -871,13 +888,6 @@
 												onclick={() =>
 													retryOnPrimary(j)}
 												>Retry</Button
-											>
-											<Button
-												size="sm"
-												variant="secondary"
-												onclick={() =>
-													openFailedDetails(j)}
-												>Error</Button
 											>
 										{:else}
 											<Button

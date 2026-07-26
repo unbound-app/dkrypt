@@ -486,7 +486,7 @@
 						<TriangleAlert class="text-warn h-3.5 w-3.5 shrink-0" />
 						<span
 							class="min-w-0 flex-1 truncate font-mono"
-							title={w.bundleId}>{w.name || w.bundleId}</span
+							title={w.bundleId}>{w.bundleId}</span
 						>
 						{#if w.consecutiveFailures >= 3}
 							<Badge variant="destructive"

@@ -3,6 +3,7 @@
 		CircleCheck,
 		LoaderCircle,
 		Plus,
+		Search,
 		TriangleAlert,
 		X,
 	} from "lucide-svelte";
@@ -13,15 +14,20 @@
 		deleteWatch,
 		fetchSettings,
 		fetchWebhookDeliveries,
+		fetchGithubRepos,
+		fetchGithubWorkflows,
 		previewWatchDispatchSource,
 		previewWatchDispatchDraft,
-		refreshAppCatalogEntry,
 		saveSettings,
+		searchApps,
 		testWebhook,
 		triggerWatchDispatch,
 		updateWatch,
 		validateCron,
 		type AppWatch,
+		type AppStoreSearchResult,
+		type GithubRepoOption,
+		type GithubWorkflowOption,
 		type SchedulerSettings,
 		type TestFlightUpdateCheck,
 		type UpdateCheck,
@@ -40,6 +46,7 @@
 		appDisplayName,
 		appIconUrl,
 		ensureAppCatalog,
+		primeAppCatalogFromSearch,
 	} from "#lib/appCatalog.svelte";
 	import { liveState } from "#lib/live.svelte";
 	import { PermissionFlag } from "#lib/permissions";
@@ -205,6 +212,11 @@
 	const REPO_RE = /^[\w.-]+\/[\w.-]+$/;
 	const WEBHOOK_URL_RE = /^https?:\/\/.+/;
 
+	function workflowFileName(path: string): string {
+		const idx = path.lastIndexOf("/");
+		return idx >= 0 ? path.slice(idx + 1) : path;
+	}
+
 	const canManageWatches = $derived(
 		sessionHasPermission(PermissionFlag.manageAutomation),
 	);
@@ -216,7 +228,6 @@
 	);
 
 	const DEFAULT_WATCH_FORM: WatchInput = {
-		name: "",
 		bundleId: "",
 		repo: "",
 		ghWorkflowFile: "remote-ipa-update.yml",
@@ -235,7 +246,18 @@
 	let previewProgressByWatch = $state<Record<string, PreviewProgress[]>>({});
 	let triggeringWatch = $state<Set<string>>(new Set());
 	let deletingWatch = $state<Set<string>>(new Set());
-	let refreshingWatchMetadata = $state<Set<string>>(new Set());
+	let watchSearchTerm = $state("");
+	let watchSearchResults = $state<AppStoreSearchResult[]>([]);
+	let watchSearchLoading = $state(false);
+	let watchSearchSearched = $state(false);
+	let watchSearchToken = 0;
+	let githubRepos = $state<GithubRepoOption[]>([]);
+	let githubReposLoading = $state(false);
+	let githubReposError = $state("");
+	let githubWorkflows = $state<GithubWorkflowOption[]>([]);
+	let githubWorkflowsLoading = $state(false);
+	let githubWorkflowsError = $state("");
+	let githubWorkflowsToken = 0;
 
 	const watches = $derived(liveState.overview?.watches ?? []);
 
@@ -256,6 +278,36 @@
 		checkWatchCron(watchForm.pollCron);
 	});
 
+	const watchRepoItems = $derived.by(() => {
+		const options = githubRepos.map((repo) => ({
+			value: repo.fullName,
+			label: `${repo.fullName}${repo.isPrivate ? " (private)" : ""}`,
+		}));
+		const current = watchForm.repo.trim();
+		if (current && !options.some((option) => option.value === current)) {
+			options.unshift({
+				value: current,
+				label: `${current} (current)`,
+			});
+		}
+		return options;
+	});
+
+	const workflowItems = $derived.by(() => {
+		const options = githubWorkflows.map((workflow) => ({
+			value: workflowFileName(workflow.path),
+			label: `${workflow.name} (${workflowFileName(workflow.path)})`,
+		}));
+		const current = watchForm.ghWorkflowFile.trim();
+		if (current && !options.some((option) => option.value === current)) {
+			options.unshift({
+				value: current,
+				label: `${current} (current)`,
+			});
+		}
+		return options;
+	});
+
 	const watchRepoErrors = $derived({
 		repo:
 			watchForm.repo && !REPO_RE.test(watchForm.repo)
@@ -270,6 +322,14 @@
 	function openAddWatch(): void {
 		editingWatchId = null;
 		watchForm = { ...DEFAULT_WATCH_FORM };
+		watchSearchTerm = "";
+		watchSearchResults = [];
+		watchSearchSearched = false;
+		watchSearchLoading = false;
+		watchSearchToken += 1;
+		githubWorkflows = [];
+		githubWorkflowsError = "";
+		void loadGithubRepos();
 		draftPreview = null;
 		watchDialogOpen = true;
 	}
@@ -277,7 +337,6 @@
 	function openEditWatch(w: AppWatch): void {
 		editingWatchId = w.id;
 		watchForm = {
-			name: w.name ?? "",
 			bundleId: w.bundleId,
 			repo: w.repo,
 			ghWorkflowFile: w.ghWorkflowFile,
@@ -285,8 +344,125 @@
 			enabled: w.enabled,
 			webhookUrl: w.webhookUrl ?? "",
 		};
+		watchSearchTerm = appDisplayName(w.bundleId);
+		watchSearchResults = [];
+		watchSearchSearched = false;
+		watchSearchLoading = false;
+		watchSearchToken += 1;
+		void loadGithubRepos();
+		void loadGithubWorkflows(w.repo);
 		draftPreview = null;
 		watchDialogOpen = true;
+	}
+
+	async function loadGithubRepos(): Promise<void> {
+		if (githubRepos.length > 0) return;
+		githubReposLoading = true;
+		githubReposError = "";
+		try {
+			const { repos } = await fetchGithubRepos();
+			githubRepos = repos;
+		} catch (err) {
+			githubRepos = [];
+			githubReposError =
+				err instanceof Error
+					? err.message
+					: "Failed to load GitHub repositories";
+		} finally {
+			githubReposLoading = false;
+		}
+	}
+
+	async function loadGithubWorkflows(repo: string): Promise<void> {
+		const trimmed = repo.trim();
+		const token = ++githubWorkflowsToken;
+		githubWorkflowsError = "";
+		if (!trimmed || !REPO_RE.test(trimmed)) {
+			githubWorkflows = [];
+			githubWorkflowsLoading = false;
+			return;
+		}
+		githubWorkflowsLoading = true;
+		try {
+			const { workflows } = await fetchGithubWorkflows(trimmed);
+			if (token !== githubWorkflowsToken) return;
+			githubWorkflows = workflows;
+		} catch (err) {
+			if (token !== githubWorkflowsToken) return;
+			githubWorkflows = [];
+			githubWorkflowsError =
+				err instanceof Error
+					? err.message
+					: "Failed to load workflows";
+		} finally {
+			if (token === githubWorkflowsToken) {
+				githubWorkflowsLoading = false;
+			}
+		}
+	}
+
+	function onWatchRepoChange(repo: string): void {
+		watchForm = { ...watchForm, repo };
+		void loadGithubWorkflows(repo);
+	}
+
+	function onWatchWorkflowChange(workflow: string): void {
+		watchForm = { ...watchForm, ghWorkflowFile: workflow };
+	}
+
+	function pickWatchApp(result: AppStoreSearchResult): void {
+		watchForm = { ...watchForm, bundleId: result.bundleId };
+		watchSearchTerm = result.trackName;
+		watchSearchResults = [];
+		watchSearchSearched = false;
+		primeAppCatalogFromSearch([result]);
+	}
+
+	async function runWatchSearch(q: string): Promise<void> {
+		const trimmed = q.trim();
+		const token = ++watchSearchToken;
+		if (!trimmed) {
+			watchSearchResults = [];
+			watchSearchSearched = false;
+			watchSearchLoading = false;
+			return;
+		}
+		watchSearchLoading = true;
+		try {
+			const data = await searchApps(trimmed);
+			if (token !== watchSearchToken) return;
+			if ("error" in data) {
+				watchSearchResults = [];
+				showToast(data.error, "error");
+			} else {
+				watchSearchResults = data.results;
+				primeAppCatalogFromSearch(data.results);
+			}
+			watchSearchSearched = true;
+		} catch {
+			if (token !== watchSearchToken) return;
+			watchSearchResults = [];
+			watchSearchSearched = true;
+		} finally {
+			if (token === watchSearchToken) watchSearchLoading = false;
+		}
+	}
+
+	const debouncedWatchSearch = debounce(
+		(q: string) => void runWatchSearch(q),
+		400,
+	);
+
+	function onWatchSearchInput(): void {
+		if (!watchSearchTerm.trim()) {
+			debouncedWatchSearch.cancel();
+			watchSearchToken += 1;
+			watchSearchResults = [];
+			watchSearchSearched = false;
+			watchSearchLoading = false;
+			return;
+		}
+		debouncedWatchSearch(watchSearchTerm);
 	}
 
 	function applyCronPreset(expr: string): void {
@@ -343,7 +519,7 @@
 	async function removeWatch(w: AppWatch): Promise<void> {
 		if (
 			!(await confirmDialog(
-				`Remove "${w.name || w.bundleId}"? Its scheduled checks stop immediately.`,
+				`Remove "${appDisplayName(w.bundleId)}"? Its scheduled checks stop immediately.`,
 			))
 		)
 			return;
@@ -501,23 +677,6 @@
 		}
 	}
 
-	async function refreshWatchAppMetadata(w: AppWatch): Promise<void> {
-		const next = new Set(refreshingWatchMetadata);
-		next.add(w.id);
-		refreshingWatchMetadata = next;
-		try {
-			await refreshAppCatalogEntry(w.bundleId);
-			showToast(
-				`Refreshed app metadata for ${appDisplayName(w.bundleId)}`,
-				"success",
-			);
-		} finally {
-			const done = new Set(refreshingWatchMetadata);
-			done.delete(w.id);
-			refreshingWatchMetadata = done;
-		}
-	}
-
 	const DEFAULT_FORM: SchedulerSettings = {
 		notifyWebhookUrl: "",
 		notifyFormat: "embed",
@@ -652,10 +811,7 @@
 										class="h-4 w-4 shrink-0 rounded"
 									/>
 								{/if}
-								<span
-									>{w.name ||
-										appDisplayName(w.bundleId)}</span
-								>
+								<span>{appDisplayName(w.bundleId)}</span>
 							</span>
 							<Badge
 								variant={w.schedulable
@@ -676,20 +832,8 @@
 										checked={w.enabled}
 										onCheckedChange={() =>
 											void toggleWatchEnabled(w)}
-										aria-label="Enable {w.name ||
-											w.bundleId}"
+										aria-label="Enable {w.bundleId}"
 									/>
-									<Button
-										size="sm"
-										variant="secondary"
-										loading={refreshingWatchMetadata.has(
-											w.id,
-										)}
-										onclick={() =>
-											refreshWatchAppMetadata(w)}
-									>
-										Refresh app data
-									</Button>
 									<Button
 										size="sm"
 										variant="secondary"
@@ -885,25 +1029,89 @@
 			{editingWatchId ? "Edit watch" : "Add watch"}
 		</div>
 		<div class="max-h-[60vh] overflow-y-auto pr-0.5">
-			<label for="w-name" class="mb-1 block text-xs text-muted"
-				>Name (optional)</label
+			<label
+				for="w-search"
+				class="mb-1 block text-xs text-muted"
+				>App search</label
 			>
-			<Input
-				id="w-name"
-				placeholder="e.g. Main app"
-				bind:value={watchForm.name}
-			/>
+			<div class="relative">
+				<Input
+					id="w-search"
+					placeholder="Search App Store app name or bundle ID"
+					bind:value={watchSearchTerm}
+					oninput={onWatchSearchInput}
+					class="pr-8"
+				/>
+				<div class="text-muted pointer-events-none absolute top-1/2 right-2 -translate-y-1/2">
+					{#if watchSearchLoading}
+						<LoaderCircle class="h-3.5 w-3.5 animate-spin" />
+					{:else}
+						<Search class="h-3.5 w-3.5" />
+					{/if}
+				</div>
+			</div>
+			{#if watchSearchResults.length > 0}
+				<div class="border-border mt-1.5 max-h-52 overflow-y-auto rounded-md border">
+					{#each watchSearchResults as result (result.bundleId)}
+						<button
+							type="button"
+							class="border-border hover:bg-panel-muted flex w-full cursor-pointer items-center gap-2 border-b px-2.5 py-2 text-left last:border-0"
+							onclick={() => pickWatchApp(result)}
+						>
+							{#if result.artworkUrl}
+								<img
+									src={result.artworkUrl}
+									alt=""
+									class="h-5 w-5 shrink-0 rounded"
+								/>
+							{/if}
+							<div class="min-w-0 flex-1">
+								<div class="truncate text-[13px] font-medium">
+									{result.trackName}
+								</div>
+								<div class="truncate text-[11px] text-muted">
+									{result.bundleId}
+								</div>
+							</div>
+						</button>
+					{/each}
+				</div>
+			{:else if watchSearchSearched && watchSearchTerm.trim()}
+				<div class="mt-1 text-xs text-muted">No apps found.</div>
+			{/if}
 
 			<label for="w-bundleId" class="mt-3 mb-1 block text-xs text-muted"
-				>Watch bundle ID</label
+				>Selected bundle ID</label
 			>
 			<Input id="w-bundleId" bind:value={watchForm.bundleId} />
 
 			<label for="w-repo" class="mt-3 mb-1 block text-xs text-muted"
-				>Repo (releases tracked here, and where the dispatch workflow
-				lives)</label
+				>Dispatch repository</label
 			>
-			<Input id="w-repo" bind:value={watchForm.repo} />
+			{#if watchRepoItems.length > 0}
+				<Select
+					id="w-repo"
+					items={watchRepoItems}
+					value={watchForm.repo}
+					onValueChange={onWatchRepoChange}
+					disabled={githubReposLoading}
+					class="w-full"
+				/>
+			{:else}
+				<Input
+					id="w-repo"
+					placeholder="owner/repo"
+					bind:value={watchForm.repo}
+					oninput={() => void loadGithubWorkflows(watchForm.repo)}
+				/>
+			{/if}
+			{#if githubReposLoading}
+				<div class="mt-1 text-xs text-muted">
+					Loading repositories...
+				</div>
+			{:else if githubReposError}
+				<div class="mt-1 text-xs text-err">{githubReposError}</div>
+			{/if}
 			{#if watchRepoErrors.repo}
 				<div class="mt-1 text-xs text-err">{watchRepoErrors.repo}</div>
 			{/if}
@@ -912,10 +1120,30 @@
 				for="w-ghWorkflowFile"
 				class="mt-3 mb-1 block text-xs text-muted">Workflow file</label
 			>
-			<Input
-				id="w-ghWorkflowFile"
-				bind:value={watchForm.ghWorkflowFile}
-			/>
+			{#if workflowItems.length > 0}
+				<Select
+					id="w-ghWorkflowFile"
+					items={workflowItems}
+					value={watchForm.ghWorkflowFile}
+					onValueChange={onWatchWorkflowChange}
+					disabled={githubWorkflowsLoading || !watchForm.repo.trim()}
+					class="w-full"
+				/>
+			{:else}
+				<Input
+					id="w-ghWorkflowFile"
+					bind:value={watchForm.ghWorkflowFile}
+				/>
+			{/if}
+			{#if githubWorkflowsLoading}
+				<div class="mt-1 text-xs text-muted">Loading workflows...</div>
+			{:else if githubWorkflowsError}
+				<div class="mt-1 text-xs text-err">{githubWorkflowsError}</div>
+			{:else if watchForm.repo.trim() && workflowItems.length === 0}
+				<div class="mt-1 text-xs text-muted">
+					No workflows found in this repository.
+				</div>
+			{/if}
 
 			<label for="w-pollCron" class="mt-3 mb-1 block text-xs text-muted"
 				>Poll cron</label
