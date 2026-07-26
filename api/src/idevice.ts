@@ -179,12 +179,18 @@ export async function uninstallInstalledApp(conn: Client, bundleId: string): Pro
   const removable = /^Removable:\s*true\s*$/m.test(stdout);
 
   if (foundId !== bundleId || !appPath || !removable) return false;
+  return uninstallInstalledBundle(conn, bundleId, appPath);
+}
+
+export async function uninstallInstalledBundle(conn: Client, bundleId: string, appPath: string): Promise<boolean> {
+  if (!/^[A-Za-z0-9.-]{1,200}$/.test(bundleId)) return false;
   if (!appPath.endsWith('.app') || !appPath.includes('/var/containers/Bundle/Application/')) return false;
 
   const container = appPath.replace(/\/[^/]+\.app$/, '');
   if (!/\/var\/containers\/Bundle\/Application\/[^/]+$/.test(container)) return false;
 
-  await execCommand(conn, `sudo /var/jb/usr/bin/uicache -u "${appPath}" 2>/dev/null; sudo rm -rf "${container}"`);
+  const { code } = await execCommand(conn, `sudo /var/jb/usr/bin/uicache -u "${appPath}" 2>/dev/null; sudo rm -rf "${container}"`);
+  if (code !== 0) return false;
   log.info('uninstalled app from device', { bundleId });
   return true;
 }

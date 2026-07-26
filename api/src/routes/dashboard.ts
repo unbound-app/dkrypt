@@ -688,6 +688,24 @@ dashboardRouter.get('/v1/dashboard/watches/:id/preview-dispatch', canTriggerDisp
   res.json({ ...appStore, testflight });
 });
 
+dashboardRouter.get('/v1/dashboard/watches/:id/preview-dispatch/:source', canTriggerDispatch, deviceOrExternalRateLimit, async (req, res) => {
+  const watch = getWatch(req.params.id);
+  if (!watch) {
+    res.status(404).json({ error: 'watch not found' });
+    return;
+  }
+
+  if (req.params.source === 'app-store') {
+    res.json({ source: 'appStore', result: await checkForUpdate(watch) });
+    return;
+  }
+  if (req.params.source === 'testflight') {
+    res.json({ source: 'testflight', result: await checkForTestFlightUpdate(watch) });
+    return;
+  }
+  res.status(400).json({ error: 'source must be app-store or testflight' });
+});
+
 dashboardRouter.post('/v1/dashboard/watches/:id/trigger-dispatch', canTriggerDispatch, async (req, res) => {
   const result = await triggerTickNow(req.params.id);
   res.status(result.ok ? 202 : 409).json(result);

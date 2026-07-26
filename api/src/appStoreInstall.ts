@@ -7,6 +7,7 @@ import {
   readInstalledBundleVersions,
   sendAppStoreBridgeRequest,
   sendSpringBoardBridgeRequest,
+  uninstallInstalledBundle,
   uninstallInstalledApp,
   withSSH,
 } from '#idevice.js';
@@ -74,7 +75,7 @@ export async function installFromAppStore(bundleId: string, options: AppStoreIns
     const existing = await findInstalledAppStoreBundle(conn, bundleId);
     if (existing) {
       report('removing the installed app before the App Store install');
-      const removed = await uninstallInstalledApp(conn, bundleId);
+      const removed = (await uninstallInstalledApp(conn, bundleId)) || (await uninstallInstalledBundle(conn, bundleId, existing));
       if (!removed) {
         throw new Error(`failed to remove the existing ${bundleId} before installing from the App Store`);
       }

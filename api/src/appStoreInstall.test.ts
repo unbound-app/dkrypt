@@ -4,6 +4,7 @@ const calls: string[] = [];
 const progress: string[] = [];
 let installedShortVersion = '338.0';
 let installRequest: Record<string, unknown> | undefined;
+let guardedUninstallFails = false;
 const originalSetTimeout = globalThis.setTimeout;
 
 const idevice = await import('#idevice.js');
@@ -24,6 +25,10 @@ mock.module('#idevice.js', () => ({
   sendSpringBoardBridgeRequest: async () => ({ launchResult: 0 }),
   uninstallInstalledApp: async () => {
     calls.push('uninstall');
+    return !guardedUninstallFails;
+  },
+  uninstallInstalledBundle: async () => {
+    calls.push('force-uninstall');
     return true;
   },
   withSSH: async (_rootDir: string, fn: (conn: object) => Promise<void>) => fn({}),
@@ -56,6 +61,7 @@ describe('installFromAppStore', () => {
     progress.length = 0;
     installedShortVersion = '338.0';
     installRequest = undefined;
+    guardedUninstallFails = false;
   });
 
   test('replaces an installed beta before decrypting a pinned App Store version', async () => {
@@ -76,6 +82,14 @@ describe('installFromAppStore', () => {
 
     expect(calls).toEqual(['uninstall', 'arm', 'request', 'clear']);
     expect(installRequest).toEqual({ action: 'install', adamId: 123, contextMode: 'fallback' });
+  });
+
+  test('removes the discovered app bundle when the guarded uninstaller rejects it', async () => {
+    guardedUninstallFails = true;
+
+    await installFromAppStore('com.hammerandchisel.discord', { externalVersionId: '123456789', expectedVersion: '338.0' });
+
+    expect(calls).toEqual(['uninstall', 'force-uninstall', 'arm', 'request', 'clear']);
   });
 
   test('refuses to decrypt a bundle whose installed version differs from the request', async () => {

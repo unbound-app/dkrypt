@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Plus, X } from 'lucide-svelte';
+  import { CircleCheck, LoaderCircle, Plus, TriangleAlert, X } from 'lucide-svelte';
   import EmptyState from '#components/EmptyState.svelte';
   import RelativeTime from '#components/RelativeTime.svelte';
   import {
@@ -7,7 +7,7 @@
     deleteWatch,
     fetchSettings,
     fetchWebhookDeliveries,
-    previewWatchDispatch,
+    previewWatchDispatchSource,
     previewWatchDispatchDraft,
     saveSettings,
     testWebhook,
@@ -16,6 +16,7 @@
     validateCron,
     type AppWatch,
     type SchedulerSettings,
+    type TestFlightUpdateCheck,
     type UpdateCheck,
     type WatchInput,
     type WebhookDeliveryEntry,
@@ -147,6 +148,7 @@
   let savingWatch = $state(false);
   let previewByWatch = $state<Record<string, UpdateCheck | null>>({});
   let previewingWatch = $state<Set<string>>(new Set());
+  let previewProgressByWatch = $state<Record<string, PreviewProgress[]>>({});
   let triggeringWatch = $state<Set<string>>(new Set());
   let deletingWatch = $state<Set<string>>(new Set());
 
@@ -198,12 +200,17 @@
 
   let draftPreview = $state<UpdateCheck | null>(null);
   let previewingDraft = $state(false);
+  let draftPreviewError = $state('');
 
   async function previewDraft(): Promise<void> {
     if (!watchForm.bundleId.trim() || !watchForm.repo.trim() || watchRepoErrors.repo) return;
     previewingDraft = true;
+    draftPreviewError = '';
     try {
       draftPreview = await previewWatchDispatchDraft(watchForm.bundleId.trim(), watchForm.repo.trim());
+    } catch (err) {
+      draftPreview = null;
+      draftPreviewError = err instanceof Error ? err.message : String(err);
     } finally {
       previewingDraft = false;
     }
@@ -244,10 +251,60 @@
     await updateWatch(w.id, { enabled: !w.enabled });
   }
 
+  type PreviewProgress = {
+    source: 'appStore' | 'testflight';
+    label: string;
+    detail: string;
+    state: 'checking' | 'complete' | 'failed';
+  };
+
+  function updatePreviewProgress(id: string, source: PreviewProgress['source'], detail: string, state: PreviewProgress['state']): void {
+    const previous = previewProgressByWatch[id] ?? [];
+    const label = source === 'appStore' ? 'App Store' : 'TestFlight';
+    const next = previous.filter((entry) => entry.source !== source);
+    previewProgressByWatch = { ...previewProgressByWatch, [id]: [...next, { source, label, detail, state }] };
+  }
+
+  function failedPreviewCheck(reason: string): UpdateCheck {
+    return { ok: false, wouldDispatch: false, reason };
+  }
+
   async function runPreviewWatch(id: string): Promise<void> {
     previewingWatch = new Set(previewingWatch).add(id);
+    previewByWatch = { ...previewByWatch, [id]: null };
+    previewProgressByWatch = {
+      ...previewProgressByWatch,
+      [id]: [
+        { source: 'appStore', label: 'App Store', detail: 'Looking up the live version and published releases…', state: 'checking' },
+        { source: 'testflight', label: 'TestFlight', detail: 'Checking the TestFlight catalog and published builds…', state: 'checking' },
+      ],
+    };
     try {
-      previewByWatch = { ...previewByWatch, [id]: await previewWatchDispatch(id) };
+      const [appStore, testflight] = await Promise.all([
+        previewWatchDispatchSource(id, 'app-store')
+          .then(({ result }) => {
+            const check = result as UpdateCheck;
+            updatePreviewProgress(id, 'appStore', check.reason, check.ok ? 'complete' : 'failed');
+            return check;
+          })
+          .catch((err) => {
+            const check = failedPreviewCheck(err instanceof Error ? err.message : String(err));
+            updatePreviewProgress(id, 'appStore', check.reason, 'failed');
+            return check;
+          }),
+        previewWatchDispatchSource(id, 'testflight')
+          .then(({ result }) => {
+            const check = result as TestFlightUpdateCheck;
+            updatePreviewProgress(id, 'testflight', check.reason, check.ok ? 'complete' : 'failed');
+            return check;
+          })
+          .catch((err) => {
+            const check = failedPreviewCheck(err instanceof Error ? err.message : String(err)) as TestFlightUpdateCheck;
+            updatePreviewProgress(id, 'testflight', check.reason, 'failed');
+            return check;
+          }),
+      ]);
+      previewByWatch = { ...previewByWatch, [id]: { ...appStore, testflight } };
     } finally {
       const next = new Set(previewingWatch);
       next.delete(id);
@@ -259,6 +316,9 @@
     const next = { ...previewByWatch };
     delete next[id];
     previewByWatch = next;
+    const progress = { ...previewProgressByWatch };
+    delete progress[id];
+    previewProgressByWatch = progress;
   }
 
   async function runTriggerWatch(id: string): Promise<void> {
@@ -407,6 +467,26 @@
             {#if w.configIssues.length > 0}
               <div class="mt-1.5 text-xs text-warn">{w.configIssues.join(' ')}</div>
             {/if}
+            {#if previewProgressByWatch[w.id]}
+              <div class="border-border bg-panel-muted mt-2 rounded-md border p-2.5 text-xs" aria-live="polite">
+                <div class="mb-1.5 font-medium">Preview activity</div>
+                <div class="flex flex-col gap-1.5 font-mono text-[11px]">
+                  {#each previewProgressByWatch[w.id] as progress (progress.source)}
+                    <div class="flex items-start gap-1.5">
+                      {#if progress.state === 'checking'}
+                        <LoaderCircle class="text-accent mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin" />
+                      {:else if progress.state === 'complete'}
+                        <CircleCheck class="text-ok mt-0.5 h-3.5 w-3.5 shrink-0" />
+                      {:else}
+                        <TriangleAlert class="text-err mt-0.5 h-3.5 w-3.5 shrink-0" />
+                      {/if}
+                      <span class="text-muted shrink-0">{progress.label}</span>
+                      <span class={progress.state === 'failed' ? 'text-err' : 'text-text'}>{progress.detail}</span>
+                    </div>
+                  {/each}
+                </div>
+              </div>
+            {/if}
             {#if previewByWatch[w.id]}
               {@const p = previewByWatch[w.id]}
               <div class="border-border bg-panel-muted mt-2 flex items-start gap-2 rounded-md border p-2.5 text-xs">
@@ -551,6 +631,8 @@
             </div>
           {/if}
         </div>
+      {:else if draftPreviewError}
+        <div class="mt-2 text-xs text-err">{draftPreviewError}</div>
       {/if}
     </div>
     <Button class="mt-3.5 w-full" loading={savingWatch} onclick={saveWatch}>{editingWatchId ? 'Save' : 'Add'}</Button>

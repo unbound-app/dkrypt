@@ -36,11 +36,14 @@ async function request(path: string, opts: RequestInit = {}, bucket?: string): P
 
 export async function apiJson<T>(path: string, opts?: RequestInit, bucket?: string): Promise<T> {
   const res = await request(path, opts, bucket);
+  let data: T | { error?: string };
   try {
-    return (await res.json()) as T;
+    data = (await res.json()) as T;
   } catch {
     throw new Error('invalid response from server');
   }
+  if (!res.ok) throw new Error((data as { error?: string }).error ?? `Request failed (${res.status})`);
+  return data as T;
 }
 
 export async function apiAction<T = Record<string, unknown>>(
@@ -430,6 +433,15 @@ export function deleteWatch(id: string): Promise<{ ok: boolean }> {
 
 export function previewWatchDispatch(id: string): Promise<UpdateCheck> {
   return apiJson(`/v1/dashboard/watches/${encodeURIComponent(id)}/preview-dispatch`, undefined, 'external');
+}
+
+export interface PreviewSourceResult {
+  source: 'appStore' | 'testflight';
+  result: UpdateCheck | TestFlightUpdateCheck;
+}
+
+export function previewWatchDispatchSource(id: string, source: 'app-store' | 'testflight'): Promise<PreviewSourceResult> {
+  return apiJson(`/v1/dashboard/watches/${encodeURIComponent(id)}/preview-dispatch/${source}`, undefined, 'external');
 }
 
 export function previewWatchDispatchDraft(bundleId: string, repo: string): Promise<UpdateCheck> {
