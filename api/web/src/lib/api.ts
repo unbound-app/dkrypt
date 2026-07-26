@@ -117,8 +117,10 @@ export interface SchedulerSettings {
   notifyWebhookUrl: string;
   notifyFormat: 'embed' | 'plain';
   notifyOnKeyRequest: boolean;
-  notifyOnDispatchSuccess: boolean;
-  notifyOnDispatchFailure: boolean;
+  notifyOnAppStoreAutomationSuccess: boolean;
+  notifyOnTestFlightAutomationSuccess: boolean;
+  notifyOnAppStoreAutomationFailure: boolean;
+  notifyOnTestFlightAutomationFailure: boolean;
   notifyOnKeyExpiringSoon: boolean;
   notifyOnDeviceOffline: boolean;
   notifyOnDeviceBatteryHot: boolean;
@@ -317,6 +319,15 @@ export interface AppStoreSearchResult {
   sellerName: string;
   artworkUrl: string;
   price: number;
+}
+
+export interface AppCatalogEntry {
+  bundleId: string;
+  displayName: string;
+  iconUrl?: string;
+  trackId?: number;
+  sellerName?: string;
+  updatedAt: number;
 }
 
 export function fetchOverview(): Promise<OverviewPayload> {
@@ -686,6 +697,19 @@ export function fetchWatchHealth(): Promise<{ watches: WatchHealthSummary[] }> {
 
 export function searchApps(term: string): Promise<{ results: AppStoreSearchResult[] } | { error: string }> {
   return apiJson(`/v1/dashboard/search?q=${encodeURIComponent(term)}`);
+}
+
+export function fetchAppCatalog(bundleIds: string[]): Promise<{ entries: AppCatalogEntry[] }> {
+  const unique = [...new Set(bundleIds.map((bundleId) => bundleId.trim()).filter(Boolean))];
+  if (unique.length === 0) return Promise.resolve({ entries: [] });
+  return apiJson(`/v1/dashboard/apps/metadata?bundleIds=${encodeURIComponent(unique.join(','))}`);
+}
+
+export function refreshAppCatalogEntry(bundleId: string): Promise<{ ok: boolean; entry: AppCatalogEntry }> {
+  return apiAction('/v1/dashboard/apps/metadata/refresh', { method: 'POST', body: JSON.stringify({ bundleId }) }).then(({ ok, data }) => {
+    if (!ok) throw new Error('failed to refresh app metadata');
+    return data as { ok: boolean; entry: AppCatalogEntry };
+  });
 }
 
 export function queueDecrypt(

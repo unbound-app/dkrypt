@@ -1,87 +1,165 @@
 <script lang="ts">
-  import { fetchKeyBundleUsage, fetchKeyUsage, type ApiKeyBundleUsage, type ApiKeyUsageBucket } from '#lib/api';
-  import Dialog from '#lib/components/ui/Dialog.svelte';
-  import Sparkline from '#components/Sparkline.svelte';
+	import {
+		fetchKeyBundleUsage,
+		fetchKeyUsage,
+		type ApiKeyBundleUsage,
+		type ApiKeyUsageBucket,
+	} from "#lib/api";
+	import {
+		appDisplayName,
+		appIconUrl,
+		ensureAppCatalog,
+	} from "#lib/appCatalog.svelte";
+	import Dialog from "#lib/components/ui/Dialog.svelte";
+	import Sparkline from "#components/Sparkline.svelte";
 
-  let {
-    open = $bindable(),
-    keyId,
-    keyName,
-    dailyLimit,
-    lastUsedIp,
-    onOpenChange,
-  }: { open: boolean; keyId: string; keyName: string; dailyLimit?: number; lastUsedIp?: string; onOpenChange: (open: boolean) => void } = $props();
+	let {
+		open = $bindable(),
+		keyId,
+		keyName,
+		dailyLimit,
+		lastUsedIp,
+		onOpenChange,
+	}: {
+		open: boolean;
+		keyId: string;
+		keyName: string;
+		dailyLimit?: number;
+		lastUsedIp?: string;
+		onOpenChange: (open: boolean) => void;
+	} = $props();
 
-  let usage = $state<ApiKeyUsageBucket[] | null>(null);
-  let bundleUsage = $state<ApiKeyBundleUsage[] | null>(null);
+	let usage = $state<ApiKeyUsageBucket[] | null>(null);
+	let bundleUsage = $state<ApiKeyBundleUsage[] | null>(null);
 
-  $effect(() => {
-    if (open && keyId) {
-      usage = null;
-      bundleUsage = null;
-      void fetchKeyUsage(keyId, 14).then((r) => (usage = r.usage));
-      void fetchKeyBundleUsage(keyId).then((r) => (bundleUsage = r.bundles));
-    }
-  });
+	$effect(() => {
+		if (open && keyId) {
+			usage = null;
+			bundleUsage = null;
+			void fetchKeyUsage(keyId, 14).then((r) => (usage = r.usage));
+			void fetchKeyBundleUsage(keyId).then(
+				(r) => (bundleUsage = r.bundles),
+			);
+		}
+	});
 
-  const maxBundleCount = $derived(Math.max(1, ...(bundleUsage?.map((b) => b.count) ?? [1])));
+	$effect(() => {
+		if (!open || !bundleUsage) return;
+		void ensureAppCatalog(bundleUsage.map((entry) => entry.bundleId));
+	});
 
-  function fmtDayLabel(dateStr: string): string {
-    return new Date(dateStr).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-  }
+	const maxBundleCount = $derived(
+		Math.max(1, ...(bundleUsage?.map((b) => b.count) ?? [1])),
+	);
 
-  const total = $derived(usage?.reduce((a, d) => a + d.count, 0) ?? 0);
-  const todayCount = $derived(usage?.[usage.length - 1]?.count ?? 0);
-  const todayPercent = $derived(dailyLimit ? Math.min(100, (todayCount / dailyLimit) * 100) : 0);
+	function fmtDayLabel(dateStr: string): string {
+		return new Date(dateStr).toLocaleDateString(undefined, {
+			month: "short",
+			day: "numeric",
+		});
+	}
+
+	const total = $derived(usage?.reduce((a, d) => a + d.count, 0) ?? 0);
+	const todayCount = $derived(usage?.[usage.length - 1]?.count ?? 0);
+	const todayPercent = $derived(
+		dailyLimit ? Math.min(100, (todayCount / dailyLimit) * 100) : 0,
+	);
 </script>
 
 <Dialog {open} {onOpenChange} class="max-w-sm">
-  <div class="mb-1 truncate text-sm font-medium" title={keyName}>{keyName} - usage</div>
-  {#if lastUsedIp}
-    <div class="mb-3 text-xs text-muted">Last seen from <span class="font-mono">{lastUsedIp}</span></div>
-  {/if}
-  {#if !usage}
-    <div class="text-sm text-muted">Loading…</div>
-  {:else}
-    {#if dailyLimit}
-      <div class="mb-3">
-        <div class="mb-1.5 flex items-center justify-between text-xs text-muted">
-          <span>Today</span>
-          <span>{todayCount} / {dailyLimit}</span>
-        </div>
-        <div class="bg-panel-muted h-1.5 w-full overflow-hidden rounded-full">
-          <div class="h-full rounded-full {todayPercent >= 100 ? 'bg-err' : todayPercent >= 80 ? 'bg-warn' : 'bg-accent'}" style="width: {todayPercent}%"></div>
-        </div>
-      </div>
-    {/if}
-    {#if total === 0}
-      <div class="text-sm text-muted">No requests with this key in the last 14 days.</div>
-    {:else}
-      <div class="mb-1.5 text-xs text-muted">{total} request{total === 1 ? '' : 's'} · last 14 days</div>
-      <Sparkline
-        data={usage.map((d) => ({ label: fmtDayLabel(d.date), value: d.count }))}
-        width={300}
-        ariaLabel="{total} requests over the last 14 days"
-      />
-    {/if}
+	<div class="mb-1 truncate text-sm font-medium" title={keyName}>
+		{keyName} - usage
+	</div>
+	{#if lastUsedIp}
+		<div class="mb-3 text-xs text-muted">
+			Last seen from <span class="font-mono">{lastUsedIp}</span>
+		</div>
+	{/if}
+	{#if !usage}
+		<div class="text-sm text-muted">Loading…</div>
+	{:else}
+		{#if dailyLimit}
+			<div class="mb-3">
+				<div
+					class="mb-1.5 flex items-center justify-between text-xs text-muted"
+				>
+					<span>Today</span>
+					<span>{todayCount} / {dailyLimit}</span>
+				</div>
+				<div
+					class="bg-panel-muted h-1.5 w-full overflow-hidden rounded-full"
+				>
+					<div
+						class="h-full rounded-full {todayPercent >= 100
+							? 'bg-err'
+							: todayPercent >= 80
+								? 'bg-warn'
+								: 'bg-accent'}"
+						style="width: {todayPercent}%"
+					></div>
+				</div>
+			</div>
+		{/if}
+		{#if total === 0}
+			<div class="text-sm text-muted">
+				No requests with this key in the last 14 days.
+			</div>
+		{:else}
+			<div class="mb-1.5 text-xs text-muted">
+				{total} request{total === 1 ? "" : "s"} · last 14 days
+			</div>
+			<Sparkline
+				data={usage.map((d) => ({
+					label: fmtDayLabel(d.date),
+					value: d.count,
+				}))}
+				width={300}
+				ariaLabel="{total} requests over the last 14 days"
+			/>
+		{/if}
 
-    {#if bundleUsage === null}
-      <div class="border-border mt-3 border-t pt-3 text-xs text-muted">Loading used-for breakdown…</div>
-    {:else if bundleUsage.length > 0}
-      <div class="border-border mt-3 border-t pt-3">
-        <div class="mb-2 text-xs text-muted">Used to decrypt</div>
-        <div class="flex flex-col gap-1.5">
-          {#each bundleUsage as b (b.bundleId)}
-            <div class="flex items-center gap-2.5">
-              <span class="w-32 shrink-0 truncate font-mono text-[11px]" title={b.bundleId}>{b.bundleId}</span>
-              <div class="bg-panel-muted h-2 flex-1 overflow-hidden rounded-full">
-                <div class="bg-accent h-full rounded-full" style="width: {(b.count / maxBundleCount) * 100}%"></div>
-              </div>
-              <span class="w-6 shrink-0 text-right text-xs text-muted">{b.count}</span>
-            </div>
-          {/each}
-        </div>
-      </div>
-    {/if}
-  {/if}
+		{#if bundleUsage === null}
+			<div class="border-border mt-3 border-t pt-3 text-xs text-muted">
+				Loading used-for breakdown…
+			</div>
+		{:else if bundleUsage.length > 0}
+			<div class="border-border mt-3 border-t pt-3">
+				<div class="mb-2 text-xs text-muted">Used to decrypt</div>
+				<div class="flex flex-col gap-1.5">
+					{#each bundleUsage as b (b.bundleId)}
+						<div class="flex items-center gap-2.5">
+							<span
+								class="flex w-44 min-w-0 items-center gap-1.5 truncate"
+								title={b.bundleId}
+							>
+								{#if appIconUrl(b.bundleId)}
+									<img
+										src={appIconUrl(b.bundleId)}
+										alt=""
+										class="h-3.5 w-3.5 shrink-0 rounded"
+									/>
+								{/if}
+								<span class="truncate text-[11px]"
+									>{appDisplayName(b.bundleId)}</span
+								>
+							</span>
+							<div
+								class="bg-panel-muted h-2 flex-1 overflow-hidden rounded-full"
+							>
+								<div
+									class="bg-accent h-full rounded-full"
+									style="width: {(b.count / maxBundleCount) *
+										100}%"
+								></div>
+							</div>
+							<span
+								class="w-6 shrink-0 text-right text-xs text-muted"
+								>{b.count}</span
+							>
+						</div>
+					{/each}
+				</div>
+			</div>
+		{/if}
+	{/if}
 </Dialog>

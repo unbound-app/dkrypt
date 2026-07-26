@@ -7,8 +7,10 @@ import { postJsonWithRetry } from '#util/webhookRetry.js';
 
 export type NotifyEvent =
   | 'keyRequest'
-  | 'dispatchSuccess'
-  | 'dispatchFailure'
+  | 'appStoreAutomationSuccess'
+  | 'testFlightAutomationSuccess'
+  | 'appStoreAutomationFailure'
+  | 'testFlightAutomationFailure'
   | 'keyExpiringSoon'
   | 'deviceOffline'
   | 'deviceBatteryHot'
@@ -20,8 +22,10 @@ export type NotifyEvent =
 
 const EVENT_SETTING_KEY: Record<NotifyEvent, keyof SchedulerSettings> = {
   keyRequest: 'notifyOnKeyRequest',
-  dispatchSuccess: 'notifyOnDispatchSuccess',
-  dispatchFailure: 'notifyOnDispatchFailure',
+  appStoreAutomationSuccess: 'notifyOnAppStoreAutomationSuccess',
+  testFlightAutomationSuccess: 'notifyOnTestFlightAutomationSuccess',
+  appStoreAutomationFailure: 'notifyOnAppStoreAutomationFailure',
+  testFlightAutomationFailure: 'notifyOnTestFlightAutomationFailure',
   keyExpiringSoon: 'notifyOnKeyExpiringSoon',
   deviceOffline: 'notifyOnDeviceOffline',
   deviceBatteryHot: 'notifyOnDeviceBatteryHot',

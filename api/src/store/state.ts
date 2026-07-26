@@ -163,8 +163,10 @@ export interface SchedulerSettings {
   notifyWebhookUrl: string;
   notifyFormat: 'embed' | 'plain';
   notifyOnKeyRequest: boolean;
-  notifyOnDispatchSuccess: boolean;
-  notifyOnDispatchFailure: boolean;
+  notifyOnAppStoreAutomationSuccess: boolean;
+  notifyOnTestFlightAutomationSuccess: boolean;
+  notifyOnAppStoreAutomationFailure: boolean;
+  notifyOnTestFlightAutomationFailure: boolean;
   notifyOnKeyExpiringSoon: boolean;
   notifyOnDeviceOffline: boolean;
   notifyOnDeviceBatteryHot: boolean;
@@ -245,6 +247,15 @@ export interface JobHistoryEntry {
   deviceId?: string;
   ipaMetadata?: IpaMetadata;
   ipaInfoPlist?: Record<string, unknown>;
+}
+
+export interface AppCatalogEntry {
+  bundleId: string;
+  displayName: string;
+  iconUrl?: string;
+  trackId?: number;
+  sellerName?: string;
+  updatedAt: number;
 }
 
 export interface UserPrefs {
@@ -370,6 +381,7 @@ interface PersistedState {
   backupSchedule: BackupScheduleSettings;
   backupHistory: BackupHistoryEntry[];
   activeSessions: ActiveSessionRecord[];
+  appCatalog: Record<string, AppCatalogEntry>;
 }
 
 const MAX_HISTORY = 100;
@@ -407,6 +419,7 @@ function defaultState(): PersistedState {
     backupSchedule: { enabled: false, cron: '0 3 * * *', retentionCount: 14 },
     backupHistory: [],
     activeSessions: [],
+    appCatalog: {},
   };
 }
 
@@ -770,10 +783,58 @@ function load(): PersistedState {
   try {
     const migrated = migrate(JSON.parse(readFileSync(statePath, 'utf8')));
     migrated.schedulerRunHistory = normalizeLegacySchedulerRunHistory(migrated.schedulerRunHistory);
+    migrated.appCatalog = migrated.appCatalog ?? {};
     return migrated;
   } catch {
     return defaultState();
   }
+}
+
+export function getAppCatalogEntry(bundleId: string): AppCatalogEntry | undefined {
+  return state.appCatalog[bundleId];
+}
+
+export function getAppCatalogEntries(bundleIds: string[]): AppCatalogEntry[] {
+  const unique = new Set(bundleIds.filter((bundleId) => !!bundleId));
+  const entries: AppCatalogEntry[] = [];
+  for (const bundleId of unique) {
+    const entry = state.appCatalog[bundleId];
+    if (entry) entries.push(entry);
+  }
+  return entries;
+}
+
+export function upsertAppCatalogEntry(entry: Omit<AppCatalogEntry, 'updatedAt'>): AppCatalogEntry {
+  const normalized: AppCatalogEntry = {
+    ...entry,
+    bundleId: entry.bundleId.trim(),
+    displayName: entry.displayName.trim(),
+    updatedAt: Date.now(),
+  };
+  if (!normalized.bundleId || !normalized.displayName) {
+    throw new Error('bundleId and displayName are required');
+  }
+  state.appCatalog[normalized.bundleId] = normalized;
+  dirty = true;
+  return normalized;
+}
+
+export function upsertAppCatalogEntries(entries: Array<Omit<AppCatalogEntry, 'updatedAt'>>): AppCatalogEntry[] {
+  const updated: AppCatalogEntry[] = [];
+  for (const entry of entries) {
+    if (!entry.bundleId?.trim() || !entry.displayName?.trim()) continue;
+    updated.push(
+      upsertAppCatalogEntry({
+        bundleId: entry.bundleId,
+        displayName: entry.displayName,
+        iconUrl: entry.iconUrl,
+        trackId: entry.trackId,
+        sellerName: entry.sellerName,
+      }),
+    );
+  }
+  if (updated.length > 0) persistNow();
+  return updated;
 }
 
 const state: PersistedState = load();
@@ -1579,12 +1640,17 @@ export function startApiKeySweeper(): void {
 }
 
 export function getEffectiveSettings(): SchedulerSettings {
+  const legacySettings = state.settings as Record<string, unknown>;
+  const legacyDispatchSuccess = typeof legacySettings.notifyOnDispatchSuccess === 'boolean' ? legacySettings.notifyOnDispatchSuccess : undefined;
+  const legacyDispatchFailure = typeof legacySettings.notifyOnDispatchFailure === 'boolean' ? legacySettings.notifyOnDispatchFailure : undefined;
   return {
     notifyWebhookUrl: state.settings.notifyWebhookUrl ?? config.notifyWebhookUrl,
     notifyFormat: state.settings.notifyFormat ?? 'embed',
     notifyOnKeyRequest: state.settings.notifyOnKeyRequest ?? true,
-    notifyOnDispatchSuccess: state.settings.notifyOnDispatchSuccess ?? true,
-    notifyOnDispatchFailure: state.settings.notifyOnDispatchFailure ?? true,
+    notifyOnAppStoreAutomationSuccess: state.settings.notifyOnAppStoreAutomationSuccess ?? legacyDispatchSuccess ?? true,
+    notifyOnTestFlightAutomationSuccess: state.settings.notifyOnTestFlightAutomationSuccess ?? legacyDispatchSuccess ?? true,
+    notifyOnAppStoreAutomationFailure: state.settings.notifyOnAppStoreAutomationFailure ?? legacyDispatchFailure ?? true,
+    notifyOnTestFlightAutomationFailure: state.settings.notifyOnTestFlightAutomationFailure ?? legacyDispatchFailure ?? true,
     notifyOnKeyExpiringSoon: state.settings.notifyOnKeyExpiringSoon ?? true,
     notifyOnDeviceOffline: state.settings.notifyOnDeviceOffline ?? true,
     notifyOnDeviceBatteryHot: state.settings.notifyOnDeviceBatteryHot ?? true,

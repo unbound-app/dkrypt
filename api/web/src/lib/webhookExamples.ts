@@ -20,8 +20,9 @@ const EXAMPLES: Record<keyof SchedulerSettings & `notifyOn${string}`, ExampleEmb
     title: 'Decrypt finished',
     color: COLOR.ok,
     fields: [
-      { name: 'App', value: 'com.example.app (v1.4.2)', inline: true },
-      { name: 'Source', value: 'manual', inline: true },
+      { name: 'App', value: 'Example App (com.example.app)', inline: true },
+      { name: 'Trigger', value: 'manual', inline: true },
+      { name: 'Channel', value: 'App Store', inline: true },
       { name: 'Size', value: '184.3 MB', inline: true },
     ],
   },
@@ -30,24 +31,44 @@ const EXAMPLES: Record<keyof SchedulerSettings & `notifyOn${string}`, ExampleEmb
     description: '**alice** requested a new key ("ci-runner") - approve it on the API Keys tab.',
     color: COLOR.info,
   },
-  notifyOnDispatchSuccess: {
-    title: 'Decrypted & dispatched',
+  notifyOnAppStoreAutomationSuccess: {
+    title: 'App Store automation succeeded',
     color: COLOR.ok,
     fields: [
-      { name: 'App', value: 'com.example.app', inline: true },
-      { name: 'Version', value: 'v1.4.2', inline: true },
-      { name: 'Source', value: 'App Store', inline: true },
+      { name: 'App', value: 'Example App (com.example.app)' },
+      { name: 'Channel', value: 'App Store', inline: true },
+      { name: 'Stage', value: 'workflow run', inline: true },
       { name: 'Run', value: 'https://github.com/owner/repo/actions/runs/123456' },
     ],
   },
-  notifyOnDispatchFailure: {
-    title: 'Dispatched, but the workflow failed',
+  notifyOnTestFlightAutomationSuccess: {
+    title: 'TestFlight automation succeeded',
+    color: COLOR.ok,
+    fields: [
+      { name: 'App', value: 'Example App (com.example.app)' },
+      { name: 'Channel', value: 'TestFlight', inline: true },
+      { name: 'Stage', value: 'workflow run', inline: true },
+      { name: 'Run', value: 'https://github.com/owner/repo/actions/runs/123456' },
+    ],
+  },
+  notifyOnAppStoreAutomationFailure: {
+    title: 'App Store automation failed',
     color: COLOR.err,
     fields: [
-      { name: 'App', value: 'com.example.app', inline: true },
-      { name: 'Version', value: 'v1.4.2', inline: true },
-      { name: 'Source', value: 'App Store', inline: true },
-      { name: 'Run', value: 'https://github.com/owner/repo/actions/runs/123456' },
+      { name: 'App', value: 'Example App (com.example.app)' },
+      { name: 'Channel', value: 'App Store', inline: true },
+      { name: 'Stage', value: 'dispatch', inline: true },
+      { name: 'Reason', value: 'metadata check failed for the target App Store version' },
+    ],
+  },
+  notifyOnTestFlightAutomationFailure: {
+    title: 'TestFlight automation failed',
+    color: COLOR.err,
+    fields: [
+      { name: 'App', value: 'Example App (com.example.app)' },
+      { name: 'Channel', value: 'TestFlight', inline: true },
+      { name: 'Stage', value: 'decrypt', inline: true },
+      { name: 'Reason', value: 'autoinstall completed but decrypt timed out' },
     ],
   },
   notifyOnKeyExpiringSoon: {
@@ -81,9 +102,9 @@ const EXAMPLES: Record<keyof SchedulerSettings & `notifyOn${string}`, ExampleEmb
     color: COLOR.warn,
   },
   notifyOnTestFlightBridgeDown: {
-    title: 'TestFlight bridge unresponsive',
+    title: 'Autoinstall bridge unresponsive',
     description:
-      'The autoinstall SpringBoard bridge on homelab has stopped responding for at least 15 minutes - TestFlight installs and the scheduler\'s TestFlight watch can\'t run until it recovers (a respring or tweak crash usually fixes it).',
+      'The autoinstall SpringBoard bridge on homelab has stopped responding for at least 15 minutes - App Store/TestFlight automation cannot install until it recovers.',
     color: COLOR.warn,
   },
 };

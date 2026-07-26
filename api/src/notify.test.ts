@@ -20,8 +20,10 @@ afterEach(() => {
     notifyWebhookUrl: '',
     notifyFormat: 'embed',
     notifyOnKeyRequest: true,
-    notifyOnDispatchSuccess: true,
-    notifyOnDispatchFailure: true,
+    notifyOnAppStoreAutomationSuccess: true,
+    notifyOnTestFlightAutomationSuccess: true,
+    notifyOnAppStoreAutomationFailure: true,
+    notifyOnTestFlightAutomationFailure: true,
   });
 });
 
@@ -44,7 +46,7 @@ describe('notify', () => {
   });
 
   test('posts a Discord-shaped embed payload for an enabled event, with no separate content line', async () => {
-    updateSettings({ notifyWebhookUrl: 'https://example.test/webhook', notifyOnDispatchSuccess: true });
+    updateSettings({ notifyWebhookUrl: 'https://example.test/webhook', notifyOnAppStoreAutomationSuccess: true });
     let capturedBody: Record<string, unknown> | undefined;
     const fetchMock = mock((_url: string, init?: RequestInit) => {
       capturedBody = JSON.parse(init?.body as string);
@@ -52,7 +54,7 @@ describe('notify', () => {
     });
     global.fetch = fetchMock as unknown as typeof fetch;
 
-    await notify('dispatchSuccess', {
+    await notify('appStoreAutomationSuccess', {
       title: 'Decrypted & dispatched',
       color: 0x3ecf8e,
       fields: [{ name: 'App', value: 'com.example.app', inline: true }],
@@ -76,7 +78,7 @@ describe('notify', () => {
     });
     global.fetch = fetchMock as unknown as typeof fetch;
 
-    await notify('dispatchFailure', {
+    await notify('appStoreAutomationFailure', {
       title: 'x',
       color: 0,
       fields: [{ name: 'Error', value: 'a'.repeat(2000) }],
@@ -96,7 +98,7 @@ describe('notify', () => {
     });
     global.fetch = fetchMock as unknown as typeof fetch;
 
-    await notify('dispatchSuccess', {
+    await notify('testFlightAutomationSuccess', {
       title: 'Decrypted & dispatched',
       description: 'all good',
       color: 0x3ecf8e,
@@ -121,7 +123,7 @@ describe('notify', () => {
     });
     global.fetch = fetchMock as unknown as typeof fetch;
 
-    await notify('dispatchSuccess', { title: 'x', color: 0 });
+    await notify('appStoreAutomationSuccess', { title: 'x', color: 0 });
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
@@ -130,7 +132,7 @@ describe('notify', () => {
     const fetchMock = mock(() => Promise.resolve(new Response('nope', { status: 500 })));
     global.fetch = fetchMock as unknown as typeof fetch;
 
-    await notify('dispatchSuccess', { title: 'x', color: 0 });
+    await notify('appStoreAutomationSuccess', { title: 'x', color: 0 });
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
@@ -146,7 +148,7 @@ describe('notify', () => {
     });
     global.fetch = fetchMock as unknown as typeof fetch;
 
-    await notify('dispatchSuccess', { title: 'x', color: 0 });
+    await notify('appStoreAutomationSuccess', { title: 'x', color: 0 });
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
@@ -159,7 +161,13 @@ describe('sendTestNotification', () => {
   });
 
   test('ignores event toggles and always posts when a URL is given', async () => {
-    updateSettings({ notifyOnKeyRequest: false, notifyOnDispatchSuccess: false, notifyOnDispatchFailure: false });
+    updateSettings({
+      notifyOnKeyRequest: false,
+      notifyOnAppStoreAutomationSuccess: false,
+      notifyOnTestFlightAutomationSuccess: false,
+      notifyOnAppStoreAutomationFailure: false,
+      notifyOnTestFlightAutomationFailure: false,
+    });
     const fetchMock = mock(() => Promise.resolve(new Response('{}', { status: 200 })));
     global.fetch = fetchMock as unknown as typeof fetch;
 

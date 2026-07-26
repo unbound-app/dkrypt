@@ -1,170 +1,320 @@
 <script lang="ts">
-  import { LoaderCircle, TriangleAlert } from 'lucide-svelte';
-  import { queueDecrypt } from '#lib/api';
-  import Button from '#lib/components/ui/Button.svelte';
-  import Dialog from '#lib/components/ui/Dialog.svelte';
-  import { addDecrypt, myDecryptsState, pushRecentBundleId } from '#lib/decrypts.svelte';
-  import { liveState } from '#lib/live.svelte';
-  import { requestNotificationPermission } from '#lib/notifications';
-  import { showToast } from '#lib/ui.svelte';
-  import { cn } from '#lib/utils';
+	import { LoaderCircle, TriangleAlert } from "lucide-svelte";
+	import { queueDecrypt } from "#lib/api";
+	import {
+		appDisplayName,
+		appIconUrl,
+		ensureAppCatalog,
+	} from "#lib/appCatalog.svelte";
+	import Button from "#lib/components/ui/Button.svelte";
+	import Dialog from "#lib/components/ui/Dialog.svelte";
+	import {
+		addDecrypt,
+		myDecryptsState,
+		pushRecentBundleId,
+	} from "#lib/decrypts.svelte";
+	import { liveState } from "#lib/live.svelte";
+	import { requestNotificationPermission } from "#lib/notifications";
+	import { showToast } from "#lib/ui.svelte";
+	import { cn } from "#lib/utils";
 
-  let { open = $bindable(), onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void } = $props();
+	let {
+		open = $bindable(),
+		onOpenChange,
+	}: { open: boolean; onOpenChange: (open: boolean) => void } = $props();
 
-  const MAX_BUNDLE_IDS = 50;
-  const BUNDLE_ID_RE = /^[A-Za-z0-9.-]{3,200}$/;
-  const EXTERNAL_VERSION_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+	const MAX_BUNDLE_IDS = 50;
+	const BUNDLE_ID_RE = /^[A-Za-z0-9.-]{3,200}$/;
+	const EXTERNAL_VERSION_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
-  interface BatchEntry {
-    bundleId: string;
-    externalVersionId?: string;
-  }
+	interface BatchEntry {
+		bundleId: string;
+		externalVersionId?: string;
+	}
 
-  let text = $state('');
-  let submitting = $state(false);
-  let results = $state<{ bundleId: string; externalVersionId?: string; state: 'pending' | 'ok' | 'error'; error?: string }[]>([]);
+	let text = $state("");
+	let submitting = $state(false);
+	let results = $state<
+		{
+			bundleId: string;
+			externalVersionId?: string;
+			state: "pending" | "ok" | "error";
+			error?: string;
+		}[]
+	>([]);
 
-  function parseEntries(raw: string): { entries: BatchEntry[]; duplicateBundleIds: string[] } {
-    const seen = new Set<string>();
-    const seenBundleIds = new Set<string>();
-    const duplicateBundleIds = new Set<string>();
-    const entries: BatchEntry[] = [];
-    for (const line of raw.split(/[\n,]/)) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      const [bundleId, externalVersionId] = trimmed.split('@').map((s) => s.trim());
-      const key = `${bundleId}@${externalVersionId ?? ''}`;
-      if (seenBundleIds.has(bundleId)) duplicateBundleIds.add(bundleId);
-      seenBundleIds.add(bundleId);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      entries.push({ bundleId, externalVersionId: externalVersionId || undefined });
-      if (entries.length >= MAX_BUNDLE_IDS) break;
-    }
-    return { entries, duplicateBundleIds: [...duplicateBundleIds] };
-  }
+	function parseEntries(raw: string): {
+		entries: BatchEntry[];
+		duplicateBundleIds: string[];
+	} {
+		const seen = new Set<string>();
+		const seenBundleIds = new Set<string>();
+		const duplicateBundleIds = new Set<string>();
+		const entries: BatchEntry[] = [];
+		for (const line of raw.split(/[\n,]/)) {
+			const trimmed = line.trim();
+			if (!trimmed) continue;
+			const [bundleId, externalVersionId] = trimmed
+				.split("@")
+				.map((s) => s.trim());
+			const key = `${bundleId}@${externalVersionId ?? ""}`;
+			if (seenBundleIds.has(bundleId)) duplicateBundleIds.add(bundleId);
+			seenBundleIds.add(bundleId);
+			if (seen.has(key)) continue;
+			seen.add(key);
+			entries.push({
+				bundleId,
+				externalVersionId: externalVersionId || undefined,
+			});
+			if (entries.length >= MAX_BUNDLE_IDS) break;
+		}
+		return { entries, duplicateBundleIds: [...duplicateBundleIds] };
+	}
 
-  const parsedResult = $derived(parseEntries(text));
-  const parsed = $derived(parsedResult.entries);
+	const parsedResult = $derived(parseEntries(text));
+	const parsed = $derived(parsedResult.entries);
 
-  const activeBundleIds = $derived.by(() => {
-    const set = new Set<string>();
-    for (const d of myDecryptsState.items) if (d.status === 'queued' || d.status === 'running') set.add(d.bundleId);
-    for (const j of liveState.overview?.activeJobs ?? []) set.add(j.bundleId);
-    return set;
-  });
+	const activeBundleIds = $derived.by(() => {
+		const set = new Set<string>();
+		for (const d of myDecryptsState.items)
+			if (d.status === "queued" || d.status === "running")
+				set.add(d.bundleId);
+		for (const j of liveState.overview?.activeJobs ?? [])
+			set.add(j.bundleId);
+		return set;
+	});
 
-  const alreadyActiveInBatch = $derived(parsed.filter((e) => activeBundleIds.has(e.bundleId)).map((e) => e.bundleId));
+	const alreadyActiveInBatch = $derived(
+		parsed
+			.filter((e) => activeBundleIds.has(e.bundleId))
+			.map((e) => e.bundleId),
+	);
 
-  function close(): void {
-    if (submitting) return;
-    text = '';
-    results = [];
-    onOpenChange(false);
-  }
+	$effect(() => {
+		void ensureAppCatalog([
+			...parsed.map((entry) => entry.bundleId),
+			...results.map((result) => result.bundleId),
+		]);
+	});
 
-  async function submitEntries(entries: BatchEntry[]): Promise<void> {
-    requestNotificationPermission();
-    submitting = true;
+	function close(): void {
+		if (submitting) return;
+		text = "";
+		results = [];
+		onOpenChange(false);
+	}
 
-    let ok = 0;
-    for (const entry of entries) {
-      const { bundleId, externalVersionId } = entry;
-      if (!BUNDLE_ID_RE.test(bundleId)) {
-        results = results.map((r) => (r.bundleId === bundleId ? { ...r, state: 'error', error: "doesn't look like a bundle ID" } : r));
-        continue;
-      }
-      if (externalVersionId && !EXTERNAL_VERSION_ID_RE.test(externalVersionId)) {
-        results = results.map((r) => (r.bundleId === bundleId ? { ...r, state: 'error', error: 'The requested App Store version could not be found.' } : r));
-        continue;
-      }
-      try {
-        const { ok: queuedOk, data } = await queueDecrypt(bundleId, externalVersionId);
-        if (!queuedOk) {
-          results = results.map((r) => (r.bundleId === bundleId ? { ...r, state: 'error', error: 'rejected' } : r));
-          continue;
-        }
-        addDecrypt({ id: data.id, bundleId, trackName: bundleId, externalVersionId, status: data.status, progress: data.progress, queue: data.queue });
-        pushRecentBundleId(bundleId);
-        results = results.map((r) => (r.bundleId === bundleId ? { ...r, state: 'ok' } : r));
-        ok += 1;
-      } catch {
-        results = results.map((r) => (r.bundleId === bundleId ? { ...r, state: 'error', error: 'request failed' } : r));
-      }
-    }
+	async function submitEntries(entries: BatchEntry[]): Promise<void> {
+		requestNotificationPermission();
+		submitting = true;
 
-    submitting = false;
-    showToast(`Queued ${ok} of ${entries.length}${ok < entries.length ? ` - ${entries.length - ok} failed` : ''}`, ok === entries.length ? 'success' : 'error');
-  }
+		let ok = 0;
+		for (const entry of entries) {
+			const { bundleId, externalVersionId } = entry;
+			if (!BUNDLE_ID_RE.test(bundleId)) {
+				results = results.map((r) =>
+					r.bundleId === bundleId
+						? {
+								...r,
+								state: "error",
+								error: "doesn't look like a bundle ID",
+							}
+						: r,
+				);
+				continue;
+			}
+			if (
+				externalVersionId &&
+				!EXTERNAL_VERSION_ID_RE.test(externalVersionId)
+			) {
+				results = results.map((r) =>
+					r.bundleId === bundleId
+						? {
+								...r,
+								state: "error",
+								error: "The requested App Store version could not be found.",
+							}
+						: r,
+				);
+				continue;
+			}
+			try {
+				const { ok: queuedOk, data } = await queueDecrypt(
+					bundleId,
+					externalVersionId,
+				);
+				if (!queuedOk) {
+					results = results.map((r) =>
+						r.bundleId === bundleId
+							? { ...r, state: "error", error: "rejected" }
+							: r,
+					);
+					continue;
+				}
+				addDecrypt({
+					id: data.id,
+					bundleId,
+					trackName: bundleId,
+					externalVersionId,
+					status: data.status,
+					progress: data.progress,
+					queue: data.queue,
+				});
+				pushRecentBundleId(bundleId);
+				results = results.map((r) =>
+					r.bundleId === bundleId ? { ...r, state: "ok" } : r,
+				);
+				ok += 1;
+			} catch {
+				results = results.map((r) =>
+					r.bundleId === bundleId
+						? { ...r, state: "error", error: "request failed" }
+						: r,
+				);
+			}
+		}
 
-  async function submit(): Promise<void> {
-    const entries = parsed;
-    if (entries.length === 0) return;
-    results = entries.map((e) => ({ bundleId: e.bundleId, externalVersionId: e.externalVersionId, state: 'pending' }));
-    await submitEntries(entries);
-  }
+		submitting = false;
+		showToast(
+			`Queued ${ok} of ${entries.length}${ok < entries.length ? ` - ${entries.length - ok} failed` : ""}`,
+			ok === entries.length ? "success" : "error",
+		);
+	}
 
-  const failedCount = $derived(results.filter((r) => r.state === 'error').length);
+	async function submit(): Promise<void> {
+		const entries = parsed;
+		if (entries.length === 0) return;
+		results = entries.map((e) => ({
+			bundleId: e.bundleId,
+			externalVersionId: e.externalVersionId,
+			state: "pending",
+		}));
+		await submitEntries(entries);
+	}
 
-  async function retryFailed(): Promise<void> {
-    const failed = results.filter((r) => r.state === 'error').map((r) => ({ bundleId: r.bundleId, externalVersionId: r.externalVersionId }));
-    if (failed.length === 0) return;
-    results = results.map((r) => (r.state === 'error' ? { ...r, state: 'pending', error: undefined } : r));
-    await submitEntries(failed);
-  }
+	const failedCount = $derived(
+		results.filter((r) => r.state === "error").length,
+	);
+
+	async function retryFailed(): Promise<void> {
+		const failed = results
+			.filter((r) => r.state === "error")
+			.map((r) => ({
+				bundleId: r.bundleId,
+				externalVersionId: r.externalVersionId,
+			}));
+		if (failed.length === 0) return;
+		results = results.map((r) =>
+			r.state === "error"
+				? { ...r, state: "pending", error: undefined }
+				: r,
+		);
+		await submitEntries(failed);
+	}
 </script>
 
 <Dialog {open} onOpenChange={(v) => !v && close()} class="max-w-md">
-  <div class="mb-1 text-sm font-medium">Batch decrypt</div>
-  <div class="mb-3 text-xs text-muted">
-    One bundle ID per line (optionally {'`id@version`'}), up to {MAX_BUNDLE_IDS} at once.
-  </div>
+	<div class="mb-1 text-sm font-medium">Batch decrypt</div>
+	<div class="mb-3 text-xs text-muted">
+		One bundle ID per line (optionally {"`id@version`"}), up to {MAX_BUNDLE_IDS}
+		at once.
+	</div>
 
-  {#if results.length === 0}
-    <textarea
-      bind:value={text}
-      disabled={submitting}
-      placeholder={'com.example.app\ncom.example.app2@abc123\ncom.example.app3'}
-      rows="6"
-      class="border-border bg-panel-muted focus:border-accent w-full rounded-md border px-3 py-2 font-mono text-xs text-text focus:outline-none disabled:opacity-60"
-    ></textarea>
-    <div class="mt-1.5 text-xs text-muted">{parsed.length} bundle ID{parsed.length === 1 ? '' : 's'} recognized</div>
-    {#if parsedResult.duplicateBundleIds.length > 0}
-      <div class="text-warn mt-1 flex items-start gap-1.5 text-xs">
-        <TriangleAlert class="mt-0.5 h-3.5 w-3.5 shrink-0" />
-        <span>Repeated in this batch: {parsedResult.duplicateBundleIds.join(', ')}</span>
-      </div>
-    {/if}
-    {#if alreadyActiveInBatch.length > 0}
-      <div class="text-warn mt-1 flex items-start gap-1.5 text-xs">
-        <TriangleAlert class="mt-0.5 h-3.5 w-3.5 shrink-0" />
-        <span>Already queued or running: {alreadyActiveInBatch.join(', ')}</span>
-      </div>
-    {/if}
-    <Button class="mt-3 w-full" disabled={parsed.length === 0} loading={submitting} onclick={submit}>Queue all</Button>
-  {:else}
-    <div class="flex max-h-72 flex-col gap-1 overflow-y-auto">
-      {#each results as r (r.bundleId + (r.externalVersionId ?? ''))}
-        <div class="flex items-center gap-2 text-xs">
-          {#if r.state === 'pending'}
-            <LoaderCircle class="h-3.5 w-3.5 shrink-0 animate-spin text-muted" />
-          {:else if r.state === 'ok'}
-            <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-ok"></span>
-          {:else}
-            <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-err"></span>
-          {/if}
-          <span class={cn('truncate font-mono', r.state === 'error' && 'text-err')}>
-            {r.bundleId}{r.externalVersionId ? `@${r.externalVersionId}` : ''}
-          </span>
-          {#if r.error}<span class="text-muted">- {r.error}</span>{/if}
-        </div>
-      {/each}
-    </div>
-    <div class="mt-3 flex gap-2">
-      {#if failedCount > 0}
-        <Button class="flex-1" loading={submitting} onclick={retryFailed}>Retry {failedCount} failed</Button>
-      {/if}
-      <Button variant="secondary" class="flex-1" disabled={submitting} onclick={close}>Close</Button>
-    </div>
-  {/if}
+	{#if results.length === 0}
+		<textarea
+			bind:value={text}
+			disabled={submitting}
+			placeholder={"com.example.app\ncom.example.app2@abc123\ncom.example.app3"}
+			rows="6"
+			class="border-border bg-panel-muted focus:border-accent w-full rounded-md border px-3 py-2 font-mono text-xs text-text focus:outline-none disabled:opacity-60"
+		></textarea>
+		<div class="mt-1.5 text-xs text-muted">
+			{parsed.length} bundle ID{parsed.length === 1 ? "" : "s"} recognized
+		</div>
+		{#if parsedResult.duplicateBundleIds.length > 0}
+			<div class="text-warn mt-1 flex items-start gap-1.5 text-xs">
+				<TriangleAlert class="mt-0.5 h-3.5 w-3.5 shrink-0" />
+				<span
+					>Repeated in this batch: {parsedResult.duplicateBundleIds.join(
+						", ",
+					)}</span
+				>
+			</div>
+		{/if}
+		{#if alreadyActiveInBatch.length > 0}
+			<div class="text-warn mt-1 flex items-start gap-1.5 text-xs">
+				<TriangleAlert class="mt-0.5 h-3.5 w-3.5 shrink-0" />
+				<span
+					>Already queued or running: {alreadyActiveInBatch.join(
+						", ",
+					)}</span
+				>
+			</div>
+		{/if}
+		<Button
+			class="mt-3 w-full"
+			disabled={parsed.length === 0}
+			loading={submitting}
+			onclick={submit}>Queue all</Button
+		>
+	{:else}
+		<div class="flex max-h-72 flex-col gap-1 overflow-y-auto">
+			{#each results as r (r.bundleId + (r.externalVersionId ?? ""))}
+				<div class="flex items-center gap-2 text-xs">
+					{#if r.state === "pending"}
+						<LoaderCircle
+							class="h-3.5 w-3.5 shrink-0 animate-spin text-muted"
+						/>
+					{:else if r.state === "ok"}
+						<span class="h-1.5 w-1.5 shrink-0 rounded-full bg-ok"
+						></span>
+					{:else}
+						<span class="h-1.5 w-1.5 shrink-0 rounded-full bg-err"
+						></span>
+					{/if}
+					<span
+						class={cn(
+							"flex min-w-0 items-center gap-1.5 truncate",
+							r.state === "error" && "text-err",
+						)}
+					>
+						{#if appIconUrl(r.bundleId)}
+							<img
+								src={appIconUrl(r.bundleId)}
+								alt=""
+								class="h-3.5 w-3.5 shrink-0 rounded"
+							/>
+						{/if}
+						<span class="truncate"
+							>{appDisplayName(r.bundleId)}</span
+						>
+					</span>
+					<span
+						class="truncate font-mono text-muted"
+						title={r.bundleId}
+						>{r.bundleId}{r.externalVersionId
+							? `@${r.externalVersionId}`
+							: ""}</span
+					>
+					{#if r.error}<span class="text-muted">- {r.error}</span
+						>{/if}
+				</div>
+			{/each}
+		</div>
+		<div class="mt-3 flex gap-2">
+			{#if failedCount > 0}
+				<Button
+					class="flex-1"
+					loading={submitting}
+					onclick={retryFailed}>Retry {failedCount} failed</Button
+				>
+			{/if}
+			<Button
+				variant="secondary"
+				class="flex-1"
+				disabled={submitting}
+				onclick={close}>Close</Button
+			>
+		</div>
+	{/if}
 </Dialog>

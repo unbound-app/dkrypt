@@ -211,19 +211,39 @@ function trackRunCompletion(
     try {
       const run = await pollRunToCompletion(watch.repo, watch.ghWorkflowFile, dispatchedAt);
       if (!run) {
+        await notify(
+          source === 'App Store' ? 'appStoreAutomationFailure' : 'testFlightAutomationFailure',
+          {
+            title: `${source} automation timed out`,
+            color: EMBED_COLOR.err,
+            fields: [
+              { name: 'App', value: watch.bundleId, inline: true },
+              { name: 'Version', value: versionLabel, inline: true },
+              { name: 'Stage', value: 'workflow-run poll', inline: true },
+            ],
+          },
+          watch.webhookUrl,
+        );
         return { runStatus: 'timed_out', reason: `Dispatched ${versionLabel} - gave up waiting for the workflow run to appear/complete` };
       }
 
       const succeeded = run.conclusion === 'success';
       await notify(
-        succeeded ? 'dispatchSuccess' : 'dispatchFailure',
+        succeeded
+          ? source === 'App Store'
+            ? 'appStoreAutomationSuccess'
+            : 'testFlightAutomationSuccess'
+          : source === 'App Store'
+            ? 'appStoreAutomationFailure'
+            : 'testFlightAutomationFailure',
         {
-          title: succeeded ? 'Decrypted & dispatched' : 'Dispatched, but the workflow failed',
+          title: succeeded ? `${source} automation succeeded` : `${source} automation failed`,
           color: succeeded ? EMBED_COLOR.ok : EMBED_COLOR.err,
           fields: [
             { name: 'App', value: watch.bundleId, inline: true },
             { name: 'Version', value: versionLabel, inline: true },
-            { name: 'Source', value: source, inline: true },
+            { name: 'Channel', value: source, inline: true },
+            { name: 'Stage', value: 'workflow run', inline: true },
             { name: 'Run', value: run.html_url },
           ],
         },
@@ -251,6 +271,20 @@ async function decryptAndDispatch(job: Job, watch: AppWatch, isTestflight: boole
       status: finished.status,
       error: finished.error,
     });
+    await notify(
+      isTestflight ? 'testFlightAutomationFailure' : 'appStoreAutomationFailure',
+      {
+        title: `${isTestflight ? 'TestFlight' : 'App Store'} automation failed`,
+        color: EMBED_COLOR.err,
+        fields: [
+          { name: 'App', value: watch.bundleId, inline: true },
+          { name: 'Version', value: versionLabel, inline: true },
+          { name: 'Stage', value: 'decrypt', inline: true },
+          { name: 'Reason', value: finished.error ?? 'unknown error' },
+        ],
+      },
+      watch.webhookUrl,
+    );
     return { outcome: { ok: false, triggered: true, reason: `Decrypt failed: ${finished.error ?? 'unknown error'}` } };
   }
 
@@ -262,14 +296,15 @@ async function decryptAndDispatch(job: Job, watch: AppWatch, isTestflight: boole
   } catch (err) {
     log.error('dispatch failed', { error: String(err), isTestflight });
     await notify(
-      'dispatchFailure',
+      isTestflight ? 'testFlightAutomationFailure' : 'appStoreAutomationFailure',
       {
-        title: 'Dispatch failed',
+        title: `${isTestflight ? 'TestFlight' : 'App Store'} automation failed`,
         color: EMBED_COLOR.err,
         fields: [
           { name: 'App', value: watch.bundleId, inline: true },
           { name: 'Version', value: versionLabel, inline: true },
-          { name: 'Error', value: `\`\`\`${String(err)}\`\`\`` },
+          { name: 'Stage', value: 'dispatch', inline: true },
+          { name: 'Reason', value: String(err) },
         ],
       },
       watch.webhookUrl,
@@ -291,6 +326,21 @@ async function tickAppStore(watch: AppWatch): Promise<DispatchResult> {
       log.info('itunes version already has a matching release, nothing to do', { bundleId: watch.bundleId, version: check.normalizedVersion });
     } else {
       log.error(check.reason, { bundleId: watch.bundleId });
+      if (!check.ok) {
+        await notify(
+          'appStoreAutomationFailure',
+          {
+            title: 'App Store automation failed',
+            color: EMBED_COLOR.err,
+            fields: [
+              { name: 'App', value: watch.bundleId, inline: true },
+              { name: 'Stage', value: 'metadata check', inline: true },
+              { name: 'Reason', value: check.reason },
+            ],
+          },
+          watch.webhookUrl,
+        );
+      }
     }
     return { outcome: { ok: check.ok, triggered: false, reason: check.reason } };
   }
@@ -324,6 +374,21 @@ async function tickTestFlight(watch: AppWatch): Promise<DispatchResult> {
       log.info('TestFlight build already has a matching release, nothing to do', { bundleId: watch.bundleId, tag: check.latestTag });
     } else {
       log.error(check.reason, { bundleId: watch.bundleId });
+      if (!check.ok) {
+        await notify(
+          'testFlightAutomationFailure',
+          {
+            title: 'TestFlight automation failed',
+            color: EMBED_COLOR.err,
+            fields: [
+              { name: 'App', value: watch.bundleId, inline: true },
+              { name: 'Stage', value: 'metadata check', inline: true },
+              { name: 'Reason', value: check.reason },
+            ],
+          },
+          watch.webhookUrl,
+        );
+      }
     }
     return { outcome: { ok: check.ok, triggered: false, reason: check.reason } };
   }

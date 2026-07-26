@@ -15,7 +15,7 @@ import { getVapidPublicKey, sendPushToUser } from '#push.js';
 import { hasPermission, isSubsetPermission, parseBits, PermissionFlag } from '#permissions.js';
 import { getAuthProfile, listAuthProfiles } from '#identity.js';
 import { applyBackupSchedule, applyWatchSchedules, checkForTestFlightUpdate, checkForUpdate, triggerTickNow } from '#scheduler/index.js';
-import { searchApps } from '#scheduler/itunes.js';
+import { lookupAppMetadata, searchApps } from '#scheduler/itunes.js';
 import { requirePermission, requireSession } from '#session.js';
 import { getDeviceHealth } from '#deviceHealth.js';
 import { validateDeviceRootDir } from '#idevice.js';
@@ -84,6 +84,7 @@ import {
   getWatch,
   getWatchConfigIssues,
   getWebhookDeliveryLog,
+  getAppCatalogEntries,
   importBackup,
   isWatchSchedulable,
   type JobHistoryEntry,
@@ -116,6 +117,8 @@ import {
   setApiKeyMaxConcurrent,
   setApiKeyPriority,
   setUserPriority,
+  upsertAppCatalogEntries,
+  upsertAppCatalogEntry,
   updateAllowedUserRoles,
   updateDevice,
   updateRole,
@@ -393,9 +396,78 @@ dashboardRouter.get('/v1/dashboard/search', async (req, res) => {
 
   try {
     const results = await searchApps(term);
+    upsertAppCatalogEntries(
+      results.map((result) => ({
+        bundleId: result.bundleId,
+        displayName: result.trackName,
+        iconUrl: result.artworkUrl,
+        trackId: result.trackId,
+        sellerName: result.sellerName,
+      })),
+    );
     res.json({ results });
   } catch (err) {
     res.status(502).json({ error: String(err) });
+  }
+});
+
+dashboardRouter.get('/v1/dashboard/apps/metadata', async (req, res) => {
+  const rawBundleIds: string = typeof req.query.bundleIds === 'string' ? req.query.bundleIds : '';
+  const parsedBundleIds: string[] = rawBundleIds
+    .split(',')
+    .map((value: string) => value.trim())
+    .filter((value: string) => BUNDLE_ID_RE.test(value));
+  const bundleIds: string[] = Array.from(new Set<string>(parsedBundleIds)).slice(0, 200);
+  if (bundleIds.length === 0) {
+    res.json({ entries: [] });
+    return;
+  }
+
+  const existing = new Map(getAppCatalogEntries(bundleIds).map((entry) => [entry.bundleId, entry]));
+  const missing = bundleIds.filter((bundleId) => !existing.has(bundleId)).slice(0, 40);
+
+  if (missing.length > 0) {
+    const fetched = await Promise.all(
+      missing.map(async (bundleId) => {
+        try {
+          const metadata = await lookupAppMetadata(bundleId);
+          return {
+            bundleId: metadata.bundleId,
+            displayName: metadata.trackName,
+            iconUrl: metadata.artworkUrl,
+            trackId: metadata.trackId,
+            sellerName: metadata.sellerName,
+          };
+        } catch {
+          return null;
+        }
+      }),
+    );
+    upsertAppCatalogEntries(fetched.filter((entry): entry is NonNullable<typeof entry> => !!entry));
+  }
+
+  res.json({ entries: getAppCatalogEntries(bundleIds) });
+});
+
+dashboardRouter.post('/v1/dashboard/apps/metadata/refresh', canManageSchedulerSettings, async (req, res) => {
+  const bundleId = typeof req.body?.bundleId === 'string' ? req.body.bundleId.trim() : '';
+  if (!BUNDLE_ID_RE.test(bundleId)) {
+    res.status(400).json({ error: 'bundleId is required and must look like a bundle identifier' });
+    return;
+  }
+
+  try {
+    const metadata = await lookupAppMetadata(bundleId);
+    const entry = upsertAppCatalogEntry({
+      bundleId: metadata.bundleId,
+      displayName: metadata.trackName,
+      iconUrl: metadata.artworkUrl,
+      trackId: metadata.trackId,
+      sellerName: metadata.sellerName,
+    });
+    res.json({ ok: true, entry });
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
 
@@ -1232,8 +1304,10 @@ dashboardRouter.get('/v1/dashboard/settings', canViewScheduler, (_req, res) => {
 const SETTINGS_STRING_FIELDS = ['notifyWebhookUrl'] as const;
 const SETTINGS_BOOL_FIELDS = [
   'notifyOnKeyRequest',
-  'notifyOnDispatchSuccess',
-  'notifyOnDispatchFailure',
+  'notifyOnAppStoreAutomationSuccess',
+  'notifyOnTestFlightAutomationSuccess',
+  'notifyOnAppStoreAutomationFailure',
+  'notifyOnTestFlightAutomationFailure',
   'notifyOnKeyExpiringSoon',
   'notifyOnDeviceOffline',
   'notifyOnDeviceBatteryHot',
@@ -1268,6 +1342,15 @@ dashboardRouter.put('/v1/dashboard/settings', canManageSchedulerSettings, (req, 
   }
   for (const field of SETTINGS_BOOL_FIELDS) {
     if (typeof body[field] === 'boolean') patch[field] = body[field];
+  }
+
+  if (typeof body.notifyOnDispatchSuccess === 'boolean') {
+    if (patch.notifyOnAppStoreAutomationSuccess === undefined) patch.notifyOnAppStoreAutomationSuccess = body.notifyOnDispatchSuccess;
+    if (patch.notifyOnTestFlightAutomationSuccess === undefined) patch.notifyOnTestFlightAutomationSuccess = body.notifyOnDispatchSuccess;
+  }
+  if (typeof body.notifyOnDispatchFailure === 'boolean') {
+    if (patch.notifyOnAppStoreAutomationFailure === undefined) patch.notifyOnAppStoreAutomationFailure = body.notifyOnDispatchFailure;
+    if (patch.notifyOnTestFlightAutomationFailure === undefined) patch.notifyOnTestFlightAutomationFailure = body.notifyOnDispatchFailure;
   }
   if (body.notifyFormat === 'embed' || body.notifyFormat === 'plain') {
     patch.notifyFormat = body.notifyFormat;
