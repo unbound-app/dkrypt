@@ -814,7 +814,9 @@
 												{/if}
 												<button
 													class="max-w-full cursor-pointer truncate text-[12.5px] font-medium hover:text-accent hover:underline"
-													title="View stats for {j.bundleId}"
+													title="View stats for {appDisplayName(
+														j.bundleId,
+													)}"
 													onclick={() =>
 														openStats(j.bundleId)}
 												>

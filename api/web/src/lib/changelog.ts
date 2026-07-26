@@ -2,6 +2,7 @@ export interface ChangelogEntry {
   date: string;
   title: string;
   description: string;
+  isMeta?: boolean;
   link?: { tab: string; subtab?: string };
 }
 
@@ -13,6 +14,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: 'Current deployment',
     title: `Build ${RELEASE_LABEL}`,
     description: 'This entry updates automatically whenever a new dashboard build is deployed.',
+    isMeta: true,
   },
   {
     date: '2026-07-26',
