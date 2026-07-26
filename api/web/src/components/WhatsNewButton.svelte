@@ -1,24 +1,23 @@
 <script lang="ts">
   import { Popover } from 'bits-ui';
   import { Sparkles } from 'lucide-svelte';
-  import { CHANGELOG, type ChangelogEntry } from '#lib/changelog';
+  import { CHANGELOG, RELEASE_ID, type ChangelogEntry } from '#lib/changelog';
   import { buttonVariants } from '#lib/components/ui/variants';
   import { setActiveTab, setSettingsSubtab, type TabId } from '#lib/ui.svelte';
   import { cn } from '#lib/utils';
 
-  const LAST_VIEWED_KEY = 'changelogLastViewedDate';
-  const latestDate = CHANGELOG[0]?.date ?? '';
+  const LAST_VIEWED_KEY = 'changelogLastViewedRelease';
 
   let open = $state(false);
   let lastViewedDate = $state(localStorage.getItem(LAST_VIEWED_KEY) ?? '');
 
-  const hasUnseen = $derived(latestDate > lastViewedDate);
+  const hasUnseen = $derived(RELEASE_ID !== lastViewedDate);
 
   function onOpenChange(v: boolean): void {
     open = v;
-    if (v && latestDate) {
-      lastViewedDate = latestDate;
-      localStorage.setItem(LAST_VIEWED_KEY, latestDate);
+    if (v) {
+      lastViewedDate = RELEASE_ID;
+      localStorage.setItem(LAST_VIEWED_KEY, RELEASE_ID);
     }
   }
 

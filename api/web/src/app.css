@@ -135,19 +135,7 @@
 }
 
 .glass-card-content {
-  position: relative;
-  isolation: isolate;
   overflow: clip;
-}
-
-.glass-card-content::before {
-  position: absolute;
-  z-index: -1;
-  inset: 0;
-  content: '';
-  opacity: 0.56;
-  background: linear-gradient(120deg, color-mix(in srgb, white 9%, transparent), transparent 34%, color-mix(in srgb, var(--color-accent) 7%, transparent));
-  pointer-events: none;
 }
 
 .workspace-content > div:not(.hidden) .glass-card {
@@ -186,13 +174,19 @@
   backdrop-filter: blur(30px) saturate(150%);
 }
 
-.brand-orb {
+.brand-mark {
   width: 1.15rem;
   height: 1.15rem;
-  border: 1px solid color-mix(in srgb, white 36%, transparent);
-  border-radius: 0.42rem;
-  background: linear-gradient(145deg, #9fc1ff, var(--color-accent) 48%, #8b5cf6);
-  box-shadow: 0 0 24px color-mix(in srgb, var(--color-accent) 56%, transparent), inset 0 1px 0 rgb(255 255 255 / 55%);
+  overflow: visible;
+  filter: drop-shadow(0 0 10px color-mix(in srgb, var(--color-accent) 44%, transparent));
+}
+
+.brand-mark path:first-child {
+  fill: url(#dkrypt-mark-fill);
+}
+
+.brand-mark path:last-child {
+  fill: color-mix(in srgb, white 86%, var(--color-accent));
 }
 
 .glass-nav,
@@ -269,8 +263,74 @@
 }
 
 .log-row {
-  background: color-mix(in srgb, var(--color-panel-muted) 52%, transparent);
-  backdrop-filter: blur(10px);
+  background: transparent;
+}
+
+.log-row:hover {
+  background: color-mix(in srgb, var(--color-panel-muted) 58%, transparent);
+}
+
+.history-table {
+  --scroll-fade-bg: color-mix(in srgb, var(--color-panel) 96%, transparent);
+}
+
+.history-table table {
+  table-layout: fixed;
+}
+
+.history-table th:first-child,
+.history-table td:first-child {
+  width: 2.25rem;
+  padding-left: 0.25rem;
+}
+
+.history-table th:nth-child(2) {
+  width: 10.5rem;
+}
+
+.history-table th:nth-child(3) {
+  width: 7rem;
+}
+
+.history-table th:nth-child(4),
+.history-table th:nth-child(5),
+.history-table th:nth-child(6),
+.history-table th:nth-child(7),
+.history-table th:nth-child(8) {
+  width: 5.5rem;
+}
+
+.history-table th:nth-child(9) {
+  width: 12rem;
+}
+
+.history-day-row td {
+  position: sticky;
+  z-index: 4;
+  top: 0;
+  background: color-mix(in srgb, var(--color-panel) 92%, transparent);
+  backdrop-filter: blur(14px);
+}
+
+@media (min-width: 768px) {
+  .history-table th:last-child,
+  .history-table td.history-actions {
+    position: sticky;
+    z-index: 2;
+    right: 0;
+    background: color-mix(in srgb, var(--color-panel) 96%, transparent);
+    box-shadow: -14px 0 22px color-mix(in srgb, var(--color-bg) 12%, transparent);
+    backdrop-filter: blur(14px);
+  }
+
+  .history-table th:last-child {
+    z-index: 3;
+    width: 17.5rem;
+  }
+
+  .history-table td.history-actions {
+    padding-left: 0.75rem;
+  }
 }
 
 .glass-input {

@@ -7,6 +7,8 @@ WORKDIR /web
 COPY web/package.json web/bun.lock ./
 RUN bun install --frozen-lockfile
 COPY web ./
+ARG BUILD_REF=development
+ENV VITE_BUILD_REF=$BUILD_REF
 RUN bun run build
 
 FROM oven/bun:1-slim

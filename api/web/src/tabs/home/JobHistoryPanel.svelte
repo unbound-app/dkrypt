@@ -27,7 +27,7 @@
   import { scrollFade } from '#lib/scrollFade';
   import { createSavedViews } from '#lib/savedViews.svelte';
   import { sessionState } from '#lib/session.svelte';
-  import { confirmDialog, historyJumpState, requestFocusSearch, setActiveTab, setSettingsSubtab, showToast, tabState } from '#lib/ui.svelte';
+  import { confirmDialog, historyJumpState, requestFocusSearch, showToast, tabState } from '#lib/ui.svelte';
   import { getQueryParam, setQueryParams } from '#lib/urlState';
 
   const PAGE_SIZE = 15;
@@ -81,7 +81,6 @@
   let timelineById = $state<Record<string, JobTimeline>>({});
   let timelineOpenId = $state<string | null>(null);
   let timelineLoading = $state<Set<string>>(new Set());
-  let cardDetailsOpenIds = $state<Set<string>>(new Set());
 
   function applyPreset(p: FilterPreset): void {
     searchText = p.query;
@@ -376,16 +375,6 @@
     }
   }
 
-  function openRemediation(error: string | undefined): void {
-    const text = (error ?? '').toLowerCase();
-    setActiveTab('settings');
-    if (text.includes('disk') || text.includes('storage') || text.includes('space') || text.includes('auth') || text.includes('password') || text.includes('apple')) {
-      setSettingsSubtab('devices');
-      return;
-    }
-    setSettingsSubtab('scheduler');
-  }
-
   function toggleSelect(id: string): void {
     const next = new Set(selected);
     if (next.has(id)) next.delete(id);
@@ -395,13 +384,6 @@
 
   function toggleSelectAll(): void {
     selected = selected.size === entries.length ? new Set() : new Set(entries.map((e) => e.id));
-  }
-
-  function toggleCardDetails(id: string): void {
-    const next = new Set(cardDetailsOpenIds);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    cardDetailsOpenIds = next;
   }
 
   async function bulkDecryptAgain(): Promise<void> {
@@ -465,7 +447,6 @@
   <Button size="sm" variant="secondary" loading={requeueing.has(entry.id)} onclick={() => decryptAgain(entry)}>Decrypt again</Button>
   {#if entry.status === 'failed'}
     <Button size="sm" variant="secondary" loading={requeueing.has(entry.id)} onclick={() => retryOnPrimary(entry)}>Retry on primary</Button>
-    <Button size="sm" variant="secondary" onclick={() => openRemediation(entry.error)}>Fix guidance</Button>
   {/if}
   <Button size="sm" variant="secondary" loading={timelineLoading.has(entry.id)} onclick={() => toggleTimeline(entry.id)}>
     {timelineOpenId === entry.id ? 'Hide timeline' : 'Timeline'}
@@ -571,98 +552,13 @@
         {#if hasActiveFilters}
           <Button size="sm" variant="secondary" onclick={clearAllFilters}>Clear filters</Button>
         {:else}
-          <Button size="sm" variant="secondary" onclick={() => requestFocusSearch()}>Queue a decrypt</Button>
+          <Button size="sm" variant="secondary" onclick={requestFocusSearch}>Queue a decrypt</Button>
         {/if}
       {/snippet}
     </EmptyState>
   {:else}
-    <div class="lg:hidden max-h-[600px] space-y-3 overflow-y-auto pr-1">
-      {#if !loaded}
-        {#each Array(4) as _, i (i)}
-          <div class="skeleton bg-panel-muted h-20 rounded-lg"></div>
-        {/each}
-      {:else}
-        {#each grouped as g (g.label)}
-          <section class="space-y-1.5">
-            <div class="bg-panel/95 sticky top-0 z-10 py-1 text-[11px] font-semibold tracking-wide text-muted uppercase">{g.label}</div>
-            {#each g.items as j (j.id)}
-              <article class="border-border bg-panel-muted/45 overflow-hidden rounded-lg border px-3 py-2.5">
-                <div class="flex items-start gap-2">
-                  <input class="mt-0.5" type="checkbox" checked={selected.has(j.id)} onchange={() => toggleSelect(j.id)} aria-label="Select {j.bundleId}" />
-                  <div class="min-w-0 flex-1">
-                    <div class="flex items-start justify-between gap-2">
-                      <button
-                        class="min-w-0 truncate cursor-pointer text-left font-mono text-[11px] hover:text-accent hover:underline"
-                        title="View stats for {j.bundleId}"
-                        onclick={() => openStats(j.bundleId)}
-                      >
-                        {j.bundleId}
-                      </button>
-                      <Badge variant={statusToBadgeVariant(j.status)} class="shrink-0">{j.status}</Badge>
-                    </div>
-                    <div class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
-                      {#if j.versionLabel}
-                        <span>{j.versionLabel}</span>
-                      {/if}
-                      {#if j.testflight}
-                        <Badge variant="secondary">TF</Badge>
-                      {/if}
-                      <span>{j.source}</span>
-                      <span>{fmtSize(j.sizeBytes)}</span>
-                      <span><RelativeTime ms={j.finishedAt} /></span>
-                      {#if j.queuedBy}
-                        <span class="max-w-full break-words" title={j.queuedBy}>by {j.queuedBy}</span>
-                      {/if}
-                      {#if j.deviceId}
-                        <span class="max-w-full break-words" title={j.deviceId}>device {j.deviceId}</span>
-                      {/if}
-                    </div>
-                    {#if j.error}
-                      <p class="mt-2 break-words text-xs leading-5 text-muted">{j.error}</p>
-                    {/if}
-                  </div>
-                </div>
-                <div class="mt-2.5 flex flex-wrap gap-1.5 pl-5">
-                  {#if j.status === 'failed'}
-                    <Button size="sm" loading={requeueing.has(j.id)} onclick={() => retryOnPrimary(j)}>Retry on primary</Button>
-                  {:else}
-                    <Button size="sm" loading={requeueing.has(j.id)} onclick={() => decryptAgain(j)}>Decrypt again</Button>
-                  {/if}
-                  <Button size="sm" variant="secondary" onclick={() => toggleCardDetails(j.id)} aria-expanded={cardDetailsOpenIds.has(j.id)}>
-                    {cardDetailsOpenIds.has(j.id) ? 'Hide details' : 'Details'}
-                  </Button>
-                </div>
-                {#if cardDetailsOpenIds.has(j.id)}
-                  <div class="border-border mt-2.5 border-t pt-2.5">
-                    <div class="flex flex-wrap gap-1.5">{@render jobActionControls(j)}</div>
-                    {#if timelineOpenId === j.id}
-                      <div class="mt-2.5">
-                        {#if timelineById[j.id]}
-                          <ol class="space-y-2">
-                            {#each timelineById[j.id].events as ev (ev.at + ev.label)}
-                              <li class="flex items-center gap-2 text-xs">
-                                <span class="bg-border h-1.5 w-1.5 shrink-0 rounded-full"></span>
-                                <Badge variant={statusToBadgeVariant(ev.status)}>{ev.status}</Badge>
-                                <span class="min-w-0 flex-1 break-words">{ev.label}</span>
-                                <span class="shrink-0 text-muted"><RelativeTime ms={ev.at} /></span>
-                              </li>
-                            {/each}
-                          </ol>
-                        {:else}
-                          <div class="text-xs text-muted">Loading timeline…</div>
-                        {/if}
-                      </div>
-                    {/if}
-                  </div>
-                {/if}
-              </article>
-            {/each}
-          </section>
-        {/each}
-      {/if}
-    </div>
-    <div class="hidden lg:block scroll-fade-x max-h-[600px] overflow-auto" use:scrollFade>
-      <table class="responsive-table min-w-[820px]">
+    <div class="history-table scroll-fade-x max-h-[640px] overflow-auto" use:scrollFade>
+      <table class="min-w-[1120px]">
         <thead>
           <tr>
             <th><input type="checkbox" checked={entries.length > 0 && selected.size === entries.length} onchange={toggleSelectAll} /></th>
@@ -682,7 +578,7 @@
             <SkeletonRows rows={4} colspan={10} />
           {:else}
             {#each grouped as g (g.label)}
-              <tr class="table-row-header bg-panel sticky top-0 z-10">
+              <tr class="history-day-row">
                 <td colspan="10" class="border-b-0! py-1.5 text-xs font-semibold text-muted">{g.label}</td>
               </tr>
               {#each g.items as j (j.id)}
@@ -717,7 +613,7 @@
                   <td data-label="Size">{fmtSize(j.sizeBytes)}</td>
                   <td data-label="Finished" class="text-muted"><RelativeTime ms={j.finishedAt} /></td>
                   <td data-label="Error" class="max-w-sm break-words text-xs leading-5 text-muted" title={j.error ?? ''}>{j.error ?? ''}</td>
-                  <td data-label="Actions" class="mobile-actions">
+                  <td data-label="Actions" class="history-actions">
                     <div class="flex flex-wrap justify-end gap-1.5">
                       {@render jobActionControls(j)}
                     </div>

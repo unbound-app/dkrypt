@@ -3,6 +3,7 @@
   import {
     BarChart3,
     BookOpen,
+    Command,
     Download,
     Home as HomeIcon,
     KeyRound,
@@ -37,7 +38,6 @@
   import SetupBanner from '#components/SetupBanner.svelte';
   import OnboardingTour from '#components/OnboardingTour.svelte';
   import ShortcutsHelp from '#components/ShortcutsHelp.svelte';
-  import QuickActions from '#tabs/home/QuickActions.svelte';
   import Badge from '#lib/components/ui/Badge.svelte';
   import Button from '#lib/components/ui/Button.svelte';
   import Input from '#lib/components/ui/Input.svelte';
@@ -453,7 +453,17 @@
     <MaintenanceBanner />
     <header class="glass-topbar sticky top-0 z-30 flex flex-wrap items-center gap-3 px-3 py-3 sm:px-5 lg:flex-nowrap xl:px-6">
       <div class="flex items-center gap-3">
-        <div class="brand-orb"></div>
+        <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true">
+          <defs>
+            <linearGradient id="dkrypt-mark-fill" x1="5" y1="4" x2="19" y2="20" gradientUnits="userSpaceOnUse">
+              <stop stop-color="#a9c7ff" />
+              <stop offset="0.52" stop-color="var(--color-accent)" />
+              <stop offset="1" stop-color="#8b5cf6" />
+            </linearGradient>
+          </defs>
+          <path d="M6 4.5h6.2c3.2 0 5.3 1.7 5.3 4.6 0 1.8-1 3.3-2.8 4 2.2.6 3.5 2.1 3.5 4.1 0 3-2.3 4.8-5.8 4.8H6z" />
+          <path d="M9.5 7.4h2.4c1.2 0 1.9.6 1.9 1.6s-.7 1.6-1.9 1.6H9.5zm0 6h2.8c1.3 0 2.1.6 2.1 1.7s-.8 1.7-2.1 1.7H9.5z" />
+        </svg>
         <h1 class="text-[15px] font-semibold tracking-tight">dkrypt</h1>
       </div>
       <nav class="glass-nav order-3 hidden w-full items-center justify-center gap-1 p-1 lg:order-none lg:flex lg:w-auto lg:flex-1" aria-label="Primary">
@@ -516,6 +526,9 @@
           {:else}
             <Rows3 class="h-4 w-4" />
           {/if}
+        </Button>
+        <Button variant="secondary" size="icon" onclick={openPalette} aria-label="Open command menu" title="Command menu (⌘/Ctrl K)">
+          <Command class="h-4 w-4" />
         </Button>
         <WhatsNewButton />
         <NotificationBell />
@@ -736,16 +749,7 @@
               <div class="text-[11px] font-medium tracking-[0.14em] text-muted uppercase">dkrypt workspace</div>
               <h2 class="mt-0.5 text-[clamp(1.35rem,1.1rem+0.8vw,1.8rem)] font-semibold tracking-tight">{visibleTabs.find((t) => t.id === tabState.active)?.label ?? 'Dashboard'}</h2>
             </div>
-            <div class="glass-key hidden items-center gap-1.5 px-2.5 py-1.5 text-[11px] text-muted sm:flex">
-              <kbd class="font-mono text-[10px]">⌘/Ctrl K</kbd>
-              Commands
-            </div>
           </div>
-          {#if tabState.active !== 'home'}
-            <div class="sticky top-20 z-20 mb-4 hidden lg:block">
-              <QuickActions />
-            </div>
-          {/if}
 
           <div class:hidden={tabState.active !== 'home'}>
             <Home bind:this={homeRef} />

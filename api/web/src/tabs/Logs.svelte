@@ -310,11 +310,11 @@
           New log lines - jump to latest
         </button>
       {/if}
-      <div class="log-stream flex max-h-[min(68dvh,760px)] flex-col gap-2 overflow-y-auto rounded-xl p-2" bind:this={listEl} onscroll={onListScroll}>
+      <div class="log-stream flex max-h-[min(74dvh,860px)] flex-col overflow-y-auto rounded-xl" bind:this={listEl} onscroll={onListScroll}>
         {#each filtered as l (entryKey(l))}
           {@const key = entryKey(l)}
-          <div class={`log-row border-border flex items-start gap-2.5 rounded-lg border border-l-[3px] px-3 py-2.5 text-[12.5px] ${LEVEL_BORDER[l.level]}`}>
-            <span class="shrink-0 font-mono text-[11.5px] whitespace-nowrap text-muted"><RelativeTime ms={l.ts} /></span>
+          <div class={`log-row border-border flex items-start gap-3 border-b border-l-[3px] px-4 py-3 text-[13px] last:border-b-0 ${LEVEL_BORDER[l.level]}`}>
+            <span class="shrink-0 font-mono text-[12px] whitespace-nowrap text-muted"><RelativeTime ms={l.ts} /></span>
             <Badge variant={LEVEL_BADGE[l.level]} class="shrink-0">{l.level}</Badge>
             <Badge variant="secondary" class="shrink-0">{l.scope}</Badge>
             <button

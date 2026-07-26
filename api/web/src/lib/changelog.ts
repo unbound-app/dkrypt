@@ -5,7 +5,22 @@ export interface ChangelogEntry {
   link?: { tab: string; subtab?: string };
 }
 
+export const RELEASE_ID = import.meta.env.VITE_BUILD_REF ?? 'development';
+export const RELEASE_LABEL = RELEASE_ID === 'development' ? 'development' : RELEASE_ID.slice(0, 7);
+
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    date: 'Current deployment',
+    title: `Build ${RELEASE_LABEL}`,
+    description: 'This entry updates automatically whenever a new dashboard build is deployed.',
+  },
+  {
+    date: '2026-07-26',
+    title: 'Liquid glass workspace',
+    description:
+      'The workspace has a new visual system, cleaner navigation, a readable activity table, and a full-height log console while the status panel remains in place.',
+    link: { tab: 'home' },
+  },
   {
     date: '2026-07-25',
     title: 'Dashboard polish pass',

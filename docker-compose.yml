@@ -1,6 +1,9 @@
 services:
   api:
-    build: ./api
+    build:
+      context: ./api
+      args:
+        BUILD_REF: ${BUILD_REF:-development}
     image: dkrypt
     container_name: dkrypt
     restart: unless-stopped

@@ -42,7 +42,7 @@ jobs:
           git fetch origin main
           git merge --ff-only origin/main
           docker tag dkrypt:latest dkrypt:previous 2>/dev/null || true
-          docker compose build api
+          BUILD_REF="$(git rev-parse HEAD)" docker compose build api
           docker compose up -d api
 
       - name: Wait for health, roll back on failure

@@ -108,9 +108,6 @@
   }
 
   const canDecrypt = $derived(sessionHasPermission(PermissionFlag.requestDecrypt));
-  const queueDepth = $derived(liveState.overview?.activeJobs.length ?? 0);
-  const primaryDevice = $derived(liveState.overview?.devices.find((d) => d.isPrimary) ?? liveState.overview?.devices[0]);
-  const diskUsedPct = $derived(liveState.overview?.disk?.usedPercent);
 
   let versionsOpen = $state(false);
   let versionsBundleId = $state('');
@@ -256,7 +253,7 @@
 <Card title="Decrypt an app">
   {#snippet headerExtra()}
     {#if canDecrypt}
-      <Button size="sm" variant="secondary" onclick={() => (batchOpen = true)}>Batch decrypt</Button>
+      <Button size="sm" variant="secondary" class="hidden sm:inline-flex" onclick={() => (batchOpen = true)}>Batch decrypt</Button>
     {/if}
   {/snippet}
   <div class="relative">
@@ -277,16 +274,6 @@
       >
         <X class="h-3.5 w-3.5" />
       </button>
-    {/if}
-  </div>
-
-  <div class="mt-2.5 flex flex-wrap items-center gap-2 text-xs text-muted">
-    <span>Queue: {queueDepth} active</span>
-    {#if primaryDevice}
-      <span>Primary: {primaryDevice.name}</span>
-    {/if}
-    {#if diskUsedPct !== undefined}
-      <span>Disk used: {Math.round(diskUsedPct)}%</span>
     {/if}
   </div>
 
