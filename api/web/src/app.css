@@ -196,10 +196,7 @@
   @apply text-accent underline decoration-transparent underline-offset-2 hover:decoration-current;
 }
 
-/* Below `sm`, reflow a data table into a stack of labeled-field cards instead of forcing a
-   horizontal-scroll table - each <td> needs a data-label attribute matching its column header,
-   and group/section header rows should get the .table-row-header escape hatch below. */
-@media (max-width: 639px) {
+@media (max-width: 1279px) {
   pre {
     max-width: 100%;
   }
@@ -237,9 +234,6 @@
     overflow-wrap: anywhere;
   }
 
-  /* Desktop truncation sometimes lives on a child (a button/span) rather than the <td> itself, so
-     that needs resetting too - otherwise the mobile card view would still clip a long bundle ID or
-     version string. Scoped to .truncate specifically so it doesn't touch button/badge wrapping. */
   .responsive-table td .truncate {
     max-width: none !important;
     overflow: visible !important;

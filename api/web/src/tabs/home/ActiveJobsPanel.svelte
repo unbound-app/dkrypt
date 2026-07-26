@@ -189,7 +189,7 @@
     {/if}
   {/snippet}
   <div class="scroll-fade-x overflow-x-auto" use:scrollFade>
-    <table class="responsive-table sm:min-w-[980px]">
+    <table class="responsive-table xl:min-w-[980px]">
       <thead>
         <tr>
           {#if canCancel}

@@ -36,9 +36,7 @@
   <OnboardingBanner />
   <DecryptPanel bind:this={decryptPanel} />
   <DonationNudge />
-  <div class="grid grid-cols-1 gap-4 2xl:grid-cols-2">
-    <MyRequestsPanel />
-    <ActiveJobsPanel />
-  </div>
+  <MyRequestsPanel />
+  <ActiveJobsPanel />
   <JobHistoryPanel />
 </div>

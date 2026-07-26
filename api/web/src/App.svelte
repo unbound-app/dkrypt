@@ -450,7 +450,7 @@
 {:else}
   <div class="min-h-screen">
     <MaintenanceBanner />
-    <header class="border-border flex flex-wrap items-center justify-between gap-3 border-b px-6 py-4">
+    <header class="border-border flex flex-wrap items-center justify-between gap-3 border-b px-3 py-3 sm:px-6 sm:py-4">
       <div class="flex items-center gap-3">
         <h1 class="text-[15px] font-semibold">dkrypt</h1>
       </div>
@@ -710,7 +710,7 @@
       <ConnectionBanner />
       <UpdateAvailableBanner />
       <SetupBanner />
-      <div class="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
+      <div class="grid grid-cols-1 items-start gap-4 2xl:grid-cols-[minmax(0,1fr)_340px]">
         <div class="min-w-0">
           <Tabs
             items={visibleTabs.map((t) => ({ id: t.id, label: t.label }))}
@@ -745,7 +745,7 @@
             </div>
           {/if}
         </div>
-        <div class="min-w-0 flex flex-col gap-4 lg:sticky lg:top-6">
+        <div class="min-w-0 flex flex-col gap-4 2xl:sticky 2xl:top-6">
           <StatusPanel />
         </div>
       </div>

@@ -469,7 +469,7 @@
 
   <Card title="My keys">
     <div class="scroll-fade-x overflow-x-auto" use:scrollFade>
-      <table class="responsive-table sm:min-w-[480px]">
+      <table class="responsive-table xl:min-w-[480px]">
         <thead>
           <tr>
             <th>Name</th>
@@ -541,7 +541,7 @@
         {/if}
       {/snippet}
       <div class="scroll-fade-x overflow-x-auto" use:scrollFade>
-        <table class="responsive-table sm:min-w-[480px]">
+        <table class="responsive-table xl:min-w-[480px]">
           <thead>
             <tr>
               <th></th>
@@ -614,7 +614,7 @@
         <Select items={STATUS_OPTIONS} bind:value={statusFilter} class="w-44" />
       </div>
       <div class="scroll-fade-x overflow-x-auto" use:scrollFade>
-        <table class="responsive-table sm:min-w-[700px]">
+        <table class="responsive-table xl:min-w-[700px]">
           <thead>
             <tr>
               {#if canRevokeAny}<th></th>{/if}

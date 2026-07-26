@@ -267,7 +267,7 @@
       </div>
     {/if}
     <div class="scroll-fade-x overflow-x-auto" use:scrollFade>
-      <table class="responsive-table sm:min-w-[480px]">
+      <table class="responsive-table xl:min-w-[480px]">
         <thead>
           <tr>
             {#if canManage}
@@ -371,7 +371,7 @@
       </div>
     {/if}
     <div class="scroll-fade-x max-h-80 overflow-auto" use:scrollFade>
-      <table class="responsive-table sm:min-w-[480px]">
+      <table class="responsive-table xl:min-w-[480px]">
         <thead>
           <tr>
             <th>When</th>
