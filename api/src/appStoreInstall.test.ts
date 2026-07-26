@@ -18,6 +18,10 @@ mock.module('#idevice.js', () => ({
   ...idevice,
   armAppStoreAutoConfirm: async () => calls.push('arm'),
   clearAppStoreAutoConfirm: async () => calls.push('clear'),
+  execCommand: async () => {
+    calls.push('restart');
+    return { stdout: '', stderr: '', code: 0 };
+  },
   findInstalledAppStoreBundle: async () => {
     lastInstalledBundle = installedBundles.shift();
     return lastInstalledBundle?.path;
@@ -81,7 +85,7 @@ describe('installFromAppStore', () => {
       onProgress: (message) => progress.push(message),
     });
 
-    expect(calls).toEqual(['uninstall', 'arm', 'request', 'clear']);
+    expect(calls).toEqual(['uninstall', 'restart', 'arm', 'request', 'clear']);
     expect(installRequest).toEqual({ action: 'install', adamId: 123, contextMode: 'fallback', versionId: 123456789 });
     expect(progress).toContain('removing the installed app before the App Store install');
     expect(progress.at(-1)).toBe('install complete in 0s');
@@ -90,7 +94,7 @@ describe('installFromAppStore', () => {
   test('replaces an installed app before decrypting the current App Store version', async () => {
     await installFromAppStore('com.hammerandchisel.discord');
 
-    expect(calls).toEqual(['uninstall', 'arm', 'request', 'clear']);
+    expect(calls).toEqual(['uninstall', 'restart', 'arm', 'request', 'clear']);
     expect(installRequest).toEqual({ action: 'install', adamId: 123, contextMode: 'fallback' });
   });
 
@@ -99,7 +103,7 @@ describe('installFromAppStore', () => {
 
     await installFromAppStore('com.hammerandchisel.discord', { externalVersionId: '123456789', expectedVersion: '338.0' });
 
-    expect(calls).toEqual(['uninstall', 'force-uninstall', 'arm', 'request', 'clear']);
+    expect(calls).toEqual(['uninstall', 'force-uninstall', 'restart', 'arm', 'request', 'clear']);
   });
 
   test('waits for the requested version when a stale App Store install lands first', async () => {
@@ -115,7 +119,7 @@ describe('installFromAppStore', () => {
       onProgress: (message) => progress.push(message),
     });
 
-    expect(calls).toEqual(['arm', 'request', 'clear']);
+    expect(calls).toEqual(['restart', 'arm', 'request', 'clear']);
     expect(progress).toContain('waiting for App Store version 338.0; version 337.0 is currently installed');
     expect(progress.at(-1)).toBe('install complete in 0s');
   });

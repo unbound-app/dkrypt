@@ -2,6 +2,7 @@ import type { Client } from 'ssh2';
 import {
   armAppStoreAutoConfirm,
   clearAppStoreAutoConfirm,
+  execCommand,
   findInstalledAppStoreBundle,
   isAppStoreRunning,
   readInstalledBundleVersions,
@@ -32,6 +33,11 @@ async function ensureAppStoreForeground(conn: Client): Promise<void> {
   }
 
   await new Promise((r) => setTimeout(r, wasRunning ? 4_000 : 8_000));
+}
+
+async function restartAppStore(conn: Client): Promise<void> {
+  await execCommand(conn, 'killall AppStore 2>/dev/null || true');
+  await new Promise((r) => setTimeout(r, 1_000));
 }
 
 export async function uninstallFromPrimaryDevice(bundleId: string): Promise<boolean> {
@@ -86,6 +92,9 @@ export async function installFromAppStore(bundleId: string, options: AppStoreIns
         throw new Error(`failed to remove the existing ${bundleId} before installing from the App Store`);
       }
     }
+
+    report('restarting the App Store to clear pending purchases');
+    await restartAppStore(conn);
 
     report('bringing the App Store to the foreground');
     await ensureAppStoreForeground(conn);
