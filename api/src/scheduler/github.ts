@@ -25,7 +25,7 @@ async function listReleases(repo: string): Promise<Release[]> {
 
 export async function listReleaseVersions(repo: string): Promise<Set<string>> {
   const releases = await listReleases(repo);
-  return new Set(releases.map((r) => normalizeVersion(r.tag_name)));
+  return new Set(releases.map((r) => normalizeVersion(r.tag_name)).filter((v) => !v.includes('_')));
 }
 
 export async function listReleaseTagNames(repo: string): Promise<Set<string>> {
