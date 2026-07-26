@@ -195,9 +195,8 @@ async function fetchAppVersions(bundleId: string): Promise<AppVersionEntry[]> {
     log.info('skipping community version history lookup, trackId resolution failed', { bundleId, error: String(err) });
   }
 
-  return ids
-    .slice()
-    .reverse()
+  return [...new Set([...ids, ...community.keys()])]
+    .sort((a, b) => Number(b) - Number(a))
     .map((id) => {
       const isLatest = id === latestId;
       const cached = cache?.versions[id];

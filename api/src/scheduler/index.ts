@@ -29,6 +29,7 @@ import { compareVersions, normalizeVersion } from '#util/version.js';
 import { listAppVersions } from '#versions.js';
 import { dispatchIpaUpdate, findDispatchedRun, getRun, listReleaseTagNames, listReleaseVersions, type WorkflowRun } from '#scheduler/github.js';
 import { lookupCurrentVersion } from '#scheduler/itunes.js';
+import { selectAppStoreVersion } from '#scheduler/appStoreVersion.js';
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -299,9 +300,9 @@ async function tickAppStore(watch: AppWatch): Promise<DispatchResult> {
   let externalVersionId: string;
   try {
     const versions = await listAppVersions(watch.bundleId);
-    const latest = versions.find((v) => v.isLatest);
-    if (!latest) throw new Error('no latest version entry in App Store version history');
-    externalVersionId = latest.externalVersionId;
+    const target = selectAppStoreVersion(versions, normalized);
+    if (!target) throw new Error(`no App Store external version id matched ${normalized}`);
+    externalVersionId = target.externalVersionId;
   } catch (err) {
     log.error('failed to resolve the App Store external version id, refusing to dispatch to avoid decrypting the wrong build on device', {
       bundleId: watch.bundleId,
