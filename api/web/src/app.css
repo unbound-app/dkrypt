@@ -460,7 +460,7 @@
 	}
 
 	.responsive-table td {
-		@apply items-start justify-between gap-3 border-b-0 ! py-1.5 text-right;
+		@apply items-start justify-between gap-3 border-b-0 !py-1.5 text-right;
 		display: flex;
 		max-width: none !important;
 		overflow: visible !important;
