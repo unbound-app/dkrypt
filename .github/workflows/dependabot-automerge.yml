@@ -1,19 +1,25 @@
 name: Dependabot auto-merge
 
 on:
-  pull_request_target:
-    types: [opened, reopened, synchronize, ready_for_review]
+  workflow_run:
+    workflows: ["CI & Deploy"]
+    types: [completed]
 
 permissions:
   contents: write
   pull-requests: write
 
 jobs:
-  enable:
-    if: github.actor == 'dependabot[bot]' && github.event.pull_request.draft == false
+  merge:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - env:
           GH_TOKEN: ${{ github.token }}
-          PR_URL: ${{ github.event.pull_request.html_url }}
-        run: gh pr merge --auto --squash --delete-branch "$PR_URL"
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          pr_number="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/pulls" --jq '.[0].number // empty')"
+          [ -n "$pr_number" ] || exit 0
+          author="$(gh pr view "$pr_number" --repo "$GITHUB_REPOSITORY" --json author --jq '.author.login')"
+          [ "$author" = "dependabot[bot]" ] || exit 0
+          gh pr merge "$pr_number" --repo "$GITHUB_REPOSITORY" --squash --delete-branch --match-head-commit "$HEAD_SHA"
