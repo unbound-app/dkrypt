@@ -61,7 +61,8 @@
   }
 
   body {
-    @apply bg-bg text-text font-sans;
+    @apply bg-bg text-text font-sans antialiased;
+    background-image: radial-gradient(circle at top, color-mix(in srgb, var(--color-accent) 8%, transparent), transparent 36rem);
   }
 
   table {
@@ -81,7 +82,7 @@
   }
 
   tbody tr {
-    @apply hover:bg-panel-muted/60;
+    @apply hover:bg-panel-muted/70 transition-colors;
   }
 
   [data-density='compact'] table {
@@ -107,6 +108,30 @@
   select,
   [tabindex] {
     @apply focus-visible:outline-accent focus-visible:outline-2 focus-visible:outline-offset-2;
+  }
+}
+
+@media (min-width: 768px) {
+  .workspace-content .rounded-xl.border.bg-panel {
+    border-radius: 0.75rem;
+    padding: 1rem;
+    box-shadow: 0 1px 2px color-mix(in srgb, var(--color-text) 4%, transparent), 0 10px 28px color-mix(in srgb, var(--color-text) 3%, transparent);
+  }
+
+  .responsive-table th {
+    @apply px-2.5 py-2.5 whitespace-nowrap;
+  }
+
+  .responsive-table td {
+    @apply px-2.5 py-2.5;
+    overflow-wrap: anywhere;
+  }
+
+}
+
+@media (min-width: 640px) {
+  .workspace-content .rounded-xl.border.bg-panel {
+    padding: 1.125rem;
   }
 }
 
@@ -207,7 +232,7 @@
   @apply text-accent underline decoration-transparent underline-offset-2 hover:decoration-current;
 }
 
-@media (max-width: 1535px) {
+@media (max-width: 1279px) {
   pre {
     max-width: 100%;
   }
@@ -221,6 +246,10 @@
   .responsive-table tr,
   .responsive-table td {
     @apply block w-full;
+  }
+
+  .responsive-table {
+    min-width: 0 !important;
   }
 
   .responsive-table tbody tr {

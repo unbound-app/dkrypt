@@ -35,7 +35,7 @@
 
 <div class="flex flex-col gap-4">
   <OnboardingBanner />
-  <div class="lg:sticky lg:top-3 lg:z-20">
+  <div class="lg:sticky lg:top-20 lg:z-20">
     <QuickActions />
   </div>
   <DecryptPanel bind:this={decryptPanel} />

@@ -41,7 +41,6 @@
   import Badge from '#lib/components/ui/Badge.svelte';
   import Button from '#lib/components/ui/Button.svelte';
   import Input from '#lib/components/ui/Input.svelte';
-  import Tabs from '#lib/components/ui/Tabs.svelte';
   import { buttonVariants } from '#lib/components/ui/variants';
   import { cn } from '#lib/utils';
   import { scrollFade } from '#lib/scrollFade';
@@ -452,7 +451,7 @@
 {:else}
   <div class="min-h-screen">
     <MaintenanceBanner />
-    <header class="border-border flex flex-wrap items-center justify-between gap-3 border-b px-3 py-3 sm:px-6 sm:py-4">
+    <header class="border-border bg-panel/90 sticky top-0 z-30 flex flex-wrap items-center justify-between gap-3 border-b px-3 py-3 backdrop-blur-xl sm:px-6 sm:py-3.5">
       <div class="flex items-center gap-3">
         <h1 class="text-[15px] font-semibold">dkrypt</h1>
       </div>
@@ -707,21 +706,45 @@
         </DropdownMenu.Root>
       </div>
     </header>
-    <main class="mx-auto max-w-[1680px] px-3 pt-4 pb-20 sm:px-4 sm:pt-6 sm:pb-6 lg:px-6">
+    <main class="mx-auto max-w-[1760px] px-3 pt-4 pb-20 sm:px-5 sm:pt-5 lg:px-6 lg:pb-6">
       <SessionExpiryBanner />
       <ConnectionBanner />
       <UpdateAvailableBanner />
       <SetupBanner />
-      <div class="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
-        <div class="min-w-0">
-          <Tabs
-            items={visibleTabs.map((t) => ({ id: t.id, label: t.label }))}
-            value={tabState.active}
-            onValueChange={(v) => setActiveTab(v as TabId)}
-            class="mb-5 hidden sm:block"
-          />
+      <div class="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_340px] 2xl:grid-cols-[208px_minmax(0,1fr)_340px] 2xl:gap-5">
+        <aside class="hidden 2xl:sticky 2xl:top-20 2xl:block">
+          <nav class="border-border bg-panel flex flex-col gap-1 rounded-xl border p-2" aria-label="Primary">
+            <div class="px-2 py-1.5 text-[10px] font-semibold tracking-[0.16em] text-muted uppercase">Workspace</div>
+            {#each visibleTabs as t (t.id)}
+              {@const Icon = TAB_ICON[t.id]}
+              <button
+                type="button"
+                class={cn(
+                  'flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] font-medium transition-colors',
+                  tabState.active === t.id ? 'bg-accent/12 text-accent' : 'text-muted hover:bg-panel-muted hover:text-text',
+                )}
+                onclick={() => setActiveTab(t.id)}
+                aria-current={tabState.active === t.id ? 'page' : undefined}
+              >
+                <Icon class="h-4 w-4 shrink-0" />
+                <span class="min-w-0 truncate">{t.label}</span>
+              </button>
+            {/each}
+            <div class="border-border mt-2 border-t px-2 py-2 text-[11px] leading-4 text-muted">
+              Press <kbd class="border-border rounded border px-1 font-mono text-[10px]">⌘/Ctrl K</kbd> for commands
+            </div>
+          </nav>
+        </aside>
+        <div class="workspace-content min-w-0">
+          <div class="mb-4 flex items-end justify-between gap-3 lg:mb-5">
+            <div>
+              <div class="text-[11px] font-medium tracking-[0.14em] text-muted uppercase">Workspace</div>
+              <h2 class="mt-0.5 text-xl font-semibold tracking-tight">{visibleTabs.find((t) => t.id === tabState.active)?.label ?? 'Dashboard'}</h2>
+            </div>
+            <div class="hidden text-xs text-muted sm:block">Live operational workspace</div>
+          </div>
           {#if tabState.active !== 'home'}
-            <div class="sticky top-3 z-20 mb-4 hidden lg:block">
+            <div class="sticky top-20 z-20 mb-4 hidden lg:block">
               <QuickActions />
             </div>
           {/if}
@@ -758,7 +781,7 @@
       </div>
     </main>
     <nav
-      class="border-border bg-panel scroll-fade-x fixed inset-x-0 bottom-0 z-40 flex overflow-x-auto border-t pb-[env(safe-area-inset-bottom)] sm:hidden"
+      class="border-border bg-panel/95 scroll-fade-x fixed inset-x-0 bottom-0 z-40 flex overflow-x-auto border-t pb-[env(safe-area-inset-bottom)] backdrop-blur-xl 2xl:hidden"
       aria-label="Primary"
       use:scrollFade
     >

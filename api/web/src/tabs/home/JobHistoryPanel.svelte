@@ -576,7 +576,7 @@
       {/snippet}
     </EmptyState>
   {:else}
-    <div class="2xl:hidden max-h-[600px] space-y-3 overflow-y-auto pr-1">
+    <div class="xl:hidden max-h-[600px] space-y-3 overflow-y-auto pr-1">
       {#if !loaded}
         {#each Array(4) as _, i (i)}
           <div class="skeleton bg-panel-muted h-20 rounded-lg"></div>
@@ -586,7 +586,7 @@
           <section class="space-y-1.5">
             <div class="bg-panel/95 sticky top-0 z-10 py-1 text-[11px] font-semibold tracking-wide text-muted uppercase">{g.label}</div>
             {#each g.items as j (j.id)}
-              <article class="border-border bg-panel-muted/45 rounded-lg border px-3 py-2.5">
+              <article class="border-border bg-panel-muted/45 overflow-hidden rounded-lg border px-3 py-2.5">
                 <div class="flex items-start gap-2">
                   <input class="mt-0.5" type="checkbox" checked={selected.has(j.id)} onchange={() => toggleSelect(j.id)} aria-label="Select {j.bundleId}" />
                   <div class="min-w-0 flex-1">
@@ -607,16 +607,16 @@
                       {#if j.testflight}
                         <Badge variant="secondary">TF</Badge>
                       {:else if j.externalVersionId}
-                        <Badge variant="secondary">pinned</Badge>
+                        <Badge variant="secondary" title="Specific App Store version selected">selected</Badge>
                       {/if}
                       <span>{j.source}</span>
                       <span>{fmtSize(j.sizeBytes)}</span>
                       <span><RelativeTime ms={j.finishedAt} /></span>
                       {#if j.queuedBy}
-                        <span>by {j.queuedBy}</span>
+                        <span class="max-w-full break-words" title={j.queuedBy}>by {j.queuedBy}</span>
                       {/if}
                       {#if j.deviceId}
-                        <span title={j.deviceId}>device {j.deviceId}</span>
+                        <span class="max-w-full break-words" title={j.deviceId}>device {j.deviceId}</span>
                       {/if}
                     </div>
                     {#if j.error}
@@ -663,8 +663,8 @@
         {/each}
       {/if}
     </div>
-    <div class="hidden 2xl:block scroll-fade-x max-h-[600px] overflow-auto" use:scrollFade>
-      <table class="responsive-table 2xl:min-w-[720px]">
+    <div class="hidden xl:block scroll-fade-x max-h-[600px] overflow-auto" use:scrollFade>
+      <table class="responsive-table min-w-[820px]">
         <thead>
           <tr>
             <th><input type="checkbox" checked={entries.length > 0 && selected.size === entries.length} onchange={toggleSelectAll} /></th>
@@ -711,7 +711,7 @@
                       {#if j.testflight}
                         <Badge variant="secondary" class="shrink-0">TF</Badge>
                       {:else if j.externalVersionId}
-                        <Badge variant="secondary" class="shrink-0" title="pinned to external version id {j.externalVersionId}">pinned</Badge>
+                        <Badge variant="secondary" class="shrink-0" title="Specific App Store version selected">selected</Badge>
                       {/if}
                     </div>
                   </td>
@@ -733,9 +733,9 @@
                       {#if timelineById[j.id]}
                         <div class="flex flex-wrap items-center gap-2 text-xs">
                           {#each timelineById[j.id].events as ev (ev.at + ev.label)}
-                            <span class="border-border inline-flex items-center gap-1 rounded-full border px-2 py-1">
+                            <span class="border-border inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-1">
                               <Badge variant={statusToBadgeVariant(ev.status)}>{ev.status}</Badge>
-                              <span>{ev.label}</span>
+                              <span class="min-w-0 break-words">{ev.label}</span>
                               <span class="text-muted">(<RelativeTime ms={ev.at} />)</span>
                             </span>
                           {/each}
