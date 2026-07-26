@@ -37,12 +37,14 @@
   import SetupBanner from '#components/SetupBanner.svelte';
   import OnboardingTour from '#components/OnboardingTour.svelte';
   import ShortcutsHelp from '#components/ShortcutsHelp.svelte';
+  import QuickActions from '#tabs/home/QuickActions.svelte';
   import Badge from '#lib/components/ui/Badge.svelte';
   import Button from '#lib/components/ui/Button.svelte';
   import Input from '#lib/components/ui/Input.svelte';
   import Tabs from '#lib/components/ui/Tabs.svelte';
   import { buttonVariants } from '#lib/components/ui/variants';
   import { cn } from '#lib/utils';
+  import { scrollFade } from '#lib/scrollFade';
   import { KOFI_URL } from '#lib/constants';
   import { myDecryptsState } from '#lib/decrypts.svelte';
   import { connectLive, disconnectLive, liveState } from '#lib/live.svelte';
@@ -718,6 +720,11 @@
             onValueChange={(v) => setActiveTab(v as TabId)}
             class="mb-5 hidden sm:block"
           />
+          {#if tabState.active !== 'home'}
+            <div class="sticky top-3 z-20 mb-4 hidden lg:block">
+              <QuickActions />
+            </div>
+          {/if}
 
           <div class:hidden={tabState.active !== 'home'}>
             <Home bind:this={homeRef} />
@@ -751,16 +758,17 @@
       </div>
     </main>
     <nav
-      class="border-border bg-panel fixed inset-x-0 bottom-0 z-40 flex overflow-x-auto border-t pb-[env(safe-area-inset-bottom)] sm:hidden"
+      class="border-border bg-panel scroll-fade-x fixed inset-x-0 bottom-0 z-40 flex overflow-x-auto border-t pb-[env(safe-area-inset-bottom)] sm:hidden"
       aria-label="Primary"
+      use:scrollFade
     >
       {#each visibleTabs as t (t.id)}
         {@const Icon = TAB_ICON[t.id]}
         <button
           type="button"
           class={cn(
-            'flex min-w-13 flex-1 cursor-pointer flex-col items-center gap-0.5 py-2 text-[10.5px]',
-            tabState.active === t.id ? 'text-accent' : 'text-muted',
+            'flex min-w-13 flex-1 cursor-pointer flex-col items-center gap-0.5 rounded-lg py-2 text-[10.5px] transition-colors',
+            tabState.active === t.id ? 'bg-accent/10 text-accent' : 'text-muted hover:text-text',
           )}
           onclick={() => setActiveTab(t.id)}
           aria-current={tabState.active === t.id ? 'page' : undefined}

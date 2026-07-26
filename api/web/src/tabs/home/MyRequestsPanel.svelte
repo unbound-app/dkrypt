@@ -21,7 +21,7 @@
   import { fmtUntil } from '#lib/format';
   import { notifyJobFinished } from '#lib/notifications';
   import { playChime } from '#lib/sound';
-  import { densityState, showToast, soundEnabledState } from '#lib/ui.svelte';
+  import { densityState, requestFocusSearch, showToast, soundEnabledState } from '#lib/ui.svelte';
 
   let pollTimer: ReturnType<typeof setTimeout> | undefined;
   let retrying = $state<Set<string>>(new Set());
@@ -187,7 +187,11 @@
     {/if}
   {/snippet}
   {#if myDecryptsState.items.length === 0}
-    <EmptyState icon={PackageSearch} message="Nothing queued yet - search above." />
+    <EmptyState icon={PackageSearch} message="Nothing queued yet. Start with an App Store search or open the command menu.">
+      {#snippet action()}
+        <Button size="sm" variant="secondary" onclick={requestFocusSearch}>Find an app</Button>
+      {/snippet}
+    </EmptyState>
   {:else}
     <table class="responsive-table">
       <thead>

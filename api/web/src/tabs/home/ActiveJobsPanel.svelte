@@ -175,7 +175,7 @@
   });
 </script>
 
-<Card title="Active jobs">
+<Card title="Active jobs" id="active-jobs">
   {#snippet headerExtra()}
     {#if canCancel && selected.size > 0}
       <div class="flex flex-wrap items-center gap-1.5">

@@ -188,6 +188,20 @@
   });
 
   let pinnedTopKey = $state<string | undefined>(undefined);
+  let expandedLogKeys = $state<Set<string>>(new Set());
+
+  function toggleExpanded(key: string): void {
+    const next = new Set(expandedLogKeys);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    expandedLogKeys = next;
+  }
+
+  $effect(() => {
+    const visibleKeys = new Set(filtered.map(entryKey));
+    if (![...expandedLogKeys].some((key) => !visibleKeys.has(key))) return;
+    expandedLogKeys = new Set([...expandedLogKeys].filter((key) => visibleKeys.has(key)));
+  });
 
   $effect(() => {
     if (stickToTop) pinnedTopKey = filtered[0] ? entryKey(filtered[0]) : undefined;
@@ -209,7 +223,7 @@
 </script>
 
 <Card title="Scheduler &amp; job logs">
-  <div class="mb-3.5 flex flex-wrap items-center gap-2.5">
+  <div class="bg-panel-muted/40 mb-3.5 flex flex-wrap items-center gap-2.5 rounded-lg p-2">
     <div class="flex flex-wrap gap-1">
       <Button variant={scopeFilter === 'all' ? 'default' : 'secondary'} onclick={() => (scopeFilter = 'all')}>All</Button>
       {#each scopes as scope (scope)}
@@ -298,16 +312,21 @@
       {/if}
       <div class="flex max-h-[560px] flex-col gap-1.5 overflow-y-auto" bind:this={listEl} onscroll={onListScroll}>
         {#each filtered as l (entryKey(l))}
-          <div class={`log-row border-border bg-panel-muted flex items-baseline gap-2 rounded-md border border-l-[3px] px-2.5 py-2 text-[12.5px] ${LEVEL_BORDER[l.level]}`}>
+          {@const key = entryKey(l)}
+          <div class={`log-row border-border bg-panel-muted flex items-start gap-2 rounded-md border border-l-[3px] px-2.5 py-2 text-[12.5px] ${LEVEL_BORDER[l.level]}`}>
             <span class="shrink-0 font-mono text-[11.5px] whitespace-nowrap text-muted"><RelativeTime ms={l.ts} /></span>
             <Badge variant={LEVEL_BADGE[l.level]} class="shrink-0">{l.level}</Badge>
             <Badge variant="secondary" class="shrink-0">{l.scope}</Badge>
-            <span class="min-w-0 flex-1 truncate" title="{l.message} {fmtLogMeta(l.meta)}">
+            <button
+              class={cn('min-w-0 flex-1 cursor-pointer text-left', expandedLogKeys.has(key) ? 'break-words leading-5' : 'truncate')}
+              onclick={() => toggleExpanded(key)}
+              title={expandedLogKeys.has(key) ? 'Collapse log entry' : 'Expand log entry'}
+            >
               {l.message}
               {#if l.meta}
-                <span class="font-mono text-[11px] text-muted">{fmtLogMeta(l.meta)}</span>
+                <span class={cn('font-mono text-[11px] text-muted', expandedLogKeys.has(key) ? 'mt-1 block break-words' : '')}>{fmtLogMeta(l.meta)}</span>
               {/if}
-            </span>
+            </button>
             <CopyButton text={JSON.stringify(l, null, 2)} label="JSON" />
           </div>
         {/each}

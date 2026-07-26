@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { cancelJob, fetchJobHistory, fetchMyKeys, fetchUsers, jobHistoryExportUrl, triggerWatchDispatch } from '#lib/api';
+  import { cancelJob, fetchJobHistory, fetchMyKeys, fetchUsers, jobHistoryExportUrl, retryJob, triggerWatchDispatch, type JobHistoryEntry } from '#lib/api';
+  import { addDecrypt, pushRecentBundleId } from '#lib/decrypts.svelte';
   import { debounce } from '#lib/format';
   import { PermissionFlag } from '#lib/permissions';
   import { logout, sessionCanSeeSettings, sessionHasPermission } from '#lib/session.svelte';
@@ -35,11 +36,14 @@
   let query = $state('');
   let selected = $state(0);
   let inputEl: HTMLInputElement | undefined = $state();
-  let recentJobs = $state<{ bundleId: string; deviceId?: string }[]>([]);
-  let queryJobs = $state<{ bundleId: string; deviceId?: string }[]>([]);
+  type RecentJob = Pick<JobHistoryEntry, 'id' | 'bundleId' | 'deviceId' | 'externalVersionId' | 'testflight' | 'versionLabel' | 'status'>;
+
+  let recentJobs = $state<RecentJob[]>([]);
+  let queryJobs = $state<RecentJob[]>([]);
   let myKeys = $state<{ id: string; name: string }[]>([]);
   let users = $state<{ username: string; displayName?: string }[]>([]);
   let recentIds = $state<string[]>([]);
+  let historyQueryToken = 0;
   const RECENT_KEY = 'commandPaletteRecent';
 
   function loadRecents(): string[] {
@@ -61,11 +65,19 @@
     recentIds = loadRecents();
     void fetchJobHistory(0, 8).then((r) => {
       const seen = new Set<string>();
-      const jobs: { bundleId: string; deviceId?: string }[] = [];
+      const jobs: RecentJob[] = [];
       for (const h of r.history) {
         if (seen.has(h.bundleId)) continue;
         seen.add(h.bundleId);
-        jobs.push({ bundleId: h.bundleId, deviceId: h.deviceId });
+        jobs.push({
+          id: h.id,
+          bundleId: h.bundleId,
+          deviceId: h.deviceId,
+          externalVersionId: h.externalVersionId,
+          testflight: h.testflight,
+          versionLabel: h.versionLabel,
+          status: h.status,
+        });
       }
       recentJobs = jobs;
     });
@@ -80,13 +92,23 @@
   });
 
   const searchJobHistory = debounce((q: string) => {
+    const token = ++historyQueryToken;
     void fetchJobHistory(0, 5, q).then((r) => {
+      if (!paletteState.open || query.trim() !== q || token !== historyQueryToken) return;
       const seen = new Set<string>();
-      const jobs: { bundleId: string; deviceId?: string }[] = [];
+      const jobs: RecentJob[] = [];
       for (const h of r.history) {
         if (seen.has(h.bundleId)) continue;
         seen.add(h.bundleId);
-        jobs.push({ bundleId: h.bundleId, deviceId: h.deviceId });
+        jobs.push({
+          id: h.id,
+          bundleId: h.bundleId,
+          deviceId: h.deviceId,
+          externalVersionId: h.externalVersionId,
+          testflight: h.testflight,
+          versionLabel: h.versionLabel,
+          status: h.status,
+        });
       }
       queryJobs = jobs;
     });
@@ -106,6 +128,30 @@
     if (jobs.length === 0) return;
     if (!(await confirmDialog(`Cancel all ${jobs.length} active job(s)?`, { confirmLabel: 'Cancel all' }))) return;
     await Promise.all(jobs.map((j) => cancelJob(j.id)));
+  }
+
+  async function cancelActiveJob(id: string, bundleId: string): Promise<void> {
+    if (!(await confirmDialog(`Cancel ${bundleId}?`, { confirmLabel: 'Cancel job' }))) return;
+    const { ok } = await cancelJob(id);
+    if (ok) showToast(`Cancelled ${bundleId}`, 'success');
+  }
+
+  async function retryRecentJob(job: RecentJob): Promise<void> {
+    const { ok, data } = await retryJob(job.id);
+    if (!ok) return;
+    addDecrypt({
+      id: data.id,
+      bundleId: job.bundleId,
+      trackName: job.bundleId,
+      versionLabel: job.versionLabel,
+      externalVersionId: job.externalVersionId,
+      testflight: job.testflight,
+      status: data.status,
+      progress: data.progress,
+      queue: data.queue,
+    });
+    pushRecentBundleId(job.bundleId);
+    showToast(`Retrying ${job.bundleId}`, 'success');
   }
 
   async function runTriggerWatchDispatch(watchId: string): Promise<void> {
@@ -154,6 +200,15 @@
       const activeCount = liveState.overview?.activeJobs.length ?? 0;
       if (activeCount > 0) {
         base.push({ id: 'cancel-all', label: `Cancel all ${activeCount} active job(s)`, category: 'Actions', run: () => void cancelAllJobs() });
+        for (const job of liveState.overview?.activeJobs ?? []) {
+          base.push({
+            id: `cancel-${job.id}`,
+            label: `Cancel ${job.bundleId}`,
+            category: 'Actions',
+            keywords: `${job.bundleId} active job`,
+            run: () => void cancelActiveJob(job.id, job.bundleId),
+          });
+        }
       }
     }
     if (sessionHasPermission(PermissionFlag.manageAutomation)) {
@@ -197,6 +252,15 @@
         keywords: job.bundleId,
         run: () => jumpToHistoryBundleId(job.bundleId),
       });
+      if (sessionHasPermission(PermissionFlag.requestDecrypt) && job.status === 'failed') {
+        base.push({
+          id: `retry-${job.id}`,
+          label: `Retry failed job: ${job.bundleId}`,
+          category: 'Actions',
+          keywords: `${job.bundleId} retry failed`,
+          run: () => void retryRecentJob(job),
+        });
+      }
     }
     for (const key of myKeys) {
       base.push({

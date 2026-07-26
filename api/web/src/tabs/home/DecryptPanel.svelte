@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { FlaskConical, History, Star, X } from 'lucide-svelte';
+  import { Ellipsis, FlaskConical, History, Star, X } from 'lucide-svelte';
   import BatchDecryptDialog from '#components/BatchDecryptDialog.svelte';
   import CopyButton from '#components/CopyButton.svelte';
   import EmptyState from '#components/EmptyState.svelte';
@@ -38,6 +38,7 @@
   let searchToken = 0;
   let queueing = $state<Set<string>>(new Set());
   let preferPrimary = $state(false);
+  let resultDetailsOpen = $state<Set<string>>(new Set());
 
   $effect(() => {
     if (sessionState.loggedIn) void fetchPreferPrimaryDevicePref().then((v) => (preferPrimary = v));
@@ -234,6 +235,13 @@
     return `curl -H "Authorization: Bearer <YOUR_API_KEY>" "${base}/v1/decrypt?bundleId=${bundleId}" -o ${bundleId}.ipa`;
   }
 
+  function toggleResultDetails(bundleId: string): void {
+    const next = new Set(resultDetailsOpen);
+    if (next.has(bundleId)) next.delete(bundleId);
+    else next.add(bundleId);
+    resultDetailsOpen = next;
+  }
+
   export function focusSearch(): void {
     inputEl?.focus();
   }
@@ -348,40 +356,42 @@
           {#if r.price > 0}
             <Badge variant="destructive" title="ipadecrypt only supports free apps">Paid</Badge>
           {:else}
-            <div class="flex items-center gap-1.5">
-              <button
-                class={cn('cursor-pointer rounded-md p-1.5', isStarredBundleId(r.bundleId) ? 'text-warn' : 'text-muted hover:text-text')}
-                onclick={() => toggleStarredApp(r)}
-                aria-label={isStarredBundleId(r.bundleId) ? `Unstar ${r.bundleId}` : `Star ${r.bundleId}`}
-                title={isStarredBundleId(r.bundleId) ? 'Unstar' : 'Star'}
-              >
-                <Star class="h-3.5 w-3.5" fill={isStarredBundleId(r.bundleId) ? 'currentColor' : 'none'} />
-              </button>
-              <CopyButton text={curlFor(r.bundleId)} label="curl" />
-              {#if canDecrypt}
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onclick={() => openVersions(r.bundleId, r.trackName)}
-                  title="Browse version history"
-                  aria-label="Browse version history"
+            <div class="flex shrink-0 items-center gap-1.5">
+              <div class="hidden items-center gap-1.5 sm:flex">
+                <button
+                  class={cn('cursor-pointer rounded-md p-1.5', isStarredBundleId(r.bundleId) ? 'text-warn' : 'text-muted hover:text-text')}
+                  onclick={() => toggleStarredApp(r)}
+                  aria-label={isStarredBundleId(r.bundleId) ? `Unstar ${r.bundleId}` : `Star ${r.bundleId}`}
+                  title={isStarredBundleId(r.bundleId) ? 'Unstar' : 'Star'}
                 >
-                  <History class="h-3.5 w-3.5" />
-                </Button>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onclick={() => openTestFlight(r.bundleId, r.trackId, r.trackName)}
-                  title="Browse TestFlight builds"
-                  aria-label="Browse TestFlight builds"
-                >
-                  <FlaskConical class="h-3.5 w-3.5" />
-                </Button>
-                <label class="hidden items-center gap-1 text-[11px] text-muted md:inline-flex">
-                  <input type="checkbox" bind:checked={preferPrimary} onchange={onPreferPrimaryChange} />
-                  Primary
-                </label>
-              {/if}
+                  <Star class="h-3.5 w-3.5" fill={isStarredBundleId(r.bundleId) ? 'currentColor' : 'none'} />
+                </button>
+                <CopyButton text={curlFor(r.bundleId)} label="curl" />
+                {#if canDecrypt}
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onclick={() => openVersions(r.bundleId, r.trackName)}
+                    title="Browse version history"
+                    aria-label="Browse version history"
+                  >
+                    <History class="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onclick={() => openTestFlight(r.bundleId, r.trackId, r.trackName)}
+                    title="Browse TestFlight builds"
+                    aria-label="Browse TestFlight builds"
+                  >
+                    <FlaskConical class="h-3.5 w-3.5" />
+                  </Button>
+                  <label class="hidden items-center gap-1 text-[11px] text-muted md:inline-flex">
+                    <input type="checkbox" bind:checked={preferPrimary} onchange={onPreferPrimaryChange} />
+                    Primary
+                  </label>
+                {/if}
+              </div>
               {#if statusByBundle.has(r.bundleId)}
                 {@const status = statusByBundle.get(r.bundleId) ?? ''}
                 <Badge variant={statusToBadgeVariant(status)}>{status}</Badge>
@@ -397,9 +407,47 @@
               {:else}
                 <Badge variant="secondary" title="Viewers can't queue decrypts">view only</Badge>
               {/if}
+              <Button
+                size="sm"
+                variant="secondary"
+                class="sm:hidden"
+                onclick={() => toggleResultDetails(r.bundleId)}
+                aria-expanded={resultDetailsOpen.has(r.bundleId)}
+                aria-label="More actions for {r.trackName}"
+                title="More actions"
+              >
+                <Ellipsis class="h-3.5 w-3.5" />
+              </Button>
             </div>
           {/if}
         </div>
+        {#if r.price === 0 && resultDetailsOpen.has(r.bundleId)}
+          <div class="border-border flex flex-wrap items-center gap-1.5 border-t py-2 sm:hidden">
+            <button
+              class={cn('cursor-pointer rounded-md p-1.5', isStarredBundleId(r.bundleId) ? 'text-warn' : 'text-muted hover:text-text')}
+              onclick={() => toggleStarredApp(r)}
+              aria-label={isStarredBundleId(r.bundleId) ? `Unstar ${r.bundleId}` : `Star ${r.bundleId}`}
+              title={isStarredBundleId(r.bundleId) ? 'Unstar' : 'Star'}
+            >
+              <Star class="h-3.5 w-3.5" fill={isStarredBundleId(r.bundleId) ? 'currentColor' : 'none'} />
+            </button>
+            <CopyButton text={curlFor(r.bundleId)} label="curl" />
+            {#if canDecrypt}
+              <Button size="sm" variant="secondary" onclick={() => openVersions(r.bundleId, r.trackName)}>
+                <History class="h-3.5 w-3.5" />
+                Versions
+              </Button>
+              <Button size="sm" variant="secondary" onclick={() => openTestFlight(r.bundleId, r.trackId, r.trackName)}>
+                <FlaskConical class="h-3.5 w-3.5" />
+                TestFlight
+              </Button>
+              <label class="inline-flex items-center gap-1 text-[11px] text-muted">
+                <input type="checkbox" bind:checked={preferPrimary} onchange={onPreferPrimaryChange} />
+                Primary
+              </label>
+            {/if}
+          </div>
+        {/if}
       {/each}
     {/if}
   </div>

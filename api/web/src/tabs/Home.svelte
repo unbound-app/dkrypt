@@ -6,6 +6,7 @@
   import DecryptPanel from '#tabs/home/DecryptPanel.svelte';
   import JobHistoryPanel from '#tabs/home/JobHistoryPanel.svelte';
   import MyRequestsPanel from '#tabs/home/MyRequestsPanel.svelte';
+  import QuickActions from '#tabs/home/QuickActions.svelte';
 
   let decryptPanel: DecryptPanel | undefined = $state();
 
@@ -34,6 +35,9 @@
 
 <div class="flex flex-col gap-4">
   <OnboardingBanner />
+  <div class="lg:sticky lg:top-3 lg:z-20">
+    <QuickActions />
+  </div>
   <DecryptPanel bind:this={decryptPanel} />
   <DonationNudge />
   <MyRequestsPanel />
