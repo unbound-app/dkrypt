@@ -391,9 +391,7 @@
 			if (token !== githubWorkflowsToken) return;
 			githubWorkflows = [];
 			githubWorkflowsError =
-				err instanceof Error
-					? err.message
-					: "Failed to load workflows";
+				err instanceof Error ? err.message : "Failed to load workflows";
 		} finally {
 			if (token === githubWorkflowsToken) {
 				githubWorkflowsLoading = false;
@@ -1029,9 +1027,7 @@
 			{editingWatchId ? "Edit watch" : "Add watch"}
 		</div>
 		<div class="max-h-[60vh] overflow-y-auto pr-0.5">
-			<label
-				for="w-search"
-				class="mb-1 block text-xs text-muted"
+			<label for="w-search" class="mb-1 block text-xs text-muted"
 				>App search</label
 			>
 			<div class="relative">
@@ -1042,7 +1038,9 @@
 					oninput={onWatchSearchInput}
 					class="pr-8"
 				/>
-				<div class="text-muted pointer-events-none absolute top-1/2 right-2 -translate-y-1/2">
+				<div
+					class="text-muted pointer-events-none absolute top-1/2 right-2 -translate-y-1/2"
+				>
 					{#if watchSearchLoading}
 						<LoaderCircle class="h-3.5 w-3.5 animate-spin" />
 					{:else}
@@ -1051,7 +1049,9 @@
 				</div>
 			</div>
 			{#if watchSearchResults.length > 0}
-				<div class="border-border mt-1.5 max-h-52 overflow-y-auto rounded-md border">
+				<div
+					class="border-border mt-1.5 max-h-52 overflow-y-auto rounded-md border"
+				>
 					{#each watchSearchResults as result (result.bundleId)}
 						<button
 							type="button"

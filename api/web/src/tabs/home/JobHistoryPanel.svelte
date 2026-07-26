@@ -855,7 +855,8 @@
 												<button
 													type="button"
 													class="cursor-pointer"
-													onclick={() => openFailedDetails(j)}
+													onclick={() =>
+														openFailedDetails(j)}
 													title="Show failure details"
 												>
 													<Badge
