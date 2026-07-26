@@ -5,7 +5,6 @@
   import EmptyState from '#components/EmptyState.svelte';
   import RelativeTime from '#components/RelativeTime.svelte';
   import ShareLinkDialog from '#components/ShareLinkDialog.svelte';
-  import SkeletonRows from '#components/SkeletonRows.svelte';
   import {
     fetchJobHistory,
     fetchJobTimeline,
@@ -24,7 +23,6 @@
   import { addDecrypt, pushRecentBundleId } from '#lib/decrypts.svelte';
   import { csvCell, debounce, downloadBlob, fmtSize } from '#lib/format';
   import { liveState } from '#lib/live.svelte';
-  import { scrollFade } from '#lib/scrollFade';
   import { createSavedViews } from '#lib/savedViews.svelte';
   import { sessionState } from '#lib/session.svelte';
   import { confirmDialog, historyJumpState, requestFocusSearch, showToast, tabState } from '#lib/ui.svelte';
@@ -254,6 +252,7 @@
   const hasActiveFilters = $derived(
     !!(activeQuery || sourceFilter !== 'all' || statusFilter !== 'all' || queuedByFilter || deviceFilter || errorFilter || failureCategoryFilter),
   );
+  const advancedFilterCount = $derived([queuedByFilter, deviceFilter, errorFilter, failureCategoryFilter].filter((value) => value.trim()).length);
 
   function clearAllFilters(): void {
     searchText = '';
@@ -444,13 +443,6 @@
 </script>
 
 {#snippet jobActionControls(entry: JobHistoryEntry)}
-  <Button size="sm" variant="secondary" loading={requeueing.has(entry.id)} onclick={() => decryptAgain(entry)}>Decrypt again</Button>
-  {#if entry.status === 'failed'}
-    <Button size="sm" variant="secondary" loading={requeueing.has(entry.id)} onclick={() => retryOnPrimary(entry)}>Retry on primary</Button>
-  {/if}
-  <Button size="sm" variant="secondary" loading={timelineLoading.has(entry.id)} onclick={() => toggleTimeline(entry.id)}>
-    {timelineOpenId === entry.id ? 'Hide timeline' : 'Timeline'}
-  </Button>
   {#if entry.status === 'done'}
     <Button size="sm" variant="secondary" onclick={() => openShare(entry.id)}>Share</Button>
   {/if}
@@ -504,47 +496,48 @@
     </div>
   </div>
 
-  <div class="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
-    <Input placeholder="Queued by username…" bind:value={queuedByFilter} />
-    <Input placeholder="Device id…" bind:value={deviceFilter} />
-    <Input placeholder="Error contains…" bind:value={errorFilter} />
-  </div>
-
-  {#if failureCategoryFilter}
-    <div class="mb-3 flex items-center gap-1.5">
-      <span class="border-accent text-accent inline-flex items-center gap-1.5 rounded-full border pr-1 pl-2.5 py-1 text-[12px]">
-        Failure category: {failureCategoryFilter}
-        <button
-          class="hover:text-err cursor-pointer rounded-full p-0.5"
-          onclick={() => (failureCategoryFilter = '')}
-          aria-label="Clear failure category filter"
-          title="Clear failure category filter"
-        >
-          <X class="h-3 w-3" />
-        </button>
-      </span>
+  <details class="border-border mb-3 rounded-lg border">
+    <summary class="text-muted cursor-pointer px-3 py-2 text-xs font-medium">
+      More filters and saved views{advancedFilterCount ? ` · ${advancedFilterCount} active` : ''}
+    </summary>
+    <div class="border-border grid grid-cols-1 gap-2 border-t p-3 sm:grid-cols-3">
+      <Input placeholder="Queued by username…" bind:value={queuedByFilter} />
+      <Input placeholder="Device id…" bind:value={deviceFilter} />
+      <Input placeholder="Error contains…" bind:value={errorFilter} />
     </div>
-  {/if}
-
-  <div class="mb-3 flex flex-wrap items-center gap-1.5">
-    {#each savedViews.presets as p (p.name)}
-      <span class="border-border text-muted hover:text-text hover:border-accent inline-flex items-center gap-1 rounded-full border pr-1 pl-2.5 py-1 text-[12px]">
-        <button class="cursor-pointer" onclick={() => applyPreset(p)}>{p.name}</button>
-        <button
-          class="text-muted hover:text-err cursor-pointer rounded-full p-0.5"
-          onclick={() => removePreset(p.name)}
-          aria-label="Delete preset {p.name}"
-          title="Delete preset"
-        >
-          <X class="h-3 w-3" />
-        </button>
-      </span>
-    {/each}
-    <div class="flex items-center gap-1.5">
-      <Input placeholder="Preset name…" bind:value={newPresetName} class="h-7 w-32 text-xs" />
-      <Button size="sm" variant="secondary" disabled={!newPresetName.trim()} onclick={savePreset}>Save filters</Button>
+    <div class="border-border flex flex-wrap items-center gap-1.5 border-t p-3">
+      {#if failureCategoryFilter}
+        <span class="border-accent text-accent inline-flex items-center gap-1.5 rounded-full border pr-1 pl-2.5 py-1 text-[12px]">
+          Failure category: {failureCategoryFilter}
+          <button
+            class="hover:text-err cursor-pointer rounded-full p-0.5"
+            onclick={() => (failureCategoryFilter = '')}
+            aria-label="Clear failure category filter"
+            title="Clear failure category filter"
+          >
+            <X class="h-3 w-3" />
+          </button>
+        </span>
+      {/if}
+      {#each savedViews.presets as p (p.name)}
+        <span class="border-border text-muted hover:text-text hover:border-accent inline-flex items-center gap-1 rounded-full border pr-1 pl-2.5 py-1 text-[12px]">
+          <button class="cursor-pointer" onclick={() => applyPreset(p)}>{p.name}</button>
+          <button
+            class="text-muted hover:text-err cursor-pointer rounded-full p-0.5"
+            onclick={() => removePreset(p.name)}
+            aria-label="Delete preset {p.name}"
+            title="Delete preset"
+          >
+            <X class="h-3 w-3" />
+          </button>
+        </span>
+      {/each}
+      <div class="flex items-center gap-1.5">
+        <Input placeholder="Preset name…" bind:value={newPresetName} class="h-7 w-32 text-xs" />
+        <Button size="sm" variant="secondary" disabled={!newPresetName.trim()} onclick={savePreset}>Save view</Button>
+      </div>
     </div>
-  </div>
+  </details>
 
   {#if loaded && entries.length === 0}
     <EmptyState icon={History} message={hasActiveFilters ? 'No decrypts match these filters.' : 'No decrypts yet.'}>
@@ -557,94 +550,101 @@
       {/snippet}
     </EmptyState>
   {:else}
-    <div class="history-table scroll-fade-x max-h-[640px] overflow-auto" use:scrollFade>
-      <table class="min-w-[1120px]">
-        <thead>
-          <tr>
-            <th><input type="checkbox" checked={entries.length > 0 && selected.size === entries.length} onchange={toggleSelectAll} /></th>
-            <th>Bundle ID</th>
-            <th>Version</th>
-            <th>Source</th>
-            <th>Queued by</th>
-            <th>Status</th>
-            <th>Size</th>
-            <th>Finished</th>
-            <th>Error</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {#if !loaded}
-            <SkeletonRows rows={4} colspan={10} />
-          {:else}
-            {#each grouped as g (g.label)}
-              <tr class="history-day-row">
-                <td colspan="10" class="border-b-0! py-1.5 text-xs font-semibold text-muted">{g.label}</td>
-              </tr>
+    <div class="history-feed">
+      {#if !loaded}
+        {#each Array(5) as _, i (i)}
+          <div class="skeleton border-border h-20 border-b" aria-label="Loading job history"></div>
+        {/each}
+      {:else}
+        {#each grouped as g (g.label)}
+          <section class="mb-5">
+            <div class="border-border mb-1 flex items-center gap-2 border-b pb-2">
+              <span class="text-[11px] font-semibold tracking-[0.12em] text-muted uppercase">{g.label}</span>
+              <span class="text-[11px] text-muted">{g.items.length} job{g.items.length === 1 ? '' : 's'}</span>
+            </div>
+            <div role="list">
               {#each g.items as j (j.id)}
-                <tr>
-                  <td data-label="Select"><input type="checkbox" checked={selected.has(j.id)} onchange={() => toggleSelect(j.id)} /></td>
-                  <td data-label="Bundle ID" class="max-w-40">
-                    <button
-                      class="block max-w-full truncate cursor-pointer text-left font-mono text-[11px] hover:text-accent hover:underline"
-                      title="View stats for {j.bundleId}"
-                      onclick={() => openStats(j.bundleId)}
-                    >
-                      {j.bundleId}
-                    </button>
-                  </td>
-                  <td data-label="Version" class="max-w-36">
-                    <div class="flex min-w-0 items-center gap-1" title={j.versionLabel ?? ''}>
-                      <span class="truncate">
-                        {#if j.versionLabel}
-                          {j.versionLabel}
-                        {:else}
-                          <span class="text-muted">-</span>
+                <article class="history-feed-row" role="listitem">
+                  <div class="flex min-w-0 flex-1 items-start gap-3">
+                    <input class="mt-1" type="checkbox" checked={selected.has(j.id)} onchange={() => toggleSelect(j.id)} aria-label="Select {j.bundleId}" />
+                    <div class="min-w-0 flex-1">
+                      <div class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                        <button
+                          class="max-w-full cursor-pointer truncate font-mono text-[12px] font-medium hover:text-accent hover:underline"
+                          title="View stats for {j.bundleId}"
+                          onclick={() => openStats(j.bundleId)}
+                        >
+                          {j.bundleId}
+                        </button>
+                        {#if j.testflight}
+                          <Badge variant="secondary">TestFlight</Badge>
                         {/if}
-                      </span>
-                      {#if j.testflight}
-                        <Badge variant="secondary" class="shrink-0">TF</Badge>
-                      {/if}
+                        <span class="text-xs text-muted">{j.source}</span>
+                      </div>
+                      <div class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
+                        <span>{j.versionLabel ?? 'Unspecified version'}</span>
+                        <span>{fmtSize(j.sizeBytes)}</span>
+                        <span>by {j.queuedBy ?? 'unknown'}</span>
+                      </div>
                     </div>
-                  </td>
-                  <td data-label="Source">{j.source}</td>
-                  <td data-label="Queued by" class="text-muted">{j.queuedBy ?? '-'}</td>
-                  <td data-label="Status"><Badge variant={statusToBadgeVariant(j.status)}>{j.status}</Badge></td>
-                  <td data-label="Size">{fmtSize(j.sizeBytes)}</td>
-                  <td data-label="Finished" class="text-muted"><RelativeTime ms={j.finishedAt} /></td>
-                  <td data-label="Error" class="max-w-sm break-words text-xs leading-5 text-muted" title={j.error ?? ''}>{j.error ?? ''}</td>
-                  <td data-label="Actions" class="history-actions">
-                    <div class="flex flex-wrap justify-end gap-1.5">
-                      {@render jobActionControls(j)}
+                  </div>
+                  <div class="min-w-[12rem] flex-1">
+                    <div class="flex items-center gap-2">
+                      <Badge variant={statusToBadgeVariant(j.status)}>{j.status}</Badge>
+                      <span class="text-xs text-muted"><RelativeTime ms={j.finishedAt} /></span>
                     </div>
-                  </td>
-                </tr>
-                {#if timelineOpenId === j.id}
-                  <tr class="bg-panel-muted/40">
-                    <td colspan="10" class="py-2.5">
-                      {#if timelineById[j.id]}
-                        <div class="flex flex-wrap items-center gap-2 text-xs">
-                          {#each timelineById[j.id].events as ev (ev.at + ev.label)}
-                            <span class="border-border inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-1">
-                              <Badge variant={statusToBadgeVariant(ev.status)}>{ev.status}</Badge>
-                              <span class="min-w-0 break-words">{ev.label}</span>
-                              <span class="text-muted">(<RelativeTime ms={ev.at} />)</span>
-                            </span>
-                          {/each}
+                    {#if j.error}
+                      <p class="mt-1 line-clamp-2 text-xs leading-5 text-muted" title={j.error}>{j.error}</p>
+                    {/if}
+                  </div>
+                  <div class="flex shrink-0 items-center gap-1.5">
+                    {#if j.status === 'failed'}
+                      <Button size="sm" loading={requeueing.has(j.id)} onclick={() => retryOnPrimary(j)}>Retry</Button>
+                    {:else}
+                      <Button size="sm" variant="secondary" loading={requeueing.has(j.id)} onclick={() => decryptAgain(j)}>Decrypt again</Button>
+                    {/if}
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      loading={timelineLoading.has(j.id)}
+                      onclick={() => toggleTimeline(j.id)}
+                      aria-expanded={timelineOpenId === j.id}
+                    >
+                      {timelineOpenId === j.id ? 'Close' : 'Details'}
+                    </Button>
+                  </div>
+                  {#if timelineOpenId === j.id}
+                    <div class="history-feed-detail">
+                      <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto]">
+                        <div>
+                          <div class="mb-2 text-[11px] font-semibold tracking-[0.1em] text-muted uppercase">Activity</div>
+                          {#if timelineById[j.id]}
+                            <ol class="flex flex-wrap gap-2">
+                              {#each timelineById[j.id].events as ev (ev.at + ev.label)}
+                                <li class="border-border inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs">
+                                  <Badge variant={statusToBadgeVariant(ev.status)}>{ev.status}</Badge>
+                                  <span>{ev.label}</span>
+                                  <span class="text-muted"><RelativeTime ms={ev.at} /></span>
+                                </li>
+                              {/each}
+                            </ol>
+                          {:else}
+                            <div class="text-xs text-muted">Loading activity…</div>
+                          {/if}
                         </div>
-                      {:else}
-                        <div class="text-xs text-muted">Loading timeline…</div>
-                      {/if}
-                    </td>
-                  </tr>
-                {/if}
+                        <div class="flex flex-wrap items-start gap-1.5">
+                          {@render jobActionControls(j)}
+                        </div>
+                      </div>
+                    </div>
+                  {/if}
+                </article>
               {/each}
-            {/each}
-          {/if}
-        </tbody>
-      </table>
+            </div>
+          </section>
+        {/each}
+      {/if}
     </div>
-
   {/if}
   {#if loaded && entries.length < total}
     <div class="mt-3 flex justify-center">

@@ -2348,14 +2348,16 @@ function redactShareLink(l: ShareLinkRecord, revealUrl: boolean) {
 }
 
 export function listShareLinksForJob(jobId: string, viewerId: string): ReturnType<typeof redactShareLink>[] {
+  const now = Date.now();
   return state.shareLinks
-    .filter((l) => l.jobId === jobId)
+    .filter((l) => l.jobId === jobId && l.expiresAt > now)
     .sort((a, b) => b.issuedAt - a.issuedAt)
     .map((l) => redactShareLink(l, l.issuedBy === viewerId));
 }
 
 export function listAllShareLinks(): ReturnType<typeof redactShareLink>[] {
-  return [...state.shareLinks].sort((a, b) => b.issuedAt - a.issuedAt).map((l) => redactShareLink(l, true));
+  const now = Date.now();
+  return state.shareLinks.filter((l) => l.expiresAt > now).sort((a, b) => b.issuedAt - a.issuedAt).map((l) => redactShareLink(l, true));
 }
 
 export function revokeShareLink(id: string): boolean {

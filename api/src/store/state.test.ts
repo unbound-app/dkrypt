@@ -28,9 +28,12 @@ import {
   getWebhookDeliveryLog,
   importBackup,
   listAllowedUsers,
+  listAllShareLinks,
+  listShareLinksForJob,
   recordDeviceHealthCheck,
   recordJobHistory,
   recordWebhookDelivery,
+  recordShareLink,
   setDiscordGuildIds,
   syncDiscordPerkRoles,
   updateAllowedUserRoles,
@@ -39,6 +42,19 @@ import {
   updateWatch,
   verifyApiKey,
 } from '#store/state.js';
+
+describe('share links', () => {
+  test('hides expired links from dashboard listings', () => {
+    const jobId = 'job-' + randomUUID();
+    const expired = recordShareLink(jobId, 'com.example.expired', 'token-' + randomUUID(), 'tester', Date.now() - 1);
+    const active = recordShareLink(jobId, 'com.example.active', 'token-' + randomUUID(), 'tester', Date.now() + 60_000);
+
+    expect(listShareLinksForJob(jobId, 'tester').map((link) => link.id)).not.toContain(expired.id);
+    expect(listAllShareLinks().map((link) => link.id)).not.toContain(expired.id);
+    expect(listShareLinksForJob(jobId, 'tester').map((link) => link.id)).toContain(active.id);
+    expect(listAllShareLinks().map((link) => link.id)).toContain(active.id);
+  });
+});
 
 describe('Discord role perks', () => {
   test('syncs guild-scoped perks from multiple guilds', () => {
