@@ -550,7 +550,7 @@
     </EmptyState>
   {:else}
     <div class="scroll-fade-x max-h-[600px] overflow-auto" use:scrollFade>
-      <table class="responsive-table xl:min-w-[720px]">
+      <table class="responsive-table 2xl:min-w-[720px]">
         <thead>
           <tr>
             <th><input type="checkbox" checked={entries.length > 0 && selected.size === entries.length} onchange={toggleSelectAll} /></th>
