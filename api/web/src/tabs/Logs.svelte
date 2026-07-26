@@ -222,8 +222,8 @@
   }
 </script>
 
-<Card title="Scheduler &amp; job logs">
-  <div class="bg-panel-muted/40 mb-3.5 flex flex-wrap items-center gap-2.5 rounded-lg p-2">
+<Card title="Scheduler &amp; job logs" class="log-surface">
+  <div class="log-toolbar mb-4 flex flex-wrap items-center gap-2.5 rounded-xl p-2.5">
     <div class="flex flex-wrap gap-1">
       <Button variant={scopeFilter === 'all' ? 'default' : 'secondary'} onclick={() => (scopeFilter = 'all')}>All</Button>
       {#each scopes as scope (scope)}
@@ -310,10 +310,10 @@
           New log lines - jump to latest
         </button>
       {/if}
-      <div class="flex max-h-[560px] flex-col gap-1.5 overflow-y-auto" bind:this={listEl} onscroll={onListScroll}>
+      <div class="log-stream flex max-h-[min(68dvh,760px)] flex-col gap-2 overflow-y-auto rounded-xl p-2" bind:this={listEl} onscroll={onListScroll}>
         {#each filtered as l (entryKey(l))}
           {@const key = entryKey(l)}
-          <div class={`log-row border-border bg-panel-muted flex items-start gap-2 rounded-md border border-l-[3px] px-2.5 py-2 text-[12.5px] ${LEVEL_BORDER[l.level]}`}>
+          <div class={`log-row border-border flex items-start gap-2.5 rounded-lg border border-l-[3px] px-3 py-2.5 text-[12.5px] ${LEVEL_BORDER[l.level]}`}>
             <span class="shrink-0 font-mono text-[11.5px] whitespace-nowrap text-muted"><RelativeTime ms={l.ts} /></span>
             <Badge variant={LEVEL_BADGE[l.level]} class="shrink-0">{l.level}</Badge>
             <Badge variant="secondary" class="shrink-0">{l.scope}</Badge>

@@ -20,11 +20,11 @@
 
 <TabsPrimitive.Root {value} {onValueChange} class={cn('w-full', className)}>
   <div class="scroll-fade-x overflow-x-auto" use:scrollFade style="--scroll-fade-bg: var(--color-panel);">
-    <TabsPrimitive.List class="border-border bg-panel-muted/60 inline-flex min-w-full gap-1 rounded-lg border p-1 sm:min-w-0">
+    <TabsPrimitive.List class="glass-tabs inline-flex min-w-full gap-1 p-1 sm:min-w-0">
       {#each items as item (item.id)}
         <TabsPrimitive.Trigger
           value={item.id}
-          class="text-muted data-[state=active]:bg-panel data-[state=active]:text-text relative cursor-pointer rounded-md px-3 py-2 text-xs font-medium whitespace-nowrap transition-colors"
+          class="text-muted data-[state=active]:text-text relative cursor-pointer rounded-lg px-3 py-2 text-xs font-medium whitespace-nowrap transition-colors data-[state=active]:[background:color-mix(in_srgb,var(--color-panel)_72%,transparent)] data-[state=active]:shadow-sm"
         >
           {item.label}
         </TabsPrimitive.Trigger>

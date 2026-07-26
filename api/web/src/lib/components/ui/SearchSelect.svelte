@@ -47,7 +47,7 @@
         open = true;
       }}
       class={cn(
-        'flex h-9 w-full items-center rounded-md border border-border bg-panel-muted px-3 pr-8 text-sm text-text focus:border-accent focus:outline-none disabled:cursor-not-allowed disabled:opacity-50',
+        'glass-input flex h-9 w-full items-center rounded-xl px-3 pr-8 text-sm text-text focus:outline-none disabled:cursor-not-allowed disabled:opacity-50',
         className,
       )}
     />
@@ -55,7 +55,7 @@
   </div>
   <Combobox.Portal>
     <Combobox.Content
-      class="border-border bg-panel z-50 overflow-hidden rounded-md border shadow-lg"
+      class="glass-popover z-50 overflow-hidden rounded-xl p-1"
       style="width: var(--bits-floating-anchor-width); min-width: max(var(--bits-floating-anchor-width), 12rem);"
       sideOffset={4}
     >
@@ -64,7 +64,7 @@
           <Combobox.Item
             value={item.value}
             label={item.label}
-            class="data-highlighted:bg-panel-muted flex cursor-pointer items-center justify-between rounded-sm px-2 py-1.5 text-sm text-text"
+            class="data-highlighted:bg-panel-muted flex cursor-pointer items-center justify-between rounded-lg px-2.5 py-2 text-sm text-text"
           >
             {#snippet children({ selected })}
               <span class="truncate">{item.label}</span>

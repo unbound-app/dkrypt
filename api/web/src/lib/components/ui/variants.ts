@@ -2,14 +2,14 @@ export type ButtonVariant = 'default' | 'secondary' | 'outline' | 'ghost' | 'des
 export type ButtonSize = 'default' | 'sm' | 'icon';
 
 export const buttonBase =
-  'inline-flex items-center justify-center gap-1.5 rounded-md text-sm font-medium transition-colors disabled:pointer-events-none disabled:opacity-50 whitespace-nowrap cursor-pointer';
+  'inline-flex items-center justify-center gap-1.5 rounded-xl border border-transparent text-sm font-medium transition-[transform,background-color,border-color,box-shadow] duration-200 disabled:pointer-events-none disabled:opacity-50 whitespace-nowrap cursor-pointer active:scale-[0.98]';
 
 export const buttonVariantClasses: Record<ButtonVariant, string> = {
-  default: 'bg-accent text-accent-contrast hover:opacity-90',
-  secondary: 'border border-border text-text hover:bg-panel-muted bg-transparent',
-  outline: 'border border-border text-text hover:bg-panel-muted bg-transparent',
-  ghost: 'text-text hover:bg-panel-muted',
-  destructive: 'bg-err text-white hover:opacity-90',
+  default: 'bg-accent text-accent-contrast shadow-[0_8px_22px_color-mix(in_srgb,var(--color-accent)_30%,transparent)] hover:-translate-y-px hover:brightness-105',
+  secondary: 'border-border/70 bg-panel/45 text-text shadow-sm backdrop-blur hover:-translate-y-px hover:border-accent/45 hover:bg-panel-muted/75',
+  outline: 'border-border/70 bg-transparent text-text hover:-translate-y-px hover:border-accent/45 hover:bg-panel-muted/60',
+  ghost: 'text-text hover:bg-panel-muted/70',
+  destructive: 'bg-err text-white shadow-[0_8px_22px_color-mix(in_srgb,var(--color-err)_26%,transparent)] hover:-translate-y-px hover:brightness-105',
   link: 'text-accent underline-offset-4 hover:underline',
   github: 'bg-[#24292f] text-white hover:opacity-90',
 };

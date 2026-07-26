@@ -576,7 +576,7 @@
       {/snippet}
     </EmptyState>
   {:else}
-    <div class="xl:hidden max-h-[600px] space-y-3 overflow-y-auto pr-1">
+    <div class="lg:hidden max-h-[600px] space-y-3 overflow-y-auto pr-1">
       {#if !loaded}
         {#each Array(4) as _, i (i)}
           <div class="skeleton bg-panel-muted h-20 rounded-lg"></div>
@@ -606,8 +606,6 @@
                       {/if}
                       {#if j.testflight}
                         <Badge variant="secondary">TF</Badge>
-                      {:else if j.externalVersionId}
-                        <Badge variant="secondary" title="Specific App Store version selected">selected</Badge>
                       {/if}
                       <span>{j.source}</span>
                       <span>{fmtSize(j.sizeBytes)}</span>
@@ -663,7 +661,7 @@
         {/each}
       {/if}
     </div>
-    <div class="hidden xl:block scroll-fade-x max-h-[600px] overflow-auto" use:scrollFade>
+    <div class="hidden lg:block scroll-fade-x max-h-[600px] overflow-auto" use:scrollFade>
       <table class="responsive-table min-w-[820px]">
         <thead>
           <tr>
@@ -710,8 +708,6 @@
                       </span>
                       {#if j.testflight}
                         <Badge variant="secondary" class="shrink-0">TF</Badge>
-                      {:else if j.externalVersionId}
-                        <Badge variant="secondary" class="shrink-0" title="Specific App Store version selected">selected</Badge>
                       {/if}
                     </div>
                   </td>

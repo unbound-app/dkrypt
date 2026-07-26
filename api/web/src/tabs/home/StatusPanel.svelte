@@ -304,7 +304,7 @@
   }
 </script>
 
-<Card title="Status">
+<Card title="Status" class="status-surface">
   {#snippet headerExtra()}
     {#if health}
       <div class="flex min-w-0 flex-wrap items-center justify-end gap-1.5 text-xs text-muted">

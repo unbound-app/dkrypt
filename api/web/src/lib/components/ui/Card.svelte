@@ -12,7 +12,7 @@
   let { title, class: className, children, headerExtra, ...rest }: Props = $props();
 </script>
 
-<div class={cn('min-w-0 rounded-xl border border-border bg-panel p-3.5 sm:p-4.5', className)} {...rest}>
+<div class={cn('glass-card glass-card-content min-w-0 rounded-[1.35rem] p-[clamp(1rem,0.78rem+0.7vw,1.35rem)]', className)} {...rest}>
   {#if title || headerExtra}
     <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
       {#if title}

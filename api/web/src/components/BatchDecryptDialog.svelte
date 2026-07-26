@@ -75,7 +75,7 @@
         continue;
       }
       if (externalVersionId && !EXTERNAL_VERSION_ID_RE.test(externalVersionId)) {
-        results = results.map((r) => (r.bundleId === bundleId ? { ...r, state: 'error', error: 'invalid pinned version id' } : r));
+        results = results.map((r) => (r.bundleId === bundleId ? { ...r, state: 'error', error: 'The requested App Store version could not be found.' } : r));
         continue;
       }
       try {

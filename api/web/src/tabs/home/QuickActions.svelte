@@ -15,7 +15,7 @@
   }
 </script>
 
-<nav class="border-border bg-panel/95 flex flex-wrap items-center gap-1.5 rounded-lg border p-1.5 shadow-sm backdrop-blur" aria-label="Quick actions">
+<nav class="glass-toolbar flex flex-wrap items-center gap-1.5 p-1.5" aria-label="Quick actions">
   <Button size="sm" onclick={requestFocusSearch}>
     <Search class="h-3.5 w-3.5" />
     Find app
