@@ -49,6 +49,7 @@ export interface AppStoreInstallOptions {
   expectedVersion?: string;
   onProgress?: (message: string) => void;
   waitTimeoutMs?: number;
+  isCancelled?: () => boolean;
 }
 
 export async function installFromAppStore(bundleId: string, options: AppStoreInstallOptions = {}): Promise<void> {
@@ -66,12 +67,17 @@ export async function installFromAppStore(bundleId: string, options: AppStoreIns
     log.info(message, { bundleId, externalVersionId });
     onProgress?.(message);
   };
+  const ensureNotCancelled = () => {
+    if (options.isCancelled?.()) throw new Error('App Store install cancelled');
+  };
 
+  ensureNotCancelled();
   report('resolving App Store id for bundle');
   const { trackId, version: latestVersion } = await lookupCurrentVersion(bundleId);
   const targetVersion = expectedVersion ?? (versionId === undefined ? latestVersion : undefined);
 
   await withSSH(primaryRootDir(), async (conn) => {
+    ensureNotCancelled();
     const existing = await findInstalledAppStoreBundle(conn, bundleId);
     if (existing) {
       report('removing the installed app before the App Store install');
@@ -85,6 +91,7 @@ export async function installFromAppStore(bundleId: string, options: AppStoreIns
     await ensureAppStoreForeground(conn);
 
     try {
+      ensureNotCancelled();
       report('arming headless auto-confirm and sending install request');
       await armAppStoreAutoConfirm(conn, 'Install');
 
@@ -100,15 +107,22 @@ export async function installFromAppStore(bundleId: string, options: AppStoreIns
       const start = Date.now();
       const deadline = start + waitTimeoutMs;
       let lastReportedAt = 0;
+      let lastUnexpectedVersion: string | undefined;
       while (Date.now() < deadline) {
+        ensureNotCancelled();
         const bundlePath = await findInstalledAppStoreBundle(conn, bundleId);
         if (bundlePath) {
           const { shortVersion } = await readInstalledBundleVersions(conn, bundlePath);
           if (targetVersion && shortVersion !== targetVersion) {
-            throw new Error(`installed ${bundleId} version ${shortVersion ?? 'unknown'}, expected App Store version ${targetVersion}`);
+            const unexpectedVersion = shortVersion ?? 'unknown';
+            if (lastUnexpectedVersion !== unexpectedVersion) {
+              report(`waiting for App Store version ${targetVersion}; version ${unexpectedVersion} is currently installed`);
+              lastUnexpectedVersion = unexpectedVersion;
+            }
+          } else {
+            report(`install complete in ${Math.round((Date.now() - start) / 1000)}s`);
+            return;
           }
-          report(`install complete in ${Math.round((Date.now() - start) / 1000)}s`);
-          return;
         }
         const elapsedSec = Math.round((Date.now() - start) / 1000);
         if (elapsedSec - lastReportedAt >= 10) {
@@ -116,6 +130,9 @@ export async function installFromAppStore(bundleId: string, options: AppStoreIns
           report(`still waiting for the App Store to finish installing (${elapsedSec}s elapsed)`);
         }
         await new Promise((r) => setTimeout(r, 5_000));
+      }
+      if (lastUnexpectedVersion && targetVersion) {
+        throw new Error(`timed out waiting for ${bundleId} version ${targetVersion}; version ${lastUnexpectedVersion} remained installed after ${Math.round(waitTimeoutMs / 1000)}s`);
       }
       throw new Error(`timed out waiting for ${bundleId} to install from the App Store after ${Math.round(waitTimeoutMs / 1000)}s`);
     } finally {

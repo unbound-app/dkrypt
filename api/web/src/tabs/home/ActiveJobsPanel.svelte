@@ -189,7 +189,7 @@
     {/if}
   {/snippet}
   <div class="scroll-fade-x overflow-x-auto" use:scrollFade>
-    <table class="responsive-table sm:min-w-[640px]">
+    <table class="responsive-table sm:min-w-[980px]">
       <thead>
         <tr>
           {#if canCancel}
@@ -250,17 +250,19 @@
                 {/if}
               </td>
               <td data-label="Status"><Badge variant={statusToBadgeVariant(j.status)}>{j.status}</Badge></td>
-              <td data-label="Progress" class="max-w-52 text-muted">
+              <td data-label="Progress" class="min-w-72 max-w-md text-muted">
                 {#if j.status === 'running'}
-                  <div class="flex items-center gap-2">
+                  <div class="flex w-full items-start gap-2">
                     <div class="progress-indeterminate bg-border relative h-1 w-10 shrink-0 overflow-hidden rounded-full after:bg-accent"></div>
-                    <span class="truncate" title={j.progress}>{j.progress}</span>
+                    <div class="min-w-0 flex-1">
+                      <p class="break-words text-left text-xs leading-5 text-text" title={j.progress}>{j.progress}</p>
+                      {#if etaByBundle[j.bundleId]}
+                        <p class="mt-0.5 text-left text-[11px] text-muted">usually {fmtDurationApprox(etaByBundle[j.bundleId] as number)}</p>
+                      {/if}
+                    </div>
                   </div>
-                  {#if etaByBundle[j.bundleId]}
-                    <div class="mt-0.5 text-[11px] text-muted">usually {fmtDurationApprox(etaByBundle[j.bundleId] as number)}</div>
-                  {/if}
                 {:else}
-                  <span class="block truncate" title={j.progress}>{j.progress}</span>
+                  <p class="break-words text-left text-xs leading-5" title={j.progress}>{j.progress}</p>
                 {/if}
               </td>
               <td data-label="Job ID">

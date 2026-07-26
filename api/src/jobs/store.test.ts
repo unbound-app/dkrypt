@@ -47,12 +47,24 @@ describe('cancelQueuedJob', () => {
 });
 
 describe('cancelJob', () => {
+  test('accepts cancellation while an App Store install is running', () => {
+    const running = getActiveJobs().find((job) => job.status === 'running');
+    expect(running).toBeDefined();
+    if (!running) return;
+    expect(running.status).toBe('running');
+    expect(running.childProcess).toBeUndefined();
+
+    expect(cancelJob(running.id, 'tester')).toBe(true);
+    expect(getJob(running.id)?.cancelledBy).toBe('tester');
+  });
+
   test('falls back to killing a running job process when it is not queued', () => {
     const running = enqueueDecryptJob('com.test.running', 'manual');
     expect(running.status).toBe('running');
 
     let killedWith: string | undefined;
     const job = getJob(running.id)!;
+    job.cancelledBy = undefined;
     job.childProcess = { kill: (signal: string) => (killedWith = signal) } as unknown as typeof job.childProcess;
 
     expect(cancelJob(running.id, 'tester')).toBe(true);

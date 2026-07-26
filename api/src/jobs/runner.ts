@@ -13,6 +13,11 @@ const log = scopedLogger('jobs');
 import type { Job } from '#jobs/types.js';
 
 export async function runDecrypt(job: Job, device: DeviceRecord): Promise<void> {
+  const ensureNotCancelled = () => {
+    if (job.cancelledBy) throw new Error(`cancelled by ${job.cancelledBy}`);
+  };
+
+  ensureNotCancelled();
   await mkdir(config.outputDir, { recursive: true });
   const outputPath = path.join(config.outputDir, `${job.id}.ipa`);
   job.filePath = outputPath;
@@ -30,8 +35,11 @@ export async function runDecrypt(job: Job, device: DeviceRecord): Promise<void> 
       externalVersionId: job.externalVersionId,
       expectedVersion: job.versionLabel,
       onProgress: report,
+      isCancelled: () => Boolean(job.cancelledBy),
     });
   }
+
+  ensureNotCancelled();
 
   const args = ['--root-dir', device.rootDir, 'decrypt', job.bundleId, '--use-installed', '--output', outputPath];
 

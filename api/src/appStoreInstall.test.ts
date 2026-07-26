@@ -2,7 +2,10 @@ import { afterAll, beforeEach, describe, expect, mock, test } from 'bun:test';
 
 const calls: string[] = [];
 const progress: string[] = [];
-let installedShortVersion = '338.0';
+type InstalledBundle = { path: string; shortVersion: string };
+
+let installedBundles: Array<InstalledBundle | undefined> = [];
+let lastInstalledBundle: InstalledBundle | undefined;
 let installRequest: Record<string, unknown> | undefined;
 let guardedUninstallFails = false;
 const originalSetTimeout = globalThis.setTimeout;
@@ -15,9 +18,12 @@ mock.module('#idevice.js', () => ({
   ...idevice,
   armAppStoreAutoConfirm: async () => calls.push('arm'),
   clearAppStoreAutoConfirm: async () => calls.push('clear'),
-  findInstalledAppStoreBundle: async () => '/apps/Discord.app',
+  findInstalledAppStoreBundle: async () => {
+    lastInstalledBundle = installedBundles.shift();
+    return lastInstalledBundle?.path;
+  },
   isAppStoreRunning: async () => true,
-  readInstalledBundleVersions: async () => ({ shortVersion: installedShortVersion, buildVersion: '106000' }),
+  readInstalledBundleVersions: async () => ({ shortVersion: lastInstalledBundle?.shortVersion, buildVersion: '106000' }),
   sendAppStoreBridgeRequest: async (_conn: object, request: Record<string, unknown>) => {
     installRequest = request;
     calls.push('request');
@@ -59,7 +65,11 @@ describe('installFromAppStore', () => {
     }) as unknown as typeof setTimeout;
     calls.length = 0;
     progress.length = 0;
-    installedShortVersion = '338.0';
+    installedBundles = [
+      { path: '/apps/Discord.app', shortVersion: '338.0' },
+      { path: '/apps/Discord.app', shortVersion: '338.0' },
+    ];
+    lastInstalledBundle = undefined;
     installRequest = undefined;
     guardedUninstallFails = false;
   });
@@ -92,16 +102,27 @@ describe('installFromAppStore', () => {
     expect(calls).toEqual(['uninstall', 'force-uninstall', 'arm', 'request', 'clear']);
   });
 
-  test('refuses to decrypt a bundle whose installed version differs from the request', async () => {
-    installedShortVersion = '341.0';
+  test('waits for the requested version when a stale App Store install lands first', async () => {
+    installedBundles = [
+      undefined,
+      { path: '/apps/Discord.app', shortVersion: '337.0' },
+      { path: '/apps/Discord.app', shortVersion: '338.0' },
+    ];
 
-    await expect(
-      installFromAppStore('com.hammerandchisel.discord', {
-        externalVersionId: '123456789',
-        expectedVersion: '338.0',
-      }),
-    ).rejects.toThrow('installed com.hammerandchisel.discord version 341.0, expected App Store version 338.0');
+    await installFromAppStore('com.hammerandchisel.discord', {
+      externalVersionId: '123456789',
+      expectedVersion: '338.0',
+      onProgress: (message) => progress.push(message),
+    });
 
-    expect(calls).toEqual(['uninstall', 'arm', 'request', 'clear']);
+    expect(calls).toEqual(['arm', 'request', 'clear']);
+    expect(progress).toContain('waiting for App Store version 338.0; version 337.0 is currently installed');
+    expect(progress.at(-1)).toBe('install complete in 0s');
+  });
+
+  test('stops before contacting the App Store when cancelled', async () => {
+    await expect(installFromAppStore('com.hammerandchisel.discord', { isCancelled: () => true })).rejects.toThrow('App Store install cancelled');
+
+    expect(calls).toEqual([]);
   });
 });

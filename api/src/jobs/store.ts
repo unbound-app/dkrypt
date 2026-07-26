@@ -209,11 +209,14 @@ export function cancelQueuedJob(id: string, cancelledBy: string): boolean {
 
 export function cancelRunningJob(id: string, cancelledBy: string): boolean {
   const job = jobs.get(id);
-  if (!job || job.status !== 'running' || !job.childProcess) return false;
+  if (!job || job.status !== 'running') return false;
+  if (job.cancelledBy) return true;
 
   job.cancelledBy = cancelledBy;
-  job.childProcess.kill('SIGTERM');
+  job.progress = 'cancelling…';
+  job.childProcess?.kill('SIGTERM');
   log.info('job cancel requested', { jobId: id, bundleId: job.bundleId, cancelledBy });
+  emitJobsChanged();
   return true;
 }
 
@@ -344,7 +347,7 @@ async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
     log.info('job done', { jobId: job.id, bundleId: job.bundleId, deviceId: device.id, sizeBytes: job.fileSizeBytes });
     persistDoneJobs();
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = job.cancelledBy ? `cancelled by ${job.cancelledBy}` : err instanceof Error ? err.message : String(err);
     const canRetry = !job.cancelledBy && (job.retryCount ?? 0) === 0;
     if (canRetry) {
       job.retryCount = (job.retryCount ?? 0) + 1;
