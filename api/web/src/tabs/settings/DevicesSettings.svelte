@@ -110,6 +110,9 @@
   let editingId = $state<string | null>(null);
   let formName = $state('');
   let formRootDir = $state('');
+	let formIosVersion = $state('');
+	let formToolchain = $state('');
+	let formNotes = $state('');
   let saving = $state(false);
   let deletingId = $state<Set<string>>(new Set());
 
@@ -117,6 +120,9 @@
     editingId = null;
     formName = '';
     formRootDir = '';
+		formIosVersion = '';
+		formToolchain = '';
+		formNotes = '';
     dialogOpen = true;
   }
 
@@ -124,6 +130,9 @@
     editingId = d.id;
     formName = d.name;
     formRootDir = d.rootDir;
+		formIosVersion = d.iosVersion ?? '';
+		formToolchain = d.toolchain ?? '';
+		formNotes = d.notes ?? '';
     dialogOpen = true;
   }
 
@@ -135,8 +144,8 @@
     saving = true;
     try {
       const { ok } = editingId
-        ? await updateDevice(editingId, { name: formName.trim(), rootDir: formRootDir.trim() })
-        : await createDevice(formName.trim(), formRootDir.trim());
+        ? await updateDevice(editingId, { name: formName.trim(), rootDir: formRootDir.trim(), iosVersion: formIosVersion.trim(), toolchain: formToolchain.trim(), notes: formNotes.trim() })
+        : await createDevice(formName.trim(), formRootDir.trim(), { iosVersion: formIosVersion.trim(), toolchain: formToolchain.trim(), notes: formNotes.trim() });
       if (ok) dialogOpen = false;
     } finally {
       saving = false;
@@ -280,6 +289,12 @@
     <Input id="d-name" placeholder="e.g. device-b" bind:value={formName} />
     <label for="d-rootDir" class="mt-3 mb-1 block text-xs text-muted">ipadecrypt root dir</label>
     <Input id="d-rootDir" placeholder="/data/devices/device-b" bind:value={formRootDir} />
+		<label for="d-ios" class="mt-3 mb-1 block text-xs text-muted">iOS version</label>
+		<Input id="d-ios" placeholder="e.g. iOS 18.4" bind:value={formIosVersion} />
+		<label for="d-toolchain" class="mt-3 mb-1 block text-xs text-muted">Toolchain / jailbreak</label>
+		<Input id="d-toolchain" placeholder="e.g. dopamine + autoinstall" bind:value={formToolchain} />
+		<label for="d-notes" class="mt-3 mb-1 block text-xs text-muted">Notes</label>
+		<Input id="d-notes" placeholder="Known compatibility notes" bind:value={formNotes} />
     <div class="mt-1 text-xs text-muted">
       Must already contain a valid config.json from a prior <code>ipadecrypt --root-dir &lt;path&gt; bootstrap</code> run.
     </div>

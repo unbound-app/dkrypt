@@ -1,6 +1,16 @@
 export const GENERATED_CHANGELOG = [
   {
     "date": "2026-07-27",
+    "title": "fix: refine operational controls",
+    "description": "Released in be487ee."
+  },
+  {
+    "date": "2026-07-27",
+    "title": "feat: add operational health controls",
+    "description": "Released in 2b01614."
+  },
+  {
+    "date": "2026-07-27",
     "title": "fix: refresh generated changelog",
     "description": "Released in d3a4982."
   },
@@ -28,15 +38,5 @@ export const GENERATED_CHANGELOG = [
     "date": "2026-07-27",
     "title": "fix: verify TestFlight install completion",
     "description": "Released in d60283b."
-  },
-  {
-    "date": "2026-07-27",
-    "title": "fix: retry TestFlight installs with fresh operations",
-    "description": "Released in f6d03cd."
-  },
-  {
-    "date": "2026-07-27",
-    "title": "feat: expand automation observability",
-    "description": "Released in de704b8."
   }
 ] as const;

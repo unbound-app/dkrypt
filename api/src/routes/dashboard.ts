@@ -614,6 +614,9 @@ dashboardRouter.get('/v1/dashboard/devices', canViewDevices, (_req, res) => {
 interface DeviceInput {
   name: string;
   rootDir: string;
+  iosVersion?: string;
+  toolchain?: string;
+  notes?: string;
   enabled?: boolean;
   isPrimary?: boolean;
 }
@@ -627,6 +630,9 @@ function parseDeviceInput(body: unknown): DeviceInput | undefined {
   return {
     name,
     rootDir,
+    iosVersion: typeof b.iosVersion === 'string' ? b.iosVersion.trim() || undefined : undefined,
+    toolchain: typeof b.toolchain === 'string' ? b.toolchain.trim() || undefined : undefined,
+    notes: typeof b.notes === 'string' ? b.notes.trim().slice(0, 1000) || undefined : undefined,
     enabled: typeof b.enabled === 'boolean' ? b.enabled : undefined,
     isPrimary: typeof b.isPrimary === 'boolean' ? b.isPrimary : undefined,
   };
@@ -654,6 +660,9 @@ dashboardRouter.patch('/v1/dashboard/devices/:id', canManageDevices, async (req,
   const patch: Partial<DeviceInput> = {};
   if (typeof body.name === 'string' && body.name.trim()) patch.name = body.name.trim();
   if (typeof body.rootDir === 'string' && body.rootDir.trim()) patch.rootDir = body.rootDir.trim();
+  if (typeof body.iosVersion === 'string') patch.iosVersion = body.iosVersion.trim() || undefined;
+  if (typeof body.toolchain === 'string') patch.toolchain = body.toolchain.trim() || undefined;
+  if (typeof body.notes === 'string') patch.notes = body.notes.trim().slice(0, 1000) || undefined;
   if (typeof body.enabled === 'boolean') patch.enabled = body.enabled;
   if (typeof body.isPrimary === 'boolean') patch.isPrimary = body.isPrimary;
 

@@ -214,6 +214,9 @@ export interface DeviceRecord {
   id: string;
   name: string;
   rootDir: string;
+  iosVersion?: string;
+  toolchain?: string;
+  notes?: string;
   enabled: boolean;
   isPrimary?: boolean;
   createdAt: number;
@@ -1950,6 +1953,9 @@ function materializeDevices(): void {
 export interface CreateDeviceInput {
   name: string;
   rootDir: string;
+  iosVersion?: string;
+  toolchain?: string;
+  notes?: string;
   enabled?: boolean;
   isPrimary?: boolean;
 }
@@ -1966,6 +1972,9 @@ export function createDevice(input: CreateDeviceInput, actor: string): DeviceRec
     id: randomUUID(),
     name: input.name,
     rootDir: input.rootDir,
+    iosVersion: input.iosVersion?.trim() || undefined,
+    toolchain: input.toolchain?.trim() || undefined,
+    notes: input.notes?.trim() || undefined,
     enabled: input.enabled ?? true,
     isPrimary: makePrimary,
     createdAt: now,

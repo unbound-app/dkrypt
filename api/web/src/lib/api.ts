@@ -178,6 +178,9 @@ export interface DeviceRecord {
   id: string;
   name: string;
   rootDir: string;
+  iosVersion?: string;
+  toolchain?: string;
+  notes?: string;
   enabled: boolean;
   isPrimary?: boolean;
   createdAt: number;
@@ -442,11 +445,11 @@ export function fetchDevices(): Promise<{ devices: DeviceRecord[] }> {
   return apiJson('/v1/dashboard/devices');
 }
 
-export function createDevice(name: string, rootDir: string): Promise<{ ok: boolean; data: DeviceRecord }> {
-  return apiAction('/v1/dashboard/devices', { method: 'POST', body: JSON.stringify({ name, rootDir }) }, 'Device added');
+export function createDevice(name: string, rootDir: string, profile?: Pick<DeviceRecord, 'iosVersion' | 'toolchain' | 'notes'>): Promise<{ ok: boolean; data: DeviceRecord }> {
+  return apiAction('/v1/dashboard/devices', { method: 'POST', body: JSON.stringify({ name, rootDir, ...profile }) }, 'Device added');
 }
 
-export function updateDevice(id: string, patch: Partial<Pick<DeviceRecord, 'name' | 'rootDir' | 'enabled' | 'isPrimary'>>): Promise<{ ok: boolean; data: DeviceRecord }> {
+export function updateDevice(id: string, patch: Partial<Pick<DeviceRecord, 'name' | 'rootDir' | 'iosVersion' | 'toolchain' | 'notes' | 'enabled' | 'isPrimary'>>): Promise<{ ok: boolean; data: DeviceRecord }> {
   return apiAction(`/v1/dashboard/devices/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) }, 'Device updated');
 }
 

@@ -26,7 +26,6 @@
 		previewWatchDispatchDraft,
 		saveSettings,
 		searchApps,
-		supportBundleUrl,
 		testWebhook,
 		triggerWatchDispatch,
 		updateWatch,
@@ -937,7 +936,6 @@
 			{#if canManageSchedulerSettings}
 				<div class="ml-auto flex flex-wrap items-center gap-1.5">
 					<Button size="sm" variant="secondary" loading={loadingBridgeDiagnostics} onclick={openBridgeDiagnostics}>Inspect autoinstall</Button>
-					<a class={buttonVariants("outline", "sm")} href={supportBundleUrl()}>Support bundle</a>
 				</div>
 			{/if}
 		</div>
@@ -1197,7 +1195,8 @@
 </div>
 
 <Dialog open={bridgeDiagnosticsOpen} onOpenChange={(value) => (bridgeDiagnosticsOpen = value)} class="max-w-lg">
-	<div class="mb-3 text-sm font-medium">autoinstall bridge diagnostics</div>
+	<div class="mb-1 text-sm font-medium">autoinstall protocol explorer</div>
+	<div class="mb-3 text-xs text-muted">Live bridge version, exposed capabilities, and the most recent protocol activity.</div>
 	{#if loadingBridgeDiagnostics}
 		<div class="text-sm text-muted">Checking the autoinstall bridge…</div>
 	{:else if bridgeDiagnostics}
@@ -1207,7 +1206,13 @@
 			<div class="border-border rounded-md border p-2">Installer <span class={bridgeDiagnostics.bridge.hasInstaller ? "text-ok" : "text-err"}>{bridgeDiagnostics.bridge.hasInstaller ? "ready" : "missing"}</span></div>
 			<div class="border-border rounded-md border p-2">Install <span class="text-muted">{String(bridgeDiagnostics.install?.state ?? "idle")}</span></div>
 		</div>
-		<div class="mt-3 text-xs text-muted">Capabilities: {bridgeDiagnostics.bridge.capabilities?.join(", ") ?? "none reported"}</div>
+		<div class="mt-3 flex flex-wrap gap-1.5">
+			{#each bridgeDiagnostics.bridge.capabilities ?? [] as capability (capability)}
+				<Badge variant="secondary">{capability}</Badge>
+			{:else}
+				<span class="text-xs text-muted">No capabilities reported.</span>
+			{/each}
+		</div>
 		{#if bridgeDiagnostics.recentLog?.length}
 			<pre class="bg-panel-muted mt-3 max-h-64 overflow-auto rounded-md p-2 text-[10px] whitespace-pre-wrap">{bridgeDiagnostics.recentLog.join("\n")}</pre>
 		{/if}
