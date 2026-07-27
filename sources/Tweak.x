@@ -327,6 +327,13 @@ static NSString * const kRequestPath = @"/tmp/autoinstall-request.json";
 static NSString * const kResponsePath = @"/tmp/autoinstall-response.json";
 static NSString * const kInstallStatusPath = @"/tmp/autoinstall-install-status.json";
 
+static NSString *networkErrorDescription(id error) {
+    if ([error respondsToSelector:@selector(localizedDescription)]) {
+        return [error localizedDescription];
+    }
+    return [NSString stringWithFormat:@"%@", error];
+}
+
 static void fetchJSON(NSString *urlString, void (^completion)(id json, NSString *error)) {
     NSURL *url = [NSURL URLWithString:urlString];
     Class<TFNetworkManagerProtocol> cls = (Class<TFNetworkManagerProtocol>)objc_getClass("TFNetworkManager");
@@ -338,7 +345,7 @@ static void fetchJSON(NSString *urlString, void (^completion)(id json, NSString 
             NSError *error = [typedResponse error];
             id data = [typedResponse data];
             if (error) {
-                completion(nil, error.localizedDescription);
+                completion(nil, networkErrorDescription(error));
                 return;
             }
             if (!data) {
