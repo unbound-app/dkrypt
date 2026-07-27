@@ -27,7 +27,17 @@
 @end
 
 @protocol TFAppInstallerProtocol <NSObject>
-- (id)requestInstall:(id)installable installationMode:(NSInteger)mode alertDelegate:(id)delegate withBackgroundTaskMaster:(id)master completionBlock:(id)block;
+- (id)requestInstall:(id)installable installationMode:(id)mode alertDelegate:(id)delegate withBackgroundTaskMaster:(id)master completionBlock:(id)block;
+@end
+
+@protocol TFInstallationModeProtocol <NSObject>
++ (id)modeWithUserInitiated:(BOOL)userInitiated interactive:(BOOL)interactive autoUpdate:(BOOL)autoUpdate;
+@end
+
+@protocol TFInstallAlertDelegate <NSObject>
+- (BOOL)presentPrecheckAlertWithType:(NSInteger)type installable:(id)installable completion:(void (^)(BOOL))completion;
+@optional
+- (void)dismissPrecheckAlert;
 @end
 
 @protocol SKUIItemStateCenterProtocol <NSObject>
@@ -108,6 +118,21 @@ static void writeBridgeError(NSString *path, NSString *code, NSString *stage, NS
         },
     });
 }
+
+@interface AutoinstallPrecheckDelegate : NSObject <TFInstallAlertDelegate>
+@end
+
+@implementation AutoinstallPrecheckDelegate
+
+- (BOOL)presentPrecheckAlertWithType:(NSInteger)type installable:(id)installable completion:(void (^)(BOOL))completion {
+    autoinstallLog([NSString stringWithFormat:@"install: approving precheck alert type=%ld installable=%@", (long)type, installable]);
+    completion(YES);
+    return YES;
+}
+
+- (void)dismissPrecheckAlert {}
+
+@end
 
 static BOOL isSpringBoard(void) {
     return [[[NSBundle mainBundle] bundleIdentifier] isEqualToString:@"com.apple.springboard"];
@@ -291,6 +316,7 @@ static void startSpringBoardSide(void) {
 static id gInstaller = nil;
 static id gCatalogManager = nil;
 static UIBackgroundTaskIdentifier gBackgroundTaskId = 0;
+static AutoinstallPrecheckDelegate *gPrecheckDelegate = nil;
 
 static void beginBackgroundKeepAlive(void) {
     if (gBackgroundTaskId != UIBackgroundTaskInvalid) return;
@@ -424,7 +450,6 @@ static void handleRequest(NSDictionary *req) {
 
     if ([action isEqualToString:@"install"]) {
         @try {
-            beginBackgroundKeepAlive();
             NSString *operationId = [req[@"operationId"] isKindOfClass:[NSString class]] ? req[@"operationId"] : [[NSUUID UUID] UUIDString];
             NSDictionary *previousStatus = readJSONFile(kInstallStatusPath);
             if ([previousStatus[@"operationId"] isEqual:operationId]) {
@@ -448,7 +473,7 @@ static void handleRequest(NSDictionary *req) {
                 writeBridgeError(kResponsePath, @"invalid_request", @"install", @"missing appId or build", NO);
                 return;
             }
-
+            beginBackgroundKeepAlive();
             id<TFAppCatalogManagerProtocol> catalogManager = gCatalogManager;
             id app = [catalogManager getAppCatalogCachedAppForAppID:appId];
             if (!app) {
@@ -478,16 +503,18 @@ static void handleRequest(NSDictionary *req) {
             }
 
             autoinstallLog([NSString stringWithFormat:@"install: installable=%@", installable]);
-
-            void (^completion)(void) = ^{
-                autoinstallLog(@"install: completionBlock fired");
-                writeJSONFile(kInstallStatusPath, @{@"ok": @YES, @"operationId": operationId, @"state": @"completed"});
-            };
-
+            void (^completion)(void) = ^{ autoinstallLog(@"install: completionBlock fired"); };
             id<TFAppInstallerProtocol> installer = gInstaller;
-            id result = [installer requestInstall:installable installationMode:0 alertDelegate:nil withBackgroundTaskMaster:nil completionBlock:completion];
-            autoinstallLog([NSString stringWithFormat:@"install: requestInstall: returned %@", result]);
+            if (!gPrecheckDelegate) gPrecheckDelegate = [AutoinstallPrecheckDelegate new];
+            Class<TFInstallationModeProtocol> modeClass = (Class<TFInstallationModeProtocol>)objc_getClass("TFInstallationMode");
+            id mode = [modeClass modeWithUserInitiated:YES interactive:YES autoUpdate:NO];
+            if (!mode) {
+                writeBridgeError(kResponsePath, @"installation_mode_unavailable", @"install", @"TFInstallationMode did not create an interactive user-initiated mode", YES);
+                return;
+            }
             writeJSONFile(kInstallStatusPath, @{@"ok": @YES, @"operationId": operationId, @"state": @"requested", @"appId": appId});
+            id result = [installer requestInstall:installable installationMode:mode alertDelegate:gPrecheckDelegate withBackgroundTaskMaster:nil completionBlock:completion];
+            autoinstallLog([NSString stringWithFormat:@"install: requestInstall: returned %@", result]);
             writeJSONFile(kResponsePath, @{@"ok": @YES, @"requested": @YES, @"operationId": operationId});
         } @catch (NSException *exception) {
             autoinstallLog([NSString stringWithFormat:@"install: EXCEPTION name=%@ reason=%@", exception.name, exception.reason]);
