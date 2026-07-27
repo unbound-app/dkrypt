@@ -1,6 +1,11 @@
 export const GENERATED_CHANGELOG = [
   {
     "date": "2026-07-27",
+    "title": "fix: verify TestFlight install completion",
+    "description": "Released in d60283b."
+  },
+  {
+    "date": "2026-07-27",
     "title": "fix: retry TestFlight installs with fresh operations",
     "description": "Released in f6d03cd."
   },
@@ -23,5 +28,15 @@ export const GENERATED_CHANGELOG = [
     "date": "2026-07-27",
     "title": "fix: refresh mobile shell delivery",
     "description": "Released in 6095b02."
+  },
+  {
+    "date": "2026-07-27",
+    "title": "fix: recover interrupted jobs and refine mobile ui",
+    "description": "Released in c5a5a56."
+  },
+  {
+    "date": "2026-07-27",
+    "title": "fix: darken device during automated installs",
+    "description": "Released in 9376710."
   }
 ] as const;

@@ -1,0 +1,5 @@
+**/node_modules
+api/dist
+api/test
+api/**/*.test.ts
+api/bunfig.toml
