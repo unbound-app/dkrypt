@@ -598,10 +598,6 @@
 				<Button size="sm" variant="secondary" onclick={bulkExportJson}
 					>Export {selected.size} JSON</Button
 				>
-			{:else if entries.length > 0}
-				<Button size="sm" variant="secondary" onclick={toggleSelectAll}
-					>Select loaded</Button
-				>
 			{/if}
 			<a
 				href={jobHistoryExportUrl("csv")}
@@ -615,6 +611,17 @@
 			>
 		</div>
 	{/snippet}
+	{#if entries.length > 0}
+		<label class="mb-3 inline-flex cursor-pointer items-center gap-2 text-xs text-muted">
+			<input
+				type="checkbox"
+				checked={selected.size === entries.length}
+				onchange={toggleSelectAll}
+				aria-label="Select or unselect all loaded jobs"
+			/>
+			Select all loaded
+		</label>
+	{/if}
 	<div class="mb-3 flex flex-wrap items-center gap-2.5">
 		<div class="relative max-w-xs flex-1">
 			<Input

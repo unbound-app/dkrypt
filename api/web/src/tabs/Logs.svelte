@@ -314,11 +314,11 @@
         {#each filtered as l (entryKey(l))}
           {@const key = entryKey(l)}
           <div class={`log-row border-border flex items-start gap-3 border-b border-l-[3px] px-4 py-3 text-[13px] last:border-b-0 ${LEVEL_BORDER[l.level]}`}>
-            <span class="shrink-0 font-mono text-[12px] whitespace-nowrap text-muted"><RelativeTime ms={l.ts} /></span>
-            <Badge variant={LEVEL_BADGE[l.level]} class="shrink-0">{l.level}</Badge>
-            <Badge variant="secondary" class="shrink-0">{l.scope}</Badge>
+            <span class="log-row-time shrink-0 font-mono text-[12px] whitespace-nowrap text-muted"><RelativeTime ms={l.ts} /></span>
+            <Badge variant={LEVEL_BADGE[l.level]} class="log-row-level shrink-0">{l.level}</Badge>
+            <Badge variant="secondary" class="log-row-scope shrink-0">{l.scope}</Badge>
             <button
-              class={cn('min-w-0 flex-1 cursor-pointer text-left', expandedLogKeys.has(key) ? 'break-words leading-5' : 'truncate')}
+              class={cn('log-row-message min-w-0 flex-1 cursor-pointer text-left', expandedLogKeys.has(key) ? 'break-words leading-5' : 'truncate')}
               onclick={() => toggleExpanded(key)}
               title={expandedLogKeys.has(key) ? 'Collapse log entry' : 'Expand log entry'}
             >
@@ -327,7 +327,7 @@
                 <span class={cn('font-mono text-[11px] text-muted', expandedLogKeys.has(key) ? 'mt-1 block break-words' : '')}>{fmtLogMeta(l.meta)}</span>
               {/if}
             </button>
-            <CopyButton text={JSON.stringify(l, null, 2)} label="JSON" />
+            <div class="log-row-copy"><CopyButton text={JSON.stringify(l, null, 2)} label="JSON" /></div>
           </div>
         {/each}
       </div>

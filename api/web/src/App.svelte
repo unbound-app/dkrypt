@@ -14,6 +14,7 @@
 		Pencil,
 		Rows2,
 		Rows3,
+		PanelRightOpen,
 		ScrollText,
 		Settings as SettingsIcon,
 		Sun,
@@ -651,8 +652,8 @@
 						{/if}
 					</DropdownMenu.Trigger>
 					<DropdownMenu.Portal>
-						<DropdownMenu.Content
-							class="border-border bg-panel z-50 w-72 rounded-xl border p-3 shadow-2xl"
+					<DropdownMenu.Content
+							class="border-border bg-panel z-50 w-72 rounded-xl border p-3 shadow-2xl max-sm:!fixed max-sm:!top-14 max-sm:!right-2 max-sm:!left-auto max-sm:!w-[min(18rem,calc(100vw-1rem))] max-sm:!transform-none"
 							sideOffset={8}
 							align="end"
 						>
@@ -993,7 +994,7 @@
 			</div>
 		</header>
 		<main
-			class="mx-auto max-w-[1760px] px-3 pt-4 pb-28 sm:px-5 sm:pt-5 lg:px-6 lg:pb-6"
+			class="mx-auto max-w-[1760px] px-3 pt-4 pb-[calc(3.75rem+env(safe-area-inset-bottom))] sm:px-5 sm:pt-5 lg:px-6 lg:pb-6"
 		>
 			<SessionExpiryBanner />
 			<ConnectionBanner />
@@ -1036,11 +1037,11 @@
 		</main>
 		<button
 			type="button"
-			class="glass-status-pull fixed top-1/2 right-0 z-40 -translate-y-1/2 rounded-l-xl px-2 py-3 text-xs font-medium lg:hidden"
+			class="glass-status-pull fixed top-1/2 right-0 z-40 flex h-20 w-7 -translate-y-1/2 items-center justify-center rounded-l-xl lg:hidden"
 			onclick={() => (mobileStatusOpen = true)}
 			aria-label="Open status drawer"
 		>
-			Status
+			<PanelRightOpen class="h-4 w-4" />
 		</button>
 		{#if mobileStatusOpen}
 			<button

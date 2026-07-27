@@ -6,16 +6,8 @@ export interface ChangelogEntry {
   link?: { tab: string; subtab?: string };
 }
 
-const configuredReleaseId = import.meta.env.VITE_BUILD_REF;
-export const RELEASE_ID = configuredReleaseId && configuredReleaseId !== 'development' ? configuredReleaseId : __DKRYPT_BUILD_TIME__;
-export const RELEASE_LABEL = RELEASE_ID === 'development' ? 'development' : RELEASE_ID.slice(0, 7);
-
 export const CHANGELOG: ChangelogEntry[] = [
-  {
-    date: 'Current deployment',
-    title: `Dashboard deployment ${RELEASE_LABEL}`,
-    description: `Built ${new Date(__DKRYPT_BUILD_TIME__).toLocaleString()} and shown as new until you open this panel.`,
-  },
+  ...GENERATED_CHANGELOG,
   {
     date: '2026-07-26',
     title: 'Liquid glass workspace',
@@ -94,3 +86,4 @@ export const CHANGELOG: ChangelogEntry[] = [
     description: 'Press Cmd/Ctrl+K to jump anywhere or run an action instantly, from any tab.',
   },
 ];
+import { GENERATED_CHANGELOG } from '#lib/generatedChangelog';
