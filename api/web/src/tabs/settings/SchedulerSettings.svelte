@@ -28,6 +28,7 @@
 		validateCron,
 		type AppWatch,
 		type AppStoreSearchResult,
+		type DispatchTarget,
 		type GithubRepoOption,
 		type GithubWorkflowOption,
 		type SchedulerSettings,
@@ -44,6 +45,7 @@
 	import Dialog from "#lib/components/ui/Dialog.svelte";
 	import Input from "#lib/components/ui/Input.svelte";
 	import Select from "#lib/components/ui/Select.svelte";
+	import SearchSelect from "#lib/components/ui/SearchSelect.svelte";
 	import Switch from "#lib/components/ui/Switch.svelte";
 	import { debounce } from "#lib/format";
 	import {
@@ -81,69 +83,81 @@
 		key: keyof SchedulerSettings;
 		label: string;
 		description: string;
+		group: "Automation" | "Access" | "Device" | "Capacity";
 	}[] = [
 		{
 			key: "notifyOnJobCompleted",
 			label: "Any decrypt finishes",
+			group: "Automation",
 			description:
 				"Manual or scheduler jobs, including App Store and TestFlight paths",
 		},
 		{
 			key: "notifyOnKeyRequest",
 			label: "API key requests",
+			group: "Access",
 			description: "A user without approveApiKeys requests a new key",
 		},
 		{
 			key: "notifyOnAutomationSuccess",
 			label: "Automation succeeded",
+			group: "Automation",
 			description:
 				"A watched App Store or TestFlight release completed its GitHub workflow",
 		},
 		{
 			key: "notifyOnAutomationFailure",
 			label: "Automation needs attention",
+			group: "Automation",
 			description:
 				"A watched App Store or TestFlight release failed a check, decrypt, dispatch, or workflow",
 		},
 		{
 			key: "notifyOnKeyExpiringSoon",
 			label: "API key expiring soon",
+			group: "Access",
 			description:
 				"An approved key has 7 days or less left before it expires",
 		},
 		{
 			key: "notifyOnDeviceOffline",
 			label: "iDevice unreachable",
+			group: "Device",
 			description:
 				"A device stays unreachable past the alert threshold below",
 		},
 		{
 			key: "notifyOnDeviceBatteryHot",
 			label: "iDevice battery hot",
+			group: "Device",
 			description:
 				"Battery temperature reaches the alert threshold below",
 		},
 		{
 			key: "notifyOnDeviceBatteryLow",
 			label: "iDevice battery low",
+			group: "Device",
 			description:
 				"Battery drops to the alert threshold below while not charging",
 		},
 		{
 			key: "notifyOnDiskFull",
 			label: "Staging disk full",
+			group: "Capacity",
 			description:
 				"The host staging disk (OUTPUT_DIR) reaches the alert threshold below",
 		},
 		{
 			key: "notifyOnDeviceStorageLow",
 			label: "iDevice storage low",
+			group: "Capacity",
 			description:
 				"A device's own storage reaches the alert threshold below",
 		},
 		{
 			key: "notifyOnTestFlightBridgeDown",
 			label: "autoinstall bridge unresponsive",
+			group: "Device",
 			description:
 				"The autoinstall SpringBoard bridge stops responding past the alert threshold below",
 		},
@@ -235,6 +249,7 @@
 		bundleId: "",
 		repo: "",
 		ghWorkflowFile: "remote-ipa-update.yml",
+		dispatchTargets: [{ repo: "", ghWorkflowFile: "remote-ipa-update.yml" }],
 		pollCron: "0 * * * *",
 		enabled: true,
 		webhookUrl: "",
@@ -245,6 +260,7 @@
 	let watchDialogOpen = $state(false);
 	let editingWatchId = $state<string | null>(null);
 	let watchForm = $state<WatchInput>({ ...DEFAULT_WATCH_FORM });
+	let dispatchTargets = $state<DispatchTarget[]>([...(DEFAULT_WATCH_FORM.dispatchTargets ?? [])]);
 	let watchCronValid = $state<boolean | null>(null);
 	let savingWatch = $state(false);
 	let previewByWatch = $state<Record<string, UpdateCheck | null>>({});
@@ -262,16 +278,18 @@
 	let watchSearchSearched = $state(false);
 	let watchSearchToken = 0;
 	let githubRepos = $state<GithubRepoOption[]>([]);
-	let githubReposLoading = $state(false);
 	let githubReposError = $state("");
-	let githubWorkflows = $state<GithubWorkflowOption[]>([]);
-	let githubWorkflowsLoading = $state(false);
-	let githubWorkflowsError = $state("");
-	let githubWorkflowsToken = 0;
+	let githubWorkflowsByRepo = $state<Record<string, GithubWorkflowOption[]>>({});
+	let githubWorkflowErrors = $state<Record<string, string>>({});
+	let loadingWorkflowRepos = $state<Set<string>>(new Set());
 
 	const watches = $derived(liveState.overview?.watches ?? []);
 	const failedWatchCount = $derived(watchHealth.filter((watch) => watch.lastCheckOk === false || watch.consecutiveFailures > 0).length);
 	const healthyWatchCount = $derived(watchHealth.filter((watch) => watch.lastCheckOk && watch.consecutiveFailures === 0).length);
+
+	function healthForWatch(watchId: string): WatchHealthSummary | undefined {
+		return watchHealth.find((entry) => entry.watchId === watchId);
+	}
 
 	$effect(() => {
 		void ensureAppCatalog(watches.map((watch) => watch.bundleId));
@@ -310,35 +328,39 @@
 		checkWatchCron(watchForm.pollCron);
 	});
 
-	const watchRepoItems = $derived.by(() => {
+	$effect(() => {
+		if (canManageWatches) void loadGithubRepos();
+	});
+
+	function repoItemsFor(current: string) {
 		const options = githubRepos.map((repo) => ({
 			value: repo.fullName,
 			label: `${repo.fullName}${repo.isPrivate ? " (private)" : ""}`,
 		}));
-		const current = watchForm.repo.trim();
-		if (current && !options.some((option) => option.value === current)) {
+		const selected = current.trim();
+		if (selected && !options.some((option) => option.value === selected)) {
 			options.unshift({
-				value: current,
-				label: `${current} (current)`,
+				value: selected,
+				label: `${selected} (current)`,
 			});
 		}
 		return options;
-	});
+	}
 
-	const workflowItems = $derived.by(() => {
-		const options = githubWorkflows.map((workflow) => ({
+	function workflowItemsFor(repo: string, current: string) {
+		const options = (githubWorkflowsByRepo[repo] ?? []).map((workflow) => ({
 			value: workflowFileName(workflow.path),
 			label: `${workflow.name} (${workflowFileName(workflow.path)})`,
 		}));
-		const current = watchForm.ghWorkflowFile.trim();
-		if (current && !options.some((option) => option.value === current)) {
+		const selected = current.trim();
+		if (selected && !options.some((option) => option.value === selected)) {
 			options.unshift({
-				value: current,
-				label: `${current} (current)`,
+				value: selected,
+				label: `${selected} (current)`,
 			});
 		}
 		return options;
-	});
+	}
 
 	const watchRepoErrors = $derived({
 		repo:
@@ -359,9 +381,7 @@
 		watchSearchSearched = false;
 		watchSearchLoading = false;
 		watchSearchToken += 1;
-		githubWorkflows = [];
-		githubWorkflowsError = "";
-		void loadGithubRepos();
+		dispatchTargets = [{ repo: "", ghWorkflowFile: "remote-ipa-update.yml" }];
 		draftPreview = null;
 		watchDialogOpen = true;
 	}
@@ -378,20 +398,21 @@
 			testFlightPolicy: w.testFlightPolicy ?? "latest",
 			testFlightTrain: w.testFlightTrain ?? "",
 		};
+		dispatchTargets = w.dispatchTargets?.length
+			? w.dispatchTargets.map((target) => ({ ...target }))
+			: [{ repo: w.repo, ghWorkflowFile: w.ghWorkflowFile }];
 		watchSearchTerm = appDisplayName(w.bundleId);
 		watchSearchResults = [];
 		watchSearchSearched = false;
 		watchSearchLoading = false;
 		watchSearchToken += 1;
-		void loadGithubRepos();
-		void loadGithubWorkflows(w.repo);
+		for (const target of dispatchTargets) void loadGithubWorkflows(target.repo);
 		draftPreview = null;
 		watchDialogOpen = true;
 	}
 
 	async function loadGithubRepos(): Promise<void> {
 		if (githubRepos.length > 0) return;
-		githubReposLoading = true;
 		githubReposError = "";
 		try {
 			const { repos } = await fetchGithubRepos();
@@ -402,44 +423,49 @@
 				err instanceof Error
 					? err.message
 					: "Failed to load GitHub repositories";
-		} finally {
-			githubReposLoading = false;
 		}
 	}
 
 	async function loadGithubWorkflows(repo: string): Promise<void> {
 		const trimmed = repo.trim();
-		const token = ++githubWorkflowsToken;
-		githubWorkflowsError = "";
-		if (!trimmed || !REPO_RE.test(trimmed)) {
-			githubWorkflows = [];
-			githubWorkflowsLoading = false;
-			return;
-		}
-		githubWorkflowsLoading = true;
+		if (!trimmed || !REPO_RE.test(trimmed) || githubWorkflowsByRepo[trimmed] || loadingWorkflowRepos.has(trimmed)) return;
+		loadingWorkflowRepos = new Set(loadingWorkflowRepos).add(trimmed);
+		githubWorkflowErrors = { ...githubWorkflowErrors, [trimmed]: "" };
 		try {
 			const { workflows } = await fetchGithubWorkflows(trimmed);
-			if (token !== githubWorkflowsToken) return;
-			githubWorkflows = workflows;
+			githubWorkflowsByRepo = { ...githubWorkflowsByRepo, [trimmed]: workflows };
 		} catch (err) {
-			if (token !== githubWorkflowsToken) return;
-			githubWorkflows = [];
-			githubWorkflowsError =
-				err instanceof Error ? err.message : "Failed to load workflows";
+			githubWorkflowErrors = { ...githubWorkflowErrors, [trimmed]: err instanceof Error ? err.message : "Failed to load workflows" };
 		} finally {
-			if (token === githubWorkflowsToken) {
-				githubWorkflowsLoading = false;
-			}
+			const next = new Set(loadingWorkflowRepos);
+			next.delete(trimmed);
+			loadingWorkflowRepos = next;
 		}
 	}
 
-	function onWatchRepoChange(repo: string): void {
-		watchForm = { ...watchForm, repo };
+	function setDispatchTarget(index: number, patch: Partial<DispatchTarget>): void {
+		dispatchTargets = dispatchTargets.map((target, targetIndex) => targetIndex === index ? { ...target, ...patch } : target);
+		const primary = dispatchTargets[0] ?? { repo: "", ghWorkflowFile: "remote-ipa-update.yml" };
+		watchForm = { ...watchForm, repo: primary.repo, ghWorkflowFile: primary.ghWorkflowFile, dispatchTargets };
+	}
+
+	function onWatchRepoChange(index: number, repo: string): void {
+		setDispatchTarget(index, { repo });
 		void loadGithubWorkflows(repo);
 	}
 
-	function onWatchWorkflowChange(workflow: string): void {
-		watchForm = { ...watchForm, ghWorkflowFile: workflow };
+	function onWatchWorkflowChange(index: number, ghWorkflowFile: string): void {
+		setDispatchTarget(index, { ghWorkflowFile });
+	}
+
+	function addDispatchTarget(): void {
+		dispatchTargets = [...dispatchTargets, { repo: "", ghWorkflowFile: "remote-ipa-update.yml" }];
+	}
+
+	function removeDispatchTarget(index: number): void {
+		if (dispatchTargets.length === 1) return;
+		dispatchTargets = dispatchTargets.filter((_, targetIndex) => targetIndex !== index);
+		setDispatchTarget(0, {});
 	}
 
 	function pickWatchApp(result: AppStoreSearchResult): void {
@@ -533,15 +559,15 @@
 			showToast("Poll cron is not a valid cron expression", "error");
 			return;
 		}
-		if (watchRepoErrors.repo || watchRepoErrors.webhookUrl) {
+		if (watchRepoErrors.repo || watchRepoErrors.webhookUrl || dispatchTargets.some((target) => !REPO_RE.test(target.repo) || !target.ghWorkflowFile.trim())) {
 			showToast("Fix the invalid fields before saving", "error");
 			return;
 		}
 		savingWatch = true;
 		try {
 			const { ok } = editingWatchId
-				? await updateWatch(editingWatchId, watchForm)
-				: await createWatch(watchForm);
+				? await updateWatch(editingWatchId, { ...watchForm, dispatchTargets })
+				: await createWatch({ ...watchForm, dispatchTargets });
 			if (ok) watchDialogOpen = false;
 		} finally {
 			savingWatch = false;
@@ -778,6 +804,20 @@
 	const enabledAlertCount = $derived(
 		NOTIFY_EVENTS.filter((e) => savedForm[e.key]).length,
 	);
+	const notificationGroups = ["Automation", "Access", "Device", "Capacity"] as const;
+
+	function applyNotificationPreset(preset: "essential" | "all" | "quiet"): void {
+		const enabled = new Set<keyof SchedulerSettings>(
+			preset === "all"
+				? NOTIFY_EVENTS.map((event) => event.key)
+				: preset === "essential"
+					? ["notifyOnAutomationFailure", "notifyOnKeyRequest", "notifyOnDeviceOffline", "notifyOnTestFlightBridgeDown", "notifyOnDiskFull"]
+					: ["notifyOnAutomationFailure", "notifyOnDeviceOffline", "notifyOnTestFlightBridgeDown"],
+		);
+		form = Object.fromEntries(
+			Object.entries(form).map(([key, value]) => [key, NOTIFY_EVENTS.some((event) => event.key === key) ? enabled.has(key as keyof SchedulerSettings) : value]),
+		) as SchedulerSettings;
+	}
 
 	async function save(): Promise<void> {
 		if (repoErrors.notifyWebhookUrl) {
@@ -914,8 +954,14 @@
 						<div
 							class="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 font-mono text-[11px] text-muted"
 						>
-							<span title={w.repo}>{w.repo || "-"}</span>
+							<span title={w.repo}>{w.dispatchTargets?.length ? `${w.dispatchTargets.length} destinations` : w.repo || "-"}</span>
 							<span title="poll cron">{w.pollCron}</span>
+							{#if healthForWatch(w.id)?.schedulerJobSuccessRate !== undefined}
+								<span class="font-sans">{Math.round((healthForWatch(w.id)?.schedulerJobSuccessRate ?? 0) * 100)}% scheduler success</span>
+							{/if}
+							{#if healthForWatch(w.id)?.medianSchedulerJobDurationMs}
+								<span class="font-sans">{Math.round((healthForWatch(w.id)?.medianSchedulerJobDurationMs ?? 0) / 60_000)}m median decrypt</span>
+							{/if}
 						</div>
 						{#if w.configIssues.length > 0}
 							<div class="mt-1.5 text-xs text-warn">
@@ -1174,64 +1220,48 @@
 				<Input id="w-testFlightTrain" placeholder="341.0" bind:value={watchForm.testFlightTrain} />
 			{/if}
 
-			<label for="w-repo" class="mt-3 mb-1 block text-xs text-muted"
-				>Dispatch repository</label
-			>
-			{#if watchRepoItems.length > 0}
-				<Select
-					id="w-repo"
-					items={watchRepoItems}
-					value={watchForm.repo}
-					onValueChange={onWatchRepoChange}
-					disabled={githubReposLoading}
-					class="w-full"
-				/>
-			{:else}
-				<Input
-					id="w-repo"
-					placeholder="owner/repo"
-					bind:value={watchForm.repo}
-					oninput={() => void loadGithubWorkflows(watchForm.repo)}
-				/>
-			{/if}
-			{#if githubReposLoading}
-				<div class="mt-1 text-xs text-muted">
-					Loading repositories...
-				</div>
-			{:else if githubReposError}
+			<div class="mt-3 flex items-center justify-between gap-3">
+				<div class="text-xs text-muted">Dispatch destinations</div>
+				<Button size="sm" variant="secondary" onclick={addDispatchTarget}>Add destination</Button>
+			</div>
+			<div class="mt-1.5 flex flex-col gap-2">
+				{#each dispatchTargets as target, index (`${index}-${target.repo}-${target.ghWorkflowFile}`)}
+					<div class="border-border rounded-lg border p-2.5">
+						<div class="mb-1.5 flex items-center justify-between gap-2 text-xs text-muted">
+							<span>Destination {index + 1}</span>
+							{#if dispatchTargets.length > 1}
+								<button type="button" class="hover:text-err cursor-pointer" onclick={() => removeDispatchTarget(index)}>Remove</button>
+							{/if}
+						</div>
+						<label for={`w-repo-${index}`} class="mb-1 block text-[11px] text-muted">Repository</label>
+						<SearchSelect
+							id={`w-repo-${index}`}
+							items={repoItemsFor(target.repo)}
+							value={target.repo}
+							placeholder="Search repositories…"
+							onValueChange={(repo) => onWatchRepoChange(index, repo)}
+							class="w-full"
+						/>
+						<label for={`w-workflow-${index}`} class="mt-2 mb-1 block text-[11px] text-muted">Workflow</label>
+						<SearchSelect
+							id={`w-workflow-${index}`}
+							items={workflowItemsFor(target.repo, target.ghWorkflowFile)}
+							value={target.ghWorkflowFile}
+							placeholder="Search workflows…"
+							onValueChange={(workflow) => onWatchWorkflowChange(index, workflow)}
+							class="w-full"
+						/>
+						{#if githubWorkflowErrors[target.repo]}
+							<div class="mt-1 text-xs text-err">{githubWorkflowErrors[target.repo]}</div>
+						{/if}
+					</div>
+				{/each}
+			</div>
+			{#if githubReposError}
 				<div class="mt-1 text-xs text-err">{githubReposError}</div>
 			{/if}
 			{#if watchRepoErrors.repo}
 				<div class="mt-1 text-xs text-err">{watchRepoErrors.repo}</div>
-			{/if}
-
-			<label
-				for="w-ghWorkflowFile"
-				class="mt-3 mb-1 block text-xs text-muted">Workflow file</label
-			>
-			{#if workflowItems.length > 0}
-				<Select
-					id="w-ghWorkflowFile"
-					items={workflowItems}
-					value={watchForm.ghWorkflowFile}
-					onValueChange={onWatchWorkflowChange}
-					disabled={githubWorkflowsLoading || !watchForm.repo.trim()}
-					class="w-full"
-				/>
-			{:else}
-				<Input
-					id="w-ghWorkflowFile"
-					bind:value={watchForm.ghWorkflowFile}
-				/>
-			{/if}
-			{#if githubWorkflowsLoading}
-				<div class="mt-1 text-xs text-muted">Loading workflows...</div>
-			{:else if githubWorkflowsError}
-				<div class="mt-1 text-xs text-err">{githubWorkflowsError}</div>
-			{:else if watchForm.repo.trim() && workflowItems.length === 0}
-				<div class="mt-1 text-xs text-muted">
-					No workflows found in this repository.
-				</div>
 			{/if}
 
 			<label for="w-pollCron" class="mt-3 mb-1 block text-xs text-muted"
@@ -1406,10 +1436,20 @@
 			</div>
 		</div>
 
-		<div class="mt-3 mb-1 text-xs text-muted">Notify on</div>
-		<div class="border-border divide-border divide-y rounded-lg border">
-			{#each NOTIFY_EVENTS as event (event.key)}
-				<div class="flex items-center gap-3 px-3 py-2">
+		<div class="mt-3 flex items-center justify-between gap-2">
+			<div class="text-xs text-muted">Notification events</div>
+			<div class="flex gap-1">
+				<button type="button" class="border-border hover:text-text cursor-pointer rounded-full border px-2 py-1 text-[11px] text-muted" onclick={() => applyNotificationPreset("essential")}>Essential</button>
+				<button type="button" class="border-border hover:text-text cursor-pointer rounded-full border px-2 py-1 text-[11px] text-muted" onclick={() => applyNotificationPreset("all")}>All</button>
+				<button type="button" class="border-border hover:text-text cursor-pointer rounded-full border px-2 py-1 text-[11px] text-muted" onclick={() => applyNotificationPreset("quiet")}>Quiet</button>
+			</div>
+		</div>
+		<div class="mt-1.5 flex flex-col gap-2">
+			{#each notificationGroups as group (group)}
+				<div class="border-border divide-border overflow-hidden rounded-lg border divide-y">
+					<div class="bg-panel-muted/50 px-3 py-1.5 text-[11px] font-medium text-muted">{group}</div>
+					{#each NOTIFY_EVENTS.filter((event) => event.group === group) as event (event.key)}
+						<div class="flex items-center gap-3 px-3 py-2">
 					<div class="min-w-0 flex-1">
 						<div class="text-[13px] text-text">{event.label}</div>
 						<div class="text-[11px] text-muted">
@@ -1450,6 +1490,8 @@
 							(form = { ...form, [event.key]: checked })}
 						aria-label={event.label}
 					/>
+						</div>
+					{/each}
 				</div>
 			{/each}
 		</div>

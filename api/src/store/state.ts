@@ -192,6 +192,7 @@ export interface AppWatch {
   bundleId: string;
   repo: string;
   ghWorkflowFile: string;
+  dispatchTargets?: DispatchTarget[];
   pollCron: string;
   enabled: boolean;
   webhookUrl?: string;
@@ -199,6 +200,11 @@ export interface AppWatch {
   testFlightTrain?: string;
   createdAt: number;
   updatedAt: number;
+}
+
+export interface DispatchTarget {
+  repo: string;
+  ghWorkflowFile: string;
 }
 
 export interface DeviceRecord {
@@ -342,6 +348,15 @@ export interface DeviceHealthCheck {
   storageUsedPercent?: number;
 }
 
+export interface DeviceActivityEntry {
+  id: string;
+  ts: number;
+  deviceId: string;
+  kind: 'health' | 'bridge' | 'job';
+  message: string;
+  bundleId?: string;
+}
+
 export interface PushSubscriptionRecord {
   endpoint: string;
   keys: { p256dh: string; auth: string };
@@ -378,6 +393,7 @@ interface PersistedState {
   rootSessionVersion: number;
   apiKeyUsage: Record<string, ApiKeyUsageBucket[]>;
   deviceHealthHistory: Record<string, DeviceHealthCheck[]>;
+  deviceActivity: DeviceActivityEntry[];
   pushSubscriptions: Record<string, PushSubscriptionRecord[]>;
   vapidKeys?: VapidKeys;
   apiKeyBundleUsage: Record<string, Record<string, number>>;
@@ -397,6 +413,7 @@ const MAX_SCHEDULER_RUNS = 20;
 const MAX_SHARE_LINKS = 200;
 const MAX_USAGE_DAYS = 30;
 const MAX_DEVICE_HEALTH_CHECKS = 288;
+const MAX_DEVICE_ACTIVITY = 300;
 const MAX_WEBHOOK_LOG = 200;
 const statePath = path.join(config.stateDir, 'state.json');
 const backupsDir = path.join(config.stateDir, 'backups');
@@ -417,6 +434,7 @@ function defaultState(): PersistedState {
     rootSessionVersion: 0,
     apiKeyUsage: {},
     deviceHealthHistory: {},
+    deviceActivity: [],
     pushSubscriptions: {},
     apiKeyBundleUsage: {},
     shareLinks: [],
@@ -1769,11 +1787,37 @@ export interface CreateWatchInput {
   bundleId: string;
   repo: string;
   ghWorkflowFile: string;
+  dispatchTargets?: DispatchTarget[];
   pollCron: string;
   enabled?: boolean;
   webhookUrl?: string;
   testFlightPolicy?: 'latest' | 'latestNonExpired' | 'train';
   testFlightTrain?: string;
+}
+
+export function getWatchDispatchTargets(watch: Pick<AppWatch, 'repo' | 'ghWorkflowFile' | 'dispatchTargets'>): DispatchTarget[] {
+  const candidates = watch.dispatchTargets?.length
+    ? watch.dispatchTargets
+    : [{ repo: watch.repo, ghWorkflowFile: watch.ghWorkflowFile }];
+  const seen = new Set<string>();
+  return candidates
+    .map((target) => ({ repo: target.repo.trim(), ghWorkflowFile: target.ghWorkflowFile.trim() }))
+    .filter((target) => {
+      const key = `${target.repo}\u0000${target.ghWorkflowFile}`;
+      if (!target.repo || !target.ghWorkflowFile || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function normalizedWatchInput(input: CreateWatchInput): Pick<CreateWatchInput, 'repo' | 'ghWorkflowFile' | 'dispatchTargets'> {
+  const targets = getWatchDispatchTargets(input);
+  const primary = targets[0] ?? { repo: input.repo.trim(), ghWorkflowFile: input.ghWorkflowFile.trim() };
+  return {
+    repo: primary.repo,
+    ghWorkflowFile: primary.ghWorkflowFile,
+    dispatchTargets: targets.length > 1 ? targets : undefined,
+  };
 }
 
 export function createWatch(input: CreateWatchInput, actor: string): { ok: boolean; watch?: AppWatch; error?: string } {
@@ -1782,11 +1826,11 @@ export function createWatch(input: CreateWatchInput, actor: string): { ok: boole
     return { ok: false, error: `another enabled watch already targets ${input.bundleId}` };
   }
   const now = Date.now();
+  const dispatch = normalizedWatchInput(input);
   const watch: AppWatch = {
     id: randomUUID(),
     bundleId: input.bundleId,
-    repo: input.repo,
-    ghWorkflowFile: input.ghWorkflowFile,
+    ...dispatch,
     pollCron: input.pollCron,
     enabled: input.enabled ?? true,
     webhookUrl: input.webhookUrl,
@@ -1810,7 +1854,9 @@ export function updateWatch(id: string, patch: Partial<CreateWatchInput>, actor:
   if (nextEnabled && hasEnabledWatchWithBundleId(nextBundleId, id)) {
     return { ok: false, error: `another enabled watch already targets ${nextBundleId}` };
   }
-  Object.assign(watch, patch, { updatedAt: Date.now() });
+  const merged = { ...watch, ...patch } as CreateWatchInput;
+  const dispatch = normalizedWatchInput(merged);
+  Object.assign(watch, patch, dispatch, { updatedAt: Date.now() });
   persistNow();
   recordAudit(actor, 'watch.update', watch.id, watch.bundleId);
   return { ok: true, watch };
@@ -1829,20 +1875,21 @@ export function deleteWatch(id: string, actor: string): boolean {
 }
 
 export function isWatchSchedulable(watch: AppWatch): boolean {
-  return watch.enabled && watch.bundleId !== '' && watch.repo !== '' && config.ghToken !== '';
+  return watch.enabled && watch.bundleId !== '' && getWatchDispatchTargets(watch).length > 0 && config.ghToken !== '';
 }
 
 export function getWatchConfigIssues(watch: AppWatch): string[] {
-  const fieldsSet = [watch.bundleId, watch.repo].filter(Boolean).length;
+  const hasRepo = Boolean(watch.repo || watch.dispatchTargets?.some((target) => target.repo.trim()));
+  const fieldsSet = [watch.bundleId, hasRepo].filter(Boolean).length;
   const issues: string[] = [];
 
   if (fieldsSet > 0 && fieldsSet < 2) {
-    const missing = [!watch.bundleId && 'watch bundle ID', !watch.repo && 'repo'].filter((v): v is string => typeof v === 'string');
+    const missing = [!watch.bundleId && 'watch bundle ID', !hasRepo && 'repo'].filter((v): v is string => typeof v === 'string');
     issues.push(`Watch is partially configured - still missing ${missing.join(', ')}.`);
   }
 
   if (fieldsSet === 2 && config.ghToken === '') {
-    issues.push('Repo is configured but GH_TOKEN is not set - this watch will never actually run.');
+    issues.push('A dispatch target is configured but GH_TOKEN is not set - this watch will never actually run.');
   }
 
   if (watch.testFlightPolicy === 'train' && !watch.testFlightTrain?.trim()) {
@@ -2227,11 +2274,15 @@ export interface WatchHealthSummary {
   watchId: string;
   bundleId: string;
   schedulable: boolean;
+  dispatchTargetCount: number;
   lastCheckAt?: number;
   lastCheckOk?: boolean;
   consecutiveFailures: number;
   everTriggeredInHistory: boolean;
   historyCount: number;
+  schedulerJobCount: number;
+  schedulerJobSuccessRate?: number;
+  medianSchedulerJobDurationMs?: number;
 }
 
 export function getWatchHealthRollup(): WatchHealthSummary[] {
@@ -2243,17 +2294,43 @@ export function getWatchHealthRollup(): WatchHealthSummary[] {
       consecutiveFailures += 1;
     }
     const last = entries[0];
+    const schedulerJobs = state.jobHistory.filter((job) => job.source === 'scheduler' && job.bundleId === watch.bundleId);
+    const completedJobs = schedulerJobs.filter((job) => job.status === 'done');
+    const durations = completedJobs
+      .filter((job) => job.startedAt)
+      .map((job) => job.finishedAt - (job.startedAt as number))
+      .sort((a, b) => a - b);
+    const midpoint = Math.floor(durations.length / 2);
+    const medianSchedulerJobDurationMs = durations.length === 0
+      ? undefined
+      : durations.length % 2 === 1
+        ? durations[midpoint]
+        : Math.round((durations[midpoint - 1] + durations[midpoint]) / 2);
     return {
       watchId: watch.id,
       bundleId: watch.bundleId,
       schedulable: isWatchSchedulable(watch),
+      dispatchTargetCount: getWatchDispatchTargets(watch).length,
       lastCheckAt: last?.ts,
       lastCheckOk: last ? last.appStore.ok && last.testflight.ok : undefined,
       consecutiveFailures,
       everTriggeredInHistory: entries.some((e) => e.appStore.triggered || e.testflight.triggered),
       historyCount: entries.length,
+      schedulerJobCount: schedulerJobs.length,
+      schedulerJobSuccessRate: schedulerJobs.length > 0 ? completedJobs.length / schedulerJobs.length : undefined,
+      medianSchedulerJobDurationMs,
     };
   });
+}
+
+export function recordDeviceActivity(entry: Omit<DeviceActivityEntry, 'id' | 'ts'>): void {
+  state.deviceActivity.unshift({ id: randomUUID(), ts: Date.now(), ...entry });
+  if (state.deviceActivity.length > MAX_DEVICE_ACTIVITY) state.deviceActivity.length = MAX_DEVICE_ACTIVITY;
+  persistNow();
+}
+
+export function getDeviceActivity(deviceId: string, limit = 20): DeviceActivityEntry[] {
+  return state.deviceActivity.filter((entry) => entry.deviceId === deviceId).slice(0, limit);
 }
 
 export function recordDeviceHealthCheck(
@@ -2575,6 +2652,7 @@ export interface BackupPayload {
   rootSessionVersion: number;
   apiKeyUsage: Record<string, ApiKeyUsageBucket[]>;
   apiKeyBundleUsage: Record<string, Record<string, number>>;
+  deviceActivity: DeviceActivityEntry[];
   billing: BillingSnapshot;
   identities: IdentitySnapshot;
 }
@@ -2597,6 +2675,7 @@ export function exportBackup(): BackupPayload {
     rootSessionVersion: state.rootSessionVersion,
     apiKeyUsage: state.apiKeyUsage,
     apiKeyBundleUsage: state.apiKeyBundleUsage,
+    deviceActivity: state.deviceActivity,
     billing: exportBillingSnapshot(),
     identities: exportIdentitySnapshot(),
   };
@@ -2750,6 +2829,7 @@ interface ValidatedBackupPayload {
   rootSessionVersion: number;
   apiKeyUsage: Record<string, ApiKeyUsageBucket[]>;
   apiKeyBundleUsage?: Record<string, Record<string, number>>;
+  deviceActivity?: DeviceActivityEntry[];
   billing: BillingSnapshot;
   identities: IdentitySnapshot;
 }
@@ -2826,6 +2906,7 @@ function validateBackupPayload(raw: unknown): { ok: true; payload: ValidatedBack
         typeof b.apiKeyBundleUsage === 'object' && b.apiKeyBundleUsage !== null
           ? (b.apiKeyBundleUsage as Record<string, Record<string, number>>)
           : undefined,
+      deviceActivity: Array.isArray(b.deviceActivity) ? (b.deviceActivity as DeviceActivityEntry[]) : undefined,
       billing: isBillingSnapshot(b.billing) ? b.billing : { customers: [], subscriptions: [] },
       identities: isIdentitySnapshot(b.identities) ? b.identities : { profiles: [] },
     },
@@ -2911,6 +2992,7 @@ export function importBackup(raw: unknown, actor: string): ImportBackupResult {
   state.rootSessionVersion = b.rootSessionVersion;
   if (b.lastSchedulerRunAt) state.lastSchedulerRunAt = b.lastSchedulerRunAt;
   state.apiKeyBundleUsage = b.apiKeyBundleUsage ?? {};
+  state.deviceActivity = b.deviceActivity?.slice(0, MAX_DEVICE_ACTIVITY) ?? [];
   replaceBillingSnapshot(b.billing);
   replaceIdentitySnapshot(b.identities);
 

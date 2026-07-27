@@ -63,6 +63,7 @@ import {
   getBundleStats,
   getDailyVolume,
   getDevice,
+  getDeviceActivity,
   getDiscordGuilds,
   getDiscordRolePerks,
   getDeviceBatteryHourlyBuckets,
@@ -98,6 +99,7 @@ import {
   listShareLinksForJob,
   previewBackup,
   recordAudit,
+  recordDeviceActivity,
   recordShareLink,
   recordUserActivity,
   touchSessionRecord,
@@ -647,6 +649,7 @@ dashboardRouter.put('/v1/dashboard/devices/:id/dark-mode', canManageDevices, asy
   }
   try {
     await withSSH(device.rootDir, (conn) => sendSpringBoardBridgeRequest(conn, { action: enabled ? 'dark_on' : 'dark_off' }));
+    recordDeviceActivity({ deviceId: device.id, kind: 'bridge', message: enabled ? 'Display blacked out through autoinstall' : 'Display blackout disabled through autoinstall' });
     res.json(await getDeviceHealth(device.id, true));
   } catch (err) {
     res.status(502).json({ error: `autoinstall could not change the display state: ${err instanceof Error ? err.message : String(err)}` });
@@ -656,6 +659,16 @@ dashboardRouter.put('/v1/dashboard/devices/:id/dark-mode', canManageDevices, asy
 dashboardRouter.get('/v1/dashboard/devices/:id/health-history', canViewDevices, (req, res) => {
   const hours = Math.min(Math.max(Number.parseInt(String(req.query.hours ?? '24'), 10) || 24, 1), 168);
   res.json({ buckets: getDeviceHealthHourlyBuckets(req.params.id, hours), uptimePercent: getDeviceUptimePercent(req.params.id, hours) ?? null });
+});
+
+dashboardRouter.get('/v1/dashboard/devices/:id/activity', canViewDevices, (req, res) => {
+  const device = requireDevice(req.params.id);
+  if (!device) {
+    res.status(404).json({ error: 'device not found' });
+    return;
+  }
+  const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit ?? '12'), 10) || 12, 1), 50);
+  res.json({ activity: getDeviceActivity(device.id, limit) });
 });
 
 dashboardRouter.get('/v1/dashboard/devices/:id/battery-history', canViewDevices, (req, res) => {
@@ -723,6 +736,7 @@ interface WatchInput {
   bundleId: string;
   repo: string;
   ghWorkflowFile: string;
+  dispatchTargets?: { repo: string; ghWorkflowFile: string }[];
   pollCron: string;
   enabled?: boolean;
   webhookUrl?: string;
@@ -735,10 +749,21 @@ function parseWatchInput(body: unknown): WatchInput | undefined {
   const b = body as Record<string, unknown>;
   const bundleId = typeof b.bundleId === 'string' ? b.bundleId.trim() : '';
   if (!bundleId) return undefined;
+  const dispatchTargets = Array.isArray(b.dispatchTargets)
+    ? b.dispatchTargets
+        .filter((target): target is Record<string, unknown> => typeof target === 'object' && target !== null)
+        .map((target) => ({
+          repo: typeof target.repo === 'string' ? target.repo.trim() : '',
+          ghWorkflowFile: typeof target.ghWorkflowFile === 'string' ? target.ghWorkflowFile.trim() : '',
+        }))
+        .filter((target) => /^[\w.-]+\/[\w.-]+$/.test(target.repo) && target.ghWorkflowFile.length > 0)
+    : undefined;
+  const primary = dispatchTargets?.[0];
   return {
     bundleId,
-    repo: typeof b.repo === 'string' ? b.repo.trim() : '',
-    ghWorkflowFile: typeof b.ghWorkflowFile === 'string' ? b.ghWorkflowFile.trim() : 'remote-ipa-update.yml',
+    repo: primary?.repo ?? (typeof b.repo === 'string' ? b.repo.trim() : ''),
+    ghWorkflowFile: primary?.ghWorkflowFile ?? (typeof b.ghWorkflowFile === 'string' ? b.ghWorkflowFile.trim() : 'remote-ipa-update.yml'),
+    dispatchTargets,
     pollCron: typeof b.pollCron === 'string' ? b.pollCron.trim() : '0 * * * *',
     enabled: typeof b.enabled === 'boolean' ? b.enabled : undefined,
     webhookUrl: typeof b.webhookUrl === 'string' ? b.webhookUrl.trim() || undefined : undefined,
@@ -778,6 +803,19 @@ dashboardRouter.patch('/v1/dashboard/watches/:id', canManageWatches, (req, res) 
   if (typeof body.bundleId === 'string' && body.bundleId.trim()) patch.bundleId = body.bundleId.trim();
   if (typeof body.repo === 'string') patch.repo = body.repo.trim();
   if (typeof body.ghWorkflowFile === 'string') patch.ghWorkflowFile = body.ghWorkflowFile.trim();
+  if (Array.isArray(body.dispatchTargets)) {
+    patch.dispatchTargets = body.dispatchTargets
+      .filter((target): target is Record<string, unknown> => typeof target === 'object' && target !== null)
+      .map((target) => ({
+        repo: typeof target.repo === 'string' ? target.repo.trim() : '',
+        ghWorkflowFile: typeof target.ghWorkflowFile === 'string' ? target.ghWorkflowFile.trim() : '',
+      }))
+      .filter((target) => /^[\w.-]+\/[\w.-]+$/.test(target.repo) && target.ghWorkflowFile.length > 0);
+    if (patch.dispatchTargets[0]) {
+      patch.repo = patch.dispatchTargets[0].repo;
+      patch.ghWorkflowFile = patch.dispatchTargets[0].ghWorkflowFile;
+    }
+  }
   if (typeof body.pollCron === 'string') patch.pollCron = body.pollCron.trim();
   if (typeof body.enabled === 'boolean') patch.enabled = body.enabled;
   if (typeof body.webhookUrl === 'string') patch.webhookUrl = body.webhookUrl.trim() || undefined;

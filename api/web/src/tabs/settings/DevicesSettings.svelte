@@ -5,12 +5,14 @@
   import {
     createDevice,
     deleteDevice,
+    fetchDeviceActivity,
     fetchDeviceHealth,
     fetchSettings,
     saveSettings,
     setDeviceDarkMode,
     updateDevice,
     type DeviceHealth,
+    type DeviceActivityEntry,
     type DeviceRecord,
     type SchedulerSettings,
   } from '#lib/api';
@@ -59,10 +61,12 @@
   }
 
   let health = $state<Record<string, DeviceHealth | undefined>>({});
+  let activity = $state<Record<string, DeviceActivityEntry[]>>({});
 
   function loadHealth(): void {
     for (const d of devices) {
       void fetchDeviceHealth(d.id).then((h) => (health = { ...health, [d.id]: h }));
+      void fetchDeviceActivity(d.id, 6).then(({ activity: entries }) => (activity = { ...activity, [d.id]: entries }));
     }
   }
 
@@ -209,6 +213,9 @@
             {#if h}
               <Badge variant={h.reachable ? 'success' : 'destructive'}>{h.reachable ? 'online' : 'unreachable'}</Badge>
             {/if}
+			{#if h?.readiness}
+				<Badge variant={h.readiness.state === 'ready' ? 'success' : h.readiness.state === 'caution' ? 'secondary' : 'destructive'}>{h.readiness.score}/100 ready</Badge>
+			{/if}
             <div class="ml-auto flex flex-wrap gap-1.5">
               <Button size="sm" variant="secondary" loading={testingId.has(d.id)} onclick={() => void testConnection(d)}>
                 Test connection
@@ -229,6 +236,9 @@
               <span class="font-sans">checked <RelativeTime ms={h.checkedAt} /></span>
             {/if}
           </div>
+			{#if h?.readiness?.reasons.length}
+				<div class="mt-1.5 text-xs text-warn">{h.readiness.reasons.join(' · ')}</div>
+			{/if}
           {#if d.isPrimary && h?.reachable && h.darkEnabled !== undefined}
             <div class="border-border mt-3 flex items-center justify-between gap-3 border-t pt-3">
               <div class="min-w-0">
@@ -243,6 +253,19 @@
               />
             </div>
           {/if}
+			{#if activity[d.id]?.length}
+				<div class="border-border mt-3 border-t pt-3">
+					<div class="mb-1.5 text-xs text-muted">Recent device activity</div>
+					<div class="flex flex-col gap-1.5">
+						{#each activity[d.id] as entry (entry.id)}
+							<div class="flex items-start gap-2 text-xs">
+								<span class="text-muted shrink-0"><RelativeTime ms={entry.ts} /></span>
+								<span>{entry.message}{entry.bundleId ? ` · ${entry.bundleId}` : ''}</span>
+							</div>
+						{/each}
+					</div>
+				</div>
+			{/if}
         </div>
       {/each}
     </div>

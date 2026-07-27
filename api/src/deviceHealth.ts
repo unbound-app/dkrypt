@@ -4,7 +4,7 @@ import { execCommand, isTestFlightRunning, sendSpringBoardBridgeRequest, tryIore
 import { scopedLogger } from '#logger.js';
 import { EMBED_COLOR, notify } from '#notify.js';
 import { releasePinnedJobsForDevice } from '#jobs/store.js';
-import { getEffectiveDevices, getEffectiveSettings, recordDeviceHealthCheck, type DeviceRecord } from '#store/state.js';
+import { getEffectiveDevices, getEffectiveSettings, recordDeviceActivity, recordDeviceHealthCheck, type DeviceRecord } from '#store/state.js';
 import { getDiskUsage } from '#util/diskUsage.js';
 import { getCachedDeviceHealth, setCachedDeviceHealth } from '#deviceHealthCache.js';
 
@@ -33,7 +33,44 @@ export interface DeviceHealth {
   internetAccess?: boolean;
   networkIpAddress?: string;
   networkInterface?: string;
+  readiness?: DeviceReadiness;
   checkedAt: number;
+}
+
+export interface DeviceReadiness {
+  score: number;
+  state: 'ready' | 'caution' | 'blocked';
+  reasons: string[];
+}
+
+export function getDeviceReadiness(health: DeviceHealth): DeviceReadiness {
+  const reasons: string[] = [];
+  let score = 100;
+  if (!health.reachable) {
+    return { score: 0, state: 'blocked', reasons: ['device is unreachable'] };
+  }
+  if (health.internetAccess === false) {
+    score -= 50;
+    reasons.push('no internet access');
+  }
+  if (health.testFlightBridgeReachable === false) {
+    score -= 50;
+    reasons.push('autoinstall bridge is unresponsive');
+  }
+  if (health.batteryPercent !== undefined && !health.batteryCharging && health.batteryPercent < 15) {
+    score -= 20;
+    reasons.push(`battery is ${health.batteryPercent}% and not charging`);
+  }
+  if (health.batteryTemperatureC !== undefined && health.batteryTemperatureC >= 45) {
+    score -= 25;
+    reasons.push(`battery is ${health.batteryTemperatureC.toFixed(1)}°C`);
+  }
+  if (health.storageUsedPercent !== undefined && health.storageUsedPercent >= 0.95) {
+    score -= 25;
+    reasons.push(`storage is ${Math.round(health.storageUsedPercent * 100)}% full`);
+  }
+  score = Math.max(0, score);
+  return { score, state: score >= 80 ? 'ready' : score >= 55 ? 'caution' : 'blocked', reasons };
 }
 
 function parseIoregValue(output: string, key: string): string | undefined {
@@ -215,7 +252,7 @@ async function computeDeviceHealth(device: DeviceRecord, isPrimary: boolean): Pr
         }),
       ]);
       const sbStatus = sbStatusResult.value;
-      return {
+      const health: DeviceHealth = {
         reachable: true,
         testFlightRunning: tfRunning,
         testFlightBridgeReachable: isPrimary ? sbStatusResult.ok : undefined,
@@ -239,9 +276,11 @@ async function computeDeviceHealth(device: DeviceRecord, isPrimary: boolean): Pr
         networkInterface: network?.networkInterface,
         checkedAt: Date.now(),
       };
+      return { ...health, readiness: getDeviceReadiness(health) };
     });
   } catch (err) {
-    return { reachable: false, error: err instanceof Error ? err.message : String(err), checkedAt: Date.now() };
+    const health: DeviceHealth = { reachable: false, error: err instanceof Error ? err.message : String(err), checkedAt: Date.now() };
+    return { ...health, readiness: getDeviceReadiness(health) };
   }
 }
 
@@ -282,6 +321,7 @@ interface DeviceAlertState {
 }
 
 const alertStates = new Map<string, DeviceAlertState>();
+const lastActivityState = new Map<string, { reachable: boolean; bridgeReachable?: boolean }>();
 
 function alertStateFor(deviceId: string): DeviceAlertState {
   let s = alertStates.get(deviceId);
@@ -448,6 +488,18 @@ async function pollOneDevice(device: DeviceRecord, isPrimary: boolean): Promise<
     health.batteryTemperatureC,
     health.storageUsedPercent !== undefined ? Math.round(health.storageUsedPercent * 100) : undefined,
   );
+  const previous = lastActivityState.get(device.id);
+  if (!previous || previous.reachable !== health.reachable) {
+    recordDeviceActivity({ deviceId: device.id, kind: 'health', message: health.reachable ? 'Device became reachable' : 'Device became unreachable' });
+  }
+  if (isPrimary && health.testFlightBridgeReachable !== undefined && previous?.bridgeReachable !== health.testFlightBridgeReachable) {
+    recordDeviceActivity({
+      deviceId: device.id,
+      kind: 'bridge',
+      message: health.testFlightBridgeReachable ? 'autoinstall bridge became available' : 'autoinstall bridge became unavailable',
+    });
+  }
+  lastActivityState.set(device.id, { reachable: health.reachable, bridgeReachable: health.testFlightBridgeReachable });
   await Promise.all([
     checkOfflineAlert(device, health.reachable),
     checkBatteryHotAlert(device, health.batteryTemperatureC),

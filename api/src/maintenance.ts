@@ -1,5 +1,5 @@
 import type { NextFunction, Request, Response } from '#http.js';
-import { peekPrimaryDeviceHealth } from '#deviceHealth.js';
+import { getDeviceReadiness, peekPrimaryDeviceHealth } from '#deviceHealth.js';
 import { getEffectiveSettings } from '#store/state.js';
 
 export interface MaintenanceStatus {
@@ -16,15 +16,10 @@ export function getMaintenanceStatus(): MaintenanceStatus {
   let autoReason: string | undefined;
   const health = peekPrimaryDeviceHealth();
   if (health) {
-    if (!health.reachable) {
+    const readiness = health.readiness ?? getDeviceReadiness(health);
+    if (readiness.state === 'blocked') {
       auto = true;
-      autoReason = 'the iDevice is unreachable';
-    } else if (health.internetAccess === false) {
-      auto = true;
-      autoReason = 'the iDevice has no internet access';
-    } else if (health.testFlightBridgeReachable === false) {
-      auto = true;
-      autoReason = 'the autoinstall bridge is unresponsive';
+      autoReason = readiness.reasons[0] ?? 'the iDevice is not ready for automation';
     }
   }
 

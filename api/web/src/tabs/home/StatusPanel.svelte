@@ -549,6 +549,18 @@
 					{/if}
 				</div>
 			</Popover>
+			{#if h.readiness}
+				{@const readiness = h.readiness}
+				<Popover>
+					{#snippet trigger()}
+						<Badge variant={readiness.state === "ready" ? "success" : readiness.state === "caution" ? "secondary" : "destructive"}>{readiness.score}/100 ready</Badge>
+					{/snippet}
+					<div class="max-w-xs">
+						<div class="font-medium">Device readiness</div>
+						<div class="mt-1 text-muted">{readiness.reasons.length ? readiness.reasons.join(" · ") : "Everything needed for automation is available."}</div>
+					</div>
+				</Popover>
+			{/if}
 			{#if poolSummary}
 				<Popover>
 					{#snippet trigger()}

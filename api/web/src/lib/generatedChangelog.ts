@@ -18,10 +18,5 @@ export const GENERATED_CHANGELOG = [
     "date": "2026-07-27",
     "title": "fix: recover interrupted jobs and refine mobile ui",
     "description": "Released in c5a5a56."
-  },
-  {
-    "date": "2026-07-27",
-    "title": "fix: darken device during automated installs",
-    "description": "Released in 9376710."
   }
 ] as const;

@@ -466,6 +466,25 @@
 </Card>
 
 {#if canViewScheduler && watchHealth !== null && watchHealth.some((w) => w.schedulable)}
+	<Card title="Watch performance" class="mt-4">
+		<div class="flex flex-col gap-1.5">
+			{#each watchHealth.filter((w) => w.schedulable) as w (w.watchId)}
+				<div class="border-border flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border px-2.5 py-2 text-xs">
+					<span class="min-w-0 flex-1 truncate" title={w.bundleId}>{appDisplayName(w.bundleId)}</span>
+					<span class="text-muted">{w.dispatchTargetCount} destination{w.dispatchTargetCount === 1 ? "" : "s"}</span>
+					{#if w.schedulerJobSuccessRate !== undefined}
+						<Badge variant={w.schedulerJobSuccessRate >= 0.9 ? "success" : w.schedulerJobSuccessRate >= 0.5 ? "secondary" : "destructive"}>{Math.round(w.schedulerJobSuccessRate * 100)}% success</Badge>
+					{:else}
+						<span class="text-muted">No scheduler jobs yet</span>
+					{/if}
+					{#if w.medianSchedulerJobDurationMs}
+						<span class="text-muted">{fmtDurationApprox(w.medianSchedulerJobDurationMs)} median</span>
+					{/if}
+				</div>
+			{/each}
+		</div>
+	</Card>
+
 	<Card title="Watch health" class="mt-4">
 		{#if flaggedWatches.length === 0}
 			<EmptyState

@@ -153,6 +153,7 @@ export interface AppWatch {
   bundleId: string;
   repo: string;
   ghWorkflowFile: string;
+  dispatchTargets?: DispatchTarget[];
   pollCron: string;
   enabled: boolean;
   webhookUrl?: string;
@@ -163,6 +164,11 @@ export interface AppWatch {
   nextRunAt?: number;
   schedulable: boolean;
   configIssues: string[];
+}
+
+export interface DispatchTarget {
+  repo: string;
+  ghWorkflowFile: string;
 }
 
 export interface DeviceRecord {
@@ -365,7 +371,23 @@ export interface DeviceHealth {
   internetAccess?: boolean;
   networkIpAddress?: string;
   networkInterface?: string;
+  readiness?: DeviceReadiness;
   checkedAt: number;
+}
+
+export interface DeviceReadiness {
+  score: number;
+  state: 'ready' | 'caution' | 'blocked';
+  reasons: string[];
+}
+
+export interface DeviceActivityEntry {
+  id: string;
+  ts: number;
+  deviceId: string;
+  kind: 'health' | 'bridge' | 'job';
+  message: string;
+  bundleId?: string;
 }
 
 export function fetchDeviceHealth(deviceId: string, force = false): Promise<DeviceHealth> {
@@ -379,6 +401,10 @@ export interface HourlyHealthBucket {
 
 export function fetchDeviceHealthHistory(deviceId: string, hours = 24): Promise<{ buckets: HourlyHealthBucket[]; uptimePercent: number | null }> {
   return apiJson(`/v1/dashboard/devices/${encodeURIComponent(deviceId)}/health-history?hours=${hours}`);
+}
+
+export function fetchDeviceActivity(deviceId: string, limit = 12): Promise<{ activity: DeviceActivityEntry[] }> {
+  return apiJson(`/v1/dashboard/devices/${encodeURIComponent(deviceId)}/activity?limit=${limit}`);
 }
 
 export interface HourlyBatteryBucket {
@@ -436,6 +462,7 @@ export interface WatchInput {
   bundleId: string;
   repo: string;
   ghWorkflowFile: string;
+  dispatchTargets?: DispatchTarget[];
   pollCron: string;
   enabled?: boolean;
   webhookUrl?: string;
@@ -709,11 +736,15 @@ export interface WatchHealthSummary {
   watchId: string;
   bundleId: string;
   schedulable: boolean;
+  dispatchTargetCount: number;
   lastCheckAt?: number;
   lastCheckOk?: boolean;
   consecutiveFailures: number;
   everTriggeredInHistory: boolean;
   historyCount: number;
+  schedulerJobCount: number;
+  schedulerJobSuccessRate?: number;
+  medianSchedulerJobDurationMs?: number;
 }
 
 export function fetchWatchHealth(): Promise<{ watches: WatchHealthSummary[] }> {

@@ -10,10 +10,12 @@ const log = scopedLogger('scheduler');
 import { EMBED_COLOR, notify } from '#notify.js';
 import {
   type AppWatch,
+  type DispatchTarget,
   createBackupSnapshot,
   getBackupSchedule,
   getEffectiveSettings,
   getEffectiveWatches,
+  getWatchDispatchTargets,
   getSchedulerRunHistory,
   isWatchSchedulable,
   recordSchedulerRun,
@@ -215,15 +217,14 @@ interface DispatchResult {
 }
 
 function trackRunCompletion(
-  finished: Job,
   watch: AppWatch,
+  target: DispatchTarget,
   versionLabel: string,
   source: 'App Store' | 'TestFlight',
   dispatchedAt: Date,
 ): () => Promise<Partial<SchedulerRunOutcome>> {
   return async () => {
-    try {
-      const run = await pollRunToCompletion(watch.repo, watch.ghWorkflowFile, dispatchedAt);
+      const run = await pollRunToCompletion(target.repo, target.ghWorkflowFile, dispatchedAt);
       if (!run) {
         await notify(
           source === 'App Store' ? 'appStoreAutomationFailure' : 'testFlightAutomationFailure',
@@ -268,14 +269,37 @@ function trackRunCompletion(
         runUrl: run.html_url,
         reason: `Dispatched ${versionLabel} - workflow ${succeeded ? 'succeeded' : `failed (${run.conclusion})`}`,
       };
-    } finally {
+  };
+}
 
+function trackRunCompletions(
+  finished: Job,
+  watch: AppWatch,
+  targets: DispatchTarget[],
+  versionLabel: string,
+  source: 'App Store' | 'TestFlight',
+  dispatchedAt: Date,
+): () => Promise<Partial<SchedulerRunOutcome>> {
+  return async () => {
+    try {
+      const settled = await Promise.allSettled(targets.map((target) => trackRunCompletion(watch, target, versionLabel, source, dispatchedAt)()));
+      const completed = settled
+        .filter((result): result is PromiseFulfilledResult<Partial<SchedulerRunOutcome>> => result.status === 'fulfilled')
+        .map((result) => result.value);
+      const succeeded = completed.filter((result) => result.runStatus === 'succeeded').length;
+      const unresolved = targets.length - succeeded;
+      return {
+        runStatus: unresolved === 0 ? 'succeeded' : succeeded === 0 ? 'failed' : 'timed_out',
+        runUrl: completed.find((result) => result.runUrl)?.runUrl,
+        reason: `Dispatched ${versionLabel} to ${targets.length} destination${targets.length === 1 ? '' : 's'} - ${succeeded} workflow${succeeded === 1 ? '' : 's'} succeeded${unresolved ? `, ${unresolved} need attention` : ''}`,
+      };
+    } finally {
       await reclaimJobFile(finished);
     }
   };
 }
 
-async function decryptAndDispatch(job: Job, watch: AppWatch, isTestflight: boolean, versionLabel: string): Promise<DispatchResult> {
+async function decryptAndDispatch(job: Job, watch: AppWatch, isTestflight: boolean, versionLabel: string, targets: DispatchTarget[]): Promise<DispatchResult> {
   const finished = await waitForJob(job, SCHEDULER_JOB_TIMEOUT_MS);
 
   if (finished.status !== 'done') {
@@ -305,8 +329,36 @@ async function decryptAndDispatch(job: Job, watch: AppWatch, isTestflight: boole
   const dispatchedAt = new Date();
   try {
     const ipaUrl = buildSignedFileUrl(finished.id, config.fileTtlMinutes);
-    await dispatchIpaUpdate(watch.repo, ipaUrl, isTestflight);
-    log.info('dispatched ipa-update', { dispatchRepo: watch.repo, bundleId: watch.bundleId, isTestflight });
+    const results = await Promise.allSettled(targets.map((target) => dispatchIpaUpdate(target.repo, ipaUrl, isTestflight)));
+    const dispatchedTargets = targets.filter((_, index) => results[index].status === 'fulfilled');
+    const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected').map((result) => String(result.reason));
+    if (dispatchedTargets.length === 0) throw new Error(failures.join('; ') || 'all dispatches failed');
+    log.info('dispatched ipa-update', { dispatchRepos: dispatchedTargets.map((target) => target.repo), bundleId: watch.bundleId, isTestflight });
+    if (failures.length > 0) {
+      await notify(
+        isTestflight ? 'testFlightAutomationFailure' : 'appStoreAutomationFailure',
+        {
+          title: `${isTestflight ? 'TestFlight' : 'App Store'} automation partially dispatched`,
+          color: EMBED_COLOR.warn,
+          fields: [
+            { name: 'App', value: watch.bundleId, inline: true },
+            { name: 'Version', value: versionLabel, inline: true },
+            { name: 'Stage', value: 'dispatch', inline: true },
+            { name: 'Reason', value: `${failures.length} destination${failures.length === 1 ? '' : 's'} could not be dispatched` },
+          ],
+        },
+        watch.webhookUrl,
+      );
+    }
+    return {
+      outcome: {
+        ok: true,
+        triggered: true,
+        reason: `Dispatched ${versionLabel} to ${dispatchedTargets.length}/${targets.length} destination${targets.length === 1 ? '' : 's'} - waiting on workflow runs`,
+        runStatus: 'dispatched',
+      },
+      trackCompletion: trackRunCompletions(finished, watch, dispatchedTargets, versionLabel, isTestflight ? 'TestFlight' : 'App Store', dispatchedAt),
+    };
   } catch (err) {
     log.error('dispatch failed', { error: String(err), isTestflight });
     await notify(
@@ -327,15 +379,15 @@ async function decryptAndDispatch(job: Job, watch: AppWatch, isTestflight: boole
     return { outcome: { ok: false, triggered: true, reason: `Failed to dispatch ${versionLabel}: ${String(err)}` } };
   }
 
-  return {
-    outcome: { ok: true, triggered: true, reason: `Dispatched ${versionLabel} - waiting on workflow run`, runStatus: 'dispatched' },
-    trackCompletion: trackRunCompletion(finished, watch, versionLabel, isTestflight ? 'TestFlight' : 'App Store', dispatchedAt),
-  };
 }
 
 async function tickAppStore(watch: AppWatch): Promise<DispatchResult> {
-  const check = await checkForUpdate(watch);
-  if (!check.wouldDispatch) {
+  const targets = getWatchDispatchTargets(watch);
+  const checks = await Promise.all(targets.map((target) => checkForUpdate({ ...watch, repo: target.repo, ghWorkflowFile: target.ghWorkflowFile })));
+  const dispatchTargets = targets.filter((_, index) => checks[index].wouldDispatch);
+  const check = checks.find((candidate) => candidate.wouldDispatch) ?? checks.find((candidate) => !candidate.ok) ?? checks[0];
+  if (!check) return { outcome: { ok: false, triggered: false, reason: 'No valid dispatch destinations configured' } };
+  if (dispatchTargets.length === 0) {
     if (check.alreadyReleased) {
       log.info('itunes version already has a matching release, nothing to do', { bundleId: watch.bundleId, version: check.normalizedVersion });
     } else {
@@ -378,12 +430,16 @@ async function tickAppStore(watch: AppWatch): Promise<DispatchResult> {
   log.info('no matching release found, decrypting', { bundleId: watch.bundleId, version: normalized, externalVersionId });
 
   const job = enqueueDecryptJob(watch.bundleId, 'scheduler', externalVersionId, undefined, normalized);
-  return decryptAndDispatch(job, watch, false, `v${normalized}`);
+  return decryptAndDispatch(job, watch, false, `v${normalized}`, dispatchTargets);
 }
 
 async function tickTestFlight(watch: AppWatch): Promise<DispatchResult> {
-  const check = await checkForTestFlightUpdate(watch);
-  if (!check.wouldDispatch || !check.build) {
+  const targets = getWatchDispatchTargets(watch);
+  const checks = await Promise.all(targets.map((target) => checkForTestFlightUpdate({ ...watch, repo: target.repo, ghWorkflowFile: target.ghWorkflowFile })));
+  const dispatchTargets = targets.filter((_, index) => checks[index].wouldDispatch);
+  const check = checks.find((candidate) => candidate.wouldDispatch && candidate.build) ?? checks.find((candidate) => !candidate.ok) ?? checks[0];
+  if (!check) return { outcome: { ok: false, triggered: false, reason: 'No valid dispatch destinations configured' } };
+  if (dispatchTargets.length === 0 || !check.build) {
     if (check.alreadyReleased) {
       log.info('TestFlight build already has a matching release, nothing to do', { bundleId: watch.bundleId, tag: check.latestTag });
     } else {
@@ -413,7 +469,7 @@ async function tickTestFlight(watch: AppWatch): Promise<DispatchResult> {
   });
 
   const job = enqueueDecryptJob(watch.bundleId, 'scheduler', undefined, { appId: check.appId as number, build: check.build });
-  return decryptAndDispatch(job, watch, true, check.latestTag as string);
+  return decryptAndDispatch(job, watch, true, check.latestTag as string, dispatchTargets);
 }
 
 const RETRY_BASE_DELAY_MS = 30_000;

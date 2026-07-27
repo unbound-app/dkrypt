@@ -9,7 +9,7 @@ import { scopedLogger } from '#logger.js';
 const log = scopedLogger('jobs');
 import { sendMailToUser } from '#mail.js';
 import { sendPushToUser } from '#push.js';
-import { getApiKeyById, getEffectiveDevices, getUserPrefs, isBundleWatched, latestActiveShareLinkExpiry, recordJobHistory, type DeviceRecord } from '#store/state.js';
+import { getApiKeyById, getEffectiveDevices, getUserPrefs, isBundleWatched, latestActiveShareLinkExpiry, recordDeviceActivity, recordJobHistory, type DeviceRecord } from '#store/state.js';
 import { uninstallFromPrimaryDevice } from '#appStoreInstall.js';
 import { getCachedDeviceHealth } from '#deviceHealthCache.js';
 import { runDecrypt } from '#jobs/runner.js';
@@ -412,6 +412,7 @@ async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
   job.startedAt = Date.now();
   job.deviceId = device.id;
   log.info('job started', { jobId: job.id, bundleId: job.bundleId, deviceId: device.id });
+  recordDeviceActivity({ deviceId: device.id, kind: 'job', bundleId: job.bundleId, message: `Started ${job.testflight ? 'TestFlight' : 'App Store'} decrypt` });
   persistActiveJobs();
   emitJobsChanged();
 
@@ -420,6 +421,7 @@ async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
     job.status = 'done';
     job.finishedAt = Date.now();
     log.info('job done', { jobId: job.id, bundleId: job.bundleId, deviceId: device.id, sizeBytes: job.fileSizeBytes });
+    recordDeviceActivity({ deviceId: device.id, kind: 'job', bundleId: job.bundleId, message: 'Decrypt completed' });
     persistDoneJobs();
     persistActiveJobs();
   } catch (err) {
@@ -450,6 +452,7 @@ async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
     job.finishedAt = Date.now();
     job.error = message;
     log.error('job failed', { jobId: job.id, bundleId: job.bundleId, deviceId: device.id, error: job.error, retried: (job.retryCount ?? 0) > 0 });
+    recordDeviceActivity({ deviceId: device.id, kind: 'job', bundleId: job.bundleId, message: 'Decrypt failed' });
     persistActiveJobs();
   }
 

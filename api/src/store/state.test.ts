@@ -24,6 +24,7 @@ import {
   getDiscordGuildIds,
   getDiscordRolePerks,
   getEffectiveDevices,
+  getWatchDispatchTargets,
   getWatchConfigIssues,
   getWebhookDeliveryLog,
   importBackup,
@@ -249,6 +250,23 @@ describe('getWatchConfigIssues', () => {
 });
 
 describe('watch CRUD', () => {
+
+  test('keeps unique dispatch destinations for one watch', () => {
+    const targets = getWatchDispatchTargets({
+      repo: 'owner/legacy',
+      ghWorkflowFile: 'legacy.yml',
+      dispatchTargets: [
+        { repo: 'owner/one', ghWorkflowFile: 'dispatch.yml' },
+        { repo: 'owner/two', ghWorkflowFile: 'publish.yml' },
+        { repo: 'owner/one', ghWorkflowFile: 'dispatch.yml' },
+      ],
+    });
+    expect(targets).toEqual([
+      { repo: 'owner/one', ghWorkflowFile: 'dispatch.yml' },
+      { repo: 'owner/two', ghWorkflowFile: 'publish.yml' },
+    ]);
+  });
+
   test('rejects a second enabled watch targeting the same bundle ID', () => {
     const first = createWatch({ bundleId: 'com.example.collide', repo: 'me/app', ghWorkflowFile: '', pollCron: '0 * * * *' }, 'tester');
     expect(first.ok).toBe(true);
