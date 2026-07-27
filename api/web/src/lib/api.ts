@@ -117,10 +117,8 @@ export interface SchedulerSettings {
   notifyWebhookUrl: string;
   notifyFormat: 'embed' | 'plain';
   notifyOnKeyRequest: boolean;
-  notifyOnAppStoreAutomationSuccess: boolean;
-  notifyOnTestFlightAutomationSuccess: boolean;
-  notifyOnAppStoreAutomationFailure: boolean;
-  notifyOnTestFlightAutomationFailure: boolean;
+  notifyOnAutomationSuccess: boolean;
+  notifyOnAutomationFailure: boolean;
   notifyOnKeyExpiringSoon: boolean;
   notifyOnDeviceOffline: boolean;
   notifyOnDeviceBatteryHot: boolean;
@@ -721,6 +719,13 @@ export function fetchAppCatalog(bundleIds: string[]): Promise<{ entries: AppCata
   const unique = [...new Set(bundleIds.map((bundleId) => bundleId.trim()).filter(Boolean))];
   if (unique.length === 0) return Promise.resolve({ entries: [] });
   return apiJson(`/v1/dashboard/apps/metadata?bundleIds=${encodeURIComponent(unique.join(','))}`);
+}
+
+export function refreshAppCatalog(bundleIds: string[]): Promise<{ ok: boolean; data: { entries: AppCatalogEntry[] } }> {
+  return apiAction('/v1/dashboard/apps/metadata/refresh', {
+    method: 'POST',
+    body: JSON.stringify({ bundleIds }),
+  });
 }
 
 export function queueDecrypt(

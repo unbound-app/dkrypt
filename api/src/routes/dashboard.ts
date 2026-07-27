@@ -449,6 +449,37 @@ dashboardRouter.get('/v1/dashboard/apps/metadata', async (req, res) => {
   res.json({ entries: getAppCatalogEntries(bundleIds) });
 });
 
+dashboardRouter.post('/v1/dashboard/apps/metadata/refresh', canManageWatches, async (req, res) => {
+  const rawBundleIds: unknown[] = Array.isArray(req.body?.bundleIds) ? req.body.bundleIds : [];
+  const validBundleIds = rawBundleIds.filter(
+    (bundleId): bundleId is string => typeof bundleId === 'string' && BUNDLE_ID_RE.test(bundleId),
+  );
+  const bundleIds = Array.from(new Set<string>(validBundleIds)).slice(0, 40);
+  if (bundleIds.length === 0) {
+    res.status(400).json({ error: 'at least one valid bundle ID is required' });
+    return;
+  }
+
+  const fetched = await Promise.all(
+    bundleIds.map(async (bundleId) => {
+      try {
+        const metadata = await lookupAppMetadata(bundleId);
+        return {
+          bundleId: metadata.bundleId,
+          displayName: metadata.trackName,
+          iconUrl: metadata.artworkUrl,
+          trackId: metadata.trackId,
+          sellerName: metadata.sellerName,
+        };
+      } catch {
+        return null;
+      }
+    }),
+  );
+  const entries = upsertAppCatalogEntries(fetched.filter((entry): entry is NonNullable<typeof entry> => !!entry));
+  res.json({ entries });
+});
+
 const EXTERNAL_VERSION_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
 dashboardRouter.post('/v1/dashboard/decrypt', canDecrypt, blockDuringMaintenance, (req, res) => {
@@ -1313,10 +1344,8 @@ dashboardRouter.get('/v1/dashboard/settings', canViewScheduler, (_req, res) => {
 const SETTINGS_STRING_FIELDS = ['notifyWebhookUrl'] as const;
 const SETTINGS_BOOL_FIELDS = [
   'notifyOnKeyRequest',
-  'notifyOnAppStoreAutomationSuccess',
-  'notifyOnTestFlightAutomationSuccess',
-  'notifyOnAppStoreAutomationFailure',
-  'notifyOnTestFlightAutomationFailure',
+  'notifyOnAutomationSuccess',
+  'notifyOnAutomationFailure',
   'notifyOnKeyExpiringSoon',
   'notifyOnDeviceOffline',
   'notifyOnDeviceBatteryHot',
@@ -1354,12 +1383,10 @@ dashboardRouter.put('/v1/dashboard/settings', canManageSchedulerSettings, (req, 
   }
 
   if (typeof body.notifyOnDispatchSuccess === 'boolean') {
-    if (patch.notifyOnAppStoreAutomationSuccess === undefined) patch.notifyOnAppStoreAutomationSuccess = body.notifyOnDispatchSuccess;
-    if (patch.notifyOnTestFlightAutomationSuccess === undefined) patch.notifyOnTestFlightAutomationSuccess = body.notifyOnDispatchSuccess;
+    if (patch.notifyOnAutomationSuccess === undefined) patch.notifyOnAutomationSuccess = body.notifyOnDispatchSuccess;
   }
   if (typeof body.notifyOnDispatchFailure === 'boolean') {
-    if (patch.notifyOnAppStoreAutomationFailure === undefined) patch.notifyOnAppStoreAutomationFailure = body.notifyOnDispatchFailure;
-    if (patch.notifyOnTestFlightAutomationFailure === undefined) patch.notifyOnTestFlightAutomationFailure = body.notifyOnDispatchFailure;
+    if (patch.notifyOnAutomationFailure === undefined) patch.notifyOnAutomationFailure = body.notifyOnDispatchFailure;
   }
   if (body.notifyFormat === 'embed' || body.notifyFormat === 'plain') {
     patch.notifyFormat = body.notifyFormat;

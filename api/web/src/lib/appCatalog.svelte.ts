@@ -1,4 +1,4 @@
-import { fetchAppCatalog, type AppCatalogEntry, type AppStoreSearchResult } from '#lib/api';
+import { fetchAppCatalog, refreshAppCatalog as requestAppCatalogRefresh, type AppCatalogEntry, type AppStoreSearchResult } from '#lib/api';
 
 const catalogState = $state<{ byBundleId: Record<string, AppCatalogEntry> }>({ byBundleId: {} });
 const inFlight = new Set<string>();
@@ -43,6 +43,14 @@ export async function ensureAppCatalog(bundleIds: string[]): Promise<void> {
   } finally {
     for (const bundleId of missing) inFlight.delete(bundleId);
   }
+}
+
+export async function refreshAppCatalog(bundleIds: string[]): Promise<boolean> {
+  const unique = normalizeBundleIds(bundleIds).slice(0, 40);
+  if (unique.length === 0) return true;
+  const { ok, data } = await requestAppCatalogRefresh(unique);
+  if (ok) mergeEntries(data.entries);
+  return ok;
 }
 
 export function appDisplayName(bundleId: string, fallback?: string): string {

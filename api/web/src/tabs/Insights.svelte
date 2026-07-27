@@ -383,12 +383,6 @@
 										>
 									</span>
 								</button>
-								<div
-									class="text-muted truncate text-[11px]"
-									title={app.bundleId}
-								>
-									{app.bundleId}
-								</div>
 							</td>
 							<td data-label="Runs">{app.totalRuns}</td>
 							<td data-label="Success rate">
@@ -484,9 +478,8 @@
 						class="border-border flex items-center gap-2.5 rounded-md border px-2.5 py-2 text-xs"
 					>
 						<TriangleAlert class="text-warn h-3.5 w-3.5 shrink-0" />
-						<span
-							class="min-w-0 flex-1 truncate font-mono"
-							title={w.bundleId}>{w.bundleId}</span
+						<span class="min-w-0 flex-1 truncate" title={w.bundleId}
+							>{appDisplayName(w.bundleId)}</span
 						>
 						{#if w.consecutiveFailures >= 3}
 							<Badge variant="destructive"

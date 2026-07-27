@@ -163,10 +163,8 @@ export interface SchedulerSettings {
   notifyWebhookUrl: string;
   notifyFormat: 'embed' | 'plain';
   notifyOnKeyRequest: boolean;
-  notifyOnAppStoreAutomationSuccess: boolean;
-  notifyOnTestFlightAutomationSuccess: boolean;
-  notifyOnAppStoreAutomationFailure: boolean;
-  notifyOnTestFlightAutomationFailure: boolean;
+  notifyOnAutomationSuccess: boolean;
+  notifyOnAutomationFailure: boolean;
   notifyOnKeyExpiringSoon: boolean;
   notifyOnDeviceOffline: boolean;
   notifyOnDeviceBatteryHot: boolean;
@@ -1642,14 +1640,18 @@ export function getEffectiveSettings(): SchedulerSettings {
   const legacySettings = state.settings as Record<string, unknown>;
   const legacyDispatchSuccess = typeof legacySettings.notifyOnDispatchSuccess === 'boolean' ? legacySettings.notifyOnDispatchSuccess : undefined;
   const legacyDispatchFailure = typeof legacySettings.notifyOnDispatchFailure === 'boolean' ? legacySettings.notifyOnDispatchFailure : undefined;
+  const legacyAutomationSuccess = [legacySettings.notifyOnAppStoreAutomationSuccess, legacySettings.notifyOnTestFlightAutomationSuccess]
+    .filter((value): value is boolean => typeof value === 'boolean')
+    .some(Boolean);
+  const legacyAutomationFailure = [legacySettings.notifyOnAppStoreAutomationFailure, legacySettings.notifyOnTestFlightAutomationFailure]
+    .filter((value): value is boolean => typeof value === 'boolean')
+    .some(Boolean);
   return {
     notifyWebhookUrl: state.settings.notifyWebhookUrl ?? config.notifyWebhookUrl,
     notifyFormat: state.settings.notifyFormat ?? 'embed',
     notifyOnKeyRequest: state.settings.notifyOnKeyRequest ?? true,
-    notifyOnAppStoreAutomationSuccess: state.settings.notifyOnAppStoreAutomationSuccess ?? legacyDispatchSuccess ?? true,
-    notifyOnTestFlightAutomationSuccess: state.settings.notifyOnTestFlightAutomationSuccess ?? legacyDispatchSuccess ?? true,
-    notifyOnAppStoreAutomationFailure: state.settings.notifyOnAppStoreAutomationFailure ?? legacyDispatchFailure ?? true,
-    notifyOnTestFlightAutomationFailure: state.settings.notifyOnTestFlightAutomationFailure ?? legacyDispatchFailure ?? true,
+    notifyOnAutomationSuccess: state.settings.notifyOnAutomationSuccess ?? legacyDispatchSuccess ?? legacyAutomationSuccess ?? true,
+    notifyOnAutomationFailure: state.settings.notifyOnAutomationFailure ?? legacyDispatchFailure ?? legacyAutomationFailure ?? true,
     notifyOnKeyExpiringSoon: state.settings.notifyOnKeyExpiringSoon ?? true,
     notifyOnDeviceOffline: state.settings.notifyOnDeviceOffline ?? true,
     notifyOnDeviceBatteryHot: state.settings.notifyOnDeviceBatteryHot ?? true,

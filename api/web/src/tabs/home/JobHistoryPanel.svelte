@@ -833,10 +833,8 @@
 											</div>
 											<div
 												class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted"
+												title={j.bundleId}
 											>
-												<span title={j.bundleId}
-													>{j.bundleId}</span
-												>
 												<span
 													>{j.versionLabel ??
 														"Unspecified version"}</span
@@ -956,9 +954,6 @@
 >
 	<div class="mb-1 text-sm font-medium">
 		{failedDetails?.title ?? "Failure details"}
-	</div>
-	<div class="mb-2 text-xs text-muted" title={failedDetails?.bundleId ?? ""}>
-		{failedDetails?.bundleId ?? ""}
 	</div>
 	<pre
 		class="bg-panel-muted max-h-80 overflow-auto rounded-lg p-3 text-xs leading-5 whitespace-pre-wrap">{failedDetails?.message ??

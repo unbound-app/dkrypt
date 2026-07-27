@@ -206,12 +206,6 @@
 								>
 							</div>
 							<div
-								class="mt-1 truncate text-[11px] text-muted"
-								title={l.bundleId}
-							>
-								{l.bundleId}
-							</div>
-							<div
 								class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-muted"
 							>
 								<span>{downloadsLabel(l)} downloads</span>
@@ -286,12 +280,6 @@
 		<div class="mb-1 text-sm font-medium">Manage share link</div>
 		<div class="mb-0.5 truncate text-xs" title={manageLink.bundleId}>
 			{appDisplayName(manageLink.bundleId)}
-		</div>
-		<div
-			class="mb-3 truncate font-mono text-xs text-muted"
-			title={manageLink.bundleId}
-		>
-			{manageLink.bundleId}
 		</div>
 		<div class="flex gap-2">
 			<div class="flex-1">

@@ -22,10 +22,10 @@ export type NotifyEvent =
 
 const EVENT_SETTING_KEY: Record<NotifyEvent, keyof SchedulerSettings> = {
   keyRequest: 'notifyOnKeyRequest',
-  appStoreAutomationSuccess: 'notifyOnAppStoreAutomationSuccess',
-  testFlightAutomationSuccess: 'notifyOnTestFlightAutomationSuccess',
-  appStoreAutomationFailure: 'notifyOnAppStoreAutomationFailure',
-  testFlightAutomationFailure: 'notifyOnTestFlightAutomationFailure',
+  appStoreAutomationSuccess: 'notifyOnAutomationSuccess',
+  testFlightAutomationSuccess: 'notifyOnAutomationSuccess',
+  appStoreAutomationFailure: 'notifyOnAutomationFailure',
+  testFlightAutomationFailure: 'notifyOnAutomationFailure',
   keyExpiringSoon: 'notifyOnKeyExpiringSoon',
   deviceOffline: 'notifyOnDeviceOffline',
   deviceBatteryHot: 'notifyOnDeviceBatteryHot',

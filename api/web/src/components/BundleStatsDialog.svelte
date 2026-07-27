@@ -126,9 +126,6 @@
 			<div class="truncate text-[13px] font-medium">
 				{appDisplayName(bundleId)}
 			</div>
-			<div class="text-muted truncate text-[11px]" title={bundleId}>
-				{bundleId}
-			</div>
 		</div>
 	</div>
 	{#if !stats}

@@ -316,12 +316,6 @@
 										>{appDisplayName(j.bundleId)}</span
 									>
 								</div>
-								<div
-									class="text-muted truncate text-[11px]"
-									title={j.bundleId}
-								>
-									{j.bundleId}
-								</div>
 							</td>
 							<td data-label="Version" class="max-w-32">
 								<div

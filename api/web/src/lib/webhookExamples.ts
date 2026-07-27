@@ -31,18 +31,8 @@ const EXAMPLES: Record<keyof SchedulerSettings & `notifyOn${string}`, ExampleEmb
     description: '**alice** requested a new key ("ci-runner") - approve it on the API Keys tab.',
     color: COLOR.info,
   },
-  notifyOnAppStoreAutomationSuccess: {
-    title: 'App Store automation succeeded',
-    color: COLOR.ok,
-    fields: [
-      { name: 'App', value: 'Example App (com.example.app)' },
-      { name: 'Channel', value: 'App Store', inline: true },
-      { name: 'Stage', value: 'workflow run', inline: true },
-      { name: 'Run', value: 'https://github.com/owner/repo/actions/runs/123456' },
-    ],
-  },
-  notifyOnTestFlightAutomationSuccess: {
-    title: 'TestFlight automation succeeded',
+  notifyOnAutomationSuccess: {
+    title: 'Automation succeeded',
     color: COLOR.ok,
     fields: [
       { name: 'App', value: 'Example App (com.example.app)' },
@@ -51,23 +41,13 @@ const EXAMPLES: Record<keyof SchedulerSettings & `notifyOn${string}`, ExampleEmb
       { name: 'Run', value: 'https://github.com/owner/repo/actions/runs/123456' },
     ],
   },
-  notifyOnAppStoreAutomationFailure: {
-    title: 'App Store automation failed',
-    color: COLOR.err,
-    fields: [
-      { name: 'App', value: 'Example App (com.example.app)' },
-      { name: 'Channel', value: 'App Store', inline: true },
-      { name: 'Stage', value: 'dispatch', inline: true },
-      { name: 'Reason', value: 'metadata check failed for the target App Store version' },
-    ],
-  },
-  notifyOnTestFlightAutomationFailure: {
-    title: 'TestFlight automation failed',
+  notifyOnAutomationFailure: {
+    title: 'Automation needs attention',
     color: COLOR.err,
     fields: [
       { name: 'App', value: 'Example App (com.example.app)' },
       { name: 'Channel', value: 'TestFlight', inline: true },
-      { name: 'Stage', value: 'decrypt', inline: true },
+      { name: 'Stage', value: 'metadata check', inline: true },
       { name: 'Reason', value: 'autoinstall completed but decrypt timed out' },
     ],
   },

@@ -6,15 +6,15 @@ export interface ChangelogEntry {
   link?: { tab: string; subtab?: string };
 }
 
-export const RELEASE_ID = import.meta.env.VITE_BUILD_REF ?? 'development';
+const configuredReleaseId = import.meta.env.VITE_BUILD_REF;
+export const RELEASE_ID = configuredReleaseId && configuredReleaseId !== 'development' ? configuredReleaseId : __DKRYPT_BUILD_TIME__;
 export const RELEASE_LABEL = RELEASE_ID === 'development' ? 'development' : RELEASE_ID.slice(0, 7);
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: 'Current deployment',
-    title: `Build ${RELEASE_LABEL}`,
-    description: 'This entry updates automatically whenever a new dashboard build is deployed.',
-    isMeta: true,
+    title: `Dashboard deployment ${RELEASE_LABEL}`,
+    description: `Built ${new Date(__DKRYPT_BUILD_TIME__).toLocaleString()} and shown as new until you open this panel.`,
   },
   {
     date: '2026-07-26',

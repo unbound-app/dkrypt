@@ -20,10 +20,8 @@ afterEach(() => {
     notifyWebhookUrl: '',
     notifyFormat: 'embed',
     notifyOnKeyRequest: true,
-    notifyOnAppStoreAutomationSuccess: true,
-    notifyOnTestFlightAutomationSuccess: true,
-    notifyOnAppStoreAutomationFailure: true,
-    notifyOnTestFlightAutomationFailure: true,
+    notifyOnAutomationSuccess: true,
+    notifyOnAutomationFailure: true,
   });
 });
 
@@ -46,7 +44,7 @@ describe('notify', () => {
   });
 
   test('posts a Discord-shaped embed payload for an enabled event, with no separate content line', async () => {
-    updateSettings({ notifyWebhookUrl: 'https://example.test/webhook', notifyOnAppStoreAutomationSuccess: true });
+    updateSettings({ notifyWebhookUrl: 'https://example.test/webhook', notifyOnAutomationSuccess: true });
     let capturedBody: Record<string, unknown> | undefined;
     const fetchMock = mock((_url: string, init?: RequestInit) => {
       capturedBody = JSON.parse(init?.body as string);
@@ -163,10 +161,8 @@ describe('sendTestNotification', () => {
   test('ignores event toggles and always posts when a URL is given', async () => {
     updateSettings({
       notifyOnKeyRequest: false,
-      notifyOnAppStoreAutomationSuccess: false,
-      notifyOnTestFlightAutomationSuccess: false,
-      notifyOnAppStoreAutomationFailure: false,
-      notifyOnTestFlightAutomationFailure: false,
+      notifyOnAutomationSuccess: false,
+      notifyOnAutomationFailure: false,
     });
     const fetchMock = mock(() => Promise.resolve(new Response('{}', { status: 200 })));
     global.fetch = fetchMock as unknown as typeof fetch;

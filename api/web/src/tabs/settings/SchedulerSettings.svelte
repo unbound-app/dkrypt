@@ -3,6 +3,7 @@
 		CircleCheck,
 		LoaderCircle,
 		Plus,
+		RefreshCw,
 		Search,
 		TriangleAlert,
 		X,
@@ -47,6 +48,7 @@
 		appIconUrl,
 		ensureAppCatalog,
 		primeAppCatalogFromSearch,
+		refreshAppCatalog,
 	} from "#lib/appCatalog.svelte";
 	import { liveState } from "#lib/live.svelte";
 	import { PermissionFlag } from "#lib/permissions";
@@ -78,28 +80,16 @@
 			description: "A user without approveApiKeys requests a new key",
 		},
 		{
-			key: "notifyOnAppStoreAutomationSuccess",
-			label: "App Store automation succeeded",
+			key: "notifyOnAutomationSuccess",
+			label: "Automation succeeded",
 			description:
-				"App Store-specific automation path completed successfully",
+				"A watched App Store or TestFlight release completed its GitHub workflow",
 		},
 		{
-			key: "notifyOnTestFlightAutomationSuccess",
-			label: "TestFlight automation succeeded",
+			key: "notifyOnAutomationFailure",
+			label: "Automation needs attention",
 			description:
-				"TestFlight-specific automation path completed successfully",
-		},
-		{
-			key: "notifyOnAppStoreAutomationFailure",
-			label: "App Store automation failed",
-			description:
-				"App Store-specific automation failed (check/decrypt/dispatch/workflow)",
-		},
-		{
-			key: "notifyOnTestFlightAutomationFailure",
-			label: "TestFlight automation failed",
-			description:
-				"TestFlight-specific automation failed (check/decrypt/dispatch/workflow)",
+				"A watched App Store or TestFlight release failed a check, decrypt, dispatch, or workflow",
 		},
 		{
 			key: "notifyOnKeyExpiringSoon",
@@ -246,6 +236,7 @@
 	let previewProgressByWatch = $state<Record<string, PreviewProgress[]>>({});
 	let triggeringWatch = $state<Set<string>>(new Set());
 	let deletingWatch = $state<Set<string>>(new Set());
+	let refreshingAppInfo = $state(false);
 	let watchSearchTerm = $state("");
 	let watchSearchResults = $state<AppStoreSearchResult[]>([]);
 	let watchSearchLoading = $state(false);
@@ -264,6 +255,16 @@
 	$effect(() => {
 		void ensureAppCatalog(watches.map((watch) => watch.bundleId));
 	});
+
+	async function refreshWatchAppInfo(): Promise<void> {
+		refreshingAppInfo = true;
+		try {
+			const ok = await refreshAppCatalog(watches.map((watch) => watch.bundleId));
+			showToast(ok ? "App names and icons refreshed" : "Could not refresh app info", ok ? "success" : "error");
+		} finally {
+			refreshingAppInfo = false;
+		}
+	}
 
 	const checkWatchCron = debounce(async (expr: string) => {
 		if (!expr) {
@@ -679,10 +680,8 @@
 		notifyWebhookUrl: "",
 		notifyFormat: "embed",
 		notifyOnKeyRequest: true,
-		notifyOnAppStoreAutomationSuccess: true,
-		notifyOnTestFlightAutomationSuccess: true,
-		notifyOnAppStoreAutomationFailure: true,
-		notifyOnTestFlightAutomationFailure: true,
+		notifyOnAutomationSuccess: true,
+		notifyOnAutomationFailure: true,
 		notifyOnKeyExpiringSoon: true,
 		notifyOnDeviceOffline: true,
 		notifyOnDeviceBatteryHot: true,
@@ -784,10 +783,23 @@
 	<Card title="Watches">
 		{#snippet headerExtra()}
 			{#if canManageWatches}
-				<Button size="sm" onclick={openAddWatch}>
-					<Plus class="h-3.5 w-3.5" />
-					Add watch
-				</Button>
+				<div class="flex items-center gap-1.5">
+					<Button
+						size="sm"
+						variant="secondary"
+						loading={refreshingAppInfo}
+						disabled={watches.length === 0}
+						onclick={refreshWatchAppInfo}
+						title="Refresh cached app names and icons"
+					>
+						<RefreshCw class="h-3.5 w-3.5" />
+						Refresh apps
+					</Button>
+					<Button size="sm" onclick={openAddWatch}>
+						<Plus class="h-3.5 w-3.5" />
+						Add watch
+					</Button>
+				</div>
 			{/if}
 		{/snippet}
 		{#if watches.length === 0}
@@ -867,7 +879,6 @@
 						<div
 							class="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 font-mono text-[11px] text-muted"
 						>
-							<span title={w.bundleId}>{w.bundleId}</span>
 							<span title={w.repo}>{w.repo || "-"}</span>
 							<span title="poll cron">{w.pollCron}</span>
 						</div>
@@ -1069,8 +1080,8 @@
 								<div class="truncate text-[13px] font-medium">
 									{result.trackName}
 								</div>
-								<div class="truncate text-[11px] text-muted">
-									{result.bundleId}
+								<div class="truncate text-[11px] text-muted" title={result.bundleId}>
+									v{result.version} · {result.sellerName}
 								</div>
 							</div>
 						</button>
@@ -1080,10 +1091,12 @@
 				<div class="mt-1 text-xs text-muted">No apps found.</div>
 			{/if}
 
-			<label for="w-bundleId" class="mt-3 mb-1 block text-xs text-muted"
-				>Selected bundle ID</label
-			>
-			<Input id="w-bundleId" bind:value={watchForm.bundleId} />
+			<div class="mt-3 text-xs text-muted">Selected app</div>
+			<div class="mt-1 truncate text-sm" title={watchForm.bundleId}>
+				{watchForm.bundleId
+					? appDisplayName(watchForm.bundleId)
+					: "Choose an app from search"}
+			</div>
 
 			<label for="w-repo" class="mt-3 mb-1 block text-xs text-muted"
 				>Dispatch repository</label

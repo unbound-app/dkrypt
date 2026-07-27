@@ -184,13 +184,13 @@
 		bundleId: string,
 	): Promise<void> {
 		if (
-			!(await confirmDialog(`Cancel ${bundleId}?`, {
+			!(await confirmDialog(`Cancel ${appDisplayName(bundleId)}?`, {
 				confirmLabel: "Cancel job",
 			}))
 		)
 			return;
 		const { ok } = await cancelJob(id);
-		if (ok) showToast(`Cancelled ${bundleId}`, "success");
+		if (ok) showToast(`Cancelled ${appDisplayName(bundleId)}`, "success");
 	}
 
 	async function retryRecentJob(job: RecentJob): Promise<void> {
@@ -320,7 +320,7 @@
 				for (const job of liveState.overview?.activeJobs ?? []) {
 					base.push({
 						id: `cancel-${job.id}`,
-						label: `Cancel ${job.bundleId}`,
+						label: `Cancel ${appDisplayName(job.bundleId)}`,
 						category: "Actions",
 						keywords: `${job.bundleId} active job`,
 						run: () => void cancelActiveJob(job.id, job.bundleId),
@@ -333,7 +333,7 @@
 				if (!w.schedulable) continue;
 				base.push({
 					id: `trigger-dispatch-${w.id}`,
-					label: `Trigger dispatch now: ${w.bundleId}`,
+					label: `Trigger dispatch now: ${appDisplayName(w.bundleId)}`,
 					category: "Actions",
 					keywords: w.bundleId,
 					run: () => void runTriggerWatchDispatch(w.id),

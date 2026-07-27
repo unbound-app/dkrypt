@@ -16,8 +16,7 @@
 		return `${entry.date}|${entry.title}|${entry.description}`;
 	}
 
-	const newestEntry =
-		CHANGELOG.find((entry) => !entry.isMeta) ?? CHANGELOG[0];
+	const newestEntry = CHANGELOG[0];
 	const newestEntryKey = newestEntry ? entryKey(newestEntry) : "";
 
 	let open = $state(false);
