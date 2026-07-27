@@ -1,6 +1,11 @@
 export const GENERATED_CHANGELOG = [
   {
     "date": "2026-07-27",
+    "title": "fix: refresh generated changelog",
+    "description": "Released in d3a4982."
+  },
+  {
+    "date": "2026-07-27",
     "title": "feat: add workflow dispatch and release planning",
     "description": "Released in a9f8aef."
   },
@@ -33,10 +38,5 @@ export const GENERATED_CHANGELOG = [
     "date": "2026-07-27",
     "title": "feat: expand automation observability",
     "description": "Released in de704b8."
-  },
-  {
-    "date": "2026-07-27",
-    "title": "fix: flush mobile navigation to viewport",
-    "description": "Released in 1b870dc."
   }
 ] as const;

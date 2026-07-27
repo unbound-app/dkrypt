@@ -458,6 +458,10 @@ export function setDeviceDarkMode(id: string, enabled: boolean): Promise<{ ok: b
   return apiAction(`/v1/dashboard/devices/${encodeURIComponent(id)}/dark-mode`, { method: 'PUT', body: JSON.stringify({ enabled }) }, enabled ? 'Display dark mode enabled' : 'Display dark mode disabled');
 }
 
+export function runBridgeAction(id: string, action: 'open-testflight' | 'open-appstore' | 'screen-status'): Promise<{ ok: boolean; data: { result: Record<string, unknown> } }> {
+  return apiAction(`/v1/dashboard/devices/${encodeURIComponent(id)}/bridge-action`, { method: 'POST', body: JSON.stringify({ action }) }, 'Bridge action completed');
+}
+
 export function fetchWatches(): Promise<{ watches: AppWatch[] }> {
   return apiJson('/v1/dashboard/watches');
 }
@@ -744,6 +748,18 @@ export function fetchInsights(trendDays = 14, topApps = 5): Promise<InsightsSumm
   return apiJson(`/v1/dashboard/insights?trendDays=${trendDays}&topApps=${topApps}`);
 }
 
+export interface FailurePattern {
+  message: string;
+  count: number;
+  firstSeen: number;
+  lastSeen: number;
+  bundleIds: string[];
+}
+
+export function fetchFailurePatterns(): Promise<{ patterns: FailurePattern[] }> {
+  return apiJson('/v1/dashboard/failure-patterns');
+}
+
 export interface StorageForecast {
   freeBytes: number;
   bytesPerDay: number;
@@ -784,6 +800,16 @@ export function fetchGithubRepos(): Promise<{ repos: GithubRepoOption[] }> {
 
 export function fetchGithubWorkflows(repo: string): Promise<{ workflows: GithubWorkflowOption[] }> {
   return apiJson(`/v1/dashboard/github/workflows?repo=${encodeURIComponent(repo)}`);
+}
+
+export interface GithubRateLimit {
+  limit?: number;
+  remaining?: number;
+  reset?: number;
+}
+
+export function fetchGithubRateLimit(): Promise<GithubRateLimit> {
+  return apiJson('/v1/dashboard/github/rate-limit');
 }
 
 export function searchApps(term: string): Promise<{ results: AppStoreSearchResult[] } | { error: string }> {

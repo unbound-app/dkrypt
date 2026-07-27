@@ -5,9 +5,11 @@
 	import Sparkline from "#components/Sparkline.svelte";
 	import {
 		fetchInsights,
+		fetchFailurePatterns,
 		fetchStorageForecast,
 		fetchWatchHealth,
 		type InsightsSummary,
+		type FailurePattern,
 		type SchedulerRunEntry,
 		type StorageForecast,
 		type WatchHealthSummary,
@@ -89,11 +91,13 @@
 	);
 	let watchHealth = $state<WatchHealthSummary[] | null>(null);
 	let storageForecast = $state<StorageForecast | null>(null);
+	let failurePatterns = $state<FailurePattern[]>([]);
 
 	$effect(() => {
 		if (!canViewScheduler) return;
 		void fetchWatchHealth().then((r) => (watchHealth = r.watches));
 		void fetchStorageForecast().then((forecast) => (storageForecast = forecast));
+		void fetchFailurePatterns().then(({ patterns }) => (failurePatterns = patterns));
 	});
 
 	const releaseDays = $derived(
@@ -488,6 +492,21 @@
 			</div>
 		{:else}
 			<EmptyState message="Storage forecast will appear after completed decrypts with recorded artifact sizes." />
+		{/if}
+	</Card>
+
+	<Card title="Failure patterns" class="mt-4">
+		{#if failurePatterns.length === 0}
+			<EmptyState message="No repeated failures recorded." />
+		{:else}
+			<div class="flex flex-col gap-2">
+				{#each failurePatterns as pattern (pattern.message)}
+					<div class="border-border rounded-lg border p-2.5 text-xs">
+						<div class="flex items-center gap-2"><Badge variant="destructive">{pattern.count}×</Badge><span class="min-w-0 flex-1 truncate" title={pattern.message}>{pattern.message}</span></div>
+						<div class="mt-1 text-muted">{pattern.bundleIds.length} app{pattern.bundleIds.length === 1 ? "" : "s"} · last seen <RelativeTime ms={pattern.lastSeen} /></div>
+					</div>
+				{/each}
+			</div>
 		{/if}
 	</Card>
 

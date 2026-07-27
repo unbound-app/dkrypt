@@ -16,6 +16,7 @@
 		fetchSettings,
 		fetchWebhookDeliveries,
 		fetchGithubRepos,
+		fetchGithubRateLimit,
 		fetchGithubWorkflows,
 		fetchAppCatalogStats,
 		importWatches,
@@ -36,6 +37,7 @@
 		type AppStoreSearchResult,
 		type DispatchTarget,
 		type GithubRepoOption,
+		type GithubRateLimit,
 		type GithubWorkflowOption,
 		type SchedulerSettings,
 		type TestFlightUpdateCheck,
@@ -290,6 +292,7 @@
 	let watchSearchSearched = $state(false);
 	let watchSearchToken = 0;
 	let githubRepos = $state<GithubRepoOption[]>([]);
+	let githubRateLimit = $state<GithubRateLimit | null>(null);
 	let githubReposError = $state("");
 	let githubWorkflowsByRepo = $state<Record<string, GithubWorkflowOption[]>>({});
 	let githubWorkflowErrors = $state<Record<string, string>>({});
@@ -309,6 +312,11 @@
 
 	$effect(() => {
 		void ensureAppCatalog(watches.map((watch) => watch.bundleId));
+	});
+
+	$effect(() => {
+		if (!canManageWatches) return;
+		void fetchGithubRateLimit().then((limit) => (githubRateLimit = limit)).catch(() => undefined);
 	});
 
 	$effect(() => {
@@ -937,6 +945,9 @@
 				<Button size="sm" variant="secondary" class="ml-auto" loading={refreshingCatalog} onclick={refreshWatchedCatalog}>Refresh app metadata</Button>
 			{/if}
 		</div>
+		{#if githubRateLimit?.remaining !== undefined}
+			<div class="mt-1 text-xs text-muted">GitHub API: {githubRateLimit.remaining}/{githubRateLimit.limit ?? "?"} requests remaining{githubRateLimit.reset ? ` · resets ${new Date(githubRateLimit.reset * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""}</div>
+		{/if}
 	</Card>
 
 	<Card title="Watches">

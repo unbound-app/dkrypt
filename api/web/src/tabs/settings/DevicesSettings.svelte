@@ -9,6 +9,7 @@
     fetchDeviceHealth,
     fetchSettings,
     saveSettings,
+    runBridgeAction,
     setDeviceDarkMode,
     updateDevice,
     type DeviceHealth,
@@ -79,6 +80,7 @@
 
   let testingId = $state<Set<string>>(new Set());
   let updatingDarkModeId = $state<Set<string>>(new Set());
+  let bridgeActionId = $state<Set<string>>(new Set());
 
   async function testConnection(d: DeviceRecord): Promise<void> {
     testingId = new Set(testingId).add(d.id);
@@ -102,6 +104,18 @@
       const next = new Set(updatingDarkModeId);
       next.delete(d.id);
       updatingDarkModeId = next;
+    }
+  }
+
+  async function bridgeAction(d: DeviceRecord, action: 'open-testflight' | 'open-appstore'): Promise<void> {
+    bridgeActionId = new Set(bridgeActionId).add(d.id);
+    try {
+      await runBridgeAction(d.id, action);
+      showToast(action === 'open-testflight' ? 'TestFlight opened' : 'App Store opened', 'success');
+    } finally {
+      const next = new Set(bridgeActionId);
+      next.delete(d.id);
+      bridgeActionId = next;
     }
   }
 
@@ -221,6 +235,8 @@
                 Test connection
               </Button>
               {#if canManageDevices}
+				<Button size="sm" variant="secondary" loading={bridgeActionId.has(d.id)} onclick={() => void bridgeAction(d, 'open-testflight')}>Open TestFlight</Button>
+				<Button size="sm" variant="secondary" loading={bridgeActionId.has(d.id)} onclick={() => void bridgeAction(d, 'open-appstore')}>Open App Store</Button>
                 {#if !d.isPrimary}
                   <Button size="sm" variant="secondary" onclick={() => void makePrimary(d)}>Make primary</Button>
                 {/if}

@@ -389,6 +389,25 @@ dashboardRouter.get('/v1/dashboard/insights', (req, res) => {
   res.json(getInsightsSummary(topAppsLimit, trendDays));
 });
 
+dashboardRouter.get('/v1/dashboard/failure-patterns', canViewScheduler, (_req, res) => {
+  const normalize = (message: string) => message
+    .replace(/https?:\/\/\S+/g, '[url]')
+    .replace(/[0-9a-f]{8}-[0-9a-f-]{27,}/gi, '[id]')
+    .replace(/\b\d{4,}\b/g, '[number]')
+    .slice(0, 180);
+  const patterns = new Map<string, { count: number; firstSeen: number; lastSeen: number; bundleIds: Set<string> }>();
+  for (const job of getAllJobHistory().filter((entry) => entry.status === 'failed' && entry.error)) {
+    const key = normalize(job.error as string);
+    const current = patterns.get(key) ?? { count: 0, firstSeen: job.finishedAt, lastSeen: job.finishedAt, bundleIds: new Set<string>() };
+    current.count += 1;
+    current.firstSeen = Math.min(current.firstSeen, job.finishedAt);
+    current.lastSeen = Math.max(current.lastSeen, job.finishedAt);
+    current.bundleIds.add(job.bundleId);
+    patterns.set(key, current);
+  }
+  res.json({ patterns: [...patterns.entries()].map(([message, pattern]) => ({ message, count: pattern.count, firstSeen: pattern.firstSeen, lastSeen: pattern.lastSeen, bundleIds: [...pattern.bundleIds] })).sort((a, b) => b.count - a.count || b.lastSeen - a.lastSeen).slice(0, 20) });
+});
+
 dashboardRouter.get('/v1/dashboard/storage-forecast', canViewScheduler, (_req, res) => {
   const cutoff = Date.now() - 30 * 86_400_000;
   const completed = getAllJobHistory().filter((entry) => entry.status === 'done' && entry.finishedAt >= cutoff && entry.sizeBytes && entry.sizeBytes > 0);
@@ -697,6 +716,47 @@ dashboardRouter.put('/v1/dashboard/devices/:id/dark-mode', canManageDevices, asy
   } catch (err) {
     res.status(502).json({ error: `autoinstall could not change the display state: ${err instanceof Error ? err.message : String(err)}` });
   }
+});
+
+dashboardRouter.post('/v1/dashboard/devices/:id/bridge-action', canManageDevices, async (req, res) => {
+  const action = (req.body as { action?: unknown } | undefined)?.action;
+  const request = action === 'open-testflight'
+    ? { action: 'launch_app', bundleId: 'com.apple.TestFlight' }
+    : action === 'open-appstore'
+      ? { action: 'launch_app', bundleId: 'com.apple.AppStore' }
+      : action === 'screen-status'
+        ? { action: 'screen_status' }
+        : undefined;
+  if (!request) {
+    res.status(400).json({ error: 'unsupported bridge action' });
+    return;
+  }
+  const device = requireDevice(req.params.id);
+  if (!device) {
+    res.status(404).json({ error: 'device not found' });
+    return;
+  }
+  try {
+    const result = await withSSH(device.rootDir, (conn) => sendSpringBoardBridgeRequest(conn, request));
+    recordDeviceActivity({ deviceId: device.id, kind: 'bridge', message: `Bridge action: ${action}` });
+    res.json({ result });
+  } catch (err) {
+    res.status(502).json({ error: `autoinstall bridge action failed: ${err instanceof Error ? err.message : String(err)}` });
+  }
+});
+
+dashboardRouter.get('/v1/dashboard/github/rate-limit', canManageWatches, async (_req, res) => {
+  if (!config.ghToken) {
+    res.status(409).json({ error: 'GH_TOKEN is not configured' });
+    return;
+  }
+  const response = await fetch('https://api.github.com/rate_limit', { headers: { Authorization: `Bearer ${config.ghToken}`, Accept: 'application/vnd.github+json' } });
+  if (!response.ok) {
+    res.status(502).json({ error: `GitHub rate-limit lookup failed: HTTP ${response.status}` });
+    return;
+  }
+  const body = await response.json() as { resources?: { core?: { limit?: number; remaining?: number; reset?: number } } };
+  res.json(body.resources?.core ?? {});
 });
 
 dashboardRouter.get('/v1/dashboard/devices/:id/health-history', canViewDevices, (req, res) => {
