@@ -220,14 +220,25 @@
 }
 
 .glass-mobile-nav {
-	border-radius: 1rem 1rem 0 0;
-	border-bottom: 0;
+	border-radius: 1rem;
 }
 
 .mobile-primary-nav {
-	left: 0;
-	right: 0;
-	bottom: max(0px, calc(env(safe-area-inset-bottom) - 0.35rem));
+	left: 0.5rem;
+	right: 0.5rem;
+	bottom: max(0.25rem, calc(env(safe-area-inset-bottom) - 0.35rem));
+}
+
+@media (max-width: 1023px) {
+	.account-menu {
+		position: fixed !important;
+		top: calc(env(safe-area-inset-top) + 3.5rem) !important;
+		right: 0.5rem !important;
+		bottom: auto !important;
+		left: auto !important;
+		width: min(18rem, calc(100vw - 1rem)) !important;
+		transform: none !important;
+	}
 }
 
 .glass-status-pull {

@@ -653,7 +653,7 @@
 					</DropdownMenu.Trigger>
 					<DropdownMenu.Portal>
 					<DropdownMenu.Content
-							class="border-border bg-panel z-50 w-72 rounded-xl border p-3 shadow-2xl max-lg:!fixed max-lg:!top-14 max-lg:!right-2 max-lg:!bottom-auto max-lg:!left-auto max-lg:!w-[min(18rem,calc(100vw-1rem))] max-lg:!transform-none"
+							class="account-menu border-border bg-panel z-50 w-72 rounded-xl border p-3 shadow-2xl"
 							sideOffset={8}
 							align="end"
 						>

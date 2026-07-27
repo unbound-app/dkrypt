@@ -1,8 +1,8 @@
-const CACHE_NAME = 'dkrypt-shell-v1';
+const CACHE_NAME = 'dkrypt-shell-__DKRYPT_BUILD__';
 const APP_SHELL = ['/', '/manifest.webmanifest', '/favicon.svg', '/favicon.png'];
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)));
+  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (event) => {
