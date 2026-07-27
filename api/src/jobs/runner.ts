@@ -10,9 +10,11 @@ import { installBuild } from '#testflight.js';
 import { extractIpaMetadata } from '#util/ipaMetadata.js';
 
 const log = scopedLogger('jobs');
-import type { Job } from '#jobs/types.js';
+import { appendJobTimelineEvent, type Job } from '#jobs/types.js';
 
 export async function runDecrypt(job: Job, device: DeviceRecord): Promise<void> {
+  const recordTimeline = (label: string) => appendJobTimelineEvent(job, label, 'running');
+
   const ensureNotCancelled = () => {
     if (job.cancelledBy) throw new Error(`cancelled by ${job.cancelledBy}`);
   };
@@ -26,6 +28,7 @@ export async function runDecrypt(job: Job, device: DeviceRecord): Promise<void> 
   let lastActivityStage = '';
   const report = (message: string) => {
     job.progress = message;
+    recordTimeline(message);
     const stage = /foreground/i.test(message)
       ? 'Foregrounding App Store'
       : /TestFlight is running/i.test(message)
@@ -71,6 +74,7 @@ export async function runDecrypt(job: Job, device: DeviceRecord): Promise<void> 
       const lines = text.split('\n');
       const lastLine = lines.at(-1) ?? text;
       job.progress = lastLine;
+      recordTimeline(lastLine);
       for (const line of lines) {
         if (line.trimStart().startsWith('[err]')) lastErrorLine = line.trim();
       }

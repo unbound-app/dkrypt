@@ -32,3 +32,8 @@ export function playChime(): void {
     osc.stop(now + start + 0.3);
   }
 }
+
+export function vibrateCompletion(success: boolean): void {
+  if (!('vibrate' in navigator)) return;
+  navigator.vibrate(success ? [12, 35, 18] : [30, 45, 30]);
+}

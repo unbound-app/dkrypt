@@ -32,7 +32,7 @@
 	} from "#lib/decrypts.svelte";
 	import { fmtUntil } from "#lib/format";
 	import { notifyJobFinished } from "#lib/notifications";
-	import { playChime } from "#lib/sound";
+	import { playChime, vibrateCompletion } from "#lib/sound";
 	import { showToast, soundEnabledState } from "#lib/ui.svelte";
 
 	let pollTimer: ReturnType<typeof setTimeout> | undefined;
@@ -70,7 +70,10 @@
 							? `${label} is ready to download.`
 							: `${label} failed: ${data.error ?? "unknown error"}`,
 					);
-					if (soundEnabledState.value) playChime();
+					if (soundEnabledState.value) {
+						playChime();
+						vibrateCompletion(data.status === "done");
+					}
 				}
 				updateDecrypt(d.id, {
 					status: data.status,

@@ -13,7 +13,7 @@ import { getApiKeyById, getEffectiveDevices, getUserPrefs, isBundleWatched, late
 import { uninstallFromPrimaryDevice } from '#appStoreInstall.js';
 import { getCachedDeviceHealth } from '#deviceHealthCache.js';
 import { runDecrypt } from '#jobs/runner.js';
-import type { Job, JobSource, TestFlightJobSource } from '#jobs/types.js';
+import { appendJobTimelineEvent, type Job, type JobSource, type TestFlightJobSource } from '#jobs/types.js';
 
 const jobs = new Map<string, Job>();
 
@@ -158,6 +158,7 @@ export function enqueueDecryptJob(
     priority,
     status: 'queued',
     progress: 'queued',
+    timeline: [{ at: Date.now(), label: 'Queued', status: 'queued' }],
     createdAt: Date.now(),
     waiters: [],
   };
@@ -241,6 +242,7 @@ function toHistoryEntry(job: Job) {
     deviceId: job.deviceId,
     ipaMetadata: job.ipaMetadata,
     ipaInfoPlist: job.ipaInfoPlist,
+    timeline: job.timeline,
   };
 }
 
@@ -254,6 +256,7 @@ export function cancelQueuedJob(id: string, cancelledBy: string): boolean {
   job.status = 'failed';
   job.error = `cancelled by ${cancelledBy}`;
   job.finishedAt = Date.now();
+  appendJobTimelineEvent(job, job.error, 'failed', job.finishedAt);
   log.info('job cancelled', { jobId: id, bundleId: job.bundleId, cancelledBy });
 
   persistActiveJobs();
@@ -271,6 +274,7 @@ export function cancelRunningJob(id: string, cancelledBy: string): boolean {
 
   job.cancelledBy = cancelledBy;
   job.progress = 'cancelling…';
+  appendJobTimelineEvent(job, job.progress, 'running');
   job.childProcess?.kill('SIGTERM');
   log.info('job cancel requested', { jobId: id, bundleId: job.bundleId, cancelledBy });
   persistActiveJobs();
@@ -411,6 +415,7 @@ async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
   job.status = 'running';
   job.startedAt = Date.now();
   job.deviceId = device.id;
+  appendJobTimelineEvent(job, `Started on ${device.name}`, 'running', job.startedAt);
   log.info('job started', { jobId: job.id, bundleId: job.bundleId, deviceId: device.id });
   recordDeviceActivity({ deviceId: device.id, kind: 'job', bundleId: job.bundleId, message: `Started ${job.testflight ? 'TestFlight' : 'App Store'} decrypt` });
   persistActiveJobs();
@@ -420,6 +425,7 @@ async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
     await runDecrypt(job, device);
     job.status = 'done';
     job.finishedAt = Date.now();
+    appendJobTimelineEvent(job, 'Finished', 'done', job.finishedAt);
     log.info('job done', { jobId: job.id, bundleId: job.bundleId, deviceId: device.id, sizeBytes: job.fileSizeBytes });
     recordDeviceActivity({ deviceId: device.id, kind: 'job', bundleId: job.bundleId, message: 'Decrypt completed' });
     persistDoneJobs();
@@ -430,6 +436,7 @@ async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
     if (canRetry) {
       job.retryCount = (job.retryCount ?? 0) + 1;
       job.progress = 'retrying after a transient failure…';
+      appendJobTimelineEvent(job, job.progress, 'running');
       log.warn('job failed, retrying once after backoff', { jobId: job.id, bundleId: job.bundleId, deviceId: device.id, error: message });
       persistActiveJobs();
       emitJobsChanged();
@@ -438,6 +445,7 @@ async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
         job.status = 'failed';
         job.finishedAt = Date.now();
         job.error = `cancelled by ${job.cancelledBy}`;
+        appendJobTimelineEvent(job, job.error, 'failed', job.finishedAt);
         log.info('job cancelled during retry backoff', { jobId: job.id, bundleId: job.bundleId, cancelledBy: job.cancelledBy });
         persistActiveJobs();
         recordJobHistory(toHistoryEntry(job));
@@ -451,6 +459,7 @@ async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
     job.status = 'failed';
     job.finishedAt = Date.now();
     job.error = message;
+    appendJobTimelineEvent(job, `Failed: ${message}`, 'failed', job.finishedAt);
     log.error('job failed', { jobId: job.id, bundleId: job.bundleId, deviceId: device.id, error: job.error, retried: (job.retryCount ?? 0) > 0 });
     recordDeviceActivity({ deviceId: device.id, kind: 'job', bundleId: job.bundleId, message: 'Decrypt failed' });
     persistActiveJobs();
@@ -466,7 +475,14 @@ async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
     const body = job.status === 'done' ? `${label} is ready to download.` : `${label} failed: ${job.error ?? 'unknown error'}`;
 
     const shouldPush = job.status === 'done' ? (prefs.pushOnSuccess ?? true) : (prefs.pushOnFailure ?? true);
-    if (shouldPush) void sendPushToUser(job.queuedBy, { title, body });
+    if (shouldPush) {
+      void sendPushToUser(job.queuedBy, {
+        title,
+        body,
+        url: `/?job=${encodeURIComponent(job.id)}`,
+        actions: [{ action: 'open-job', title: 'Open job' }],
+      });
+    }
 
     const shouldMail = job.status === 'done' ? (prefs.emailOnSuccess ?? false) : (prefs.emailOnFailure ?? false);
     if (shouldMail) void sendMailToUser(job.queuedBy, { subject: title, text: body });

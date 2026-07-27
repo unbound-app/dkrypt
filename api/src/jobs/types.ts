@@ -10,6 +10,12 @@ export interface TestFlightJobSource {
   build: TFBuild;
 }
 
+export interface JobTimelineEvent {
+  at: number;
+  label: string;
+  status: JobStatus;
+}
+
 export interface Job {
   id: string;
   bundleId: string;
@@ -23,6 +29,7 @@ export interface Job {
   priority: number;
   status: JobStatus;
   progress: string;
+  timeline?: JobTimelineEvent[];
   error?: string;
   retryCount?: number;
   cancelledBy?: string;
@@ -37,4 +44,11 @@ export interface Job {
   finishedAt?: number;
   downloadedAt?: number;
   waiters: Array<(job: Job) => void>;
+}
+
+export function appendJobTimelineEvent(job: Job, label: string, status: JobStatus, at = Date.now()): void {
+  const events = job.timeline ?? (job.timeline = []);
+  if (events.at(-1)?.label === label) return;
+  events.push({ at, label, status });
+  if (events.length > 80) events.splice(0, events.length - 80);
 }

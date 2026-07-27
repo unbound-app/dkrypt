@@ -169,6 +169,7 @@ export interface AppWatch {
 export interface DispatchTarget {
   repo: string;
   ghWorkflowFile: string;
+  inputs?: Record<string, string>;
 }
 
 export interface DeviceRecord {
@@ -254,6 +255,7 @@ export interface JobTimelineEvent {
 
 export interface JobTimeline {
   id: string;
+  correlationId: string;
   bundleId: string;
   status: 'queued' | 'running' | 'done' | 'failed';
   events: JobTimelineEvent[];
@@ -493,6 +495,14 @@ export function updateWatch(id: string, patch: Partial<WatchInput>): Promise<{ o
 
 export function deleteWatch(id: string): Promise<{ ok: boolean }> {
   return apiAction(`/v1/dashboard/watches/${encodeURIComponent(id)}`, { method: 'DELETE' }, 'Watch removed');
+}
+
+export function importWatches(watches: WatchInput[]): Promise<{ ok: boolean; data: { watches: AppWatch[]; skipped: string[] } }> {
+  return apiAction('/v1/dashboard/watches/import', { method: 'POST', body: JSON.stringify({ watches }) }, 'Watches imported');
+}
+
+export function watchesExportUrl(): string {
+  return '/v1/dashboard/watches/export';
 }
 
 export function previewWatchDispatch(id: string): Promise<UpdateCheck> {
@@ -776,6 +786,17 @@ export function refreshAppCatalog(bundleIds: string[]): Promise<{ ok: boolean; d
   });
 }
 
+export interface AppCatalogStats {
+  entries: number;
+  icons: number;
+  oldestUpdatedAt?: number;
+  newestUpdatedAt?: number;
+}
+
+export function fetchAppCatalogStats(): Promise<AppCatalogStats> {
+  return apiJson('/v1/dashboard/apps/cache');
+}
+
 export function queueDecrypt(
   bundleId: string,
   externalVersionId?: string,
@@ -860,6 +881,10 @@ export function retryJob(id: string, preferPrimary = false): Promise<{ ok: boole
 
 export function fetchJobTimeline(id: string): Promise<JobTimeline> {
   return apiJson(`/v1/dashboard/jobs/${encodeURIComponent(id)}/timeline`);
+}
+
+export function jobDiagnosticUrl(id: string): string {
+  return `/v1/dashboard/jobs/${encodeURIComponent(id)}/diagnostic`;
 }
 
 export function fetchMyKeys(): Promise<{ keys: ApiKeyRecord[] }> {

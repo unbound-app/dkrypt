@@ -113,13 +113,18 @@ export async function listReleaseTagNames(repo: string): Promise<Set<string>> {
   return new Set(releases.map((r) => r.tag_name));
 }
 
-export async function dispatchIpaUpdate(dispatchRepo: string, ipaUrl: string, isTestflight: boolean): Promise<void> {
+export async function dispatchIpaUpdate(
+  dispatchRepo: string,
+  ipaUrl: string,
+  isTestflight: boolean,
+  inputs?: Record<string, string>,
+): Promise<void> {
   const res = await fetch(`${GITHUB_API}/repos/${dispatchRepo}/dispatches`, {
     method: 'POST',
     headers: { ...headers(), 'Content-Type': 'application/json' },
     body: JSON.stringify({
       event_type: 'ipa-update',
-      client_payload: { ipa_url: ipaUrl, is_testflight: isTestflight },
+      client_payload: { ipa_url: ipaUrl, is_testflight: isTestflight, inputs },
     }),
   });
 

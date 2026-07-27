@@ -16,6 +16,7 @@ export function jobSummary(job: Job) {
 
   return {
     id: job.id,
+    correlationId: job.id,
     bundleId: job.bundleId,
     externalVersionId: job.externalVersionId,
     testflight: job.testflight

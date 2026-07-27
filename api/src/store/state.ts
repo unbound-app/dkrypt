@@ -17,7 +17,7 @@ import {
   replaceIdentitySnapshot,
   type IdentitySnapshot,
 } from '#identity.js';
-import type { TestFlightJobSource } from '#jobs/types.js';
+import type { JobTimelineEvent, TestFlightJobSource } from '#jobs/types.js';
 import { categorizeFailure } from '#util/failureCategory.js';
 import { combineBits, hasPermission, parseBits, PermissionFlag, serializeBits } from '#permissions.js';
 
@@ -205,6 +205,7 @@ export interface AppWatch {
 export interface DispatchTarget {
   repo: string;
   ghWorkflowFile: string;
+  inputs?: Record<string, string>;
 }
 
 export interface DeviceRecord {
@@ -255,6 +256,7 @@ export interface JobHistoryEntry {
   deviceId?: string;
   ipaMetadata?: IpaMetadata;
   ipaInfoPlist?: Record<string, unknown>;
+  timeline?: JobTimelineEvent[];
 }
 
 export interface AppCatalogEntry {
@@ -297,6 +299,7 @@ export type AuditAction =
   | 'watch.add'
   | 'watch.update'
   | 'watch.remove'
+  | 'watch.import'
   | 'device.add'
   | 'device.update'
   | 'device.remove'
@@ -827,6 +830,17 @@ export function getAppCatalogEntries(bundleIds: string[]): AppCatalogEntry[] {
     if (entry) entries.push(entry);
   }
   return entries;
+}
+
+export function getAppCatalogStats(): { entries: number; icons: number; oldestUpdatedAt?: number; newestUpdatedAt?: number } {
+  const entries = Object.values(state.appCatalog);
+  const updatedAt = entries.map((entry) => entry.updatedAt).filter(Number.isFinite);
+  return {
+    entries: entries.length,
+    icons: entries.filter((entry) => Boolean(entry.iconUrl)).length,
+    oldestUpdatedAt: updatedAt.length ? Math.min(...updatedAt) : undefined,
+    newestUpdatedAt: updatedAt.length ? Math.max(...updatedAt) : undefined,
+  };
 }
 
 export function upsertAppCatalogEntry(entry: Omit<AppCatalogEntry, 'updatedAt'>): AppCatalogEntry {
@@ -1801,7 +1815,7 @@ export function getWatchDispatchTargets(watch: Pick<AppWatch, 'repo' | 'ghWorkfl
     : [{ repo: watch.repo, ghWorkflowFile: watch.ghWorkflowFile }];
   const seen = new Set<string>();
   return candidates
-    .map((target) => ({ repo: target.repo.trim(), ghWorkflowFile: target.ghWorkflowFile.trim() }))
+    .map((target) => ({ repo: target.repo.trim(), ghWorkflowFile: target.ghWorkflowFile.trim(), inputs: target.inputs }))
     .filter((target) => {
       const key = `${target.repo}\u0000${target.ghWorkflowFile}`;
       if (!target.repo || !target.ghWorkflowFile || seen.has(key)) return false;

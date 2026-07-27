@@ -87,6 +87,7 @@ import {
   getWatchConfigIssues,
   getWebhookDeliveryLog,
   getAppCatalogEntries,
+  getAppCatalogStats,
   importBackup,
   isWatchSchedulable,
   type JobHistoryEntry,
@@ -457,6 +458,10 @@ dashboardRouter.get('/v1/dashboard/apps/metadata', async (req, res) => {
   res.json({ entries: getAppCatalogEntries(bundleIds) });
 });
 
+dashboardRouter.get('/v1/dashboard/apps/cache', canViewScheduler, (_req, res) => {
+  res.json(getAppCatalogStats());
+});
+
 dashboardRouter.post('/v1/dashboard/apps/metadata/refresh', canManageWatches, async (req, res) => {
   const rawBundleIds: unknown[] = Array.isArray(req.body?.bundleIds) ? req.body.bundleIds : [];
   const validBundleIds = rawBundleIds.filter(
@@ -694,6 +699,11 @@ dashboardRouter.get('/v1/dashboard/watches', canViewScheduler, (_req, res) => {
   res.json({ watches: getEffectiveWatches().map(serializeWatch) });
 });
 
+dashboardRouter.get('/v1/dashboard/watches/export', canManageWatches, (_req, res) => {
+  res.setHeader('Content-Disposition', 'attachment; filename="dkrypt-watches.json"');
+  res.json({ version: 1, watches: getEffectiveWatches() });
+});
+
 dashboardRouter.get('/v1/dashboard/watches/health', canViewScheduler, (_req, res) => {
   res.json({ watches: getWatchHealthRollup() });
 });
@@ -736,7 +746,7 @@ interface WatchInput {
   bundleId: string;
   repo: string;
   ghWorkflowFile: string;
-  dispatchTargets?: { repo: string; ghWorkflowFile: string }[];
+  dispatchTargets?: { repo: string; ghWorkflowFile: string; inputs?: Record<string, string> }[];
   pollCron: string;
   enabled?: boolean;
   webhookUrl?: string;
@@ -755,6 +765,7 @@ function parseWatchInput(body: unknown): WatchInput | undefined {
         .map((target) => ({
           repo: typeof target.repo === 'string' ? target.repo.trim() : '',
           ghWorkflowFile: typeof target.ghWorkflowFile === 'string' ? target.ghWorkflowFile.trim() : '',
+          inputs: parseDispatchInputs(target.inputs),
         }))
         .filter((target) => /^[\w.-]+\/[\w.-]+$/.test(target.repo) && target.ghWorkflowFile.length > 0)
     : undefined;
@@ -771,6 +782,15 @@ function parseWatchInput(body: unknown): WatchInput | undefined {
       b.testFlightPolicy === 'latestNonExpired' || b.testFlightPolicy === 'train' ? b.testFlightPolicy : 'latest',
     testFlightTrain: typeof b.testFlightTrain === 'string' ? b.testFlightTrain.trim() || undefined : undefined,
   };
+}
+
+function parseDispatchInputs(value: unknown): Record<string, string> | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  const inputs = Object.entries(value as Record<string, unknown>)
+    .filter((entry): entry is [string, string] => entry[0].trim().length > 0 && typeof entry[1] === 'string')
+    .slice(0, 20);
+  if (inputs.length === 0) return undefined;
+  return Object.fromEntries(inputs.map(([key, item]) => [key.trim().slice(0, 100), item.trim().slice(0, 500)]));
 }
 
 dashboardRouter.post('/v1/dashboard/watches', canManageWatches, (req, res) => {
@@ -806,9 +826,10 @@ dashboardRouter.patch('/v1/dashboard/watches/:id', canManageWatches, (req, res) 
   if (Array.isArray(body.dispatchTargets)) {
     patch.dispatchTargets = body.dispatchTargets
       .filter((target): target is Record<string, unknown> => typeof target === 'object' && target !== null)
-      .map((target) => ({
-        repo: typeof target.repo === 'string' ? target.repo.trim() : '',
-        ghWorkflowFile: typeof target.ghWorkflowFile === 'string' ? target.ghWorkflowFile.trim() : '',
+        .map((target) => ({
+          repo: typeof target.repo === 'string' ? target.repo.trim() : '',
+          ghWorkflowFile: typeof target.ghWorkflowFile === 'string' ? target.ghWorkflowFile.trim() : '',
+          inputs: parseDispatchInputs(target.inputs),
       }))
       .filter((target) => /^[\w.-]+\/[\w.-]+$/.test(target.repo) && target.ghWorkflowFile.length > 0);
     if (patch.dispatchTargets[0]) {
@@ -857,6 +878,35 @@ dashboardRouter.delete('/v1/dashboard/watches/:id', canManageWatches, (req, res)
   applyWatchSchedules();
   emitJobsChanged();
   res.json({ ok: true });
+});
+
+dashboardRouter.post('/v1/dashboard/watches/import', canManageWatches, (req, res) => {
+  const body = req.body as { watches?: unknown } | undefined;
+  const rawWatches = Array.isArray(body?.watches) ? body.watches : [];
+  if (rawWatches.length === 0 || rawWatches.length > 100) {
+    res.status(400).json({ error: 'watches must contain between 1 and 100 entries' });
+    return;
+  }
+  const imported: AppWatch[] = [];
+  const skipped: string[] = [];
+  for (const rawWatch of rawWatches) {
+    const input = parseWatchInput(rawWatch);
+    if (!input || !validateCronExpr(input.pollCron) || (input.testFlightPolicy === 'train' && !input.testFlightTrain)) {
+      skipped.push('invalid watch');
+      continue;
+    }
+    const result = createWatch({ ...input, enabled: false }, res.locals.session.sub);
+    if (result.watch) imported.push(serializeWatch(result.watch));
+    else skipped.push(result.error ?? 'could not import watch');
+  }
+  if (imported.length === 0) {
+    res.status(400).json({ error: skipped[0] ?? 'no watches were imported' });
+    return;
+  }
+  recordAudit(res.locals.session.sub, 'watch.import', 'watches', `${imported.length} imported disabled`);
+  applyWatchSchedules();
+  emitJobsChanged();
+  res.status(201).json({ watches: imported, skipped });
 });
 
 dashboardRouter.post('/v1/dashboard/watches/preview-dispatch-draft', canManageWatches, deviceOrExternalRateLimit, async (req, res) => {
@@ -1039,10 +1089,7 @@ dashboardRouter.post('/v1/dashboard/jobs/:id/retry', canDecrypt, blockDuringMain
 dashboardRouter.get('/v1/dashboard/jobs/:id/timeline', (req, res) => {
   const active = getJob(req.params.id);
   if (active) {
-    const events = [{ at: active.createdAt, label: 'Queued', status: 'queued' }];
-    if (active.startedAt) events.push({ at: active.startedAt, label: `Started on ${active.deviceId ?? 'unknown device'}`, status: 'running' });
-    if (active.finishedAt) events.push({ at: active.finishedAt, label: active.status === 'done' ? 'Finished' : `Failed: ${active.error ?? 'unknown error'}`, status: active.status });
-    res.json({ id: active.id, bundleId: active.bundleId, status: active.status, events });
+    res.json({ id: active.id, correlationId: active.id, bundleId: active.bundleId, status: active.status, events: active.timeline ?? [] });
     return;
   }
 
@@ -1051,10 +1098,25 @@ dashboardRouter.get('/v1/dashboard/jobs/:id/timeline', (req, res) => {
     res.status(404).json({ error: 'job not found' });
     return;
   }
-  const events = [{ at: entry.createdAt, label: 'Queued', status: 'queued' }];
-  if (entry.startedAt) events.push({ at: entry.startedAt, label: `Started on ${entry.deviceId ?? 'unknown device'}`, status: 'running' });
-  events.push({ at: entry.finishedAt, label: entry.status === 'done' ? 'Finished' : `Failed: ${entry.error ?? 'unknown error'}`, status: entry.status });
-  res.json({ id: entry.id, bundleId: entry.bundleId, status: entry.status, events });
+  const events = entry.timeline ?? [
+    { at: entry.createdAt, label: 'Queued', status: 'queued' as const },
+    ...(entry.startedAt ? [{ at: entry.startedAt, label: `Started on ${entry.deviceId ?? 'unknown device'}`, status: 'running' as const }] : []),
+    { at: entry.finishedAt, label: entry.status === 'done' ? 'Finished' : `Failed: ${entry.error ?? 'unknown error'}`, status: entry.status },
+  ];
+  res.json({ id: entry.id, correlationId: entry.id, bundleId: entry.bundleId, status: entry.status, events });
+});
+
+dashboardRouter.get('/v1/dashboard/jobs/:id/diagnostic', canDecrypt, (req, res) => {
+  const active = getJob(req.params.id);
+  const entry = active ? undefined : getJobHistoryEntryById(req.params.id);
+  if (!active && !entry) {
+    res.status(404).json({ error: 'job not found' });
+    return;
+  }
+  const job = active ?? entry;
+  if (!job) return;
+  res.setHeader('Content-Disposition', `attachment; filename="dkrypt-job-${job.id}-diagnostic.json"`);
+  res.json({ generatedAt: new Date().toISOString(), correlationId: job.id, job, timeline: active?.timeline ?? entry?.timeline ?? [] });
 });
 
 dashboardRouter.get('/v1/dashboard/jobs/:id/file', async (req, res) => {

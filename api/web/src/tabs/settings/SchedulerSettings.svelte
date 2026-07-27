@@ -8,6 +8,7 @@
 		X,
 	} from "lucide-svelte";
 	import EmptyState from "#components/EmptyState.svelte";
+	import AppIcon from "#components/AppIcon.svelte";
 	import RelativeTime from "#components/RelativeTime.svelte";
 	import {
 		createWatch,
@@ -16,6 +17,8 @@
 		fetchWebhookDeliveries,
 		fetchGithubRepos,
 		fetchGithubWorkflows,
+		fetchAppCatalogStats,
+		importWatches,
 		fetchTestFlightBridgeDiagnostics,
 		fetchWatchHealth,
 		previewWatchDispatchSource,
@@ -25,8 +28,10 @@
 		testWebhook,
 		triggerWatchDispatch,
 		updateWatch,
+		watchesExportUrl,
 		validateCron,
 		type AppWatch,
+		type AppCatalogStats,
 		type AppStoreSearchResult,
 		type DispatchTarget,
 		type GithubRepoOption,
@@ -47,12 +52,14 @@
 	import Select from "#lib/components/ui/Select.svelte";
 	import SearchSelect from "#lib/components/ui/SearchSelect.svelte";
 	import Switch from "#lib/components/ui/Switch.svelte";
+	import { buttonVariants } from "#lib/components/ui/variants";
 	import { debounce } from "#lib/format";
 	import {
 		appDisplayName,
 		appIconUrl,
 		ensureAppCatalog,
 		primeAppCatalogFromSearch,
+		refreshAppCatalog,
 	} from "#lib/appCatalog.svelte";
 	import { liveState } from "#lib/live.svelte";
 	import { PermissionFlag } from "#lib/permissions";
@@ -282,6 +289,10 @@
 	let githubWorkflowsByRepo = $state<Record<string, GithubWorkflowOption[]>>({});
 	let githubWorkflowErrors = $state<Record<string, string>>({});
 	let loadingWorkflowRepos = $state<Set<string>>(new Set());
+	let importingWatches = $state(false);
+	let watchImportInput = $state<HTMLInputElement | null>(null);
+	let appCatalogStats = $state<AppCatalogStats | null>(null);
+	let refreshingCatalog = $state(false);
 
 	const watches = $derived(liveState.overview?.watches ?? []);
 	const failedWatchCount = $derived(watchHealth.filter((watch) => watch.lastCheckOk === false || watch.consecutiveFailures > 0).length);
@@ -293,6 +304,10 @@
 
 	$effect(() => {
 		void ensureAppCatalog(watches.map((watch) => watch.bundleId));
+	});
+
+	$effect(() => {
+		void fetchAppCatalogStats().then((stats) => (appCatalogStats = stats)).catch(() => undefined);
 	});
 
 	$effect(() => {
@@ -458,6 +473,22 @@
 		setDispatchTarget(index, { ghWorkflowFile });
 	}
 
+	function setDispatchInput(index: number, previousKey: string, key: string, value: string): void {
+		const inputs = { ...(dispatchTargets[index]?.inputs ?? {}) };
+		delete inputs[previousKey];
+		if (key.trim()) inputs[key.trim()] = value;
+		setDispatchTarget(index, { inputs: Object.keys(inputs).length ? inputs : undefined });
+	}
+
+	function addDispatchInput(index: number): void {
+		const inputs = { ...(dispatchTargets[index]?.inputs ?? {}) };
+		let name = "input-name";
+		let suffix = 2;
+		while (name in inputs) name = `input-name-${suffix++}`;
+		inputs[name] = "";
+		setDispatchTarget(index, { inputs });
+	}
+
 	function addDispatchTarget(): void {
 		dispatchTargets = [...dispatchTargets, { repo: "", ghWorkflowFile: "remote-ipa-update.yml" }];
 	}
@@ -594,6 +625,36 @@
 
 	async function toggleWatchEnabled(w: AppWatch): Promise<void> {
 		await updateWatch(w.id, { enabled: !w.enabled });
+	}
+
+	async function refreshWatchedCatalog(): Promise<void> {
+		refreshingCatalog = true;
+		try {
+			if (await refreshAppCatalog(watches.map((watch) => watch.bundleId))) {
+				appCatalogStats = await fetchAppCatalogStats();
+				showToast("App metadata refreshed", "success");
+			}
+		} finally {
+			refreshingCatalog = false;
+		}
+	}
+
+	async function importWatchFile(event: Event): Promise<void> {
+		const input = event.currentTarget as HTMLInputElement;
+		const file = input.files?.[0];
+		if (!file) return;
+		importingWatches = true;
+		try {
+			const parsed = JSON.parse(await file.text()) as { watches?: WatchInput[] };
+			if (!Array.isArray(parsed.watches)) throw new Error("This file does not contain watches");
+			const { ok, data } = await importWatches(parsed.watches);
+			if (ok && data.skipped.length) showToast(`${data.watches.length} watches imported; ${data.skipped.length} skipped`, "success");
+		} catch (err) {
+			showToast(err instanceof Error ? err.message : "Could not import watches", "error");
+		} finally {
+			input.value = "";
+			importingWatches = false;
+		}
 	}
 
 	type PreviewProgress = {
@@ -864,12 +925,21 @@
 				<Button size="sm" variant="secondary" class="ml-auto" loading={loadingBridgeDiagnostics} onclick={openBridgeDiagnostics}>Inspect autoinstall</Button>
 			{/if}
 		</div>
+		<div class="mt-2 flex items-center gap-2 text-xs text-muted">
+			<span>{appCatalogStats ? `${appCatalogStats.entries} catalogued apps · ${appCatalogStats.icons} icons cached` : "Loading app catalog…"}</span>
+			{#if canManageWatches}
+				<Button size="sm" variant="secondary" class="ml-auto" loading={refreshingCatalog} onclick={refreshWatchedCatalog}>Refresh app metadata</Button>
+			{/if}
+		</div>
 	</Card>
 
 	<Card title="Watches">
 		{#snippet headerExtra()}
 			{#if canManageWatches}
 				<div class="flex items-center gap-1.5">
+					<input class="hidden" bind:this={watchImportInput} type="file" accept="application/json" onchange={importWatchFile} />
+					<Button size="sm" variant="secondary" onclick={() => watchImportInput?.click()} loading={importingWatches}>Import</Button>
+					<a class={buttonVariants("secondary", "sm")} href={watchesExportUrl()}>Export</a>
 					<Button size="sm" onclick={openAddWatch}>
 						<Plus class="h-3.5 w-3.5" />
 						Add watch
@@ -889,13 +959,7 @@
 							<span
 								class="flex items-center gap-1.5 text-[13px] font-medium"
 							>
-								{#if appIconUrl(w.bundleId)}
-									<img
-										src={appIconUrl(w.bundleId)}
-										alt=""
-										class="h-4 w-4 shrink-0 rounded"
-									/>
-								{/if}
+								<AppIcon bundleId={w.bundleId} src={appIconUrl(w.bundleId)} label={appDisplayName(w.bundleId)} class="h-4 w-4" />
 								<span>{appDisplayName(w.bundleId)}</span>
 							</span>
 							<Badge
@@ -1254,6 +1318,16 @@
 						{#if githubWorkflowErrors[target.repo]}
 							<div class="mt-1 text-xs text-err">{githubWorkflowErrors[target.repo]}</div>
 						{/if}
+						<div class="mt-2.5 flex items-center justify-between gap-2">
+							<span class="text-[11px] text-muted">Workflow payload inputs</span>
+							<Button size="sm" variant="secondary" onclick={() => addDispatchInput(index)}>Add input</Button>
+						</div>
+						{#each Object.entries(target.inputs ?? {}) as [key, value] (key)}
+							<div class="mt-1.5 grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-1.5">
+								<Input value={key} aria-label="Input name" onchange={(event) => setDispatchInput(index, key, event.currentTarget.value, value)} />
+								<Input value={value} aria-label="Input value" onchange={(event) => setDispatchInput(index, key, key, event.currentTarget.value)} />
+							</div>
+						{/each}
 					</div>
 				{/each}
 			</div>

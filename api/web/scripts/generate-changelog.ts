@@ -12,8 +12,8 @@ if (git) {
   const result = Bun.spawnSync([git, 'log', '--pretty=format:%H%x1f%cs%x1f%s']);
   if (result.exitCode === 0) {
     const entries: GeneratedEntry[] = new TextDecoder().decode(result.stdout).split('\n').filter(Boolean).map((line) => {
-      const [hash, date, title] = line.split('\x1f');
-      return { date, title, description: `Released in ${hash.slice(0, 7)}.` };
+      const [, date, title] = line.split('\x1f');
+      return { date, title, description: 'Included in this build.' };
     }).filter((entry) => !entry.title.startsWith('chore:')).slice(0, 8);
     const source = `export const GENERATED_CHANGELOG = ${JSON.stringify(entries, null, 2)} as const;\n`;
     await Bun.write(outputPath, source);

@@ -40,17 +40,19 @@ self.addEventListener('message', (event) => {
 });
 
 self.addEventListener('push', (event) => {
-  let payload = { title: 'dkrypt', body: '' };
+  let payload = { title: 'dkrypt', body: '', url: '/', actions: [] };
   try {
     if (event.data) payload = event.data.json();
   } catch {
-    payload = { title: 'dkrypt', body: event.data ? event.data.text() : '' };
+    payload = { title: 'dkrypt', body: event.data ? event.data.text() : '', url: '/', actions: [] };
   }
 
   event.waitUntil(
     self.registration.showNotification(payload.title, {
       body: payload.body,
       icon: '/favicon.svg',
+      data: { url: payload.url ?? '/' },
+      actions: payload.actions ?? [],
     }),
   );
 });
@@ -62,7 +64,7 @@ self.addEventListener('notificationclick', (event) => {
       for (const client of clients) {
         if ('focus' in client) return client.focus();
       }
-      return self.clients.openWindow('/');
+      return self.clients.openWindow(event.notification.data?.url ?? '/');
     }),
   );
 });

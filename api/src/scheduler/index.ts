@@ -329,7 +329,7 @@ async function decryptAndDispatch(job: Job, watch: AppWatch, isTestflight: boole
   const dispatchedAt = new Date();
   try {
     const ipaUrl = buildSignedFileUrl(finished.id, config.fileTtlMinutes);
-    const results = await Promise.allSettled(targets.map((target) => dispatchIpaUpdate(target.repo, ipaUrl, isTestflight)));
+    const results = await Promise.allSettled(targets.map((target) => dispatchIpaUpdate(target.repo, ipaUrl, isTestflight, target.inputs)));
     const dispatchedTargets = targets.filter((_, index) => results[index].status === 'fulfilled');
     const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected').map((result) => String(result.reason));
     if (dispatchedTargets.length === 0) throw new Error(failures.join('; ') || 'all dispatches failed');

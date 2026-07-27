@@ -1,6 +1,8 @@
 <script lang="ts">
-	import { History, X } from "lucide-svelte";
+	import { Eye, History, X } from "lucide-svelte";
 	import BundleStatsDialog from "#components/BundleStatsDialog.svelte";
+	import AppIcon from "#components/AppIcon.svelte";
+	import JobDetailsDialog from "#components/JobDetailsDialog.svelte";
 	import CopyButton from "#components/CopyButton.svelte";
 	import EmptyState from "#components/EmptyState.svelte";
 	import RelativeTime from "#components/RelativeTime.svelte";
@@ -125,6 +127,9 @@
 	);
 	let newPresetName = $state("");
 	let failedDetailsOpen = $state(false);
+	let jobDetailsOpen = $state(Boolean(getQueryParam("job")));
+	let jobDetailsId = $state(getQueryParam("job") ?? "");
+	let jobDetailsTitle = $state("");
 	let failedDetails = $state<{
 		bundleId: string;
 		title: string;
@@ -480,6 +485,25 @@
 		failedDetailsOpen = true;
 	}
 
+	function openJobDetails(entry: JobHistoryEntry): void {
+		jobDetailsId = entry.id;
+		jobDetailsTitle = entry.versionLabel
+			? `${appDisplayName(entry.bundleId)} (${entry.versionLabel})`
+			: appDisplayName(entry.bundleId);
+		jobDetailsOpen = true;
+		setQueryParams({ job: entry.id });
+	}
+
+	$effect(() => {
+		if (!jobDetailsId || jobDetailsTitle) return;
+		const entry = entries.find((item) => item.id === jobDetailsId);
+		if (entry) openJobDetails(entry);
+	});
+
+	$effect(() => {
+		if (!jobDetailsOpen && getQueryParam("job")) setQueryParams({ job: undefined });
+	});
+
 	function toggleSelect(id: string): void {
 		const next = new Set(selected);
 		if (next.has(id)) next.delete(id);
@@ -810,15 +834,7 @@
 											<div
 												class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1"
 											>
-												{#if appIconUrl(j.bundleId)}
-													<img
-														src={appIconUrl(
-															j.bundleId,
-														)}
-														alt=""
-														class="h-5 w-5 shrink-0 rounded"
-													/>
-												{/if}
+											<AppIcon bundleId={j.bundleId} src={appIconUrl(j.bundleId)} label={appDisplayName(j.bundleId)} class="h-5 w-5" />
 												<button
 													class="max-w-full cursor-pointer truncate text-[12.5px] font-medium hover:text-accent hover:underline"
 													title="View stats for {appDisplayName(
@@ -890,6 +906,7 @@
 										class="history-feed-actions flex w-full shrink-0 items-center justify-start gap-1.5 self-start sm:w-[15rem] sm:justify-end"
 									>
 										{#if j.status === "failed"}
+											<Button size="sm" variant="secondary" onclick={() => openJobDetails(j)} title="Inspect job"><Eye class="h-3.5 w-3.5" /></Button>
 											<Button
 												size="sm"
 												loading={requeueing.has(j.id)}
@@ -898,6 +915,7 @@
 												>Retry</Button
 											>
 										{:else}
+											<Button size="sm" variant="secondary" onclick={() => openJobDetails(j)} title="Inspect job"><Eye class="h-3.5 w-3.5" /></Button>
 											<Button
 												size="sm"
 												variant="secondary"
@@ -954,6 +972,7 @@
 	preselectIds={statsPreselectIds}
 	onOpenChange={(v) => (statsOpen = v)}
 />
+<JobDetailsDialog bind:open={jobDetailsOpen} jobId={jobDetailsId} title={jobDetailsTitle || "Job details"} />
 <Dialog
 	open={failedDetailsOpen}
 	onOpenChange={(v) => (failedDetailsOpen = v)}

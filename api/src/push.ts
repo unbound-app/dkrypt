@@ -22,6 +22,8 @@ export function getVapidPublicKey(): string {
 export interface PushPayload {
   title: string;
   body: string;
+  url?: string;
+  actions?: { action: string; title: string }[];
 }
 
 export async function sendPushToUser(username: string, payload: PushPayload): Promise<void> {

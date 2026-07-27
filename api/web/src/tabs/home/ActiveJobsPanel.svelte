@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { GripVertical, PackageOpen } from "lucide-svelte";
 	import CopyButton from "#components/CopyButton.svelte";
+	import AppIcon from "#components/AppIcon.svelte";
 	import EmptyState from "#components/EmptyState.svelte";
 	import SkeletonRows from "#components/SkeletonRows.svelte";
 	import {
@@ -295,13 +296,7 @@
 									class="flex items-center gap-2"
 									title={j.bundleId}
 								>
-									{#if appIconUrl(j.bundleId)}
-										<img
-											src={appIconUrl(j.bundleId)}
-											alt=""
-											class="h-4 w-4 shrink-0 rounded"
-										/>
-									{/if}
+									<AppIcon bundleId={j.bundleId} src={appIconUrl(j.bundleId)} label={appDisplayName(j.bundleId)} class="h-4 w-4" />
 									<span class="truncate"
 										>{appDisplayName(j.bundleId)}</span
 									>
