@@ -41,7 +41,7 @@
 	} from "#lib/ui.svelte";
 	import { getQueryParam, setQueryParams } from "#lib/urlState";
 
-	const PAGE_SIZE = 15;
+	const PAGE_SIZE = typeof window !== "undefined" && window.matchMedia("(max-width: 639px)").matches ? 8 : 15;
 
 	type SourceFilter = "all" | "manual" | "scheduler";
 	type StatusFilter = "all" | "done" | "failed";
@@ -790,7 +790,7 @@
 									role="listitem"
 								>
 									<div
-										class="flex min-w-0 flex-1 items-start gap-3"
+										class="history-feed-summary flex min-w-0 flex-1 items-start gap-3"
 									>
 										<input
 											class="mt-1"
@@ -848,7 +848,7 @@
 										</div>
 									</div>
 									<div
-										class="w-full shrink-0 self-start sm:w-[11.5rem]"
+										class="history-feed-status w-full shrink-0 self-start sm:w-[11.5rem]"
 									>
 										<div class="flex items-center gap-2">
 											{#if j.status === "failed"}
@@ -880,7 +880,7 @@
 										</div>
 									</div>
 									<div
-										class="flex w-full shrink-0 items-center justify-start gap-1.5 self-start sm:w-[15rem] sm:justify-end"
+										class="history-feed-actions flex w-full shrink-0 items-center justify-start gap-1.5 self-start sm:w-[15rem] sm:justify-end"
 									>
 										{#if j.status === "failed"}
 											<Button

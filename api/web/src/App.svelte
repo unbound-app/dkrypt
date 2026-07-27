@@ -977,9 +977,30 @@
 					</DropdownMenu.Portal>
 				</DropdownMenu.Root>
 			</div>
+			<nav
+				class="glass-nav order-3 flex w-full items-center gap-1 overflow-x-auto p-1 lg:hidden"
+				aria-label="Primary"
+				use:scrollFade
+			>
+				{#each visibleTabs as t (t.id)}
+					{@const Icon = TAB_ICON[t.id]}
+					<button
+						type="button"
+						class={cn(
+							"glass-nav-item flex min-w-17 cursor-pointer items-center justify-center gap-1.5 px-2.5 py-2 text-xs font-medium whitespace-nowrap",
+							tabState.active === t.id ? "is-active" : "",
+						)}
+						onclick={() => setActiveTab(t.id)}
+						aria-current={tabState.active === t.id ? "page" : undefined}
+					>
+						<Icon class="h-3.5 w-3.5" />
+						{t.label}
+					</button>
+				{/each}
+			</nav>
 		</header>
 		<main
-			class="mx-auto max-w-[1760px] px-3 pt-4 pb-20 sm:px-5 sm:pt-5 lg:px-6 lg:pb-6"
+			class="mx-auto max-w-[1760px] px-3 pt-4 pb-6 sm:px-5 sm:pt-5 lg:px-6"
 		>
 			<SessionExpiryBanner />
 			<ConnectionBanner />
@@ -988,7 +1009,7 @@
 			<div
 				class="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_340px] lg:gap-5"
 			>
-				<div class="workspace-content min-w-0">
+				<div class="workspace-content order-2 min-w-0 lg:order-none">
 					<div class:hidden={tabState.active !== "home"}>
 						<Home bind:this={homeRef} />
 					</div>
@@ -1015,34 +1036,11 @@
 						</div>
 					{/if}
 				</div>
-				<div class="min-w-0 flex flex-col gap-4 lg:sticky lg:top-6">
+				<div class="order-1 min-w-0 flex flex-col gap-4 lg:sticky lg:top-6 lg:order-none">
 					<StatusPanel />
 				</div>
 			</div>
 		</main>
-		<nav
-			class="glass-mobile-nav scroll-fade-x fixed inset-x-0 bottom-0 z-40 flex overflow-x-auto pb-[env(safe-area-inset-bottom)] lg:hidden"
-			aria-label="Primary"
-			use:scrollFade
-		>
-			{#each visibleTabs as t (t.id)}
-				{@const Icon = TAB_ICON[t.id]}
-				<button
-					type="button"
-					class={cn(
-						"flex min-w-13 flex-1 cursor-pointer flex-col items-center gap-0.5 rounded-lg py-2 text-[10.5px] transition-colors",
-						tabState.active === t.id
-							? "bg-accent/10 text-accent"
-							: "text-muted hover:text-text",
-					)}
-					onclick={() => setActiveTab(t.id)}
-					aria-current={tabState.active === t.id ? "page" : undefined}
-				>
-					<Icon class="h-5 w-5" />
-					{t.label}
-				</button>
-			{/each}
-		</nav>
 	</div>
 {/if}
 

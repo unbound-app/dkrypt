@@ -3,7 +3,6 @@
 		CircleCheck,
 		LoaderCircle,
 		Plus,
-		RefreshCw,
 		Search,
 		TriangleAlert,
 		X,
@@ -52,7 +51,6 @@
 		appIconUrl,
 		ensureAppCatalog,
 		primeAppCatalogFromSearch,
-		refreshAppCatalog,
 	} from "#lib/appCatalog.svelte";
 	import { liveState } from "#lib/live.svelte";
 	import { PermissionFlag } from "#lib/permissions";
@@ -254,7 +252,6 @@
 	let previewProgressByWatch = $state<Record<string, PreviewProgress[]>>({});
 	let triggeringWatch = $state<Set<string>>(new Set());
 	let deletingWatch = $state<Set<string>>(new Set());
-	let refreshingAppInfo = $state(false);
 	let loadingBridgeDiagnostics = $state(false);
 	let bridgeDiagnostics = $state<TestFlightBridgeDiagnostics | null>(null);
 	let bridgeDiagnosticsOpen = $state(false);
@@ -286,16 +283,6 @@
 		const interval = setInterval(load, 30_000);
 		return () => clearInterval(interval);
 	});
-
-	async function refreshWatchAppInfo(): Promise<void> {
-		refreshingAppInfo = true;
-		try {
-			const ok = await refreshAppCatalog(watches.map((watch) => watch.bundleId));
-			showToast(ok ? "App names and icons refreshed" : "Could not refresh app info", ok ? "success" : "error");
-		} finally {
-			refreshingAppInfo = false;
-		}
-	}
 
 	async function openBridgeDiagnostics(): Promise<void> {
 		loadingBridgeDiagnostics = true;
@@ -843,20 +830,6 @@
 		{#snippet headerExtra()}
 			{#if canManageWatches}
 				<div class="flex items-center gap-1.5">
-					<Button
-						size="sm"
-						variant="secondary"
-						loading={refreshingAppInfo}
-						disabled={watches.length === 0}
-						onclick={refreshWatchAppInfo}
-						title="Refresh cached app names and icons"
-					>
-						<RefreshCw class="h-3.5 w-3.5" />
-						Refresh apps
-					</Button>
-					<Button size="sm" variant="secondary" loading={loadingBridgeDiagnostics} onclick={openBridgeDiagnostics}>
-						Bridge diagnostics
-					</Button>
 					<Button size="sm" onclick={openAddWatch}>
 						<Plus class="h-3.5 w-3.5" />
 						Add watch
@@ -1091,7 +1064,7 @@
 </div>
 
 <Dialog open={bridgeDiagnosticsOpen} onOpenChange={(value) => (bridgeDiagnosticsOpen = value)} class="max-w-lg">
-	<div class="mb-3 text-sm font-medium">TestFlight bridge diagnostics</div>
+	<div class="mb-3 text-sm font-medium">Autoinstall bridge diagnostics</div>
 	{#if loadingBridgeDiagnostics}
 		<div class="text-sm text-muted">Checking the iPad bridge…</div>
 	{:else if bridgeDiagnostics}

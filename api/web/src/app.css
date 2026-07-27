@@ -290,16 +290,19 @@
 
 @media (max-width: 639px) {
 	.history-feed-row {
-		gap: 0.7rem;
-		padding-block: 0.85rem;
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto;
+		gap: 0.65rem 0.5rem;
+		padding: 0.7rem;
 	}
 
-	.history-feed-row>div:nth-child(2) {
-		margin-left: 1.8rem;
-		width: calc(100% - 1.8rem);
+	.history-feed-status {
+		width: auto;
+		align-self: start;
 	}
 
-	.history-feed-row>div:nth-child(3) {
+	.history-feed-actions {
+		grid-column: 1 / -1;
 		margin-left: 1.8rem;
 		width: calc(100% - 1.8rem);
 		justify-content: flex-start;
