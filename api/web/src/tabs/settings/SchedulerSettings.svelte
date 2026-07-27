@@ -935,8 +935,10 @@
 			<Badge variant={failedWatchCount > 0 ? "destructive" : "success"}>{failedWatchCount > 0 ? "attention needed" : "healthy"}</Badge>
 			<span class="text-muted">{healthyWatchCount} healthy · {failedWatchCount} needs attention · {watches.filter((watch) => watch.schedulable).length} active</span>
 			{#if canManageSchedulerSettings}
-				<Button size="sm" variant="secondary" class="ml-auto" loading={loadingBridgeDiagnostics} onclick={openBridgeDiagnostics}>Inspect autoinstall</Button>
-				<a class={buttonVariants("secondary", "sm")} href={supportBundleUrl()}>Support bundle</a>
+				<div class="ml-auto flex flex-wrap items-center gap-1.5">
+					<Button size="sm" variant="secondary" loading={loadingBridgeDiagnostics} onclick={openBridgeDiagnostics}>Inspect autoinstall</Button>
+					<a class={buttonVariants("outline", "sm")} href={supportBundleUrl()}>Support bundle</a>
+				</div>
 			{/if}
 		</div>
 		<div class="mt-2 flex items-center gap-2 text-xs text-muted">
@@ -946,7 +948,11 @@
 			{/if}
 		</div>
 		{#if githubRateLimit?.remaining !== undefined}
-			<div class="mt-1 text-xs text-muted">GitHub API: {githubRateLimit.remaining}/{githubRateLimit.limit ?? "?"} requests remaining{githubRateLimit.reset ? ` · resets ${new Date(githubRateLimit.reset * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""}</div>
+			<div class="border-border mt-2 flex flex-wrap items-center gap-2 rounded-lg border px-2.5 py-2 text-xs">
+				<Badge variant={githubRateLimit.remaining < 100 ? "destructive" : "secondary"}>GitHub API</Badge>
+				<span class="font-medium">{githubRateLimit.remaining}/{githubRateLimit.limit ?? "?"} remaining</span>
+				{#if githubRateLimit.reset}<span class="text-muted">resets {new Date(githubRateLimit.reset * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>{/if}
+			</div>
 		{/if}
 	</Card>
 

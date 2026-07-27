@@ -392,6 +392,7 @@ dashboardRouter.get('/v1/dashboard/insights', (req, res) => {
 dashboardRouter.get('/v1/dashboard/failure-patterns', canViewScheduler, (_req, res) => {
   const normalize = (message: string) => message
     .replace(/https?:\/\/\S+/g, '[url]')
+    .replace(/(?:authorization:\s*bearer\s+|(?:token|secret|key|cookie)\s*[:=]\s*)[^\s,;"']+/gi, '[redacted]')
     .replace(/[0-9a-f]{8}-[0-9a-f-]{27,}/gi, '[id]')
     .replace(/\b\d{4,}\b/g, '[number]')
     .slice(0, 180);
