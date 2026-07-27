@@ -49,11 +49,9 @@ export interface TestFlightBridgeDiagnostics {
 
 const REQUIRED_BRIDGE_CAPABILITIES = ['list_trains', 'list_builds', 'install', 'diagnostics', 'idempotent_install'];
 
-function isCompatibleBridge(response: Record<string, unknown>): boolean {
-  const version = typeof response.bridgeVersion === 'string' ? response.bridgeVersion : '';
-  const [major, minor] = version.split('.').map(Number);
+function hasRequiredBridgeCapabilities(response: Record<string, unknown>): boolean {
   const capabilities = Array.isArray(response.capabilities) ? response.capabilities.filter((value): value is string => typeof value === 'string') : [];
-  return major === 1 && minor >= 1 && REQUIRED_BRIDGE_CAPABILITIES.every((capability) => capabilities.includes(capability));
+  return REQUIRED_BRIDGE_CAPABILITIES.every((capability) => capabilities.includes(capability));
 }
 
 async function launchTestFlight(conn: Client, wasRunning: boolean): Promise<void> {
@@ -68,7 +66,7 @@ async function waitForBridgeReady(conn: Client, timeoutMs = 20_000): Promise<voi
   while (Date.now() < deadline) {
     try {
       const response = await sendTestFlightBridgeRequest(conn, { action: 'status' }, 3_000);
-      if (response?.hasInstaller && response?.hasCatalogManager && isCompatibleBridge(response)) return;
+      if (response?.hasInstaller && response?.hasCatalogManager && hasRequiredBridgeCapabilities(response)) return;
     } catch {}
     await new Promise((r) => setTimeout(r, 1_000));
   }
@@ -132,7 +130,7 @@ async function findInstalledBundlePath(conn: Client, bundleId: string): Promise<
     `find /var/containers/Bundle/Application -maxdepth 1 -exec sh -c "grep -la ${bundleId} {}/*.app/Info.plist 2>/dev/null" \\; 2>/dev/null`,
   );
   const line = stdout.trim().split('\n')[0];
-  return line || undefined;
+  return line.endsWith('/Info.plist') ? line.slice(0, -'/Info.plist'.length) : undefined;
 }
 
 const SAFE_BUNDLE_ID_RE = /^[A-Za-z0-9.-]{1,200}$/;
