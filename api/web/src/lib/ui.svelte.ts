@@ -110,6 +110,7 @@ export interface ToastHistoryEntry {
   message: string;
   type: 'success' | 'error';
   ts: number;
+  downloadUrl?: string;
 }
 
 const MAX_TOAST_HISTORY = 20;
@@ -141,7 +142,7 @@ export function clearToastHistory(): void {
 export function showToast(
   message: string,
   type: 'success' | 'error' = 'success',
-  options?: { track?: boolean; action?: { label: string; onClick: () => void }; id?: string },
+  options?: { track?: boolean; action?: { label: string; onClick: () => void }; id?: string; downloadUrl?: string },
 ): void {
   const toastOptions = options?.action || options?.id ? { action: options.action, id: options.id } : undefined;
   if (type === 'error') toast.error(message, toastOptions);
@@ -150,7 +151,7 @@ export function showToast(
   const track = options?.track ?? type === 'error';
   if (!track) return;
 
-  toastHistoryState.items = [{ id: crypto.randomUUID(), message, type, ts: Date.now() }, ...toastHistoryState.items].slice(0, MAX_TOAST_HISTORY);
+  toastHistoryState.items = [{ id: crypto.randomUUID(), message, type, ts: Date.now(), downloadUrl: options?.downloadUrl }, ...toastHistoryState.items].slice(0, MAX_TOAST_HISTORY);
   persistToastHistory();
 }
 

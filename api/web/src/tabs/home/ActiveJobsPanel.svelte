@@ -29,6 +29,7 @@
 		confirmDialog,
 		requestFocusSearch,
 	} from "#lib/ui.svelte";
+	import { highlightJobIdState } from "#lib/decrypts.svelte";
 
 	const jobs = $derived(liveState.overview?.activeJobs ?? []);
 	const loaded = $derived(liveState.overviewLoaded);
@@ -39,6 +40,7 @@
 	let cancelling = $state<Set<string>>(new Set());
 	let prioritizing = $state<Set<string>>(new Set());
 	let selected = $state<Set<string>>(new Set());
+	let highlightedId = $state<string | null>(null);
 	let bulkCancelling = $state(false);
 	let bulkPrioritizing = $state(false);
 	$effect(() => {
@@ -46,6 +48,19 @@
 		if ([...selected].some((id) => !liveIds.has(id))) {
 			selected = new Set([...selected].filter((id) => liveIds.has(id)));
 		}
+	});
+
+	$effect(() => {
+		const id = highlightJobIdState.id;
+		if (!id || !jobs.some((job) => job.id === id)) return;
+		highlightedId = id;
+		const row = document.querySelector(`[data-job-id="${CSS.escape(id)}"]`);
+		row?.scrollIntoView({ behavior: "smooth", block: "center" });
+		const timer = setTimeout(() => {
+			highlightedId = null;
+			if (highlightJobIdState.id === id) highlightJobIdState.id = null;
+		}, 2000);
+		return () => clearTimeout(timer);
 	});
 
 	$effect(() => {
@@ -264,9 +279,9 @@
 				{:else}
 					{#each jobs as j (j.id)}
 						<tr
-							class={dragOverId === j.id
-								? "bg-panel-muted/80 rounded-lg"
-								: ""}
+							data-job-id={j.id}
+							class:job-highlight={j.id === highlightedId}
+							class:queue-drag-over={dragOverId === j.id}
 							draggable={canCancel && j.status === "queued"}
 							ondragstart={() => onRowDragStart(j)}
 							ondragover={(e) => onRowDragOver(e, j)}

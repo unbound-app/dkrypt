@@ -9,11 +9,12 @@ import { scopedLogger } from '#logger.js';
 const log = scopedLogger('jobs');
 import { sendMailToUser } from '#mail.js';
 import { sendPushToUser } from '#push.js';
-import { getApiKeyById, getEffectiveDevices, getUserPrefs, isBundleWatched, latestActiveShareLinkExpiry, recordDeviceActivity, recordJobHistory, type DeviceRecord } from '#store/state.js';
+import { getApiKeyById, getEffectiveDevices, getUserPrefs, isBundleWatched, latestActiveShareLinkExpiry, recordDeviceActivity, recordJobHistory, recordShareLink, type DeviceRecord } from '#store/state.js';
 import { uninstallFromPrimaryDevice } from '#appStoreInstall.js';
 import { getCachedDeviceHealth } from '#deviceHealthCache.js';
 import { runDecrypt } from '#jobs/runner.js';
 import { appendJobTimelineEvent, type Job, type JobSource, type TestFlightJobSource } from '#jobs/types.js';
+import { buildSignedFileUrlWithToken } from '#util/signedUrl.js';
 
 const jobs = new Map<string, Job>();
 
@@ -100,6 +101,7 @@ loadDoneJobs();
 loadActiveJobs();
 
 const RETRY_BACKOFF_MS = 5_000;
+const COMPLETION_SHARE_TTL_MINUTES = 60;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -468,6 +470,19 @@ async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
   recordJobHistory(toHistoryEntry(job));
   emitJobsChanged();
 
+  const completionShare = job.status === 'done'
+    ? buildSignedFileUrlWithToken(job.id, COMPLETION_SHARE_TTL_MINUTES)
+    : undefined;
+  if (completionShare) {
+    recordShareLink(
+      job.id,
+      job.bundleId,
+      completionShare.token,
+      job.queuedBy ?? 'system',
+      completionShare.expiresAtMs,
+    );
+  }
+
   if (job.queuedBy) {
     const prefs = getUserPrefs(job.queuedBy);
     const label = job.versionLabel ? `${job.bundleId} (${job.versionLabel})` : job.bundleId;
@@ -479,13 +494,18 @@ async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
       void sendPushToUser(job.queuedBy, {
         title,
         body,
-        url: `/?job=${encodeURIComponent(job.id)}`,
-        actions: [{ action: 'open-job', title: 'Open job' }],
+        url: completionShare?.url ?? `/?job=${encodeURIComponent(job.id)}`,
+        actions: completionShare
+          ? [{ action: 'download', title: 'Download' }]
+          : [{ action: 'open-job', title: 'Open job' }],
       });
     }
 
     const shouldMail = job.status === 'done' ? (prefs.emailOnSuccess ?? false) : (prefs.emailOnFailure ?? false);
-    if (shouldMail) void sendMailToUser(job.queuedBy, { subject: title, text: body });
+    if (shouldMail) void sendMailToUser(job.queuedBy, {
+      subject: title,
+      text: completionShare ? `${body}\n\nDownload: ${completionShare.url}` : body,
+    });
   }
 
   settle(job);

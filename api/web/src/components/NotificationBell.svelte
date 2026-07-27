@@ -52,7 +52,12 @@
               {/if}
               <div class="min-w-0 flex-1">
                 <div class="text-text">{t.message}</div>
-                <div class="text-muted mt-0.5"><RelativeTime ms={t.ts} /></div>
+                <div class="mt-0.5 flex items-center justify-between gap-2">
+                  <span class="text-muted"><RelativeTime ms={t.ts} /></span>
+                  {#if t.downloadUrl}
+                    <a href={t.downloadUrl} class="text-accent hover:text-text font-medium">Download</a>
+                  {/if}
+                </div>
               </div>
             </div>
           {/each}
