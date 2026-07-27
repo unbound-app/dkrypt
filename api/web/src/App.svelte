@@ -12,8 +12,6 @@
 		Monitor,
 		Moon,
 		Pencil,
-		Rows2,
-		Rows3,
 		PanelRightOpen,
 		ScrollText,
 		Settings as SettingsIcon,
@@ -67,7 +65,6 @@
 		logoutEverywhere,
 		permissionsSummary,
 		pushAccentPref,
-		pushDensityPref,
 		fetchNotificationPrefs,
 		pushNotificationPrefs,
 		pushSoundPref,
@@ -86,16 +83,13 @@
 		ACCENT_PRESETS,
 		accentState,
 		confirmDialog,
-		densityState,
 		initAccent,
-		initDensity,
 		initTheme,
 		initUrlTabSync,
 		openHelp,
 		openPalette,
 		setAccent,
 		setActiveTab,
-		setDensity,
 		setSoundEnabled,
 		setTheme,
 		showToast,
@@ -116,7 +110,6 @@
 	import Settings from "#tabs/Settings.svelte";
 
 	initTheme();
-	initDensity();
 	initAccent();
 	initUrlTabSync();
 
@@ -490,13 +483,6 @@
 		void pushThemePref(next);
 	}
 
-	function toggleDensity(): void {
-		const next =
-			densityState.value === "compact" ? "comfortable" : "compact";
-		setDensity(next);
-		void pushDensityPref(next);
-	}
-
 	function chooseAccent(id: string): void {
 		setAccent(id);
 		void pushAccentPref(id);
@@ -599,21 +585,6 @@
 				<Button
 					variant="secondary"
 					size="icon"
-					onclick={toggleDensity}
-					aria-label="Toggle compact table rows"
-					title={densityState.value === "compact"
-						? "Switch to comfortable rows"
-						: "Switch to compact rows"}
-				>
-					{#if densityState.value === "compact"}
-						<Rows2 class="h-4 w-4" />
-					{:else}
-						<Rows3 class="h-4 w-4" />
-					{/if}
-				</Button>
-				<Button
-					variant="secondary"
-					size="icon"
 					onclick={openPalette}
 					aria-label="Open command menu"
 					title="Command menu (⌘/Ctrl K)"
@@ -651,7 +622,6 @@
 							></span>
 						{/if}
 					</DropdownMenu.Trigger>
-					<DropdownMenu.Portal>
 					<DropdownMenu.Content
 							class="account-menu border-border bg-panel z-50 w-72 rounded-xl border p-3 shadow-2xl"
 							sideOffset={8}
@@ -988,13 +958,12 @@
 									Log out everywhere
 								</Button>
 							</div>
-						</DropdownMenu.Content>
-					</DropdownMenu.Portal>
+					</DropdownMenu.Content>
 				</DropdownMenu.Root>
 			</div>
 		</header>
 		<main
-			class="mx-auto max-w-[1760px] px-3 pt-4 pb-[calc(3.25rem+env(safe-area-inset-bottom))] sm:px-5 sm:pt-5 lg:px-6 lg:pb-6"
+			class="mx-auto max-w-[1760px] px-3 pt-4 pb-[calc(4.5rem+env(safe-area-inset-bottom))] sm:px-5 sm:pt-5 lg:px-6 lg:pb-6"
 		>
 			<SessionExpiryBanner />
 			<ConnectionBanner />

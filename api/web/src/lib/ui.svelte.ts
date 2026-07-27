@@ -98,24 +98,6 @@ export function initAccent(): void {
   applyAccent(accentState.value);
 }
 
-export type Density = 'comfortable' | 'compact';
-
-function readStoredDensity(): Density {
-  return localStorage.getItem('density') === 'compact' ? 'compact' : 'comfortable';
-}
-
-export const densityState = $state<{ value: Density }>({ value: readStoredDensity() });
-
-export function setDensity(density: Density): void {
-  densityState.value = density;
-  localStorage.setItem('density', density);
-  document.documentElement.setAttribute('data-density', density);
-}
-
-export function initDensity(): void {
-  document.documentElement.setAttribute('data-density', densityState.value);
-}
-
 export const soundEnabledState = $state<{ value: boolean }>({ value: localStorage.getItem('soundEnabled') === 'true' });
 
 export function setSoundEnabled(enabled: boolean): void {

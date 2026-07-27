@@ -33,7 +33,7 @@
 	import { fmtUntil } from "#lib/format";
 	import { notifyJobFinished } from "#lib/notifications";
 	import { playChime } from "#lib/sound";
-	import { densityState, showToast, soundEnabledState } from "#lib/ui.svelte";
+	import { showToast, soundEnabledState } from "#lib/ui.svelte";
 
 	let pollTimer: ReturnType<typeof setTimeout> | undefined;
 	let retrying = $state<Set<string>>(new Set());
@@ -150,15 +150,6 @@
 
 	let cancelling = $state<Set<string>>(new Set());
 	let copyingCurl = $state<Set<string>>(new Set());
-	let revealedJobIds = $state<Set<string>>(new Set());
-
-	function toggleReveal(id: string): void {
-		const next = new Set(revealedJobIds);
-		if (next.has(id)) next.delete(id);
-		else next.add(id);
-		revealedJobIds = next;
-	}
-
 	async function copyCurl(d: TrackedDecrypt): Promise<void> {
 		copyingCurl = new Set(copyingCurl).add(d.id);
 		try {
@@ -336,19 +327,10 @@
 							><RelativeTime ms={d.createdAt} /></td
 						>
 						<td data-label="Job ID">
-							{#if densityState.value === "compact" && !revealedJobIds.has(d.id)}
-								<button
-									class="text-muted hover:text-text cursor-pointer text-xs underline-offset-2 hover:underline"
-									onclick={() => toggleReveal(d.id)}
-								>
-									show
-								</button>
-							{:else}
 								<div class="flex items-center gap-1.5">
 									<code title={d.id}>{d.id.slice(0, 8)}</code>
 									<CopyButton text={d.id} />
 								</div>
-							{/if}
 						</td>
 						<td data-label="Actions" class="mobile-actions">
 							<div class="flex flex-wrap justify-end gap-1.5">

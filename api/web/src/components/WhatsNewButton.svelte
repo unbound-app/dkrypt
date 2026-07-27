@@ -63,7 +63,7 @@
 		>
 			<div class="mb-2 text-sm font-medium">What's new</div>
 			<div class="flex max-h-96 flex-col gap-3 overflow-y-auto">
-				{#each CHANGELOG as entry (entry.date + entry.title)}
+				{#each CHANGELOG as entry (entry.date + entry.title + entry.description)}
 					<div class="text-xs">
 						<div
 							class="mb-0.5 flex items-center justify-between gap-2"
