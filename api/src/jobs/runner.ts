@@ -43,7 +43,8 @@ export async function runDecrypt(job: Job, device: DeviceRecord): Promise<void> 
   };
 
   if (job.testflight) {
-    await installBuild(job.testflight.appId, job.testflight.build, report, undefined, job.id);
+    const operationId = job.retryCount && job.retryCount > 0 ? `${job.id}-retry-${job.retryCount}` : job.id;
+    await installBuild(job.testflight.appId, job.testflight.build, report, undefined, operationId);
   } else {
     await installFromAppStore(job.bundleId, {
       externalVersionId: job.externalVersionId,
