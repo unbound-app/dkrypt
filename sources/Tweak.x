@@ -90,6 +90,25 @@ static void writeJSONFile(NSString *path, id obj) {
     [data writeToFile:path atomically:YES];
 }
 
+static NSDictionary *readJSONFile(NSString *path) {
+    NSData *data = [NSData dataWithContentsOfFile:path];
+    if (!data) return nil;
+    id json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+    return [json isKindOfClass:[NSDictionary class]] ? json : nil;
+}
+
+static void writeBridgeError(NSString *path, NSString *code, NSString *stage, NSString *message, BOOL retryable) {
+    writeJSONFile(path, @{
+        @"ok": @NO,
+        @"error": @{
+            @"code": code,
+            @"stage": stage,
+            @"message": message,
+            @"retryable": @(retryable),
+        },
+    });
+}
+
 static BOOL isSpringBoard(void) {
     return [[[NSBundle mainBundle] bundleIdentifier] isEqualToString:@"com.apple.springboard"];
 }
@@ -327,6 +346,30 @@ static NSString * const kRequestPath = @"/tmp/autoinstall-request.json";
 static NSString * const kResponsePath = @"/tmp/autoinstall-response.json";
 static NSString * const kInstallStatusPath = @"/tmp/autoinstall-install-status.json";
 
+static NSDictionary *bridgeStatus(void) {
+    return @{
+        @"bridgeVersion": @"1.1.0",
+        @"capabilities": @[@"list_trains", @"list_builds", @"install", @"status", @"diagnostics", @"idempotent_install"],
+        @"hasInstaller": gInstaller ? @YES : @NO,
+        @"hasCatalogManager": gCatalogManager ? @YES : @NO,
+        @"backgroundTaskActive": gBackgroundTaskId != UIBackgroundTaskInvalid ? @YES : @NO,
+        @"backgroundTimeRemaining": @([[UIApplication sharedApplication] backgroundTimeRemaining]),
+    };
+}
+
+static NSArray<NSString *> *recentBridgeLogEntries(void) {
+    NSString *log = [NSString stringWithContentsOfFile:@"/tmp/autoinstall.log" encoding:NSUTF8StringEncoding error:nil];
+    if (!log.length) return @[];
+    NSArray<NSString *> *lines = [log componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]];
+    NSUInteger start = lines.count > 20 ? lines.count - 20 : 0;
+    NSMutableArray<NSString *> *recent = [NSMutableArray array];
+    for (NSUInteger index = start; index < lines.count; index++) {
+        NSString *line = lines[index];
+        if (line.length) [recent addObject:line];
+    }
+    return recent;
+}
+
 static NSString *networkErrorDescription(id error) {
     if ([error respondsToSelector:@selector(localizedDescription)]) {
         return [error localizedDescription];
@@ -334,7 +377,7 @@ static NSString *networkErrorDescription(id error) {
     return [NSString stringWithFormat:@"%@", error];
 }
 
-static void fetchJSON(NSString *urlString, void (^completion)(id json, NSString *error)) {
+static void fetchJSON(NSString *urlString, void (^completion)(id json, NSDictionary *error)) {
     NSURL *url = [NSURL URLWithString:urlString];
     Class<TFNetworkManagerProtocol> cls = (Class<TFNetworkManagerProtocol>)objc_getClass("TFNetworkManager");
     id<TFNetworkManagerProtocol> manager = [cls shared];
@@ -345,17 +388,32 @@ static void fetchJSON(NSString *urlString, void (^completion)(id json, NSString 
             NSError *error = [typedResponse error];
             id data = [typedResponse data];
             if (error) {
-                completion(nil, networkErrorDescription(error));
+                completion(nil, @{
+                    @"code": @"network_request_failed",
+                    @"stage": @"metadata_fetch",
+                    @"message": networkErrorDescription(error),
+                    @"retryable": @YES,
+                });
                 return;
             }
             if (!data) {
-                completion(nil, @"no data in response");
+                completion(nil, @{
+                    @"code": @"missing_response_data",
+                    @"stage": @"metadata_fetch",
+                    @"message": @"no data in response",
+                    @"retryable": @YES,
+                });
                 return;
             }
             completion(data, nil);
         } @catch (NSException *exception) {
             autoinstallLog([NSString stringWithFormat:@"fetchJSON: EXCEPTION name=%@ reason=%@", exception.name, exception.reason]);
-            completion(nil, [NSString stringWithFormat:@"exception: %@", exception.reason]);
+            completion(nil, @{
+                @"code": @"metadata_exception",
+                @"stage": @"metadata_fetch",
+                @"message": [NSString stringWithFormat:@"exception: %@", exception.reason],
+                @"retryable": @YES,
+            });
         }
     }];
 }
@@ -367,34 +425,41 @@ static void handleRequest(NSDictionary *req) {
     if ([action isEqualToString:@"install"]) {
         @try {
             beginBackgroundKeepAlive();
+            NSString *operationId = [req[@"operationId"] isKindOfClass:[NSString class]] ? req[@"operationId"] : [[NSUUID UUID] UUIDString];
+            NSDictionary *previousStatus = readJSONFile(kInstallStatusPath);
+            if ([previousStatus[@"operationId"] isEqual:operationId]) {
+                BOOL completed = [previousStatus[@"state"] isEqualToString:@"completed"];
+                writeJSONFile(kResponsePath, @{@"ok": @YES, @"requested": @(!completed), @"resumed": @YES, @"completed": @(completed), @"operationId": operationId});
+                return;
+            }
 
             if (!gCatalogManager) {
-                writeJSONFile(kResponsePath, @{@"ok": @NO, @"error": @"gCatalogManager not stashed yet"});
+                writeBridgeError(kResponsePath, @"catalog_unavailable", @"install", @"gCatalogManager not stashed yet", YES);
                 return;
             }
             if (!gInstaller) {
-                writeJSONFile(kResponsePath, @{@"ok": @NO, @"error": @"gInstaller not stashed yet"});
+                writeBridgeError(kResponsePath, @"installer_unavailable", @"install", @"gInstaller not stashed yet", YES);
                 return;
             }
 
             NSNumber *appId = req[@"appId"];
             NSDictionary *buildDict = req[@"build"];
             if (!appId || !buildDict) {
-                writeJSONFile(kResponsePath, @{@"ok": @NO, @"error": @"missing appId or build"});
+                writeBridgeError(kResponsePath, @"invalid_request", @"install", @"missing appId or build", NO);
                 return;
             }
 
             id<TFAppCatalogManagerProtocol> catalogManager = gCatalogManager;
             id app = [catalogManager getAppCatalogCachedAppForAppID:appId];
             if (!app) {
-                writeJSONFile(kResponsePath, @{@"ok": @NO, @"error": @"getAppCatalogCachedAppForAppID: returned nil - is the catalog populated?"});
+                writeBridgeError(kResponsePath, @"app_not_cached", @"install", @"getAppCatalogCachedAppForAppID: returned nil - is the catalog populated?", YES);
                 return;
             }
 
             Class<TFAppBuildProtocol> buildCls = (Class<TFAppBuildProtocol>)objc_getClass("TFAppBuild");
             id build = [buildCls buildFromDictionary:buildDict];
             if (!build) {
-                writeJSONFile(kResponsePath, @{@"ok": @NO, @"error": @"buildFromDictionary: returned nil"});
+                writeBridgeError(kResponsePath, @"invalid_build", @"install", @"buildFromDictionary: returned nil", NO);
                 return;
             }
 
@@ -408,7 +473,7 @@ static void handleRequest(NSDictionary *req) {
                                     allowReinstallSameVersion:YES
                                                       variant:nil];
             if (!installable) {
-                writeJSONFile(kResponsePath, @{@"ok": @NO, @"error": @"initWithApp:build:... returned nil"});
+                writeBridgeError(kResponsePath, @"installable_unavailable", @"install", @"initWithApp:build:... returned nil", YES);
                 return;
             }
 
@@ -416,16 +481,17 @@ static void handleRequest(NSDictionary *req) {
 
             void (^completion)(void) = ^{
                 autoinstallLog(@"install: completionBlock fired");
-                writeJSONFile(kInstallStatusPath, @{@"ok": @YES});
+                writeJSONFile(kInstallStatusPath, @{@"ok": @YES, @"operationId": operationId, @"state": @"completed"});
             };
 
             id<TFAppInstallerProtocol> installer = gInstaller;
             id result = [installer requestInstall:installable installationMode:0 alertDelegate:nil withBackgroundTaskMaster:nil completionBlock:completion];
             autoinstallLog([NSString stringWithFormat:@"install: requestInstall: returned %@", result]);
-            writeJSONFile(kResponsePath, @{@"ok": @YES, @"requested": @YES});
+            writeJSONFile(kInstallStatusPath, @{@"ok": @YES, @"operationId": operationId, @"state": @"requested", @"appId": appId});
+            writeJSONFile(kResponsePath, @{@"ok": @YES, @"requested": @YES, @"operationId": operationId});
         } @catch (NSException *exception) {
             autoinstallLog([NSString stringWithFormat:@"install: EXCEPTION name=%@ reason=%@", exception.name, exception.reason]);
-            writeJSONFile(kResponsePath, @{@"ok": @NO, @"error": [NSString stringWithFormat:@"exception: %@ %@", exception.name, exception.reason]});
+            writeBridgeError(kResponsePath, @"install_exception", @"install", [NSString stringWithFormat:@"exception: %@ %@", exception.name, exception.reason], YES);
         }
         return;
     }
@@ -433,7 +499,7 @@ static void handleRequest(NSDictionary *req) {
     if ([action isEqualToString:@"list_trains"]) {
         NSString *appId = [req[@"appId"] stringValue];
         NSString *url = [NSString stringWithFormat:@"https://testflight.apple.com/v2/apps/%@/platforms/ios/trains", appId];
-        fetchJSON(url, ^(id json, NSString *error) {
+        fetchJSON(url, ^(id json, NSDictionary *error) {
             if (error) {
                 writeJSONFile(kResponsePath, @{@"ok": @NO, @"error": error});
             } else {
@@ -447,7 +513,7 @@ static void handleRequest(NSDictionary *req) {
         NSString *appId = [req[@"appId"] stringValue];
         NSString *train = req[@"trainVersion"];
         NSString *url = [NSString stringWithFormat:@"https://testflight.apple.com/v2/apps/%@/platforms/ios/trains/%@/builds", appId, train];
-        fetchJSON(url, ^(id json, NSString *error) {
+        fetchJSON(url, ^(id json, NSDictionary *error) {
             if (error) {
                 writeJSONFile(kResponsePath, @{@"ok": @NO, @"error": error});
             } else {
@@ -458,12 +524,21 @@ static void handleRequest(NSDictionary *req) {
     }
 
     if ([action isEqualToString:@"status"]) {
+        NSMutableDictionary *response = [bridgeStatus() mutableCopy];
+        response[@"ok"] = @YES;
+        response[@"install"] = readJSONFile(kInstallStatusPath) ?: @{};
+        writeJSONFile(kResponsePath, response);
+        return;
+    }
+
+    if ([action isEqualToString:@"diagnostics"]) {
         writeJSONFile(kResponsePath, @{
             @"ok": @YES,
-            @"hasInstaller": gInstaller ? @YES : @NO,
-            @"hasCatalogManager": gCatalogManager ? @YES : @NO,
-            @"backgroundTaskActive": gBackgroundTaskId != UIBackgroundTaskInvalid ? @YES : @NO,
-            @"backgroundTimeRemaining": @([[UIApplication sharedApplication] backgroundTimeRemaining]),
+            @"data": @{
+                @"bridge": bridgeStatus(),
+                @"install": readJSONFile(kInstallStatusPath) ?: @{},
+                @"recentLog": recentBridgeLogEntries(),
+            },
         });
         return;
     }
@@ -474,7 +549,7 @@ static void handleRequest(NSDictionary *req) {
         return;
     }
 
-    writeJSONFile(kResponsePath, @{@"ok": @NO, @"error": [NSString stringWithFormat:@"unknown action: %@", action]});
+    writeBridgeError(kResponsePath, @"unknown_action", @"request", [NSString stringWithFormat:@"unknown action: %@", action], NO);
 }
 
 static dispatch_queue_t gBridgeQueue = nil;
