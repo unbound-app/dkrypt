@@ -465,7 +465,7 @@
 							class="break-words text-xs leading-4 text-muted"
 							title={r.bundleId}
 						>
-							v{r.version} · {r.sellerName}
+							v{r.version} · {r.sellerName}{r.category ? ` · ${r.category}` : ""}
 						</div>
 					</div>
 					{#if r.price > 0}

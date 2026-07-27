@@ -64,6 +64,15 @@ const WEBHOOK_USERNAME = 'dkrypt';
 
 const WEBHOOK_AVATAR_URL = `${config.publicBaseUrl}/favicon.png`;
 
+interface PendingDigest {
+  url: string;
+  format: SchedulerSettings['notifyFormat'];
+  entries: string[];
+}
+
+const pendingDigests = new Map<string, PendingDigest>();
+let lastDigestKey: string | undefined;
+
 function flattenEmbed(embed: NotifyEmbed): string {
   const lines = [`**${embed.title}**`];
   if (embed.description) lines.push(embed.description);
@@ -101,6 +110,35 @@ function targetHost(url: string): string {
   } catch {
     return 'invalid-url';
   }
+}
+
+function isWithinQuietHours(now: Date, start: string, end: string): boolean {
+  if (!/^\d{2}:\d{2}$/.test(start) || !/^\d{2}:\d{2}$/.test(end) || start === end) return false;
+  const current = now.getHours() * 60 + now.getMinutes();
+  const [startHour, startMinute] = start.split(':').map(Number);
+  const [endHour, endMinute] = end.split(':').map(Number);
+  const startMinutes = startHour * 60 + startMinute;
+  const endMinutes = endHour * 60 + endMinute;
+  return startMinutes < endMinutes ? current >= startMinutes && current < endMinutes : current >= startMinutes || current < endMinutes;
+}
+
+function isSuccessNotification(event: NotifyEvent, embed: NotifyEmbed): boolean {
+  return event === 'appStoreAutomationSuccess' || event === 'testFlightAutomationSuccess' || (event === 'jobCompleted' && embed.color === EMBED_COLOR.ok);
+}
+
+function queueDigest(url: string, format: SchedulerSettings['notifyFormat'], embed: NotifyEmbed): void {
+  const key = `${url}|${format}`;
+  const digest = pendingDigests.get(key) ?? { url, format, entries: [] };
+  digest.entries.push(flattenEmbed(embed));
+  pendingDigests.set(key, digest);
+}
+
+function digestKey(mode: SchedulerSettings['notifySuccessMode'], now: Date): string | undefined {
+  if (mode === 'instant') return undefined;
+  if (now.getHours() !== 9) return undefined;
+  if (mode === 'daily') return `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}`;
+  if (now.getDay() !== 1) return undefined;
+  return `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}-weekly`;
 }
 
 async function postWebhook(
@@ -158,8 +196,42 @@ export async function notify(event: NotifyEvent, embed: NotifyEmbed, webhookUrlO
 
   const url = webhookUrlOverride || settings.notifyWebhookUrl;
   if (!url) return;
+  if (isSuccessNotification(event, embed)) {
+    if (isWithinQuietHours(new Date(), settings.notifyQuietHoursStart, settings.notifyQuietHoursEnd)) {
+      if (settings.notifySuccessMode !== 'instant') queueDigest(url, settings.notifyFormat, embed);
+      return;
+    }
+    if (settings.notifySuccessMode !== 'instant') {
+      queueDigest(url, settings.notifyFormat, embed);
+      return;
+    }
+  }
   const result = await postWebhook(url, embed, settings.notifyFormat, event);
   if (!result.ok) log.warn('notify webhook failed', { event, status: result.status, error: result.error });
+}
+
+export async function flushNotificationDigests(now = new Date()): Promise<void> {
+  const settings = getEffectiveSettings();
+  const key = digestKey(settings.notifySuccessMode, now);
+  if (!key || key === lastDigestKey || pendingDigests.size === 0) return;
+  lastDigestKey = key;
+  const digests = [...pendingDigests.values()];
+  pendingDigests.clear();
+  await Promise.all(
+    digests.map(async (digest) => {
+      const embed: NotifyEmbed = {
+        title: settings.notifySuccessMode === 'weekly' ? 'Weekly dkrypt automation digest' : 'Daily dkrypt automation digest',
+        description: digest.entries.slice(-20).join('\n\n'),
+        color: EMBED_COLOR.ok,
+      };
+      const result = await postWebhook(digest.url, embed, digest.format, 'automationDigest');
+      if (!result.ok) log.warn('notification digest webhook failed', { status: result.status, error: result.error });
+    }),
+  );
+}
+
+export function startNotificationDigestScheduler(): void {
+  setInterval(() => void flushNotificationDigests(), 60_000).unref();
 }
 
 export async function sendTestNotification(urlOverride?: string): Promise<{ ok: boolean; error?: string }> {

@@ -20,7 +20,7 @@ import { lookupAppMetadata, searchApps } from '#scheduler/itunes.js';
 import { requirePermission, requireSession } from '#session.js';
 import { getDeviceHealth } from '#deviceHealth.js';
 import { validateDeviceRootDir } from '#idevice.js';
-import { listBuilds, listTrains } from '#testflight.js';
+import { getTestFlightBridgeDiagnostics, listBuilds, listTrains } from '#testflight.js';
 import { nextCronRunAt } from '#util/cron.js';
 import { getDiskUsage } from '#util/diskUsage.js';
 import { rateLimitPerUser } from '#util/rateLimit.js';
@@ -403,6 +403,7 @@ dashboardRouter.get('/v1/dashboard/search', async (req, res) => {
         iconUrl: result.artworkUrl,
         trackId: result.trackId,
         sellerName: result.sellerName,
+        category: result.category,
       })),
     );
     res.json({ results });
@@ -437,6 +438,11 @@ dashboardRouter.get('/v1/dashboard/apps/metadata', async (req, res) => {
             iconUrl: metadata.artworkUrl,
             trackId: metadata.trackId,
             sellerName: metadata.sellerName,
+            category: metadata.category,
+            description: metadata.description,
+            screenshots: metadata.screenshots,
+            releaseNotes: metadata.releaseNotes,
+            price: metadata.price,
           };
         } catch {
           return null;
@@ -470,6 +476,11 @@ dashboardRouter.post('/v1/dashboard/apps/metadata/refresh', canManageWatches, as
           iconUrl: metadata.artworkUrl,
           trackId: metadata.trackId,
           sellerName: metadata.sellerName,
+          category: metadata.category,
+          description: metadata.description,
+          screenshots: metadata.screenshots,
+          releaseNotes: metadata.releaseNotes,
+          price: metadata.price,
         };
       } catch {
         return null;
@@ -696,6 +707,8 @@ interface WatchInput {
   pollCron: string;
   enabled?: boolean;
   webhookUrl?: string;
+  testFlightPolicy?: 'latest' | 'latestNonExpired' | 'train';
+  testFlightTrain?: string;
 }
 
 function parseWatchInput(body: unknown): WatchInput | undefined {
@@ -710,6 +723,9 @@ function parseWatchInput(body: unknown): WatchInput | undefined {
     pollCron: typeof b.pollCron === 'string' ? b.pollCron.trim() : '0 * * * *',
     enabled: typeof b.enabled === 'boolean' ? b.enabled : undefined,
     webhookUrl: typeof b.webhookUrl === 'string' ? b.webhookUrl.trim() || undefined : undefined,
+    testFlightPolicy:
+      b.testFlightPolicy === 'latestNonExpired' || b.testFlightPolicy === 'train' ? b.testFlightPolicy : 'latest',
+    testFlightTrain: typeof b.testFlightTrain === 'string' ? b.testFlightTrain.trim() || undefined : undefined,
   };
 }
 
@@ -721,6 +737,10 @@ dashboardRouter.post('/v1/dashboard/watches', canManageWatches, (req, res) => {
   }
   if (input.pollCron && !validateCronExpr(input.pollCron)) {
     res.status(400).json({ error: 'pollCron is not a valid cron expression' });
+    return;
+  }
+  if (input.testFlightPolicy === 'train' && !input.testFlightTrain) {
+    res.status(400).json({ error: 'testFlightTrain is required when testFlightPolicy is train' });
     return;
   }
   const result = createWatch(input, res.locals.session.sub);
@@ -742,9 +762,22 @@ dashboardRouter.patch('/v1/dashboard/watches/:id', canManageWatches, (req, res) 
   if (typeof body.pollCron === 'string') patch.pollCron = body.pollCron.trim();
   if (typeof body.enabled === 'boolean') patch.enabled = body.enabled;
   if (typeof body.webhookUrl === 'string') patch.webhookUrl = body.webhookUrl.trim() || undefined;
+  if (body.testFlightPolicy === 'latest' || body.testFlightPolicy === 'latestNonExpired' || body.testFlightPolicy === 'train') {
+    patch.testFlightPolicy = body.testFlightPolicy;
+  }
+  if (typeof body.testFlightTrain === 'string') patch.testFlightTrain = body.testFlightTrain.trim() || undefined;
 
   if (patch.pollCron && !validateCronExpr(patch.pollCron)) {
     res.status(400).json({ error: 'pollCron is not a valid cron expression' });
+    return;
+  }
+  const existingWatch = getWatch(req.params.id);
+  if (!existingWatch) {
+    res.status(404).json({ error: 'watch not found' });
+    return;
+  }
+  if ((patch.testFlightPolicy ?? existingWatch.testFlightPolicy) === 'train' && !(patch.testFlightTrain ?? existingWatch.testFlightTrain)) {
+    res.status(400).json({ error: 'testFlightTrain is required when testFlightPolicy is train' });
     return;
   }
 
@@ -833,6 +866,14 @@ dashboardRouter.get('/v1/dashboard/testflight/:appId/trains', deviceOrExternalRa
   try {
     const trains = await listTrains(appId);
     res.json({ trains });
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+dashboardRouter.get('/v1/dashboard/testflight/diagnostics', canManageSchedulerSettings, deviceOrExternalRateLimit, async (_req, res) => {
+  try {
+    res.json(await getTestFlightBridgeDiagnostics());
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
   }
@@ -1390,6 +1431,15 @@ dashboardRouter.put('/v1/dashboard/settings', canManageSchedulerSettings, (req, 
   }
   if (body.notifyFormat === 'embed' || body.notifyFormat === 'plain') {
     patch.notifyFormat = body.notifyFormat;
+  }
+  if (body.notifySuccessMode === 'instant' || body.notifySuccessMode === 'daily' || body.notifySuccessMode === 'weekly') {
+    patch.notifySuccessMode = body.notifySuccessMode;
+  }
+  if (typeof body.notifyQuietHoursStart === 'string' && (body.notifyQuietHoursStart === '' || /^\d{2}:\d{2}$/.test(body.notifyQuietHoursStart))) {
+    patch.notifyQuietHoursStart = body.notifyQuietHoursStart;
+  }
+  if (typeof body.notifyQuietHoursEnd === 'string' && (body.notifyQuietHoursEnd === '' || /^\d{2}:\d{2}$/.test(body.notifyQuietHoursEnd))) {
+    patch.notifyQuietHoursEnd = body.notifyQuietHoursEnd;
   }
   if (typeof body.schedulerRetryCount === 'number') {
     patch.schedulerRetryCount = Math.min(Math.max(Math.round(body.schedulerRetryCount), 0), MAX_SCHEDULER_RETRY_COUNT);

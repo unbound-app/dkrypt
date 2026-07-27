@@ -162,6 +162,9 @@ export interface ApiKeyAuthResult {
 export interface SchedulerSettings {
   notifyWebhookUrl: string;
   notifyFormat: 'embed' | 'plain';
+  notifySuccessMode: 'instant' | 'daily' | 'weekly';
+  notifyQuietHoursStart: string;
+  notifyQuietHoursEnd: string;
   notifyOnKeyRequest: boolean;
   notifyOnAutomationSuccess: boolean;
   notifyOnAutomationFailure: boolean;
@@ -192,6 +195,8 @@ export interface AppWatch {
   pollCron: string;
   enabled: boolean;
   webhookUrl?: string;
+  testFlightPolicy?: 'latest' | 'latestNonExpired' | 'train';
+  testFlightTrain?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -252,6 +257,11 @@ export interface AppCatalogEntry {
   iconUrl?: string;
   trackId?: number;
   sellerName?: string;
+  category?: string;
+  description?: string;
+  screenshots?: string[];
+  releaseNotes?: string;
+  price?: number;
   updatedAt: number;
 }
 
@@ -827,6 +837,11 @@ export function upsertAppCatalogEntries(entries: Array<Omit<AppCatalogEntry, 'up
         iconUrl: entry.iconUrl,
         trackId: entry.trackId,
         sellerName: entry.sellerName,
+        category: entry.category,
+        description: entry.description,
+        screenshots: entry.screenshots?.slice(0, 10),
+        releaseNotes: entry.releaseNotes,
+        price: entry.price,
       }),
     );
   }
@@ -1649,6 +1664,18 @@ export function getEffectiveSettings(): SchedulerSettings {
   return {
     notifyWebhookUrl: state.settings.notifyWebhookUrl ?? config.notifyWebhookUrl,
     notifyFormat: state.settings.notifyFormat ?? 'embed',
+    notifySuccessMode:
+      state.settings.notifySuccessMode === 'daily' || state.settings.notifySuccessMode === 'weekly'
+        ? state.settings.notifySuccessMode
+        : 'instant',
+    notifyQuietHoursStart:
+      typeof state.settings.notifyQuietHoursStart === 'string' && /^\d{2}:\d{2}$/.test(state.settings.notifyQuietHoursStart)
+        ? state.settings.notifyQuietHoursStart
+        : '',
+    notifyQuietHoursEnd:
+      typeof state.settings.notifyQuietHoursEnd === 'string' && /^\d{2}:\d{2}$/.test(state.settings.notifyQuietHoursEnd)
+        ? state.settings.notifyQuietHoursEnd
+        : '',
     notifyOnKeyRequest: state.settings.notifyOnKeyRequest ?? true,
     notifyOnAutomationSuccess: state.settings.notifyOnAutomationSuccess ?? legacyDispatchSuccess ?? legacyAutomationSuccess ?? true,
     notifyOnAutomationFailure: state.settings.notifyOnAutomationFailure ?? legacyDispatchFailure ?? legacyAutomationFailure ?? true,
@@ -1745,6 +1772,8 @@ export interface CreateWatchInput {
   pollCron: string;
   enabled?: boolean;
   webhookUrl?: string;
+  testFlightPolicy?: 'latest' | 'latestNonExpired' | 'train';
+  testFlightTrain?: string;
 }
 
 export function createWatch(input: CreateWatchInput, actor: string): { ok: boolean; watch?: AppWatch; error?: string } {
@@ -1761,6 +1790,8 @@ export function createWatch(input: CreateWatchInput, actor: string): { ok: boole
     pollCron: input.pollCron,
     enabled: input.enabled ?? true,
     webhookUrl: input.webhookUrl,
+    testFlightPolicy: input.testFlightPolicy,
+    testFlightTrain: input.testFlightTrain,
     createdAt: now,
     updatedAt: now,
   };
@@ -1812,6 +1843,10 @@ export function getWatchConfigIssues(watch: AppWatch): string[] {
 
   if (fieldsSet === 2 && config.ghToken === '') {
     issues.push('Repo is configured but GH_TOKEN is not set - this watch will never actually run.');
+  }
+
+  if (watch.testFlightPolicy === 'train' && !watch.testFlightTrain?.trim()) {
+    issues.push('A TestFlight train is required when the train policy is selected.');
   }
 
   return issues;

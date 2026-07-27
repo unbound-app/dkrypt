@@ -97,6 +97,14 @@ export interface TestFlightUpdateCheck {
   reason: string;
 }
 
+function testFlightTrainMatchesPolicy(trainVersion: string, watch: AppWatch): boolean {
+  return watch.testFlightPolicy !== 'train' || trainVersion === watch.testFlightTrain;
+}
+
+function isExpiredTestFlightBuild(build: TFBuild): boolean {
+  return Boolean(build.expiration && Number.isFinite(Date.parse(build.expiration)) && Date.parse(build.expiration) <= Date.now());
+}
+
 export async function checkForTestFlightUpdate(watch: AppWatch): Promise<TestFlightUpdateCheck> {
   if (!watch.bundleId) {
     return { ok: true, wouldDispatch: false, reason: 'No watch bundle ID configured' };
@@ -117,7 +125,12 @@ export async function checkForTestFlightUpdate(watch: AppWatch): Promise<TestFli
   }
 
   let latestBuild: TFBuild | undefined;
-  for (const train of trains) {
+  const eligibleTrains = trains.filter((train) => testFlightTrainMatchesPolicy(train.trainVersion, watch));
+  if (eligibleTrains.length === 0) {
+    return { ok: true, appId, wouldDispatch: false, reason: 'No TestFlight trains matched this watch policy' };
+  }
+
+  for (const train of eligibleTrains) {
     let builds: TFBuild[];
     try {
       builds = await listBuilds(appId, train.trainVersion);
@@ -126,6 +139,7 @@ export async function checkForTestFlightUpdate(watch: AppWatch): Promise<TestFli
       continue;
     }
     for (const build of builds) {
+      if (watch.testFlightPolicy === 'latestNonExpired' && isExpiredTestFlightBuild(build)) continue;
       const buildNum = Number.parseInt(build.cfBundleVersion, 10) || 0;
       const latestNum = latestBuild ? Number.parseInt(latestBuild.cfBundleVersion, 10) || 0 : -1;
       if (buildNum > latestNum) latestBuild = build;

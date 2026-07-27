@@ -25,6 +25,8 @@ export function primeAppCatalogFromSearch(results: AppStoreSearchResult[]): void
       iconUrl: result.artworkUrl,
       trackId: result.trackId,
       sellerName: result.sellerName,
+      category: result.category,
+      price: result.price,
       updatedAt: Date.now(),
     })),
   );

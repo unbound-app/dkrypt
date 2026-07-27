@@ -13,6 +13,23 @@ const AS_REQUEST_PATH = '/tmp/autoinstall-as-request.json';
 const AS_RESPONSE_PATH = '/tmp/autoinstall-as-response.json';
 const AUTOCONFIRM_FLAG_PATH = '/tmp/autoinstall-autoconfirm.flag';
 
+export interface BridgeErrorDetails {
+  code?: string;
+  stage?: string;
+  message: string;
+  retryable: boolean;
+}
+
+export class BridgeError extends Error {
+  readonly details: BridgeErrorDetails;
+
+  constructor(details: BridgeErrorDetails) {
+    super(`${details.code ?? 'bridge_error'} at ${details.stage ?? 'unknown stage'}: ${details.message}`);
+    this.name = 'BridgeError';
+    this.details = details;
+  }
+}
+
 interface DeviceAuth {
   host: string;
   port: number;
@@ -240,7 +257,18 @@ async function sendBridgeRequestRawTo(
       const raw = await readRemoteFileIfExists(conn, responsePath);
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (parsed.ok === false) throw new Error(`autoinstall bridge error: ${parsed.error}`);
+        if (parsed.ok === false) {
+          const error = parsed.error;
+          if (error && typeof error === 'object') {
+            throw new BridgeError({
+              code: typeof error.code === 'string' ? error.code : undefined,
+              stage: typeof error.stage === 'string' ? error.stage : undefined,
+              message: typeof error.message === 'string' ? error.message : JSON.stringify(error),
+              retryable: error.retryable === true,
+            });
+          }
+          throw new BridgeError({ message: typeof error === 'string' ? error : String(error), retryable: false });
+        }
         return parsed;
       }
       await new Promise((r) => setTimeout(r, 500));

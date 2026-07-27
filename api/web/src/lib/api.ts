@@ -116,6 +116,9 @@ export interface ActiveJob {
 export interface SchedulerSettings {
   notifyWebhookUrl: string;
   notifyFormat: 'embed' | 'plain';
+  notifySuccessMode: 'instant' | 'daily' | 'weekly';
+  notifyQuietHoursStart: string;
+  notifyQuietHoursEnd: string;
   notifyOnKeyRequest: boolean;
   notifyOnAutomationSuccess: boolean;
   notifyOnAutomationFailure: boolean;
@@ -153,6 +156,8 @@ export interface AppWatch {
   pollCron: string;
   enabled: boolean;
   webhookUrl?: string;
+  testFlightPolicy?: 'latest' | 'latestNonExpired' | 'train';
+  testFlightTrain?: string;
   createdAt: number;
   updatedAt: number;
   nextRunAt?: number;
@@ -316,6 +321,7 @@ export interface AppStoreSearchResult {
   sellerName: string;
   artworkUrl: string;
   price: number;
+  category?: string;
 }
 
 export interface AppCatalogEntry {
@@ -324,6 +330,11 @@ export interface AppCatalogEntry {
   iconUrl?: string;
   trackId?: number;
   sellerName?: string;
+  category?: string;
+  description?: string;
+  screenshots?: string[];
+  releaseNotes?: string;
+  price?: number;
   updatedAt: number;
 }
 
@@ -424,6 +435,8 @@ export interface WatchInput {
   pollCron: string;
   enabled?: boolean;
   webhookUrl?: string;
+  testFlightPolicy?: 'latest' | 'latestNonExpired' | 'train';
+  testFlightTrain?: string;
 }
 
 export interface GithubRepoOption {
@@ -770,6 +783,23 @@ export interface TFBuild {
   releaseDate?: string;
   expiration?: string;
   fileSize?: number;
+}
+
+export interface TestFlightBridgeDiagnostics {
+  bridge: {
+    bridgeVersion?: string;
+    capabilities?: string[];
+    hasInstaller?: boolean;
+    hasCatalogManager?: boolean;
+    backgroundTaskActive?: boolean;
+    backgroundTimeRemaining?: number;
+  };
+  install?: Record<string, unknown>;
+  recentLog?: string[];
+}
+
+export function fetchTestFlightBridgeDiagnostics(): Promise<TestFlightBridgeDiagnostics> {
+  return apiJson('/v1/dashboard/testflight/diagnostics', undefined, 'external');
 }
 
 export function fetchTestFlightTrains(appId: number): Promise<{ trains: TFTrain[] } | { error: string }> {

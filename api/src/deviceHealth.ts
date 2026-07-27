@@ -6,6 +6,7 @@ import { EMBED_COLOR, notify } from '#notify.js';
 import { releasePinnedJobsForDevice } from '#jobs/store.js';
 import { getEffectiveDevices, getEffectiveSettings, recordDeviceHealthCheck, type DeviceRecord } from '#store/state.js';
 import { getDiskUsage } from '#util/diskUsage.js';
+import { getCachedDeviceHealth, setCachedDeviceHealth } from '#deviceHealthCache.js';
 
 const log = scopedLogger('idevice');
 
@@ -189,7 +190,6 @@ async function queryNetworkStatus(conn: Client): Promise<NetworkStatus | undefin
 }
 
 const HEALTH_CACHE_TTL_MS = 20_000;
-const healthCache = new Map<string, { at: number; value: DeviceHealth }>();
 
 async function computeDeviceHealth(device: DeviceRecord, isPrimary: boolean): Promise<DeviceHealth> {
   try {
@@ -255,16 +255,16 @@ export function peekPrimaryDeviceHealth(): DeviceHealth | undefined {
   const devices = getEffectiveDevices().filter((d) => d.enabled);
   const primary = devices.find((d) => d.isPrimary) ?? devices[0];
   if (!primary) return undefined;
-  return healthCache.get(primary.id)?.value;
+  return getCachedDeviceHealth(primary.id)?.value;
 }
 
 export async function getDeviceHealth(deviceId: string, force = false): Promise<DeviceHealth> {
-  const cached = healthCache.get(deviceId);
+  const cached = getCachedDeviceHealth(deviceId);
   if (!force && cached && Date.now() - cached.at < HEALTH_CACHE_TTL_MS) return cached.value;
   const device = getEffectiveDevices().find((d) => d.id === deviceId);
   if (!device) return { reachable: false, error: 'device not found', checkedAt: Date.now() };
   const value = await computeDeviceHealth(device, isPrimaryDeviceId(deviceId));
-  healthCache.set(deviceId, { at: Date.now(), value });
+  setCachedDeviceHealth(deviceId, value);
   return value;
 }
 
@@ -439,7 +439,7 @@ function warnOnMissingTelemetry(device: DeviceRecord, health: DeviceHealth): voi
 
 async function pollOneDevice(device: DeviceRecord, isPrimary: boolean): Promise<void> {
   const health = await computeDeviceHealth(device, isPrimary);
-  healthCache.set(device.id, { at: Date.now(), value: health });
+  setCachedDeviceHealth(device.id, health);
   warnOnMissingTelemetry(device, health);
   recordDeviceHealthCheck(
     device.id,

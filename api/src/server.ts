@@ -21,6 +21,7 @@ import { startScheduler } from '#scheduler/index.js';
 import { startApiKeySweeper, startSessionSweeper, startStateFlusher } from '#store/state.js';
 import { startDeviceHealthPoller } from '#deviceHealth.js';
 import { renderPublicPage } from '#publicPages.js';
+import { startNotificationDigestScheduler } from '#notify.js';
 
 const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 
@@ -95,6 +96,7 @@ function startBackgroundServices(): void {
   startDeviceHealthPoller();
   startKeyExpiryPoller();
   startJobWebhookDispatcher();
+  startNotificationDigestScheduler();
 }
 
 async function start(): Promise<void> {

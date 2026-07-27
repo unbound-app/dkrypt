@@ -11,6 +11,7 @@ import { sendMailToUser } from '#mail.js';
 import { sendPushToUser } from '#push.js';
 import { getApiKeyById, getEffectiveDevices, getUserPrefs, isBundleWatched, latestActiveShareLinkExpiry, recordJobHistory, type DeviceRecord } from '#store/state.js';
 import { uninstallFromPrimaryDevice } from '#appStoreInstall.js';
+import { getCachedDeviceHealth } from '#deviceHealthCache.js';
 import { runDecrypt } from '#jobs/runner.js';
 import type { Job, JobSource, TestFlightJobSource } from '#jobs/types.js';
 
@@ -280,6 +281,21 @@ function isDispatchable(job: Job, device: DeviceRecord, primary: DeviceRecord): 
   return true;
 }
 
+function deviceScore(device: DeviceRecord, primary: DeviceRecord): number {
+  const cachedHealth = getCachedDeviceHealth(device.id);
+  if (!cachedHealth) return device.id === primary.id ? 1 : 0;
+  const health = cachedHealth.value;
+  if (!health.reachable) return -10_000;
+
+  let score = device.id === primary.id ? 10 : 0;
+  score += Math.min(health.storageFreeBytes ? Math.floor(health.storageFreeBytes / (1024 * 1024 * 1024)) : 0, 100);
+  score += health.batteryCharging ? 20 : 0;
+  score += health.batteryPercent ? Math.floor(health.batteryPercent / 5) : 0;
+  score -= health.batteryTemperatureC && health.batteryTemperatureC >= 40 ? 50 : 0;
+  score -= health.storageUsedPercent && health.storageUsedPercent >= 0.9 ? 50 : 0;
+  return score;
+}
+
 function queuedByActiveCount(username: string): number {
   let count = 0;
   for (const job of jobs.values()) {
@@ -318,7 +334,8 @@ function pumpWorkers(): void {
   if (devices.length === 0) return;
   const primary = devices.find((d) => d.isPrimary) ?? devices[0];
 
-  for (const device of devices) {
+  const rankedDevices = [...devices].sort((a, b) => deviceScore(b, primary) - deviceScore(a, primary));
+  for (const device of rankedDevices) {
     if (busyDeviceIds.has(device.id)) continue;
     const jobId = takeNextDispatchableJobId(device, primary);
     if (!jobId) continue;

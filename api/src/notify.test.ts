@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
-import { notify, sendTestNotification } from '#notify.js';
+import { flushNotificationDigests, notify, sendTestNotification } from '#notify.js';
 import { updateSettings } from '#store/state.js';
 
 const originalFetch = global.fetch;
@@ -22,6 +22,9 @@ afterEach(() => {
     notifyOnKeyRequest: true,
     notifyOnAutomationSuccess: true,
     notifyOnAutomationFailure: true,
+    notifySuccessMode: 'instant',
+    notifyQuietHoursStart: '',
+    notifyQuietHoursEnd: '',
   });
 });
 
@@ -148,6 +151,19 @@ describe('notify', () => {
 
     await notify('appStoreAutomationSuccess', { title: 'x', color: 0 });
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  test('batches automation successes into the scheduled digest', async () => {
+    updateSettings({ notifyWebhookUrl: 'https://example.test/webhook', notifySuccessMode: 'daily' });
+    const fetchMock = mock(() => Promise.resolve(new Response('{}', { status: 200 })));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    await notify('appStoreAutomationSuccess', { title: 'First success', color: 0x3ecf8e });
+    await notify('testFlightAutomationSuccess', { title: 'Second success', color: 0x3ecf8e });
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    await flushNotificationDigests(new Date(2030, 0, 2, 9, 0));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
 

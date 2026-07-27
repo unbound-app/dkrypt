@@ -17,6 +17,8 @@
 		fetchWebhookDeliveries,
 		fetchGithubRepos,
 		fetchGithubWorkflows,
+		fetchTestFlightBridgeDiagnostics,
+		fetchWatchHealth,
 		previewWatchDispatchSource,
 		previewWatchDispatchDraft,
 		saveSettings,
@@ -31,8 +33,10 @@
 		type GithubWorkflowOption,
 		type SchedulerSettings,
 		type TestFlightUpdateCheck,
+		type TestFlightBridgeDiagnostics,
 		type UpdateCheck,
 		type WatchInput,
+		type WatchHealthSummary,
 		type WebhookDeliveryEntry,
 	} from "#lib/api";
 	import Badge from "#lib/components/ui/Badge.svelte";
@@ -61,6 +65,18 @@
 	const FORMAT_OPTIONS = [
 		{ value: "embed", label: "Rich embed (Discord)" },
 		{ value: "plain", label: "Plain text (Slack / generic)" },
+	];
+
+	const SUCCESS_DELIVERY_OPTIONS = [
+		{ value: "instant", label: "Immediately" },
+		{ value: "daily", label: "Daily digest (09:00)" },
+		{ value: "weekly", label: "Weekly digest (Monday 09:00)" },
+	];
+
+	const TESTFLIGHT_POLICY_OPTIONS = [
+		{ value: "latest", label: "Latest build" },
+		{ value: "latestNonExpired", label: "Latest non-expired build" },
+		{ value: "train", label: "Specific train" },
 	];
 
 	const NOTIFY_EVENTS: {
@@ -224,6 +240,8 @@
 		pollCron: "0 * * * *",
 		enabled: true,
 		webhookUrl: "",
+		testFlightPolicy: "latest",
+		testFlightTrain: "",
 	};
 
 	let watchDialogOpen = $state(false);
@@ -237,6 +255,10 @@
 	let triggeringWatch = $state<Set<string>>(new Set());
 	let deletingWatch = $state<Set<string>>(new Set());
 	let refreshingAppInfo = $state(false);
+	let loadingBridgeDiagnostics = $state(false);
+	let bridgeDiagnostics = $state<TestFlightBridgeDiagnostics | null>(null);
+	let bridgeDiagnosticsOpen = $state(false);
+	let watchHealth = $state<WatchHealthSummary[]>([]);
 	let watchSearchTerm = $state("");
 	let watchSearchResults = $state<AppStoreSearchResult[]>([]);
 	let watchSearchLoading = $state(false);
@@ -251,9 +273,18 @@
 	let githubWorkflowsToken = 0;
 
 	const watches = $derived(liveState.overview?.watches ?? []);
+	const failedWatchCount = $derived(watchHealth.filter((watch) => watch.lastCheckOk === false || watch.consecutiveFailures > 0).length);
+	const healthyWatchCount = $derived(watchHealth.filter((watch) => watch.lastCheckOk && watch.consecutiveFailures === 0).length);
 
 	$effect(() => {
 		void ensureAppCatalog(watches.map((watch) => watch.bundleId));
+	});
+
+	$effect(() => {
+		const load = () => void fetchWatchHealth().then(({ watches: next }) => (watchHealth = next)).catch(() => undefined);
+		load();
+		const interval = setInterval(load, 30_000);
+		return () => clearInterval(interval);
 	});
 
 	async function refreshWatchAppInfo(): Promise<void> {
@@ -263,6 +294,19 @@
 			showToast(ok ? "App names and icons refreshed" : "Could not refresh app info", ok ? "success" : "error");
 		} finally {
 			refreshingAppInfo = false;
+		}
+	}
+
+	async function openBridgeDiagnostics(): Promise<void> {
+		loadingBridgeDiagnostics = true;
+		bridgeDiagnosticsOpen = true;
+		try {
+			bridgeDiagnostics = await fetchTestFlightBridgeDiagnostics();
+		} catch (err) {
+			bridgeDiagnostics = null;
+			showToast(err instanceof Error ? err.message : "Could not load bridge diagnostics", "error");
+		} finally {
+			loadingBridgeDiagnostics = false;
 		}
 	}
 
@@ -344,6 +388,8 @@
 			pollCron: w.pollCron,
 			enabled: w.enabled,
 			webhookUrl: w.webhookUrl ?? "",
+			testFlightPolicy: w.testFlightPolicy ?? "latest",
+			testFlightTrain: w.testFlightTrain ?? "",
 		};
 		watchSearchTerm = appDisplayName(w.bundleId);
 		watchSearchResults = [];
@@ -679,6 +725,9 @@
 	const DEFAULT_FORM: SchedulerSettings = {
 		notifyWebhookUrl: "",
 		notifyFormat: "embed",
+		notifySuccessMode: "instant",
+		notifyQuietHoursStart: "",
+		notifyQuietHoursEnd: "",
 		notifyOnKeyRequest: true,
 		notifyOnAutomationSuccess: true,
 		notifyOnAutomationFailure: true,
@@ -780,6 +829,16 @@
 </script>
 
 <div class="flex flex-col gap-4">
+	<Card title="Automation health">
+		<div class="flex flex-wrap items-center gap-2 text-sm">
+			<Badge variant={failedWatchCount > 0 ? "destructive" : "success"}>{failedWatchCount > 0 ? "attention needed" : "healthy"}</Badge>
+			<span class="text-muted">{healthyWatchCount} healthy · {failedWatchCount} needs attention · {watches.filter((watch) => watch.schedulable).length} active</span>
+			{#if canManageSchedulerSettings}
+				<Button size="sm" variant="secondary" class="ml-auto" loading={loadingBridgeDiagnostics} onclick={openBridgeDiagnostics}>Inspect bridge</Button>
+			{/if}
+		</div>
+	</Card>
+
 	<Card title="Watches">
 		{#snippet headerExtra()}
 			{#if canManageWatches}
@@ -794,6 +853,9 @@
 					>
 						<RefreshCw class="h-3.5 w-3.5" />
 						Refresh apps
+					</Button>
+					<Button size="sm" variant="secondary" loading={loadingBridgeDiagnostics} onclick={openBridgeDiagnostics}>
+						Bridge diagnostics
 					</Button>
 					<Button size="sm" onclick={openAddWatch}>
 						<Plus class="h-3.5 w-3.5" />
@@ -1028,6 +1090,26 @@
 	{/if}
 </div>
 
+<Dialog open={bridgeDiagnosticsOpen} onOpenChange={(value) => (bridgeDiagnosticsOpen = value)} class="max-w-lg">
+	<div class="mb-3 text-sm font-medium">TestFlight bridge diagnostics</div>
+	{#if loadingBridgeDiagnostics}
+		<div class="text-sm text-muted">Checking the iPad bridge…</div>
+	{:else if bridgeDiagnostics}
+		<div class="grid grid-cols-2 gap-2 text-xs">
+			<div class="border-border rounded-md border p-2">Version <span class="text-muted">{bridgeDiagnostics.bridge.bridgeVersion ?? "unknown"}</span></div>
+			<div class="border-border rounded-md border p-2">Catalog <span class={bridgeDiagnostics.bridge.hasCatalogManager ? "text-ok" : "text-err"}>{bridgeDiagnostics.bridge.hasCatalogManager ? "ready" : "missing"}</span></div>
+			<div class="border-border rounded-md border p-2">Installer <span class={bridgeDiagnostics.bridge.hasInstaller ? "text-ok" : "text-err"}>{bridgeDiagnostics.bridge.hasInstaller ? "ready" : "missing"}</span></div>
+			<div class="border-border rounded-md border p-2">Install <span class="text-muted">{String(bridgeDiagnostics.install?.state ?? "idle")}</span></div>
+		</div>
+		<div class="mt-3 text-xs text-muted">Capabilities: {bridgeDiagnostics.bridge.capabilities?.join(", ") ?? "none reported"}</div>
+		{#if bridgeDiagnostics.recentLog?.length}
+			<pre class="bg-panel-muted mt-3 max-h-64 overflow-auto rounded-md p-2 text-[10px] whitespace-pre-wrap">{bridgeDiagnostics.recentLog.join("\n")}</pre>
+		{/if}
+	{:else}
+		<div class="text-sm text-muted">No diagnostics available.</div>
+	{/if}
+</Dialog>
+
 {#if canManageWatches}
 	<Dialog
 		open={watchDialogOpen}
@@ -1081,7 +1163,7 @@
 									{result.trackName}
 								</div>
 								<div class="truncate text-[11px] text-muted" title={result.bundleId}>
-									v{result.version} · {result.sellerName}
+									v{result.version} · {result.sellerName}{result.category ? ` · ${result.category}` : ""}
 								</div>
 							</div>
 						</button>
@@ -1097,6 +1179,27 @@
 					? appDisplayName(watchForm.bundleId)
 					: "Choose an app from search"}
 			</div>
+
+			<label for="w-testFlightPolicy" class="mt-3 mb-1 block text-xs text-muted"
+				>TestFlight build policy</label
+			>
+			<Select
+				id="w-testFlightPolicy"
+				items={TESTFLIGHT_POLICY_OPTIONS}
+				value={watchForm.testFlightPolicy ?? "latest"}
+				onValueChange={(value) =>
+					(watchForm = {
+						...watchForm,
+						testFlightPolicy: value as WatchInput["testFlightPolicy"],
+					})}
+				class="w-full"
+			/>
+			{#if watchForm.testFlightPolicy === "train"}
+				<label for="w-testFlightTrain" class="mt-2 mb-1 block text-xs text-muted"
+					>Train version</label
+				>
+				<Input id="w-testFlightTrain" placeholder="341.0" bind:value={watchForm.testFlightTrain} />
+			{/if}
 
 			<label for="w-repo" class="mt-3 mb-1 block text-xs text-muted"
 				>Dispatch repository</label
@@ -1299,6 +1402,36 @@
 			disabled={!canManageSchedulerSettings}
 			class="w-full"
 		/>
+
+		<label for="s-successDelivery" class="mt-3 mb-1 block text-xs text-muted"
+			>Successful automation delivery</label
+		>
+		<Select
+			id="s-successDelivery"
+			items={SUCCESS_DELIVERY_OPTIONS}
+			value={form.notifySuccessMode}
+			onValueChange={(value) =>
+				(form = {
+					...form,
+					notifySuccessMode: value as SchedulerSettings["notifySuccessMode"],
+				})}
+			disabled={!canManageSchedulerSettings}
+			class="w-full"
+		/>
+		<div class="mt-1 text-xs text-muted">
+			Failures remain immediate. Digests include successful decrypts and completed automation runs.
+		</div>
+
+		<div class="mt-3 grid grid-cols-2 gap-2">
+			<div>
+				<label for="s-quietStart" class="mb-1 block text-xs text-muted">Quiet hours start</label>
+				<Input id="s-quietStart" type="time" bind:value={form.notifyQuietHoursStart} disabled={!canManageSchedulerSettings} />
+			</div>
+			<div>
+				<label for="s-quietEnd" class="mb-1 block text-xs text-muted">Quiet hours end</label>
+				<Input id="s-quietEnd" type="time" bind:value={form.notifyQuietHoursEnd} disabled={!canManageSchedulerSettings} />
+			</div>
+		</div>
 
 		<div class="mt-3 mb-1 text-xs text-muted">Notify on</div>
 		<div class="border-border divide-border divide-y rounded-lg border">

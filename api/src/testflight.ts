@@ -2,6 +2,7 @@ import { Client } from 'ssh2';
 import { scopedLogger } from '#logger.js';
 import {
   execCommand,
+  BridgeError,
   isTestFlightRunning,
   readInstalledBundleVersions,
   sendSpringBoardBridgeRequest,
@@ -33,6 +34,28 @@ export interface TFBuild {
   [key: string]: unknown;
 }
 
+export interface TestFlightBridgeDiagnostics {
+  bridge: {
+    bridgeVersion?: string;
+    capabilities?: string[];
+    hasInstaller?: boolean;
+    hasCatalogManager?: boolean;
+    backgroundTaskActive?: boolean;
+    backgroundTimeRemaining?: number;
+  };
+  install?: Record<string, unknown>;
+  recentLog?: string[];
+}
+
+const REQUIRED_BRIDGE_CAPABILITIES = ['list_trains', 'list_builds', 'install', 'diagnostics', 'idempotent_install'];
+
+function isCompatibleBridge(response: Record<string, unknown>): boolean {
+  const version = typeof response.bridgeVersion === 'string' ? response.bridgeVersion : '';
+  const [major, minor] = version.split('.').map(Number);
+  const capabilities = Array.isArray(response.capabilities) ? response.capabilities.filter((value): value is string => typeof value === 'string') : [];
+  return major === 1 && minor >= 1 && REQUIRED_BRIDGE_CAPABILITIES.every((capability) => capabilities.includes(capability));
+}
+
 async function launchTestFlight(conn: Client, wasRunning: boolean): Promise<void> {
   const response = await sendSpringBoardBridgeRequest(conn, { action: 'launch_app', bundleId: 'com.apple.TestFlight' });
   if (!wasRunning && response?.launchResult !== 0) {
@@ -45,7 +68,7 @@ async function waitForBridgeReady(conn: Client, timeoutMs = 20_000): Promise<voi
   while (Date.now() < deadline) {
     try {
       const response = await sendTestFlightBridgeRequest(conn, { action: 'status' }, 3_000);
-      if (response?.hasInstaller && response?.hasCatalogManager) return;
+      if (response?.hasInstaller && response?.hasCatalogManager && isCompatibleBridge(response)) return;
     } catch {}
     await new Promise((r) => setTimeout(r, 1_000));
   }
@@ -67,19 +90,40 @@ export async function ensureTestFlightRunning(): Promise<void> {
 }
 
 export async function listTrains(appId: number): Promise<TFTrain[]> {
-  await ensureTestFlightRunning();
-  return withSSH(primaryRootDir(), async (conn) => {
+  return withReadyBridgeRequest(() => withSSH(primaryRootDir(), async (conn) => {
     const response = await sendTestFlightBridgeRequest(conn, { action: 'list_trains', appId });
     return response.data as TFTrain[];
-  });
+  }));
 }
 
 export async function listBuilds(appId: number, trainVersion: string): Promise<TFBuild[]> {
-  await ensureTestFlightRunning();
-  return withSSH(primaryRootDir(), async (conn) => {
+  return withReadyBridgeRequest(() => withSSH(primaryRootDir(), async (conn) => {
     const response = await sendTestFlightBridgeRequest(conn, { action: 'list_builds', appId, trainVersion });
     return response.data as TFBuild[];
-  });
+  }));
+}
+
+async function withReadyBridgeRequest<T>(request: () => Promise<T>): Promise<T> {
+  await ensureTestFlightRunning();
+  return withBridgeRecovery(request);
+}
+
+async function withBridgeRecovery<T>(request: () => Promise<T>): Promise<T> {
+  try {
+    return await request();
+  } catch (err) {
+    if (!(err instanceof BridgeError) || !err.details.retryable) throw err;
+    log.warn('recovering a retryable TestFlight bridge request', { code: err.details.code, stage: err.details.stage });
+    await ensureTestFlightRunning();
+    return request();
+  }
+}
+
+export async function getTestFlightBridgeDiagnostics(): Promise<TestFlightBridgeDiagnostics> {
+  return withReadyBridgeRequest(() => withSSH(primaryRootDir(), async (conn) => {
+    const response = await sendTestFlightBridgeRequest(conn, { action: 'diagnostics' });
+    return response.data as TestFlightBridgeDiagnostics;
+  }));
 }
 
 async function findInstalledBundlePath(conn: Client, bundleId: string): Promise<string | undefined> {
@@ -98,6 +142,7 @@ export async function installBuild(
   build: TFBuild,
   onProgress?: (message: string) => void,
   waitTimeoutMs = 4 * 60_000,
+  operationId?: string,
 ): Promise<void> {
   if (!SAFE_BUNDLE_ID_RE.test(build.bundleId)) {
     throw new Error(`refusing to install build with unsafe bundleId: ${JSON.stringify(build.bundleId)}`);
@@ -113,7 +158,7 @@ export async function installBuild(
 
   await withSSH(primaryRootDir(), async (conn) => {
     report('sending install request to TestFlight');
-    await sendTestFlightBridgeRequest(conn, { action: 'install', appId, build });
+    await sendTestFlightBridgeRequest(conn, { action: 'install', appId, build, operationId });
     report('TestFlight accepted the install request, waiting for it to land');
 
     const start = Date.now();

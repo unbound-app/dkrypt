@@ -13,6 +13,11 @@ export interface ItunesAppMetadata {
   sellerName: string;
   artworkUrl: string;
   version: string;
+  category?: string;
+  description?: string;
+  screenshots?: string[];
+  releaseNotes?: string;
+  price?: number;
 }
 
 interface ItunesLookupResponse {
@@ -26,6 +31,11 @@ interface ItunesLookupResponse {
     artworkUrl60?: string;
     artworkUrl100?: string;
     artworkUrl512?: string;
+    primaryGenreName?: string;
+    description?: string;
+    screenshotUrls?: string[];
+    releaseNotes?: string;
+    price?: number;
   }>;
 }
 
@@ -59,6 +69,11 @@ export async function lookupAppMetadata(bundleId: string): Promise<ItunesAppMeta
     sellerName: result.sellerName ?? '',
     artworkUrl: result.artworkUrl512 || result.artworkUrl100 || result.artworkUrl60 || '',
     version: result.version,
+    category: result.primaryGenreName,
+    description: result.description,
+    screenshots: result.screenshotUrls?.slice(0, 10),
+    releaseNotes: result.releaseNotes,
+    price: result.price,
   };
 }
 
@@ -70,6 +85,7 @@ export interface ItunesSearchResult {
   sellerName: string;
   artworkUrl: string;
   price: number;
+  category?: string;
 }
 
 interface ItunesSearchResponse {
@@ -82,6 +98,7 @@ interface ItunesSearchResponse {
     artworkUrl60?: string;
     artworkUrl100?: string;
     price: number;
+    primaryGenreName?: string;
   }>;
 }
 
@@ -99,5 +116,6 @@ export async function searchApps(term: string, limit = 10): Promise<ItunesSearch
     sellerName: r.sellerName,
     artworkUrl: r.artworkUrl100 || r.artworkUrl60 || '',
     price: r.price,
+    category: r.primaryGenreName,
   }));
 }

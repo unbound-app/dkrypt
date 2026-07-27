@@ -237,6 +237,15 @@ describe('getWatchConfigIssues', () => {
     const issues = getWatchConfigIssues(watch!);
     expect(issues.some((i) => i.includes('GH_TOKEN'))).toBe(true);
   });
+
+  test('requires a train when the TestFlight train policy is selected', () => {
+    const { watch } = createWatch(
+      { bundleId: 'com.example.train', repo: 'me/app', ghWorkflowFile: '', pollCron: '0 * * * *', testFlightPolicy: 'train' },
+      'tester',
+    );
+    expect(getWatchConfigIssues(watch!).some((issue) => issue.includes('TestFlight train'))).toBe(true);
+    deleteWatch(watch!.id, 'tester');
+  });
 });
 
 describe('watch CRUD', () => {

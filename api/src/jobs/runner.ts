@@ -29,7 +29,7 @@ export async function runDecrypt(job: Job, device: DeviceRecord): Promise<void> 
   };
 
   if (job.testflight) {
-    await installBuild(job.testflight.appId, job.testflight.build, report);
+    await installBuild(job.testflight.appId, job.testflight.build, report, undefined, job.id);
   } else {
     await installFromAppStore(job.bundleId, {
       externalVersionId: job.externalVersionId,
