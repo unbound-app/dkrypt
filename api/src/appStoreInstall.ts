@@ -25,13 +25,7 @@ function primaryRootDir(): string {
   return getPrimaryDevice().rootDir;
 }
 
-async function enableDarkAwakeMode(conn: Client): Promise<void> {
-  const response = await sendSpringBoardBridgeRequest(conn, { action: 'dark_on' });
-  if (response?.ok === false) log.warn('autoinstall dark-awake mode was not confirmed', { response });
-}
-
 async function ensureAppStoreForeground(conn: Client): Promise<void> {
-  await enableDarkAwakeMode(conn);
   const wasRunning = await isAppStoreRunning(conn);
   const response = await sendSpringBoardBridgeRequest(conn, { action: 'launch_app', bundleId: 'com.apple.AppStore' });
   if (!wasRunning && response?.launchResult !== 0) {

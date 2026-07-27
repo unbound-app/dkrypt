@@ -63,11 +63,6 @@ async function launchTestFlight(conn: Client, wasRunning: boolean): Promise<void
   }
 }
 
-async function enableDarkAwakeMode(conn: Client): Promise<void> {
-  const response = await sendSpringBoardBridgeRequest(conn, { action: 'dark_on' });
-  if (response?.ok === false) log.warn('autoinstall dark-awake mode was not confirmed', { response });
-}
-
 async function waitForBridgeReady(conn: Client, timeoutMs = 20_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -82,7 +77,6 @@ async function waitForBridgeReady(conn: Client, timeoutMs = 20_000): Promise<voi
 
 export async function ensureTestFlightRunning(): Promise<void> {
   await withSSH(primaryRootDir(), async (conn) => {
-    await enableDarkAwakeMode(conn);
     const wasRunning = await isTestFlightRunning(conn);
     log.info(
       wasRunning

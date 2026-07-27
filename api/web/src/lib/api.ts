@@ -424,6 +424,10 @@ export function deleteDevice(id: string): Promise<{ ok: boolean }> {
   return apiAction(`/v1/dashboard/devices/${encodeURIComponent(id)}`, { method: 'DELETE' }, 'Device removed');
 }
 
+export function setDeviceDarkMode(id: string, enabled: boolean): Promise<{ ok: boolean; data: DeviceHealth }> {
+  return apiAction(`/v1/dashboard/devices/${encodeURIComponent(id)}/dark-mode`, { method: 'PUT', body: JSON.stringify({ enabled }) }, enabled ? 'Display dark mode enabled' : 'Display dark mode disabled');
+}
+
 export function fetchWatches(): Promise<{ watches: AppWatch[] }> {
   return apiJson('/v1/dashboard/watches');
 }

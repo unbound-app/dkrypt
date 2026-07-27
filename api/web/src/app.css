@@ -227,7 +227,7 @@
 .mobile-primary-nav {
 	left: 0;
 	right: 0;
-	bottom: env(safe-area-inset-bottom);
+	bottom: max(0px, calc(env(safe-area-inset-bottom) - 0.35rem));
 }
 
 .glass-status-pull {

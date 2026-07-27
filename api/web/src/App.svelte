@@ -653,7 +653,7 @@
 					</DropdownMenu.Trigger>
 					<DropdownMenu.Portal>
 					<DropdownMenu.Content
-							class="border-border bg-panel z-50 w-72 rounded-xl border p-3 shadow-2xl max-sm:!fixed max-sm:!top-14 max-sm:!right-2 max-sm:!left-auto max-sm:!w-[min(18rem,calc(100vw-1rem))] max-sm:!transform-none"
+							class="border-border bg-panel z-50 w-72 rounded-xl border p-3 shadow-2xl max-lg:!fixed max-lg:!top-14 max-lg:!right-2 max-lg:!bottom-auto max-lg:!left-auto max-lg:!w-[min(18rem,calc(100vw-1rem))] max-lg:!transform-none"
 							sideOffset={8}
 							align="end"
 						>
@@ -994,7 +994,7 @@
 			</div>
 		</header>
 		<main
-			class="mx-auto max-w-[1760px] px-3 pt-4 pb-[calc(3.75rem+env(safe-area-inset-bottom))] sm:px-5 sm:pt-5 lg:px-6 lg:pb-6"
+			class="mx-auto max-w-[1760px] px-3 pt-4 pb-[calc(3.25rem+env(safe-area-inset-bottom))] sm:px-5 sm:pt-5 lg:px-6 lg:pb-6"
 		>
 			<SessionExpiryBanner />
 			<ConnectionBanner />

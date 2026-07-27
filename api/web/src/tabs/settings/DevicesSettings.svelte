@@ -8,6 +8,7 @@
     fetchDeviceHealth,
     fetchSettings,
     saveSettings,
+    setDeviceDarkMode,
     updateDevice,
     type DeviceHealth,
     type DeviceRecord,
@@ -73,6 +74,7 @@
   });
 
   let testingId = $state<Set<string>>(new Set());
+  let updatingDarkModeId = $state<Set<string>>(new Set());
 
   async function testConnection(d: DeviceRecord): Promise<void> {
     testingId = new Set(testingId).add(d.id);
@@ -84,6 +86,18 @@
       const next = new Set(testingId);
       next.delete(d.id);
       testingId = next;
+    }
+  }
+
+  async function toggleDarkMode(d: DeviceRecord, enabled: boolean): Promise<void> {
+    updatingDarkModeId = new Set(updatingDarkModeId).add(d.id);
+    try {
+      const result = await setDeviceDarkMode(d.id, enabled);
+      if (result.ok) health = { ...health, [d.id]: result.data };
+    } finally {
+      const next = new Set(updatingDarkModeId);
+      next.delete(d.id);
+      updatingDarkModeId = next;
     }
   }
 
@@ -215,6 +229,20 @@
               <span class="font-sans">checked <RelativeTime ms={h.checkedAt} /></span>
             {/if}
           </div>
+          {#if d.isPrimary && h?.reachable && h.darkEnabled !== undefined}
+            <div class="border-border mt-3 flex items-center justify-between gap-3 border-t pt-3">
+              <div class="min-w-0">
+                <div class="text-sm">Keep display dark</div>
+                <div class="text-xs text-muted">autoinstall keeps the device awake while the display is blacked out.</div>
+              </div>
+              <Switch
+                checked={h.darkEnabled}
+                disabled={!canManageDevices || updatingDarkModeId.has(d.id)}
+                onCheckedChange={(enabled) => void toggleDarkMode(d, enabled)}
+                aria-label="Keep display dark"
+              />
+            </div>
+          {/if}
         </div>
       {/each}
     </div>

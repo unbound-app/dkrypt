@@ -18,12 +18,27 @@ import type { Job, JobSource, TestFlightJobSource } from '#jobs/types.js';
 const jobs = new Map<string, Job>();
 
 const donePath = path.join(config.stateDir, 'done-jobs.json');
+const activePath = path.join(config.stateDir, 'active-jobs.json');
+const queue: string[] = [];
+const busyDeviceIds = new Set<string>();
+
+function serializableJob(job: Job): Omit<Job, 'childProcess' | 'waiters'> {
+  const { childProcess: _childProcess, waiters: _waiters, ...rest } = job;
+  return rest;
+}
 
 function persistDoneJobs(): void {
   const done = [...jobs.values()]
     .filter((j) => j.status === 'done')
-    .map(({ childProcess: _childProcess, waiters: _waiters, ...rest }) => rest);
+    .map(serializableJob);
   writeFileSync(donePath, JSON.stringify(done));
+}
+
+function persistActiveJobs(): void {
+  const active = [...jobs.values()]
+    .filter((j) => j.status === 'queued' || j.status === 'running')
+    .map(serializableJob);
+  writeFileSync(activePath, JSON.stringify(active));
 }
 
 function loadDoneJobs(): void {
@@ -40,10 +55,49 @@ function loadDoneJobs(): void {
   }
 }
 
-loadDoneJobs();
+export function recoverPersistedActiveJobs(saved: Job[], now = Date.now()): { queued: Job[]; interrupted: Job[] } {
+  const queued: Job[] = [];
+  const interrupted: Job[] = [];
+  for (const job of saved) {
+    const restored = { ...job, childProcess: undefined, waiters: [] };
+    if (restored.status === 'queued') {
+      queued.push(restored);
+      continue;
+    }
+    if (restored.status === 'running') {
+      interrupted.push({
+        ...restored,
+        status: 'failed',
+        progress: 'interrupted by dkrypt restart',
+        error: 'interrupted by dkrypt restart',
+        finishedAt: now,
+      });
+    }
+  }
+  return { queued, interrupted };
+}
 
-const queue: string[] = [];
-const busyDeviceIds = new Set<string>();
+function loadActiveJobs(): void {
+  if (!existsSync(activePath)) return;
+  try {
+    const saved = JSON.parse(readFileSync(activePath, 'utf8')) as Job[];
+    const { queued, interrupted } = recoverPersistedActiveJobs(saved);
+    for (const job of queued) {
+      jobs.set(job.id, job);
+      insertByPriority(job.id, job.priority);
+    }
+    for (const job of interrupted) recordJobHistory(toHistoryEntry(job));
+    persistActiveJobs();
+    if (queued.length > 0 || interrupted.length > 0) {
+      log.warn('recovered jobs after dkrypt restart', { queued: queued.length, interrupted: interrupted.length });
+    }
+  } catch (err) {
+    log.warn('failed to restore active-jobs.json', { error: String(err) });
+  }
+}
+
+loadDoneJobs();
+loadActiveJobs();
 
 const RETRY_BACKOFF_MS = 5_000;
 
@@ -115,6 +169,7 @@ export function enqueueDecryptJob(
     insertByPriority(job.id, priority);
   }
   log.info('job queued', { jobId: job.id, bundleId, externalVersionId, source, priority });
+  persistActiveJobs();
   emitJobsChanged();
 
   pumpWorkers();
@@ -201,6 +256,7 @@ export function cancelQueuedJob(id: string, cancelledBy: string): boolean {
   job.finishedAt = Date.now();
   log.info('job cancelled', { jobId: id, bundleId: job.bundleId, cancelledBy });
 
+  persistActiveJobs();
   recordJobHistory(toHistoryEntry(job));
   settle(job);
 
@@ -217,6 +273,7 @@ export function cancelRunningJob(id: string, cancelledBy: string): boolean {
   job.progress = 'cancelling…';
   job.childProcess?.kill('SIGTERM');
   log.info('job cancel requested', { jobId: id, bundleId: job.bundleId, cancelledBy });
+  persistActiveJobs();
   emitJobsChanged();
   return true;
 }
@@ -355,6 +412,7 @@ async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
   job.startedAt = Date.now();
   job.deviceId = device.id;
   log.info('job started', { jobId: job.id, bundleId: job.bundleId, deviceId: device.id });
+  persistActiveJobs();
   emitJobsChanged();
 
   try {
@@ -363,6 +421,7 @@ async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
     job.finishedAt = Date.now();
     log.info('job done', { jobId: job.id, bundleId: job.bundleId, deviceId: device.id, sizeBytes: job.fileSizeBytes });
     persistDoneJobs();
+    persistActiveJobs();
   } catch (err) {
     const message = job.cancelledBy ? `cancelled by ${job.cancelledBy}` : err instanceof Error ? err.message : String(err);
     const canRetry = !job.cancelledBy && (job.retryCount ?? 0) === 0;
@@ -370,6 +429,7 @@ async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
       job.retryCount = (job.retryCount ?? 0) + 1;
       job.progress = 'retrying after a transient failure…';
       log.warn('job failed, retrying once after backoff', { jobId: job.id, bundleId: job.bundleId, deviceId: device.id, error: message });
+      persistActiveJobs();
       emitJobsChanged();
       await sleep(RETRY_BACKOFF_MS);
       if (job.cancelledBy) {
@@ -377,6 +437,7 @@ async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
         job.finishedAt = Date.now();
         job.error = `cancelled by ${job.cancelledBy}`;
         log.info('job cancelled during retry backoff', { jobId: job.id, bundleId: job.bundleId, cancelledBy: job.cancelledBy });
+        persistActiveJobs();
         recordJobHistory(toHistoryEntry(job));
         emitJobsChanged();
         settle(job);
@@ -389,6 +450,7 @@ async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
     job.finishedAt = Date.now();
     job.error = message;
     log.error('job failed', { jobId: job.id, bundleId: job.bundleId, deviceId: device.id, error: job.error, retried: (job.retryCount ?? 0) > 0 });
+    persistActiveJobs();
   }
 
   recordJobHistory(toHistoryEntry(job));
@@ -437,6 +499,7 @@ async function reclaimAndMaybeUninstall(job: Job): Promise<void> {
 }
 
 export function startJobSweeper(): void {
+  pumpWorkers();
   const intervalMs = 60_000;
   setInterval(() => {
     const now = Date.now();

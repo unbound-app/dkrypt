@@ -4,7 +4,33 @@ mock.module('./runner.js', () => ({
   runDecrypt: () => new Promise<void>(() => {}),
 }));
 
-const { cancelJob, cancelQueuedJob, enqueueDecryptJob, getActiveJobs, getJob, getQueueInfo } = await import('./store.js');
+const { cancelJob, cancelQueuedJob, enqueueDecryptJob, getActiveJobs, getJob, getQueueInfo, recoverPersistedActiveJobs } = await import('./store.js');
+
+describe('recoverPersistedActiveJobs', () => {
+  test('keeps queued jobs and records a running job as interrupted after a restart', () => {
+    const base = {
+      bundleId: 'com.test.restart',
+      source: 'scheduler' as const,
+      priority: 0,
+      progress: 'decrypting',
+      createdAt: 1,
+      waiters: [],
+    };
+    const { queued, interrupted } = recoverPersistedActiveJobs([
+      { ...base, id: 'queued', status: 'queued' },
+      { ...base, id: 'running', status: 'running', startedAt: 2 },
+    ], 3);
+
+    expect(queued.map((job) => job.id)).toEqual(['queued']);
+    expect(interrupted).toHaveLength(1);
+    expect(interrupted[0]).toMatchObject({
+      id: 'running',
+      status: 'failed',
+      error: 'interrupted by dkrypt restart',
+      finishedAt: 3,
+    });
+  });
+});
 
 describe('enqueueDecryptJob', () => {
   test('scheduler jumps queued dashboard jobs, dedupes same bundle, never overtakes a running job', () => {

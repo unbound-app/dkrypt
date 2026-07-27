@@ -19,7 +19,7 @@ import { listDispatchRepos, listRepoWorkflows } from '#scheduler/github.js';
 import { lookupAppMetadata, searchApps } from '#scheduler/itunes.js';
 import { requirePermission, requireSession } from '#session.js';
 import { getDeviceHealth } from '#deviceHealth.js';
-import { validateDeviceRootDir } from '#idevice.js';
+import { sendSpringBoardBridgeRequest, validateDeviceRootDir, withSSH } from '#idevice.js';
 import { getTestFlightBridgeDiagnostics, listBuilds, listTrains } from '#testflight.js';
 import { nextCronRunAt } from '#util/cron.js';
 import { getDiskUsage } from '#util/diskUsage.js';
@@ -632,6 +632,25 @@ dashboardRouter.get('/v1/dashboard/devices/:id/health', canViewDevices, async (r
   }
   const health = await getDeviceHealth(device.id, req.query.force === 'true');
   res.json(health);
+});
+
+dashboardRouter.put('/v1/dashboard/devices/:id/dark-mode', canManageDevices, async (req, res) => {
+  const enabled = (req.body as { enabled?: unknown } | undefined)?.enabled;
+  if (typeof enabled !== 'boolean') {
+    res.status(400).json({ error: 'enabled must be a boolean' });
+    return;
+  }
+  const device = requireDevice(req.params.id);
+  if (!device) {
+    res.status(404).json({ error: 'device not found' });
+    return;
+  }
+  try {
+    await withSSH(device.rootDir, (conn) => sendSpringBoardBridgeRequest(conn, { action: enabled ? 'dark_on' : 'dark_off' }));
+    res.json(await getDeviceHealth(device.id, true));
+  } catch (err) {
+    res.status(502).json({ error: `autoinstall could not change the display state: ${err instanceof Error ? err.message : String(err)}` });
+  }
 });
 
 dashboardRouter.get('/v1/dashboard/devices/:id/health-history', canViewDevices, (req, res) => {
