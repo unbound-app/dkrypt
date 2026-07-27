@@ -1,6 +1,11 @@
 export const GENERATED_CHANGELOG = [
   {
     "date": "2026-07-27",
+    "title": "feat: add workflow dispatch and release planning",
+    "description": "Released in a9f8aef."
+  },
+  {
+    "date": "2026-07-27",
     "title": "fix: preserve changelog generator format",
     "description": "Released in 77e1641."
   },
@@ -33,10 +38,5 @@ export const GENERATED_CHANGELOG = [
     "date": "2026-07-27",
     "title": "fix: flush mobile navigation to viewport",
     "description": "Released in 1b870dc."
-  },
-  {
-    "date": "2026-07-27",
-    "title": "fix: restore dashboard popovers and mobile layout",
-    "description": "Released in 19789d9."
   }
 ] as const;
