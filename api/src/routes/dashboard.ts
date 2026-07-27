@@ -85,6 +85,7 @@ import {
   getUserPriority,
   getWatch,
   getWatchConfigIssues,
+  getWatchDispatchTargets,
   getWebhookDeliveryLog,
   getAppCatalogEntries,
   getAppCatalogStats,
@@ -386,6 +387,43 @@ dashboardRouter.get('/v1/dashboard/insights', (req, res) => {
   const topAppsLimit = Math.min(Math.max(Number.parseInt(String(req.query.topApps ?? '5'), 10) || 5, 1), 25);
   const trendDays = Math.min(Math.max(Number.parseInt(String(req.query.trendDays ?? '14'), 10) || 14, 1), 90);
   res.json(getInsightsSummary(topAppsLimit, trendDays));
+});
+
+dashboardRouter.get('/v1/dashboard/storage-forecast', canViewScheduler, (_req, res) => {
+  const cutoff = Date.now() - 30 * 86_400_000;
+  const completed = getAllJobHistory().filter((entry) => entry.status === 'done' && entry.finishedAt >= cutoff && entry.sizeBytes && entry.sizeBytes > 0);
+  const bytesPerDay = completed.reduce((total, entry) => total + (entry.sizeBytes ?? 0), 0) / 30;
+  const disk = getDiskUsage(config.outputDir);
+  if (!disk) {
+    res.status(503).json({ error: 'output storage is unavailable' });
+    return;
+  }
+  res.json({
+    freeBytes: disk.freeBytes,
+    bytesPerDay,
+    daysRemaining: bytesPerDay > 0 ? Math.floor(disk.freeBytes / bytesPerDay) : null,
+    sampleCount: completed.length,
+  });
+});
+
+dashboardRouter.get('/v1/dashboard/support-bundle', canManageWatches, (_req, res) => {
+  const clean = (value: string | undefined): string | undefined => value?.replace(/https?:\/\/\S+/g, '[redacted-url]').replace(/(?:token|secret|key)=\S+/gi, '$1=[redacted]');
+  const jobs = getAllJobHistory()
+    .slice(0, 100)
+    .map(({ id, bundleId, status, source, versionLabel, createdAt, startedAt, finishedAt, sizeBytes, error }) => ({
+      id, bundleId, status, source, versionLabel, createdAt, startedAt, finishedAt, sizeBytes, error: clean(error),
+    }));
+  res.setHeader('Content-Disposition', 'attachment; filename="dkrypt-support-bundle.json"');
+  res.json({
+    generatedAt: new Date().toISOString(),
+    disk: getDiskUsage(config.outputDir),
+    catalog: getAppCatalogStats(),
+    devices: getEffectiveDevices().map(({ id, name, enabled, isPrimary }) => ({ id, name, enabled, isPrimary })),
+    watches: getEffectiveWatches().map((watch) => ({ bundleId: watch.bundleId, enabled: watch.enabled, pollCron: watch.pollCron, destinations: getWatchDispatchTargets(watch).length })),
+    watchHealth: getWatchHealthRollup(),
+    schedulerRuns: getSchedulerRunHistory(50).map((run) => ({ ...run, appStore: { ...run.appStore, reason: clean(run.appStore.reason) ?? '' }, testflight: { ...run.testflight, reason: clean(run.testflight.reason) ?? '' } })),
+    jobs,
+  });
 });
 
 const BUNDLE_ID_RE = /^[A-Za-z0-9.-]{3,200}$/;
@@ -746,7 +784,7 @@ interface WatchInput {
   bundleId: string;
   repo: string;
   ghWorkflowFile: string;
-  dispatchTargets?: { repo: string; ghWorkflowFile: string; inputs?: Record<string, string> }[];
+  dispatchTargets?: { repo: string; ghWorkflowFile: string; mode?: 'repository_dispatch' | 'workflow_dispatch'; ref?: string; inputs?: Record<string, string> }[];
   pollCron: string;
   enabled?: boolean;
   webhookUrl?: string;
@@ -765,6 +803,8 @@ function parseWatchInput(body: unknown): WatchInput | undefined {
         .map((target) => ({
           repo: typeof target.repo === 'string' ? target.repo.trim() : '',
           ghWorkflowFile: typeof target.ghWorkflowFile === 'string' ? target.ghWorkflowFile.trim() : '',
+          mode: target.mode === 'workflow_dispatch' ? 'workflow_dispatch' as const : 'repository_dispatch' as const,
+          ref: typeof target.ref === 'string' ? target.ref.trim() || undefined : undefined,
           inputs: parseDispatchInputs(target.inputs),
         }))
         .filter((target) => /^[\w.-]+\/[\w.-]+$/.test(target.repo) && target.ghWorkflowFile.length > 0)
@@ -829,6 +869,8 @@ dashboardRouter.patch('/v1/dashboard/watches/:id', canManageWatches, (req, res) 
         .map((target) => ({
           repo: typeof target.repo === 'string' ? target.repo.trim() : '',
           ghWorkflowFile: typeof target.ghWorkflowFile === 'string' ? target.ghWorkflowFile.trim() : '',
+          mode: target.mode === 'workflow_dispatch' ? 'workflow_dispatch' as const : 'repository_dispatch' as const,
+          ref: typeof target.ref === 'string' ? target.ref.trim() || undefined : undefined,
           inputs: parseDispatchInputs(target.inputs),
       }))
       .filter((target) => /^[\w.-]+\/[\w.-]+$/.test(target.repo) && target.ghWorkflowFile.length > 0);

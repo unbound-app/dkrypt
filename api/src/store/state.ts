@@ -205,6 +205,8 @@ export interface AppWatch {
 export interface DispatchTarget {
   repo: string;
   ghWorkflowFile: string;
+  mode?: 'repository_dispatch' | 'workflow_dispatch';
+  ref?: string;
   inputs?: Record<string, string>;
 }
 
@@ -1815,9 +1817,15 @@ export function getWatchDispatchTargets(watch: Pick<AppWatch, 'repo' | 'ghWorkfl
     : [{ repo: watch.repo, ghWorkflowFile: watch.ghWorkflowFile }];
   const seen = new Set<string>();
   return candidates
-    .map((target) => ({ repo: target.repo.trim(), ghWorkflowFile: target.ghWorkflowFile.trim(), inputs: target.inputs }))
+    .map((target) => ({
+      repo: target.repo.trim(),
+      ghWorkflowFile: target.ghWorkflowFile.trim(),
+      mode: target.mode,
+      ref: target.ref?.trim() || undefined,
+      inputs: target.inputs,
+    }))
     .filter((target) => {
-      const key = `${target.repo}\u0000${target.ghWorkflowFile}`;
+      const key = JSON.stringify([target.repo, target.ghWorkflowFile, target.mode ?? 'repository_dispatch', target.ref ?? '', target.inputs ?? {}]);
       if (!target.repo || !target.ghWorkflowFile || seen.has(key)) return false;
       seen.add(key);
       return true;
@@ -1827,10 +1835,11 @@ export function getWatchDispatchTargets(watch: Pick<AppWatch, 'repo' | 'ghWorkfl
 function normalizedWatchInput(input: CreateWatchInput): Pick<CreateWatchInput, 'repo' | 'ghWorkflowFile' | 'dispatchTargets'> {
   const targets = getWatchDispatchTargets(input);
   const primary = targets[0] ?? { repo: input.repo.trim(), ghWorkflowFile: input.ghWorkflowFile.trim() };
+  const preserveTargets = targets.length > 1 || targets.some((target) => target.mode === 'workflow_dispatch' || target.ref || Object.keys(target.inputs ?? {}).length > 0);
   return {
     repo: primary.repo,
     ghWorkflowFile: primary.ghWorkflowFile,
-    dispatchTargets: targets.length > 1 ? targets : undefined,
+    dispatchTargets: preserveTargets ? targets : undefined,
   };
 }
 

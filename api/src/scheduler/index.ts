@@ -184,12 +184,12 @@ export async function checkForTestFlightUpdate(watch: AppWatch): Promise<TestFli
   };
 }
 
-async function pollRunToCompletion(dispatchRepo: string, workflowFile: string, dispatchedAt: Date): Promise<WorkflowRun | undefined> {
+async function pollRunToCompletion(dispatchRepo: string, workflowFile: string, dispatchedAt: Date, event: 'repository_dispatch' | 'workflow_dispatch' = 'repository_dispatch'): Promise<WorkflowRun | undefined> {
   const deadline = Date.now() + config.runPollTimeoutMinutes * 60_000;
 
   let run: WorkflowRun | undefined;
   while (Date.now() < deadline && !run) {
-    run = await findDispatchedRun(dispatchRepo, workflowFile, dispatchedAt);
+    run = await findDispatchedRun(dispatchRepo, workflowFile, dispatchedAt, event);
     if (!run) await sleep(config.runPollIntervalSeconds * 1000);
   }
 
@@ -224,7 +224,7 @@ function trackRunCompletion(
   dispatchedAt: Date,
 ): () => Promise<Partial<SchedulerRunOutcome>> {
   return async () => {
-      const run = await pollRunToCompletion(target.repo, target.ghWorkflowFile, dispatchedAt);
+      const run = await pollRunToCompletion(target.repo, target.ghWorkflowFile, dispatchedAt, target.mode ?? 'repository_dispatch');
       if (!run) {
         await notify(
           source === 'App Store' ? 'appStoreAutomationFailure' : 'testFlightAutomationFailure',
@@ -329,7 +329,7 @@ async function decryptAndDispatch(job: Job, watch: AppWatch, isTestflight: boole
   const dispatchedAt = new Date();
   try {
     const ipaUrl = buildSignedFileUrl(finished.id, config.fileTtlMinutes);
-    const results = await Promise.allSettled(targets.map((target) => dispatchIpaUpdate(target.repo, ipaUrl, isTestflight, target.inputs)));
+    const results = await Promise.allSettled(targets.map((target) => dispatchIpaUpdate(target.repo, target.ghWorkflowFile, ipaUrl, isTestflight, target.mode, target.ref, target.inputs)));
     const dispatchedTargets = targets.filter((_, index) => results[index].status === 'fulfilled');
     const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected').map((result) => String(result.reason));
     if (dispatchedTargets.length === 0) throw new Error(failures.join('; ') || 'all dispatches failed');

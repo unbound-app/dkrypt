@@ -5,8 +5,11 @@
 	import Sparkline from "#components/Sparkline.svelte";
 	import {
 		fetchInsights,
+		fetchStorageForecast,
 		fetchWatchHealth,
 		type InsightsSummary,
+		type SchedulerRunEntry,
+		type StorageForecast,
 		type WatchHealthSummary,
 	} from "#lib/api";
 	import Badge from "#lib/components/ui/Badge.svelte";
@@ -85,11 +88,21 @@
 		]),
 	);
 	let watchHealth = $state<WatchHealthSummary[] | null>(null);
+	let storageForecast = $state<StorageForecast | null>(null);
 
 	$effect(() => {
 		if (!canViewScheduler) return;
 		void fetchWatchHealth().then((r) => (watchHealth = r.watches));
+		void fetchStorageForecast().then((forecast) => (storageForecast = forecast));
 	});
+
+	const releaseDays = $derived(
+		(liveState.overview?.schedulerRunHistory ?? []).reduce<Record<string, SchedulerRunEntry[]>>((days, run) => {
+			const day = new Date(run.ts).toISOString().slice(0, 10);
+			(days[day] ??= []).push(run);
+			return days;
+		}, {}),
+	);
 
 	const flaggedWatches = $derived(
 		(watchHealth ?? []).filter(
@@ -466,6 +479,40 @@
 </Card>
 
 {#if canViewScheduler && watchHealth !== null && watchHealth.some((w) => w.schedulable)}
+	<Card title="Storage forecast" class="mt-4">
+		{#if storageForecast?.sampleCount}
+			<div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+				<Badge variant={storageForecast.daysRemaining !== null && storageForecast.daysRemaining < 14 ? "destructive" : "secondary"}>{fmtBytesGB(storageForecast.freeBytes)} free</Badge>
+				<span class="text-muted">~{fmtBytesGB(storageForecast.bytesPerDay)} retained per day from {storageForecast.sampleCount} completed jobs</span>
+				<span class="font-medium">{storageForecast.daysRemaining === null ? "Forecast unavailable" : `${storageForecast.daysRemaining} days at current volume`}</span>
+			</div>
+		{:else}
+			<EmptyState message="Storage forecast will appear after completed decrypts with recorded artifact sizes." />
+		{/if}
+	</Card>
+
+	<Card title="Release calendar" class="mt-4">
+		{#if Object.keys(releaseDays).length === 0}
+			<EmptyState message="Scheduled release activity will appear here after watches run." />
+		{:else}
+			<div class="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+				{#each Object.entries(releaseDays) as [day, runs] (day)}
+					<div class="border-border rounded-lg border p-2.5">
+						<div class="mb-2 text-xs font-medium text-muted">{new Date(`${day}T00:00:00Z`).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</div>
+						<div class="flex flex-col gap-1.5">
+							{#each runs as run (run.id)}
+								<div class="flex min-w-0 items-center gap-2 text-xs">
+									<span class="min-w-0 flex-1 truncate" title={run.bundleId}>{appDisplayName(run.bundleId ?? "unknown")}</span>
+									<Badge variant={run.appStore.runStatus === "failed" || run.testflight.runStatus === "failed" ? "destructive" : run.appStore.triggered || run.testflight.triggered ? "success" : "secondary"}>{run.appStore.triggered || run.testflight.triggered ? "released" : "checked"}</Badge>
+								</div>
+							{/each}
+						</div>
+					</div>
+				{/each}
+			</div>
+		{/if}
+	</Card>
+
 	<Card title="Watch performance" class="mt-4">
 		<div class="flex flex-col gap-1.5">
 			{#each watchHealth.filter((w) => w.schedulable) as w (w.watchId)}

@@ -169,6 +169,8 @@ export interface AppWatch {
 export interface DispatchTarget {
   repo: string;
   ghWorkflowFile: string;
+  mode?: 'repository_dispatch' | 'workflow_dispatch';
+  ref?: string;
   inputs?: Record<string, string>;
 }
 
@@ -740,6 +742,21 @@ export interface DeviceThroughputStats {
 
 export function fetchInsights(trendDays = 14, topApps = 5): Promise<InsightsSummary> {
   return apiJson(`/v1/dashboard/insights?trendDays=${trendDays}&topApps=${topApps}`);
+}
+
+export interface StorageForecast {
+  freeBytes: number;
+  bytesPerDay: number;
+  daysRemaining: number | null;
+  sampleCount: number;
+}
+
+export function fetchStorageForecast(): Promise<StorageForecast> {
+  return apiJson('/v1/dashboard/storage-forecast');
+}
+
+export function supportBundleUrl(): string {
+  return '/v1/dashboard/support-bundle';
 }
 
 export interface WatchHealthSummary {

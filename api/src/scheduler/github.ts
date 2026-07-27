@@ -115,10 +115,23 @@ export async function listReleaseTagNames(repo: string): Promise<Set<string>> {
 
 export async function dispatchIpaUpdate(
   dispatchRepo: string,
+  workflowFile: string,
   ipaUrl: string,
   isTestflight: boolean,
+  mode: 'repository_dispatch' | 'workflow_dispatch' = 'repository_dispatch',
+  ref?: string,
   inputs?: Record<string, string>,
 ): Promise<void> {
+  if (mode === 'workflow_dispatch') {
+    const selectedRef = ref || (await getDefaultBranch(dispatchRepo));
+    const res = await fetch(`${GITHUB_API}/repos/${dispatchRepo}/actions/workflows/${workflowFile}/dispatches`, {
+      method: 'POST',
+      headers: { ...headers(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ref: selectedRef, inputs: { ...inputs, ipa_url: ipaUrl, is_testflight: String(isTestflight) } }),
+    });
+    if (res.status !== 204) throw new Error(`workflow_dispatch failed: HTTP ${res.status} ${await res.text()}`);
+    return;
+  }
   const res = await fetch(`${GITHUB_API}/repos/${dispatchRepo}/dispatches`, {
     method: 'POST',
     headers: { ...headers(), 'Content-Type': 'application/json' },
@@ -131,6 +144,14 @@ export async function dispatchIpaUpdate(
   if (res.status !== 204) {
     throw new Error(`repository_dispatch failed: HTTP ${res.status} ${await res.text()}`);
   }
+}
+
+async function getDefaultBranch(repo: string): Promise<string> {
+  const res = await fetch(`${GITHUB_API}/repos/${repo}`, { headers: headers() });
+  if (!res.ok) throw new Error(describeHttpError('get repository failed', res));
+  const body = (await res.json()) as GitHubRepo;
+  if (!body.default_branch) throw new Error('repository has no default branch');
+  return body.default_branch;
 }
 
 export interface WorkflowRun {
@@ -149,8 +170,9 @@ export async function findDispatchedRun(
   dispatchRepo: string,
   workflowFile: string,
   since: Date,
+  event: 'repository_dispatch' | 'workflow_dispatch' = 'repository_dispatch',
 ): Promise<WorkflowRun | undefined> {
-  const url = `${GITHUB_API}/repos/${dispatchRepo}/actions/workflows/${workflowFile}/runs?event=repository_dispatch&per_page=10`;
+  const url = `${GITHUB_API}/repos/${dispatchRepo}/actions/workflows/${workflowFile}/runs?event=${event}&per_page=10`;
   const res = await fetch(url, { headers: headers() });
   if (!res.ok) throw new Error(describeHttpError('list workflow runs failed', res));
 

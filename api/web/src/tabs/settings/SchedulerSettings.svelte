@@ -25,6 +25,7 @@
 		previewWatchDispatchDraft,
 		saveSettings,
 		searchApps,
+		supportBundleUrl,
 		testWebhook,
 		triggerWatchDispatch,
 		updateWatch,
@@ -236,6 +237,10 @@
 
 	const REPO_RE = /^[\w.-]+\/[\w.-]+$/;
 	const WEBHOOK_URL_RE = /^https?:\/\/.+/;
+	const DISPATCH_MODE_OPTIONS = [
+		{ value: "repository_dispatch", label: "Repository dispatch" },
+		{ value: "workflow_dispatch", label: "Workflow dispatch" },
+	];
 
 	function workflowFileName(path: string): string {
 		const idx = path.lastIndexOf("/");
@@ -923,6 +928,7 @@
 			<span class="text-muted">{healthyWatchCount} healthy · {failedWatchCount} needs attention · {watches.filter((watch) => watch.schedulable).length} active</span>
 			{#if canManageSchedulerSettings}
 				<Button size="sm" variant="secondary" class="ml-auto" loading={loadingBridgeDiagnostics} onclick={openBridgeDiagnostics}>Inspect autoinstall</Button>
+				<a class={buttonVariants("secondary", "sm")} href={supportBundleUrl()}>Support bundle</a>
 			{/if}
 		</div>
 		<div class="mt-2 flex items-center gap-2 text-xs text-muted">
@@ -1315,6 +1321,18 @@
 							onValueChange={(workflow) => onWatchWorkflowChange(index, workflow)}
 							class="w-full"
 						/>
+						<label for={`w-mode-${index}`} class="mt-2 mb-1 block text-[11px] text-muted">Trigger</label>
+						<Select
+							id={`w-mode-${index}`}
+							items={DISPATCH_MODE_OPTIONS}
+							value={target.mode ?? "repository_dispatch"}
+							onValueChange={(mode) => setDispatchTarget(index, { mode: mode as DispatchTarget["mode"] })}
+							class="w-full"
+						/>
+						{#if target.mode === "workflow_dispatch"}
+							<label for={`w-ref-${index}`} class="mt-2 mb-1 block text-[11px] text-muted">Branch or tag</label>
+							<Input id={`w-ref-${index}`} placeholder="Default branch" value={target.ref ?? ""} onchange={(event) => setDispatchTarget(index, { ref: event.currentTarget.value })} />
+						{/if}
 						{#if githubWorkflowErrors[target.repo]}
 							<div class="mt-1 text-xs text-err">{githubWorkflowErrors[target.repo]}</div>
 						{/if}

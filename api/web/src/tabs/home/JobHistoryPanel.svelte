@@ -23,7 +23,6 @@
 	import Badge from "#lib/components/ui/Badge.svelte";
 	import Button from "#lib/components/ui/Button.svelte";
 	import Card from "#lib/components/ui/Card.svelte";
-	import Dialog from "#lib/components/ui/Dialog.svelte";
 	import Input from "#lib/components/ui/Input.svelte";
 	import {
 		buttonVariants,
@@ -126,15 +125,9 @@
 		"jobHistoryFilterPresets",
 	);
 	let newPresetName = $state("");
-	let failedDetailsOpen = $state(false);
 	let jobDetailsOpen = $state(Boolean(getQueryParam("job")));
 	let jobDetailsId = $state(getQueryParam("job") ?? "");
 	let jobDetailsTitle = $state("");
-	let failedDetails = $state<{
-		bundleId: string;
-		title: string;
-		message: string;
-	} | null>(null);
 
 	function applyPreset(p: FilterPreset): void {
 		searchText = p.query;
@@ -470,19 +463,6 @@
 			next.delete(entry.id);
 			requeueing = next;
 		}
-	}
-
-	function openFailedDetails(entry: JobHistoryEntry): void {
-		failedDetails = {
-			bundleId: entry.bundleId,
-			title: entry.versionLabel
-				? `${appDisplayName(entry.bundleId)} (${entry.versionLabel})`
-				: appDisplayName(entry.bundleId),
-			message:
-				entry.error ??
-				"No error details were captured for this failure.",
-		};
-		failedDetailsOpen = true;
 	}
 
 	function openJobDetails(entry: JobHistoryEntry): void {
@@ -874,27 +854,11 @@
 										class="history-feed-status w-full shrink-0 self-start sm:w-[11.5rem]"
 									>
 										<div class="flex items-center gap-2">
-											{#if j.status === "failed"}
-												<button
-													type="button"
-													class="cursor-pointer"
-													onclick={() =>
-														openFailedDetails(j)}
-													title="Show failure details"
-												>
-													<Badge
-														variant={statusToBadgeVariant(
-															j.status,
-														)}>{j.status}</Badge
-													>
-												</button>
-											{:else}
-												<Badge
-													variant={statusToBadgeVariant(
-														j.status,
-													)}>{j.status}</Badge
-												>
-											{/if}
+											<Badge
+												variant={statusToBadgeVariant(
+													j.status,
+												)}>{j.status}</Badge
+											>
 											<span class="text-xs text-muted"
 												><RelativeTime
 													ms={j.finishedAt}
@@ -973,15 +937,3 @@
 	onOpenChange={(v) => (statsOpen = v)}
 />
 <JobDetailsDialog bind:open={jobDetailsOpen} jobId={jobDetailsId} title={jobDetailsTitle || "Job details"} />
-<Dialog
-	open={failedDetailsOpen}
-	onOpenChange={(v) => (failedDetailsOpen = v)}
-	class="max-w-md"
->
-	<div class="mb-1 text-sm font-medium">
-		{failedDetails?.title ?? "Failure details"}
-	</div>
-	<pre
-		class="bg-panel-muted max-h-80 overflow-auto rounded-lg p-3 text-xs leading-5 whitespace-pre-wrap">{failedDetails?.message ??
-			""}</pre>
-</Dialog>

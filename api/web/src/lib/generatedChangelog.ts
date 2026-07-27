@@ -1,6 +1,11 @@
 export const GENERATED_CHANGELOG = [
   {
     "date": "2026-07-27",
+    "title": "fix: preserve changelog generator format",
+    "description": "Released in 77e1641."
+  },
+  {
+    "date": "2026-07-27",
     "title": "feat: enhance job observability and automation controls",
     "description": "Released in 58ba0f4."
   },
@@ -33,10 +38,5 @@ export const GENERATED_CHANGELOG = [
     "date": "2026-07-27",
     "title": "fix: restore dashboard popovers and mobile layout",
     "description": "Released in 19789d9."
-  },
-  {
-    "date": "2026-07-27",
-    "title": "fix: refresh mobile shell delivery",
-    "description": "Released in 6095b02."
   }
 ] as const;
