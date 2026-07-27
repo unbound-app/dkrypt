@@ -374,7 +374,7 @@ static NSString * const kInstallStatusPath = @"/tmp/autoinstall-install-status.j
 
 static NSDictionary *bridgeStatus(void) {
     return @{
-        @"bridgeVersion": @"1.1.0",
+        @"bridgeVersion": BRIDGE_VERSION,
         @"capabilities": @[@"list_trains", @"list_builds", @"install", @"status", @"diagnostics", @"idempotent_install"],
         @"hasInstaller": gInstaller ? @YES : @NO,
         @"hasCatalogManager": gCatalogManager ? @YES : @NO,
