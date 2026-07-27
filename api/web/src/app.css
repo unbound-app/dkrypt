@@ -220,8 +220,21 @@
 }
 
 .glass-mobile-nav {
-	border-radius: 1.25rem 1.25rem 0 0;
-	border-bottom: 0;
+	border-radius: 1rem;
+}
+
+.mobile-primary-nav {
+	left: max(0.75rem, env(safe-area-inset-left));
+	right: max(0.75rem, env(safe-area-inset-right));
+	bottom: max(0.75rem, env(safe-area-inset-bottom));
+}
+
+.glass-status-pull {
+	border: 1px solid color-mix(in srgb, var(--color-border) 72%, white 28%);
+	border-right: 0;
+	background: color-mix(in srgb, var(--color-panel-muted) 80%, transparent);
+	box-shadow: 0 8px 28px color-mix(in srgb, #020617 18%, transparent);
+	backdrop-filter: blur(20px) saturate(140%);
 }
 
 .glass-toolbar {

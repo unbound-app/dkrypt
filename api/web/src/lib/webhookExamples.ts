@@ -82,7 +82,7 @@ const EXAMPLES: Record<keyof SchedulerSettings & `notifyOn${string}`, ExampleEmb
     color: COLOR.warn,
   },
   notifyOnTestFlightBridgeDown: {
-    title: 'Autoinstall bridge unresponsive',
+    title: 'autoinstall bridge unresponsive',
     description:
       'The autoinstall SpringBoard bridge on homelab has stopped responding for at least 15 minutes - App Store/TestFlight automation cannot install until it recovers.',
     color: COLOR.warn,

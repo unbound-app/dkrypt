@@ -44,7 +44,6 @@
 	import Input from "#lib/components/ui/Input.svelte";
 	import { buttonVariants } from "#lib/components/ui/variants";
 	import { cn } from "#lib/utils";
-	import { scrollFade } from "#lib/scrollFade";
 	import { KOFI_URL } from "#lib/constants";
 	import { myDecryptsState } from "#lib/decrypts.svelte";
 	import { connectLive, disconnectLive, liveState } from "#lib/live.svelte";
@@ -143,6 +142,8 @@
 	let profileNameDraft = $state("");
 	let savingProfileName = $state(false);
 	let sessionChecked = $state(false);
+	let mobileStatusOpen = $state(false);
+	let mobileSwipeStartX = $state<number | null>(null);
 
 	const otherOnlineUsers = $derived(
 		liveState.onlineUsers.filter((u) => u !== sessionState.sub),
@@ -463,6 +464,19 @@
 		}
 	}
 
+	function onMobilePointerDown(event: PointerEvent): void {
+		if (window.innerWidth >= 1024) return;
+		mobileSwipeStartX = event.clientX;
+	}
+
+	function onMobilePointerUp(event: PointerEvent): void {
+		if (window.innerWidth >= 1024 || mobileSwipeStartX === null) return;
+		const distance = event.clientX - mobileSwipeStartX;
+		if (!mobileStatusOpen && mobileSwipeStartX >= window.innerWidth - 32 && distance < -48) mobileStatusOpen = true;
+		if (mobileStatusOpen && distance > 64) mobileStatusOpen = false;
+		mobileSwipeStartX = null;
+	}
+
 	const THEME_CYCLE = ["dark", "light", "auto"] as const;
 
 	function cycleTheme(): void {
@@ -494,7 +508,7 @@
 	}
 </script>
 
-<svelte:window onkeydown={onKeydown} />
+<svelte:window onkeydown={onKeydown} onpointerdown={onMobilePointerDown} onpointerup={onMobilePointerUp} />
 
 <Toaster theme={themeState.value} richColors position="bottom-right" />
 
@@ -977,30 +991,9 @@
 					</DropdownMenu.Portal>
 				</DropdownMenu.Root>
 			</div>
-			<nav
-				class="glass-nav order-3 flex w-full items-center gap-1 overflow-x-auto p-1 lg:hidden"
-				aria-label="Primary"
-				use:scrollFade
-			>
-				{#each visibleTabs as t (t.id)}
-					{@const Icon = TAB_ICON[t.id]}
-					<button
-						type="button"
-						class={cn(
-							"glass-nav-item flex min-w-17 cursor-pointer items-center justify-center gap-1.5 px-2.5 py-2 text-xs font-medium whitespace-nowrap",
-							tabState.active === t.id ? "is-active" : "",
-						)}
-						onclick={() => setActiveTab(t.id)}
-						aria-current={tabState.active === t.id ? "page" : undefined}
-					>
-						<Icon class="h-3.5 w-3.5" />
-						{t.label}
-					</button>
-				{/each}
-			</nav>
 		</header>
 		<main
-			class="mx-auto max-w-[1760px] px-3 pt-4 pb-6 sm:px-5 sm:pt-5 lg:px-6"
+			class="mx-auto max-w-[1760px] px-3 pt-4 pb-28 sm:px-5 sm:pt-5 lg:px-6 lg:pb-6"
 		>
 			<SessionExpiryBanner />
 			<ConnectionBanner />
@@ -1009,7 +1002,7 @@
 			<div
 				class="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_340px] lg:gap-5"
 			>
-				<div class="workspace-content order-2 min-w-0 lg:order-none">
+				<div class="workspace-content min-w-0">
 					<div class:hidden={tabState.active !== "home"}>
 						<Home bind:this={homeRef} />
 					</div>
@@ -1036,11 +1029,58 @@
 						</div>
 					{/if}
 				</div>
-				<div class="order-1 min-w-0 flex flex-col gap-4 lg:sticky lg:top-6 lg:order-none">
+				<div class="hidden min-w-0 flex-col gap-4 lg:sticky lg:top-6 lg:flex">
 					<StatusPanel />
 				</div>
 			</div>
 		</main>
+		<button
+			type="button"
+			class="glass-status-pull fixed top-1/2 right-0 z-40 -translate-y-1/2 rounded-l-xl px-2 py-3 text-xs font-medium lg:hidden"
+			onclick={() => (mobileStatusOpen = true)}
+			aria-label="Open status drawer"
+		>
+			Status
+		</button>
+		{#if mobileStatusOpen}
+			<button
+				type="button"
+				class="fixed inset-0 z-40 bg-black/35 lg:hidden"
+				onclick={() => (mobileStatusOpen = false)}
+				aria-label="Close status drawer"
+			></button>
+		{/if}
+		<aside
+			class={cn(
+				"fixed top-0 right-0 z-50 h-[100dvh] w-[min(24rem,calc(100vw-1.5rem))] overflow-y-auto border-l border-border bg-panel p-3 pt-[max(0.75rem,env(safe-area-inset-top))] shadow-2xl transition-transform duration-200 lg:hidden",
+				mobileStatusOpen ? "translate-x-0" : "translate-x-full",
+			)}
+			aria-label="Status drawer"
+			aria-hidden={!mobileStatusOpen}
+		>
+			<div class="mb-3 flex items-center justify-between">
+				<span class="text-sm font-semibold">Status</span>
+				<Button size="sm" variant="secondary" onclick={() => (mobileStatusOpen = false)}>Close</Button>
+			</div>
+			<StatusPanel />
+		</aside>
+		<nav class="glass-mobile-nav mobile-primary-nav fixed z-40 flex overflow-x-auto p-1 lg:hidden" aria-label="Primary">
+			{#each visibleTabs as t (t.id)}
+				{@const Icon = TAB_ICON[t.id]}
+				<button
+					type="button"
+					class={cn(
+						"flex min-w-13 flex-1 cursor-pointer flex-col items-center gap-0.5 rounded-lg py-2 text-[10.5px] transition-colors",
+						tabState.active === t.id ? "bg-accent/10 text-accent" : "text-muted hover:text-text",
+					)}
+					onclick={() => setActiveTab(t.id)}
+					aria-current={tabState.active === t.id ? "page" : undefined}
+				>
+					<Icon class="h-5 w-5" />
+					{t.label}
+				</button>
+			{/each}
+		</nav>
 	</div>
 {/if}
 

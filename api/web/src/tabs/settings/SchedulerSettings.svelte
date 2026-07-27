@@ -143,9 +143,9 @@
 		},
 		{
 			key: "notifyOnTestFlightBridgeDown",
-			label: "Autoinstall bridge unresponsive",
+			label: "autoinstall bridge unresponsive",
 			description:
-				"The SpringBoard autoinstall bridge stops responding past the alert threshold below",
+				"The autoinstall SpringBoard bridge stops responding past the alert threshold below",
 		},
 	];
 
@@ -821,7 +821,7 @@
 			<Badge variant={failedWatchCount > 0 ? "destructive" : "success"}>{failedWatchCount > 0 ? "attention needed" : "healthy"}</Badge>
 			<span class="text-muted">{healthyWatchCount} healthy · {failedWatchCount} needs attention · {watches.filter((watch) => watch.schedulable).length} active</span>
 			{#if canManageSchedulerSettings}
-				<Button size="sm" variant="secondary" class="ml-auto" loading={loadingBridgeDiagnostics} onclick={openBridgeDiagnostics}>Inspect bridge</Button>
+				<Button size="sm" variant="secondary" class="ml-auto" loading={loadingBridgeDiagnostics} onclick={openBridgeDiagnostics}>Inspect autoinstall</Button>
 			{/if}
 		</div>
 	</Card>
@@ -1064,9 +1064,9 @@
 </div>
 
 <Dialog open={bridgeDiagnosticsOpen} onOpenChange={(value) => (bridgeDiagnosticsOpen = value)} class="max-w-lg">
-	<div class="mb-3 text-sm font-medium">Autoinstall bridge diagnostics</div>
+	<div class="mb-3 text-sm font-medium">autoinstall bridge diagnostics</div>
 	{#if loadingBridgeDiagnostics}
-		<div class="text-sm text-muted">Checking the iPad bridge…</div>
+		<div class="text-sm text-muted">Checking the autoinstall bridge…</div>
 	{:else if bridgeDiagnostics}
 		<div class="grid grid-cols-2 gap-2 text-xs">
 			<div class="border-border rounded-md border p-2">Version <span class="text-muted">{bridgeDiagnostics.bridge.bridgeVersion ?? "unknown"}</span></div>
@@ -1549,7 +1549,7 @@
 		/>
 
 		<label for="s-bridgeDown" class="mt-3 mb-1 block text-xs text-muted"
-			>TestFlight bridge unresponsive alert threshold</label
+			>autoinstall bridge unresponsive alert threshold</label
 		>
 		<Select
 			id="s-bridgeDown"
