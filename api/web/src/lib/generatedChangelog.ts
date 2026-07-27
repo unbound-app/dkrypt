@@ -1,6 +1,11 @@
 export const GENERATED_CHANGELOG = [
   {
     "date": "2026-07-27",
+    "title": "fix: flush mobile navigation to viewport",
+    "description": "Released in 1b870dc."
+  },
+  {
+    "date": "2026-07-27",
     "title": "fix: restore dashboard popovers and mobile layout",
     "description": "Released in 19789d9."
   },
@@ -18,10 +23,5 @@ export const GENERATED_CHANGELOG = [
     "date": "2026-07-27",
     "title": "fix: darken device during automated installs",
     "description": "Released in 9376710."
-  },
-  {
-    "date": "2026-07-27",
-    "title": "fix: tolerate missing git in web builds",
-    "description": "Released in 0ff84a9."
   }
 ] as const;
