@@ -1,13 +1,13 @@
 export const GENERATED_CHANGELOG = [
   {
     "date": "2026-07-27",
-    "title": "fix: refresh mobile shell delivery",
-    "description": "Released in 6095b02."
+    "title": "fix: restore dashboard popovers and mobile layout",
+    "description": "Released in 19789d9."
   },
   {
     "date": "2026-07-27",
-    "title": "chore: update generated changelog",
-    "description": "Released in 02a6137."
+    "title": "fix: refresh mobile shell delivery",
+    "description": "Released in 6095b02."
   },
   {
     "date": "2026-07-27",
@@ -21,22 +21,7 @@ export const GENERATED_CHANGELOG = [
   },
   {
     "date": "2026-07-27",
-    "title": "chore: update generated changelog",
-    "description": "Released in 069bec7."
-  },
-  {
-    "date": "2026-07-27",
     "title": "fix: tolerate missing git in web builds",
     "description": "Released in 0ff84a9."
-  },
-  {
-    "date": "2026-07-27",
-    "title": "fix: refine mobile dashboard controls",
-    "description": "Released in 3cc4250."
-  },
-  {
-    "date": "2026-07-27",
-    "title": "fix: restore mobile navigation controls",
-    "description": "Released in a5f78e6."
   }
 ] as const;
