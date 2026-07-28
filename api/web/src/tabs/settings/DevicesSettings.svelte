@@ -7,6 +7,8 @@
     deleteDevice,
     fetchDeviceActivity,
     fetchDeviceHealth,
+		fetchDeviceInventory,
+		fetchDevicePreflight,
     fetchSettings,
     saveSettings,
     setDeviceDarkMode,
@@ -14,6 +16,7 @@
     type DeviceHealth,
     type DeviceActivityEntry,
     type DeviceRecord,
+		type DevicePreflight,
     type SchedulerSettings,
   } from '#lib/api';
   import Badge from '#lib/components/ui/Badge.svelte';
@@ -79,6 +82,11 @@
 
   let testingId = $state<Set<string>>(new Set());
   let updatingDarkModeId = $state<Set<string>>(new Set());
+	let preflightOpen = $state(false);
+	let preflight = $state<DevicePreflight | null>(null);
+	let inventoryOpen = $state(false);
+	let inventory = $state<{ deviceId: string; bundles: string[] } | null>(null);
+	let inspectingId = $state<Set<string>>(new Set());
 
   async function testConnection(d: DeviceRecord): Promise<void> {
     testingId = new Set(testingId).add(d.id);
@@ -92,6 +100,30 @@
       testingId = next;
     }
   }
+
+	async function inspectDevice(d: DeviceRecord): Promise<void> {
+		inspectingId = new Set(inspectingId).add(d.id);
+		try {
+			preflight = await fetchDevicePreflight(d.id);
+			preflightOpen = true;
+		} finally {
+			const next = new Set(inspectingId);
+			next.delete(d.id);
+			inspectingId = next;
+		}
+	}
+
+	async function inspectInventory(d: DeviceRecord): Promise<void> {
+		inspectingId = new Set(inspectingId).add(d.id);
+		try {
+			inventory = await fetchDeviceInventory(d.id);
+			inventoryOpen = true;
+		} finally {
+			const next = new Set(inspectingId);
+			next.delete(d.id);
+			inspectingId = next;
+		}
+	}
 
   async function toggleDarkMode(d: DeviceRecord, enabled: boolean): Promise<void> {
     updatingDarkModeId = new Set(updatingDarkModeId).add(d.id);
@@ -230,6 +262,8 @@
               <Button size="sm" variant="secondary" loading={testingId.has(d.id)} onclick={() => void testConnection(d)}>
                 Test connection
               </Button>
+				<Button size="sm" variant="secondary" loading={inspectingId.has(d.id)} onclick={() => void inspectDevice(d)}>Preflight</Button>
+				<Button size="sm" variant="secondary" loading={inspectingId.has(d.id)} onclick={() => void inspectInventory(d)}>Inventory</Button>
               {#if canManageDevices}
                 {#if !d.isPrimary}
                   <Button size="sm" variant="secondary" onclick={() => void makePrimary(d)}>Make primary</Button>
@@ -281,6 +315,34 @@
     </div>
   {/if}
 </Card>
+
+<Dialog open={preflightOpen} onOpenChange={(value) => (preflightOpen = value)} class="max-w-lg">
+	<div class="mb-1 text-sm font-medium">Device preflight</div>
+	{#if preflight}
+		<div class="mb-3 text-xs text-muted">{preflight.device.name} · {preflight.ready ? 'ready for automation' : 'needs attention'}</div>
+		<div class="flex flex-col gap-2">
+			{#each preflight.checks as check (check.label)}
+				<div class="border-border flex items-start justify-between gap-3 rounded-lg border p-2.5 text-sm">
+					<div><div>{check.label}</div>{#if check.detail}<div class="mt-0.5 text-xs text-muted">{check.detail}</div>{/if}</div>
+					<Badge variant={check.ok ? 'success' : 'destructive'}>{check.ok ? 'ready' : 'attention'}</Badge>
+				</div>
+			{/each}
+		</div>
+		{#if preflight.bridge?.bridge.bridgeVersion}<div class="mt-3 text-xs text-muted">autoinstall {preflight.bridge.bridge.bridgeVersion} · {(preflight.bridge.bridge.capabilities ?? []).join(', ') || 'no capabilities reported'}</div>{/if}
+	{/if}
+</Dialog>
+
+<Dialog open={inventoryOpen} onOpenChange={(value) => (inventoryOpen = value)} class="max-w-lg">
+	<div class="mb-1 text-sm font-medium">Installed App Store inventory</div>
+	<div class="mb-3 text-xs text-muted">Encrypted App Store bundles currently present on the device.</div>
+	{#if inventory?.bundles.length}
+		<div class="max-h-96 overflow-auto rounded-lg border border-border">
+			{#each inventory.bundles as bundle (bundle)}<div class="border-border border-b px-3 py-2 font-mono text-xs last:border-b-0">{bundle}</div>{/each}
+		</div>
+	{:else}
+		<div class="text-sm text-muted">No encrypted App Store bundles found.</div>
+	{/if}
+</Dialog>
 
 {#if canManageDevices}
   <Dialog open={dialogOpen} onOpenChange={(v) => (dialogOpen = v)} class="max-w-md">

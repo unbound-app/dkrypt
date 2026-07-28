@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { Client } from 'ssh2';
 import { scopedLogger } from '#logger.js';
@@ -222,6 +223,11 @@ export async function findInstalledAppStoreBundle(conn: Client, bundleId: string
   return line || undefined;
 }
 
+export async function listInstalledAppStoreBundles(conn: Client): Promise<string[]> {
+  const { stdout } = await execCommand(conn, 'for d in /var/containers/Bundle/Application/*/*.app; do [ -d "$d/SC_Info" ] && echo "$d"; done');
+  return stdout.split('\n').map((entry) => entry.trim()).filter(Boolean).sort();
+}
+
 export interface InstalledBundleVersions {
   shortVersion?: string;
   buildVersion?: string;
@@ -249,8 +255,11 @@ async function sendBridgeRequestRawTo(
   timeoutMs = 20_000,
 ): Promise<any> {
   return withBridgeLock(async () => {
+    const requestId = typeof request.requestId === 'string' ? request.requestId : randomUUID();
+    const tracedRequest = { ...request, requestId };
+    log.info('sending autoinstall bridge request', { requestId, action: request.action, requestPath });
     await execCommand(conn, `rm -f ${responsePath}`);
-    await writeRemoteFile(conn, requestPath, JSON.stringify(request));
+    await writeRemoteFile(conn, requestPath, JSON.stringify(tracedRequest));
 
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
@@ -269,11 +278,11 @@ async function sendBridgeRequestRawTo(
           }
           throw new BridgeError({ message: typeof error === 'string' ? error : String(error), retryable: false });
         }
-        return parsed;
+        return { ...parsed, requestId };
       }
       await new Promise((r) => setTimeout(r, 500));
     }
-    throw new Error(`autoinstall bridge request timed out: ${JSON.stringify(request)}`);
+    throw new Error(`autoinstall bridge request timed out (${requestId}): ${JSON.stringify(request)}`);
   });
 }
 

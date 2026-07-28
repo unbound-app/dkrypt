@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { Copy, Download, GitBranch } from 'lucide-svelte';
-  import { fetchJobTimeline, jobDiagnosticUrl, type JobTimeline } from '#lib/api';
+  import { Copy, Download, GitBranch, Link } from 'lucide-svelte';
+  import { fetchJobTimeline, jobDiagnosticUrl, regenerateWorkflowHandoff, type JobTimeline } from '#lib/api';
   import Button from '#lib/components/ui/Button.svelte';
   import Dialog from '#lib/components/ui/Dialog.svelte';
   import { fmtTime } from '#lib/format';
@@ -32,6 +32,13 @@
     await navigator.clipboard.writeText(url.toString());
     showToast('Job link copied', 'success');
   }
+
+  async function recoverHandoff(): Promise<void> {
+    const { ok, data } = await regenerateWorkflowHandoff(jobId);
+    if (!ok) return;
+    await navigator.clipboard.writeText(data.url);
+    showToast('Fresh workflow handoff URL copied', 'success');
+  }
 </script>
 
 <Dialog bind:open class="max-w-xl">
@@ -45,6 +52,7 @@
     </div>
     <div class="flex shrink-0 gap-1.5">
       <Button size="sm" variant="secondary" onclick={() => void copyDeepLink()}><Copy class="h-3.5 w-3.5" />Link</Button>
+      <Button size="sm" variant="secondary" onclick={() => void recoverHandoff()}><Link class="h-3.5 w-3.5" />Handoff</Button>
       <a href={jobDiagnosticUrl(jobId)} download><Button size="sm" variant="secondary"><Download class="h-3.5 w-3.5" />Diagnostic</Button></a>
     </div>
   </div>
@@ -61,6 +69,12 @@
   {#if loading}
     <div class="text-sm text-muted">Loading job timeline…</div>
   {:else if timeline}
+    {#if timeline.guidance}
+      <div class="border-warn/40 bg-warn/10 mb-4 rounded-lg border p-3 text-sm">
+        <div class="font-medium">{timeline.guidance.title}</div>
+        <div class="mt-1 text-muted">{timeline.guidance.action}</div>
+      </div>
+    {/if}
     <ol class="max-h-80 space-y-3 overflow-y-auto pr-1">
       {#each timeline.events as event, index (`${event.at}-${event.label}`)}
         <li class="flex gap-3">

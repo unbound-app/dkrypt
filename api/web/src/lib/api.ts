@@ -187,6 +187,14 @@ export interface DeviceRecord {
   updatedAt: number;
 }
 
+export interface DevicePreflight {
+  device: DeviceRecord;
+  health: DeviceHealth;
+  bridge?: TestFlightBridgeDiagnostics;
+  ready: boolean;
+  checks: Array<{ label: string; ok: boolean; detail?: string }>;
+}
+
 export type SchedulerRunStatus = 'dispatched' | 'succeeded' | 'failed' | 'timed_out';
 
 export interface SchedulerRunOutcome {
@@ -195,6 +203,8 @@ export interface SchedulerRunOutcome {
   reason: string;
   runUrl?: string;
   runStatus?: SchedulerRunStatus;
+  observedVersion?: string;
+  installMode?: 'pinned' | 'current';
 }
 
 export interface SchedulerRunEntry {
@@ -250,6 +260,7 @@ export interface JobHistoryEntry {
   deviceId?: string;
   ipaMetadata?: IpaMetadata;
   ipaInfoPlist?: Record<string, unknown>;
+  activeShareUrl?: string;
 }
 
 export interface JobTimelineEvent {
@@ -264,6 +275,7 @@ export interface JobTimeline {
   bundleId: string;
   status: 'queued' | 'running' | 'done' | 'failed';
   events: JobTimelineEvent[];
+  guidance?: { category: string; title: string; action: string; retryRecommended: boolean };
 }
 
 export interface ApiKeyRecord {
@@ -399,6 +411,14 @@ export interface DeviceActivityEntry {
 
 export function fetchDeviceHealth(deviceId: string, force = false): Promise<DeviceHealth> {
   return apiJson(`/v1/dashboard/devices/${encodeURIComponent(deviceId)}/health${force ? '?force=true' : ''}`);
+}
+
+export function fetchDevicePreflight(deviceId: string): Promise<DevicePreflight> {
+  return apiJson(`/v1/dashboard/devices/${encodeURIComponent(deviceId)}/preflight`, undefined, 'external');
+}
+
+export function fetchDeviceInventory(deviceId: string): Promise<{ deviceId: string; bundles: string[] }> {
+  return apiJson(`/v1/dashboard/devices/${encodeURIComponent(deviceId)}/inventory`, undefined, 'external');
 }
 
 export interface HourlyHealthBucket {
@@ -931,6 +951,10 @@ export function fetchJobTimeline(id: string): Promise<JobTimeline> {
 
 export function jobDiagnosticUrl(id: string): string {
   return `/v1/dashboard/jobs/${encodeURIComponent(id)}/diagnostic`;
+}
+
+export function regenerateWorkflowHandoff(id: string): Promise<{ ok: boolean; data: { url: string; expiresAt: number } }> {
+  return apiAction(`/v1/dashboard/jobs/${encodeURIComponent(id)}/handoff`, { method: 'POST' });
 }
 
 export function fetchMyKeys(): Promise<{ keys: ApiKeyRecord[] }> {

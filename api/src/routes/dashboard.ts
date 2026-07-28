@@ -19,15 +19,17 @@ import { listDispatchRepos, listRepoWorkflows } from '#scheduler/github.js';
 import { lookupAppMetadata, searchApps } from '#scheduler/itunes.js';
 import { requirePermission, requireSession } from '#session.js';
 import { getDeviceHealth } from '#deviceHealth.js';
-import { sendSpringBoardBridgeRequest, validateDeviceRootDir, withSSH } from '#idevice.js';
+import { listInstalledAppStoreBundles, sendSpringBoardBridgeRequest, validateDeviceRootDir, withSSH } from '#idevice.js';
 import { getTestFlightBridgeDiagnostics, listBuilds, listTrains } from '#testflight.js';
 import { nextCronRunAt } from '#util/cron.js';
 import { getDiskUsage } from '#util/diskUsage.js';
 import { rateLimitPerUser } from '#util/rateLimit.js';
 import { buildSignedFileUrlWithToken } from '#util/signedUrl.js';
+import { getFailureGuidance } from '#util/failureGuidance.js';
 import { listAppVersions } from '#versions.js';
 import {
   addAllowedUser,
+  activeShareLinkDownloadUrlForJob,
   addPushSubscription,
   approveApiKey,
   type AppWatch,
@@ -284,7 +286,10 @@ dashboardRouter.get('/v1/dashboard/jobs', (req, res) => {
     fromTs: Number.isFinite(fromTs) ? fromTs : undefined,
     toTs: Number.isFinite(toTs) ? toTs : undefined,
   });
-  res.json({ history: entries, total });
+  res.json({
+    history: entries.map((entry) => ({ ...entry, activeShareUrl: activeShareLinkDownloadUrlForJob(entry.id, res.locals.session.sub) })),
+    total,
+  });
 });
 
 dashboardRouter.get('/v1/dashboard/logs', canViewLogs, (_req, res) => {
@@ -706,6 +711,41 @@ dashboardRouter.get('/v1/dashboard/devices/:id/health', canViewDevices, async (r
   }
   const health = await getDeviceHealth(device.id, req.query.force === 'true');
   res.json(health);
+});
+
+dashboardRouter.get('/v1/dashboard/devices/:id/preflight', canViewDevices, async (req, res) => {
+  const device = requireDevice(req.params.id);
+  if (!device) {
+    res.status(404).json({ error: 'device not found' });
+    return;
+  }
+  const health = await getDeviceHealth(device.id, true);
+  let bridge: Awaited<ReturnType<typeof getTestFlightBridgeDiagnostics>> | undefined;
+  if (device.id === getPrimaryDevice().id && health.reachable) {
+    bridge = await getTestFlightBridgeDiagnostics().catch(() => undefined);
+  }
+  const checks = [
+    { label: 'SSH connection', ok: health.reachable, detail: health.error },
+    { label: 'Internet access', ok: health.internetAccess !== false, detail: health.internetAccess === false ? 'Device cannot reach Apple services' : undefined },
+    { label: 'autoinstall bridge', ok: health.testFlightBridgeReachable !== false, detail: health.testFlightBridgeReachable === false ? 'Bridge did not respond' : undefined },
+    { label: 'Device readiness', ok: health.readiness?.state !== 'blocked', detail: health.readiness?.reasons.join(' · ') || undefined },
+    { label: 'Bridge compatibility', ok: bridge ? Boolean(bridge.bridge.bridgeVersion) : true, detail: bridge?.bridge.bridgeVersion ? `autoinstall ${bridge.bridge.bridgeVersion}` : undefined },
+  ];
+  res.json({ device, health, bridge, checks, ready: checks.every((check) => check.ok) });
+});
+
+dashboardRouter.get('/v1/dashboard/devices/:id/inventory', canViewDevices, async (req, res) => {
+  const device = requireDevice(req.params.id);
+  if (!device) {
+    res.status(404).json({ error: 'device not found' });
+    return;
+  }
+  try {
+    const bundles = await withSSH(device.rootDir, listInstalledAppStoreBundles);
+    res.json({ deviceId: device.id, bundles });
+  } catch (err) {
+    res.status(502).json({ error: `could not inspect installed App Store apps: ${err instanceof Error ? err.message : String(err)}` });
+  }
 });
 
 dashboardRouter.put('/v1/dashboard/devices/:id/dark-mode', canManageDevices, async (req, res) => {
@@ -1201,7 +1241,7 @@ dashboardRouter.post('/v1/dashboard/jobs/:id/retry', canDecrypt, blockDuringMain
 dashboardRouter.get('/v1/dashboard/jobs/:id/timeline', (req, res) => {
   const active = getJob(req.params.id);
   if (active) {
-    res.json({ id: active.id, correlationId: active.id, bundleId: active.bundleId, status: active.status, events: active.timeline ?? [] });
+    res.json({ id: active.id, correlationId: active.id, bundleId: active.bundleId, status: active.status, events: active.timeline ?? [], guidance: active.status === 'failed' ? getFailureGuidance(active.error) : undefined });
     return;
   }
 
@@ -1215,7 +1255,7 @@ dashboardRouter.get('/v1/dashboard/jobs/:id/timeline', (req, res) => {
     ...(entry.startedAt ? [{ at: entry.startedAt, label: `Started on ${entry.deviceId ?? 'unknown device'}`, status: 'running' as const }] : []),
     { at: entry.finishedAt, label: entry.status === 'done' ? 'Finished' : `Failed: ${entry.error ?? 'unknown error'}`, status: entry.status },
   ];
-  res.json({ id: entry.id, correlationId: entry.id, bundleId: entry.bundleId, status: entry.status, events });
+  res.json({ id: entry.id, correlationId: entry.id, bundleId: entry.bundleId, status: entry.status, events, guidance: entry.status === 'failed' ? getFailureGuidance(entry.error) : undefined });
 });
 
 dashboardRouter.get('/v1/dashboard/jobs/:id/diagnostic', canDecrypt, (req, res) => {
@@ -1238,6 +1278,16 @@ dashboardRouter.get('/v1/dashboard/jobs/:id/file', async (req, res) => {
     return;
   }
   await streamJobFile(job, req, res);
+});
+
+dashboardRouter.post('/v1/dashboard/jobs/:id/handoff', canTriggerDispatch, (req, res) => {
+  const job = getJob(req.params.id);
+  if (!job || job.status !== 'done' || !job.filePath) {
+    res.status(409).json({ error: 'the decrypted IPA is no longer available for handoff' });
+    return;
+  }
+  const { url, expiresAtMs } = buildSignedFileUrlWithToken(job.id, config.fileTtlMinutes);
+  res.json({ url, expiresAt: expiresAtMs });
 });
 
 const SHARE_TTL_MIN = 1;

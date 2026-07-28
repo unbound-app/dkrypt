@@ -962,5 +962,8 @@
 				>{RUN_STATE_LABEL[state]}</span
 			>
 		{/if}
+		{#if outcome.observedVersion}
+			<span class="text-muted">v{outcome.observedVersion} · {outcome.installMode === "pinned" ? "pinned" : "current install"}</span>
+		{/if}
 	</div>
 {/snippet}

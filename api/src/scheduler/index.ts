@@ -433,7 +433,9 @@ async function tickAppStore(watch: AppWatch): Promise<DispatchResult> {
   log.info('no matching release found, decrypting', { bundleId: watch.bundleId, version: normalized, externalVersionId });
 
   const job = enqueueDecryptJob(watch.bundleId, 'scheduler', externalVersionId, undefined, normalized);
-  return decryptAndDispatch(job, watch, false, `v${normalized}`, dispatchTargets);
+  const result = await decryptAndDispatch(job, watch, false, `v${normalized}`, dispatchTargets);
+  result.outcome = { ...result.outcome, observedVersion: normalized, installMode: externalVersionId ? 'pinned' : 'current' };
+  return result;
 }
 
 async function tickTestFlight(watch: AppWatch): Promise<DispatchResult> {

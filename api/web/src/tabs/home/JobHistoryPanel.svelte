@@ -870,6 +870,9 @@
 										class="history-feed-actions flex w-full shrink-0 items-center justify-start gap-1.5 self-start sm:w-[15rem] sm:justify-end"
 									>
 										{#if j.status === "failed"}
+											{#if j.activeShareUrl}
+												<a class={buttonVariants("default", "sm")} href={j.activeShareUrl}>Download</a>
+											{/if}
 											<Button size="sm" variant="secondary" onclick={() => openJobDetails(j)} title="Inspect job"><Eye class="h-3.5 w-3.5" /></Button>
 											<Button
 												size="sm"
@@ -879,6 +882,9 @@
 												>Retry</Button
 											>
 										{:else}
+											{#if j.activeShareUrl}
+												<a class={buttonVariants("default", "sm")} href={j.activeShareUrl}>Download</a>
+											{/if}
 											<Button size="sm" variant="secondary" onclick={() => openJobDetails(j)} title="Inspect job"><Eye class="h-3.5 w-3.5" /></Button>
 											<Button
 												size="sm"

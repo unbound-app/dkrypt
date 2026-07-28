@@ -332,6 +332,8 @@ export interface SchedulerRunOutcome {
   reason: string;
   runUrl?: string;
   runStatus?: SchedulerRunStatus;
+  observedVersion?: string;
+  installMode?: 'pinned' | 'current';
 }
 
 export interface SchedulerRunEntry {
@@ -2560,6 +2562,14 @@ export function listShareLinksForJob(jobId: string, viewerId: string): ReturnTyp
     .filter((l) => l.jobId === jobId && l.expiresAt > now)
     .sort((a, b) => b.issuedAt - a.issuedAt)
     .map((l) => redactShareLink(l, l.issuedBy === viewerId));
+}
+
+export function activeShareLinkDownloadUrlForJob(jobId: string, viewerId: string): string | undefined {
+  const now = Date.now();
+  const link = state.shareLinks
+    .filter((candidate) => candidate.jobId === jobId && candidate.issuedBy === viewerId && !candidate.revoked && candidate.expiresAt > now && !shareLinkExhausted(candidate))
+    .sort((a, b) => b.expiresAt - a.expiresAt)[0];
+  return link ? shareLinkDownloadUrl(link) : undefined;
 }
 
 export function listAllShareLinks(): ReturnType<typeof redactShareLink>[] {

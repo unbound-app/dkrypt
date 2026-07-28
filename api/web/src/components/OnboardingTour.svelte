@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { KeyRound, Search, SquareTerminal, Sparkles as SparklesIcon } from 'lucide-svelte';
+  import { HeartPulse, KeyRound, Search, SquareTerminal, Sparkles as SparklesIcon } from 'lucide-svelte';
   import Button from '#lib/components/ui/Button.svelte';
   import Dialog from '#lib/components/ui/Dialog.svelte';
   import { sessionState } from '#lib/session.svelte';
@@ -16,6 +16,13 @@
   }
 
   const steps: Step[] = [
+    {
+      icon: HeartPulse,
+      title: 'Check device readiness first',
+      body: 'Open Settings → Devices and run Preflight before your first decrypt. It checks SSH, App Store connectivity, autoinstall compatibility, and available capacity.',
+      actionLabel: 'Open Devices',
+      action: () => setActiveTab('settings'),
+    },
     {
       icon: Search,
       title: 'Decrypt any app',
