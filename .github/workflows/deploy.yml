@@ -153,5 +153,6 @@ jobs:
           set -e
           LEGACY_DIR=/home/adrian/dkrypt
           if [ -d "$LEGACY_DIR" ] && [ ! -L "$LEGACY_DIR" ]; then
-            rm -rf -- "$LEGACY_DIR"
+            cd /tmp
+            find "$LEGACY_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
           fi
