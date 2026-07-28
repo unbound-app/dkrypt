@@ -43,7 +43,7 @@ It uses the device's signed-in App Store account and `ipadecrypt`; no Apple ID i
    docker compose up -d
    ```
 
-Open `http://localhost:8080`, or place your reverse proxy in front of it. The included `Caddyfile` is a starting point.
+Open `http://localhost:8080`, or place your reverse proxy in front of it.
 
 ## Deployment
 
