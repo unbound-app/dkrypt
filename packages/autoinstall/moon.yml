@@ -1,0 +1,10 @@
+tasks:
+  package:
+    command: gmake
+    args:
+      - clean
+      - package
+  deploy:
+    command: ../../scripts/autoinstall-release
+    args:
+      - deploy

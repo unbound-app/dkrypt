@@ -15,13 +15,13 @@ import { getVapidPublicKey, sendPushToUser } from '#push.js';
 import { hasPermission, isSubsetPermission, parseBits, PermissionFlag } from '#permissions.js';
 import { getAuthProfile, listAuthProfiles } from '#identity.js';
 import { applyBackupSchedule, applyWatchSchedules, checkForTestFlightUpdate, checkForUpdate, triggerTickNow } from '#scheduler/index.js';
-import { listDispatchRepos, listRepoWorkflows } from '#scheduler/github.js';
+import { getGitHubRateLimitBudget, listDispatchRepos, listRepoWorkflows } from '#scheduler/github.js';
 import { lookupAppMetadata, searchApps } from '#scheduler/itunes.js';
 import { requirePermission, requireSession } from '#session.js';
 import { getDeviceHealth, isBridgeHeartbeatFresh } from '#deviceHealth.js';
 import { listInstalledAppStoreBundles, sendSpringBoardBridgeRequest, validateDeviceRootDir, withSSH } from '#idevice.js';
 import { getTestFlightBridgeDiagnostics, listBuilds, listTrains } from '#testflight.js';
-import { nextCronRunAt } from '#util/cron.js';
+import { nextCronRunAt, nextCronRuns } from '#util/cron.js';
 import { getDiskUsage } from '#util/diskUsage.js';
 import { rateLimitPerUser } from '#util/rateLimit.js';
 import { buildSignedFileUrlWithToken } from '#util/signedUrl.js';
@@ -77,6 +77,7 @@ import {
   getEffectiveSettings,
   getEffectiveWatches,
   getInsightsSummary,
+  getUserActivityStats,
   getJobHistoryEntryById,
   getJobHistoryPage,
   getLastSchedulerRunAt,
@@ -802,13 +803,12 @@ dashboardRouter.get('/v1/dashboard/github/rate-limit', canManageWatches, async (
     res.status(409).json({ error: 'GH_TOKEN is not configured' });
     return;
   }
-  const response = await fetch('https://api.github.com/rate_limit', { headers: { Authorization: `Bearer ${config.ghToken}`, Accept: 'application/vnd.github+json' } });
-  if (!response.ok) {
-    res.status(502).json({ error: `GitHub rate-limit lookup failed: HTTP ${response.status}` });
-    return;
+  try {
+    const budget = await getGitHubRateLimitBudget(true);
+    res.json(budget ? { limit: budget.limit, remaining: budget.remaining, reset: Math.floor(budget.resetAt / 1000) } : {});
+  } catch (err) {
+    res.status(502).json({ error: `GitHub rate-limit lookup failed: ${String(err)}` });
   }
-  const body = await response.json() as { resources?: { core?: { limit?: number; remaining?: number; reset?: number } } };
-  res.json(body.resources?.core ?? {});
 });
 
 dashboardRouter.get('/v1/dashboard/devices/:id/health-history', canViewDevices, (req, res) => {
@@ -856,6 +856,28 @@ dashboardRouter.get('/v1/dashboard/watches/export', canManageWatches, (_req, res
 
 dashboardRouter.get('/v1/dashboard/watches/health', canViewScheduler, (_req, res) => {
   res.json({ watches: getWatchHealthRollup() });
+});
+
+dashboardRouter.get('/v1/dashboard/watches/calendar', canViewScheduler, (req, res) => {
+  const hours = Math.min(Math.max(Number.parseInt(String(req.query.hours ?? '24'), 10) || 24, 1), 168);
+  const fromAt = Date.now();
+  const untilAt = fromAt + hours * 60 * 60 * 1000;
+  const maxRuns = 200;
+  const runs: { watchId: string; bundleId: string; at: number }[] = [];
+  const pending = getEffectiveWatches()
+    .filter(isWatchSchedulable)
+    .flatMap((watch) => {
+      const at = nextCronRuns(watch.pollCron, untilAt, fromAt, 1)[0];
+      return at === undefined ? [] : [{ watch, at }];
+    });
+  while (pending.length > 0 && runs.length < maxRuns) {
+    pending.sort((a, b) => a.at - b.at);
+    const next = pending.shift() as { watch: AppWatch; at: number };
+    runs.push({ watchId: next.watch.id, bundleId: next.watch.bundleId, at: next.at });
+    const followingAt = nextCronRuns(next.watch.pollCron, untilAt, next.at, 1)[0];
+    if (followingAt !== undefined) pending.push({ watch: next.watch, at: followingAt });
+  }
+  res.json({ untilAt, runs, truncated: pending.length > 0 });
 });
 
 dashboardRouter.get('/v1/dashboard/github/repos', canManageWatches, async (_req, res) => {
@@ -1787,6 +1809,7 @@ function canGrantBits(actorBits: bigint, targetBits: bigint): boolean {
 
 dashboardRouter.get('/v1/dashboard/users', canViewUsers, (_req, res) => {
   const assignments = new Map(listAllowedUsers().map((user) => [user.username, user]));
+  const activity = getUserActivityStats();
   const users = listAuthProfiles().map((profile) => {
     const assignment = assignments.get(profile.userId);
     return {
@@ -1797,6 +1820,7 @@ dashboardRouter.get('/v1/dashboard/users', canViewUsers, (_req, res) => {
       addedAt: assignment?.addedAt ?? Date.parse(profile.updatedAt),
       lastActiveAt: assignment?.lastActiveAt,
       priority: assignment?.priority,
+      activity: activity.get(profile.userId.toLowerCase()),
     };
   });
   for (const assignment of assignments.values()) {
@@ -1809,6 +1833,7 @@ dashboardRouter.get('/v1/dashboard/users', canViewUsers, (_req, res) => {
         addedAt: assignment.addedAt,
         lastActiveAt: assignment.lastActiveAt,
         priority: assignment.priority,
+        activity: activity.get(assignment.username.toLowerCase()),
       });
     }
   }

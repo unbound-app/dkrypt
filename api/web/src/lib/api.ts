@@ -305,6 +305,15 @@ export interface AllowedUser {
   addedAt: number;
   lastActiveAt?: number;
   priority?: number;
+  activity?: {
+    manualJobs: number;
+    completedJobs: number;
+    failedJobs: number;
+    lastJobAt?: number;
+    apiKeys: number;
+    apiRequests30d: number;
+    activeShareLinks: number;
+  };
 }
 
 export interface AuditLogEntry {
@@ -816,6 +825,16 @@ export interface WatchHealthSummary {
 
 export function fetchWatchHealth(): Promise<{ watches: WatchHealthSummary[] }> {
   return apiJson('/v1/dashboard/watches/health');
+}
+
+export interface SchedulerCalendarRun {
+  watchId: string;
+  bundleId: string;
+  at: number;
+}
+
+export function fetchWatchCalendar(hours = 24): Promise<{ untilAt: number; runs: SchedulerCalendarRun[]; truncated: boolean }> {
+  return apiJson(`/v1/dashboard/watches/calendar?hours=${hours}`);
 }
 
 export function fetchGithubRepos(): Promise<{ repos: GithubRepoOption[] }> {

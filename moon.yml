@@ -1,0 +1,21 @@
+dependsOn:
+  - api
+  - web
+  - autoinstall
+tasks:
+  check:
+    command: 'true'
+    deps:
+      - api:check
+    inputs: []
+  composeBuild:
+    command: docker
+    args:
+      - compose
+      - build
+    inputs: []
+  autoinstallDeploy:
+    command: ./scripts/autoinstall-release
+    args:
+      - deploy
+    inputs: []

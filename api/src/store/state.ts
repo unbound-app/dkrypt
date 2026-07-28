@@ -2087,6 +2087,47 @@ export function getAllJobHistory(): JobHistoryEntry[] {
   return state.jobHistory;
 }
 
+export interface UserActivityStats {
+  manualJobs: number;
+  completedJobs: number;
+  failedJobs: number;
+  lastJobAt?: number;
+  apiKeys: number;
+  apiRequests30d: number;
+  activeShareLinks: number;
+}
+
+export function getUserActivityStats(): Map<string, UserActivityStats> {
+  const stats = new Map<string, UserActivityStats>();
+  const ensure = (username: string): UserActivityStats => {
+    const key = username.toLowerCase();
+    const current = stats.get(key);
+    if (current) return current;
+    const next = { manualJobs: 0, completedJobs: 0, failedJobs: 0, apiKeys: 0, apiRequests30d: 0, activeShareLinks: 0 };
+    stats.set(key, next);
+    return next;
+  };
+  for (const job of state.jobHistory) {
+    if (!job.queuedBy || job.source !== 'manual') continue;
+    const activity = ensure(job.queuedBy);
+    activity.manualJobs += 1;
+    if (job.status === 'done') activity.completedJobs += 1;
+    else activity.failedJobs += 1;
+    activity.lastJobAt = Math.max(activity.lastJobAt ?? 0, job.finishedAt) || undefined;
+  }
+  for (const key of state.apiKeys) {
+    const activity = ensure(key.ownerId);
+    activity.apiKeys += 1;
+    activity.apiRequests30d += getApiKeyUsage(key.id, 30).reduce((total, bucket) => total + bucket.count, 0);
+  }
+  const now = Date.now();
+  for (const link of state.shareLinks) {
+    if (link.revoked || link.expiresAt <= now || shareLinkExhausted(link)) continue;
+    ensure(link.issuedBy).activeShareLinks += 1;
+  }
+  return stats;
+}
+
 export function getJobHistoryEntryById(id: string): JobHistoryEntry | undefined {
   return state.jobHistory.find((e) => e.id === id);
 }

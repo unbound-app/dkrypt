@@ -3,6 +3,15 @@ import { describeHttpError } from '#util/httpError.js';
 import { normalizeVersion } from '#util/version.js';
 
 const GITHUB_API = 'https://api.github.com';
+const RATE_LIMIT_CACHE_MS = 30_000;
+
+export interface GitHubRateLimitBudget {
+  limit: number;
+  remaining: number;
+  resetAt: number;
+}
+
+let cachedRateLimit: { value: GitHubRateLimitBudget; at: number } | undefined;
 
 function headers(): Record<string, string> {
   return {
@@ -10,6 +19,19 @@ function headers(): Record<string, string> {
     Authorization: `Bearer ${config.ghToken}`,
     'X-GitHub-Api-Version': '2022-11-28',
   };
+}
+
+export async function getGitHubRateLimitBudget(force = false): Promise<GitHubRateLimitBudget | undefined> {
+  if (!config.ghToken) return undefined;
+  if (!force && cachedRateLimit && Date.now() - cachedRateLimit.at < RATE_LIMIT_CACHE_MS) return cachedRateLimit.value;
+  const response = await fetch(`${GITHUB_API}/rate_limit`, { headers: headers() });
+  if (!response.ok) throw new Error(describeHttpError('GitHub rate-limit lookup failed', response));
+  const body = (await response.json()) as { resources?: { core?: { limit?: number; remaining?: number; reset?: number } } };
+  const core = body.resources?.core;
+  if (typeof core?.limit !== 'number' || typeof core.remaining !== 'number' || typeof core.reset !== 'number') return undefined;
+  const value = { limit: core.limit, remaining: core.remaining, resetAt: core.reset * 1000 };
+  cachedRateLimit = { value, at: Date.now() };
+  return value;
 }
 
 interface Release {

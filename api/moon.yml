@@ -1,0 +1,16 @@
+tasks:
+  test:
+    command: bun
+    args:
+      - test
+  typecheck:
+    command: bun
+    args:
+      - run
+      - typecheck
+  check:
+    command: 'true'
+    deps:
+      - '~:test'
+      - '~:typecheck'
+      - web:typecheck

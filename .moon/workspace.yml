@@ -1,0 +1,9 @@
+vcs:
+  client: git
+  defaultBranch: main
+projects:
+  sources:
+    dkrypt: .
+    api: api
+    web: api/web
+    autoinstall: packages/autoinstall

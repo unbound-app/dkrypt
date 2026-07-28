@@ -22,6 +22,7 @@
 		importWatches,
 		fetchTestFlightBridgeDiagnostics,
 		fetchWatchHealth,
+		fetchWatchCalendar,
 		previewWatchDispatchSource,
 		previewWatchDispatchDraft,
 		saveSettings,
@@ -44,6 +45,7 @@
 		type UpdateCheck,
 		type WatchInput,
 		type WatchHealthSummary,
+		type SchedulerCalendarRun,
 		type WebhookDeliveryEntry,
 	} from "#lib/api";
 	import Badge from "#lib/components/ui/Badge.svelte";
@@ -300,6 +302,8 @@
 	let watchImportInput = $state<HTMLInputElement | null>(null);
 	let appCatalogStats = $state<AppCatalogStats | null>(null);
 	let refreshingCatalog = $state(false);
+	let calendarRuns = $state<SchedulerCalendarRun[]>([]);
+	let calendarTruncated = $state(false);
 
 	const watches = $derived(liveState.overview?.watches ?? []);
 	const failedWatchCount = $derived(watchHealth.filter((watch) => watch.lastCheckOk === false || watch.consecutiveFailures > 0).length);
@@ -326,6 +330,16 @@
 		const load = () => void fetchWatchHealth().then(({ watches: next }) => (watchHealth = next)).catch(() => undefined);
 		load();
 		const interval = setInterval(load, 30_000);
+		return () => clearInterval(interval);
+	});
+
+	$effect(() => {
+		const load = () => void fetchWatchCalendar().then(({ runs, truncated }) => {
+			calendarRuns = runs;
+			calendarTruncated = truncated;
+		}).catch(() => undefined);
+		load();
+		const interval = setInterval(load, 60_000);
 		return () => clearInterval(interval);
 	});
 
@@ -950,6 +964,24 @@
 				<Badge variant={githubRateLimit.remaining < 100 ? "destructive" : "secondary"}>GitHub API</Badge>
 				<span class="font-medium">{githubRateLimit.remaining}/{githubRateLimit.limit ?? "?"} remaining</span>
 				{#if githubRateLimit.reset}<span class="text-muted">resets {new Date(githubRateLimit.reset * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>{/if}
+			</div>
+		{/if}
+	</Card>
+
+	<Card title="Next 24 hours">
+		{#if calendarRuns.length === 0}
+			<p class="text-sm text-muted">No schedulable watch runs are due in the next 24 hours.</p>
+		{:else}
+			{#if calendarTruncated}
+				<p class="mb-2 text-xs text-muted">Showing the first 200 scheduled runs.</p>
+			{/if}
+			<div class="flex flex-col gap-1.5">
+				{#each calendarRuns.slice(0, 30) as run (`${run.watchId}-${run.at}`)}
+					<div class="border-border flex items-center justify-between rounded-lg border px-3 py-2 text-sm">
+						<span>{appDisplayName(run.bundleId)}</span>
+						<span class="text-muted"><RelativeTime ms={run.at} /></span>
+					</div>
+				{/each}
 			</div>
 		{/if}
 	</Card>

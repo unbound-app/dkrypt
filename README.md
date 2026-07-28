@@ -10,7 +10,9 @@ It uses the device's signed-in App Store account and `ipadecrypt`; no Apple ID i
 - Browses and decrypts TestFlight builds.
 - Queues jobs, keeps a downloadable history, and creates expiring share links.
 - Watches App Store releases on a schedule and dispatches signed IPA URLs to GitHub Actions.
+- Protects scheduled watches from exhausting the GitHub API budget and shows their next 24 hours of runs.
 - Runs a multi-user dashboard with OAuth, API keys, roles, billing, device health, logs, and backups.
+- Gives admins per-user job, key, API-usage, and last-activity visibility.
 
 ## Requirements
 
@@ -63,11 +65,24 @@ The listed API endpoints use `Authorization: Bearer <API_KEY>`. Completed IPA do
 | `packages/autoinstall/` | Theos tweak installed on the device |
 | `scripts/autoinstall-release` | Build, install, heartbeat-check, and roll back the tweak |
 
+Moon manages the cross-language project graph and task targets. The `Makefile` remains a short convenience layer.
+Moon is pinned in `.prototools`; install it with `proto install` before using the Moon commands.
+
+| Moon project | Scope |
+| --- | --- |
+| `dkrypt` | Repository checks, Compose build, and release tasks |
+| `api` | Fastify API tests and type checks |
+| `web` | Svelte dashboard type checks |
+| `autoinstall` | Theos package and deployment tasks |
+
 ```sh
 make check
 make autoinstall-package
 make autoinstall-deploy
 make autoinstall-rollback PACKAGE=/absolute/path/to/package.deb
+moon run api:check
+moon run autoinstall:package
+moon run dkrypt:check
 ```
 
 `autoinstall-deploy` uses the configured device target. Override the target or SSH key with `AUTOINSTALL_IPAD_TARGET` and `AUTOINSTALL_IPAD_KEY`.

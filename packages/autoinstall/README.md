@@ -23,6 +23,7 @@ From the repository root, use the release rail to build, install, restart Spring
 
 ```sh
 make autoinstall-deploy
+moon run autoinstall:package
 ```
 
 ## Bridge

@@ -23,6 +23,9 @@ jobs:
       - run: bun test
       - run: bun run typecheck:web
       - run: bun run build:web
+      - name: Verify Moon task graph
+        working-directory: .
+        run: bunx @moonrepo/cli@2.4.6 run dkrypt:check
 
   deploy:
     name: Deploy to homelab

@@ -277,12 +277,13 @@
             <th>Roles</th>
             <th>Added</th>
             <th>Last active</th>
+            <th>Activity</th>
             {#if canManage}<th></th>{/if}
           </tr>
         </thead>
         <tbody>
           {#if users === null}
-            <SkeletonRows rows={3} colspan={canManage ? 6 : 4} />
+            <SkeletonRows rows={3} colspan={canManage ? 7 : 5} />
           {:else}
             {@const defaultRole = (roles ?? []).find((r) => r.isDefault)}
             {#each filteredUsers as u (u.username)}
@@ -327,6 +328,15 @@
                     <RelativeTime ms={u.lastActiveAt} />
                   {:else}
                     never
+                  {/if}
+                </td>
+                <td data-label="Activity" class="text-xs text-muted">
+                  {#if u.activity}
+					<div>{u.activity.manualJobs} jobs · {u.activity.completedJobs} done · {u.activity.failedJobs} failed</div>
+					<div>{u.activity.apiKeys} keys · {u.activity.apiRequests30d} API requests / 30d · {u.activity.activeShareLinks} active shares</div>
+					{#if u.activity.lastJobAt}<div>last job <RelativeTime ms={u.activity.lastJobAt} /></div>{/if}
+                  {:else}
+                    no activity
                   {/if}
                 </td>
                 {#if canManage}

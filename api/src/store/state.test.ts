@@ -23,6 +23,7 @@ import {
   getDeviceUptimePercent,
   getDiscordGuildIds,
   getDiscordRolePerks,
+  getUserActivityStats,
   getEffectiveDevices,
   getWatchDispatchTargets,
   getWatchConfigIssues,
@@ -54,6 +55,29 @@ describe('share links', () => {
     expect(listAllShareLinks().map((link) => link.id)).not.toContain(expired.id);
     expect(listShareLinksForJob(jobId, 'tester').map((link) => link.id)).toContain(active.id);
     expect(listAllShareLinks().map((link) => link.id)).toContain(active.id);
+  });
+
+  test('attributes active links and manual jobs to the issuing user', () => {
+    const username = `activity-${randomUUID()}`;
+    const jobId = `job-${randomUUID()}`;
+    const now = Date.now();
+    recordJobHistory({
+      id: jobId,
+      bundleId: 'com.example.activity',
+      queuedBy: username,
+      status: 'done',
+      source: 'manual',
+      createdAt: now,
+      finishedAt: now,
+    });
+    recordShareLink(jobId, 'com.example.activity', `token-${randomUUID()}`, username, now + 60_000);
+
+    expect(getUserActivityStats().get(username)).toMatchObject({
+      manualJobs: 1,
+      completedJobs: 1,
+      failedJobs: 0,
+      activeShareLinks: 1,
+    });
   });
 });
 
