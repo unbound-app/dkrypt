@@ -565,6 +565,17 @@ export function previewWatchDispatchDraft(bundleId: string, repo: string): Promi
   );
 }
 
+export interface DispatchValidationResult {
+  repo: string;
+  workflow: string;
+  ok: boolean;
+  checks: { label: string; ok: boolean; detail: string }[];
+}
+
+export function validateWatchDispatchDraft(targets: DispatchTarget[]): Promise<{ ok: boolean; results: DispatchValidationResult[] }> {
+  return apiJson('/v1/dashboard/watches/validate-dispatch-draft', { method: 'POST', body: JSON.stringify({ targets }) }, 'external');
+}
+
 export function triggerWatchDispatch(id: string): Promise<{ ok: boolean; data: { ok: boolean; error?: string } }> {
   return apiAction(`/v1/dashboard/watches/${encodeURIComponent(id)}/trigger-dispatch`, { method: 'POST' });
 }

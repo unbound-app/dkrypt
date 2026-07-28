@@ -91,6 +91,44 @@ export interface WorkflowOption {
   state: string;
 }
 
+export interface DispatchValidationTarget {
+  repo: string;
+  ghWorkflowFile: string;
+  mode: 'repository_dispatch' | 'workflow_dispatch';
+  ref?: string;
+  inputs?: Record<string, string>;
+}
+
+export interface DispatchValidationResult {
+  repo: string;
+  workflow: string;
+  ok: boolean;
+  checks: { label: string; ok: boolean; detail: string }[];
+}
+
+export async function validateDispatchTarget(target: DispatchValidationTarget): Promise<DispatchValidationResult> {
+  const checks: DispatchValidationResult['checks'] = [];
+  try {
+    const repoResponse = await githubFetch(`${GITHUB_API}/repos/${target.repo}`, { headers: headers() });
+    if (!repoResponse.ok) throw new Error(describeHttpError('repository lookup failed', repoResponse));
+    const repo = (await repoResponse.json()) as GitHubRepo & { permissions?: { push?: boolean; admin?: boolean } };
+    checks.push({ label: 'Repository access', ok: true, detail: `${repo.default_branch} is accessible` });
+    checks.push({ label: 'Dispatch permission', ok: repo.permissions?.push === true || repo.permissions?.admin === true, detail: repo.permissions?.push || repo.permissions?.admin ? 'token can push to the repository' : 'token does not report push permission' });
+    const workflows = await listRepoWorkflows(target.repo);
+    const workflow = workflows.find((candidate) => candidate.path === target.ghWorkflowFile || candidate.path.endsWith(`/${target.ghWorkflowFile}`));
+    checks.push({ label: 'Workflow', ok: !!workflow && workflow.state === 'active', detail: workflow ? `${workflow.name} is ${workflow.state}` : 'workflow was not found' });
+    if (target.mode === 'workflow_dispatch' && target.ref) {
+      const refResponse = await githubFetch(`${GITHUB_API}/repos/${target.repo}/git/ref/heads/${encodeURIComponent(target.ref)}`, { headers: headers() });
+      checks.push({ label: 'Workflow ref', ok: refResponse.ok, detail: refResponse.ok ? `${target.ref} exists` : `${target.ref} could not be resolved` });
+    }
+    const inputEntries = Object.entries(target.inputs ?? {});
+    checks.push({ label: 'Workflow inputs', ok: inputEntries.every(([key, value]) => /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/.test(key) && value.length <= 500), detail: `${inputEntries.length} custom inputs are well formed` });
+  } catch (err) {
+    checks.push({ label: 'GitHub validation', ok: false, detail: err instanceof Error ? err.message : String(err) });
+  }
+  return { repo: target.repo, workflow: target.ghWorkflowFile, ok: checks.every((check) => check.ok), checks };
+}
+
 export async function listDispatchRepos(): Promise<DispatchRepoOption[]> {
   const repos: DispatchRepoOption[] = [];
   let page = 1;

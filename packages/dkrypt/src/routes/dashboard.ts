@@ -15,7 +15,7 @@ import { getVapidPublicKey, sendPushToUser } from '#push.js';
 import { hasPermission, isSubsetPermission, parseBits, PermissionFlag } from '#permissions.js';
 import { getAuthProfile, listAuthProfiles } from '#identity.js';
 import { applyBackupSchedule, applyWatchSchedules, checkForTestFlightUpdate, checkForUpdate, triggerTickNow } from '#scheduler/index.js';
-import { getGitHubRateLimitBudget, listDispatchRepos, listRepoWorkflows } from '#scheduler/github.js';
+import { getGitHubRateLimitBudget, listDispatchRepos, listRepoWorkflows, validateDispatchTarget } from '#scheduler/github.js';
 import { lookupAppMetadata, searchApps } from '#scheduler/itunes.js';
 import { requirePermission, requireSession } from '#session.js';
 import { getDeviceHealth, isBridgeHeartbeatFresh } from '#deviceHealth.js';
@@ -1124,6 +1124,30 @@ dashboardRouter.post('/v1/dashboard/watches/preview-dispatch-draft', canManageWa
   };
   const [appStore, testflight] = await Promise.all([checkForUpdate(draft), checkForTestFlightUpdate(draft)]);
   res.json({ ...appStore, testflight });
+});
+
+dashboardRouter.post('/v1/dashboard/watches/validate-dispatch-draft', canManageWatches, deviceOrExternalRateLimit, async (req, res) => {
+  const rawTargets: unknown[] = Array.isArray(req.body?.targets) ? req.body.targets : [];
+  if (rawTargets.length === 0 || rawTargets.length > 10) {
+    res.status(400).json({ error: 'provide between 1 and 10 dispatch targets' });
+    return;
+  }
+  const parsed = rawTargets.map((target) => {
+    if (typeof target !== 'object' || target === null) return undefined;
+    const value = target as Record<string, unknown>;
+    const repo = typeof value.repo === 'string' ? value.repo.trim() : '';
+    const ghWorkflowFile = typeof value.ghWorkflowFile === 'string' ? value.ghWorkflowFile.trim() : '';
+    if (!/^[\w.-]+\/[\w.-]+$/.test(repo) || !ghWorkflowFile) return undefined;
+    const rawInputs = typeof value.inputs === 'object' && value.inputs !== null ? value.inputs as Record<string, unknown> : {};
+    const inputs = Object.fromEntries(Object.entries(rawInputs).filter(([, input]) => typeof input === 'string')) as Record<string, string>;
+    return { repo, ghWorkflowFile, mode: value.mode === 'workflow_dispatch' ? 'workflow_dispatch' as const : 'repository_dispatch' as const, ref: typeof value.ref === 'string' && value.ref.trim() ? value.ref.trim() : undefined, inputs };
+  });
+  if (parsed.some((target) => !target)) {
+    res.status(400).json({ error: 'each dispatch target needs a valid repository and workflow' });
+    return;
+  }
+  const results = await Promise.all(parsed.map((target) => validateDispatchTarget(target!)));
+  res.json({ results, ok: results.every((result) => result.ok) });
 });
 
 dashboardRouter.get('/v1/dashboard/watches/:id/preview-dispatch', canTriggerDispatch, deviceOrExternalRateLimit, async (req, res) => {

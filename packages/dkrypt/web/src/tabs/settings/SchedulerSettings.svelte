@@ -26,6 +26,7 @@
 		fetchWatchCalendar,
 		previewWatchDispatchSource,
 		previewWatchDispatchDraft,
+		validateWatchDispatchDraft,
 		saveSettings,
 		searchApps,
 		testWebhook,
@@ -37,6 +38,7 @@
 		type AppCatalogStats,
 		type AppStoreSearchResult,
 		type DispatchTarget,
+		type DispatchValidationResult,
 		type GithubRepoOption,
 		type GithubRateLimit,
 		type GitHubBudgetTelemetryEntry,
@@ -604,6 +606,8 @@
 	let draftPreview = $state<UpdateCheck | null>(null);
 	let previewingDraft = $state(false);
 	let draftPreviewError = $state("");
+	let validatingDraft = $state(false);
+	let dispatchValidation = $state<DispatchValidationResult[] | null>(null);
 
 	async function previewDraft(): Promise<void> {
 		if (
@@ -625,6 +629,19 @@
 				err instanceof Error ? err.message : String(err);
 		} finally {
 			previewingDraft = false;
+		}
+	}
+
+	async function validateDraftDispatch(): Promise<void> {
+		if (dispatchTargets.some((target) => !REPO_RE.test(target.repo) || !target.ghWorkflowFile.trim())) return;
+		validatingDraft = true;
+		dispatchValidation = null;
+		try {
+			dispatchValidation = (await validateWatchDispatchDraft(dispatchTargets)).results;
+		} catch (err) {
+			showToast(err instanceof Error ? err.message : String(err), "error");
+		} finally {
+			validatingDraft = false;
 		}
 	}
 
@@ -1499,6 +1516,25 @@
 			>
 				Preview what this would do
 			</Button>
+			<Button
+				variant="secondary"
+				class="mt-2 w-full"
+				loading={validatingDraft}
+				disabled={dispatchTargets.some((target) => !REPO_RE.test(target.repo) || !target.ghWorkflowFile.trim())}
+				onclick={validateDraftDispatch}
+			>
+				Validate GitHub destinations
+			</Button>
+			{#if dispatchValidation}
+				<div class="border-border bg-panel-muted mt-2 rounded-md border p-2.5 text-xs">
+					{#each dispatchValidation as result (`${result.repo}-${result.workflow}`)}
+						<div class={result.ok ? "text-ok" : "text-err"}>{result.repo} · {result.workflow}</div>
+						{#each result.checks as check (check.label)}
+							<div class="mt-1 text-muted"><span class={check.ok ? "text-ok" : "text-err"}>{check.ok ? "✓" : "×"}</span> {check.label}: {check.detail}</div>
+						{/each}
+					{/each}
+				</div>
+			{/if}
 			{#if draftPreview}
 				<div
 					class="border-border bg-panel-muted mt-2 rounded-md border p-2.5 text-xs"
