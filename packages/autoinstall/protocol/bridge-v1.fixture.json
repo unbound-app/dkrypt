@@ -1,0 +1,26 @@
+{
+  "contract": {
+    "version": 1,
+    "springboard": ["dark_on", "dark_off", "launch_app", "screen_status", "status", "protocol_v1", "authenticated_requests", "operation_responses", "heartbeats", "stale_artifact_cleanup"],
+    "testflight": ["list_trains", "list_builds", "install", "diagnostics", "idempotent_install", "protocol_v1", "authenticated_requests", "operation_responses", "heartbeats", "stale_artifact_cleanup"],
+    "appstore": ["install", "status", "diagnostics", "protocol_v1", "authenticated_requests", "operation_responses", "heartbeats", "stale_artifact_cleanup"]
+  },
+  "secret": "test-secret",
+  "channel": "testflight",
+  "request": {
+    "action": "install",
+    "appId": 42,
+    "build": {
+      "id": 7
+    }
+  },
+  "requestId": "request-1",
+  "issuedAt": 1700000000,
+  "envelope": {
+    "version": 1,
+    "requestId": "request-1",
+    "issuedAt": 1700000000,
+    "payload": "eyJhY3Rpb24iOiJpbnN0YWxsIiwiYXBwSWQiOjQyLCJidWlsZCI6eyJpZCI6N319",
+    "signature": "d6cb90702b8327d74575982fceae0b295ce73024d4d2022b7220f63a331ec765"
+  }
+}

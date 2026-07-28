@@ -16,7 +16,7 @@ mock.module('#idevice.js', () => ({
     if (request.action === 'status') {
       return {
         bridgeVersion: '2.0.0',
-        capabilities: ['list_trains', 'list_builds', 'install', 'diagnostics', 'idempotent_install'],
+        capabilities: ['list_trains', 'list_builds', 'install', 'diagnostics', 'idempotent_install', 'protocol_v1', 'authenticated_requests', 'operation_responses', 'heartbeats', 'stale_artifact_cleanup'],
         hasInstaller: true,
         hasCatalogManager: true,
       };
@@ -49,6 +49,10 @@ describe('installBuild', () => {
       bundleId: 'com.hammerandchisel.discord',
       cfBundleShortVersion: '341.0',
       cfBundleVersion: '107127',
-    }, undefined, 20, 'testflight-path-regression')).resolves.toBeUndefined();
+    }, undefined, 20, 'testflight-path-regression')).resolves.toMatchObject({
+      bundleId: 'com.hammerandchisel.discord',
+      fairPlayProtected: true,
+      buildVersion: '107127',
+    });
   });
 });

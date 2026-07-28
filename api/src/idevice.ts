@@ -1,24 +1,41 @@
-import { readFile } from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
+import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { Client } from 'ssh2';
 import { scopedLogger } from '#logger.js';
+import { BRIDGE_PROTOCOL_VERSION } from '#bridgeProtocol.js';
+import type { BridgeChannel } from '#bridgeProtocol.js';
 
 const log = scopedLogger('idevice');
 
-const REQUEST_PATH = '/tmp/autoinstall-request.json';
-const RESPONSE_PATH = '/tmp/autoinstall-response.json';
-const SB_REQUEST_PATH = '/tmp/autoinstall-sb-request.json';
-const SB_RESPONSE_PATH = '/tmp/autoinstall-sb-response.json';
-const AS_REQUEST_PATH = '/tmp/autoinstall-as-request.json';
-const AS_RESPONSE_PATH = '/tmp/autoinstall-as-response.json';
 const AUTOCONFIRM_FLAG_PATH = '/tmp/autoinstall-autoconfirm.flag';
+const BRIDGE_ROOT_PATH = '/tmp/autoinstall/v1';
+const BRIDGE_SECRET_FILE_NAME = 'autoinstall-bridge-secret';
+const BRIDGE_SECRET_REMOTE_PATH = '/var/mobile/Library/Preferences/dev.adrian.autoinstall-bridge.secret';
+const BRIDGE_ARTIFACT_TTL_MINUTES = 30;
+
+export type { BridgeChannel } from '#bridgeProtocol.js';
+
+export interface BridgeEnvelope {
+  version: number;
+  requestId: string;
+  issuedAt: number;
+  payload: string;
+  signature: string;
+}
 
 export interface BridgeErrorDetails {
   code?: string;
   stage?: string;
   message: string;
   retryable: boolean;
+}
+
+export interface BridgeHeartbeat {
+  bridgeVersion?: string;
+  channel?: BridgeChannel;
+  process?: string;
+  at?: number;
 }
 
 export class BridgeError extends Error {
@@ -48,6 +65,8 @@ interface RawIpadecryptConfig {
 }
 
 const authCache = new Map<string, DeviceAuth>();
+const bridgeSecretCache = new Map<string, string>();
+const connectionRoots = new WeakMap<Client, string>();
 
 async function loadDeviceAuth(rootDir: string): Promise<DeviceAuth> {
   const cached = authCache.get(rootDir);
@@ -99,14 +118,52 @@ export async function withSSH<T>(rootDir: string, fn: (conn: Client) => Promise<
         conn.on('error', reject);
         conn.connect({ host: auth.host, port: auth.port, username: auth.user, privateKey, readyTimeout: 15_000 });
       });
+      connectionRoots.set(conn, rootDir);
       return await fn(conn);
     } catch (err) {
       authCache.delete(rootDir);
       throw err;
     } finally {
+      connectionRoots.delete(conn);
       conn.end();
     }
   });
+}
+
+async function loadBridgeSecret(rootDir: string): Promise<string> {
+  const cached = bridgeSecretCache.get(rootDir);
+  if (cached) return cached;
+  const secretPath = path.join(rootDir, BRIDGE_SECRET_FILE_NAME);
+  try {
+    const secret = (await readFile(secretPath, 'utf8')).trim();
+    if (secret.length >= 32) {
+      bridgeSecretCache.set(rootDir, secret);
+      return secret;
+    }
+  } catch {}
+  await mkdir(rootDir, { recursive: true });
+  const secret = randomBytes(32).toString('base64url');
+  await writeFile(secretPath, `${secret}\n`, { mode: 0o600 });
+  await chmod(secretPath, 0o600);
+  bridgeSecretCache.set(rootDir, secret);
+  return secret;
+}
+
+function bridgeSignature(secret: string, channel: BridgeChannel, requestId: string, issuedAt: number, payload: string): string {
+  return createHmac('sha256', secret)
+    .update(`${BRIDGE_PROTOCOL_VERSION}|${channel}|${requestId}|${issuedAt}|${payload}`)
+    .digest('hex');
+}
+
+export function createBridgeEnvelope(secret: string, channel: BridgeChannel, request: Record<string, unknown>, requestId: string = randomUUID(), issuedAt = Math.floor(Date.now() / 1000)): BridgeEnvelope {
+  const payload = Buffer.from(JSON.stringify(request)).toString('base64url');
+  return {
+    version: BRIDGE_PROTOCOL_VERSION,
+    requestId,
+    issuedAt,
+    payload,
+    signature: bridgeSignature(secret, channel, requestId, issuedAt, payload),
+  };
 }
 
 export function execCommand(conn: Client, command: string): Promise<{ stdout: string; stderr: string; code: number | null }> {
@@ -145,6 +202,13 @@ function writeRemoteFile(conn: Client, remotePath: string, content: string): Pro
   });
 }
 
+async function writeRemoteFileAtomically(conn: Client, remotePath: string, content: string): Promise<void> {
+  const tempPath = `${remotePath}.${randomUUID()}.partial`;
+  await writeRemoteFile(conn, tempPath, content);
+  const { code, stderr } = await execCommand(conn, `mv "${tempPath}" "${remotePath}"`);
+  if (code !== 0) throw new Error(`could not publish bridge request: ${stderr || code}`);
+}
+
 function readRemoteFileIfExists(conn: Client, remotePath: string): Promise<string | undefined> {
   return new Promise((resolve, reject) => {
     conn.sftp((err, sftp) => {
@@ -166,6 +230,20 @@ function readRemoteFileIfExists(conn: Client, remotePath: string): Promise<strin
       });
     });
   });
+}
+
+export async function readBridgeHeartbeats(conn: Client): Promise<Partial<Record<BridgeChannel, BridgeHeartbeat>>> {
+  const channels: BridgeChannel[] = ['springboard', 'testflight', 'appstore'];
+  const entries = await Promise.all(channels.map(async (channel) => {
+    const raw = await readRemoteFileIfExists(conn, `${BRIDGE_ROOT_PATH}/${channel}/state/heartbeat.json`);
+    if (!raw) return [channel, undefined] as const;
+    try {
+      return [channel, JSON.parse(raw) as BridgeHeartbeat] as const;
+    } catch {
+      return [channel, undefined] as const;
+    }
+  }));
+  return Object.fromEntries(entries.filter((entry): entry is [BridgeChannel, BridgeHeartbeat] => entry[1] !== undefined));
 }
 
 export async function isTestFlightRunning(conn: Client): Promise<boolean> {
@@ -233,6 +311,13 @@ export interface InstalledBundleVersions {
   buildVersion?: string;
 }
 
+export interface InstallVerification extends InstalledBundleVersions {
+  bundleId: string;
+  appPath: string;
+  fairPlayProtected: true;
+  elapsedMs: number;
+}
+
 export async function readInstalledBundleVersions(conn: Client, appPath: string): Promise<InstalledBundleVersions> {
   const tmp = `/tmp/dkrypt-check-${Date.now()}.plist`;
   try {
@@ -249,17 +334,31 @@ const withBridgeLock = makeSerialQueue();
 
 async function sendBridgeRequestRawTo(
   conn: Client,
-  requestPath: string,
-  responsePath: string,
+  channel: BridgeChannel,
   request: Record<string, unknown>,
   timeoutMs = 20_000,
 ): Promise<any> {
   return withBridgeLock(async () => {
     const requestId = typeof request.requestId === 'string' ? request.requestId : randomUUID();
-    const tracedRequest = { ...request, requestId };
-    log.info('sending autoinstall bridge request', { requestId, action: request.action, requestPath });
-    await execCommand(conn, `rm -f ${responsePath}`);
-    await writeRemoteFile(conn, requestPath, JSON.stringify(tracedRequest));
+    const rootDir = connectionRoots.get(conn);
+    if (!rootDir) throw new Error('autoinstall bridge requests must run through withSSH');
+    const secret = await loadBridgeSecret(rootDir);
+    const requestDirectory = `${BRIDGE_ROOT_PATH}/${channel}/requests`;
+    const responseDirectory = `${BRIDGE_ROOT_PATH}/${channel}/responses`;
+    const requestPath = `${requestDirectory}/${requestId}.json`;
+    const responsePath = `${responseDirectory}/${requestId}.response.json`;
+    const envelope = createBridgeEnvelope(secret, channel, request, requestId);
+    log.info('sending authenticated autoinstall bridge request', { requestId, channel, action: request.action });
+    const { code, stderr } = await execCommand(
+      conn,
+      `mkdir -p "${requestDirectory}" "${responseDirectory}" && chmod 700 "${BRIDGE_ROOT_PATH}" "${BRIDGE_ROOT_PATH}/${channel}" "${requestDirectory}" "${responseDirectory}"`,
+    );
+    if (code !== 0) throw new Error(`could not prepare autoinstall bridge directories: ${stderr || code}`);
+    await writeRemoteFileAtomically(conn, BRIDGE_SECRET_REMOTE_PATH, `${secret}\n`);
+    const secretMode = await execCommand(conn, `chmod 600 "${BRIDGE_SECRET_REMOTE_PATH}"`);
+    if (secretMode.code !== 0) throw new Error(`could not secure autoinstall bridge secret: ${secretMode.stderr || secretMode.code}`);
+    await execCommand(conn, `find "${BRIDGE_ROOT_PATH}" -type f -mmin +${BRIDGE_ARTIFACT_TTL_MINUTES} -delete`);
+    await writeRemoteFileAtomically(conn, requestPath, JSON.stringify(envelope));
 
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
@@ -267,10 +366,11 @@ async function sendBridgeRequestRawTo(
       if (raw) {
         const parsed = JSON.parse(raw);
         if (typeof parsed.requestId === 'string' && parsed.requestId !== requestId) {
-          log.warn('discarding autoinstall bridge response with a mismatched request id', { requestId, responseRequestId: parsed.requestId, requestPath });
+          log.warn('discarding autoinstall bridge response with a mismatched request id', { requestId, responseRequestId: parsed.requestId, channel });
           await execCommand(conn, `rm -f ${responsePath}`);
           continue;
         }
+        await execCommand(conn, `rm -f "${responsePath}"`);
         if (parsed.ok === false) {
           const error = parsed.error;
           if (error && typeof error === 'object') {
@@ -287,20 +387,21 @@ async function sendBridgeRequestRawTo(
       }
       await new Promise((r) => setTimeout(r, 500));
     }
-    throw new Error(`autoinstall bridge request timed out (${requestId}): ${JSON.stringify(request)}`);
+    await execCommand(conn, `rm -f "${requestPath}" "${responsePath}"`);
+    throw new Error(`autoinstall bridge request timed out (${requestId}) on ${channel}: ${JSON.stringify(request)}`);
   });
 }
 
 export function sendTestFlightBridgeRequest(conn: Client, request: Record<string, unknown>, timeoutMs = 20_000): Promise<any> {
-  return sendBridgeRequestRawTo(conn, REQUEST_PATH, RESPONSE_PATH, request, timeoutMs);
+  return sendBridgeRequestRawTo(conn, 'testflight', request, timeoutMs);
 }
 
 export function sendSpringBoardBridgeRequest(conn: Client, request: Record<string, unknown>, timeoutMs = 20_000): Promise<any> {
-  return sendBridgeRequestRawTo(conn, SB_REQUEST_PATH, SB_RESPONSE_PATH, request, timeoutMs);
+  return sendBridgeRequestRawTo(conn, 'springboard', request, timeoutMs);
 }
 
 export function sendAppStoreBridgeRequest(conn: Client, request: Record<string, unknown>, timeoutMs = 20_000): Promise<any> {
-  return sendBridgeRequestRawTo(conn, AS_REQUEST_PATH, AS_RESPONSE_PATH, request, timeoutMs);
+  return sendBridgeRequestRawTo(conn, 'appstore', request, timeoutMs);
 }
 
 export async function tryIoregCandidates(conn: Client, ioregClass: string, candidates: string[]): Promise<string | undefined> {

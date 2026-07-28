@@ -51,6 +51,11 @@ describe('enqueueDecryptJob', () => {
     expect(schedulerPos?.position).toBeLessThan(manualPos!.position);
     expect(getActiveJobs().map((j) => j.id)).toContain(running.id);
   });
+
+  test('labels an unpinned App Store job as the current release', () => {
+    const job = enqueueDecryptJob('com.test.current-release', 'manual');
+    expect(job.versionLabel).toBe('Current App Store release');
+  });
 });
 
 describe('cancelQueuedJob', () => {

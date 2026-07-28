@@ -1,6 +1,6 @@
 import { Client } from 'ssh2';
 import { config } from '#config.js';
-import { execCommand, isTestFlightRunning, sendSpringBoardBridgeRequest, tryIoregCandidates, withSSH } from '#idevice.js';
+import { execCommand, isTestFlightRunning, readBridgeHeartbeats, sendSpringBoardBridgeRequest, tryIoregCandidates, withSSH, type BridgeHeartbeat } from '#idevice.js';
 import { scopedLogger } from '#logger.js';
 import { EMBED_COLOR, notify } from '#notify.js';
 import { releasePinnedJobsForDevice } from '#jobs/store.js';
@@ -33,6 +33,7 @@ export interface DeviceHealth {
   internetAccess?: boolean;
   networkIpAddress?: string;
   networkInterface?: string;
+  bridgeHeartbeats?: Partial<Record<'springboard' | 'testflight' | 'appstore', BridgeHeartbeat>>;
   readiness?: DeviceReadiness;
   checkedAt: number;
 }
@@ -41,6 +42,23 @@ export interface DeviceReadiness {
   score: number;
   state: 'ready' | 'caution' | 'blocked';
   reasons: string[];
+}
+
+const BRIDGE_HEARTBEAT_MAX_AGE_MS = 90_000;
+
+export function isBridgeHeartbeatFresh(heartbeat: BridgeHeartbeat | undefined, now = Date.now()): boolean {
+  return typeof heartbeat?.at === 'number' && now - heartbeat.at * 1000 <= BRIDGE_HEARTBEAT_MAX_AGE_MS;
+}
+
+export function getDeviceInstallBlocker(health: DeviceHealth): string | undefined {
+  if (!health.reachable) return health.error ?? 'device is unreachable';
+  if (health.internetAccess === false) return 'device cannot reach Apple services';
+  if (health.testFlightBridgeReachable === false) return 'autoinstall bridge is unresponsive';
+  if (health.bridgeHeartbeats?.springboard && !isBridgeHeartbeatFresh(health.bridgeHeartbeats.springboard)) return 'autoinstall SpringBoard heartbeat is stale';
+  if (health.batteryPercent !== undefined && !health.batteryCharging && health.batteryPercent < 15) return `device battery is ${health.batteryPercent}% and not charging`;
+  if (health.batteryTemperatureC !== undefined && health.batteryTemperatureC >= 45) return `device temperature is ${health.batteryTemperatureC.toFixed(1)}°C`;
+  if (health.storageFreeBytes !== undefined && health.storageFreeBytes < 2 * 1024 * 1024 * 1024) return `device has less than 2 GiB free storage`;
+  return undefined;
 }
 
 export function getDeviceReadiness(health: DeviceHealth): DeviceReadiness {
@@ -56,6 +74,10 @@ export function getDeviceReadiness(health: DeviceHealth): DeviceReadiness {
   if (health.testFlightBridgeReachable === false) {
     score -= 50;
     reasons.push('autoinstall bridge is unresponsive');
+  }
+  if (health.bridgeHeartbeats?.springboard && !isBridgeHeartbeatFresh(health.bridgeHeartbeats.springboard)) {
+    score -= 50;
+    reasons.push('autoinstall SpringBoard heartbeat is stale');
   }
   if (health.batteryPercent !== undefined && !health.batteryCharging && health.batteryPercent < 15) {
     score -= 20;
@@ -231,7 +253,7 @@ const HEALTH_CACHE_TTL_MS = 20_000;
 async function computeDeviceHealth(device: DeviceRecord, isPrimary: boolean): Promise<DeviceHealth> {
   try {
     return await withSSH(device.rootDir, async (conn) => {
-      const [tfRunning, sbStatusResult, battery, storage, network] = await Promise.all([
+      const [tfRunning, sbStatusResult, battery, storage, network, bridgeHeartbeats] = await Promise.all([
         isTestFlightRunning(conn),
         isPrimary
           ? sendSpringBoardBridgeRequest(conn, { action: 'screen_status' }, 8_000)
@@ -250,6 +272,7 @@ async function computeDeviceHealth(device: DeviceRecord, isPrimary: boolean): Pr
           log.warn('network query threw', { deviceId: device.id, error: String(err) });
           return undefined;
         }),
+        readBridgeHeartbeats(conn),
       ]);
       const sbStatus = sbStatusResult.value;
       const health: DeviceHealth = {
@@ -274,6 +297,7 @@ async function computeDeviceHealth(device: DeviceRecord, isPrimary: boolean): Pr
         internetAccess: network?.internetAccess,
         networkIpAddress: network?.ipAddress,
         networkInterface: network?.networkInterface,
+        bridgeHeartbeats,
         checkedAt: Date.now(),
       };
       return { ...health, readiness: getDeviceReadiness(health) };

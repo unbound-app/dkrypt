@@ -1,5 +1,6 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
+#import <CommonCrypto/CommonHMAC.h>
 #import <dlfcn.h>
 #import <objc/runtime.h>
 
@@ -91,20 +92,26 @@ static void autoinstallLog(NSString *line) {
     [handle closeFile];
 }
 
-static NSString *gBridgeRequestId = nil;
+static NSString * const kBridgeRootPath = @"/tmp/autoinstall/v1";
+static NSString * const kBridgeSecretPath = @"/var/mobile/Library/Preferences/dev.adrian.autoinstall-bridge.secret";
 
 static void writeJSONFile(NSString *path, id obj) {
-    if (gBridgeRequestId.length && [path hasSuffix:@"response.json"] && [obj isKindOfClass:[NSDictionary class]]) {
-        NSMutableDictionary *response = [obj mutableCopy];
-        response[@"requestId"] = gBridgeRequestId;
-        obj = response;
-    }
     NSError *err = nil;
     NSData *data = [NSJSONSerialization dataWithJSONObject:obj options:NSJSONWritingPrettyPrinted error:&err];
     if (!data) {
         data = [[NSString stringWithFormat:@"{\"ok\":false,\"error\":\"serialize failed: %@\"}", err] dataUsingEncoding:NSUTF8StringEncoding];
     }
     [data writeToFile:path atomically:YES];
+}
+
+static void writeBridgeResponse(NSString *path, NSString *requestId, id obj) {
+    if ([obj isKindOfClass:[NSDictionary class]]) {
+        NSMutableDictionary *response = [obj mutableCopy];
+        response[@"requestId"] = requestId;
+        writeJSONFile(path, response);
+        return;
+    }
+    writeJSONFile(path, obj);
 }
 
 static NSDictionary *readJSONFile(NSString *path) {
@@ -124,6 +131,147 @@ static void writeBridgeError(NSString *path, NSString *code, NSString *stage, NS
             @"retryable": @(retryable),
         },
     });
+}
+
+static NSString *bridgeDirectory(NSString *channel, NSString *kind) {
+    return [NSString stringWithFormat:@"%@/%@/%@", kBridgeRootPath, channel, kind];
+}
+
+static NSDictionary *readJSONFile(NSString *path);
+
+static NSString *bridgeTransactionPath(NSString *channel, NSString *operationId) {
+    return [[bridgeDirectory(channel, @"transactions") stringByAppendingPathComponent:operationId] stringByAppendingPathExtension:@"json"];
+}
+
+static NSDictionary *readBridgeTransaction(NSString *channel, NSString *operationId) {
+    return readJSONFile(bridgeTransactionPath(channel, operationId));
+}
+
+static void writeBridgeTransaction(NSString *channel, NSString *operationId, NSString *state, NSDictionary *fields) {
+    NSString *directory = bridgeDirectory(channel, @"transactions");
+    [[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions: @0700} error:nil];
+    NSMutableDictionary *transaction = [fields mutableCopy] ?: [NSMutableDictionary dictionary];
+    transaction[@"operationId"] = operationId;
+    transaction[@"state"] = state;
+    transaction[@"updatedAt"] = @([[NSDate date] timeIntervalSince1970]);
+    writeJSONFile(bridgeTransactionPath(channel, operationId), transaction);
+}
+
+static NSString *bridgeHMAC(NSString *secret, NSString *channel, NSString *requestId, NSNumber *issuedAt, NSString *payload) {
+    NSString *message = [NSString stringWithFormat:@"1|%@|%@|%@|%@", channel, requestId, issuedAt, payload];
+    NSData *messageData = [message dataUsingEncoding:NSUTF8StringEncoding];
+    NSData *secretData = [secret dataUsingEncoding:NSUTF8StringEncoding];
+    unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+    CCHmac(kCCHmacAlgSHA256, secretData.bytes, secretData.length, messageData.bytes, messageData.length, digest);
+    NSMutableString *hex = [NSMutableString stringWithCapacity:CC_SHA256_DIGEST_LENGTH * 2];
+    for (NSUInteger index = 0; index < CC_SHA256_DIGEST_LENGTH; index++) [hex appendFormat:@"%02x", digest[index]];
+    return hex;
+}
+
+static NSData *decodeBase64URL(NSString *value) {
+    NSString *standard = [[value stringByReplacingOccurrencesOfString:@"-" withString:@"+"] stringByReplacingOccurrencesOfString:@"_" withString:@"/"];
+    while (standard.length % 4) standard = [standard stringByAppendingString:@"="];
+    return [[NSData alloc] initWithBase64EncodedString:standard options:0];
+}
+
+static NSDictionary *validatedBridgeRequest(NSDictionary *envelope, NSString *channel, NSString **requestId, NSString **error) {
+    NSNumber *version = envelope[@"version"];
+    NSString *candidateRequestId = envelope[@"requestId"];
+    NSNumber *issuedAt = envelope[@"issuedAt"];
+    NSString *payload = envelope[@"payload"];
+    NSString *signature = envelope[@"signature"];
+    NSString *secret = [[NSString stringWithContentsOfFile:kBridgeSecretPath encoding:NSUTF8StringEncoding error:nil] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if (![version isKindOfClass:[NSNumber class]] || version.integerValue != 1 || ![[NSUUID alloc] initWithUUIDString:candidateRequestId] || ![issuedAt isKindOfClass:[NSNumber class]] || ![payload isKindOfClass:[NSString class]] || ![signature isKindOfClass:[NSString class]] || secret.length < 32) {
+        *error = @"invalid authenticated bridge envelope";
+        return nil;
+    }
+    if (fabs([[NSDate date] timeIntervalSince1970] - issuedAt.doubleValue) > 120) {
+        *error = @"authenticated bridge envelope expired";
+        return nil;
+    }
+    if (![bridgeHMAC(secret, channel, candidateRequestId, issuedAt, payload) isEqualToString:signature]) {
+        *error = @"authenticated bridge envelope signature did not match";
+        return nil;
+    }
+    NSData *payloadData = decodeBase64URL(payload);
+    id decoded = payloadData ? [NSJSONSerialization JSONObjectWithData:payloadData options:0 error:nil] : nil;
+    if (![decoded isKindOfClass:[NSDictionary class]]) {
+        *error = @"authenticated bridge payload was not an object";
+        return nil;
+    }
+    NSMutableDictionary *request = [decoded mutableCopy];
+    request[@"requestId"] = candidateRequestId;
+    *requestId = candidateRequestId;
+    return request;
+}
+
+static void writeBridgeHeartbeat(NSString *channel) {
+    static NSMutableDictionary<NSString *, NSNumber *> *lastWritten = nil;
+    if (!lastWritten) lastWritten = [NSMutableDictionary dictionary];
+    NSTimeInterval now = [[NSDate date] timeIntervalSince1970];
+    if (now - lastWritten[channel].doubleValue < 30) return;
+    NSString *directory = bridgeDirectory(channel, @"state");
+    [[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions: @0700} error:nil];
+    writeJSONFile([directory stringByAppendingPathComponent:@"heartbeat.json"], @{
+        @"bridgeVersion": BRIDGE_VERSION,
+        @"channel": channel,
+        @"process": [[NSProcessInfo processInfo] processName],
+        @"at": @(now),
+    });
+    lastWritten[channel] = @(now);
+}
+
+static void sweepBridgeArtifacts(NSString *channel) {
+    static NSMutableDictionary<NSString *, NSNumber *> *lastSwept = nil;
+    if (!lastSwept) lastSwept = [NSMutableDictionary dictionary];
+    NSTimeInterval now = [[NSDate date] timeIntervalSince1970];
+    if (now - lastSwept[channel].doubleValue < 30) return;
+    lastSwept[channel] = @(now);
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSDate *cutoff = [NSDate dateWithTimeIntervalSinceNow:-1800];
+    for (NSString *kind in @[@"requests", @"responses", @"transactions"]) {
+        NSString *directory = bridgeDirectory(channel, kind);
+        [fm createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions: @0700} error:nil];
+        for (NSString *name in [fm contentsOfDirectoryAtPath:directory error:nil] ?: @[]) {
+            NSString *file = [directory stringByAppendingPathComponent:name];
+            NSDate *modified = [fm attributesOfItemAtPath:file error:nil][NSFileModificationDate];
+            if ([modified compare:cutoff] == NSOrderedAscending && [fm removeItemAtPath:file error:nil]) {
+                autoinstallLog([NSString stringWithFormat:@"%@-bridge: removed stale artifact %@", channel, name]);
+            }
+        }
+    }
+}
+
+static void processSecureBridgeRequests(NSString *channel, void (^handler)(NSDictionary *request, NSString *responsePath, NSString *requestId)) {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *requests = bridgeDirectory(channel, @"requests");
+    NSString *responses = bridgeDirectory(channel, @"responses");
+    [fm createDirectoryAtPath:requests withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions: @0700} error:nil];
+    [fm createDirectoryAtPath:responses withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions: @0700} error:nil];
+    for (NSString *name in [[fm contentsOfDirectoryAtPath:requests error:nil] sortedArrayUsingSelector:@selector(compare:)] ?: @[]) {
+        if (![name hasSuffix:@".json"]) continue;
+        NSString *requestPath = [requests stringByAppendingPathComponent:name];
+        NSData *data = [NSData dataWithContentsOfFile:requestPath];
+        [fm removeItemAtPath:requestPath error:nil];
+        id envelope = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+        NSString *candidateRequestId = [envelope isKindOfClass:[NSDictionary class]] && [envelope[@"requestId"] isKindOfClass:[NSString class]] ? envelope[@"requestId"] : nil;
+        NSString *requestId = nil;
+        NSString *error = nil;
+        NSDictionary *request = [envelope isKindOfClass:[NSDictionary class]] ? validatedBridgeRequest(envelope, channel, &requestId, &error) : nil;
+        NSString *responseId = requestId ?: candidateRequestId;
+        NSString *responsePath = responseId.length ? [responses stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.response.json", responseId]] : nil;
+        if (!request) {
+            if (responsePath) {
+                writeBridgeResponse(responsePath, responseId, @{@"ok": @NO, @"error": error ?: @"invalid authenticated bridge request"});
+            }
+            continue;
+        }
+        handler(request, responsePath, requestId);
+    }
+}
+
+static void rejectLegacyBridgeRequest(NSDictionary *request, NSString *responsePath) {
+    writeBridgeError(responsePath, @"protocol_upgrade_required", @"authentication", @"use the authenticated autoinstall bridge protocol", NO);
 }
 
 @interface AutoinstallPrecheckDelegate : NSObject <TFInstallAlertDelegate>
@@ -237,8 +385,14 @@ static NSDictionary *screenStatusDict(void) {
     };
 }
 
-static void handleSpringBoardRequest(NSDictionary *req) {
-    gBridgeRequestId = [req[@"requestId"] isKindOfClass:[NSString class]] ? req[@"requestId"] : nil;
+static NSDictionary *springBoardBridgeStatus(void) {
+    NSMutableDictionary *status = [screenStatusDict() mutableCopy];
+    status[@"bridgeVersion"] = BRIDGE_VERSION;
+    status[@"capabilities"] = @[@"dark_on", @"dark_off", @"launch_app", @"screen_status", @"status", @"protocol_v1", @"authenticated_requests", @"operation_responses", @"heartbeats", @"stale_artifact_cleanup"];
+    return status;
+}
+
+static void handleSpringBoardRequest(NSDictionary *req, NSString *responsePath, NSString *requestId) {
     NSString *action = req[@"action"];
     autoinstallLog([NSString stringWithFormat:@"sb-bridge: handling action=%@ req=%@", action, req]);
 
@@ -246,21 +400,21 @@ static void handleSpringBoardRequest(NSDictionary *req) {
         if ([action isEqualToString:@"dark_on"]) {
             setDarkFlag(YES);
             applyDark();
-            writeJSONFile(kSBResponsePath, screenStatusDict());
+            writeBridgeResponse(responsePath, requestId, screenStatusDict());
             return;
         }
 
         if ([action isEqualToString:@"dark_off"]) {
             setDarkFlag(NO);
             removeDark();
-            writeJSONFile(kSBResponsePath, screenStatusDict());
+            writeBridgeResponse(responsePath, requestId, screenStatusDict());
             return;
         }
 
         if ([action isEqualToString:@"launch_app"]) {
             NSString *bundleId = req[@"bundleId"];
             if (!bundleId) {
-                writeJSONFile(kSBResponsePath, @{@"ok": @NO, @"error": @"missing bundleId"});
+                writeBridgeResponse(responsePath, requestId, @{@"ok": @NO, @"error": @"missing bundleId"});
                 return;
             }
             if (isDarkFlagSet()) applyDark();
@@ -269,19 +423,19 @@ static void handleSpringBoardRequest(NSDictionary *req) {
             NSMutableDictionary *resp = [screenStatusDict() mutableCopy];
             resp[@"ok"] = rc == 0 ? @YES : @NO;
             resp[@"launchResult"] = @(rc);
-            writeJSONFile(kSBResponsePath, resp);
+            writeBridgeResponse(responsePath, requestId, resp);
             return;
         }
 
         if ([action isEqualToString:@"screen_status"] || [action isEqualToString:@"status"]) {
-            writeJSONFile(kSBResponsePath, screenStatusDict());
+            writeBridgeResponse(responsePath, requestId, springBoardBridgeStatus());
             return;
         }
 
-        writeJSONFile(kSBResponsePath, @{@"ok": @NO, @"error": [NSString stringWithFormat:@"unknown action: %@", action]});
+        writeBridgeResponse(responsePath, requestId, @{@"ok": @NO, @"error": [NSString stringWithFormat:@"unknown action: %@", action]});
     } @catch (NSException *exception) {
         autoinstallLog([NSString stringWithFormat:@"sb-bridge: EXCEPTION name=%@ reason=%@", exception.name, exception.reason]);
-        writeJSONFile(kSBResponsePath, @{@"ok": @NO, @"error": [NSString stringWithFormat:@"exception: %@ %@", exception.name, exception.reason]});
+        writeBridgeResponse(responsePath, requestId, @{@"ok": @NO, @"error": [NSString stringWithFormat:@"exception: %@ %@", exception.name, exception.reason]});
     }
 }
 
@@ -294,6 +448,11 @@ static void startSpringBoardSide(void) {
     dispatch_source_set_timer(gSBBridgeTimer, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), NSEC_PER_SEC, NSEC_PER_MSEC * 200);
     dispatch_source_set_event_handler(gSBBridgeTimer, ^{
         NSFileManager *fm = [NSFileManager defaultManager];
+        writeBridgeHeartbeat(@"springboard");
+        sweepBridgeArtifacts(@"springboard");
+        processSecureBridgeRequests(@"springboard", ^(NSDictionary *request, NSString *responsePath, NSString *requestId) {
+            handleSpringBoardRequest(request, responsePath, requestId);
+        });
         if (![fm fileExistsAtPath:kSBRequestPath]) return;
 
         NSData *data = [NSData dataWithContentsOfFile:kSBRequestPath];
@@ -306,7 +465,7 @@ static void startSpringBoardSide(void) {
             autoinstallLog([NSString stringWithFormat:@"sb-bridge: bad request json: %@", err]);
             return;
         }
-        handleSpringBoardRequest(req);
+        rejectLegacyBridgeRequest(req, kSBResponsePath);
     });
     dispatch_resume(gSBBridgeTimer);
     autoinstallLog(@"sb-bridge: request-file watcher started");
@@ -383,7 +542,7 @@ static NSString * const kInstallStatusPath = @"/tmp/autoinstall-install-status.j
 static NSDictionary *bridgeStatus(void) {
     return @{
         @"bridgeVersion": BRIDGE_VERSION,
-        @"capabilities": @[@"list_trains", @"list_builds", @"install", @"status", @"diagnostics", @"idempotent_install"],
+        @"capabilities": @[@"list_trains", @"list_builds", @"install", @"status", @"diagnostics", @"idempotent_install", @"protocol_v1", @"authenticated_requests", @"operation_responses", @"heartbeats", @"stale_artifact_cleanup"],
         @"hasInstaller": gInstaller ? @YES : @NO,
         @"hasCatalogManager": gCatalogManager ? @YES : @NO,
         @"backgroundTaskActive": gBackgroundTaskId != UIBackgroundTaskInvalid ? @YES : @NO,
@@ -452,48 +611,51 @@ static void fetchJSON(NSString *urlString, void (^completion)(id json, NSDiction
     }];
 }
 
-static void handleRequest(NSDictionary *req) {
-    gBridgeRequestId = [req[@"requestId"] isKindOfClass:[NSString class]] ? req[@"requestId"] : nil;
+static void handleRequest(NSDictionary *req, NSString *responsePath, NSString *requestId) {
+    void (^respond)(id) = ^(id response) { writeBridgeResponse(responsePath, requestId, response); };
+    void (^fail)(NSString *, NSString *, NSString *, BOOL) = ^(NSString *code, NSString *stage, NSString *message, BOOL retryable) {
+        respond(@{@"ok": @NO, @"error": @{@"code": code, @"stage": stage, @"message": message, @"retryable": @(retryable)}});
+    };
     NSString *action = req[@"action"];
     autoinstallLog([NSString stringWithFormat:@"bridge: handling action=%@ req=%@", action, req]);
 
     if ([action isEqualToString:@"install"]) {
         @try {
             NSString *operationId = [req[@"operationId"] isKindOfClass:[NSString class]] ? req[@"operationId"] : [[NSUUID UUID] UUIDString];
-            NSDictionary *previousStatus = readJSONFile(kInstallStatusPath);
+            NSDictionary *previousStatus = readBridgeTransaction(@"testflight", operationId);
             if ([previousStatus[@"operationId"] isEqual:operationId]) {
                 BOOL completed = [previousStatus[@"state"] isEqualToString:@"completed"];
-                writeJSONFile(kResponsePath, @{@"ok": @YES, @"requested": @(!completed), @"resumed": @YES, @"completed": @(completed), @"operationId": operationId});
+                respond(@{@"ok": @YES, @"requested": @(!completed), @"resumed": @YES, @"completed": @(completed), @"operationId": operationId});
                 return;
             }
 
             if (!gCatalogManager) {
-                writeBridgeError(kResponsePath, @"catalog_unavailable", @"install", @"gCatalogManager not stashed yet", YES);
+                fail(@"catalog_unavailable", @"install", @"gCatalogManager not stashed yet", YES);
                 return;
             }
             if (!gInstaller) {
-                writeBridgeError(kResponsePath, @"installer_unavailable", @"install", @"gInstaller not stashed yet", YES);
+                fail(@"installer_unavailable", @"install", @"gInstaller not stashed yet", YES);
                 return;
             }
 
             NSNumber *appId = req[@"appId"];
             NSDictionary *buildDict = req[@"build"];
             if (!appId || !buildDict) {
-                writeBridgeError(kResponsePath, @"invalid_request", @"install", @"missing appId or build", NO);
+                fail(@"invalid_request", @"install", @"missing appId or build", NO);
                 return;
             }
             beginBackgroundKeepAlive();
             id<TFAppCatalogManagerProtocol> catalogManager = gCatalogManager;
             id app = [catalogManager getAppCatalogCachedAppForAppID:appId];
             if (!app) {
-                writeBridgeError(kResponsePath, @"app_not_cached", @"install", @"getAppCatalogCachedAppForAppID: returned nil - is the catalog populated?", YES);
+                fail(@"app_not_cached", @"install", @"getAppCatalogCachedAppForAppID: returned nil - is the catalog populated?", YES);
                 return;
             }
 
             Class<TFAppBuildProtocol> buildCls = (Class<TFAppBuildProtocol>)objc_getClass("TFAppBuild");
             id build = [buildCls buildFromDictionary:buildDict];
             if (!build) {
-                writeBridgeError(kResponsePath, @"invalid_build", @"install", @"buildFromDictionary: returned nil", NO);
+                fail(@"invalid_build", @"install", @"buildFromDictionary: returned nil", NO);
                 return;
             }
 
@@ -507,27 +669,33 @@ static void handleRequest(NSDictionary *req) {
                                     allowReinstallSameVersion:YES
                                                       variant:nil];
             if (!installable) {
-                writeBridgeError(kResponsePath, @"installable_unavailable", @"install", @"initWithApp:build:... returned nil", YES);
+                fail(@"installable_unavailable", @"install", @"initWithApp:build:... returned nil", YES);
                 return;
             }
 
             autoinstallLog([NSString stringWithFormat:@"install: installable=%@", installable]);
-            void (^completion)(void) = ^{ autoinstallLog(@"install: completionBlock fired"); };
+            void (^completion)(void) = ^{
+                autoinstallLog(@"install: completionBlock fired");
+                writeBridgeTransaction(@"testflight", operationId, @"completed", @{@"ok": @YES, @"appId": appId, @"bundleId": buildDict[@"bundleId"] ?: [NSNull null], @"buildVersion": buildDict[@"cfBundleVersion"] ?: [NSNull null]});
+                writeJSONFile(kInstallStatusPath, @{@"ok": @YES, @"operationId": operationId, @"state": @"completed", @"appId": appId});
+            };
             id<TFAppInstallerProtocol> installer = gInstaller;
             if (!gPrecheckDelegate) gPrecheckDelegate = [AutoinstallPrecheckDelegate new];
             Class<TFInstallationModeProtocol> modeClass = (Class<TFInstallationModeProtocol>)objc_getClass("TFInstallationMode");
             id mode = [modeClass modeWithUserInitiated:YES interactive:YES autoUpdate:NO];
             if (!mode) {
-                writeBridgeError(kResponsePath, @"installation_mode_unavailable", @"install", @"TFInstallationMode did not create an interactive user-initiated mode", YES);
+                fail(@"installation_mode_unavailable", @"install", @"TFInstallationMode did not create an interactive user-initiated mode", YES);
                 return;
             }
+            NSDictionary *transaction = @{@"ok": @YES, @"appId": appId, @"bundleId": buildDict[@"bundleId"] ?: [NSNull null], @"buildVersion": buildDict[@"cfBundleVersion"] ?: [NSNull null]};
+            writeBridgeTransaction(@"testflight", operationId, @"requested", transaction);
             writeJSONFile(kInstallStatusPath, @{@"ok": @YES, @"operationId": operationId, @"state": @"requested", @"appId": appId});
             id result = [installer requestInstall:installable installationMode:mode alertDelegate:gPrecheckDelegate withBackgroundTaskMaster:nil completionBlock:completion];
             autoinstallLog([NSString stringWithFormat:@"install: requestInstall: returned %@", result]);
-            writeJSONFile(kResponsePath, @{@"ok": @YES, @"requested": @YES, @"operationId": operationId});
+            respond(@{@"ok": @YES, @"requested": @YES, @"operationId": operationId});
         } @catch (NSException *exception) {
             autoinstallLog([NSString stringWithFormat:@"install: EXCEPTION name=%@ reason=%@", exception.name, exception.reason]);
-            writeBridgeError(kResponsePath, @"install_exception", @"install", [NSString stringWithFormat:@"exception: %@ %@", exception.name, exception.reason], YES);
+            fail(@"install_exception", @"install", [NSString stringWithFormat:@"exception: %@ %@", exception.name, exception.reason], YES);
         }
         return;
     }
@@ -537,9 +705,9 @@ static void handleRequest(NSDictionary *req) {
         NSString *url = [NSString stringWithFormat:@"https://testflight.apple.com/v2/apps/%@/platforms/ios/trains", appId];
         fetchJSON(url, ^(id json, NSDictionary *error) {
             if (error) {
-                writeJSONFile(kResponsePath, @{@"ok": @NO, @"error": error});
+                respond(@{@"ok": @NO, @"error": error});
             } else {
-                writeJSONFile(kResponsePath, @{@"ok": @YES, @"data": json});
+                respond(@{@"ok": @YES, @"data": json});
             }
         });
         return;
@@ -551,9 +719,9 @@ static void handleRequest(NSDictionary *req) {
         NSString *url = [NSString stringWithFormat:@"https://testflight.apple.com/v2/apps/%@/platforms/ios/trains/%@/builds", appId, train];
         fetchJSON(url, ^(id json, NSDictionary *error) {
             if (error) {
-                writeJSONFile(kResponsePath, @{@"ok": @NO, @"error": error});
+                respond(@{@"ok": @NO, @"error": error});
             } else {
-                writeJSONFile(kResponsePath, @{@"ok": @YES, @"data": json});
+                respond(@{@"ok": @YES, @"data": json});
             }
         });
         return;
@@ -563,12 +731,12 @@ static void handleRequest(NSDictionary *req) {
         NSMutableDictionary *response = [bridgeStatus() mutableCopy];
         response[@"ok"] = @YES;
         response[@"install"] = readJSONFile(kInstallStatusPath) ?: @{};
-        writeJSONFile(kResponsePath, response);
+        respond(response);
         return;
     }
 
     if ([action isEqualToString:@"diagnostics"]) {
-        writeJSONFile(kResponsePath, @{
+        respond(@{
             @"ok": @YES,
             @"data": @{
                 @"bridge": bridgeStatus(),
@@ -581,11 +749,11 @@ static void handleRequest(NSDictionary *req) {
 
     if ([action isEqualToString:@"end_background_keepalive"]) {
         endBackgroundKeepAlive();
-        writeJSONFile(kResponsePath, @{@"ok": @YES});
+        respond(@{@"ok": @YES});
         return;
     }
 
-    writeBridgeError(kResponsePath, @"unknown_action", @"request", [NSString stringWithFormat:@"unknown action: %@", action], NO);
+    fail(@"unknown_action", @"request", [NSString stringWithFormat:@"unknown action: %@", action], NO);
 }
 
 static dispatch_queue_t gBridgeQueue = nil;
@@ -597,6 +765,11 @@ static void startTestFlightSide(void) {
     dispatch_source_set_timer(gBridgeTimer, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), NSEC_PER_SEC, NSEC_PER_MSEC * 200);
     dispatch_source_set_event_handler(gBridgeTimer, ^{
         NSFileManager *fm = [NSFileManager defaultManager];
+        writeBridgeHeartbeat(@"testflight");
+        sweepBridgeArtifacts(@"testflight");
+        processSecureBridgeRequests(@"testflight", ^(NSDictionary *request, NSString *responsePath, NSString *requestId) {
+            handleRequest(request, responsePath, requestId);
+        });
         if (![fm fileExistsAtPath:kRequestPath]) return;
 
         NSData *data = [NSData dataWithContentsOfFile:kRequestPath];
@@ -609,26 +782,18 @@ static void startTestFlightSide(void) {
             autoinstallLog([NSString stringWithFormat:@"bridge: bad request json: %@", err]);
             return;
         }
-        handleRequest(req);
+        rejectLegacyBridgeRequest(req, kResponsePath);
     });
     dispatch_resume(gBridgeTimer);
     autoinstallLog(@"bridge: request-file watcher started");
 }
 
-#pragma mark - App Store side: SKUIItemStateCenter purchase pipeline + PassKit sheet auto-confirm
-
 static BOOL gIsAppStoreProcess = NO;
 static BOOL gIsPassbookProcess = NO;
 
-// The confirmation sheet is a stashed SwiftUI view controller (the PassKit authorization view, hosted
-// in PassbookUIService). Reset per sheet so it's confirmed exactly once.
 static id gStashedConfirmVC = nil;
 static BOOL gConfirmDoneThisSheet = NO;
 
-// SwiftUI exposes buttons as VIRTUAL accessibility elements (UIAccessibilityElement returned by
-// -accessibilityElements / -accessibilityElementAtIndex:), NOT as real UIView subviews - so a plain
-// subview walk finds nothing. Walk the accessibility tree instead, descending both AX children and
-// real subviews.
 static void autoinstallWalkAX(id element, void (^visit)(id el)) {
     if (!element) return;
     visit(element);
@@ -651,9 +816,6 @@ static void autoinstallWalkAX(id element, void (^visit)(id el)) {
     } @catch (NSException *e) {}
 }
 
-// SwiftUI/UIKit only materialise their virtual accessibility elements when an accessibility client is
-// active. Turn on the same automation server XCUITest uses (libAccessibility SPI) so -accessibilityElements
-// actually returns the buttons; without this the AX tree is empty.
 static void autoinstallEnableAX(void) {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
@@ -667,9 +829,6 @@ static void autoinstallEnableAX(void) {
     });
 }
 
-// Walk the stashed confirmation VC's accessibility tree and trigger the element whose class-or-label
-// matches `match` (e.g. "Install") via the accessibility activation point - works for SwiftUI buttons
-// that have no UIControl target-action.
 static NSArray *autoinstallConfirmStashed(NSString *match) {
     NSMutableArray *acted = [NSMutableArray array];
     id root = nil;
@@ -697,9 +856,6 @@ static NSArray *autoinstallConfirmStashed(NSString *match) {
     return acted;
 }
 
-// The confirmation sheet's SwiftUI content VC (PaymentUIBase AuthorizationViewHostingController)
-// appears ~0.8s after the PassKit container, in PassbookUIService. Stash it, enable the AX server,
-// and - if auto-confirm is armed via the flag file - activate its "Install" button, once per sheet.
 %hook UIViewController
 
 - (void)viewDidAppear:(BOOL)animated {
@@ -725,8 +881,6 @@ static NSArray *autoinstallConfirmStashed(NSString *match) {
 
 %end
 
-// A new PassKit authorization sheet is appearing - clear the once-guard so the SwiftUI hook above
-// confirms exactly once for it.
 %hook PKPaymentAuthorizationRemoteAlertViewController
 
 - (void)viewDidAppear:(BOOL)animated {
@@ -740,25 +894,51 @@ static NSString * const kASRequestPath = @"/tmp/autoinstall-as-request.json";
 static NSString * const kASResponsePath = @"/tmp/autoinstall-as-response.json";
 static NSString * const kASInstallStatusPath = @"/tmp/autoinstall-as-install-status.json";
 
-static void handleAppStoreRequest(NSDictionary *req) {
-    gBridgeRequestId = [req[@"requestId"] isKindOfClass:[NSString class]] ? req[@"requestId"] : nil;
+static NSDictionary *appStoreBridgeStatus(void) {
+    return @{
+        @"bridgeVersion": BRIDGE_VERSION,
+        @"capabilities": @[@"install", @"status", @"diagnostics", @"protocol_v1", @"authenticated_requests", @"operation_responses", @"heartbeats", @"stale_artifact_cleanup"],
+        @"install": readJSONFile(kASInstallStatusPath) ?: @{},
+    };
+}
+
+static void handleAppStoreRequest(NSDictionary *req, NSString *responsePath, NSString *requestId) {
+    void (^respond)(id) = ^(id response) { writeBridgeResponse(responsePath, requestId, response); };
     NSString *action = req[@"action"];
     autoinstallLog([NSString stringWithFormat:@"as-bridge: handling action=%@ req=%@", action, req]);
 
+    if ([action isEqualToString:@"status"]) {
+        NSMutableDictionary *response = [appStoreBridgeStatus() mutableCopy];
+        response[@"ok"] = @YES;
+        respond(response);
+        return;
+    }
+
+    if ([action isEqualToString:@"diagnostics"]) {
+        respond(@{@"ok": @YES, @"data": @{ @"bridge": appStoreBridgeStatus(), @"recentLog": recentBridgeLogEntries() }});
+        return;
+    }
+
     if (![action isEqualToString:@"install"]) {
-        writeJSONFile(kASResponsePath, @{@"ok": @NO, @"error": [NSString stringWithFormat:@"unknown action: %@", action]});
+        respond(@{@"ok": @NO, @"error": [NSString stringWithFormat:@"unknown action: %@", action]});
         return;
     }
 
     NSNumber *adamId = req[@"adamId"];
     NSNumber *versionId = req[@"versionId"];
+    NSString *operationId = [req[@"operationId"] isKindOfClass:[NSString class]] ? req[@"operationId"] : [[NSUUID UUID] UUIDString];
     if (!adamId) {
-        writeJSONFile(kASResponsePath, @{@"ok": @NO, @"error": @"missing adamId"});
+        respond(@{@"ok": @NO, @"error": @"missing adamId"});
         return;
     }
 
-    // StoreKitUI's singletons require the main thread - defaultCenter/defaultContext returned nil when
-    // called from the background bridge queue, worked once dispatched here.
+    NSDictionary *previousStatus = readBridgeTransaction(@"appstore", operationId);
+    if ([previousStatus[@"operationId"] isEqual:operationId]) {
+        BOOL completed = [previousStatus[@"state"] isEqual:@"completed"];
+        respond(@{@"ok": @YES, @"requested": @(!completed), @"resumed": @YES, @"completed": @(completed), @"operationId": operationId});
+        return;
+    }
+
     dispatch_sync(dispatch_get_main_queue(), ^{
         @try {
             NSString *adamIdStr = [adamId stringValue];
@@ -772,7 +952,7 @@ static void handleAppStoreRequest(NSDictionary *req) {
             id<SKUIItemOfferProtocol> offer = [[objc_getClass("SKUIItemOffer") alloc] initWithLookupDictionary:@{@"buyParams": offerString}];
             id<SKUIItemProtocol> item = [[objc_getClass("SKUIItem") alloc] initWithLookupDictionary:@{@"_itemOffer": adamIdStr}];
             if (!offer || !item) {
-                writeJSONFile(kASResponsePath, @{@"ok": @NO, @"error": @"initWithLookupDictionary: returned nil"});
+                respond(@{@"ok": @NO, @"error": @"initWithLookupDictionary: returned nil"});
                 return;
             }
 
@@ -786,15 +966,13 @@ static void handleAppStoreRequest(NSDictionary *req) {
             Class contextCls = objc_getClass("SKUIClientContext");
             id<SKUIItemStateCenterProtocol> center = [centerCls defaultCenter];
 
-            // +defaultContext is nil in the real App Store app; build one from the class's own fallback
-            // config instead (it prints empty but is enough for the purchase pipeline to work).
             id<SKUIClientContextProtocol> clientContext = [contextCls defaultContext];
             if (!clientContext) {
                 id fallbackConfig = [contextCls _fallbackConfigurationDictionary];
                 clientContext = [[contextCls alloc] initWithConfigurationDictionary:fallbackConfig];
             }
             if (!center || !clientContext) {
-                writeJSONFile(kASResponsePath, @{@"ok": @NO, @"error": [NSString stringWithFormat:@"center=%@ clientContext=%@", center, clientContext]});
+                respond(@{@"ok": @NO, @"error": [NSString stringWithFormat:@"center=%@ clientContext=%@", center, clientContext]});
                 return;
             }
 
@@ -803,14 +981,17 @@ static void handleAppStoreRequest(NSDictionary *req) {
 
             void (^completion)(id) = ^(id arg1) {
                 autoinstallLog(@"as-install: completionBlock fired");
-                writeJSONFile(kASInstallStatusPath, @{@"ok": @YES});
+                writeBridgeTransaction(@"appstore", operationId, @"completed", @{@"ok": @YES, @"adamId": adamId, @"versionId": versionId ?: [NSNull null]});
+                writeJSONFile(kASInstallStatusPath, @{@"ok": @YES, @"operationId": operationId, @"state": @"completed", @"adamId": adamId});
             };
 
+            writeBridgeTransaction(@"appstore", operationId, @"requested", @{@"ok": @YES, @"adamId": adamId, @"versionId": versionId ?: [NSNull null]});
+            writeJSONFile(kASInstallStatusPath, @{@"ok": @YES, @"operationId": operationId, @"state": @"requested", @"adamId": adamId, @"versionId": versionId ?: [NSNull null]});
             [center _performPurchases:purchases hasBundlePurchase:NO withClientContext:(id)clientContext completionBlock:completion];
-            writeJSONFile(kASResponsePath, @{@"ok": @YES, @"requested": @YES});
+            respond(@{@"ok": @YES, @"requested": @YES, @"operationId": operationId});
         } @catch (NSException *exception) {
             autoinstallLog([NSString stringWithFormat:@"as-install: EXCEPTION name=%@ reason=%@", exception.name, exception.reason]);
-            writeJSONFile(kASResponsePath, @{@"ok": @NO, @"error": [NSString stringWithFormat:@"exception: %@ %@", exception.name, exception.reason]});
+            respond(@{@"ok": @NO, @"error": [NSString stringWithFormat:@"exception: %@ %@", exception.name, exception.reason]});
         }
     });
 }
@@ -824,6 +1005,11 @@ static void startAppStoreSide(void) {
     dispatch_source_set_timer(gASBridgeTimer, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), NSEC_PER_SEC, NSEC_PER_MSEC * 200);
     dispatch_source_set_event_handler(gASBridgeTimer, ^{
         NSFileManager *fm = [NSFileManager defaultManager];
+        writeBridgeHeartbeat(@"appstore");
+        sweepBridgeArtifacts(@"appstore");
+        processSecureBridgeRequests(@"appstore", ^(NSDictionary *request, NSString *responsePath, NSString *requestId) {
+            handleAppStoreRequest(request, responsePath, requestId);
+        });
         if (![fm fileExistsAtPath:kASRequestPath]) return;
 
         NSData *data = [NSData dataWithContentsOfFile:kASRequestPath];
@@ -836,7 +1022,7 @@ static void startAppStoreSide(void) {
             autoinstallLog([NSString stringWithFormat:@"as-bridge: bad request json: %@", err]);
             return;
         }
-        handleAppStoreRequest(req);
+        rejectLegacyBridgeRequest(req, kASResponsePath);
     });
     dispatch_resume(gASBridgeTimer);
     autoinstallLog(@"as-bridge: request-file watcher started");

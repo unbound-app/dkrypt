@@ -1,0 +1,54 @@
+#!/bin/zsh
+set -euo pipefail
+
+root_dir="$(cd "$(dirname "$0")/.." && pwd)"
+mode="${1:-deploy}"
+package_path="${2:-}"
+target="${AUTOINSTALL_IPAD_TARGET:-mobile@192.168.2.158}"
+key_path="${AUTOINSTALL_IPAD_KEY:-$HOME/.ssh/id_ed25519}"
+ssh_options=(-i "$key_path" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new)
+
+if [[ "$mode" == "deploy" ]]; then
+  gmake -C "$root_dir/packages/autoinstall" clean package
+  package_path="$(ls -t "$root_dir"/packages/autoinstall/packages/dev.adrian.autoinstall_*_iphoneos-arm64.deb | head -n 1)"
+elif [[ "$mode" != "rollback" || ! -f "$package_path" ]]; then
+  print -u2 "usage: $0 deploy | $0 rollback /absolute/path/to/dev.adrian.autoinstall_*.deb"
+  exit 64
+fi
+
+expected_version="$(dpkg-deb -f "$package_path" Version)"
+previous_version="$(ssh "${ssh_options[@]}" "$target" "dpkg-query -W -f='\${Version}' dev.adrian.autoinstall 2>/dev/null || true")"
+previous_package=""
+if [[ -n "$previous_version" ]]; then
+  previous_package="$(ls -t "$root_dir"/packages/autoinstall/packages/dev.adrian.autoinstall_"$previous_version"_iphoneos-arm64.deb 2>/dev/null | head -n 1 || true)"
+fi
+remote_package="/tmp/$(basename "$package_path")"
+install_package() {
+  local package="$1"
+  local remote="/tmp/$(basename "$package")"
+  scp "${ssh_options[@]}" "$package" "$target:$remote"
+  ssh -tt "${ssh_options[@]}" "$target" "sudo dpkg -i '$remote' && { sudo killall -9 AppStore TestFlight 2>/dev/null || true; } && sudo /var/jb/usr/bin/sbreload"
+}
+
+rollback() {
+  if [[ -z "$previous_package" ]]; then
+    print -u2 "autoinstall deployment verification failed and no local rollback package is available"
+    return
+  fi
+  install_package "$previous_package"
+  print -u2 "autoinstall deployment verification failed; restored $previous_version"
+}
+
+install_package "$package_path"
+installed_version="$(ssh "${ssh_options[@]}" "$target" "dpkg-query -W -f='\${Version}' dev.adrian.autoinstall")"
+if [[ "$installed_version" != "$expected_version" ]]; then
+  rollback
+  exit 1
+fi
+sleep 4
+heartbeat="$(ssh "${ssh_options[@]}" "$target" "cat /tmp/autoinstall/v1/springboard/state/heartbeat.json 2>/dev/null || true")"
+if [[ "$heartbeat" != *'"bridgeVersion"'* || "$heartbeat" != *'"channel" : "springboard"'* ]]; then
+  rollback
+  exit 1
+fi
+print "autoinstall $installed_version installed on $target"

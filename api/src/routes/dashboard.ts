@@ -18,7 +18,7 @@ import { applyBackupSchedule, applyWatchSchedules, checkForTestFlightUpdate, che
 import { listDispatchRepos, listRepoWorkflows } from '#scheduler/github.js';
 import { lookupAppMetadata, searchApps } from '#scheduler/itunes.js';
 import { requirePermission, requireSession } from '#session.js';
-import { getDeviceHealth } from '#deviceHealth.js';
+import { getDeviceHealth, isBridgeHeartbeatFresh } from '#deviceHealth.js';
 import { listInstalledAppStoreBundles, sendSpringBoardBridgeRequest, validateDeviceRootDir, withSSH } from '#idevice.js';
 import { getTestFlightBridgeDiagnostics, listBuilds, listTrains } from '#testflight.js';
 import { nextCronRunAt } from '#util/cron.js';
@@ -731,6 +731,7 @@ dashboardRouter.get('/v1/dashboard/devices/:id/preflight', canViewDevices, async
     { label: 'autoinstall bridge', ok: isPrimary ? health.testFlightBridgeReachable === true : true, detail: isPrimary ? health.testFlightBridgeReachable === true ? undefined : 'Bridge did not respond' : 'App Store and TestFlight automation run on the primary device' },
     { label: 'Device readiness', ok: health.readiness?.state !== 'blocked', detail: health.readiness?.reasons.join(' · ') || undefined },
     { label: 'Bridge compatibility', ok: isPrimary ? Boolean(bridge?.bridge.bridgeVersion) : true, detail: bridge?.bridge.bridgeVersion ? `autoinstall ${bridge.bridge.bridgeVersion}` : isPrimary ? 'No autoinstall version reported' : 'Checked on the primary device' },
+    { label: 'SpringBoard heartbeat', ok: isPrimary ? isBridgeHeartbeatFresh(health.bridgeHeartbeats?.springboard) : true, detail: health.bridgeHeartbeats?.springboard?.at ? `reported ${new Date(health.bridgeHeartbeats.springboard.at * 1000).toISOString()}` : isPrimary ? 'No authenticated autoinstall heartbeat reported' : 'Checked on the primary device' },
   ];
   res.json({ device, health, bridge, checks, ready: checks.every((check) => check.ok) });
 });

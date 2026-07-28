@@ -145,7 +145,7 @@ export function enqueueDecryptJob(
   const existing = findActiveJobForBundle(bundleId, externalVersionId, testflight?.build.id);
   if (existing) return existing;
 
-  const resolvedLabel = versionLabel ?? (testflight ? `${testflight.build.cfBundleShortVersion}_${testflight.build.cfBundleVersion}` : undefined);
+  const resolvedLabel = versionLabel ?? (testflight ? `${testflight.build.cfBundleShortVersion}_${testflight.build.cfBundleVersion}` : 'Current App Store release');
 
   const job: Job = {
     id: randomUUID(),

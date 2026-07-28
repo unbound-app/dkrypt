@@ -62,20 +62,18 @@ Running injected in the real `com.apple.AppStore` process, so StoreKitUI is alre
 ```objc
 NSString *offerString = [NSString stringWithFormat:
     @"productType=C&price=0&salableAdamId=%@&pricingParameters=pricingParameter&clientBuyId=1&installed=0&trolled=1", adamIdStr];
-// append &appExtVrsId=<versionId> to pin a historical version
 
 id offer = [[SKUIItemOffer alloc] initWithLookupDictionary:@{@"buyParams": offerString}];
 id item  = [[SKUIItem alloc] initWithLookupDictionary:@{@"_itemOffer": adamIdStr}];
 [item setValue:offer forKey:@"_itemOffer"];
 [item setValue:@"iosSoftware" forKey:@"_itemKindString"];
-// [item setValue:@(versionId) forKey:@"_versionIdentifier"]; // when pinning a version
 
 SKUIItemStateCenter *center = [SKUIItemStateCenter defaultCenter];
 SKUIClientContext *ctx = [SKUIClientContext defaultContext];
 if (!ctx) ctx = [[SKUIClientContext alloc] initWithConfigurationDictionary:[SKUIClientContext _fallbackConfigurationDictionary]];
 
 [center _performPurchases:[center _newPurchasesWithItems:@[item]] hasBundlePurchase:0
-        withClientContext:ctx completionBlock:^(id resp){ /* SSPurchaseResponse: carries the signed IPA URL */ }];
+        withClientContext:ctx completionBlock:^(id resp){}];
 ```
 
 Must run on the main thread (`dispatch_sync(dispatch_get_main_queue(), …)`) — the StoreKitUI singletons misbehave off it.

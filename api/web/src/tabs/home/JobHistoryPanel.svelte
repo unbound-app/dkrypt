@@ -839,8 +839,8 @@
 												title={j.bundleId}
 											>
 												<span
-													>{j.versionLabel ??
-														"Unspecified version"}</span
+											>{j.versionLabel ??
+													"Current App Store release"}</span
 												>
 												<span
 													>{fmtSize(

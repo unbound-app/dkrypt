@@ -7,9 +7,11 @@ import {
   readInstalledBundleVersions,
   sendSpringBoardBridgeRequest,
   sendTestFlightBridgeRequest,
+  type InstallVerification,
   withSSH,
 } from '#idevice.js';
 import { getPrimaryDevice } from '#store/state.js';
+import { hasBridgeCapabilities } from '#bridgeProtocol.js';
 
 function primaryRootDir(): string {
   return getPrimaryDevice().rootDir;
@@ -47,11 +49,8 @@ export interface TestFlightBridgeDiagnostics {
   recentLog?: string[];
 }
 
-const REQUIRED_BRIDGE_CAPABILITIES = ['list_trains', 'list_builds', 'install', 'diagnostics', 'idempotent_install'];
-
 function hasRequiredBridgeCapabilities(response: Record<string, unknown>): boolean {
-  const capabilities = Array.isArray(response.capabilities) ? response.capabilities.filter((value): value is string => typeof value === 'string') : [];
-  return REQUIRED_BRIDGE_CAPABILITIES.every((capability) => capabilities.includes(capability));
+  return hasBridgeCapabilities('testflight', response.capabilities);
 }
 
 async function launchTestFlight(conn: Client, wasRunning: boolean): Promise<void> {
@@ -74,7 +73,7 @@ async function waitForBridgeReady(conn: Client, timeoutMs = 20_000): Promise<voi
 }
 
 export async function ensureTestFlightRunning(): Promise<void> {
-  await withSSH(primaryRootDir(), async (conn) => {
+  return withSSH(primaryRootDir(), async (conn) => {
     const wasRunning = await isTestFlightRunning(conn);
     log.info(
       wasRunning
@@ -141,7 +140,7 @@ export async function installBuild(
   onProgress?: (message: string) => void,
   waitTimeoutMs = 4 * 60_000,
   operationId?: string,
-): Promise<void> {
+): Promise<InstallVerification> {
   if (!SAFE_BUNDLE_ID_RE.test(build.bundleId)) {
     throw new Error(`refusing to install build with unsafe bundleId: ${JSON.stringify(build.bundleId)}`);
   }
@@ -154,9 +153,9 @@ export async function installBuild(
   report('ensuring TestFlight is running');
   await ensureTestFlightRunning();
 
-  await withSSH(primaryRootDir(), async (conn) => {
+  return withSSH(primaryRootDir(), async (conn) => {
     report('sending install request to TestFlight');
-    await sendTestFlightBridgeRequest(conn, { action: 'install', appId, build, operationId });
+    await sendTestFlightBridgeRequest(conn, { action: 'install', appId, build, operationId, requestId: operationId });
     report('TestFlight accepted the install request, waiting for it to land');
 
     const start = Date.now();
@@ -165,10 +164,11 @@ export async function installBuild(
     while (Date.now() < deadline) {
       const bundlePath = await findInstalledBundlePath(conn, build.bundleId);
       if (bundlePath) {
-        const { buildVersion } = await readInstalledBundleVersions(conn, bundlePath);
+        const installedVersion = await readInstalledBundleVersions(conn, bundlePath);
+        const { buildVersion } = installedVersion;
         if (buildVersion === build.cfBundleVersion) {
-          report(`install complete in ${Math.round((Date.now() - start) / 1000)}s`);
-          return;
+          report(`install verified: ${installedVersion.shortVersion ?? build.cfBundleShortVersion} build ${buildVersion} in ${Math.round((Date.now() - start) / 1000)}s`);
+          return { ...installedVersion, bundleId: build.bundleId, appPath: bundlePath, fairPlayProtected: true, elapsedMs: Date.now() - start };
         }
       }
       const elapsedSec = Math.round((Date.now() - start) / 1000);

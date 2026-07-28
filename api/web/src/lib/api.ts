@@ -390,6 +390,7 @@ export interface DeviceHealth {
   internetAccess?: boolean;
   networkIpAddress?: string;
   networkInterface?: string;
+  bridgeHeartbeats?: Partial<Record<'springboard' | 'testflight' | 'appstore', { bridgeVersion?: string; channel?: string; process?: string; at?: number }>>;
   readiness?: DeviceReadiness;
   checkedAt: number;
 }

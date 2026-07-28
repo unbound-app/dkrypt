@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { Client } from 'ssh2';
 import {
   armAppStoreAutoConfirm,
@@ -11,10 +12,12 @@ import {
   uninstallInstalledBundle,
   uninstallInstalledApp,
   withSSH,
+  type InstallVerification,
 } from '#idevice.js';
 import { scopedLogger } from '#logger.js';
 import { lookupCurrentVersion } from '#scheduler/itunes.js';
 import { getPrimaryDevice } from '#store/state.js';
+import { BRIDGE_CAPABILITIES, hasBridgeCapabilities } from '#bridgeProtocol.js';
 
 const log = scopedLogger('appstore');
 
@@ -35,6 +38,14 @@ async function ensureAppStoreForeground(conn: Client): Promise<void> {
   await new Promise((r) => setTimeout(r, wasRunning ? 4_000 : 8_000));
 }
 
+async function ensureAppStoreBridgeReady(conn: Client): Promise<void> {
+  const response = await sendAppStoreBridgeRequest(conn, { action: 'status' });
+  if (hasBridgeCapabilities('appstore', response.capabilities)) return;
+  const reported = Array.isArray(response.capabilities) ? response.capabilities.filter((value: unknown): value is string => typeof value === 'string') : [];
+  const missing = BRIDGE_CAPABILITIES.appstore.filter((capability) => !reported.includes(capability));
+  throw new Error(`autoinstall App Store bridge is incompatible; missing ${missing.join(', ')}`);
+}
+
 async function restartAppStore(conn: Client): Promise<void> {
   await execCommand(conn, 'killall AppStore 2>/dev/null || true');
   await new Promise((r) => setTimeout(r, 1_000));
@@ -53,12 +64,13 @@ export async function uninstallFromPrimaryDevice(bundleId: string): Promise<bool
 export interface AppStoreInstallOptions {
   externalVersionId?: string;
   expectedVersion?: string;
+  operationId?: string;
   onProgress?: (message: string) => void;
   waitTimeoutMs?: number;
   isCancelled?: () => boolean;
 }
 
-export async function installFromAppStore(bundleId: string, options: AppStoreInstallOptions = {}): Promise<void> {
+export async function installFromAppStore(bundleId: string, options: AppStoreInstallOptions = {}): Promise<InstallVerification> {
   const { externalVersionId, expectedVersion, onProgress, waitTimeoutMs = 5 * 60_000 } = options;
 
   if (!SAFE_BUNDLE_ID_RE.test(bundleId)) {
@@ -82,7 +94,7 @@ export async function installFromAppStore(bundleId: string, options: AppStoreIns
   const { trackId, version: latestVersion } = await lookupCurrentVersion(bundleId);
   const targetVersion = expectedVersion ?? (versionId === undefined ? latestVersion : undefined);
 
-  await withSSH(primaryRootDir(), async (conn) => {
+  return withSSH(primaryRootDir(), async (conn) => {
     ensureNotCancelled();
     const existing = await findInstalledAppStoreBundle(conn, bundleId);
     if (existing) {
@@ -98,13 +110,15 @@ export async function installFromAppStore(bundleId: string, options: AppStoreIns
 
     report('bringing the App Store to the foreground');
     await ensureAppStoreForeground(conn);
+    await ensureAppStoreBridgeReady(conn);
 
     try {
       ensureNotCancelled();
       report('arming headless auto-confirm and sending install request');
       await armAppStoreAutoConfirm(conn, 'Install');
 
-      const request: Record<string, unknown> = { action: 'install', adamId: trackId, contextMode: 'fallback' };
+      const operationId = options.operationId ?? randomUUID();
+      const request: Record<string, unknown> = { action: 'install', adamId: trackId, contextMode: 'fallback', operationId, requestId: operationId };
       if (versionId !== undefined) request.versionId = versionId;
       await sendAppStoreBridgeRequest(conn, request);
       report(
@@ -121,7 +135,8 @@ export async function installFromAppStore(bundleId: string, options: AppStoreIns
         ensureNotCancelled();
         const bundlePath = await findInstalledAppStoreBundle(conn, bundleId);
         if (bundlePath) {
-          const { shortVersion } = await readInstalledBundleVersions(conn, bundlePath);
+          const installedVersion = await readInstalledBundleVersions(conn, bundlePath);
+          const { shortVersion } = installedVersion;
           if (targetVersion && shortVersion !== targetVersion) {
             const unexpectedVersion = shortVersion ?? 'unknown';
             if (lastUnexpectedVersion !== unexpectedVersion) {
@@ -129,8 +144,8 @@ export async function installFromAppStore(bundleId: string, options: AppStoreIns
               lastUnexpectedVersion = unexpectedVersion;
             }
           } else {
-            report(`install complete in ${Math.round((Date.now() - start) / 1000)}s`);
-            return;
+            report(`install verified: ${shortVersion ?? 'unknown version'} build ${installedVersion.buildVersion ?? 'unknown'} in ${Math.round((Date.now() - start) / 1000)}s`);
+            return { ...installedVersion, bundleId, appPath: bundlePath, fairPlayProtected: true, elapsedMs: Date.now() - start };
           }
         }
         const elapsedSec = Math.round((Date.now() - start) / 1000);

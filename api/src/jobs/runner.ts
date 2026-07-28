@@ -7,6 +7,7 @@ import { scopedLogger } from '#logger.js';
 import { recordDeviceActivity, type DeviceRecord } from '#store/state.js';
 import { installFromAppStore } from '#appStoreInstall.js';
 import { installBuild } from '#testflight.js';
+import { getDeviceHealth, getDeviceInstallBlocker } from '#deviceHealth.js';
 import { extractIpaMetadata } from '#util/ipaMetadata.js';
 
 const log = scopedLogger('jobs');
@@ -20,6 +21,9 @@ export async function runDecrypt(job: Job, device: DeviceRecord): Promise<void> 
   };
 
   ensureNotCancelled();
+  const health = await getDeviceHealth(device.id, true);
+  const installBlocker = getDeviceInstallBlocker(health);
+  if (installBlocker) throw new Error(`decrypt deferred: ${installBlocker}`);
   await mkdir(config.outputDir, { recursive: true });
   const outputPath = path.join(config.outputDir, `${job.id}.ipa`);
   job.filePath = outputPath;
@@ -45,16 +49,19 @@ export async function runDecrypt(job: Job, device: DeviceRecord): Promise<void> 
     emitJobsChanged();
   };
 
+  report(`autoinstall transaction ${job.id}`);
+
   if (job.testflight) {
-    const operationId = job.retryCount && job.retryCount > 0 ? `${job.id}-retry-${job.retryCount}` : job.id;
-    await installBuild(job.testflight.appId, job.testflight.build, report, undefined, operationId);
+    await installBuild(job.testflight.appId, job.testflight.build, report, undefined, job.id);
   } else {
-    await installFromAppStore(job.bundleId, {
+    const installed = await installFromAppStore(job.bundleId, {
       externalVersionId: job.externalVersionId,
-      expectedVersion: job.versionLabel,
+      expectedVersion: job.externalVersionId ? job.versionLabel : undefined,
+      operationId: job.id,
       onProgress: report,
       isCancelled: () => Boolean(job.cancelledBy),
     });
+    if (installed.shortVersion) job.versionLabel = installed.shortVersion;
   }
 
   ensureNotCancelled();

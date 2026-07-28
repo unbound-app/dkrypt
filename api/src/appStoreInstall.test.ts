@@ -29,8 +29,13 @@ mock.module('#idevice.js', () => ({
   isAppStoreRunning: async () => true,
   readInstalledBundleVersions: async () => ({ shortVersion: lastInstalledBundle?.shortVersion, buildVersion: '106000' }),
   sendAppStoreBridgeRequest: async (_conn: object, request: Record<string, unknown>) => {
+    if (request.action === 'status') {
+      calls.push('status');
+      return { capabilities: ['install', 'status', 'diagnostics', 'protocol_v1', 'authenticated_requests', 'operation_responses', 'heartbeats', 'stale_artifact_cleanup'] };
+    }
     installRequest = request;
     calls.push('request');
+    return { ok: true };
   },
   sendSpringBoardBridgeRequest: async () => ({ launchResult: 0 }),
   uninstallInstalledApp: async () => {
@@ -85,17 +90,17 @@ describe('installFromAppStore', () => {
       onProgress: (message) => progress.push(message),
     });
 
-    expect(calls).toEqual(['uninstall', 'restart', 'arm', 'request', 'clear']);
-    expect(installRequest).toEqual({ action: 'install', adamId: 123, contextMode: 'fallback', versionId: 123456789 });
+    expect(calls).toEqual(['uninstall', 'restart', 'status', 'arm', 'request', 'clear']);
+    expect(installRequest).toMatchObject({ action: 'install', adamId: 123, contextMode: 'fallback', versionId: 123456789 });
     expect(progress).toContain('removing the installed app before the App Store install');
-    expect(progress.at(-1)).toBe('install complete in 0s');
+    expect(progress.at(-1)).toBe('install verified: 338.0 build 106000 in 0s');
   });
 
   test('replaces an installed app before decrypting the current App Store version', async () => {
     await installFromAppStore('com.hammerandchisel.discord');
 
-    expect(calls).toEqual(['uninstall', 'restart', 'arm', 'request', 'clear']);
-    expect(installRequest).toEqual({ action: 'install', adamId: 123, contextMode: 'fallback' });
+    expect(calls).toEqual(['uninstall', 'restart', 'status', 'arm', 'request', 'clear']);
+    expect(installRequest).toMatchObject({ action: 'install', adamId: 123, contextMode: 'fallback' });
   });
 
   test('removes the discovered app bundle when the guarded uninstaller rejects it', async () => {
@@ -103,7 +108,7 @@ describe('installFromAppStore', () => {
 
     await installFromAppStore('com.hammerandchisel.discord', { externalVersionId: '123456789', expectedVersion: '338.0' });
 
-    expect(calls).toEqual(['uninstall', 'force-uninstall', 'restart', 'arm', 'request', 'clear']);
+    expect(calls).toEqual(['uninstall', 'force-uninstall', 'restart', 'status', 'arm', 'request', 'clear']);
   });
 
   test('waits for the requested version when a stale App Store install lands first', async () => {
@@ -119,9 +124,9 @@ describe('installFromAppStore', () => {
       onProgress: (message) => progress.push(message),
     });
 
-    expect(calls).toEqual(['restart', 'arm', 'request', 'clear']);
+    expect(calls).toEqual(['restart', 'status', 'arm', 'request', 'clear']);
     expect(progress).toContain('waiting for App Store version 338.0; version 337.0 is currently installed');
-    expect(progress.at(-1)).toBe('install complete in 0s');
+    expect(progress.at(-1)).toBe('install verified: 338.0 build 106000 in 0s');
   });
 
   test('stops before contacting the App Store when cancelled', async () => {
