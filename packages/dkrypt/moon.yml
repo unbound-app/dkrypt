@@ -1,3 +1,6 @@
+dependsOn:
+  - web
+  - autoinstall
 tasks:
   test:
     command: bun
@@ -14,3 +17,12 @@ tasks:
       - '~:test'
       - '~:typecheck'
       - web:typecheck
+  composeBuild:
+    command: docker
+    args:
+      - compose
+      - build
+  autoinstallDeploy:
+    command: ../../scripts/autoinstall-release
+    args:
+      - deploy

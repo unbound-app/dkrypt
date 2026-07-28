@@ -1,5 +1,6 @@
-**/node_modules
-api/dist
-api/test
-api/**/*.test.ts
-api/bunfig.toml
+packages/dkrypt/node_modules
+packages/dkrypt/web/node_modules
+packages/dkrypt/dist
+packages/dkrypt/test
+packages/dkrypt/**/*.test.ts
+packages/dkrypt/bunfig.toml

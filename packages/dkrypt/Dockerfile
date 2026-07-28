@@ -6,10 +6,10 @@ FROM oven/bun:1-slim AS web
 WORKDIR /web
 RUN apt-get update && apt-get install -y --no-install-recommends git \
   && rm -rf /var/lib/apt/lists/*
-COPY api/web/package.json api/web/bun.lock ./
+COPY packages/dkrypt/web/package.json packages/dkrypt/web/bun.lock ./
 RUN bun install --frozen-lockfile
 COPY .git /repo/.git
-COPY api/web ./
+COPY packages/dkrypt/web ./
 ARG BUILD_REF=development
 ENV VITE_BUILD_REF=$BUILD_REF
 ENV GIT_DIR=/repo/.git
@@ -22,9 +22,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
   && rm -rf /var/lib/apt/lists/*
 
 COPY --from=ipadecrypt /go/bin/ipadecrypt /usr/local/bin/ipadecrypt
-COPY api/package.json api/bun.lock api/tsconfig.json ./
+COPY packages/dkrypt/package.json packages/dkrypt/bun.lock packages/dkrypt/tsconfig.json ./
 RUN bun install --production --frozen-lockfile
-COPY api/src ./src
+COPY packages/dkrypt/src ./src
 COPY --from=web /public ./public
 
 ENV NODE_ENV=production

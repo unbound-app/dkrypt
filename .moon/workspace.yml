@@ -3,7 +3,6 @@ vcs:
   defaultBranch: main
 projects:
   sources:
-    dkrypt: .
-    api: api
-    web: api/web
+    dkrypt: packages/dkrypt
+    web: packages/dkrypt/web
     autoinstall: packages/autoinstall

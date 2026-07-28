@@ -5,7 +5,7 @@ import { createBridgeEnvelope, type BridgeEnvelope } from './idevice.js';
 import { BRIDGE_CAPABILITIES, BRIDGE_PROTOCOL_VERSION } from './bridgeProtocol.js';
 
 test('createBridgeEnvelope matches the shared bridge fixture', async () => {
-  const fixturePath = path.resolve(import.meta.dir, '../../packages/autoinstall/protocol/bridge-v1.fixture.json');
+  const fixturePath = path.resolve(import.meta.dir, '../../autoinstall/protocol/bridge-v1.fixture.json');
   const fixture = JSON.parse(await readFile(fixturePath, 'utf8')) as {
     secret: string;
     channel: 'testflight';

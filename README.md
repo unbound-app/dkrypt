@@ -61,7 +61,7 @@ The listed API endpoints use `Authorization: Bearer <API_KEY>`. Completed IPA do
 
 | Path | Purpose |
 | --- | --- |
-| `api/` | Fastify API and Svelte dashboard |
+| `packages/dkrypt/` | Fastify API and Svelte dashboard |
 | `packages/autoinstall/` | Theos tweak installed on the device |
 | `scripts/autoinstall-release` | Build, install, heartbeat-check, and roll back the tweak |
 
@@ -70,8 +70,7 @@ Moon is pinned in `.prototools`; install it with `proto install` before using th
 
 | Moon project | Scope |
 | --- | --- |
-| `dkrypt` | Repository checks, Compose build, and release tasks |
-| `api` | Fastify API tests and type checks |
+| `dkrypt` | Fastify API tests, dashboard checks, Compose build, and release tasks |
 | `web` | Svelte dashboard type checks |
 | `autoinstall` | Theos package and deployment tasks |
 
@@ -80,9 +79,8 @@ make check
 make autoinstall-package
 make autoinstall-deploy
 make autoinstall-rollback PACKAGE=/absolute/path/to/package.deb
-moon run api:check
-moon run autoinstall:package
 moon run dkrypt:check
+moon run autoinstall:package
 ```
 
 `autoinstall-deploy` uses the configured device target. Override the target or SSH key with `AUTOINSTALL_IPAD_TARGET` and `AUTOINSTALL_IPAD_KEY`.
@@ -90,7 +88,7 @@ moon run dkrypt:check
 ## Development
 
 ```sh
-cd api
+cd packages/dkrypt
 bun test
 bun run typecheck
 bun run typecheck:web

@@ -2,7 +2,7 @@ services:
   api:
     build:
       context: .
-      dockerfile: api/Dockerfile
+      dockerfile: packages/dkrypt/Dockerfile
       args:
         BUILD_REF: ${BUILD_REF:-development}
     image: dkrypt

@@ -10,7 +10,7 @@ updates:
           - "*"
 
   - package-ecosystem: "bun"
-    directory: "/api"
+    directory: "/packages/dkrypt"
     schedule:
       interval: "weekly"
     groups:
@@ -23,7 +23,7 @@ updates:
           - "version-update:semver-major"
 
   - package-ecosystem: "bun"
-    directory: "/api/web"
+    directory: "/packages/dkrypt/web"
     schedule:
       interval: "weekly"
     groups:
@@ -36,7 +36,7 @@ updates:
           - "version-update:semver-major"
 
   - package-ecosystem: "docker"
-    directory: "/api"
+    directory: "/packages/dkrypt"
     schedule:
       interval: "weekly"
     groups:

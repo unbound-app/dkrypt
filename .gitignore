@@ -1,8 +1,8 @@
 .env
-api/node_modules/
-api/dist/
-api/public/
-api/web/node_modules/
-api/web/dist/
+packages/dkrypt/node_modules/
+packages/dkrypt/dist/
+packages/dkrypt/public/
+packages/dkrypt/web/node_modules/
+packages/dkrypt/web/dist/
 data/
 .DS_Store
