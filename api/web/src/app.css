@@ -94,6 +94,10 @@
 		transition: background-color 180ms ease, border-color 180ms ease;
 	}
 
+	.responsive-table tbody tr:hover {
+		background: transparent;
+	}
+
 	.responsive-table tbody tr:hover > td {
 		background: color-mix(in srgb, var(--color-panel-muted) 42%, transparent);
 		border-color: color-mix(in srgb, var(--color-border) 56%, var(--color-accent) 44%);
