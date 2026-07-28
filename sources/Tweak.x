@@ -91,7 +91,14 @@ static void autoinstallLog(NSString *line) {
     [handle closeFile];
 }
 
+static NSString *gBridgeRequestId = nil;
+
 static void writeJSONFile(NSString *path, id obj) {
+    if (gBridgeRequestId.length && [path hasSuffix:@"response.json"] && [obj isKindOfClass:[NSDictionary class]]) {
+        NSMutableDictionary *response = [obj mutableCopy];
+        response[@"requestId"] = gBridgeRequestId;
+        obj = response;
+    }
     NSError *err = nil;
     NSData *data = [NSJSONSerialization dataWithJSONObject:obj options:NSJSONWritingPrettyPrinted error:&err];
     if (!data) {
@@ -231,6 +238,7 @@ static NSDictionary *screenStatusDict(void) {
 }
 
 static void handleSpringBoardRequest(NSDictionary *req) {
+    gBridgeRequestId = [req[@"requestId"] isKindOfClass:[NSString class]] ? req[@"requestId"] : nil;
     NSString *action = req[@"action"];
     autoinstallLog([NSString stringWithFormat:@"sb-bridge: handling action=%@ req=%@", action, req]);
 
@@ -445,6 +453,7 @@ static void fetchJSON(NSString *urlString, void (^completion)(id json, NSDiction
 }
 
 static void handleRequest(NSDictionary *req) {
+    gBridgeRequestId = [req[@"requestId"] isKindOfClass:[NSString class]] ? req[@"requestId"] : nil;
     NSString *action = req[@"action"];
     autoinstallLog([NSString stringWithFormat:@"bridge: handling action=%@ req=%@", action, req]);
 
@@ -732,6 +741,7 @@ static NSString * const kASResponsePath = @"/tmp/autoinstall-as-response.json";
 static NSString * const kASInstallStatusPath = @"/tmp/autoinstall-as-install-status.json";
 
 static void handleAppStoreRequest(NSDictionary *req) {
+    gBridgeRequestId = [req[@"requestId"] isKindOfClass:[NSString class]] ? req[@"requestId"] : nil;
     NSString *action = req[@"action"];
     autoinstallLog([NSString stringWithFormat:@"as-bridge: handling action=%@ req=%@", action, req]);
 
