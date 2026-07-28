@@ -74,6 +74,40 @@ jobs:
       group: deploy-homelab
       cancel-in-progress: false
     steps:
+      - name: Write runtime stack manifest
+        run: |
+          set -e
+          RUNTIME_DIR=/home/adrian/.local/share/dkrypt
+          test -f "$RUNTIME_DIR/.env"
+          cat > "$RUNTIME_DIR/compose.yml" <<'EOF'
+          name: dkrypt
+          services:
+            api:
+              image: ${DKRYPT_IMAGE:?DKRYPT_IMAGE is required}
+              container_name: dkrypt
+              restart: unless-stopped
+              network_mode: host
+              env_file:
+                - .env
+              environment:
+                PORT: 8080
+                BIND_HOST: 127.0.0.1
+              volumes:
+                - appstore-config:/root/.ipadecrypt
+                - ipa-tmp:/data/tmp
+                - state:/data/state
+                - /home/adrian/.ssh/id_ed25519_ipad:/root/.ssh/id_ed25519:ro
+          volumes:
+            appstore-config:
+              external: true
+              name: dkrypt_appstore-config
+            ipa-tmp:
+              external: true
+              name: dkrypt_ipa-tmp
+            state:
+              external: true
+              name: dkrypt_state
+          EOF
       - name: Pull and deploy immutable image
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -89,18 +123,7 @@ jobs:
           docker pull "$IMAGE"
           docker tag "$IMAGE" dkrypt:latest
           docker rm -f dkrypt 2>/dev/null || true
-          docker run -d \
-            --name dkrypt \
-            --restart unless-stopped \
-            --network host \
-            --env-file /home/adrian/.local/share/dkrypt/.env \
-            -e PORT=8080 \
-            -e BIND_HOST=127.0.0.1 \
-            --mount type=volume,src=dkrypt_appstore-config,dst=/root/.ipadecrypt \
-            --mount type=volume,src=dkrypt_ipa-tmp,dst=/data/tmp \
-            --mount type=volume,src=dkrypt_state,dst=/data/state \
-            --mount type=bind,src=/home/adrian/.ssh/id_ed25519_ipad,dst=/root/.ssh/id_ed25519,readonly \
-            "$IMAGE"
+          DKRYPT_IMAGE="$IMAGE" docker compose --project-name dkrypt -f /home/adrian/.local/share/dkrypt/compose.yml up -d --no-build
 
       - name: Wait for health, roll back on failure
         run: |
@@ -116,23 +139,11 @@ jobs:
           done
 
           echo "service did not become healthy in time" >&2
-          docker logs --tail 50 dkrypt || true
+          docker compose --project-name dkrypt -f /home/adrian/.local/share/dkrypt/compose.yml logs --tail 50 api || true
 
           if docker image inspect dkrypt:previous >/dev/null 2>&1; then
             echo "rolling back to the previous image" >&2
-            docker rm -f dkrypt 2>/dev/null || true
-            docker run -d \
-              --name dkrypt \
-              --restart unless-stopped \
-              --network host \
-              --env-file /home/adrian/.local/share/dkrypt/.env \
-              -e PORT=8080 \
-              -e BIND_HOST=127.0.0.1 \
-              --mount type=volume,src=dkrypt_appstore-config,dst=/root/.ipadecrypt \
-              --mount type=volume,src=dkrypt_ipa-tmp,dst=/data/tmp \
-              --mount type=volume,src=dkrypt_state,dst=/data/state \
-              --mount type=bind,src=/home/adrian/.ssh/id_ed25519_ipad,dst=/root/.ssh/id_ed25519,readonly \
-              dkrypt:previous
+            DKRYPT_IMAGE=dkrypt:previous docker compose --project-name dkrypt -f /home/adrian/.local/share/dkrypt/compose.yml up -d --no-build
           else
             echo "no previous image to roll back to" >&2
           fi
