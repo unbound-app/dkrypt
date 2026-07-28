@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { tick } from "svelte";
 	import { Popover } from "bits-ui";
 	import { Sparkles } from "lucide-svelte";
 	import { CHANGELOG, type ChangelogEntry } from "#lib/changelog";
@@ -21,16 +22,19 @@
 
 	let open = $state(false);
 	let lastViewedDate = $state(localStorage.getItem(LAST_VIEWED_KEY) ?? "");
+	let changelogList = $state<HTMLDivElement>();
 
 	const hasUnseen = $derived(
 		newestEntryKey !== "" && newestEntryKey !== lastViewedDate,
 	);
 
-	function onOpenChange(v: boolean): void {
+	async function onOpenChange(v: boolean): Promise<void> {
 		open = v;
 		if (v) {
 			lastViewedDate = newestEntryKey;
 			localStorage.setItem(LAST_VIEWED_KEY, newestEntryKey);
+			await tick();
+			changelogList?.scrollTo({ top: 0 });
 		}
 	}
 
@@ -62,7 +66,10 @@
 			align="end"
 		>
 			<div class="mb-2 text-sm font-medium">What's new</div>
-			<div class="flex max-h-96 flex-col gap-3 overflow-y-auto">
+			<div
+				bind:this={changelogList}
+				class="flex max-h-96 flex-col gap-3 overflow-y-auto"
+			>
 				{#each CHANGELOG as entry (entry.date + entry.title + entry.description)}
 					<div class="text-xs">
 						<div
