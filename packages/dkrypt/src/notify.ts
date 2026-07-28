@@ -1,4 +1,5 @@
 import { config } from '#config.js';
+import { createHmac } from 'node:crypto';
 import { log } from '#logger.js';
 import { sendMailToAllSubscribed, type MailCategory } from '#mail.js';
 import { sendPushToAllSubscribed, type PushCategory } from '#push.js';
@@ -104,6 +105,21 @@ function buildPayload(embed: NotifyEmbed, format: SchedulerSettings['notifyForma
   };
 }
 
+export function webhookSignature(secret: string, timestamp: string, payload: string): string {
+  return `sha256=${createHmac('sha256', secret).update(`${timestamp}.${payload}`).digest('hex')}`;
+}
+
+function webhookHeaders(event: string, payload: Record<string, unknown>): Record<string, string> {
+  if (!config.outboundWebhookSecret) return {};
+  const timestamp = new Date().toISOString();
+  const body = JSON.stringify(payload);
+  return {
+    'X-Dkrypt-Event': event,
+    'X-Dkrypt-Timestamp': timestamp,
+    'X-Dkrypt-Signature': webhookSignature(config.outboundWebhookSecret, timestamp, body),
+  };
+}
+
 function targetHost(url: string): string {
   try {
     return new URL(url).host;
@@ -147,7 +163,8 @@ async function postWebhook(
   format: SchedulerSettings['notifyFormat'],
   event: string,
 ): Promise<{ ok: boolean; status?: number; error?: string }> {
-  const result = await postJsonWithRetry(url, buildPayload(embed, format));
+  const payload = buildPayload(embed, format);
+  const result = await postJsonWithRetry(url, payload, webhookHeaders(event, payload));
   recordWebhookDelivery({
     kind: event === 'jobCompleted' ? 'job' : 'scheduler',
     event,
@@ -239,12 +256,10 @@ export async function sendTestNotification(urlOverride?: string): Promise<{ ok: 
   const url = urlOverride || settings.notifyWebhookUrl;
   if (!url) return { ok: false, error: 'no webhook URL configured' };
 
-  const result = await postJsonWithRetry(
-    url,
-    buildPayload(
-      { title: 'Test notification', description: 'This is what a notification from dkrypt looks like.', color: EMBED_COLOR.info },
-      settings.notifyFormat,
-    ),
+  const payload = buildPayload(
+    { title: 'Test notification', description: 'This is what a notification from dkrypt looks like.', color: EMBED_COLOR.info },
+    settings.notifyFormat,
   );
+  const result = await postJsonWithRetry(url, payload, webhookHeaders('testNotification', payload));
   return result.ok ? { ok: true } : { ok: false, error: result.error ?? `webhook returned HTTP ${result.status}` };
 }

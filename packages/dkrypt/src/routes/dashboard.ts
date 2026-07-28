@@ -5,8 +5,8 @@ import { fetchBotGuilds, fetchGuildRoles } from '#discord.js';
 import { dashboardEvents, emitJobsChanged, getOnlineUsernames, registerPresence, unregisterPresence } from '#events.js';
 import { getBillingEntitlements } from '#billing.js';
 import { blockDuringMaintenance, getMaintenanceStatus } from '#maintenance.js';
-import { jobSummary, streamJobFile } from '#jobs/http.js';
-import { cancelJob, enqueueDecryptJob, getActiveJobs, getJob, prioritizeQueuedJob, reorderQueue } from '#jobs/store.js';
+import { jobFileAvailable, jobSummary, streamJobFile } from '#jobs/http.js';
+import { cancelJob, enqueueDecryptJob, getActiveJobs, getJob, getQueueInfo, getRetainedJobArtifacts, prioritizeQueuedJob, reorderQueue } from '#jobs/store.js';
 import type { LogEntry, LogLevel } from '#logger.js';
 import { getRecentLogs } from '#logger.js';
 import { EMBED_COLOR, notify, sendTestNotification } from '#notify.js';
@@ -104,6 +104,7 @@ import {
   listRoles,
   listAllShareLinks,
   listShareLinksForJob,
+  previewJobHistoryRetention,
   previewBackup,
   drillBackupRestore,
   recordAudit,
@@ -291,7 +292,11 @@ dashboardRouter.get('/v1/dashboard/jobs', (req, res) => {
     toTs: Number.isFinite(toTs) ? toTs : undefined,
   });
   res.json({
-    history: entries.map((entry) => ({ ...entry, activeShareUrl: activeShareLinkDownloadUrlForJob(entry.id, res.locals.session.sub) })),
+    history: entries.map((entry) => ({
+      ...entry,
+      activeShareUrl: activeShareLinkDownloadUrlForJob(entry.id, res.locals.session.sub),
+      fileAvailable: jobFileAvailable(getJob(entry.id)),
+    })),
     total,
   });
 });
@@ -357,6 +362,30 @@ dashboardRouter.get('/v1/dashboard/jobs/export', (req, res) => {
 
 dashboardRouter.get('/v1/dashboard/jobs/eta/:bundleId', (req, res) => {
   res.json({ avgMs: getAverageJobDurationMs(req.params.bundleId) ?? null });
+});
+
+dashboardRouter.get('/v1/dashboard/jobs/slo', canViewScheduler, (_req, res) => {
+  const now = Date.now();
+  const completed = getAllJobHistory().filter((job) => job.status === 'done' && job.startedAt && job.finishedAt > job.startedAt);
+  const durations = completed.map((job) => job.finishedAt - (job.startedAt as number)).sort((a, b) => a - b);
+  const historicalP95Ms = durations.length === 0 ? null : durations[Math.ceil(durations.length * 0.95) - 1];
+  const targetMs = historicalP95Ms ?? config.queueSloMinutes * 60_000;
+  const jobs = getActiveJobs().map((job) => {
+    const queue = job.status === 'queued' ? getQueueInfo(job.id) : undefined;
+    const waitedMs = now - job.createdAt;
+    const predictedStartMs = queue && historicalP95Ms !== null ? Math.max(0, queue.position - 1) * historicalP95Ms : null;
+    const predictedCompletionMs = predictedStartMs === null || historicalP95Ms === null ? null : predictedStartMs + historicalP95Ms;
+    return {
+      id: job.id,
+      bundleId: job.bundleId,
+      status: job.status,
+      waitedMs,
+      predictedStartMs,
+      predictedCompletionMs,
+      objective: waitedMs > targetMs || (predictedCompletionMs !== null && waitedMs + predictedCompletionMs > targetMs) ? 'breached' : 'within',
+    };
+  });
+  res.json({ targetMs, historicalP95Ms, jobs });
 });
 
 dashboardRouter.get('/v1/dashboard/jobs/stats/:bundleId', (req, res) => {
@@ -1364,11 +1393,20 @@ const SHARE_TTL_MAX = 1440;
 dashboardRouter.post('/v1/dashboard/jobs/:id/share', (req, res) => {
   const job = getJob(req.params.id);
   if (!job) {
+    const history = getJobHistoryEntryById(req.params.id);
+    if (history?.status === 'done') {
+      res.status(410).json({ error: 'the decrypted IPA has been cleaned up and can no longer be shared' });
+      return;
+    }
     res.status(404).json({ error: 'job not found' });
     return;
   }
-  if (job.status !== 'done' || !job.filePath) {
+  if (job.status !== 'done') {
     res.status(409).json({ error: 'job is not finished yet' });
+    return;
+  }
+  if (!jobFileAvailable(job)) {
+    res.status(410).json({ error: 'the decrypted IPA has been cleaned up and can no longer be shared' });
     return;
   }
 
@@ -1844,6 +1882,32 @@ dashboardRouter.put('/v1/dashboard/settings', canManageSchedulerSettings, (req, 
 
   const updated = updateSettings(patch, res.locals.session.sub);
   res.json(updated);
+});
+
+dashboardRouter.get('/v1/dashboard/settings/job-history-retention/preview', canManageSchedulerSettings, (req, res) => {
+  const retentionDays = Number.parseInt(String(req.query.retentionDays ?? ''), 10);
+  const fileTtlMinutes = Number.parseInt(String(req.query.fileTtlMinutes ?? config.fileTtlMinutes), 10);
+  if (!Number.isFinite(retentionDays) || retentionDays < 0) {
+    res.status(400).json({ error: 'retentionDays must be a non-negative integer' });
+    return;
+  }
+  if (!Number.isFinite(fileTtlMinutes) || fileTtlMinutes < 0) {
+    res.status(400).json({ error: 'fileTtlMinutes must be a non-negative integer' });
+    return;
+  }
+  const now = Date.now();
+  const artifacts = getRetainedJobArtifacts();
+  const reclaimable = artifacts.filter((job) => job.finishedAt && now - job.finishedAt > fileTtlMinutes * 60_000);
+  res.json({
+    ...previewJobHistoryRetention(retentionDays, now),
+    artifacts: {
+      fileTtlMinutes,
+      retained: artifacts.length,
+      retainedBytes: artifacts.reduce((total, job) => total + (job.fileSizeBytes ?? 0), 0),
+      reclaimable: reclaimable.length,
+      reclaimableBytes: reclaimable.reduce((total, job) => total + (job.fileSizeBytes ?? 0), 0),
+    },
+  });
 });
 
 dashboardRouter.get('/v1/dashboard/settings/validate-cron', canValidateCron, (req, res) => {

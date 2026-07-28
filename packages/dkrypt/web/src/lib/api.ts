@@ -261,6 +261,7 @@ export interface JobHistoryEntry {
   ipaMetadata?: IpaMetadata;
   ipaInfoPlist?: Record<string, unknown>;
   activeShareUrl?: string;
+  fileAvailable: boolean;
 }
 
 export interface JobTimelineEvent {

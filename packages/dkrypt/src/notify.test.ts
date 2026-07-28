@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
-import { flushNotificationDigests, notify, sendTestNotification } from '#notify.js';
+import { flushNotificationDigests, notify, sendTestNotification, webhookSignature } from '#notify.js';
 import { updateSettings } from '#store/state.js';
 
 const originalFetch = global.fetch;
@@ -29,6 +29,12 @@ afterEach(() => {
 });
 
 describe('notify', () => {
+  test('creates a stable HMAC signature for outbound webhook payloads', () => {
+    expect(webhookSignature('secret', '2026-01-01T00:00:00.000Z', '{"event":"jobCompleted"}')).toBe(
+      'sha256=d94b3d9b5ac9f6e30eaf52b5bde2cade376efe54d1b03ead7ac7fe2bca623a65',
+    );
+  });
+
   test('does nothing without a configured webhook URL', async () => {
     const fetchMock = mock(() => Promise.resolve(new Response('{}', { status: 200 })));
     global.fetch = fetchMock as unknown as typeof fetch;

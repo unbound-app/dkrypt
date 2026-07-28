@@ -2155,6 +2155,19 @@ export function getAllJobHistory(): JobHistoryEntry[] {
   return state.jobHistory;
 }
 
+export function previewJobHistoryRetention(retentionDays: number, now = Date.now()): {
+  retentionDays: number;
+  cutoff?: number;
+  retained: number;
+  removed: number;
+} {
+  const normalizedDays = Math.max(0, Math.round(retentionDays));
+  if (normalizedDays === 0) return { retentionDays: normalizedDays, retained: state.jobHistory.length, removed: 0 };
+  const cutoff = now - normalizedDays * 86_400_000;
+  const retained = state.jobHistory.filter((entry) => entry.finishedAt >= cutoff).length;
+  return { retentionDays: normalizedDays, cutoff, retained, removed: state.jobHistory.length - retained };
+}
+
 export interface UserActivityStats {
   manualJobs: number;
   completedJobs: number;

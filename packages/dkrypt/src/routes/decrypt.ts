@@ -1,17 +1,36 @@
-import type { Response } from '#http.js';
+import type { Request, Response } from '#http.js';
 import { Router } from '#http.js';
+import { createHash } from 'node:crypto';
 import { config } from '#config.js';
 import { requireApiKey, requireApiKeyOrSignedToken, requireTestFlightScope } from '#auth.js';
 import { blockDuringMaintenance } from '#maintenance.js';
-import { jobSummary, streamJobFile } from '#jobs/http.js';
+import { jobFileAvailable, jobSummary, streamJobFile } from '#jobs/http.js';
 import { enqueueDecryptJob, getJob, waitForJob } from '#jobs/store.js';
 import { recordApiKeyBundleUsage } from '#store/state.js';
 import { listBuilds, listTrains } from '#testflight.js';
+import { apiIdempotencyRegistry } from '#idempotency.js';
 
 export const decryptRouter = Router();
 
 const BUNDLE_ID_RE = /^[A-Za-z0-9.-]{3,200}$/;
 const EXTERNAL_VERSION_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const IDEMPOTENCY_KEY_RE = /^[A-Za-z0-9._:-]{1,200}$/;
+const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
+
+function idempotencyJobId(req: Request, res: Response, fingerprint: string): { jobId?: string; error?: string; key?: string } {
+  const key = req.header('idempotency-key');
+  if (!key) return {};
+  if (!IDEMPOTENCY_KEY_RE.test(key)) return { error: 'Idempotency-Key must be 1-200 URL-safe characters' };
+  const scope = res.locals.apiKeyId as string | undefined;
+  if (!scope) return { error: 'API key identity is unavailable' };
+  const existing = apiIdempotencyRegistry.lookup(scope, key, fingerprint);
+  if (existing.conflict) return { error: 'Idempotency-Key was already used with a different request' };
+  return { jobId: existing.jobId, key };
+}
+
+function requestFingerprint(route: string, body: Record<string, unknown>): string {
+  return createHash('sha256').update(JSON.stringify({ route, body })).digest('hex');
+}
 
 function isBundleIdAllowed(res: Response, bundleId: string): boolean {
   const scope = res.locals.apiKeyScope as string[] | undefined;
@@ -35,19 +54,37 @@ decryptRouter.get('/v1/decrypt', requireApiKey, blockDuringMaintenance, async (r
     typeof externalVersionId === 'string' && EXTERNAL_VERSION_ID_RE.test(externalVersionId) ? externalVersionId : undefined;
 
   const apiKeyId = res.locals.apiKeyId as string | undefined;
-  if (apiKeyId) recordApiKeyBundleUsage(apiKeyId, bundleId);
+  const fingerprint = requestFingerprint('/v1/decrypt', { bundleId, externalVersionId: versionId ?? null });
+  const idempotency = idempotencyJobId(req, res, fingerprint);
+  if (idempotency.error) {
+    res.status(409).json({ error: idempotency.error });
+    return;
+  }
 
-  const job = enqueueDecryptJob(
-    bundleId,
-    'manual',
-    versionId,
-    undefined,
-    undefined,
-    res.locals.apiKeyOwner as string | undefined,
-    (res.locals.apiKeyPriority as number | undefined) ?? 0,
-    undefined,
-    res.locals.apiKeyId as string | undefined,
-  );
+  let job = idempotency.jobId ? getJob(idempotency.jobId) : undefined;
+  if (idempotency.jobId && !job) {
+    res.status(410).json({ error: 'the result for this Idempotency-Key is no longer retained' });
+    return;
+  }
+  if (!job) {
+    if (apiKeyId) recordApiKeyBundleUsage(apiKeyId, bundleId);
+    job = enqueueDecryptJob(
+      bundleId,
+      'manual',
+      versionId,
+      undefined,
+      undefined,
+      res.locals.apiKeyOwner as string | undefined,
+      (res.locals.apiKeyPriority as number | undefined) ?? 0,
+      undefined,
+      apiKeyId,
+    );
+    if (idempotency.key && apiKeyId) apiIdempotencyRegistry.record(apiKeyId, idempotency.key, fingerprint, job.id, IDEMPOTENCY_TTL_MS);
+  }
+  if (job.status === 'done' && !jobFileAvailable(job)) {
+    res.status(410).json({ error: 'the result for this Idempotency-Key is no longer retained' });
+    return;
+  }
   const finished = await waitForJob(job, config.jobMaxWaitSeconds * 1000);
 
   if (finished.status === 'queued' || finished.status === 'running') {
@@ -145,18 +182,32 @@ decryptRouter.post('/v1/testflight/decrypt', requireApiKey, requireTestFlightSco
   }
 
   const apiKeyId = res.locals.apiKeyId as string | undefined;
-  if (apiKeyId) recordApiKeyBundleUsage(apiKeyId, bundleId);
+  const fingerprint = requestFingerprint('/v1/testflight/decrypt', { bundleId, appId, build });
+  const idempotency = idempotencyJobId(req, res, fingerprint);
+  if (idempotency.error) {
+    res.status(409).json({ error: idempotency.error });
+    return;
+  }
 
-  const job = enqueueDecryptJob(
-    bundleId,
-    'manual',
-    undefined,
-    { appId, build },
-    undefined,
-    res.locals.apiKeyOwner as string | undefined,
-    (res.locals.apiKeyPriority as number | undefined) ?? 0,
-    undefined,
-    res.locals.apiKeyId as string | undefined,
-  );
+  let job = idempotency.jobId ? getJob(idempotency.jobId) : undefined;
+  if (idempotency.jobId && !job) {
+    res.status(410).json({ error: 'the result for this Idempotency-Key is no longer retained' });
+    return;
+  }
+  if (!job) {
+    if (apiKeyId) recordApiKeyBundleUsage(apiKeyId, bundleId);
+    job = enqueueDecryptJob(
+      bundleId,
+      'manual',
+      undefined,
+      { appId, build },
+      undefined,
+      res.locals.apiKeyOwner as string | undefined,
+      (res.locals.apiKeyPriority as number | undefined) ?? 0,
+      undefined,
+      apiKeyId,
+    );
+    if (idempotency.key && apiKeyId) apiIdempotencyRegistry.record(apiKeyId, idempotency.key, fingerprint, job.id, IDEMPOTENCY_TTL_MS);
+  }
   res.status(202).json(jobSummary(job));
 });

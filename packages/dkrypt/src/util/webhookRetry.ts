@@ -21,13 +21,13 @@ async function retryDelayMs(res: Response): Promise<number> {
   return RETRY_DELAY_MS;
 }
 
-export async function postJsonWithRetry(url: string, body: unknown): Promise<WebhookPostResult> {
+export async function postJsonWithRetry(url: string, body: unknown, headers: Record<string, string> = {}): Promise<WebhookPostResult> {
   const payload = JSON.stringify(body);
   const startedAt = Date.now();
 
   for (let attempt = 0; attempt <= 1; attempt++) {
     try {
-      const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload });
+      const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: payload });
       if (res.ok) return { ok: true, status: res.status, durationMs: Date.now() - startedAt };
       if (attempt === 0) {
         await sleep(await retryDelayMs(res));

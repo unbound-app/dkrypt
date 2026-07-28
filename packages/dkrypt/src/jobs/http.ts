@@ -1,5 +1,5 @@
 import type { Request, Response } from '#http.js';
-import { createReadStream } from 'node:fs';
+import { createReadStream, existsSync } from 'node:fs';
 import { config } from '#config.js';
 import { scopedLogger } from '#logger.js';
 
@@ -7,6 +7,11 @@ const log = scopedLogger('jobs');
 import { latestActiveShareLinkExpiry } from '#store/state.js';
 import { getQueueInfo } from '#jobs/store.js';
 import type { Job } from '#jobs/types.js';
+
+export function jobFileAvailable(job: Job | undefined): boolean {
+  if (!job || job.status !== 'done' || !job.filePath) return false;
+  return existsSync(job.filePath);
+}
 
 export function jobSummary(job: Job) {
   const fileExpiresAt =
@@ -41,7 +46,7 @@ export function jobSummary(job: Job) {
 }
 
 export async function streamJobFile(job: Job, req: Request, res: Response): Promise<void> {
-  if (job.status !== 'done' || !job.filePath) {
+  if (!jobFileAvailable(job) || !job.filePath) {
     res.status(409).json(jobSummary(job));
     return;
   }

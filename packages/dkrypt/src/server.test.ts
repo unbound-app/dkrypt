@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test } from 'bun:test';
 import { buildServer } from '#server.js';
+import { recordJobHistory } from '#store/state.js';
 
 async function signIn() {
   const server = await buildServer({ includePublicRoutes: false });
@@ -62,6 +63,83 @@ test('Fastify sends the initial dashboard overview over SSE', async () => {
   } finally {
     clearTimeout(timeout);
     controller.abort();
+    await server.close();
+  }
+});
+
+test('Fastify explains when a history job no longer has an IPA to share', async () => {
+  const { server, cookie } = await signIn();
+  const id = `cleaned-job-${crypto.randomUUID()}`;
+  recordJobHistory({
+    id,
+    bundleId: 'com.example.cleaned',
+    status: 'done',
+    source: 'manual',
+    createdAt: Date.now() - 1_000,
+    finishedAt: Date.now(),
+  });
+
+  try {
+    const response = await server.inject({
+      method: 'POST',
+      url: `/v1/dashboard/jobs/${id}/share`,
+      headers: { cookie },
+    });
+    expect(response.statusCode).toBe(410);
+    expect(response.json() as { error?: string }).toEqual({
+      error: 'the decrypted IPA has been cleaned up and can no longer be shared',
+    });
+  } finally {
+    await server.close();
+  }
+});
+
+test('Fastify marks cleaned completed jobs as unavailable in history', async () => {
+  const { server, cookie } = await signIn();
+  const id = `cleaned-history-${crypto.randomUUID()}`;
+  recordJobHistory({
+    id,
+    bundleId: 'com.example.cleaned-history',
+    status: 'done',
+    source: 'manual',
+    createdAt: Date.now() - 1_000,
+    finishedAt: Date.now(),
+  });
+
+  try {
+    const response = await server.inject({
+      method: 'GET',
+      url: '/v1/dashboard/jobs?q=com.example.cleaned-history',
+      headers: { cookie },
+    });
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as { history: Array<{ id: string; fileAvailable: boolean }> };
+    expect(body.history).toContainEqual(expect.objectContaining({ id, fileAvailable: false }));
+  } finally {
+    await server.close();
+  }
+});
+
+test('Fastify previews retention and reports queue service objectives', async () => {
+  const { server, cookie } = await signIn();
+
+  try {
+    const retention = await server.inject({
+      method: 'GET',
+      url: '/v1/dashboard/settings/job-history-retention/preview?retentionDays=0',
+      headers: { cookie },
+    });
+    expect(retention.statusCode).toBe(200);
+    expect(retention.json()).toMatchObject({ retentionDays: 0, removed: 0 });
+
+    const slo = await server.inject({
+      method: 'GET',
+      url: '/v1/dashboard/jobs/slo',
+      headers: { cookie },
+    });
+    expect(slo.statusCode).toBe(200);
+    expect(slo.json()).toMatchObject({ targetMs: expect.any(Number), jobs: expect.any(Array) });
+  } finally {
     await server.close();
   }
 });

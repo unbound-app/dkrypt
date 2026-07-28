@@ -1,4 +1,7 @@
 import { describe, expect, mock, test } from 'bun:test';
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 
 mock.module('./runner.js', () => ({
   runDecrypt: () => new Promise<void>(() => {}),
@@ -55,6 +58,19 @@ describe('enqueueDecryptJob', () => {
   test('labels an unpinned App Store job as the current release', () => {
     const job = enqueueDecryptJob('com.test.current-release', 'manual');
     expect(job.versionLabel).toBe('Current App Store release');
+  });
+
+  test('reuses a completed exact build while its IPA still exists', async () => {
+    const outputDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-cache-'));
+    const outputPath = path.join(outputDir, 'app.ipa');
+    await writeFile(outputPath, 'ipa');
+    const completed = enqueueDecryptJob('com.test.cached', 'manual', '123');
+    completed.status = 'done';
+    completed.filePath = outputPath;
+    completed.finishedAt = Date.now();
+
+    const retry = enqueueDecryptJob('com.test.cached', 'manual', '123');
+    expect(retry.id).toBe(completed.id);
   });
 });
 

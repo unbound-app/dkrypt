@@ -894,7 +894,7 @@
 												>Decrypt again</Button
 											>
 										{/if}
-										{#if j.status === "done"}
+										{#if j.status === "done" && j.fileAvailable}
 											<Button
 												size="sm"
 												variant="secondary"

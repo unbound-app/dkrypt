@@ -125,6 +125,27 @@ function findActiveJobForBundle(
   return undefined;
 }
 
+function findReusableCompletedJob(
+  bundleId: string,
+  externalVersionId: string | undefined,
+  testflightBuildId: number | undefined,
+): Job | undefined {
+  if (externalVersionId === undefined && testflightBuildId === undefined) return undefined;
+  for (const job of jobs.values()) {
+    if (
+      job.bundleId === bundleId &&
+      job.externalVersionId === externalVersionId &&
+      job.testflight?.build.id === testflightBuildId &&
+      job.status === 'done' &&
+      job.filePath &&
+      existsSync(job.filePath)
+    ) {
+      return job;
+    }
+  }
+  return undefined;
+}
+
 function insertByPriority(id: string, priority: number): void {
   const idx = queue.findIndex((qid) => (jobs.get(qid)?.priority ?? 0) < priority);
   if (idx === -1) queue.push(id);
@@ -144,6 +165,8 @@ export function enqueueDecryptJob(
 ): Job {
   const existing = findActiveJobForBundle(bundleId, externalVersionId, testflight?.build.id);
   if (existing) return existing;
+  const reusable = findReusableCompletedJob(bundleId, externalVersionId, testflight?.build.id);
+  if (reusable) return reusable;
 
   const resolvedLabel = versionLabel ?? (testflight ? `${testflight.build.cfBundleShortVersion}_${testflight.build.cfBundleVersion}` : 'Current App Store release');
 
@@ -185,6 +208,10 @@ export function getJob(id: string): Job | undefined {
 
 export function getActiveJobs(): Job[] {
   return [...jobs.values()].filter((j) => j.status === 'queued' || j.status === 'running');
+}
+
+export function getRetainedJobArtifacts(): Job[] {
+  return [...jobs.values()].filter((job) => job.status === 'done' && !!job.filePath && existsSync(job.filePath));
 }
 
 export function mergeActiveJobOwner(targetUserId: string, sourceUserId: string): void {

@@ -79,7 +79,9 @@ export const config = {
   runPollIntervalSeconds: optionalInt('RUN_POLL_INTERVAL_SECONDS', 15),
   runPollTimeoutMinutes: optionalInt('RUN_POLL_TIMEOUT_MINUTES', 30),
   notifyWebhookUrl: optional('NOTIFY_WEBHOOK_URL', ''),
+  outboundWebhookSecret: optional('OUTBOUND_WEBHOOK_SECRET', ''),
   userConcurrencyCap: optionalInt('USER_CONCURRENCY_CAP', 0),
+  queueSloMinutes: optionalInt('QUEUE_SLO_MINUTES', 30),
 
   smtpHost: optional('SMTP_HOST', ''),
   smtpPort: optionalInt('SMTP_PORT', 587),
