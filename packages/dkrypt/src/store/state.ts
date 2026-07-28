@@ -23,6 +23,27 @@ import { combineBits, hasPermission, parseBits, PermissionFlag, serializeBits } 
 
 export type ApiKeyStatus = 'pending' | 'approved' | 'denied';
 
+export interface ApiKeyOutcomeUsage {
+  route: string;
+  success: number;
+  clientError: number;
+  serverError: number;
+  lastAt: number;
+}
+
+export interface GitHubBudgetTelemetryEntry {
+  id: string;
+  ts: number;
+  watchId: string;
+  bundleId: string;
+  estimatedRequests: number;
+  observedRequests?: number;
+  limit: number;
+  remainingBefore: number;
+  remainingAfter?: number;
+  resetAt: number;
+}
+
 export interface Role {
   id: string;
   name: string;
@@ -388,7 +409,7 @@ export interface ShareLinkRecord {
 }
 
 interface PersistedState {
-  version: 11;
+  version: 12;
   apiKeys: ApiKeyRecord[];
   allowedUsers: AllowedUser[];
   roles: Role[];
@@ -407,6 +428,8 @@ interface PersistedState {
   pushSubscriptions: Record<string, PushSubscriptionRecord[]>;
   vapidKeys?: VapidKeys;
   apiKeyBundleUsage: Record<string, Record<string, number>>;
+  apiKeyOutcomeUsage: Record<string, Record<string, ApiKeyOutcomeUsage>>;
+  githubBudgetTelemetry: GitHubBudgetTelemetryEntry[];
   shareLinks: ShareLinkRecord[];
   webhookDeliveryLog: WebhookDeliveryEntry[];
   discordRolePerks: DiscordRolePerk[];
@@ -430,7 +453,7 @@ const backupsDir = path.join(config.stateDir, 'backups');
 
 function defaultState(): PersistedState {
   return {
-    version: 11,
+    version: 12,
     apiKeys: [],
     allowedUsers: [],
     roles: [seedDefaultRole(Date.now())],
@@ -447,6 +470,8 @@ function defaultState(): PersistedState {
     deviceActivity: [],
     pushSubscriptions: {},
     apiKeyBundleUsage: {},
+    apiKeyOutcomeUsage: {},
+    githubBudgetTelemetry: [],
     shareLinks: [],
     webhookDeliveryLog: [],
     discordRolePerks: [],
@@ -709,27 +734,32 @@ function migrateV9ToV10(v9: Record<string, unknown> | PersistedState): Record<st
   return { ...defaultState(), ...v9, version: 10, roles };
 }
 
-function migrateV10ToV11(v10: Record<string, unknown>): PersistedState {
+function migrateV10ToV11(v10: Record<string, unknown>): Record<string, unknown> {
   const v10State = migrateV9ToV10(v10);
   return {
     ...v10State,
     version: 11,
     roles: (v10State.roles as Role[]).map((role) => ({ ...role, permissions: serializeBits(consolidatePermissionBits(parseBits(role.permissions))) })),
-  } as PersistedState;
+  };
+}
+
+function migrateV11ToV12(v11: Record<string, unknown>): PersistedState {
+  return { ...defaultState(), ...v11, version: 12 } as PersistedState;
 }
 
 function migrate(raw: Record<string, unknown>): PersistedState {
-  if (raw.version === 11) return { ...defaultState(), ...raw } as PersistedState;
-  if (raw.version === 10) return migrateV10ToV11(raw);
-  if (raw.version === 9) return migrateV10ToV11(raw);
-  if (raw.version === 8) return migrateV10ToV11(migrateV8ToV9(raw));
-  if (raw.version === 7) return migrateV10ToV11(migrateV8ToV9(migrateV7ToV8(raw)));
-  if (raw.version === 6) return migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(raw)));
-  if (raw.version === 5) return migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(migrateV5ToV6(raw))));
+  if (raw.version === 12) return { ...defaultState(), ...raw } as PersistedState;
+  if (raw.version === 11) return migrateV11ToV12(raw);
+  if (raw.version === 10) return migrateV11ToV12(migrateV10ToV11(raw));
+  if (raw.version === 9) return migrateV11ToV12(migrateV10ToV11(raw));
+  if (raw.version === 8) return migrateV11ToV12(migrateV10ToV11(migrateV8ToV9(raw)));
+  if (raw.version === 7) return migrateV11ToV12(migrateV10ToV11(migrateV8ToV9(migrateV7ToV8(raw))));
+  if (raw.version === 6) return migrateV11ToV12(migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(raw))));
+  if (raw.version === 5) return migrateV11ToV12(migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(migrateV5ToV6(raw)))));
 
   if (raw.version === 4) {
     const v4Users = Array.isArray(raw.allowedUsers) ? (raw.allowedUsers as Record<string, unknown>[]) : [];
-    return migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(
+    return migrateV11ToV12(migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(
       migrateV5ToV6({
         ...raw,
         version: 5,
@@ -739,12 +769,12 @@ function migrate(raw: Record<string, unknown>): PersistedState {
           addedAt: u.addedAt as number,
         })),
       }),
-    )));
+    ))));
   }
 
   if (raw.version === 3) {
     const v3Users = Array.isArray(raw.allowedUsers) ? (raw.allowedUsers as Record<string, unknown>[]) : [];
-    return migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(
+    return migrateV11ToV12(migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(
       migrateV5ToV6({
         ...raw,
         version: 5,
@@ -754,12 +784,12 @@ function migrate(raw: Record<string, unknown>): PersistedState {
           addedAt: u.addedAt as number,
         })),
       }),
-    )));
+    ))));
   }
 
   if (raw.version === 2) {
     const legacyUsers = Array.isArray(raw.allowedUsers) ? (raw.allowedUsers as Record<string, unknown>[]) : [];
-    return migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(
+    return migrateV11ToV12(migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(
       migrateV5ToV6({
         ...raw,
         version: 5,
@@ -769,11 +799,11 @@ function migrate(raw: Record<string, unknown>): PersistedState {
           addedAt: u.addedAt as number,
         })),
       }),
-    )));
+    ))));
   }
 
   const legacyKeys = Array.isArray(raw.apiKeys) ? (raw.apiKeys as Record<string, unknown>[]) : [];
-  return migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(
+  return migrateV11ToV12(migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(
     migrateV5ToV6({
       apiKeys: legacyKeys.map((k) => ({
         id: k.id as string,
@@ -788,7 +818,7 @@ function migrate(raw: Record<string, unknown>): PersistedState {
       settings: (raw.settings as Partial<SchedulerSettings>) ?? {},
       jobHistory: (raw.jobHistory as JobHistoryEntry[]) ?? [],
     }),
-  )));
+  ))));
 }
 
 function normalizeLegacySchedulerRunOutcome(raw: unknown): SchedulerRunOutcome {
@@ -1492,6 +1522,7 @@ export function revokeApiKey(id: string, requesterId: string, requesterIsAdmin: 
   state.apiKeys = state.apiKeys.filter((k) => k.id !== id);
   delete state.apiKeyUsage[id];
   delete state.apiKeyBundleUsage[id];
+  delete state.apiKeyOutcomeUsage[id];
   persistNow();
   return true;
 }
@@ -1617,6 +1648,43 @@ export function getApiKeyBundleUsage(id: string, limit = 10): { bundleId: string
     .map(([bundleId, count]) => ({ bundleId, count }))
     .sort((a, b) => b.count - a.count)
     .slice(0, limit);
+}
+
+const MAX_TRACKED_OUTCOMES_PER_KEY = 30;
+
+export function recordApiKeyOutcome(id: string, method: string, path: string, status: number): void {
+  const route = `${method} ${path}`;
+  const perKey = state.apiKeyOutcomeUsage[id] ?? {};
+  const outcome = perKey[route] ?? { route, success: 0, clientError: 0, serverError: 0, lastAt: Date.now() };
+  if (status < 400) outcome.success += 1;
+  else if (status < 500) outcome.clientError += 1;
+  else outcome.serverError += 1;
+  outcome.lastAt = Date.now();
+  perKey[route] = outcome;
+  if (Object.keys(perKey).length > MAX_TRACKED_OUTCOMES_PER_KEY) {
+    const oldest = Object.values(perKey).sort((a, b) => a.lastAt - b.lastAt)[0]?.route;
+    if (oldest) delete perKey[oldest];
+  }
+  state.apiKeyOutcomeUsage[id] = perKey;
+  dirty = true;
+}
+
+export function getApiKeyOutcomeUsage(id: string, limit = 10): ApiKeyOutcomeUsage[] {
+  return Object.values(state.apiKeyOutcomeUsage[id] ?? {})
+    .sort((a, b) => b.lastAt - a.lastAt)
+    .slice(0, limit);
+}
+
+const MAX_GITHUB_BUDGET_TELEMETRY = 200;
+
+export function recordGitHubBudgetTelemetry(entry: Omit<GitHubBudgetTelemetryEntry, 'id' | 'ts'>): void {
+  state.githubBudgetTelemetry.unshift({ id: randomUUID(), ts: Date.now(), ...entry });
+  if (state.githubBudgetTelemetry.length > MAX_GITHUB_BUDGET_TELEMETRY) state.githubBudgetTelemetry.length = MAX_GITHUB_BUDGET_TELEMETRY;
+  dirty = true;
+}
+
+export function getGitHubBudgetTelemetry(limit = 30): GitHubBudgetTelemetryEntry[] {
+  return state.githubBudgetTelemetry.slice(0, limit);
 }
 
 export function getUserPriority(username: string): number {
@@ -3048,6 +3116,52 @@ export function previewBackup(raw: unknown): { ok: true; summary: BackupPreviewS
   };
 }
 
+export interface BackupRestoreDrill {
+  ok: boolean;
+  checks: { label: string; ok: boolean; detail: string }[];
+}
+
+function prepareBackupRestore(payload: ValidatedBackupPayload): Pick<PersistedState, 'allowedUsers' | 'roles' | 'apiKeys' | 'settings' | 'watches' | 'devices' | 'jobHistory' | 'auditLog' | 'schedulerRunHistory' | 'userPrefs' | 'apiKeyUsage' | 'rootSessionVersion' | 'apiKeyBundleUsage' | 'deviceActivity'> {
+  return {
+    allowedUsers: payload.allowedUsers,
+    roles: payload.roles.map((role) => ({ ...role, permissions: serializeBits(consolidatePermissionBits(upgradePermissionBits(parseBits(role.permissions)))) })),
+    apiKeys: payload.apiKeys.map((key) => ({ ...key, pendingReveal: undefined })),
+    settings: payload.settings,
+    watches: payload.watches,
+    devices: payload.devices,
+    jobHistory: payload.jobHistory.slice(0, MAX_HISTORY),
+    auditLog: payload.auditLog.slice(0, MAX_AUDIT_LOG),
+    schedulerRunHistory: payload.schedulerRunHistory.slice(0, MAX_SCHEDULER_RUNS).map((entry) => ({ ...entry, id: entry.id ?? randomUUID() })),
+    userPrefs: payload.userPrefs,
+    apiKeyUsage: payload.apiKeyUsage,
+    rootSessionVersion: payload.rootSessionVersion,
+    apiKeyBundleUsage: payload.apiKeyBundleUsage ?? {},
+    deviceActivity: payload.deviceActivity?.slice(0, MAX_DEVICE_ACTIVITY) ?? [],
+  };
+}
+
+export function drillBackupRestore(raw: unknown): { ok: true; drill: BackupRestoreDrill } | { ok: false; error: string } {
+  const validated = validateBackupPayload(raw);
+  if (!validated.ok) return validated;
+  const { payload } = validated;
+  const restored = prepareBackupRestore(payload);
+  const roleIds = new Set(payload.roles.map((role) => role.id));
+  const userIds = new Set(payload.allowedUsers.map((user) => user.username.toLowerCase()));
+  const watchIds = new Set(payload.watches.map((watch) => watch.id));
+  const deviceIds = new Set(payload.devices.map((device) => device.id));
+  const checks = [
+    { label: 'Unique role IDs', ok: roleIds.size === payload.roles.length, detail: `${roleIds.size} roles` },
+    { label: 'Default role', ok: payload.roles.filter((role) => role.isDefault).length === 1, detail: `${payload.roles.filter((role) => role.isDefault).length} default roles` },
+    { label: 'User role assignments', ok: payload.allowedUsers.every((user) => user.roleIds.every((id) => roleIds.has(id))), detail: `${payload.allowedUsers.length} users checked` },
+    { label: 'API key owners', ok: payload.apiKeys.every((key) => key.ownerId === 'root' || userIds.has(key.ownerId.toLowerCase())), detail: `${payload.apiKeys.length} keys checked` },
+    { label: 'Unique watch IDs', ok: watchIds.size === payload.watches.length, detail: `${watchIds.size} watches` },
+    { label: 'Unique device IDs', ok: deviceIds.size === payload.devices.length, detail: `${deviceIds.size} devices` },
+    { label: 'Restore transformation', ok: restored.roles.length === payload.roles.length && restored.apiKeys.every((key) => key.pendingReveal === undefined), detail: `${restored.apiKeys.length} keys normalized` },
+    { label: 'Serializable restored state', ok: (() => { try { JSON.stringify(restored); return true; } catch { return false; } })(), detail: 'normalized state checked' },
+  ];
+  return { ok: true, drill: { ok: checks.every((check) => check.ok), checks } };
+}
+
 export interface ImportBackupResult {
   ok: boolean;
   error?: string;
@@ -3057,24 +3171,13 @@ export function importBackup(raw: unknown, actor: string): ImportBackupResult {
   const validated = validateBackupPayload(raw);
   if (!validated.ok) return { ok: false, error: validated.error };
   const b = validated.payload;
+  const restored = prepareBackupRestore(b);
 
-  state.allowedUsers = b.allowedUsers;
-  state.roles = b.roles.map((role) => ({ ...role, permissions: serializeBits(consolidatePermissionBits(upgradePermissionBits(parseBits(role.permissions)))) }));
-  state.apiKeys = b.apiKeys.map((k) => ({ ...k, pendingReveal: undefined }));
-  state.settings = b.settings;
-  state.watches = b.watches;
-  state.devices = b.devices;
-  state.jobHistory = b.jobHistory.slice(0, MAX_HISTORY);
-  state.auditLog = b.auditLog.slice(0, MAX_AUDIT_LOG);
-
-  state.schedulerRunHistory = b.schedulerRunHistory
-    .slice(0, MAX_SCHEDULER_RUNS)
-    .map((e) => ({ ...e, id: e.id ?? randomUUID() }));
-  state.userPrefs = b.userPrefs;
-  state.apiKeyUsage = b.apiKeyUsage;
-  state.rootSessionVersion = b.rootSessionVersion;
+  Object.assign(state, restored);
   if (b.lastSchedulerRunAt) state.lastSchedulerRunAt = b.lastSchedulerRunAt;
   state.apiKeyBundleUsage = b.apiKeyBundleUsage ?? {};
+  state.apiKeyOutcomeUsage = {};
+  state.githubBudgetTelemetry = [];
   state.deviceActivity = b.deviceActivity?.slice(0, MAX_DEVICE_ACTIVITY) ?? [];
   replaceBillingSnapshot(b.billing);
   replaceIdentitySnapshot(b.identities);

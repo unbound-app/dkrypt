@@ -13,6 +13,15 @@ export interface LogEntry {
   meta?: Record<string, unknown>;
 }
 
+export interface LogQuery {
+  scope?: string;
+  level?: LogLevel;
+  query?: string;
+  regex?: boolean;
+  offset?: number;
+  limit?: number;
+}
+
 const MAX_LOG_ENTRIES = 500;
 const logsPath = path.join(config.stateDir, 'logs.json');
 
@@ -36,8 +45,21 @@ function record(entry: LogEntry): void {
   emitLogAdded(entry);
 }
 
-export function getRecentLogs(): LogEntry[] {
-  return [...recentLogs].reverse();
+export function getRecentLogs(query: LogQuery = {}): { logs: LogEntry[]; total: number } {
+  const search = query.query?.trim();
+  const matcher = search && query.regex ? new RegExp(search, 'i') : undefined;
+  const normalizedSearch = search?.toLowerCase();
+  const matches = (entry: LogEntry): boolean => {
+    if (query.scope && entry.scope !== query.scope) return false;
+    if (query.level && entry.level !== query.level) return false;
+    if (!search) return true;
+    const content = `${entry.message} ${entry.meta ? JSON.stringify(entry.meta) : ''}`;
+    return matcher ? matcher.test(content) : content.toLowerCase().includes(normalizedSearch as string);
+  };
+  const filtered = recentLogs.filter(matches).reverse();
+  const offset = Math.max(0, query.offset ?? 0);
+  const limit = Math.max(1, query.limit ?? 100);
+  return { logs: filtered.slice(offset, offset + limit), total: filtered.length };
 }
 
 export function startLogFlusher(): void {

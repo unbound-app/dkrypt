@@ -1,6 +1,10 @@
 tasks:
   typecheck:
+    script: bun install --frozen-lockfile && bun run typecheck
+  build:
     command: bun
     args:
       - run
-      - typecheck
+      - build
+    deps:
+      - '~:typecheck'

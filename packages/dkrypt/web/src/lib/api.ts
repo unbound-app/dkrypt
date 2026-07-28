@@ -725,8 +725,36 @@ export function fetchKeyBundleUsage(id: string, limit = 10): Promise<{ bundles: 
   return apiJson(`/v1/dashboard/keys/${id}/bundle-usage?limit=${limit}`);
 }
 
-export function fetchLogs(): Promise<{ logs: LogEntry[] }> {
-  return apiJson('/v1/dashboard/logs');
+export interface ApiKeyOutcomeUsage {
+  route: string;
+  success: number;
+  clientError: number;
+  serverError: number;
+  lastAt: number;
+}
+
+export function fetchKeyOutcomeUsage(id: string, limit = 10): Promise<{ outcomes: ApiKeyOutcomeUsage[] }> {
+  return apiJson(`/v1/dashboard/keys/${id}/outcomes?limit=${limit}`);
+}
+
+export interface LogQuery {
+  scope?: string;
+  level?: string;
+  q?: string;
+  regex?: boolean;
+  offset?: number;
+  limit?: number;
+}
+
+export function fetchLogs(query: LogQuery = {}): Promise<{ logs: LogEntry[]; total: number }> {
+  const params = new URLSearchParams();
+  if (query.scope && query.scope !== 'all') params.set('scope', query.scope);
+  if (query.level && query.level !== 'all') params.set('level', query.level);
+  if (query.q?.trim()) params.set('q', query.q.trim());
+  if (query.regex) params.set('regex', '1');
+  if (query.offset) params.set('offset', String(query.offset));
+  if (query.limit) params.set('limit', String(query.limit));
+  return apiJson(`/v1/dashboard/logs${params.size ? `?${params}` : ''}`);
 }
 
 export function jobHistoryExportUrl(format: 'csv' | 'json'): string {
@@ -833,8 +861,25 @@ export interface SchedulerCalendarRun {
   at: number;
 }
 
-export function fetchWatchCalendar(hours = 24): Promise<{ untilAt: number; runs: SchedulerCalendarRun[]; truncated: boolean }> {
-  return apiJson(`/v1/dashboard/watches/calendar?hours=${hours}`);
+export function fetchWatchCalendar(hours = 24, fromAt?: number): Promise<{ fromAt: number; untilAt: number; runs: SchedulerCalendarRun[]; truncated: boolean }> {
+  return apiJson(`/v1/dashboard/watches/calendar?hours=${hours}${fromAt ? `&fromAt=${fromAt}` : ''}`);
+}
+
+export interface GitHubBudgetTelemetryEntry {
+  id: string;
+  ts: number;
+  watchId: string;
+  bundleId: string;
+  estimatedRequests: number;
+  observedRequests?: number;
+  limit: number;
+  remainingBefore: number;
+  remainingAfter?: number;
+  resetAt: number;
+}
+
+export function fetchGitHubBudgetTelemetry(limit = 30): Promise<{ entries: GitHubBudgetTelemetryEntry[] }> {
+  return apiJson(`/v1/dashboard/github/budget-history?limit=${limit}`);
 }
 
 export function fetchGithubRepos(): Promise<{ repos: GithubRepoOption[] }> {
@@ -1245,6 +1290,15 @@ export interface BackupPreviewSummary {
 
 export function previewBackup(payload: unknown): Promise<{ ok: boolean; data: BackupPreviewSummary | { error?: string } }> {
   return apiAction('/v1/dashboard/backup/preview', { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export interface BackupRestoreDrill {
+  ok: boolean;
+  checks: { label: string; ok: boolean; detail: string }[];
+}
+
+export function drillBackupRestore(payload: unknown): Promise<{ ok: boolean; data: BackupRestoreDrill | { error?: string } }> {
+  return apiAction('/v1/dashboard/backup/drill', { method: 'POST', body: JSON.stringify(payload) });
 }
 
 export interface BackupScheduleSettings {

@@ -20,6 +20,7 @@ import {
   isWatchSchedulable,
   recordSchedulerRun,
   recordSchedulerRunOutcome,
+  recordGitHubBudgetTelemetry,
   type SchedulerRunOutcome,
   type SchedulerSettings,
   updateSchedulerRunOutcome,
@@ -29,7 +30,7 @@ import { listBuilds, listTrains } from '#testflight.js';
 import { buildSignedFileUrl } from '#util/signedUrl.js';
 import { compareVersions, normalizeVersion } from '#util/version.js';
 import { listAppVersions } from '#versions.js';
-import { dispatchIpaUpdate, findDispatchedRun, getGitHubRateLimitBudget, getRun, listReleaseTagNames, listReleaseVersions, type WorkflowRun } from '#scheduler/github.js';
+import { dispatchIpaUpdate, findDispatchedRun, getGitHubRateLimitBudget, getRun, listReleaseTagNames, listReleaseVersions, measureGitHubRequests, type WorkflowRun } from '#scheduler/github.js';
 import { lookupCurrentVersion } from '#scheduler/itunes.js';
 import { resolveAppStoreDecryptTarget } from '#scheduler/appStoreVersion.js';
 
@@ -569,6 +570,9 @@ async function tick(watch: AppWatch, mode: 'scheduled' | 'manual' = 'scheduled',
     return;
   }
   tickInProgress.add(watch.id);
+  let githubBudget: { limit: number; remaining: number; resetAt: number } | undefined;
+  let estimatedRequests: number | undefined;
+  let actualGitHubRequests: number | undefined;
   try {
     recordSchedulerRun();
     const settings: SchedulerSettings = getEffectiveSettings();
@@ -579,7 +583,8 @@ async function tick(watch: AppWatch, mode: 'scheduled' | 'manual' = 'scheduled',
         log.warn('could not read GitHub rate limit before scheduler tick', { watchId: watch.id, error: String(err) });
         return undefined;
       });
-      const estimatedRequests = budget ? reserveGitHubBudget(watch, settings.schedulerRetryCount, budget) : undefined;
+      githubBudget = budget;
+      estimatedRequests = budget ? reserveGitHubBudget(watch, settings.schedulerRetryCount, budget) : undefined;
       if (budget && estimatedRequests === undefined) {
         const retryAt = new Date(budget.resetAt + GITHUB_RATE_LIMIT_RETRY_PADDING_MS).toISOString();
         const reason = `deferred to preserve GitHub API budget (${budget.remaining}/${budget.limit} remaining; retrying after reset at ${retryAt})`;
@@ -595,8 +600,12 @@ async function tick(watch: AppWatch, mode: 'scheduled' | 'manual' = 'scheduled',
       }
     }
 
-    const appStore = await tickWithRetry(tickAppStore, watch, settings.schedulerRetryCount, 'App Store');
-    const testflight = await tickWithRetry(tickTestFlight, watch, settings.schedulerRetryCount, 'TestFlight');
+    const measured = await measureGitHubRequests(async () => ({
+      appStore: await tickWithRetry(tickAppStore, watch, settings.schedulerRetryCount, 'App Store'),
+      testflight: await tickWithRetry(tickTestFlight, watch, settings.schedulerRetryCount, 'TestFlight'),
+    }));
+    actualGitHubRequests = measured.requests;
+    const { appStore, testflight } = measured.value;
     const entryId = recordSchedulerRunOutcome({
       watchId: watch.id,
       bundleId: watch.bundleId,
@@ -607,6 +616,18 @@ async function tick(watch: AppWatch, mode: 'scheduled' | 'manual' = 'scheduled',
     if (appStore.trackCompletion) void trackAndUpdate(entryId, 'appStore', appStore.trackCompletion);
     if (testflight.trackCompletion) void trackAndUpdate(entryId, 'testflight', testflight.trackCompletion);
   } finally {
+    if (githubBudget && estimatedRequests !== undefined) {
+      recordGitHubBudgetTelemetry({
+        watchId: watch.id,
+        bundleId: watch.bundleId,
+        estimatedRequests,
+        observedRequests: actualGitHubRequests,
+        limit: githubBudget.limit,
+        remainingBefore: githubBudget.remaining,
+        remainingAfter: undefined,
+        resetAt: githubBudget.resetAt,
+      });
+    }
     tickInProgress.delete(watch.id);
 
     emitJobsChanged();

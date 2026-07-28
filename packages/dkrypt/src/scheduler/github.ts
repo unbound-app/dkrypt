@@ -1,4 +1,5 @@
 import { config } from '#config.js';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { describeHttpError } from '#util/httpError.js';
 import { normalizeVersion } from '#util/version.js';
 
@@ -12,6 +13,19 @@ export interface GitHubRateLimitBudget {
 }
 
 let cachedRateLimit: { value: GitHubRateLimitBudget; at: number } | undefined;
+const requestTelemetry = new AsyncLocalStorage<{ requests: number }>();
+
+export async function measureGitHubRequests<T>(fn: () => Promise<T>): Promise<{ value: T; requests: number }> {
+  const telemetry = { requests: 0 };
+  const value = await requestTelemetry.run(telemetry, fn);
+  return { value, requests: telemetry.requests };
+}
+
+async function githubFetch(input: string, init: RequestInit): Promise<Response> {
+  const telemetry = requestTelemetry.getStore();
+  if (telemetry) telemetry.requests += 1;
+  return fetch(input, init);
+}
 
 function headers(): Record<string, string> {
   return {
@@ -24,7 +38,7 @@ function headers(): Record<string, string> {
 export async function getGitHubRateLimitBudget(force = false): Promise<GitHubRateLimitBudget | undefined> {
   if (!config.ghToken) return undefined;
   if (!force && cachedRateLimit && Date.now() - cachedRateLimit.at < RATE_LIMIT_CACHE_MS) return cachedRateLimit.value;
-  const response = await fetch(`${GITHUB_API}/rate_limit`, { headers: headers() });
+  const response = await githubFetch(`${GITHUB_API}/rate_limit`, { headers: headers() });
   if (!response.ok) throw new Error(describeHttpError('GitHub rate-limit lookup failed', response));
   const body = (await response.json()) as { resources?: { core?: { limit?: number; remaining?: number; reset?: number } } };
   const core = body.resources?.core;
@@ -59,7 +73,7 @@ interface GitHubWorkflowsResponse {
 }
 
 async function listReleases(repo: string): Promise<Release[]> {
-  const res = await fetch(`${GITHUB_API}/repos/${repo}/releases?per_page=100`, { headers: headers() });
+  const res = await githubFetch(`${GITHUB_API}/repos/${repo}/releases?per_page=100`, { headers: headers() });
   if (!res.ok) throw new Error(describeHttpError(`list releases failed for ${repo}`, res));
   return (await res.json()) as Release[];
 }
@@ -82,7 +96,7 @@ export async function listDispatchRepos(): Promise<DispatchRepoOption[]> {
   let page = 1;
 
   while (page <= 3) {
-    const res = await fetch(`${GITHUB_API}/user/repos?sort=updated&direction=desc&per_page=100&page=${page}`, { headers: headers() });
+    const res = await githubFetch(`${GITHUB_API}/user/repos?sort=updated&direction=desc&per_page=100&page=${page}`, { headers: headers() });
     if (!res.ok) throw new Error(describeHttpError('list repos failed', res));
 
     const batch = (await res.json()) as GitHubRepo[];
@@ -107,7 +121,7 @@ export async function listRepoWorkflows(repo: string): Promise<WorkflowOption[]>
   let page = 1;
 
   while (page <= 3) {
-    const res = await fetch(`${GITHUB_API}/repos/${repo}/actions/workflows?per_page=100&page=${page}`, { headers: headers() });
+    const res = await githubFetch(`${GITHUB_API}/repos/${repo}/actions/workflows?per_page=100&page=${page}`, { headers: headers() });
     if (!res.ok) throw new Error(describeHttpError(`list workflows failed for ${repo}`, res));
 
     const body = (await res.json()) as GitHubWorkflowsResponse;
@@ -146,7 +160,7 @@ export async function dispatchIpaUpdate(
 ): Promise<void> {
   if (mode === 'workflow_dispatch') {
     const selectedRef = ref || (await getDefaultBranch(dispatchRepo));
-    const res = await fetch(`${GITHUB_API}/repos/${dispatchRepo}/actions/workflows/${workflowFile}/dispatches`, {
+    const res = await githubFetch(`${GITHUB_API}/repos/${dispatchRepo}/actions/workflows/${workflowFile}/dispatches`, {
       method: 'POST',
       headers: { ...headers(), 'Content-Type': 'application/json' },
       body: JSON.stringify({ ref: selectedRef, inputs: { ...inputs, ipa_url: ipaUrl, is_testflight: String(isTestflight) } }),
@@ -154,7 +168,7 @@ export async function dispatchIpaUpdate(
     if (res.status !== 204) throw new Error(`workflow_dispatch failed: HTTP ${res.status} ${await res.text()}`);
     return;
   }
-  const res = await fetch(`${GITHUB_API}/repos/${dispatchRepo}/dispatches`, {
+  const res = await githubFetch(`${GITHUB_API}/repos/${dispatchRepo}/dispatches`, {
     method: 'POST',
     headers: { ...headers(), 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -169,7 +183,7 @@ export async function dispatchIpaUpdate(
 }
 
 async function getDefaultBranch(repo: string): Promise<string> {
-  const res = await fetch(`${GITHUB_API}/repos/${repo}`, { headers: headers() });
+  const res = await githubFetch(`${GITHUB_API}/repos/${repo}`, { headers: headers() });
   if (!res.ok) throw new Error(describeHttpError('get repository failed', res));
   const body = (await res.json()) as GitHubRepo;
   if (!body.default_branch) throw new Error('repository has no default branch');
@@ -195,7 +209,7 @@ export async function findDispatchedRun(
   event: 'repository_dispatch' | 'workflow_dispatch' = 'repository_dispatch',
 ): Promise<WorkflowRun | undefined> {
   const url = `${GITHUB_API}/repos/${dispatchRepo}/actions/workflows/${workflowFile}/runs?event=${event}&per_page=10`;
-  const res = await fetch(url, { headers: headers() });
+  const res = await githubFetch(url, { headers: headers() });
   if (!res.ok) throw new Error(describeHttpError('list workflow runs failed', res));
 
   const body = (await res.json()) as WorkflowRunsResponse;
@@ -207,7 +221,7 @@ export async function findDispatchedRun(
 }
 
 export async function getRun(dispatchRepo: string, runId: number): Promise<WorkflowRun> {
-  const res = await fetch(`${GITHUB_API}/repos/${dispatchRepo}/actions/runs/${runId}`, {
+  const res = await githubFetch(`${GITHUB_API}/repos/${dispatchRepo}/actions/runs/${runId}`, {
     headers: headers(),
   });
   if (!res.ok) throw new Error(describeHttpError('get run failed', res));

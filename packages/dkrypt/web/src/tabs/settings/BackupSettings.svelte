@@ -7,6 +7,7 @@
     backupSnapshotDownloadUrl,
     createBackupSnapshot,
     deleteBackupSnapshot,
+    drillBackupRestore,
     fetchBackupHistory,
     fetchBackupSchedule,
     importBackup,
@@ -14,6 +15,7 @@
     updateBackupSchedule,
     validateCron,
     type BackupHistoryEntry,
+    type BackupRestoreDrill,
     type BackupPreviewSummary,
     type BackupScheduleSettings,
   } from '#lib/api';
@@ -35,6 +37,8 @@
   let parsedPayload: unknown = null;
   let preview = $state<BackupPreviewSummary | null>(null);
   let previewError = $state('');
+  let drilling = $state(false);
+  let drill = $state<BackupRestoreDrill | null>(null);
 
   let schedule = $state<BackupScheduleSettings | null>(null);
   let cronValid = $state<boolean | null>(null);
@@ -114,6 +118,7 @@
     selectedFile = fileInput?.files?.[0] ?? null;
     parsedPayload = null;
     preview = null;
+    drill = null;
     previewError = '';
     if (!selectedFile) return;
 
@@ -151,6 +156,18 @@
       }
     } finally {
       restoring = false;
+    }
+  }
+
+  async function runRestoreDrill(): Promise<void> {
+    if (!parsedPayload || !preview) return;
+    drilling = true;
+    try {
+      const { ok, data } = await drillBackupRestore(parsedPayload);
+      if (ok) drill = data as BackupRestoreDrill;
+      else previewError = (data as { error?: string }).error ?? 'The restore drill could not validate this backup';
+    } finally {
+      drilling = false;
     }
   }
 </script>
@@ -240,7 +257,20 @@
         </div>
       </div>
     {/if}
-    <Button class="mt-3" variant="destructive" disabled={!selectedFile || !preview} loading={restoring} onclick={restore}>Restore from backup</Button>
+    {#if drill}
+      <div class="mt-3 rounded-md border border-border bg-panel-muted p-3 text-[13px]">
+        <div class={drill.ok ? 'text-success' : 'text-err'}>{drill.ok ? 'Restore drill passed' : 'Restore drill found issues'}</div>
+        <div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-muted">
+          {#each drill.checks as check (check.label)}
+            <span class={check.ok ? '' : 'text-err'}>{check.ok ? '✓' : '×'} {check.label}: {check.detail}</span>
+          {/each}
+        </div>
+      </div>
+    {/if}
+    <div class="mt-3 flex flex-wrap gap-2">
+      <Button variant="secondary" disabled={!selectedFile || !preview} loading={drilling} onclick={runRestoreDrill}>Run restore drill</Button>
+      <Button variant="destructive" disabled={!selectedFile || !preview} loading={restoring} onclick={restore}>Restore from backup</Button>
+    </div>
   </Card>
   {/if}
 

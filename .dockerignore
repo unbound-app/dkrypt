@@ -4,3 +4,4 @@ packages/dkrypt/dist
 packages/dkrypt/test
 packages/dkrypt/**/*.test.ts
 packages/dkrypt/bunfig.toml
+.git

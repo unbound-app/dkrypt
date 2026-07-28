@@ -1,42 +1,42 @@
 export const GENERATED_CHANGELOG = [
   {
-    "date": "2026-07-27",
-    "title": "fix: refine operational controls",
-    "description": "Released in be487ee."
+    "date": "2026-07-28",
+    "title": "chore(deps-dev): bump svelte-check (#8)",
+    "description": "Released in f7545a9."
   },
   {
-    "date": "2026-07-27",
-    "title": "feat: add operational health controls",
-    "description": "Released in 2b01614."
+    "date": "2026-07-28",
+    "title": "chore(deps): bump discord-api-types (#7)",
+    "description": "Released in 1ee3eb2."
   },
   {
-    "date": "2026-07-27",
-    "title": "fix: refresh generated changelog",
-    "description": "Released in d3a4982."
+    "date": "2026-07-28",
+    "title": "fix: preserve checked out moon base branch",
+    "description": "Released in c81f934."
   },
   {
-    "date": "2026-07-27",
-    "title": "feat: add workflow dispatch and release planning",
-    "description": "Released in a9f8aef."
+    "date": "2026-07-28",
+    "title": "fix: provide moon CI base branch",
+    "description": "Released in 78dc96f."
   },
   {
-    "date": "2026-07-27",
-    "title": "fix: preserve changelog generator format",
-    "description": "Released in 77e1641."
+    "date": "2026-07-28",
+    "title": "refactor: move dkrypt into packages",
+    "description": "Released in d8f68b9."
   },
   {
-    "date": "2026-07-27",
-    "title": "feat: enhance job observability and automation controls",
-    "description": "Released in 58ba0f4."
+    "date": "2026-07-28",
+    "title": "feat: add scheduler planning controls",
+    "description": "Released in efd82a7."
   },
   {
-    "date": "2026-07-27",
-    "title": "fix: generate complete release changelog",
-    "description": "Released in ee990fb."
+    "date": "2026-07-28",
+    "title": "docs: simplify project readmes",
+    "description": "Released in 8e90425."
   },
   {
-    "date": "2026-07-27",
-    "title": "fix: verify TestFlight install completion",
-    "description": "Released in d60283b."
+    "date": "2026-07-28",
+    "title": "fix: wait for autoinstall heartbeat",
+    "description": "Released in a1a3264."
   }
 ] as const;

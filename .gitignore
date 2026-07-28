@@ -6,3 +6,4 @@ packages/dkrypt/web/node_modules/
 packages/dkrypt/web/dist/
 data/
 .DS_Store
+.moon/cache/

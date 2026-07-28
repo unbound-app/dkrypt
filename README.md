@@ -45,6 +45,10 @@ It uses the device's signed-in App Store account and `ipadecrypt`; no Apple ID i
 
 Open `http://localhost:8080`, or place your reverse proxy in front of it. The included `Caddyfile` is a starting point.
 
+## Deployment
+
+Pushes to `main` run the Moon check graph, generate the dashboard changelog from Git history, publish an immutable GHCR image, and deploy that exact digest on the homelab runner. The runner only pulls images; it never builds production code. If its health check fails, it starts the previous image again.
+
 ## API
 
 The listed API endpoints use `Authorization: Bearer <API_KEY>`. Completed IPA downloads may also use an expiring signed share token.

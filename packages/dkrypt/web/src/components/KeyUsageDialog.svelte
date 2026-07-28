@@ -1,8 +1,10 @@
 <script lang="ts">
 	import {
 		fetchKeyBundleUsage,
+		fetchKeyOutcomeUsage,
 		fetchKeyUsage,
 		type ApiKeyBundleUsage,
+		type ApiKeyOutcomeUsage,
 		type ApiKeyUsageBucket,
 	} from "#lib/api";
 	import {
@@ -31,15 +33,18 @@
 
 	let usage = $state<ApiKeyUsageBucket[] | null>(null);
 	let bundleUsage = $state<ApiKeyBundleUsage[] | null>(null);
+	let outcomeUsage = $state<ApiKeyOutcomeUsage[] | null>(null);
 
 	$effect(() => {
 		if (open && keyId) {
 			usage = null;
 			bundleUsage = null;
+			outcomeUsage = null;
 			void fetchKeyUsage(keyId, 14).then((r) => (usage = r.usage));
 			void fetchKeyBundleUsage(keyId).then(
 				(r) => (bundleUsage = r.bundles),
 			);
+			void fetchKeyOutcomeUsage(keyId).then((r) => (outcomeUsage = r.outcomes));
 		}
 	});
 
@@ -156,6 +161,22 @@
 								class="w-6 shrink-0 text-right text-xs text-muted"
 								>{b.count}</span
 							>
+						</div>
+					{/each}
+				</div>
+			</div>
+		{/if}
+
+		{#if outcomeUsage === null}
+			<div class="border-border mt-3 border-t pt-3 text-xs text-muted">Loading response outcomes…</div>
+		{:else if outcomeUsage.length > 0}
+			<div class="border-border mt-3 border-t pt-3">
+				<div class="mb-2 text-xs text-muted">Response outcomes</div>
+				<div class="flex flex-col gap-1.5 text-xs">
+					{#each outcomeUsage as outcome (outcome.route)}
+						<div class="flex items-center justify-between gap-2">
+							<span class="truncate font-mono text-muted" title={outcome.route}>{outcome.route}</span>
+							<span class="shrink-0"><span class="text-ok">{outcome.success} ok</span> · <span class={outcome.clientError || outcome.serverError ? 'text-err' : 'text-muted'}>{outcome.clientError + outcome.serverError} failed</span></span>
 						</div>
 					{/each}
 				</div>

@@ -1,6 +1,11 @@
 import type { NextFunction, Request, Response } from '#http.js';
-import { isShareLinkExhausted, isShareLinkExpired, isShareLinkRevoked, recordShareLinkDownload, shareLinkExistsForToken, verifyApiKey } from '#store/state.js';
+import { isShareLinkExhausted, isShareLinkExpired, isShareLinkRevoked, recordApiKeyOutcome, recordShareLinkDownload, shareLinkExistsForToken, verifyApiKey } from '#store/state.js';
 import { verifyTokenSignature } from '#util/signedUrl.js';
+
+function trackApiKeyOutcome(req: Request, res: Response, keyId: string | undefined): void {
+  if (!keyId) return;
+  res.raw.once('finish', () => recordApiKeyOutcome(keyId, req.method, req.path ?? req.url.split('?')[0], res.raw.statusCode));
+}
 
 export function requireApiKey(req: Request, res: Response, next: NextFunction): void {
   const header = req.header('authorization') ?? '';
@@ -21,6 +26,7 @@ export function requireApiKey(req: Request, res: Response, next: NextFunction): 
   res.locals.apiKeyPriority = result.priority ?? 0;
   res.locals.apiKeyId = result.keyId;
   res.locals.apiKeyAllowTestFlight = result.allowTestFlight ?? true;
+  trackApiKeyOutcome(req, res, result.keyId);
   next();
 }
 
@@ -46,6 +52,7 @@ export function requireApiKeyOrSignedToken(req: Request, res: Response, next: Ne
       res.locals.apiKeyOwner = result.ownerId;
       res.locals.apiKeyPriority = result.priority ?? 0;
       res.locals.apiKeyId = result.keyId;
+      trackApiKeyOutcome(req, res, result.keyId);
       next();
       return;
     }

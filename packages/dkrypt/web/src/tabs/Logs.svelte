@@ -37,6 +37,8 @@
   let regexMode = $state(getQueryParam('regex') === '1' || (getQueryParam('regex') === null && localStorage.getItem('logRegexMode') === 'true'));
   let autoScroll = $state(localStorage.getItem('logAutoScroll') !== 'false');
   let initialLogs = $state<LogEntry[] | null>(null);
+  let totalLogs = $state(0);
+  let loadingOlder = $state(false);
   let listEl: HTMLDivElement | undefined = $state();
   let stickToTop = $state(true);
   const savedViews = createSavedViews<LogFilterPreset>('logFilterPresets');
@@ -89,12 +91,6 @@
   };
 
   $effect(() => {
-    void fetchLogs().then((d) => {
-      initialLogs = d.logs;
-    });
-  });
-
-  $effect(() => {
     localStorage.setItem('logScopeFilter', scopeFilter);
   });
   $effect(() => {
@@ -110,23 +106,24 @@
     localStorage.setItem('logSearchText', searchText);
   });
 
-  const regexError = $derived.by(() => {
-    if (!regexMode || !searchText.trim()) return null;
+  const regexPattern = $derived.by((): { matcher?: RegExp; error?: string } => {
+    if (!regexMode || !searchText.trim()) return {};
     try {
-      new RegExp(searchText);
-      return null;
+      return { matcher: new RegExp(searchText.trim(), 'i') };
     } catch (e) {
-      return e instanceof Error ? e.message : String(e);
+      return { error: e instanceof Error ? e.message : String(e) };
     }
   });
+
+  const regexError = $derived(regexPattern.error ?? null);
+  const searchMatcher = $derived(regexPattern.matcher);
 
   function matchesSearch(l: LogEntry): boolean {
     const q = searchText.trim();
     if (!q) return true;
     if (regexMode) {
       if (regexError) return false;
-      const re = new RegExp(q, 'i');
-      return re.test(l.message) || re.test(fmtLogMeta(l.meta));
+      return Boolean(searchMatcher?.test(l.message) || searchMatcher?.test(fmtLogMeta(l.meta)));
     }
     return l.message.toLowerCase().includes(q.toLowerCase()) || fmtLogMeta(l.meta).toLowerCase().includes(q.toLowerCase());
   }
@@ -154,6 +151,45 @@
     }
     return merged;
   });
+
+  let requestSequence = 0;
+
+  $effect(() => {
+    const scope = scopeFilter;
+    const level = levelFilter;
+    const q = searchText.trim();
+    const regex = regexMode;
+    if (regexError) {
+      initialLogs = [];
+      totalLogs = 0;
+      return;
+    }
+    const sequence = ++requestSequence;
+    initialLogs = null;
+    void fetchLogs({ scope, level, q, regex, limit: 100 }).then((result) => {
+      if (sequence !== requestSequence) return;
+      initialLogs = result.logs;
+      totalLogs = result.total;
+    }).catch(() => {
+      if (sequence !== requestSequence) return;
+      initialLogs = [];
+      totalLogs = 0;
+    });
+  });
+
+  async function loadOlder(): Promise<void> {
+    if (loadingOlder || !initialLogs || initialLogs.length >= totalLogs) return;
+    const sequence = requestSequence;
+    loadingOlder = true;
+    try {
+      const result = await fetchLogs({ scope: scopeFilter, level: levelFilter, q: searchText.trim(), regex: regexMode, offset: initialLogs.length, limit: 100 });
+      if (sequence !== requestSequence) return;
+      initialLogs = [...initialLogs, ...result.logs];
+      totalLogs = result.total;
+    } finally {
+      loadingOlder = false;
+    }
+  }
 
   function exportCsv(): void {
     const rows = ['ts,level,scope,message,meta'];
@@ -334,6 +370,9 @@
     </div>
     {#if filtered.length === 0}
       <EmptyState icon={ScrollText} message="No log entries yet." />
+    {/if}
+    {#if initialLogs && initialLogs.length < totalLogs}
+      <Button class="mt-3" variant="secondary" loading={loadingOlder} onclick={loadOlder}>Load older logs ({totalLogs - initialLogs.length} remaining)</Button>
     {/if}
   {/if}
 </Card>

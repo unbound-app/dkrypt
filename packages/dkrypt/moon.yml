@@ -17,6 +17,7 @@ tasks:
       - '~:test'
       - '~:typecheck'
       - web:typecheck
+      - web:build
   composeBuild:
     command: docker
     args:

@@ -5,7 +5,7 @@ services:
       dockerfile: packages/dkrypt/Dockerfile
       args:
         BUILD_REF: ${BUILD_REF:-development}
-    image: dkrypt
+    image: ${DKRYPT_IMAGE:-dkrypt:latest}
     container_name: dkrypt
     restart: unless-stopped
     network_mode: host

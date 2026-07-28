@@ -6,13 +6,14 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   ci:
     name: Typecheck & test
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: packages/dkrypt
     steps:
       - uses: actions/checkout@v7
         with:
@@ -21,18 +22,51 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
-      - run: bun install --frozen-lockfile
-      - run: bun run typecheck
-      - run: bun test
-      - run: bun run typecheck:web
-      - run: bun run build:web
-      - name: Verify Moon task graph
-        working-directory: .
+      - name: Install workspace dependencies
+        run: |
+          cd packages/dkrypt && bun install --frozen-lockfile
+          cd web && bun install --frozen-lockfile
+      - name: Run Moon checks
         run: bunx @moonrepo/cli@2.4.6 run dkrypt:check
+
+  image:
+    name: Build immutable image
+    needs: ci
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Generate changelog asset
+        run: |
+          cd packages/dkrypt/web
+          bun install --frozen-lockfile
+          bun run scripts/generate-changelog.ts
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        id: build
+        with:
+          context: .
+          file: packages/dkrypt/Dockerfile
+          push: true
+          build-args: BUILD_REF=${{ github.sha }}
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ github.sha }}
+            ghcr.io/${{ github.repository }}:main
 
   deploy:
     name: Deploy to homelab
-    needs: ci
+    needs: image
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: [self-hosted, homelab]
     timeout-minutes: 15
@@ -40,16 +74,29 @@ jobs:
       group: deploy-homelab
       cancel-in-progress: false
     steps:
-      - name: Pull and rebuild
+      - name: Update deployment configuration
         run: |
           set -e
           git config --global --add safe.directory /home/adrian/dkrypt
           cd /home/adrian/dkrypt
           git fetch origin main
           git merge --ff-only origin/main
-          docker tag dkrypt:latest dkrypt:previous 2>/dev/null || true
-          BUILD_REF="$(git rev-parse HEAD)" docker compose build api
-          docker compose up -d api
+      - name: Pull and deploy immutable image
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE: ghcr.io/${{ github.repository }}@${{ needs.image.outputs.digest }}
+        run: |
+          set -e
+          cd /home/adrian/dkrypt
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          if docker container inspect dkrypt >/dev/null 2>&1; then
+            docker tag "$(docker inspect --format '{{.Image}}' dkrypt)" dkrypt:previous
+          elif docker image inspect dkrypt:latest >/dev/null 2>&1; then
+            docker tag dkrypt:latest dkrypt:previous
+          fi
+          docker pull "$IMAGE"
+          docker tag "$IMAGE" dkrypt:latest
+          DKRYPT_IMAGE="$IMAGE" docker compose up -d --no-build api
 
       - name: Wait for health, roll back on failure
         run: |
@@ -69,8 +116,7 @@ jobs:
 
           if docker image inspect dkrypt:previous >/dev/null 2>&1; then
             echo "rolling back to the previous image" >&2
-            docker tag dkrypt:previous dkrypt:latest
-            docker compose -f /home/adrian/dkrypt/docker-compose.yml up -d api
+            DKRYPT_IMAGE=dkrypt:previous docker compose -f /home/adrian/dkrypt/docker-compose.yml up -d --no-build api
           else
             echo "no previous image to roll back to" >&2
           fi

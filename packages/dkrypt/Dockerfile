@@ -4,15 +4,11 @@ RUN go install github.com/londek/ipadecrypt/cmd/ipadecrypt@${IPADECRYPT_VERSION}
 
 FROM oven/bun:1-slim AS web
 WORKDIR /web
-RUN apt-get update && apt-get install -y --no-install-recommends git \
-  && rm -rf /var/lib/apt/lists/*
 COPY packages/dkrypt/web/package.json packages/dkrypt/web/bun.lock ./
 RUN bun install --frozen-lockfile
-COPY .git /repo/.git
 COPY packages/dkrypt/web ./
 ARG BUILD_REF=development
 ENV VITE_BUILD_REF=$BUILD_REF
-ENV GIT_DIR=/repo/.git
 RUN bun run build
 
 FROM oven/bun:1-slim

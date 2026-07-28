@@ -7,7 +7,7 @@ import { getBillingEntitlements } from '#billing.js';
 import { blockDuringMaintenance, getMaintenanceStatus } from '#maintenance.js';
 import { jobSummary, streamJobFile } from '#jobs/http.js';
 import { cancelJob, enqueueDecryptJob, getActiveJobs, getJob, prioritizeQueuedJob, reorderQueue } from '#jobs/store.js';
-import type { LogEntry } from '#logger.js';
+import type { LogEntry, LogLevel } from '#logger.js';
 import { getRecentLogs } from '#logger.js';
 import { EMBED_COLOR, notify, sendTestNotification } from '#notify.js';
 import { resolveNotifyEmail, sendMailToUser } from '#mail.js';
@@ -56,6 +56,7 @@ import {
   getAllJobHistory,
   getApiKeyById,
   getApiKeyBundleUsage,
+  getApiKeyOutcomeUsage,
   getApiKeyUsage,
   getAuditLog,
   getAverageJobDurationMs,
@@ -83,6 +84,7 @@ import {
   getLastSchedulerRunAt,
   getPrimaryDevice,
   getSchedulerRunHistory,
+  getGitHubBudgetTelemetry,
   getWatchHealthRollup,
   getUserPrefs,
   getUserPriority,
@@ -103,6 +105,7 @@ import {
   listAllShareLinks,
   listShareLinksForJob,
   previewBackup,
+  drillBackupRestore,
   recordAudit,
   recordDeviceActivity,
   recordShareLink,
@@ -293,8 +296,18 @@ dashboardRouter.get('/v1/dashboard/jobs', (req, res) => {
   });
 });
 
-dashboardRouter.get('/v1/dashboard/logs', canViewLogs, (_req, res) => {
-  res.json({ logs: getRecentLogs() });
+dashboardRouter.get('/v1/dashboard/logs', canViewLogs, (req, res) => {
+  const scope = typeof req.query.scope === 'string' && req.query.scope !== 'all' ? req.query.scope.slice(0, 100) : undefined;
+  const level = typeof req.query.level === 'string' && ['info', 'warn', 'error'].includes(req.query.level) ? req.query.level as LogLevel : undefined;
+  const query = typeof req.query.q === 'string' && req.query.q.trim() ? req.query.q.trim().slice(0, 100) : undefined;
+  const regex = req.query.regex === '1';
+  const offset = Math.max(0, Number.parseInt(String(req.query.offset ?? '0'), 10) || 0);
+  const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit ?? '100'), 10) || 100, 1), 200);
+  try {
+    res.json(getRecentLogs({ scope, level, query, regex, offset, limit }));
+  } catch {
+    res.status(400).json({ error: 'invalid log search pattern' });
+  }
 });
 
 dashboardRouter.get('/v1/dashboard/webhooks', canViewLogs, (req, res) => {
@@ -860,7 +873,9 @@ dashboardRouter.get('/v1/dashboard/watches/health', canViewScheduler, (_req, res
 
 dashboardRouter.get('/v1/dashboard/watches/calendar', canViewScheduler, (req, res) => {
   const hours = Math.min(Math.max(Number.parseInt(String(req.query.hours ?? '24'), 10) || 24, 1), 168);
-  const fromAt = Date.now();
+  const requestedFromAt = Number.parseInt(String(req.query.fromAt ?? ''), 10);
+  const now = Date.now();
+  const fromAt = Number.isFinite(requestedFromAt) && Math.abs(requestedFromAt - now) <= 90 * 24 * 60 * 60 * 1000 ? requestedFromAt : now;
   const untilAt = fromAt + hours * 60 * 60 * 1000;
   const maxRuns = 200;
   const runs: { watchId: string; bundleId: string; at: number }[] = [];
@@ -877,7 +892,12 @@ dashboardRouter.get('/v1/dashboard/watches/calendar', canViewScheduler, (req, re
     const followingAt = nextCronRuns(next.watch.pollCron, untilAt, next.at, 1)[0];
     if (followingAt !== undefined) pending.push({ watch: next.watch, at: followingAt });
   }
-  res.json({ untilAt, runs, truncated: pending.length > 0 });
+  res.json({ fromAt, untilAt, runs, truncated: pending.length > 0 });
+});
+
+dashboardRouter.get('/v1/dashboard/github/budget-history', canManageWatches, (req, res) => {
+  const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit ?? '30'), 10) || 30, 1), 200);
+  res.json({ entries: getGitHubBudgetTelemetry(limit) });
 });
 
 dashboardRouter.get('/v1/dashboard/github/repos', canManageWatches, async (_req, res) => {
@@ -1604,6 +1624,21 @@ dashboardRouter.get('/v1/dashboard/keys/:id/bundle-usage', requirePermission(Per
   res.json({ bundles: getApiKeyBundleUsage(req.params.id, limit) });
 });
 
+dashboardRouter.get('/v1/dashboard/keys/:id/outcomes', requirePermission(PermissionFlag.createApiKeys, PermissionFlag.viewApiKeys, PermissionFlag.manageApiKeys), (req, res) => {
+  const key = getApiKeyById(req.params.id);
+  if (!key) {
+    res.status(404).json({ error: 'key not found' });
+    return;
+  }
+  const { sub, permissions } = res.locals.session;
+  if (key.ownerId !== sub && !hasPermission(permissions, PermissionFlag.viewApiKeys) && !hasPermission(permissions, PermissionFlag.manageApiKeys)) {
+    res.status(403).json({ error: "not your key" });
+    return;
+  }
+  const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit ?? '10'), 10) || 10, 1), 30);
+  res.json({ outcomes: getApiKeyOutcomeUsage(req.params.id, limit) });
+});
+
 dashboardRouter.get('/v1/dashboard/keys/pending', canApproveApiKeys, (_req, res) => {
   res.json({ keys: listPendingApiKeys() });
 });
@@ -2121,6 +2156,15 @@ dashboardRouter.post('/v1/dashboard/backup/preview', canManageBackup, (req, res)
     return;
   }
   res.json(result.summary);
+});
+
+dashboardRouter.post('/v1/dashboard/backup/drill', canManageBackup, (req, res) => {
+  const result = drillBackupRestore(req.body);
+  if (!result.ok) {
+    res.status(400).json({ error: result.error });
+    return;
+  }
+  res.json(result.drill);
 });
 
 dashboardRouter.get('/v1/dashboard/backup/schedule', canViewBackup, (_req, res) => {
