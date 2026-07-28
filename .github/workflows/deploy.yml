@@ -15,6 +15,9 @@ jobs:
         working-directory: packages/dkrypt
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - run: git branch --force main origin/main
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
