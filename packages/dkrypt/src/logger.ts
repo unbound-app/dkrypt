@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import safeRegex from 'safe-regex2';
 import { config } from '#config.js';
 import { emitLogAdded } from '#events.js';
 
@@ -47,6 +48,7 @@ function record(entry: LogEntry): void {
 
 export function getRecentLogs(query: LogQuery = {}): { logs: LogEntry[]; total: number } {
   const search = query.query?.trim();
+  if (search && query.regex && !safeRegex(search, { limit: 8 })) throw new Error('unsafe log search pattern');
   const matcher = search && query.regex ? new RegExp(search, 'i') : undefined;
   const normalizedSearch = search?.toLowerCase();
   const matches = (entry: LogEntry): boolean => {

@@ -306,7 +306,7 @@ dashboardRouter.get('/v1/dashboard/logs', canViewLogs, (req, res) => {
   try {
     res.json(getRecentLogs({ scope, level, query, regex, offset, limit }));
   } catch {
-    res.status(400).json({ error: 'invalid log search pattern' });
+    res.status(400).json({ error: 'log search pattern is invalid or unsafe' });
   }
 });
 

@@ -32,6 +32,7 @@
     "node-cron": "^4.6.0",
     "nodemailer": "^9.0.3",
     "plist": "^5.0.0",
+    "safe-regex2": "^5.1.1",
     "ssh2": "^1.17.0",
     "web-push": "^3.6.7"
   },
