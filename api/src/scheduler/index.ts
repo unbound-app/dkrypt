@@ -31,7 +31,7 @@ import { compareVersions, normalizeVersion } from '#util/version.js';
 import { listAppVersions } from '#versions.js';
 import { dispatchIpaUpdate, findDispatchedRun, getRun, listReleaseTagNames, listReleaseVersions, type WorkflowRun } from '#scheduler/github.js';
 import { lookupCurrentVersion } from '#scheduler/itunes.js';
-import { selectAppStoreVersion } from '#scheduler/appStoreVersion.js';
+import { resolveAppStoreDecryptTarget } from '#scheduler/appStoreVersion.js';
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -413,18 +413,21 @@ async function tickAppStore(watch: AppWatch): Promise<DispatchResult> {
 
   const normalized = check.normalizedVersion as string;
 
-  let externalVersionId: string;
+  let externalVersionId: string | undefined;
   try {
     const versions = await listAppVersions(watch.bundleId);
-    const target = selectAppStoreVersion(versions, normalized);
-    if (!target) throw new Error(`no App Store external version id matched ${normalized}`);
-    externalVersionId = target.externalVersionId;
+    externalVersionId = resolveAppStoreDecryptTarget(versions, normalized).externalVersionId;
+    if (!externalVersionId) {
+      log.info('no App Store external version id matched the current version, dispatching an unpinned install that will verify the installed version', {
+        bundleId: watch.bundleId,
+        version: normalized,
+      });
+    }
   } catch (err) {
-    log.error('failed to resolve the App Store external version id, refusing to dispatch to avoid decrypting the wrong build on device', {
+    log.warn('failed to resolve the App Store external version id, dispatching an unpinned install that will verify the installed version', {
       bundleId: watch.bundleId,
       error: String(err),
     });
-    return { outcome: { ok: false, triggered: false, reason: `Failed to resolve App Store version id: ${String(err)}` } };
   }
 
   log.info('no matching release found, decrypting', { bundleId: watch.bundleId, version: normalized, externalVersionId });

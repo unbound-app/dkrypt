@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { selectAppStoreVersion } from './appStoreVersion.js';
+import { resolveAppStoreDecryptTarget, selectAppStoreVersion } from './appStoreVersion.js';
 
 test('selects the version matching the App Store lookup instead of stale latest metadata', () => {
   const version = selectAppStoreVersion(
@@ -11,4 +11,8 @@ test('selects the version matching the App Store lookup instead of stale latest 
   );
 
   expect(version?.externalVersionId).toBe('888477548');
+});
+
+test('keeps the current App Store release schedulable while its external version id is unavailable', () => {
+  expect(resolveAppStoreDecryptTarget([], '339.0')).toEqual({ expectedVersion: '339.0' });
 });
