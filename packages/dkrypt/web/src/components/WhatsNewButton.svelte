@@ -23,6 +23,7 @@
 	let open = $state(false);
 	let lastViewedDate = $state(localStorage.getItem(LAST_VIEWED_KEY) ?? "");
 	let changelogList = $state<HTMLDivElement>();
+	let resetFrame = $state<number | undefined>(undefined);
 
 	const hasUnseen = $derived(
 		newestEntryKey !== "" && newestEntryKey !== lastViewedDate,
@@ -34,7 +35,11 @@
 			lastViewedDate = newestEntryKey;
 			localStorage.setItem(LAST_VIEWED_KEY, newestEntryKey);
 			await tick();
-			changelogList?.scrollTo({ top: 0 });
+			if (changelogList) changelogList.scrollTop = 0;
+			if (resetFrame) cancelAnimationFrame(resetFrame);
+			resetFrame = requestAnimationFrame(() => {
+				if (changelogList) changelogList.scrollTop = 0;
+			});
 		}
 	}
 
