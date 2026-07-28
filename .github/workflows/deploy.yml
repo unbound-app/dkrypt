@@ -74,20 +74,22 @@ jobs:
       group: deploy-homelab
       cancel-in-progress: false
     steps:
-      - name: Update deployment configuration
+      - name: Migrate runtime configuration
         run: |
           set -e
-          git config --global --add safe.directory /home/adrian/dkrypt
-          cd /home/adrian/dkrypt
-          git fetch origin main
-          git merge --ff-only origin/main
+          RUNTIME_DIR=/home/adrian/.local/share/dkrypt
+          LEGACY_DIR=/home/adrian/dkrypt
+          install -d -m 700 "$RUNTIME_DIR"
+          if [ ! -f "$RUNTIME_DIR/.env" ] && [ -f "$LEGACY_DIR/.env" ]; then
+            install -m 600 "$LEGACY_DIR/.env" "$RUNTIME_DIR/.env"
+          fi
+          test -f "$RUNTIME_DIR/.env"
       - name: Pull and deploy immutable image
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           IMAGE: ghcr.io/${{ github.repository }}@${{ needs.image.outputs.digest }}
         run: |
           set -e
-          cd /home/adrian/dkrypt
           printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
           if docker container inspect dkrypt >/dev/null 2>&1; then
             docker tag "$(docker inspect --format '{{.Image}}' dkrypt)" dkrypt:previous
@@ -96,7 +98,19 @@ jobs:
           fi
           docker pull "$IMAGE"
           docker tag "$IMAGE" dkrypt:latest
-          DKRYPT_IMAGE="$IMAGE" docker compose up -d --no-build api
+          docker rm -f dkrypt 2>/dev/null || true
+          docker run -d \
+            --name dkrypt \
+            --restart unless-stopped \
+            --network host \
+            --env-file /home/adrian/.local/share/dkrypt/.env \
+            -e PORT=8080 \
+            -e BIND_HOST=127.0.0.1 \
+            --mount type=volume,src=dkrypt_appstore-config,dst=/root/.ipadecrypt \
+            --mount type=volume,src=dkrypt_ipa-tmp,dst=/data/tmp \
+            --mount type=volume,src=dkrypt_state,dst=/data/state \
+            --mount type=bind,src=/home/adrian/.ssh/id_ed25519_ipad,dst=/root/.ssh/id_ed25519,readonly \
+            "$IMAGE"
 
       - name: Wait for health, roll back on failure
         run: |
@@ -112,12 +126,32 @@ jobs:
           done
 
           echo "service did not become healthy in time" >&2
-          docker compose -f /home/adrian/dkrypt/docker-compose.yml logs --tail 50 api
+          docker logs --tail 50 dkrypt || true
 
           if docker image inspect dkrypt:previous >/dev/null 2>&1; then
             echo "rolling back to the previous image" >&2
-            DKRYPT_IMAGE=dkrypt:previous docker compose -f /home/adrian/dkrypt/docker-compose.yml up -d --no-build api
+            docker rm -f dkrypt 2>/dev/null || true
+            docker run -d \
+              --name dkrypt \
+              --restart unless-stopped \
+              --network host \
+              --env-file /home/adrian/.local/share/dkrypt/.env \
+              -e PORT=8080 \
+              -e BIND_HOST=127.0.0.1 \
+              --mount type=volume,src=dkrypt_appstore-config,dst=/root/.ipadecrypt \
+              --mount type=volume,src=dkrypt_ipa-tmp,dst=/data/tmp \
+              --mount type=volume,src=dkrypt_state,dst=/data/state \
+              --mount type=bind,src=/home/adrian/.ssh/id_ed25519_ipad,dst=/root/.ssh/id_ed25519,readonly \
+              dkrypt:previous
           else
             echo "no previous image to roll back to" >&2
           fi
           exit 1
+
+      - name: Remove legacy checkout
+        run: |
+          set -e
+          LEGACY_DIR=/home/adrian/dkrypt
+          if [ -d "$LEGACY_DIR" ] && [ ! -L "$LEGACY_DIR" ]; then
+            rm -rf -- "$LEGACY_DIR"
+          fi

@@ -47,7 +47,7 @@ Open `http://localhost:8080`, or place your reverse proxy in front of it.
 
 ## Deployment
 
-Pushes to `main` run the Moon check graph, generate the dashboard changelog from Git history, publish an immutable GHCR image, and deploy that exact digest on the homelab runner. The runner only pulls images; it never builds production code. If its health check fails, it starts the previous image again.
+Pushes to `main` run the Moon check graph, generate the dashboard changelog from Git history, publish an immutable GHCR image, and deploy that exact digest on the homelab runner. The runner keeps only the runtime `.env` in `/home/adrian/.local/share/dkrypt`, pulls images, and never retains a source checkout. If its health check fails, it starts the previous image again.
 
 ## API
 
