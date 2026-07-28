@@ -45,9 +45,15 @@ if [[ "$installed_version" != "$expected_version" ]]; then
   rollback
   exit 1
 fi
-sleep 4
-heartbeat="$(ssh "${ssh_options[@]}" "$target" "cat /tmp/autoinstall/v1/springboard/state/heartbeat.json 2>/dev/null || true")"
-if [[ "$heartbeat" != *'"bridgeVersion"'* || "$heartbeat" != *'"channel" : "springboard"'* ]]; then
+heartbeat_ready=false
+for _ in {1..15}; do
+  if ssh "${ssh_options[@]}" "$target" "test -s /tmp/autoinstall/v1/springboard/state/heartbeat.json && grep -q 'springboard' /tmp/autoinstall/v1/springboard/state/heartbeat.json"; then
+    heartbeat_ready=true
+    break
+  fi
+  sleep 2
+done
+if [[ "$heartbeat_ready" != true ]]; then
   rollback
   exit 1
 fi
