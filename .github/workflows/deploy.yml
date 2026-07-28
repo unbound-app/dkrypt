@@ -74,16 +74,6 @@ jobs:
       group: deploy-homelab
       cancel-in-progress: false
     steps:
-      - name: Migrate runtime configuration
-        run: |
-          set -e
-          RUNTIME_DIR=/home/adrian/.local/share/dkrypt
-          LEGACY_DIR=/home/adrian/dkrypt
-          install -d -m 700 "$RUNTIME_DIR"
-          if [ ! -f "$RUNTIME_DIR/.env" ] && [ -f "$LEGACY_DIR/.env" ]; then
-            install -m 600 "$LEGACY_DIR/.env" "$RUNTIME_DIR/.env"
-          fi
-          test -f "$RUNTIME_DIR/.env"
       - name: Pull and deploy immutable image
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -147,12 +137,3 @@ jobs:
             echo "no previous image to roll back to" >&2
           fi
           exit 1
-
-      - name: Remove legacy checkout
-        run: |
-          set -e
-          LEGACY_DIR=/home/adrian/dkrypt
-          if [ -d "$LEGACY_DIR" ] && [ ! -L "$LEGACY_DIR" ]; then
-            cd /tmp
-            find "$LEGACY_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
-          fi
