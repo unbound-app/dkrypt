@@ -16,7 +16,7 @@ elif [[ "$mode" != "rollback" || ! -f "$package_path" ]]; then
   exit 64
 fi
 
-expected_version="$(dpkg-deb -f "$package_path" Version)"
+expected_version="$(awk -F': ' '$1 == "Version" { print $2 }' "$root_dir/packages/autoinstall/control")"
 previous_version="$(ssh "${ssh_options[@]}" "$target" "dpkg-query -W -f='\${Version}' dev.adrian.autoinstall 2>/dev/null || true")"
 previous_package=""
 if [[ -n "$previous_version" ]]; then
