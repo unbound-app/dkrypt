@@ -266,6 +266,11 @@ async function sendBridgeRequestRawTo(
       const raw = await readRemoteFileIfExists(conn, responsePath);
       if (raw) {
         const parsed = JSON.parse(raw);
+        if (typeof parsed.requestId === 'string' && parsed.requestId !== requestId) {
+          log.warn('discarding autoinstall bridge response with a mismatched request id', { requestId, responseRequestId: parsed.requestId, requestPath });
+          await execCommand(conn, `rm -f ${responsePath}`);
+          continue;
+        }
         if (parsed.ok === false) {
           const error = parsed.error;
           if (error && typeof error === 'object') {

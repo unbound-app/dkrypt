@@ -52,7 +52,7 @@
     </div>
     <div class="flex shrink-0 gap-1.5">
       <Button size="sm" variant="secondary" onclick={() => void copyDeepLink()}><Copy class="h-3.5 w-3.5" />Link</Button>
-      <Button size="sm" variant="secondary" onclick={() => void recoverHandoff()}><Link class="h-3.5 w-3.5" />Handoff</Button>
+      {#if timeline?.status === 'done'}<Button size="sm" variant="secondary" onclick={() => void recoverHandoff()}><Link class="h-3.5 w-3.5" />Handoff</Button>{/if}
       <a href={jobDiagnosticUrl(jobId)} download><Button size="sm" variant="secondary"><Download class="h-3.5 w-3.5" />Diagnostic</Button></a>
     </div>
   </div>

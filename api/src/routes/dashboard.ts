@@ -720,16 +720,17 @@ dashboardRouter.get('/v1/dashboard/devices/:id/preflight', canViewDevices, async
     return;
   }
   const health = await getDeviceHealth(device.id, true);
+  const isPrimary = device.id === getPrimaryDevice().id;
   let bridge: Awaited<ReturnType<typeof getTestFlightBridgeDiagnostics>> | undefined;
-  if (device.id === getPrimaryDevice().id && health.reachable) {
+  if (isPrimary && health.reachable) {
     bridge = await getTestFlightBridgeDiagnostics().catch(() => undefined);
   }
   const checks = [
     { label: 'SSH connection', ok: health.reachable, detail: health.error },
     { label: 'Internet access', ok: health.internetAccess !== false, detail: health.internetAccess === false ? 'Device cannot reach Apple services' : undefined },
-    { label: 'autoinstall bridge', ok: health.testFlightBridgeReachable !== false, detail: health.testFlightBridgeReachable === false ? 'Bridge did not respond' : undefined },
+    { label: 'autoinstall bridge', ok: isPrimary ? health.testFlightBridgeReachable === true : true, detail: isPrimary ? health.testFlightBridgeReachable === true ? undefined : 'Bridge did not respond' : 'App Store and TestFlight automation run on the primary device' },
     { label: 'Device readiness', ok: health.readiness?.state !== 'blocked', detail: health.readiness?.reasons.join(' · ') || undefined },
-    { label: 'Bridge compatibility', ok: bridge ? Boolean(bridge.bridge.bridgeVersion) : true, detail: bridge?.bridge.bridgeVersion ? `autoinstall ${bridge.bridge.bridgeVersion}` : undefined },
+    { label: 'Bridge compatibility', ok: isPrimary ? Boolean(bridge?.bridge.bridgeVersion) : true, detail: bridge?.bridge.bridgeVersion ? `autoinstall ${bridge.bridge.bridgeVersion}` : isPrimary ? 'No autoinstall version reported' : 'Checked on the primary device' },
   ];
   res.json({ device, health, bridge, checks, ready: checks.every((check) => check.ok) });
 });
