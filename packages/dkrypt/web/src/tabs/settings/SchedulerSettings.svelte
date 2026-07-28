@@ -23,7 +23,6 @@
 		importWatches,
 		fetchTestFlightBridgeDiagnostics,
 		fetchWatchHealth,
-		fetchWatchCalendar,
 		previewWatchDispatchSource,
 		previewWatchDispatchDraft,
 		validateWatchDispatchDraft,
@@ -49,7 +48,6 @@
 		type UpdateCheck,
 		type WatchInput,
 		type WatchHealthSummary,
-		type SchedulerCalendarRun,
 		type WebhookDeliveryEntry,
 	} from "#lib/api";
 	import Badge from "#lib/components/ui/Badge.svelte";
@@ -306,11 +304,6 @@
 	let watchImportInput = $state<HTMLInputElement | null>(null);
 	let appCatalogStats = $state<AppCatalogStats | null>(null);
 	let refreshingCatalog = $state(false);
-	let calendarRuns = $state<SchedulerCalendarRun[]>([]);
-	let calendarTruncated = $state(false);
-	let calendarHours = $state<24 | 168>(24);
-	let calendarVisibleCount = $state(30);
-	let calendarFromAt = $state<number | undefined>(undefined);
 	let githubBudgetTelemetry = $state<GitHubBudgetTelemetryEntry[]>([]);
 
 	const watches = $derived(liveState.overview?.watches ?? []);
@@ -338,19 +331,6 @@
 		const load = () => void fetchWatchHealth().then(({ watches: next }) => (watchHealth = next)).catch(() => undefined);
 		load();
 		const interval = setInterval(load, 30_000);
-		return () => clearInterval(interval);
-	});
-
-	$effect(() => {
-		const hours = calendarHours;
-		const fromAt = calendarFromAt;
-		const load = () => void fetchWatchCalendar(hours, fromAt).then(({ runs, truncated }) => {
-			calendarRuns = runs;
-			calendarTruncated = truncated;
-			calendarVisibleCount = 30;
-		}).catch(() => undefined);
-		load();
-		const interval = setInterval(load, 60_000);
 		return () => clearInterval(interval);
 	});
 
@@ -1009,36 +989,6 @@
 					{/each}
 				</div>
 			</div>
-		{/if}
-	</Card>
-
-	<Card title={`Next ${calendarHours === 24 ? "24 hours" : "7 days"}`}>
-		{#snippet headerExtra()}
-			<div class="flex gap-1">
-				<Button size="sm" variant={calendarHours === 24 ? "default" : "secondary"} onclick={() => (calendarHours = 24)}>24h</Button>
-				<Button size="sm" variant={calendarHours === 168 ? "default" : "secondary"} onclick={() => (calendarHours = 168)}>7d</Button>
-				<Button size="sm" variant="secondary" onclick={() => (calendarFromAt = (calendarFromAt ?? Date.now()) - calendarHours * 60 * 60 * 1000)}>Previous</Button>
-				<Button size="sm" variant="secondary" onclick={() => (calendarFromAt = (calendarFromAt ?? Date.now()) + calendarHours * 60 * 60 * 1000)}>Next</Button>
-				{#if calendarFromAt}<Button size="sm" variant="secondary" onclick={() => (calendarFromAt = undefined)}>Now</Button>{/if}
-			</div>
-		{/snippet}
-		{#if calendarRuns.length === 0}
-			<p class="text-sm text-muted">No schedulable watch runs are due in this time window.</p>
-		{:else}
-			{#if calendarTruncated}
-				<p class="mb-2 text-xs text-muted">Showing the first 200 scheduled runs.</p>
-			{/if}
-			<div class="flex flex-col gap-1.5">
-				{#each calendarRuns.slice(0, calendarVisibleCount) as run (`${run.watchId}-${run.at}`)}
-					<div class="border-border flex items-center justify-between rounded-lg border px-3 py-2 text-sm">
-						<span>{appDisplayName(run.bundleId)}</span>
-						<span class="text-muted"><RelativeTime ms={run.at} /></span>
-					</div>
-				{/each}
-			</div>
-			{#if calendarVisibleCount < calendarRuns.length}
-				<Button class="mt-2" variant="secondary" onclick={() => (calendarVisibleCount = Math.min(calendarVisibleCount + 30, calendarRuns.length))}>Show more ({calendarRuns.length - calendarVisibleCount} remaining)</Button>
-			{/if}
 		{/if}
 	</Card>
 
