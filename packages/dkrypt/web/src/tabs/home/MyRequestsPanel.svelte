@@ -277,9 +277,7 @@
 				{#each myDecryptsState.items as d (d.id)}
 					<tr
 						data-job-id={d.id}
-						class={d.id === highlightedId
-							? "bg-panel-muted/80 rounded-lg transition-colors duration-1000"
-							: "transition-colors duration-1000"}
+						class:job-highlight={d.id === highlightedId}
 					>
 						<td data-label="App" class="max-w-40 truncate">
 							<div class="flex items-center justify-end gap-1.5">

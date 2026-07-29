@@ -347,6 +347,10 @@
 	}
 
 	async function disconnectIdentity(provider: "github" | "discord"): Promise<void> {
+		if ((sessionState.identities?.length ?? 0) < 2) {
+			showToast("Connect another sign-in method before removing this one.", "error");
+			return;
+		}
 		if (!(await confirmDialog(`Disconnect ${provider === "github" ? "GitHub" : "Discord"}? It will no longer sign you in to this account.`, { confirmLabel: "Disconnect", variant: "destructive" }))) return;
 		const response = await fetch(`/v1/auth/connections/${provider}`, { method: "DELETE" });
 		if (!response.ok) {
@@ -732,9 +736,9 @@
 													? "GitHub"
 													: "Discord"}</span
 											>
-											<span class="truncate"
-												>{identity.displayName} · @{identity.username}</span
-											>
+										<span class="min-w-0 flex-1 truncate"
+											>{identity.displayName} · @{identity.username}</span
+										>
 											{#if (sessionState.identities?.length ?? 0) > 1}
 												<button class="ml-auto shrink-0 text-xs text-muted hover:text-danger" onclick={() => disconnectIdentity(identity.provider)}>Disconnect</button>
 											{/if}

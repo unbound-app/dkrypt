@@ -17,7 +17,6 @@
 		fetchWebhookDeliveries,
 		fetchGithubRepos,
 		fetchGithubRateLimit,
-		fetchGitHubBudgetTelemetry,
 		fetchGithubWorkflows,
 		fetchAppCatalogStats,
 		importWatches,
@@ -40,7 +39,6 @@
 		type DispatchValidationResult,
 		type GithubRepoOption,
 		type GithubRateLimit,
-		type GitHubBudgetTelemetryEntry,
 		type GithubWorkflowOption,
 		type SchedulerSettings,
 		type TestFlightUpdateCheck,
@@ -304,7 +302,6 @@
 	let watchImportInput = $state<HTMLInputElement | null>(null);
 	let appCatalogStats = $state<AppCatalogStats | null>(null);
 	let refreshingCatalog = $state(false);
-	let githubBudgetTelemetry = $state<GitHubBudgetTelemetryEntry[]>([]);
 
 	const watches = $derived(liveState.overview?.watches ?? []);
 	const failedWatchCount = $derived(watchHealth.filter((watch) => watch.lastCheckOk === false || watch.consecutiveFailures > 0).length);
@@ -331,14 +328,6 @@
 		const load = () => void fetchWatchHealth().then(({ watches: next }) => (watchHealth = next)).catch(() => undefined);
 		load();
 		const interval = setInterval(load, 30_000);
-		return () => clearInterval(interval);
-	});
-
-	$effect(() => {
-		if (!canManageWatches) return;
-		const load = () => void fetchGitHubBudgetTelemetry().then(({ entries }) => (githubBudgetTelemetry = entries)).catch(() => undefined);
-		load();
-		const interval = setInterval(load, 60_000);
 		return () => clearInterval(interval);
 	});
 
@@ -978,16 +967,6 @@
 				<Badge variant={githubRateLimit.remaining < 100 ? "destructive" : "secondary"}>GitHub API</Badge>
 				<span class="font-medium">{githubRateLimit.remaining}/{githubRateLimit.limit ?? "?"} remaining</span>
 				{#if githubRateLimit.reset}<span class="text-muted">resets {new Date(githubRateLimit.reset * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>{/if}
-			</div>
-		{/if}
-		{#if githubBudgetTelemetry.length > 0}
-			<div class="border-border mt-2 rounded-lg border px-2.5 py-2 text-xs">
-				<div class="mb-1 font-medium">Recent scheduler GitHub budget</div>
-				<div class="flex flex-col gap-1 text-muted">
-					{#each githubBudgetTelemetry.slice(0, 5) as entry (entry.id)}
-						<div class="flex justify-between gap-2"><span class="truncate">{appDisplayName(entry.bundleId)}</span><span class="shrink-0">{entry.observedRequests === undefined ? "usage unavailable" : `${entry.observedRequests} observed`} · {entry.estimatedRequests} reserved</span></div>
-					{/each}
-				</div>
 			</div>
 		{/if}
 	</Card>
