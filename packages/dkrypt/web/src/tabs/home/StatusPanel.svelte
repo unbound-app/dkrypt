@@ -860,7 +860,7 @@
 				<span>iDevice storage</span>
 				<span>
 					{#if health.storageFreeBytes !== undefined && health.storageTotalBytes !== undefined}
-						{fmtBytesGB(health.storageFreeBytes)} free / {fmtBytesGB(
+						{fmtBytesGB(health.storageUsedBytes ?? health.storageTotalBytes - health.storageFreeBytes)} / {fmtBytesGB(
 							health.storageTotalBytes,
 						)}
 					{:else}
