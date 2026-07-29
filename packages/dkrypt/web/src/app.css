@@ -87,44 +87,32 @@
 	}
 
 	tbody tr {
-		@apply hover:bg-panel-muted/70 transition-colors;
+		@apply transition-colors;
 	}
 
-	.responsive-table tbody tr > td {
+	tbody tr > td {
 		transition: background-color 180ms ease, border-color 180ms ease;
 	}
 
-	.responsive-table tbody tr:hover {
+	tbody tr:hover {
 		background: transparent;
 	}
 
-	.responsive-table tbody tr:hover > td {
-		background: color-mix(in srgb, var(--color-panel-muted) 42%, transparent);
-		border-color: color-mix(in srgb, var(--color-border) 56%, var(--color-accent) 44%);
-	}
-
-	.responsive-table tbody tr:hover > td:first-child {
-		border-top-left-radius: 0.7rem;
-		border-bottom-left-radius: 0.7rem;
-	}
-
-	.responsive-table tbody tr:hover > td:last-child {
-		border-top-right-radius: 0.7rem;
-		border-bottom-right-radius: 0.7rem;
-	}
-
+	tbody tr:hover > td,
 	.responsive-table tbody tr.job-highlight > td,
 	.responsive-table tbody tr.queue-drag-over > td {
 		background: color-mix(in srgb, var(--color-panel-muted) 82%, var(--color-accent) 18%);
 		border-color: color-mix(in srgb, var(--color-border) 42%, var(--color-accent) 58%);
 	}
 
+	tbody tr:hover > td:first-child,
 	.responsive-table tbody tr.job-highlight > td:first-child,
 	.responsive-table tbody tr.queue-drag-over > td:first-child {
 		border-top-left-radius: 0.7rem;
 		border-bottom-left-radius: 0.7rem;
 	}
 
+	tbody tr:hover > td:last-child,
 	.responsive-table tbody tr.job-highlight > td:last-child,
 	.responsive-table tbody tr.queue-drag-over > td:last-child {
 		border-top-right-radius: 0.7rem;

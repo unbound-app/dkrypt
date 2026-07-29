@@ -16,6 +16,14 @@ export interface ResolveOauthAccountInput {
   fallbackUserId: string;
 }
 
+function mergeProfileData(targetUserId: string, sourceUserId: string, actor: string): void {
+  if (targetUserId === sourceUserId) return;
+  mergeUserAccounts(targetUserId, sourceUserId, actor);
+  mergeBillingAccounts(targetUserId, sourceUserId);
+  mergeActiveJobOwner(targetUserId, sourceUserId);
+  mergeAuthProfiles(targetUserId, sourceUserId);
+}
+
 function uniqueProfiles(profiles: Array<AuthProfile | undefined>): AuthProfile[] {
   return profiles.filter(
     (profile, index, all): profile is AuthProfile =>
@@ -57,13 +65,18 @@ export function resolveOauthAccount(input: ResolveOauthAccountInput): AuthProfil
     (profile) => profile.userId !== targetUserId,
   );
   for (const profile of profilesToMerge) {
-    mergeUserAccounts(targetUserId, profile.userId, `oauth:${input.identity.provider}`);
-    mergeBillingAccounts(targetUserId, profile.userId);
-    mergeActiveJobOwner(targetUserId, profile.userId);
-    mergeAuthProfiles(targetUserId, profile.userId);
+    mergeProfileData(targetUserId, profile.userId, `oauth:${input.identity.provider}`);
   }
 
   const profile = upsertAuthIdentity(targetUserId, input.identity);
   for (const identity of discoveredIdentities) upsertAuthIdentity(targetUserId, identity);
   return profile;
+}
+
+export function linkOauthAccount(targetUserId: string, identity: AuthIdentity): AuthProfile {
+  const existingProfile = findAuthProfileByIdentity(identity.provider, identity.providerId);
+  if (existingProfile && existingProfile.userId !== targetUserId) {
+    mergeProfileData(targetUserId, existingProfile.userId, `oauth:${identity.provider}:connect`);
+  }
+  return upsertAuthIdentity(targetUserId, identity);
 }

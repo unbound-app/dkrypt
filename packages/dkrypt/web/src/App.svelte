@@ -342,6 +342,22 @@
 		editingProfileName = true;
 	}
 
+	function connectIdentity(provider: "github" | "discord"): void {
+		window.location.assign(`/v1/auth/${provider}/connect`);
+	}
+
+	async function disconnectIdentity(provider: "github" | "discord"): Promise<void> {
+		if (!(await confirmDialog(`Disconnect ${provider === "github" ? "GitHub" : "Discord"}? It will no longer sign you in to this account.`, { confirmLabel: "Disconnect", variant: "destructive" }))) return;
+		const response = await fetch(`/v1/auth/connections/${provider}`, { method: "DELETE" });
+		if (!response.ok) {
+			const body = (await response.json().catch(() => ({}))) as { error?: string };
+			showToast(body.error ?? "Could not disconnect this sign-in method.", "error");
+			return;
+		}
+		await refreshSession();
+		showToast(`${provider === "github" ? "GitHub" : "Discord"} disconnected.`, "success");
+	}
+
 	async function saveProfileName(): Promise<void> {
 		savingProfileName = true;
 		try {
@@ -719,8 +735,27 @@
 											<span class="truncate"
 												>{identity.displayName} · @{identity.username}</span
 											>
+											{#if (sessionState.identities?.length ?? 0) > 1}
+												<button class="ml-auto shrink-0 text-xs text-muted hover:text-danger" onclick={() => disconnectIdentity(identity.provider)}>Disconnect</button>
+											{/if}
 										</div>
 									{/each}
+								</div>
+							{/if}
+							{#if sessionState.sub !== "root"}
+								<div class="border-border mb-3 border-t pt-3">
+									<div class="mb-1.5 text-[11px] text-muted">Login connections</div>
+									<div class="flex flex-wrap gap-1.5">
+										{#if sessionState.githubOauthEnabled && !sessionState.linkedProviders?.includes("github")}
+											<Button size="sm" variant="secondary" onclick={() => connectIdentity("github")}>Connect GitHub</Button>
+										{/if}
+										{#if sessionState.discordOauthEnabled && !sessionState.linkedProviders?.includes("discord")}
+											<Button size="sm" variant="secondary" onclick={() => connectIdentity("discord")}>Connect Discord</Button>
+										{/if}
+										{#if sessionState.linkedProviders?.length === 2}
+											<span class="text-xs text-muted">GitHub and Discord connected</span>
+										{/if}
+									</div>
 								</div>
 							{/if}
 							{#if myGrantedPermissions.length > 0}

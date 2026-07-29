@@ -60,7 +60,7 @@
 					<SelectPrimitive.Item
 						value={item.value}
 						label={item.label}
-						class="data-highlighted:bg-panel-muted/90 data-highlighted:ring-border flex cursor-pointer items-center justify-between rounded-lg px-2.5 py-2 text-sm text-text data-highlighted:ring-1"
+						class="data-highlighted:bg-panel-muted/80 data-highlighted:ring-accent/60 flex cursor-pointer items-center justify-between rounded-lg px-2.5 py-2 text-sm text-text data-highlighted:ring-1"
 					>
 						{#snippet children({ selected })}
 							<span class="flex min-w-0 items-center gap-2">

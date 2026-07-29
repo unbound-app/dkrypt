@@ -1297,7 +1297,7 @@
 					{#each watchSearchResults as result (result.bundleId)}
 						<button
 							type="button"
-							class="border-border hover:bg-panel-muted flex w-full cursor-pointer items-center gap-2 border-b px-2.5 py-2 text-left last:border-0"
+							class="border-border hover:bg-panel-muted/80 hover:ring-accent/60 flex w-full cursor-pointer items-center gap-2 rounded-lg border-b px-2.5 py-2 text-left last:border-0 hover:ring-1"
 							onclick={() => pickWatchApp(result)}
 						>
 							{#if result.artworkUrl}

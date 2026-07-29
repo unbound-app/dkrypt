@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, test } from 'bun:test';
-import { resolveOauthAccount } from '#account.js';
+import { linkOauthAccount, resolveOauthAccount } from '#account.js';
 import {
   getBillingCustomerId,
   getBillingEntitlements,
@@ -10,6 +10,7 @@ import {
 import {
   type AuthIdentity,
   getLinkedAuthProviders,
+  removeAuthIdentity,
   setAuthDisplayName,
 } from '#identity.js';
 import { PermissionFlag, serializeBits } from '#permissions.js';
@@ -38,6 +39,50 @@ function identity(
 }
 
 describe('resolveOauthAccount', () => {
+
+  test('manually links and merges a separately used OAuth account into the current account', () => {
+    const discordId = randomUUID();
+    const githubId = randomUUID();
+    const discordUserId = `discord:${discordId}`;
+    const githubUserId = `github:${githubId}`;
+
+    resolveOauthAccount({ fallbackUserId: githubUserId, identity: identity('github', githubId) });
+    const role = createRole(
+      {
+        name: `Connected account role ${randomUUID()}`,
+        color: '#5865f2',
+        permissions: serializeBits(PermissionFlag.viewLogs),
+      },
+      'tester',
+    );
+    addAllowedUser(githubUserId, [role.id], 'tester');
+    createApiKey('connected account key', githubUserId);
+    resolveOauthAccount({ fallbackUserId: discordUserId, identity: identity('discord', discordId) });
+
+    const merged = linkOauthAccount(discordUserId, identity('github', githubId));
+
+    expect(merged.userId).toBe(discordUserId);
+    expect(getLinkedAuthProviders(discordUserId).sort()).toEqual(['discord', 'github']);
+    expect(listAllowedUsers().some((user) => user.username === githubUserId)).toBe(false);
+    expect(listAllowedUsers().find((user) => user.username === discordUserId)?.roleIds).toContain(role.id);
+    expect(listApiKeysForOwner(discordUserId)).toHaveLength(1);
+  });
+
+  test('removes a linked provider while keeping another OAuth identity', () => {
+    const discordId = randomUUID();
+    const githubId = randomUUID();
+    const userId = `discord:${discordId}`;
+
+    resolveOauthAccount({ fallbackUserId: userId, identity: identity('discord', discordId) });
+    linkOauthAccount(userId, identity('github', githubId));
+    const profile = removeAuthIdentity(userId, 'github');
+
+    expect(profile?.provider).toBe('discord');
+    expect(getLinkedAuthProviders(userId)).toEqual(['discord']);
+    const reauthenticated = resolveOauthAccount({ fallbackUserId: `github:${githubId}`, identity: identity('github', githubId) });
+    expect(reauthenticated.userId).toBe(`github:${githubId}`);
+  });
+
   test('merges a Discord GitHub connection into a legacy GitHub account immediately', () => {
     const discordId = randomUUID();
     const githubId = randomUUID();

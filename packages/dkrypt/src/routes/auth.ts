@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
-import { Router } from '#http.js';
-import { resolveOauthAccount } from '#account.js';
+import { Router, type Response } from '#http.js';
+import { linkOauthAccount, resolveOauthAccount } from '#account.js';
 import { config, discordBotEnabled, discordOauthEnabled, githubOauthEnabled } from '#config.js';
 import { fetchMemberRoleIds } from '#discord.js';
 import {
@@ -8,6 +8,7 @@ import {
   getAuthProfile,
   getLinkedAuthIdentities,
   getLinkedAuthProviders,
+  removeAuthIdentity,
   setAuthDisplayName,
 } from '#identity.js';
 import { log } from '#logger.js';
@@ -102,6 +103,31 @@ authRouter.patch('/v1/auth/profile', requireSession, (req, res) => {
   res.json({ displayName: profile.displayName, linkedProviders: getLinkedAuthProviders(userId) });
 });
 
+authRouter.delete('/v1/auth/connections/:provider', requireSession, (req, res) => {
+  const userId = res.locals.session.sub;
+  const provider = req.params.provider;
+  if (userId === 'root') {
+    res.status(400).json({ error: 'the root account does not have OAuth connections' });
+    return;
+  }
+  if (provider !== 'github' && provider !== 'discord') {
+    res.status(400).json({ error: 'provider must be github or discord' });
+    return;
+  }
+  if (getLinkedAuthIdentities(userId).length < 2) {
+    res.status(400).json({ error: 'connect another provider before removing this sign-in method' });
+    return;
+  }
+  const profile = removeAuthIdentity(userId, provider);
+  if (!profile) {
+    res.status(404).json({ error: 'connection not found' });
+    return;
+  }
+  bumpSessionVersion(userId);
+  setSessionCookie(res, { sub: userId, permissions: getUserEffectivePermissions(userId) ?? 0n }, sessionOptsFromReq(req));
+  res.json({ identities: getLinkedAuthIdentities(userId), linkedProviders: getLinkedAuthProviders(userId) });
+});
+
 authRouter.post('/v1/auth/refresh', requireSession, (req, res) => {
   const session = getSession(req);
   if (!session) {
@@ -190,6 +216,7 @@ authRouter.post('/v1/auth/sessions/revoke-others', requireSession, (req, res) =>
 
 const GITHUB_OAUTH_STATE_COOKIE = 'github_oauth_state';
 const DISCORD_OAUTH_STATE_COOKIE = 'discord_oauth_state';
+const oauthConnections = new Map<string, { provider: 'github' | 'discord'; userId: string; expiresAt: number }>();
 
 function oauthCookie(name: string, value: string, maxAge: number): string {
   const secure = config.publicBaseUrl.startsWith('https://') ? '; Secure' : '';
@@ -202,13 +229,33 @@ function oauthUserId(provider: 'github' | 'discord', providerId: string, usernam
   return legacy?.username ?? stableId;
 }
 
-authRouter.get('/v1/auth/github/login', (_req, res) => {
+function createOauthState(provider: 'github' | 'discord', userId?: string): string {
+  const state = randomBytes(16).toString('hex');
+  if (userId) oauthConnections.set(state, { provider, userId, expiresAt: Date.now() + 600_000 });
+  return state;
+}
+
+function consumeOauthConnection(provider: 'github' | 'discord', state: string): string | undefined {
+  const connection = oauthConnections.get(state);
+  oauthConnections.delete(state);
+  if (!connection || connection.provider !== provider || connection.expiresAt < Date.now()) return undefined;
+  return connection.userId;
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [state, connection] of oauthConnections) {
+    if (connection.expiresAt < now) oauthConnections.delete(state);
+  }
+}, 60_000).unref();
+
+function startGithubLogin(res: Response, userId?: string): void {
   if (!githubOauthEnabled) {
     res.status(404).json({ error: 'GitHub OAuth is not configured' });
     return;
   }
 
-  const state = randomBytes(16).toString('hex');
+  const state = createOauthState('github', userId);
   res.setHeader('Set-Cookie', oauthCookie(GITHUB_OAUTH_STATE_COOKIE, state, 600));
 
   const redirectUri = `${config.publicBaseUrl}/v1/auth/github/callback`;
@@ -219,6 +266,18 @@ authRouter.get('/v1/auth/github/login', (_req, res) => {
   url.searchParams.set('state', state);
 
   res.redirect(url.toString());
+}
+
+authRouter.get('/v1/auth/github/login', (_req, res) => {
+  startGithubLogin(res);
+});
+
+authRouter.get('/v1/auth/github/connect', requireSession, (_req, res) => {
+  if (res.locals.session.sub === 'root') {
+    res.status(400).json({ error: 'the root account cannot connect OAuth identities' });
+    return;
+  }
+  startGithubLogin(res, res.locals.session.sub);
 });
 
 function parseCookieHeader(header: string | undefined): Record<string, string> {
@@ -248,6 +307,7 @@ authRouter.get('/v1/auth/github/callback', async (req, res) => {
     res.redirect('/?auth_error=state_mismatch');
     return;
   }
+  const linkUserId = consumeOauthConnection('github', state);
 
   try {
     const tokenRes = await fetch('https://github.com/login/oauth/access_token', {
@@ -289,19 +349,19 @@ authRouter.get('/v1/auth/github/callback', async (req, res) => {
     }
 
     const updatedAt = new Date().toISOString();
-    const profile = resolveOauthAccount({
-      fallbackUserId: oauthUserId('github', String(user.id), user.login),
-      identity: {
-        provider: 'github',
-        providerId: String(user.id),
-        username: user.login,
-        displayName: user.name || user.login,
-        email,
-        avatarUrl: user.avatar_url,
-        source: 'oauth',
-        updatedAt,
-      },
-    });
+    const identity: AuthIdentity = {
+      provider: 'github',
+      providerId: String(user.id),
+      username: user.login,
+      displayName: user.name || user.login,
+      email,
+      avatarUrl: user.avatar_url,
+      source: 'oauth',
+      updatedAt,
+    };
+    const profile = linkUserId
+      ? linkOauthAccount(linkUserId, identity)
+      : resolveOauthAccount({ fallbackUserId: oauthUserId('github', String(user.id), user.login), identity });
     const userId = profile.userId;
     const permissions = getUserEffectivePermissions(userId) ?? 0n;
     setSessionCookie(res, { sub: userId, permissions }, sessionOptsFromReq(req));
@@ -313,13 +373,13 @@ authRouter.get('/v1/auth/github/callback', async (req, res) => {
   }
 });
 
-authRouter.get('/v1/auth/discord/login', (_req, res) => {
+function startDiscordLogin(res: Response, userId?: string): void {
   if (!discordOauthEnabled) {
     res.status(404).json({ error: 'Discord OAuth is not configured' });
     return;
   }
 
-  const state = randomBytes(16).toString('hex');
+  const state = createOauthState('discord', userId);
   res.setHeader('Set-Cookie', oauthCookie(DISCORD_OAUTH_STATE_COOKIE, state, 600));
 
   const redirectUri = `${config.publicBaseUrl}/v1/auth/discord/callback`;
@@ -330,6 +390,18 @@ authRouter.get('/v1/auth/discord/login', (_req, res) => {
   url.searchParams.set('scope', 'identify email connections');
   url.searchParams.set('state', state);
   res.redirect(url.toString());
+}
+
+authRouter.get('/v1/auth/discord/login', (_req, res) => {
+  startDiscordLogin(res);
+});
+
+authRouter.get('/v1/auth/discord/connect', requireSession, (_req, res) => {
+  if (res.locals.session.sub === 'root') {
+    res.status(400).json({ error: 'the root account cannot connect OAuth identities' });
+    return;
+  }
+  startDiscordLogin(res, res.locals.session.sub);
 });
 
 authRouter.get('/v1/auth/discord/callback', async (req, res) => {
@@ -348,6 +420,7 @@ authRouter.get('/v1/auth/discord/callback', async (req, res) => {
     res.redirect('/?auth_error=state_mismatch');
     return;
   }
+  const linkUserId = consumeOauthConnection('discord', state);
 
   try {
     const redirectUri = `${config.publicBaseUrl}/v1/auth/discord/callback`;
@@ -408,20 +481,23 @@ authRouter.get('/v1/auth/discord/callback', async (req, res) => {
         source: 'discord_connection',
         updatedAt,
       }));
-    const profile = resolveOauthAccount({
-      fallbackUserId: oauthUserId('discord', user.id, `discord:${user.username}`),
-      identity: {
-        provider: 'discord',
-        providerId: user.id,
-        username: user.username,
-        displayName: user.global_name || user.username,
-        email: user.email,
-        avatarUrl: user.avatar ? `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png` : undefined,
-        source: 'oauth',
-        updatedAt,
-      },
-      discoveredIdentities,
-    });
+    const identity: AuthIdentity = {
+      provider: 'discord',
+      providerId: user.id,
+      username: user.username,
+      displayName: user.global_name || user.username,
+      email: user.email,
+      avatarUrl: user.avatar ? `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png` : undefined,
+      source: 'oauth',
+      updatedAt,
+    };
+    const profile = linkUserId
+      ? linkOauthAccount(linkUserId, identity)
+      : resolveOauthAccount({
+          fallbackUserId: oauthUserId('discord', user.id, `discord:${user.username}`),
+          identity,
+          discoveredIdentities,
+        });
     const userId = profile.userId;
     const guildIds = getDiscordGuildIds();
     if (discordBotEnabled && guildIds.length > 0) {

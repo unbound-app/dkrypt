@@ -208,7 +208,7 @@
 				<div class="flex max-h-40 flex-col gap-1 overflow-y-auto">
 					{#each versions as v (v.id)}
 						<label
-							class="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-xs hover:bg-panel-muted"
+							class="hover:bg-panel-muted/80 hover:ring-accent/60 flex cursor-pointer items-center gap-2 rounded-lg px-1.5 py-1 text-xs hover:ring-1"
 						>
 							<input
 								type="checkbox"

@@ -211,6 +211,27 @@ export function getLinkedAuthIdentities(userId: string): Array<Pick<AuthIdentity
   return (profile.identities ?? [legacyIdentity(profile)]).map(({ provider, username, displayName, avatarUrl }) => ({ provider, username, displayName, avatarUrl }));
 }
 
+export function removeAuthIdentity(userId: string, provider: AuthProvider): AuthProfile | undefined {
+  const profile = getAuthProfile(userId);
+  if (!profile) return undefined;
+  const currentIdentities = profile.identities ?? [legacyIdentity(profile)];
+  const removedIdentity = currentIdentities.find((identity) => identity.provider === provider);
+  const identities = currentIdentities.filter((identity) => identity.provider !== provider);
+  if (!removedIdentity || identities.length === 0) return undefined;
+  const primary = identities.find((identity) => identity.source === 'oauth') ?? identities[0];
+  profile.identities = identities;
+  profile.provider = primary.provider;
+  profile.providerId = primary.providerId;
+  profile.username = primary.username;
+  profile.email = primary.email;
+  profile.avatarUrl = primary.avatarUrl;
+  profile.aliases = (profile.aliases ?? []).filter((alias) => alias !== `${provider}:${removedIdentity.providerId}`);
+  profile.displayName = profile.customDisplayName ?? primary.displayName;
+  profile.updatedAt = new Date().toISOString();
+  persist();
+  return profile;
+}
+
 export function exportIdentitySnapshot(): IdentitySnapshot {
   return structuredClone(state);
 }
