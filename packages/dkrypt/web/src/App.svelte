@@ -736,7 +736,7 @@
 													? "GitHub"
 													: "Discord"}</span
 											>
-										<span class="min-w-0 flex-1 truncate"
+										<span class="min-w-0 flex-1 break-all"
 											>{identity.displayName} · @{identity.username}</span
 										>
 											{#if (sessionState.identities?.length ?? 0) > 1}
