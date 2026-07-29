@@ -169,6 +169,39 @@ interface DeviceStorage {
   usedPercent: number;
 }
 
+export function parseDeviceStorageDf(stdout: string): DeviceStorage | undefined {
+  const lines = stdout.trim().split('\n').filter(Boolean);
+  let parsed: { totalKb: number; freeKb: number } | undefined;
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i].trim();
+    const match = line.match(/(?:^|\s)(\d+)\s+(\d+)\s+(\d+)\s+(\d+)%(?:\s|$)/);
+    if (!match) continue;
+    parsed = {
+      totalKb: Number(match[1]),
+      freeKb: Number(match[3]),
+    };
+    break;
+  }
+
+  if (!parsed) return undefined;
+
+  const totalBytes = parsed.totalKb * 1024;
+  const freeBytes = parsed.freeKb * 1024;
+  const usedBytes = totalBytes - freeBytes;
+  if (
+    !Number.isFinite(totalBytes) ||
+    !Number.isFinite(usedBytes) ||
+    !Number.isFinite(freeBytes) ||
+    totalBytes <= 0 ||
+    freeBytes < 0 ||
+    freeBytes > totalBytes
+  ) {
+    return undefined;
+  }
+
+  return { totalBytes, usedBytes, freeBytes, usedPercent: usedBytes / totalBytes };
+}
+
 async function queryDeviceStorage(conn: Client): Promise<DeviceStorage | undefined> {
   const { stdout, code } = await execCommand(conn, 'df -k /private/var 2>&1');
   if (code !== 0) {
@@ -176,45 +209,11 @@ async function queryDeviceStorage(conn: Client): Promise<DeviceStorage | undefin
     return undefined;
   }
 
-  const lines = stdout.trim().split('\n').filter(Boolean);
-  let parsed: { totalKb: number; usedKb: number; freeKb: number; capacityPercent: number } | undefined;
-  for (let i = lines.length - 1; i >= 0; i -= 1) {
-    const line = lines[i].trim();
-    const match = line.match(/(?:^|\s)(\d+)\s+(\d+)\s+(\d+)\s+(\d+)%(?:\s|$)/);
-    if (!match) continue;
-    parsed = {
-      totalKb: Number(match[1]),
-      usedKb: Number(match[2]),
-      freeKb: Number(match[3]),
-      capacityPercent: Number(match[4]),
-    };
-    break;
+  const storage = parseDeviceStorageDf(stdout);
+  if (!storage) {
+    log.warn('device storage df output did not contain parseable numbers', { sample: stdout.slice(-200) });
   }
-
-  if (!parsed) {
-    log.warn('device storage df output did not contain expected numeric columns', {
-      sample: lines[lines.length - 1]?.slice(0, 200),
-    });
-    return undefined;
-  }
-
-  const totalBytes = parsed.totalKb * 1024;
-  const usedBytes = parsed.usedKb * 1024;
-  const freeBytes = parsed.freeKb * 1024;
-  if (
-    !Number.isFinite(totalBytes) ||
-    !Number.isFinite(usedBytes) ||
-    !Number.isFinite(freeBytes) ||
-    !Number.isFinite(parsed.capacityPercent) ||
-    totalBytes <= 0
-  ) {
-    log.warn('device storage df output did not contain parseable numbers', {
-      sample: lines[lines.length - 1]?.slice(0, 200),
-    });
-    return undefined;
-  }
-
-  return { totalBytes, usedBytes, freeBytes, usedPercent: Math.min(1, Math.max(0, parsed.capacityPercent / 100)) };
+  return storage;
 }
 
 interface NetworkStatus {

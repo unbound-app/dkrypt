@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { getDeviceInstallBlocker, getDeviceReadiness, isBridgeHeartbeatFresh, type DeviceHealth } from '#deviceHealth.js';
+import { getDeviceInstallBlocker, getDeviceReadiness, isBridgeHeartbeatFresh, parseDeviceStorageDf, type DeviceHealth } from '#deviceHealth.js';
 
 function health(overrides: Partial<DeviceHealth> = {}): DeviceHealth {
   return { reachable: true, checkedAt: 0, ...overrides };
@@ -27,5 +27,18 @@ describe('getDeviceReadiness', () => {
     const now = 1_000_000;
     expect(isBridgeHeartbeatFresh({ at: (now - 90_001) / 1000 }, now)).toBeFalse();
     expect(getDeviceInstallBlocker(health({ bridgeHeartbeats: { springboard: { at: 0 } } }))).toContain('heartbeat');
+  });
+});
+
+describe('parseDeviceStorageDf', () => {
+  test('uses the available space rather than the per-volume used figure on APFS', () => {
+    const storage = parseDeviceStorageDf('Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/disk1s2 30720000 7168000 1740800 81% /private/var\n');
+
+    expect(storage).toEqual({
+      totalBytes: 30_720_000 * 1024,
+      usedBytes: 28_979_200 * 1024,
+      freeBytes: 1_740_800 * 1024,
+      usedPercent: 28_979_200 / 30_720_000,
+    });
   });
 });
