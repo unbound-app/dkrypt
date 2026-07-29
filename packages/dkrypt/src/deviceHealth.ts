@@ -45,19 +45,32 @@ export interface DeviceReadiness {
 }
 
 const BRIDGE_HEARTBEAT_MAX_AGE_MS = 90_000;
+const INSTALL_STORAGE_SAFETY_MULTIPLIER = 2;
+
+function formatGigabytes(bytes: number): string {
+  return `${(bytes / 1_000_000_000).toFixed(1)} GB`;
+}
 
 export function isBridgeHeartbeatFresh(heartbeat: BridgeHeartbeat | undefined, now = Date.now()): boolean {
   return typeof heartbeat?.at === 'number' && now - heartbeat.at * 1000 <= BRIDGE_HEARTBEAT_MAX_AGE_MS;
 }
 
-export function getDeviceInstallBlocker(health: DeviceHealth): string | undefined {
+export function getDeviceInstallBlocker(health: DeviceHealth, installSizeBytes?: number): string | undefined {
   if (!health.reachable) return health.error ?? 'device is unreachable';
   if (health.internetAccess === false) return 'device cannot reach Apple services';
   if (health.testFlightBridgeReachable === false) return 'autoinstall bridge is unresponsive';
   if (health.bridgeHeartbeats?.springboard && !isBridgeHeartbeatFresh(health.bridgeHeartbeats.springboard)) return 'autoinstall SpringBoard heartbeat is stale';
   if (health.batteryPercent !== undefined && !health.batteryCharging && health.batteryPercent < 15) return `device battery is ${health.batteryPercent}% and not charging`;
   if (health.batteryTemperatureC !== undefined && health.batteryTemperatureC >= 45) return `device temperature is ${health.batteryTemperatureC.toFixed(1)}°C`;
-  if (health.storageFreeBytes !== undefined && health.storageFreeBytes < 2 * 1024 * 1024 * 1024) return `device has less than 2 GiB free storage`;
+  const normalizedInstallSizeBytes = typeof installSizeBytes === 'number' && Number.isFinite(installSizeBytes) && installSizeBytes > 0 ? installSizeBytes : undefined;
+  if (
+    health.storageFreeBytes !== undefined &&
+    normalizedInstallSizeBytes !== undefined &&
+    health.storageFreeBytes < normalizedInstallSizeBytes * INSTALL_STORAGE_SAFETY_MULTIPLIER
+  ) {
+    const requiredBytes = normalizedInstallSizeBytes * INSTALL_STORAGE_SAFETY_MULTIPLIER;
+    return `device has ${formatGigabytes(health.storageFreeBytes)} free storage; install needs ${formatGigabytes(requiredBytes)} (2× build size)`;
+  }
   return undefined;
 }
 
@@ -164,15 +177,16 @@ async function queryDeviceStorage(conn: Client): Promise<DeviceStorage | undefin
   }
 
   const lines = stdout.trim().split('\n').filter(Boolean);
-  let parsed: { totalKb: number; usedKb: number; freeKb: number } | undefined;
+  let parsed: { totalKb: number; usedKb: number; freeKb: number; capacityPercent: number } | undefined;
   for (let i = lines.length - 1; i >= 0; i -= 1) {
     const line = lines[i].trim();
-    const match = line.match(/(?:^|\s)(\d+)\s+(\d+)\s+(\d+)\s+\d+%(?:\s|$)/);
+    const match = line.match(/(?:^|\s)(\d+)\s+(\d+)\s+(\d+)\s+(\d+)%(?:\s|$)/);
     if (!match) continue;
     parsed = {
       totalKb: Number(match[1]),
       usedKb: Number(match[2]),
       freeKb: Number(match[3]),
+      capacityPercent: Number(match[4]),
     };
     break;
   }
@@ -187,14 +201,20 @@ async function queryDeviceStorage(conn: Client): Promise<DeviceStorage | undefin
   const totalBytes = parsed.totalKb * 1024;
   const usedBytes = parsed.usedKb * 1024;
   const freeBytes = parsed.freeKb * 1024;
-  if (!Number.isFinite(totalBytes) || !Number.isFinite(usedBytes) || !Number.isFinite(freeBytes) || totalBytes <= 0) {
+  if (
+    !Number.isFinite(totalBytes) ||
+    !Number.isFinite(usedBytes) ||
+    !Number.isFinite(freeBytes) ||
+    !Number.isFinite(parsed.capacityPercent) ||
+    totalBytes <= 0
+  ) {
     log.warn('device storage df output did not contain parseable numbers', {
       sample: lines[lines.length - 1]?.slice(0, 200),
     });
     return undefined;
   }
 
-  return { totalBytes, usedBytes, freeBytes, usedPercent: usedBytes / totalBytes };
+  return { totalBytes, usedBytes, freeBytes, usedPercent: Math.min(1, Math.max(0, parsed.capacityPercent / 100)) };
 }
 
 interface NetworkStatus {

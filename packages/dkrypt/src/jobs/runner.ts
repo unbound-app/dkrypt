@@ -8,6 +8,7 @@ import { recordDeviceActivity, type DeviceRecord } from '#store/state.js';
 import { installFromAppStore } from '#appStoreInstall.js';
 import { installBuild } from '#testflight.js';
 import { getDeviceHealth, getDeviceInstallBlocker } from '#deviceHealth.js';
+import { lookupCurrentVersion, type ItunesLookupResult } from '#scheduler/itunes.js';
 import { extractIpaMetadata } from '#util/ipaMetadata.js';
 
 const log = scopedLogger('jobs');
@@ -22,7 +23,15 @@ export async function runDecrypt(job: Job, device: DeviceRecord): Promise<void> 
 
   ensureNotCancelled();
   const health = await getDeviceHealth(device.id, true);
-  const installBlocker = getDeviceInstallBlocker(health);
+  let currentAppStoreVersion: ItunesLookupResult | undefined;
+  if (!job.testflight && !job.externalVersionId) {
+    try {
+      currentAppStoreVersion = await lookupCurrentVersion(job.bundleId);
+    } catch (err) {
+      log.warn('could not resolve current App Store file size before install', { bundleId: job.bundleId, error: String(err) });
+    }
+  }
+  const installBlocker = getDeviceInstallBlocker(health, job.testflight?.build.fileSize ?? currentAppStoreVersion?.fileSizeBytes);
   if (installBlocker) throw new Error(`decrypt deferred: ${installBlocker}`);
   await mkdir(config.outputDir, { recursive: true });
   const outputPath = path.join(config.outputDir, `${job.id}.ipa`);
@@ -60,6 +69,7 @@ export async function runDecrypt(job: Job, device: DeviceRecord): Promise<void> 
       operationId: job.id,
       onProgress: report,
       isCancelled: () => Boolean(job.cancelledBy),
+      currentVersion: currentAppStoreVersion,
     });
     if (installed.shortVersion) job.versionLabel = installed.shortVersion;
   }

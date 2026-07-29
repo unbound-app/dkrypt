@@ -5,6 +5,9 @@ import { normalizeVersion } from '#util/version.js';
 
 const GITHUB_API = 'https://api.github.com';
 const RATE_LIMIT_CACHE_MS = 30_000;
+const GITHUB_GET_RETRY_COUNT = 2;
+const GITHUB_REQUEST_TIMEOUT_MS = 15_000;
+const GITHUB_RETRY_BASE_DELAY_MS = 750;
 
 export interface GitHubRateLimitBudget {
   limit: number;
@@ -23,8 +26,41 @@ export async function measureGitHubRequests<T>(fn: () => Promise<T>): Promise<{ 
 
 async function githubFetch(input: string, init: RequestInit): Promise<Response> {
   const telemetry = requestTelemetry.getStore();
-  if (telemetry) telemetry.requests += 1;
-  return fetch(input, init);
+  const method = (init.method ?? 'GET').toUpperCase();
+  const retryable = method === 'GET' || method === 'HEAD';
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt <= (retryable ? GITHUB_GET_RETRY_COUNT : 0); attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), GITHUB_REQUEST_TIMEOUT_MS);
+    try {
+      if (telemetry) telemetry.requests += 1;
+      const response = await fetch(input, { ...init, signal: controller.signal });
+      const retryableStatus = response.status === 408 || response.status === 429 || response.status >= 500;
+      if (!retryable || !retryableStatus || attempt === GITHUB_GET_RETRY_COUNT) return response;
+
+      if (response.body) await response.body.cancel().catch(() => {});
+      await sleep(githubRetryDelay(response, attempt));
+    } catch (err) {
+      lastError = err;
+      if (!retryable || attempt === GITHUB_GET_RETRY_COUNT) throw err;
+      await sleep(githubRetryDelay(undefined, attempt));
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function githubRetryDelay(response: Response | undefined, attempt: number): number {
+  const retryAfter = Number(response?.headers.get('retry-after'));
+  if (Number.isFinite(retryAfter) && retryAfter >= 0) return Math.min(retryAfter * 1000, 10_000);
+  return GITHUB_RETRY_BASE_DELAY_MS * 2 ** attempt;
 }
 
 function headers(): Record<string, string> {

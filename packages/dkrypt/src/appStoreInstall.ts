@@ -15,7 +15,7 @@ import {
   type InstallVerification,
 } from '#idevice.js';
 import { scopedLogger } from '#logger.js';
-import { lookupCurrentVersion } from '#scheduler/itunes.js';
+import { lookupCurrentVersion, type ItunesLookupResult } from '#scheduler/itunes.js';
 import { getPrimaryDevice } from '#store/state.js';
 import { BRIDGE_CAPABILITIES, hasBridgeCapabilities } from '#bridgeProtocol.js';
 
@@ -64,6 +64,7 @@ export async function uninstallFromPrimaryDevice(bundleId: string): Promise<bool
 export interface AppStoreInstallOptions {
   externalVersionId?: string;
   expectedVersion?: string;
+  currentVersion?: ItunesLookupResult;
   operationId?: string;
   onProgress?: (message: string) => void;
   waitTimeoutMs?: number;
@@ -91,7 +92,7 @@ export async function installFromAppStore(bundleId: string, options: AppStoreIns
 
   ensureNotCancelled();
   report('resolving App Store id for bundle');
-  const { trackId, version: latestVersion } = await lookupCurrentVersion(bundleId);
+  const { trackId, version: latestVersion } = options.currentVersion ?? (await lookupCurrentVersion(bundleId));
   const targetVersion = expectedVersion ?? (versionId === undefined ? latestVersion : undefined);
 
   return withSSH(primaryRootDir(), async (conn) => {

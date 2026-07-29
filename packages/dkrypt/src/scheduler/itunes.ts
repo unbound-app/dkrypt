@@ -1,9 +1,10 @@
 import { describeHttpError } from '#util/httpError.js';
 
-interface ItunesLookupResult {
+export interface ItunesLookupResult {
   version: string;
   bundleId: string;
   trackId: number;
+  fileSizeBytes?: number;
 }
 
 export interface ItunesAppMetadata {
@@ -13,6 +14,7 @@ export interface ItunesAppMetadata {
   sellerName: string;
   artworkUrl: string;
   version: string;
+  fileSizeBytes?: number;
   category?: string;
   description?: string;
   screenshots?: string[];
@@ -26,6 +28,7 @@ interface ItunesLookupResponse {
     version: string;
     bundleId: string;
     trackId: number;
+    fileSizeBytes?: number;
     trackName?: string;
     sellerName?: string;
     artworkUrl60?: string;
@@ -39,6 +42,10 @@ interface ItunesLookupResponse {
   }>;
 }
 
+function parseFileSizeBytes(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
 export async function lookupCurrentVersion(bundleId: string): Promise<ItunesLookupResult> {
   const url = `https://itunes.apple.com/lookup?bundleId=${encodeURIComponent(bundleId)}`;
   const res = await fetch(url);
@@ -48,7 +55,12 @@ export async function lookupCurrentVersion(bundleId: string): Promise<ItunesLook
   const result = body.results[0];
   if (body.resultCount < 1 || !result) throw new Error(`itunes lookup returned no results for ${bundleId}`);
 
-  return { version: result.version, bundleId: result.bundleId, trackId: result.trackId };
+  return {
+    version: result.version,
+    bundleId: result.bundleId,
+    trackId: result.trackId,
+    fileSizeBytes: parseFileSizeBytes(result.fileSizeBytes),
+  };
 }
 
 export async function lookupAppMetadata(bundleId: string): Promise<ItunesAppMetadata> {
@@ -69,6 +81,7 @@ export async function lookupAppMetadata(bundleId: string): Promise<ItunesAppMeta
     sellerName: result.sellerName ?? '',
     artworkUrl: result.artworkUrl512 || result.artworkUrl100 || result.artworkUrl60 || '',
     version: result.version,
+    fileSizeBytes: parseFileSizeBytes(result.fileSizeBytes),
     category: result.primaryGenreName,
     description: result.description,
     screenshots: result.screenshotUrls?.slice(0, 10),
