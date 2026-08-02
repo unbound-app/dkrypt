@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test } from 'bun:test';
 import { buildServer } from '#server.js';
-import { recordJobHistory } from '#store/state.js';
+import { recordJobHistory, recordNotification } from '#store/state.js';
 
 async function signIn() {
   const server = await buildServer({ includePublicRoutes: false });
@@ -139,6 +139,51 @@ test('Fastify previews retention and reports queue service objectives', async ()
     });
     expect(slo.statusCode).toBe(200);
     expect(slo.json()).toMatchObject({ targetMs: expect.any(Number), jobs: expect.any(Array) });
+  } finally {
+    await server.close();
+  }
+});
+
+test('Fastify previews bulk decrypts and serves durable notifications', async () => {
+  const { server, cookie } = await signIn();
+  const firstId = `bulk-first-${crypto.randomUUID()}`;
+  const secondId = `bulk-second-${crypto.randomUUID()}`;
+  recordJobHistory({
+    id: firstId,
+    bundleId: 'com.example.bulk-first',
+    status: 'done',
+    source: 'manual',
+    createdAt: Date.now() - 10_000,
+    finishedAt: Date.now() - 5_000,
+    sizeBytes: 12 * 1024 * 1024,
+  });
+  recordJobHistory({
+    id: secondId,
+    bundleId: 'com.example.bulk-second',
+    status: 'failed',
+    source: 'manual',
+    createdAt: Date.now() - 10_000,
+    finishedAt: Date.now() - 4_000,
+  });
+  recordNotification({ userId: 'root', title: 'Test notification', message: 'Durable', severity: 'info' });
+
+  try {
+    const preview = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/jobs/bulk-preview',
+      headers: { cookie },
+      payload: { ids: [firstId, secondId] },
+    });
+    expect(preview.statusCode).toBe(200);
+    expect(preview.json()).toMatchObject({ requested: 2, eligible: 2, projectedQueueAdds: 2, previousSizeBytes: 12 * 1024 * 1024 });
+
+    const notifications = await server.inject({ method: 'GET', url: '/v1/dashboard/notifications', headers: { cookie } });
+    expect(notifications.statusCode).toBe(200);
+    expect(notifications.json()).toMatchObject({ unread: expect.any(Number), notifications: expect.arrayContaining([expect.objectContaining({ message: 'Durable' })]) });
+
+    const marked = await server.inject({ method: 'POST', url: '/v1/dashboard/notifications/read', headers: { cookie }, payload: {} });
+    expect(marked.statusCode).toBe(200);
+    expect(marked.json()).toMatchObject({ ok: true, marked: expect.any(Number) });
   } finally {
     await server.close();
   }

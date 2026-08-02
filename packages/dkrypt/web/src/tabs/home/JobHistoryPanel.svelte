@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Eye, History, X } from "lucide-svelte";
 	import BundleStatsDialog from "#components/BundleStatsDialog.svelte";
+	import BulkJobPreviewDialog from "#components/BulkJobPreviewDialog.svelte";
 	import AppIcon from "#components/AppIcon.svelte";
 	import JobDetailsDialog from "#components/JobDetailsDialog.svelte";
 	import CopyButton from "#components/CopyButton.svelte";
@@ -10,9 +11,11 @@
 	import {
 		fetchJobHistory,
 		jobHistoryExportUrl,
+		previewBulkJobReplay,
 		queueDecrypt,
 		queueTestFlightDecrypt,
 		retryJob,
+		type BulkJobPreview,
 		type JobHistoryEntry,
 	} from "#lib/api";
 	import {
@@ -34,7 +37,6 @@
 	import { createSavedViews } from "#lib/savedViews.svelte";
 	import { sessionState } from "#lib/session.svelte";
 	import {
-		confirmDialog,
 		historyJumpState,
 		requestFocusSearch,
 		showToast,
@@ -121,6 +123,9 @@
 	);
 	let selected = $state<Set<string>>(new Set());
 	let bulkRequeueing = $state(false);
+	let bulkPreviewOpen = $state(false);
+	let bulkPreviewLoading = $state(false);
+	let bulkPreview = $state<BulkJobPreview | null>(null);
 	const savedViews = createSavedViews<FilterPreset>(
 		"jobHistoryFilterPresets",
 	);
@@ -498,15 +503,29 @@
 				: new Set(entries.map((e) => e.id));
 	}
 
-	async function bulkDecryptAgain(): Promise<void> {
-		const targets = entries.filter((e) => selected.has(e.id));
+	async function openBulkPreview(): Promise<void> {
+		const ids = entries.filter((entry) => selected.has(entry.id)).map((entry) => entry.id);
+		if (ids.length === 0) return;
+		bulkPreviewLoading = true;
+		try {
+			bulkPreview = await previewBulkJobReplay(ids);
+			bulkPreviewOpen = true;
+		} catch {
+			showToast("Could not prepare the bulk preview", "error");
+		} finally {
+			bulkPreviewLoading = false;
+		}
+	}
+
+	async function confirmBulkDecryptAgain(): Promise<void> {
+		const targets = entries.filter((entry) => bulkPreview?.items.some((item) => item.id === entry.id && item.action === "queue"));
+		bulkPreviewOpen = false;
 		if (targets.length === 0) return;
-		if (!(await confirmDialog(`Queue ${targets.length} decrypt(s) again?`)))
-			return;
 		bulkRequeueing = true;
 		try {
 			for (const entry of targets) await decryptAgain(entry);
 			selected = new Set();
+			bulkPreview = null;
 		} finally {
 			bulkRequeueing = false;
 		}
@@ -592,8 +611,8 @@
 				{/if}
 				<Button
 					size="sm"
-					loading={bulkRequeueing}
-					onclick={bulkDecryptAgain}
+					loading={bulkRequeueing || bulkPreviewLoading}
+					onclick={() => void openBulkPreview()}
 					>Decrypt {selected.size} again</Button
 				>
 				<Button size="sm" variant="secondary" onclick={bulkExportCsv}
@@ -943,3 +962,12 @@
 	onOpenChange={(v) => (statsOpen = v)}
 />
 <JobDetailsDialog bind:open={jobDetailsOpen} jobId={jobDetailsId} title={jobDetailsTitle || "Job details"} />
+<BulkJobPreviewDialog
+	open={bulkPreviewOpen}
+	preview={bulkPreview}
+	onOpenChange={(v) => {
+		bulkPreviewOpen = v;
+		if (!v) bulkPreview = null;
+	}}
+	onConfirm={() => void confirmBulkDecryptAgain()}
+/>

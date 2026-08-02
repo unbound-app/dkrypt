@@ -1,6 +1,6 @@
 import { dashboardEvents } from '#events.js';
 import { EMBED_COLOR, notify } from '#notify.js';
-import { type JobHistoryEntry } from '#store/state.js';
+import { recordNotification, type JobHistoryEntry } from '#store/state.js';
 
 function label(entry: JobHistoryEntry): string {
   return entry.versionLabel ? `${entry.bundleId} (${entry.versionLabel})` : entry.bundleId;
@@ -13,6 +13,15 @@ function fmtBytes(bytes: number): string {
 
 export function startJobWebhookDispatcher(): void {
   dashboardEvents.on('historyAdded', (entry: JobHistoryEntry) => {
+    const labelText = label(entry);
+    recordNotification({
+      userId: entry.queuedBy ?? 'root',
+      title: entry.status === 'done' ? 'Decrypt finished' : 'Decrypt failed',
+      message: entry.status === 'done' ? `${labelText} is ready to download.` : `${labelText}: ${entry.error ?? 'the decrypt failed'}`,
+      severity: entry.status === 'done' ? 'success' : 'error',
+      jobId: entry.id,
+      href: `/?tab=home&job=${encodeURIComponent(entry.id)}`,
+    });
     void notify('jobCompleted', {
       title: entry.status === 'done' ? 'Decrypt finished' : 'Decrypt failed',
       color: entry.status === 'done' ? EMBED_COLOR.ok : EMBED_COLOR.err,

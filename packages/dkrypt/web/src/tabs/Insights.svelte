@@ -33,7 +33,9 @@
 	import {
 		jumpToHistoryFailureCategory,
 		requestFocusSearch,
+		setActiveTab,
 	} from "#lib/ui.svelte";
+	import { setQueryParams } from "#lib/urlState";
 	import RelativeTime from "#components/RelativeTime.svelte";
 	import {
 		appDisplayName,
@@ -163,6 +165,11 @@
 	function openStats(bundleId: string): void {
 		statsBundleId = bundleId;
 		statsOpen = true;
+	}
+
+	function inspectAnomaly(jobId: string): void {
+		setActiveTab("home");
+		setQueryParams({ job: jobId });
 	}
 
 	function exportCsv(): void {
@@ -352,6 +359,33 @@
 								>{f.count}</span
 							>
 						</button>
+					{/each}
+				</div>
+			</div>
+		{/if}
+
+		{#if insights.anomalies.length > 0}
+			<div class="border-border mb-4 border-t pt-3">
+				<div class="mb-2 flex items-center justify-between gap-2">
+					<div class="text-xs text-muted">Performance anomalies</div>
+					<Badge variant="warning">{insights.anomalies.length} recent</Badge>
+				</div>
+				<div class="flex flex-col gap-1.5">
+					{#each insights.anomalies.slice(0, 6) as anomaly (anomaly.jobId)}
+						<div class="border-border flex items-center gap-2 rounded-lg border p-2.5 text-xs">
+							<div class="min-w-0 flex-1">
+								<div class="flex flex-wrap items-center gap-1.5">
+									<span class="font-medium">{appDisplayName(anomaly.bundleId)}</span>
+									<Badge variant="destructive">{anomaly.kind === "duration-and-size" ? "slow + large" : anomaly.kind === "duration" ? "slow" : "large"}</Badge>
+								</div>
+								<div class="mt-1 text-muted">
+									{#if anomaly.durationRatio}{Math.round(anomaly.durationRatio * 100)}% of baseline runtime{/if}
+									{#if anomaly.sizeRatio}{anomaly.durationRatio ? " · " : ""}{Math.round(anomaly.sizeRatio * 100)}% of baseline size{/if}
+									 · <RelativeTime ms={anomaly.finishedAt} />
+								</div>
+							</div>
+							<Button size="sm" variant="secondary" onclick={() => inspectAnomaly(anomaly.jobId)}>Inspect</Button>
+						</div>
 					{/each}
 				</div>
 			</div>

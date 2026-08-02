@@ -7,7 +7,7 @@ mock.module('./runner.js', () => ({
   runDecrypt: () => new Promise<void>(() => {}),
 }));
 
-const { cancelJob, cancelQueuedJob, enqueueDecryptJob, getActiveJobs, getJob, getQueueInfo, recoverPersistedActiveJobs } = await import('./store.js');
+const { cancelJob, cancelQueuedJob, enqueueDecryptJob, getActiveJobs, getJob, getQueueInfo, getQueueReason, recoverPersistedActiveJobs } = await import('./store.js');
 
 describe('recoverPersistedActiveJobs', () => {
   test('keeps queued jobs and records a running job as interrupted after a restart', () => {
@@ -58,6 +58,12 @@ describe('enqueueDecryptJob', () => {
   test('labels an unpinned App Store job as the current release', () => {
     const job = enqueueDecryptJob('com.test.current-release', 'manual');
     expect(job.versionLabel).toBe('Current App Store release');
+  });
+
+  test('explains why a queued job is waiting', () => {
+    const job = enqueueDecryptJob(`com.test.queue-reason-${crypto.randomUUID()}`, 'manual');
+    expect(job.status).toBe('queued');
+    expect(getQueueReason(job)).toMatch(/^Waiting /);
   });
 
   test('reuses a completed exact build while its IPA still exists', async () => {

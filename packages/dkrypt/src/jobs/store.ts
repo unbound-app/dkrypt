@@ -235,6 +235,34 @@ export function getQueueInfo(jobId: string): { position: number; total: number }
   return { position: idx === -1 ? ordered.length : idx + 1, total: ordered.length };
 }
 
+export function getQueueReason(job: Job): string | undefined {
+  if (job.status !== 'queued') return undefined;
+  const devices = getEffectiveDevices().filter((device) => device.enabled);
+  if (devices.length === 0) return 'Waiting for an enabled device';
+
+  const primary = devices.find((device) => device.isPrimary) ?? devices[0];
+  const eligible = devices.filter((device) => isDispatchable(job, device, primary));
+  if (eligible.length === 0) return job.testflight ? 'Waiting for the primary device' : 'Waiting for a compatible device';
+
+  if (config.userConcurrencyCap > 0 && job.queuedBy && queuedByActiveCount(job.queuedBy) >= config.userConcurrencyCap) {
+    return `Waiting for your concurrency limit (${config.userConcurrencyCap}) to free up`;
+  }
+  if (job.apiKeyId) {
+    const maxConcurrent = getApiKeyById(job.apiKeyId)?.maxConcurrent;
+    if (maxConcurrent && apiKeyActiveCount(job.apiKeyId) >= maxConcurrent) return `Waiting for API key concurrency limit (${maxConcurrent}) to free up`;
+  }
+
+  const available = eligible.filter((device) => !busyDeviceIds.has(device.id));
+  if (available.length === 0) {
+    const names = eligible.map((device) => device.name).join(', ');
+    return `Waiting for ${names} to become available`;
+  }
+
+  const queue = getQueueInfo(job.id);
+  if (queue && queue.position > 1) return `Waiting behind ${queue.position - 1} job${queue.position === 2 ? '' : 's'}`;
+  return undefined;
+}
+
 export function waitForJob(job: Job, timeoutMs: number): Promise<Job> {
   if (job.status === 'done' || job.status === 'failed') return Promise.resolve(job);
 

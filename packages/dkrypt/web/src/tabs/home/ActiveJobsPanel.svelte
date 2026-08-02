@@ -392,6 +392,9 @@
 									>
 										{j.progress}
 									</p>
+									{#if j.queueReason}
+										<p class="mt-0.5 break-words text-left text-[11px] text-warn" title="Why this job is waiting">{j.queueReason}</p>
+									{/if}
 								{/if}
 							</td>
 							<td data-label="Job ID">

@@ -263,6 +263,13 @@ export interface IpaMetadata {
   shortVersion?: string;
   minOsVersion?: string;
   executable?: string;
+  architectures?: string[];
+  entitlementKeys?: string[];
+  embeddedFrameworks?: string[];
+  fileCount?: number;
+  compressedSizeBytes?: number;
+  uncompressedSizeBytes?: number;
+  codeSignaturePresent?: boolean;
 }
 
 export interface JobHistoryEntry {
@@ -408,8 +415,22 @@ export interface ShareLinkRecord {
   lastUsedAt?: number;
 }
 
+export type NotificationSeverity = 'info' | 'success' | 'warning' | 'error';
+
+export interface NotificationRecord {
+  id: string;
+  userId: string;
+  title: string;
+  message: string;
+  severity: NotificationSeverity;
+  createdAt: number;
+  readAt?: number;
+  jobId?: string;
+  href?: string;
+}
+
 interface PersistedState {
-  version: 12;
+  version: 13;
   apiKeys: ApiKeyRecord[];
   allowedUsers: AllowedUser[];
   roles: Role[];
@@ -438,6 +459,7 @@ interface PersistedState {
   backupHistory: BackupHistoryEntry[];
   activeSessions: ActiveSessionRecord[];
   appCatalog: Record<string, AppCatalogEntry>;
+  notifications: NotificationRecord[];
 }
 
 const MAX_HISTORY = 100;
@@ -448,12 +470,13 @@ const MAX_USAGE_DAYS = 30;
 const MAX_DEVICE_HEALTH_CHECKS = 288;
 const MAX_DEVICE_ACTIVITY = 300;
 const MAX_WEBHOOK_LOG = 200;
+const MAX_NOTIFICATIONS = 500;
 const statePath = path.join(config.stateDir, 'state.json');
 const backupsDir = path.join(config.stateDir, 'backups');
 
 function defaultState(): PersistedState {
   return {
-    version: 12,
+    version: 13,
     apiKeys: [],
     allowedUsers: [],
     roles: [seedDefaultRole(Date.now())],
@@ -480,6 +503,7 @@ function defaultState(): PersistedState {
     backupHistory: [],
     activeSessions: [],
     appCatalog: {},
+    notifications: [],
   };
 }
 
@@ -743,23 +767,33 @@ function migrateV10ToV11(v10: Record<string, unknown>): Record<string, unknown> 
   };
 }
 
-function migrateV11ToV12(v11: Record<string, unknown>): PersistedState {
-  return { ...defaultState(), ...v11, version: 12 } as PersistedState;
+function migrateV11ToV12(v11: Record<string, unknown>): Record<string, unknown> {
+  return { ...defaultState(), ...v11, version: 12 };
+}
+
+function migrateV12ToV13(v12: Record<string, unknown>): PersistedState {
+  return {
+    ...defaultState(),
+    ...v12,
+    version: 13,
+    notifications: Array.isArray(v12.notifications) ? (v12.notifications as NotificationRecord[]) : [],
+  } as PersistedState;
 }
 
 function migrate(raw: Record<string, unknown>): PersistedState {
-  if (raw.version === 12) return { ...defaultState(), ...raw } as PersistedState;
-  if (raw.version === 11) return migrateV11ToV12(raw);
-  if (raw.version === 10) return migrateV11ToV12(migrateV10ToV11(raw));
-  if (raw.version === 9) return migrateV11ToV12(migrateV10ToV11(raw));
-  if (raw.version === 8) return migrateV11ToV12(migrateV10ToV11(migrateV8ToV9(raw)));
-  if (raw.version === 7) return migrateV11ToV12(migrateV10ToV11(migrateV8ToV9(migrateV7ToV8(raw))));
-  if (raw.version === 6) return migrateV11ToV12(migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(raw))));
-  if (raw.version === 5) return migrateV11ToV12(migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(migrateV5ToV6(raw)))));
+  if (raw.version === 13) return { ...defaultState(), ...raw } as PersistedState;
+  if (raw.version === 12) return migrateV12ToV13(raw);
+  if (raw.version === 11) return migrateV12ToV13(migrateV11ToV12(raw));
+  if (raw.version === 10) return migrateV12ToV13(migrateV11ToV12(migrateV10ToV11(raw)));
+  if (raw.version === 9) return migrateV12ToV13(migrateV11ToV12(migrateV10ToV11(raw)));
+  if (raw.version === 8) return migrateV12ToV13(migrateV11ToV12(migrateV10ToV11(migrateV8ToV9(raw))));
+  if (raw.version === 7) return migrateV12ToV13(migrateV11ToV12(migrateV10ToV11(migrateV8ToV9(migrateV7ToV8(raw)))));
+  if (raw.version === 6) return migrateV12ToV13(migrateV11ToV12(migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(raw)))));
+  if (raw.version === 5) return migrateV12ToV13(migrateV11ToV12(migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(migrateV5ToV6(raw))))));
 
   if (raw.version === 4) {
     const v4Users = Array.isArray(raw.allowedUsers) ? (raw.allowedUsers as Record<string, unknown>[]) : [];
-    return migrateV11ToV12(migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(
+    return migrateV12ToV13(migrateV11ToV12(migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(
       migrateV5ToV6({
         ...raw,
         version: 5,
@@ -769,12 +803,12 @@ function migrate(raw: Record<string, unknown>): PersistedState {
           addedAt: u.addedAt as number,
         })),
       }),
-    ))));
+    )))));
   }
 
   if (raw.version === 3) {
     const v3Users = Array.isArray(raw.allowedUsers) ? (raw.allowedUsers as Record<string, unknown>[]) : [];
-    return migrateV11ToV12(migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(
+    return migrateV12ToV13(migrateV11ToV12(migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(
       migrateV5ToV6({
         ...raw,
         version: 5,
@@ -784,12 +818,12 @@ function migrate(raw: Record<string, unknown>): PersistedState {
           addedAt: u.addedAt as number,
         })),
       }),
-    ))));
+    )))));
   }
 
   if (raw.version === 2) {
     const legacyUsers = Array.isArray(raw.allowedUsers) ? (raw.allowedUsers as Record<string, unknown>[]) : [];
-    return migrateV11ToV12(migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(
+    return migrateV12ToV13(migrateV11ToV12(migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(
       migrateV5ToV6({
         ...raw,
         version: 5,
@@ -799,11 +833,11 @@ function migrate(raw: Record<string, unknown>): PersistedState {
           addedAt: u.addedAt as number,
         })),
       }),
-    ))));
+    )))));
   }
 
   const legacyKeys = Array.isArray(raw.apiKeys) ? (raw.apiKeys as Record<string, unknown>[]) : [];
-  return migrateV11ToV12(migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(
+  return migrateV12ToV13(migrateV11ToV12(migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(
     migrateV5ToV6({
       apiKeys: legacyKeys.map((k) => ({
         id: k.id as string,
@@ -818,7 +852,7 @@ function migrate(raw: Record<string, unknown>): PersistedState {
       settings: (raw.settings as Partial<SchedulerSettings>) ?? {},
       jobHistory: (raw.jobHistory as JobHistoryEntry[]) ?? [],
     }),
-  ))));
+  )))));
 }
 
 function normalizeLegacySchedulerRunOutcome(raw: unknown): SchedulerRunOutcome {
@@ -849,6 +883,7 @@ function load(): PersistedState {
     const migrated = migrate(JSON.parse(readFileSync(statePath, 'utf8')));
     migrated.schedulerRunHistory = normalizeLegacySchedulerRunHistory(migrated.schedulerRunHistory);
     migrated.appCatalog = migrated.appCatalog ?? {};
+    migrated.notifications = Array.isArray(migrated.notifications) ? migrated.notifications.slice(0, MAX_NOTIFICATIONS) : [];
     return migrated;
   } catch {
     return defaultState();
@@ -2286,6 +2321,21 @@ export interface InsightsSummary {
   trend: { date: string; count: number }[];
   failureBreakdown: { category: string; count: number }[];
   byDevice: DeviceThroughputStats[];
+  anomalies: PerformanceAnomaly[];
+}
+
+export interface PerformanceAnomaly {
+  jobId: string;
+  bundleId: string;
+  versionLabel?: string;
+  finishedAt: number;
+  kind: 'duration' | 'size' | 'duration-and-size';
+  durationMs?: number;
+  baselineDurationMs?: number;
+  durationRatio?: number;
+  sizeBytes?: number;
+  baselineSizeBytes?: number;
+  sizeRatio?: number;
 }
 
 function getFailureBreakdown(runs: JobHistoryEntry[]): { category: string; count: number }[] {
@@ -2296,6 +2346,56 @@ function getFailureBreakdown(runs: JobHistoryEntry[]): { category: string; count
     counts.set(category, (counts.get(category) ?? 0) + 1);
   }
   return [...counts.entries()].map(([category, count]) => ({ category, count })).sort((a, b) => b.count - a.count);
+}
+
+function median(values: number[]): number | undefined {
+  if (values.length === 0) return undefined;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle];
+}
+
+function getPerformanceAnomalies(runs: JobHistoryEntry[]): PerformanceAnomaly[] {
+  const byBundle = new Map<string, JobHistoryEntry[]>();
+  for (const run of runs.filter((entry) => entry.status === 'done')) {
+    const bundleRuns = byBundle.get(run.bundleId) ?? [];
+    bundleRuns.push(run);
+    byBundle.set(run.bundleId, bundleRuns);
+  }
+
+  const anomalies: PerformanceAnomaly[] = [];
+  for (const bundleRuns of byBundle.values()) {
+    const ordered = [...bundleRuns].sort((a, b) => a.finishedAt - b.finishedAt);
+    for (let index = 0; index < ordered.length; index += 1) {
+      const current = ordered[index];
+      const allPrevious = ordered.slice(0, index);
+      const sameDevicePrevious = current.deviceId ? allPrevious.filter((entry) => entry.deviceId === current.deviceId) : [];
+      const previous = sameDevicePrevious.length >= 3 ? sameDevicePrevious : allPrevious;
+      if (previous.length < 3) continue;
+      const durationMs = current.startedAt ? current.finishedAt - current.startedAt : undefined;
+      const baselineDurationMs = median(previous.filter((entry) => entry.startedAt).map((entry) => entry.finishedAt - (entry.startedAt as number)));
+      const baselineSizeBytes = median(previous.map((entry) => entry.sizeBytes).filter((size): size is number => typeof size === 'number' && size > 0));
+      const durationRatio = durationMs && baselineDurationMs ? durationMs / baselineDurationMs : undefined;
+      const sizeRatio = current.sizeBytes && baselineSizeBytes ? current.sizeBytes / baselineSizeBytes : undefined;
+      const durationAnomaly = durationMs !== undefined && baselineDurationMs !== undefined && durationRatio !== undefined && durationRatio >= 1.75 && durationMs - baselineDurationMs >= 60_000;
+      const sizeAnomaly = current.sizeBytes !== undefined && baselineSizeBytes !== undefined && sizeRatio !== undefined && sizeRatio >= 1.5 && current.sizeBytes - baselineSizeBytes >= 5 * 1024 * 1024;
+      if (!durationAnomaly && !sizeAnomaly) continue;
+      anomalies.push({
+        jobId: current.id,
+        bundleId: current.bundleId,
+        versionLabel: current.versionLabel,
+        finishedAt: current.finishedAt,
+        kind: durationAnomaly && sizeAnomaly ? 'duration-and-size' : durationAnomaly ? 'duration' : 'size',
+        durationMs,
+        baselineDurationMs,
+        durationRatio,
+        sizeBytes: current.sizeBytes,
+        baselineSizeBytes,
+        sizeRatio,
+      });
+    }
+  }
+  return anomalies.sort((a, b) => b.finishedAt - a.finishedAt).slice(0, 20);
 }
 
 export function getInsightsSummary(topAppsLimit = 5, trendDays = 14): InsightsSummary {
@@ -2348,6 +2448,7 @@ export function getInsightsSummary(topAppsLimit = 5, trendDays = 14): InsightsSu
     trend: getDailyVolume(trendDays),
     failureBreakdown: getFailureBreakdown(runs),
     byDevice: getDeviceThroughput(),
+    anomalies: getPerformanceAnomalies(runs),
   };
 }
 
@@ -2795,6 +2896,37 @@ export function updateUserPrefs(username: string, patch: Partial<UserPrefs>): Us
   state.userPrefs[lower] = updated;
   persistNow();
   return updated;
+}
+
+export function recordNotification(input: Omit<NotificationRecord, 'id' | 'createdAt' | 'readAt'>): NotificationRecord {
+  const notification: NotificationRecord = { ...input, id: randomUUID(), createdAt: Date.now() };
+  state.notifications.unshift(notification);
+  if (state.notifications.length > MAX_NOTIFICATIONS) state.notifications.length = MAX_NOTIFICATIONS;
+  persistNow();
+  return notification;
+}
+
+export function listNotifications(userId: string, limit = 50): { notifications: NotificationRecord[]; unread: number } {
+  const lower = userId.toLowerCase();
+  const owned = state.notifications.filter((notification) => notification.userId.toLowerCase() === lower);
+  return {
+    notifications: owned.slice(0, Math.min(Math.max(limit, 1), 100)).map((notification) => ({ ...notification })),
+    unread: owned.filter((notification) => !notification.readAt).length,
+  };
+}
+
+export function markNotificationsRead(userId: string, ids?: string[]): number {
+  const lower = userId.toLowerCase();
+  const allowed = ids ? new Set(ids) : undefined;
+  const now = Date.now();
+  let changed = 0;
+  for (const notification of state.notifications) {
+    if (notification.userId.toLowerCase() !== lower || notification.readAt || (allowed && !allowed.has(notification.id))) continue;
+    notification.readAt = now;
+    changed += 1;
+  }
+  if (changed > 0) persistNow();
+  return changed;
 }
 
 const BACKUP_VERSION = 4;

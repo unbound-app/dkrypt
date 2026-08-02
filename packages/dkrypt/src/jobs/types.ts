@@ -1,5 +1,6 @@
 import type { ChildProcess } from 'node:child_process';
 import type { TFBuild } from '#testflight.js';
+import type { IpaMetadata } from '#store/state.js';
 
 export type JobStatus = 'queued' | 'running' | 'done' | 'failed';
 
@@ -37,7 +38,7 @@ export interface Job {
   filePath?: string;
   fileSizeBytes?: number;
   deviceId?: string;
-  ipaMetadata?: { bundleVersion?: string; shortVersion?: string; minOsVersion?: string; executable?: string };
+  ipaMetadata?: IpaMetadata;
   ipaInfoPlist?: Record<string, unknown>;
   createdAt: number;
   startedAt?: number;

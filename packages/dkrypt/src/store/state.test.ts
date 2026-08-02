@@ -23,6 +23,7 @@ import {
   getDeviceUptimePercent,
   getDiscordGuildIds,
   getDiscordRolePerks,
+  getInsightsSummary,
   getUserActivityStats,
   getEffectiveDevices,
   getWatchDispatchTargets,
@@ -31,9 +32,11 @@ import {
   importBackup,
   listAllowedUsers,
   listAllShareLinks,
+  listNotifications,
   listShareLinksForJob,
   recordDeviceHealthCheck,
   recordJobHistory,
+  recordNotification,
   recordWebhookDelivery,
   recordShareLink,
   setDiscordGuildIds,
@@ -43,6 +46,7 @@ import {
   updateSettings,
   updateWatch,
   verifyApiKey,
+  markNotificationsRead,
 } from '#store/state.js';
 
 describe('share links', () => {
@@ -78,6 +82,53 @@ describe('share links', () => {
       failedJobs: 0,
       activeShareLinks: 1,
     });
+  });
+});
+
+describe('dashboard notifications', () => {
+  test('stores notifications per user and marks selected entries read', () => {
+    const userId = `notifications-${randomUUID()}`;
+    const first = recordNotification({ userId, title: 'Finished', message: 'Ready', severity: 'success' });
+    recordNotification({ userId, title: 'Failed', message: 'Needs attention', severity: 'error' });
+    recordNotification({ userId: `other-${randomUUID()}`, title: 'Hidden', message: 'Not yours', severity: 'info' });
+
+    expect(listNotifications(userId)).toMatchObject({ unread: 2, notifications: expect.arrayContaining([expect.objectContaining({ id: first.id })]) });
+    expect(markNotificationsRead(userId, [first.id])).toBe(1);
+    expect(listNotifications(userId)).toMatchObject({ unread: 1 });
+  });
+});
+
+describe('performance anomalies', () => {
+  test('flags a completed job that is much slower and larger than its baseline', () => {
+    const bundleId = `com.example.anomaly.${randomUUID()}`;
+    const start = Date.now() - 4 * 60 * 60 * 1000;
+    for (let index = 0; index < 3; index += 1) {
+      const finishedAt = start + index * 60 * 60 * 1000;
+      recordJobHistory({
+        id: `${bundleId}-${index}`,
+        bundleId,
+        status: 'done',
+        source: 'manual',
+        createdAt: finishedAt - 12_000,
+        startedAt: finishedAt - 10_000,
+        finishedAt,
+        sizeBytes: 10 * 1024 * 1024,
+      });
+    }
+    const anomalousId = `${bundleId}-outlier`;
+    const finishedAt = Date.now();
+    recordJobHistory({
+      id: anomalousId,
+      bundleId,
+      status: 'done',
+      source: 'manual',
+      createdAt: finishedAt - 130_000,
+      startedAt: finishedAt - 120_000,
+      finishedAt,
+      sizeBytes: 20 * 1024 * 1024,
+    });
+
+    expect(getInsightsSummary().anomalies).toContainEqual(expect.objectContaining({ jobId: anomalousId, kind: 'duration-and-size' }));
   });
 });
 

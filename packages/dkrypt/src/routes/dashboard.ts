@@ -6,7 +6,7 @@ import { dashboardEvents, emitJobsChanged, getOnlineUsernames, registerPresence,
 import { getBillingEntitlements } from '#billing.js';
 import { blockDuringMaintenance, getMaintenanceStatus } from '#maintenance.js';
 import { jobFileAvailable, jobSummary, streamJobFile } from '#jobs/http.js';
-import { cancelJob, enqueueDecryptJob, getActiveJobs, getJob, getQueueInfo, getRetainedJobArtifacts, prioritizeQueuedJob, reorderQueue } from '#jobs/store.js';
+import { cancelJob, enqueueDecryptJob, getActiveJobs, getJob, getQueueInfo, getQueueReason, getRetainedJobArtifacts, prioritizeQueuedJob, reorderQueue } from '#jobs/store.js';
 import type { LogEntry, LogLevel } from '#logger.js';
 import { getRecentLogs } from '#logger.js';
 import { EMBED_COLOR, notify, sendTestNotification } from '#notify.js';
@@ -18,7 +18,7 @@ import { applyBackupSchedule, applyWatchSchedules, checkForTestFlightUpdate, che
 import { getGitHubRateLimitBudget, listDispatchRepos, listRepoWorkflows, validateDispatchTarget } from '#scheduler/github.js';
 import { lookupAppMetadata, searchApps } from '#scheduler/itunes.js';
 import { requirePermission, requireSession } from '#session.js';
-import { getDeviceHealth, isBridgeHeartbeatFresh } from '#deviceHealth.js';
+import { getDeviceHealth, getDeviceInstallBlocker, getDeviceReadiness, isBridgeHeartbeatFresh } from '#deviceHealth.js';
 import { listInstalledAppStoreBundles, sendSpringBoardBridgeRequest, validateDeviceRootDir, withSSH } from '#idevice.js';
 import { getTestFlightBridgeDiagnostics, listBuilds, listTrains } from '#testflight.js';
 import { nextCronRunAt, nextCronRuns } from '#util/cron.js';
@@ -82,6 +82,8 @@ import {
   getJobHistoryEntryById,
   getJobHistoryPage,
   getLastSchedulerRunAt,
+  listNotifications,
+  markNotificationsRead,
   getPrimaryDevice,
   getSchedulerRunHistory,
   getGitHubBudgetTelemetry,
@@ -220,12 +222,23 @@ function buildOverview(permissions: bigint, userId: string) {
       queuedBy: j.queuedBy,
       priority: j.priority,
       createdAt: j.createdAt,
+      queueReason: getQueueReason(j),
     })),
   };
 }
 
 dashboardRouter.get('/v1/dashboard/overview', (_req, res) => {
   res.json(buildOverview(res.locals.session.permissions, res.locals.session.sub));
+});
+
+dashboardRouter.get('/v1/dashboard/notifications', (req, res) => {
+  const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit ?? '50'), 10) || 50, 1), 100);
+  res.json(listNotifications(res.locals.session.sub, limit));
+});
+
+dashboardRouter.post('/v1/dashboard/notifications/read', (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter((id: unknown): id is string => typeof id === 'string').slice(0, 100) : undefined;
+  res.json({ ok: true, marked: markNotificationsRead(res.locals.session.sub, ids) });
 });
 
 dashboardRouter.get('/v1/dashboard/events', (_req, res) => {
@@ -362,6 +375,34 @@ dashboardRouter.get('/v1/dashboard/jobs/export', (req, res) => {
 
 dashboardRouter.get('/v1/dashboard/jobs/eta/:bundleId', (req, res) => {
   res.json({ avgMs: getAverageJobDurationMs(req.params.bundleId) ?? null });
+});
+
+dashboardRouter.post('/v1/dashboard/jobs/bulk-preview', canDecrypt, (req, res) => {
+  const rawIds: string[] = Array.isArray(req.body?.ids) ? req.body.ids.filter((id: unknown): id is string => typeof id === 'string') : [];
+  const ids = [...new Set<string>(rawIds)].slice(0, 100);
+  const activeJobs = getActiveJobs();
+  const items = ids.flatMap((id) => {
+    const entry = getJobHistoryEntryById(id);
+    if (!entry) return [];
+    const active = activeJobs.find((job) => job.bundleId === entry.bundleId && job.externalVersionId === entry.externalVersionId && job.testflight?.build.id === entry.testflight?.build.id);
+    return [{
+      id: entry.id,
+      bundleId: entry.bundleId,
+      versionLabel: entry.versionLabel,
+      status: entry.status,
+      action: active ? 'join-existing' as const : 'queue' as const,
+      reason: active ? `Already active as ${active.id.slice(0, 8)}` : undefined,
+      estimatedDurationMs: getAverageJobDurationMs(entry.bundleId),
+    }];
+  });
+  res.json({
+    requested: ids.length,
+    eligible: items.length,
+    projectedQueueAdds: items.filter((item) => item.action === 'queue').length,
+    estimatedDurationMs: items.filter((item) => item.action === 'queue').reduce((sum, item) => sum + (item.estimatedDurationMs ?? 0), 0),
+    previousSizeBytes: ids.reduce((sum, id) => sum + (getJobHistoryEntryById(id)?.sizeBytes ?? 0), 0),
+    items,
+  });
 });
 
 dashboardRouter.get('/v1/dashboard/jobs/slo', canViewScheduler, (_req, res) => {
@@ -634,6 +675,62 @@ dashboardRouter.post('/v1/dashboard/decrypt', canDecrypt, blockDuringMaintenance
     preferredDeviceId,
   );
   res.status(202).json(jobSummary(job));
+});
+
+dashboardRouter.post('/v1/dashboard/decrypt/preflight', canDecrypt, async (req, res) => {
+  const bundleId = typeof req.body?.bundleId === 'string' ? req.body.bundleId.trim() : '';
+  if (!BUNDLE_ID_RE.test(bundleId)) {
+    res.status(400).json({ error: 'bundleId is required and must look like a bundle identifier' });
+    return;
+  }
+  const testflight = req.body?.testflight === true;
+  const versionLabel = typeof req.body?.versionLabel === 'string' ? req.body.versionLabel.trim().slice(0, 64) || undefined : undefined;
+  const installSizeBytes = typeof req.body?.installSizeBytes === 'number' && Number.isFinite(req.body.installSizeBytes) && req.body.installSizeBytes > 0 ? req.body.installSizeBytes : undefined;
+  const devices = getEffectiveDevices().filter((device) => device.enabled);
+  const primary = devices.find((device) => device.isPrimary) ?? devices[0];
+  const checks = await Promise.all(devices.map(async (device) => {
+    try {
+      const health = await getDeviceHealth(device.id, true);
+      const blockers: string[] = [];
+      if (!health.reachable) blockers.push(health.error ?? 'device is unreachable');
+      if (health.internetAccess === false) blockers.push('device cannot reach Apple services');
+      const installBlocker = getDeviceInstallBlocker(health, installSizeBytes);
+      if (installBlocker) blockers.push(installBlocker);
+      if (health.readiness?.state === 'blocked') blockers.push(...(health.readiness.reasons.length > 0 ? health.readiness.reasons : ['device readiness is blocked']));
+      if (testflight && primary && device.id !== primary.id) blockers.push('TestFlight decrypts run on the primary device');
+      if (testflight && device.id === primary?.id && health.testFlightBridgeReachable === false) blockers.push('TestFlight bridge is unresponsive');
+      return {
+        id: device.id,
+        name: device.name,
+        isPrimary: device.id === primary?.id,
+        ready: blockers.length === 0,
+        blockers: [...new Set(blockers)],
+        readiness: health.readiness ?? getDeviceReadiness(health),
+        reachable: health.reachable,
+        storageFreeBytes: health.storageFreeBytes,
+        batteryPercent: health.batteryPercent,
+      };
+    } catch (error) {
+      return {
+        id: device.id,
+        name: device.name,
+        isPrimary: device.id === primary?.id,
+        ready: false,
+        blockers: [error instanceof Error ? error.message : 'device health check failed'],
+        reachable: false,
+      };
+    }
+  }));
+  res.json({
+    bundleId,
+    versionLabel,
+    testflight,
+    installSizeBytes,
+    estimatedDurationMs: getAverageJobDurationMs(bundleId),
+    queueLength: getActiveJobs().length,
+    canQueue: checks.some((check) => check.ready),
+    devices: checks,
+  });
 });
 
 dashboardRouter.get('/v1/dashboard/versions/:bundleId', async (req, res) => {
@@ -1338,7 +1435,19 @@ dashboardRouter.post('/v1/dashboard/jobs/:id/retry', canDecrypt, blockDuringMain
 dashboardRouter.get('/v1/dashboard/jobs/:id/timeline', (req, res) => {
   const active = getJob(req.params.id);
   if (active) {
-    res.json({ id: active.id, correlationId: active.id, bundleId: active.bundleId, status: active.status, events: active.timeline ?? [], guidance: active.status === 'failed' ? getFailureGuidance(active.error) : undefined });
+    res.json({
+      id: active.id,
+      correlationId: active.id,
+      bundleId: active.bundleId,
+      status: active.status,
+      versionLabel: active.versionLabel,
+      deviceId: active.deviceId,
+      sizeBytes: active.fileSizeBytes,
+      ipaMetadata: active.ipaMetadata,
+      ipaInfoPlist: active.ipaInfoPlist,
+      events: active.timeline ?? [],
+      guidance: active.status === 'failed' ? getFailureGuidance(active.error) : undefined,
+    });
     return;
   }
 
@@ -1352,7 +1461,19 @@ dashboardRouter.get('/v1/dashboard/jobs/:id/timeline', (req, res) => {
     ...(entry.startedAt ? [{ at: entry.startedAt, label: `Started on ${entry.deviceId ?? 'unknown device'}`, status: 'running' as const }] : []),
     { at: entry.finishedAt, label: entry.status === 'done' ? 'Finished' : `Failed: ${entry.error ?? 'unknown error'}`, status: entry.status },
   ];
-  res.json({ id: entry.id, correlationId: entry.id, bundleId: entry.bundleId, status: entry.status, events, guidance: entry.status === 'failed' ? getFailureGuidance(entry.error) : undefined });
+  res.json({
+    id: entry.id,
+    correlationId: entry.id,
+    bundleId: entry.bundleId,
+    status: entry.status,
+    versionLabel: entry.versionLabel,
+    deviceId: entry.deviceId,
+    sizeBytes: entry.sizeBytes,
+    ipaMetadata: entry.ipaMetadata,
+    ipaInfoPlist: entry.ipaInfoPlist,
+    events,
+    guidance: entry.status === 'failed' ? getFailureGuidance(entry.error) : undefined,
+  });
 });
 
 dashboardRouter.get('/v1/dashboard/jobs/:id/diagnostic', canDecrypt, (req, res) => {
@@ -1375,16 +1496,6 @@ dashboardRouter.get('/v1/dashboard/jobs/:id/file', async (req, res) => {
     return;
   }
   await streamJobFile(job, req, res);
-});
-
-dashboardRouter.post('/v1/dashboard/jobs/:id/handoff', canTriggerDispatch, (req, res) => {
-  const job = getJob(req.params.id);
-  if (!job || job.status !== 'done' || !job.filePath) {
-    res.status(409).json({ error: 'the decrypted IPA is no longer available for handoff' });
-    return;
-  }
-  const { url, expiresAtMs } = buildSignedFileUrlWithToken(job.id, config.fileTtlMinutes);
-  res.json({ url, expiresAt: expiresAtMs });
 });
 
 const SHARE_TTL_MIN = 1;

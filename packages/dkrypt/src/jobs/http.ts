@@ -5,7 +5,7 @@ import { scopedLogger } from '#logger.js';
 
 const log = scopedLogger('jobs');
 import { latestActiveShareLinkExpiry } from '#store/state.js';
-import { getQueueInfo } from '#jobs/store.js';
+import { getQueueInfo, getQueueReason } from '#jobs/store.js';
 import type { Job } from '#jobs/types.js';
 
 export function jobFileAvailable(job: Job | undefined): boolean {
@@ -40,6 +40,7 @@ export function jobSummary(job: Job) {
     finishedAt: job.finishedAt ? new Date(job.finishedAt).toISOString() : undefined,
     fileExpiresAt,
     queue: getQueueInfo(job.id),
+    queueReason: getQueueReason(job),
     statusUrl: `/v1/jobs/${job.id}`,
     fileUrl: `/v1/jobs/${job.id}/file`,
   };

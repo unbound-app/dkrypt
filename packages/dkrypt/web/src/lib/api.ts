@@ -95,6 +95,7 @@ export interface JobSummary {
   finishedAt?: string;
   fileExpiresAt?: string;
   queue?: { position: number; total: number };
+  queueReason?: string;
   statusUrl: string;
   fileUrl: string;
 }
@@ -111,6 +112,7 @@ export interface ActiveJob {
   priority?: number;
   createdAt: number;
   deviceId?: string;
+  queueReason?: string;
 }
 
 export interface SchedulerSettings {
@@ -241,6 +243,13 @@ export interface IpaMetadata {
   shortVersion?: string;
   minOsVersion?: string;
   executable?: string;
+  architectures?: string[];
+  entitlementKeys?: string[];
+  embeddedFrameworks?: string[];
+  fileCount?: number;
+  compressedSizeBytes?: number;
+  uncompressedSizeBytes?: number;
+  codeSignaturePresent?: boolean;
 }
 
 export interface JobHistoryEntry {
@@ -277,6 +286,83 @@ export interface JobTimeline {
   status: 'queued' | 'running' | 'done' | 'failed';
   events: JobTimelineEvent[];
   guidance?: { category: string; title: string; action: string; retryRecommended: boolean };
+  versionLabel?: string;
+  deviceId?: string;
+  sizeBytes?: number;
+  ipaMetadata?: IpaMetadata;
+  ipaInfoPlist?: Record<string, unknown>;
+}
+
+export interface DecryptPreflightDevice {
+  id: string;
+  name: string;
+  isPrimary: boolean;
+  ready: boolean;
+  blockers: string[];
+  readiness?: DeviceReadiness;
+  reachable: boolean;
+  storageFreeBytes?: number;
+  batteryPercent?: number;
+}
+
+export interface DecryptPreflight {
+  bundleId: string;
+  versionLabel?: string;
+  testflight: boolean;
+  installSizeBytes?: number;
+  estimatedDurationMs?: number;
+  queueLength: number;
+  canQueue: boolean;
+  devices: DecryptPreflightDevice[];
+}
+
+export interface BulkJobPreviewItem {
+  id: string;
+  bundleId: string;
+  versionLabel?: string;
+  status: 'done' | 'failed';
+  action: 'queue' | 'join-existing';
+  reason?: string;
+  estimatedDurationMs?: number;
+}
+
+export interface BulkJobPreview {
+  requested: number;
+  eligible: number;
+  projectedQueueAdds: number;
+  estimatedDurationMs: number;
+  previousSizeBytes: number;
+  items: BulkJobPreviewItem[];
+}
+
+export interface DashboardNotification {
+  id: string;
+  title: string;
+  message: string;
+  severity: 'info' | 'success' | 'warning' | 'error';
+  createdAt: number;
+  readAt?: number;
+  jobId?: string;
+  href?: string;
+}
+
+export interface NotificationResponse {
+  notifications: DashboardNotification[];
+  unread: number;
+}
+
+export interface PerformanceAnomaly {
+  jobId: string;
+  bundleId: string;
+  versionLabel?: string;
+  finishedAt: number;
+  kind: 'duration' | 'size' | 'duration-and-size';
+  durationMs?: number;
+  baselineDurationMs?: number;
+  durationRatio?: number;
+  sizeBytes?: number;
+  baselineSizeBytes?: number;
+  sizeRatio?: number;
 }
 
 export interface ApiKeyRecord {
@@ -803,6 +889,7 @@ export interface InsightsSummary {
   trend: { date: string; count: number }[];
   failureBreakdown: { category: string; count: number }[];
   byDevice: DeviceThroughputStats[];
+  anomalies: PerformanceAnomaly[];
 }
 
 export interface DeviceThroughputStats {
@@ -952,6 +1039,13 @@ export function queueDecrypt(
   });
 }
 
+export function fetchDecryptPreflight(input: { bundleId: string; versionLabel?: string; testflight?: boolean; installSizeBytes?: number }): Promise<DecryptPreflight> {
+  return apiJson('/v1/dashboard/decrypt/preflight', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
 export interface AppVersionEntry {
   externalVersionId: string;
   isLatest: boolean;
@@ -1026,12 +1120,26 @@ export function fetchJobTimeline(id: string): Promise<JobTimeline> {
   return apiJson(`/v1/dashboard/jobs/${encodeURIComponent(id)}/timeline`);
 }
 
-export function jobDiagnosticUrl(id: string): string {
-  return `/v1/dashboard/jobs/${encodeURIComponent(id)}/diagnostic`;
+export function previewBulkJobReplay(ids: string[]): Promise<BulkJobPreview> {
+  return apiJson('/v1/dashboard/jobs/bulk-preview', {
+    method: 'POST',
+    body: JSON.stringify({ ids }),
+  });
 }
 
-export function regenerateWorkflowHandoff(id: string): Promise<{ ok: boolean; data: { url: string; expiresAt: number } }> {
-  return apiAction(`/v1/dashboard/jobs/${encodeURIComponent(id)}/handoff`, { method: 'POST' });
+export function fetchNotifications(limit = 50): Promise<NotificationResponse> {
+  return apiJson(`/v1/dashboard/notifications?limit=${limit}`);
+}
+
+export function markNotificationsRead(ids?: string[]): Promise<{ ok: boolean; data: { marked: number } }> {
+  return apiAction('/v1/dashboard/notifications/read', {
+    method: 'POST',
+    body: JSON.stringify(ids ? { ids } : {}),
+  });
+}
+
+export function jobDiagnosticUrl(id: string): string {
+  return `/v1/dashboard/jobs/${encodeURIComponent(id)}/diagnostic`;
 }
 
 export function fetchMyKeys(): Promise<{ keys: ApiKeyRecord[] }> {

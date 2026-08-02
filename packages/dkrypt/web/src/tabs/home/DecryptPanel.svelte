@@ -3,12 +3,15 @@
 	import BatchDecryptDialog from "#components/BatchDecryptDialog.svelte";
 	import CopyButton from "#components/CopyButton.svelte";
 	import EmptyState from "#components/EmptyState.svelte";
+	import JobPreflightDialog from "#components/JobPreflightDialog.svelte";
 	import {
+		fetchDecryptPreflight,
 		fetchJobEta,
 		queueDecrypt,
 		queueTestFlightDecrypt,
 		searchApps,
 		type AppStoreSearchResult,
+		type DecryptPreflight,
 		type TFBuild,
 	} from "#lib/api";
 	import Badge from "#lib/components/ui/Badge.svelte";
@@ -51,6 +54,15 @@
 	let searchToken = 0;
 	let queueing = $state<Set<string>>(new Set());
 	let resultDetailsOpen = $state<Set<string>>(new Set());
+	let preflightOpen = $state(false);
+	let preflight = $state<DecryptPreflight | null>(null);
+	let pendingQueue = $state<{
+		bundleId: string;
+		trackName: string;
+		externalVersionId?: string;
+		versionLabel?: string;
+		testflight?: { appId: number; build: TFBuild };
+	} | null>(null);
 
 	const statusByBundle = $derived.by(() => {
 		const map = new Map<string, string>();
@@ -132,6 +144,42 @@
 		versionsOpen = true;
 	}
 
+	async function queueNow(request: NonNullable<typeof pendingQueue>): Promise<void> {
+		requestNotificationPermission();
+		queueing = new Set(queueing).add(request.bundleId);
+		try {
+			const { ok, data } = request.testflight
+				? await queueTestFlightDecrypt(request.bundleId, request.testflight.appId, request.testflight.build, false)
+				: await queueDecrypt(request.bundleId, request.externalVersionId, request.versionLabel, false);
+			if (!ok) return;
+			addDecrypt({
+				id: data.id,
+				bundleId: request.bundleId,
+				trackName: request.trackName,
+				versionLabel: request.versionLabel,
+				externalVersionId: request.externalVersionId,
+				testflight: request.testflight,
+				status: data.status,
+				progress: data.progress,
+				queue: data.queue,
+			});
+			pushRecentBundleId(request.bundleId);
+			showToast(`Queued ${request.trackName}${request.versionLabel ? ` (${request.versionLabel})` : ""}`, "success");
+		} finally {
+			const next = new Set(queueing);
+			next.delete(request.bundleId);
+			queueing = next;
+		}
+	}
+
+	async function confirmPreflight(): Promise<void> {
+		const request = pendingQueue;
+		preflightOpen = false;
+		pendingQueue = null;
+		preflight = null;
+		if (request) await queueNow(request);
+	}
+
 	async function queue(
 		bundleId: string,
 		trackName: string,
@@ -139,35 +187,14 @@
 		versionLabel?: string,
 	): Promise<void> {
 		if (!canDecrypt) return;
-		requestNotificationPermission();
-		queueing = new Set(queueing).add(bundleId);
 		try {
-			const { ok, data } = await queueDecrypt(
-				bundleId,
-				externalVersionId,
-				versionLabel,
-				false,
-			);
-			if (!ok) return;
-			addDecrypt({
-				id: data.id,
-				bundleId,
-				trackName,
-				versionLabel,
-				externalVersionId,
-				status: data.status,
-				progress: data.progress,
-				queue: data.queue,
-			});
-			pushRecentBundleId(bundleId);
-			showToast(
-				`Queued ${trackName}${versionLabel ? ` (${versionLabel})` : ""}`,
-				"success",
-			);
-		} finally {
-			const next = new Set(queueing);
-			next.delete(bundleId);
-			queueing = next;
+			pendingQueue = { bundleId, trackName, externalVersionId, versionLabel };
+			preflight = await fetchDecryptPreflight({ bundleId, versionLabel });
+			preflightOpen = true;
+		} catch {
+			pendingQueue = null;
+			preflight = null;
+			showToast("Could not check device readiness", "error");
 		}
 	}
 
@@ -203,30 +230,21 @@
 		label: string,
 	): Promise<void> {
 		if (!canDecrypt) return;
-		requestNotificationPermission();
 		testflightOpen = false;
-		const { ok, data } = await queueTestFlightDecrypt(
-			bundleId,
-			appId,
-			build,
-			false,
-		);
-		if (!ok) return;
-		addDecrypt({
-			id: data.id,
-			bundleId,
-			trackName: testflightTrackName,
-			versionLabel: `TestFlight ${label}`,
-			testflight: { appId, build },
-			status: data.status,
-			progress: data.progress,
-			queue: data.queue,
-		});
-		pushRecentBundleId(bundleId);
-		showToast(
-			`Queued ${testflightTrackName} (TestFlight ${label})`,
-			"success",
-		);
+		try {
+			pendingQueue = {
+				bundleId,
+				trackName: testflightTrackName,
+				versionLabel: `TestFlight ${label}`,
+				testflight: { appId, build },
+			};
+			preflight = await fetchDecryptPreflight({ bundleId, versionLabel: `TestFlight ${label}`, testflight: true, installSizeBytes: build.fileSize });
+			preflightOpen = true;
+		} catch {
+			pendingQueue = null;
+			preflight = null;
+			showToast("Could not check device readiness", "error");
+		}
 	}
 
 	function onKeydown(e: KeyboardEvent): void {
@@ -657,3 +675,16 @@
 />
 
 <BatchDecryptDialog open={batchOpen} onOpenChange={(v) => (batchOpen = v)} />
+
+<JobPreflightDialog
+	open={preflightOpen}
+	preflight={preflight}
+	onOpenChange={(v) => {
+		preflightOpen = v;
+		if (!v) {
+			pendingQueue = null;
+			preflight = null;
+		}
+	}}
+	onConfirm={() => void confirmPreflight()}
+/>
