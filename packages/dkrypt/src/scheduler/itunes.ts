@@ -1,5 +1,12 @@
 import { describeHttpError } from '#util/httpError.js';
 
+const DEFAULT_ITUNES_COUNTRY = 'US';
+
+function buildItunesUrl(endpoint: 'lookup' | 'search', params: Record<string, string>): string {
+  const query = new URLSearchParams({ country: DEFAULT_ITUNES_COUNTRY, ...params });
+  return `https://itunes.apple.com/${endpoint}?${query.toString()}`;
+}
+
 export interface ItunesLookupResult {
   version: string;
   bundleId: string;
@@ -47,7 +54,7 @@ function parseFileSizeBytes(value: unknown): number | undefined {
 }
 
 export async function lookupCurrentVersion(bundleId: string): Promise<ItunesLookupResult> {
-  const url = `https://itunes.apple.com/lookup?bundleId=${encodeURIComponent(bundleId)}`;
+  const url = buildItunesUrl('lookup', { bundleId });
   const res = await fetch(url);
   if (!res.ok) throw new Error(describeHttpError('itunes lookup failed', res));
 
@@ -64,7 +71,7 @@ export async function lookupCurrentVersion(bundleId: string): Promise<ItunesLook
 }
 
 export async function lookupAppMetadata(bundleId: string): Promise<ItunesAppMetadata> {
-  const url = `https://itunes.apple.com/lookup?bundleId=${encodeURIComponent(bundleId)}`;
+  const url = buildItunesUrl('lookup', { bundleId });
   const res = await fetch(url);
   if (!res.ok) throw new Error(describeHttpError('itunes lookup failed', res));
 
@@ -116,7 +123,7 @@ interface ItunesSearchResponse {
 }
 
 export async function searchApps(term: string, limit = 10): Promise<ItunesSearchResult[]> {
-  const url = `https://itunes.apple.com/search?entity=software&limit=${limit}&term=${encodeURIComponent(term)}`;
+  const url = buildItunesUrl('search', { entity: 'software', limit: String(limit), term });
   const res = await fetch(url);
   if (!res.ok) throw new Error(describeHttpError('itunes search failed', res));
 
