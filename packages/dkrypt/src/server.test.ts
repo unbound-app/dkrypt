@@ -2,8 +2,10 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test } from 'bun:test';
+import { enqueueDecryptJob, reclaimJobFile } from '#jobs/store.js';
 import { buildServer } from '#server.js';
-import { recordJobHistory, recordNotification } from '#store/state.js';
+import { recordJobHistory, recordNotification, recordShareLink, revokeShareLink } from '#store/state.js';
+import { buildSignedFileUrlWithToken } from '#util/signedUrl.js';
 
 async function signIn() {
   const server = await buildServer({ includePublicRoutes: false });
@@ -116,6 +118,71 @@ test('Fastify marks cleaned completed jobs as unavailable in history', async () 
     const body = response.json() as { history: Array<{ id: string; fileAvailable: boolean }> };
     expect(body.history).toContainEqual(expect.objectContaining({ id, fileAvailable: false }));
   } finally {
+    await server.close();
+  }
+});
+
+test('Fastify exposes system-issued scheduler share links in recent jobs', async () => {
+  const { server, cookie } = await signIn();
+  const id = `scheduler-share-${crypto.randomUUID()}`;
+  const token = `token-${crypto.randomUUID()}`;
+  recordJobHistory({
+    id,
+    bundleId: 'com.example.scheduler-share',
+    status: 'done',
+    source: 'scheduler',
+    createdAt: Date.now() - 1_000,
+    finishedAt: Date.now(),
+  });
+  const link = recordShareLink(id, 'com.example.scheduler-share', token, 'system', Date.now() + 60_000);
+
+  try {
+    const response = await server.inject({
+      method: 'GET',
+      url: '/v1/dashboard/jobs?q=com.example.scheduler-share',
+      headers: { cookie },
+    });
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as { history: Array<{ id: string; activeShareUrl?: string }> };
+    expect(body.history.find((entry) => entry.id === id)?.activeShareUrl).toContain(`/v1/jobs/${id}/file?token=${token}`);
+  } finally {
+    revokeShareLink(link.id);
+    await server.close();
+  }
+});
+
+test('Fastify serves a signed scheduler share link while the job is retained', async () => {
+  const server = await buildServer({ includePublicRoutes: false });
+  const outputDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-scheduler-download-'));
+  const outputPath = path.join(outputDir, 'app.ipa');
+  await writeFile(outputPath, 'ipa');
+  const job = enqueueDecryptJob(
+    'com.example.scheduler-download',
+    'scheduler',
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    0,
+    `unavailable-device-${crypto.randomUUID()}`,
+  );
+  job.status = 'done';
+  job.filePath = outputPath;
+  job.fileSizeBytes = 3;
+  job.finishedAt = Date.now();
+  const share = buildSignedFileUrlWithToken(job.id, 60);
+  const link = recordShareLink(job.id, job.bundleId, share.token, 'system', share.expiresAtMs);
+
+  try {
+    const response = await server.inject({
+      method: 'GET',
+      url: `/v1/jobs/${job.id}/file?token=${encodeURIComponent(share.token)}`,
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toBe('ipa');
+  } finally {
+    revokeShareLink(link.id);
+    await reclaimJobFile(job);
     await server.close();
   }
 });

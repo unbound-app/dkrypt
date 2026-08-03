@@ -578,6 +578,7 @@ async function cleanupJob(job: Job): Promise<void> {
 }
 
 export async function reclaimJobFile(job: Job): Promise<void> {
+  if (latestActiveShareLinkExpiry(job.id) !== undefined) return;
   job.downloadedAt = Date.now();
   await cleanupJob(job);
 }

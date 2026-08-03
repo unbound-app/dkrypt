@@ -2787,10 +2787,17 @@ export function listShareLinksForJob(jobId: string, viewerId: string): ReturnTyp
     .map((l) => redactShareLink(l, l.issuedBy === viewerId));
 }
 
-export function activeShareLinkDownloadUrlForJob(jobId: string, viewerId: string): string | undefined {
+export function activeShareLinkDownloadUrlForJob(jobId: string, viewerId: string, includeSystem = false): string | undefined {
   const now = Date.now();
   const link = state.shareLinks
-    .filter((candidate) => candidate.jobId === jobId && candidate.issuedBy === viewerId && !candidate.revoked && candidate.expiresAt > now && !shareLinkExhausted(candidate))
+    .filter(
+      (candidate) =>
+        candidate.jobId === jobId &&
+        (candidate.issuedBy === viewerId || (includeSystem && candidate.issuedBy === 'system')) &&
+        !candidate.revoked &&
+        candidate.expiresAt > now &&
+        !shareLinkExhausted(candidate),
+    )
     .sort((a, b) => b.expiresAt - a.expiresAt)[0];
   return link ? shareLinkDownloadUrl(link) : undefined;
 }

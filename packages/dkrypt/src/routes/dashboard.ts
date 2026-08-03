@@ -307,7 +307,7 @@ dashboardRouter.get('/v1/dashboard/jobs', (req, res) => {
   res.json({
     history: entries.map((entry) => ({
       ...entry,
-      activeShareUrl: activeShareLinkDownloadUrlForJob(entry.id, res.locals.session.sub),
+      activeShareUrl: activeShareLinkDownloadUrlForJob(entry.id, res.locals.session.sub, entry.source === 'scheduler'),
       fileAvailable: jobFileAvailable(getJob(entry.id)),
     })),
     total,
