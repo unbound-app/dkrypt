@@ -5,9 +5,10 @@ import { normalizeVersion } from '#util/version.js';
 
 const GITHUB_API = 'https://api.github.com';
 const RATE_LIMIT_CACHE_MS = 30_000;
-const GITHUB_GET_RETRY_COUNT = 2;
+const GITHUB_GET_RETRY_COUNT = 3;
 const GITHUB_REQUEST_TIMEOUT_MS = 15_000;
 const GITHUB_RETRY_BASE_DELAY_MS = 750;
+const GITHUB_WORKFLOW_RUN_PAGE_SIZE = 100;
 
 export interface GitHubRateLimitBudget {
   limit: number;
@@ -282,9 +283,16 @@ export async function findDispatchedRun(
   since: Date,
   event: 'repository_dispatch' | 'workflow_dispatch' = 'repository_dispatch',
 ): Promise<WorkflowRun | undefined> {
-  const url = `${GITHUB_API}/repos/${dispatchRepo}/actions/workflows/${workflowFile}/runs?event=${event}&per_page=10`;
+  const url = `${GITHUB_API}/repos/${dispatchRepo}/actions/workflows/${workflowFile}/runs?event=${event}&per_page=${GITHUB_WORKFLOW_RUN_PAGE_SIZE}`;
   const res = await githubFetch(url, { headers: headers() });
-  if (!res.ok) throw new Error(describeHttpError('list workflow runs failed', res));
+  if (!res.ok) {
+    const retryableStatus = res.status === 408 || res.status === 429 || res.status >= 500;
+    if (retryableStatus) {
+      await res.body?.cancel().catch(() => {});
+      return undefined;
+    }
+    throw new Error(describeHttpError('list workflow runs failed', res));
+  }
 
   const body = (await res.json()) as WorkflowRunsResponse;
   const candidates = body.workflow_runs
