@@ -69,6 +69,49 @@ test('Fastify sends the initial dashboard overview over SSE', async () => {
   }
 });
 
+test('Fastify includes live download metadata in history events', async () => {
+  const { server, cookie } = await signIn();
+  const baseUrl = await server.listen({ port: 0, host: '127.0.0.1' });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5_000);
+  const id = `live-history-${crypto.randomUUID()}`;
+  const token = `token-${crypto.randomUUID()}`;
+  const link = recordShareLink(id, 'com.example.live-history', token, 'system', Date.now() + 60_000);
+
+  try {
+    const response = await fetch(`${baseUrl}/v1/dashboard/events`, { headers: { cookie }, signal: controller.signal });
+    expect(response.status).toBe(200);
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('dashboard event stream has no reader');
+    const initial = await reader.read();
+    expect(new TextDecoder().decode(initial.value)).toContain('event: overview');
+
+    recordJobHistory({
+      id,
+      bundleId: 'com.example.live-history',
+      status: 'done',
+      source: 'scheduler',
+      createdAt: Date.now() - 1_000,
+      finishedAt: Date.now(),
+    });
+
+    const next = await reader.read();
+    const text = new TextDecoder().decode(next.value);
+    const match = text.match(/event: history\ndata: (.+)\n\n/);
+    expect(match).not.toBeNull();
+    expect(JSON.parse(match?.[1] ?? '')).toMatchObject({
+      id,
+      activeShareUrl: expect.stringContaining(`/v1/jobs/${id}/file?token=${token}`),
+      fileAvailable: false,
+    });
+  } finally {
+    clearTimeout(timeout);
+    controller.abort();
+    revokeShareLink(link.id);
+    await server.close();
+  }
+});
+
 test('Fastify explains when a history job no longer has an IPA to share', async () => {
   const { server, cookie } = await signIn();
   const id = `cleaned-job-${crypto.randomUUID()}`;

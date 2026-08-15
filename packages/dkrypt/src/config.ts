@@ -17,6 +17,7 @@ function optionalInt(name: string, fallback: number): number {
 }
 
 const paddleEnvironment = optional('PADDLE_ENV', 'sandbox');
+const DEFAULT_TTL_MINUTES = 24 * 60;
 
 export const config = {
   port: optionalInt('PORT', 8080),
@@ -67,8 +68,8 @@ export const config = {
   ipadecryptRootDir: optional('IPADECRYPT_ROOT_DIR', '/root/.ipadecrypt'),
 
   jobMaxWaitSeconds: optionalInt('JOB_MAX_WAIT_SECONDS', 1800),
-  fileTtlMinutes: optionalInt('FILE_TTL_MINUTES', 15),
-  jobRetentionMinutes: optionalInt('JOB_RETENTION_MINUTES', 60),
+  fileTtlMinutes: optionalInt('FILE_TTL_MINUTES', DEFAULT_TTL_MINUTES),
+  jobRetentionMinutes: optionalInt('JOB_RETENTION_MINUTES', DEFAULT_TTL_MINUTES),
 
   watchBundleId: optional('WATCH_BUNDLE_ID', ''),
   watchAppRepo: optional('WATCH_APP_REPO', ''),

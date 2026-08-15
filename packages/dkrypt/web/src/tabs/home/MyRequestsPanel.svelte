@@ -156,14 +156,14 @@
 	async function copyCurl(d: TrackedDecrypt): Promise<void> {
 		copyingCurl = new Set(copyingCurl).add(d.id);
 		try {
-			const { ok, data } = await shareJobFile(d.id, 30);
+			const { ok, data } = await shareJobFile(d.id);
 			if (!ok) return;
 			const filename = `${d.bundleId}.ipa`;
 			await navigator.clipboard.writeText(
 				`curl -o "${filename}" "${data.url}"`,
 			);
 			showToast(
-				"Copied curl command - link works for 30 minutes",
+				`Copied curl command - link works for ${fmtUntil(data.expiresAt)}`,
 				"success",
 			);
 		} catch {
@@ -358,7 +358,7 @@
 										size="sm"
 										variant="secondary"
 										onclick={() => openShare(d.id)}
-										>Share</Button
+										>Download link</Button
 									>
 									<Button
 										size="sm"

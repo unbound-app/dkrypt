@@ -101,7 +101,6 @@ loadDoneJobs();
 loadActiveJobs();
 
 const RETRY_BACKOFF_MS = 5_000;
-const COMPLETION_SHARE_TTL_MINUTES = 60;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -522,11 +521,8 @@ async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
     persistActiveJobs();
   }
 
-  recordJobHistory(toHistoryEntry(job));
-  emitJobsChanged();
-
   const completionShare = job.status === 'done'
-    ? buildSignedFileUrlWithToken(job.id, COMPLETION_SHARE_TTL_MINUTES)
+    ? buildSignedFileUrlWithToken(job.id, config.fileTtlMinutes)
     : undefined;
   if (completionShare) {
     recordShareLink(
@@ -537,6 +533,9 @@ async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
       completionShare.expiresAtMs,
     );
   }
+
+  recordJobHistory(toHistoryEntry(job));
+  emitJobsChanged();
 
   if (job.queuedBy) {
     const prefs = getUserPrefs(job.queuedBy);

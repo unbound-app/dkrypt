@@ -227,6 +227,14 @@ function buildOverview(permissions: bigint, userId: string) {
   };
 }
 
+function dashboardHistoryEntry(entry: JobHistoryEntry, viewerId: string) {
+  return {
+    ...entry,
+    activeShareUrl: activeShareLinkDownloadUrlForJob(entry.id, viewerId, entry.source === 'scheduler'),
+    fileAvailable: jobFileAvailable(getJob(entry.id)),
+  };
+}
+
 dashboardRouter.get('/v1/dashboard/overview', (_req, res) => {
   res.json(buildOverview(res.locals.session.permissions, res.locals.session.sub));
 });
@@ -261,7 +269,7 @@ dashboardRouter.get('/v1/dashboard/events', (_req, res) => {
 
   const onJobsChanged = () => sendEvent('overview', buildOverview(res.locals.session.permissions, res.locals.session.sub));
   const onLogAdded = (entry: LogEntry) => sendEvent('log', entry);
-  const onHistoryAdded = (entry: JobHistoryEntry) => sendEvent('history', entry);
+  const onHistoryAdded = (entry: JobHistoryEntry) => sendEvent('history', dashboardHistoryEntry(entry, res.locals.session.sub));
   const onPresenceChanged = (usernames: string[]) => sendEvent('presence', usernames);
 
   dashboardEvents.on('jobsChanged', onJobsChanged);
@@ -305,11 +313,7 @@ dashboardRouter.get('/v1/dashboard/jobs', (req, res) => {
     toTs: Number.isFinite(toTs) ? toTs : undefined,
   });
   res.json({
-    history: entries.map((entry) => ({
-      ...entry,
-      activeShareUrl: activeShareLinkDownloadUrlForJob(entry.id, res.locals.session.sub, entry.source === 'scheduler'),
-      fileAvailable: jobFileAvailable(getJob(entry.id)),
-    })),
+    history: entries.map((entry) => dashboardHistoryEntry(entry, res.locals.session.sub)),
     total,
   });
 });

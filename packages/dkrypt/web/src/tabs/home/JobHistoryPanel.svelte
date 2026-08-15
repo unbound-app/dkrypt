@@ -913,12 +913,12 @@
 												>Decrypt again</Button
 											>
 										{/if}
-										{#if j.status === "done" && j.fileAvailable}
+										{#if j.status === "done" && j.fileAvailable && !j.activeShareUrl}
 											<Button
 												size="sm"
 												variant="secondary"
 												onclick={() => openShare(j.id)}
-												>Share</Button
+												>Download</Button
 											>
 										{/if}
 										{#if !j.testflight}

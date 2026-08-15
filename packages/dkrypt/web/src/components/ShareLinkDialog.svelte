@@ -28,8 +28,10 @@
   ];
   const LAST_TTL_KEY = 'shareLinkLastTtlMinutes';
   const LAST_MAX_KEY = 'shareLinkLastMaxDownloads';
+  const DEFAULT_TTL_MINUTES = '1440';
+  const storedTtlMinutes = localStorage.getItem(LAST_TTL_KEY);
 
-  let ttlMinutes = $state(localStorage.getItem(LAST_TTL_KEY) ?? '30');
+  let ttlMinutes = $state(storedTtlMinutes === null || storedTtlMinutes === '30' ? DEFAULT_TTL_MINUTES : storedTtlMinutes);
   let maxDownloads = $state(localStorage.getItem(LAST_MAX_KEY) ?? '0');
   let loading = $state(false);
   let links = $state<ShareLinkRecord[] | null>(null);

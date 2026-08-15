@@ -33,7 +33,7 @@
 
 	let manageOpen = $state(false);
 	let manageLink = $state<ShareLinkRecord | null>(null);
-	let manageTtl = $state("30");
+	let manageTtl = $state("1440");
 	let manageMaxDownloads = $state("0");
 
 	const canExtend = $derived(
