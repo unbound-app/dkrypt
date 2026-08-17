@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { findDispatchedRun, listReleaseVersions } from '#scheduler/github.js';
+import { findDispatchedRun, listReleaseVersions, releaseVersionExists } from '#scheduler/github.js';
 
 const originalFetch = globalThis.fetch;
 
@@ -78,5 +78,26 @@ describe('GitHub metadata requests', () => {
     globalThis.fetch = (async () => new Response(JSON.stringify({ workflow_runs: [run] }), { status: 200 })) as unknown as typeof fetch;
 
     await expect(findDispatchedRun('example/app', 'dispatch.yml', new Date('2026-08-06T00:00:00Z'))).resolves.toBeUndefined();
+  });
+
+  test('checks the release tag endpoint when the release list misses a version', async () => {
+    const urls: string[] = [];
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      const url = String(input);
+      urls.push(url);
+      if (url.endsWith('/releases?per_page=100')) {
+        return new Response(JSON.stringify([{ tag_name: 'v342.0_108502', created_at: '2026-08-15T00:00:00Z' }]), { status: 200 });
+      }
+      if (url.endsWith('/releases/tags/v341.0')) {
+        return new Response(JSON.stringify({ tag_name: 'v341.0', created_at: '2026-08-11T00:00:00Z' }), { status: 200 });
+      }
+      throw new Error(`unexpected URL ${url}`);
+    }) as unknown as typeof fetch;
+
+    await expect(releaseVersionExists('example/app', '341.0')).resolves.toBe(true);
+    expect(urls).toEqual([
+      'https://api.github.com/repos/example/app/releases?per_page=100',
+      'https://api.github.com/repos/example/app/releases/tags/v341.0',
+    ]);
   });
 });

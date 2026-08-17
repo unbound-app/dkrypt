@@ -362,6 +362,8 @@ export interface SchedulerRunOutcome {
   runStatus?: SchedulerRunStatus;
   observedVersion?: string;
   installMode?: 'pinned' | 'current';
+  versionLabel?: string;
+  dispatchTargetKeys?: string[];
 }
 
 export interface SchedulerRunEntry {
@@ -863,6 +865,10 @@ function normalizeLegacySchedulerRunOutcome(raw: unknown): SchedulerRunOutcome {
     reason: o.reason ?? '',
     runUrl: o.runUrl,
     runStatus: o.runStatus,
+    observedVersion: o.observedVersion,
+    installMode: o.installMode,
+    versionLabel: typeof o.versionLabel === 'string' ? o.versionLabel : undefined,
+    dispatchTargetKeys: Array.isArray(o.dispatchTargetKeys) ? o.dispatchTargetKeys.filter((key): key is string => typeof key === 'string') : undefined,
   };
 }
 

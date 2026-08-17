@@ -18,6 +18,7 @@ function primaryRootDir(): string {
 }
 
 const log = scopedLogger('testflight');
+const TESTFLIGHT_INSTALL_RETRY_AFTER_MS = 2 * 60_000;
 
 export interface TFTrain {
   trainVersion: string;
@@ -140,6 +141,7 @@ export async function installBuild(
   onProgress?: (message: string) => void,
   waitTimeoutMs = 4 * 60_000,
   operationId?: string,
+  retryAfterMs = TESTFLIGHT_INSTALL_RETRY_AFTER_MS,
 ): Promise<InstallVerification> {
   if (!SAFE_BUNDLE_ID_RE.test(build.bundleId)) {
     throw new Error(`refusing to install build with unsafe bundleId: ${JSON.stringify(build.bundleId)}`);
@@ -161,6 +163,8 @@ export async function installBuild(
     const start = Date.now();
     const deadline = start + waitTimeoutMs;
     let lastReportedAt = 0;
+    let lastUnexpectedBuild: string | undefined;
+    let installRetried = false;
     while (Date.now() < deadline) {
       const bundlePath = await findInstalledBundlePath(conn, build.bundleId);
       if (bundlePath) {
@@ -170,6 +174,15 @@ export async function installBuild(
           report(`install verified: ${installedVersion.shortVersion ?? build.cfBundleShortVersion} build ${buildVersion} in ${Math.round((Date.now() - start) / 1000)}s`);
           return { ...installedVersion, bundleId: build.bundleId, appPath: bundlePath, fairPlayProtected: true, elapsedMs: Date.now() - start };
         }
+        if (buildVersion && buildVersion !== lastUnexpectedBuild) {
+          lastUnexpectedBuild = buildVersion;
+          report(`waiting for TestFlight build ${build.cfBundleVersion}; build ${buildVersion} is currently installed`);
+        }
+      }
+      if (!installRetried && Date.now() - start >= retryAfterMs) {
+        installRetried = true;
+        report('reissuing the TestFlight install request after no version change');
+        await sendTestFlightBridgeRequest(conn, { action: 'install', appId, build, operationId, requestId: operationId });
       }
       const elapsedSec = Math.round((Date.now() - start) / 1000);
       if (elapsedSec - lastReportedAt >= 10) {

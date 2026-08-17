@@ -27,10 +27,11 @@ import {
 } from '#store/state.js';
 import type { TFBuild } from '#testflight.js';
 import { listBuilds, listTrains } from '#testflight.js';
+import { dispatchTargetKey, filterPendingDispatchTargets } from '#scheduler/pendingDispatch.js';
 import { buildSignedFileUrl } from '#util/signedUrl.js';
-import { compareVersions, normalizeVersion } from '#util/version.js';
+import { normalizeVersion } from '#util/version.js';
 import { listAppVersions } from '#versions.js';
-import { dispatchIpaUpdate, findDispatchedRun, getGitHubRateLimitBudget, getRun, listReleaseTagNames, listReleaseVersions, measureGitHubRequests, type WorkflowRun } from '#scheduler/github.js';
+import { dispatchIpaUpdate, findDispatchedRun, getGitHubRateLimitBudget, getRun, measureGitHubRequests, releaseTagExists, releaseVersionExists, type WorkflowRun } from '#scheduler/github.js';
 import { lookupCurrentVersion } from '#scheduler/itunes.js';
 import { resolveAppStoreDecryptTarget } from '#scheduler/appStoreVersion.js';
 
@@ -63,14 +64,13 @@ export async function checkForUpdate(watch: AppWatch): Promise<UpdateCheck> {
 
   const normalizedVersion = normalizeVersion(itunesVersion);
 
-  let releaseVersions: Set<string>;
+  let alreadyReleased: boolean;
   try {
-    releaseVersions = await listReleaseVersions(watch.repo);
+    alreadyReleased = await releaseVersionExists(watch.repo, normalizedVersion);
   } catch (err) {
-    return { ok: false, itunesVersion, normalizedVersion, wouldDispatch: false, reason: `Failed to list releases: ${String(err)}` };
+    return { ok: false, itunesVersion, normalizedVersion, wouldDispatch: false, reason: `Failed to verify releases: ${String(err)}` };
   }
 
-  const alreadyReleased = [...releaseVersions].some((v) => compareVersions(v, normalizedVersion) === 0);
   if (alreadyReleased) {
     return {
       ok: true,
@@ -157,14 +157,14 @@ export async function checkForTestFlightUpdate(watch: AppWatch): Promise<TestFli
 
   const latestTag = `v${latestBuild.cfBundleShortVersion}_${latestBuild.cfBundleVersion}`;
 
-  let tagNames: Set<string>;
+  let alreadyReleased: boolean;
   try {
-    tagNames = await listReleaseTagNames(watch.repo);
+    alreadyReleased = await releaseTagExists(watch.repo, latestTag);
   } catch (err) {
-    return { ok: false, appId, latestTag, build: latestBuild, wouldDispatch: false, reason: `Failed to list releases: ${String(err)}` };
+    return { ok: false, appId, latestTag, build: latestBuild, wouldDispatch: false, reason: `Failed to verify releases: ${String(err)}` };
   }
 
-  if (tagNames.has(latestTag)) {
+  if (alreadyReleased) {
     return {
       ok: true,
       appId,
@@ -303,6 +303,7 @@ function trackRunCompletions(
 }
 
 async function decryptAndDispatch(job: Job, watch: AppWatch, isTestflight: boolean, versionLabel: string, targets: DispatchTarget[]): Promise<DispatchResult> {
+  const outcomeMetadata = { versionLabel, dispatchTargetKeys: [] as string[] };
   const finished = await waitForJob(job, SCHEDULER_JOB_TIMEOUT_MS);
 
   if (finished.status !== 'done') {
@@ -326,7 +327,7 @@ async function decryptAndDispatch(job: Job, watch: AppWatch, isTestflight: boole
       },
       watch.webhookUrl,
     );
-    return { outcome: { ok: false, triggered: true, reason: `Decrypt failed: ${finished.error ?? 'unknown error'}` } };
+    return { outcome: { ...outcomeMetadata, ok: false, triggered: true, reason: `Decrypt failed: ${finished.error ?? 'unknown error'}` } };
   }
 
   const dispatchedAt = new Date();
@@ -359,6 +360,8 @@ async function decryptAndDispatch(job: Job, watch: AppWatch, isTestflight: boole
         triggered: true,
         reason: `Dispatched ${versionLabel} to ${dispatchedTargets.length}/${targets.length} destination${targets.length === 1 ? '' : 's'} - waiting on workflow runs`,
         runStatus: 'dispatched',
+        versionLabel,
+        dispatchTargetKeys: dispatchedTargets.map(dispatchTargetKey),
       },
       trackCompletion: trackRunCompletions(finished, watch, dispatchedTargets, versionLabel, isTestflight ? 'TestFlight' : 'App Store', dispatchedAt),
     };
@@ -379,7 +382,7 @@ async function decryptAndDispatch(job: Job, watch: AppWatch, isTestflight: boole
       watch.webhookUrl,
     );
     await reclaimJobFile(finished);
-    return { outcome: { ok: false, triggered: true, reason: `Failed to dispatch ${versionLabel}: ${String(err)}` } };
+    return { outcome: { ...outcomeMetadata, ok: false, triggered: true, reason: `Failed to dispatch ${versionLabel}: ${String(err)}` } };
   }
 
 }
@@ -387,10 +390,18 @@ async function decryptAndDispatch(job: Job, watch: AppWatch, isTestflight: boole
 async function tickAppStore(watch: AppWatch): Promise<DispatchResult> {
   const targets = getWatchDispatchTargets(watch);
   const checks = await Promise.all(targets.map((target) => checkForUpdate({ ...watch, repo: target.repo, ghWorkflowFile: target.ghWorkflowFile })));
-  const dispatchTargets = targets.filter((_, index) => checks[index].wouldDispatch);
+  const candidateDispatchTargets = targets.filter((_, index) => checks[index].wouldDispatch);
   const check = checks.find((candidate) => candidate.wouldDispatch) ?? checks.find((candidate) => !candidate.ok) ?? checks[0];
   if (!check) return { outcome: { ok: false, triggered: false, reason: 'No valid dispatch destinations configured' } };
+  const versionLabel = check.normalizedVersion ? `v${check.normalizedVersion}` : undefined;
+  const dispatchTargets = versionLabel
+    ? filterPendingDispatchTargets(candidateDispatchTargets, getSchedulerRunHistory(20, watch.id), 'App Store', versionLabel)
+    : candidateDispatchTargets;
   if (dispatchTargets.length === 0) {
+    if (candidateDispatchTargets.length > 0 && !check.alreadyReleased && versionLabel) {
+      log.info('itunes version already has a pending dispatch, nothing to do', { bundleId: watch.bundleId, version: check.normalizedVersion });
+      return { outcome: { ok: true, triggered: false, versionLabel, reason: `${versionLabel} already dispatched; workflow still pending` } };
+    }
     if (check.alreadyReleased) {
       log.info('itunes version already has a matching release, nothing to do', { bundleId: watch.bundleId, version: check.normalizedVersion });
     } else {
@@ -411,7 +422,7 @@ async function tickAppStore(watch: AppWatch): Promise<DispatchResult> {
         );
       }
     }
-    return { outcome: { ok: check.ok, triggered: false, reason: check.reason } };
+    return { outcome: { ok: check.ok, triggered: false, versionLabel, reason: check.reason } };
   }
 
   const normalized = check.normalizedVersion as string;
@@ -444,10 +455,18 @@ async function tickAppStore(watch: AppWatch): Promise<DispatchResult> {
 async function tickTestFlight(watch: AppWatch): Promise<DispatchResult> {
   const targets = getWatchDispatchTargets(watch);
   const checks = await Promise.all(targets.map((target) => checkForTestFlightUpdate({ ...watch, repo: target.repo, ghWorkflowFile: target.ghWorkflowFile })));
-  const dispatchTargets = targets.filter((_, index) => checks[index].wouldDispatch);
+  const candidateDispatchTargets = targets.filter((_, index) => checks[index].wouldDispatch);
   const check = checks.find((candidate) => candidate.wouldDispatch && candidate.build) ?? checks.find((candidate) => !candidate.ok) ?? checks[0];
   if (!check) return { outcome: { ok: false, triggered: false, reason: 'No valid dispatch destinations configured' } };
+  const versionLabel = check.latestTag;
+  const dispatchTargets = versionLabel
+    ? filterPendingDispatchTargets(candidateDispatchTargets, getSchedulerRunHistory(20, watch.id), 'TestFlight', versionLabel)
+    : candidateDispatchTargets;
   if (dispatchTargets.length === 0 || !check.build) {
+    if (candidateDispatchTargets.length > 0 && !check.alreadyReleased && versionLabel && dispatchTargets.length === 0) {
+      log.info('TestFlight build already has a pending dispatch, nothing to do', { bundleId: watch.bundleId, tag: check.latestTag });
+      return { outcome: { ok: true, triggered: false, versionLabel, reason: `${versionLabel} already dispatched; workflow still pending` } };
+    }
     if (check.alreadyReleased) {
       log.info('TestFlight build already has a matching release, nothing to do', { bundleId: watch.bundleId, tag: check.latestTag });
     } else {
@@ -468,7 +487,7 @@ async function tickTestFlight(watch: AppWatch): Promise<DispatchResult> {
         );
       }
     }
-    return { outcome: { ok: check.ok, triggered: false, reason: check.reason } };
+    return { outcome: { ok: check.ok, triggered: false, versionLabel, reason: check.reason } };
   }
 
   log.info('no matching release found for latest TestFlight build, installing and decrypting', {

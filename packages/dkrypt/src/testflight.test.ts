@@ -2,6 +2,8 @@ import { afterAll, beforeEach, describe, expect, mock, test } from 'bun:test';
 
 const installedInfoPlist = '/var/containers/Bundle/Application/B7CC6241-7F24-4683-A9BC-3E0F3DE60ED5/Discord.app/Info.plist';
 const originalSetTimeout = globalThis.setTimeout;
+let installRequests = 0;
+let installedBuild = '107127';
 
 const idevice = await import('#idevice.js');
 const state = await import('#store/state.js');
@@ -10,7 +12,7 @@ mock.module('#idevice.js', () => ({
   ...idevice,
   execCommand: async () => ({ stdout: `${installedInfoPlist}\n`, stderr: '', code: 0 }),
   isTestFlightRunning: async () => true,
-  readInstalledBundleVersions: async (_conn: object, appPath: string) => ({ buildVersion: appPath.endsWith('.app') ? '107127' : undefined }),
+  readInstalledBundleVersions: async (_conn: object, appPath: string) => ({ buildVersion: appPath.endsWith('.app') ? installedBuild : undefined }),
   sendSpringBoardBridgeRequest: async () => ({ launchResult: 0 }),
   sendTestFlightBridgeRequest: async (_conn: object, request: Record<string, unknown>) => {
     if (request.action === 'status') {
@@ -20,6 +22,10 @@ mock.module('#idevice.js', () => ({
         hasInstaller: true,
         hasCatalogManager: true,
       };
+    }
+    if (request.action === 'install') {
+      installRequests += 1;
+      if (installRequests >= 2) installedBuild = '107128';
     }
     return { ok: true };
   },
@@ -40,6 +46,8 @@ describe('installBuild', () => {
   });
 
   beforeEach(() => {
+    installRequests = 0;
+    installedBuild = '107127';
     globalThis.setTimeout = ((handler: () => void) => originalSetTimeout(handler, 1)) as unknown as typeof setTimeout;
   });
 
@@ -54,5 +62,18 @@ describe('installBuild', () => {
       fairPlayProtected: true,
       buildVersion: '107127',
     });
+  });
+
+  test('reissues a stalled install request before timing out', async () => {
+    await expect(installBuild(985746746, {
+      id: 225052693,
+      bundleId: 'com.hammerandchisel.discord',
+      cfBundleShortVersion: '341.0',
+      cfBundleVersion: '107128',
+    }, undefined, 30, 'testflight-retry', 0)).resolves.toMatchObject({
+      bundleId: 'com.hammerandchisel.discord',
+      buildVersion: '107128',
+    });
+    expect(installRequests).toBe(2);
   });
 });

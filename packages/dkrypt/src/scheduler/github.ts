@@ -1,7 +1,7 @@
 import { config } from '#config.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { describeHttpError } from '#util/httpError.js';
-import { normalizeVersion } from '#util/version.js';
+import { compareVersions, normalizeVersion } from '#util/version.js';
 
 const GITHUB_API = 'https://api.github.com';
 const RATE_LIMIT_CACHE_MS = 30_000;
@@ -219,9 +219,33 @@ export async function listReleaseVersions(repo: string): Promise<Set<string>> {
   return new Set(releases.map((r) => normalizeVersion(r.tag_name)).filter((v) => !v.includes('_')));
 }
 
+async function releaseExistsByTag(repo: string, tagName: string): Promise<boolean> {
+  const res = await githubFetch(`${GITHUB_API}/repos/${repo}/releases/tags/${encodeURIComponent(tagName)}`, { headers: headers() });
+  if (res.status === 404) {
+    await res.body?.cancel().catch(() => {});
+    return false;
+  }
+  if (!res.ok) throw new Error(describeHttpError(`lookup release ${tagName} failed for ${repo}`, res));
+  await res.body?.cancel().catch(() => {});
+  return true;
+}
+
+export async function releaseVersionExists(repo: string, version: string): Promise<boolean> {
+  const normalizedVersion = normalizeVersion(version);
+  const releaseVersions = await listReleaseVersions(repo);
+  if ([...releaseVersions].some((candidate) => compareVersions(candidate, normalizedVersion) === 0)) return true;
+  return releaseExistsByTag(repo, `v${normalizedVersion}`);
+}
+
 export async function listReleaseTagNames(repo: string): Promise<Set<string>> {
   const releases = await listReleases(repo);
   return new Set(releases.map((r) => r.tag_name));
+}
+
+export async function releaseTagExists(repo: string, tagName: string): Promise<boolean> {
+  const tagNames = await listReleaseTagNames(repo);
+  if (tagNames.has(tagName)) return true;
+  return releaseExistsByTag(repo, tagName);
 }
 
 export async function dispatchIpaUpdate(
