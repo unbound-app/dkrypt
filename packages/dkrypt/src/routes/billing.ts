@@ -1,5 +1,5 @@
 import Stripe from 'stripe';
-import { Router } from '#http.js';
+import { Router, type Response } from '#http.js';
 import {
   getBillingCustomerId,
   getBillingEntitlements,
@@ -18,10 +18,16 @@ import { log } from '#logger.js';
 import { requireSession } from '#session.js';
 import { getStripe } from '#stripe.js';
 
-function customDataUserId(metadata: unknown): string | undefined {
+function metadataUserId(metadata: unknown): string | undefined {
   if (typeof metadata !== 'object' || metadata === null) return undefined;
   const value = (metadata as Record<string, unknown>).dkrypt_user_id;
   return typeof value === 'string' && value.length <= 160 ? resolveAuthUserId(value) : undefined;
+}
+
+function requireStripeBilling(res: Response): boolean {
+  if (stripeEnabled) return true;
+  res.status(503).json({ error: 'Stripe billing is not configured' });
+  return false;
 }
 
 function stripeObjectId(value: unknown): string | undefined {
@@ -46,7 +52,7 @@ function processCustomer(event: Stripe.Event): void {
     provider: 'stripe',
     customerId: customer.id,
     email: customer.email ?? '',
-    userId: customDataUserId(customer.metadata),
+    userId: metadataUserId(customer.metadata),
     updatedAt: eventDate(event),
   });
 }
@@ -54,7 +60,7 @@ function processCustomer(event: Stripe.Event): void {
 function processCheckoutSession(event: Stripe.Event): void {
   const session = event.data.object as Stripe.Checkout.Session;
   const customerId = stripeObjectId(session.customer);
-  const userId = customDataUserId(session.metadata);
+  const userId = metadataUserId(session.metadata);
   if (customerId && userId) linkBillingCustomer(customerId, userId);
 }
 
@@ -82,7 +88,7 @@ function processSubscription(event: Stripe.Event): void {
     provider: 'stripe',
     subscriptionId: subscription.id,
     customerId,
-    userId: customDataUserId(subscription.metadata) ?? getBillingUserId(customerId),
+    userId: metadataUserId(subscription.metadata) ?? getBillingUserId(customerId),
     status: subscription.status,
     planId,
     priceId,
@@ -169,10 +175,7 @@ billingRouter.post('/v1/billing/checkout', requireSession, async (req, res) => {
     res.status(400).json({ error: 'unknown plan' });
     return;
   }
-  if (!stripeEnabled) {
-    res.status(503).json({ error: 'Stripe billing is not configured' });
-    return;
-  }
+  if (!requireStripeBilling(res)) return;
   if (getBillingEntitlements(userId).subscriptionId) {
     res.status(409).json({ error: 'this account already has a subscription' });
     return;
@@ -212,10 +215,7 @@ billingRouter.post('/v1/billing/portal', requireSession, async (_req, res) => {
     res.status(404).json({ error: 'no Stripe customer exists for this account' });
     return;
   }
-  if (!stripeEnabled) {
-    res.status(503).json({ error: 'Stripe billing is not configured' });
-    return;
-  }
+  if (!requireStripeBilling(res)) return;
 
   try {
     const portal = await getStripe().billingPortal.sessions.create({
@@ -236,10 +236,7 @@ billingRouter.post('/v1/billing/subscription', requireSession, async (req, res) 
     res.status(400).json({ error: 'unknown plan' });
     return;
   }
-  if (!stripeEnabled) {
-    res.status(503).json({ error: 'Stripe billing is not configured' });
-    return;
-  }
+  if (!requireStripeBilling(res)) return;
 
   const entitlement = getBillingEntitlements(userId);
   if (!entitlement.subscriptionId) {

@@ -1,12 +1,11 @@
 import Stripe from 'stripe';
+import { createStripeCliClient } from './stripe-cli.js';
 
-const apiKey = process.env.STRIPE_SECRET_KEY;
 const destination = process.env.STRIPE_WEBHOOK_URL;
-if (!apiKey) throw new Error('STRIPE_SECRET_KEY is required');
 if (!destination) throw new Error('STRIPE_WEBHOOK_URL is required');
 if (!destination.startsWith('https://')) throw new Error('STRIPE_WEBHOOK_URL must use HTTPS');
 
-const stripe = new Stripe(apiKey);
+const { client: stripe, environment } = createStripeCliClient();
 const enabledEvents: Stripe.WebhookEndpointCreateParams.EnabledEvent[] = [
   'checkout.session.completed',
   'checkout.session.async_payment_succeeded',
@@ -26,7 +25,7 @@ const endpoint = existing
 console.log(
   JSON.stringify(
     {
-      environment: apiKey.startsWith('sk_live_') ? 'live' : 'test',
+      environment,
       endpointId: endpoint.id,
       destination: endpoint.url,
       endpointSecret: endpoint.secret,

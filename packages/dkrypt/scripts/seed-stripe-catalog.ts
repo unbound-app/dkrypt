@@ -1,9 +1,7 @@
 import Stripe from 'stripe';
+import { createStripeCliClient } from './stripe-cli.js';
 
-const apiKey = process.env.STRIPE_SECRET_KEY;
-if (!apiKey) throw new Error('STRIPE_SECRET_KEY is required');
-
-const stripe = new Stripe(apiKey);
+const { client: stripe, environment } = createStripeCliClient();
 const tiers = [
   { key: 'regular', name: 'dkrypt Regular', amount: 500 },
   { key: 'priority', name: 'dkrypt Priority', amount: 1000 },
@@ -59,7 +57,7 @@ async function seed(): Promise<void> {
     catalog[tier.key] = { productId: product.id, priceId: price.id };
   }
 
-  console.log(JSON.stringify({ environment: apiKey.startsWith('sk_live_') ? 'live' : 'test', currency: 'EUR', catalog }, null, 2));
+  console.log(JSON.stringify({ environment, currency: 'EUR', catalog }, null, 2));
 }
 
 await seed();
