@@ -12,20 +12,20 @@
     "typecheck": "svelte-check --tsconfig ./tsconfig.json"
   },
   "devDependencies": {
-    "@sveltejs/vite-plugin-svelte": "^7.2.0",
+    "@sveltejs/vite-plugin-svelte": "^7.3.0",
     "@tailwindcss/vite": "^4.3.3",
     "@tsconfig/svelte": "^5.0.4",
-    "svelte": "^5.56.8",
-    "svelte-check": "^4.7.4",
+    "svelte": "^5.56.9",
+    "svelte-check": "^4.7.6",
     "tailwindcss": "^4.3.3",
     "typescript": "^5.7.2",
-    "vite": "^8.1.5"
+    "vite": "^8.2.2"
   },
   "dependencies": {
-    "bits-ui": "^2.18.1",
+    "bits-ui": "^2.19.0",
     "clsx": "^2.1.1",
     "lucide-svelte": "^1.0.1",
-    "svelte-sonner": "^1.1.1",
+    "svelte-sonner": "^1.2.1",
     "tailwind-merge": "^3.6.0"
   }
 }
