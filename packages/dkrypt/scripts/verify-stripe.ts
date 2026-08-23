@@ -1,3 +1,4 @@
+import { createHmac } from 'node:crypto';
 import Stripe from 'stripe';
 import { createStripeCliClient } from './stripe-cli.js';
 
@@ -53,6 +54,30 @@ const priceChecks = prices.map((price, index) => {
 const endpoint = endpoints.data.find((candidate) => candidate.url === webhookUrl && candidate.status === 'enabled');
 const configuredEvents = new Set(endpoint?.enabled_events ?? []);
 const missingEvents = requiredEvents.filter((event) => !configuredEvents.has(event));
+const webhookProbe = endpoint
+  ? await (async () => {
+      const probePayload = JSON.stringify({
+        id: `evt_dkrypt_verification_${Date.now()}`,
+        object: 'event',
+        api_version: null,
+        created: Math.floor(Date.now() / 1000),
+        data: { object: {} },
+        livemode: environment === 'live',
+        pending_webhooks: 1,
+        request: null,
+        type: 'dkrypt.verification',
+      });
+      const probeTimestamp = Math.floor(Date.now() / 1000);
+      const probeSignature = `t=${probeTimestamp},v1=${createHmac('sha256', webhookSecret).update(`${probeTimestamp}.${probePayload}`).digest('hex')}`;
+      const probeResponse = await fetch(webhookUrl, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'stripe-signature': probeSignature },
+        body: probePayload,
+      });
+      const probeBody = (await probeResponse.json().catch(() => ({}))) as { received?: boolean };
+      return { status: probeResponse.status, received: probeBody.received === true };
+    })()
+  : { status: null, received: false };
 const checks = {
   account: account.id,
   chargesEnabled: account.charges_enabled,
@@ -61,9 +86,10 @@ const checks = {
   webhook: endpoint
     ? { id: endpoint.id, url: endpoint.url, missingEvents }
     : { id: null, url: webhookUrl, missingEvents: requiredEvents },
+  webhookProbe,
 };
 
-if (priceChecks.some(({ valid }) => !valid) || !endpoint || missingEvents.length > 0) {
+if (priceChecks.some(({ valid }) => !valid) || !endpoint || missingEvents.length > 0 || !webhookProbe.received) {
   throw new Error(JSON.stringify(checks, null, 2));
 }
 

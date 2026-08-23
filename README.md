@@ -59,7 +59,7 @@ bun run stripe:webhook
 bun run stripe:verify
 ```
 
-Copy the four price IDs printed by `stripe:seed` into the runtime environment, store the webhook secret printed for a newly created endpoint as `STRIPE_WEBHOOK_SECRET`, and set `STRIPE_WEBHOOK_URL` to the public `/v1/stripe/webhook` URL. `stripe:verify` checks the account mode, recurring price amounts, webhook URL, and subscribed events without printing any secret.
+Copy the four price IDs printed by `stripe:seed` into the runtime environment, store the webhook secret printed for a newly created endpoint as `STRIPE_WEBHOOK_SECRET`, and set `STRIPE_WEBHOOK_URL` to the public `/v1/stripe/webhook` URL. `stripe:verify` checks the account mode, recurring price amounts, webhook URL, subscribed events, and signed endpoint reachability without printing any secret. Its endpoint probe is an ignored `dkrypt.verification` event and does not change billing state.
 
 ## API
 

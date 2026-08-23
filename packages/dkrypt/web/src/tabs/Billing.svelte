@@ -8,6 +8,7 @@
     KeyRound,
     LoaderCircle,
     LockKeyhole,
+    RefreshCw,
     ShieldCheck,
     X,
     Zap,
@@ -65,6 +66,7 @@
   let openingPortal = $state(false);
   let activationStatus = $state<ActivationStatus>('idle');
   let checkoutIdempotencyKey = $state<string | undefined>();
+  let checkoutIdempotencyPlan = $state<PlanId | undefined>();
   let checkoutState = $state<CheckoutState>(new URLSearchParams(location.search).get('checkout') as CheckoutState);
 
   async function loadBilling(): Promise<void> {
@@ -124,11 +126,20 @@
 
   async function startCheckout(plan: Plan): Promise<void> {
     openingPlan = plan.id;
-    checkoutIdempotencyKey ??= crypto.randomUUID();
+    if (checkoutIdempotencyPlan !== plan.id) {
+      checkoutIdempotencyKey = crypto.randomUUID();
+      checkoutIdempotencyPlan = plan.id;
+    }
+    const idempotencyKey = checkoutIdempotencyKey;
+    if (!idempotencyKey) {
+      openingPlan = undefined;
+      showToast("Couldn't start checkout", 'error');
+      return;
+    }
     try {
       const response = await fetch('/v1/billing/checkout', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': checkoutIdempotencyKey },
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
         body: JSON.stringify({ planId: plan.id }),
       });
       const data = (await response.json().catch(() => ({}))) as { url?: string; error?: string };
@@ -211,7 +222,10 @@
           {#if activationStatus === 'active'}
             Your subscription is active and paid features are ready.
           {:else if activationStatus === 'pending'}
-            Stripe is still confirming your subscription. Refresh this page in a moment; access will remain unchanged until the webhook arrives.
+            Stripe is still confirming your subscription. Access will remain unchanged until the webhook arrives.
+            <Button class="mt-3" size="sm" variant="secondary" onclick={() => void waitForActivation()}>
+              <RefreshCw class="h-4 w-4" /> Check again
+            </Button>
           {:else}
             Stripe is confirming your subscription. This usually takes a few seconds.
           {/if}
