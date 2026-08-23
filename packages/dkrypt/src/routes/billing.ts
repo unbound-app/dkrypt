@@ -66,8 +66,7 @@ function processCheckoutSession(event: Stripe.Event): void {
   if (customerId && userId) linkBillingCustomer(customerId, userId);
 }
 
-function processSubscription(event: Stripe.Event): void {
-  const subscription = event.data.object as Stripe.Subscription;
+function persistStripeSubscription(subscription: Stripe.Subscription, occurredAt: string, fallbackUserId?: string): void {
   const item = subscription.items?.data?.[0];
   const customerId = stripeObjectId(subscription.customer);
   if (!item || !customerId) return;
@@ -90,7 +89,7 @@ function processSubscription(event: Stripe.Event): void {
     provider: 'stripe',
     subscriptionId: subscription.id,
     customerId,
-    userId: metadataUserId(subscription.metadata) ?? getBillingUserId(customerId),
+    userId: metadataUserId(subscription.metadata) ?? fallbackUserId ?? getBillingUserId(customerId),
     status: subscription.status,
     planId,
     priceId,
@@ -99,15 +98,20 @@ function processSubscription(event: Stripe.Event): void {
     nextBilledAt: scheduledChangeAction ? undefined : unixDate(item.current_period_end),
     scheduledChangeAction,
     scheduledChangeAt,
-    occurredAt: eventDate(event),
-    updatedAt: eventDate(event),
+    occurredAt,
+    updatedAt: occurredAt,
   });
+}
+
+function processSubscription(event: Stripe.Event): void {
+  persistStripeSubscription(event.data.object as Stripe.Subscription, eventDate(event));
 }
 
 export async function processStripeEvent(event: Stripe.Event): Promise<void> {
   switch (event.type) {
     case 'checkout.session.completed':
     case 'checkout.session.async_payment_succeeded':
+    case 'checkout.session.async_payment_failed':
       processCheckoutSession(event);
       return;
     case 'customer.created':
@@ -278,6 +282,7 @@ billingRouter.post('/v1/billing/subscription', requireSession, async (req, res) 
       proration_behavior: current && target.amount > current.amount ? 'always_invoice' : 'create_prorations',
       payment_behavior: 'error_if_incomplete',
     });
+    persistStripeSubscription(updated, new Date().toISOString(), userId);
     res.json({
       success: true,
       status: updated.status,

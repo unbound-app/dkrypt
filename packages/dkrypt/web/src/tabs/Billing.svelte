@@ -132,7 +132,6 @@
       });
       const data = (await response.json().catch(() => ({}))) as { url?: string; error?: string };
       if (!response.ok || !data.url) {
-        checkoutIdempotencyKey = undefined;
         showToast(data.error ?? "Couldn't start checkout", 'error');
         return;
       }
@@ -155,7 +154,7 @@
         showToast(data.error ?? 'Plan change failed', 'error');
         return;
       }
-      showToast('Plan change accepted. Your access is being updated…', 'success');
+      showToast('Plan updated. Your access is refreshing…', 'success');
       await refreshAfterCheckout();
     } finally {
       openingPlan = undefined;

@@ -25,8 +25,8 @@ function event(type: string, object: Record<string, unknown>): Stripe.Event {
   } as unknown as Stripe.Event;
 }
 
-function checkoutEvent(userId: string, customerId: string, subscriptionId: string): Stripe.Event {
-  return event('checkout.session.completed', {
+function checkoutEvent(userId: string, customerId: string, subscriptionId: string, type = 'checkout.session.completed'): Stripe.Event {
+  return event(type, {
     id: `cs_${crypto.randomUUID()}`,
     object: 'checkout.session',
     customer: customerId,
@@ -63,6 +63,17 @@ describe('Stripe billing webhooks', () => {
 
     expect(getBillingCustomerId(userId)).toBe(customerId);
     expect(getBillingEntitlements(userId)).toMatchObject({ planId: 'priority', decrypt: true, priority: 5 });
+  });
+
+  test('keeps async payment failures from granting entitlements', async () => {
+    const userId = `stripe-failed-${crypto.randomUUID()}`;
+    const customerId = `cus_${crypto.randomUUID()}`;
+    replaceBillingSnapshot({ customers: [], subscriptions: [] });
+
+    await processStripeEvent(checkoutEvent(userId, customerId, `sub_${crypto.randomUUID()}`, 'checkout.session.async_payment_failed'));
+
+    expect(getBillingCustomerId(userId)).toBe(customerId);
+    expect(getBillingEntitlements(userId).planId).toBe('viewer');
   });
 
   test('accepts a signed raw webhook request', async () => {
