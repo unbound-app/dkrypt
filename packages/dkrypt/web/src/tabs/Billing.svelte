@@ -50,6 +50,7 @@
     enabled: boolean;
     provider: 'stripe';
     environment: 'test' | 'live';
+    missingConfiguration: string[];
     plans: Plan[];
     customerId?: string;
     customerEmail?: string;
@@ -282,7 +283,14 @@
     <Card class="py-12 text-center">
       <LockKeyhole class="mx-auto mb-3 h-8 w-8 text-muted" />
       <div class="font-medium">Billing is not configured</div>
-      <div class="mx-auto mt-1 max-w-md text-sm text-muted">Stripe checkout is unavailable until the server has a secret key, webhook secret, and price IDs configured.</div>
+      <div class="mx-auto mt-1 max-w-md text-sm text-muted">Stripe checkout is unavailable until an administrator completes the server configuration. No payment details are collected while billing is disabled.</div>
+      {#if billing}
+        <div class="mx-auto mt-4 flex max-w-xl flex-wrap justify-center gap-2" aria-label="Missing Stripe configuration">
+          {#each billing.missingConfiguration as name (name)}
+            <code class="rounded-lg border border-border bg-bg/70 px-2.5 py-1 text-xs text-muted">{name}</code>
+          {/each}
+        </div>
+      {/if}
     </Card>
   {:else}
     <div class="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-4">

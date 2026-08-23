@@ -118,7 +118,7 @@ describe('Stripe billing webhooks', () => {
         headers: { cookie: cookie.split(';', 1)[0] },
       });
       expect(response.statusCode).toBe(200);
-      expect(response.json()).toMatchObject({ enabled: true, provider: 'stripe', environment: 'test', plans: expect.any(Array) });
+      expect(response.json()).toMatchObject({ enabled: true, provider: 'stripe', environment: 'test', missingConfiguration: [], plans: expect.any(Array) });
       expect(response.json()).not.toHaveProperty('clientToken');
     } finally {
       await server.close();

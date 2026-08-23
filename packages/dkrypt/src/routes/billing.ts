@@ -14,7 +14,7 @@ import {
   upsertBillingCustomer,
   upsertBillingSubscription,
 } from '#billing.js';
-import { config, stripeEnabled, stripeEnvironment } from '#config.js';
+import { config, stripeEnabled, stripeEnvironment, stripeMissingConfiguration } from '#config.js';
 import { getAuthProfile, resolveAuthUserId } from '#identity.js';
 import { log } from '#logger.js';
 import { requireSession } from '#session.js';
@@ -167,6 +167,7 @@ billingRouter.get('/v1/billing', requireSession, (_req, res) => {
     enabled: stripeEnabled,
     provider: 'stripe',
     environment: stripeEnvironment,
+    missingConfiguration: stripeEnabled ? [] : stripeMissingConfiguration,
     plans: listPlans(),
     customerId: getBillingCustomerId(userId),
     customerEmail: profile?.email,

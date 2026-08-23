@@ -82,11 +82,14 @@ export const githubOauthEnabled = config.githubOauthClientId !== '' && config.gi
 export const discordOauthEnabled = config.discordOauthClientId !== '' && config.discordOauthClientSecret !== '';
 export const discordBotEnabled = config.discordBotToken !== '';
 export const stripeEnvironment = config.stripeSecretKey.startsWith('sk_live_') ? 'live' : 'test';
-export const stripeEnabled =
-  config.stripeSecretKey !== '' &&
-  config.stripeWebhookSecret !== '' &&
-  config.stripeRegularPriceId !== '' &&
-  config.stripePriorityPriceId !== '' &&
-  config.stripeApiPriceId !== '' &&
-  config.stripePriorityApiPriceId !== '';
+const stripeRequirements = [
+  ['STRIPE_SECRET_KEY', config.stripeSecretKey],
+  ['STRIPE_WEBHOOK_SECRET', config.stripeWebhookSecret],
+  ['STRIPE_REGULAR_PRICE_ID', config.stripeRegularPriceId],
+  ['STRIPE_PRIORITY_PRICE_ID', config.stripePriorityPriceId],
+  ['STRIPE_API_PRICE_ID', config.stripeApiPriceId],
+  ['STRIPE_PRIORITY_API_PRICE_ID', config.stripePriorityApiPriceId],
+] as const;
+export const stripeMissingConfiguration = stripeRequirements.filter(([, value]) => value === '').map(([name]) => name);
+export const stripeEnabled = stripeMissingConfiguration.length === 0;
 export const emailEnabled = config.smtpHost !== '' && config.smtpUser !== '' && config.smtpPass !== '';
