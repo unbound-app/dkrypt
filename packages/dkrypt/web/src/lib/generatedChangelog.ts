@@ -1,6 +1,11 @@
 export const GENERATED_CHANGELOG = [
   {
     "date": "2026-08-23",
+    "title": "feat: clarify stripe billing readiness",
+    "description": "Released in 430e5b0."
+  },
+  {
+    "date": "2026-08-23",
     "title": "fix: close stripe billing state gaps",
     "description": "Released in 667d81a."
   },
@@ -33,10 +38,5 @@ export const GENERATED_CHANGELOG = [
     "date": "2026-08-06",
     "title": "fix(scheduler): tolerate transient GitHub run lookup failures",
     "description": "Released in 6962c58."
-  },
-  {
-    "date": "2026-08-03",
-    "title": "fix(scheduler): preserve completion download links",
-    "description": "Released in ecff5f6."
   }
 ] as const;
