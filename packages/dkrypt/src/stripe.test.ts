@@ -113,4 +113,29 @@ describe('Stripe billing webhooks', () => {
       await server.close();
     }
   });
+
+  test('requires an idempotency key before creating checkout', async () => {
+    const server = await buildServer({ includePublicRoutes: false });
+    const login = await server.inject({
+      method: 'POST',
+      url: '/v1/auth/login',
+      payload: { password: process.env.ADMIN_PASSWORD },
+    });
+    const cookieHeader = login.headers['set-cookie'];
+    const cookie = Array.isArray(cookieHeader) ? cookieHeader[0] : cookieHeader;
+    if (typeof cookie !== 'string') throw new Error('login did not set a session cookie');
+
+    try {
+      const response = await server.inject({
+        method: 'POST',
+        url: '/v1/billing/checkout',
+        headers: { cookie: cookie.split(';', 1)[0] },
+        payload: { planId: 'regular' },
+      });
+      expect(response.statusCode).toBe(400);
+      expect(response.json()).toMatchObject({ error: 'Idempotency-Key must be 1-200 URL-safe characters' });
+    } finally {
+      await server.close();
+    }
+  });
 });

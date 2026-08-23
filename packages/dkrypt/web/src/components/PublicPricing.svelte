@@ -101,7 +101,7 @@
     </div>
 
     <Card class="mx-auto mt-8 max-w-3xl text-sm leading-6 text-muted">
-      Plans renew monthly until canceled. Prices are shown in EUR; any applicable tax is shown at checkout. You can cancel from the billing portal at any time, effective at the end of the current billing period.
+      Plans renew monthly until canceled. Prices are shown in EUR; Stripe shows the final amount and any configured tax before payment. You can cancel from the billing portal at any time, effective at the end of the current billing period.
     </Card>
   </main>
   <PublicPageFooter />

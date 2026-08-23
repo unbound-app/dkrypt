@@ -1,11 +1,13 @@
+import { createHash } from 'node:crypto';
 import Stripe from 'stripe';
-import { Router, type Response } from '#http.js';
+import { Router, type Request, type Response } from '#http.js';
 import {
   getBillingCustomerId,
   getBillingEntitlements,
   getBillingSubscription,
   getBillingUserId,
   getPlan,
+  hasLegacyBillingRecord,
   linkBillingCustomer,
   listPlans,
   planForPrice,
@@ -164,9 +166,21 @@ billingRouter.get('/v1/billing', requireSession, (_req, res) => {
     plans: listPlans(),
     customerId: getBillingCustomerId(userId),
     customerEmail: profile?.email,
+    legacyBilling: hasLegacyBillingRecord(userId),
     entitlement: getBillingEntitlements(userId),
   });
 });
+
+const checkoutIdempotencyKeyPattern = /^[A-Za-z0-9._~-]{1,200}$/;
+
+function getCheckoutIdempotencyKey(req: Request, res: Response, userId: string): string | undefined {
+  const key = req.header('idempotency-key') ?? '';
+  if (!checkoutIdempotencyKeyPattern.test(key)) {
+    res.status(400).json({ error: 'Idempotency-Key must be 1-200 URL-safe characters' });
+    return undefined;
+  }
+  return `dkrypt-checkout-${createHash('sha256').update(`${userId}:${key}`).digest('hex')}`;
+}
 
 billingRouter.post('/v1/billing/checkout', requireSession, async (req, res) => {
   const userId = res.locals.session.sub;
@@ -176,6 +190,8 @@ billingRouter.post('/v1/billing/checkout', requireSession, async (req, res) => {
     return;
   }
   if (!requireStripeBilling(res)) return;
+  const idempotencyKey = getCheckoutIdempotencyKey(req, res, userId);
+  if (!idempotencyKey) return;
   if (getBillingEntitlements(userId).subscriptionId) {
     res.status(409).json({ error: 'this account already has a subscription' });
     return;
@@ -196,7 +212,7 @@ billingRouter.post('/v1/billing/checkout', requireSession, async (req, res) => {
       cancel_url: `${config.publicBaseUrl}/?tab=billing&checkout=cancelled`,
       billing_address_collection: 'auto',
       automatic_tax: config.stripeAutomaticTax ? { enabled: true } : undefined,
-    });
+    }, { idempotencyKey });
     if (!session.url) {
       res.status(502).json({ error: 'Stripe did not return a checkout URL' });
       return;
@@ -260,7 +276,7 @@ billingRouter.post('/v1/billing/subscription', requireSession, async (req, res) 
     const updated = await getStripe().subscriptions.update(subscription.subscriptionId, {
       items: [{ id: item.id, price: target.priceId, quantity: item.quantity ?? 1 }],
       proration_behavior: current && target.amount > current.amount ? 'always_invoice' : 'create_prorations',
-      payment_behavior: 'pending_if_incomplete',
+      payment_behavior: 'error_if_incomplete',
     });
     res.json({
       success: true,
@@ -269,6 +285,10 @@ billingRouter.post('/v1/billing/subscription', requireSession, async (req, res) 
     });
   } catch (error) {
     log.error('Stripe subscription update failed', { userId, planId: target.id, error: String(error) });
+    if (typeof error === 'object' && error !== null && (error as { statusCode?: unknown }).statusCode === 402) {
+      res.status(402).json({ error: 'payment confirmation is required; use Manage billing to complete the change' });
+      return;
+    }
     res.status(502).json({ error: 'subscription update failed; your existing plan was not changed' });
   }
 });

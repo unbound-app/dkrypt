@@ -8,6 +8,7 @@ if (!destination.startsWith('https://')) throw new Error('STRIPE_WEBHOOK_URL mus
 const { client: stripe, environment } = createStripeCliClient();
 const enabledEvents: Stripe.WebhookEndpointCreateParams.EnabledEvent[] = [
   'checkout.session.completed',
+  'checkout.session.async_payment_failed',
   'checkout.session.async_payment_succeeded',
   'customer.created',
   'customer.updated',

@@ -1,7 +1,14 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  type BillingSnapshot,
   type BillingSubscription,
   canCreateApiKeyImmediately,
+  exportBillingSnapshot,
+  getBillingCustomerId,
+  getBillingEntitlements,
+  hasLegacyBillingRecord,
+  isBillingSnapshot,
+  replaceBillingSnapshot,
   resolveBillingEntitlements,
 } from '#billing.js';
 import { PermissionFlag } from '#permissions.js';
@@ -64,6 +71,43 @@ describe('resolveBillingEntitlements', () => {
       api: false,
       priority: 0,
     });
+  });
+
+  test('keeps legacy provider subscriptions from granting Stripe entitlements', () => {
+    expect(resolveBillingEntitlements([{ ...subscription('priority'), provider: 'legacy' }])).toMatchObject({
+      planId: 'viewer',
+      decrypt: false,
+      api: false,
+      priority: 0,
+    });
+  });
+});
+
+describe('billing provider cutover', () => {
+  test('normalizes and retains old provider records for reconciliation', () => {
+    const userId = `legacy-${crypto.randomUUID()}`;
+    const snapshot = {
+      customers: [{ customerId: `cus_legacy_${crypto.randomUUID()}`, email: 'legacy@example.com', userId, updatedAt: '2026-07-23T00:00:00.000Z' }],
+      subscriptions: [{
+        subscriptionId: `sub_legacy_${crypto.randomUUID()}`,
+        customerId: 'cus_legacy_missing',
+        userId,
+        status: 'active',
+        planId: 'priority',
+        priceId: 'price_legacy_priority',
+        productId: 'prod_legacy_priority',
+        occurredAt: '2026-07-23T00:00:00.000Z',
+        updatedAt: '2026-07-23T00:00:00.000Z',
+      }],
+    };
+
+    expect(isBillingSnapshot(snapshot)).toBe(true);
+    replaceBillingSnapshot(snapshot as unknown as BillingSnapshot);
+    expect(exportBillingSnapshot()).toMatchObject({ customers: [{ provider: 'legacy' }], subscriptions: [{ provider: 'legacy' }] });
+    expect(hasLegacyBillingRecord(userId)).toBe(true);
+    expect(getBillingCustomerId(userId)).toBeUndefined();
+    expect(getBillingEntitlements(userId).planId).toBe('viewer');
+    replaceBillingSnapshot({ customers: [], subscriptions: [] });
   });
 });
 

@@ -23,6 +23,7 @@
 
   type PlanId = 'viewer' | 'regular' | 'priority' | 'api' | 'priority_api';
   type CheckoutState = 'success' | 'cancelled' | undefined;
+  type ActivationStatus = 'idle' | 'checking' | 'active' | 'pending';
 
   interface Plan {
     id: Exclude<PlanId, 'viewer'>;
@@ -52,6 +53,7 @@
     plans: Plan[];
     customerId?: string;
     customerEmail?: string;
+    legacyBilling: boolean;
     entitlement: Entitlement;
   }
 
@@ -60,7 +62,8 @@
   let loadError = $state(false);
   let openingPlan = $state<PlanId | undefined>();
   let openingPortal = $state(false);
-  let activationPending = $state(false);
+  let activationStatus = $state<ActivationStatus>('idle');
+  let checkoutIdempotencyKey = $state<string | undefined>();
   let checkoutState = $state<CheckoutState>(new URLSearchParams(location.search).get('checkout') as CheckoutState);
 
   async function loadBilling(): Promise<void> {
@@ -90,17 +93,17 @@
   }
 
   async function waitForActivation(): Promise<void> {
-    activationPending = true;
+    activationStatus = 'checking';
     for (let attempt = 0; attempt < 8; attempt += 1) {
       await refreshAfterCheckout();
       if (billing?.entitlement.planId !== 'viewer') {
-        activationPending = false;
+        activationStatus = 'active';
         showToast('Subscription active. Your paid features are ready.', 'success');
         return;
       }
       await new Promise((resolve) => setTimeout(resolve, 1250));
     }
-    activationPending = false;
+    activationStatus = 'pending';
   }
 
   async function manageSubscription(): Promise<void> {
@@ -120,14 +123,16 @@
 
   async function startCheckout(plan: Plan): Promise<void> {
     openingPlan = plan.id;
+    checkoutIdempotencyKey ??= crypto.randomUUID();
     try {
       const response = await fetch('/v1/billing/checkout', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': checkoutIdempotencyKey },
         body: JSON.stringify({ planId: plan.id }),
       });
       const data = (await response.json().catch(() => ({}))) as { url?: string; error?: string };
       if (!response.ok || !data.url) {
+        checkoutIdempotencyKey = undefined;
         showToast(data.error ?? "Couldn't start checkout", 'error');
         return;
       }
@@ -158,6 +163,7 @@
   }
 
   function choosePlan(plan: Plan): void {
+    if (openingPlan) return;
     if (billing?.entitlement.subscriptionId) {
       void changePlan(plan);
       return;
@@ -200,9 +206,15 @@
     <div class="flex items-start gap-3 rounded-[1.2rem] border border-ok/30 bg-ok/10 px-4 py-3 text-sm" aria-live="polite">
       <CircleCheck class="mt-0.5 h-5 w-5 shrink-0 text-ok" />
       <div>
-        <div class="font-semibold text-ok">Payment received</div>
+        <div class="font-semibold text-ok">Checkout completed</div>
         <p class="mt-1 text-muted">
-          {activationPending ? 'Stripe is confirming your subscription. This usually takes a few seconds.' : 'Your subscription status is up to date.'}
+          {#if activationStatus === 'active'}
+            Your subscription is active and paid features are ready.
+          {:else if activationStatus === 'pending'}
+            Stripe is still confirming your subscription. Refresh this page in a moment; access will remain unchanged until the webhook arrives.
+          {:else}
+            Stripe is confirming your subscription. This usually takes a few seconds.
+          {/if}
         </p>
       </div>
     </div>
@@ -246,6 +258,15 @@
       {/if}
     </div>
   </Card>
+
+  {#if billing?.legacyBilling}
+    <Card class="border-accent/40 bg-accent/5">
+      <div class="text-sm">
+        <div class="font-medium">Previous billing record needs review</div>
+        <div class="mt-1 text-muted">Your previous payment-provider record was kept for reconciliation, but it does not grant Stripe access. Contact support before starting a new subscription so the account is not charged twice.</div>
+      </div>
+    </Card>
+  {/if}
 
   {#if loading}
     <Card class="flex min-h-48 items-center justify-center">
@@ -312,7 +333,7 @@
             <Button
               class="w-full"
               variant={highlighted ? 'default' : 'secondary'}
-              disabled={current || (!billing.enabled && !billing.entitlement.subscriptionId)}
+              disabled={current || openingPlan !== undefined || (!billing.enabled && !billing.entitlement.subscriptionId)}
               loading={openingPlan === plan.id}
               onclick={() => choosePlan(plan)}
             >
@@ -335,7 +356,7 @@
     {/if}
 
     <Card class="text-center text-xs leading-5 text-muted">
-      Plans renew monthly until canceled. Any applicable tax is shown at checkout. Payment details are handled by Stripe and never stored by dkrypt.
+      Plans renew monthly until canceled. Stripe shows the final amount and any configured tax before payment. Payment details are handled by Stripe and never stored by dkrypt.
       <div class="mt-3">
         <LegalLinks />
       </div>

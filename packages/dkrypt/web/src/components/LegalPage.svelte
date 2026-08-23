@@ -53,7 +53,7 @@
         <h2>4. Subscriptions, payments, and taxes</h2>
         <p>
           Paid plans are monthly subscriptions that renew automatically until canceled. The applicable plan, billing frequency, price, and
-          taxes are presented before purchase. dkrypt provides the subscription, and Stripe acts as our payment processor. Stripe hosts
+          configured taxes are presented before purchase. dkrypt provides the subscription, and Stripe acts as our payment processor. Stripe hosts
           checkout, receipts, and subscription billing; dkrypt does not store full card details. Where enabled, applicable tax is
           calculated through Stripe’s tax tools.
         </p>
