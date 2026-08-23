@@ -49,6 +49,18 @@ Open `http://localhost:8080`, or place your reverse proxy in front of it.
 
 Pushes to `main` run the Moon check graph, generate the dashboard changelog from Git history, publish an immutable GHCR image, and deploy that exact digest on the homelab runner. The runner keeps only the runtime `.env` in `/home/adrian/.local/share/dkrypt`, pulls images, and never retains a source checkout. If its health check fails, it starts the previous image again.
 
+## Stripe setup
+
+Create the monthly EUR catalog and configure the hosted webhook from `packages/dkrypt` with a Stripe test or live secret:
+
+```sh
+bun run stripe:seed
+bun run stripe:webhook
+bun run stripe:verify
+```
+
+Copy the four price IDs printed by `stripe:seed` into the runtime environment, store the webhook secret printed for a newly created endpoint as `STRIPE_WEBHOOK_SECRET`, and set `STRIPE_WEBHOOK_URL` to the public `/v1/stripe/webhook` URL. `stripe:verify` checks the account mode, recurring price amounts, webhook URL, and subscribed events without printing any secret.
+
 ## API
 
 The listed API endpoints use `Authorization: Bearer <API_KEY>`. Completed IPA downloads may also use an expiring signed share token.
