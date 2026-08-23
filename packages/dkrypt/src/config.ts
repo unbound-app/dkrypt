@@ -16,7 +16,13 @@ function optionalInt(name: string, fallback: number): number {
   return n;
 }
 
-const paddleEnvironment = optional('PADDLE_ENV', 'sandbox');
+function optionalBoolean(name: string, fallback: boolean): boolean {
+  const value = process.env[name];
+  if (!value) return fallback;
+  if (value !== 'true' && value !== 'false') throw new Error(`env var ${name} must be true or false, got ${value}`);
+  return value === 'true';
+}
+
 const DEFAULT_TTL_MINUTES = 24 * 60;
 
 export const config = {
@@ -36,32 +42,13 @@ export const config = {
   discordOauthClientSecret: optional('DISCORD_OAUTH_CLIENT_SECRET', ''),
   discordBotToken: optional('DISCORD_BOT_TOKEN', ''),
 
-  paddleEnvironment,
-  paddleApiKey: optional(
-    'PADDLE_API_KEY',
-    optional(paddleEnvironment === 'production' ? 'PADDLE_LIVE_API_KEY' : 'PADDLE_SANDBOX_API_KEY', ''),
-  ),
-  paddleClientToken: optional(
-    'PADDLE_CLIENT_TOKEN',
-    paddleEnvironment === 'sandbox' ? 'test_929a0f86f31a93f2db87364231f' : '',
-  ),
-  paddleWebhookSecret: optional('PADDLE_WEBHOOK_SECRET', ''),
-  paddleRegularPriceId: optional(
-    'PADDLE_REGULAR_PRICE_ID',
-    paddleEnvironment === 'sandbox' ? 'pri_01ky77t7x5111gkpmyp9626s74' : '',
-  ),
-  paddlePriorityPriceId: optional(
-    'PADDLE_PRIORITY_PRICE_ID',
-    paddleEnvironment === 'sandbox' ? 'pri_01ky77t8gy88z082pan4jst041' : '',
-  ),
-  paddleApiPriceId: optional(
-    'PADDLE_API_PRICE_ID',
-    paddleEnvironment === 'sandbox' ? 'pri_01ky77t9ae7k5b2sgsmxxpb2fx' : '',
-  ),
-  paddlePriorityApiPriceId: optional(
-    'PADDLE_PRIORITY_API_PRICE_ID',
-    paddleEnvironment === 'sandbox' ? 'pri_01ky77t9ynrhz0je61qwvm15rg' : '',
-  ),
+  stripeSecretKey: optional('STRIPE_SECRET_KEY', ''),
+  stripeWebhookSecret: optional('STRIPE_WEBHOOK_SECRET', ''),
+  stripeRegularPriceId: optional('STRIPE_REGULAR_PRICE_ID', ''),
+  stripePriorityPriceId: optional('STRIPE_PRIORITY_PRICE_ID', ''),
+  stripeApiPriceId: optional('STRIPE_API_PRICE_ID', ''),
+  stripePriorityApiPriceId: optional('STRIPE_PRIORITY_API_PRICE_ID', ''),
+  stripeAutomaticTax: optionalBoolean('STRIPE_AUTOMATIC_TAX', false),
 
   ipadecryptBin: optional('IPADECRYPT_BIN', 'ipadecrypt'),
   outputDir: optional('OUTPUT_DIR', '/data/tmp'),
@@ -94,10 +81,12 @@ export const config = {
 export const githubOauthEnabled = config.githubOauthClientId !== '' && config.githubOauthClientSecret !== '';
 export const discordOauthEnabled = config.discordOauthClientId !== '' && config.discordOauthClientSecret !== '';
 export const discordBotEnabled = config.discordBotToken !== '';
-export const paddleEnabled =
-  config.paddleClientToken !== '' &&
-  config.paddleRegularPriceId !== '' &&
-  config.paddlePriorityPriceId !== '' &&
-  config.paddleApiPriceId !== '' &&
-  config.paddlePriorityApiPriceId !== '';
+export const stripeEnvironment = config.stripeSecretKey.startsWith('sk_live_') ? 'live' : 'test';
+export const stripeEnabled =
+  config.stripeSecretKey !== '' &&
+  config.stripeWebhookSecret !== '' &&
+  config.stripeRegularPriceId !== '' &&
+  config.stripePriorityPriceId !== '' &&
+  config.stripeApiPriceId !== '' &&
+  config.stripePriorityApiPriceId !== '';
 export const emailEnabled = config.smtpHost !== '' && config.smtpUser !== '' && config.smtpPass !== '';

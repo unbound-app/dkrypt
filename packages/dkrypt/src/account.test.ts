@@ -195,12 +195,14 @@ describe('resolveOauthAccount', () => {
     addAllowedUser(discordUserId, [role.id], 'tester');
     createApiKey('merged key', discordUserId);
     upsertBillingCustomer({
+      provider: 'stripe',
       customerId: `ctm_${randomUUID()}`,
       email: 'linked@example.com',
       userId: discordUserId,
       updatedAt: new Date().toISOString(),
     });
     upsertBillingSubscription({
+      provider: 'stripe',
       subscriptionId: `sub_${randomUUID()}`,
       customerId: getBillingCustomerId(discordUserId) ?? '',
       userId: discordUserId,

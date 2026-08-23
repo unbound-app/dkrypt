@@ -25,7 +25,6 @@ export default defineConfig({
             { name: 'svelte', test: /node_modules[\\/]svelte[\\/]/, priority: 30 },
             { name: 'bits-ui', test: /node_modules[\\/]bits-ui[\\/]/, priority: 20 },
             { name: 'icons', test: /node_modules[\\/]lucide-svelte[\\/]/, priority: 20 },
-            { name: 'paddle', test: /node_modules[\\/]@paddle[\\/]/, priority: 20 },
             { name: 'vendor', test: /node_modules[\\/]/, priority: 10, minSize: 20_000 },
           ],
         },

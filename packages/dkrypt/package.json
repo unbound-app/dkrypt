@@ -14,15 +14,14 @@
     "dev": "bun --watch src/server.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "bun test",
-    "paddle:seed": "bun scripts/seed-paddle-catalog.ts",
-    "paddle:webhook": "bun scripts/configure-paddle-webhook.ts",
+    "stripe:seed": "bun scripts/seed-stripe-catalog.ts",
+    "stripe:webhook": "bun scripts/configure-stripe-webhook.ts",
     "build:web": "cd web && bun install --frozen-lockfile && bun run build",
     "typecheck:web": "cd web && bun install --frozen-lockfile && bun run typecheck"
   },
   "dependencies": {
     "@discordjs/rest": "^2.6.3",
     "@fastify/static": "^10.1.2",
-    "@paddle/paddle-node-sdk": "^3.8.0",
     "@scalar/fastify-api-reference": "^1.63.0",
     "adm-zip": "^0.6.0",
     "bplist-parser": "^0.3.2",
@@ -34,6 +33,7 @@
     "plist": "^5.0.0",
     "safe-regex2": "^5.1.1",
     "ssh2": "^1.17.0",
+    "stripe": "^20.4.0",
     "web-push": "^3.6.7"
   },
   "devDependencies": {

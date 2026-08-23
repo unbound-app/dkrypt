@@ -43,7 +43,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: '2026-07-23',
     title: 'Paid plans',
-    description: 'Subscribe via Paddle to unlock TestFlight scoping, higher key limits, and priority queueing.',
+    description: 'Subscribe to unlock TestFlight scoping, higher key limits, and priority queueing.',
     link: { tab: 'billing' },
   },
   {

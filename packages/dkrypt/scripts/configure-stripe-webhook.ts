@@ -1,0 +1,38 @@
+import Stripe from 'stripe';
+
+const apiKey = process.env.STRIPE_SECRET_KEY;
+const destination = process.env.STRIPE_WEBHOOK_URL;
+if (!apiKey) throw new Error('STRIPE_SECRET_KEY is required');
+if (!destination) throw new Error('STRIPE_WEBHOOK_URL is required');
+if (!destination.startsWith('https://')) throw new Error('STRIPE_WEBHOOK_URL must use HTTPS');
+
+const stripe = new Stripe(apiKey);
+const enabledEvents: Stripe.WebhookEndpointCreateParams.EnabledEvent[] = [
+  'checkout.session.completed',
+  'checkout.session.async_payment_succeeded',
+  'customer.created',
+  'customer.updated',
+  'customer.subscription.created',
+  'customer.subscription.updated',
+  'customer.subscription.deleted',
+];
+
+const endpoints = await stripe.webhookEndpoints.list({ limit: 100 });
+const existing = endpoints.data.find((endpoint) => endpoint.url === destination);
+const endpoint = existing
+  ? await stripe.webhookEndpoints.update(existing.id, { description: 'dkrypt Stripe billing', enabled_events: enabledEvents, disabled: false })
+  : await stripe.webhookEndpoints.create({ url: destination, description: 'dkrypt Stripe billing', enabled_events: enabledEvents });
+
+console.log(
+  JSON.stringify(
+    {
+      environment: apiKey.startsWith('sk_live_') ? 'live' : 'test',
+      endpointId: endpoint.id,
+      destination: endpoint.url,
+      endpointSecret: endpoint.secret,
+      secretAction: endpoint.secret ? 'store STRIPE_WEBHOOK_SECRET in the runtime environment' : 'existing endpoint secret is unchanged',
+    },
+    null,
+    2,
+  ),
+);

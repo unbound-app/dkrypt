@@ -13,7 +13,7 @@ import { startKeyExpiryPoller } from '#keyExpiryPoller.js';
 import { log, startLogFlusher } from '#logger.js';
 import { openApiDocument } from '#openapi.js';
 import { authRouter } from '#routes/auth.js';
-import { billingRouter, paddleWebhookRouter } from '#routes/billing.js';
+import { billingRouter, stripeWebhookRouter } from '#routes/billing.js';
 import { dashboardRouter } from '#routes/dashboard.js';
 import { decryptRouter } from '#routes/decrypt.js';
 import { healthRouter } from '#routes/health.js';
@@ -29,7 +29,7 @@ export async function buildServer(options: { includePublicRoutes?: boolean } = {
   const server = Fastify({ bodyLimit: 5 * 1024 * 1024, trustProxy: 'loopback' });
 
   server.addContentTypeParser('application/json', { parseAs: 'buffer' }, (request, body, done) => {
-    if (request.url.startsWith('/v1/paddle/webhook')) return done(null, body);
+    if (request.url.startsWith('/v1/stripe/webhook')) return done(null, body);
     try {
       done(null, body.length === 0 ? {} : JSON.parse(body.toString('utf8')));
     } catch (error) {
@@ -74,7 +74,7 @@ export async function buildServer(options: { includePublicRoutes?: boolean } = {
     server.get('/sw.js', (_request, reply) => reply.type('application/javascript').sendFile('sw.js'));
   }
 
-  registerRouter(server, paddleWebhookRouter);
+  registerRouter(server, stripeWebhookRouter);
   registerRouter(server, healthRouter);
   registerRouter(server, decryptRouter);
   registerRouter(server, authRouter);

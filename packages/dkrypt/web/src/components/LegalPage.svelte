@@ -53,20 +53,20 @@
         <h2>4. Subscriptions, payments, and taxes</h2>
         <p>
           Paid plans are monthly subscriptions that renew automatically until canceled. The applicable plan, billing frequency, price, and
-          taxes are presented before purchase. Paddle is our authorized reseller and merchant of record. Paddle processes payments, issues
-          receipts, calculates applicable taxes, and administers subscription billing under the
-          <a href="https://www.paddle.com/legal/buyer-terms" target="_blank" rel="noopener noreferrer">Paddle Buyer Terms</a>.
+          taxes are presented before purchase. dkrypt provides the subscription, and Stripe acts as our payment processor. Stripe hosts
+          checkout, receipts, and subscription billing; dkrypt does not store full card details. Where enabled, applicable tax is
+          calculated through Stripe’s tax tools.
         </p>
         <p>
-          You may cancel through the dkrypt billing portal or the link in your Paddle receipt. Unless mandatory law provides otherwise,
+          You may cancel through the dkrypt billing portal or the link in your Stripe receipt. Unless mandatory law provides otherwise,
           cancellation takes effect at the end of the current billing period. Plan changes may be prorated as shown before confirmation.
           Access to paid features depends on the subscription remaining in an eligible status.
         </p>
 
         <h2>5. Refunds</h2>
         <p>
-          Refund eligibility and requests are governed by our <a href="/refund-policy">Refund Policy</a> and Paddle’s applicable buyer
-          terms. Nothing in these terms limits mandatory consumer rights.
+          Refund eligibility and requests are governed by our <a href="/refund-policy">Refund Policy</a> and applicable law. Nothing in
+          these terms limits mandatory consumer rights.
         </p>
 
         <h2>6. Intellectual property</h2>
@@ -79,7 +79,7 @@
 
         <h2>7. Third-party services</h2>
         <p>
-          dkrypt interoperates with third-party services including GitHub, Discord, Apple services, Paddle, and infrastructure providers.
+          dkrypt interoperates with third-party services including GitHub, Discord, Apple services, Stripe, and infrastructure providers.
           Their own terms and privacy notices apply to their services. We are not responsible for third-party availability or acts beyond
           our reasonable control.
         </p>
@@ -117,7 +117,7 @@
         <p>
           Questions about these terms may be sent to
           <a href="mailto:contact@dylib.dev">contact@dylib.dev</a>. Billing questions may also be submitted through
-          <a href="https://paddle.net" target="_blank" rel="noopener noreferrer">Paddle Buyer Support</a>.
+          <a href="mailto:contact@dylib.dev">contact@dylib.dev</a> with the purchase email and receipt details.
         </p>
       </article>
     {:else if document === 'privacy'}
@@ -138,8 +138,8 @@
             GitHub or Discord.
           </li>
           <li>
-            <strong>Billing data:</strong> Paddle customer and subscription identifiers, plan, subscription status, renewal information,
-            and billing email. Paddle collects and processes payment details; dkrypt does not store full card details.
+            <strong>Billing data:</strong> Stripe customer and subscription identifiers, plan, subscription status, renewal information,
+            and billing email. Stripe collects and processes payment details; dkrypt does not store full card details.
           </li>
           <li>
             <strong>Service data:</strong> decrypt requests, application identifiers and versions, job status, results, API-key metadata,
@@ -173,14 +173,14 @@
         <p>We share data only as needed with:</p>
         <ul>
           <li>GitHub or Discord for authentication you choose to use;</li>
-          <li>Paddle, our merchant of record, for checkout, subscription administration, tax, receipts, fraud prevention, and refunds;</li>
+          <li>Stripe, our payment processor, for checkout, subscription administration, tax tools, receipts, and fraud prevention;</li>
           <li>hosting, network, security, email, notification, and infrastructure providers that help operate dkrypt;</li>
           <li>Apple and related services where required to fulfill an authorized request; and</li>
           <li>authorities or professional advisers where required by law or necessary to protect legal rights and safety.</li>
         </ul>
         <p>
-          Paddle handles buyer data under its own
-          <a href="https://www.paddle.com/legal/privacy" target="_blank" rel="noopener noreferrer">Privacy Notice</a>.
+          Stripe handles payment data under its own
+          <a href="https://stripe.com/privacy" target="_blank" rel="noopener noreferrer">Privacy Center</a>.
           We do not sell personal data or use it for third-party behavioral advertising.
         </p>
 
@@ -236,15 +236,13 @@
         <p class="document-date">Last updated: 23 July 2026</p>
 
         <p>
-          Paddle is the authorized reseller and merchant of record for dkrypt subscriptions. Paddle handles payments, receipts,
-          cancellations, and refund processing. This policy supplements and refers to the
-          <a href="https://www.paddle.com/legal/refund-policy" target="_blank" rel="noopener noreferrer">Paddle Refund Policy</a>,
-          which governs eligibility and processing.
+          Stripe is dkrypt’s payment processor and hosts checkout, receipts, cancellations, and the customer portal. dkrypt handles
+          refund decisions under this policy and applicable law.
         </p>
 
         <h2>1. Refund period</h2>
         <p>
-          You may request a refund within 14 days of a transaction. Requests are assessed under Paddle’s Refund Policy and applicable law.
+          You may request a refund within 14 days of a transaction. Requests are assessed under this Refund Policy and applicable law.
           Submitting a request does not guarantee approval, except where you have a mandatory statutory right to a refund or withdrawal.
           Nothing in this policy limits non-waivable consumer rights.
         </p>
@@ -252,12 +250,12 @@
         <h2>2. How to request a refund</h2>
         <p>Use one of these methods:</p>
         <ul>
-          <li>select the manage-subscription or support link in your Paddle receipt or transaction email;</li>
+          <li>select the manage-subscription link in your Stripe receipt or transaction email;</li>
           <li>open the dkrypt billing portal and follow the available support options; or</li>
-          <li>visit <a href="https://paddle.net" target="_blank" rel="noopener noreferrer">Paddle Buyer Support</a> and choose the refund option.</li>
+          <li>email <a href="mailto:contact@dylib.dev">contact@dylib.dev</a> with the purchase email and receipt details.</li>
         </ul>
         <p>
-          Include the email address used for purchase and enough transaction information for Paddle to locate the payment. Do not send full
+          Include the email address used for purchase and enough transaction information for us to locate the payment. Do not send full
           card details to dkrypt.
         </p>
 
@@ -265,12 +263,12 @@
         <p>
           If a persistent technical defect prevents access to paid features, contact
           <a href="mailto:contact@dylib.dev">contact@dylib.dev</a> so we can try to resolve it. If the issue cannot be resolved, request a
-          refund through Paddle and describe the problem.
+          refund through dkrypt and describe the problem.
         </p>
 
         <h2>4. Cancellations</h2>
         <p>
-          You can cancel a subscription at any time through the dkrypt billing portal or the link in your Paddle receipt. Cancellation
+          You can cancel a subscription at any time through the dkrypt billing portal or the link in your Stripe receipt. Cancellation
           normally takes effect at the end of the current billing period and prevents future renewal charges. Cancellation by itself does
           not automatically refund a completed payment.
         </p>
@@ -285,7 +283,7 @@
         <h2>6. Contact</h2>
         <p>
           For product support, contact <a href="mailto:contact@dylib.dev">contact@dylib.dev</a>. For refund status or payment questions,
-          contact <a href="https://paddle.net" target="_blank" rel="noopener noreferrer">Paddle Buyer Support</a>.
+          contact <a href="mailto:contact@dylib.dev">contact@dylib.dev</a>.
         </p>
       </article>
     {/if}

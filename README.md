@@ -98,4 +98,4 @@ bun run typecheck
 bun run typecheck:web
 ```
 
-For scheduler watches, OAuth, Paddle, push notifications, and all optional integrations, use the documented environment variables in `.env.example` and configure them from the dashboard.
+For scheduler watches, OAuth, Stripe, push notifications, and all optional integrations, use the documented environment variables in `.env.example` and configure them from the dashboard. Existing Paddle billing records are ignored after the provider cutover; create Stripe subscriptions for affected accounts and retain the old provider’s records for reconciliation.

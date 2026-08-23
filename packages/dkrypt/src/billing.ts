@@ -3,9 +3,11 @@ import path from 'node:path';
 import { config } from '#config.js';
 import { hasPermission, PermissionFlag } from '#permissions.js';
 
+export type BillingProvider = 'stripe';
 export type PlanId = 'viewer' | 'regular' | 'priority' | 'api' | 'priority_api';
 
 export interface BillingCustomer {
+  provider: BillingProvider;
   customerId: string;
   email: string;
   userId?: string;
@@ -13,6 +15,7 @@ export interface BillingCustomer {
 }
 
 export interface BillingSubscription {
+  provider: BillingProvider;
   subscriptionId: string;
   customerId: string;
   userId?: string;
@@ -20,6 +23,7 @@ export interface BillingSubscription {
   planId: Exclude<PlanId, 'viewer'>;
   priceId: string;
   productId: string;
+  subscriptionItemId?: string;
   nextBilledAt?: string;
   scheduledChangeAction?: string;
   scheduledChangeAt?: string;
@@ -51,7 +55,7 @@ const planDefinitions = [
     description: 'Dashboard decrypt access with standard queue priority.',
     amount: 5,
     currency: 'EUR',
-    priceId: config.paddleRegularPriceId,
+    priceId: config.stripeRegularPriceId,
     decrypt: true,
     api: false,
     priority: 0,
@@ -62,7 +66,7 @@ const planDefinitions = [
     description: 'Dashboard decrypt access with high queue priority.',
     amount: 10,
     currency: 'EUR',
-    priceId: config.paddlePriorityPriceId,
+    priceId: config.stripePriorityPriceId,
     decrypt: true,
     api: false,
     priority: 5,
@@ -73,7 +77,7 @@ const planDefinitions = [
     description: 'Dashboard decrypts and API key access with standard priority.',
     amount: 15,
     currency: 'EUR',
-    priceId: config.paddleApiPriceId,
+    priceId: config.stripeApiPriceId,
     decrypt: true,
     api: true,
     priority: 0,
@@ -84,7 +88,7 @@ const planDefinitions = [
     description: 'Dashboard decrypts and API key access with high priority.',
     amount: 20,
     currency: 'EUR',
-    priceId: config.paddlePriorityApiPriceId,
+    priceId: config.stripePriorityApiPriceId,
     decrypt: true,
     api: true,
     priority: 5,
@@ -100,8 +104,10 @@ function load(): BillingSnapshot {
   try {
     const state = JSON.parse(readFileSync(billingPath, 'utf8')) as Partial<BillingSnapshot>;
     return {
-      customers: Array.isArray(state.customers) ? state.customers : [],
-      subscriptions: Array.isArray(state.subscriptions) ? state.subscriptions : [],
+      customers: Array.isArray(state.customers) ? state.customers.filter((customer) => customer.provider === 'stripe') : [],
+      subscriptions: Array.isArray(state.subscriptions)
+        ? state.subscriptions.filter((subscription) => subscription.provider === 'stripe')
+        : [],
     };
   } catch {
     return { customers: [], subscriptions: [] };
@@ -142,7 +148,7 @@ export function upsertBillingCustomer(customer: BillingCustomer): void {
 export function linkBillingCustomer(customerId: string, userId: string): void {
   const existing = state.customers.find((item) => item.customerId === customerId);
   if (existing) existing.userId = userId;
-  else state.customers.push({ customerId, email: '', userId, updatedAt: new Date().toISOString() });
+  else state.customers.push({ provider: 'stripe', customerId, email: '', userId, updatedAt: new Date().toISOString() });
   for (const subscription of state.subscriptions) {
     if (subscription.customerId === customerId && !subscription.userId) subscription.userId = userId;
   }
@@ -162,6 +168,10 @@ export function upsertBillingSubscription(subscription: BillingSubscription): vo
 
 export function getBillingCustomerId(userId: string): string | undefined {
   return state.customers.find((customer) => customer.userId === userId)?.customerId;
+}
+
+export function getBillingUserId(customerId: string): string | undefined {
+  return state.customers.find((customer) => customer.customerId === customerId)?.userId;
 }
 
 export function getBillingSubscription(userId: string, subscriptionId: string): BillingSubscription | undefined {
@@ -250,6 +260,7 @@ export function isBillingSnapshot(value: unknown): value is BillingSnapshot {
       if (typeof customer !== 'object' || customer === null) return false;
       const record = customer as Record<string, unknown>;
       return (
+        record.provider === 'stripe' &&
         typeof record.customerId === 'string' &&
         typeof record.email === 'string' &&
         typeof record.updatedAt === 'string'
@@ -260,12 +271,14 @@ export function isBillingSnapshot(value: unknown): value is BillingSnapshot {
       if (typeof subscription !== 'object' || subscription === null) return false;
       const record = subscription as Record<string, unknown>;
       return (
+        record.provider === 'stripe' &&
         typeof record.subscriptionId === 'string' &&
         typeof record.customerId === 'string' &&
         typeof record.status === 'string' &&
         planDefinitions.some((plan) => plan.id === record.planId) &&
         typeof record.priceId === 'string' &&
         typeof record.productId === 'string' &&
+        (record.subscriptionItemId === undefined || typeof record.subscriptionItemId === 'string') &&
         typeof record.occurredAt === 'string' &&
         typeof record.updatedAt === 'string'
       );

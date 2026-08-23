@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { Check, Gauge, KeyRound, X, Zap } from 'lucide-svelte';
+  import { Check, Gauge, KeyRound, ShieldCheck, X, Zap } from 'lucide-svelte';
+  import Badge from '#lib/components/ui/Badge.svelte';
   import Card from '#lib/components/ui/Card.svelte';
   import PublicPageFooter from '#components/PublicPageFooter.svelte';
   import PublicPageHeader from '#components/PublicPageHeader.svelte';
@@ -53,7 +54,10 @@
           <div class="flex h-full min-h-72 flex-col">
             <div class="mb-4 flex items-start justify-between gap-3">
               <div>
-                <h2 class="text-base font-semibold">{plan.name}</h2>
+                <div class="flex flex-wrap items-center gap-2">
+                  <h2 class="text-base font-semibold">{plan.name}</h2>
+                  {#if plan.name === 'Priority API'}<Badge>Best value</Badge>{/if}
+                </div>
                 <p class="mt-1 text-sm text-muted">{plan.description}</p>
               </div>
               {#if plan.priority}
@@ -82,6 +86,7 @@
               {:else}
                 <div class="flex items-center gap-2 text-muted"><X class="h-4 w-4" /> High queue priority</div>
               {/if}
+              <div class="mt-2 flex items-center gap-2 text-xs text-muted"><ShieldCheck class="h-4 w-4 text-accent" /> Secure Stripe checkout</div>
             </div>
 
             <a
@@ -96,7 +101,7 @@
     </div>
 
     <Card class="mx-auto mt-8 max-w-3xl text-sm leading-6 text-muted">
-      Plans renew monthly until canceled. Prices are shown in EUR; applicable tax is calculated at checkout. You can cancel from the billing portal at any time, effective at the end of the current billing period.
+      Plans renew monthly until canceled. Prices are shown in EUR; any applicable tax is shown at checkout. You can cancel from the billing portal at any time, effective at the end of the current billing period.
     </Card>
   </main>
   <PublicPageFooter />

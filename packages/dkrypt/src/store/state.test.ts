@@ -236,7 +236,7 @@ describe('exportBackup / importBackup', () => {
     expect(key?.pendingReveal).toBeUndefined();
   });
 
-  test('round-trips OAuth profiles and Paddle subscriptions', () => {
+  test('round-trips OAuth profiles and Stripe subscriptions', () => {
     const userId = `github:${randomUUID()}`;
     upsertAuthProfile({
       userId,
@@ -248,12 +248,14 @@ describe('exportBackup / importBackup', () => {
       updatedAt: new Date().toISOString(),
     });
     upsertBillingCustomer({
+      provider: 'stripe',
       customerId: 'ctm_backup',
       email: 'billing@example.com',
       userId,
       updatedAt: new Date().toISOString(),
     });
     upsertBillingSubscription({
+      provider: 'stripe',
       subscriptionId: 'sub_backup',
       customerId: 'ctm_backup',
       userId,

@@ -9,7 +9,7 @@ describe('renderPublicPage', () => {
   test.each([
     ['/', 'subscription service'],
     ['/pricing', '€5/month'],
-    ['/terms', 'merchant of record'],
+    ['/terms', 'Stripe processes payments'],
     ['/privacy', 'Privacy notice'],
     ['/refund-policy', '14 days'],
     ['/contact', 'Contact dkrypt'],

@@ -8,6 +8,7 @@ import { PermissionFlag } from '#permissions.js';
 
 function subscription(planId: BillingSubscription['planId'], status = 'active'): BillingSubscription {
   return {
+    provider: 'stripe',
     subscriptionId: `sub_${planId}`,
     customerId: 'ctm_test',
     userId: 'github:1',
