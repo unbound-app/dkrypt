@@ -1,6 +1,11 @@
 export const GENERATED_CHANGELOG = [
   {
     "date": "2026-08-23",
+    "title": "fix: harden stripe cutover flow",
+    "description": "Released in 0acc48e."
+  },
+  {
+    "date": "2026-08-23",
     "title": "refactor: tighten stripe billing helpers",
     "description": "Released in 5f9304d."
   },
@@ -33,10 +38,5 @@ export const GENERATED_CHANGELOG = [
     "date": "2026-08-03",
     "title": "fix(itunes): default app store lookups to US storefront",
     "description": "Released in 43c7983."
-  },
-  {
-    "date": "2026-08-02",
-    "title": "feat(dashboard): improve job safety and observability",
-    "description": "Released in 153f4e9."
   }
 ] as const;
