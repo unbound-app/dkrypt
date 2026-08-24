@@ -1,4 +1,4 @@
-import { createHmac } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import Stripe from 'stripe';
 import { createStripeCliClient } from './stripe-cli.js';
 
@@ -29,6 +29,13 @@ const requiredEvents: Stripe.WebhookEndpointCreateParams.EnabledEvent[] = [
 ];
 
 const { client: stripe, environment } = createStripeCliClient();
+
+function createIntegrationIdentifier(): string {
+  const alphabet = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  const suffix = Array.from(randomBytes(8), (byte) => alphabet[byte % alphabet.length]).join('');
+  return `dkrypt_${suffix}`;
+}
+
 const priceIds = expectedPrices.map(({ key }) => ({ key, id: process.env[key] }));
 const missingPrice = priceIds.find(({ id }) => !id);
 if (missingPrice) throw new Error(`${missingPrice.key} is required`);
@@ -91,8 +98,9 @@ const managedPaymentsProbe = await (async () => {
     cancel_url: `${webhookUrl}/managed-payments-verification-cancel`,
     billing_address_collection: 'required',
     managed_payments: { enabled: true },
-  } as Stripe.Checkout.SessionCreateParams & { managed_payments: { enabled: true } });
-  const managedPayments = (session as Stripe.Checkout.Session & { managed_payments?: { enabled?: boolean } }).managed_payments;
+    integration_identifier: createIntegrationIdentifier(),
+  });
+  const managedPayments = session.managed_payments;
   await stripe.checkout.sessions.expire(session.id);
   return { id: session.id, enabled: managedPayments?.enabled === true };
 })();

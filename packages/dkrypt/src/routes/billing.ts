@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import Stripe from 'stripe';
 import { Router, type Request, type Response } from '#http.js';
 import {
@@ -188,6 +188,12 @@ function getCheckoutIdempotencyKey(req: Request, res: Response, userId: string):
   return `dkrypt-checkout-${createHash('sha256').update(`${userId}:${key}`).digest('hex')}`;
 }
 
+function createIntegrationIdentifier(): string {
+  const alphabet = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  const suffix = Array.from(randomBytes(8), (byte) => alphabet[byte % alphabet.length]).join('');
+  return `dkrypt_${suffix}`;
+}
+
 billingRouter.post('/v1/billing/checkout', requireSession, async (req, res) => {
   const userId = res.locals.session.sub;
   const target = getPlan(typeof req.body?.planId === 'string' ? req.body.planId : '');
@@ -218,7 +224,8 @@ billingRouter.post('/v1/billing/checkout', requireSession, async (req, res) => {
       cancel_url: `${config.publicBaseUrl}/?tab=billing&checkout=cancelled`,
       billing_address_collection: 'required',
       managed_payments: { enabled: true },
-    } as Stripe.Checkout.SessionCreateParams & { managed_payments: { enabled: true } }, { idempotencyKey });
+      integration_identifier: createIntegrationIdentifier(),
+    }, { idempotencyKey });
     if (!session.url) {
       res.status(502).json({ error: 'Stripe did not return a checkout URL' });
       return;
