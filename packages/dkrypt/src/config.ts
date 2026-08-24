@@ -73,7 +73,7 @@ export const config = {
 export const githubOauthEnabled = config.githubOauthClientId !== '' && config.githubOauthClientSecret !== '';
 export const discordOauthEnabled = config.discordOauthClientId !== '' && config.discordOauthClientSecret !== '';
 export const discordBotEnabled = config.discordBotToken !== '';
-export const stripeEnvironment = config.stripeSecretKey.startsWith('sk_live_') ? 'live' : 'test';
+export const stripeEnvironment = config.stripeSecretKey.startsWith('sk_live_') || config.stripeSecretKey.startsWith('rk_live_') ? 'live' : 'test';
 const stripeRequirements = [
   ['STRIPE_SECRET_KEY', config.stripeSecretKey],
   ['STRIPE_WEBHOOK_SECRET', config.stripeWebhookSecret],
