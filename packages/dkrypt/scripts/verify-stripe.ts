@@ -40,8 +40,7 @@ const priceIds = expectedPrices.map(({ key }) => ({ key, id: process.env[key] })
 const missingPrice = priceIds.find(({ id }) => !id);
 if (missingPrice) throw new Error(`${missingPrice.key} is required`);
 
-const [account, prices, endpoints] = await Promise.all([
-  stripe.accounts.retrieve(),
+const [prices, endpoints] = await Promise.all([
   Promise.all(priceIds.map(({ id }) => stripe.prices.retrieve(id as string))),
   stripe.webhookEndpoints.list({ limit: 100 }),
 ]);
@@ -105,9 +104,7 @@ const managedPaymentsProbe = await (async () => {
   return { id: session.id, enabled: managedPayments?.enabled === true };
 })();
 const checks = {
-  account: account.id,
-  chargesEnabled: account.charges_enabled,
-  environment,
+  accountMode: environment,
   prices: priceChecks,
   products: productChecks,
   webhook: endpoint

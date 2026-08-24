@@ -5,6 +5,6 @@ export function createStripeCliClient(): { client: Stripe; environment: 'live' |
   if (!apiKey) throw new Error('STRIPE_SECRET_KEY is required');
   return {
     client: new Stripe(apiKey, { apiVersion: '2026-07-29.dahlia' }),
-    environment: apiKey.startsWith('sk_live_') ? 'live' : 'test',
+    environment: apiKey.startsWith('sk_live_') || apiKey.startsWith('rk_live_') ? 'live' : 'test',
   };
 }
