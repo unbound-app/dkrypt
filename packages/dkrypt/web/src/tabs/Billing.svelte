@@ -248,8 +248,8 @@
       <div>
         <div class="mb-1 flex flex-wrap items-center gap-2">
           <h2 class="text-lg font-semibold">Choose your dkrypt plan</h2>
-          {#if billing?.enabled}
-          <Badge variant="outline">Stripe Managed Payments {billing.environment === 'test' ? 'test mode' : 'live'}</Badge>
+          {#if billing?.enabled && billing.environment === 'test'}
+          <Badge variant="outline">Stripe Managed Payments test mode</Badge>
           {/if}
         </div>
         <p class="max-w-2xl text-sm text-muted">
