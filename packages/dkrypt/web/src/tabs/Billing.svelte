@@ -51,6 +51,7 @@
     enabled: boolean;
     provider: 'stripe';
     environment: 'test' | 'live';
+    managedPayments: boolean;
     missingConfiguration: string[];
     plans: Plan[];
     customerId?: string;
@@ -248,11 +249,11 @@
         <div class="mb-1 flex flex-wrap items-center gap-2">
           <h2 class="text-lg font-semibold">Choose your dkrypt plan</h2>
           {#if billing?.enabled}
-            <Badge variant="outline">Stripe {billing.environment === 'test' ? 'test mode' : 'billing'}</Badge>
+          <Badge variant="outline">Stripe Managed Payments {billing.environment === 'test' ? 'test mode' : 'live'}</Badge>
           {/if}
         </div>
         <p class="max-w-2xl text-sm text-muted">
-          Subscribe to unlock authorized decrypt processing, API access, and higher queue priority. Checkout opens on Stripe and returns you here when payment is complete.
+          Subscribe to unlock authorized decrypt processing, API access, and higher queue priority. Stripe hosts checkout, handles tax and local-currency presentation, and returns you here when payment is complete.
         </p>
       </div>
       {#if billing}
@@ -377,7 +378,7 @@
     {/if}
 
     <Card class="text-center text-xs leading-5 text-muted">
-      Plans renew monthly until canceled. Stripe shows the final amount and any configured tax before payment. Payment details are handled by Stripe and never stored by dkrypt.
+      Plans renew monthly until canceled. Stripe Managed Payments shows the final amount and applicable tax before payment. Stripe and Link handle payment details, receipts, and transaction support; dkrypt never stores full card details.
       <div class="mt-3">
         <LegalLinks />
       </div>

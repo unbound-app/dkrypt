@@ -2,6 +2,8 @@ import Stripe from 'stripe';
 import { createStripeCliClient } from './stripe-cli.js';
 
 const { client: stripe, environment } = createStripeCliClient();
+const taxCode = process.env.STRIPE_TAX_CODE;
+if (!taxCode) throw new Error('STRIPE_TAX_CODE is required and must be eligible for Managed Payments');
 const tiers = [
   { key: 'regular', name: 'dkrypt Regular', amount: 500 },
   { key: 'priority', name: 'dkrypt Priority', amount: 1000 },
@@ -35,13 +37,16 @@ async function seed(): Promise<void> {
   const catalog: Record<string, { productId: string; priceId: string }> = {};
 
   for (const tier of tiers) {
-    const product =
+    let product =
       (await findProduct(tier.key)) ??
       (await stripe.products.create({
         name: tier.name,
         description: `${tier.name} monthly subscription`,
+        tax_code: taxCode,
         metadata: { dkrypt_tier: tier.key },
       }));
+
+    if (product.tax_code !== taxCode) product = await stripe.products.update(product.id, { tax_code: taxCode });
 
     const price =
       (await findPrice(product.id, tier.key, tier.amount)) ??

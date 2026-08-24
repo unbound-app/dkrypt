@@ -5,6 +5,6 @@ let stripe: Stripe | undefined;
 
 export function getStripe(): Stripe {
   if (!config.stripeSecretKey) throw new Error('Stripe secret key is not configured');
-  stripe ??= new Stripe(config.stripeSecretKey);
+  stripe ??= new Stripe(config.stripeSecretKey, { apiVersion: '2026-02-25.clover' });
   return stripe;
 }

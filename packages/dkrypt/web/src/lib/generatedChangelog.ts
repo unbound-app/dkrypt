@@ -1,6 +1,11 @@
 export const GENERATED_CHANGELOG = [
   {
     "date": "2026-08-23",
+    "title": "fix: harden stripe verification and billing retries",
+    "description": "Released in a80f39d."
+  },
+  {
+    "date": "2026-08-23",
     "title": "feat: add stripe verification doctor",
     "description": "Released in 3d30c27."
   },
@@ -33,10 +38,5 @@ export const GENERATED_CHANGELOG = [
     "date": "2026-08-17",
     "title": "fix(scheduler): prevent duplicate release dispatches",
     "description": "Released in df8f103."
-  },
-  {
-    "date": "2026-08-15",
-    "title": "fix(jobs): use 24-hour retention and live download links",
-    "description": "Released in cbdae21."
   }
 ] as const;

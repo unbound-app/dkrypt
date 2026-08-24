@@ -29,7 +29,7 @@ const pageContent: Record<string, string> = {
   '/pricing': `
     <main>
       <h1>dkrypt pricing</h1>
-        <p>All plans renew monthly until canceled. Prices are shown in EUR, and Stripe shows the final amount and any configured tax before payment.</p>
+        <p>All plans renew monthly until canceled. Prices start in EUR, and Stripe Managed Payments shows the final local-currency amount and applicable tax before payment.</p>
       <section>
         <h2>Regular — €5/month</h2>
         <p>Dashboard decrypt access with standard queue priority.</p>
@@ -54,7 +54,7 @@ const pageContent: Record<string, string> = {
         <h2>Accounts and acceptable use</h2>
         <p>You must provide accurate account information, protect your account and API keys, and use dkrypt only for lawful purposes involving software and data you have the rights and authorization to process. You must not infringe third-party rights, distribute malware, commit fraud, bypass security controls, overload the service, or enable unauthorized access.</p>
         <h2>Subscriptions, payments, and taxes</h2>
-        <p>Paid plans renew monthly until canceled. The plan, billing frequency, price, and any configured tax are presented before purchase. dkrypt provides the subscription, and Stripe processes payments and subscription billing as our payment processor. Stripe hosts checkout and the customer portal; dkrypt does not store full card details.</p>
+        <p>Paid plans renew monthly until canceled. The plan, billing frequency, price, and applicable tax are presented before purchase. Stripe Managed Payments acts as merchant of record for eligible purchases and handles checkout, tax, receipts, and transaction support. dkrypt provides the subscription and product-level support and does not store full card details.</p>
         <h2>Cancellation and refunds</h2>
         <p>You may cancel through the billing portal or the link in your purchase receipt. Cancellation normally takes effect at the end of the current billing period. Refund requests are governed by the <a href="/refund-policy">Refund Policy</a> and mandatory consumer law.</p>
         <h2>Service availability and liability</h2>
@@ -88,7 +88,7 @@ const pageContent: Record<string, string> = {
       <article>
         <h1>Refund policy</h1>
         <p>Last updated: 23 July 2026</p>
-        <p>Stripe is dkrypt’s payment processor. Stripe handles payment processing, receipts, subscription billing, and the hosted customer portal. dkrypt handles refund decisions under this policy and applicable law.</p>
+        <p>Stripe Managed Payments acts as merchant of record and handles checkout, receipts, subscription billing, and transaction support. dkrypt handles product-level refund decisions under this policy and applicable law.</p>
         <h2>Refund period</h2>
         <p>You may request a refund within 14 days of a transaction. Requests are assessed under this policy and applicable law. Nothing in this policy limits mandatory consumer rights.</p>
         <h2>How to request a refund</h2>

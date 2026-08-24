@@ -51,7 +51,7 @@ Pushes to `main` run the Moon check graph, generate the dashboard changelog from
 
 ## Stripe setup
 
-Create the monthly EUR catalog and configure the hosted webhook from `packages/dkrypt` with a Stripe test or live secret:
+Enable Managed Payments and accept its terms in Stripe Dashboard first. Then choose an eligible product tax code for dkrypt’s SaaS plans and set `STRIPE_TAX_CODE` before creating the monthly EUR catalog and hosted webhook from `packages/dkrypt` with a Stripe test or live secret:
 
 ```sh
 bun run stripe:seed
@@ -59,7 +59,7 @@ bun run stripe:webhook
 bun run stripe:verify
 ```
 
-Copy the four price IDs printed by `stripe:seed` into the runtime environment, store the webhook secret printed for a newly created endpoint as `STRIPE_WEBHOOK_SECRET`, and set `STRIPE_WEBHOOK_URL` to the public `/v1/stripe/webhook` URL. `stripe:verify` checks the account mode, recurring price amounts, webhook URL, subscribed events, and signed endpoint reachability without printing any secret. Its endpoint probe is an ignored `dkrypt.verification` event and does not change billing state.
+Copy the four price IDs printed by `stripe:seed` into the runtime environment, store the webhook secret printed for a newly created endpoint as `STRIPE_WEBHOOK_SECRET`, and set `STRIPE_WEBHOOK_URL` to the public `/v1/stripe/webhook` URL. `stripe:verify` checks the account mode, recurring price amounts, eligible product tax codes, Managed Payments Checkout compatibility, webhook URL, subscribed events, and signed endpoint reachability without printing any secret. Its Checkout probe is created and immediately expired without collecting payment details.
 
 ## API
 

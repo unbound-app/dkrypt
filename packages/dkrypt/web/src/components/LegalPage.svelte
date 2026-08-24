@@ -53,9 +53,8 @@
         <h2>4. Subscriptions, payments, and taxes</h2>
         <p>
           Paid plans are monthly subscriptions that renew automatically until canceled. The applicable plan, billing frequency, price, and
-          configured taxes are presented before purchase. dkrypt provides the subscription, and Stripe acts as our payment processor. Stripe hosts
-          checkout, receipts, and subscription billing; dkrypt does not store full card details. Where enabled, applicable tax is
-          calculated through Stripe’s tax tools.
+          applicable taxes are presented before purchase. Stripe Managed Payments acts as merchant of record for eligible purchases and handles
+          checkout, receipts, subscription billing, and tax compliance; dkrypt does not store full card details.
         </p>
         <p>
           You may cancel through the dkrypt billing portal or the link in your Stripe receipt. Unless mandatory law provides otherwise,
@@ -173,7 +172,7 @@
         <p>We share data only as needed with:</p>
         <ul>
           <li>GitHub or Discord for authentication you choose to use;</li>
-          <li>Stripe, our payment processor, for checkout, subscription administration, tax tools, receipts, and fraud prevention;</li>
+          <li>Stripe Managed Payments for checkout, subscription administration, tax compliance, receipts, and fraud prevention;</li>
           <li>hosting, network, security, email, notification, and infrastructure providers that help operate dkrypt;</li>
           <li>Apple and related services where required to fulfill an authorized request; and</li>
           <li>authorities or professional advisers where required by law or necessary to protect legal rights and safety.</li>
@@ -236,8 +235,8 @@
         <p class="document-date">Last updated: 23 July 2026</p>
 
         <p>
-          Stripe is dkrypt’s payment processor and hosts checkout, receipts, cancellations, and the customer portal. dkrypt handles
-          refund decisions under this policy and applicable law.
+          Stripe Managed Payments hosts checkout, receipts, cancellations, and transaction support as merchant of record. dkrypt handles
+          product-level refund decisions under this policy and applicable law.
         </p>
 
         <h2>1. Refund period</h2>

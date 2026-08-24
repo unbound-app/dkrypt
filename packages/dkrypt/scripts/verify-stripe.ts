@@ -4,9 +4,11 @@ import { createStripeCliClient } from './stripe-cli.js';
 
 const webhookUrl = process.env.STRIPE_WEBHOOK_URL;
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+const taxCode = process.env.STRIPE_TAX_CODE;
 if (!webhookUrl) throw new Error('STRIPE_WEBHOOK_URL is required');
 if (!webhookUrl.startsWith('https://')) throw new Error('STRIPE_WEBHOOK_URL must use HTTPS');
 if (!webhookSecret) throw new Error('STRIPE_WEBHOOK_SECRET is required');
+if (!taxCode) throw new Error('STRIPE_TAX_CODE is required and must be eligible for Managed Payments');
 
 const expectedPrices = [
   { key: 'STRIPE_REGULAR_PRICE_ID', amount: 500 },
@@ -36,6 +38,9 @@ const [account, prices, endpoints] = await Promise.all([
   Promise.all(priceIds.map(({ id }) => stripe.prices.retrieve(id as string))),
   stripe.webhookEndpoints.list({ limit: 100 }),
 ]);
+const productIds = [...new Set(prices.map((price) => (typeof price.product === 'string' ? price.product : price.product.id)))];
+const products = await Promise.all(productIds.map((id) => stripe.products.retrieve(id)));
+const productChecks = products.map((product) => ({ id: product.id, taxCode: product.tax_code, valid: product.active && product.tax_code === taxCode }));
 
 const priceChecks = prices.map((price, index) => {
   const expected = expectedPrices[index];
@@ -78,18 +83,33 @@ const webhookProbe = endpoint
       return { status: probeResponse.status, received: probeBody.received === true };
     })()
   : { status: null, received: false };
+const managedPaymentsProbe = await (async () => {
+  const session = await stripe.checkout.sessions.create({
+    mode: 'subscription',
+    line_items: [{ price: prices[0].id, quantity: 1 }],
+    success_url: `${webhookUrl}/managed-payments-verification-success`,
+    cancel_url: `${webhookUrl}/managed-payments-verification-cancel`,
+    billing_address_collection: 'required',
+    managed_payments: { enabled: true },
+  } as Stripe.Checkout.SessionCreateParams & { managed_payments: { enabled: true } });
+  const managedPayments = (session as Stripe.Checkout.Session & { managed_payments?: { enabled?: boolean } }).managed_payments;
+  await stripe.checkout.sessions.expire(session.id);
+  return { id: session.id, enabled: managedPayments?.enabled === true };
+})();
 const checks = {
   account: account.id,
   chargesEnabled: account.charges_enabled,
   environment,
   prices: priceChecks,
+  products: productChecks,
   webhook: endpoint
     ? { id: endpoint.id, url: endpoint.url, missingEvents }
     : { id: null, url: webhookUrl, missingEvents: requiredEvents },
   webhookProbe,
+  managedPaymentsProbe,
 };
 
-if (priceChecks.some(({ valid }) => !valid) || !endpoint || missingEvents.length > 0 || !webhookProbe.received) {
+if (priceChecks.some(({ valid }) => !valid) || productChecks.some(({ valid }) => !valid) || !endpoint || missingEvents.length > 0 || !webhookProbe.received || !managedPaymentsProbe.enabled) {
   throw new Error(JSON.stringify(checks, null, 2));
 }
 

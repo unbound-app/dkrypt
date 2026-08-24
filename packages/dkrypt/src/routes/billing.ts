@@ -167,6 +167,7 @@ billingRouter.get('/v1/billing', requireSession, (_req, res) => {
     enabled: stripeEnabled,
     provider: 'stripe',
     environment: stripeEnvironment,
+    managedPayments: true,
     missingConfiguration: stripeEnabled ? [] : stripeMissingConfiguration,
     plans: listPlans(),
     customerId: getBillingCustomerId(userId),
@@ -215,9 +216,9 @@ billingRouter.post('/v1/billing/checkout', requireSession, async (req, res) => {
       subscription_data: { metadata: { dkrypt_user_id: userId, plan_id: target.id } },
       success_url: `${config.publicBaseUrl}/?tab=billing&checkout=success&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${config.publicBaseUrl}/?tab=billing&checkout=cancelled`,
-      billing_address_collection: 'auto',
-      automatic_tax: config.stripeAutomaticTax ? { enabled: true } : undefined,
-    }, { idempotencyKey });
+      billing_address_collection: 'required',
+      managed_payments: { enabled: true },
+    } as Stripe.Checkout.SessionCreateParams & { managed_payments: { enabled: true } }, { idempotencyKey });
     if (!session.url) {
       res.status(502).json({ error: 'Stripe did not return a checkout URL' });
       return;

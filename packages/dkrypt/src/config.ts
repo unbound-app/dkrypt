@@ -16,13 +16,6 @@ function optionalInt(name: string, fallback: number): number {
   return n;
 }
 
-function optionalBoolean(name: string, fallback: boolean): boolean {
-  const value = process.env[name];
-  if (!value) return fallback;
-  if (value !== 'true' && value !== 'false') throw new Error(`env var ${name} must be true or false, got ${value}`);
-  return value === 'true';
-}
-
 const DEFAULT_TTL_MINUTES = 24 * 60;
 
 export const config = {
@@ -48,7 +41,6 @@ export const config = {
   stripePriorityPriceId: optional('STRIPE_PRIORITY_PRICE_ID', ''),
   stripeApiPriceId: optional('STRIPE_API_PRICE_ID', ''),
   stripePriorityApiPriceId: optional('STRIPE_PRIORITY_API_PRICE_ID', ''),
-  stripeAutomaticTax: optionalBoolean('STRIPE_AUTOMATIC_TAX', false),
 
   ipadecryptBin: optional('IPADECRYPT_BIN', 'ipadecrypt'),
   outputDir: optional('OUTPUT_DIR', '/data/tmp'),
