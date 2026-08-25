@@ -2,7 +2,7 @@ import { lookupAppMetadata } from '#scheduler/itunes.js';
 import { listAppVersions, type AppVersionEntry } from '#versions.js';
 import { compareVersions } from '#util/version.js';
 import { listBuilds, listTrains, type TFBuild } from '#testflight.js';
-import { artifactKeyForAppStore, artifactKeyForTestFlight } from '#artifacts.js';
+import { artifactKeyForAppStoreVersion, artifactKeyForTestFlight } from '#artifacts.js';
 
 export const VERSION_SELECTOR_RE = /^v?\d+(?:\.\d+)*(?:_\d+)?$/i;
 
@@ -62,14 +62,14 @@ export async function resolveDecryptTarget(bundleId: string, selector?: string):
   if (!selected) {
     throw new Error(normalized ? `App Store version ${normalized} was not found for ${bundleId}` : `no latest App Store version was found for ${bundleId}`);
   }
-  if (!selected.externalVersionId) throw new Error(`App Store version ${normalized ?? 'latest'} has no external version ID`);
+  const versionLabel = selected.displayVersion ?? normalized ?? 'latest';
 
   return {
     bundleId,
     selector: normalized,
     channel: 'appstore',
     externalVersionId: selected.externalVersionId,
-    versionLabel: selected.displayVersion ?? normalized ?? selected.externalVersionId,
-    artifactKey: artifactKeyForAppStore(bundleId, selected.externalVersionId),
+    versionLabel,
+    artifactKey: artifactKeyForAppStoreVersion(bundleId, versionLabel, selected.externalVersionId),
   };
 }

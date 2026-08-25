@@ -211,7 +211,7 @@ export function enqueueDecryptJob(
 ): Job {
   const existing = findActiveJobForBundle(bundleId, externalVersionId, testflight?.build.id);
   if (existing) return existing;
-  const artifactKey = artifactKeyForJob({ id: 'lookup', bundleId, externalVersionId, testflight });
+  const artifactKey = artifactKeyForJob({ id: 'lookup', bundleId, externalVersionId, testflight, versionLabel });
   const artifact = getArtifactByKey(artifactKey);
   if (artifact) {
     return createCachedJob(bundleId, source, externalVersionId, testflight, versionLabel, queuedBy, priority, apiKeyId, artifact);

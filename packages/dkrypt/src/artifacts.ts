@@ -98,6 +98,10 @@ export function artifactKeyForAppStore(bundleId: string, externalVersionId: stri
   return `${bundleId}|appstore|${externalVersionId}`;
 }
 
+export function artifactKeyForAppStoreVersion(bundleId: string, versionLabel: string, externalVersionId?: string): string {
+  return externalVersionId ? artifactKeyForAppStore(bundleId, externalVersionId) : `${bundleId}|appstore|version:${versionLabel}`;
+}
+
 export function artifactKeyForTestFlight(bundleId: string, buildId: number): string {
   return `${bundleId}|testflight|${buildId}`;
 }
@@ -107,9 +111,13 @@ export function artifactKeyForJob(job: {
   bundleId: string;
   externalVersionId?: string;
   testflight?: { build: { id: number } };
+  versionLabel?: string;
 }): string {
   if (job.testflight) return artifactKeyForTestFlight(job.bundleId, job.testflight.build.id);
   if (job.externalVersionId) return artifactKeyForAppStore(job.bundleId, job.externalVersionId);
+  if (job.versionLabel && job.versionLabel !== 'Current App Store release') {
+    return artifactKeyForAppStoreVersion(job.bundleId, job.versionLabel);
+  }
   return `${job.bundleId}|legacy|${job.id}`;
 }
 

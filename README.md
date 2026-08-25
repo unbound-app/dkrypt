@@ -76,7 +76,7 @@ The listed API endpoints use `Authorization: Bearer <API_KEY>`. Completed IPA do
 | `GET /v1/artifacts/:id/file` | Download a retained IPA artifact. |
 | `GET /v1/health` | Read liveness and scheduler state. |
 
-The `POST /v1/decrypts` selector accepts an optional leading `v`. A blank selector resolves the latest App Store version reported by the signed-in device catalog. Selectors containing an underscore target a TestFlight train and build. Completed artifacts survive job-history cleanup and remain available until the persistent artifact store reaches its configured 200 GiB limit; least-recently-used artifacts are evicted first.
+The `POST /v1/decrypts` selector accepts an optional leading `v`. A blank selector resolves the current App Store version and lets the signed-in device's autoinstall bridge perform the install. Historical App Store selectors use the available version history when an external version id is known; selectors containing an underscore target a TestFlight train and build. Completed artifacts survive job-history cleanup and remain available until the persistent artifact store reaches its configured 200 GiB limit; least-recently-used artifacts are evicted first.
 
 ## Monorepo
 

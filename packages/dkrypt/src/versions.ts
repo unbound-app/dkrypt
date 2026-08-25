@@ -1,137 +1,16 @@
-import { spawn } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
-import path from 'node:path';
-import { config } from '#config.js';
 import { scopedLogger } from '#logger.js';
 import { lookupCurrentVersion } from '#scheduler/itunes.js';
-import { getPrimaryDevice } from '#store/state.js';
+import { compareVersions } from '#util/version.js';
 
 const log = scopedLogger('versions');
 
-function versionsLogPath(): string {
-  return path.join(getPrimaryDevice().rootDir, 'logs', 'versions.log');
-}
-
-function versionsCacheDir(): string {
-  return path.join(getPrimaryDevice().rootDir, 'cache', 'versions');
-}
-
 export interface AppVersionEntry {
-  externalVersionId: string;
+  /** App Store external version id when the catalog exposes one. */
+  externalVersionId?: string;
   isLatest: boolean;
   displayVersion?: string;
   bundleVersion?: string;
   releaseDate?: string;
-}
-
-interface VersionsLogRecord {
-  ts: string;
-  kind: string;
-  bundleId: string;
-  metadata: Record<string, unknown>;
-}
-
-interface CachedVersionEntry {
-  displayVersion?: string;
-  bundleVersion?: string;
-  releaseDate?: string;
-}
-
-interface VersionsCacheFile {
-  bundleId: string;
-  versions: Record<string, CachedVersionEntry>;
-}
-
-async function readLastListVersionsRecord(bundleId: string): Promise<VersionsLogRecord | undefined> {
-  let text: string;
-  try {
-    text = await readFile(versionsLogPath(), 'utf8');
-  } catch {
-    return undefined;
-  }
-
-  let last: VersionsLogRecord | undefined;
-  for (const line of text.split('\n')) {
-    if (!line.trim()) continue;
-    try {
-      const rec = JSON.parse(line) as VersionsLogRecord;
-      if (rec.kind === 'list_versions' && rec.bundleId === bundleId) last = rec;
-    } catch {
-      // skip malformed lines
-    }
-  }
-  return last;
-}
-
-async function readVersionsCache(bundleId: string): Promise<VersionsCacheFile | undefined> {
-  try {
-    const text = await readFile(path.join(versionsCacheDir(), `${bundleId}.json`), 'utf8');
-    return JSON.parse(text) as VersionsCacheFile;
-  } catch {
-    return undefined;
-  }
-}
-
-function metaStr(meta: Record<string, unknown>, key: string): string | undefined {
-  const v = meta[key];
-  return typeof v === 'string' ? v : undefined;
-}
-
-const SAFE_BUNDLE_ID_RE = /^[A-Za-z0-9.-]{1,200}$/;
-
-function runIpadecryptVersions(bundleId: string): Promise<void> {
-  if (!SAFE_BUNDLE_ID_RE.test(bundleId)) {
-    return Promise.reject(new Error(`refusing to run ipadecrypt versions with unsafe bundleId: ${JSON.stringify(bundleId)}`));
-  }
-
-  return new Promise((resolve) => {
-    const innerCommand = `${config.ipadecryptBin} --root-dir ${getPrimaryDevice().rootDir} versions ${bundleId} --log-responses`;
-    const child = spawn('script', ['-qec', innerCommand, '/dev/null'], {
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-
-    let buf = '';
-    let sentEnter = false;
-    let sawCompletion = false;
-    let settled = false;
-
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(hardTimeout);
-      try {
-        child.kill('SIGKILL');
-      } catch {}
-      resolve();
-    };
-
-    const onData = (chunk: Buffer) => {
-      buf += chunk.toString('utf8');
-      if (!sentEnter && buf.includes('Enter') && buf.includes('Ctrl-C')) {
-        sentEnter = true;
-        log.info('ipadecrypt versions: answering one-time consent prompt', { bundleId });
-        setTimeout(() => {
-          try {
-            child.stdin.write('\r');
-          } catch {}
-        }, 300);
-      }
-      if (!sawCompletion && /\d+ version\(s\)/.test(buf)) {
-        sawCompletion = true;
-        setTimeout(finish, 500);
-      }
-    };
-
-    child.stdout.on('data', onData);
-    child.stderr.on('data', onData);
-    child.on('error', (err) => {
-      log.info('ipadecrypt versions spawn error', { bundleId, error: String(err) });
-      finish();
-    });
-    child.on('close', finish);
-
-    const hardTimeout = setTimeout(finish, 15_000);
-  });
 }
 
 interface CommunityVersionInfo {
@@ -141,12 +20,18 @@ interface CommunityVersionInfo {
 
 interface CommunityVersionRecord {
   bundle_version?: string;
-  external_identifier?: number;
+  external_identifier?: number | string;
   created_at?: string;
 }
 
 const COMMUNITY_LOOKUP_TIMEOUT_MS = 6_000;
 
+/**
+ * The signed-in App Store account is driven by the autoinstall bridge. The
+ * bridge installs the current App Store item without requiring an external
+ * version id, so the current lookup is metadata only; ipadecrypt is not
+ * involved in version discovery.
+ */
 async function fetchCommunityVersionLabels(trackId: number): Promise<Map<string, CommunityVersionInfo>> {
   const map = new Map<string, CommunityVersionInfo>();
 
@@ -173,42 +58,32 @@ async function fetchCommunityVersionLabels(trackId: number): Promise<Map<string,
 }
 
 async function fetchAppVersions(bundleId: string): Promise<AppVersionEntry[]> {
-  await runIpadecryptVersions(bundleId);
+  const current = await lookupCurrentVersion(bundleId);
+  const community = await fetchCommunityVersionLabels(current.trackId);
 
-  const record = await readLastListVersionsRecord(bundleId);
-  if (!record) {
-    throw new Error('no version data came back from ipadecrypt versions - check the container logs for the underlying error (network issue, invalid bundle ID, or App Store lookup failure)');
+  // The community history is useful for pinned historical releases, but the
+  // current version is always taken from the current App Store lookup. When
+  // the history service has not observed the current release yet, the
+  // current entry intentionally has no external id and is installed through
+  // autoinstall's unpinned App Store transaction.
+  const currentHistoryEntry = [...community.entries()]
+    .filter(([, entry]) => compareVersions(entry.displayVersion, current.version) === 0)
+    .sort(([a], [b]) => Number(b) - Number(a))[0];
+
+  const entries: AppVersionEntry[] = [
+    {
+      externalVersionId: currentHistoryEntry?.[0],
+      isLatest: true,
+      displayVersion: current.version,
+    },
+  ];
+
+  for (const [externalVersionId, entry] of community.entries()) {
+    if (externalVersionId === currentHistoryEntry?.[0]) continue;
+    entries.push({ externalVersionId, isLatest: false, displayVersion: entry.displayVersion, releaseDate: entry.releaseDate });
   }
 
-  const meta = record.metadata;
-  const rawIds = Array.isArray(meta.softwareVersionExternalIdentifiers) ? meta.softwareVersionExternalIdentifiers : [];
-  const ids = rawIds.map((v) => String(v));
-  const latestId = meta.softwareVersionExternalIdentifier != null ? String(meta.softwareVersionExternalIdentifier) : undefined;
-
-  const cache = await readVersionsCache(bundleId);
-
-  let community = new Map<string, CommunityVersionInfo>();
-  try {
-    const { trackId } = await lookupCurrentVersion(bundleId);
-    community = await fetchCommunityVersionLabels(trackId);
-  } catch (err) {
-    log.info('skipping community version history lookup, trackId resolution failed', { bundleId, error: String(err) });
-  }
-
-  return [...new Set([...ids, ...community.keys()])]
-    .sort((a, b) => Number(b) - Number(a))
-    .map((id) => {
-      const isLatest = id === latestId;
-      const cached = cache?.versions[id];
-      const communityEntry = community.get(id);
-      return {
-        externalVersionId: id,
-        isLatest,
-        displayVersion: (isLatest ? metaStr(meta, 'bundleShortVersionString') : undefined) ?? cached?.displayVersion ?? communityEntry?.displayVersion,
-        bundleVersion: (isLatest ? metaStr(meta, 'bundleVersion') : undefined) ?? cached?.bundleVersion,
-        releaseDate: (isLatest ? metaStr(meta, 'releaseDate') : undefined) ?? cached?.releaseDate ?? communityEntry?.releaseDate,
-      };
-    });
+  return entries;
 }
 
 const CACHE_TTL_MS = 5 * 60_000;

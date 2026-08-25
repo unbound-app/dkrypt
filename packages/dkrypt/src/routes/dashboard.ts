@@ -28,7 +28,7 @@ import { rateLimitPerUser } from '#util/rateLimit.js';
 import { buildSignedFileUrlWithToken } from '#util/signedUrl.js';
 import { getFailureGuidance } from '#util/failureGuidance.js';
 import { listAppVersions } from '#versions.js';
-import { artifactDownloadName, artifactFileAvailable, artifactKeyForAppStore, getArtifactById, getArtifactByKey, getArtifactStorageStats, listArtifacts, touchArtifact } from '#artifacts.js';
+import { artifactDownloadName, artifactFileAvailable, artifactKeyForAppStoreVersion, getArtifactById, getArtifactByKey, getArtifactStorageStats, listArtifacts, touchArtifact } from '#artifacts.js';
 import {
   addAllowedUser,
   activeShareLinkDownloadUrlForJob,
@@ -786,7 +786,7 @@ dashboardRouter.get('/v1/dashboard/versions/:bundleId', async (req, res) => {
     res.json({
       versions: versions.map((version) => ({
         ...version,
-        retainedArtifactId: getArtifactByKey(artifactKeyForAppStore(bundleId, version.externalVersionId))?.id,
+        retainedArtifactId: getArtifactByKey(artifactKeyForAppStoreVersion(bundleId, version.displayVersion ?? version.externalVersionId ?? 'latest', version.externalVersionId))?.id,
       })),
     });
   } catch (err) {
