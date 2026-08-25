@@ -54,6 +54,48 @@ export function jobSummary(job: Job) {
   };
 }
 
+export async function streamFilePath(
+  filePath: string,
+  req: Request,
+  res: Response,
+  filename: string,
+  fileSizeBytes: number | undefined,
+  contextId: string,
+): Promise<void> {
+  res.setHeader('Content-Type', 'application/octet-stream');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  if (fileSizeBytes) res.setHeader('Content-Length', String(fileSizeBytes));
+
+  const stream = createReadStream(filePath);
+
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+
+    stream.on('error', (err) => {
+      log.error('file stream error', { contextId, error: String(err) });
+      if (!res.headersSent) res.status(500).json({ error: 'failed to read decrypted file' });
+      finish();
+    });
+
+    stream.on('close', finish);
+    req.on('close', () => {
+      stream.destroy();
+      finish();
+    });
+
+    // Bun's Node-compatible Readable is not reliably handled by Fastify's
+    // reply.send() stream adapter. Hijack the reply and pipe to the native
+    // response so retained artifacts are sent instead of an empty body.
+    res.reply.hijack();
+    stream.pipe(res.raw);
+  });
+}
+
 export async function streamJobFile(job: Job, req: Request, res: Response): Promise<void> {
   const artifact = getArtifactForJob(job);
   const filePath = artifact?.filePath ?? job.filePath;
@@ -64,22 +106,12 @@ export async function streamJobFile(job: Job, req: Request, res: Response): Prom
 
   if (artifact) await touchArtifact(artifact);
 
-  res.setHeader('Content-Type', 'application/octet-stream');
-  res.setHeader('Content-Disposition', `attachment; filename="${artifact ? artifactDownloadName(artifact) : `${job.bundleId}.ipa`}"`);
-  if (job.fileSizeBytes) res.setHeader('Content-Length', String(job.fileSizeBytes));
-
-  const stream = createReadStream(filePath);
-
-  await new Promise<void>((resolve) => {
-    stream.on('error', (err) => {
-      log.error('file stream error', { jobId: job.id, error: String(err) });
-      if (!res.headersSent) res.status(500).json({ error: 'failed to read decrypted file' });
-      resolve();
-    });
-
-    stream.on('close', () => resolve());
-    req.on('close', () => resolve());
-
-    res.reply.send(stream);
-  });
+  await streamFilePath(
+    filePath,
+    req,
+    res,
+    artifact ? artifactDownloadName(artifact) : `${job.bundleId}.ipa`,
+    job.fileSizeBytes,
+    job.id,
+  );
 }

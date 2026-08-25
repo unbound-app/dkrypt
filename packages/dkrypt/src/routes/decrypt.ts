@@ -1,11 +1,10 @@
 import type { Request, Response } from '#http.js';
 import { Router } from '#http.js';
 import { createHash } from 'node:crypto';
-import { createReadStream } from 'node:fs';
 import { config } from '#config.js';
 import { requireApiKey, requireApiKeyOrSignedToken, requireTestFlightScope } from '#auth.js';
 import { blockDuringMaintenance } from '#maintenance.js';
-import { jobFileAvailable, jobSummary, streamJobFile } from '#jobs/http.js';
+import { jobFileAvailable, jobSummary, streamFilePath, streamJobFile } from '#jobs/http.js';
 import { enqueueDecryptJob, getJob, waitForJob } from '#jobs/store.js';
 import { recordApiKeyBundleUsage } from '#store/state.js';
 import { listBuilds, listTrains } from '#testflight.js';
@@ -234,10 +233,7 @@ decryptRouter.get('/v1/artifacts/:id/file', requireApiKeyOrSignedToken, async (r
     return;
   }
   await touchArtifact(artifact);
-  res.setHeader('Content-Type', 'application/octet-stream');
-  res.setHeader('Content-Disposition', `attachment; filename="${artifactDownloadName(artifact)}"`);
-  res.setHeader('Content-Length', String(artifact.fileSizeBytes));
-  res.reply.send(createReadStream(artifact.filePath));
+  await streamFilePath(artifact.filePath, req, res, artifactDownloadName(artifact), artifact.fileSizeBytes, artifact.id);
 });
 
 decryptRouter.get('/v1/jobs/:id', requireApiKey, (req, res) => {
