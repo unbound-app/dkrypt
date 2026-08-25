@@ -13,7 +13,7 @@ export interface AppVersionEntry {
   releaseDate?: string;
 }
 
-interface CommunityVersionInfo {
+export interface CommunityVersionInfo {
   displayVersion: string;
   releaseDate?: string;
 }
@@ -61,20 +61,24 @@ async function fetchAppVersions(bundleId: string): Promise<AppVersionEntry[]> {
   const current = await lookupCurrentVersion(bundleId);
   const community = await fetchCommunityVersionLabels(current.trackId);
 
+  return buildAppVersionEntries(current.version, community);
+}
+
+export function buildAppVersionEntries(currentVersion: string, community: Map<string, CommunityVersionInfo>): AppVersionEntry[] {
   // The community history is useful for pinned historical releases, but the
   // current version is always taken from the current App Store lookup. When
   // the history service has not observed the current release yet, the
   // current entry intentionally has no external id and is installed through
   // autoinstall's unpinned App Store transaction.
   const currentHistoryEntry = [...community.entries()]
-    .filter(([, entry]) => compareVersions(entry.displayVersion, current.version) === 0)
+    .filter(([, entry]) => compareVersions(entry.displayVersion, currentVersion) === 0)
     .sort(([a], [b]) => Number(b) - Number(a))[0];
 
   const entries: AppVersionEntry[] = [
     {
       externalVersionId: currentHistoryEntry?.[0],
       isLatest: true,
-      displayVersion: current.version,
+      displayVersion: currentVersion,
     },
   ];
 
