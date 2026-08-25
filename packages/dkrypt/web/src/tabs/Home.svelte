@@ -4,6 +4,7 @@
   import OnboardingBanner from '#components/OnboardingBanner.svelte';
   import { batchDecryptJumpState, focusSearchJumpState } from '#lib/ui.svelte';
   import ActiveJobsPanel from '#tabs/home/ActiveJobsPanel.svelte';
+  import ArtifactLibrary from '#tabs/home/ArtifactLibrary.svelte';
   import DecryptPanel from '#tabs/home/DecryptPanel.svelte';
   import JobHistoryPanel from '#tabs/home/JobHistoryPanel.svelte';
 
@@ -35,6 +36,7 @@
 <div class="flex flex-col gap-4">
   <OnboardingBanner />
   <DecryptPanel bind:this={decryptPanel} />
+  <ArtifactLibrary />
   <DonationNudge />
   <DecryptCompletion />
   <ActiveJobsPanel />

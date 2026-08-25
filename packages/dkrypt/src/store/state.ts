@@ -281,7 +281,9 @@ export interface JobHistoryEntry {
   queuedBy?: string;
   status: 'done' | 'failed';
   error?: string;
+  artifactId?: string;
   sizeBytes?: number;
+  sha256?: string;
   source: 'manual' | 'scheduler';
   createdAt: number;
   startedAt?: number;

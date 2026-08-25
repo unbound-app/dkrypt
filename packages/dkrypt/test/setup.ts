@@ -17,3 +17,4 @@ process.env.STRIPE_PRIORITY_API_PRICE_ID ??= 'price_priority_api_test';
 // read and write the actual local dev state (confirmed: it did, before this fix).
 process.env.STATE_DIR = mkdtempSync(path.join(tmpdir(), 'ipadecrypt-test-state-'));
 process.env.OUTPUT_DIR = mkdtempSync(path.join(tmpdir(), 'ipadecrypt-test-output-'));
+process.env.ARTIFACT_DIR = mkdtempSync(path.join(tmpdir(), 'ipadecrypt-test-artifacts-'));

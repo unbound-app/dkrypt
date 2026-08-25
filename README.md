@@ -8,7 +8,7 @@ It uses the device's signed-in App Store account and `ipadecrypt`; no Apple ID i
 
 - Decrypts current or pinned historical App Store releases by bundle ID.
 - Browses and decrypts TestFlight builds.
-- Queues jobs, keeps a downloadable history, and creates expiring share links.
+- Queues jobs, keeps a persistent indexed IPA library, and creates expiring share links.
 - Watches App Store releases on a schedule and dispatches signed IPA URLs to GitHub Actions.
 - Protects scheduled watches from exhausting the GitHub API budget and shows their next 24 hours of runs.
 - Runs a multi-user dashboard with OAuth, API keys, roles, billing, device health, logs, and backups.
@@ -69,9 +69,14 @@ The listed API endpoints use `Authorization: Bearer <API_KEY>`. Completed IPA do
 | --- | --- |
 | `GET /v1/decrypt?bundleId=<id>` | Queue or join a decrypt and return the IPA. |
 | `GET /v1/decrypt?bundleId=<id>&externalVersionId=<id>` | Decrypt a pinned historical App Store release. |
+| `POST /v1/decrypts` | Queue or reuse a decrypt by release selector (`240`, `234.2`, or `240_109440`). |
 | `GET /v1/jobs/:id` | Read job status. |
 | `GET /v1/jobs/:id/file` | Download a completed IPA. |
+| `GET /v1/artifacts` | List retained IPA artifacts. |
+| `GET /v1/artifacts/:id/file` | Download a retained IPA artifact. |
 | `GET /v1/health` | Read liveness and scheduler state. |
+
+The `POST /v1/decrypts` selector accepts an optional leading `v`. A blank selector resolves the latest App Store version reported by the signed-in device catalog. Selectors containing an underscore target a TestFlight train and build. Completed artifacts survive job-history cleanup and remain available until the persistent artifact store reaches its configured 200 GiB limit; least-recently-used artifacts are evicted first.
 
 ## Monorepo
 

@@ -2,7 +2,7 @@ import cron, { type ScheduledTask } from 'node-cron';
 import { config } from '#config.js';
 import { emitJobsChanged } from '#events.js';
 import type { Job } from '#jobs/types.js';
-import { enqueueDecryptJob, reclaimJobFile, waitForJob } from '#jobs/store.js';
+import { enqueueDecryptJob, waitForJob } from '#jobs/store.js';
 import { getMaintenanceStatus } from '#maintenance.js';
 import { scopedLogger } from '#logger.js';
 
@@ -276,7 +276,6 @@ function trackRunCompletion(
 }
 
 function trackRunCompletions(
-  finished: Job,
   watch: AppWatch,
   targets: DispatchTarget[],
   versionLabel: string,
@@ -284,21 +283,17 @@ function trackRunCompletions(
   dispatchedAt: Date,
 ): () => Promise<Partial<SchedulerRunOutcome>> {
   return async () => {
-    try {
-      const settled = await Promise.allSettled(targets.map((target) => trackRunCompletion(watch, target, versionLabel, source, dispatchedAt)()));
-      const completed = settled
-        .filter((result): result is PromiseFulfilledResult<Partial<SchedulerRunOutcome>> => result.status === 'fulfilled')
-        .map((result) => result.value);
-      const succeeded = completed.filter((result) => result.runStatus === 'succeeded').length;
-      const unresolved = targets.length - succeeded;
-      return {
-        runStatus: unresolved === 0 ? 'succeeded' : succeeded === 0 ? 'failed' : 'timed_out',
-        runUrl: completed.find((result) => result.runUrl)?.runUrl,
-        reason: `Dispatched ${versionLabel} to ${targets.length} destination${targets.length === 1 ? '' : 's'} - ${succeeded} workflow${succeeded === 1 ? '' : 's'} succeeded${unresolved ? `, ${unresolved} need attention` : ''}`,
-      };
-    } finally {
-      await reclaimJobFile(finished);
-    }
+    const settled = await Promise.allSettled(targets.map((target) => trackRunCompletion(watch, target, versionLabel, source, dispatchedAt)()));
+    const completed = settled
+      .filter((result): result is PromiseFulfilledResult<Partial<SchedulerRunOutcome>> => result.status === 'fulfilled')
+      .map((result) => result.value);
+    const succeeded = completed.filter((result) => result.runStatus === 'succeeded').length;
+    const unresolved = targets.length - succeeded;
+    return {
+      runStatus: unresolved === 0 ? 'succeeded' : succeeded === 0 ? 'failed' : 'timed_out',
+      runUrl: completed.find((result) => result.runUrl)?.runUrl,
+      reason: `Dispatched ${versionLabel} to ${targets.length} destination${targets.length === 1 ? '' : 's'} - ${succeeded} workflow${succeeded === 1 ? '' : 's'} succeeded${unresolved ? `, ${unresolved} need attention` : ''}`,
+    };
   };
 }
 
@@ -363,7 +358,7 @@ async function decryptAndDispatch(job: Job, watch: AppWatch, isTestflight: boole
         versionLabel,
         dispatchTargetKeys: dispatchedTargets.map(dispatchTargetKey),
       },
-      trackCompletion: trackRunCompletions(finished, watch, dispatchedTargets, versionLabel, isTestflight ? 'TestFlight' : 'App Store', dispatchedAt),
+      trackCompletion: trackRunCompletions(watch, dispatchedTargets, versionLabel, isTestflight ? 'TestFlight' : 'App Store', dispatchedAt),
     };
   } catch (err) {
     log.error('dispatch failed', { error: String(err), isTestflight });
@@ -381,7 +376,6 @@ async function decryptAndDispatch(job: Job, watch: AppWatch, isTestflight: boole
       },
       watch.webhookUrl,
     );
-    await reclaimJobFile(finished);
     return { outcome: { ...outcomeMetadata, ok: false, triggered: true, reason: `Failed to dispatch ${versionLabel}: ${String(err)}` } };
   }
 

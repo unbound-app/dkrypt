@@ -10,6 +10,7 @@ import { installBuild } from '#testflight.js';
 import { getDeviceHealth, getDeviceInstallBlocker } from '#deviceHealth.js';
 import { lookupCurrentVersion, type ItunesLookupResult } from '#scheduler/itunes.js';
 import { extractIpaMetadata } from '#util/ipaMetadata.js';
+import { artifactKeyForJob, promoteArtifact } from '#artifacts.js';
 
 const log = scopedLogger('jobs');
 import { appendJobTimelineEvent, type Job } from '#jobs/types.js';
@@ -33,8 +34,9 @@ export async function runDecrypt(job: Job, device: DeviceRecord): Promise<void> 
   }
   const installBlocker = getDeviceInstallBlocker(health, job.testflight?.build.fileSize ?? currentAppStoreVersion?.fileSizeBytes);
   if (installBlocker) throw new Error(`decrypt deferred: ${installBlocker}`);
-  await mkdir(config.outputDir, { recursive: true });
-  const outputPath = path.join(config.outputDir, `${job.id}.ipa`);
+  const stagingDir = path.join(config.artifactDir, '.staging');
+  await mkdir(stagingDir, { recursive: true });
+  const outputPath = path.join(stagingDir, `${job.id}.ipa`);
   job.filePath = outputPath;
   job.deviceId = device.id;
 
@@ -126,4 +128,20 @@ export async function runDecrypt(job: Job, device: DeviceRecord): Promise<void> 
   } catch (err) {
     log.warn('failed to extract IPA metadata', { jobId: job.id, bundleId: job.bundleId, error: String(err) });
   }
+
+  const artifact = await promoteArtifact({
+    key: artifactKeyForJob(job),
+    bundleId: job.bundleId,
+    channel: job.testflight ? 'testflight' : 'appstore',
+    externalVersionId: job.externalVersionId,
+    testflightBuildId: job.testflight?.build.id,
+    versionLabel: job.versionLabel,
+    buildNumber: job.testflight?.build.cfBundleVersion,
+    stagingPath: outputPath,
+    sourceJobId: job.id,
+  });
+  job.artifactId = artifact.id;
+  job.filePath = artifact.filePath;
+  job.fileSizeBytes = artifact.fileSizeBytes;
+  job.sha256 = artifact.sha256;
 }

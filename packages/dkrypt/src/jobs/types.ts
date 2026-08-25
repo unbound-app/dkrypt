@@ -35,8 +35,11 @@ export interface Job {
   retryCount?: number;
   cancelledBy?: string;
   childProcess?: ChildProcess;
+  artifactId?: string;
+  cacheHit?: boolean;
   filePath?: string;
   fileSizeBytes?: number;
+  sha256?: string;
   deviceId?: string;
   ipaMetadata?: IpaMetadata;
   ipaInfoPlist?: Record<string, unknown>;

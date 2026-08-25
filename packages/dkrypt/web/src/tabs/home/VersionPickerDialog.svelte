@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { RefreshCw } from 'lucide-svelte';
+  import { Download, RefreshCw } from 'lucide-svelte';
   import EmptyState from '#components/EmptyState.svelte';
   import { fetchAppVersions, type AppVersionEntry } from '#lib/api';
   import Badge from '#lib/components/ui/Badge.svelte';
@@ -115,12 +115,21 @@
               {#if v.isLatest}
                 <Badge variant="default">latest</Badge>
               {/if}
+              {#if v.retainedArtifactId}
+                <Badge variant="secondary">retained</Badge>
+              {/if}
             </div>
             {#if v.releaseDate}
               <div class="text-muted text-xs">{fmtTime(new Date(v.releaseDate).getTime())}</div>
             {/if}
           </div>
-          <Button size="sm" onclick={() => onDecrypt(bundleId, v.externalVersionId, label(v))}>Decrypt</Button>
+          {#if v.retainedArtifactId}
+            <a href={`/v1/dashboard/artifacts/${v.retainedArtifactId}/file`} download>
+              <Button size="sm" variant="secondary"><Download class="h-3.5 w-3.5" />Download</Button>
+            </a>
+          {:else}
+            <Button size="sm" onclick={() => onDecrypt(bundleId, v.externalVersionId, label(v))}>Decrypt</Button>
+          {/if}
         </div>
       {/each}
     </div>

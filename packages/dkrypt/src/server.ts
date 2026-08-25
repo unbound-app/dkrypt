@@ -7,7 +7,7 @@ import scalarApiReference from '@scalar/fastify-api-reference';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { config } from '#config.js';
 import { registerRouter } from '#http.js';
-import { startJobSweeper } from '#jobs/store.js';
+import { getRetainedJobArtifacts, startJobSweeper } from '#jobs/store.js';
 import { startJobWebhookDispatcher } from '#jobWebhook.js';
 import { startKeyExpiryPoller } from '#keyExpiryPoller.js';
 import { log, startLogFlusher } from '#logger.js';
@@ -22,6 +22,7 @@ import { startApiKeySweeper, startSessionSweeper, startStateFlusher } from '#sto
 import { startDeviceHealthPoller } from '#deviceHealth.js';
 import { renderPublicPage } from '#publicPages.js';
 import { startNotificationDigestScheduler } from '#notify.js';
+import { initializeArtifactStore } from '#artifacts.js';
 
 const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 
@@ -86,7 +87,8 @@ export async function buildServer(options: { includePublicRoutes?: boolean } = {
   return server;
 }
 
-function startBackgroundServices(): void {
+async function startBackgroundServices(): Promise<void> {
+  await initializeArtifactStore(getRetainedJobArtifacts());
   startJobSweeper();
   startStateFlusher();
   startLogFlusher();
@@ -101,7 +103,7 @@ function startBackgroundServices(): void {
 
 async function start(): Promise<void> {
   const server = await buildServer();
-  startBackgroundServices();
+  await startBackgroundServices();
   await server.listen({ port: config.port, host: config.bindHost });
   log.info(`dkrypt listening on ${config.bindHost}:${config.port}`);
 }

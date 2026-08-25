@@ -16,14 +16,14 @@ services:
       BIND_HOST: 127.0.0.1
     volumes:
       - appstore-config:/root/.ipadecrypt
-      - ipa-tmp:/data/tmp
+      - ipa-storage:/data/artifacts
       - state:/data/state
       - ${HOME}/.ssh/id_ed25519_ipad:/root/.ssh/id_ed25519:ro
 
 volumes:
   appstore-config:
     name: dkrypt_appstore-config
-  ipa-tmp:
+  ipa-storage:
     name: dkrypt_ipa-tmp
   state:
     name: dkrypt_state

@@ -462,7 +462,7 @@ async function checkDeviceStorageAlert(device: DeviceRecord, usedPercent: number
 let diskFullAlertSentAt: number | undefined;
 
 async function checkDiskFullAlert(): Promise<void> {
-  const usage = getDiskUsage(config.outputDir);
+  const usage = getDiskUsage(config.artifactDir);
   if (!usage) return;
   const settings = getEffectiveSettings();
   const percent = usage.usedPercent * 100;
@@ -476,7 +476,7 @@ async function checkDiskFullAlert(): Promise<void> {
   diskFullAlertSentAt = Date.now();
   await notify('diskFull', {
     title: 'Staging disk running low',
-    description: `${config.outputDir} is ${Math.round(percent)}% full (alert threshold ${settings.diskFullAlertPercent}%) - decrypts will start failing once it fills up.`,
+    description: `${config.artifactDir} is ${Math.round(percent)}% full (alert threshold ${settings.diskFullAlertPercent}%) - decrypts will start failing once it fills up.`,
     color: EMBED_COLOR.warn,
   });
 }

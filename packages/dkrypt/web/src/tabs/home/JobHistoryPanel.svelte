@@ -849,10 +849,13 @@
 														>TestFlight</Badge
 													>
 												{/if}
-												<span class="text-xs text-muted"
-													>{j.source}</span
-												>
-											</div>
+											<span class="text-xs text-muted"
+												>{j.source}</span
+											>
+											<span class="text-xs text-muted" title="The dashboard user or API-key owner that queued this job">
+												requested by {j.queuedBy ?? (j.source === "scheduler" ? "scheduler" : "unknown")}
+											</span>
+										</div>
 											<div
 												class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted"
 												title={j.bundleId}

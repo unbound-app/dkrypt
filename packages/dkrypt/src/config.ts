@@ -28,6 +28,7 @@ export const config = {
 
   adminPassword: required('ADMIN_PASSWORD'),
   stateDir: optional('STATE_DIR', '/data/state'),
+  artifactDir: optional('ARTIFACT_DIR', '/data/artifacts'),
 
   githubOauthClientId: optional('GITHUB_OAUTH_CLIENT_ID', ''),
   githubOauthClientSecret: optional('GITHUB_OAUTH_CLIENT_SECRET', ''),
@@ -45,6 +46,7 @@ export const config = {
   ipadecryptBin: optional('IPADECRYPT_BIN', 'ipadecrypt'),
   outputDir: optional('OUTPUT_DIR', '/data/tmp'),
   ipadecryptRootDir: optional('IPADECRYPT_ROOT_DIR', '/root/.ipadecrypt'),
+  artifactMaxBytes: optionalInt('ARTIFACT_MAX_BYTES', 200 * 1024 * 1024 * 1024),
 
   jobMaxWaitSeconds: optionalInt('JOB_MAX_WAIT_SECONDS', 1800),
   fileTtlMinutes: optionalInt('FILE_TTL_MINUTES', DEFAULT_TTL_MINUTES),

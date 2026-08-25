@@ -15,6 +15,7 @@ import { getCachedDeviceHealth } from '#deviceHealthCache.js';
 import { runDecrypt } from '#jobs/runner.js';
 import { appendJobTimelineEvent, type Job, type JobSource, type TestFlightJobSource } from '#jobs/types.js';
 import { buildSignedFileUrlWithToken } from '#util/signedUrl.js';
+import { artifactKeyForJob, getArtifactByKey, getArtifactForJob, migrateLegacyPath, type ArtifactRecord } from '#artifacts.js';
 
 const jobs = new Map<string, Job>();
 
@@ -47,6 +48,7 @@ function loadDoneJobs(): void {
   try {
     const restored = JSON.parse(readFileSync(donePath, 'utf8')) as Job[];
     for (const job of restored) {
+      job.filePath = migrateLegacyPath(job.filePath);
       if (!job.filePath || !existsSync(job.filePath)) continue;
       jobs.set(job.id, { ...job, waiters: [] });
     }
@@ -145,6 +147,51 @@ function findReusableCompletedJob(
   return undefined;
 }
 
+function createCachedJob(
+  bundleId: string,
+  source: JobSource,
+  externalVersionId: string | undefined,
+  testflight: TestFlightJobSource | undefined,
+  versionLabel: string | undefined,
+  queuedBy: string | undefined,
+  priority: number,
+  apiKeyId: string | undefined,
+  artifact: ArtifactRecord,
+): Job {
+  const now = Date.now();
+  const resolvedLabel = versionLabel ?? artifact.versionLabel;
+  const job: Job = {
+    id: randomUUID(),
+    bundleId,
+    externalVersionId,
+    testflight,
+    versionLabel: resolvedLabel,
+    source,
+    queuedBy,
+    apiKeyId,
+    priority,
+    status: 'done',
+    progress: 'retained IPA cache hit',
+    timeline: [
+      { at: now, label: 'Retained IPA cache hit', status: 'done' },
+      { at: now, label: 'Finished', status: 'done' },
+    ],
+    artifactId: artifact.id,
+    cacheHit: true,
+    filePath: artifact.filePath,
+    fileSizeBytes: artifact.fileSizeBytes,
+    sha256: artifact.sha256,
+    createdAt: now,
+    finishedAt: now,
+    waiters: [],
+  };
+  jobs.set(job.id, job);
+  persistDoneJobs();
+  recordJobHistory(toHistoryEntry(job));
+  emitJobsChanged();
+  return job;
+}
+
 function insertByPriority(id: string, priority: number): void {
   const idx = queue.findIndex((qid) => (jobs.get(qid)?.priority ?? 0) < priority);
   if (idx === -1) queue.push(id);
@@ -164,6 +211,11 @@ export function enqueueDecryptJob(
 ): Job {
   const existing = findActiveJobForBundle(bundleId, externalVersionId, testflight?.build.id);
   if (existing) return existing;
+  const artifactKey = artifactKeyForJob({ id: 'lookup', bundleId, externalVersionId, testflight });
+  const artifact = getArtifactByKey(artifactKey);
+  if (artifact) {
+    return createCachedJob(bundleId, source, externalVersionId, testflight, versionLabel, queuedBy, priority, apiKeyId, artifact);
+  }
   const reusable = findReusableCompletedJob(bundleId, externalVersionId, testflight?.build.id);
   if (reusable) return reusable;
 
@@ -210,7 +262,7 @@ export function getActiveJobs(): Job[] {
 }
 
 export function getRetainedJobArtifacts(): Job[] {
-  return [...jobs.values()].filter((job) => job.status === 'done' && !!job.filePath && existsSync(job.filePath));
+  return [...jobs.values()].filter((job) => job.status === 'done' && !!job.filePath);
 }
 
 export function mergeActiveJobOwner(targetUserId: string, sourceUserId: string): void {
@@ -298,6 +350,8 @@ function toHistoryEntry(job: Job) {
     deviceId: job.deviceId,
     ipaMetadata: job.ipaMetadata,
     ipaInfoPlist: job.ipaInfoPlist,
+    artifactId: job.artifactId,
+    sha256: job.sha256,
     timeline: job.timeline,
   };
 }
@@ -488,6 +542,10 @@ async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
     persistActiveJobs();
   } catch (err) {
     const message = job.cancelledBy ? `cancelled by ${job.cancelledBy}` : err instanceof Error ? err.message : String(err);
+    if (job.filePath?.startsWith(`${config.artifactDir}/.staging/`)) {
+      await rm(job.filePath, { force: true }).catch(() => {});
+      job.filePath = undefined;
+    }
     const canRetry = !job.cancelledBy && (job.retryCount ?? 0) === 0;
     if (canRetry) {
       job.retryCount = (job.retryCount ?? 0) + 1;
@@ -566,7 +624,7 @@ async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
 }
 
 async function cleanupJob(job: Job): Promise<void> {
-  if (job.filePath) {
+  if (job.filePath && !job.artifactId && !getArtifactForJob(job)) {
     await rm(job.filePath, { force: true }).catch((err: unknown) => {
       log.warn('failed to remove job file', { jobId: job.id, error: String(err) });
     });
@@ -577,6 +635,7 @@ async function cleanupJob(job: Job): Promise<void> {
 }
 
 export async function reclaimJobFile(job: Job): Promise<void> {
+  if (job.artifactId || getArtifactForJob(job)) return;
   if (latestActiveShareLinkExpiry(job.id) !== undefined) return;
   job.downloadedAt = Date.now();
   await cleanupJob(job);
@@ -597,18 +656,11 @@ export function startJobSweeper(): void {
   const intervalMs = 60_000;
   setInterval(() => {
     const now = Date.now();
-    const fileTtlMs = config.fileTtlMinutes * 60_000;
     const retentionMs = config.jobRetentionMinutes * 60_000;
 
     for (const job of jobs.values()) {
 
       const shareLinkExpiry = latestActiveShareLinkExpiry(job.id) ?? 0;
-
-      if (job.status === 'done' && job.finishedAt && !job.downloadedAt && now - job.finishedAt > fileTtlMs && now > shareLinkExpiry) {
-        log.warn('reclaiming undownloaded job file', { jobId: job.id, bundleId: job.bundleId });
-        void reclaimAndMaybeUninstall(job);
-        continue;
-      }
 
       const finishedAt = job.finishedAt ?? job.createdAt;
       if ((job.status === 'done' || job.status === 'failed') && now - finishedAt > retentionMs && now > shareLinkExpiry) {

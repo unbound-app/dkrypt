@@ -84,12 +84,17 @@ export interface JobSummary {
   testflight?: JobTestFlightSummary;
   versionLabel?: string;
   source: 'manual' | 'scheduler';
+  channel?: 'appstore' | 'testflight';
   queuedBy?: string;
   priority?: number;
   status: 'queued' | 'running' | 'done' | 'failed';
   progress: string;
   error?: string;
+  artifactId?: string;
+  artifactUrl?: string;
+  cacheHit?: boolean;
   sizeBytes?: number;
+  sha256?: string;
   createdAt: string;
   startedAt?: string;
   finishedAt?: string;
@@ -261,6 +266,8 @@ export interface JobHistoryEntry {
   queuedBy?: string;
   status: 'done' | 'failed';
   error?: string;
+  artifactId?: string;
+  sha256?: string;
   sizeBytes?: number;
   source: 'manual' | 'scheduler';
   createdAt: number;
@@ -271,6 +278,23 @@ export interface JobHistoryEntry {
   ipaInfoPlist?: Record<string, unknown>;
   activeShareUrl?: string;
   fileAvailable: boolean;
+}
+
+export interface ArtifactRecord {
+  id: string;
+  bundleId: string;
+  key: string;
+  channel: 'appstore' | 'testflight';
+  externalVersionId?: string;
+  testflightBuildId?: number;
+  versionLabel?: string;
+  buildNumber?: string;
+  fileSizeBytes: number;
+  sha256: string;
+  createdAt: string;
+  lastAccessedAt: string;
+  accessCount: number;
+  fileUrl: string;
 }
 
 export interface JobTimelineEvent {
@@ -728,6 +752,12 @@ export function fetchJobHistory(
   );
 }
 
+export function fetchArtifacts(offset = 0, limit = 50, q?: string, channel?: ArtifactRecord['channel']): Promise<{ artifacts: ArtifactRecord[]; total: number; totalBytes: number; maxBytes: number }> {
+  const query = q ? `&q=${encodeURIComponent(q)}` : '';
+  const channelQuery = channel ? `&channel=${channel}` : '';
+  return apiJson(`/v1/dashboard/artifacts?offset=${offset}&limit=${limit}${query}${channelQuery}`);
+}
+
 export interface BundleStats {
   bundleId: string;
   totalRuns: number;
@@ -1052,6 +1082,7 @@ export interface AppVersionEntry {
   displayVersion?: string;
   bundleVersion?: string;
   releaseDate?: string;
+  retainedArtifactId?: string;
 }
 
 export function fetchAppVersions(bundleId: string, force = false): Promise<{ versions: AppVersionEntry[] } | { error: string }> {

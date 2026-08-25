@@ -94,14 +94,14 @@ jobs:
                 BIND_HOST: 127.0.0.1
               volumes:
                 - appstore-config:/root/.ipadecrypt
-                - ipa-tmp:/data/tmp
+                - ipa-storage:/data/artifacts
                 - state:/data/state
                 - /home/adrian/.ssh/id_ed25519_ipad:/root/.ssh/id_ed25519:ro
           volumes:
             appstore-config:
               external: true
               name: dkrypt_appstore-config
-            ipa-tmp:
+            ipa-storage:
               external: true
               name: dkrypt_ipa-tmp
             state:

@@ -1,12 +1,13 @@
 import { Router } from '#http.js';
 import { validate as validateCronExpr } from 'node-cron';
+import { createReadStream } from 'node:fs';
 import { config, discordBotEnabled } from '#config.js';
 import { fetchBotGuilds, fetchGuildRoles } from '#discord.js';
 import { dashboardEvents, emitJobsChanged, getOnlineUsernames, registerPresence, unregisterPresence } from '#events.js';
 import { getBillingEntitlements } from '#billing.js';
 import { blockDuringMaintenance, getMaintenanceStatus } from '#maintenance.js';
 import { jobFileAvailable, jobSummary, streamJobFile } from '#jobs/http.js';
-import { cancelJob, enqueueDecryptJob, getActiveJobs, getJob, getQueueInfo, getQueueReason, getRetainedJobArtifacts, prioritizeQueuedJob, reorderQueue } from '#jobs/store.js';
+import { cancelJob, enqueueDecryptJob, getActiveJobs, getJob, getQueueInfo, getQueueReason, prioritizeQueuedJob, reorderQueue } from '#jobs/store.js';
 import type { LogEntry, LogLevel } from '#logger.js';
 import { getRecentLogs } from '#logger.js';
 import { EMBED_COLOR, notify, sendTestNotification } from '#notify.js';
@@ -27,6 +28,7 @@ import { rateLimitPerUser } from '#util/rateLimit.js';
 import { buildSignedFileUrlWithToken } from '#util/signedUrl.js';
 import { getFailureGuidance } from '#util/failureGuidance.js';
 import { listAppVersions } from '#versions.js';
+import { artifactDownloadName, artifactFileAvailable, artifactKeyForAppStore, getArtifactById, getArtifactByKey, getArtifactStorageStats, listArtifacts, touchArtifact } from '#artifacts.js';
 import {
   addAllowedUser,
   activeShareLinkDownloadUrlForJob,
@@ -205,7 +207,7 @@ function buildOverview(permissions: bigint, userId: string) {
     devices,
     lastSchedulerRunAt: canViewAutomation ? getLastSchedulerRunAt() : undefined,
     schedulerRunHistory: canViewAutomation ? getSchedulerRunHistory(10) : [],
-    disk: getDiskUsage(config.outputDir),
+    disk: getDiskUsage(config.artifactDir),
     isPaidPlan: getBillingEntitlements(userId).planId !== 'viewer',
     maintenance: getMaintenanceStatus(),
     activeJobs: getActiveJobs().map((j) => ({
@@ -316,6 +318,41 @@ dashboardRouter.get('/v1/dashboard/jobs', (req, res) => {
     history: entries.map((entry) => dashboardHistoryEntry(entry, res.locals.session.sub)),
     total,
   });
+});
+
+dashboardRouter.get('/v1/dashboard/artifacts', canDecrypt, (req, res) => {
+  const offset = Number.parseInt(String(req.query.offset ?? '0'), 10);
+  const limit = Number.parseInt(String(req.query.limit ?? '50'), 10);
+  const channel = req.query.channel === 'appstore' || req.query.channel === 'testflight' ? req.query.channel : undefined;
+  const result = listArtifacts({
+    offset: Number.isFinite(offset) ? offset : 0,
+    limit: Number.isFinite(limit) ? limit : 50,
+    query: typeof req.query.q === 'string' ? req.query.q : undefined,
+    channel,
+  });
+  res.json({
+    ...result,
+    artifacts: result.artifacts.map((artifact) => ({
+      ...artifact,
+      filePath: undefined,
+      fileUrl: `/v1/dashboard/artifacts/${artifact.id}/file`,
+      createdAt: new Date(artifact.createdAt).toISOString(),
+      lastAccessedAt: new Date(artifact.lastAccessedAt).toISOString(),
+    })),
+  });
+});
+
+dashboardRouter.get('/v1/dashboard/artifacts/:id/file', canDecrypt, async (req, res) => {
+  const artifact = getArtifactById(req.params.id);
+  if (!artifact || !artifactFileAvailable(artifact)) {
+    res.status(404).json({ error: 'artifact not found' });
+    return;
+  }
+  await touchArtifact(artifact);
+  res.setHeader('Content-Type', 'application/octet-stream');
+  res.setHeader('Content-Disposition', `attachment; filename="${artifactDownloadName(artifact)}"`);
+  res.setHeader('Content-Length', String(artifact.fileSizeBytes));
+  res.reply.send(createReadStream(artifact.filePath));
 });
 
 dashboardRouter.get('/v1/dashboard/logs', canViewLogs, (req, res) => {
@@ -506,7 +543,7 @@ dashboardRouter.get('/v1/dashboard/storage-forecast', canViewScheduler, (_req, r
   const cutoff = Date.now() - 30 * 86_400_000;
   const completed = getAllJobHistory().filter((entry) => entry.status === 'done' && entry.finishedAt >= cutoff && entry.sizeBytes && entry.sizeBytes > 0);
   const bytesPerDay = completed.reduce((total, entry) => total + (entry.sizeBytes ?? 0), 0) / 30;
-  const disk = getDiskUsage(config.outputDir);
+  const disk = getDiskUsage(config.artifactDir);
   if (!disk) {
     res.status(503).json({ error: 'output storage is unavailable' });
     return;
@@ -529,7 +566,7 @@ dashboardRouter.get('/v1/dashboard/support-bundle', canManageWatches, (_req, res
   res.setHeader('Content-Disposition', 'attachment; filename="dkrypt-support-bundle.json"');
   res.json({
     generatedAt: new Date().toISOString(),
-    disk: getDiskUsage(config.outputDir),
+    disk: getDiskUsage(config.artifactDir),
     catalog: getAppCatalogStats(),
     devices: getEffectiveDevices().map(({ id, name, enabled, isPrimary }) => ({ id, name, enabled, isPrimary })),
     watches: getEffectiveWatches().map((watch) => ({ bundleId: watch.bundleId, enabled: watch.enabled, pollCron: watch.pollCron, destinations: getWatchDispatchTargets(watch).length })),
@@ -746,7 +783,12 @@ dashboardRouter.get('/v1/dashboard/versions/:bundleId', async (req, res) => {
 
   try {
     const versions = await listAppVersions(bundleId, req.query.force === 'true');
-    res.json({ versions });
+    res.json({
+      versions: versions.map((version) => ({
+        ...version,
+        retainedArtifactId: getArtifactByKey(artifactKeyForAppStore(bundleId, version.externalVersionId))?.id,
+      })),
+    });
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
   }
@@ -2011,16 +2053,16 @@ dashboardRouter.get('/v1/dashboard/settings/job-history-retention/preview', canM
     return;
   }
   const now = Date.now();
-  const artifacts = getRetainedJobArtifacts();
-  const reclaimable = artifacts.filter((job) => job.finishedAt && now - job.finishedAt > fileTtlMinutes * 60_000);
+  const storage = getArtifactStorageStats();
   res.json({
     ...previewJobHistoryRetention(retentionDays, now),
     artifacts: {
       fileTtlMinutes,
-      retained: artifacts.length,
-      retainedBytes: artifacts.reduce((total, job) => total + (job.fileSizeBytes ?? 0), 0),
-      reclaimable: reclaimable.length,
-      reclaimableBytes: reclaimable.reduce((total, job) => total + (job.fileSizeBytes ?? 0), 0),
+      retained: storage.count,
+      retainedBytes: storage.usedBytes,
+      maxBytes: storage.maxBytes,
+      reclaimable: 0,
+      reclaimableBytes: 0,
     },
   });
 });
