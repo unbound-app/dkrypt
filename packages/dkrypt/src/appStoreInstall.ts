@@ -23,6 +23,9 @@ const log = scopedLogger('appstore');
 
 const SAFE_BUNDLE_ID_RE = /^[A-Za-z0-9.-]{1,200}$/;
 const APP_EXT_VERSION_ID_RE = /^\d{1,20}$/;
+const APP_STORE_BRIDGE_READY_TIMEOUT_MS = 20_000;
+const APP_STORE_BRIDGE_STATUS_TIMEOUT_MS = 3_000;
+const APP_STORE_BRIDGE_POLL_INTERVAL_MS = 500;
 
 export function buildAppStoreOperationId(jobId: string, retryCount = 0): string {
   return retryCount > 0 ? `${jobId}-retry-${retryCount}` : jobId;
@@ -43,15 +46,42 @@ async function ensureAppStoreForeground(conn: Client): Promise<void> {
 }
 
 async function ensureAppStoreBridgeReady(conn: Client): Promise<void> {
-  const response = await sendAppStoreBridgeRequest(conn, { action: 'status' });
-  if (hasBridgeCapabilities('appstore', response.capabilities)) return;
-  const reported = Array.isArray(response.capabilities) ? response.capabilities.filter((value: unknown): value is string => typeof value === 'string') : [];
-  const missing = BRIDGE_CAPABILITIES.appstore.filter((capability) => !reported.includes(capability));
-  throw new Error(`autoinstall App Store bridge is incompatible; missing ${missing.join(', ')}`);
+  const deadline = Date.now() + APP_STORE_BRIDGE_READY_TIMEOUT_MS;
+  let lastError: Error | undefined;
+
+  while (Date.now() < deadline) {
+    let response: Record<string, unknown> | undefined;
+    try {
+      response = await sendAppStoreBridgeRequest(conn, { action: 'status' }, APP_STORE_BRIDGE_STATUS_TIMEOUT_MS);
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+    }
+
+    if (response) {
+      if (!hasBridgeCapabilities('appstore', response.capabilities)) {
+        const reported = Array.isArray(response.capabilities) ? response.capabilities.filter((value: unknown): value is string => typeof value === 'string') : [];
+        const missing = BRIDGE_CAPABILITIES.appstore.filter((capability) => !reported.includes(capability));
+        throw new Error(`autoinstall App Store bridge is incompatible; missing ${missing.join(', ')}`);
+      }
+      if (response.foreground === true) return;
+    }
+
+    try {
+      const launch = await sendSpringBoardBridgeRequest(conn, { action: 'launch_app', bundleId: 'com.apple.AppStore' }, APP_STORE_BRIDGE_STATUS_TIMEOUT_MS);
+      if (launch?.launchResult !== 0) {
+        lastError = new Error(`autoinstall SpringBoard launch_app (AppStore) failed: ${JSON.stringify(launch)}`);
+      }
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+    }
+    await new Promise((resolve) => setTimeout(resolve, APP_STORE_BRIDGE_POLL_INTERVAL_MS));
+  }
+
+  throw new Error(`autoinstall App Store bridge did not become foreground-ready within ${APP_STORE_BRIDGE_READY_TIMEOUT_MS / 1000}s${lastError ? `: ${lastError.message}` : ''}`);
 }
 
 async function restartAppStore(conn: Client): Promise<void> {
-  await execCommand(conn, 'killall AppStore 2>/dev/null || true');
+  await execCommand(conn, 'killall AppStore PassbookUIService 2>/dev/null || true');
   await new Promise((r) => setTimeout(r, 1_000));
 }
 

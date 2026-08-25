@@ -793,6 +793,7 @@ static BOOL gIsPassbookProcess = NO;
 
 static id gStashedConfirmVC = nil;
 static BOOL gConfirmDoneThisSheet = NO;
+static BOOL gConfirmAttemptActive = NO;
 
 static void autoinstallWalkAX(id element, void (^visit)(id el)) {
     if (!element) return;
@@ -856,6 +857,25 @@ static NSArray *autoinstallConfirmStashed(NSString *match) {
     return acted;
 }
 
+static void autoinstallScheduleConfirm(NSString *match, NSUInteger attempt) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (![[NSFileManager defaultManager] fileExistsAtPath:@"/tmp/autoinstall-autoconfirm.flag"] || !gStashedConfirmVC) {
+            gConfirmAttemptActive = NO;
+            return;
+        }
+
+        NSArray *acted = autoinstallConfirmStashed(match);
+        autoinstallLog([NSString stringWithFormat:@"[PB] auto-confirm match=%@ attempt=%lu acted=%@", match, (unsigned long)(attempt + 1), acted]);
+        if (acted.count > 0 || attempt >= 12) {
+            gConfirmDoneThisSheet = acted.count > 0;
+            gConfirmAttemptActive = NO;
+            return;
+        }
+
+        autoinstallScheduleConfirm(match, attempt + 1);
+    });
+}
+
 %hook UIViewController
 
 - (void)viewDidAppear:(BOOL)animated {
@@ -866,16 +886,13 @@ static NSArray *autoinstallConfirmStashed(NSString *match) {
         if ([cls rangeOfString:@"AuthorizationViewHostingController"].location == NSNotFound) return;
         gStashedConfirmVC = self;
         autoinstallEnableAX();
-        if (gConfirmDoneThisSheet) return;
+        if (gConfirmDoneThisSheet || gConfirmAttemptActive) return;
         if (![[NSFileManager defaultManager] fileExistsAtPath:@"/tmp/autoinstall-autoconfirm.flag"]) return;
-        gConfirmDoneThisSheet = YES;
+        gConfirmAttemptActive = YES;
         NSString *match = [NSString stringWithContentsOfFile:@"/tmp/autoinstall-autoconfirm.flag" encoding:NSUTF8StringEncoding error:nil];
         match = [match stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
         if (!match.length) match = @"Install";
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            NSArray *acted = autoinstallConfirmStashed(match);
-            autoinstallLog([NSString stringWithFormat:@"[PB] auto-confirm match=%@ acted=%@", match, acted]);
-        });
+        autoinstallScheduleConfirm(match, 0);
     } @catch (NSException *e) {}
 }
 
@@ -885,7 +902,10 @@ static NSArray *autoinstallConfirmStashed(NSString *match) {
 
 - (void)viewDidAppear:(BOOL)animated {
     %orig;
-    if (gIsPassbookProcess) gConfirmDoneThisSheet = NO;
+    if (gIsPassbookProcess) {
+        gConfirmDoneThisSheet = NO;
+        gConfirmAttemptActive = NO;
+    }
 }
 
 %end
@@ -894,10 +914,15 @@ static NSString * const kASRequestPath = @"/tmp/autoinstall-as-request.json";
 static NSString * const kASResponsePath = @"/tmp/autoinstall-as-response.json";
 static NSString * const kASInstallStatusPath = @"/tmp/autoinstall-as-install-status.json";
 
+static BOOL appStoreIsForeground(void) {
+    return [UIApplication sharedApplication].applicationState == UIApplicationStateActive;
+}
+
 static NSDictionary *appStoreBridgeStatus(void) {
     return @{
         @"bridgeVersion": BRIDGE_VERSION,
-        @"capabilities": @[@"install", @"status", @"diagnostics", @"protocol_v1", @"authenticated_requests", @"operation_responses", @"heartbeats", @"stale_artifact_cleanup"],
+        @"capabilities": @[@"install", @"status", @"diagnostics", @"foreground_status", @"protocol_v1", @"authenticated_requests", @"operation_responses", @"heartbeats", @"stale_artifact_cleanup"],
+        @"foreground": @(appStoreIsForeground()),
         @"install": readJSONFile(kASInstallStatusPath) ?: @{},
     };
 }
@@ -941,6 +966,19 @@ static void handleAppStoreRequest(NSDictionary *req, NSString *responsePath, NSS
 
     dispatch_sync(dispatch_get_main_queue(), ^{
         @try {
+            if (!appStoreIsForeground()) {
+                respond(@{
+                    @"ok": @NO,
+                    @"error": @{
+                        @"code": @"appstore_not_foreground",
+                        @"stage": @"foreground",
+                        @"message": @"App Store is not active",
+                        @"retryable": @YES,
+                    },
+                });
+                return;
+            }
+
             NSString *adamIdStr = [adamId stringValue];
             NSString *offerString;
             if (versionId && versionId.longLongValue != 0) {

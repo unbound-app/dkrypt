@@ -8,6 +8,8 @@ let installedBundles: Array<InstalledBundle | undefined> = [];
 let lastInstalledBundle: InstalledBundle | undefined;
 let installRequest: Record<string, unknown> | undefined;
 let guardedUninstallFails = false;
+let foregroundStatuses: boolean[] = [];
+let foregroundRequests = 0;
 const originalSetTimeout = globalThis.setTimeout;
 
 const idevice = await import('#idevice.js');
@@ -31,13 +33,16 @@ mock.module('#idevice.js', () => ({
   sendAppStoreBridgeRequest: async (_conn: object, request: Record<string, unknown>) => {
     if (request.action === 'status') {
       calls.push('status');
-      return { capabilities: ['install', 'status', 'diagnostics', 'protocol_v1', 'authenticated_requests', 'operation_responses', 'heartbeats', 'stale_artifact_cleanup'] };
+      return { capabilities: ['install', 'status', 'diagnostics', 'foreground_status', 'protocol_v1', 'authenticated_requests', 'operation_responses', 'heartbeats', 'stale_artifact_cleanup'], foreground: foregroundStatuses.shift() ?? true };
     }
     installRequest = request;
     calls.push('request');
     return { ok: true };
   },
-  sendSpringBoardBridgeRequest: async () => ({ launchResult: 0 }),
+  sendSpringBoardBridgeRequest: async () => {
+    foregroundRequests += 1;
+    return { launchResult: 0 };
+  },
   uninstallInstalledApp: async () => {
     calls.push('uninstall');
     return !guardedUninstallFails;
@@ -81,6 +86,8 @@ describe('installFromAppStore', () => {
     lastInstalledBundle = undefined;
     installRequest = undefined;
     guardedUninstallFails = false;
+    foregroundStatuses = [true];
+    foregroundRequests = 0;
   });
 
   test('uses a distinct bridge operation id for each job retry', () => {
@@ -90,6 +97,17 @@ describe('installFromAppStore', () => {
     expect(firstAttempt).toBe('job-id');
     expect(retryAttempt).toBe('job-id-retry-1');
     expect(retryAttempt).not.toBe(firstAttempt);
+  });
+
+  test('waits for the App Store to become foreground-ready before purchasing', async () => {
+    foregroundStatuses = [false, true];
+    installedBundles = [undefined, { path: '/apps/Discord.app', shortVersion: '338.0' }];
+
+    await installFromAppStore('com.hammerandchisel.discord');
+
+    expect(calls.filter((call) => call === 'status')).toHaveLength(2);
+    expect(foregroundRequests).toBe(2);
+    expect(calls).toEqual(['restart', 'status', 'status', 'arm', 'request', 'clear']);
   });
 
   test('replaces an installed beta before decrypting a pinned App Store version', async () => {

@@ -3,7 +3,7 @@ export const BRIDGE_PROTOCOL_VERSION = 1;
 export const BRIDGE_CAPABILITIES = {
   springboard: ['dark_on', 'dark_off', 'launch_app', 'screen_status', 'status', 'protocol_v1', 'authenticated_requests', 'operation_responses', 'heartbeats', 'stale_artifact_cleanup'],
   testflight: ['list_trains', 'list_builds', 'install', 'diagnostics', 'idempotent_install', 'protocol_v1', 'authenticated_requests', 'operation_responses', 'heartbeats', 'stale_artifact_cleanup'],
-  appstore: ['install', 'status', 'diagnostics', 'protocol_v1', 'authenticated_requests', 'operation_responses', 'heartbeats', 'stale_artifact_cleanup'],
+  appstore: ['install', 'status', 'diagnostics', 'foreground_status', 'protocol_v1', 'authenticated_requests', 'operation_responses', 'heartbeats', 'stale_artifact_cleanup'],
 } as const;
 
 export type BridgeChannel = keyof typeof BRIDGE_CAPABILITIES;
