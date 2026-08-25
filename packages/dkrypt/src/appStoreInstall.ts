@@ -24,6 +24,10 @@ const log = scopedLogger('appstore');
 const SAFE_BUNDLE_ID_RE = /^[A-Za-z0-9.-]{1,200}$/;
 const APP_EXT_VERSION_ID_RE = /^\d{1,20}$/;
 
+export function buildAppStoreOperationId(jobId: string, retryCount = 0): string {
+  return retryCount > 0 ? `${jobId}-retry-${retryCount}` : jobId;
+}
+
 function primaryRootDir(): string {
   return getPrimaryDevice().rootDir;
 }

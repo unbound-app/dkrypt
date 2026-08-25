@@ -5,7 +5,7 @@ import { config } from '#config.js';
 import { emitJobsChanged } from '#events.js';
 import { scopedLogger } from '#logger.js';
 import { recordDeviceActivity, type DeviceRecord } from '#store/state.js';
-import { installFromAppStore } from '#appStoreInstall.js';
+import { buildAppStoreOperationId, installFromAppStore } from '#appStoreInstall.js';
 import { installBuild } from '#testflight.js';
 import { getDeviceHealth, getDeviceInstallBlocker } from '#deviceHealth.js';
 import { lookupCurrentVersion, type ItunesLookupResult } from '#scheduler/itunes.js';
@@ -68,7 +68,7 @@ export async function runDecrypt(job: Job, device: DeviceRecord): Promise<void> 
     const installed = await installFromAppStore(job.bundleId, {
       externalVersionId: job.externalVersionId,
       expectedVersion: job.externalVersionId ? job.versionLabel : undefined,
-      operationId: job.id,
+      operationId: buildAppStoreOperationId(job.id, job.retryCount ?? 0),
       onProgress: report,
       isCancelled: () => Boolean(job.cancelledBy),
       currentVersion: currentAppStoreVersion,

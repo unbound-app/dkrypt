@@ -59,7 +59,7 @@ mock.module('#store/state.js', () => ({
   getPrimaryDevice: () => ({ rootDir: '/device' }),
 }));
 
-const { installFromAppStore } = await import('./appStoreInstall.js');
+const { buildAppStoreOperationId, installFromAppStore } = await import('./appStoreInstall.js');
 
 describe('installFromAppStore', () => {
   afterAll(() => {
@@ -81,6 +81,15 @@ describe('installFromAppStore', () => {
     lastInstalledBundle = undefined;
     installRequest = undefined;
     guardedUninstallFails = false;
+  });
+
+  test('uses a distinct bridge operation id for each job retry', () => {
+    const firstAttempt = buildAppStoreOperationId('job-id', 0);
+    const retryAttempt = buildAppStoreOperationId('job-id', 1);
+
+    expect(firstAttempt).toBe('job-id');
+    expect(retryAttempt).toBe('job-id-retry-1');
+    expect(retryAttempt).not.toBe(firstAttempt);
   });
 
   test('replaces an installed beta before decrypting a pinned App Store version', async () => {
