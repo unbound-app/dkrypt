@@ -92,7 +92,7 @@ jobs:
               environment:
                 PORT: 8080
                 BIND_HOST: 127.0.0.1
-                SESSION_SIGNING_SECRET: ${SESSION_SIGNING_SECRET:-${DOWNLOAD_SIGNING_SECRET:?SESSION_SIGNING_SECRET is required}}
+                SESSION_SIGNING_SECRET: ${SESSION_SIGNING_SECRET:?SESSION_SIGNING_SECRET is required}
               volumes:
                 - appstore-config:/root/.ipadecrypt
                 - ipa-storage:/data/artifacts
