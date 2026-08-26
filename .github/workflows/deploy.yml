@@ -92,6 +92,7 @@ jobs:
               environment:
                 PORT: 8080
                 BIND_HOST: 127.0.0.1
+                SESSION_SIGNING_SECRET: ${SESSION_SIGNING_SECRET:-${DOWNLOAD_SIGNING_SECRET:?SESSION_SIGNING_SECRET is required}}
               volumes:
                 - appstore-config:/root/.ipadecrypt
                 - ipa-storage:/data/artifacts
@@ -123,7 +124,7 @@ jobs:
           docker pull "$IMAGE"
           docker tag "$IMAGE" dkrypt:latest
           docker rm -f dkrypt 2>/dev/null || true
-          DKRYPT_IMAGE="$IMAGE" docker compose --project-name dkrypt -f /home/adrian/.local/share/dkrypt/compose.yml up -d --no-build
+          DKRYPT_IMAGE="$IMAGE" docker compose --env-file /home/adrian/.local/share/dkrypt/.env --project-name dkrypt -f /home/adrian/.local/share/dkrypt/compose.yml up -d --no-build
 
       - name: Wait for health, roll back on failure
         run: |
@@ -139,11 +140,11 @@ jobs:
           done
 
           echo "service did not become healthy in time" >&2
-          docker compose --project-name dkrypt -f /home/adrian/.local/share/dkrypt/compose.yml logs --tail 50 api || true
+          docker logs --tail 100 dkrypt || true
 
           if docker image inspect dkrypt:previous >/dev/null 2>&1; then
             echo "rolling back to the previous image" >&2
-            DKRYPT_IMAGE=dkrypt:previous docker compose --project-name dkrypt -f /home/adrian/.local/share/dkrypt/compose.yml up -d --no-build
+            DKRYPT_IMAGE=dkrypt:previous docker compose --env-file /home/adrian/.local/share/dkrypt/.env --project-name dkrypt -f /home/adrian/.local/share/dkrypt/compose.yml up -d --no-build
           else
             echo "no previous image to roll back to" >&2
           fi
