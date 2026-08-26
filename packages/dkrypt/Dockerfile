@@ -1,4 +1,4 @@
-FROM golang:1.26-bookworm AS ipadecrypt
+FROM golang:1.27-bookworm AS ipadecrypt
 ARG IPADECRYPT_VERSION=v0.7.3
 RUN go install github.com/londek/ipadecrypt/cmd/ipadecrypt@${IPADECRYPT_VERSION}
 
