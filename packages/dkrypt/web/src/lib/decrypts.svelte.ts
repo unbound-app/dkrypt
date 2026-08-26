@@ -12,7 +12,8 @@ export interface TrackedDecrypt {
   queue?: { position: number; total: number };
   error?: string;
   createdAt: number;
-  fileExpiresAt?: string;
+  artifactId?: string;
+  artifactUrl?: string;
 }
 
 const MAX_TRACKED = 30;

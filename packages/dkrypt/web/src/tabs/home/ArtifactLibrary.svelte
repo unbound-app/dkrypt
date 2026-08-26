@@ -1,12 +1,14 @@
 <script lang="ts">
   import { Download, RefreshCw } from 'lucide-svelte';
+  import AppIcon from '#components/AppIcon.svelte';
   import EmptyState from '#components/EmptyState.svelte';
   import Badge from '#lib/components/ui/Badge.svelte';
   import Button from '#lib/components/ui/Button.svelte';
   import Card from '#lib/components/ui/Card.svelte';
   import Input from '#lib/components/ui/Input.svelte';
   import { fetchArtifacts, type ArtifactRecord } from '#lib/api';
-  import { fmtBytesGB, fmtSize } from '#lib/format';
+  import { appDisplayName, appIconUrl, ensureAppCatalog } from '#lib/appCatalog.svelte';
+  import { fmtBytesGB, fmtRelative, fmtSize } from '#lib/format';
   import { PermissionFlag } from '#lib/permissions';
   import { sessionHasPermission } from '#lib/session.svelte';
 
@@ -30,7 +32,7 @@
       totalBytes = result.totalBytes;
       maxBytes = result.maxBytes;
     } catch (err) {
-      error = err instanceof Error ? err.message : 'Failed to load retained artifacts';
+      error = err instanceof Error ? err.message : 'Failed to load artifacts';
     } finally {
       loading = false;
     }
@@ -40,39 +42,49 @@
     if (canDecrypt) void load();
   });
 
-  function formatDate(value: string): string {
-    return new Date(value).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-  }
+  $effect(() => {
+    if (canDecrypt) void ensureAppCatalog(artifacts.map((artifact) => artifact.bundleId));
+  });
 </script>
 
 {#if canDecrypt}
   <Card>
-    <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-      <div>
-        <div class="text-sm font-medium">Retained IPA library</div>
+    <div class="mb-3 flex flex-wrap items-center gap-2">
+      <div class="min-w-0 flex-1">
+        <div class="text-sm font-medium">IPA Library</div>
         <div class="text-muted text-xs">{total} artifact{total === 1 ? '' : 's'} · {fmtBytesGB(totalBytes)} / {fmtBytesGB(maxBytes)} used</div>
       </div>
-      <button type="button" class="text-muted hover:text-text cursor-pointer disabled:opacity-50" disabled={loading} onclick={() => void load()} aria-label="Refresh retained artifacts" title="Refresh retained artifacts">
+      <Input bind:value={query} onkeydown={(event) => event.key === 'Enter' && void load()} placeholder="Search apps or versions…" class="order-3 min-w-[14rem] flex-1 sm:order-none" />
+      <button type="button" class="text-muted hover:text-text cursor-pointer disabled:opacity-50" disabled={loading} onclick={() => void load()} aria-label="Refresh IPA Library" title="Refresh IPA Library">
         <RefreshCw class="h-3.5 w-3.5 {loading ? 'animate-spin' : ''}" />
       </button>
     </div>
 
-    <Input bind:value={query} onkeydown={(event) => event.key === 'Enter' && void load()} placeholder="Search bundle or version…" class="mb-3" />
-
     {#if error}
       <div class="text-err text-[13px]">{error}</div>
     {:else if artifacts.length === 0 && !loading}
-      <EmptyState message="No retained IPAs match this search." />
+      <EmptyState message="No artifacts match this search." />
     {:else}
-      <div class="divide-border divide-y">
+      <div class="divide-border max-h-96 divide-y overflow-y-auto pr-1">
         {#each artifacts as artifact (artifact.id)}
-          <div class="flex flex-wrap items-center justify-between gap-3 py-2.5">
-            <div class="min-w-0">
-              <div class="flex items-center gap-1.5 text-[13px]">
-                <span class="truncate">{artifact.bundleId}</span>
-                <Badge variant={artifact.channel === 'testflight' ? 'secondary' : 'default'}>{artifact.channel === 'testflight' ? 'TestFlight' : 'App Store'}</Badge>
+          <div class="flex flex-wrap items-center gap-2 py-2">
+            <AppIcon bundleId={artifact.bundleId} src={appIconUrl(artifact.bundleId)} label={appDisplayName(artifact.bundleId)} class="h-8 w-8" />
+            <div class="min-w-0 flex-1">
+              <div class="truncate text-[13px] font-medium">{appDisplayName(artifact.bundleId)}</div>
+              <div class="text-muted truncate text-xs" title={artifact.bundleId}>{artifact.bundleId}</div>
+            </div>
+            <div class="min-w-32 text-xs sm:w-40">
+              <div class="flex flex-wrap items-center gap-1.5">
+                <span>{artifact.versionLabel ?? 'Unknown version'}</span>
+                {#if artifact.buildNumber}<span class="text-muted">build {artifact.buildNumber}</span>{/if}
               </div>
-              <div class="text-muted text-xs">{artifact.versionLabel ?? 'Unknown version'} · {fmtSize(artifact.fileSizeBytes)} · accessed {formatDate(artifact.lastAccessedAt)}</div>
+              <div class="text-muted flex items-center gap-1.5">
+                <Badge variant={artifact.channel === 'testflight' ? 'secondary' : 'default'}>{artifact.channel === 'testflight' ? 'TestFlight' : 'App Store'}</Badge>
+                <span>{fmtSize(artifact.fileSizeBytes)}</span>
+              </div>
+            </div>
+            <div class="text-muted w-24 text-right text-xs" title={new Date(artifact.lastAccessedAt).toLocaleString()}>
+              last {fmtRelative(new Date(artifact.lastAccessedAt).getTime())}
             </div>
             <a href={artifact.fileUrl} download>
               <Button size="sm" variant="secondary"><Download class="h-3.5 w-3.5" />Download</Button>

@@ -162,6 +162,8 @@
 				status: data.status,
 				progress: data.progress,
 				queue: data.queue,
+				artifactId: data.artifactId,
+				artifactUrl: data.artifactUrl,
 			});
 			pushRecentBundleId(request.bundleId);
 			showToast(`Queued ${request.trackName}${request.versionLabel ? ` (${request.versionLabel})` : ""}`, "success");

@@ -2,15 +2,15 @@
 	import { PackageSearch } from "lucide-svelte";
 	import {
 		cancelJob,
+		artifactDownloadUrl,
 		fetchJobStatus,
 		queueDecrypt,
 		queueTestFlightDecrypt,
-		shareJobFile,
+		dashboardArtifactDownloadUrl,
 	} from "#lib/api";
 	import CopyButton from "#components/CopyButton.svelte";
 	import EmptyState from "#components/EmptyState.svelte";
 	import RelativeTime from "#components/RelativeTime.svelte";
-	import ShareLinkDialog from "#components/ShareLinkDialog.svelte";
 	import Dialog from "#lib/components/ui/Dialog.svelte";
 	import Badge from "#lib/components/ui/Badge.svelte";
 	import Button from "#lib/components/ui/Button.svelte";
@@ -30,19 +30,12 @@
 		updateDecrypt,
 		type TrackedDecrypt,
 	} from "#lib/decrypts.svelte";
-	import { fmtUntil } from "#lib/format";
 	import { notifyJobFinished } from "#lib/notifications";
 	import { playChime, vibrateCompletion } from "#lib/sound";
 	import { showToast, soundEnabledState } from "#lib/ui.svelte";
 
 	let pollTimer: ReturnType<typeof setTimeout> | undefined;
 	let retrying = $state<Set<string>>(new Set());
-
-	let now = $state(Date.now());
-	$effect(() => {
-		const interval = setInterval(() => (now = Date.now()), 15_000);
-		return () => clearInterval(interval);
-	});
 
 	async function poll(): Promise<void> {
 		clearTimeout(pollTimer);
@@ -62,13 +55,22 @@
 					const label = d.versionLabel
 						? `${d.trackName} (${d.versionLabel})`
 						: d.trackName;
+					const downloadUrl =
+						data.status === "done" && data.artifactId
+							? dashboardArtifactDownloadUrl(data.artifactId)
+							: undefined;
+					const message =
+						data.status === "done"
+							? downloadUrl
+								? `${label} is ready to download.`
+								: `${label} finished, but its artifact is unavailable.`
+							: `${label} failed: ${data.error ?? "unknown error"}`;
 					notifyJobFinished(
 						data.status === "done"
 							? "Decrypt finished"
 							: "Decrypt failed",
-						data.status === "done"
-							? `${label} is ready to download.`
-							: `${label} failed: ${data.error ?? "unknown error"}`,
+						message,
+						downloadUrl,
 					);
 					if (soundEnabledState.value) {
 						playChime();
@@ -80,7 +82,8 @@
 					progress: data.progress,
 					queue: data.queue,
 					error: data.error,
-					fileExpiresAt: data.fileExpiresAt,
+					artifactId: data.artifactId,
+					artifactUrl: data.artifactUrl,
 				});
 			} catch {}
 		}
@@ -129,6 +132,8 @@
 				status: data.status,
 				progress: data.progress,
 				queue: data.queue,
+				artifactId: data.artifactId,
+				artifactUrl: data.artifactUrl,
 			});
 			pushRecentBundleId(d.bundleId);
 			dismissDecrypt(d.id);
@@ -143,29 +148,22 @@
 		}
 	}
 
-	let shareOpen = $state(false);
-	let shareJobId = $state("");
-
-	function openShare(id: string): void {
-		shareJobId = id;
-		shareOpen = true;
-	}
-
 	let cancelling = $state<Set<string>>(new Set());
 	let copyingCurl = $state<Set<string>>(new Set());
 	async function copyCurl(d: TrackedDecrypt): Promise<void> {
 		copyingCurl = new Set(copyingCurl).add(d.id);
 		try {
-			const { ok, data } = await shareJobFile(d.id);
-			if (!ok) return;
+			const artifactUrl = d.artifactUrl ?? (d.artifactId ? artifactDownloadUrl(d.artifactId) : undefined);
+			if (!artifactUrl) {
+				showToast("This artifact is no longer available", "error");
+				return;
+			}
 			const filename = `${d.bundleId}.ipa`;
+			const url = new URL(artifactUrl, window.location.origin).toString();
 			await navigator.clipboard.writeText(
-				`curl -o "${filename}" "${data.url}"`,
+				`curl -H "Authorization: Bearer <YOUR_API_KEY>" -o "${filename}" "${url}"`,
 			);
-			showToast(
-				`Copied curl command - link works for ${fmtUntil(data.expiresAt)}`,
-				"success",
-			);
+			showToast("Copied authenticated curl command", "success");
 		} catch {
 			showToast(
 				"Couldn't copy - your browser blocked clipboard access",
@@ -211,12 +209,6 @@
 		}, 2000);
 		return () => clearTimeout(timer);
 	});
-
-	function expiresInMs(d: TrackedDecrypt): number | undefined {
-		if (!d.fileExpiresAt) return undefined;
-		void now;
-		return new Date(d.fileExpiresAt).getTime() - Date.now();
-	}
 
 	const finishedCount = $derived(
 		myDecryptsState.items.filter(
@@ -336,81 +328,64 @@
 						<td data-label="Actions" class="mobile-actions">
 							<div class="flex flex-wrap justify-end gap-1.5">
 								{#if d.status === "done"}
-									{@const expiresIn = expiresInMs(d)}
-									{#if expiresIn !== undefined && expiresIn > 0}
-										<Badge
-											variant={expiresIn < 5 * 60_000
-												? "destructive"
-												: "secondary"}
-											title="File is reclaimed from disk if not downloaded in time"
+									{#if d.artifactId}
+										<a
+											class={buttonVariants("default", "sm")}
+											href={dashboardArtifactDownloadUrl(d.artifactId)}
+											>Download</a
 										>
-											expires in {fmtUntil(
-												Date.now() + expiresIn,
-											)}
-										</Badge>
+										<Button
+											size="sm"
+											variant="secondary"
+											loading={copyingCurl.has(d.id)}
+											onclick={() => copyCurl(d)}
+											>Copy curl</Button
+										>
 									{/if}
-									<a
-										class={buttonVariants("default", "sm")}
-										href="/v1/dashboard/jobs/{d.id}/file"
-										>Download</a
-									>
-									<Button
-										size="sm"
-										variant="secondary"
-										onclick={() => openShare(d.id)}
-										>Download link</Button
-									>
-									<Button
-										size="sm"
-										variant="secondary"
-										loading={copyingCurl.has(d.id)}
-										onclick={() => copyCurl(d)}
-										>Copy curl</Button
-									>
-									<Button
-										size="sm"
-										variant="secondary"
-										onclick={() => dismiss(d)}
-										>Dismiss</Button
-									>
-								{:else if d.status === "failed"}
-									<Button
-										size="sm"
-										loading={retrying.has(d.id)}
-										onclick={() => retry(d)}>Retry</Button
-									>
-									<Button
-										size="sm"
-										variant="secondary"
-										onclick={() => openFailedDetails(d)}
-										>Error</Button
-									>
-									<Button
-										size="sm"
-										variant="secondary"
-										onclick={() => dismiss(d)}
-										>Dismiss</Button
-									>
-								{:else if d.status === "queued"}
-									<Button
-										size="sm"
-										variant="destructive"
-										loading={cancelling.has(d.id)}
-										onclick={() => cancel(d)}>Cancel</Button
-									>
-									<Button
-										size="sm"
-										variant="secondary"
-										onclick={() => dismiss(d)}
-										>Dismiss</Button
-									>
-								{:else}
-									<Button
-										size="sm"
-										variant="secondary"
-										onclick={() => dismiss(d)}
-										>Dismiss</Button
-									>
+										<Button
+											size="sm"
+											variant="secondary"
+											onclick={() => dismiss(d)}
+											>Dismiss</Button
+										>
+									{:else if d.status === "failed"}
+										<Button
+											size="sm"
+											loading={retrying.has(d.id)}
+											onclick={() => retry(d)}>Retry</Button
+										>
+										<Button
+											size="sm"
+											variant="secondary"
+											onclick={() => openFailedDetails(d)}
+											>Error</Button
+										>
+										<Button
+											size="sm"
+											variant="secondary"
+											onclick={() => dismiss(d)}
+											>Dismiss</Button
+										>
+									{:else if d.status === "queued"}
+										<Button
+											size="sm"
+											variant="destructive"
+											loading={cancelling.has(d.id)}
+											onclick={() => cancel(d)}>Cancel</Button
+										>
+										<Button
+											size="sm"
+											variant="secondary"
+											onclick={() => dismiss(d)}
+											>Dismiss</Button
+										>
+									{:else}
+										<Button
+											size="sm"
+											variant="secondary"
+											onclick={() => dismiss(d)}
+											>Dismiss</Button
+										>
 								{/if}
 							</div>
 						</td>
@@ -420,12 +395,6 @@
 		</table>
 	{/if}
 </Card>
-
-<ShareLinkDialog
-	open={shareOpen}
-	jobId={shareJobId}
-	onOpenChange={(v) => (shareOpen = v)}
-/>
 
 <Dialog
 	open={failedDetailsOpen}

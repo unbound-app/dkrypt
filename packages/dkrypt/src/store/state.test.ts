@@ -24,21 +24,17 @@ import {
   getDiscordGuildIds,
   getDiscordRolePerks,
   getInsightsSummary,
-  getUserActivityStats,
   getEffectiveDevices,
   getWatchDispatchTargets,
   getWatchConfigIssues,
   getWebhookDeliveryLog,
   importBackup,
   listAllowedUsers,
-  listAllShareLinks,
   listNotifications,
-  listShareLinksForJob,
   recordDeviceHealthCheck,
   recordJobHistory,
   recordNotification,
   recordWebhookDelivery,
-  recordShareLink,
   setDiscordGuildIds,
   syncDiscordPerkRoles,
   updateAllowedUserRoles,
@@ -48,42 +44,6 @@ import {
   verifyApiKey,
   markNotificationsRead,
 } from '#store/state.js';
-
-describe('share links', () => {
-  test('hides expired links from dashboard listings', () => {
-    const jobId = 'job-' + randomUUID();
-    const expired = recordShareLink(jobId, 'com.example.expired', 'token-' + randomUUID(), 'tester', Date.now() - 1);
-    const active = recordShareLink(jobId, 'com.example.active', 'token-' + randomUUID(), 'tester', Date.now() + 60_000);
-
-    expect(listShareLinksForJob(jobId, 'tester').map((link) => link.id)).not.toContain(expired.id);
-    expect(listAllShareLinks().map((link) => link.id)).not.toContain(expired.id);
-    expect(listShareLinksForJob(jobId, 'tester').map((link) => link.id)).toContain(active.id);
-    expect(listAllShareLinks().map((link) => link.id)).toContain(active.id);
-  });
-
-  test('attributes active links and manual jobs to the issuing user', () => {
-    const username = `activity-${randomUUID()}`;
-    const jobId = `job-${randomUUID()}`;
-    const now = Date.now();
-    recordJobHistory({
-      id: jobId,
-      bundleId: 'com.example.activity',
-      queuedBy: username,
-      status: 'done',
-      source: 'manual',
-      createdAt: now,
-      finishedAt: now,
-    });
-    recordShareLink(jobId, 'com.example.activity', `token-${randomUUID()}`, username, now + 60_000);
-
-    expect(getUserActivityStats().get(username)).toMatchObject({
-      manualJobs: 1,
-      completedJobs: 1,
-      failedJobs: 0,
-      activeShareLinks: 1,
-    });
-  });
-});
 
 describe('dashboard notifications', () => {
   test('stores notifications per user and marks selected entries read', () => {

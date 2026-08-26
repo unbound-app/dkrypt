@@ -133,6 +133,10 @@ export function getArtifactById(id: string): ArtifactRecord | undefined {
   return index.artifacts.find((artifact) => artifact.id === id);
 }
 
+export function getArtifactBySourceJobId(jobId: string): ArtifactRecord | undefined {
+  return index.artifacts.find((artifact) => artifact.sourceJobId === jobId);
+}
+
 export function getArtifactByKey(key: string): ArtifactRecord | undefined {
   const artifact = index.artifacts.find((candidate) => candidate.key === key);
   if (!artifact || !existsSync(artifact.filePath)) return undefined;
@@ -217,11 +221,11 @@ async function evictForBytes(requiredBytes: number, protectedKeys: Set<string>):
     await rm(candidate.filePath, { force: true });
     index.artifacts = index.artifacts.filter((artifact) => artifact.id !== candidate.id);
     usedBytes -= size;
-    log.info('evicted retained artifact for storage quota', { artifactId: candidate.id, bundleId: candidate.bundleId, sizeBytes: size });
+    log.info('evicted artifact for storage quota', { artifactId: candidate.id, bundleId: candidate.bundleId, sizeBytes: size });
   }
 
   if (usedBytes + requiredBytes > config.artifactMaxBytes) {
-    throw new Error('unable to free enough retained artifact storage');
+    throw new Error('unable to free enough artifact storage');
   }
 }
 
@@ -376,4 +380,12 @@ export function getArtifactForJob(job: { artifactId?: string; filePath?: string 
 export function artifactDownloadName(artifact: ArtifactRecord): string {
   const version = artifact.versionLabel ? `-${artifact.versionLabel.replace(/[^A-Za-z0-9._-]/g, '_')}` : '';
   return `${artifact.bundleId}${version}.ipa`;
+}
+
+export function buildArtifactFileUrl(id: string): string {
+  return `${config.publicBaseUrl}/v1/artifacts/${encodeURIComponent(id)}/file`;
+}
+
+export function buildDashboardArtifactFileUrl(id: string): string {
+  return `${config.publicBaseUrl}/v1/dashboard/artifacts/${encodeURIComponent(id)}/file`;
 }

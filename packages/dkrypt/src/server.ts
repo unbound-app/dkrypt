@@ -7,7 +7,7 @@ import scalarApiReference from '@scalar/fastify-api-reference';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { config } from '#config.js';
 import { registerRouter } from '#http.js';
-import { getRetainedJobArtifacts, startJobSweeper } from '#jobs/store.js';
+import { getArtifactBackedJobs, startJobSweeper } from '#jobs/store.js';
 import { startJobWebhookDispatcher } from '#jobWebhook.js';
 import { startKeyExpiryPoller } from '#keyExpiryPoller.js';
 import { log, startLogFlusher } from '#logger.js';
@@ -88,7 +88,7 @@ export async function buildServer(options: { includePublicRoutes?: boolean } = {
 }
 
 async function startBackgroundServices(): Promise<void> {
-  await initializeArtifactStore(getRetainedJobArtifacts());
+  await initializeArtifactStore(getArtifactBackedJobs());
   startJobSweeper();
   startStateFlusher();
   startLogFlusher();

@@ -98,11 +98,9 @@ export interface JobSummary {
   createdAt: string;
   startedAt?: string;
   finishedAt?: string;
-  fileExpiresAt?: string;
   queue?: { position: number; total: number };
   queueReason?: string;
   statusUrl: string;
-  fileUrl: string;
 }
 
 export interface ActiveJob {
@@ -276,7 +274,7 @@ export interface JobHistoryEntry {
   deviceId?: string;
   ipaMetadata?: IpaMetadata;
   ipaInfoPlist?: Record<string, unknown>;
-  activeShareUrl?: string;
+  downloadUrl?: string;
   fileAvailable: boolean;
 }
 
@@ -423,7 +421,6 @@ export interface AllowedUser {
     lastJobAt?: number;
     apiKeys: number;
     apiRequests30d: number;
-    activeShareLinks: number;
   };
 }
 
@@ -758,6 +755,14 @@ export function fetchArtifacts(offset = 0, limit = 50, q?: string, channel?: Art
   return apiJson(`/v1/dashboard/artifacts?offset=${offset}&limit=${limit}${query}${channelQuery}`);
 }
 
+export function dashboardArtifactDownloadUrl(id: string): string {
+  return `/v1/dashboard/artifacts/${encodeURIComponent(id)}/file`;
+}
+
+export function artifactDownloadUrl(id: string): string {
+  return `/v1/artifacts/${encodeURIComponent(id)}/file`;
+}
+
 export interface BundleStats {
   bundleId: string;
   totalRuns: number;
@@ -771,56 +776,6 @@ export interface BundleStats {
 
 export function fetchBundleStats(bundleId: string): Promise<BundleStats> {
   return apiJson(`/v1/dashboard/jobs/stats/${encodeURIComponent(bundleId)}`);
-}
-
-export function shareJobFile(
-  id: string,
-  ttlMinutes?: number,
-  maxDownloads?: number,
-): Promise<{ ok: boolean; data: { url: string; expiresAt: number; maxDownloads?: number } }> {
-  return apiAction(`/v1/dashboard/jobs/${id}/share`, { method: 'POST', body: JSON.stringify({ ttlMinutes, maxDownloads }) });
-}
-
-export interface ShareLinkRecord {
-  id: string;
-  jobId: string;
-  bundleId: string;
-  issuedBy: string;
-  issuedAt: number;
-  expiresAt: number;
-  revoked: boolean;
-  maxDownloads?: number;
-  downloadCount: number;
-  usedAt?: number;
-  lastUsedAt?: number;
-  url?: string;
-}
-
-export function fetchShareLinks(jobId: string): Promise<{ links: ShareLinkRecord[] }> {
-  return apiJson(`/v1/dashboard/jobs/${jobId}/share`);
-}
-
-export function fetchAllShareLinks(): Promise<{ links: ShareLinkRecord[] }> {
-  return apiJson('/v1/dashboard/share-links');
-}
-
-export function shareLinksExportUrl(format: 'csv' | 'json'): string {
-  return `/v1/dashboard/share-links/export?format=${format}`;
-}
-
-export function revokeShareLink(linkId: string): Promise<{ ok: boolean }> {
-  return apiAction(`/v1/dashboard/jobs/share/${linkId}/revoke`, { method: 'POST' }, 'Link revoked').then((r) => ({ ok: r.ok }));
-}
-
-export function revokeAllShareLinks(jobId: string): Promise<{ ok: boolean; data: { revoked: number } }> {
-  return apiAction(`/v1/dashboard/jobs/${jobId}/share/revoke-all`, { method: 'POST' }, 'Active links revoked');
-}
-
-export function updateShareLink(
-  linkId: string,
-  updates: { ttlMinutes?: number; maxDownloads?: number | null },
-): Promise<{ ok: boolean; data: { link?: ShareLinkRecord } }> {
-  return apiAction(`/v1/dashboard/jobs/share/${linkId}`, { method: 'PATCH', body: JSON.stringify(updates) }, 'Link updated');
 }
 
 export function cancelJob(id: string): Promise<{ ok: boolean }> {
@@ -1082,7 +1037,7 @@ export interface AppVersionEntry {
   displayVersion?: string;
   bundleVersion?: string;
   releaseDate?: string;
-  retainedArtifactId?: string;
+  artifactId?: string;
 }
 
 export function fetchAppVersions(bundleId: string, force = false): Promise<{ versions: AppVersionEntry[] } | { error: string }> {

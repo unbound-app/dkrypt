@@ -1,11 +1,10 @@
 <script lang="ts">
   import CopyButton from '#components/CopyButton.svelte';
-  import { fetchJobStatus, fetchShareLinks } from '#lib/api';
+  import { dashboardArtifactDownloadUrl, fetchJobStatus } from '#lib/api';
   import { appDisplayName } from '#lib/appCatalog.svelte';
   import Button from '#lib/components/ui/Button.svelte';
   import Dialog from '#lib/components/ui/Dialog.svelte';
   import { myDecryptsState, updateDecrypt, type TrackedDecrypt } from '#lib/decrypts.svelte';
-  import { fmtUntil } from '#lib/format';
   import { notifyJobFinished } from '#lib/notifications';
   import { playChime, vibrateCompletion } from '#lib/sound';
   import { showToast, soundEnabledState } from '#lib/ui.svelte';
@@ -13,7 +12,6 @@
   interface CompletedDecrypt {
     label: string;
     url: string;
-    expiresAt: number;
   }
 
   let pollTimer: ReturnType<typeof setTimeout> | undefined;
@@ -25,19 +23,18 @@
     return d.versionLabel ? `${name} (${d.versionLabel})` : name;
   }
 
-  async function presentCompletion(d: TrackedDecrypt): Promise<void> {
-    const links = await fetchShareLinks(d.id);
-    const link = links.links.find((entry) => entry.url);
+  function presentCompletion(d: TrackedDecrypt, artifactId: string | undefined): void {
     const label = decryptLabel(d);
 
-    if (!link?.url) {
-      showToast(`${label} finished, but its share link is unavailable.`, 'error', { track: true });
-      notifyJobFinished('Decrypt finished', `${label} is ready to download.`);
+    if (!artifactId) {
+      const message = `${label} finished, but its artifact is unavailable.`;
+      showToast(message, 'error', { track: true });
+      notifyJobFinished('Decrypt finished', message);
       return;
     }
 
-    const url = link.url;
-    completed = [...completed, { label, url, expiresAt: link.expiresAt }];
+    const url = dashboardArtifactDownloadUrl(artifactId);
+    completed = [...completed, { label, url }];
     notifyJobFinished('Decrypt finished', `${label} is ready to download.`, url);
     showToast(`${label} is ready to download.`, 'success', {
       track: true,
@@ -66,14 +63,15 @@
           progress: data.progress,
           queue: data.queue,
           error: data.error,
-          fileExpiresAt: data.fileExpiresAt,
+          artifactId: data.artifactId,
+          artifactUrl: data.artifactUrl,
         });
         if (!finished) continue;
         if (soundEnabledState.value) {
           playChime();
           vibrateCompletion(data.status === 'done');
         }
-        if (data.status === 'done') await presentCompletion(d);
+        if (data.status === 'done') presentCompletion(d, data.artifactId);
         else {
           const label = decryptLabel(d);
           const message = `${label} failed: ${data.error ?? 'unknown error'}`;
@@ -108,13 +106,13 @@
   {#if current}
     <div class="mb-1 text-sm font-medium">Decrypt ready</div>
     <div class="mb-3 text-xs text-muted">
-      {current.label} has a registered share link with unlimited downloads.
+      {current.label} has an artifact ready for download.
     </div>
     <div class="bg-panel-muted mb-4 flex items-center gap-2 rounded-lg p-2">
       <code class="min-w-0 flex-1 truncate" title={current.url}>{current.url}</code>
       <CopyButton text={current.url} label="Copy" />
     </div>
-    <div class="mb-4 text-xs text-muted">Expires {fmtUntil(current.expiresAt)}. It is available in Share links.</div>
+    <div class="mb-4 text-xs text-muted">The download remains available while the artifact is stored.</div>
     <div class="flex gap-2">
       <a href={current.url} class="bg-accent text-accent-contrast hover:opacity-90 inline-flex h-8 flex-1 items-center justify-center rounded-md px-3 text-xs font-medium">Download</a>
       <Button variant="secondary" class="flex-1" onclick={() => onOpenChange(false)}>Close</Button>

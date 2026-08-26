@@ -7,10 +7,10 @@
 	import CopyButton from "#components/CopyButton.svelte";
 	import EmptyState from "#components/EmptyState.svelte";
 	import RelativeTime from "#components/RelativeTime.svelte";
-	import ShareLinkDialog from "#components/ShareLinkDialog.svelte";
 	import {
 		fetchJobHistory,
 		jobHistoryExportUrl,
+		artifactDownloadUrl,
 		previewBulkJobReplay,
 		queueDecrypt,
 		queueTestFlightDecrypt,
@@ -364,14 +364,6 @@
 		);
 	});
 
-	let shareOpen = $state(false);
-	let shareJobId = $state("");
-
-	function openShare(id: string): void {
-		shareJobId = id;
-		shareOpen = true;
-	}
-
 	let statsOpen = $state(false);
 	let statsBundleId = $state("");
 	let statsPreselectIds = $state<string[] | undefined>(undefined);
@@ -402,11 +394,10 @@
 	}
 
 	function curlFor(entry: JobHistoryEntry): string {
+		if (!entry.artifactId) return "";
 		const base = sessionState.publicBaseUrl ?? location.origin;
-		const versionQuery = entry.externalVersionId
-			? `&externalVersionId=${entry.externalVersionId}`
-			: "";
-		return `curl -H "Authorization: Bearer <YOUR_API_KEY>" "${base}/v1/decrypt?bundleId=${entry.bundleId}${versionQuery}" -o ${entry.bundleId}.ipa`;
+		const url = new URL(artifactDownloadUrl(entry.artifactId), base).toString();
+		return `curl -H "Authorization: Bearer <YOUR_API_KEY>" "${url}" -o ${entry.bundleId}.ipa`;
 	}
 
 	async function decryptAgain(entry: JobHistoryEntry): Promise<void> {
@@ -429,6 +420,8 @@
 				status: data.status,
 				progress: data.progress,
 				queue: data.queue,
+				artifactId: data.artifactId,
+				artifactUrl: data.artifactUrl,
 			});
 			pushRecentBundleId(bundleId);
 			showToast(
@@ -457,6 +450,8 @@
 				status: data.status,
 				progress: data.progress,
 				queue: data.queue,
+				artifactId: data.artifactId,
+				artifactUrl: data.artifactUrl,
 			});
 			pushRecentBundleId(entry.bundleId);
 			showToast(
@@ -892,9 +887,6 @@
 										class="history-feed-actions flex w-full shrink-0 items-center justify-start gap-1.5 self-start sm:w-[15rem] sm:justify-end"
 									>
 										{#if j.status === "failed"}
-											{#if j.activeShareUrl}
-												<a class={buttonVariants("default", "sm")} href={j.activeShareUrl}>Download</a>
-											{/if}
 											<Button size="sm" variant="secondary" onclick={() => openJobDetails(j)} title="Inspect job"><Eye class="h-3.5 w-3.5" /></Button>
 											<Button
 												size="sm"
@@ -904,8 +896,8 @@
 												>Retry</Button
 											>
 										{:else}
-											{#if j.activeShareUrl}
-												<a class={buttonVariants("default", "sm")} href={j.activeShareUrl}>Download</a>
+											{#if j.downloadUrl}
+												<a class={buttonVariants("default", "sm")} href={j.downloadUrl}>Download</a>
 											{/if}
 											<Button size="sm" variant="secondary" onclick={() => openJobDetails(j)} title="Inspect job"><Eye class="h-3.5 w-3.5" /></Button>
 											<Button
@@ -916,15 +908,7 @@
 												>Decrypt again</Button
 											>
 										{/if}
-										{#if j.status === "done" && j.fileAvailable && !j.activeShareUrl}
-											<Button
-												size="sm"
-												variant="secondary"
-												onclick={() => openShare(j.id)}
-												>Download</Button
-											>
-										{/if}
-										{#if !j.testflight}
+										{#if j.artifactId && j.fileAvailable}
 											<CopyButton
 												text={curlFor(j)}
 												label="curl"
@@ -953,11 +937,6 @@
 	{/if}
 </Card>
 
-<ShareLinkDialog
-	open={shareOpen}
-	jobId={shareJobId}
-	onOpenChange={(v) => (shareOpen = v)}
-/>
 <BundleStatsDialog
 	open={statsOpen}
 	bundleId={statsBundleId}

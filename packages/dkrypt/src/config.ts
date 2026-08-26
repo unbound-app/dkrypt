@@ -16,14 +16,12 @@ function optionalInt(name: string, fallback: number): number {
   return n;
 }
 
-const DEFAULT_TTL_MINUTES = 24 * 60;
-
 export const config = {
   port: optionalInt('PORT', 8080),
   bindHost: optional('BIND_HOST', '127.0.0.1'),
 
   apiKey: required('API_KEY'),
-  downloadSigningSecret: required('DOWNLOAD_SIGNING_SECRET'),
+  sessionSigningSecret: required('SESSION_SIGNING_SECRET'),
   publicBaseUrl: optional('PUBLIC_BASE_URL', 'http://localhost:8080'),
 
   adminPassword: required('ADMIN_PASSWORD'),
@@ -49,8 +47,7 @@ export const config = {
   artifactMaxBytes: optionalInt('ARTIFACT_MAX_BYTES', 200 * 1024 * 1024 * 1024),
 
   jobMaxWaitSeconds: optionalInt('JOB_MAX_WAIT_SECONDS', 1800),
-  fileTtlMinutes: optionalInt('FILE_TTL_MINUTES', DEFAULT_TTL_MINUTES),
-  jobRetentionMinutes: optionalInt('JOB_RETENTION_MINUTES', DEFAULT_TTL_MINUTES),
+  jobRetentionMinutes: optionalInt('JOB_RETENTION_MINUTES', 24 * 60),
 
   watchBundleId: optional('WATCH_BUNDLE_ID', ''),
   watchAppRepo: optional('WATCH_APP_REPO', ''),

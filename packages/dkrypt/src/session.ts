@@ -38,7 +38,7 @@ function safeEqualStr(a: string, b: string): boolean {
 }
 
 function sign(payload: string): string {
-  return createHmac('sha256', config.downloadSigningSecret).update(payload).digest('hex');
+  return createHmac('sha256', config.sessionSigningSecret).update(payload).digest('hex');
 }
 
 function serialize(session: Omit<Session, 'exp'>, expiresAtMs: number): string {

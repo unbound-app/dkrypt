@@ -8,8 +8,8 @@ It uses the device's signed-in App Store account and `ipadecrypt`; no Apple ID i
 
 - Decrypts current or pinned historical App Store releases by bundle ID.
 - Browses and decrypts TestFlight builds.
-- Queues jobs, keeps a persistent indexed IPA library, and creates expiring share links.
-- Watches App Store releases on a schedule and dispatches signed IPA URLs to GitHub Actions.
+- Queues jobs and keeps a persistent indexed IPA library with authenticated artifact downloads.
+- Watches App Store releases on a schedule and dispatches authenticated artifact URLs to GitHub Actions.
 - Protects scheduled watches from exhausting the GitHub API budget and shows their next 24 hours of runs.
 - Runs a multi-user dashboard with OAuth, API keys, roles, billing, device health, logs, and backups.
 - Gives admins per-user job, key, API-usage, and last-activity visibility.
@@ -24,7 +24,7 @@ It uses the device's signed-in App Store account and `ipadecrypt`; no Apple ID i
 
 ## Quick start
 
-1. Copy `.env.example` to `.env` and set at least `API_KEY`, `DOWNLOAD_SIGNING_SECRET`, `PUBLIC_BASE_URL`, and `ADMIN_PASSWORD`.
+1. Copy `.env.example` to `.env` and set at least `API_KEY`, `SESSION_SIGNING_SECRET`, `PUBLIC_BASE_URL`, and `ADMIN_PASSWORD`.
 2. Build the service:
 
    ```sh
@@ -63,7 +63,9 @@ Copy the four price IDs printed by `stripe:seed` into the runtime environment, s
 
 ## API
 
-The listed API endpoints use `Authorization: Bearer <API_KEY>`. Completed IPA downloads may also use an expiring signed share token.
+The listed API endpoints use `Authorization: Bearer <API_KEY>`. Dashboard downloads use the signed-in session, while API and scheduler downloads use `Authorization: Bearer <API_KEY>`. Artifact URLs remain valid until the underlying artifact is explicitly removed or evicted by storage quota.
+
+Repositories receiving scheduler dispatches must define a `DKRYPT_API_KEY` Actions secret. The loader’s remote-deploy workflow enables authenticated artifact-source downloads with that secret; manual and other external IPA source downloads remain unauthenticated. For a deployment whose `PUBLIC_BASE_URL` is not `https://ipa.dylib.dev`, set the receiving repository variable `DKRYPT_BASE_URL` to the same host.
 
 | Endpoint | Purpose |
 | --- | --- |
@@ -71,9 +73,8 @@ The listed API endpoints use `Authorization: Bearer <API_KEY>`. Completed IPA do
 | `GET /v1/decrypt?bundleId=<id>&externalVersionId=<id>` | Decrypt a pinned historical App Store release. |
 | `POST /v1/decrypts` | Queue or reuse a decrypt by release selector (`240`, `234.2`, or `240_109440`). |
 | `GET /v1/jobs/:id` | Read job status. |
-| `GET /v1/jobs/:id/file` | Download a completed IPA. |
-| `GET /v1/artifacts` | List retained IPA artifacts. |
-| `GET /v1/artifacts/:id/file` | Download a retained IPA artifact. |
+| `GET /v1/artifacts` | List IPA artifacts. |
+| `GET /v1/artifacts/:id/file` | Download an IPA artifact with an API key. |
 | `GET /v1/health` | Read liveness and scheduler state. |
 
 The `POST /v1/decrypts` selector accepts an optional leading `v`. A blank selector resolves the current App Store version and lets the signed-in device's autoinstall bridge perform the install. Historical App Store selectors use the available version history when an external version id is known; selectors containing an underscore target a TestFlight train and build. Completed artifacts survive job-history cleanup and remain available until the persistent artifact store reaches its configured 200 GiB limit; least-recently-used artifacts are evicted first.

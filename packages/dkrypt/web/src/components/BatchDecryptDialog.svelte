@@ -159,6 +159,8 @@
 					status: data.status,
 					progress: data.progress,
 					queue: data.queue,
+					artifactId: data.artifactId,
+					artifactUrl: data.artifactUrl,
 				});
 				pushRecentBundleId(bundleId);
 				results = results.map((r) =>

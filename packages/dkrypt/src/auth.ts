@@ -1,6 +1,5 @@
 import type { NextFunction, Request, Response } from '#http.js';
-import { isShareLinkExhausted, isShareLinkExpired, isShareLinkRevoked, recordApiKeyOutcome, recordShareLinkDownload, shareLinkExistsForToken, verifyApiKey } from '#store/state.js';
-import { verifyTokenSignature } from '#util/signedUrl.js';
+import { recordApiKeyOutcome, verifyApiKey } from '#store/state.js';
 
 function trackApiKeyOutcome(req: Request, res: Response, keyId: string | undefined): void {
   if (!keyId) return;
@@ -36,56 +35,4 @@ export function requireTestFlightScope(_req: Request, res: Response, next: NextF
     return;
   }
   next();
-}
-
-export function requireApiKeyOrSignedToken(req: Request, res: Response, next: NextFunction): void {
-  const header = req.header('authorization') ?? '';
-  const [scheme, token] = header.split(' ');
-  if (scheme === 'Bearer' && token) {
-    const result = verifyApiKey(token, req.ip);
-    if (result === 'rate-limited') {
-      res.status(429).json({ error: 'this API key has hit its daily request limit' });
-      return;
-    }
-    if (result) {
-      res.locals.apiKeyScope = result.allowedBundleIds;
-      res.locals.apiKeyOwner = result.ownerId;
-      res.locals.apiKeyPriority = result.priority ?? 0;
-      res.locals.apiKeyId = result.keyId;
-      trackApiKeyOutcome(req, res, result.keyId);
-      next();
-      return;
-    }
-  }
-
-  const queryToken = req.query.token;
-  const jobId = req.params.id;
-  if (typeof queryToken === 'string' && jobId) {
-    const embeddedExpiresAtMs = verifyTokenSignature(jobId, queryToken);
-    if (embeddedExpiresAtMs !== undefined) {
-      if (shareLinkExistsForToken(jobId, queryToken)) {
-        if (isShareLinkRevoked(jobId, queryToken)) {
-          res.status(401).json({ error: 'this share link has been revoked' });
-          return;
-        }
-        if (isShareLinkExpired(jobId, queryToken)) {
-          res.status(401).json({ error: 'this share link has expired' });
-          return;
-        }
-        if (isShareLinkExhausted(jobId, queryToken)) {
-          res.status(410).json({ error: 'this share link has reached its download limit' });
-          return;
-        }
-        recordShareLinkDownload(jobId, queryToken);
-        next();
-        return;
-      }
-      if (Date.now() <= embeddedExpiresAtMs) {
-        next();
-        return;
-      }
-    }
-  }
-
-  res.status(401).json({ error: 'unauthorized' });
 }

@@ -36,8 +36,8 @@
 <div class="flex flex-col gap-4">
   <OnboardingBanner />
   <DecryptPanel bind:this={decryptPanel} />
-  <ArtifactLibrary />
   <DonationNudge />
+  <ArtifactLibrary />
   <DecryptCompletion />
   <ActiveJobsPanel />
   <JobHistoryPanel />

@@ -7,7 +7,6 @@
   import DevicesSettings from '#tabs/settings/DevicesSettings.svelte';
   import RolesSettings from '#tabs/settings/RolesSettings.svelte';
   import SchedulerSettings from '#tabs/settings/SchedulerSettings.svelte';
-  import ShareLinksSettings from '#tabs/settings/ShareLinksSettings.svelte';
   import UsersSettings from '#tabs/settings/UsersSettings.svelte';
 
   const ALL_SUBTABS: { id: string; label: string; requires: bigint[] }[] = [
@@ -15,7 +14,6 @@
     { id: 'devices', label: 'Devices', requires: [PermissionFlag.viewDevices, PermissionFlag.manageDevices] },
     { id: 'users', label: 'Users', requires: [PermissionFlag.viewUsers, PermissionFlag.manageUsers] },
     { id: 'roles', label: 'Roles', requires: [PermissionFlag.viewRoles, PermissionFlag.manageRoles] },
-    { id: 'sharelinks', label: 'Share links', requires: [PermissionFlag.manageShareLinks] },
     { id: 'backup', label: 'Backup', requires: [PermissionFlag.viewBackup, PermissionFlag.manageBackup] },
   ];
 
@@ -52,11 +50,6 @@
 {#if hasAccess([PermissionFlag.viewRoles, PermissionFlag.manageRoles])}
   <div class:hidden={tabState.settingsSubtab !== 'roles'}>
     <RolesSettings />
-  </div>
-{/if}
-{#if hasAccess([PermissionFlag.manageShareLinks])}
-  <div class:hidden={tabState.settingsSubtab !== 'sharelinks'}>
-    <ShareLinksSettings />
   </div>
 {/if}
 {#if hasAccess([PermissionFlag.viewBackup, PermissionFlag.manageBackup])}

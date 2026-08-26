@@ -9,6 +9,12 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   ...GENERATED_CHANGELOG,
   {
+    date: '2026-08-26',
+    title: 'Authenticated IPA artifacts',
+    description: 'Completed decrypts stay in the IPA Library with stable authenticated downloads until the artifact is removed or evicted.',
+    link: { tab: 'home' },
+  },
+  {
     date: '2026-07-26',
     title: 'Liquid glass workspace',
     description:
@@ -33,12 +39,6 @@ export const CHANGELOG: ChangelogEntry[] = [
     title: 'Maintenance mode',
     description: "Decrypts and the API pause automatically when the primary device isn't in a usable state, with a manual override in Settings.",
     link: { tab: 'settings', subtab: 'devices' },
-  },
-  {
-    date: '2026-07-24',
-    title: 'Share link management',
-    description: 'View, copy, and revoke every share link that has been issued from the admin Share Links tab.',
-    link: { tab: 'settings', subtab: 'sharelinks' },
   },
   {
     date: '2026-07-23',

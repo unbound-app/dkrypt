@@ -1,17 +1,17 @@
 import { describe, expect, test } from 'bun:test';
 
-async function loadDefaultTtls(): Promise<{ fileTtlMinutes: number; jobRetentionMinutes: number }> {
+async function loadDefaultRetention(): Promise<{ jobRetentionMinutes: number }> {
   const child = Bun.spawn(
     [
       process.execPath,
       '-e',
-      "const { config } = await import('./src/config.ts'); console.log(JSON.stringify({ fileTtlMinutes: config.fileTtlMinutes, jobRetentionMinutes: config.jobRetentionMinutes }));",
+      "const { config } = await import('./src/config.ts'); console.log(JSON.stringify({ jobRetentionMinutes: config.jobRetentionMinutes }));",
     ],
     {
       cwd: process.cwd(),
       env: {
         API_KEY: 'config-test-api-key',
-        DOWNLOAD_SIGNING_SECRET: 'config-test-signing-secret',
+        SESSION_SIGNING_SECRET: 'config-test-session-signing-secret',
         ADMIN_PASSWORD: 'config-test-admin-password',
       },
       stdout: 'pipe',
@@ -24,7 +24,7 @@ async function loadDefaultTtls(): Promise<{ fileTtlMinutes: number; jobRetention
     child.exited,
   ]);
   if (exitCode !== 0) throw new Error(`config defaults lookup failed: ${stderr}`);
-  return JSON.parse(stdout) as { fileTtlMinutes: number; jobRetentionMinutes: number };
+  return JSON.parse(stdout) as { jobRetentionMinutes: number };
 }
 
 async function loadStripeMissingConfiguration(): Promise<string[]> {
@@ -38,7 +38,7 @@ async function loadStripeMissingConfiguration(): Promise<string[]> {
       cwd: process.cwd(),
       env: {
         API_KEY: 'config-test-api-key',
-        DOWNLOAD_SIGNING_SECRET: 'config-test-signing-secret',
+        SESSION_SIGNING_SECRET: 'config-test-session-signing-secret',
         ADMIN_PASSWORD: 'config-test-admin-password',
         STRIPE_SECRET_KEY: '',
         STRIPE_WEBHOOK_SECRET: '',
@@ -71,7 +71,7 @@ async function loadStripeEnvironment(secretKey: string): Promise<string> {
       cwd: process.cwd(),
       env: {
         API_KEY: 'config-test-api-key',
-        DOWNLOAD_SIGNING_SECRET: 'config-test-signing-secret',
+        SESSION_SIGNING_SECRET: 'config-test-session-signing-secret',
         ADMIN_PASSWORD: 'config-test-admin-password',
         STRIPE_SECRET_KEY: secretKey,
       },
@@ -89,8 +89,8 @@ async function loadStripeEnvironment(secretKey: string): Promise<string> {
 }
 
 describe('config defaults', () => {
-  test('keeps completed jobs and their files for 24 hours by default', async () => {
-    await expect(loadDefaultTtls()).resolves.toEqual({ fileTtlMinutes: 1440, jobRetentionMinutes: 1440 });
+  test('keeps completed job history for 24 hours by default', async () => {
+    await expect(loadDefaultRetention()).resolves.toEqual({ jobRetentionMinutes: 1440 });
   });
 
   test('reports every missing Stripe runtime prerequisite', async () => {

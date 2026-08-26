@@ -2,7 +2,7 @@ import type { Request, Response } from '#http.js';
 import { Router } from '#http.js';
 import { createHash } from 'node:crypto';
 import { config } from '#config.js';
-import { requireApiKey, requireApiKeyOrSignedToken, requireTestFlightScope } from '#auth.js';
+import { requireApiKey, requireTestFlightScope } from '#auth.js';
 import { blockDuringMaintenance } from '#maintenance.js';
 import { jobFileAvailable, jobSummary, streamFilePath, streamJobFile } from '#jobs/http.js';
 import { enqueueDecryptJob, getJob, waitForJob } from '#jobs/store.js';
@@ -226,10 +226,14 @@ decryptRouter.get('/v1/artifacts/:id', requireApiKey, (req, res) => {
   res.json(artifactSummary(artifact));
 });
 
-decryptRouter.get('/v1/artifacts/:id/file', requireApiKeyOrSignedToken, async (req, res) => {
+decryptRouter.get('/v1/artifacts/:id/file', requireApiKey, async (req, res) => {
   const artifact = getArtifactById(req.params.id);
   if (!artifact || !artifactFileAvailable(artifact)) {
     res.status(404).json({ error: 'artifact not found' });
+    return;
+  }
+  if (!isBundleIdAllowed(res, artifact.bundleId)) {
+    res.status(403).json({ error: 'this API key is not scoped to this bundleId' });
     return;
   }
   await touchArtifact(artifact);
@@ -247,25 +251,6 @@ decryptRouter.get('/v1/jobs/:id', requireApiKey, (req, res) => {
     return;
   }
   res.json(jobSummary(job));
-});
-
-decryptRouter.get('/v1/jobs/:id/file', requireApiKeyOrSignedToken, async (req, res) => {
-  const job = getJob(req.params.id);
-  if (!job) {
-    res.status(404).json({ error: 'job not found' });
-    return;
-  }
-  if (!isBundleIdAllowed(res, job.bundleId)) {
-    res.status(403).json({ error: 'this API key is not scoped to this bundleId' });
-    return;
-  }
-
-  if (job.status !== 'done' || !job.filePath) {
-    res.status(409).json(jobSummary(job));
-    return;
-  }
-
-  await streamJobFile(job, req, res);
 });
 
 decryptRouter.get('/v1/testflight/:appId/trains', requireApiKey, requireTestFlightScope, async (req, res) => {

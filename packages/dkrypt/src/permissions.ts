@@ -9,7 +9,6 @@ export const PermissionFlag = {
   manageDevices: 1n << 7n,
   manageSchedulerSettings: 1n << 8n,
   triggerDispatch: 1n << 9n,
-  manageShareLinks: 1n << 10n,
   viewLogs: 1n << 11n,
   viewUsers: 1n << 12n,
   manageUsers: 1n << 13n,
@@ -33,7 +32,6 @@ export const PermissionFlag = {
   manageApiKeys: 1n << 31n,
   viewAutomation: 1n << 32n,
   manageAutomation: 1n << 33n,
-  extendShareLinks: 1n << 34n,
 } as const;
 
 export type PermissionFlagKey = keyof typeof PermissionFlag;

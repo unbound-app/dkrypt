@@ -333,7 +333,7 @@
                 <td data-label="Activity" class="text-xs text-muted">
                   {#if u.activity}
 					<div>{u.activity.manualJobs} jobs · {u.activity.completedJobs} done · {u.activity.failedJobs} failed</div>
-					<div>{u.activity.apiKeys} keys · {u.activity.apiRequests30d} API requests / 30d · {u.activity.activeShareLinks} active shares</div>
+					<div>{u.activity.apiKeys} keys · {u.activity.apiRequests30d} API requests / 30d</div>
 					{#if u.activity.lastJobAt}<div>last job <RelativeTime ms={u.activity.lastJobAt} /></div>{/if}
                   {:else}
                     no activity

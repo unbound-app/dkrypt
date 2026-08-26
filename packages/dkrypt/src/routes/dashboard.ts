@@ -1,12 +1,11 @@
 import { Router } from '#http.js';
 import { validate as validateCronExpr } from 'node-cron';
-import { createReadStream } from 'node:fs';
 import { config, discordBotEnabled } from '#config.js';
 import { fetchBotGuilds, fetchGuildRoles } from '#discord.js';
 import { dashboardEvents, emitJobsChanged, getOnlineUsernames, registerPresence, unregisterPresence } from '#events.js';
 import { getBillingEntitlements } from '#billing.js';
 import { blockDuringMaintenance, getMaintenanceStatus } from '#maintenance.js';
-import { jobFileAvailable, jobSummary, streamJobFile } from '#jobs/http.js';
+import { jobFileAvailable, jobSummary, streamFilePath } from '#jobs/http.js';
 import { cancelJob, enqueueDecryptJob, getActiveJobs, getJob, getQueueInfo, getQueueReason, prioritizeQueuedJob, reorderQueue } from '#jobs/store.js';
 import type { LogEntry, LogLevel } from '#logger.js';
 import { getRecentLogs } from '#logger.js';
@@ -25,13 +24,11 @@ import { getTestFlightBridgeDiagnostics, listBuilds, listTrains } from '#testfli
 import { nextCronRunAt, nextCronRuns } from '#util/cron.js';
 import { getDiskUsage } from '#util/diskUsage.js';
 import { rateLimitPerUser } from '#util/rateLimit.js';
-import { buildSignedFileUrlWithToken } from '#util/signedUrl.js';
 import { getFailureGuidance } from '#util/failureGuidance.js';
 import { listAppVersions } from '#versions.js';
-import { artifactDownloadName, artifactFileAvailable, artifactKeyForAppStoreVersion, getArtifactById, getArtifactByKey, getArtifactStorageStats, listArtifacts, touchArtifact } from '#artifacts.js';
+import { artifactDownloadName, artifactFileAvailable, artifactKeyForAppStoreVersion, getArtifactById, getArtifactByKey, getArtifactBySourceJobId, getArtifactForJob, getArtifactStorageStats, listArtifacts, touchArtifact } from '#artifacts.js';
 import {
   addAllowedUser,
-  activeShareLinkDownloadUrlForJob,
   addPushSubscription,
   approveApiKey,
   type AppWatch,
@@ -106,14 +103,11 @@ import {
   listApiKeysForOwner,
   listPendingApiKeys,
   listRoles,
-  listAllShareLinks,
-  listShareLinksForJob,
   previewJobHistoryRetention,
   previewBackup,
   drillBackupRestore,
   recordAudit,
   recordDeviceActivity,
-  recordShareLink,
   recordUserActivity,
   touchSessionRecord,
   regenerateApiKey,
@@ -123,9 +117,6 @@ import {
   requestApiKey,
   revealApiKeySecret,
   revokeApiKey,
-  revokeAllShareLinksForJob,
-  revokeShareLink,
-  updateShareLink,
   type SchedulerSettings,
   setApiKeyAllowTestFlight,
   setBackupSchedule,
@@ -229,11 +220,17 @@ function buildOverview(permissions: bigint, userId: string) {
   };
 }
 
-function dashboardHistoryEntry(entry: JobHistoryEntry, viewerId: string) {
+function dashboardHistoryEntry(entry: JobHistoryEntry) {
+  const job = getJob(entry.id);
+  const artifact =
+    (entry.artifactId ? getArtifactById(entry.artifactId) : undefined) ??
+    (job ? getArtifactForJob(job) : undefined) ??
+    getArtifactBySourceJobId(entry.id);
+  const fileAvailable = artifact ? artifactFileAvailable(artifact) : jobFileAvailable(job);
   return {
     ...entry,
-    activeShareUrl: activeShareLinkDownloadUrlForJob(entry.id, viewerId, entry.source === 'scheduler'),
-    fileAvailable: jobFileAvailable(getJob(entry.id)),
+    downloadUrl: artifact && fileAvailable ? `/v1/dashboard/artifacts/${encodeURIComponent(artifact.id)}/file` : undefined,
+    fileAvailable,
   };
 }
 
@@ -271,7 +268,7 @@ dashboardRouter.get('/v1/dashboard/events', (_req, res) => {
 
   const onJobsChanged = () => sendEvent('overview', buildOverview(res.locals.session.permissions, res.locals.session.sub));
   const onLogAdded = (entry: LogEntry) => sendEvent('log', entry);
-  const onHistoryAdded = (entry: JobHistoryEntry) => sendEvent('history', dashboardHistoryEntry(entry, res.locals.session.sub));
+  const onHistoryAdded = (entry: JobHistoryEntry) => sendEvent('history', dashboardHistoryEntry(entry));
   const onPresenceChanged = (usernames: string[]) => sendEvent('presence', usernames);
 
   dashboardEvents.on('jobsChanged', onJobsChanged);
@@ -315,7 +312,7 @@ dashboardRouter.get('/v1/dashboard/jobs', (req, res) => {
     toTs: Number.isFinite(toTs) ? toTs : undefined,
   });
   res.json({
-    history: entries.map((entry) => dashboardHistoryEntry(entry, res.locals.session.sub)),
+    history: entries.map((entry) => dashboardHistoryEntry(entry)),
     total,
   });
 });
@@ -349,10 +346,7 @@ dashboardRouter.get('/v1/dashboard/artifacts/:id/file', canDecrypt, async (req, 
     return;
   }
   await touchArtifact(artifact);
-  res.setHeader('Content-Type', 'application/octet-stream');
-  res.setHeader('Content-Disposition', `attachment; filename="${artifactDownloadName(artifact)}"`);
-  res.setHeader('Content-Length', String(artifact.fileSizeBytes));
-  res.reply.send(createReadStream(artifact.filePath));
+  await streamFilePath(artifact.filePath, req, res, artifactDownloadName(artifact), artifact.fileSizeBytes, artifact.id);
 });
 
 dashboardRouter.get('/v1/dashboard/logs', canViewLogs, (req, res) => {
@@ -786,7 +780,7 @@ dashboardRouter.get('/v1/dashboard/versions/:bundleId', async (req, res) => {
     res.json({
       versions: versions.map((version) => ({
         ...version,
-        retainedArtifactId: getArtifactByKey(artifactKeyForAppStoreVersion(bundleId, version.displayVersion ?? version.externalVersionId ?? 'latest', version.externalVersionId))?.id,
+        artifactId: getArtifactByKey(artifactKeyForAppStoreVersion(bundleId, version.displayVersion ?? version.externalVersionId ?? 'latest', version.externalVersionId))?.id,
       })),
     });
   } catch (err) {
@@ -1535,141 +1529,6 @@ dashboardRouter.get('/v1/dashboard/jobs/:id/diagnostic', canDecrypt, (req, res) 
   res.json({ generatedAt: new Date().toISOString(), correlationId: job.id, job, timeline: active?.timeline ?? entry?.timeline ?? [] });
 });
 
-dashboardRouter.get('/v1/dashboard/jobs/:id/file', async (req, res) => {
-  const job = getJob(req.params.id);
-  if (!job) {
-    res.status(404).json({ error: 'job not found' });
-    return;
-  }
-  await streamJobFile(job, req, res);
-});
-
-const SHARE_TTL_MIN = 1;
-const SHARE_TTL_MAX = 1440;
-
-dashboardRouter.post('/v1/dashboard/jobs/:id/share', (req, res) => {
-  const job = getJob(req.params.id);
-  if (!job) {
-    const history = getJobHistoryEntryById(req.params.id);
-    if (history?.status === 'done') {
-      res.status(410).json({ error: 'the decrypted IPA has been cleaned up and can no longer be shared' });
-      return;
-    }
-    res.status(404).json({ error: 'job not found' });
-    return;
-  }
-  if (job.status !== 'done') {
-    res.status(409).json({ error: 'job is not finished yet' });
-    return;
-  }
-  if (!jobFileAvailable(job)) {
-    res.status(410).json({ error: 'the decrypted IPA has been cleaned up and can no longer be shared' });
-    return;
-  }
-
-  const requested = Number.parseInt(String(req.body?.ttlMinutes ?? config.fileTtlMinutes), 10);
-  const ttlMinutes = Number.isFinite(requested) ? Math.min(Math.max(requested, SHARE_TTL_MIN), SHARE_TTL_MAX) : config.fileTtlMinutes;
-
-  const requestedMax = Number.parseInt(String(req.body?.maxDownloads ?? ''), 10);
-  const maxDownloads = Number.isFinite(requestedMax) && requestedMax > 0 ? requestedMax : undefined;
-
-  const { url, token, expiresAtMs } = buildSignedFileUrlWithToken(job.id, ttlMinutes);
-  recordShareLink(job.id, job.bundleId, token, res.locals.session.sub, expiresAtMs, maxDownloads);
-  res.json({ url, expiresAt: expiresAtMs, maxDownloads });
-});
-
-dashboardRouter.get('/v1/dashboard/share-links', requirePermission(PermissionFlag.manageShareLinks), (_req, res) => {
-  res.json({ links: listAllShareLinks() });
-});
-
-const SHARE_LINK_CSV_COLUMNS = [
-  'id',
-  'jobId',
-  'bundleId',
-  'issuedBy',
-  'issuedAt',
-  'expiresAt',
-  'revoked',
-  'maxDownloads',
-  'downloadCount',
-  'usedAt',
-  'lastUsedAt',
-] as const;
-
-dashboardRouter.get('/v1/dashboard/share-links/export', requirePermission(PermissionFlag.manageShareLinks), (req, res) => {
-  const format = req.query.format === 'csv' ? 'csv' : 'json';
-  const links = listAllShareLinks();
-
-  if (format === 'json') {
-    res.setHeader('Content-Disposition', 'attachment; filename="dkrypt-share-links.json"');
-    res.json(links);
-    return;
-  }
-
-  const rows = [SHARE_LINK_CSV_COLUMNS.join(',')];
-  for (const l of links) {
-    rows.push(SHARE_LINK_CSV_COLUMNS.map((c) => csvCell(l[c])).join(','));
-  }
-  res.setHeader('Content-Type', 'text/csv');
-  res.setHeader('Content-Disposition', 'attachment; filename="dkrypt-share-links.csv"');
-  res.send(rows.join('\n'));
-});
-
-dashboardRouter.get('/v1/dashboard/jobs/:id/share', (req, res) => {
-  res.json({ links: listShareLinksForJob(req.params.id, res.locals.session.sub) });
-});
-
-dashboardRouter.post('/v1/dashboard/jobs/share/:linkId/revoke', (req, res) => {
-  const ok = revokeShareLink(req.params.linkId);
-  if (!ok) {
-    res.status(404).json({ error: 'share link not found' });
-    return;
-  }
-  res.json({ ok: true });
-});
-
-dashboardRouter.post('/v1/dashboard/jobs/:id/share/revoke-all', (req, res) => {
-  const revoked = revokeAllShareLinksForJob(req.params.id);
-  res.json({ ok: true, revoked });
-});
-
-dashboardRouter.patch('/v1/dashboard/jobs/share/:linkId', requirePermission(PermissionFlag.manageShareLinks), (req, res) => {
-  const body = req.body ?? {};
-  const updates: { expiresAt?: number; maxDownloads?: number | null } = {};
-
-  if (body.ttlMinutes !== undefined) {
-    const requested = Number.parseInt(String(body.ttlMinutes), 10);
-    if (!Number.isFinite(requested)) {
-      res.status(400).json({ error: 'invalid ttlMinutes' });
-      return;
-    }
-    const ttlMinutes = Math.min(Math.max(requested, SHARE_TTL_MIN), SHARE_TTL_MAX);
-    updates.expiresAt = Date.now() + ttlMinutes * 60_000;
-  }
-
-  if ('maxDownloads' in body) {
-    if (body.maxDownloads === null) {
-      updates.maxDownloads = null;
-    } else {
-      const requestedMax = Number.parseInt(String(body.maxDownloads), 10);
-      if (!Number.isFinite(requestedMax) || requestedMax <= 0) {
-        res.status(400).json({ error: 'invalid maxDownloads' });
-        return;
-      }
-      updates.maxDownloads = requestedMax;
-    }
-  }
-
-  const allowExtend = hasPermission(res.locals.session.permissions, PermissionFlag.extendShareLinks);
-  const result = updateShareLink(req.params.linkId, updates, allowExtend);
-  if (!result.ok) {
-    const status = result.error === 'share link not found' ? 404 : result.error?.includes('permission') ? 403 : 409;
-    res.status(status).json({ error: result.error });
-    return;
-  }
-  res.json({ ok: true, link: result.link });
-});
-
 dashboardRouter.get('/v1/dashboard/keys/mine', canViewOwnApiKeys, (_req, res) => {
   const { sub } = res.locals.session;
   res.json({ keys: listApiKeysForOwner(sub) });
@@ -2043,13 +1902,8 @@ dashboardRouter.put('/v1/dashboard/settings', canManageSchedulerSettings, (req, 
 
 dashboardRouter.get('/v1/dashboard/settings/job-history-retention/preview', canManageSchedulerSettings, (req, res) => {
   const retentionDays = Number.parseInt(String(req.query.retentionDays ?? ''), 10);
-  const fileTtlMinutes = Number.parseInt(String(req.query.fileTtlMinutes ?? config.fileTtlMinutes), 10);
   if (!Number.isFinite(retentionDays) || retentionDays < 0) {
     res.status(400).json({ error: 'retentionDays must be a non-negative integer' });
-    return;
-  }
-  if (!Number.isFinite(fileTtlMinutes) || fileTtlMinutes < 0) {
-    res.status(400).json({ error: 'fileTtlMinutes must be a non-negative integer' });
     return;
   }
   const now = Date.now();
@@ -2057,7 +1911,6 @@ dashboardRouter.get('/v1/dashboard/settings/job-history-retention/preview', canM
   res.json({
     ...previewJobHistoryRetention(retentionDays, now),
     artifacts: {
-      fileTtlMinutes,
       retained: storage.count,
       retainedBytes: storage.usedBytes,
       maxBytes: storage.maxBytes,

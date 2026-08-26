@@ -1,10 +1,8 @@
 import type { Request, Response } from '#http.js';
 import { createReadStream, existsSync } from 'node:fs';
-import { config } from '#config.js';
 import { scopedLogger } from '#logger.js';
 
 const log = scopedLogger('jobs');
-import { latestActiveShareLinkExpiry } from '#store/state.js';
 import { getQueueInfo, getQueueReason } from '#jobs/store.js';
 import type { Job } from '#jobs/types.js';
 import { artifactDownloadName, artifactFileAvailable, getArtifactForJob, touchArtifact } from '#artifacts.js';
@@ -17,11 +15,6 @@ export function jobFileAvailable(job: Job | undefined): boolean {
 }
 
 export function jobSummary(job: Job) {
-  const fileExpiresAt =
-    job.status === 'done' && job.finishedAt && !job.downloadedAt && !job.artifactId
-      ? new Date(Math.max(job.finishedAt + config.fileTtlMinutes * 60_000, latestActiveShareLinkExpiry(job.id) ?? 0)).toISOString()
-      : undefined;
-
   return {
     id: job.id,
     correlationId: job.id,
@@ -46,11 +39,9 @@ export function jobSummary(job: Job) {
     createdAt: new Date(job.createdAt).toISOString(),
     startedAt: job.startedAt ? new Date(job.startedAt).toISOString() : undefined,
     finishedAt: job.finishedAt ? new Date(job.finishedAt).toISOString() : undefined,
-    fileExpiresAt,
     queue: getQueueInfo(job.id),
     queueReason: getQueueReason(job),
     statusUrl: `/v1/jobs/${job.id}`,
-    fileUrl: `/v1/jobs/${job.id}/file`,
   };
 }
 
@@ -88,9 +79,6 @@ export async function streamFilePath(
       finish();
     });
 
-    // Bun's Node-compatible Readable is not reliably handled by Fastify's
-    // reply.send() stream adapter. Hijack the reply and pipe to the native
-    // response so retained artifacts are sent instead of an empty body.
     res.reply.hijack();
     stream.pipe(res.raw);
   });
@@ -111,7 +99,7 @@ export async function streamJobFile(job: Job, req: Request, res: Response): Prom
     req,
     res,
     artifact ? artifactDownloadName(artifact) : `${job.bundleId}.ipa`,
-    job.fileSizeBytes,
+    artifact?.fileSizeBytes ?? job.fileSizeBytes,
     job.id,
   );
 }

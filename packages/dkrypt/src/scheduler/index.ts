@@ -28,12 +28,12 @@ import {
 import type { TFBuild } from '#testflight.js';
 import { listBuilds, listTrains } from '#testflight.js';
 import { dispatchTargetKey, filterPendingDispatchTargets } from '#scheduler/pendingDispatch.js';
-import { buildSignedFileUrl } from '#util/signedUrl.js';
 import { normalizeVersion } from '#util/version.js';
 import { listAppVersions } from '#versions.js';
 import { dispatchIpaUpdate, findDispatchedRun, getGitHubRateLimitBudget, getRun, measureGitHubRequests, releaseTagExists, releaseVersionExists, type WorkflowRun } from '#scheduler/github.js';
 import { lookupCurrentVersion } from '#scheduler/itunes.js';
 import { resolveAppStoreDecryptTarget } from '#scheduler/appStoreVersion.js';
+import { buildArtifactFileUrl, getArtifactById } from '#artifacts.js';
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -327,7 +327,9 @@ async function decryptAndDispatch(job: Job, watch: AppWatch, isTestflight: boole
 
   const dispatchedAt = new Date();
   try {
-    const ipaUrl = buildSignedFileUrl(finished.id, config.fileTtlMinutes);
+    const artifact = finished.artifactId ? getArtifactById(finished.artifactId) : undefined;
+    if (!artifact) throw new Error('decrypt completed without a downloadable artifact');
+    const ipaUrl = buildArtifactFileUrl(artifact.id);
     const results = await Promise.allSettled(targets.map((target) => dispatchIpaUpdate(target.repo, target.ghWorkflowFile, ipaUrl, isTestflight, target.mode, target.ref, target.inputs)));
     const dispatchedTargets = targets.filter((_, index) => results[index].status === 'fulfilled');
     const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected').map((result) => String(result.reason));

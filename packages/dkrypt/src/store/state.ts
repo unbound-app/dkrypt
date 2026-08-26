@@ -404,21 +404,6 @@ export interface PushSubscriptionRecord {
   keys: { p256dh: string; auth: string };
 }
 
-export interface ShareLinkRecord {
-  id: string;
-  jobId: string;
-  bundleId: string;
-  token: string;
-  issuedBy: string;
-  issuedAt: number;
-  expiresAt: number;
-  revoked: boolean;
-  maxDownloads?: number;
-  downloadCount: number;
-  usedAt?: number;
-  lastUsedAt?: number;
-}
-
 export type NotificationSeverity = 'info' | 'success' | 'warning' | 'error';
 
 export interface NotificationRecord {
@@ -434,7 +419,7 @@ export interface NotificationRecord {
 }
 
 interface PersistedState {
-  version: 13;
+  version: 14;
   apiKeys: ApiKeyRecord[];
   allowedUsers: AllowedUser[];
   roles: Role[];
@@ -455,7 +440,6 @@ interface PersistedState {
   apiKeyBundleUsage: Record<string, Record<string, number>>;
   apiKeyOutcomeUsage: Record<string, Record<string, ApiKeyOutcomeUsage>>;
   githubBudgetTelemetry: GitHubBudgetTelemetryEntry[];
-  shareLinks: ShareLinkRecord[];
   webhookDeliveryLog: WebhookDeliveryEntry[];
   discordRolePerks: DiscordRolePerk[];
   discordGuilds: DiscordGuildConfiguration[];
@@ -469,7 +453,6 @@ interface PersistedState {
 const MAX_HISTORY = 100;
 const MAX_AUDIT_LOG = 200;
 const MAX_SCHEDULER_RUNS = 20;
-const MAX_SHARE_LINKS = 200;
 const MAX_USAGE_DAYS = 30;
 const MAX_DEVICE_HEALTH_CHECKS = 288;
 const MAX_DEVICE_ACTIVITY = 300;
@@ -480,7 +463,7 @@ const backupsDir = path.join(config.stateDir, 'backups');
 
 function defaultState(): PersistedState {
   return {
-    version: 13,
+    version: 14,
     apiKeys: [],
     allowedUsers: [],
     roles: [seedDefaultRole(Date.now())],
@@ -499,7 +482,6 @@ function defaultState(): PersistedState {
     apiKeyBundleUsage: {},
     apiKeyOutcomeUsage: {},
     githubBudgetTelemetry: [],
-    shareLinks: [],
     webhookDeliveryLog: [],
     discordRolePerks: [],
     discordGuilds: [],
@@ -775,29 +757,43 @@ function migrateV11ToV12(v11: Record<string, unknown>): Record<string, unknown> 
   return { ...defaultState(), ...v11, version: 12 };
 }
 
-function migrateV12ToV13(v12: Record<string, unknown>): PersistedState {
+function migrateV12ToV13(v12: Record<string, unknown>): Record<string, unknown> {
   return {
     ...defaultState(),
     ...v12,
     version: 13,
     notifications: Array.isArray(v12.notifications) ? (v12.notifications as NotificationRecord[]) : [],
-  } as PersistedState;
+  };
+}
+
+function migrateV13ToV14(v13: Record<string, unknown>): PersistedState {
+  const migrated = {
+    ...defaultState(),
+    ...v13,
+    version: 14,
+  } as PersistedState & { shareLinks?: unknown };
+  delete migrated.shareLinks;
+  migrated.roles = Array.isArray(v13.roles)
+    ? (v13.roles as Role[]).map((role) => ({ ...role, permissions: serializeBits(parseBits(role.permissions)) }))
+    : [seedDefaultRole(Date.now())];
+  return migrated;
 }
 
 function migrate(raw: Record<string, unknown>): PersistedState {
-  if (raw.version === 13) return { ...defaultState(), ...raw } as PersistedState;
-  if (raw.version === 12) return migrateV12ToV13(raw);
-  if (raw.version === 11) return migrateV12ToV13(migrateV11ToV12(raw));
-  if (raw.version === 10) return migrateV12ToV13(migrateV11ToV12(migrateV10ToV11(raw)));
-  if (raw.version === 9) return migrateV12ToV13(migrateV11ToV12(migrateV10ToV11(raw)));
-  if (raw.version === 8) return migrateV12ToV13(migrateV11ToV12(migrateV10ToV11(migrateV8ToV9(raw))));
-  if (raw.version === 7) return migrateV12ToV13(migrateV11ToV12(migrateV10ToV11(migrateV8ToV9(migrateV7ToV8(raw)))));
-  if (raw.version === 6) return migrateV12ToV13(migrateV11ToV12(migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(raw)))));
-  if (raw.version === 5) return migrateV12ToV13(migrateV11ToV12(migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(migrateV5ToV6(raw))))));
+  if (raw.version === 14) return migrateV13ToV14(raw);
+  if (raw.version === 13) return migrateV13ToV14(raw);
+  if (raw.version === 12) return migrateV13ToV14(migrateV12ToV13(raw));
+  if (raw.version === 11) return migrateV13ToV14(migrateV12ToV13(migrateV11ToV12(raw)));
+  if (raw.version === 10) return migrateV13ToV14(migrateV12ToV13(migrateV11ToV12(migrateV10ToV11(raw))));
+  if (raw.version === 9) return migrateV13ToV14(migrateV12ToV13(migrateV11ToV12(migrateV10ToV11(raw))));
+  if (raw.version === 8) return migrateV13ToV14(migrateV12ToV13(migrateV11ToV12(migrateV10ToV11(migrateV8ToV9(raw)))));
+  if (raw.version === 7) return migrateV13ToV14(migrateV12ToV13(migrateV11ToV12(migrateV10ToV11(migrateV8ToV9(migrateV7ToV8(raw))))));
+  if (raw.version === 6) return migrateV13ToV14(migrateV12ToV13(migrateV11ToV12(migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(raw))))));
+  if (raw.version === 5) return migrateV13ToV14(migrateV12ToV13(migrateV11ToV12(migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(migrateV5ToV6(raw)))))));
 
   if (raw.version === 4) {
     const v4Users = Array.isArray(raw.allowedUsers) ? (raw.allowedUsers as Record<string, unknown>[]) : [];
-    return migrateV12ToV13(migrateV11ToV12(migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(
+    return migrateV13ToV14(migrateV12ToV13(migrateV11ToV12(migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(
       migrateV5ToV6({
         ...raw,
         version: 5,
@@ -807,12 +803,12 @@ function migrate(raw: Record<string, unknown>): PersistedState {
           addedAt: u.addedAt as number,
         })),
       }),
-    )))));
+    ))))));
   }
 
   if (raw.version === 3) {
     const v3Users = Array.isArray(raw.allowedUsers) ? (raw.allowedUsers as Record<string, unknown>[]) : [];
-    return migrateV12ToV13(migrateV11ToV12(migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(
+    return migrateV13ToV14(migrateV12ToV13(migrateV11ToV12(migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(
       migrateV5ToV6({
         ...raw,
         version: 5,
@@ -822,12 +818,12 @@ function migrate(raw: Record<string, unknown>): PersistedState {
           addedAt: u.addedAt as number,
         })),
       }),
-    )))));
+    ))))));
   }
 
   if (raw.version === 2) {
     const legacyUsers = Array.isArray(raw.allowedUsers) ? (raw.allowedUsers as Record<string, unknown>[]) : [];
-    return migrateV12ToV13(migrateV11ToV12(migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(
+    return migrateV13ToV14(migrateV12ToV13(migrateV11ToV12(migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(
       migrateV5ToV6({
         ...raw,
         version: 5,
@@ -837,11 +833,11 @@ function migrate(raw: Record<string, unknown>): PersistedState {
           addedAt: u.addedAt as number,
         })),
       }),
-    )))));
+    ))))));
   }
 
   const legacyKeys = Array.isArray(raw.apiKeys) ? (raw.apiKeys as Record<string, unknown>[]) : [];
-  return migrateV12ToV13(migrateV11ToV12(migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(
+  return migrateV13ToV14(migrateV12ToV13(migrateV11ToV12(migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(
     migrateV5ToV6({
       apiKeys: legacyKeys.map((k) => ({
         id: k.id as string,
@@ -856,7 +852,7 @@ function migrate(raw: Record<string, unknown>): PersistedState {
       settings: (raw.settings as Partial<SchedulerSettings>) ?? {},
       jobHistory: (raw.jobHistory as JobHistoryEntry[]) ?? [],
     }),
-  )))));
+  ))))));
 }
 
 function normalizeLegacySchedulerRunOutcome(raw: unknown): SchedulerRunOutcome {
@@ -892,6 +888,7 @@ function load(): PersistedState {
     migrated.schedulerRunHistory = normalizeLegacySchedulerRunHistory(migrated.schedulerRunHistory);
     migrated.appCatalog = migrated.appCatalog ?? {};
     migrated.notifications = Array.isArray(migrated.notifications) ? migrated.notifications.slice(0, MAX_NOTIFICATIONS) : [];
+    writeFileSync(statePath, JSON.stringify(migrated, null, 2));
     return migrated;
   } catch {
     return defaultState();
@@ -1274,10 +1271,6 @@ export function mergeUserAccounts(targetUsername: string, sourceUsername: string
   for (const entry of state.jobHistory) {
     if (entry.queuedBy === sourceId) entry.queuedBy = targetId;
   }
-  for (const link of state.shareLinks) {
-    if (link.issuedBy === sourceId) link.issuedBy = targetId;
-  }
-
   const sourcePrefs = state.userPrefs[sourceId];
   const targetPrefs = state.userPrefs[targetId];
   if (sourcePrefs || targetPrefs) state.userPrefs[targetId] = { ...(sourcePrefs ?? {}), ...(targetPrefs ?? {}) };
@@ -2218,7 +2211,6 @@ export interface UserActivityStats {
   lastJobAt?: number;
   apiKeys: number;
   apiRequests30d: number;
-  activeShareLinks: number;
 }
 
 export function getUserActivityStats(): Map<string, UserActivityStats> {
@@ -2227,7 +2219,7 @@ export function getUserActivityStats(): Map<string, UserActivityStats> {
     const key = username.toLowerCase();
     const current = stats.get(key);
     if (current) return current;
-    const next = { manualJobs: 0, completedJobs: 0, failedJobs: 0, apiKeys: 0, apiRequests30d: 0, activeShareLinks: 0 };
+    const next = { manualJobs: 0, completedJobs: 0, failedJobs: 0, apiKeys: 0, apiRequests30d: 0 };
     stats.set(key, next);
     return next;
   };
@@ -2243,11 +2235,6 @@ export function getUserActivityStats(): Map<string, UserActivityStats> {
     const activity = ensure(key.ownerId);
     activity.apiKeys += 1;
     activity.apiRequests30d += getApiKeyUsage(key.id, 30).reduce((total, bucket) => total + bucket.count, 0);
-  }
-  const now = Date.now();
-  for (const link of state.shareLinks) {
-    if (link.revoked || link.expiresAt <= now || shareLinkExhausted(link)) continue;
-    ensure(link.issuedBy).activeShareLinks += 1;
   }
   return stats;
 }
@@ -2734,171 +2721,6 @@ export function getPushSubscriptions(username: string): PushSubscriptionRecord[]
 
 export function getUsersWithPushSubscriptions(): string[] {
   return Object.keys(state.pushSubscriptions).filter((username) => state.pushSubscriptions[username].length > 0);
-}
-
-export function recordShareLink(
-  jobId: string,
-  bundleId: string,
-  token: string,
-  issuedBy: string,
-  expiresAt: number,
-  maxDownloads?: number,
-): ShareLinkRecord {
-  const record: ShareLinkRecord = {
-    id: randomUUID(),
-    jobId,
-    bundleId,
-    token,
-    issuedBy,
-    issuedAt: Date.now(),
-    expiresAt,
-    revoked: false,
-    downloadCount: 0,
-    maxDownloads: maxDownloads && maxDownloads > 0 ? maxDownloads : undefined,
-  };
-  state.shareLinks.push(record);
-  if (state.shareLinks.length > MAX_SHARE_LINKS) state.shareLinks.shift();
-  persistNow();
-  return record;
-}
-
-export function shareLinkDownloadUrl(l: ShareLinkRecord): string {
-  return `${config.publicBaseUrl}/v1/jobs/${l.jobId}/file?token=${l.token}`;
-}
-
-function shareLinkExhausted(l: ShareLinkRecord): boolean {
-  return l.maxDownloads !== undefined && (l.downloadCount ?? 0) >= l.maxDownloads;
-}
-
-function redactShareLink(l: ShareLinkRecord, revealUrl: boolean) {
-  return {
-    id: l.id,
-    jobId: l.jobId,
-    bundleId: l.bundleId,
-    issuedBy: l.issuedBy,
-    issuedAt: l.issuedAt,
-    expiresAt: l.expiresAt,
-    revoked: l.revoked,
-    maxDownloads: l.maxDownloads,
-    downloadCount: l.downloadCount ?? 0,
-    usedAt: l.usedAt,
-    lastUsedAt: l.lastUsedAt,
-    url: revealUrl ? shareLinkDownloadUrl(l) : undefined,
-  };
-}
-
-export function listShareLinksForJob(jobId: string, viewerId: string): ReturnType<typeof redactShareLink>[] {
-  const now = Date.now();
-  return state.shareLinks
-    .filter((l) => l.jobId === jobId && l.expiresAt > now)
-    .sort((a, b) => b.issuedAt - a.issuedAt)
-    .map((l) => redactShareLink(l, l.issuedBy === viewerId));
-}
-
-export function activeShareLinkDownloadUrlForJob(jobId: string, viewerId: string, includeSystem = false): string | undefined {
-  const now = Date.now();
-  const link = state.shareLinks
-    .filter(
-      (candidate) =>
-        candidate.jobId === jobId &&
-        (candidate.issuedBy === viewerId || (includeSystem && candidate.issuedBy === 'system')) &&
-        !candidate.revoked &&
-        candidate.expiresAt > now &&
-        !shareLinkExhausted(candidate),
-    )
-    .sort((a, b) => b.expiresAt - a.expiresAt)[0];
-  return link ? shareLinkDownloadUrl(link) : undefined;
-}
-
-export function listAllShareLinks(): ReturnType<typeof redactShareLink>[] {
-  const now = Date.now();
-  return state.shareLinks.filter((l) => l.expiresAt > now).sort((a, b) => b.issuedAt - a.issuedAt).map((l) => redactShareLink(l, true));
-}
-
-export function revokeShareLink(id: string): boolean {
-  const record = state.shareLinks.find((l) => l.id === id);
-  if (!record) return false;
-  record.revoked = true;
-  persistNow();
-  return true;
-}
-
-export interface UpdateShareLinkResult {
-  ok: boolean;
-  error?: string;
-  link?: ReturnType<typeof redactShareLink>;
-}
-
-export function updateShareLink(id: string, updates: { expiresAt?: number; maxDownloads?: number | null }, allowExtend: boolean): UpdateShareLinkResult {
-  const record = state.shareLinks.find((l) => l.id === id);
-  if (!record) return { ok: false, error: 'share link not found' };
-  if (record.revoked) return { ok: false, error: 'this share link has been revoked' };
-
-  if (updates.expiresAt !== undefined) {
-    if (updates.expiresAt > record.expiresAt && !allowExtend) {
-      return { ok: false, error: 'extending a share link’s expiry requires additional permission' };
-    }
-    record.expiresAt = updates.expiresAt;
-  }
-
-  if (updates.maxDownloads !== undefined) {
-    record.maxDownloads = updates.maxDownloads === null ? undefined : updates.maxDownloads;
-  }
-
-  persistNow();
-  return { ok: true, link: redactShareLink(record, true) };
-}
-
-export function revokeAllShareLinksForJob(jobId: string): number {
-  const now = Date.now();
-  let revoked = 0;
-  for (const l of state.shareLinks) {
-    if (l.jobId === jobId && !l.revoked && l.expiresAt > now) {
-      l.revoked = true;
-      revoked += 1;
-    }
-  }
-  if (revoked > 0) persistNow();
-  return revoked;
-}
-
-export function isShareLinkRevoked(jobId: string, token: string): boolean {
-  return state.shareLinks.some((l) => l.jobId === jobId && l.token === token && l.revoked);
-}
-
-export function shareLinkExistsForToken(jobId: string, token: string): boolean {
-  return state.shareLinks.some((l) => l.jobId === jobId && l.token === token);
-}
-
-export function isShareLinkExpired(jobId: string, token: string): boolean {
-  const record = state.shareLinks.find((l) => l.jobId === jobId && l.token === token);
-  return record ? record.expiresAt <= Date.now() : false;
-}
-
-export function latestActiveShareLinkExpiry(jobId: string): number | undefined {
-  const now = Date.now();
-  let latest: number | undefined;
-  for (const l of state.shareLinks) {
-    if (l.jobId === jobId && !l.revoked && l.expiresAt > now && !shareLinkExhausted(l) && (latest === undefined || l.expiresAt > latest)) {
-      latest = l.expiresAt;
-    }
-  }
-  return latest;
-}
-
-export function isShareLinkExhausted(jobId: string, token: string): boolean {
-  const record = state.shareLinks.find((l) => l.jobId === jobId && l.token === token);
-  return record ? shareLinkExhausted(record) : false;
-}
-
-export function recordShareLinkDownload(jobId: string, token: string): void {
-  const record = state.shareLinks.find((l) => l.jobId === jobId && l.token === token);
-  if (!record) return;
-  const now = Date.now();
-  record.downloadCount = (record.downloadCount ?? 0) + 1;
-  if (!record.usedAt) record.usedAt = now;
-  record.lastUsedAt = now;
-  persistNow();
 }
 
 export function getUserPrefs(username: string): UserPrefs {

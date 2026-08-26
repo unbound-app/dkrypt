@@ -3,8 +3,6 @@ import { existsSync } from 'node:fs';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { recordShareLink, revokeShareLink } from '#store/state.js';
-import { buildSignedFileUrlWithToken } from '#util/signedUrl.js';
 
 mock.module('./runner.js', () => ({
   runDecrypt: () => new Promise<void>(() => {}),
@@ -82,24 +80,17 @@ describe('enqueueDecryptJob', () => {
     expect(retry.id).toBe(completed.id);
   });
 
-  test('keeps a completed job while its active share link is available', async () => {
-    const outputDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-share-retention-'));
+  test('reclaims a completed job file without an artifact exception', async () => {
+    const outputDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-job-retention-'));
     const outputPath = path.join(outputDir, 'app.ipa');
     await writeFile(outputPath, 'ipa');
     const job = enqueueDecryptJob('com.test.scheduler-share', 'scheduler');
     job.status = 'done';
     job.filePath = outputPath;
     job.finishedAt = Date.now();
-    const share = buildSignedFileUrlWithToken(job.id, 60);
-    const link = recordShareLink(job.id, job.bundleId, share.token, 'system', share.expiresAtMs);
-
-    try {
-      await reclaimJobFile(job);
-      expect(getJob(job.id)).toBe(job);
-      expect(existsSync(outputPath)).toBe(true);
-    } finally {
-      revokeShareLink(link.id);
-    }
+    await reclaimJobFile(job);
+    expect(getJob(job.id)).toBeUndefined();
+    expect(existsSync(outputPath)).toBe(false);
   });
 });
 

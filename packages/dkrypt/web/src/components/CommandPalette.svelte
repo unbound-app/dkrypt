@@ -206,6 +206,8 @@
 			status: data.status,
 			progress: data.progress,
 			queue: data.queue,
+			artifactId: data.artifactId,
+			artifactUrl: data.artifactUrl,
 		});
 		pushRecentBundleId(job.bundleId);
 		showToast(`Retrying ${appDisplayName(job.bundleId)}`, "success");

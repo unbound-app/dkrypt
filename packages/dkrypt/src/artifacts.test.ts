@@ -94,7 +94,7 @@ describe('persistent artifact store', () => {
     await expect(rm(orphan)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  test('lists retained files newest first with quota statistics', async () => {
+  test('lists artifacts newest first with quota statistics', async () => {
     config.artifactMaxBytes = 1024 * 1024;
     await promoteArtifact({
       key: `test-list-${crypto.randomUUID()}`,

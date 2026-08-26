@@ -9,13 +9,12 @@ import { scopedLogger } from '#logger.js';
 const log = scopedLogger('jobs');
 import { sendMailToUser } from '#mail.js';
 import { sendPushToUser } from '#push.js';
-import { getApiKeyById, getEffectiveDevices, getUserPrefs, isBundleWatched, latestActiveShareLinkExpiry, recordDeviceActivity, recordJobHistory, recordShareLink, type DeviceRecord } from '#store/state.js';
+import { getApiKeyById, getEffectiveDevices, getUserPrefs, isBundleWatched, recordDeviceActivity, recordJobHistory, type DeviceRecord } from '#store/state.js';
 import { uninstallFromPrimaryDevice } from '#appStoreInstall.js';
 import { getCachedDeviceHealth } from '#deviceHealthCache.js';
 import { runDecrypt } from '#jobs/runner.js';
 import { appendJobTimelineEvent, type Job, type JobSource, type TestFlightJobSource } from '#jobs/types.js';
-import { buildSignedFileUrlWithToken } from '#util/signedUrl.js';
-import { artifactKeyForJob, getArtifactByKey, getArtifactForJob, migrateLegacyPath, type ArtifactRecord } from '#artifacts.js';
+import { artifactKeyForJob, buildDashboardArtifactFileUrl, getArtifactById, getArtifactByKey, getArtifactForJob, migrateLegacyPath, type ArtifactRecord } from '#artifacts.js';
 
 const jobs = new Map<string, Job>();
 
@@ -171,9 +170,9 @@ function createCachedJob(
     apiKeyId,
     priority,
     status: 'done',
-    progress: 'retained IPA cache hit',
+    progress: 'artifact cache hit',
     timeline: [
-      { at: now, label: 'Retained IPA cache hit', status: 'done' },
+      { at: now, label: 'Artifact cache hit', status: 'done' },
       { at: now, label: 'Finished', status: 'done' },
     ],
     artifactId: artifact.id,
@@ -261,7 +260,7 @@ export function getActiveJobs(): Job[] {
   return [...jobs.values()].filter((j) => j.status === 'queued' || j.status === 'running');
 }
 
-export function getRetainedJobArtifacts(): Job[] {
+export function getArtifactBackedJobs(): Job[] {
   return [...jobs.values()].filter((job) => job.status === 'done' && !!job.filePath);
 }
 
@@ -579,18 +578,8 @@ async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
     persistActiveJobs();
   }
 
-  const completionShare = job.status === 'done'
-    ? buildSignedFileUrlWithToken(job.id, config.fileTtlMinutes)
-    : undefined;
-  if (completionShare) {
-    recordShareLink(
-      job.id,
-      job.bundleId,
-      completionShare.token,
-      job.queuedBy ?? 'system',
-      completionShare.expiresAtMs,
-    );
-  }
+  const completedArtifact = job.status === 'done' && job.artifactId ? getArtifactById(job.artifactId) : undefined;
+  const downloadUrl = completedArtifact ? buildDashboardArtifactFileUrl(completedArtifact.id) : undefined;
 
   recordJobHistory(toHistoryEntry(job));
   emitJobsChanged();
@@ -599,15 +588,17 @@ async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
     const prefs = getUserPrefs(job.queuedBy);
     const label = job.versionLabel ? `${job.bundleId} (${job.versionLabel})` : job.bundleId;
     const title = job.status === 'done' ? 'Decrypt finished' : 'Decrypt failed';
-    const body = job.status === 'done' ? `${label} is ready to download.` : `${label} failed: ${job.error ?? 'unknown error'}`;
+    const body = job.status === 'done'
+      ? downloadUrl ? `${label} is ready to download.` : `${label} finished, but its artifact is unavailable.`
+      : `${label} failed: ${job.error ?? 'unknown error'}`;
 
     const shouldPush = job.status === 'done' ? (prefs.pushOnSuccess ?? true) : (prefs.pushOnFailure ?? true);
     if (shouldPush) {
       void sendPushToUser(job.queuedBy, {
         title,
         body,
-        url: completionShare?.url ?? `/?job=${encodeURIComponent(job.id)}`,
-        actions: completionShare
+        url: downloadUrl ?? `/?job=${encodeURIComponent(job.id)}`,
+        actions: downloadUrl
           ? [{ action: 'download', title: 'Download' }]
           : [{ action: 'open-job', title: 'Open job' }],
       });
@@ -616,7 +607,7 @@ async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
     const shouldMail = job.status === 'done' ? (prefs.emailOnSuccess ?? false) : (prefs.emailOnFailure ?? false);
     if (shouldMail) void sendMailToUser(job.queuedBy, {
       subject: title,
-      text: completionShare ? `${body}\n\nDownload: ${completionShare.url}` : body,
+      text: downloadUrl ? `${body}\n\nDownload: ${downloadUrl}` : body,
     });
   }
 
@@ -636,7 +627,6 @@ async function cleanupJob(job: Job): Promise<void> {
 
 export async function reclaimJobFile(job: Job): Promise<void> {
   if (job.artifactId || getArtifactForJob(job)) return;
-  if (latestActiveShareLinkExpiry(job.id) !== undefined) return;
   job.downloadedAt = Date.now();
   await cleanupJob(job);
 }
@@ -660,10 +650,8 @@ export function startJobSweeper(): void {
 
     for (const job of jobs.values()) {
 
-      const shareLinkExpiry = latestActiveShareLinkExpiry(job.id) ?? 0;
-
       const finishedAt = job.finishedAt ?? job.createdAt;
-      if ((job.status === 'done' || job.status === 'failed') && now - finishedAt > retentionMs && now > shareLinkExpiry) {
+      if ((job.status === 'done' || job.status === 'failed') && now - finishedAt > retentionMs) {
         void reclaimAndMaybeUninstall(job);
       }
     }

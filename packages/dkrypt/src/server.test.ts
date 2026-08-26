@@ -1,11 +1,10 @@
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test } from 'bun:test';
-import { enqueueDecryptJob, reclaimJobFile } from '#jobs/store.js';
+import { buildArtifactFileUrl, promoteArtifact } from '#artifacts.js';
 import { buildServer } from '#server.js';
-import { recordJobHistory, recordNotification, recordShareLink, revokeShareLink } from '#store/state.js';
-import { buildSignedFileUrlWithToken } from '#util/signedUrl.js';
+import { createApiKey, recordJobHistory, recordNotification, revokeApiKey } from '#store/state.js';
 
 async function signIn() {
   const server = await buildServer({ includePublicRoutes: false });
@@ -69,14 +68,23 @@ test('Fastify sends the initial dashboard overview over SSE', async () => {
   }
 });
 
-test('Fastify includes live download metadata in history events', async () => {
+test('Fastify includes a session-protected artifact download in live history events', async () => {
   const { server, cookie } = await signIn();
   const baseUrl = await server.listen({ port: 0, host: '127.0.0.1' });
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 5_000);
   const id = `live-history-${crypto.randomUUID()}`;
-  const token = `token-${crypto.randomUUID()}`;
-  const link = recordShareLink(id, 'com.example.live-history', token, 'system', Date.now() + 60_000);
+  const outputDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-live-history-'));
+  const outputPath = path.join(outputDir, 'app.ipa');
+  await writeFile(outputPath, 'ipa');
+  const artifact = await promoteArtifact({
+    key: `com.example.live-history|appstore|${id}`,
+    bundleId: 'com.example.live-history',
+    channel: 'appstore',
+    versionLabel: '342.0',
+    stagingPath: outputPath,
+    sourceJobId: id,
+  });
 
   try {
     const response = await fetch(`${baseUrl}/v1/dashboard/events`, { headers: { cookie }, signal: controller.signal });
@@ -91,6 +99,7 @@ test('Fastify includes live download metadata in history events', async () => {
       bundleId: 'com.example.live-history',
       status: 'done',
       source: 'scheduler',
+      artifactId: artifact.id,
       createdAt: Date.now() - 1_000,
       finishedAt: Date.now(),
     });
@@ -101,40 +110,66 @@ test('Fastify includes live download metadata in history events', async () => {
     expect(match).not.toBeNull();
     expect(JSON.parse(match?.[1] ?? '')).toMatchObject({
       id,
-      activeShareUrl: expect.stringContaining(`/v1/jobs/${id}/file?token=${token}`),
-      fileAvailable: false,
+      downloadUrl: `/v1/dashboard/artifacts/${artifact.id}/file`,
+      fileAvailable: true,
     });
   } finally {
     clearTimeout(timeout);
     controller.abort();
-    revokeShareLink(link.id);
+    await rm(artifact.filePath, { force: true });
     await server.close();
   }
 });
 
-test('Fastify explains when a history job no longer has an IPA to share', async () => {
+test('Fastify has no former share-link dashboard routes', async () => {
   const { server, cookie } = await signIn();
-  const id = `cleaned-job-${crypto.randomUUID()}`;
-  recordJobHistory({
-    id,
-    bundleId: 'com.example.cleaned',
-    status: 'done',
-    source: 'manual',
-    createdAt: Date.now() - 1_000,
-    finishedAt: Date.now(),
+
+  try {
+    const routes = [
+      ['POST', '/v1/dashboard/jobs/removed/share'],
+      ['GET', '/v1/dashboard/jobs/removed/share'],
+      ['GET', '/v1/dashboard/share-links'],
+      ['GET', '/v1/dashboard/share-links/export'],
+      ['POST', '/v1/dashboard/jobs/share/removed/revoke'],
+      ['POST', '/v1/dashboard/jobs/removed/share/revoke-all'],
+      ['PATCH', '/v1/dashboard/jobs/share/removed'],
+      ['GET', '/v1/dashboard/jobs/removed/file'],
+    ] as const;
+    for (const [method, url] of routes) {
+      const response = await server.inject({ method, url, headers: { cookie } });
+      expect(response.statusCode).toBe(404);
+    }
+  } finally {
+    await server.close();
+  }
+});
+
+test('Fastify serves artifacts through a dashboard session', async () => {
+  const { server, cookie } = await signIn();
+  const outputDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-dashboard-artifact-'));
+  const outputPath = path.join(outputDir, 'app.ipa');
+  await writeFile(outputPath, 'dashboard ipa');
+  const artifact = await promoteArtifact({
+    key: `com.example.dashboard-artifact|appstore|${crypto.randomUUID()}`,
+    bundleId: 'com.example.dashboard-artifact',
+    channel: 'appstore',
+    versionLabel: '342.0',
+    stagingPath: outputPath,
   });
 
   try {
+    const unauthorized = await server.inject({ method: 'GET', url: `/v1/dashboard/artifacts/${artifact.id}/file` });
+    expect(unauthorized.statusCode).toBe(401);
+
     const response = await server.inject({
-      method: 'POST',
-      url: `/v1/dashboard/jobs/${id}/share`,
+      method: 'GET',
+      url: `/v1/dashboard/artifacts/${artifact.id}/file`,
       headers: { cookie },
     });
-    expect(response.statusCode).toBe(410);
-    expect(response.json() as { error?: string }).toEqual({
-      error: 'the decrypted IPA has been cleaned up and can no longer be shared',
-    });
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toBe('dashboard ipa');
   } finally {
+    await rm(artifact.filePath, { force: true });
     await server.close();
   }
 });
@@ -165,67 +200,119 @@ test('Fastify marks cleaned completed jobs as unavailable in history', async () 
   }
 });
 
-test('Fastify exposes system-issued scheduler share links in recent jobs', async () => {
+test('Fastify exposes scheduler artifacts in recent jobs after the job is pruned', async () => {
   const { server, cookie } = await signIn();
-  const id = `scheduler-share-${crypto.randomUUID()}`;
-  const token = `token-${crypto.randomUUID()}`;
+  const id = `scheduler-artifact-${crypto.randomUUID()}`;
+  const outputDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-scheduler-artifact-'));
+  const outputPath = path.join(outputDir, 'app.ipa');
+  await writeFile(outputPath, 'ipa');
+  const artifact = await promoteArtifact({
+    key: `com.example.scheduler-artifact|appstore|${id}`,
+    bundleId: 'com.example.scheduler-artifact',
+    channel: 'appstore',
+    versionLabel: '342.0',
+    stagingPath: outputPath,
+    sourceJobId: id,
+  });
   recordJobHistory({
     id,
-    bundleId: 'com.example.scheduler-share',
+    bundleId: 'com.example.scheduler-artifact',
     status: 'done',
     source: 'scheduler',
     createdAt: Date.now() - 1_000,
     finishedAt: Date.now(),
   });
-  const link = recordShareLink(id, 'com.example.scheduler-share', token, 'system', Date.now() + 60_000);
 
   try {
     const response = await server.inject({
       method: 'GET',
-      url: '/v1/dashboard/jobs?q=com.example.scheduler-share',
+      url: '/v1/dashboard/jobs?q=com.example.scheduler-artifact',
       headers: { cookie },
     });
     expect(response.statusCode).toBe(200);
-    const body = response.json() as { history: Array<{ id: string; activeShareUrl?: string }> };
-    expect(body.history.find((entry) => entry.id === id)?.activeShareUrl).toContain(`/v1/jobs/${id}/file?token=${token}`);
+    const body = response.json() as { history: Array<{ id: string; downloadUrl?: string; fileAvailable: boolean }> };
+    expect(body.history.find((entry) => entry.id === id)).toMatchObject({
+      downloadUrl: `/v1/dashboard/artifacts/${artifact.id}/file`,
+      fileAvailable: true,
+    });
   } finally {
-    revokeShareLink(link.id);
+    await rm(artifact.filePath, { force: true });
     await server.close();
   }
 });
 
-test('Fastify serves a signed scheduler share link while the job is retained', async () => {
+test('Fastify requires an API key for stable artifact downloads and rejects old signed tokens', async () => {
   const server = await buildServer({ includePublicRoutes: false });
-  const outputDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-scheduler-download-'));
+  const outputDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-artifact-download-'));
   const outputPath = path.join(outputDir, 'app.ipa');
   await writeFile(outputPath, 'ipa');
-  const job = enqueueDecryptJob(
-    'com.example.scheduler-download',
-    'scheduler',
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    0,
-    `unavailable-device-${crypto.randomUUID()}`,
-  );
-  job.status = 'done';
-  job.filePath = outputPath;
-  job.fileSizeBytes = 3;
-  job.finishedAt = Date.now();
-  const share = buildSignedFileUrlWithToken(job.id, 60);
-  const link = recordShareLink(job.id, job.bundleId, share.token, 'system', share.expiresAtMs);
+  const artifact = await promoteArtifact({
+    key: `com.example.scheduler-download|appstore|${crypto.randomUUID()}`,
+    bundleId: 'com.example.scheduler-download',
+    channel: 'appstore',
+    versionLabel: '342.0',
+    stagingPath: outputPath,
+  });
+
+  try {
+    const unauthorized = await server.inject({
+      method: 'GET',
+      url: `/v1/artifacts/${artifact.id}/file?token=old-token`,
+    });
+    expect(unauthorized.statusCode).toBe(401);
+
+    const oldJobRoute = await server.inject({
+      method: 'GET',
+      url: '/v1/jobs/removed/file?token=old-token',
+      headers: { authorization: `Bearer ${process.env.API_KEY}` },
+    });
+    expect(oldJobRoute.statusCode).toBe(404);
+
+    const response = await server.inject({
+      method: 'GET',
+      url: buildArtifactFileUrl(artifact.id),
+      headers: { authorization: `Bearer ${process.env.API_KEY}` },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toBe('ipa');
+
+    await rm(artifact.filePath, { force: true });
+    const removed = await server.inject({
+      method: 'GET',
+      url: buildArtifactFileUrl(artifact.id),
+      headers: { authorization: `Bearer ${process.env.API_KEY}` },
+    });
+    expect(removed.statusCode).toBe(404);
+  } finally {
+    await rm(artifact.filePath, { force: true });
+    await server.close();
+  }
+});
+
+test('Fastify enforces API key bundle scopes for artifact downloads', async () => {
+  const server = await buildServer({ includePublicRoutes: false });
+  const outputDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-scoped-artifact-'));
+  const outputPath = path.join(outputDir, 'app.ipa');
+  await writeFile(outputPath, 'scoped ipa');
+  const artifact = await promoteArtifact({
+    key: `com.example.scoped-artifact|appstore|${crypto.randomUUID()}`,
+    bundleId: 'com.example.scoped-artifact',
+    channel: 'appstore',
+    versionLabel: '342.0',
+    stagingPath: outputPath,
+  });
+  const scopedKey = createApiKey('scoped artifact test', 'root', undefined, ['com.example.other']);
 
   try {
     const response = await server.inject({
       method: 'GET',
-      url: `/v1/jobs/${job.id}/file?token=${encodeURIComponent(share.token)}`,
+      url: buildArtifactFileUrl(artifact.id),
+      headers: { authorization: `Bearer ${scopedKey.key}` },
     });
-    expect(response.statusCode).toBe(200);
-    expect(response.body).toBe('ipa');
+    expect(response.statusCode).toBe(403);
   } finally {
-    revokeShareLink(link.id);
-    await reclaimJobFile(job);
+    revokeApiKey(scopedKey.id, 'root', true);
+    await rm(artifact.filePath, { force: true });
     await server.close();
   }
 });

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { findDispatchedRun, listReleaseVersions, releaseVersionExists } from '#scheduler/github.js';
+import { config } from '#config.js';
+import { dispatchIpaUpdate, findDispatchedRun, listReleaseVersions, releaseVersionExists } from '#scheduler/github.js';
 
 const originalFetch = globalThis.fetch;
 
@@ -99,5 +100,25 @@ describe('GitHub metadata requests', () => {
       'https://api.github.com/repos/example/app/releases?per_page=100',
       'https://api.github.com/repos/example/app/releases/tags/v341.0',
     ]);
+  });
+
+  test('dispatches a stable artifact URL without an expiry token', async () => {
+    let payload: Record<string, unknown> | undefined;
+    globalThis.fetch = (async (_input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      payload = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return new Response(null, { status: 204 });
+    }) as unknown as typeof fetch;
+
+    await dispatchIpaUpdate('example/app', 'remote-deploy.yml', `${config.publicBaseUrl}/v1/artifacts/artifact-1/file`, false);
+
+    expect(payload).toMatchObject({
+      event_type: 'ipa-update',
+      client_payload: {
+        ipa_url: `${config.publicBaseUrl}/v1/artifacts/artifact-1/file`,
+        is_testflight: false,
+      },
+    });
+    expect(String((payload?.client_payload as Record<string, unknown>)?.ipa_url)).not.toContain('token=');
+    expect((payload?.client_payload as Record<string, unknown>)?.dkrypt_base_url).toBeUndefined();
   });
 });

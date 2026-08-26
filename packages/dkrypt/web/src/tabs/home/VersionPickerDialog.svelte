@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Download, RefreshCw } from 'lucide-svelte';
   import EmptyState from '#components/EmptyState.svelte';
-  import { fetchAppVersions, type AppVersionEntry } from '#lib/api';
+  import { dashboardArtifactDownloadUrl, fetchAppVersions, type AppVersionEntry } from '#lib/api';
   import Badge from '#lib/components/ui/Badge.svelte';
   import Button from '#lib/components/ui/Button.svelte';
   import Dialog from '#lib/components/ui/Dialog.svelte';
@@ -115,16 +115,16 @@
               {#if v.isLatest}
                 <Badge variant="default">latest</Badge>
               {/if}
-              {#if v.retainedArtifactId}
-                <Badge variant="secondary">retained</Badge>
+              {#if v.artifactId}
+                <Badge variant="secondary">artifact available</Badge>
               {/if}
             </div>
             {#if v.releaseDate}
               <div class="text-muted text-xs">{fmtTime(new Date(v.releaseDate).getTime())}</div>
             {/if}
           </div>
-          {#if v.retainedArtifactId}
-            <a href={`/v1/dashboard/artifacts/${v.retainedArtifactId}/file`} download>
+          {#if v.artifactId}
+            <a href={dashboardArtifactDownloadUrl(v.artifactId)} download>
               <Button size="sm" variant="secondary"><Download class="h-3.5 w-3.5" />Download</Button>
             </a>
           {:else}

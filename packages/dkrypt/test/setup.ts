@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 process.env.API_KEY ??= 'test-api-key';
-process.env.DOWNLOAD_SIGNING_SECRET ??= 'test-signing-secret';
+process.env.SESSION_SIGNING_SECRET ??= 'test-session-signing-secret';
 process.env.ADMIN_PASSWORD ??= 'test-admin-password';
 process.env.STRIPE_SECRET_KEY ??= 'sk_test_dkrypt';
 process.env.STRIPE_WEBHOOK_SECRET ??= 'whsec_dkrypt_test';
