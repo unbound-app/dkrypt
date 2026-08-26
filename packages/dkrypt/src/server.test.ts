@@ -268,7 +268,10 @@ test('Fastify resolves job requester identities for history', async () => {
       displayName: 'Visual User',
       avatarUrl: 'https://example.com/avatar.png',
     });
-    expect(body.history.find((entry) => entry.id === schedulerId)?.requester).toEqual({ displayName: 'System' });
+    expect(body.history.find((entry) => entry.id === schedulerId)?.requester).toEqual({
+      displayName: 'System',
+      avatarUrl: '/favicon.svg',
+    });
   } finally {
     await server.close();
   }

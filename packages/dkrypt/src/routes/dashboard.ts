@@ -236,7 +236,7 @@ function dashboardHistoryEntry(entry: JobHistoryEntry) {
 }
 
 function dashboardJobRequester(entry: JobHistoryEntry) {
-  if (entry.source === 'scheduler') return { displayName: 'System' };
+  if (entry.source === 'scheduler') return { displayName: 'System', avatarUrl: '/favicon.svg' };
   if (!entry.queuedBy) return { displayName: 'Unknown' };
   const profile = getAuthProfile(entry.queuedBy);
   return {
