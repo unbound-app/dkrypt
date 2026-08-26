@@ -49,6 +49,8 @@ Open `http://localhost:8080`, or place your reverse proxy in front of it.
 
 Pushes to `main` run the Moon check graph, generate the dashboard changelog from Git history, publish an immutable GHCR image, and deploy that exact digest on the homelab runner. The runner keeps only the runtime `.env` in `/home/adrian/.local/share/dkrypt`, pulls images, and never retains a source checkout. If its health check fails, it starts the previous image again.
 
+The homelab runtime `.env` must include `SESSION_SIGNING_SECRET` alongside the other required authentication values.
+
 ## Stripe setup
 
 Enable Managed Payments and accept its terms in Stripe Dashboard first. Then choose an eligible product tax code for dkrypt’s SaaS plans and set `STRIPE_TAX_CODE` before creating the monthly EUR catalog and hosted webhook from `packages/dkrypt` with a Stripe test or live secret:
