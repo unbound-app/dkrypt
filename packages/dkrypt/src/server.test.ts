@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test } from 'bun:test';
 import { buildArtifactFileUrl, promoteArtifact } from '#artifacts.js';
+import { upsertAuthProfile } from '#identity.js';
 import { buildServer } from '#server.js';
 import { createApiKey, recordJobHistory, recordNotification, revokeApiKey } from '#store/state.js';
 
@@ -215,6 +216,59 @@ test('Fastify marks cleaned completed jobs as unavailable in history', async () 
     expect(response.statusCode).toBe(200);
     const body = response.json() as { history: Array<{ id: string; fileAvailable: boolean }> };
     expect(body.history).toContainEqual(expect.objectContaining({ id, fileAvailable: false }));
+  } finally {
+    await server.close();
+  }
+});
+
+test('Fastify resolves job requester identities for history', async () => {
+  const { server, cookie } = await signIn();
+  const suffix = crypto.randomUUID();
+  const bundleId = `com.example.requester-${suffix}`;
+  const userId = `github:${suffix}`;
+  const manualId = `manual-requester-${suffix}`;
+  const schedulerId = `scheduler-requester-${suffix}`;
+  upsertAuthProfile({
+    userId,
+    provider: 'github',
+    providerId: suffix,
+    username: `requester-${suffix}`,
+    displayName: 'Visual User',
+    avatarUrl: 'https://example.com/avatar.png',
+    updatedAt: new Date().toISOString(),
+  });
+  recordJobHistory({
+    id: manualId,
+    bundleId,
+    queuedBy: userId,
+    status: 'done',
+    source: 'manual',
+    createdAt: Date.now() - 2_000,
+    finishedAt: Date.now() - 1_000,
+  });
+  recordJobHistory({
+    id: schedulerId,
+    bundleId,
+    status: 'done',
+    source: 'scheduler',
+    createdAt: Date.now() - 1_000,
+    finishedAt: Date.now(),
+  });
+
+  try {
+    const response = await server.inject({
+      method: 'GET',
+      url: `/v1/dashboard/jobs?q=${encodeURIComponent(bundleId)}`,
+      headers: { cookie },
+    });
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as { history: Array<{ id: string; requester?: { username?: string; displayName: string; avatarUrl?: string } }> };
+    expect(body.history.find((entry) => entry.id === manualId)?.requester).toEqual({
+      username: `requester-${suffix}`,
+      displayName: 'Visual User',
+      avatarUrl: 'https://example.com/avatar.png',
+    });
+    expect(body.history.find((entry) => entry.id === schedulerId)?.requester).toEqual({ displayName: 'System' });
   } finally {
     await server.close();
   }

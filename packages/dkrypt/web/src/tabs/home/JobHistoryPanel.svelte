@@ -66,6 +66,15 @@
 		/ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EHOSTUNREACH|no route to host|not reachable|connection closed/i;
 	const DISK_RE = /ENOSPC|no space left/i;
 
+	function requesterInitials(name: string): string {
+		return name
+			.split(/\s+/)
+			.filter(Boolean)
+			.slice(0, 2)
+			.map((part) => part[0]?.toUpperCase())
+			.join("") || "?";
+	}
+
 	function categorizeFailure(message: string | undefined): string {
 		if (!message) return "Unknown";
 		if (CANCELLED_RE.test(message)) return "Cancelled";
@@ -810,6 +819,10 @@
 						</div>
 						<div role="list">
 							{#each g.items as j (j.id)}
+								{@const requester = j.requester ?? {
+									displayName: j.source === "scheduler" ? "System" : (j.queuedBy ?? "Unknown"),
+									username: j.queuedBy,
+								}}
 								<article
 									class="history-feed-row"
 									role="listitem"
@@ -844,11 +857,18 @@
 														>TestFlight</Badge
 													>
 												{/if}
-											<span class="text-xs text-muted"
-												>{j.source}</span
+											<span
+												class="border-border bg-panel-muted inline-flex max-w-full items-center gap-1.5 rounded-full border py-0.5 pr-2 pl-1 text-[11px] text-muted"
+												title={requester.username ?? requester.displayName}
 											>
-											<span class="text-xs text-muted" title="The dashboard user or API-key owner that queued this job">
-												requested by {j.queuedBy ?? (j.source === "scheduler" ? "scheduler" : "unknown")}
+												{#if requester.avatarUrl}
+													<img src={requester.avatarUrl} alt="" class="h-4 w-4 shrink-0 rounded-full object-cover" />
+												{:else}
+													<span class="bg-panel flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[8px] font-semibold">
+														{requesterInitials(requester.displayName)}
+													</span>
+												{/if}
+												<span class="truncate">{requester.displayName}</span>
 											</span>
 										</div>
 											<div

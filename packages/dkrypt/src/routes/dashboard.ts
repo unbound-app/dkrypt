@@ -229,8 +229,20 @@ function dashboardHistoryEntry(entry: JobHistoryEntry) {
   const fileAvailable = artifact ? artifactFileAvailable(artifact) : jobFileAvailable(job);
   return {
     ...entry,
+    requester: dashboardJobRequester(entry),
     downloadUrl: artifact && fileAvailable ? `/v1/dashboard/artifacts/${encodeURIComponent(artifact.id)}/file` : undefined,
     fileAvailable,
+  };
+}
+
+function dashboardJobRequester(entry: JobHistoryEntry) {
+  if (entry.source === 'scheduler') return { displayName: 'System' };
+  if (!entry.queuedBy) return { displayName: 'Unknown' };
+  const profile = getAuthProfile(entry.queuedBy);
+  return {
+    username: profile?.username ?? entry.queuedBy,
+    displayName: profile?.displayName ?? entry.queuedBy,
+    avatarUrl: profile?.avatarUrl,
   };
 }
 

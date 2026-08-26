@@ -262,6 +262,7 @@ export interface JobHistoryEntry {
   testflight?: { appId: number; build: TFBuild };
   versionLabel?: string;
   queuedBy?: string;
+  requester?: { username?: string; displayName: string; avatarUrl?: string };
   status: 'done' | 'failed';
   error?: string;
   artifactId?: string;
