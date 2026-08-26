@@ -128,6 +128,7 @@ jobs:
           fi
           docker pull "$IMAGE"
           docker tag "$IMAGE" dkrypt:latest
+          DKRYPT_IMAGE="$IMAGE" docker compose --env-file /home/adrian/.local/share/dkrypt/.env --project-name dkrypt -f /home/adrian/.local/share/dkrypt/compose.yml config >/dev/null
           docker rm -f dkrypt 2>/dev/null || true
           DKRYPT_IMAGE="$IMAGE" docker compose --env-file /home/adrian/.local/share/dkrypt/.env --project-name dkrypt -f /home/adrian/.local/share/dkrypt/compose.yml up -d --no-build
 
