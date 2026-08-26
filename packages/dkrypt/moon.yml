@@ -6,6 +6,8 @@ tasks:
     command: bun
     args:
       - test
+    deps:
+      - web:build
   typecheck:
     command: bun
     args:
