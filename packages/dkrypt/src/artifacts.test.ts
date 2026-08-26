@@ -108,4 +108,30 @@ describe('persistent artifact store', () => {
     expect(result.totalBytes).toBeGreaterThan(0);
     expect(result.maxBytes).toBe(1024 * 1024);
   });
+
+  test('stores Apple version and build metadata separately from TestFlight release tags', async () => {
+    const key = `test-metadata-${crypto.randomUUID()}`;
+    const artifact = await promoteArtifact({
+      key,
+      bundleId: 'com.example.metadata',
+      channel: 'testflight',
+      versionLabel: '344.0_109551',
+      buildNumber: '109551',
+      stagingPath: await stagingFile('metadata ipa'),
+    });
+
+    expect(artifact.versionLabel).toBe('344.0');
+    expect(artifact.buildNumber).toBe('109551');
+
+    const refreshed = await promoteArtifact({
+      key,
+      bundleId: 'com.example.metadata',
+      channel: 'testflight',
+      versionLabel: '344.0',
+      buildNumber: '109551',
+      stagingPath: await stagingFile('discarded ipa'),
+    });
+    expect(refreshed.versionLabel).toBe('344.0');
+    expect(refreshed.buildNumber).toBe('109551');
+  });
 });

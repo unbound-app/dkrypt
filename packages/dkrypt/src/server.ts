@@ -63,16 +63,16 @@ export async function buildServer(options: { includePublicRoutes?: boolean } = {
       server.get(route, (request, reply) => reply.type('text/html').send(renderPublicPage(indexHtml, request.url)));
     }
 
-    server.get('/favicon.svg', (_request, reply) => reply.header('Cache-Control', 'public, max-age=86400').type('image/svg+xml').sendFile('favicon.svg'));
-    server.get('/favicon.png', (_request, reply) => reply.header('Cache-Control', 'public, max-age=86400').type('image/png').sendFile('favicon.png'));
-    server.get('/og-image.png', (_request, reply) => reply.header('Cache-Control', 'public, max-age=86400').type('image/png').sendFile('og-image.png'));
+    server.get('/favicon.svg', (_request, reply) => reply.header('Cache-Control', 'public, max-age=86400').type('image/svg+xml').sendFile('favicon.svg', publicDir));
+    server.get('/favicon.png', (_request, reply) => reply.header('Cache-Control', 'public, max-age=86400').type('image/png').sendFile('favicon.png', publicDir));
+    server.get('/og-image.png', (_request, reply) => reply.header('Cache-Control', 'public, max-age=86400').type('image/png').sendFile('og-image.png', publicDir));
     server.get('/manifest.webmanifest', (_request, reply) =>
-      reply.header('Cache-Control', 'public, max-age=86400').type('application/manifest+json').sendFile('manifest.webmanifest'),
+      reply.header('Cache-Control', 'public, max-age=86400').type('application/manifest+json').sendFile('manifest.webmanifest', publicDir),
     );
     server.get('/.well-known/apple-developer-merchantid-domain-association', (_request, reply) =>
-      reply.type('text/plain').sendFile('.well-known/apple-developer-merchantid-domain-association'),
+      reply.type('text/plain').sendFile('.well-known/apple-developer-merchantid-domain-association', publicDir),
     );
-    server.get('/sw.js', (_request, reply) => reply.type('application/javascript').sendFile('sw.js'));
+    server.get('/sw.js', (_request, reply) => reply.type('application/javascript').sendFile('sw.js', publicDir));
   }
 
   registerRouter(server, stripeWebhookRouter);

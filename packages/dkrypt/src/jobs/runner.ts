@@ -135,8 +135,8 @@ export async function runDecrypt(job: Job, device: DeviceRecord): Promise<void> 
     channel: job.testflight ? 'testflight' : 'appstore',
     externalVersionId: job.externalVersionId,
     testflightBuildId: job.testflight?.build.id,
-    versionLabel: job.versionLabel,
-    buildNumber: job.testflight?.build.cfBundleVersion,
+    versionLabel: job.ipaMetadata?.shortVersion ?? job.testflight?.build.cfBundleShortVersion ?? job.versionLabel,
+    buildNumber: job.ipaMetadata?.bundleVersion ?? job.testflight?.build.cfBundleVersion,
     stagingPath: outputPath,
     sourceJobId: job.id,
   });

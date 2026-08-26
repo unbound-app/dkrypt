@@ -51,13 +51,28 @@ const stagingDir = path.join(config.artifactDir, '.staging');
 let index: ArtifactIndex = loadIndex();
 let mutationChain = Promise.resolve();
 
+function normalizeArtifactVersionLabel(value: string | undefined, channel: ArtifactChannel): string | undefined {
+  const normalized = value?.trim().replace(/^TestFlight\s+/i, '').replace(/^v(?=\d)/i, '');
+  if (!normalized) return undefined;
+  if (channel === 'testflight') {
+    const separator = normalized.indexOf('_');
+    if (separator > 0) return normalized.slice(0, separator);
+  }
+  return normalized;
+}
+
+function normalizeArtifactRecord(record: ArtifactRecord): ArtifactRecord {
+  const versionLabel = normalizeArtifactVersionLabel(record.versionLabel, record.channel);
+  return versionLabel === record.versionLabel ? record : { ...record, versionLabel };
+}
+
 function loadIndex(): ArtifactIndex {
   mkdirSync(config.stateDir, { recursive: true });
   if (!existsSync(indexPath)) return { version: 1, artifacts: [] };
   try {
     const parsed = JSON.parse(readFileSync(indexPath, 'utf8')) as Partial<ArtifactIndex>;
     if (parsed.version !== 1 || !Array.isArray(parsed.artifacts)) throw new Error('unsupported artifact index');
-    return { version: 1, artifacts: parsed.artifacts.filter(isArtifactRecord) };
+    return { version: 1, artifacts: parsed.artifacts.filter(isArtifactRecord).map(normalizeArtifactRecord) };
   } catch (err) {
     log.warn('failed to load artifact index; starting with an empty index', { error: String(err) });
     return { version: 1, artifacts: [] };
@@ -92,6 +107,21 @@ function withMutation<T>(fn: () => Promise<T>): Promise<T> {
   const next = mutationChain.then(fn, fn);
   mutationChain = next.then(() => undefined, () => undefined);
   return next;
+}
+
+function updateArtifactMetadata(artifact: ArtifactRecord, channel: ArtifactChannel, versionLabel?: string, buildNumber?: string): boolean {
+  const normalizedVersion = normalizeArtifactVersionLabel(versionLabel, channel);
+  const normalizedBuild = buildNumber?.trim() || undefined;
+  let changed = false;
+  if (normalizedVersion && artifact.versionLabel !== normalizedVersion) {
+    artifact.versionLabel = normalizedVersion;
+    changed = true;
+  }
+  if (normalizedBuild && artifact.buildNumber !== normalizedBuild) {
+    artifact.buildNumber = normalizedBuild;
+    changed = true;
+  }
+  return changed;
 }
 
 export function artifactKeyForAppStore(bundleId: string, externalVersionId: string): string {
@@ -245,6 +275,7 @@ export async function promoteArtifact(input: {
     const existing = getArtifactByKey(input.key);
     if (existing) {
       await rm(input.stagingPath, { force: true });
+      if (updateArtifactMetadata(existing, input.channel, input.versionLabel, input.buildNumber)) persistIndex();
       touchArtifactUnsafe(existing);
       return existing;
     }
@@ -261,8 +292,8 @@ export async function promoteArtifact(input: {
       channel: input.channel,
       externalVersionId: input.externalVersionId,
       testflightBuildId: input.testflightBuildId,
-      versionLabel: input.versionLabel,
-      buildNumber: input.buildNumber,
+      versionLabel: normalizeArtifactVersionLabel(input.versionLabel, input.channel),
+      buildNumber: input.buildNumber?.trim() || undefined,
       filePath: path.join(config.artifactDir, `${now}-${randomUUID()}.ipa`),
       fileSizeBytes: file.size,
       sha256,
@@ -284,6 +315,7 @@ export async function registerLegacyJobArtifact(job: {
   externalVersionId?: string;
   testflight?: { build: { id: number; cfBundleShortVersion: string; cfBundleVersion: string } };
   versionLabel?: string;
+  ipaMetadata?: { shortVersion?: string; bundleVersion?: string };
   filePath?: string;
   fileSizeBytes?: number;
 }): Promise<ArtifactRecord | undefined> {
@@ -292,7 +324,13 @@ export async function registerLegacyJobArtifact(job: {
   return withMutation(async () => {
     const key = artifactKeyForJob(job);
     const existing = getArtifactByKey(key);
-    if (existing && existsSync(existing.filePath)) return existing;
+    const channel = job.testflight ? 'testflight' : 'appstore';
+    const versionLabel = job.ipaMetadata?.shortVersion ?? job.testflight?.build.cfBundleShortVersion ?? job.versionLabel;
+    const buildNumber = job.ipaMetadata?.bundleVersion ?? job.testflight?.build.cfBundleVersion;
+    if (existing && existsSync(existing.filePath)) {
+      if (updateArtifactMetadata(existing, channel, versionLabel, buildNumber)) persistIndex();
+      return existing;
+    }
     const file = await stat(migratedPath);
     index.artifacts = index.artifacts.filter((artifact) => artifact.key !== key || existsSync(artifact.filePath));
     const now = Date.now();
@@ -300,11 +338,11 @@ export async function registerLegacyJobArtifact(job: {
       id: randomUUID(),
       key,
       bundleId: job.bundleId,
-      channel: job.testflight ? 'testflight' : 'appstore',
+      channel,
       externalVersionId: job.externalVersionId,
       testflightBuildId: job.testflight?.build.id,
-      versionLabel: job.versionLabel,
-      buildNumber: job.testflight?.build.cfBundleVersion,
+      versionLabel: normalizeArtifactVersionLabel(versionLabel, channel),
+      buildNumber: buildNumber?.trim() || undefined,
       filePath: migratedPath,
       fileSizeBytes: file.size,
       sha256: await sha256File(migratedPath),
@@ -356,6 +394,7 @@ export async function initializeArtifactStore(jobs: Array<{
   externalVersionId?: string;
   testflight?: { build: { id: number; cfBundleShortVersion: string; cfBundleVersion: string } };
   versionLabel?: string;
+  ipaMetadata?: { shortVersion?: string; bundleVersion?: string };
   filePath?: string;
   fileSizeBytes?: number;
   artifactId?: string;

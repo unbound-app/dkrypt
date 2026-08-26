@@ -68,6 +68,26 @@ test('Fastify sends the initial dashboard overview over SSE', async () => {
   }
 });
 
+test('Fastify serves browser identity assets from the public root', async () => {
+  const server = await buildServer();
+
+  try {
+    const favicon = await server.inject({ method: 'GET', url: '/favicon.svg' });
+    expect(favicon.statusCode).toBe(200);
+    expect(favicon.headers['content-type']).toContain('image/svg+xml');
+
+    const png = await server.inject({ method: 'GET', url: '/favicon.png' });
+    expect(png.statusCode).toBe(200);
+    expect(png.headers['content-type']).toContain('image/png');
+
+    const manifest = await server.inject({ method: 'GET', url: '/manifest.webmanifest' });
+    expect(manifest.statusCode).toBe(200);
+    expect(manifest.headers['content-type']).toContain('application/manifest+json');
+  } finally {
+    await server.close();
+  }
+});
+
 test('Fastify includes a session-protected artifact download in live history events', async () => {
   const { server, cookie } = await signIn();
   const baseUrl = await server.listen({ port: 0, host: '127.0.0.1' });
