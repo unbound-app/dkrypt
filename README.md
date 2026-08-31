@@ -2,7 +2,7 @@
 
 dkrypt is a self-hosted dashboard and API for headlessly decrypting App Store and TestFlight apps on a jailbroken iPhone or iPad.
 
-It uses the device's signed-in App Store account and `ipadecrypt`; no Apple ID is configured in dkrypt.
+<img width="1822" height="1095" alt="ishare-1788189848-zen" src="https://github.com/user-attachments/assets/2c0e65cd-92b8-4653-8d21-3ee87c4e8171" />
 
 ## What it does
 
@@ -18,7 +18,6 @@ It uses the device's signed-in App Store account and `ipadecrypt`; no Apple ID i
 
 - Docker Compose
 - A jailbroken iPhone or iPad reachable over SSH
-- `ipadecrypt` prerequisites on the device
 - [autoinstall](packages/autoinstall/README.md), installed on the device
 - An Apple ID signed in to App Store on the device; TestFlight sign-in is needed only for beta builds
 
