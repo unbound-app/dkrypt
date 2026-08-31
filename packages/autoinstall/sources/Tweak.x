@@ -346,29 +346,37 @@ static BOOL setBrightnessFactor(NSNumber *factor) {
     return result;
 }
 
-static void applyDark(void) {
+static BOOL applyDark(void) {
     @try {
         id backlight = backlightController();
         if (respondsToSelectorSafe(backlight, @selector(preventIdleSleep))) {
             [backlight preventIdleSleep];
+        } else {
+            autoinstallLog(@"applyDark: preventIdleSleep unavailable");
         }
-        setBrightnessFactor(@(0));
-        autoinstallLog(@"applyDark: preventIdleSleep + DisplayBrightnessFactor=0");
+        BOOL result = setBrightnessFactor(@(0));
+        autoinstallLog([NSString stringWithFormat:@"applyDark: DisplayBrightnessFactor=0 result=%d", result]);
+        return result;
     } @catch (NSException *exception) {
         autoinstallLog([NSString stringWithFormat:@"applyDark: EXCEPTION name=%@ reason=%@", exception.name, exception.reason]);
+        return NO;
     }
 }
 
-static void removeDark(void) {
+static BOOL removeDark(void) {
     @try {
-        setBrightnessFactor(@(1));
+        BOOL result = setBrightnessFactor(@(1));
         id backlight = backlightController();
         if (respondsToSelectorSafe(backlight, @selector(allowIdleSleep))) {
             [backlight allowIdleSleep];
+        } else {
+            autoinstallLog(@"removeDark: allowIdleSleep unavailable");
         }
-        autoinstallLog(@"removeDark: DisplayBrightnessFactor=1 + allowIdleSleep");
+        autoinstallLog([NSString stringWithFormat:@"removeDark: DisplayBrightnessFactor=1 result=%d", result]);
+        return result;
     } @catch (NSException *exception) {
         autoinstallLog([NSString stringWithFormat:@"removeDark: EXCEPTION name=%@ reason=%@", exception.name, exception.reason]);
+        return NO;
     }
 }
 
@@ -423,16 +431,22 @@ static void handleSpringBoardRequest(NSDictionary *req, NSString *responsePath, 
 
     @try {
         if ([action isEqualToString:@"dark_on"]) {
-            setDarkFlag(YES);
-            applyDark();
-            writeBridgeResponse(responsePath, requestId, screenStatusDict());
+            BOOL applied = applyDark();
+            if (applied) setDarkFlag(YES);
+            NSMutableDictionary *status = [screenStatusDict() mutableCopy];
+            status[@"ok"] = @(applied);
+            if (!applied) status[@"error"] = @"dark mode could not be applied";
+            writeBridgeResponse(responsePath, requestId, status);
             return;
         }
 
         if ([action isEqualToString:@"dark_off"]) {
-            setDarkFlag(NO);
-            removeDark();
-            writeBridgeResponse(responsePath, requestId, screenStatusDict());
+            BOOL removed = removeDark();
+            if (removed) setDarkFlag(NO);
+            NSMutableDictionary *status = [screenStatusDict() mutableCopy];
+            status[@"ok"] = @(removed);
+            if (!removed) status[@"error"] = @"dark mode could not be disabled";
+            writeBridgeResponse(responsePath, requestId, status);
             return;
         }
 
