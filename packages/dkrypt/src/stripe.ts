@@ -5,6 +5,6 @@ let stripe: Stripe | undefined;
 
 export function getStripe(): Stripe {
   if (!config.stripeSecretKey) throw new Error('Stripe secret key is not configured');
-  stripe ??= new Stripe(config.stripeSecretKey, { apiVersion: '2026-07-29.dahlia' });
+  stripe ??= new Stripe(config.stripeSecretKey, { apiVersion: '2026-08-26.dahlia' });
   return stripe;
 }
