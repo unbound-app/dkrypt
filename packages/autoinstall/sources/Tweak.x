@@ -316,21 +316,29 @@ static id getIvarObject(id instance, const char *ivarName) {
     return object_getIvar(instance, ivar);
 }
 
-static id<BrightnessSystemClientProtocol> brightnessClient(void) {
-    Class<SBBacklightControllerProtocol> backlightCls = (Class<SBBacklightControllerProtocol>)objc_getClass("SBBacklightController");
-    id backlight = [backlightCls sharedInstance];
-    return getIvarObject(backlight, "_brightnessSystemClient");
+static BOOL respondsToSelectorSafe(id object, SEL selector) {
+    return object != nil && [object respondsToSelector:selector];
 }
 
 static id<SBBacklightControllerProtocol> backlightController(void) {
     Class<SBBacklightControllerProtocol> backlightCls = (Class<SBBacklightControllerProtocol>)objc_getClass("SBBacklightController");
+    if (!respondsToSelectorSafe((id)backlightCls, @selector(sharedInstance))) return nil;
     return [backlightCls sharedInstance];
+}
+
+static id<BrightnessSystemClientProtocol> brightnessClient(void) {
+    id backlight = backlightController();
+    return getIvarObject(backlight, "_brightnessSystemClient");
 }
 
 static BOOL setBrightnessFactor(NSNumber *factor) {
     id<BrightnessSystemClientProtocol> bsc = brightnessClient();
     if (!bsc) {
         autoinstallLog(@"setBrightnessFactor: _brightnessSystemClient not found");
+        return NO;
+    }
+    if (!respondsToSelectorSafe(bsc, @selector(setProperty:forKey:))) {
+        autoinstallLog(@"setBrightnessFactor: setProperty:forKey: unavailable");
         return NO;
     }
     BOOL result = [bsc setProperty:factor forKey:@"DisplayBrightnessFactor"];
@@ -340,7 +348,10 @@ static BOOL setBrightnessFactor(NSNumber *factor) {
 
 static void applyDark(void) {
     @try {
-        [backlightController() preventIdleSleep];
+        id backlight = backlightController();
+        if (respondsToSelectorSafe(backlight, @selector(preventIdleSleep))) {
+            [backlight preventIdleSleep];
+        }
         setBrightnessFactor(@(0));
         autoinstallLog(@"applyDark: preventIdleSleep + DisplayBrightnessFactor=0");
     } @catch (NSException *exception) {
@@ -351,7 +362,10 @@ static void applyDark(void) {
 static void removeDark(void) {
     @try {
         setBrightnessFactor(@(1));
-        [backlightController() allowIdleSleep];
+        id backlight = backlightController();
+        if (respondsToSelectorSafe(backlight, @selector(allowIdleSleep))) {
+            [backlight allowIdleSleep];
+        }
         autoinstallLog(@"removeDark: DisplayBrightnessFactor=1 + allowIdleSleep");
     } @catch (NSException *exception) {
         autoinstallLog([NSString stringWithFormat:@"removeDark: EXCEPTION name=%@ reason=%@", exception.name, exception.reason]);
@@ -372,17 +386,28 @@ static void setDarkFlag(BOOL on) {
 }
 
 static NSDictionary *screenStatusDict(void) {
-    id<SBBacklightControllerProtocol> backlight = backlightController();
-    id<BrightnessSystemClientProtocol> bsc = brightnessClient();
-    id factor = bsc ? [bsc copyPropertyForKey:@"DisplayBrightnessFactor"] : nil;
-    return @{
+    id backlight = backlightController();
+    id bsc = brightnessClient();
+    NSMutableDictionary *status = [@{
         @"ok": @YES,
         @"darkEnabled": @(isDarkFlagSet()),
-        @"screenIsOn": @([backlight screenIsOn]),
-        @"screenIsDim": @([backlight screenIsDim]),
-        @"backlightState": @([backlight backlightState]),
-        @"brightnessFactor": factor ? [factor description] : [NSNull null],
-    };
+    } mutableCopy];
+    if (respondsToSelectorSafe(backlight, @selector(screenIsOn))) {
+        status[@"screenIsOn"] = @([backlight screenIsOn]);
+    }
+    if (respondsToSelectorSafe(backlight, @selector(screenIsDim))) {
+        status[@"screenIsDim"] = @([backlight screenIsDim]);
+    }
+    if (respondsToSelectorSafe(backlight, @selector(backlightState))) {
+        status[@"backlightState"] = @([backlight backlightState]);
+    }
+    if (respondsToSelectorSafe(bsc, @selector(copyPropertyForKey:))) {
+        id factor = [bsc copyPropertyForKey:@"DisplayBrightnessFactor"];
+        status[@"brightnessFactor"] = factor ? [factor description] : [NSNull null];
+    } else {
+        status[@"brightnessFactor"] = [NSNull null];
+    }
+    return status;
 }
 
 static NSDictionary *springBoardBridgeStatus(void) {
