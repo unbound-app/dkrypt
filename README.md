@@ -49,6 +49,90 @@ dkrypt is a self-hosted dashboard and API for headlessly decrypting App Store an
 
 Open `http://localhost:8080`, or place your reverse proxy in front of it.
 
+<details>
+<summary>Self-hosting setup</summary>
+
+### Prepare the host
+
+Install Docker Compose, GNU make, and Git. Clone this repository, copy <code>.env.example</code> to <code>.env</code>, and set <code>API_KEY</code>, <code>SESSION_SIGNING_SECRET</code>, <code>PUBLIC_BASE_URL</code>, and <code>ADMIN_PASSWORD</code> to values for your deployment. Use an HTTPS <code>PUBLIC_BASE_URL</code> when enabling OAuth, Stripe, or external webhooks.
+
+Keep the host's SSH private key outside the repository. Compose mounts <code>$HOME/.ssh/id_ed25519_ipad</code> into the container as <code>/root/.ssh/id_ed25519</code>; create that file or update the SSH-key volume in <code>docker-compose.yml</code> to match your key.
+
+### Prepare the device
+
+The device needs a rootless jailbreak with ElleKit, OpenSSH, AppSync Unified, appinst, and no passcode. Sign in to the App Store on the device; TestFlight builds also require TestFlight to be signed in. Verify SSH access from the host before continuing:
+
+~~~sh
+ssh -i "$HOME/.ssh/id_ed25519_ipad" mobile@<device-ip> 'uname -a'
+~~~
+
+Install the autoinstall bridge from the repository root. Override the target and key when they differ from the defaults:
+
+~~~sh
+AUTOINSTALL_IPAD_TARGET=mobile@<device-ip> AUTOINSTALL_IPAD_KEY="$HOME/.ssh/id_ed25519_ipad" make autoinstall-deploy
+~~~
+
+The release script builds the tweak, installs it, restarts the affected processes, checks the bridge heartbeat, and rolls back when verification fails.
+
+### Configure the device connection
+
+Autoinstall handles on-device App Store and TestFlight installs. dkrypt still needs a small SSH connection file so it can reach the device and run the final decrypt. Create a temporary <code>device-config.json</code> with the connection details:
+
+~~~json
+{
+  "device": {
+    "host": "<device-ip>",
+    "port": 22,
+    "user": "mobile",
+    "auth": {
+      "keyPath": "/root/.ssh/id_ed25519"
+    }
+  }
+}
+~~~
+
+Start the service, then copy the file into the persistent Compose volume:
+
+~~~sh
+docker compose up -d
+docker compose cp device-config.json api:/root/.ipadecrypt/config.json
+~~~
+
+The default connection directory is <code>/root/.ipadecrypt</code>. Change it
+with <code>IPADECRYPT_ROOT_DIR</code> if needed, and add a persistent Compose
+volume mount for the replacement path. For additional devices, create a
+separate directory under that persistent volume, copy a connection file there,
+and register the directory in **Settings → Devices**:
+
+~~~sh
+docker compose exec api mkdir -p /root/.ipadecrypt/devices/device-b
+docker compose cp device-b-config.json api:/root/.ipadecrypt/devices/device-b/config.json
+~~~
+
+The key path in each connection file is the path inside the container, not the host path. Do not commit the temporary JSON files or put private-key contents in them.
+
+### Verify the installation
+
+The API health response should report a reachable device, a reachable autoinstall bridge, and <code>readiness: "ready"</code>:
+
+~~~sh
+docker compose exec api bun -e 'const response = await fetch("http://127.0.0.1:8080/v1/health", { headers: { authorization: "Bearer " + process.env.API_KEY } }); console.log(await response.text()); process.exit(response.ok ? 0 : 1)'
+~~~
+
+If the device is unreachable, test SSH from inside the API container and confirm that the mounted key path and the <code>config.json</code> host, port, and user are correct. If the bridge is not ready, confirm that autoinstall is installed and that the App Store account is signed in without a device passcode.
+
+### Update safely
+
+Persistent state, connection configuration, and decrypted artifacts live in Docker volumes. To update a source-based installation, pull the new revision, rebuild, and recreate the service:
+
+~~~sh
+git pull --ff-only origin main
+docker compose build
+docker compose up -d
+~~~
+
+</details>
+
 ## Deployment
 
 Pushes to `main` run the Moon check graph, generate the dashboard changelog from Git history, publish an immutable GHCR image, and deploy that exact digest on the homelab runner. The runner keeps only the runtime `.env` in `/home/adrian/.local/share/dkrypt`, pulls images, and never retains a source checkout. If its health check fails, it starts the previous image again.
