@@ -30,13 +30,18 @@ dkrypt is a self-hosted dashboard and API for headlessly decrypting App Store an
    docker compose build
    ```
 
-3. Configure the device SSH connection once:
+3. Install or update autoinstall on the device:
 
    ```sh
-   docker compose run --rm -it --name dkrypt-bootstrap api ipadecrypt bootstrap
+   make autoinstall-deploy
    ```
 
-4. Start dkrypt:
+4. Ensure the device connection directory configured by `IPADECRYPT_ROOT_DIR`
+   (default `/root/.ipadecrypt`) contains a `config.json` with the device host,
+   port, SSH user, and key path. Additional device connection directories can be
+   registered from **Settings → Devices**.
+
+5. Start dkrypt:
 
    ```sh
    docker compose up -d

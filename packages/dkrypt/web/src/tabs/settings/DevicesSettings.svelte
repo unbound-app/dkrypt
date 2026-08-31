@@ -236,9 +236,8 @@
     {/if}
   {/snippet}
   <div class="mb-3 text-sm text-muted">
-    Each device needs to already be bootstrapped independently (<code>ipadecrypt --root-dir &lt;path&gt; bootstrap</code>) before
-    it's registered here. TestFlight jobs always run on the primary device - only App Store decrypts distribute across the
-    whole pool.
+    Each device needs the autoinstall bridge installed and a valid SSH connection directory before it's registered here. TestFlight jobs always
+    run on the primary device - only App Store decrypts distribute across the whole pool.
   </div>
   {#if devices.length === 0}
     <EmptyState message="No devices registered." />
@@ -349,7 +348,7 @@
     <div class="mb-3 text-sm font-medium">{editingId ? 'Edit device' : 'Add device'}</div>
     <label for="d-name" class="mb-1 block text-xs text-muted">Name</label>
     <Input id="d-name" placeholder="e.g. device-b" bind:value={formName} />
-    <label for="d-rootDir" class="mt-3 mb-1 block text-xs text-muted">ipadecrypt root dir</label>
+    <label for="d-rootDir" class="mt-3 mb-1 block text-xs text-muted">Device connection directory</label>
     <Input id="d-rootDir" placeholder="/data/devices/device-b" bind:value={formRootDir} />
 		<label for="d-ios" class="mt-3 mb-1 block text-xs text-muted">iOS version</label>
 		<Input id="d-ios" placeholder="e.g. iOS 18.4" bind:value={formIosVersion} />
@@ -358,7 +357,7 @@
 		<label for="d-notes" class="mt-3 mb-1 block text-xs text-muted">Notes</label>
 		<Input id="d-notes" placeholder="Known compatibility notes" bind:value={formNotes} />
     <div class="mt-1 text-xs text-muted">
-      Must already contain a valid config.json from a prior <code>ipadecrypt --root-dir &lt;path&gt; bootstrap</code> run.
+      Must contain a valid config.json with the device host, port, SSH user, and key path.
     </div>
     <Button class="mt-3.5 w-full" loading={saving} onclick={save}>{editingId ? 'Save' : 'Add'}</Button>
   </Dialog>

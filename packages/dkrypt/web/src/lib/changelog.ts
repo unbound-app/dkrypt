@@ -32,7 +32,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: '2026-07-24',
     title: 'On-device App Store installs',
     description:
-      "Decrypts now install through the device's own signed-in App Store instead of ipadecrypt's Apple ID login - no more re-authentication step.",
+      "Decrypts now install through the device's own signed-in App Store via autoinstall - dkrypt no longer handles Apple authentication.",
   },
   {
     date: '2026-07-24',

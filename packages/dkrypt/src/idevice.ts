@@ -55,7 +55,7 @@ interface DeviceAuth {
   keyPath: string;
 }
 
-interface RawIpadecryptConfig {
+interface RawDeviceConfig {
   device?: {
     host?: string;
     port?: number;
@@ -72,10 +72,10 @@ async function loadDeviceAuth(rootDir: string): Promise<DeviceAuth> {
   const cached = authCache.get(rootDir);
   if (cached) return cached;
   const configPath = path.join(rootDir, 'config.json');
-  const raw = JSON.parse(await readFile(configPath, 'utf8')) as RawIpadecryptConfig;
+  const raw = JSON.parse(await readFile(configPath, 'utf8')) as RawDeviceConfig;
   const device = raw.device;
   if (!device?.host || !device.port || !device.user || !device.auth?.keyPath) {
-    throw new Error(`ipadecrypt config at ${configPath} is missing device connection info (host/port/user/auth.keyPath)`);
+    throw new Error(`device connection config at ${configPath} is missing connection info (host/port/user/auth.keyPath)`);
   }
   const auth: DeviceAuth = { host: device.host, port: device.port, user: device.user, keyPath: device.auth.keyPath };
   authCache.set(rootDir, auth);

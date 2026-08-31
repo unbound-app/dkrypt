@@ -844,7 +844,7 @@ dashboardRouter.post('/v1/dashboard/devices', canManageDevices, async (req, res)
   try {
     await validateDeviceRootDir(input.rootDir);
   } catch (err) {
-    res.status(400).json({ error: `couldn't read a valid ipadecrypt config at that root dir: ${err instanceof Error ? err.message : String(err)}` });
+    res.status(400).json({ error: `couldn't read a valid device connection config at that directory: ${err instanceof Error ? err.message : String(err)}` });
     return;
   }
   const device = createDevice(input, res.locals.session.sub);
@@ -867,7 +867,7 @@ dashboardRouter.patch('/v1/dashboard/devices/:id', canManageDevices, async (req,
     try {
       await validateDeviceRootDir(patch.rootDir);
     } catch (err) {
-      res.status(400).json({ error: `couldn't read a valid ipadecrypt config at that root dir: ${err instanceof Error ? err.message : String(err)}` });
+      res.status(400).json({ error: `couldn't read a valid device connection config at that directory: ${err instanceof Error ? err.message : String(err)}` });
       return;
     }
   }

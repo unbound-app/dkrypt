@@ -43,8 +43,8 @@
         <div class="font-medium">Welcome to dkrypt - a few things to get set up:</div>
         <ol class="mt-1.5 list-decimal space-y-1 pl-4 text-muted">
           <li>
-            Bootstrap your jailbroken device once from a terminal (<code class="text-[12px]">docker compose run --rm -it api ipadecrypt bootstrap</code
-            >) if you haven't already - this can't be done from the dashboard itself.
+            Make sure <code class="text-[12px]">autoinstall</code> is installed on your jailbroken device, then check its connection in
+            <button type="button" class="text-accent underline underline-offset-2" onclick={goToDevices}>Settings → Devices</button>.
           </li>
           <li>Once a device is reachable, try a decrypt from the search box on this page.</li>
           <li>
