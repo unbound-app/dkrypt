@@ -153,7 +153,7 @@ export async function installFromAppStore(bundleId: string, options: AppStoreIns
       await armAppStoreAutoConfirm(conn, 'Install');
 
       const operationId = options.operationId ?? randomUUID();
-      const request: Record<string, unknown> = { action: 'install', adamId: trackId, contextMode: 'fallback', operationId, requestId: operationId };
+      const request: Record<string, unknown> = { action: 'install', adamId: trackId, contextMode: 'fallback', operationId };
       if (versionId !== undefined) request.versionId = versionId;
       await sendAppStoreBridgeRequest(conn, request);
       report(

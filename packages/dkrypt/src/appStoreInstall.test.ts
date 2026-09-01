@@ -148,6 +148,7 @@ describe('installFromAppStore', () => {
 
     expect(calls).toEqual(['uninstall', 'restart', 'status', 'arm', 'request', 'clear']);
     expect(installRequest).toMatchObject({ action: 'install', adamId: 123, contextMode: 'fallback', versionId: 123456789 });
+    expect(installRequest).not.toHaveProperty('requestId');
     expect(progress).toContain('removing the installed app before the App Store install');
     expect(progress.at(-1)).toBe('install verified: 338.0 build 106000 in 0s');
   });
