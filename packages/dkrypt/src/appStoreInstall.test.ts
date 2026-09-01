@@ -9,8 +9,10 @@ let lastInstalledBundle: InstalledBundle | undefined;
 let installRequest: Record<string, unknown> | undefined;
 let guardedUninstallFails = false;
 let foregroundStatuses: boolean[] = [];
+let bridgeStatusErrors = 0;
 let foregroundRequests = 0;
 const originalSetTimeout = globalThis.setTimeout;
+const originalDateNow = Date.now;
 
 const idevice = await import('#idevice.js');
 const itunes = await import('#scheduler/itunes.js');
@@ -33,6 +35,10 @@ mock.module('#idevice.js', () => ({
   sendAppStoreBridgeRequest: async (_conn: object, request: Record<string, unknown>) => {
     if (request.action === 'status') {
       calls.push('status');
+      if (bridgeStatusErrors > 0) {
+        bridgeStatusErrors -= 1;
+        throw new Error('status request timed out');
+      }
       return { capabilities: ['install', 'status', 'diagnostics', 'foreground_status', 'protocol_v1', 'authenticated_requests', 'operation_responses', 'heartbeats', 'stale_artifact_cleanup'], foreground: foregroundStatuses.shift() ?? true };
     }
     installRequest = request;
@@ -69,6 +75,7 @@ const { buildAppStoreOperationId, installFromAppStore } = await import('./appSto
 describe('installFromAppStore', () => {
   afterAll(() => {
     globalThis.setTimeout = originalSetTimeout;
+    Date.now = originalDateNow;
     mock.restore();
   });
 
@@ -87,6 +94,7 @@ describe('installFromAppStore', () => {
     installRequest = undefined;
     guardedUninstallFails = false;
     foregroundStatuses = [true];
+    bridgeStatusErrors = 0;
     foregroundRequests = 0;
   });
 
@@ -99,8 +107,8 @@ describe('installFromAppStore', () => {
     expect(retryAttempt).not.toBe(firstAttempt);
   });
 
-  test('waits for the App Store to become foreground-ready before purchasing', async () => {
-    foregroundStatuses = [false, true];
+  test('retries after a temporarily unavailable bridge before purchasing', async () => {
+    bridgeStatusErrors = 1;
     installedBundles = [undefined, { path: '/apps/Discord.app', shortVersion: '338.0' }];
 
     await installFromAppStore('com.hammerandchisel.discord');
@@ -108,6 +116,27 @@ describe('installFromAppStore', () => {
     expect(calls.filter((call) => call === 'status')).toHaveLength(2);
     expect(foregroundRequests).toBe(2);
     expect(calls).toEqual(['restart', 'status', 'status', 'arm', 'request', 'clear']);
+  });
+
+  test('continues when the App Store bridge is responsive but inactive', async () => {
+    let now = 0;
+    Date.now = () => now;
+    globalThis.setTimeout = ((handler: () => void) => {
+      now += 20_000;
+      handler();
+      return 0;
+    }) as unknown as typeof setTimeout;
+    foregroundStatuses = [false];
+    installedBundles = [undefined, { path: '/apps/Discord.app', shortVersion: '338.0' }];
+
+    try {
+      await expect(installFromAppStore('com.hammerandchisel.discord')).resolves.toMatchObject({ bundleId: 'com.hammerandchisel.discord', shortVersion: '338.0' });
+    } finally {
+      Date.now = originalDateNow;
+      globalThis.setTimeout = originalSetTimeout;
+    }
+
+    expect(calls).toEqual(['restart', 'status', 'arm', 'request', 'clear']);
   });
 
   test('replaces an installed beta before decrypting a pinned App Store version', async () => {

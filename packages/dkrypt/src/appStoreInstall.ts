@@ -63,7 +63,7 @@ async function ensureAppStoreBridgeReady(conn: Client): Promise<void> {
         const missing = BRIDGE_CAPABILITIES.appstore.filter((capability) => !reported.includes(capability));
         throw new Error(`autoinstall App Store bridge is incompatible; missing ${missing.join(', ')}`);
       }
-      if (response.foreground === true) return;
+      return;
     }
 
     try {
@@ -77,7 +77,7 @@ async function ensureAppStoreBridgeReady(conn: Client): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, APP_STORE_BRIDGE_POLL_INTERVAL_MS));
   }
 
-  throw new Error(`autoinstall App Store bridge did not become foreground-ready within ${APP_STORE_BRIDGE_READY_TIMEOUT_MS / 1000}s${lastError ? `: ${lastError.message}` : ''}`);
+  throw new Error(`autoinstall App Store bridge did not become ready within ${APP_STORE_BRIDGE_READY_TIMEOUT_MS / 1000}s${lastError ? `: ${lastError.message}` : ''}`);
 }
 
 async function restartAppStore(conn: Client): Promise<void> {

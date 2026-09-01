@@ -1005,19 +1005,6 @@ static void handleAppStoreRequest(NSDictionary *req, NSString *responsePath, NSS
 
     dispatch_sync(dispatch_get_main_queue(), ^{
         @try {
-            if (!appStoreIsForeground()) {
-                respond(@{
-                    @"ok": @NO,
-                    @"error": @{
-                        @"code": @"appstore_not_foreground",
-                        @"stage": @"foreground",
-                        @"message": @"App Store is not active",
-                        @"retryable": @YES,
-                    },
-                });
-                return;
-            }
-
             NSString *adamIdStr = [adamId stringValue];
             NSString *offerString;
             if (versionId && versionId.longLongValue != 0) {
