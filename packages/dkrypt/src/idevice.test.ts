@@ -2,8 +2,10 @@ import { expect, test } from 'bun:test';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { Client } from 'ssh2';
-import { armAppStoreAutoConfirm, createBridgeEnvelope, readBridgeHeartbeats, type BridgeEnvelope } from './idevice.js';
+import type { BridgeEnvelope } from './idevice.js';
 import { BRIDGE_CAPABILITIES, BRIDGE_PROTOCOL_VERSION } from './bridgeProtocol.js';
+
+const { armAppStoreAutoConfirm, createBridgeEnvelope, readBridgeHeartbeats } = await import('./idevice.js' + '?idevice-transport-test');
 
 type FakeExecStream = {
   stderr: {
