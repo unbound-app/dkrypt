@@ -74,7 +74,7 @@ test('createBridgeEnvelope matches the shared bridge fixture', async () => {
   expect(fixture.contract).toEqual({ version: BRIDGE_PROTOCOL_VERSION, ...BRIDGE_CAPABILITIES });
 });
 
-test('uses SSH exec channels for device file reads and writes', async () => {
+test('uses SSH exec channels for device file reads and quoted writes', async () => {
   const { connection, commands, writes } = fakeDeviceConnection();
 
   await expect(readBridgeHeartbeats(connection)).resolves.toEqual({
@@ -85,8 +85,10 @@ test('uses SSH exec channels for device file reads and writes', async () => {
   await armAppStoreAutoConfirm(connection, 'Inspect');
 
   expect(commands).toHaveLength(4);
-  expect(commands.every((command) => command.includes('cat'))).toBe(true);
-  expect(writes).toEqual(['Inspect']);
+  expect(commands.slice(0, 3).every((command) => command.includes('cat'))).toBe(true);
+  expect(commands[3]).toContain('printf');
+  expect(commands[3]).toContain('Inspect');
+  expect(writes).toEqual([]);
 });
 
 test('times out stalled SSH exec channels', async () => {

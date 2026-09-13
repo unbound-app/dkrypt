@@ -682,55 +682,8 @@ function shellQuote(value: string): string {
 }
 
 function writeRemoteFile(conn: Client, remotePath: string, content: string, timeoutMs = REMOTE_COMMAND_TIMEOUT_MS): Promise<void> {
-  return new Promise((resolve, reject) => {
-    let stream: Channel | undefined;
-    let stderr = '';
-    let settled = false;
-    let timer: ReturnType<typeof setTimeout>;
-    const effectiveTimeoutMs = Math.max(1, timeoutMs);
-    const fail = (error: Error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      stream?.destroy();
-      reject(error);
-    };
-    const finish = (code: number | null) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (code === 0) {
-        resolve();
-        return;
-      }
-      reject(new Error(`could not write remote file: ${stderr.trim() || `exit code ${code ?? 'unknown'}`}`));
-    };
-    timer = setTimeout(() => fail(new Error(`could not write remote file: command timed out after ${effectiveTimeoutMs}ms`)), effectiveTimeoutMs);
-    try {
-      conn.exec(`cat > ${shellQuote(remotePath)}`, (err, nextStream) => {
-        if (settled) {
-          nextStream?.destroy();
-          return;
-        }
-        if (err) {
-          fail(err);
-          return;
-        }
-        stream = nextStream;
-        nextStream.stderr.on('data', (chunk: Buffer) => {
-          stderr += chunk.toString('utf8');
-        });
-        nextStream.on('error', fail);
-        nextStream.on('close', finish);
-        try {
-          nextStream.end(content);
-        } catch (error) {
-          fail(error instanceof Error ? error : new Error(String(error)));
-        }
-      });
-    } catch (error) {
-      fail(error instanceof Error ? error : new Error(String(error)));
-    }
+  return execCommand(conn, `printf %s ${shellQuote(content)} > ${shellQuote(remotePath)}`, timeoutMs).then(({ code, stderr }) => {
+    if (code !== 0) throw new Error(`could not write remote file: ${stderr.trim() || `exit code ${code ?? 'unknown'}`}`);
   });
 }
 
