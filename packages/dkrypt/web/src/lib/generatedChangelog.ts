@@ -1,6 +1,11 @@
 export const GENERATED_CHANGELOG = [
   {
     "date": "2026-09-13",
+    "title": "test(idevice): stabilize ssh channel regression",
+    "description": "Released in c5675ce."
+  },
+  {
+    "date": "2026-09-13",
     "title": "fix(web): align IPA library metadata",
     "description": "Released in dc8b60e."
   },
@@ -33,10 +38,5 @@ export const GENERATED_CHANGELOG = [
     "date": "2026-09-10",
     "title": "feat(web): reimplement dashboard UI with shadcn primitives",
     "description": "Released in 6496dd0."
-  },
-  {
-    "date": "2026-09-10",
-    "title": "refactor(autoinstall): use generic iDevice deployment variables",
-    "description": "Released in da290cd."
   }
 ] as const;

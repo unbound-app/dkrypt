@@ -21,15 +21,13 @@ function fakeDeviceConnection(): { connection: Client; commands: string[]; write
       stream.stderr = new EventEmitter();
       stream.end = (input = '') => {
         writes.push(input);
-        setTimeout(() => stream.emit('close', 0), 0);
+        stream.emit('close', 0);
       };
       callback(undefined, stream);
       if (command.includes('cat >')) return;
       const channel = command.match(/\/tmp\/autoinstall\/v1\/([^/]+)\//)?.[1] ?? 'unknown';
-      setTimeout(() => {
-        stream.emit('data', Buffer.from(JSON.stringify({ process: channel, at: 1 })));
-        stream.emit('close', 0);
-      }, 0);
+      stream.emit('data', Buffer.from(JSON.stringify({ process: channel, at: 1 })));
+      stream.emit('close', 0);
     },
   } as unknown as Client;
   return { connection, commands, writes };
