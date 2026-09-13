@@ -72,7 +72,7 @@
 	}
 
 	const RUN_STATE_LABEL: Record<RunState, string> = {
-		inProgress: "Run in progress…",
+		inProgress: "Run in progress",
 		succeeded: "Run succeeded",
 		failed: "Run failed",
 		timedOut: "Timed out waiting for run",
@@ -389,8 +389,33 @@
 		ok: "All good",
 		warn: "Needs attention",
 		err: "Needs attention now",
-		unknown: "Checking…",
+		unknown: "Checking",
 	};
+
+	const deviceChip = $derived.by(() => {
+		if (!overview) {
+			return {
+				label: "Loading devices",
+				detail: "Loading the configured device pool.",
+			};
+		}
+		if (overview.devices.length === 0) {
+			return {
+				label: "No device connected",
+				detail: "Connect a device from Settings → Devices to run decrypts.",
+			};
+		}
+		if (!overview.devices.some((device) => device.enabled)) {
+			return {
+				label: "No enabled device",
+				detail: "Enable a device from Settings → Devices to run decrypts.",
+			};
+		}
+		return {
+			label: "Checking device",
+			detail: "Checking the enabled device connection and autoinstall bridge.",
+		};
+	});
 	const activeJobs = $derived(overview?.activeJobs.length ?? 0);
 	const schedulableWatchCount = $derived(
 		overview?.watches.filter((w) => w.schedulable).length ?? 0,
@@ -576,7 +601,7 @@
 										? dh.reachable
 											? "online"
 											: "unreachable"
-										: "…"}</span
+										: "checking"}</span
 								>
 								· {d.name}{d.id === primaryDeviceId
 									? " (primary)"
@@ -613,7 +638,12 @@
 				</Popover>
 			{/if}
 		{:else}
-			<Badge variant="secondary">iDevice …</Badge>
+			<Popover>
+				{#snippet trigger()}
+					<Badge variant="secondary">{deviceChip.label}</Badge>
+				{/snippet}
+				<div class="max-w-xs whitespace-normal">{deviceChip.detail}</div>
+			</Popover>
 		{/if}
 	</div>
 	{#if health}
