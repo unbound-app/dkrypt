@@ -88,7 +88,7 @@
                 <div class="text-muted mt-0.5 break-all text-xs" title={artifact.bundleId}>{artifact.bundleId}</div>
               </div>
             </div>
-            <div class="grid grid-cols-2 gap-x-4 gap-y-2 text-xs sm:col-span-2 sm:grid-cols-[minmax(0,1fr)_auto_auto] 2xl:col-span-1">
+            <div class="grid grid-cols-2 gap-x-5 gap-y-2 text-xs sm:col-span-2 sm:grid-cols-3 2xl:col-span-1 2xl:grid-cols-3">
               <div class="min-w-0 text-left">
                 <div class="text-muted text-[10px] font-semibold tracking-[0.08em] uppercase">Version</div>
                 <div class="mt-0.5 truncate text-[13px] font-semibold" title={artifact.buildNumber ? `${artifact.versionLabel ?? ''} (${artifact.buildNumber})` : artifact.versionLabel}>{artifactVersion(artifact)}</div>

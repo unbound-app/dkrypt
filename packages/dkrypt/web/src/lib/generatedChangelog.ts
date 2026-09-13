@@ -1,5 +1,10 @@
 export const GENERATED_CHANGELOG = [
   {
+    "date": "2026-09-13",
+    "title": "fix(idevice): avoid unreliable sftp subsystem",
+    "description": "Released in 3e3c7bb."
+  },
+  {
     "date": "2026-09-10",
     "title": "fix(web): keep IPA library details readable",
     "description": "Released in 97ccd5a."
@@ -33,10 +38,5 @@ export const GENERATED_CHANGELOG = [
     "date": "2026-09-10",
     "title": "chore(deps-dev): bump svelte (#19)",
     "description": "Released in cfc83a9."
-  },
-  {
-    "date": "2026-09-10",
-    "title": "chore(deps): bump the api-dependencies group (#20)",
-    "description": "Released in 51da69d."
   }
 ] as const;
