@@ -5,7 +5,7 @@ import type { Client } from 'ssh2';
 import type { BridgeEnvelope } from './idevice.js';
 import { BRIDGE_CAPABILITIES, BRIDGE_PROTOCOL_VERSION } from './bridgeProtocol.js';
 
-const { armAppStoreAutoConfirm, createBridgeEnvelope, execCommand, readBridgeHeartbeats, retryTransientSshConnection } = await import('./idevice.js' + '?idevice-transport-test');
+const { armAppStoreAutoConfirm, buildIpadecryptRuntimeConfig, createBridgeEnvelope, execCommand, readBridgeHeartbeats, retryTransientSshConnection } = await import('./idevice.js' + '?idevice-transport-test');
 
 type FakeExecStream = {
   stderr: {
@@ -111,4 +111,19 @@ test('retries transient SSH handshakes before failing', async () => {
   }, 1, 0)).resolves.toBe('ready');
 
   expect(attempts).toBe(2);
+});
+
+test('creates an ipadecrypt runtime config without requiring bootstrap credentials', () => {
+  const config = JSON.parse(buildIpadecryptRuntimeConfig({ host: '127.0.0.1', port: 2222, user: 'mobile', keyPath: '/root/.ssh/id_ed25519' })) as {
+    version: number;
+    apple?: { email?: string; password?: string };
+    device?: { host?: string; port?: number; user?: string; auth?: { kind?: string; keyPath?: string } };
+  };
+
+  expect(config).toMatchObject({
+    version: 2,
+    apple: { email: 'managed-device@dkrypt.invalid' },
+    device: { host: '127.0.0.1', port: 2222, user: 'mobile', auth: { kind: 'key', keyPath: '/root/.ssh/id_ed25519' } },
+  });
+  expect(config.apple?.password).toBeUndefined();
 });

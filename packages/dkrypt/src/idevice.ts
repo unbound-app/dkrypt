@@ -240,13 +240,17 @@ async function startUsbmuxTunnel(udid: string, remotePort: number, network: bool
 async function ensureIpadecryptRuntime(rootDir: string, auth: DeviceAuth): Promise<string> {
   await mkdir(rootDir, { recursive: true });
   const configPath = path.join(rootDir, 'config.json');
-  await writeFile(
-    configPath,
-    `${JSON.stringify({ version: 2, device: { host: auth.host, port: auth.port, user: auth.user, auth: { kind: 'key', keyPath: auth.keyPath } } })}\n`,
-    { mode: 0o600 },
-  );
+  await writeFile(configPath, buildIpadecryptRuntimeConfig(auth), { mode: 0o600 });
   await chmod(configPath, 0o600);
   return rootDir;
+}
+
+export function buildIpadecryptRuntimeConfig(auth: { host: string; port: number; user: string; keyPath: string }): string {
+  return `${JSON.stringify({
+    version: 2,
+    apple: { email: 'managed-device@dkrypt.invalid' },
+    device: { host: auth.host, port: auth.port, user: auth.user, auth: { kind: 'key', keyPath: auth.keyPath } },
+  })}\n`;
 }
 
 async function withDeviceTunnel<T>(connection: DeviceConnection | string, fn: (auth: DeviceAuth, rootDir: string) => Promise<T>): Promise<T> {
