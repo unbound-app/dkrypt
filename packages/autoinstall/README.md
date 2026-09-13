@@ -4,14 +4,16 @@ The dkrypt device-side tweak for headless App Store and TestFlight installs on j
 
 It injects into SpringBoard, TestFlight, App Store, and PassbookUIService to launch apps with the screen dark, request installs through the device's already-signed-in account, and confirm the App Store install sheet without a tap.
 
-## Requirements
+## Device requirements
 
 - Rootless jailbreak with ElleKit
-- Theos
+- OpenSSH enabled for the dashboard connection
 - An Apple ID signed in to App Store and TestFlight
 - No device passcode
 
 ## Build
+
+The build host needs Theos.
 
 ```sh
 gmake clean package

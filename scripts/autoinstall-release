@@ -4,9 +4,14 @@ set -euo pipefail
 root_dir="$(cd "$(dirname "$0")/.." && pwd)"
 mode="${1:-deploy}"
 package_path="${2:-}"
-target="${AUTOINSTALL_IDEVICE_TARGET:-mobile@192.168.2.158}"
+target="${AUTOINSTALL_IDEVICE_TARGET:-}"
 key_path="${AUTOINSTALL_IDEVICE_KEY:-$HOME/.ssh/id_ed25519}"
 ssh_options=(-i "$key_path" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new)
+
+if [[ -z "$target" ]]; then
+  print -u2 "set AUTOINSTALL_IDEVICE_TARGET to mobile@<device-address>"
+  exit 64
+fi
 
 if [[ "$mode" == "deploy" ]]; then
   gmake -C "$root_dir/packages/autoinstall" clean package

@@ -1,13 +1,13 @@
 import { Router } from '#http.js';
 import { requireApiKey } from '#auth.js';
-import { getDeviceHealth } from '#deviceHealth.js';
+import { peekPrimaryDeviceHealth } from '#deviceHealth.js';
 import { getEffectiveWatches, getPrimaryDevice, isWatchSchedulable } from '#store/state.js';
 
 export const healthRouter = Router();
 
-healthRouter.get('/v1/health', requireApiKey, async (_req, res) => {
+healthRouter.get('/v1/health', requireApiKey, (_req, res) => {
   const primary = getPrimaryDevice();
-  const device = primary ? await getDeviceHealth(primary.id).catch(() => undefined) : undefined;
+  const device = peekPrimaryDeviceHealth();
   const schedulerEnabled = getEffectiveWatches().some(isWatchSchedulable);
   res.json({
     ok: primary ? Boolean(device?.reachable) : true,

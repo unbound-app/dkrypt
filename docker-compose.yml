@@ -18,7 +18,7 @@ services:
       - appstore-config:/root/.ipadecrypt
       - ipa-storage:/data/artifacts
       - state:/data/state
-      - ${HOME}/.ssh/id_ed25519_ipad:/root/.ssh/id_ed25519:ro
+      - ${HOME}/.ssh/id_ed25519:/root/.ssh/id_ed25519:ro
       - /var/run/usbmuxd:/var/run/usbmuxd
 
 volumes:

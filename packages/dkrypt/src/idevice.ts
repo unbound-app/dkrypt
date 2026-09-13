@@ -564,13 +564,10 @@ export async function setupDeviceConnection(connection: DeviceConnection): Promi
     const architecture = await readRemoteValue(conn, 'uname -p 2>/dev/null') ?? await readRemoteValue(conn, 'uname -m 2>/dev/null');
     const name = await readRemoteValue(conn, 'scutil --get ComputerName 2>/dev/null') ?? await readRemoteValue(conn, 'hostname 2>/dev/null');
     const jailbreak = await execCommand(conn, 'test -d /var/jb').then(({ code }) => code === 0).catch(() => false);
-    const appSyncVersion = await queryPackageVersion(conn, 'ai.akemi.appsyncunified');
     const ellekitVersion = await queryPackageVersion(conn, 'ellekit');
     const openSshVersion = await queryPackageVersion(conn, 'openssh-server');
-    const appinst = await execCommand(conn, 'test -x /var/jb/usr/bin/appinst').then(({ code }) => code === 0).catch(() => false);
     const bridge = await execCommand(conn, 'test -s /tmp/autoinstall/v1/springboard/state/heartbeat.json').then(({ code }) => code === 0).catch(() => false);
     const systemReady = system === 'Darwin';
-    const appinstReady = appinst;
     const bridgeReady = bridge;
     const info: DeviceSetupInfo = {
       name: name || model || connection.host || 'iDevice',
@@ -583,8 +580,6 @@ export async function setupDeviceConnection(connection: DeviceConnection): Promi
       { id: 'ssh', label: 'SSH connection', status: 'ready', detail: `${connection.user ?? config.deviceSshUser}@${connection.host ?? 'USB/Wi-Fi tunnel'}${openSshVersion ? ` · OpenSSH ${openSshVersion}` : ''}` },
       { id: 'ios', label: 'iOS device detected', status: systemReady ? 'ready' : 'attention', detail: systemReady ? `${info.productType ?? 'iDevice'} · iOS ${info.productVersion ?? 'unknown'}` : 'The SSH target did not report Darwin.' },
       { id: 'jailbreak', label: 'Rootless jailbreak', status: jailbreak ? 'ready' : 'attention', detail: jailbreak ? `/var/jb is available${ellekitVersion ? ` · ElleKit ${ellekitVersion}` : ''}` : 'Install and enable a rootless jailbreak before continuing.' },
-      { id: 'appsync', label: 'AppSync Unified', status: appSyncVersion ? 'ready' : 'attention', detail: appSyncVersion ? `version ${appSyncVersion}` : 'Install AppSync Unified on the device.' },
-      { id: 'appinst', label: 'appinst', status: appinstReady ? 'ready' : 'attention', detail: appinstReady ? 'installer is available' : 'Install appinst on the device.' },
       { id: 'bridge', label: 'autoinstall bridge', status: bridgeReady ? 'ready' : 'attention', detail: bridgeReady ? 'SpringBoard heartbeat is responding' : 'Install autoinstall, then run setup again.' },
     ];
     if (!systemReady) steps[1] = { id: 'ios', label: 'iOS device detected', status: 'unavailable', detail: 'The SSH target did not report Darwin.' };

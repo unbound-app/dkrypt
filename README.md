@@ -13,7 +13,7 @@ dkrypt provides a dashboard and API for:
 
 1. Clone the repository and copy `.env.example` to `.env`.
 2. Set `API_KEY`, `SESSION_SIGNING_SECRET`, `PUBLIC_BASE_URL`, and `ADMIN_PASSWORD`.
-3. Put the SSH key for the device at `~/.ssh/id_ed25519_ipad` so Compose can mount it into the API container.
+3. Put the SSH key for the device at `~/.ssh/id_ed25519` so Compose can mount it into the API container.
 4. Start the service:
 
    ```sh
@@ -33,7 +33,7 @@ Open `http://localhost:8080`, or put an HTTPS reverse proxy in front of it.
 The device needs:
 
 - a rootless jailbreak with ElleKit;
-- OpenSSH, AppSync Unified, and `appinst`;
+- OpenSSH;
 - the dkrypt `autoinstall` bridge;
 - an Apple ID signed in to the App Store; and
 - no device passcode.
@@ -42,11 +42,11 @@ TestFlight builds also require TestFlight to be signed in. The bridge package ca
 
 ```sh
 AUTOINSTALL_IDEVICE_TARGET=mobile@<device-ip> \
-AUTOINSTALL_IDEVICE_KEY="$HOME/.ssh/id_ed25519_ipad" \
+AUTOINSTALL_IDEVICE_KEY="$HOME/.ssh/id_ed25519" \
 make autoinstall-deploy
 ```
 
-The dashboard setup check verifies SSH, iOS, the jailbreak, AppSync Unified, `appinst`, and the bridge heartbeat. Install or repair any item marked **attention**, then run setup again.
+The dashboard setup check verifies SSH, iOS, the jailbreak, and the bridge heartbeat. Install or repair any item marked **attention**, then run setup again. dkrypt does not require a separate IPA installer package.
 
 </details>
 
