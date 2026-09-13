@@ -1,6 +1,11 @@
 export const GENERATED_CHANGELOG = [
   {
     "date": "2026-09-13",
+    "title": "fix(web): align IPA library metadata",
+    "description": "Released in dc8b60e."
+  },
+  {
+    "date": "2026-09-13",
     "title": "fix(idevice): avoid unreliable sftp subsystem",
     "description": "Released in 3e3c7bb."
   },
@@ -33,10 +38,5 @@ export const GENERATED_CHANGELOG = [
     "date": "2026-09-10",
     "title": "refactor(autoinstall): use generic iDevice deployment variables",
     "description": "Released in da290cd."
-  },
-  {
-    "date": "2026-09-10",
-    "title": "chore(deps-dev): bump svelte (#19)",
-    "description": "Released in cfc83a9."
   }
 ] as const;
