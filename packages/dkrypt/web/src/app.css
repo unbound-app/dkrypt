@@ -321,6 +321,7 @@
 	left: 0.5rem;
 	right: 0.5rem;
 	bottom: 0;
+	padding-bottom: max(0.25rem, env(safe-area-inset-bottom));
 }
 
 .account-menu {

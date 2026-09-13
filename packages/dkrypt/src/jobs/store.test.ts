@@ -4,12 +4,13 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createDevice, deleteDevice } from '#store/state.js';
+import type { Job } from '#jobs/types.js';
 
 mock.module('./runner.js', () => ({
   runDecrypt: () => new Promise<void>(() => {}),
 }));
 
-const { cancelJob, cancelQueuedJob, enqueueDecryptJob, getActiveJobs, getJob, getQueueInfo, getQueueReason, reclaimJobFile, recoverPersistedActiveJobs } = await import('./store.js');
+const { cancelJob, cancelQueuedJob, enqueueDecryptJob, getActiveJobs, getJob, getQueueInfo, getQueueReason, isJobDispatchable, reclaimJobFile, recoverPersistedActiveJobs } = await import('./store.js');
 
 let testDeviceId = '';
 
@@ -48,6 +49,12 @@ describe('recoverPersistedActiveJobs', () => {
 });
 
 describe('enqueueDecryptJob', () => {
+  test('allows TestFlight jobs on any enabled device', () => {
+    const job = { preferredDeviceId: undefined } as Pick<Job, 'preferredDeviceId'>;
+
+    expect(isJobDispatchable(job, { id: 'secondary-device' })).toBeTrue();
+  });
+
   test('scheduler jumps queued dashboard jobs, dedupes same bundle, never overtakes a running job', () => {
     const running = enqueueDecryptJob('com.test.running', 'manual');
     expect(running.status).toBe('running');

@@ -688,16 +688,17 @@ async function readRemoteFileIfExists(conn: Client, remotePath: string): Promise
 
 export async function readBridgeHeartbeats(conn: Client): Promise<Partial<Record<BridgeChannel, BridgeHeartbeat>>> {
   const channels: BridgeChannel[] = ['springboard', 'testflight', 'appstore'];
-  const entries = await Promise.all(channels.map(async (channel) => {
+  const heartbeats: Partial<Record<BridgeChannel, BridgeHeartbeat>> = {};
+  for (const channel of channels) {
     const raw = await readRemoteFileIfExists(conn, `${BRIDGE_ROOT_PATH}/${channel}/state/heartbeat.json`);
-    if (!raw) return [channel, undefined] as const;
+    if (!raw) continue;
     try {
-      return [channel, JSON.parse(raw) as BridgeHeartbeat] as const;
+      heartbeats[channel] = JSON.parse(raw) as BridgeHeartbeat;
     } catch {
-      return [channel, undefined] as const;
+      continue;
     }
-  }));
-  return Object.fromEntries(entries.filter((entry): entry is [BridgeChannel, BridgeHeartbeat] => entry[1] !== undefined));
+  }
+  return heartbeats;
 }
 
 export async function isTestFlightRunning(conn: Client): Promise<boolean> {

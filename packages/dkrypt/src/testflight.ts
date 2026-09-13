@@ -10,7 +10,7 @@ import {
   type InstallVerification,
   withSSH,
 } from '#idevice.js';
-import { getPrimaryDevice } from '#store/state.js';
+import { getPrimaryDevice, type DeviceRecord } from '#store/state.js';
 import { hasBridgeCapabilities } from '#bridgeProtocol.js';
 
 function primaryDevice() {
@@ -75,8 +75,8 @@ async function waitForBridgeReady(conn: Client, timeoutMs = 20_000): Promise<voi
   throw new Error('autoinstall bridge did not become ready within timeout');
 }
 
-export async function ensureTestFlightRunning(): Promise<void> {
-  return withSSH(primaryDevice(), async (conn) => {
+export async function ensureTestFlightRunning(device = primaryDevice()): Promise<void> {
+  return withSSH(device, async (conn) => {
     const wasRunning = await isTestFlightRunning(conn);
     log.info(
       wasRunning
@@ -89,41 +89,41 @@ export async function ensureTestFlightRunning(): Promise<void> {
   });
 }
 
-export async function listTrains(appId: number): Promise<TFTrain[]> {
-  return withReadyBridgeRequest(() => withSSH(primaryDevice(), async (conn) => {
+export async function listTrains(appId: number, device = primaryDevice()): Promise<TFTrain[]> {
+  return withReadyBridgeRequest(() => withSSH(device, async (conn) => {
     const response = await sendTestFlightBridgeRequest(conn, { action: 'list_trains', appId });
     return response.data as TFTrain[];
-  }));
+  }), device);
 }
 
-export async function listBuilds(appId: number, trainVersion: string): Promise<TFBuild[]> {
-  return withReadyBridgeRequest(() => withSSH(primaryDevice(), async (conn) => {
+export async function listBuilds(appId: number, trainVersion: string, device = primaryDevice()): Promise<TFBuild[]> {
+  return withReadyBridgeRequest(() => withSSH(device, async (conn) => {
     const response = await sendTestFlightBridgeRequest(conn, { action: 'list_builds', appId, trainVersion });
     return response.data as TFBuild[];
-  }));
+  }), device);
 }
 
-async function withReadyBridgeRequest<T>(request: () => Promise<T>): Promise<T> {
-  await ensureTestFlightRunning();
-  return withBridgeRecovery(request);
+async function withReadyBridgeRequest<T>(request: () => Promise<T>, device: DeviceRecord): Promise<T> {
+  await ensureTestFlightRunning(device);
+  return withBridgeRecovery(request, device);
 }
 
-async function withBridgeRecovery<T>(request: () => Promise<T>): Promise<T> {
+async function withBridgeRecovery<T>(request: () => Promise<T>, device: DeviceRecord): Promise<T> {
   try {
     return await request();
   } catch (err) {
     if (!(err instanceof BridgeError) || !err.details.retryable) throw err;
     log.warn('recovering a retryable TestFlight bridge request', { code: err.details.code, stage: err.details.stage });
-    await ensureTestFlightRunning();
+    await ensureTestFlightRunning(device);
     return request();
   }
 }
 
-export async function getTestFlightBridgeDiagnostics(): Promise<TestFlightBridgeDiagnostics> {
-  return withReadyBridgeRequest(() => withSSH(primaryDevice(), async (conn) => {
+export async function getTestFlightBridgeDiagnostics(device = primaryDevice()): Promise<TestFlightBridgeDiagnostics> {
+  return withReadyBridgeRequest(() => withSSH(device, async (conn) => {
     const response = await sendTestFlightBridgeRequest(conn, { action: 'diagnostics' });
     return response.data as TestFlightBridgeDiagnostics;
-  }));
+  }), device);
 }
 
 async function findInstalledBundlePath(conn: Client, bundleId: string): Promise<string | undefined> {
@@ -144,6 +144,7 @@ export async function installBuild(
   waitTimeoutMs = 4 * 60_000,
   operationId?: string,
   retryAfterMs = TESTFLIGHT_INSTALL_RETRY_AFTER_MS,
+  device = primaryDevice(),
 ): Promise<InstallVerification> {
   if (!SAFE_BUNDLE_ID_RE.test(build.bundleId)) {
     throw new Error(`refusing to install build with unsafe bundleId: ${JSON.stringify(build.bundleId)}`);
@@ -155,9 +156,9 @@ export async function installBuild(
   };
 
   report('ensuring TestFlight is running');
-  await ensureTestFlightRunning();
+  await ensureTestFlightRunning(device);
 
-  return withSSH(primaryDevice(), async (conn) => {
+  return withSSH(device, async (conn) => {
     report('sending install request to TestFlight');
     await sendTestFlightBridgeRequest(conn, { action: 'install', appId, build, operationId, requestId: operationId });
     report('TestFlight accepted the install request, waiting for it to land');

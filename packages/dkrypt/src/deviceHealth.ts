@@ -227,6 +227,66 @@ const IFCONFIG_CANDIDATES = ['ifconfig', '/sbin/ifconfig', '/var/jb/sbin/ifconfi
 
 const CAPTIVE_CHECK_URL = 'http://captive.apple.com/hotspot-detect.html';
 
+interface SpringBoardStatusResult {
+  ok: boolean;
+  value?: {
+    darkEnabled?: boolean;
+    screenIsOn?: boolean;
+    backlightState?: number;
+  };
+}
+
+export interface DeviceHealthQueries {
+  testFlightRunning: () => Promise<boolean>;
+  springBoardStatus: () => Promise<SpringBoardStatusResult>;
+  battery: () => Promise<BatteryStatus | undefined>;
+  storage: () => Promise<DeviceStorage | undefined>;
+  network: () => Promise<NetworkStatus | undefined>;
+  bridgeHeartbeats: () => Promise<Partial<Record<'springboard' | 'testflight' | 'appstore', BridgeHeartbeat>>>;
+}
+
+export interface DeviceTelemetry {
+  testFlightRunning: boolean;
+  testFlightBridgeReachable?: boolean;
+  darkEnabled?: boolean;
+  screenIsOn?: boolean;
+  backlightState?: number;
+  battery?: BatteryStatus;
+  storage?: DeviceStorage;
+  network?: NetworkStatus;
+  bridgeHeartbeats: Partial<Record<'springboard' | 'testflight' | 'appstore', BridgeHeartbeat>>;
+}
+
+async function runHealthQuery<T>(name: string, query: () => Promise<T>, fallback: T): Promise<T> {
+  try {
+    return await query();
+  } catch (err) {
+    log.warn('device telemetry query failed', { name, error: String(err) });
+    return fallback;
+  }
+}
+
+export async function collectDeviceTelemetry(queries: DeviceHealthQueries): Promise<DeviceTelemetry> {
+  const testFlightRunning = await runHealthQuery('TestFlight process status', queries.testFlightRunning, false);
+  const springBoardStatus = await runHealthQuery('SpringBoard bridge status', queries.springBoardStatus, { ok: false });
+  const battery = await runHealthQuery('battery status', queries.battery, undefined);
+  const storage = await runHealthQuery('storage status', queries.storage, undefined);
+  const network = await runHealthQuery('network status', queries.network, undefined);
+  const bridgeHeartbeats = await runHealthQuery('autoinstall heartbeats', queries.bridgeHeartbeats, {});
+
+  return {
+    testFlightRunning,
+    testFlightBridgeReachable: springBoardStatus.ok,
+    darkEnabled: springBoardStatus.value?.darkEnabled,
+    screenIsOn: springBoardStatus.value?.screenIsOn,
+    backlightState: springBoardStatus.value?.backlightState,
+    battery,
+    storage,
+    network,
+    bridgeHeartbeats,
+  };
+}
+
 async function runIfconfig(conn: Client): Promise<string | undefined> {
   for (const bin of IFCONFIG_CANDIDATES) {
     const { stdout, code } = await execCommand(conn, `${bin} 2>/dev/null`);
@@ -269,54 +329,40 @@ async function queryNetworkStatus(conn: Client): Promise<NetworkStatus | undefin
 
 const HEALTH_CACHE_TTL_MS = 20_000;
 
-async function computeDeviceHealth(device: DeviceRecord, isPrimary: boolean): Promise<DeviceHealth> {
+async function computeDeviceHealth(device: DeviceRecord): Promise<DeviceHealth> {
   try {
     return await withSSH(device, async (conn) => {
-      const [tfRunning, sbStatusResult, battery, storage, network, bridgeHeartbeats] = await Promise.all([
-        isTestFlightRunning(conn),
-        isPrimary
-          ? sendSpringBoardBridgeRequest(conn, { action: 'screen_status' }, 8_000)
-              .then((value) => ({ ok: true as const, value }))
-              .catch(() => ({ ok: false as const, value: undefined }))
-          : Promise.resolve({ ok: false as const, value: undefined }),
-        queryBatteryStatus(conn).catch((err: unknown) => {
-          log.warn('battery query threw', { deviceId: device.id, error: String(err) });
-          return undefined;
-        }),
-        queryDeviceStorage(conn).catch((err: unknown) => {
-          log.warn('storage query threw', { deviceId: device.id, error: String(err) });
-          return undefined;
-        }),
-        queryNetworkStatus(conn).catch((err: unknown) => {
-          log.warn('network query threw', { deviceId: device.id, error: String(err) });
-          return undefined;
-        }),
-        readBridgeHeartbeats(conn),
-      ]);
-      const sbStatus = sbStatusResult.value;
+      const telemetry = await collectDeviceTelemetry({
+        testFlightRunning: () => isTestFlightRunning(conn),
+        springBoardStatus: () => sendSpringBoardBridgeRequest(conn, { action: 'screen_status' }, 8_000).then((value) => ({ ok: true, value })),
+        battery: () => queryBatteryStatus(conn),
+        storage: () => queryDeviceStorage(conn),
+        network: () => queryNetworkStatus(conn),
+        bridgeHeartbeats: () => readBridgeHeartbeats(conn),
+      });
       const health: DeviceHealth = {
         reachable: true,
-        testFlightRunning: tfRunning,
-        testFlightBridgeReachable: isPrimary ? sbStatusResult.ok : undefined,
-        darkEnabled: sbStatus?.darkEnabled,
-        screenIsOn: sbStatus?.screenIsOn,
-        backlightState: sbStatus?.backlightState,
-        batteryPercent: battery?.batteryPercent,
-        batteryCharging: battery?.batteryCharging,
-        batteryTemperatureC: battery?.batteryTemperatureC,
-        batteryCycleCount: battery?.batteryCycleCount,
-        batteryHealthPercent: battery?.batteryHealthPercent,
-        batteryDesignCapacityMah: battery?.batteryDesignCapacityMah,
-        batteryMaxCapacityMah: battery?.batteryMaxCapacityMah,
-        storageTotalBytes: storage?.totalBytes,
-        storageUsedBytes: storage?.usedBytes,
-        storageFreeBytes: storage?.freeBytes,
-        storageUsedPercent: storage?.usedPercent,
-        networkConnected: network?.networkConnected,
-        internetAccess: network?.internetAccess,
-        networkIpAddress: network?.ipAddress,
-        networkInterface: network?.networkInterface,
-        bridgeHeartbeats,
+        testFlightRunning: telemetry.testFlightRunning,
+        testFlightBridgeReachable: telemetry.testFlightBridgeReachable,
+        darkEnabled: telemetry.darkEnabled,
+        screenIsOn: telemetry.screenIsOn,
+        backlightState: telemetry.backlightState,
+        batteryPercent: telemetry.battery?.batteryPercent,
+        batteryCharging: telemetry.battery?.batteryCharging,
+        batteryTemperatureC: telemetry.battery?.batteryTemperatureC,
+        batteryCycleCount: telemetry.battery?.batteryCycleCount,
+        batteryHealthPercent: telemetry.battery?.batteryHealthPercent,
+        batteryDesignCapacityMah: telemetry.battery?.batteryDesignCapacityMah,
+        batteryMaxCapacityMah: telemetry.battery?.batteryMaxCapacityMah,
+        storageTotalBytes: telemetry.storage?.totalBytes,
+        storageUsedBytes: telemetry.storage?.usedBytes,
+        storageFreeBytes: telemetry.storage?.freeBytes,
+        storageUsedPercent: telemetry.storage?.usedPercent,
+        networkConnected: telemetry.network?.networkConnected,
+        internetAccess: telemetry.network?.internetAccess,
+        networkIpAddress: telemetry.network?.ipAddress,
+        networkInterface: telemetry.network?.networkInterface,
+        bridgeHeartbeats: telemetry.bridgeHeartbeats,
         checkedAt: Date.now(),
       };
       return { ...health, readiness: getDeviceReadiness(health) };
@@ -325,12 +371,6 @@ async function computeDeviceHealth(device: DeviceRecord, isPrimary: boolean): Pr
     const health: DeviceHealth = { reachable: false, error: err instanceof Error ? err.message : String(err), checkedAt: Date.now() };
     return { ...health, readiness: getDeviceReadiness(health) };
   }
-}
-
-function isPrimaryDeviceId(deviceId: string): boolean {
-  const devices = getEffectiveDevices().filter((d) => d.enabled);
-  const primary = devices.find((d) => d.isPrimary) ?? devices[0];
-  return primary?.id === deviceId;
 }
 
 export function peekPrimaryDeviceHealth(): DeviceHealth | undefined {
@@ -345,7 +385,7 @@ export async function getDeviceHealth(deviceId: string, force = false): Promise<
   if (!force && cached && Date.now() - cached.at < HEALTH_CACHE_TTL_MS) return cached.value;
   const device = getEffectiveDevices().find((d) => d.id === deviceId);
   if (!device) return { reachable: false, error: 'device not found', checkedAt: Date.now() };
-  const value = await computeDeviceHealth(device, isPrimaryDeviceId(deviceId));
+  const value = await computeDeviceHealth(device);
   setCachedDeviceHealth(deviceId, value);
   return value;
 }
@@ -520,8 +560,8 @@ function warnOnMissingTelemetry(device: DeviceRecord, health: DeviceHealth): voi
   if (missing.length > 0) log.warn('device is reachable but missing expected telemetry fields', { deviceId: device.id, missing });
 }
 
-async function pollOneDevice(device: DeviceRecord, isPrimary: boolean): Promise<void> {
-  const health = await computeDeviceHealth(device, isPrimary);
+async function pollOneDevice(device: DeviceRecord): Promise<void> {
+  const health = await computeDeviceHealth(device);
   setCachedDeviceHealth(device.id, health);
   warnOnMissingTelemetry(device, health);
   recordDeviceHealthCheck(
@@ -535,7 +575,7 @@ async function pollOneDevice(device: DeviceRecord, isPrimary: boolean): Promise<
   if (!previous || previous.reachable !== health.reachable) {
     recordDeviceActivity({ deviceId: device.id, kind: 'health', message: health.reachable ? 'Device became reachable' : 'Device became unreachable' });
   }
-  if (isPrimary && health.testFlightBridgeReachable !== undefined && previous?.bridgeReachable !== health.testFlightBridgeReachable) {
+  if (health.testFlightBridgeReachable !== undefined && previous?.bridgeReachable !== health.testFlightBridgeReachable) {
     recordDeviceActivity({
       deviceId: device.id,
       kind: 'bridge',
@@ -548,15 +588,14 @@ async function pollOneDevice(device: DeviceRecord, isPrimary: boolean): Promise<
     checkBatteryHotAlert(device, health.batteryTemperatureC),
     checkBatteryLowAlert(device, health.batteryPercent, health.batteryCharging),
     checkDeviceStorageAlert(device, health.storageUsedPercent),
-    ...(isPrimary ? [checkTestFlightBridgeAlert(device, health.testFlightBridgeReachable ?? false)] : []),
+    checkTestFlightBridgeAlert(device, health.testFlightBridgeReachable ?? false),
   ]);
 }
 
 export function startDeviceHealthPoller(): void {
   const poll = async () => {
     const devices = getEffectiveDevices().filter((d) => d.enabled);
-    const primary = devices.find((d) => d.isPrimary) ?? devices[0];
-    await Promise.all(devices.map((d) => pollOneDevice(d, d.id === primary?.id).catch((err) => log.warn('device health poll failed', { deviceId: d.id, error: String(err) }))));
+    await Promise.all(devices.map((d) => pollOneDevice(d).catch((err) => log.warn('device health poll failed', { deviceId: d.id, error: String(err) }))));
     await checkDiskFullAlert().catch((err) => log.warn('disk full check failed', { error: String(err) }));
   };
 

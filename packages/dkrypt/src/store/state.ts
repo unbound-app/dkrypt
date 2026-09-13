@@ -240,6 +240,7 @@ export interface DeviceRecord {
   user?: string;
   udid?: string;
   usbmuxNetwork?: boolean;
+  productType?: string;
   keyPath?: string;
   rootDir?: string;
   iosVersion?: string;
@@ -2099,6 +2100,7 @@ export interface CreateDeviceInput {
   user?: string;
   udid?: string;
   usbmuxNetwork?: boolean;
+  productType?: string;
   rootDir?: string;
   iosVersion?: string;
   toolchain?: string;
@@ -2124,6 +2126,7 @@ export function createDevice(input: CreateDeviceInput, actor: string): DeviceRec
     user: input.user?.trim() || undefined,
     udid: input.udid?.trim() || undefined,
     usbmuxNetwork: input.usbmuxNetwork,
+    productType: input.productType?.trim() || undefined,
     rootDir: input.rootDir,
     iosVersion: input.iosVersion?.trim() || undefined,
     toolchain: input.toolchain?.trim() || undefined,

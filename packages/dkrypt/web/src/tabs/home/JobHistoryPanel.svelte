@@ -445,10 +445,10 @@
 		}
 	}
 
-	async function retryOnPrimary(entry: JobHistoryEntry): Promise<void> {
+	async function retryJobFromHistory(entry: JobHistoryEntry): Promise<void> {
 		requeueing = new Set(requeueing).add(entry.id);
 		try {
-			const { ok, data } = await retryJob(entry.id, true);
+			const { ok, data } = await retryJob(entry.id);
 			if (!ok) return;
 			addDecrypt({
 				id: data.id,
@@ -464,10 +464,7 @@
 				artifactUrl: data.artifactUrl,
 			});
 			pushRecentBundleId(entry.bundleId);
-			showToast(
-				`Retried ${appDisplayName(entry.bundleId)} on primary device`,
-				"success",
-			);
+			showToast(`Retried ${appDisplayName(entry.bundleId)}`, "success");
 		} finally {
 			const next = new Set(requeueing);
 			next.delete(entry.id);
@@ -922,13 +919,7 @@
 									>
 										{#if j.status === "failed"}
 											<Button size="sm" variant="secondary" onclick={() => openJobDetails(j)} title="Inspect job"><Eye class="h-3.5 w-3.5" /></Button>
-											<Button
-												size="sm"
-												loading={requeueing.has(j.id)}
-												onclick={() =>
-													retryOnPrimary(j)}
-												>Retry</Button
-											>
+											<Button size="sm" loading={requeueing.has(j.id)} onclick={() => retryJobFromHistory(j)}>Retry</Button>
 										{:else}
 											{#if j.downloadUrl}
 												<a class={buttonVariants("default", "sm")} href={j.downloadUrl}>Download</a>

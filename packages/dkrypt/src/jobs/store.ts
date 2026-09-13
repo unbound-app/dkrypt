@@ -9,8 +9,8 @@ import { scopedLogger } from '#logger.js';
 const log = scopedLogger('jobs');
 import { sendMailToUser } from '#mail.js';
 import { sendPushToUser } from '#push.js';
-import { getApiKeyById, getEffectiveDevices, getUserPrefs, isBundleWatched, recordDeviceActivity, recordJobHistory, type DeviceRecord } from '#store/state.js';
-import { uninstallFromPrimaryDevice } from '#appStoreInstall.js';
+import { getApiKeyById, getDevice, getEffectiveDevices, getUserPrefs, isBundleWatched, recordDeviceActivity, recordJobHistory, type DeviceRecord } from '#store/state.js';
+import { uninstallFromDevice } from '#appStoreInstall.js';
 import { getCachedDeviceHealth } from '#deviceHealthCache.js';
 import { runDecrypt } from '#jobs/runner.js';
 import { appendJobTimelineEvent, type Job, type JobSource, type TestFlightJobSource } from '#jobs/types.js';
@@ -290,9 +290,8 @@ export function getQueueReason(job: Job): string | undefined {
   const devices = getEffectiveDevices().filter((device) => device.enabled);
   if (devices.length === 0) return 'Waiting for an enabled device';
 
-  const primary = devices.find((device) => device.isPrimary) ?? devices[0];
-  const eligible = devices.filter((device) => isDispatchable(job, device, primary));
-  if (eligible.length === 0) return job.testflight ? 'Waiting for the primary device' : 'Waiting for a compatible device';
+  const eligible = devices.filter((device) => isJobDispatchable(job, device));
+  if (eligible.length === 0) return 'Waiting for a compatible device';
 
   if (config.userConcurrencyCap > 0 && job.queuedBy && queuedByActiveCount(job.queuedBy) >= config.userConcurrencyCap) {
     return `Waiting for your concurrency limit (${config.userConcurrencyCap}) to free up`;
@@ -446,9 +445,8 @@ export function reorderQueue(orderedIds: string[]): boolean {
   return true;
 }
 
-function isDispatchable(job: Job, device: DeviceRecord, primary: DeviceRecord): boolean {
+export function isJobDispatchable(job: Pick<Job, 'preferredDeviceId'>, device: Pick<DeviceRecord, 'id'>): boolean {
   if (job.preferredDeviceId && job.preferredDeviceId !== device.id) return false;
-  if (job.testflight) return device.id === primary.id;
   return true;
 }
 
@@ -484,11 +482,11 @@ function apiKeyActiveCount(apiKeyId: string): number {
   return count;
 }
 
-function takeNextDispatchableJobId(device: DeviceRecord, primary: DeviceRecord): string | undefined {
+function takeNextDispatchableJobId(device: DeviceRecord): string | undefined {
   const cap = config.userConcurrencyCap;
   for (let i = 0; i < queue.length; i++) {
     const job = jobs.get(queue[i]);
-    if (!job || !isDispatchable(job, device, primary)) continue;
+    if (!job || !isJobDispatchable(job, device)) continue;
     if (cap > 0 && job.queuedBy && queuedByActiveCount(job.queuedBy) >= cap) continue;
     if (job.apiKeyId) {
       const keyMaxConcurrent = getApiKeyById(job.apiKeyId)?.maxConcurrent;
@@ -508,7 +506,7 @@ function pumpWorkers(): void {
   const rankedDevices = [...devices].sort((a, b) => deviceScore(b, primary) - deviceScore(a, primary));
   for (const device of rankedDevices) {
     if (busyDeviceIds.has(device.id)) continue;
-    const jobId = takeNextDispatchableJobId(device, primary);
+    const jobId = takeNextDispatchableJobId(device);
     if (!jobId) continue;
     const job = jobs.get(jobId);
     if (!job) continue;
@@ -639,7 +637,7 @@ async function reclaimAndMaybeUninstall(job: Job): Promise<void> {
   const { bundleId, status } = job;
   await cleanupJob(job);
   if (status === 'done' && !isBundleWatched(bundleId)) {
-    await uninstallFromPrimaryDevice(bundleId).catch((err: unknown) => {
+    await uninstallFromDevice(bundleId, job.deviceId ? getDevice(job.deviceId) : undefined).catch((err: unknown) => {
       log.warn('device uninstall during sweep failed', { bundleId, error: String(err) });
     });
   }

@@ -66,7 +66,7 @@ export async function runDecrypt(job: Job, device: DeviceRecord): Promise<void> 
   report(`autoinstall transaction ${job.id}`);
 
   if (job.testflight) {
-    await installBuild(job.testflight.appId, job.testflight.build, report, undefined, job.id);
+    await installBuild(job.testflight.appId, job.testflight.build, report, undefined, job.id, undefined, device);
   } else {
     const installed = await installFromAppStore(job.bundleId, {
       externalVersionId: job.externalVersionId,
@@ -75,6 +75,7 @@ export async function runDecrypt(job: Job, device: DeviceRecord): Promise<void> 
       onProgress: report,
       isCancelled: () => Boolean(job.cancelledBy),
       currentVersion: currentAppStoreVersion,
+      device,
     });
     if (installed.shortVersion) job.versionLabel = installed.shortVersion;
   }

@@ -1,24 +1,17 @@
 <script lang="ts">
 	import { DropdownMenu } from "bits-ui";
 	import {
-		BarChart3,
-		BookOpen,
 		Command,
 		Download,
-		Home as HomeIcon,
-		KeyRound,
 		Lock,
 		LogOut,
 		Monitor,
 		Moon,
 		Pencil,
 		PanelRightOpen,
-		ScrollText,
-		Settings as SettingsIcon,
 		Sun,
 		Volume2,
 		VolumeX,
-		Wallet,
 	} from "lucide-svelte";
 	import { Toaster } from "svelte-sonner";
 	import CommandPalette from "#components/CommandPalette.svelte";
@@ -32,6 +25,7 @@
 	import NotificationBell from "#components/NotificationBell.svelte";
 	import WhatsNewButton from "#components/WhatsNewButton.svelte";
 	import ContactPage from "#components/ContactPage.svelte";
+	import TabIcon from "#components/TabIcon.svelte";
 	import PublicPricing from "#components/PublicPricing.svelte";
 	import SessionExpiryBanner from "#components/SessionExpiryBanner.svelte";
 	import SessionsDialog from "#components/SessionsDialog.svelte";
@@ -312,16 +306,6 @@
 		}),
 	);
 
-	const TAB_ICON: Record<TabId, typeof HomeIcon> = {
-		home: HomeIcon,
-		billing: Wallet,
-		keys: KeyRound,
-		logs: ScrollText,
-		insights: BarChart3,
-		docs: BookOpen,
-		settings: SettingsIcon,
-	};
-
 	async function doLogout(): Promise<void> {
 		loggingOut = true;
 		try {
@@ -562,14 +546,13 @@
 				<nav class="flex flex-1 flex-col gap-1 p-4" aria-label="Workspace">
 					<div class="mb-2 px-3 text-[10px] font-semibold tracking-[0.14em] text-sidebar-foreground/45 uppercase">Workspace</div>
 					{#each visibleTabs as t (t.id)}
-						{@const Icon = TAB_ICON[t.id]}
 						<Button
 							variant={tabState.active === t.id ? "secondary" : "ghost"}
 							class={cn("group w-full justify-start gap-3 px-3 text-sm", tabState.active === t.id ? "bg-sidebar-accent text-sidebar-accent-foreground shadow-sm" : "text-sidebar-foreground/65 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground")}
 							onclick={() => setActiveTab(t.id)}
 							aria-current={tabState.active === t.id ? "page" : undefined}
 						>
-							<Icon class="size-4" />
+							<TabIcon id={t.id} class="size-4" />
 							<span>{t.label}</span>
 						</Button>
 					{/each}
@@ -1075,7 +1058,6 @@
 		</aside>
 		<nav class="mobile-primary-nav fixed z-40 flex overflow-x-auto border border-border bg-card p-1 shadow-lg lg:hidden" aria-label="Primary">
 			{#each visibleTabs as t (t.id)}
-				{@const Icon = TAB_ICON[t.id]}
 				<Button
 					variant={tabState.active === t.id ? "secondary" : "ghost"}
 					class={cn(
@@ -1085,7 +1067,7 @@
 					onclick={() => setActiveTab(t.id)}
 					aria-current={tabState.active === t.id ? "page" : undefined}
 				>
-					<Icon class="h-5 w-5" />
+						<TabIcon id={t.id} class="size-5" />
 					{t.label}
 				</Button>
 			{/each}

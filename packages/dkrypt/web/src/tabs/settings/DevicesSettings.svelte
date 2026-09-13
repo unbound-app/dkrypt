@@ -1,5 +1,6 @@
 <script lang="ts">
   import { AlertTriangle, CheckCircle2, CircleX, Pencil, RefreshCw, Search, Smartphone, Star, Trash2, Usb, Wifi } from 'lucide-svelte';
+  import DeviceArtwork from '#components/DeviceArtwork.svelte';
   import EmptyState from '#components/EmptyState.svelte';
   import RelativeTime from '#components/RelativeTime.svelte';
   import {
@@ -31,6 +32,7 @@
   import Switch from '#lib/components/ui/Switch.svelte';
   import { liveState } from '#lib/live.svelte';
   import { PermissionFlag } from '#lib/permissions';
+  import { getAppleDeviceModelName } from '#lib/deviceModel';
   import { sessionHasAnyPermission, sessionHasPermission } from '#lib/session.svelte';
   import { confirmDialog, showToast } from '#lib/ui.svelte';
 
@@ -311,18 +313,20 @@
   {#snippet headerExtra()}
     {#if canManageDevices}<Button size="sm" onclick={() => void openDiscovery()}><Search class="h-3.5 w-3.5" />Find a device</Button>{/if}
   {/snippet}
-  <div class="mb-4 flex flex-wrap items-start justify-between gap-3"><div class="max-w-2xl text-sm text-muted">Connect a jailbroken iPhone or iPad over USB or Wi-Fi. dkrypt discovers it, verifies the connection, checks every prerequisite, and adds it to the pool with a clear readiness summary.</div><div class="text-right text-xs text-muted">TestFlight uses the primary device · App Store decrypts can use any enabled device</div></div>
+  <div class="mb-4 max-w-3xl text-sm text-muted">Connect a jailbroken iPhone or iPad over USB or Wi-Fi. dkrypt discovers it, verifies the connection, checks every prerequisite, and adds it to the pool with a clear readiness summary.</div>
   {#if devices.length === 0}
     <EmptyState icon={Smartphone} message="No devices connected yet." />
   {:else}
     <div class="grid gap-3 xl:grid-cols-2">
       {#each devices as device (device.id)}
         {@const h = health[device.id]}
+        {@const model = getAppleDeviceModelName(device.productType, device.name)}
         <div class="border-border/80 bg-background/30 min-w-0 rounded-xl border p-4">
           <div class="flex items-start gap-3">
-            <div class="bg-primary/10 text-primary flex h-9 w-9 shrink-0 items-center justify-center rounded-lg">{#if device.transport === 'usb'}<Usb class="h-4 w-4" />{:else}<Wifi class="h-4 w-4" />{/if}</div>
+            <DeviceArtwork productType={device.productType} name={device.name} />
             <div class="min-w-0 flex-1">
               <div class="flex flex-wrap items-center gap-1.5"><span class="truncate text-sm font-semibold">{device.name}</span>{#if device.isPrimary}<Badge variant="default"><Star class="mr-1 h-3 w-3" />primary</Badge>{/if}<Badge variant="secondary">{device.transport === 'usb' ? 'USB' : 'Wi-Fi'}</Badge>{#if h}<Badge variant={h.reachable ? 'success' : 'destructive'}>{h.reachable ? 'online' : 'offline'}</Badge>{/if}{#if h?.readiness}<Badge variant={h.readiness.state === 'ready' ? 'success' : h.readiness.state === 'caution' ? 'secondary' : 'destructive'}>{h.readiness.score}/100 ready</Badge>{/if}</div>
+              <div class="mt-1 text-xs font-medium text-foreground/80">{model ?? 'Apple device'}{device.productType && model !== device.productType ? ` · ${device.productType}` : ''}</div>
               <div class="mt-1 truncate font-mono text-[11px] text-muted" title={connectionLabel(device)}>{connectionLabel(device)}</div>
             </div>
             {#if canManageDevices}<Button size="icon" variant="ghost" class="h-8 w-8 shrink-0" onclick={() => openEdit(device)} aria-label={`Edit ${device.name}`} title="Edit device"><Pencil class="h-3.5 w-3.5" /></Button>{/if}

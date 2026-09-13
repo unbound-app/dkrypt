@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { getDeviceInstallBlocker, getDeviceReadiness, isBridgeHeartbeatFresh, parseDeviceStorageDf, type DeviceHealth } from '#deviceHealth.js';
+import { collectDeviceTelemetry, getDeviceInstallBlocker, getDeviceReadiness, isBridgeHeartbeatFresh, parseDeviceStorageDf, type DeviceHealth } from '#deviceHealth.js';
 
 function health(overrides: Partial<DeviceHealth> = {}): DeviceHealth {
   return { reachable: true, checkedAt: 0, ...overrides };
@@ -40,5 +40,34 @@ describe('parseDeviceStorageDf', () => {
       freeBytes: 1_740_800 * 1024,
       usedPercent: 28_979_200 / 30_720_000,
     });
+  });
+});
+
+describe('collectDeviceTelemetry', () => {
+  test('keeps telemetry failures from making an established SSH session unreachable', async () => {
+    let activeQueries = 0;
+    let maxActiveQueries = 0;
+    const query = <T>(value: T, shouldFail = false) => async (): Promise<T> => {
+      activeQueries += 1;
+      maxActiveQueries = Math.max(maxActiveQueries, activeQueries);
+      await Promise.resolve();
+      activeQueries -= 1;
+      if (shouldFail) throw new Error('Unable to exec');
+      return value;
+    };
+
+    const telemetry = await collectDeviceTelemetry({
+      testFlightRunning: query(false, true),
+      springBoardStatus: query({ ok: false, value: undefined }, true),
+      battery: query(undefined),
+      storage: query(undefined),
+      network: query(undefined),
+      bridgeHeartbeats: query({}),
+    });
+
+    expect(maxActiveQueries).toBe(1);
+    expect(telemetry.testFlightRunning).toBeFalse();
+    expect(telemetry.testFlightBridgeReachable).toBeFalse();
+    expect(telemetry.bridgeHeartbeats).toEqual({});
   });
 });

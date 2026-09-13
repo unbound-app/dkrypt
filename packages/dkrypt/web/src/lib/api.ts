@@ -189,6 +189,7 @@ export interface DeviceRecord {
   user: string;
   udid?: string;
   usbmuxNetwork?: boolean;
+  productType?: string;
   setupRequired?: boolean;
   legacyConnection?: boolean;
   iosVersion?: string;
@@ -639,17 +640,17 @@ export function discoverDevices(): Promise<DeviceDiscoveryResult> {
 }
 
 export function setupDevice(
-  connection: Pick<DeviceDiscoveryCandidate, 'transport' | 'host' | 'port' | 'user' | 'udid' | 'usbmuxNetwork'>,
+  connection: Pick<DeviceDiscoveryCandidate, 'transport' | 'host' | 'port' | 'user' | 'udid' | 'usbmuxNetwork' | 'productType'>,
   profile?: { name?: string; existingId?: string; iosVersion?: string; toolchain?: string; notes?: string },
 ): Promise<{ ok: boolean; data: { device: DeviceRecord; setup: DeviceSetupResult } }> {
   return apiAction('/v1/dashboard/devices/setup', { method: 'POST', body: JSON.stringify({ ...connection, ...profile }) });
 }
 
-export function createDevice(connection: Pick<DeviceRecord, 'name' | 'transport' | 'host' | 'port' | 'user' | 'udid' | 'usbmuxNetwork'>): Promise<{ ok: boolean; data: DeviceRecord }> {
+export function createDevice(connection: Pick<DeviceRecord, 'name' | 'transport' | 'host' | 'port' | 'user' | 'udid' | 'usbmuxNetwork' | 'productType'>): Promise<{ ok: boolean; data: DeviceRecord }> {
   return apiAction('/v1/dashboard/devices', { method: 'POST', body: JSON.stringify(connection) }, 'Device added');
 }
 
-export function updateDevice(id: string, patch: Partial<Pick<DeviceRecord, 'name' | 'transport' | 'host' | 'port' | 'user' | 'udid' | 'usbmuxNetwork' | 'iosVersion' | 'toolchain' | 'notes' | 'enabled' | 'isPrimary'>>): Promise<{ ok: boolean; data: DeviceRecord }> {
+export function updateDevice(id: string, patch: Partial<Pick<DeviceRecord, 'name' | 'transport' | 'host' | 'port' | 'user' | 'udid' | 'usbmuxNetwork' | 'productType' | 'iosVersion' | 'toolchain' | 'notes' | 'enabled' | 'isPrimary'>>): Promise<{ ok: boolean; data: DeviceRecord }> {
   return apiAction(`/v1/dashboard/devices/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) }, 'Device updated');
 }
 

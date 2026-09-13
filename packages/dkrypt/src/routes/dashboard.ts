@@ -744,8 +744,7 @@ dashboardRouter.post('/v1/dashboard/decrypt/preflight', canDecrypt, async (req, 
       const installBlocker = getDeviceInstallBlocker(health, installSizeBytes);
       if (installBlocker) blockers.push(installBlocker);
       if (health.readiness?.state === 'blocked') blockers.push(...(health.readiness.reasons.length > 0 ? health.readiness.reasons : ['device readiness is blocked']));
-      if (testflight && primary && device.id !== primary.id) blockers.push('TestFlight decrypts run on the primary device');
-      if (testflight && device.id === primary?.id && health.testFlightBridgeReachable === false) blockers.push('TestFlight bridge is unresponsive');
+      if (testflight && health.testFlightBridgeReachable === false) blockers.push('TestFlight bridge is unresponsive');
       return {
         id: device.id,
         name: device.name,
@@ -832,6 +831,7 @@ interface DeviceInput {
   user?: string;
   udid?: string;
   usbmuxNetwork?: boolean;
+  productType?: string;
   rootDir?: string;
   iosVersion?: string;
   toolchain?: string;
@@ -860,6 +860,7 @@ function parseDeviceInput(body: unknown): DeviceInput | undefined {
     user: user || undefined,
     udid: udid || undefined,
     usbmuxNetwork: b.usbmuxNetwork === true,
+    productType: typeof b.productType === 'string' ? b.productType.trim() || undefined : undefined,
     rootDir: rootDir || undefined,
     iosVersion: typeof b.iosVersion === 'string' ? b.iosVersion.trim() || undefined : undefined,
     toolchain: typeof b.toolchain === 'string' ? b.toolchain.trim() || undefined : undefined,
@@ -869,12 +870,13 @@ function parseDeviceInput(body: unknown): DeviceInput | undefined {
   };
 }
 
-function parseDeviceConnection(body: unknown): { connection: DeviceConnection; name?: string; existingId?: string; iosVersion?: string; toolchain?: string; notes?: string } | undefined {
+function parseDeviceConnection(body: unknown): { connection: DeviceConnection; name?: string; existingId?: string; productType?: string; iosVersion?: string; toolchain?: string; notes?: string } | undefined {
   if (typeof body !== 'object' || body === null) return undefined;
   const b = body as Record<string, unknown>;
   const transport = b.transport === 'usb' || b.transport === 'wifi' ? b.transport : undefined;
   const host = typeof b.host === 'string' ? b.host.trim() : '';
   const udid = typeof b.udid === 'string' ? b.udid.trim() : '';
+  const productType = typeof b.productType === 'string' ? b.productType.trim() : '';
   const user = typeof b.user === 'string' ? b.user.trim() : '';
   const port = typeof b.port === 'number' && Number.isInteger(b.port) && b.port >= 1 && b.port <= 65_535 ? b.port : undefined;
   if (!host && !udid) return undefined;
@@ -888,6 +890,7 @@ function parseDeviceConnection(body: unknown): { connection: DeviceConnection; n
     connection: { transport: resolvedTransport, host: host || undefined, port, user: user || undefined, udid: udid || undefined, usbmuxNetwork },
     name: typeof b.name === 'string' ? b.name.trim() || undefined : undefined,
     existingId: typeof b.existingId === 'string' ? b.existingId.trim() || undefined : undefined,
+    productType: productType || undefined,
     iosVersion: typeof b.iosVersion === 'string' ? b.iosVersion.trim() || undefined : undefined,
     toolchain: typeof b.toolchain === 'string' ? b.toolchain.trim() || undefined : undefined,
     notes: typeof b.notes === 'string' ? b.notes.trim().slice(0, 1000) || undefined : undefined,
@@ -920,6 +923,7 @@ dashboardRouter.post('/v1/dashboard/devices/setup', canManageDevices, async (req
         user: input.connection.user,
         udid: input.connection.udid,
         usbmuxNetwork: input.connection.usbmuxNetwork,
+        productType: input.productType ?? setup.info.productType ?? existing.productType,
         rootDir: undefined,
         name: input.name ?? existing.name,
         iosVersion: input.iosVersion ?? setup.info.productVersion ?? existing.iosVersion,
@@ -942,6 +946,7 @@ dashboardRouter.post('/v1/dashboard/devices/setup', canManageDevices, async (req
         user: input.connection.user,
         udid: input.connection.udid,
         usbmuxNetwork: input.connection.usbmuxNetwork,
+        productType: input.productType ?? setup.info.productType,
         iosVersion: input.iosVersion ?? setup.info.productVersion,
         toolchain: input.toolchain,
         notes: input.notes,
@@ -983,6 +988,7 @@ dashboardRouter.patch('/v1/dashboard/devices/:id', canManageDevices, async (req,
   if (typeof body.user === 'string') patch.user = body.user.trim() || undefined;
   if (typeof body.udid === 'string') patch.udid = body.udid.trim() || undefined;
   if (typeof body.usbmuxNetwork === 'boolean') patch.usbmuxNetwork = body.usbmuxNetwork;
+  if (typeof body.productType === 'string') patch.productType = body.productType.trim() || undefined;
   if (typeof body.rootDir === 'string' && body.rootDir.trim()) patch.rootDir = body.rootDir.trim();
   if (typeof body.iosVersion === 'string') patch.iosVersion = body.iosVersion.trim() || undefined;
   if (typeof body.toolchain === 'string') patch.toolchain = body.toolchain.trim() || undefined;
@@ -1039,18 +1045,17 @@ dashboardRouter.get('/v1/dashboard/devices/:id/preflight', canViewDevices, async
     return;
   }
   const health = await getDeviceHealth(device.id, true);
-  const isPrimary = device.id === getPrimaryDevice()?.id;
   let bridge: Awaited<ReturnType<typeof getTestFlightBridgeDiagnostics>> | undefined;
-  if (isPrimary && health.reachable) {
-    bridge = await getTestFlightBridgeDiagnostics().catch(() => undefined);
+  if (health.reachable) {
+    bridge = await getTestFlightBridgeDiagnostics(device).catch(() => undefined);
   }
   const checks = [
     { label: 'SSH connection', ok: health.reachable, detail: health.error },
     { label: 'Internet access', ok: health.internetAccess !== false, detail: health.internetAccess === false ? 'Device cannot reach Apple services' : undefined },
-    { label: 'autoinstall bridge', ok: isPrimary ? health.testFlightBridgeReachable === true : true, detail: isPrimary ? health.testFlightBridgeReachable === true ? undefined : 'Bridge did not respond' : 'App Store and TestFlight automation run on the primary device' },
+    { label: 'autoinstall bridge', ok: health.testFlightBridgeReachable === true, detail: health.testFlightBridgeReachable === true ? undefined : 'Bridge did not respond' },
     { label: 'Device readiness', ok: health.readiness?.state !== 'blocked', detail: health.readiness?.reasons.join(' · ') || undefined },
-    { label: 'Bridge compatibility', ok: isPrimary ? Boolean(bridge?.bridge.bridgeVersion) : true, detail: bridge?.bridge.bridgeVersion ? `autoinstall ${bridge.bridge.bridgeVersion}` : isPrimary ? 'No autoinstall version reported' : 'Checked on the primary device' },
-    { label: 'SpringBoard heartbeat', ok: isPrimary ? isBridgeHeartbeatFresh(health.bridgeHeartbeats?.springboard) : true, detail: health.bridgeHeartbeats?.springboard?.at ? `reported ${new Date(health.bridgeHeartbeats.springboard.at * 1000).toISOString()}` : isPrimary ? 'No authenticated autoinstall heartbeat reported' : 'Checked on the primary device' },
+    { label: 'Bridge compatibility', ok: Boolean(bridge?.bridge.bridgeVersion), detail: bridge?.bridge.bridgeVersion ? `autoinstall ${bridge.bridge.bridgeVersion}` : 'No autoinstall version reported' },
+    { label: 'SpringBoard heartbeat', ok: isBridgeHeartbeatFresh(health.bridgeHeartbeats?.springboard), detail: health.bridgeHeartbeats?.springboard?.at ? `reported ${new Date(health.bridgeHeartbeats.springboard.at * 1000).toISOString()}` : 'No authenticated autoinstall heartbeat reported' },
   ];
   res.json({ device: serializeDevice(device), health, bridge, checks, ready: checks.every((check) => check.ok) });
 });

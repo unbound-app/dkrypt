@@ -16,7 +16,7 @@ import {
 } from '#idevice.js';
 import { scopedLogger } from '#logger.js';
 import { lookupCurrentVersion, type ItunesLookupResult } from '#scheduler/itunes.js';
-import { getPrimaryDevice } from '#store/state.js';
+import { getPrimaryDevice, type DeviceRecord } from '#store/state.js';
 import { BRIDGE_CAPABILITIES, hasBridgeCapabilities } from '#bridgeProtocol.js';
 
 const log = scopedLogger('appstore');
@@ -87,10 +87,10 @@ async function restartAppStore(conn: Client): Promise<void> {
   await new Promise((r) => setTimeout(r, 1_000));
 }
 
-export async function uninstallFromPrimaryDevice(bundleId: string): Promise<boolean> {
+export async function uninstallFromDevice(bundleId: string, device = primaryDevice()): Promise<boolean> {
   if (!SAFE_BUNDLE_ID_RE.test(bundleId)) return false;
   try {
-    return await withSSH(primaryDevice(), (conn) => uninstallInstalledApp(conn, bundleId));
+    return await withSSH(device, (conn) => uninstallInstalledApp(conn, bundleId));
   } catch (err) {
     log.warn('device uninstall failed', { bundleId, error: err instanceof Error ? err.message : String(err) });
     return false;
@@ -101,6 +101,7 @@ export interface AppStoreInstallOptions {
   externalVersionId?: string;
   expectedVersion?: string;
   currentVersion?: ItunesLookupResult;
+  device?: DeviceRecord;
   operationId?: string;
   onProgress?: (message: string) => void;
   waitTimeoutMs?: number;
@@ -131,7 +132,7 @@ export async function installFromAppStore(bundleId: string, options: AppStoreIns
   const { trackId, version: latestVersion } = options.currentVersion ?? (await lookupCurrentVersion(bundleId));
   const targetVersion = expectedVersion ?? (versionId === undefined ? latestVersion : undefined);
 
-  return withSSH(primaryDevice(), async (conn) => {
+  return withSSH(options.device ?? primaryDevice(), async (conn) => {
     ensureNotCancelled();
     const existing = await findInstalledAppStoreBundle(conn, bundleId);
     if (existing) {
