@@ -1,14 +1,20 @@
 import { expect, test } from 'bun:test';
-import { EventEmitter } from 'node:events';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { Client } from 'ssh2';
 import { armAppStoreAutoConfirm, createBridgeEnvelope, readBridgeHeartbeats, type BridgeEnvelope } from './idevice.js';
 import { BRIDGE_CAPABILITIES, BRIDGE_PROTOCOL_VERSION } from './bridgeProtocol.js';
 
-type FakeExecStream = EventEmitter & {
-  stderr: EventEmitter;
+type FakeExecStream = {
+  stderr: {
+    on(event: 'data', listener: (chunk: Buffer) => void): void;
+  };
+  on(event: 'data', listener: (chunk: Buffer) => void): void;
+  on(event: 'error', listener: (error: Error) => void): void;
+  on(event: 'close', listener: (code: number | null) => void): void;
   end(input?: string): void;
+  sendData(chunk: Buffer): void;
+  finish(code: number): void;
 };
 
 function fakeDeviceConnection(): { connection: Client; commands: string[]; writes: string[] } {
@@ -17,17 +23,32 @@ function fakeDeviceConnection(): { connection: Client; commands: string[]; write
   const connection = {
     exec(command: string, callback: (error: Error | undefined, stream: FakeExecStream) => void) {
       commands.push(command);
-      const stream = new EventEmitter() as FakeExecStream;
-      stream.stderr = new EventEmitter();
-      stream.end = (input = '') => {
-        writes.push(input);
-        stream.emit('close', 0);
-      };
+      let outputHandler: ((chunk: Buffer) => void) | undefined;
+      let closeHandler: ((code: number | null) => void) | undefined;
+      const stream = {
+        stderr: {
+          on(_event: 'data', _listener: (chunk: Buffer) => void) {},
+        },
+        on(event: 'data' | 'error' | 'close', listener: ((chunk: Buffer) => void) | ((error: Error) => void) | ((code: number | null) => void)) {
+          if (event === 'data') outputHandler = listener as (chunk: Buffer) => void;
+          if (event === 'close') closeHandler = listener as (code: number | null) => void;
+        },
+        sendData(chunk: Buffer) {
+          outputHandler?.(chunk);
+        },
+        finish(code: number) {
+          closeHandler?.(code);
+        },
+        end(input = '') {
+          writes.push(input);
+          closeHandler?.(0);
+        },
+      } as unknown as FakeExecStream;
       callback(undefined, stream);
-      if (command.includes('cat >')) return;
+      if (command.startsWith('cat >')) return;
       const channel = command.match(/\/tmp\/autoinstall\/v1\/([^/]+)\//)?.[1] ?? 'unknown';
-      stream.emit('data', Buffer.from(JSON.stringify({ process: channel, at: 1 })));
-      stream.emit('close', 0);
+      stream.sendData(Buffer.from(JSON.stringify({ process: channel, at: 1 })));
+      stream.finish(0);
     },
   } as unknown as Client;
   return { connection, commands, writes };

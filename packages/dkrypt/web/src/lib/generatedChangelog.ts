@@ -1,6 +1,11 @@
 export const GENERATED_CHANGELOG = [
   {
     "date": "2026-09-13",
+    "title": "test(idevice): use deterministic ssh stream events",
+    "description": "Released in f6d026b."
+  },
+  {
+    "date": "2026-09-13",
     "title": "test(idevice): stabilize ssh channel regression",
     "description": "Released in c5675ce."
   },
@@ -33,10 +38,5 @@ export const GENERATED_CHANGELOG = [
     "date": "2026-09-10",
     "title": "fix(jobs,web): preserve extension warnings and improve IPA library layout",
     "description": "Released in 176236d."
-  },
-  {
-    "date": "2026-09-10",
-    "title": "feat(web): reimplement dashboard UI with shadcn primitives",
-    "description": "Released in 6496dd0."
   }
 ] as const;
