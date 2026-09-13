@@ -5,7 +5,7 @@ import type { Client } from 'ssh2';
 import type { BridgeEnvelope } from './idevice.js';
 import { BRIDGE_CAPABILITIES, BRIDGE_PROTOCOL_VERSION } from './bridgeProtocol.js';
 
-const { armAppStoreAutoConfirm, createBridgeEnvelope, readBridgeHeartbeats } = await import('./idevice.js' + '?idevice-transport-test');
+const { armAppStoreAutoConfirm, createBridgeEnvelope, execCommand, readBridgeHeartbeats } = await import('./idevice.js' + '?idevice-transport-test');
 
 type FakeExecStream = {
   stderr: {
@@ -87,4 +87,14 @@ test('uses SSH exec channels for device file reads and writes', async () => {
   expect(commands).toHaveLength(4);
   expect(commands.every((command) => command.includes('cat'))).toBe(true);
   expect(writes).toEqual(['Inspect']);
+});
+
+test('times out stalled SSH exec channels', async () => {
+  const connection = { exec() {} } as unknown as Client;
+
+  await expect(execCommand(connection, 'stalled command', 20)).resolves.toEqual({
+    stdout: '',
+    stderr: 'command timed out after 20ms',
+    code: null,
+  });
 });

@@ -368,7 +368,9 @@ async function computeDeviceHealth(device: DeviceRecord): Promise<DeviceHealth> 
       return { ...health, readiness: getDeviceReadiness(health) };
     });
   } catch (err) {
-    const health: DeviceHealth = { reachable: false, error: err instanceof Error ? err.message : String(err), checkedAt: Date.now() };
+    const error = err instanceof Error ? err.message : String(err);
+    log.warn('device health check failed', { deviceId: device.id, error });
+    const health: DeviceHealth = { reachable: false, error, checkedAt: Date.now() };
     return { ...health, readiness: getDeviceReadiness(health) };
   }
 }

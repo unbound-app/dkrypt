@@ -4,7 +4,7 @@ import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { connect as connectSocket, createServer } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { Client } from 'ssh2';
+import { Client, type Channel } from 'ssh2';
 import { config } from '#config.js';
 import { scopedLogger } from '#logger.js';
 import { BRIDGE_PROTOCOL_VERSION } from '#bridgeProtocol.js';
@@ -17,6 +17,7 @@ const BRIDGE_ROOT_PATH = '/tmp/autoinstall/v1';
 const BRIDGE_SECRET_FILE_NAME = 'autoinstall-bridge-secret';
 const BRIDGE_SECRET_REMOTE_PATH = '/var/mobile/Library/Preferences/dev.adrian.autoinstall-bridge.secret';
 const BRIDGE_ARTIFACT_TTL_MINUTES = 30;
+const REMOTE_COMMAND_TIMEOUT_MS = 10_000;
 
 export type { BridgeChannel } from '#bridgeProtocol.js';
 
@@ -623,21 +624,56 @@ export function createBridgeEnvelope(secret: string, channel: BridgeChannel, req
   };
 }
 
-export function execCommand(conn: Client, command: string): Promise<{ stdout: string; stderr: string; code: number | null }> {
+export function execCommand(conn: Client, command: string, timeoutMs = REMOTE_COMMAND_TIMEOUT_MS): Promise<{ stdout: string; stderr: string; code: number | null }> {
   return new Promise((resolve, reject) => {
-    conn.exec(command, (err, stream) => {
-      if (err) return reject(err);
-      let stdout = '';
-      let stderr = '';
-      stream.on('data', (chunk: Buffer) => {
-        stdout += chunk.toString('utf8');
+    let stdout = '';
+    let stderr = '';
+    let stream: Channel | undefined;
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const effectiveTimeoutMs = Math.max(1, timeoutMs);
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      stream?.destroy();
+      reject(error);
+    };
+    timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      stream?.destroy();
+      resolve({ stdout, stderr: `${stderr}\ncommand timed out after ${effectiveTimeoutMs}ms`.trim(), code: null });
+    }, effectiveTimeoutMs);
+    try {
+      conn.exec(command, (err, nextStream) => {
+        if (settled) {
+          nextStream?.destroy();
+          return;
+        }
+        if (err) {
+          fail(err);
+          return;
+        }
+        stream = nextStream;
+        nextStream.on('data', (chunk: Buffer) => {
+          stdout += chunk.toString('utf8');
+        });
+        nextStream.stderr.on('data', (chunk: Buffer) => {
+          stderr += chunk.toString('utf8');
+        });
+        nextStream.on('close', (code: number | null) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolve({ stdout, stderr, code });
+        });
+        nextStream.on('error', fail);
       });
-      stream.stderr.on('data', (chunk: Buffer) => {
-        stderr += chunk.toString('utf8');
-      });
-      stream.on('close', (code: number | null) => resolve({ stdout, stderr, code }));
-      stream.on('error', reject);
-    });
+    } catch (error) {
+      fail(error instanceof Error ? error : new Error(String(error)));
+    }
   });
 }
 
@@ -645,37 +681,69 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
-function writeRemoteFile(conn: Client, remotePath: string, content: string): Promise<void> {
+function writeRemoteFile(conn: Client, remotePath: string, content: string, timeoutMs = REMOTE_COMMAND_TIMEOUT_MS): Promise<void> {
   return new Promise((resolve, reject) => {
-    conn.exec(`cat > ${shellQuote(remotePath)}`, (err, stream) => {
-      if (err) return reject(err);
-      let stderr = '';
-      stream.stderr.on('data', (chunk: Buffer) => {
-        stderr += chunk.toString('utf8');
-      });
-      stream.on('error', reject);
-      stream.on('close', (code: number | null) => {
-        if (code === 0) {
-          resolve();
+    let stream: Channel | undefined;
+    let stderr = '';
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const effectiveTimeoutMs = Math.max(1, timeoutMs);
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      stream?.destroy();
+      reject(error);
+    };
+    const finish = (code: number | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(`could not write remote file: ${stderr.trim() || `exit code ${code ?? 'unknown'}`}`));
+    };
+    timer = setTimeout(() => fail(new Error(`could not write remote file: command timed out after ${effectiveTimeoutMs}ms`)), effectiveTimeoutMs);
+    try {
+      conn.exec(`cat > ${shellQuote(remotePath)}`, (err, nextStream) => {
+        if (settled) {
+          nextStream?.destroy();
           return;
         }
-        reject(new Error(`could not write remote file: ${stderr.trim() || `exit code ${code ?? 'unknown'}`}`));
+        if (err) {
+          fail(err);
+          return;
+        }
+        stream = nextStream;
+        nextStream.stderr.on('data', (chunk: Buffer) => {
+          stderr += chunk.toString('utf8');
+        });
+        nextStream.on('error', fail);
+        nextStream.on('close', finish);
+        try {
+          nextStream.end(content);
+        } catch (error) {
+          fail(error instanceof Error ? error : new Error(String(error)));
+        }
       });
-      stream.end(content);
-    });
+    } catch (error) {
+      fail(error instanceof Error ? error : new Error(String(error)));
+    }
   });
 }
 
-async function writeRemoteFileAtomically(conn: Client, remotePath: string, content: string): Promise<void> {
+async function writeRemoteFileAtomically(conn: Client, remotePath: string, content: string, timeoutMs = REMOTE_COMMAND_TIMEOUT_MS): Promise<void> {
   const tempPath = `${remotePath}.${randomUUID()}.partial`;
-  await writeRemoteFile(conn, tempPath, content);
-  const { code, stderr } = await execCommand(conn, `mv ${shellQuote(tempPath)} ${shellQuote(remotePath)}`);
+  await writeRemoteFile(conn, tempPath, content, timeoutMs);
+  const { code, stderr } = await execCommand(conn, `mv ${shellQuote(tempPath)} ${shellQuote(remotePath)}`, timeoutMs);
   if (code !== 0) throw new Error(`could not publish bridge request: ${stderr || code}`);
 }
 
-async function readRemoteFileIfExists(conn: Client, remotePath: string): Promise<string | undefined> {
+async function readRemoteFileIfExists(conn: Client, remotePath: string, timeoutMs = REMOTE_COMMAND_TIMEOUT_MS): Promise<string | undefined> {
   const quotedPath = shellQuote(remotePath);
-  const { stdout, stderr, code } = await execCommand(conn, `if [ -f ${quotedPath} ]; then cat ${quotedPath}; else exit 44; fi`);
+  const { stdout, stderr, code } = await execCommand(conn, `if [ -f ${quotedPath} ]; then cat ${quotedPath}; else exit 44; fi`, timeoutMs);
   if (code === 0) return stdout;
   if (code === 44) return undefined;
   throw new Error(`could not read remote file: ${stderr.trim() || stdout.trim() || `exit code ${code ?? 'unknown'}`}`);
@@ -798,29 +866,31 @@ async function sendBridgeRequestRawTo(
     const requestPath = `${requestDirectory}/${requestId}.json`;
     const responsePath = `${responseDirectory}/${requestId}.response.json`;
     const envelope = createBridgeEnvelope(secret, channel, request, requestId);
+    const deadline = Date.now() + timeoutMs;
+    const commandTimeout = () => Math.max(1, Math.min(REMOTE_COMMAND_TIMEOUT_MS, deadline - Date.now()));
     log.info('sending authenticated autoinstall bridge request', { requestId, channel, action: request.action });
     const { code, stderr } = await execCommand(
       conn,
       `mkdir -p "${requestDirectory}" "${responseDirectory}" && chmod 700 "${BRIDGE_ROOT_PATH}" "${BRIDGE_ROOT_PATH}/${channel}" "${requestDirectory}" "${responseDirectory}"`,
+      commandTimeout(),
     );
     if (code !== 0) throw new Error(`could not prepare autoinstall bridge directories: ${stderr || code}`);
-    await writeRemoteFileAtomically(conn, BRIDGE_SECRET_REMOTE_PATH, `${secret}\n`);
-    const secretMode = await execCommand(conn, `chmod 600 "${BRIDGE_SECRET_REMOTE_PATH}"`);
+    await writeRemoteFileAtomically(conn, BRIDGE_SECRET_REMOTE_PATH, `${secret}\n`, commandTimeout());
+    const secretMode = await execCommand(conn, `chmod 600 "${BRIDGE_SECRET_REMOTE_PATH}"`, commandTimeout());
     if (secretMode.code !== 0) throw new Error(`could not secure autoinstall bridge secret: ${secretMode.stderr || secretMode.code}`);
-    await execCommand(conn, `find "${BRIDGE_ROOT_PATH}" -type f -mmin +${BRIDGE_ARTIFACT_TTL_MINUTES} -delete`);
-    await writeRemoteFileAtomically(conn, requestPath, JSON.stringify(envelope));
+    await execCommand(conn, `find "${BRIDGE_ROOT_PATH}" -type f -mmin +${BRIDGE_ARTIFACT_TTL_MINUTES} -delete`, commandTimeout());
+    await writeRemoteFileAtomically(conn, requestPath, JSON.stringify(envelope), commandTimeout());
 
-    const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-      const raw = await readRemoteFileIfExists(conn, responsePath);
+      const raw = await readRemoteFileIfExists(conn, responsePath, commandTimeout());
       if (raw) {
         const parsed = JSON.parse(raw);
         if (typeof parsed.requestId === 'string' && parsed.requestId !== requestId) {
           log.warn('discarding autoinstall bridge response with a mismatched request id', { requestId, responseRequestId: parsed.requestId, channel });
-          await execCommand(conn, `rm -f ${responsePath}`);
+          await execCommand(conn, `rm -f ${responsePath}`, commandTimeout());
           continue;
         }
-        await execCommand(conn, `rm -f "${responsePath}"`);
+        await execCommand(conn, `rm -f "${responsePath}"`, commandTimeout());
         if (parsed.ok === false) {
           const error = parsed.error;
           if (error && typeof error === 'object') {
@@ -835,9 +905,9 @@ async function sendBridgeRequestRawTo(
         }
         return { ...parsed, requestId };
       }
-      await new Promise((r) => setTimeout(r, 500));
+      await new Promise((r) => setTimeout(r, Math.min(500, Math.max(1, deadline - Date.now()))));
     }
-    await execCommand(conn, `rm -f "${requestPath}" "${responsePath}"`);
+    await execCommand(conn, `rm -f "${requestPath}" "${responsePath}"`, commandTimeout()).catch(() => {});
     throw new Error(`autoinstall bridge request timed out (${requestId}) on ${channel}: ${JSON.stringify(request)}`);
   });
 }
