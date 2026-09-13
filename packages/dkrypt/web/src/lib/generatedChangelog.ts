@@ -1,6 +1,11 @@
 export const GENERATED_CHANGELOG = [
   {
     "date": "2026-09-10",
+    "title": "fix(web): keep IPA library details readable",
+    "description": "Released in 97ccd5a."
+  },
+  {
+    "date": "2026-09-10",
     "title": "fix(web): tighten IPA library columns",
     "description": "Released in 48fbe14."
   },
@@ -33,10 +38,5 @@ export const GENERATED_CHANGELOG = [
     "date": "2026-09-10",
     "title": "chore(deps): bump the api-dependencies group (#20)",
     "description": "Released in 51da69d."
-  },
-  {
-    "date": "2026-09-10",
-    "title": "feat(autoinstall): support out-of-process auth sheets and headless password entry (#21)",
-    "description": "Released in 13d97ac."
   }
 ] as const;

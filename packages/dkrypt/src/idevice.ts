@@ -184,18 +184,25 @@ export function execCommand(conn: Client, command: string): Promise<{ stdout: st
   });
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
 function writeRemoteFile(conn: Client, remotePath: string, content: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    conn.sftp((err, sftp) => {
+    conn.exec(`cat > ${shellQuote(remotePath)}`, (err, stream) => {
       if (err) return reject(err);
-      const stream = sftp.createWriteStream(remotePath);
-      stream.on('close', () => {
-        sftp.end();
-        resolve();
+      let stderr = '';
+      stream.stderr.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString('utf8');
       });
-      stream.on('error', (streamErr: Error) => {
-        sftp.end();
-        reject(streamErr);
+      stream.on('error', reject);
+      stream.on('close', (code: number | null) => {
+        if (code === 0) {
+          resolve();
+          return;
+        }
+        reject(new Error(`could not write remote file: ${stderr.trim() || `exit code ${code ?? 'unknown'}`}`));
       });
       stream.end(content);
     });
@@ -205,31 +212,16 @@ function writeRemoteFile(conn: Client, remotePath: string, content: string): Pro
 async function writeRemoteFileAtomically(conn: Client, remotePath: string, content: string): Promise<void> {
   const tempPath = `${remotePath}.${randomUUID()}.partial`;
   await writeRemoteFile(conn, tempPath, content);
-  const { code, stderr } = await execCommand(conn, `mv "${tempPath}" "${remotePath}"`);
+  const { code, stderr } = await execCommand(conn, `mv ${shellQuote(tempPath)} ${shellQuote(remotePath)}`);
   if (code !== 0) throw new Error(`could not publish bridge request: ${stderr || code}`);
 }
 
-function readRemoteFileIfExists(conn: Client, remotePath: string): Promise<string | undefined> {
-  return new Promise((resolve, reject) => {
-    conn.sftp((err, sftp) => {
-      if (err) return reject(err);
-      const chunks: Buffer[] = [];
-      const stream = sftp.createReadStream(remotePath);
-      stream.on('data', (chunk: Buffer) => chunks.push(chunk));
-      stream.on('end', () => {
-        sftp.end();
-        resolve(Buffer.concat(chunks).toString('utf8'));
-      });
-      stream.on('error', (streamErr: NodeJS.ErrnoException) => {
-        sftp.end();
-        if (streamErr.code === 'ENOENT' || streamErr.message?.includes('No such file')) {
-          resolve(undefined);
-        } else {
-          reject(streamErr);
-        }
-      });
-    });
-  });
+async function readRemoteFileIfExists(conn: Client, remotePath: string): Promise<string | undefined> {
+  const quotedPath = shellQuote(remotePath);
+  const { stdout, stderr, code } = await execCommand(conn, `if [ -f ${quotedPath} ]; then cat ${quotedPath}; else exit 44; fi`);
+  if (code === 0) return stdout;
+  if (code === 44) return undefined;
+  throw new Error(`could not read remote file: ${stderr.trim() || stdout.trim() || `exit code ${code ?? 'unknown'}`}`);
 }
 
 export async function readBridgeHeartbeats(conn: Client): Promise<Partial<Record<BridgeChannel, BridgeHeartbeat>>> {
