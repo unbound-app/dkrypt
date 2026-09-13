@@ -183,7 +183,14 @@ export interface DispatchTarget {
 export interface DeviceRecord {
   id: string;
   name: string;
-  rootDir: string;
+  transport: 'wifi' | 'usb';
+  host?: string;
+  port: number;
+  user: string;
+  udid?: string;
+  usbmuxNetwork?: boolean;
+  setupRequired?: boolean;
+  legacyConnection?: boolean;
   iosVersion?: string;
   toolchain?: string;
   notes?: string;
@@ -199,6 +206,46 @@ export interface DevicePreflight {
   bridge?: TestFlightBridgeDiagnostics;
   ready: boolean;
   checks: Array<{ label: string; ok: boolean; detail?: string }>;
+}
+
+export interface DeviceDiscoveryCandidate {
+  discoveryId: string;
+  name: string;
+  transport: 'wifi' | 'usb';
+  host?: string;
+  port: number;
+  user: string;
+  udid?: string;
+  usbmuxNetwork?: boolean;
+  productType?: string;
+  productVersion?: string;
+  source: 'usb' | 'wifi';
+}
+
+export interface DeviceDiscoveryResult {
+  devices: DeviceDiscoveryCandidate[];
+  scannedNetworks: string[];
+  warnings: string[];
+}
+
+export interface DeviceSetupStep {
+  id: string;
+  label: string;
+  status: 'ready' | 'attention' | 'unavailable';
+  detail?: string;
+}
+
+export interface DeviceSetupResult {
+  info: {
+    name: string;
+    model?: string;
+    productType?: string;
+    productVersion?: string;
+    architecture?: string;
+    serialNumber?: string;
+  };
+  steps: DeviceSetupStep[];
+  ready: boolean;
 }
 
 export type SchedulerRunStatus = 'dispatched' | 'succeeded' | 'failed' | 'timed_out';
@@ -587,11 +634,22 @@ export function fetchDevices(): Promise<{ devices: DeviceRecord[] }> {
   return apiJson('/v1/dashboard/devices');
 }
 
-export function createDevice(name: string, rootDir: string, profile?: Pick<DeviceRecord, 'iosVersion' | 'toolchain' | 'notes'>): Promise<{ ok: boolean; data: DeviceRecord }> {
-  return apiAction('/v1/dashboard/devices', { method: 'POST', body: JSON.stringify({ name, rootDir, ...profile }) }, 'Device added');
+export function discoverDevices(): Promise<DeviceDiscoveryResult> {
+  return apiJson('/v1/dashboard/devices/discover');
 }
 
-export function updateDevice(id: string, patch: Partial<Pick<DeviceRecord, 'name' | 'rootDir' | 'iosVersion' | 'toolchain' | 'notes' | 'enabled' | 'isPrimary'>>): Promise<{ ok: boolean; data: DeviceRecord }> {
+export function setupDevice(
+  connection: Pick<DeviceDiscoveryCandidate, 'transport' | 'host' | 'port' | 'user' | 'udid' | 'usbmuxNetwork'>,
+  profile?: { name?: string; existingId?: string; iosVersion?: string; toolchain?: string; notes?: string },
+): Promise<{ ok: boolean; data: { device: DeviceRecord; setup: DeviceSetupResult } }> {
+  return apiAction('/v1/dashboard/devices/setup', { method: 'POST', body: JSON.stringify({ ...connection, ...profile }) });
+}
+
+export function createDevice(connection: Pick<DeviceRecord, 'name' | 'transport' | 'host' | 'port' | 'user' | 'udid' | 'usbmuxNetwork'>): Promise<{ ok: boolean; data: DeviceRecord }> {
+  return apiAction('/v1/dashboard/devices', { method: 'POST', body: JSON.stringify(connection) }, 'Device added');
+}
+
+export function updateDevice(id: string, patch: Partial<Pick<DeviceRecord, 'name' | 'transport' | 'host' | 'port' | 'user' | 'udid' | 'usbmuxNetwork' | 'iosVersion' | 'toolchain' | 'notes' | 'enabled' | 'isPrimary'>>): Promise<{ ok: boolean; data: DeviceRecord }> {
   return apiAction(`/v1/dashboard/devices/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) }, 'Device updated');
 }
 

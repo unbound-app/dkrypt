@@ -31,8 +31,10 @@ export function buildAppStoreOperationId(jobId: string, retryCount = 0): string 
   return retryCount > 0 ? `${jobId}-retry-${retryCount}` : jobId;
 }
 
-function primaryRootDir(): string {
-  return getPrimaryDevice().rootDir;
+function primaryDevice() {
+  const device = getPrimaryDevice();
+  if (!device) throw new Error('No enabled device is configured');
+  return device;
 }
 
 async function ensureAppStoreForeground(conn: Client): Promise<void> {
@@ -88,7 +90,7 @@ async function restartAppStore(conn: Client): Promise<void> {
 export async function uninstallFromPrimaryDevice(bundleId: string): Promise<boolean> {
   if (!SAFE_BUNDLE_ID_RE.test(bundleId)) return false;
   try {
-    return await withSSH(primaryRootDir(), (conn) => uninstallInstalledApp(conn, bundleId));
+    return await withSSH(primaryDevice(), (conn) => uninstallInstalledApp(conn, bundleId));
   } catch (err) {
     log.warn('device uninstall failed', { bundleId, error: err instanceof Error ? err.message : String(err) });
     return false;
@@ -129,7 +131,7 @@ export async function installFromAppStore(bundleId: string, options: AppStoreIns
   const { trackId, version: latestVersion } = options.currentVersion ?? (await lookupCurrentVersion(bundleId));
   const targetVersion = expectedVersion ?? (versionId === undefined ? latestVersion : undefined);
 
-  return withSSH(primaryRootDir(), async (conn) => {
+  return withSSH(primaryDevice(), async (conn) => {
     ensureNotCancelled();
     const existing = await findInstalledAppStoreBundle(conn, bundleId);
     if (existing) {

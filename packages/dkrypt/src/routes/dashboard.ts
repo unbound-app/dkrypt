@@ -19,7 +19,7 @@ import { getGitHubRateLimitBudget, listDispatchRepos, listRepoWorkflows, validat
 import { lookupAppMetadata, searchApps } from '#scheduler/itunes.js';
 import { requirePermission, requireSession } from '#session.js';
 import { getDeviceHealth, getDeviceInstallBlocker, getDeviceReadiness, isBridgeHeartbeatFresh } from '#deviceHealth.js';
-import { listInstalledAppStoreBundles, sendSpringBoardBridgeRequest, validateDeviceRootDir, withSSH } from '#idevice.js';
+import { discoverDevices, listInstalledAppStoreBundles, sendSpringBoardBridgeRequest, setupDeviceConnection, validateDeviceRootDir, withSSH, type DeviceConnection } from '#idevice.js';
 import { getTestFlightBridgeDiagnostics, listBuilds, listTrains } from '#testflight.js';
 import { nextCronRunAt, nextCronRuns } from '#util/cron.js';
 import { getDiskUsage } from '#util/diskUsage.js';
@@ -709,7 +709,7 @@ dashboardRouter.post('/v1/dashboard/decrypt', canDecrypt, blockDuringMaintenance
   const versionLabel = typeof req.body?.versionLabel === 'string' ? req.body.versionLabel.trim().slice(0, 64) || undefined : undefined;
 
   const preferPrimary = req.body?.preferPrimary === true;
-  const preferredDeviceId = preferPrimary ? getPrimaryDevice().id : undefined;
+  const preferredDeviceId = preferPrimary ? getPrimaryDevice()?.id : undefined;
 
   const job = enqueueDecryptJob(
     bundleId,
@@ -801,8 +801,24 @@ dashboardRouter.get('/v1/dashboard/versions/:bundleId', async (req, res) => {
 });
 
 function serializeDevice(d: DeviceRecord) {
-  return d;
+  const { keyPath: _keyPath, rootDir: _rootDir, ...device } = d;
+  return {
+    ...device,
+    transport: d.transport ?? 'wifi',
+    port: d.port ?? config.deviceSshPort,
+    user: d.user ?? config.deviceSshUser,
+    setupRequired: !d.host && !d.udid,
+    legacyConnection: Boolean(d.rootDir && !d.host && !d.udid),
+  };
 }
+
+dashboardRouter.get('/v1/dashboard/devices/discover', canManageDevices, async (_req, res) => {
+  try {
+    res.json(await discoverDevices());
+  } catch (err) {
+    res.status(502).json({ error: `device discovery failed: ${err instanceof Error ? err.message : String(err)}` });
+  }
+});
 
 dashboardRouter.get('/v1/dashboard/devices', canViewDevices, (_req, res) => {
   res.json({ devices: getEffectiveDevices().map(serializeDevice) });
@@ -810,7 +826,13 @@ dashboardRouter.get('/v1/dashboard/devices', canViewDevices, (_req, res) => {
 
 interface DeviceInput {
   name: string;
-  rootDir: string;
+  transport?: 'wifi' | 'usb';
+  host?: string;
+  port?: number;
+  user?: string;
+  udid?: string;
+  usbmuxNetwork?: boolean;
+  rootDir?: string;
   iosVersion?: string;
   toolchain?: string;
   notes?: string;
@@ -823,10 +845,22 @@ function parseDeviceInput(body: unknown): DeviceInput | undefined {
   const b = body as Record<string, unknown>;
   const name = typeof b.name === 'string' ? b.name.trim() : '';
   const rootDir = typeof b.rootDir === 'string' ? b.rootDir.trim() : '';
-  if (!name || !rootDir) return undefined;
+  const transport = b.transport === 'usb' || b.transport === 'wifi' ? b.transport : undefined;
+  const host = typeof b.host === 'string' ? b.host.trim() : '';
+  const user = typeof b.user === 'string' ? b.user.trim() : '';
+  const udid = typeof b.udid === 'string' ? b.udid.trim() : '';
+  const port = typeof b.port === 'number' && Number.isInteger(b.port) && b.port >= 1 && b.port <= 65_535 ? b.port : undefined;
+  if (!name || (!rootDir && !host && !udid)) return undefined;
+  if (transport === 'usb' && !udid) return undefined;
   return {
     name,
-    rootDir,
+    transport,
+    host: host || undefined,
+    port,
+    user: user || undefined,
+    udid: udid || undefined,
+    usbmuxNetwork: b.usbmuxNetwork === true,
+    rootDir: rootDir || undefined,
     iosVersion: typeof b.iosVersion === 'string' ? b.iosVersion.trim() || undefined : undefined,
     toolchain: typeof b.toolchain === 'string' ? b.toolchain.trim() || undefined : undefined,
     notes: typeof b.notes === 'string' ? b.notes.trim().slice(0, 1000) || undefined : undefined,
@@ -835,27 +869,120 @@ function parseDeviceInput(body: unknown): DeviceInput | undefined {
   };
 }
 
-dashboardRouter.post('/v1/dashboard/devices', canManageDevices, async (req, res) => {
-  const input = parseDeviceInput(req.body);
+function parseDeviceConnection(body: unknown): { connection: DeviceConnection; name?: string; existingId?: string; iosVersion?: string; toolchain?: string; notes?: string } | undefined {
+  if (typeof body !== 'object' || body === null) return undefined;
+  const b = body as Record<string, unknown>;
+  const transport = b.transport === 'usb' || b.transport === 'wifi' ? b.transport : undefined;
+  const host = typeof b.host === 'string' ? b.host.trim() : '';
+  const udid = typeof b.udid === 'string' ? b.udid.trim() : '';
+  const user = typeof b.user === 'string' ? b.user.trim() : '';
+  const port = typeof b.port === 'number' && Number.isInteger(b.port) && b.port >= 1 && b.port <= 65_535 ? b.port : undefined;
+  if (!host && !udid) return undefined;
+  if (host && !/^[A-Za-z0-9._-]{1,253}$/.test(host)) return undefined;
+  if (udid && !/^[A-Za-z0-9-]{8,80}$/.test(udid)) return undefined;
+  if (transport === 'usb' && !udid) return undefined;
+  const usbmuxNetwork = b.usbmuxNetwork === true;
+  const resolvedTransport = host ? 'wifi' : udid ? usbmuxNetwork ? 'wifi' : 'usb' : undefined;
+  if (!resolvedTransport || (transport && transport !== resolvedTransport)) return undefined;
+  return {
+    connection: { transport: resolvedTransport, host: host || undefined, port, user: user || undefined, udid: udid || undefined, usbmuxNetwork },
+    name: typeof b.name === 'string' ? b.name.trim() || undefined : undefined,
+    existingId: typeof b.existingId === 'string' ? b.existingId.trim() || undefined : undefined,
+    iosVersion: typeof b.iosVersion === 'string' ? b.iosVersion.trim() || undefined : undefined,
+    toolchain: typeof b.toolchain === 'string' ? b.toolchain.trim() || undefined : undefined,
+    notes: typeof b.notes === 'string' ? b.notes.trim().slice(0, 1000) || undefined : undefined,
+  };
+}
+
+dashboardRouter.post('/v1/dashboard/devices/setup', canManageDevices, async (req, res) => {
+  const input = parseDeviceConnection(req.body);
   if (!input) {
-    res.status(400).json({ error: 'name and rootDir are required' });
+    res.status(400).json({ error: 'a discovered device connection is required' });
     return;
   }
   try {
-    await validateDeviceRootDir(input.rootDir);
+    const setup = await setupDeviceConnection(input.connection);
+    let device: DeviceRecord | undefined;
+    const existingId = input.existingId ?? getEffectiveDevices().find((candidate) => {
+      if (input.connection.udid && candidate.udid === input.connection.udid) return true;
+      return Boolean(input.connection.host && candidate.host === input.connection.host && (candidate.port ?? config.deviceSshPort) === (input.connection.port ?? config.deviceSshPort));
+    })?.id;
+    if (existingId) {
+      const existing = getDevice(existingId);
+      if (!existing) {
+        res.status(404).json({ error: 'device not found' });
+        return;
+      }
+      const patch: Partial<DeviceInput> = {
+        transport: input.connection.transport,
+        host: input.connection.host,
+        port: input.connection.port,
+        user: input.connection.user,
+        udid: input.connection.udid,
+        usbmuxNetwork: input.connection.usbmuxNetwork,
+        rootDir: undefined,
+        name: input.name ?? existing.name,
+        iosVersion: input.iosVersion ?? setup.info.productVersion ?? existing.iosVersion,
+        enabled: true,
+      };
+      if (input.toolchain !== undefined) patch.toolchain = input.toolchain;
+      if (input.notes !== undefined) patch.notes = input.notes;
+      const result = updateDevice(existing.id, patch, res.locals.session.sub);
+      if (!result.ok || !result.device) {
+        res.status(404).json({ error: result.error ?? 'device not found' });
+        return;
+      }
+      device = result.device;
+    } else {
+      device = createDevice({
+        name: input.name ?? setup.info.name,
+        transport: input.connection.transport,
+        host: input.connection.host,
+        port: input.connection.port,
+        user: input.connection.user,
+        udid: input.connection.udid,
+        usbmuxNetwork: input.connection.usbmuxNetwork,
+        iosVersion: input.iosVersion ?? setup.info.productVersion,
+        toolchain: input.toolchain,
+        notes: input.notes,
+      }, res.locals.session.sub);
+    }
+    emitJobsChanged();
+    res.status(201).json({ device: serializeDevice(device), setup });
   } catch (err) {
-    res.status(400).json({ error: `couldn't read a valid device connection config at that directory: ${err instanceof Error ? err.message : String(err)}` });
+    res.status(502).json({ error: `could not connect to the device: ${err instanceof Error ? err.message : String(err)}` });
+  }
+});
+
+dashboardRouter.post('/v1/dashboard/devices', canManageDevices, async (req, res) => {
+  const input = parseDeviceInput(req.body);
+  if (!input) {
+    res.status(400).json({ error: 'name and a device connection are required' });
     return;
+  }
+  if (input.rootDir) {
+    try {
+      await validateDeviceRootDir(input.rootDir);
+    } catch (err) {
+      res.status(400).json({ error: `couldn't read a valid legacy device connection: ${err instanceof Error ? err.message : String(err)}` });
+      return;
+    }
   }
   const device = createDevice(input, res.locals.session.sub);
   emitJobsChanged();
-  res.status(201).json(device);
+  res.status(201).json(serializeDevice(device));
 });
 
 dashboardRouter.patch('/v1/dashboard/devices/:id', canManageDevices, async (req, res) => {
   const body = (req.body ?? {}) as Record<string, unknown>;
   const patch: Partial<DeviceInput> = {};
   if (typeof body.name === 'string' && body.name.trim()) patch.name = body.name.trim();
+  if (body.transport === 'usb' || body.transport === 'wifi') patch.transport = body.transport;
+  if (typeof body.host === 'string') patch.host = body.host.trim() || undefined;
+  if (typeof body.port === 'number' && Number.isInteger(body.port) && body.port >= 1 && body.port <= 65_535) patch.port = body.port;
+  if (typeof body.user === 'string') patch.user = body.user.trim() || undefined;
+  if (typeof body.udid === 'string') patch.udid = body.udid.trim() || undefined;
+  if (typeof body.usbmuxNetwork === 'boolean') patch.usbmuxNetwork = body.usbmuxNetwork;
   if (typeof body.rootDir === 'string' && body.rootDir.trim()) patch.rootDir = body.rootDir.trim();
   if (typeof body.iosVersion === 'string') patch.iosVersion = body.iosVersion.trim() || undefined;
   if (typeof body.toolchain === 'string') patch.toolchain = body.toolchain.trim() || undefined;
@@ -867,7 +994,7 @@ dashboardRouter.patch('/v1/dashboard/devices/:id', canManageDevices, async (req,
     try {
       await validateDeviceRootDir(patch.rootDir);
     } catch (err) {
-      res.status(400).json({ error: `couldn't read a valid device connection config at that directory: ${err instanceof Error ? err.message : String(err)}` });
+      res.status(400).json({ error: `couldn't read a valid legacy device connection: ${err instanceof Error ? err.message : String(err)}` });
       return;
     }
   }
@@ -878,7 +1005,7 @@ dashboardRouter.patch('/v1/dashboard/devices/:id', canManageDevices, async (req,
     return;
   }
   emitJobsChanged();
-  res.json(result.device);
+  res.json(serializeDevice(result.device as DeviceRecord));
 });
 
 dashboardRouter.delete('/v1/dashboard/devices/:id', canManageDevices, (req, res) => {
@@ -912,7 +1039,7 @@ dashboardRouter.get('/v1/dashboard/devices/:id/preflight', canViewDevices, async
     return;
   }
   const health = await getDeviceHealth(device.id, true);
-  const isPrimary = device.id === getPrimaryDevice().id;
+  const isPrimary = device.id === getPrimaryDevice()?.id;
   let bridge: Awaited<ReturnType<typeof getTestFlightBridgeDiagnostics>> | undefined;
   if (isPrimary && health.reachable) {
     bridge = await getTestFlightBridgeDiagnostics().catch(() => undefined);
@@ -925,7 +1052,7 @@ dashboardRouter.get('/v1/dashboard/devices/:id/preflight', canViewDevices, async
     { label: 'Bridge compatibility', ok: isPrimary ? Boolean(bridge?.bridge.bridgeVersion) : true, detail: bridge?.bridge.bridgeVersion ? `autoinstall ${bridge.bridge.bridgeVersion}` : isPrimary ? 'No autoinstall version reported' : 'Checked on the primary device' },
     { label: 'SpringBoard heartbeat', ok: isPrimary ? isBridgeHeartbeatFresh(health.bridgeHeartbeats?.springboard) : true, detail: health.bridgeHeartbeats?.springboard?.at ? `reported ${new Date(health.bridgeHeartbeats.springboard.at * 1000).toISOString()}` : isPrimary ? 'No authenticated autoinstall heartbeat reported' : 'Checked on the primary device' },
   ];
-  res.json({ device, health, bridge, checks, ready: checks.every((check) => check.ok) });
+  res.json({ device: serializeDevice(device), health, bridge, checks, ready: checks.every((check) => check.ok) });
 });
 
 dashboardRouter.get('/v1/dashboard/devices/:id/inventory', canViewDevices, async (req, res) => {
@@ -935,7 +1062,7 @@ dashboardRouter.get('/v1/dashboard/devices/:id/inventory', canViewDevices, async
     return;
   }
   try {
-    const bundles = await withSSH(device.rootDir, listInstalledAppStoreBundles);
+    const bundles = await withSSH(device, listInstalledAppStoreBundles);
     res.json({ deviceId: device.id, bundles });
   } catch (err) {
     res.status(502).json({ error: `could not inspect installed App Store apps: ${err instanceof Error ? err.message : String(err)}` });
@@ -954,7 +1081,7 @@ dashboardRouter.put('/v1/dashboard/devices/:id/dark-mode', canManageDevices, asy
     return;
   }
   try {
-    await withSSH(device.rootDir, (conn) => sendSpringBoardBridgeRequest(conn, { action: enabled ? 'dark_on' : 'dark_off' }));
+    await withSSH(device, (conn) => sendSpringBoardBridgeRequest(conn, { action: enabled ? 'dark_on' : 'dark_off' }));
     recordDeviceActivity({ deviceId: device.id, kind: 'bridge', message: enabled ? 'Display blacked out through autoinstall' : 'Display blackout disabled through autoinstall' });
     res.json(await getDeviceHealth(device.id, true));
   } catch (err) {
@@ -981,7 +1108,7 @@ dashboardRouter.post('/v1/dashboard/devices/:id/bridge-action', canManageDevices
     return;
   }
   try {
-    const result = await withSSH(device.rootDir, (conn) => sendSpringBoardBridgeRequest(conn, request));
+    const result = await withSSH(device, (conn) => sendSpringBoardBridgeRequest(conn, request));
     recordDeviceActivity({ deviceId: device.id, kind: 'bridge', message: `Bridge action: ${action}` });
     res.json({ result });
   } catch (err) {
@@ -1414,7 +1541,7 @@ dashboardRouter.post('/v1/dashboard/testflight/decrypt', canDecrypt, blockDuring
   }
 
   const preferPrimary = req.body?.preferPrimary === true;
-  const preferredDeviceId = preferPrimary ? getPrimaryDevice().id : undefined;
+  const preferredDeviceId = preferPrimary ? getPrimaryDevice()?.id : undefined;
 
   const job = enqueueDecryptJob(
     bundleId,
@@ -1470,7 +1597,7 @@ dashboardRouter.post('/v1/dashboard/jobs/:id/retry', canDecrypt, blockDuringMain
   }
 
   const preferPrimary = req.body?.preferPrimary === true;
-  const preferredDeviceId = preferPrimary ? getPrimaryDevice().id : undefined;
+  const preferredDeviceId = preferPrimary ? getPrimaryDevice()?.id : undefined;
   const job = enqueueDecryptJob(
     entry.bundleId,
     'manual',

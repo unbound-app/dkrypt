@@ -22,22 +22,19 @@ async function signIn() {
 
 test('Fastify persists dashboard device mutations and returns the updated overview', async () => {
   const { server, cookie } = await signIn();
-  const rootDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-device-'));
-  await writeFile(
-    path.join(rootDir, 'config.json'),
-    JSON.stringify({ device: { host: '127.0.0.1', port: 22, user: 'root', auth: { keyPath: '/tmp/test-key' } } }),
-  );
 
   try {
     const created = await server.inject({
       method: 'POST',
       url: '/v1/dashboard/devices',
       headers: { cookie },
-      payload: { name: 'test device', rootDir },
+      payload: { name: 'test device', transport: 'wifi', host: '192.168.1.10', port: 22, user: 'mobile' },
     });
     expect(created.statusCode).toBe(201);
-    const device = created.json() as { id: string; name: string };
+    const device = created.json() as { id: string; name: string; host?: string; rootDir?: string };
     expect(device.name).toBe('test device');
+    expect(device.host).toBe('192.168.1.10');
+    expect(device.rootDir).toBeUndefined();
 
     const overview = await server.inject({ method: 'GET', url: '/v1/dashboard/overview', headers: { cookie } });
     expect(overview.statusCode).toBe(200);

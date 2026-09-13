@@ -337,17 +337,15 @@ describe('watch CRUD', () => {
 
 describe('device CRUD primary invariant', () => {
   test('exactly one enabled device stays primary through add/update/delete', () => {
+    const a = createDevice({ name: 'device-a', transport: 'wifi', host: '192.168.1.10' }, 'tester');
+    expect(a.isPrimary).toBe(true);
+    expect(getEffectiveDevices()).toEqual([expect.objectContaining({ id: a.id, host: '192.168.1.10', rootDir: undefined })]);
 
-    const a = createDevice({ name: 'device-a', rootDir: '/tmp/device-a' }, 'tester');
-    expect(a.isPrimary).toBeFalsy();
-    expect(getEffectiveDevices().find((d) => d.id === 'default')?.isPrimary).toBe(true);
-
-    const b = createDevice({ name: 'device-b', rootDir: '/tmp/device-b' }, 'tester');
+    const b = createDevice({ name: 'device-b', transport: 'wifi', host: '192.168.1.11' }, 'tester');
     expect(b.isPrimary).toBeFalsy();
 
     updateDevice(b.id, { isPrimary: true }, 'tester');
     const afterPromote = getEffectiveDevices();
-    expect(afterPromote.find((d) => d.id === 'default')?.isPrimary).toBeFalsy();
     expect(afterPromote.find((d) => d.id === a.id)?.isPrimary).toBeFalsy();
     expect(afterPromote.find((d) => d.id === b.id)?.isPrimary).toBe(true);
 
@@ -355,7 +353,7 @@ describe('device CRUD primary invariant', () => {
     expect(getEffectiveDevices().some((d) => d.isPrimary)).toBe(true);
 
     deleteDevice(a.id, 'tester');
-    deleteDevice('default', 'tester');
+    expect(getEffectiveDevices()).toEqual([]);
   });
 });
 

@@ -1,14 +1,25 @@
-import { describe, expect, mock, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test';
 import { existsSync } from 'node:fs';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { createDevice, deleteDevice } from '#store/state.js';
 
 mock.module('./runner.js', () => ({
   runDecrypt: () => new Promise<void>(() => {}),
 }));
 
 const { cancelJob, cancelQueuedJob, enqueueDecryptJob, getActiveJobs, getJob, getQueueInfo, getQueueReason, reclaimJobFile, recoverPersistedActiveJobs } = await import('./store.js');
+
+let testDeviceId = '';
+
+beforeAll(() => {
+  testDeviceId = createDevice({ name: 'job-test-device', transport: 'wifi', host: '127.0.0.1' }, 'tests').id;
+});
+
+afterAll(() => {
+  if (testDeviceId) deleteDevice(testDeviceId, 'tests');
+});
 
 describe('recoverPersistedActiveJobs', () => {
   test('keeps queued jobs and records a running job as interrupted after a restart', () => {

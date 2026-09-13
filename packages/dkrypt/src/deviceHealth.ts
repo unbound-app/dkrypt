@@ -271,7 +271,7 @@ const HEALTH_CACHE_TTL_MS = 20_000;
 
 async function computeDeviceHealth(device: DeviceRecord, isPrimary: boolean): Promise<DeviceHealth> {
   try {
-    return await withSSH(device.rootDir, async (conn) => {
+    return await withSSH(device, async (conn) => {
       const [tfRunning, sbStatusResult, battery, storage, network, bridgeHeartbeats] = await Promise.all([
         isTestFlightRunning(conn),
         isPrimary

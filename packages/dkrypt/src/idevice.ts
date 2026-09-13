@@ -1,7 +1,11 @@
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
-import { createHmac, randomBytes, randomUUID } from 'node:crypto';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
+import { connect as connectSocket, createServer } from 'node:net';
+import os from 'node:os';
 import path from 'node:path';
 import { Client } from 'ssh2';
+import { config } from '#config.js';
 import { scopedLogger } from '#logger.js';
 import { BRIDGE_PROTOCOL_VERSION } from '#bridgeProtocol.js';
 import type { BridgeChannel } from '#bridgeProtocol.js';
@@ -68,6 +72,62 @@ const authCache = new Map<string, DeviceAuth>();
 const bridgeSecretCache = new Map<string, string>();
 const connectionRoots = new WeakMap<Client, string>();
 
+export type DeviceTransport = 'wifi' | 'usb';
+
+export interface DeviceConnection {
+  id?: string;
+  transport?: DeviceTransport;
+  host?: string;
+  port?: number;
+  user?: string;
+  udid?: string;
+  usbmuxNetwork?: boolean;
+  keyPath?: string;
+  rootDir?: string;
+}
+
+export interface DeviceDiscoveryCandidate {
+  discoveryId: string;
+  name: string;
+  transport: DeviceTransport;
+  host?: string;
+  port: number;
+  user: string;
+  udid?: string;
+  usbmuxNetwork?: boolean;
+  productType?: string;
+  productVersion?: string;
+  source: 'usb' | 'wifi';
+}
+
+export interface DeviceDiscoveryResult {
+  devices: DeviceDiscoveryCandidate[];
+  scannedNetworks: string[];
+  warnings: string[];
+}
+
+export interface DeviceSetupInfo {
+  name: string;
+  model?: string;
+  productType?: string;
+  productVersion?: string;
+  architecture?: string;
+  serialNumber?: string;
+}
+
+export interface DeviceSetupStep {
+  id: string;
+  label: string;
+  status: 'ready' | 'attention' | 'unavailable';
+  detail?: string;
+}
+
+export interface DeviceSetupResult {
+  info: DeviceSetupInfo;
+  steps: DeviceSetupStep[];
+  ready: boolean;
+}
+
 async function loadDeviceAuth(rootDir: string): Promise<DeviceAuth> {
   const cached = authCache.get(rootDir);
   if (cached) return cached;
@@ -87,6 +147,117 @@ export async function validateDeviceRootDir(rootDir: string): Promise<void> {
   await loadDeviceAuth(rootDir);
 }
 
+function connectionIdentity(connection: DeviceConnection): string {
+  return connection.id ?? connection.udid ?? `${connection.host ?? 'device'}:${connection.port ?? config.deviceSshPort}`;
+}
+
+function connectionRuntimeRoot(connection: DeviceConnection): string {
+  const transport = connection.transport ?? (connection.udid ? connection.usbmuxNetwork ? 'wifi' : 'usb' : 'wifi');
+  const identity = `${transport}:${connectionIdentity(connection)}`;
+  const digest = createHash('sha256').update(identity).digest('hex').slice(0, 24);
+  return path.join(config.deviceRuntimeDir, digest);
+}
+
+function directDeviceAuth(connection: DeviceConnection): DeviceAuth {
+  const usesUsbmux = !connection.host && Boolean(connection.udid);
+  if (!usesUsbmux && !connection.host) throw new Error('device host is required');
+  return {
+    host: connection.host ?? '127.0.0.1',
+    port: connection.port ?? config.deviceSshPort,
+    user: connection.user ?? config.deviceSshUser,
+    keyPath: connection.keyPath ?? config.deviceSshKeyPath,
+  };
+}
+
+async function resolveDeviceAuth(connection: DeviceConnection | string): Promise<{ auth: DeviceAuth; rootDir: string; usesUsbmux: boolean; networkUsbmux: boolean }> {
+  if (typeof connection === 'string') {
+    return { auth: await loadDeviceAuth(connection), rootDir: connection, usesUsbmux: false, networkUsbmux: false };
+  }
+  if (!connection.host && !connection.udid && connection.rootDir) {
+    return { auth: await loadDeviceAuth(connection.rootDir), rootDir: connection.rootDir, usesUsbmux: false, networkUsbmux: false };
+  }
+  return {
+    auth: directDeviceAuth(connection),
+    rootDir: connectionRuntimeRoot(connection),
+    usesUsbmux: !connection.host && Boolean(connection.udid),
+    networkUsbmux: connection.usbmuxNetwork === true,
+  };
+}
+
+async function findFreePort(): Promise<number> {
+  const server = createServer();
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => resolve());
+  });
+  const address = server.address();
+  await new Promise<void>((resolve, reject) => {
+    server.close((err) => (err ? reject(err) : resolve()));
+  });
+  if (!address || typeof address === 'string') throw new Error('could not allocate a local device tunnel port');
+  return address.port;
+}
+
+function canConnectToPort(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = connectSocket({ host: '127.0.0.1', port });
+    const finish = (result: boolean) => {
+      socket.destroy();
+      resolve(result);
+    };
+    socket.once('connect', () => finish(true));
+    socket.once('error', () => finish(false));
+    socket.setTimeout(250, () => finish(false));
+  });
+}
+
+async function startUsbmuxTunnel(udid: string, remotePort: number, network: boolean): Promise<{ host: string; port: number; process: ChildProcess }> {
+  const localPort = await findFreePort();
+  const args = [...(network ? ['-n'] : []), '-u', udid, '-s', '127.0.0.1', `${localPort}:${remotePort}`];
+  const process = spawn(config.ideviceProxyBin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  let stderr = '';
+  let spawnError = '';
+  process.once('error', (error) => {
+    spawnError = error.message;
+  });
+  process.stderr?.on('data', (chunk) => {
+    stderr += chunk.toString('utf8');
+  });
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    if (spawnError) break;
+    if (process.exitCode !== null) break;
+    if (await canConnectToPort(localPort)) return { host: '127.0.0.1', port: localPort, process };
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  process.kill();
+  const reason = spawnError || stderr.trim();
+  throw new Error(`could not open the ${network ? 'Wi-Fi' : 'USB'} device tunnel${reason ? `: ${reason}` : ''}`);
+}
+
+async function ensureIpadecryptRuntime(rootDir: string, auth: DeviceAuth): Promise<string> {
+  await mkdir(rootDir, { recursive: true });
+  const configPath = path.join(rootDir, 'config.json');
+  await writeFile(
+    configPath,
+    `${JSON.stringify({ version: 2, device: { host: auth.host, port: auth.port, user: auth.user, auth: { kind: 'key', keyPath: auth.keyPath } } })}\n`,
+    { mode: 0o600 },
+  );
+  await chmod(configPath, 0o600);
+  return rootDir;
+}
+
+async function withDeviceTunnel<T>(connection: DeviceConnection | string, fn: (auth: DeviceAuth, rootDir: string) => Promise<T>): Promise<T> {
+  const resolved = await resolveDeviceAuth(connection);
+  if (!resolved.usesUsbmux) return fn(resolved.auth, resolved.rootDir);
+  if (typeof connection === 'string' || !connection.udid) throw new Error('a paired device identifier is required for USB setup');
+  const tunnel = await startUsbmuxTunnel(connection.udid, resolved.auth.port, resolved.networkUsbmux);
+  try {
+    return await fn({ ...resolved.auth, host: tunnel.host, port: tunnel.port }, resolved.rootDir);
+  } finally {
+    tunnel.process.kill();
+  }
+}
+
 function makeSerialQueue() {
   let queue: Promise<unknown> = Promise.resolve();
   return function withLock<T>(fn: () => Promise<T>): Promise<T> {
@@ -101,14 +272,21 @@ function makeSerialQueue() {
 
 const withSSHLock = makeSerialQueue();
 
-export async function withSSH<T>(rootDir: string, fn: (conn: Client) => Promise<T>): Promise<T> {
-  return withSSHLock(async () => {
-    const auth = await loadDeviceAuth(rootDir);
+function invalidateAuthCache(connection: DeviceConnection | string): void {
+  if (typeof connection === 'string') {
+    authCache.delete(connection);
+  } else if (connection.rootDir) {
+    authCache.delete(connection.rootDir);
+  }
+}
+
+export async function withSSH<T>(connection: DeviceConnection | string, fn: (conn: Client) => Promise<T>): Promise<T> {
+  return withSSHLock(() => withDeviceTunnel(connection, async (auth, rootDir) => {
     let privateKey: Buffer;
     try {
       privateKey = await readFile(auth.keyPath);
     } catch (err) {
-      authCache.delete(rootDir);
+      invalidateAuthCache(connection);
       throw err;
     }
     const conn = new Client();
@@ -121,12 +299,296 @@ export async function withSSH<T>(rootDir: string, fn: (conn: Client) => Promise<
       connectionRoots.set(conn, rootDir);
       return await fn(conn);
     } catch (err) {
-      authCache.delete(rootDir);
+      invalidateAuthCache(connection);
       throw err;
     } finally {
       connectionRoots.delete(conn);
       conn.end();
     }
+  }));
+}
+
+export async function withIpadecrypt<T>(connection: DeviceConnection | string, fn: (rootDir: string) => Promise<T>): Promise<T> {
+  return withDeviceTunnel(connection, async (auth, rootDir) => fn(typeof connection === 'string' ? rootDir : await ensureIpadecryptRuntime(rootDir, auth)));
+}
+
+interface LocalCommandResult {
+  stdout: string;
+  stderr: string;
+  code: number | null;
+}
+
+function runLocalCommand(file: string, args: string[], timeoutMs: number): Promise<LocalCommandResult> {
+  return new Promise((resolve) => {
+    const child = spawn(file, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    const timer = setTimeout(() => {
+      child.kill();
+      if (!settled) {
+        settled = true;
+        resolve({ stdout, stderr: `${stderr}\ncommand timed out`.trim(), code: null });
+      }
+    }, timeoutMs);
+    const finish = (code: number | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ stdout, stderr, code });
+    };
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk.toString('utf8');
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString('utf8');
+    });
+    child.on('error', (error) => {
+      stderr = `${stderr}\n${error.message}`.trim();
+      finish(null);
+    });
+    child.on('close', finish);
+  });
+}
+
+function parseKeyValueOutput(output: string): Record<string, string> {
+  const values: Record<string, string> = {};
+  for (const line of output.split('\n')) {
+    const separator = line.indexOf(':');
+    if (separator <= 0) continue;
+    values[line.slice(0, separator).trim()] = line.slice(separator + 1).trim();
+  }
+  return values;
+}
+
+function parseIdeviceInfo(output: string): Record<string, string> {
+  return parseKeyValueOutput(output);
+}
+
+async function listUsbmuxDevices(network: boolean): Promise<{ ids: string[]; available: boolean; error?: string }> {
+  const result = await runLocalCommand(config.ideviceIdBin, network ? ['-n'] : ['-l'], 5_000);
+  if (result.code === null || result.code !== 0) {
+    return { ids: [], available: false, error: result.stderr.trim() || `${config.ideviceIdBin} exited with code ${result.code ?? 'unknown'}` };
+  }
+  return { ids: result.stdout.split('\n').map((id) => id.trim()).filter(Boolean), available: true };
+}
+
+async function getUsbmuxInfo(udid: string, network: boolean): Promise<Record<string, string>> {
+  const result = await runLocalCommand(config.ideviceInfoBin, [...(network ? ['-n'] : []), '-u', udid], 5_000);
+  return result.code === 0 ? parseIdeviceInfo(result.stdout) : {};
+}
+
+function candidateFromUsbmux(udid: string, info: Record<string, string>, network: boolean): DeviceDiscoveryCandidate {
+  const productType = info.ProductType;
+  const productVersion = info.ProductVersion;
+  const name = info.DeviceName || productType || `${network ? 'Wi-Fi' : 'USB'} iDevice`;
+  return {
+    discoveryId: `${network ? 'wifi' : 'usb'}-${udid}`,
+    name,
+    transport: network ? 'wifi' : 'usb',
+    port: config.deviceSshPort,
+    user: config.deviceSshUser,
+    udid,
+    usbmuxNetwork: network,
+    productType,
+    productVersion,
+    source: network ? 'wifi' : 'usb',
+  };
+}
+
+function isPrivateIpv4(host: string): boolean {
+  const octets = host.split('.').map(Number);
+  if (octets.length !== 4 || octets.some((value) => !Number.isInteger(value) || value < 0 || value > 255)) return false;
+  return octets[0] === 10 || (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) || (octets[0] === 192 && octets[1] === 168);
+}
+
+function ipv4ToNumber(host: string): number | undefined {
+  if (!isPrivateIpv4(host)) return undefined;
+  return host.split('.').map(Number).reduce((value, octet) => (value << 8) + octet, 0) >>> 0;
+}
+
+function numberToIpv4(value: number): string {
+  return [value >>> 24, (value >>> 16) & 255, (value >>> 8) & 255, value & 255].join('.');
+}
+
+function parseDiscoverySubnet(value: string): string | undefined {
+  const [rawHost, rawPrefix] = value.trim().split('/');
+  const host = ipv4ToNumber(rawHost);
+  const prefix = Number(rawPrefix ?? '24');
+  if (host === undefined || !Number.isInteger(prefix) || prefix < 16 || prefix > 30) return undefined;
+  const mask = prefix === 32 ? 0xffffffff : (0xffffffff << (32 - prefix)) >>> 0;
+  const network = host & mask;
+  const scanPrefix = Math.max(prefix, 24);
+  const scanMask = (0xffffffff << (32 - scanPrefix)) >>> 0;
+  return `${numberToIpv4(network & scanMask)}/${scanPrefix}`;
+}
+
+function localDiscoverySubnets(): string[] {
+  const values = new Set<string>();
+  const configured = config.deviceDiscoverySubnets.split(',').map(parseDiscoverySubnet).filter((value): value is string => Boolean(value));
+  for (const value of configured) values.add(value);
+  if (values.size > 0) return [...values];
+  for (const interfaces of Object.values(os.networkInterfaces())) {
+    for (const address of interfaces ?? []) {
+      if (address.family !== 'IPv4' || address.internal) continue;
+      const subnet = parseDiscoverySubnet(`${address.address}/${address.cidr?.split('/')[1] ?? '24'}`);
+      if (subnet) values.add(subnet);
+    }
+  }
+  return [...values];
+}
+
+function hostsInSubnet(subnet: string): string[] {
+  const [rawNetwork, rawPrefix] = subnet.split('/');
+  const network = ipv4ToNumber(rawNetwork);
+  const prefix = Number(rawPrefix);
+  if (network === undefined || !Number.isInteger(prefix) || prefix < 16 || prefix > 30) return [];
+  const size = 2 ** (32 - prefix);
+  const first = network + 1;
+  const last = network + size - 2;
+  const hosts: string[] = [];
+  for (let value = first; value <= last; value += 1) hosts.push(numberToIpv4(value >>> 0));
+  return hosts;
+}
+
+function canConnectToHost(host: string, port: number, timeoutMs: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = connectSocket({ host, port });
+    const finish = (result: boolean) => {
+      socket.destroy();
+      resolve(result);
+    };
+    socket.once('connect', () => finish(true));
+    socket.once('error', () => finish(false));
+    socket.setTimeout(timeoutMs, () => finish(false));
+  });
+}
+
+async function probeWifiHost(host: string, privateKey: Buffer): Promise<DeviceDiscoveryCandidate | undefined> {
+  if (!(await canConnectToHost(host, config.deviceSshPort, 350))) return undefined;
+  const conn = new Client();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      conn.on('ready', () => resolve());
+      conn.on('error', reject);
+      conn.connect({ host, port: config.deviceSshPort, username: config.deviceSshUser, privateKey, readyTimeout: 1_500 });
+    });
+    const system = await readRemoteValue(conn, 'uname -s 2>/dev/null');
+    if (system !== 'Darwin') return undefined;
+    const model = await readRemoteValue(conn, 'sysctl -n hw.machine 2>/dev/null') ?? await readRemoteValue(conn, 'uname -m 2>/dev/null');
+    const productVersion = await readRemoteValue(conn, '/var/jb/usr/bin/sw_vers -productVersion 2>/dev/null');
+    const name = await readRemoteValue(conn, 'scutil --get ComputerName 2>/dev/null') ?? await readRemoteValue(conn, 'hostname 2>/dev/null');
+    return {
+      discoveryId: `wifi-${host}`,
+      name: name || model || host,
+      transport: 'wifi',
+      host,
+      port: config.deviceSshPort,
+      user: config.deviceSshUser,
+      productType: model,
+      productVersion,
+      source: 'wifi',
+    };
+  } catch {
+    return undefined;
+  } finally {
+    conn.end();
+  }
+}
+
+async function mapWithConcurrency<T, R>(values: T[], concurrency: number, fn: (value: T) => Promise<R | undefined>): Promise<R[]> {
+  const result: R[] = [];
+  let next = 0;
+  async function worker(): Promise<void> {
+    while (next < values.length) {
+      const index = next;
+      next += 1;
+      const value = await fn(values[index]);
+      if (value !== undefined) result.push(value);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, values.length) }, () => worker()));
+  return result;
+}
+
+export async function discoverDevices(): Promise<DeviceDiscoveryResult> {
+  const devices: DeviceDiscoveryCandidate[] = [];
+  const warnings: string[] = [];
+  const usb = await listUsbmuxDevices(false);
+  if (!usb.available && usb.error) warnings.push(`USB discovery unavailable: ${usb.error}`);
+  for (const udid of usb.ids) devices.push(candidateFromUsbmux(udid, await getUsbmuxInfo(udid, false), false));
+
+  const network = await listUsbmuxDevices(true);
+  if (!network.available && network.error && usb.available) warnings.push(`paired Wi-Fi discovery unavailable: ${network.error}`);
+  for (const udid of network.ids) devices.push(candidateFromUsbmux(udid, await getUsbmuxInfo(udid, true), true));
+
+  let privateKey: Buffer | undefined;
+  try {
+    privateKey = await readFile(config.deviceSshKeyPath);
+  } catch {
+    warnings.push(`Wi-Fi SSH discovery needs a readable key at ${config.deviceSshKeyPath}`);
+  }
+  const explicitHosts = config.deviceDiscoveryHosts
+    .split(',')
+    .map((host) => host.trim())
+    .filter((host) => isPrivateIpv4(host));
+  const scannedNetworks = localDiscoverySubnets();
+  const scanHosts = [...new Set([...explicitHosts, ...scannedNetworks.flatMap(hostsInSubnet)])];
+  if (privateKey && scanHosts.length > 0) {
+    devices.push(...(await mapWithConcurrency(scanHosts, 24, (host) => probeWifiHost(host, privateKey as Buffer))));
+  }
+
+  const unique = new Map<string, DeviceDiscoveryCandidate>();
+  for (const device of devices) unique.set(device.discoveryId, device);
+  return { devices: [...unique.values()].sort((a, b) => a.name.localeCompare(b.name)), scannedNetworks, warnings };
+}
+
+async function queryPackageVersion(conn: Client, packageName: string): Promise<string | undefined> {
+  const result = await execCommand(conn, `/var/jb/usr/bin/dpkg-query -W -f='\${Status}|\${Version}' ${packageName} 2>/dev/null`).catch(() => ({ stdout: '', stderr: '', code: 1 }));
+  if (result.code !== 0 || !result.stdout.startsWith('install ok installed|')) return undefined;
+  return result.stdout.slice('install ok installed|'.length).trim() || 'installed';
+}
+
+async function readRemoteValue(conn: Client, command: string): Promise<string | undefined> {
+  const result = await execCommand(conn, command).catch(() => ({ stdout: '', stderr: '', code: 1 }));
+  if (result.code !== 0) return undefined;
+  const value = result.stdout.trim();
+  return value || undefined;
+}
+
+export async function setupDeviceConnection(connection: DeviceConnection): Promise<DeviceSetupResult> {
+  return withSSH(connection, async (conn) => {
+    const system = await readRemoteValue(conn, 'uname -s 2>/dev/null');
+    const model = await readRemoteValue(conn, 'sysctl -n hw.machine 2>/dev/null') ?? await readRemoteValue(conn, 'uname -m 2>/dev/null');
+    const productVersion = await readRemoteValue(conn, '/var/jb/usr/bin/sw_vers -productVersion 2>/dev/null');
+    const architecture = await readRemoteValue(conn, 'uname -p 2>/dev/null') ?? await readRemoteValue(conn, 'uname -m 2>/dev/null');
+    const name = await readRemoteValue(conn, 'scutil --get ComputerName 2>/dev/null') ?? await readRemoteValue(conn, 'hostname 2>/dev/null');
+    const jailbreak = await execCommand(conn, 'test -d /var/jb').then(({ code }) => code === 0).catch(() => false);
+    const appSyncVersion = await queryPackageVersion(conn, 'ai.akemi.appsyncunified');
+    const ellekitVersion = await queryPackageVersion(conn, 'ellekit');
+    const openSshVersion = await queryPackageVersion(conn, 'openssh-server');
+    const appinst = await execCommand(conn, 'test -x /var/jb/usr/bin/appinst').then(({ code }) => code === 0).catch(() => false);
+    const bridge = await execCommand(conn, 'test -s /tmp/autoinstall/v1/springboard/state/heartbeat.json').then(({ code }) => code === 0).catch(() => false);
+    const systemReady = system === 'Darwin';
+    const appinstReady = appinst;
+    const bridgeReady = bridge;
+    const info: DeviceSetupInfo = {
+      name: name || model || connection.host || 'iDevice',
+      model,
+      productType: model,
+      productVersion,
+      architecture,
+    };
+    const steps: DeviceSetupStep[] = [
+      { id: 'ssh', label: 'SSH connection', status: 'ready', detail: `${connection.user ?? config.deviceSshUser}@${connection.host ?? 'USB/Wi-Fi tunnel'}${openSshVersion ? ` · OpenSSH ${openSshVersion}` : ''}` },
+      { id: 'ios', label: 'iOS device detected', status: systemReady ? 'ready' : 'attention', detail: systemReady ? `${info.productType ?? 'iDevice'} · iOS ${info.productVersion ?? 'unknown'}` : 'The SSH target did not report Darwin.' },
+      { id: 'jailbreak', label: 'Rootless jailbreak', status: jailbreak ? 'ready' : 'attention', detail: jailbreak ? `/var/jb is available${ellekitVersion ? ` · ElleKit ${ellekitVersion}` : ''}` : 'Install and enable a rootless jailbreak before continuing.' },
+      { id: 'appsync', label: 'AppSync Unified', status: appSyncVersion ? 'ready' : 'attention', detail: appSyncVersion ? `version ${appSyncVersion}` : 'Install AppSync Unified on the device.' },
+      { id: 'appinst', label: 'appinst', status: appinstReady ? 'ready' : 'attention', detail: appinstReady ? 'installer is available' : 'Install appinst on the device.' },
+      { id: 'bridge', label: 'autoinstall bridge', status: bridgeReady ? 'ready' : 'attention', detail: bridgeReady ? 'SpringBoard heartbeat is responding' : 'Install autoinstall, then run setup again.' },
+    ];
+    if (!systemReady) steps[1] = { id: 'ios', label: 'iOS device detected', status: 'unavailable', detail: 'The SSH target did not report Darwin.' };
+    return { info, steps, ready: steps.every((step) => step.status === 'ready') };
   });
 }
 

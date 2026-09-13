@@ -1,6 +1,31 @@
 export const GENERATED_CHANGELOG = [
   {
     "date": "2026-09-13",
+    "title": "feat(devices): add direct device discovery and setup",
+    "description": "Released in 7fc9a05."
+  },
+  {
+    "date": "2026-09-13",
+    "title": "chore(deps): bump the api-dependencies group (#23)",
+    "description": "Released in bfa036f."
+  },
+  {
+    "date": "2026-09-13",
+    "title": "chore(deps): bump bits-ui (#22)",
+    "description": "Released in 64b5f24."
+  },
+  {
+    "date": "2026-09-13",
+    "title": "test(idevice): isolate bridge transport test",
+    "description": "Released in 2cbbda0."
+  },
+  {
+    "date": "2026-09-13",
+    "title": "test(idevice): remove event emitter timing dependency",
+    "description": "Released in e86cdc3."
+  },
+  {
+    "date": "2026-09-13",
     "title": "test(idevice): use deterministic ssh stream events",
     "description": "Released in f6d026b."
   },
@@ -13,30 +38,5 @@ export const GENERATED_CHANGELOG = [
     "date": "2026-09-13",
     "title": "fix(web): align IPA library metadata",
     "description": "Released in dc8b60e."
-  },
-  {
-    "date": "2026-09-13",
-    "title": "fix(idevice): avoid unreliable sftp subsystem",
-    "description": "Released in 3e3c7bb."
-  },
-  {
-    "date": "2026-09-10",
-    "title": "fix(web): keep IPA library details readable",
-    "description": "Released in 97ccd5a."
-  },
-  {
-    "date": "2026-09-10",
-    "title": "fix(web): tighten IPA library columns",
-    "description": "Released in 48fbe14."
-  },
-  {
-    "date": "2026-09-10",
-    "title": "fix(web): simplify IPA library metadata",
-    "description": "Released in 29112b0."
-  },
-  {
-    "date": "2026-09-10",
-    "title": "fix(jobs,web): preserve extension warnings and improve IPA library layout",
-    "description": "Released in 176236d."
   }
 ] as const;

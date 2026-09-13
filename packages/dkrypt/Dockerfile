@@ -14,7 +14,7 @@ RUN bun run build
 FROM oven/bun:1-slim
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libimobiledevice-utils libusbmuxd-tools \
   && rm -rf /var/lib/apt/lists/*
 
 COPY --from=ipadecrypt /go/bin/ipadecrypt /usr/local/bin/ipadecrypt

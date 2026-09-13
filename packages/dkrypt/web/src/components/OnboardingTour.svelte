@@ -3,7 +3,7 @@
   import Button from '#lib/components/ui/Button.svelte';
   import Dialog from '#lib/components/ui/Dialog.svelte';
   import { sessionState } from '#lib/session.svelte';
-  import { openHelp, openPalette, setActiveTab } from '#lib/ui.svelte';
+  import { openHelp, openPalette, setActiveTab, setSettingsSubtab } from '#lib/ui.svelte';
 
   const SEEN_KEY = 'onboardingTourSeen';
 
@@ -18,10 +18,13 @@
   const steps: Step[] = [
     {
       icon: HeartPulse,
-      title: 'Check device readiness first',
-      body: 'Open Settings → Devices and run Preflight before your first decrypt. It checks SSH, App Store connectivity, autoinstall compatibility, and available capacity.',
+      title: 'Connect a device first',
+      body: 'Open Settings → Devices and choose Find a device. dkrypt discovers USB and Wi-Fi devices, saves the connection, and checks every setup prerequisite.',
       actionLabel: 'Open Devices',
-      action: () => setActiveTab('settings'),
+      action: () => {
+        setActiveTab('settings');
+        setSettingsSubtab('devices');
+      },
     },
     {
       icon: Search,

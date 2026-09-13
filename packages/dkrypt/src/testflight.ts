@@ -13,8 +13,10 @@ import {
 import { getPrimaryDevice } from '#store/state.js';
 import { hasBridgeCapabilities } from '#bridgeProtocol.js';
 
-function primaryRootDir(): string {
-  return getPrimaryDevice().rootDir;
+function primaryDevice() {
+  const device = getPrimaryDevice();
+  if (!device) throw new Error('No enabled device is configured');
+  return device;
 }
 
 const log = scopedLogger('testflight');
@@ -74,7 +76,7 @@ async function waitForBridgeReady(conn: Client, timeoutMs = 20_000): Promise<voi
 }
 
 export async function ensureTestFlightRunning(): Promise<void> {
-  return withSSH(primaryRootDir(), async (conn) => {
+  return withSSH(primaryDevice(), async (conn) => {
     const wasRunning = await isTestFlightRunning(conn);
     log.info(
       wasRunning
@@ -88,14 +90,14 @@ export async function ensureTestFlightRunning(): Promise<void> {
 }
 
 export async function listTrains(appId: number): Promise<TFTrain[]> {
-  return withReadyBridgeRequest(() => withSSH(primaryRootDir(), async (conn) => {
+  return withReadyBridgeRequest(() => withSSH(primaryDevice(), async (conn) => {
     const response = await sendTestFlightBridgeRequest(conn, { action: 'list_trains', appId });
     return response.data as TFTrain[];
   }));
 }
 
 export async function listBuilds(appId: number, trainVersion: string): Promise<TFBuild[]> {
-  return withReadyBridgeRequest(() => withSSH(primaryRootDir(), async (conn) => {
+  return withReadyBridgeRequest(() => withSSH(primaryDevice(), async (conn) => {
     const response = await sendTestFlightBridgeRequest(conn, { action: 'list_builds', appId, trainVersion });
     return response.data as TFBuild[];
   }));
@@ -118,7 +120,7 @@ async function withBridgeRecovery<T>(request: () => Promise<T>): Promise<T> {
 }
 
 export async function getTestFlightBridgeDiagnostics(): Promise<TestFlightBridgeDiagnostics> {
-  return withReadyBridgeRequest(() => withSSH(primaryRootDir(), async (conn) => {
+  return withReadyBridgeRequest(() => withSSH(primaryDevice(), async (conn) => {
     const response = await sendTestFlightBridgeRequest(conn, { action: 'diagnostics' });
     return response.data as TestFlightBridgeDiagnostics;
   }));
@@ -155,7 +157,7 @@ export async function installBuild(
   report('ensuring TestFlight is running');
   await ensureTestFlightRunning();
 
-  return withSSH(primaryRootDir(), async (conn) => {
+  return withSSH(primaryDevice(), async (conn) => {
     report('sending install request to TestFlight');
     await sendTestFlightBridgeRequest(conn, { action: 'install', appId, build, operationId, requestId: operationId });
     report('TestFlight accepted the install request, waiting for it to land');

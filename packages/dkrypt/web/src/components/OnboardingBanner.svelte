@@ -45,8 +45,8 @@
         <div class="font-medium">Welcome to dkrypt - a few things to get set up:</div>
         <ol class="mt-1.5 list-decimal space-y-1 pl-4 text-muted">
           <li>
-            Make sure <code class="text-[12px]">autoinstall</code> is installed on your jailbroken device, then check its connection in
-            <Button variant="link" size="sm" class="h-auto p-0 text-primary" onclick={goToDevices}>Settings → Devices</Button>.
+            Open <Button variant="link" size="sm" class="h-auto p-0 text-primary" onclick={goToDevices}>Settings → Devices</Button> and use
+            <strong>Find a device</strong> to connect your jailbroken iPhone or iPad and check its setup.
           </li>
           <li>Once a device is reachable, try a decrypt from the search box on this page.</li>
           <li>

@@ -7,11 +7,11 @@ export const healthRouter = Router();
 
 healthRouter.get('/v1/health', requireApiKey, async (_req, res) => {
   const primary = getPrimaryDevice();
-  const device = await getDeviceHealth(primary.id).catch(() => undefined);
+  const device = primary ? await getDeviceHealth(primary.id).catch(() => undefined) : undefined;
   const schedulerEnabled = getEffectiveWatches().some(isWatchSchedulable);
   res.json({
-    ok: Boolean(device?.reachable),
+    ok: primary ? Boolean(device?.reachable) : true,
     schedulerEnabled,
-    device: { reachable: device?.reachable ?? false, bridgeReachable: device?.testFlightBridgeReachable ?? false, readiness: device?.readiness?.state ?? 'unknown' },
+    device: { reachable: device?.reachable ?? false, bridgeReachable: device?.testFlightBridgeReachable ?? false, readiness: device?.readiness?.state ?? (primary ? 'unknown' : 'setup_required') },
   });
 });

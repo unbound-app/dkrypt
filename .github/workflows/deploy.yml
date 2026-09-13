@@ -103,6 +103,7 @@ jobs:
                 - ipa-storage:/data/artifacts
                 - state:/data/state
                 - /home/adrian/.ssh/id_ed25519_ipad:/root/.ssh/id_ed25519:ro
+                - /var/run/usbmuxd:/var/run/usbmuxd
           volumes:
             appstore-config:
               external: true

@@ -234,7 +234,14 @@ export interface DispatchTarget {
 export interface DeviceRecord {
   id: string;
   name: string;
-  rootDir: string;
+  transport?: 'wifi' | 'usb';
+  host?: string;
+  port?: number;
+  user?: string;
+  udid?: string;
+  usbmuxNetwork?: boolean;
+  keyPath?: string;
+  rootDir?: string;
   iosVersion?: string;
   toolchain?: string;
   notes?: string;
@@ -883,17 +890,52 @@ function normalizeLegacySchedulerRunHistory(entries: unknown): SchedulerRunEntry
 
 function load(): PersistedState {
   mkdirSync(config.stateDir, { recursive: true });
-  if (!existsSync(statePath)) return defaultState();
+  if (!existsSync(statePath)) {
+    return initialStateWithLegacyDevice();
+  }
   try {
     const migrated = migrate(JSON.parse(readFileSync(statePath, 'utf8')));
+    migrated.devices = migrated.devices.map((device) => migrateLegacyDevice(device));
+    if (migrated.devices.length === 0) {
+      const legacy = readLegacyDevice(config.ipadecryptRootDir, 'default', 'iDevice');
+      if (legacy) migrated.devices = [legacy];
+    }
     migrated.schedulerRunHistory = normalizeLegacySchedulerRunHistory(migrated.schedulerRunHistory);
     migrated.appCatalog = migrated.appCatalog ?? {};
     migrated.notifications = Array.isArray(migrated.notifications) ? migrated.notifications.slice(0, MAX_NOTIFICATIONS) : [];
     writeFileSync(statePath, JSON.stringify(migrated, null, 2));
     return migrated;
   } catch {
-    return defaultState();
+    return initialStateWithLegacyDevice();
   }
+}
+
+function initialStateWithLegacyDevice(): PersistedState {
+  const initial = defaultState();
+  const legacy = readLegacyDevice(config.ipadecryptRootDir, 'default', 'iDevice');
+  if (legacy) initial.devices = [legacy];
+  return initial;
+}
+
+function readLegacyDevice(rootDir: string, id: string, name: string): DeviceRecord | undefined {
+  try {
+    const raw = JSON.parse(readFileSync(path.join(rootDir, 'config.json'), 'utf8')) as {
+      device?: { host?: string; port?: number; user?: string; auth?: { keyPath?: string } };
+    };
+    const device = raw.device;
+    if (!device?.host || !device.port || !device.user || !device.auth?.keyPath) return undefined;
+    return { id, name, transport: 'wifi', host: device.host, port: device.port, user: device.user, keyPath: device.auth.keyPath, enabled: true, isPrimary: true, createdAt: 0, updatedAt: 0 };
+  } catch {
+    return undefined;
+  }
+}
+
+function migrateLegacyDevice(device: DeviceRecord): DeviceRecord {
+  if (!device.rootDir || device.host || device.udid) return device;
+  const migrated = readLegacyDevice(device.rootDir, device.id, device.name);
+  return migrated
+    ? { ...device, transport: migrated.transport, host: migrated.host, port: migrated.port, user: migrated.user, keyPath: migrated.keyPath, udid: undefined, usbmuxNetwork: undefined, rootDir: undefined }
+    : device;
 }
 
 export function getAppCatalogEntry(bundleId: string): AppCatalogEntry | undefined {
@@ -2033,8 +2075,7 @@ export function getWatchConfigIssues(watch: AppWatch): string[] {
 }
 
 export function getEffectiveDevices(): DeviceRecord[] {
-  if (state.devices.length > 0) return state.devices;
-  return [{ id: 'default', name: 'default', rootDir: config.ipadecryptRootDir, enabled: true, isPrimary: true, createdAt: 0, updatedAt: 0 }];
+  return state.devices;
 }
 
 export function listDevices(): DeviceRecord[] {
@@ -2045,21 +2086,20 @@ export function getDevice(id: string): DeviceRecord | undefined {
   return getEffectiveDevices().find((d) => d.id === id);
 }
 
-export function getPrimaryDevice(): DeviceRecord {
+export function getPrimaryDevice(): DeviceRecord | undefined {
   const devices = getEffectiveDevices().filter((d) => d.enabled);
-  return devices.find((d) => d.isPrimary) ?? devices[0] ?? getEffectiveDevices()[0];
-}
-
-function materializeDevices(): void {
-  if (state.devices.length > 0) return;
-  state.devices = [
-    { id: 'default', name: 'default', rootDir: config.ipadecryptRootDir, enabled: true, isPrimary: true, createdAt: 0, updatedAt: 0 },
-  ];
+  return devices.find((d) => d.isPrimary) ?? devices[0];
 }
 
 export interface CreateDeviceInput {
   name: string;
-  rootDir: string;
+  transport?: 'wifi' | 'usb';
+  host?: string;
+  port?: number;
+  user?: string;
+  udid?: string;
+  usbmuxNetwork?: boolean;
+  rootDir?: string;
   iosVersion?: string;
   toolchain?: string;
   notes?: string;
@@ -2072,12 +2112,18 @@ function clearOtherPrimaries(exceptId?: string): void {
 }
 
 export function createDevice(input: CreateDeviceInput, actor: string): DeviceRecord {
-  materializeDevices();
   const now = Date.now();
   const makePrimary = input.isPrimary || !state.devices.some((d) => d.isPrimary);
+  const transport = input.transport ?? (input.udid ? input.usbmuxNetwork ? 'wifi' : 'usb' : 'wifi');
   const device: DeviceRecord = {
     id: randomUUID(),
     name: input.name,
+    transport,
+    host: input.host?.trim() || undefined,
+    port: input.port,
+    user: input.user?.trim() || undefined,
+    udid: input.udid?.trim() || undefined,
+    usbmuxNetwork: input.usbmuxNetwork,
     rootDir: input.rootDir,
     iosVersion: input.iosVersion?.trim() || undefined,
     toolchain: input.toolchain?.trim() || undefined,
@@ -2095,7 +2141,6 @@ export function createDevice(input: CreateDeviceInput, actor: string): DeviceRec
 }
 
 export function updateDevice(id: string, patch: Partial<CreateDeviceInput>, actor: string): { ok: boolean; device?: DeviceRecord; error?: string } {
-  materializeDevices();
   const device = state.devices.find((d) => d.id === id);
   if (!device) return { ok: false, error: 'device not found' };
   Object.assign(device, patch, { updatedAt: Date.now() });
@@ -2111,7 +2156,6 @@ export function updateDevice(id: string, patch: Partial<CreateDeviceInput>, acto
 }
 
 export function deleteDevice(id: string, actor: string): boolean {
-  materializeDevices();
   const before = state.devices.length;
   state.devices = state.devices.filter((d) => d.id !== id);
   const changed = state.devices.length !== before;
@@ -2914,7 +2958,9 @@ function isAppWatchShape(value: unknown): value is AppWatch {
 function isDeviceRecordShape(value: unknown): value is DeviceRecord {
   if (typeof value !== 'object' || value === null) return false;
   const d = value as Record<string, unknown>;
-  return typeof d.id === 'string' && typeof d.name === 'string' && typeof d.rootDir === 'string' && typeof d.enabled === 'boolean';
+  const hasLegacyConnection = typeof d.rootDir === 'string' && d.rootDir.length > 0;
+  const hasDirectConnection = (d.transport === 'wifi' || d.transport === 'usb') && (typeof d.host === 'string' || typeof d.udid === 'string');
+  return typeof d.id === 'string' && typeof d.name === 'string' && typeof d.enabled === 'boolean' && (hasLegacyConnection || hasDirectConnection);
 }
 
 function isJobHistoryEntryShape(value: unknown): value is JobHistoryEntry {
@@ -3111,7 +3157,7 @@ function prepareBackupRestore(payload: ValidatedBackupPayload): Pick<PersistedSt
     apiKeys: payload.apiKeys.map((key) => ({ ...key, pendingReveal: undefined })),
     settings: payload.settings,
     watches: payload.watches,
-    devices: payload.devices,
+    devices: payload.devices.map(migrateLegacyDevice),
     jobHistory: payload.jobHistory.slice(0, MAX_HISTORY),
     auditLog: payload.auditLog.slice(0, MAX_AUDIT_LOG),
     schedulerRunHistory: payload.schedulerRunHistory.slice(0, MAX_SCHEDULER_RUNS).map((entry) => ({ ...entry, id: entry.id ?? randomUUID() })),
