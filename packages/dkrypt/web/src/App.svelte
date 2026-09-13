@@ -557,15 +557,6 @@
 						</Button>
 					{/each}
 				</nav>
-				<div class="border-t border-sidebar-border p-4">
-					<div class="flex items-center gap-2 rounded-lg border border-sidebar-border bg-sidebar-accent/50 px-3 py-2.5">
-						<span class="relative flex size-2">
-							<span class="absolute inline-flex size-full animate-ping rounded-full bg-ok/60"></span>
-							<span class="relative inline-flex size-2 rounded-full bg-ok"></span>
-						</span>
-						<span class="text-xs font-medium text-sidebar-foreground/75">Live workspace</span>
-					</div>
-				</div>
 			</aside>
 			<div class="min-w-0 flex-1">
 		<header

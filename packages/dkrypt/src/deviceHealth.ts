@@ -327,7 +327,47 @@ async function queryNetworkStatus(conn: Client): Promise<NetworkStatus | undefin
   return { networkConnected: true, internetAccess, ipAddress: primary.ipAddress, networkInterface: primary.iface };
 }
 
-const HEALTH_CACHE_TTL_MS = 20_000;
+const HEALTH_CACHE_TTL_MS = 45_000;
+const HEALTH_FAILURE_CONFIRMATIONS = 2;
+
+export function coalesceDeviceHealthRequest<T>(pending: Map<string, Promise<T>>, deviceId: string, request: () => Promise<T>): Promise<T> {
+  const existing = pending.get(deviceId);
+  if (existing) return existing;
+
+  let next: Promise<T>;
+  try {
+    next = request();
+  } catch (error) {
+    next = Promise.reject(error);
+  }
+  const tracked = next.finally(() => {
+    if (pending.get(deviceId) === tracked) pending.delete(deviceId);
+  });
+  pending.set(deviceId, tracked);
+  return tracked;
+}
+
+export function stabilizeDeviceHealth(previous: DeviceHealth | undefined, next: DeviceHealth, consecutiveFailures: number): DeviceHealth {
+  if (next.reachable || !previous?.reachable || consecutiveFailures >= HEALTH_FAILURE_CONFIRMATIONS) return next;
+  return { ...previous, checkedAt: next.checkedAt };
+}
+
+const pendingDeviceHealth = new Map<string, Promise<DeviceHealth>>();
+const deviceHealthFailures = new Map<string, number>();
+const lastKnownGoodDeviceHealth = new Map<string, DeviceHealth>();
+
+function cacheDeviceHealth(deviceId: string, value: DeviceHealth): void {
+  if (value.reachable) {
+    deviceHealthFailures.delete(deviceId);
+    lastKnownGoodDeviceHealth.set(deviceId, value);
+    setCachedDeviceHealth(deviceId, value);
+    return;
+  }
+
+  const failures = (deviceHealthFailures.get(deviceId) ?? 0) + 1;
+  deviceHealthFailures.set(deviceId, failures);
+  setCachedDeviceHealth(deviceId, stabilizeDeviceHealth(lastKnownGoodDeviceHealth.get(deviceId), value, failures));
+}
 
 async function computeDeviceHealth(device: DeviceRecord): Promise<DeviceHealth> {
   try {
@@ -385,11 +425,17 @@ export function peekPrimaryDeviceHealth(): DeviceHealth | undefined {
 export async function getDeviceHealth(deviceId: string, force = false): Promise<DeviceHealth> {
   const cached = getCachedDeviceHealth(deviceId);
   if (!force && cached && Date.now() - cached.at < HEALTH_CACHE_TTL_MS) return cached.value;
-  const device = getEffectiveDevices().find((d) => d.id === deviceId);
-  if (!device) return { reachable: false, error: 'device not found', checkedAt: Date.now() };
-  const value = await computeDeviceHealth(device);
-  setCachedDeviceHealth(deviceId, value);
-  return value;
+  const value = await coalesceDeviceHealthRequest(pendingDeviceHealth, deviceId, async () => {
+    const device = getEffectiveDevices().find((d) => d.id === deviceId);
+    if (!device) {
+      const missing: DeviceHealth = { reachable: false, error: 'device not found', checkedAt: Date.now(), readiness: { score: 0, state: 'blocked', reasons: ['device is unreachable'] } };
+      return missing;
+    }
+    const result = await computeDeviceHealth(device);
+    cacheDeviceHealth(deviceId, result);
+    return result;
+  });
+  return force ? value : getCachedDeviceHealth(deviceId)?.value ?? value;
 }
 
 const HEALTH_POLL_INTERVAL_MS = 5 * 60_000;
@@ -563,8 +609,7 @@ function warnOnMissingTelemetry(device: DeviceRecord, health: DeviceHealth): voi
 }
 
 async function pollOneDevice(device: DeviceRecord): Promise<void> {
-  const health = await computeDeviceHealth(device);
-  setCachedDeviceHealth(device.id, health);
+  const health = await getDeviceHealth(device.id, true);
   warnOnMissingTelemetry(device, health);
   recordDeviceHealthCheck(
     device.id,

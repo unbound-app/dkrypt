@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { collectDeviceTelemetry, getDeviceInstallBlocker, getDeviceReadiness, isBridgeHeartbeatFresh, parseDeviceStorageDf, type DeviceHealth } from '#deviceHealth.js';
+import { coalesceDeviceHealthRequest, collectDeviceTelemetry, getDeviceInstallBlocker, getDeviceReadiness, isBridgeHeartbeatFresh, parseDeviceStorageDf, stabilizeDeviceHealth, type DeviceHealth } from '#deviceHealth.js';
 
 function health(overrides: Partial<DeviceHealth> = {}): DeviceHealth {
   return { reachable: true, checkedAt: 0, ...overrides };
@@ -69,5 +69,36 @@ describe('collectDeviceTelemetry', () => {
     expect(telemetry.testFlightRunning).toBeFalse();
     expect(telemetry.testFlightBridgeReachable).toBeFalse();
     expect(telemetry.bridgeHeartbeats).toEqual({});
+  });
+});
+
+describe('device health coordination', () => {
+  test('shares one refresh across concurrent callers', async () => {
+    const pending = new Map<string, Promise<number>>();
+    let calls = 0;
+    let resolveRequest: ((value: number) => void) | undefined;
+    const request = () => {
+      calls += 1;
+      return new Promise<number>((resolve) => {
+        resolveRequest = resolve;
+      });
+    };
+
+    const first = coalesceDeviceHealthRequest(pending, 'device-a', request);
+    const second = coalesceDeviceHealthRequest(pending, 'device-a', request);
+    resolveRequest?.(42);
+
+    await expect(Promise.all([first, second])).resolves.toEqual([42, 42]);
+    expect(calls).toBe(1);
+    expect(pending).toHaveLength(0);
+  });
+
+  test('keeps a known-good status through one transient failure', () => {
+    const previous = health({ checkedAt: 100 });
+    const failed = health({ reachable: false, error: 'Timed out while waiting for handshake', checkedAt: 200 });
+
+    expect(stabilizeDeviceHealth(previous, failed, 1)).toEqual({ ...previous, checkedAt: 200 });
+    expect(stabilizeDeviceHealth(previous, failed, 2)).toBe(failed);
+    expect(stabilizeDeviceHealth(undefined, failed, 1)).toBe(failed);
   });
 });
