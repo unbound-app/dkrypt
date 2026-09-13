@@ -22,7 +22,7 @@
     "vite": "^8.2.2"
   },
   "dependencies": {
-    "bits-ui": "^2.19.0",
+    "bits-ui": "^2.19.2",
     "clsx": "^2.1.1",
     "lucide-svelte": "^1.0.1",
     "svelte-sonner": "^1.2.1",
