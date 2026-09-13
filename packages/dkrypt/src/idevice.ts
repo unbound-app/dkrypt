@@ -18,6 +18,8 @@ const BRIDGE_SECRET_FILE_NAME = 'autoinstall-bridge-secret';
 const BRIDGE_SECRET_REMOTE_PATH = '/var/mobile/Library/Preferences/dev.adrian.autoinstall-bridge.secret';
 const BRIDGE_ARTIFACT_TTL_MINUTES = 30;
 const REMOTE_COMMAND_TIMEOUT_MS = 10_000;
+const SSH_HANDSHAKE_RETRIES = 1;
+const SSH_HANDSHAKE_RETRY_DELAY_MS = 150;
 
 export type { BridgeChannel } from '#bridgeProtocol.js';
 
@@ -273,6 +275,47 @@ function makeSerialQueue() {
 
 const withSSHLock = makeSerialQueue();
 
+function isTransientSshConnectionError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /timed out while waiting for handshake|connection reset by peer|socket hang up|ECONNRESET/i.test(message);
+}
+
+export async function retryTransientSshConnection<T>(operation: () => Promise<T>, maxRetries = SSH_HANDSHAKE_RETRIES, delayMs = SSH_HANDSHAKE_RETRY_DELAY_MS): Promise<T> {
+  let retries = 0;
+  while (true) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (!isTransientSshConnectionError(error) || retries >= maxRetries) throw error;
+      retries += 1;
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+}
+
+function connectSshClient(auth: DeviceAuth, privateKey: Buffer): Promise<Client> {
+  const conn = new Client();
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      conn.destroy();
+      reject(error);
+    };
+    conn.on('error', fail);
+    conn.once('ready', () => {
+      settled = true;
+      resolve(conn);
+    });
+    try {
+      conn.connect({ host: auth.host, port: auth.port, username: auth.user, privateKey, readyTimeout: 15_000 });
+    } catch (error) {
+      fail(error instanceof Error ? error : new Error(String(error)));
+    }
+  });
+}
+
 function invalidateAuthCache(connection: DeviceConnection | string): void {
   if (typeof connection === 'string') {
     authCache.delete(connection);
@@ -290,21 +333,19 @@ export async function withSSH<T>(connection: DeviceConnection | string, fn: (con
       invalidateAuthCache(connection);
       throw err;
     }
-    const conn = new Client();
+    let conn: Client | undefined;
     try {
-      await new Promise<void>((resolve, reject) => {
-        conn.on('ready', () => resolve());
-        conn.on('error', reject);
-        conn.connect({ host: auth.host, port: auth.port, username: auth.user, privateKey, readyTimeout: 15_000 });
-      });
+      conn = await retryTransientSshConnection(() => connectSshClient(auth, privateKey));
       connectionRoots.set(conn, rootDir);
       return await fn(conn);
     } catch (err) {
       invalidateAuthCache(connection);
       throw err;
     } finally {
-      connectionRoots.delete(conn);
-      conn.end();
+      if (conn) {
+        connectionRoots.delete(conn);
+        conn.end();
+      }
     }
   }));
 }

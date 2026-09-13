@@ -328,7 +328,7 @@ async function queryNetworkStatus(conn: Client): Promise<NetworkStatus | undefin
 }
 
 const HEALTH_CACHE_TTL_MS = 45_000;
-const HEALTH_FAILURE_CONFIRMATIONS = 2;
+const HEALTH_FAILURE_CONFIRMATIONS = 3;
 
 export function coalesceDeviceHealthRequest<T>(pending: Map<string, Promise<T>>, deviceId: string, request: () => Promise<T>): Promise<T> {
   const existing = pending.get(deviceId);

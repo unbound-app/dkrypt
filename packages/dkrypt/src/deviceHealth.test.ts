@@ -98,7 +98,8 @@ describe('device health coordination', () => {
     const failed = health({ reachable: false, error: 'Timed out while waiting for handshake', checkedAt: 200 });
 
     expect(stabilizeDeviceHealth(previous, failed, 1)).toEqual({ ...previous, checkedAt: 200 });
-    expect(stabilizeDeviceHealth(previous, failed, 2)).toBe(failed);
+    expect(stabilizeDeviceHealth(previous, failed, 2)).toEqual({ ...previous, checkedAt: 200 });
+    expect(stabilizeDeviceHealth(previous, failed, 3)).toBe(failed);
     expect(stabilizeDeviceHealth(undefined, failed, 1)).toBe(failed);
   });
 });

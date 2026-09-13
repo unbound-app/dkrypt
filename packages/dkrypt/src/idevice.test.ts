@@ -5,7 +5,7 @@ import type { Client } from 'ssh2';
 import type { BridgeEnvelope } from './idevice.js';
 import { BRIDGE_CAPABILITIES, BRIDGE_PROTOCOL_VERSION } from './bridgeProtocol.js';
 
-const { armAppStoreAutoConfirm, createBridgeEnvelope, execCommand, readBridgeHeartbeats } = await import('./idevice.js' + '?idevice-transport-test');
+const { armAppStoreAutoConfirm, createBridgeEnvelope, execCommand, readBridgeHeartbeats, retryTransientSshConnection } = await import('./idevice.js' + '?idevice-transport-test');
 
 type FakeExecStream = {
   stderr: {
@@ -99,4 +99,16 @@ test('times out stalled SSH exec channels', async () => {
     stderr: 'command timed out after 20ms',
     code: null,
   });
+});
+
+test('retries transient SSH handshakes before failing', async () => {
+  let attempts = 0;
+
+  await expect(retryTransientSshConnection(async () => {
+    attempts += 1;
+    if (attempts === 1) throw new Error('Timed out while waiting for handshake');
+    return 'ready';
+  }, 1, 0)).resolves.toBe('ready');
+
+  expect(attempts).toBe(2);
 });
