@@ -319,6 +319,7 @@ export interface AppCatalogEntry {
 
 export type TestFlightSubscriptionStatus = 'pending' | 'approved' | 'denied' | 'withdrawn';
 export type TestFlightSubscriptionDeviceStatus = 'pending' | 'syncing' | 'active' | 'unavailable' | 'unsupported' | 'error' | 'unsubscribed';
+export const IMMUTABLE_TESTFLIGHT_BUNDLE_ID = 'com.hammerandchisel.discord';
 
 export interface TestFlightSubscriptionDevice {
   deviceId: string;
@@ -2181,6 +2182,7 @@ export function findTestFlightSubscriptionByInviteCode(inviteCode: string): Test
 export function ensureTestFlightSubscriptionDevices(id: string): TestFlightSubscription | undefined {
   const subscription = state.testFlightSubscriptions.find((entry) => entry.id === id);
   if (!subscription) return undefined;
+  if (subscription.bundleId === IMMUTABLE_TESTFLIGHT_BUNDLE_ID) return cloneTestFlightSubscription(subscription);
   const known = new Set(subscription.devices.map((device) => device.deviceId));
   const now = Date.now();
   for (const device of getEffectiveDevices().filter((entry) => entry.enabled)) {
@@ -2193,6 +2195,7 @@ export function ensureTestFlightSubscriptionDevices(id: string): TestFlightSubsc
 }
 
 export function createTestFlightSubscription(input: CreateTestFlightSubscriptionInput, actor: string): TestFlightSubscription {
+  if (input.bundleId === IMMUTABLE_TESTFLIGHT_BUNDLE_ID) throw new Error('Discord TestFlight access is protected and cannot be changed');
   const existing = findTestFlightSubscriptionByInviteCode(input.inviteCode);
   if (existing) return existing;
   const now = Date.now();
@@ -2227,7 +2230,7 @@ export function createTestFlightSubscription(input: CreateTestFlightSubscription
 
 export function approveTestFlightSubscription(id: string, actor: string): TestFlightSubscription | undefined {
   const subscription = state.testFlightSubscriptions.find((entry) => entry.id === id);
-  if (!subscription || subscription.status !== 'pending') return undefined;
+  if (!subscription || subscription.status !== 'pending' || subscription.bundleId === IMMUTABLE_TESTFLIGHT_BUNDLE_ID) return undefined;
   const now = Date.now();
   subscription.status = 'approved';
   subscription.approvedAt = now;
@@ -2244,7 +2247,7 @@ export function approveTestFlightSubscription(id: string, actor: string): TestFl
 
 export function denyTestFlightSubscription(id: string, actor: string): TestFlightSubscription | undefined {
   const subscription = state.testFlightSubscriptions.find((entry) => entry.id === id);
-  if (!subscription || subscription.status !== 'pending') return undefined;
+  if (!subscription || subscription.status !== 'pending' || subscription.bundleId === IMMUTABLE_TESTFLIGHT_BUNDLE_ID) return undefined;
   const now = Date.now();
   subscription.status = 'denied';
   subscription.deniedAt = now;
@@ -2259,6 +2262,7 @@ export function denyTestFlightSubscription(id: string, actor: string): TestFligh
 export function withdrawTestFlightSubscription(id: string, actor: string, detail?: string): TestFlightSubscription | undefined {
   const subscription = state.testFlightSubscriptions.find((entry) => entry.id === id);
   if (!subscription) return undefined;
+  if (subscription.bundleId === IMMUTABLE_TESTFLIGHT_BUNDLE_ID) return cloneTestFlightSubscription(subscription);
   if (subscription.status === 'withdrawn') return cloneTestFlightSubscription(subscription);
   const now = Date.now();
   subscription.status = 'withdrawn';
@@ -2277,6 +2281,7 @@ export function updateTestFlightSubscriptionDevice(
 ): TestFlightSubscription | undefined {
   const subscription = state.testFlightSubscriptions.find((entry) => entry.id === id);
   if (!subscription) return undefined;
+  if (subscription.bundleId === IMMUTABLE_TESTFLIGHT_BUNDLE_ID) return cloneTestFlightSubscription(subscription);
   let device = subscription.devices.find((entry) => entry.deviceId === deviceId);
   if (!device) {
     device = { deviceId, status: 'pending' };
@@ -2294,6 +2299,7 @@ export function updateTestFlightSubscriptionMetadata(
 ): TestFlightSubscription | undefined {
   const subscription = state.testFlightSubscriptions.find((entry) => entry.id === id);
   if (!subscription) return undefined;
+  if (subscription.bundleId === IMMUTABLE_TESTFLIGHT_BUNDLE_ID) return cloneTestFlightSubscription(subscription);
   Object.assign(subscription, patch, { updatedAt: Date.now() });
   persistNow();
   return cloneTestFlightSubscription(subscription);

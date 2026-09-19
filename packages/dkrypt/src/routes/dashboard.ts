@@ -28,10 +28,13 @@ import { getFailureGuidance } from '#util/failureGuidance.js';
 import {
   decorateSearchResults,
   getVerifiedTestFlightCatalog,
+  isImmutableTestFlightBundle,
   normalizeTestFlightInvite,
   resolveTestFlightInvite,
   subscriptionsForUser,
   syncTestFlightSubscription,
+  TestFlightCatalogUnavailableError,
+  unsubscribeDeviceTestFlightApp,
   unsubscribeTestFlightSubscription,
 } from '#testflightSubscriptions.js';
 import {
@@ -611,7 +614,7 @@ dashboardRouter.get('/v1/dashboard/search', async (req, res) => {
   }
 
   try {
-    const results = decorateSearchResults(await searchApps(term));
+    const results = await decorateSearchResults(await searchApps(term));
     upsertAppCatalogEntries(
       results.map((result) => ({
         bundleId: result.bundleId,
@@ -644,6 +647,10 @@ dashboardRouter.post('/v1/dashboard/testflight/subscriptions', canViewTestFlight
   const manager = hasPermission(res.locals.session.permissions, PermissionFlag.manageTestFlightSubscriptions);
   const existing = findTestFlightSubscriptionByInviteCode(normalized.inviteCode);
   if (existing) {
+    if (existing.status === 'approved') {
+      res.status(409).json({ error: `${existing.displayName ?? existing.url} is already subscribed`, alreadySubscribed: true, subscription: existing });
+      return;
+    }
     if (!manager && existing.requestedBy !== res.locals.session.sub.toLowerCase()) {
       res.status(409).json({ error: 'a subscription already exists for this invite link' });
       return;
@@ -654,12 +661,21 @@ dashboardRouter.post('/v1/dashboard/testflight/subscriptions', canViewTestFlight
       res.status(202).json({ subscription: approved ?? existing });
       return;
     }
-    if (manager && existing.status === 'approved') void syncTestFlightSubscription(existing.id, res.locals.session.sub);
     res.json({ subscription: existing });
     return;
   }
   try {
     const metadata = await resolveTestFlightInvite(normalized.url);
+    if (isImmutableTestFlightBundle(metadata.bundleId)) {
+      res.status(409).json({ error: 'Discord TestFlight access is protected and cannot be changed' });
+      return;
+    }
+    const deviceCatalog = await getVerifiedTestFlightCatalog({ requireAllDevices: true });
+    const existingDeviceAccess = deviceCatalog.find((entry) => entry.appId === metadata.appId && entry.bundleId === metadata.bundleId);
+    if (existingDeviceAccess) {
+      res.status(409).json({ error: `${metadata.displayName} is already subscribed on an enabled device`, alreadySubscribed: true });
+      return;
+    }
     const subscription = createTestFlightSubscription({
       ...normalized,
       ...metadata,
@@ -673,7 +689,7 @@ dashboardRouter.post('/v1/dashboard/testflight/subscriptions', canViewTestFlight
     if (manager) void syncTestFlightSubscription(subscription.id, res.locals.session.sub);
     res.status(manager ? 202 : 201).json({ subscription });
   } catch (error) {
-    res.status(422).json({ error: error instanceof Error ? error.message : String(error) });
+    res.status(error instanceof TestFlightCatalogUnavailableError ? 503 : 422).json({ error: error instanceof Error ? error.message : String(error) });
   }
 });
 
@@ -685,6 +701,10 @@ dashboardRouter.post('/v1/dashboard/testflight/subscriptions/:id/approve', canMa
   }
   if (current.status !== 'pending') {
     res.status(409).json({ error: `cannot approve a ${current.status} subscription` });
+    return;
+  }
+  if (isImmutableTestFlightBundle(current.bundleId)) {
+    res.status(409).json({ error: 'Discord TestFlight access is protected and cannot be changed' });
     return;
   }
   const subscription = approveTestFlightSubscription(req.params.id, res.locals.session.sub);
@@ -706,6 +726,10 @@ dashboardRouter.post('/v1/dashboard/testflight/subscriptions/:id/deny', canManag
     res.status(409).json({ error: `cannot deny a ${current.status} subscription` });
     return;
   }
+  if (isImmutableTestFlightBundle(current.bundleId)) {
+    res.status(409).json({ error: 'Discord TestFlight access is protected and cannot be changed' });
+    return;
+  }
   const subscription = denyTestFlightSubscription(req.params.id, res.locals.session.sub);
   if (!subscription) {
     res.status(404).json({ error: 'subscription not found' });
@@ -724,6 +748,10 @@ dashboardRouter.post('/v1/dashboard/testflight/subscriptions/:id/sync', canManag
     res.status(409).json({ error: `cannot synchronize a ${subscription.status} subscription` });
     return;
   }
+  if (isImmutableTestFlightBundle(subscription.bundleId)) {
+    res.status(409).json({ error: 'Discord TestFlight access is protected and cannot be changed' });
+    return;
+  }
   void syncTestFlightSubscription(subscription.id, res.locals.session.sub);
   res.status(202).json({ subscription });
 });
@@ -739,12 +767,29 @@ dashboardRouter.post('/v1/dashboard/testflight/subscriptions/:id/unsubscribe', c
     res.status(403).json({ error: 'you can only unsubscribe your own TestFlight subscriptions' });
     return;
   }
+  if (isImmutableTestFlightBundle(subscription.bundleId)) {
+    res.status(409).json({ error: 'Discord TestFlight access cannot be unsubscribed' });
+    return;
+  }
   void unsubscribeTestFlightSubscription(subscription.id, res.locals.session.sub);
   res.status(202).json({ subscription });
 });
 
-dashboardRouter.get('/v1/dashboard/testflight/catalog', canViewTestFlightCatalog, (_req, res) => {
-  res.json({ apps: getVerifiedTestFlightCatalog() });
+dashboardRouter.get('/v1/dashboard/testflight/catalog', canViewTestFlightCatalog, async (_req, res) => {
+  res.json({ apps: await getVerifiedTestFlightCatalog() });
+});
+
+dashboardRouter.post('/v1/dashboard/testflight/catalog/:bundleId/unsubscribe', canManageTestFlightSubscriptions, async (req, res) => {
+  const bundleId = typeof req.params.bundleId === 'string' ? req.params.bundleId : '';
+  if (!BUNDLE_ID_RE.test(bundleId)) {
+    res.status(400).json({ error: 'bundleId is invalid' });
+    return;
+  }
+  try {
+    res.json(await unsubscribeDeviceTestFlightApp(bundleId, res.locals.session.sub));
+  } catch (error) {
+    res.status(error instanceof TestFlightCatalogUnavailableError ? 503 : isImmutableTestFlightBundle(bundleId) ? 409 : 422).json({ error: error instanceof Error ? error.message : String(error) });
+  }
 });
 
 dashboardRouter.get('/v1/dashboard/apps/metadata', async (req, res) => {
@@ -877,8 +922,9 @@ dashboardRouter.post('/v1/dashboard/decrypt/preflight', canDecrypt, async (req, 
     res.status(400).json({ error: 'deviceId must refer to an enabled device' });
     return;
   }
+  const verifiedCatalog = testflight ? await getVerifiedTestFlightCatalog() : [];
   const verifiedTestFlightApp = testflight
-    ? getVerifiedTestFlightCatalog().find((entry) => entry.bundleId === bundleId)
+    ? verifiedCatalog.find((entry) => entry.bundleId === bundleId)
     : undefined;
   if (testflight && !verifiedTestFlightApp) {
     res.status(409).json({ error: 'TestFlight access must be verified on an enabled device before queueing' });
@@ -1704,7 +1750,7 @@ dashboardRouter.get('/v1/dashboard/testflight/:appId/builds', deviceOrExternalRa
   }
 });
 
-dashboardRouter.post('/v1/dashboard/testflight/decrypt', canDecrypt, blockDuringMaintenance, (req, res) => {
+dashboardRouter.post('/v1/dashboard/testflight/decrypt', canDecrypt, blockDuringMaintenance, async (req, res) => {
   const bundleId = typeof req.body?.bundleId === 'string' ? req.body.bundleId.trim() : '';
   const appId = Number.parseInt(req.body?.appId, 10);
   const build = req.body?.build;
@@ -1723,7 +1769,7 @@ dashboardRouter.post('/v1/dashboard/testflight/decrypt', canDecrypt, blockDuring
     res.status(400).json({ error: 'deviceId must refer to an enabled device' });
     return;
   }
-  const verifiedTestFlightApp = getVerifiedTestFlightCatalog().find((entry) => entry.appId === appId && entry.bundleId === bundleId);
+  const verifiedTestFlightApp = (await getVerifiedTestFlightCatalog()).find((entry) => entry.appId === appId && entry.bundleId === bundleId);
   if (!verifiedTestFlightApp) {
     res.status(409).json({ error: 'TestFlight access must be verified on an enabled device before queueing' });
     return;

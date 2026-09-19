@@ -674,7 +674,7 @@ static NSString * const kInstallStatusPath = @"/tmp/autoinstall-install-status.j
 static NSDictionary *bridgeStatus(void) {
     return @{
         @"bridgeVersion": BRIDGE_VERSION,
-        @"capabilities": @[@"list_trains", @"list_builds", @"install", @"status", @"diagnostics", @"subscribe_invite", @"status_invite", @"unsubscribe_invite", @"invite_lifecycle", @"idempotent_install", @"protocol_v1", @"authenticated_requests", @"operation_responses", @"heartbeats", @"stale_artifact_cleanup"],
+        @"capabilities": @[@"list_trains", @"list_builds", @"list_apps", @"device_catalog", @"install", @"status", @"diagnostics", @"subscribe_invite", @"status_invite", @"unsubscribe_invite", @"invite_lifecycle", @"idempotent_install", @"protocol_v1", @"authenticated_requests", @"operation_responses", @"heartbeats", @"stale_artifact_cleanup"],
         @"hasInstaller": gInstaller ? @YES : @NO,
         @"hasCatalogManager": gCatalogManager ? @YES : @NO,
         @"backgroundTaskActive": gBackgroundTaskId != UIBackgroundTaskInvalid ? @YES : @NO,
@@ -773,6 +773,14 @@ static void handleRequest(NSDictionary *req, NSString *responsePath, NSString *r
                 fail(@"invalid_request", @"subscribe_invite", @"only canonical testflight.apple.com public links are supported", NO);
                 return;
             }
+            NSNumber *appId = [req[@"appId"] isKindOfClass:[NSNumber class]] ? req[@"appId"] : nil;
+            if (appId && appId.longLongValue > 0 && gCatalogManager) {
+                id existingApp = [(id<TFAppCatalogManagerProtocol>)gCatalogManager getAppCatalogCachedAppForAppID:appId];
+                if (existingApp) {
+                    respond(@{ @"ok": @YES, @"requested": @NO, @"alreadySubscribed": @YES, @"appleMembership": @"accepted" });
+                    return;
+                }
+            }
             NSString *operationId = [req[@"operationId"] isKindOfClass:[NSString class]] ? req[@"operationId"] : [[NSUUID UUID] UUIDString];
             NSDictionary *previous = readBridgeTransaction(@"testflight", operationId);
             if ([previous[@"operationId"] isEqual:operationId] && ![previous[@"state"] isEqualToString:@"failed"]) {
@@ -816,6 +824,73 @@ static void handleRequest(NSDictionary *req, NSString *responsePath, NSString *r
         return;
     }
 
+    if ([action isEqualToString:@"list_apps"]) {
+        @try {
+            if (!gCatalogManager) {
+                fail(@"catalog_unavailable", @"list_apps", @"gCatalogManager not stashed yet", YES);
+                return;
+            }
+            SEL selector = NSSelectorFromString(@"getAllAppsWithRefresh:completionBlock:");
+            if (![gCatalogManager respondsToSelector:selector]) {
+                fail(@"unsupported", @"list_apps", @"TestFlight app catalog enumeration is unavailable", NO);
+                return;
+            }
+            void (^completion)(id, id) = ^(id value, id error) {
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    if ([error isKindOfClass:[NSError class]]) {
+                        respond(@{ @"ok": @NO, @"error": @{ @"code": @"catalog_refresh_failed", @"stage": @"list_apps", @"message": [error localizedDescription] ?: @"TestFlight app catalog refresh failed", @"retryable": @YES } });
+                        return;
+                    }
+                    id appsValue = value;
+                    if (![appsValue isKindOfClass:[NSArray class]] && [appsValue respondsToSelector:@selector(allObjects)]) appsValue = [appsValue allObjects];
+                    if (![appsValue isKindOfClass:[NSArray class]]) @try { appsValue = [appsValue valueForKey:@"apps"]; } @catch (NSException *exception) { appsValue = @[]; }
+                    NSMutableArray *apps = [NSMutableArray array];
+                    if ([appsValue isKindOfClass:[NSArray class]]) {
+                        for (id app in appsValue) {
+                            @try {
+                                id rawAppId = [app valueForKey:@"appID"];
+                                id rawBundleId = [app valueForKey:@"bundleID"];
+                                NSString *bundleId = [rawBundleId isKindOfClass:[NSString class]] ? rawBundleId : [rawBundleId description];
+                                NSInteger appIdValue = [rawAppId respondsToSelector:@selector(longLongValue)] ? [rawAppId longLongValue] : [[rawAppId description] longLongValue];
+                                if (appIdValue <= 0 || bundleId.length == 0) continue;
+                                NSMutableDictionary *entry = [@{ @"appId": @(appIdValue), @"bundleId": bundleId } mutableCopy];
+                                NSDictionary *keys = @{
+                                    @"name": @"name",
+                                    @"providerName": @"providerName",
+                                    @"publicLinkURL": @"publicLinkURL",
+                                    @"publicLinkStatus": @"publicLinkStatus",
+                                    @"inviteStatus": @"inviteStatus",
+                                    @"isPublicLinkUser": @"isPublicLinkUser",
+                                };
+                                for (NSString *key in keys) {
+                                    id rawValue = nil;
+                                    @try { rawValue = [app valueForKey:keys[key]]; } @catch (NSException *exception) {}
+                                    if (!rawValue || rawValue == [NSNull null]) continue;
+                                    if ([rawValue isKindOfClass:[NSURL class]]) rawValue = [rawValue absoluteString];
+                                    if ([rawValue isKindOfClass:[NSString class]] || [rawValue isKindOfClass:[NSNumber class]]) entry[key] = rawValue;
+                                }
+                                [apps addObject:entry];
+                            } @catch (NSException *exception) {
+                                autoinstallLog([NSString stringWithFormat:@"list_apps: app serialization exception %@ %@", exception.name, exception.reason]);
+                            }
+                        }
+                    }
+                    respond(@{ @"ok": @YES, @"apps": apps });
+                });
+            };
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                @try {
+                    ((void (*)(id, SEL, BOOL, id))objc_msgSend)(gCatalogManager, selector, YES, [completion copy]);
+                } @catch (NSException *exception) {
+                    fail(@"list_apps_exception", @"list_apps", [NSString stringWithFormat:@"exception: %@ %@", exception.name, exception.reason], YES);
+                }
+            });
+        } @catch (NSException *exception) {
+            fail(@"list_apps_exception", @"list_apps", [NSString stringWithFormat:@"exception: %@ %@", exception.name, exception.reason], YES);
+        }
+        return;
+    }
+
     if ([action isEqualToString:@"status_invite"]) {
         @try {
             NSString *url = [req[@"url"] isKindOfClass:[NSString class]] ? req[@"url"] : @"";
@@ -855,6 +930,10 @@ static void handleRequest(NSDictionary *req, NSString *responsePath, NSString *r
         NSString *bundleId = [req[@"bundleId"] isKindOfClass:[NSString class]] ? req[@"bundleId"] : @"";
         if (bundleId.length == 0 || [bundleId rangeOfCharacterFromSet:[[NSCharacterSet characterSetWithCharactersInString:@"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-"] invertedSet]].location != NSNotFound) {
             fail(@"invalid_request", @"unsubscribe_invite", @"bundleId is invalid", NO);
+            return;
+        }
+        if ([bundleId isEqualToString:@"com.hammerandchisel.discord"]) {
+            fail(@"immutable_subscription", @"unsubscribe_invite", @"Discord TestFlight access is protected and cannot be removed", NO);
             return;
         }
         NSString *operationId = [req[@"operationId"] isKindOfClass:[NSString class]] ? req[@"operationId"] : [NSString stringWithFormat:@"unsubscribe-%@", bundleId];

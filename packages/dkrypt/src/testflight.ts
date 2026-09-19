@@ -11,7 +11,7 @@ import {
   withSSH,
 } from '#idevice.js';
 import { getPrimaryDevice, type DeviceRecord } from '#store/state.js';
-import { hasBridgeCapabilities, hasBridgeCapabilitySet, TESTFLIGHT_LIFECYCLE_CAPABILITIES } from '#bridgeProtocol.js';
+import { hasBridgeCapabilities, hasBridgeCapabilitySet, TESTFLIGHT_DEVICE_CATALOG_CAPABILITIES, TESTFLIGHT_LIFECYCLE_CAPABILITIES } from '#bridgeProtocol.js';
 
 function primaryDevice() {
   const device = getPrimaryDevice();
@@ -50,6 +50,17 @@ export interface TestFlightBridgeDiagnostics {
   };
   install?: Record<string, unknown>;
   recentLog?: string[];
+}
+
+export interface TFDeviceApp {
+  appId: number;
+  bundleId: string;
+  name?: string;
+  providerName?: string;
+  publicLinkURL?: string;
+  publicLinkStatus?: string;
+  inviteStatus?: string;
+  isPublicLinkUser?: boolean;
 }
 
 function hasRequiredBridgeCapabilities(response: Record<string, unknown>): boolean {
@@ -112,12 +123,13 @@ export async function listBuilds(appId: number, trainVersion: string, device = p
 
 const TESTFLIGHT_INVITE_URL_RE = /^https:\/\/testflight\.apple\.com\/join\/([A-Za-z0-9]{4,32})$/;
 
-export async function subscribeToTestFlightInvite(url: string, operationId: string, device = primaryDevice()): Promise<Record<string, unknown>> {
+export async function subscribeToTestFlightInvite(url: string, operationId: string, device = primaryDevice(), appId?: number): Promise<Record<string, unknown>> {
   if (!TESTFLIGHT_INVITE_URL_RE.test(url)) throw new Error('invalid TestFlight public link');
   return withReadyBridgeRequest(() => withSSH(device, (conn) => sendTestFlightBridgeRequest(conn, {
     action: 'subscribe_invite',
     url,
     operationId,
+    ...(appId && Number.isInteger(appId) && appId > 0 ? { appId } : {}),
   })), device, TESTFLIGHT_LIFECYCLE_CAPABILITIES);
 }
 
@@ -138,6 +150,18 @@ export async function unsubscribeFromTestFlightInvite(bundleId: string, device =
     bundleId,
     operationId,
   })), device, TESTFLIGHT_LIFECYCLE_CAPABILITIES);
+}
+
+export async function listTestFlightApps(device = primaryDevice()): Promise<TFDeviceApp[]> {
+  return withReadyBridgeRequest(() => withSSH(device, async (conn) => {
+    const response = await sendTestFlightBridgeRequest(conn, { action: 'list_apps' });
+    if (!Array.isArray(response.apps)) return [];
+    return response.apps.filter((entry: unknown): entry is TFDeviceApp => {
+      if (typeof entry !== 'object' || entry === null) return false;
+      const value = entry as Record<string, unknown>;
+      return Number.isInteger(value.appId) && Number(value.appId) > 0 && typeof value.bundleId === 'string' && value.bundleId.length > 0;
+    });
+  }), device, TESTFLIGHT_DEVICE_CATALOG_CAPABILITIES);
 }
 
 async function withReadyBridgeRequest<T>(request: () => Promise<T>, device: DeviceRecord, requiredCapabilities: readonly string[] = []): Promise<T> {

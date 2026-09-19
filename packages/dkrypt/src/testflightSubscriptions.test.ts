@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { normalizeTestFlightInvite, parseTestFlightInviteHtml } from '#testflightSubscriptions.js';
+import { IMMUTABLE_TESTFLIGHT_BUNDLE_ID, isImmutableTestFlightBundle, mergeDeviceTestFlightApps, normalizeTestFlightInvite, parseTestFlightInviteHtml } from '#testflightSubscriptions.js';
 
 describe('TestFlight public links', () => {
   test('normalizes canonical links and removes query state', () => {
@@ -24,5 +24,20 @@ describe('TestFlight public links', () => {
   test('extracts app metadata from TestFlight invite HTML', () => {
     const parsed = parseTestFlightInviteHtml('<title>Join the Discord beta - TestFlight - Apple</title><meta property="og:image" content="https://example.com/icon.png">');
     expect(parsed).toEqual({ displayName: 'Discord', iconUrl: 'https://example.com/icon.png' });
+  });
+});
+
+describe('device TestFlight catalog', () => {
+  test('merges app access by device and keeps the device as the source of truth', () => {
+    const apps = mergeDeviceTestFlightApps([
+      { device: { id: 'ipad-a', name: 'iPad A', enabled: true } as never, fetchedAt: 100, apps: [{ appId: 42, bundleId: 'com.example.app', name: 'Example' }] },
+      { device: { id: 'ipad-b', name: 'iPad B', enabled: true } as never, fetchedAt: 200, apps: [{ appId: 42, bundleId: 'com.example.app', name: 'Example' }] },
+    ]);
+    expect(apps).toEqual([{ appId: 42, bundleId: 'com.example.app', displayName: 'Example', devices: [{ id: 'ipad-a', name: 'iPad A' }, { id: 'ipad-b', name: 'iPad B' }], lastVerifiedAt: 200, deviceSource: true }]);
+  });
+
+  test('protects the immutable Discord subscription', () => {
+    expect(isImmutableTestFlightBundle(IMMUTABLE_TESTFLIGHT_BUNDLE_ID)).toBe(true);
+    expect(isImmutableTestFlightBundle('com.example.app')).toBe(false);
   });
 });

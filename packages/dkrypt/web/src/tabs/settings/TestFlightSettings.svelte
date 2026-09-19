@@ -1,22 +1,23 @@
 <script lang="ts">
-  import { Check, Link2, RefreshCw, ShieldCheck, UserRound, X } from 'lucide-svelte';
+  import { Check, LockKeyhole, RefreshCw, ShieldCheck, UserRound, X } from 'lucide-svelte';
   import { onMount } from 'svelte';
   import {
     approveTestFlightSubscription,
     denyTestFlightSubscription,
     fetchDevices,
+    fetchTestFlightCatalog,
     fetchTestFlightSubscriptions,
     syncTestFlightSubscription,
-    submitTestFlightSubscription,
+    unsubscribeTestFlightCatalogApp,
     unsubscribeTestFlightSubscription,
     type DeviceRecord,
+    type TestFlightCatalogApp,
     type TestFlightSubscription,
     type TestFlightSubscriptionDeviceStatus,
   } from '#lib/api';
   import Badge from '#lib/components/ui/Badge.svelte';
   import Button from '#lib/components/ui/Button.svelte';
   import Card from '#lib/components/ui/Card.svelte';
-  import Input from '#lib/components/ui/Input.svelte';
   import { PermissionFlag } from '#lib/permissions';
   import { sessionHasAnyPermission, sessionHasPermission } from '#lib/session.svelte';
   import { confirmDialog, showToast } from '#lib/ui.svelte';
@@ -24,11 +25,11 @@
   const canManage = $derived(sessionHasPermission(PermissionFlag.manageTestFlightSubscriptions));
   const canViewDevices = $derived(sessionHasAnyPermission([PermissionFlag.viewDevices, PermissionFlag.manageDevices]));
   let subscriptions = $state<TestFlightSubscription[]>([]);
+  let deviceApps = $state<TestFlightCatalogApp[]>([]);
   let devices = $state<DeviceRecord[]>([]);
-  let inviteUrl = $state('');
   let loading = $state(true);
-  let submitting = $state(false);
   let busyId = $state<string | null>(null);
+  let busyBundleId = $state<string | null>(null);
 
   const deviceNames = $derived(new Map(devices.map((device) => [device.id, device.name])));
 
@@ -53,8 +54,10 @@
       ]);
       subscriptions = subscriptionData.subscriptions;
       devices = deviceData.devices;
+      deviceApps = canManage ? (await fetchTestFlightCatalog()).apps : [];
     } catch {
       subscriptions = [];
+      deviceApps = [];
     } finally {
       loading = false;
     }
@@ -63,20 +66,6 @@
   onMount(() => {
     void load();
   });
-
-  async function submit(): Promise<void> {
-    if (!inviteUrl.trim()) return;
-    submitting = true;
-    try {
-      const result = await submitTestFlightSubscription(inviteUrl.trim());
-      if (!result.ok) return;
-      inviteUrl = '';
-      showToast(canManage ? 'TestFlight access is being synchronized' : 'TestFlight request submitted for approval', 'success');
-      await load();
-    } finally {
-      submitting = false;
-    }
-  }
 
   async function decide(subscription: TestFlightSubscription, action: 'approve' | 'deny'): Promise<void> {
     busyId = subscription.id;
@@ -114,23 +103,27 @@
       busyId = null;
     }
   }
+
+  async function unsubscribeDeviceApp(app: TestFlightCatalogApp): Promise<void> {
+    if (!(await confirmDialog(`Remove ${app.displayName} from the connected devices? TestFlight membership itself may remain active with Apple.`, { confirmLabel: 'Remove from devices', variant: 'destructive' }))) return;
+    busyBundleId = app.bundleId;
+    try {
+      const result = await unsubscribeTestFlightCatalogApp(app.bundleId);
+      if (result.ok) {
+        showToast(result.data.failures.length > 0 ? 'Removed with device warnings' : 'Removed from connected devices', result.data.failures.length > 0 ? 'error' : 'success');
+        await load();
+      }
+    } finally {
+      busyBundleId = null;
+    }
+  }
 </script>
 
 <div class="flex flex-col gap-4">
-  <Card title="Public TestFlight access">
+  <Card title="TestFlight subscription management">
     <div class="mb-4 max-w-2xl text-sm text-muted">
-      Add a public TestFlight invite link to make its builds available in the decrypt search. Managers activate links immediately; other requests stay private until approved.
+      This page is for approvals and device synchronization. Actual TestFlight availability is read from the connected devices, so apps already present in TestFlight appear in the Home search automatically.
     </div>
-    <form class="flex flex-col gap-2 sm:flex-row" onsubmit={(event) => { event.preventDefault(); void submit(); }}>
-      <div class="relative min-w-0 flex-1">
-        <Link2 class="text-muted pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
-        <Input bind:value={inviteUrl} class="pl-9" placeholder="https://testflight.apple.com/join/ABC123" aria-label="TestFlight public link" />
-      </div>
-      <Button type="submit" loading={submitting} disabled={!inviteUrl.trim()}>Add public link</Button>
-    </form>
-  </Card>
-
-  <Card title={canManage ? 'Subscription requests and access' : 'Your TestFlight access'}>
     {#if loading}
       <div class="text-sm text-muted">Loading TestFlight access…</div>
     {:else if subscriptions.length === 0}
@@ -158,14 +151,16 @@
                 </div>
               </div>
               <div class="flex shrink-0 flex-wrap gap-2">
-                {#if canManage && subscription.status === 'pending'}
+                {#if canManage && subscription.bundleId !== 'com.hammerandchisel.discord' && subscription.status === 'pending'}
                   <Button size="sm" loading={busyId === subscription.id} onclick={() => void decide(subscription, 'approve')}><Check class="h-3.5 w-3.5" /> Approve</Button>
                   <Button size="sm" variant="destructive" disabled={busyId === subscription.id} onclick={() => void decide(subscription, 'deny')}><X class="h-3.5 w-3.5" /> Deny</Button>
                 {/if}
-                {#if canManage && subscription.status === 'approved'}
+                {#if canManage && subscription.bundleId !== 'com.hammerandchisel.discord' && subscription.status === 'approved'}
                   <Button size="sm" variant="secondary" loading={busyId === subscription.id} onclick={() => void sync(subscription)}><RefreshCw class="h-3.5 w-3.5" /> Sync</Button>
                 {/if}
-                {#if subscription.status !== 'withdrawn' && subscription.status !== 'denied'}
+                {#if subscription.bundleId === 'com.hammerandchisel.discord'}
+                  <Badge variant="secondary"><LockKeyhole class="h-3 w-3" /> Protected</Badge>
+                {:else if subscription.status !== 'withdrawn' && subscription.status !== 'denied'}
                   <Button size="sm" variant="ghost" disabled={busyId === subscription.id} onclick={() => void unsubscribe(subscription)}>Unsubscribe</Button>
                 {/if}
               </div>
@@ -185,6 +180,43 @@
             {/if}
           </div>
         {/each}
+      </div>
+    {/if}
+    {#if canManage}
+      <div class="border-border/70 mt-5 border-t pt-4">
+        <div class="mb-3 flex items-center justify-between gap-2">
+          <div>
+            <div class="text-sm font-medium">Detected on connected devices</div>
+            <div class="text-xs text-muted">This list is read directly from TestFlight on each enabled device.</div>
+          </div>
+          <Badge variant="secondary">Device source</Badge>
+        </div>
+        {#if deviceApps.length === 0}
+          <div class="text-sm text-muted">No TestFlight apps were reported by the enabled devices.</div>
+        {:else}
+          <div class="divide-border/70 divide-y">
+            {#each deviceApps as app (app.bundleId)}
+              <div class="flex flex-col gap-3 py-3 first:pt-0 last:pb-0 sm:flex-row sm:items-center sm:justify-between">
+                <div class="flex min-w-0 items-center gap-3">
+                  {#if app.iconUrl}
+                    <img src={app.iconUrl} alt="" class="h-9 w-9 rounded-xl border border-border/70 object-cover" />
+                  {:else}
+                    <div class="bg-secondary text-muted flex h-9 w-9 items-center justify-center rounded-xl"><ShieldCheck class="h-4 w-4" /></div>
+                  {/if}
+                  <div class="min-w-0">
+                    <div class="truncate text-sm font-medium">{app.displayName}</div>
+                    <div class="truncate text-xs text-muted">{app.bundleId} · {app.devices.map((device) => device.name).join(', ')}</div>
+                  </div>
+                </div>
+                {#if app.bundleId === 'com.hammerandchisel.discord'}
+                  <Badge variant="secondary"><LockKeyhole class="h-3 w-3" /> Protected</Badge>
+                {:else}
+                  <Button size="sm" variant="ghost" loading={busyBundleId === app.bundleId} onclick={() => void unsubscribeDeviceApp(app)}>Remove from devices</Button>
+                {/if}
+              </div>
+            {/each}
+          </div>
+        {/if}
       </div>
     {/if}
   </Card>

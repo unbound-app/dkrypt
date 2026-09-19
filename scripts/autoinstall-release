@@ -13,16 +13,61 @@ if [[ -z "$target" ]]; then
   exit 64
 fi
 
-if [[ "$mode" == "deploy" ]]; then
-  gmake -C "$root_dir/packages/autoinstall" clean package
-  package_path="$(ls -t "$root_dir"/packages/autoinstall/packages/dev.adrian.autoinstall_*_iphoneos-arm64.deb | head -n 1)"
-elif [[ "$mode" != "rollback" || ! -f "$package_path" ]]; then
-  print -u2 "usage: $0 deploy | $0 rollback /absolute/path/to/dev.adrian.autoinstall_*.deb"
+is_semver() {
+  [[ "$1" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+}
+
+is_greater_version() {
+  local left="$1"
+  local right="$2"
+  local left_major left_minor left_patch right_major right_minor right_patch
+  IFS=. read -r left_major left_minor left_patch <<< "$left"
+  IFS=. read -r right_major right_minor right_patch <<< "$right"
+  (( left_major > right_major || (left_major == right_major && left_minor > right_minor) || (left_major == right_major && left_minor == right_minor && left_patch > right_patch) ))
+}
+
+control_version="$(awk -F': ' '$1 == "Version" { print $2 }' "$root_dir/packages/autoinstall/control")"
+if ! is_semver "$control_version"; then
+  print -u2 "autoinstall version must be strict semantic versioning (MAJOR.MINOR.PATCH): $control_version"
   exit 64
 fi
 
-expected_version="$(awk -F': ' '$1 == "Version" { print $2 }' "$root_dir/packages/autoinstall/control")"
+if [[ "$mode" == "deploy" ]]; then
+  expected_version="$control_version"
+  gmake -C "$root_dir/packages/autoinstall" clean package
+  package_path="$root_dir/packages/autoinstall/packages/dev.adrian.autoinstall_${expected_version}_iphoneos-arm64.deb"
+  if [[ ! -f "$package_path" ]]; then
+    print -u2 "autoinstall build did not produce the expected semantic-versioned package: $package_path"
+    exit 1
+  fi
+elif [[ "$mode" != "rollback" || ! -f "$package_path" ]]; then
+  print -u2 "usage: $0 deploy | $0 rollback /absolute/path/to/dev.adrian.autoinstall_*.deb"
+  exit 64
+else
+  package_name="$(basename "$package_path")"
+  if [[ "$package_name" != dev.adrian.autoinstall_*_iphoneos-arm64.deb ]]; then
+    print -u2 "rollback package has an unexpected filename: $package_name"
+    exit 64
+  fi
+  expected_version="${package_name#dev.adrian.autoinstall_}"
+  expected_version="${expected_version%_iphoneos-arm64.deb}"
+  if ! is_semver "$expected_version"; then
+    print -u2 "rollback package version must be strict semantic versioning: $expected_version"
+    exit 64
+  fi
+fi
+
 previous_version="$(ssh "${ssh_options[@]}" "$target" "dpkg-query -W -f='\${Version}' dev.adrian.autoinstall 2>/dev/null || true")"
+if [[ "$mode" == "deploy" && -n "$previous_version" ]]; then
+  if ! is_semver "$previous_version"; then
+    print -u2 "installed autoinstall version is not semantic versioning: $previous_version"
+    exit 1
+  fi
+  if ! is_greater_version "$expected_version" "$previous_version"; then
+    print -u2 "autoinstall version must increase: $previous_version -> $expected_version"
+    exit 1
+  fi
+fi
 previous_package=""
 if [[ -n "$previous_version" ]]; then
   previous_package="$(ls -t "$root_dir"/packages/autoinstall/packages/dev.adrian.autoinstall_"$previous_version"_iphoneos-arm64.deb 2>/dev/null | head -n 1 || true)"

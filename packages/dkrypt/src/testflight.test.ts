@@ -19,7 +19,7 @@ mock.module('#idevice.js', () => ({
     if (request.action === 'status') {
       return {
         bridgeVersion: '2.0.0',
-        capabilities: ['list_trains', 'list_builds', 'install', 'diagnostics', 'subscribe_invite', 'status_invite', 'unsubscribe_invite', 'invite_lifecycle', 'idempotent_install', 'protocol_v1', 'authenticated_requests', 'operation_responses', 'heartbeats', 'stale_artifact_cleanup'],
+        capabilities: ['list_trains', 'list_builds', 'list_apps', 'device_catalog', 'install', 'diagnostics', 'subscribe_invite', 'status_invite', 'unsubscribe_invite', 'invite_lifecycle', 'idempotent_install', 'protocol_v1', 'authenticated_requests', 'operation_responses', 'heartbeats', 'stale_artifact_cleanup'],
         hasInstaller: true,
         hasCatalogManager: true,
       };
@@ -32,6 +32,7 @@ mock.module('#idevice.js', () => ({
       lifecycleActions.push(String(request.action));
       if (request.action === 'status_invite') return { ok: true, verified: true };
     }
+    if (request.action === 'list_apps') return { ok: true, apps: [{ appId: 985746746, bundleId: 'com.hammerandchisel.discord', name: 'Discord' }] };
     return { ok: true };
   },
   withSSH: async (_rootDir: string, fn: (conn: object) => Promise<void>) => fn({}),
@@ -42,7 +43,7 @@ mock.module('#store/state.js', () => ({
   getPrimaryDevice: () => ({ rootDir: '/device' }),
 }));
 
-const { installBuild, statusTestFlightInvite, subscribeToTestFlightInvite, unsubscribeFromTestFlightInvite } = await import('./testflight.js');
+const { installBuild, listTestFlightApps, statusTestFlightInvite, subscribeToTestFlightInvite, unsubscribeFromTestFlightInvite } = await import('./testflight.js');
 
 describe('installBuild', () => {
   afterAll(() => {
@@ -88,5 +89,9 @@ describe('installBuild', () => {
     await expect(statusTestFlightInvite('https://testflight.apple.com/join/AbC123', 985746746, 'invite-status')).resolves.toMatchObject({ ok: true, verified: true });
     await expect(unsubscribeFromTestFlightInvite('com.hammerandchisel.discord', undefined, 'invite-unsubscribe')).resolves.toMatchObject({ ok: true });
     expect(lifecycleActions).toEqual(['subscribe_invite', 'status_invite', 'unsubscribe_invite']);
+  });
+
+  test('reads the device TestFlight catalog through the bridge', async () => {
+    await expect(listTestFlightApps()).resolves.toEqual([{ appId: 985746746, bundleId: 'com.hammerandchisel.discord', name: 'Discord' }]);
   });
 });

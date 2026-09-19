@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Ellipsis, FlaskConical, History, Star, X } from "lucide-svelte";
+	import { Ellipsis, FlaskConical, History, Link2, Star, X } from "lucide-svelte";
 	import BatchDecryptDialog from "#components/BatchDecryptDialog.svelte";
 	import CopyButton from "#components/CopyButton.svelte";
 	import EmptyState from "#components/EmptyState.svelte";
@@ -45,6 +45,7 @@
 	import { showToast } from "#lib/ui.svelte";
 	import { cn } from "#lib/utils";
 	import TestFlightPickerDialog from "#tabs/home/TestFlightPickerDialog.svelte";
+	import TestFlightInviteDialog from "#tabs/home/TestFlightInviteDialog.svelte";
 	import VersionPickerDialog from "#tabs/home/VersionPickerDialog.svelte";
 
 	let term = $state("");
@@ -137,6 +138,9 @@
 	const canDecrypt = $derived(
 		sessionHasPermission(PermissionFlag.requestDecrypt),
 	);
+	const canRequestTestFlight = $derived(
+		sessionHasPermission(PermissionFlag.requestTestFlightSubscriptions),
+	);
 
 	let versionsOpen = $state(false);
 	let versionsBundleId = $state("");
@@ -218,6 +222,7 @@
 	let testflightAppId = $state(0);
 	let testflightTrackName = $state("");
 	let testflightDevices = $state<Array<{ id: string; name: string }>>([]);
+	let inviteDialogOpen = $state(false);
 
 	function openTestFlight(
 		bundleId: string,
@@ -339,7 +344,7 @@
 	});
 
 	$effect(() => {
-		if (!canDecrypt) return;
+		if (!canDecrypt && !canRequestTestFlight) return;
 		void fetchTestFlightCatalog().then((data) => {
 			testflightApps = data.apps;
 		}).catch(() => {
@@ -496,7 +501,12 @@
 
 	{#if !term.trim() && testflightApps.length > 0}
 		<div class="mt-3">
-			<div class="mb-1.5 flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.12em] text-muted">TestFlight access <span class="normal-case tracking-normal text-muted/70">verified on your devices</span></div>
+			<div class="mb-1.5 flex items-center justify-between gap-2 text-[11px] font-medium uppercase tracking-[0.12em] text-muted">
+				<span>TestFlight access <span class="normal-case tracking-normal text-muted/70">from connected devices</span></span>
+				{#if canRequestTestFlight}
+					<Button size="sm" variant="ghost" class="h-7 px-2 text-[11px] normal-case tracking-normal" onclick={() => (inviteDialogOpen = true)}><Link2 class="h-3.5 w-3.5" /> Add link</Button>
+				{/if}
+			</div>
 			<div class="flex snap-x gap-2 overflow-x-auto pb-1">
 				{#each testflightApps as app (app.appId)}
 					<Button
@@ -515,6 +525,13 @@
 					</Button>
 				{/each}
 			</div>
+		</div>
+	{/if}
+
+	{#if !term.trim() && testflightApps.length === 0 && canRequestTestFlight}
+		<div class="mt-3 flex items-center justify-between gap-3 rounded-xl border border-dashed border-border px-3 py-2.5 text-xs text-muted">
+			<span>No TestFlight apps found on connected devices.</span>
+			<Button size="sm" variant="secondary" onclick={() => (inviteDialogOpen = true)}><Link2 class="h-3.5 w-3.5" /> Add public link</Button>
 		</div>
 	{/if}
 
@@ -756,6 +773,8 @@
 	onOpenChange={(v) => (testflightOpen = v)}
 	onDecrypt={decryptTestFlightBuild}
 />
+
+<TestFlightInviteDialog open={inviteDialogOpen} onOpenChange={(value) => (inviteDialogOpen = value)} />
 
 <BatchDecryptDialog open={batchOpen} onOpenChange={(v) => (batchOpen = v)} />
 

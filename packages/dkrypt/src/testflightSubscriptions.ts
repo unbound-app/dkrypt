@@ -1,13 +1,14 @@
 import { BridgeError } from '#idevice.js';
 import { uninstallFromDevice } from '#appStoreInstall.js';
-import { searchApps, type ItunesSearchResult } from '#scheduler/itunes.js';
+import { lookupAppMetadata, searchApps, type ItunesSearchResult } from '#scheduler/itunes.js';
 import {
   ensureTestFlightSubscriptionDevices,
   getTestFlightSubscriptions,
-  getDevice,
   getEffectiveDevices,
   getTestFlightSubscription,
+  IMMUTABLE_TESTFLIGHT_BUNDLE_ID,
   recordDeviceActivity,
+  recordAudit,
   recordNotification,
   recordTestFlightSubscriptionSync,
   updateTestFlightSubscriptionDevice,
@@ -16,7 +17,7 @@ import {
   type TestFlightSubscription,
   type TestFlightSubscriptionDevice,
 } from '#store/state.js';
-import { statusTestFlightInvite, subscribeToTestFlightInvite, unsubscribeFromTestFlightInvite } from '#testflight.js';
+import { listTestFlightApps, statusTestFlightInvite, subscribeToTestFlightInvite, unsubscribeFromTestFlightInvite, type TFDeviceApp } from '#testflight.js';
 
 export const TESTFLIGHT_VERIFICATION_TTL_MS = 30 * 60_000;
 const TESTFLIGHT_INVITE_PATH = /^\/join\/([A-Za-z0-9]{4,32})\/?$/;
@@ -24,6 +25,9 @@ const TESTFLIGHT_HTML_LIMIT = 2_000_000;
 const TESTFLIGHT_SYNC_CONCURRENCY = 3;
 const TESTFLIGHT_VERIFICATION_ATTEMPTS = 12;
 const TESTFLIGHT_VERIFICATION_DELAY_MS = 1_000;
+const TESTFLIGHT_DEVICE_CATALOG_TTL_MS = 2 * 60_000;
+const TESTFLIGHT_METADATA_TTL_MS = 60 * 60_000;
+export { IMMUTABLE_TESTFLIGHT_BUNDLE_ID } from '#store/state.js';
 
 export interface NormalizedTestFlightInvite {
   url: string;
@@ -48,6 +52,14 @@ export interface TestFlightCatalogApp {
   category?: string;
   devices: Array<{ id: string; name: string }>;
   lastVerifiedAt: number;
+  deviceSource: true;
+}
+
+export class TestFlightCatalogUnavailableError extends Error {
+  constructor() {
+    super('TestFlight availability could not be verified on every enabled device');
+    this.name = 'TestFlightCatalogUnavailableError';
+  }
 }
 
 export function normalizeTestFlightInvite(raw: unknown): NormalizedTestFlightInvite {
@@ -132,42 +144,92 @@ function enabledDeviceMap(): Map<string, DeviceRecord> {
   return new Map(getEffectiveDevices().filter((device) => device.enabled).map((device) => [device.id, device]));
 }
 
-function activeDevice(device: TestFlightSubscriptionDevice): { id: string; name: string } | undefined {
-  const record = getDevice(device.deviceId);
-  if (!record?.enabled || device.status !== 'active' || !device.lastVerifiedAt || Date.now() - device.lastVerifiedAt > TESTFLIGHT_VERIFICATION_TTL_MS) return undefined;
-  return { id: record.id, name: record.name };
+interface DeviceCatalogCacheEntry {
+  fetchedAt: number;
+  apps: TFDeviceApp[];
 }
 
-export function getVerifiedTestFlightCatalog(): TestFlightCatalogApp[] {
-  const byApp = new Map<number, TestFlightCatalogApp>();
-  for (const subscription of listApprovedSubscriptions()) {
-    if (!subscription.appId || !subscription.bundleId || !subscription.displayName) continue;
-    const active = subscription.devices.map((device) => ({ device, active: activeDevice(device) })).filter((entry): entry is { device: TestFlightSubscriptionDevice; active: { id: string; name: string } } => Boolean(entry.active));
-    if (active.length === 0) continue;
-    const lastVerifiedAt = Math.max(...active.map(({ device }) => device.lastVerifiedAt ?? 0));
-    const existing = byApp.get(subscription.appId);
-    if (existing) {
-      existing.devices = [...existing.devices, ...active.map(({ active: device }) => device)].filter((device, index, all) => all.findIndex((entry) => entry.id === device.id) === index);
-      existing.lastVerifiedAt = Math.max(existing.lastVerifiedAt, lastVerifiedAt);
-      continue;
+interface AppMetadataCacheEntry {
+  fetchedAt: number;
+  metadata?: Awaited<ReturnType<typeof lookupAppMetadata>>;
+}
+
+const deviceCatalogCache = new Map<string, DeviceCatalogCacheEntry>();
+const appMetadataCache = new Map<string, AppMetadataCacheEntry>();
+
+export function clearTestFlightDeviceCatalogCache(): void {
+  deviceCatalogCache.clear();
+}
+
+async function getDeviceApps(device: DeviceRecord): Promise<{ device: DeviceRecord; fetchedAt: number; apps: TFDeviceApp[] }> {
+  const cached = deviceCatalogCache.get(device.id);
+  if (cached && Date.now() - cached.fetchedAt < TESTFLIGHT_DEVICE_CATALOG_TTL_MS) return { device, ...cached };
+  const apps = await listTestFlightApps(device);
+  const fetchedAt = Date.now();
+  deviceCatalogCache.set(device.id, { fetchedAt, apps });
+  return { device, fetchedAt, apps };
+}
+
+async function getAppMetadata(bundleId: string): Promise<Awaited<ReturnType<typeof lookupAppMetadata>> | undefined> {
+  const cached = appMetadataCache.get(bundleId);
+  if (cached && Date.now() - cached.fetchedAt < TESTFLIGHT_METADATA_TTL_MS) return cached.metadata;
+  const metadata = await lookupAppMetadata(bundleId).catch(() => undefined);
+  appMetadataCache.set(bundleId, { fetchedAt: Date.now(), metadata });
+  return metadata;
+}
+
+function appKey(app: Pick<TFDeviceApp, 'appId' | 'bundleId'>): string {
+  return `${app.appId}:${app.bundleId}`;
+}
+
+export function isImmutableTestFlightBundle(bundleId: string | undefined): boolean {
+  return bundleId === IMMUTABLE_TESTFLIGHT_BUNDLE_ID;
+}
+
+export function mergeDeviceTestFlightApps(entries: Array<{ device: DeviceRecord; fetchedAt: number; apps: TFDeviceApp[] }>, metadata: Map<string, Awaited<ReturnType<typeof lookupAppMetadata>> | undefined> = new Map()): TestFlightCatalogApp[] {
+  const byApp = new Map<string, TestFlightCatalogApp>();
+  for (const entry of entries) {
+    for (const app of entry.apps) {
+      const key = appKey(app);
+      const storeMetadata = metadata.get(app.bundleId);
+      const current = byApp.get(key);
+      const device = { id: entry.device.id, name: entry.device.name };
+      if (current) {
+        if (!current.devices.some((candidate) => candidate.id === device.id)) current.devices.push(device);
+        current.lastVerifiedAt = Math.max(current.lastVerifiedAt, entry.fetchedAt);
+        continue;
+      }
+      byApp.set(key, {
+        appId: app.appId,
+        bundleId: app.bundleId,
+        displayName: app.name?.trim() || storeMetadata?.trackName || app.bundleId,
+        iconUrl: storeMetadata?.artworkUrl,
+        sellerName: app.providerName || storeMetadata?.sellerName,
+        category: storeMetadata?.category,
+        devices: [device],
+        lastVerifiedAt: entry.fetchedAt,
+        deviceSource: true,
+      });
     }
-    byApp.set(subscription.appId, {
-      appId: subscription.appId,
-      bundleId: subscription.bundleId,
-      displayName: subscription.displayName,
-      iconUrl: subscription.iconUrl,
-      sellerName: subscription.sellerName,
-      category: subscription.category,
-      devices: active.map(({ active: device }) => device),
-      lastVerifiedAt,
-    });
   }
   return [...byApp.values()].sort((a, b) => a.displayName.localeCompare(b.displayName));
 }
 
-export function decorateSearchResults<T extends { bundleId: string; trackId: number }>(results: T[]): Array<T & { testflight?: Pick<TestFlightCatalogApp, 'appId' | 'devices' | 'lastVerifiedAt'> }> {
-  const byBundle = new Map(getVerifiedTestFlightCatalog().map((entry) => [entry.bundleId, entry]));
-  const byApp = new Map(getVerifiedTestFlightCatalog().map((entry) => [entry.appId, entry]));
+export async function getVerifiedTestFlightCatalog(options: { requireAllDevices?: boolean } = {}): Promise<TestFlightCatalogApp[]> {
+  const devices = getEffectiveDevices().filter((device) => device.enabled);
+  if (devices.length === 0) return [];
+  const settled = await Promise.allSettled(devices.map((device) => getDeviceApps(device)));
+  if (options.requireAllDevices && settled.some((result) => result.status === 'rejected')) throw new TestFlightCatalogUnavailableError();
+  const entries = settled.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
+  const bundleIds = [...new Set(entries.flatMap((entry) => entry.apps.map((app) => app.bundleId)))];
+  const metadataEntries = await Promise.all(bundleIds.map(async (bundleId) => [bundleId, await getAppMetadata(bundleId)] as const));
+  return mergeDeviceTestFlightApps(entries, new Map(metadataEntries));
+}
+
+export async function decorateSearchResults<T extends { bundleId: string; trackId: number }>(results: T[]): Promise<Array<T & { testflight?: Pick<TestFlightCatalogApp, 'appId' | 'devices' | 'lastVerifiedAt'> }>> {
+  const catalog = await getVerifiedTestFlightCatalog();
+  const byBundle = new Map(catalog.map((entry) => [entry.bundleId, entry]));
+  const byApp = new Map(catalog.map((entry) => [entry.appId, entry]));
   return results.map((result) => {
     const catalog = byBundle.get(result.bundleId) ?? byApp.get(result.trackId);
     if (!catalog) return result;
@@ -193,7 +255,7 @@ function classifySyncError(error: unknown): TestFlightSubscriptionDevice['status
 
 async function verifySubscriptionOnDevice(subscription: TestFlightSubscription, device: DeviceRecord): Promise<void> {
   if (!subscription.appId) throw new Error('TestFlight app metadata is missing');
-  await subscribeToTestFlightInvite(subscription.url, `${subscription.id}-${device.id}`, device);
+  await subscribeToTestFlightInvite(subscription.url, `${subscription.id}-${device.id}`, device, subscription.appId);
   let lastError: unknown;
   for (let attempt = 0; attempt < TESTFLIGHT_VERIFICATION_ATTEMPTS; attempt += 1) {
     try {
@@ -239,6 +301,7 @@ async function syncDevice(subscription: TestFlightSubscription, device: DeviceRe
 export async function syncTestFlightSubscription(id: string, actor = 'system'): Promise<TestFlightSubscription | undefined> {
   const initial = getTestFlightSubscription(id);
   if (!initial || initial.status !== 'approved') return initial;
+  if (isImmutableTestFlightBundle(initial.bundleId)) return initial;
   ensureTestFlightSubscriptionDevices(id);
   const subscription = getTestFlightSubscription(id);
   if (!subscription) return undefined;
@@ -252,6 +315,7 @@ export async function syncTestFlightSubscription(id: string, actor = 'system'): 
   const failed = completed.length - active;
   recordTestFlightSubscriptionSync(id, actor, `${active} device(s) verified, ${failed} device(s) unavailable or unsupported`);
   const updated = getTestFlightSubscription(id);
+  clearTestFlightDeviceCatalogCache();
   if (updated) {
     recordNotification({
       userId: updated.requestedBy,
@@ -267,6 +331,7 @@ export async function syncTestFlightSubscription(id: string, actor = 'system'): 
 export async function unsubscribeTestFlightSubscription(id: string, actor: string): Promise<TestFlightSubscription | undefined> {
   const subscription = getTestFlightSubscription(id);
   if (!subscription) return undefined;
+  if (isImmutableTestFlightBundle(subscription.bundleId)) return subscription;
   if (subscription.status !== 'approved') return withdrawTestFlightSubscription(id, actor);
   const devices = enabledDeviceMap();
   const failures: string[] = [];
@@ -316,6 +381,65 @@ export async function unsubscribeTestFlightSubscription(id: string, actor: strin
     });
   }
   return result;
+}
+
+export async function unsubscribeDeviceTestFlightApp(bundleId: string, actor: string): Promise<{ bundleId: string; removedDeviceIds: string[]; failures: string[] }> {
+  if (isImmutableTestFlightBundle(bundleId)) throw new Error('Discord TestFlight access is protected and cannot be removed');
+  const managed = getTestFlightSubscriptions().find((entry) => entry.bundleId === bundleId && entry.status !== 'withdrawn');
+  if (managed?.status === 'approved') {
+    const result = await unsubscribeTestFlightSubscription(managed.id, actor);
+    const devices = result?.devices ?? [];
+    return {
+      bundleId,
+      removedDeviceIds: devices.filter((device) => device.status === 'unsubscribed').map((device) => device.deviceId),
+      failures: devices.filter((device) => device.status === 'error' || device.status === 'unavailable').map((device) => `${device.deviceId}: ${device.lastError ?? 'device cleanup failed'}`),
+    };
+  }
+  if (managed) withdrawTestFlightSubscription(managed.id, actor, `device catalog removal for ${bundleId}`);
+  const catalog = await getVerifiedTestFlightCatalog({ requireAllDevices: true });
+  const app = catalog.find((entry) => entry.bundleId === bundleId);
+  if (!app) throw new Error('TestFlight app was not found on an enabled device');
+  const devices = enabledDeviceMap();
+  const removedDeviceIds: string[] = [];
+  const failures: string[] = [];
+  for (const device of app.devices) {
+    const record = devices.get(device.id);
+    if (!record) {
+      failures.push(`${device.name}: device is disabled or unavailable`);
+      continue;
+    }
+    const errors: string[] = [];
+    try {
+      await unsubscribeFromTestFlightInvite(bundleId, record, `device-${bundleId}-${record.id}-unsubscribe`);
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : String(error));
+    }
+    try {
+      const removed = await uninstallFromDevice(bundleId, record);
+      if (!removed) errors.push('installed app could not be removed from the device');
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : String(error));
+    }
+    if (errors.length > 0) {
+      const detail = errors.join('; ');
+      failures.push(`${record.name}: ${detail}`);
+      recordDeviceActivity({ deviceId: record.id, kind: 'bridge', message: `TestFlight device cleanup failed for ${app.displayName}: ${detail}` });
+    } else {
+      removedDeviceIds.push(record.id);
+      recordDeviceActivity({ deviceId: record.id, kind: 'bridge', message: `removed ${app.displayName} from TestFlight device access` });
+    }
+  }
+  clearTestFlightDeviceCatalogCache();
+  const detail = failures.length > 0 ? `device catalog cleanup failed: ${failures.join(' | ')}` : `removed from ${removedDeviceIds.length} device(s)`;
+  recordAudit(actor, 'testflight-subscription.remove', `device:${bundleId}`, detail);
+  recordNotification({
+    userId: actor.toLowerCase(),
+    title: failures.length > 0 ? 'TestFlight device access removed with warnings' : 'TestFlight device access removed',
+    message: `${app.displayName}: ${detail}`,
+    severity: failures.length > 0 ? 'warning' : 'success',
+    href: '/?tab=settings&stab=testflight',
+  });
+  return { bundleId, removedDeviceIds, failures };
 }
 
 export async function syncApprovedTestFlightSubscriptions(): Promise<void> {

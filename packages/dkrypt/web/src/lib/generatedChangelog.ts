@@ -1,5 +1,35 @@
 export const GENERATED_CHANGELOG = [
   {
+    "date": "2026-09-19",
+    "title": "feat(testflight): source subscriptions from devices",
+    "description": "Released in 3f6aa2e."
+  },
+  {
+    "date": "2026-09-19",
+    "title": "feat(testflight): add public subscriptions and device-aware search",
+    "description": "Released in 99ba63d."
+  },
+  {
+    "date": "2026-09-19",
+    "title": "fix(devices): harden health recovery and tweak timers",
+    "description": "Released in b304736."
+  },
+  {
+    "date": "2026-09-13",
+    "title": "fix(devices): configure managed ipadecrypt runs",
+    "description": "Released in de5ec40."
+  },
+  {
+    "date": "2026-09-13",
+    "title": "fix(devices): retry transient ssh handshakes",
+    "description": "Released in 1637303."
+  },
+  {
+    "date": "2026-09-13",
+    "title": "fix(ui): stabilize device status and remove workspace badge",
+    "description": "Released in 8cbee34."
+  },
+  {
     "date": "2026-09-13",
     "title": "fix(devices): use reliable ssh bridge writes",
     "description": "Released in 4306389."
@@ -8,35 +38,5 @@ export const GENERATED_CHANGELOG = [
     "date": "2026-09-13",
     "title": "fix(devices): bound stalled ssh health commands",
     "description": "Released in 496d632."
-  },
-  {
-    "date": "2026-09-13",
-    "title": "fix(ui): explain missing device status",
-    "description": "Released in 33e38af."
-  },
-  {
-    "date": "2026-09-13",
-    "title": "fix(devices): remove obsolete setup prerequisites",
-    "description": "Released in 84bc10b."
-  },
-  {
-    "date": "2026-09-13",
-    "title": "fix(devices): make health and decrypt routing device-aware",
-    "description": "Released in 0c4a30d."
-  },
-  {
-    "date": "2026-09-13",
-    "title": "feat(devices): add direct device discovery and setup",
-    "description": "Released in 4d1b306."
-  },
-  {
-    "date": "2026-09-13",
-    "title": "chore(deps): bump the api-dependencies group (#23)",
-    "description": "Released in bfa036f."
-  },
-  {
-    "date": "2026-09-13",
-    "title": "chore(deps): bump bits-ui (#22)",
-    "description": "Released in 64b5f24."
   }
 ] as const;

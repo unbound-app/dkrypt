@@ -16,7 +16,7 @@
     { id: 'users', label: 'Users', requires: [PermissionFlag.viewUsers, PermissionFlag.manageUsers] },
     { id: 'roles', label: 'Roles', requires: [PermissionFlag.viewRoles, PermissionFlag.manageRoles] },
     { id: 'backup', label: 'Backup', requires: [PermissionFlag.viewBackup, PermissionFlag.manageBackup] },
-    { id: 'testflight', label: 'TestFlight', requires: [PermissionFlag.requestTestFlightSubscriptions, PermissionFlag.manageTestFlightSubscriptions] },
+    { id: 'testflight', label: 'TestFlight', requires: [PermissionFlag.manageTestFlightSubscriptions] },
   ];
 
   function hasAccess(requires: bigint[]): boolean {
@@ -59,7 +59,7 @@
     <BackupSettings />
   </div>
 {/if}
-{#if hasAccess([PermissionFlag.requestTestFlightSubscriptions, PermissionFlag.manageTestFlightSubscriptions])}
+{#if hasAccess([PermissionFlag.manageTestFlightSubscriptions])}
   <div class:hidden={tabState.settingsSubtab !== 'testflight'}>
     <TestFlightSettings />
   </div>

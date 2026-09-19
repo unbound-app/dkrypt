@@ -568,6 +568,7 @@ export interface TestFlightCatalogApp {
   category?: string;
   devices: Array<{ id: string; name: string }>;
   lastVerifiedAt: number;
+  deviceSource: true;
 }
 
 export interface AppCatalogEntry {
@@ -1243,6 +1244,10 @@ export function unsubscribeTestFlightSubscription(id: string): Promise<{ ok: boo
 
 export function fetchTestFlightCatalog(): Promise<{ apps: TestFlightCatalogApp[] }> {
   return apiJson('/v1/dashboard/testflight/catalog');
+}
+
+export function unsubscribeTestFlightCatalogApp(bundleId: string): Promise<{ ok: boolean; data: { bundleId: string; removedDeviceIds: string[]; failures: string[] } }> {
+  return apiAction(`/v1/dashboard/testflight/catalog/${encodeURIComponent(bundleId)}/unsubscribe`, { method: 'POST' });
 }
 
 export function retryJob(id: string, preferPrimary = false): Promise<{ ok: boolean; data: JobSummary }> {

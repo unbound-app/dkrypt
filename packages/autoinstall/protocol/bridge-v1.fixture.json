@@ -2,7 +2,7 @@
   "contract": {
     "version": 1,
     "springboard": ["dark_on", "dark_off", "launch_app", "screen_status", "status", "protocol_v1", "authenticated_requests", "operation_responses", "heartbeats", "stale_artifact_cleanup"],
-    "testflight": ["list_trains", "list_builds", "install", "diagnostics", "idempotent_install", "protocol_v1", "authenticated_requests", "operation_responses", "heartbeats", "stale_artifact_cleanup"],
+    "testflight": ["list_trains", "list_builds", "list_apps", "device_catalog", "install", "diagnostics", "idempotent_install", "protocol_v1", "authenticated_requests", "operation_responses", "heartbeats", "stale_artifact_cleanup"],
     "testflightLifecycle": ["subscribe_invite", "status_invite", "unsubscribe_invite", "invite_lifecycle"],
     "appstore": ["install", "status", "diagnostics", "foreground_status", "protocol_v1", "authenticated_requests", "operation_responses", "heartbeats", "stale_artifact_cleanup"]
   },
