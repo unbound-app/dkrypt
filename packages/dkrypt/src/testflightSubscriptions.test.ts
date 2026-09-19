@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { IMMUTABLE_TESTFLIGHT_BUNDLE_ID, isImmutableTestFlightBundle, mergeDeviceTestFlightApps, normalizeTestFlightInvite, parseTestFlightInviteHtml } from '#testflightSubscriptions.js';
+import { IMMUTABLE_TESTFLIGHT_BUNDLE_ID, isImmutableTestFlightBundle, mergeDeviceTestFlightApps, normalizeTestFlightInvite, parseTestFlightInviteHtml, readTestFlightCatalogCache } from '#testflightSubscriptions.js';
 
 describe('TestFlight public links', () => {
   test('normalizes canonical links and removes query state', () => {
@@ -28,6 +28,31 @@ describe('TestFlight public links', () => {
 });
 
 describe('device TestFlight catalog', () => {
+  test('keeps cached access available while detecting device changes', () => {
+    const cache = {
+      fetchedAt: 100,
+      deviceIds: ['ipad-a'],
+      apps: [{
+        appId: 42,
+        bundleId: 'com.example.app',
+        displayName: 'Example',
+        devices: [{ id: 'ipad-a', name: 'iPad A' }],
+        lastVerifiedAt: 100,
+        deviceSource: true as const,
+      }],
+    };
+    expect(readTestFlightCatalogCache(cache, [{ id: 'ipad-a', name: 'iPad A', enabled: true } as never], 1_000)).toMatchObject({
+      apps: [{ bundleId: 'com.example.app', devices: [{ id: 'ipad-a' }] }],
+      stale: false,
+    });
+    expect(readTestFlightCatalogCache(cache, [{ id: 'ipad-b', name: 'iPad B', enabled: true } as never], 1_000)).toEqual({
+      apps: [],
+      fetchedAt: 100,
+      stale: true,
+    });
+    expect(readTestFlightCatalogCache({ ...cache, complete: false }, [{ id: 'ipad-a', name: 'iPad A', enabled: true } as never], 1_000)?.stale).toBe(true);
+  });
+
   test('merges app access by device and keeps the device as the source of truth', () => {
     const apps = mergeDeviceTestFlightApps([
       { device: { id: 'ipad-a', name: 'iPad A', enabled: true } as never, fetchedAt: 100, apps: [{ appId: 42, bundleId: 'com.example.app', name: 'Example' }] },

@@ -27,10 +27,12 @@ import { rateLimitPerUser } from '#util/rateLimit.js';
 import { getFailureGuidance } from '#util/failureGuidance.js';
 import {
   decorateSearchResults,
+  getTestFlightCatalogCacheState,
   getVerifiedTestFlightCatalog,
   isImmutableTestFlightBundle,
   normalizeTestFlightInvite,
   resolveTestFlightInvite,
+  refreshTestFlightCatalogInBackground,
   subscriptionsForUser,
   syncTestFlightSubscription,
   TestFlightCatalogUnavailableError,
@@ -775,8 +777,12 @@ dashboardRouter.post('/v1/dashboard/testflight/subscriptions/:id/unsubscribe', c
   res.status(202).json({ subscription });
 });
 
-dashboardRouter.get('/v1/dashboard/testflight/catalog', canViewTestFlightCatalog, async (_req, res) => {
-  res.json({ apps: await getVerifiedTestFlightCatalog() });
+dashboardRouter.get('/v1/dashboard/testflight/catalog', canViewTestFlightCatalog, (req, res) => {
+  const cache = getTestFlightCatalogCacheState();
+  const forceRefresh = req.query.refresh === 'true';
+  if (forceRefresh || cache.stale) refreshTestFlightCatalogInBackground(forceRefresh);
+  const current = getTestFlightCatalogCacheState();
+  res.json({ apps: cache.apps, fetchedAt: cache.fetchedAt, refreshing: forceRefresh || current.refreshing });
 });
 
 dashboardRouter.post('/v1/dashboard/testflight/catalog/:bundleId/unsubscribe', canManageTestFlightSubscriptions, async (req, res) => {
@@ -922,7 +928,18 @@ dashboardRouter.post('/v1/dashboard/decrypt/preflight', canDecrypt, async (req, 
     res.status(400).json({ error: 'deviceId must refer to an enabled device' });
     return;
   }
-  const verifiedCatalog = testflight ? await getVerifiedTestFlightCatalog() : [];
+  let verifiedCatalog = [] as Awaited<ReturnType<typeof getVerifiedTestFlightCatalog>>;
+  if (testflight) {
+    try {
+      verifiedCatalog = await getVerifiedTestFlightCatalog({ requireAllDevices: true });
+    } catch (error) {
+      if (error instanceof TestFlightCatalogUnavailableError) {
+        res.status(503).json({ error: error.message, code: 'testflight_catalog_unavailable' });
+        return;
+      }
+      throw error;
+    }
+  }
   const verifiedTestFlightApp = testflight
     ? verifiedCatalog.find((entry) => entry.bundleId === bundleId)
     : undefined;
@@ -1769,7 +1786,16 @@ dashboardRouter.post('/v1/dashboard/testflight/decrypt', canDecrypt, blockDuring
     res.status(400).json({ error: 'deviceId must refer to an enabled device' });
     return;
   }
-  const verifiedTestFlightApp = (await getVerifiedTestFlightCatalog()).find((entry) => entry.appId === appId && entry.bundleId === bundleId);
+  let verifiedTestFlightApp;
+  try {
+    verifiedTestFlightApp = (await getVerifiedTestFlightCatalog({ requireAllDevices: true })).find((entry) => entry.appId === appId && entry.bundleId === bundleId);
+  } catch (error) {
+    if (error instanceof TestFlightCatalogUnavailableError) {
+      res.status(503).json({ error: error.message, code: 'testflight_catalog_unavailable' });
+      return;
+    }
+    throw error;
+  }
   if (!verifiedTestFlightApp) {
     res.status(409).json({ error: 'TestFlight access must be verified on an enabled device before queueing' });
     return;

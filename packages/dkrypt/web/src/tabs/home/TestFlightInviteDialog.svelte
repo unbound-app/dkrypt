@@ -5,6 +5,7 @@
   import Button from '#lib/components/ui/Button.svelte';
   import Dialog from '#lib/components/ui/Dialog.svelte';
   import Input from '#lib/components/ui/Input.svelte';
+  import { loadTestFlightCatalog } from '#lib/testflightCatalog.svelte';
   import { showToast } from '#lib/ui.svelte';
 
   interface Props {
@@ -54,6 +55,7 @@
       if (!result.ok) return;
       inviteUrl = '';
       showToast('TestFlight link submitted', 'success');
+      void loadTestFlightCatalog(true);
       await load();
     } finally {
       submitting = false;

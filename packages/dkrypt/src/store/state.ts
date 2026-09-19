@@ -317,6 +317,25 @@ export interface AppCatalogEntry {
   updatedAt: number;
 }
 
+export interface TestFlightCatalogCacheApp {
+  appId: number;
+  bundleId: string;
+  displayName: string;
+  iconUrl?: string;
+  sellerName?: string;
+  category?: string;
+  devices: Array<{ id: string; name: string }>;
+  lastVerifiedAt: number;
+  deviceSource: true;
+}
+
+export interface TestFlightCatalogCache {
+  fetchedAt: number;
+  deviceIds: string[];
+  apps: TestFlightCatalogCacheApp[];
+  complete?: boolean;
+}
+
 export type TestFlightSubscriptionStatus = 'pending' | 'approved' | 'denied' | 'withdrawn';
 export type TestFlightSubscriptionDeviceStatus = 'pending' | 'syncing' | 'active' | 'unavailable' | 'unsupported' | 'error' | 'unsubscribed';
 export const IMMUTABLE_TESTFLIGHT_BUNDLE_ID = 'com.hammerandchisel.discord';
@@ -498,6 +517,7 @@ interface PersistedState {
   backupHistory: BackupHistoryEntry[];
   activeSessions: ActiveSessionRecord[];
   appCatalog: Record<string, AppCatalogEntry>;
+  testFlightCatalog?: TestFlightCatalogCache;
   notifications: NotificationRecord[];
   testFlightSubscriptions: TestFlightSubscription[];
 }
@@ -951,6 +971,7 @@ function load(): PersistedState {
     }
     migrated.schedulerRunHistory = normalizeLegacySchedulerRunHistory(migrated.schedulerRunHistory);
     migrated.appCatalog = migrated.appCatalog ?? {};
+    migrated.testFlightCatalog = isTestFlightCatalogCacheShape(migrated.testFlightCatalog) ? migrated.testFlightCatalog : undefined;
     migrated.notifications = Array.isArray(migrated.notifications) ? migrated.notifications.slice(0, MAX_NOTIFICATIONS) : [];
     migrated.testFlightSubscriptions = Array.isArray(migrated.testFlightSubscriptions) ? migrated.testFlightSubscriptions : [];
     writeFileSync(statePath, JSON.stringify(migrated, null, 2));
@@ -1011,6 +1032,27 @@ export function getAppCatalogStats(): { entries: number; icons: number; oldestUp
     oldestUpdatedAt: updatedAt.length ? Math.min(...updatedAt) : undefined,
     newestUpdatedAt: updatedAt.length ? Math.max(...updatedAt) : undefined,
   };
+}
+
+export function getTestFlightCatalogCache(): TestFlightCatalogCache | undefined {
+  const cache = state.testFlightCatalog;
+  if (!cache) return undefined;
+  return {
+    fetchedAt: cache.fetchedAt,
+    deviceIds: [...cache.deviceIds],
+    apps: cache.apps.map((app) => ({ ...app, devices: app.devices.map((device) => ({ ...device })) })),
+    complete: cache.complete,
+  };
+}
+
+export function setTestFlightCatalogCache(cache: TestFlightCatalogCache): void {
+  state.testFlightCatalog = {
+    fetchedAt: cache.fetchedAt,
+    deviceIds: [...new Set(cache.deviceIds)],
+    apps: cache.apps.map((app) => ({ ...app, devices: app.devices.map((device) => ({ ...device })) })),
+    complete: cache.complete,
+  };
+  persistNow();
 }
 
 export function upsertAppCatalogEntry(entry: Omit<AppCatalogEntry, 'updatedAt'>): AppCatalogEntry {
@@ -3234,6 +3276,33 @@ function isTestFlightSubscriptionShape(value: unknown): value is TestFlightSubsc
     Array.isArray(s.devices) &&
     s.devices.every(isTestFlightSubscriptionDeviceShape) &&
     s.devicePolicy === 'all-enabled'
+  );
+}
+
+function isTestFlightCatalogCacheAppShape(value: unknown): value is TestFlightCatalogCacheApp {
+  if (typeof value !== 'object' || value === null) return false;
+  const app = value as Record<string, unknown>;
+  return (
+    typeof app.appId === 'number' &&
+    typeof app.bundleId === 'string' &&
+    typeof app.displayName === 'string' &&
+    typeof app.lastVerifiedAt === 'number' &&
+    app.deviceSource === true &&
+    Array.isArray(app.devices) &&
+    app.devices.every((device) => typeof device === 'object' && device !== null && typeof (device as Record<string, unknown>).id === 'string' && typeof (device as Record<string, unknown>).name === 'string')
+  );
+}
+
+function isTestFlightCatalogCacheShape(value: unknown): value is TestFlightCatalogCache {
+  if (typeof value !== 'object' || value === null) return false;
+  const cache = value as Record<string, unknown>;
+  return (
+    typeof cache.fetchedAt === 'number' &&
+    Array.isArray(cache.deviceIds) &&
+    cache.deviceIds.every((deviceId) => typeof deviceId === 'string') &&
+    Array.isArray(cache.apps) &&
+    cache.apps.every(isTestFlightCatalogCacheAppShape) &&
+    (cache.complete === undefined || typeof cache.complete === 'boolean')
   );
 }
 

@@ -7,7 +7,6 @@
 	import {
 		fetchDecryptPreflight,
 		fetchJobEta,
-		fetchTestFlightCatalog,
 		queueDecrypt,
 		queueTestFlightDecrypt,
 		searchApps,
@@ -43,6 +42,7 @@
 	import { PermissionFlag } from "#lib/permissions";
 	import { sessionHasPermission, sessionState } from "#lib/session.svelte";
 	import { showToast } from "#lib/ui.svelte";
+	import { loadTestFlightCatalog, testFlightCatalogState } from "#lib/testflightCatalog.svelte";
 	import { cn } from "#lib/utils";
 	import TestFlightPickerDialog from "#tabs/home/TestFlightPickerDialog.svelte";
 	import TestFlightInviteDialog from "#tabs/home/TestFlightInviteDialog.svelte";
@@ -51,7 +51,6 @@
 	let term = $state("");
 	let results = $state<AppStoreSearchResult[]>([]);
 	let loading = $state(false);
-	let testflightApps = $state<TestFlightCatalogApp[]>([]);
 	let searched = $state(false);
 	let highlighted = $state(-1);
 	let inputEl: HTMLInputElement | undefined = $state();
@@ -345,11 +344,7 @@
 
 	$effect(() => {
 		if (!canDecrypt && !canRequestTestFlight) return;
-		void fetchTestFlightCatalog().then((data) => {
-			testflightApps = data.apps;
-		}).catch(() => {
-			testflightApps = [];
-		});
+		void loadTestFlightCatalog();
 	});
 
 	function decryptButtonTitle(bundleId: string): string | undefined {
@@ -499,16 +494,16 @@
 		</div>
 	{/if}
 
-	{#if !term.trim() && testflightApps.length > 0}
+	{#if !term.trim() && testFlightCatalogState.apps.length > 0}
 		<div class="mt-3">
 			<div class="mb-1.5 flex items-center justify-between gap-2 text-[11px] font-medium uppercase tracking-[0.12em] text-muted">
-				<span>TestFlight access <span class="normal-case tracking-normal text-muted/70">from connected devices</span></span>
+				<span>Available via TestFlight</span>
 				{#if canRequestTestFlight}
-					<Button size="sm" variant="ghost" class="h-7 px-2 text-[11px] normal-case tracking-normal" onclick={() => (inviteDialogOpen = true)}><Link2 class="h-3.5 w-3.5" /> Add link</Button>
+					<Button size="sm" variant="ghost" class="h-7 px-2 text-[11px] normal-case tracking-normal" onclick={() => (inviteDialogOpen = true)}><Link2 class="h-3.5 w-3.5" /> Request an app</Button>
 				{/if}
 			</div>
 			<div class="flex snap-x gap-2 overflow-x-auto pb-1">
-				{#each testflightApps as app (app.appId)}
+				{#each testFlightCatalogState.apps as app (app.appId)}
 					<Button
 						variant="outline"
 						size="sm"
@@ -520,7 +515,6 @@
 						<span class="min-w-0">
 							<span class="block truncate text-xs font-medium">{app.displayName}</span>
 							<span class="block truncate text-[10px] text-muted">{app.bundleId}</span>
-							<span class="block truncate text-[10px] text-muted">{app.devices.length} verified device{app.devices.length === 1 ? "" : "s"}</span>
 						</span>
 					</Button>
 				{/each}
@@ -528,10 +522,14 @@
 		</div>
 	{/if}
 
-	{#if !term.trim() && testflightApps.length === 0 && canRequestTestFlight}
+	{#if !term.trim() && testFlightCatalogState.apps.length === 0 && testFlightCatalogState.loading}
+		<div class="mt-3 rounded-xl border border-border px-3 py-2.5 text-xs text-muted">
+			Checking TestFlight availability…
+		</div>
+	{:else if !term.trim() && testFlightCatalogState.apps.length === 0 && canRequestTestFlight}
 		<div class="mt-3 flex items-center justify-between gap-3 rounded-xl border border-dashed border-border px-3 py-2.5 text-xs text-muted">
-			<span>No TestFlight apps found on connected devices.</span>
-			<Button size="sm" variant="secondary" onclick={() => (inviteDialogOpen = true)}><Link2 class="h-3.5 w-3.5" /> Add public link</Button>
+			<span>No TestFlight apps yet.</span>
+			<Button size="sm" variant="secondary" onclick={() => (inviteDialogOpen = true)}><Link2 class="h-3.5 w-3.5" /> Request an app</Button>
 		</div>
 	{/if}
 

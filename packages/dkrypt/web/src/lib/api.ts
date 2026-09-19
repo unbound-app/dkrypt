@@ -1242,8 +1242,8 @@ export function unsubscribeTestFlightSubscription(id: string): Promise<{ ok: boo
   return apiAction(`/v1/dashboard/testflight/subscriptions/${encodeURIComponent(id)}/unsubscribe`, { method: 'POST' });
 }
 
-export function fetchTestFlightCatalog(): Promise<{ apps: TestFlightCatalogApp[] }> {
-  return apiJson('/v1/dashboard/testflight/catalog');
+export function fetchTestFlightCatalog(refresh = false): Promise<{ apps: TestFlightCatalogApp[]; fetchedAt?: number; refreshing?: boolean }> {
+  return apiJson(`/v1/dashboard/testflight/catalog${refresh ? '?refresh=true' : ''}`);
 }
 
 export function unsubscribeTestFlightCatalogApp(bundleId: string): Promise<{ ok: boolean; data: { bundleId: string; removedDeviceIds: string[]; failures: string[] } }> {

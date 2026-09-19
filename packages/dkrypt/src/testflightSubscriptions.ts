@@ -5,12 +5,17 @@ import {
   ensureTestFlightSubscriptionDevices,
   getTestFlightSubscriptions,
   getEffectiveDevices,
+  getAppCatalogEntry,
+  getTestFlightCatalogCache,
   getTestFlightSubscription,
   IMMUTABLE_TESTFLIGHT_BUNDLE_ID,
   recordDeviceActivity,
   recordAudit,
   recordNotification,
   recordTestFlightSubscriptionSync,
+  setTestFlightCatalogCache,
+  upsertAppCatalogEntries,
+  type TestFlightCatalogCache,
   updateTestFlightSubscriptionDevice,
   withdrawTestFlightSubscription,
   type DeviceRecord,
@@ -26,6 +31,10 @@ const TESTFLIGHT_SYNC_CONCURRENCY = 3;
 const TESTFLIGHT_VERIFICATION_ATTEMPTS = 12;
 const TESTFLIGHT_VERIFICATION_DELAY_MS = 1_000;
 const TESTFLIGHT_DEVICE_CATALOG_TTL_MS = 2 * 60_000;
+const TESTFLIGHT_CATALOG_CACHE_TTL_MS = 5 * 60_000;
+const TESTFLIGHT_CATALOG_REFRESH_INTERVAL_MS = 10 * 60_000;
+const TESTFLIGHT_CATALOG_START_DELAY_MS = 1_500;
+const TESTFLIGHT_CATALOG_REFRESH_FAILURE_BACKOFF_MS = 30_000;
 const TESTFLIGHT_METADATA_TTL_MS = 60 * 60_000;
 export { IMMUTABLE_TESTFLIGHT_BUNDLE_ID } from '#store/state.js';
 
@@ -154,16 +163,27 @@ interface AppMetadataCacheEntry {
   metadata?: Awaited<ReturnType<typeof lookupAppMetadata>>;
 }
 
+export interface TestFlightCatalogCacheState {
+  apps: TestFlightCatalogApp[];
+  fetchedAt?: number;
+  stale: boolean;
+  refreshing: boolean;
+}
+
 const deviceCatalogCache = new Map<string, DeviceCatalogCacheEntry>();
 const appMetadataCache = new Map<string, AppMetadataCacheEntry>();
+let catalogRefreshPromise: Promise<TestFlightCatalogApp[]> | undefined;
+let catalogRefreshRequiresAllDevices = false;
+let catalogRefreshTimer: NodeJS.Timeout | undefined;
+let catalogRefreshFailureAt: number | undefined;
 
 export function clearTestFlightDeviceCatalogCache(): void {
   deviceCatalogCache.clear();
 }
 
-async function getDeviceApps(device: DeviceRecord): Promise<{ device: DeviceRecord; fetchedAt: number; apps: TFDeviceApp[] }> {
+async function getDeviceApps(device: DeviceRecord, forceRefresh = false): Promise<{ device: DeviceRecord; fetchedAt: number; apps: TFDeviceApp[] }> {
   const cached = deviceCatalogCache.get(device.id);
-  if (cached && Date.now() - cached.fetchedAt < TESTFLIGHT_DEVICE_CATALOG_TTL_MS) return { device, ...cached };
+  if (!forceRefresh && cached && Date.now() - cached.fetchedAt < TESTFLIGHT_DEVICE_CATALOG_TTL_MS) return { device, ...cached };
   const apps = await listTestFlightApps(device);
   const fetchedAt = Date.now();
   deviceCatalogCache.set(device.id, { fetchedAt, apps });
@@ -173,6 +193,24 @@ async function getDeviceApps(device: DeviceRecord): Promise<{ device: DeviceReco
 async function getAppMetadata(bundleId: string): Promise<Awaited<ReturnType<typeof lookupAppMetadata>> | undefined> {
   const cached = appMetadataCache.get(bundleId);
   if (cached && Date.now() - cached.fetchedAt < TESTFLIGHT_METADATA_TTL_MS) return cached.metadata;
+  const stored = getAppCatalogEntry(bundleId);
+  if (stored?.trackId) {
+    const metadata = {
+      bundleId: stored.bundleId,
+      trackId: stored.trackId,
+      trackName: stored.displayName,
+      sellerName: stored.sellerName ?? '',
+      artworkUrl: stored.iconUrl ?? '',
+      version: '',
+      category: stored.category,
+      description: stored.description,
+      screenshots: stored.screenshots,
+      releaseNotes: stored.releaseNotes,
+      price: stored.price,
+    };
+    appMetadataCache.set(bundleId, { fetchedAt: Date.now(), metadata });
+    return metadata;
+  }
   const metadata = await lookupAppMetadata(bundleId).catch(() => undefined);
   appMetadataCache.set(bundleId, { fetchedAt: Date.now(), metadata });
   return metadata;
@@ -184,6 +222,23 @@ function appKey(app: Pick<TFDeviceApp, 'appId' | 'bundleId'>): string {
 
 export function isImmutableTestFlightBundle(bundleId: string | undefined): boolean {
   return bundleId === IMMUTABLE_TESTFLIGHT_BUNDLE_ID;
+}
+
+export function readTestFlightCatalogCache(cache: TestFlightCatalogCache | undefined, devices: DeviceRecord[], now = Date.now()): { apps: TestFlightCatalogApp[]; fetchedAt: number; stale: boolean } | undefined {
+  const enabledDevices = devices.filter((device) => device.enabled);
+  if (!cache) return enabledDevices.length === 0 ? { apps: [], fetchedAt: now, stale: false } : undefined;
+  const enabledDeviceIds = enabledDevices.map((device) => device.id).sort();
+  const cachedDeviceIds = [...cache.deviceIds].sort();
+  const sameDevices = enabledDeviceIds.length === cachedDeviceIds.length && enabledDeviceIds.every((id, index) => id === cachedDeviceIds[index]);
+  const enabledDeviceSet = new Set(enabledDeviceIds);
+  const apps = cache.apps
+    .map((app) => ({ ...app, devices: app.devices.filter((device) => enabledDeviceSet.has(device.id)) }))
+    .filter((app) => app.devices.length > 0);
+  return {
+    apps,
+    fetchedAt: cache.fetchedAt,
+    stale: cache.complete === false || !sameDevices || now - cache.fetchedAt >= TESTFLIGHT_CATALOG_CACHE_TTL_MS,
+  };
 }
 
 export function mergeDeviceTestFlightApps(entries: Array<{ device: DeviceRecord; fetchedAt: number; apps: TFDeviceApp[] }>, metadata: Map<string, Awaited<ReturnType<typeof lookupAppMetadata>> | undefined> = new Map()): TestFlightCatalogApp[] {
@@ -215,15 +270,89 @@ export function mergeDeviceTestFlightApps(entries: Array<{ device: DeviceRecord;
   return [...byApp.values()].sort((a, b) => a.displayName.localeCompare(b.displayName));
 }
 
+function cachedCatalogForEnabledDevices(): { apps: TestFlightCatalogApp[]; fetchedAt: number; stale: boolean } | undefined {
+  return readTestFlightCatalogCache(getTestFlightCatalogCache(), getEffectiveDevices());
+}
+
+export function getTestFlightCatalogCacheState(): TestFlightCatalogCacheState {
+  const cached = cachedCatalogForEnabledDevices();
+  return {
+    apps: cached?.apps ?? [],
+    fetchedAt: cached?.fetchedAt,
+    stale: cached?.stale ?? true,
+    refreshing: Boolean(catalogRefreshPromise),
+  };
+}
+
+async function refreshTestFlightCatalog(requireAllDevices = false): Promise<TestFlightCatalogApp[]> {
+  if (catalogRefreshPromise && (!requireAllDevices || catalogRefreshRequiresAllDevices)) return catalogRefreshPromise;
+  if (catalogRefreshPromise) await catalogRefreshPromise.catch(() => undefined);
+
+  const operation = (async () => {
+    const devices = getEffectiveDevices().filter((device) => device.enabled);
+    if (devices.length === 0) {
+      const apps: TestFlightCatalogApp[] = [];
+      setTestFlightCatalogCache({ fetchedAt: Date.now(), deviceIds: [], apps, complete: true });
+      return apps;
+    }
+    const settled = await Promise.allSettled(devices.map((device) => getDeviceApps(device, true)));
+    if (requireAllDevices && settled.some((result) => result.status === 'rejected')) throw new TestFlightCatalogUnavailableError();
+    const complete = settled.every((result) => result.status === 'fulfilled');
+    const entries = settled.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
+    const bundleIds = [...new Set(entries.flatMap((entry) => entry.apps.map((app) => app.bundleId)))];
+    const metadataEntries = await Promise.all(bundleIds.map(async (bundleId) => [bundleId, await getAppMetadata(bundleId)] as const));
+    const apps = mergeDeviceTestFlightApps(entries, new Map(metadataEntries));
+    const metadata = metadataEntries.flatMap(([, entry]) => entry ? [{
+      bundleId: entry.bundleId,
+      displayName: entry.trackName,
+      iconUrl: entry.artworkUrl,
+      trackId: entry.trackId,
+      sellerName: entry.sellerName,
+      category: entry.category,
+      description: entry.description,
+      screenshots: entry.screenshots,
+      releaseNotes: entry.releaseNotes,
+      price: entry.price,
+    }] : []);
+    if (metadata.length > 0) upsertAppCatalogEntries(metadata);
+    setTestFlightCatalogCache({ fetchedAt: Date.now(), deviceIds: devices.map((device) => device.id), apps, complete });
+    return apps;
+  })();
+
+  catalogRefreshPromise = operation;
+  catalogRefreshRequiresAllDevices = requireAllDevices;
+  try {
+    return await operation;
+  } finally {
+    if (catalogRefreshPromise === operation) {
+      catalogRefreshPromise = undefined;
+      catalogRefreshRequiresAllDevices = false;
+    }
+  }
+}
+
+export function refreshTestFlightCatalogInBackground(force = false): void {
+  if (!force && catalogRefreshFailureAt && Date.now() - catalogRefreshFailureAt < TESTFLIGHT_CATALOG_REFRESH_FAILURE_BACKOFF_MS) return;
+  void refreshTestFlightCatalog()
+    .then(() => {
+      catalogRefreshFailureAt = undefined;
+    })
+    .catch(() => {
+      catalogRefreshFailureAt = Date.now();
+    });
+}
+
 export async function getVerifiedTestFlightCatalog(options: { requireAllDevices?: boolean } = {}): Promise<TestFlightCatalogApp[]> {
-  const devices = getEffectiveDevices().filter((device) => device.enabled);
-  if (devices.length === 0) return [];
-  const settled = await Promise.allSettled(devices.map((device) => getDeviceApps(device)));
-  if (options.requireAllDevices && settled.some((result) => result.status === 'rejected')) throw new TestFlightCatalogUnavailableError();
-  const entries = settled.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
-  const bundleIds = [...new Set(entries.flatMap((entry) => entry.apps.map((app) => app.bundleId)))];
-  const metadataEntries = await Promise.all(bundleIds.map(async (bundleId) => [bundleId, await getAppMetadata(bundleId)] as const));
-  return mergeDeviceTestFlightApps(entries, new Map(metadataEntries));
+  if (!options.requireAllDevices) {
+    const cached = cachedCatalogForEnabledDevices();
+    if (cached) {
+      if (cached.stale) refreshTestFlightCatalogInBackground();
+      return cached.apps;
+    }
+    refreshTestFlightCatalogInBackground();
+    return [];
+  }
+  return refreshTestFlightCatalog(true);
 }
 
 export async function decorateSearchResults<T extends { bundleId: string; trackId: number }>(results: T[]): Promise<Array<T & { testflight?: Pick<TestFlightCatalogApp, 'appId' | 'devices' | 'lastVerifiedAt'> }>> {
@@ -453,8 +582,10 @@ export async function syncApprovedTestFlightSubscriptions(): Promise<void> {
 let syncTimer: NodeJS.Timeout | undefined;
 
 export function startTestFlightSubscriptionPoller(): void {
-  if (syncTimer) return;
-  syncTimer = setInterval(() => void syncApprovedTestFlightSubscriptions(), TESTFLIGHT_VERIFICATION_TTL_MS).unref();
+  if (!syncTimer) syncTimer = setInterval(() => void syncApprovedTestFlightSubscriptions(), TESTFLIGHT_VERIFICATION_TTL_MS).unref();
+  if (catalogRefreshTimer) return;
+  setTimeout(refreshTestFlightCatalogInBackground, TESTFLIGHT_CATALOG_START_DELAY_MS).unref();
+  catalogRefreshTimer = setInterval(refreshTestFlightCatalogInBackground, TESTFLIGHT_CATALOG_REFRESH_INTERVAL_MS).unref();
 }
 
 export function subscriptionsForUser(userId: string, manager: boolean): TestFlightSubscription[] {

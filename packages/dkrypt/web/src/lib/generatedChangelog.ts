@@ -1,8 +1,18 @@
 export const GENERATED_CHANGELOG = [
   {
+    "date": "2026-09-20",
+    "title": "fix(testflight): keep device catalog available across reloads",
+    "description": "Released in cf565a8."
+  },
+  {
+    "date": "2026-09-20",
+    "title": "fix(autoinstall): correct package version to 1.2.0",
+    "description": "Released in a9ee1d8."
+  },
+  {
     "date": "2026-09-19",
     "title": "feat(testflight): source subscriptions from devices",
-    "description": "Released in 3f6aa2e."
+    "description": "Released in 01ebb13."
   },
   {
     "date": "2026-09-19",
@@ -28,15 +38,5 @@ export const GENERATED_CHANGELOG = [
     "date": "2026-09-13",
     "title": "fix(ui): stabilize device status and remove workspace badge",
     "description": "Released in 8cbee34."
-  },
-  {
-    "date": "2026-09-13",
-    "title": "fix(devices): use reliable ssh bridge writes",
-    "description": "Released in 4306389."
-  },
-  {
-    "date": "2026-09-13",
-    "title": "fix(devices): bound stalled ssh health commands",
-    "description": "Released in 496d632."
   }
 ] as const;
