@@ -23,6 +23,7 @@ import { startDeviceHealthPoller } from '#deviceHealth.js';
 import { renderPublicPage } from '#publicPages.js';
 import { startNotificationDigestScheduler } from '#notify.js';
 import { initializeArtifactStore } from '#artifacts.js';
+import { startTestFlightSubscriptionPoller } from '#testflightSubscriptions.js';
 
 const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 
@@ -97,6 +98,7 @@ async function startBackgroundServices(): Promise<void> {
   startScheduler();
   startDeviceHealthPoller();
   startKeyExpiryPoller();
+  startTestFlightSubscriptionPoller();
   startJobWebhookDispatcher();
   startNotificationDigestScheduler();
 }

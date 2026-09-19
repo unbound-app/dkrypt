@@ -317,6 +317,42 @@ export interface AppCatalogEntry {
   updatedAt: number;
 }
 
+export type TestFlightSubscriptionStatus = 'pending' | 'approved' | 'denied' | 'withdrawn';
+export type TestFlightSubscriptionDeviceStatus = 'pending' | 'syncing' | 'active' | 'unavailable' | 'unsupported' | 'error' | 'unsubscribed';
+
+export interface TestFlightSubscriptionDevice {
+  deviceId: string;
+  status: TestFlightSubscriptionDeviceStatus;
+  appleMembership?: 'accepted' | 'pending' | 'unknown';
+  lastVerifiedAt?: number;
+  lastSyncedAt?: number;
+  lastError?: string;
+}
+
+export interface TestFlightSubscription {
+  id: string;
+  url: string;
+  inviteCode: string;
+  requestedBy: string;
+  status: TestFlightSubscriptionStatus;
+  appId?: number;
+  bundleId?: string;
+  displayName?: string;
+  iconUrl?: string;
+  sellerName?: string;
+  category?: string;
+  createdAt: number;
+  updatedAt: number;
+  approvedAt?: number;
+  approvedBy?: string;
+  deniedAt?: number;
+  deniedBy?: string;
+  withdrawnAt?: number;
+  withdrawnBy?: string;
+  devices: TestFlightSubscriptionDevice[];
+  devicePolicy: 'all-enabled';
+}
+
 export interface UserPrefs {
   theme?: 'dark' | 'light' | 'auto';
   density?: 'comfortable' | 'compact';
@@ -352,7 +388,12 @@ export type AuditAction =
   | 'role.remove'
   | 'backup.schedule-update'
   | 'backup.create'
-  | 'backup.delete';
+  | 'backup.delete'
+  | 'testflight-subscription.add'
+  | 'testflight-subscription.approve'
+  | 'testflight-subscription.deny'
+  | 'testflight-subscription.sync'
+  | 'testflight-subscription.remove';
 
 export interface AuditLogEntry {
   id: string;
@@ -428,7 +469,7 @@ export interface NotificationRecord {
 }
 
 interface PersistedState {
-  version: 14;
+  version: 15;
   apiKeys: ApiKeyRecord[];
   allowedUsers: AllowedUser[];
   roles: Role[];
@@ -457,6 +498,7 @@ interface PersistedState {
   activeSessions: ActiveSessionRecord[];
   appCatalog: Record<string, AppCatalogEntry>;
   notifications: NotificationRecord[];
+  testFlightSubscriptions: TestFlightSubscription[];
 }
 
 const MAX_HISTORY = 100;
@@ -472,7 +514,7 @@ const backupsDir = path.join(config.stateDir, 'backups');
 
 function defaultState(): PersistedState {
   return {
-    version: 14,
+    version: 15,
     apiKeys: [],
     allowedUsers: [],
     roles: [seedDefaultRole(Date.now())],
@@ -499,6 +541,7 @@ function defaultState(): PersistedState {
     activeSessions: [],
     appCatalog: {},
     notifications: [],
+    testFlightSubscriptions: [],
   };
 }
 
@@ -779,9 +822,12 @@ function migrateV13ToV14(v13: Record<string, unknown>): PersistedState {
   const migrated = {
     ...defaultState(),
     ...v13,
-    version: 14,
+    version: 15,
   } as PersistedState & { shareLinks?: unknown };
   delete migrated.shareLinks;
+  migrated.testFlightSubscriptions = Array.isArray(v13.testFlightSubscriptions)
+    ? (v13.testFlightSubscriptions as TestFlightSubscription[])
+    : [];
   migrated.roles = Array.isArray(v13.roles)
     ? (v13.roles as Role[]).map((role) => ({ ...role, permissions: serializeBits(parseBits(role.permissions)) }))
     : [seedDefaultRole(Date.now())];
@@ -789,6 +835,7 @@ function migrateV13ToV14(v13: Record<string, unknown>): PersistedState {
 }
 
 function migrate(raw: Record<string, unknown>): PersistedState {
+  if (raw.version === 15) return migrateV13ToV14(raw);
   if (raw.version === 14) return migrateV13ToV14(raw);
   if (raw.version === 13) return migrateV13ToV14(raw);
   if (raw.version === 12) return migrateV13ToV14(migrateV12ToV13(raw));
@@ -904,6 +951,7 @@ function load(): PersistedState {
     migrated.schedulerRunHistory = normalizeLegacySchedulerRunHistory(migrated.schedulerRunHistory);
     migrated.appCatalog = migrated.appCatalog ?? {};
     migrated.notifications = Array.isArray(migrated.notifications) ? migrated.notifications.slice(0, MAX_NOTIFICATIONS) : [];
+    migrated.testFlightSubscriptions = Array.isArray(migrated.testFlightSubscriptions) ? migrated.testFlightSubscriptions : [];
     writeFileSync(statePath, JSON.stringify(migrated, null, 2));
     return migrated;
   } catch {
@@ -1314,6 +1362,9 @@ export function mergeUserAccounts(targetUsername: string, sourceUsername: string
   }
   for (const entry of state.jobHistory) {
     if (entry.queuedBy === sourceId) entry.queuedBy = targetId;
+  }
+  for (const subscription of state.testFlightSubscriptions) {
+    if (subscription.requestedBy === sourceId) subscription.requestedBy = targetId;
   }
   const sourcePrefs = state.userPrefs[sourceId];
   const targetPrefs = state.userPrefs[targetId];
@@ -2092,6 +2143,166 @@ export function getPrimaryDevice(): DeviceRecord | undefined {
   return devices.find((d) => d.isPrimary) ?? devices[0];
 }
 
+export interface CreateTestFlightSubscriptionInput {
+  url: string;
+  inviteCode: string;
+  requestedBy: string;
+  status: TestFlightSubscriptionStatus;
+  appId?: number;
+  bundleId?: string;
+  displayName?: string;
+  iconUrl?: string;
+  sellerName?: string;
+  category?: string;
+}
+
+function cloneTestFlightSubscription(subscription: TestFlightSubscription): TestFlightSubscription {
+  return { ...subscription, devices: subscription.devices.map((device) => ({ ...device })) };
+}
+
+function notificationForSubscription(userId: string, title: string, message: string, severity: NotificationSeverity): void {
+  recordNotification({ userId, title, message, severity, href: '/?tab=settings&stab=testflight' });
+}
+
+export function getTestFlightSubscriptions(): TestFlightSubscription[] {
+  return state.testFlightSubscriptions.map(cloneTestFlightSubscription);
+}
+
+export function getTestFlightSubscription(id: string): TestFlightSubscription | undefined {
+  const subscription = state.testFlightSubscriptions.find((entry) => entry.id === id);
+  return subscription ? cloneTestFlightSubscription(subscription) : undefined;
+}
+
+export function findTestFlightSubscriptionByInviteCode(inviteCode: string): TestFlightSubscription | undefined {
+  const subscription = state.testFlightSubscriptions.find((entry) => entry.inviteCode === inviteCode && entry.status !== 'withdrawn');
+  return subscription ? cloneTestFlightSubscription(subscription) : undefined;
+}
+
+export function ensureTestFlightSubscriptionDevices(id: string): TestFlightSubscription | undefined {
+  const subscription = state.testFlightSubscriptions.find((entry) => entry.id === id);
+  if (!subscription) return undefined;
+  const known = new Set(subscription.devices.map((device) => device.deviceId));
+  const now = Date.now();
+  for (const device of getEffectiveDevices().filter((entry) => entry.enabled)) {
+    if (known.has(device.id)) continue;
+    subscription.devices.push({ deviceId: device.id, status: 'pending' });
+  }
+  subscription.updatedAt = now;
+  persistNow();
+  return cloneTestFlightSubscription(subscription);
+}
+
+export function createTestFlightSubscription(input: CreateTestFlightSubscriptionInput, actor: string): TestFlightSubscription {
+  const existing = findTestFlightSubscriptionByInviteCode(input.inviteCode);
+  if (existing) return existing;
+  const now = Date.now();
+  const subscription: TestFlightSubscription = {
+    id: randomUUID(),
+    url: input.url,
+    inviteCode: input.inviteCode,
+    requestedBy: input.requestedBy.toLowerCase(),
+    status: input.status,
+    appId: input.appId,
+    bundleId: input.bundleId,
+    displayName: input.displayName,
+    iconUrl: input.iconUrl,
+    sellerName: input.sellerName,
+    category: input.category,
+    createdAt: now,
+    updatedAt: now,
+    devices: getEffectiveDevices().filter((device) => device.enabled).map((device) => ({ deviceId: device.id, status: 'pending' })),
+    devicePolicy: 'all-enabled',
+  };
+  state.testFlightSubscriptions.unshift(subscription);
+  persistNow();
+  recordAudit(actor, 'testflight-subscription.add', subscription.id, `${subscription.url} (${subscription.status})`);
+  notificationForSubscription(
+    subscription.requestedBy,
+    'TestFlight subscription submitted',
+    subscription.status === 'approved' ? `${subscription.displayName ?? subscription.url} is being synchronized.` : `${subscription.displayName ?? subscription.url} is awaiting approval.`,
+    subscription.status === 'approved' ? 'info' : 'success',
+  );
+  return cloneTestFlightSubscription(subscription);
+}
+
+export function approveTestFlightSubscription(id: string, actor: string): TestFlightSubscription | undefined {
+  const subscription = state.testFlightSubscriptions.find((entry) => entry.id === id);
+  if (!subscription || subscription.status !== 'pending') return undefined;
+  const now = Date.now();
+  subscription.status = 'approved';
+  subscription.approvedAt = now;
+  subscription.approvedBy = actor;
+  subscription.deniedAt = undefined;
+  subscription.deniedBy = undefined;
+  subscription.updatedAt = now;
+  ensureTestFlightSubscriptionDevices(id);
+  persistNow();
+  recordAudit(actor, 'testflight-subscription.approve', id, subscription.url);
+  notificationForSubscription(subscription.requestedBy, 'TestFlight subscription approved', `${subscription.displayName ?? subscription.url} is being synchronized to enabled devices.`, 'success');
+  return cloneTestFlightSubscription(subscription);
+}
+
+export function denyTestFlightSubscription(id: string, actor: string): TestFlightSubscription | undefined {
+  const subscription = state.testFlightSubscriptions.find((entry) => entry.id === id);
+  if (!subscription || subscription.status !== 'pending') return undefined;
+  const now = Date.now();
+  subscription.status = 'denied';
+  subscription.deniedAt = now;
+  subscription.deniedBy = actor;
+  subscription.updatedAt = now;
+  persistNow();
+  recordAudit(actor, 'testflight-subscription.deny', id, subscription.url);
+  notificationForSubscription(subscription.requestedBy, 'TestFlight subscription denied', subscription.displayName ?? subscription.url, 'warning');
+  return cloneTestFlightSubscription(subscription);
+}
+
+export function withdrawTestFlightSubscription(id: string, actor: string, detail?: string): TestFlightSubscription | undefined {
+  const subscription = state.testFlightSubscriptions.find((entry) => entry.id === id);
+  if (!subscription) return undefined;
+  if (subscription.status === 'withdrawn') return cloneTestFlightSubscription(subscription);
+  const now = Date.now();
+  subscription.status = 'withdrawn';
+  subscription.withdrawnAt = now;
+  subscription.withdrawnBy = actor;
+  subscription.updatedAt = now;
+  persistNow();
+  recordAudit(actor, 'testflight-subscription.remove', id, detail ?? subscription.url);
+  return cloneTestFlightSubscription(subscription);
+}
+
+export function updateTestFlightSubscriptionDevice(
+  id: string,
+  deviceId: string,
+  patch: Partial<TestFlightSubscriptionDevice>,
+): TestFlightSubscription | undefined {
+  const subscription = state.testFlightSubscriptions.find((entry) => entry.id === id);
+  if (!subscription) return undefined;
+  let device = subscription.devices.find((entry) => entry.deviceId === deviceId);
+  if (!device) {
+    device = { deviceId, status: 'pending' };
+    subscription.devices.push(device);
+  }
+  Object.assign(device, patch);
+  subscription.updatedAt = Date.now();
+  persistNow();
+  return cloneTestFlightSubscription(subscription);
+}
+
+export function updateTestFlightSubscriptionMetadata(
+  id: string,
+  patch: Pick<TestFlightSubscription, 'appId' | 'bundleId' | 'displayName' | 'iconUrl' | 'sellerName' | 'category'>,
+): TestFlightSubscription | undefined {
+  const subscription = state.testFlightSubscriptions.find((entry) => entry.id === id);
+  if (!subscription) return undefined;
+  Object.assign(subscription, patch, { updatedAt: Date.now() });
+  persistNow();
+  return cloneTestFlightSubscription(subscription);
+}
+
+export function recordTestFlightSubscriptionSync(id: string, actor: string, detail: string): void {
+  recordAudit(actor, 'testflight-subscription.sync', id, detail);
+}
+
 export interface CreateDeviceInput {
   name: string;
   transport?: 'wifi' | 'usb';
@@ -2814,7 +3025,7 @@ export function markNotificationsRead(userId: string, ids?: string[]): number {
   return changed;
 }
 
-const BACKUP_VERSION = 4;
+const BACKUP_VERSION = 5;
 
 export interface BackupPayload {
   backupVersion: typeof BACKUP_VERSION;
@@ -2834,6 +3045,7 @@ export interface BackupPayload {
   apiKeyUsage: Record<string, ApiKeyUsageBucket[]>;
   apiKeyBundleUsage: Record<string, Record<string, number>>;
   deviceActivity: DeviceActivityEntry[];
+  testFlightSubscriptions: TestFlightSubscription[];
   billing: BillingSnapshot;
   identities: IdentitySnapshot;
 }
@@ -2857,6 +3069,7 @@ export function exportBackup(): BackupPayload {
     apiKeyUsage: state.apiKeyUsage,
     apiKeyBundleUsage: state.apiKeyBundleUsage,
     deviceActivity: state.deviceActivity,
+    testFlightSubscriptions: getTestFlightSubscriptions(),
     billing: exportBillingSnapshot(),
     identities: exportIdentitySnapshot(),
   };
@@ -2995,6 +3208,29 @@ function isSchedulerRunEntryShape(value: unknown): value is SchedulerRunEntry {
   return typeof e.ts === 'number' && typeof e.appStore === 'object' && typeof e.testflight === 'object';
 }
 
+function isTestFlightSubscriptionDeviceShape(value: unknown): value is TestFlightSubscriptionDevice {
+  if (typeof value !== 'object' || value === null) return false;
+  const d = value as Record<string, unknown>;
+  return typeof d.deviceId === 'string' && ['pending', 'syncing', 'active', 'unavailable', 'unsupported', 'error', 'unsubscribed'].includes(String(d.status));
+}
+
+function isTestFlightSubscriptionShape(value: unknown): value is TestFlightSubscription {
+  if (typeof value !== 'object' || value === null) return false;
+  const s = value as Record<string, unknown>;
+  return (
+    typeof s.id === 'string' &&
+    typeof s.url === 'string' &&
+    typeof s.inviteCode === 'string' &&
+    typeof s.requestedBy === 'string' &&
+    ['pending', 'approved', 'denied', 'withdrawn'].includes(String(s.status)) &&
+    typeof s.createdAt === 'number' &&
+    typeof s.updatedAt === 'number' &&
+    Array.isArray(s.devices) &&
+    s.devices.every(isTestFlightSubscriptionDeviceShape) &&
+    s.devicePolicy === 'all-enabled'
+  );
+}
+
 interface ValidatedBackupPayload {
   backupVersion: number;
   exportedAt?: number;
@@ -3013,6 +3249,7 @@ interface ValidatedBackupPayload {
   apiKeyUsage: Record<string, ApiKeyUsageBucket[]>;
   apiKeyBundleUsage?: Record<string, Record<string, number>>;
   deviceActivity?: DeviceActivityEntry[];
+  testFlightSubscriptions: TestFlightSubscription[];
   billing: BillingSnapshot;
   identities: IdentitySnapshot;
 }
@@ -3021,8 +3258,8 @@ function validateBackupPayload(raw: unknown): { ok: true; payload: ValidatedBack
   if (typeof raw !== 'object' || raw === null) return { ok: false, error: 'not a valid backup file' };
   const b = raw as Record<string, unknown>;
 
-  if (b.backupVersion !== 3 && b.backupVersion !== BACKUP_VERSION) {
-    return { ok: false, error: `unsupported backup version (expected 3 or ${BACKUP_VERSION})` };
+  if (b.backupVersion !== 3 && b.backupVersion !== 4 && b.backupVersion !== BACKUP_VERSION) {
+    return { ok: false, error: `unsupported backup version (expected 3, 4, or ${BACKUP_VERSION})` };
   }
   if (!Array.isArray(b.allowedUsers) || !b.allowedUsers.every(isAllowedUserShape)) {
     return { ok: false, error: 'allowedUsers is missing or malformed' };
@@ -3060,10 +3297,13 @@ function validateBackupPayload(raw: unknown): { ok: true; payload: ValidatedBack
   if (typeof b.rootSessionVersion !== 'number') {
     return { ok: false, error: 'rootSessionVersion is missing or malformed' };
   }
-  if (b.backupVersion === BACKUP_VERSION && !isBillingSnapshot(b.billing)) {
+  if (b.backupVersion === BACKUP_VERSION && (!Array.isArray(b.testFlightSubscriptions) || !b.testFlightSubscriptions.every(isTestFlightSubscriptionShape))) {
+    return { ok: false, error: 'testFlightSubscriptions is missing or malformed' };
+  }
+  if (b.backupVersion >= 4 && !isBillingSnapshot(b.billing)) {
     return { ok: false, error: 'billing is missing or malformed' };
   }
-  if (b.backupVersion === BACKUP_VERSION && !isIdentitySnapshot(b.identities)) {
+  if (b.backupVersion >= 4 && !isIdentitySnapshot(b.identities)) {
     return { ok: false, error: 'identities is missing or malformed' };
   }
 
@@ -3090,6 +3330,7 @@ function validateBackupPayload(raw: unknown): { ok: true; payload: ValidatedBack
           ? (b.apiKeyBundleUsage as Record<string, Record<string, number>>)
           : undefined,
       deviceActivity: Array.isArray(b.deviceActivity) ? (b.deviceActivity as DeviceActivityEntry[]) : undefined,
+      testFlightSubscriptions: Array.isArray(b.testFlightSubscriptions) ? (b.testFlightSubscriptions as TestFlightSubscription[]) : [],
       billing: isBillingSnapshot(b.billing) ? b.billing : { customers: [], subscriptions: [] },
       identities: isIdentitySnapshot(b.identities) ? b.identities : { profiles: [] },
     },
@@ -3153,7 +3394,7 @@ export interface BackupRestoreDrill {
   checks: { label: string; ok: boolean; detail: string }[];
 }
 
-function prepareBackupRestore(payload: ValidatedBackupPayload): Pick<PersistedState, 'allowedUsers' | 'roles' | 'apiKeys' | 'settings' | 'watches' | 'devices' | 'jobHistory' | 'auditLog' | 'schedulerRunHistory' | 'userPrefs' | 'apiKeyUsage' | 'rootSessionVersion' | 'apiKeyBundleUsage' | 'deviceActivity'> {
+function prepareBackupRestore(payload: ValidatedBackupPayload): Pick<PersistedState, 'allowedUsers' | 'roles' | 'apiKeys' | 'settings' | 'watches' | 'devices' | 'jobHistory' | 'auditLog' | 'schedulerRunHistory' | 'userPrefs' | 'apiKeyUsage' | 'rootSessionVersion' | 'apiKeyBundleUsage' | 'deviceActivity' | 'testFlightSubscriptions'> {
   return {
     allowedUsers: payload.allowedUsers,
     roles: payload.roles.map((role) => ({ ...role, permissions: serializeBits(consolidatePermissionBits(upgradePermissionBits(parseBits(role.permissions)))) })),
@@ -3169,6 +3410,7 @@ function prepareBackupRestore(payload: ValidatedBackupPayload): Pick<PersistedSt
     rootSessionVersion: payload.rootSessionVersion,
     apiKeyBundleUsage: payload.apiKeyBundleUsage ?? {},
     deviceActivity: payload.deviceActivity?.slice(0, MAX_DEVICE_ACTIVITY) ?? [],
+    testFlightSubscriptions: payload.testFlightSubscriptions.map(cloneTestFlightSubscription),
   };
 }
 

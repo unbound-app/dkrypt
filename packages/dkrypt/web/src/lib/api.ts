@@ -516,6 +516,58 @@ export interface AppStoreSearchResult {
   artworkUrl: string;
   price: number;
   category?: string;
+  testflight?: {
+    appId: number;
+    devices: Array<{ id: string; name: string }>;
+    lastVerifiedAt: number;
+  };
+}
+
+export type TestFlightSubscriptionStatus = 'pending' | 'approved' | 'denied' | 'withdrawn';
+export type TestFlightSubscriptionDeviceStatus = 'pending' | 'syncing' | 'active' | 'unavailable' | 'unsupported' | 'error' | 'unsubscribed';
+
+export interface TestFlightSubscriptionDevice {
+  deviceId: string;
+  status: TestFlightSubscriptionDeviceStatus;
+  appleMembership?: 'accepted' | 'pending' | 'unknown';
+  lastVerifiedAt?: number;
+  lastSyncedAt?: number;
+  lastError?: string;
+}
+
+export interface TestFlightSubscription {
+  id: string;
+  url: string;
+  inviteCode: string;
+  requestedBy: string;
+  status: TestFlightSubscriptionStatus;
+  appId?: number;
+  bundleId?: string;
+  displayName?: string;
+  iconUrl?: string;
+  sellerName?: string;
+  category?: string;
+  createdAt: number;
+  updatedAt: number;
+  approvedAt?: number;
+  approvedBy?: string;
+  deniedAt?: number;
+  deniedBy?: string;
+  withdrawnAt?: number;
+  withdrawnBy?: string;
+  devices: TestFlightSubscriptionDevice[];
+  devicePolicy: 'all-enabled';
+}
+
+export interface TestFlightCatalogApp {
+  appId: number;
+  bundleId: string;
+  displayName: string;
+  iconUrl?: string;
+  sellerName?: string;
+  category?: string;
+  devices: Array<{ id: string; name: string }>;
+  lastVerifiedAt: number;
 }
 
 export interface AppCatalogEntry {
@@ -1087,7 +1139,7 @@ export function queueDecrypt(
   });
 }
 
-export function fetchDecryptPreflight(input: { bundleId: string; versionLabel?: string; testflight?: boolean; installSizeBytes?: number }): Promise<DecryptPreflight> {
+export function fetchDecryptPreflight(input: { bundleId: string; versionLabel?: string; testflight?: boolean; installSizeBytes?: number; deviceId?: string }): Promise<DecryptPreflight> {
   return apiJson('/v1/dashboard/decrypt/preflight', {
     method: 'POST',
     body: JSON.stringify(input),
@@ -1144,12 +1196,15 @@ export function fetchTestFlightBridgeDiagnostics(): Promise<TestFlightBridgeDiag
   return apiJson('/v1/dashboard/testflight/diagnostics', undefined, 'external');
 }
 
-export function fetchTestFlightTrains(appId: number): Promise<{ trains: TFTrain[] } | { error: string }> {
-  return apiJson(`/v1/dashboard/testflight/${appId}/trains`, undefined, 'external');
+export function fetchTestFlightTrains(appId: number, deviceId?: string): Promise<{ trains: TFTrain[] } | { error: string }> {
+  const suffix = deviceId ? `?deviceId=${encodeURIComponent(deviceId)}` : '';
+  return apiJson(`/v1/dashboard/testflight/${appId}/trains${suffix}`, undefined, 'external');
 }
 
-export function fetchTestFlightBuilds(appId: number, trainVersion: string): Promise<{ builds: TFBuild[] } | { error: string }> {
-  return apiJson(`/v1/dashboard/testflight/${appId}/builds?trainVersion=${encodeURIComponent(trainVersion)}`, undefined, 'external');
+export function fetchTestFlightBuilds(appId: number, trainVersion: string, deviceId?: string): Promise<{ builds: TFBuild[] } | { error: string }> {
+  const params = new URLSearchParams({ trainVersion });
+  if (deviceId) params.set('deviceId', deviceId);
+  return apiJson(`/v1/dashboard/testflight/${appId}/builds?${params.toString()}`, undefined, 'external');
 }
 
 export function queueTestFlightDecrypt(
@@ -1157,8 +1212,37 @@ export function queueTestFlightDecrypt(
   appId: number,
   build: TFBuild,
   preferPrimary = false,
+  deviceId?: string,
 ): Promise<{ ok: boolean; data: JobSummary }> {
-  return apiAction('/v1/dashboard/testflight/decrypt', { method: 'POST', body: JSON.stringify({ bundleId, appId, build, preferPrimary }) });
+  return apiAction('/v1/dashboard/testflight/decrypt', { method: 'POST', body: JSON.stringify({ bundleId, appId, build, preferPrimary, deviceId }) });
+}
+
+export function fetchTestFlightSubscriptions(): Promise<{ subscriptions: TestFlightSubscription[] }> {
+  return apiJson('/v1/dashboard/testflight/subscriptions');
+}
+
+export function submitTestFlightSubscription(url: string): Promise<{ ok: boolean; data: { subscription: TestFlightSubscription } }> {
+  return apiAction('/v1/dashboard/testflight/subscriptions', { method: 'POST', body: JSON.stringify({ url }) });
+}
+
+export function approveTestFlightSubscription(id: string): Promise<{ ok: boolean; data: { subscription: TestFlightSubscription } }> {
+  return apiAction(`/v1/dashboard/testflight/subscriptions/${encodeURIComponent(id)}/approve`, { method: 'POST' });
+}
+
+export function denyTestFlightSubscription(id: string): Promise<{ ok: boolean; data: { subscription: TestFlightSubscription } }> {
+  return apiAction(`/v1/dashboard/testflight/subscriptions/${encodeURIComponent(id)}/deny`, { method: 'POST' });
+}
+
+export function syncTestFlightSubscription(id: string): Promise<{ ok: boolean; data: { subscription: TestFlightSubscription } }> {
+  return apiAction(`/v1/dashboard/testflight/subscriptions/${encodeURIComponent(id)}/sync`, { method: 'POST' });
+}
+
+export function unsubscribeTestFlightSubscription(id: string): Promise<{ ok: boolean; data: { subscription: TestFlightSubscription } }> {
+  return apiAction(`/v1/dashboard/testflight/subscriptions/${encodeURIComponent(id)}/unsubscribe`, { method: 'POST' });
+}
+
+export function fetchTestFlightCatalog(): Promise<{ apps: TestFlightCatalogApp[] }> {
+  return apiJson('/v1/dashboard/testflight/catalog');
 }
 
 export function retryJob(id: string, preferPrimary = false): Promise<{ ok: boolean; data: JobSummary }> {

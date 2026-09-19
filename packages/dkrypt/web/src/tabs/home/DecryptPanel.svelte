@@ -7,11 +7,13 @@
 	import {
 		fetchDecryptPreflight,
 		fetchJobEta,
+		fetchTestFlightCatalog,
 		queueDecrypt,
 		queueTestFlightDecrypt,
 		searchApps,
 		type AppStoreSearchResult,
 		type DecryptPreflight,
+		type TestFlightCatalogApp,
 		type TFBuild,
 	} from "#lib/api";
 	import Badge from "#lib/components/ui/Badge.svelte";
@@ -48,6 +50,7 @@
 	let term = $state("");
 	let results = $state<AppStoreSearchResult[]>([]);
 	let loading = $state(false);
+	let testflightApps = $state<TestFlightCatalogApp[]>([]);
 	let searched = $state(false);
 	let highlighted = $state(-1);
 	let inputEl: HTMLInputElement | undefined = $state();
@@ -62,6 +65,7 @@
 		externalVersionId?: string;
 		versionLabel?: string;
 		testflight?: { appId: number; build: TFBuild };
+		deviceId?: string;
 	} | null>(null);
 
 	const statusByBundle = $derived.by(() => {
@@ -148,8 +152,8 @@
 		requestNotificationPermission();
 		queueing = new Set(queueing).add(request.bundleId);
 		try {
-			const { ok, data } = request.testflight
-				? await queueTestFlightDecrypt(request.bundleId, request.testflight.appId, request.testflight.build, false)
+		const { ok, data } = request.testflight
+				? await queueTestFlightDecrypt(request.bundleId, request.testflight.appId, request.testflight.build, false, request.deviceId)
 				: await queueDecrypt(request.bundleId, request.externalVersionId, request.versionLabel, false);
 			if (!ok) return;
 			addDecrypt({
@@ -213,15 +217,18 @@
 	let testflightBundleId = $state("");
 	let testflightAppId = $state(0);
 	let testflightTrackName = $state("");
+	let testflightDevices = $state<Array<{ id: string; name: string }>>([]);
 
 	function openTestFlight(
 		bundleId: string,
 		appId: number,
 		trackName: string,
+		devices: Array<{ id: string; name: string }> = [],
 	): void {
 		testflightBundleId = bundleId;
 		testflightAppId = appId;
 		testflightTrackName = trackName;
+		testflightDevices = devices;
 		testflightOpen = true;
 	}
 
@@ -230,6 +237,7 @@
 		appId: number,
 		build: TFBuild,
 		label: string,
+		deviceId?: string,
 	): Promise<void> {
 		if (!canDecrypt) return;
 		testflightOpen = false;
@@ -239,8 +247,9 @@
 				trackName: testflightTrackName,
 				versionLabel: `TestFlight ${label}`,
 				testflight: { appId, build },
+				deviceId,
 			};
-			preflight = await fetchDecryptPreflight({ bundleId, versionLabel: `TestFlight ${label}`, testflight: true, installSizeBytes: build.fileSize });
+			preflight = await fetchDecryptPreflight({ bundleId, versionLabel: `TestFlight ${label}`, testflight: true, installSizeBytes: build.fileSize, deviceId });
 			preflightOpen = true;
 		} catch {
 			pendingQueue = null;
@@ -289,6 +298,24 @@
 		highlighted = -1;
 	}
 
+	function testFlightShortcut(app: TestFlightCatalogApp): AppStoreSearchResult {
+		return {
+			bundleId: app.bundleId,
+			trackId: app.appId,
+			trackName: app.displayName,
+			version: "TestFlight",
+			sellerName: app.sellerName ?? "",
+			artworkUrl: app.iconUrl ?? "",
+			price: 0,
+			category: app.category,
+			testflight: { appId: app.appId, devices: app.devices, lastVerifiedAt: app.lastVerifiedAt },
+		};
+	}
+
+	function showTestFlightShortcut(app: TestFlightCatalogApp): void {
+		showStarredApp(testFlightShortcut(app));
+	}
+
 	let etaByBundle = $state<Record<string, number | null>>({});
 	const fetchedEtaBundles = new Set<string>();
 
@@ -309,6 +336,15 @@
 			...recentBundleIdsState.items,
 			...results.map((result) => result.bundleId),
 		]);
+	});
+
+	$effect(() => {
+		if (!canDecrypt) return;
+		void fetchTestFlightCatalog().then((data) => {
+			testflightApps = data.apps;
+		}).catch(() => {
+			testflightApps = [];
+		});
 	});
 
 	function decryptButtonTitle(bundleId: string): string | undefined {
@@ -458,6 +494,30 @@
 		</div>
 	{/if}
 
+	{#if !term.trim() && testflightApps.length > 0}
+		<div class="mt-3">
+			<div class="mb-1.5 flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.12em] text-muted">TestFlight access <span class="normal-case tracking-normal text-muted/70">verified on your devices</span></div>
+			<div class="flex snap-x gap-2 overflow-x-auto pb-1">
+				{#each testflightApps as app (app.appId)}
+					<Button
+						variant="outline"
+						size="sm"
+						class="h-auto min-w-[10rem] shrink-0 snap-start justify-start gap-2 rounded-xl px-2.5 py-2 text-left"
+						onclick={() => showTestFlightShortcut(app)}
+						title={`${app.displayName} · ${app.bundleId}`}
+					>
+						{#if app.iconUrl}<img src={app.iconUrl} alt="" class="h-7 w-7 shrink-0 rounded-lg" />{/if}
+						<span class="min-w-0">
+							<span class="block truncate text-xs font-medium">{app.displayName}</span>
+							<span class="block truncate text-[10px] text-muted">{app.bundleId}</span>
+							<span class="block truncate text-[10px] text-muted">{app.devices.length} verified device{app.devices.length === 1 ? "" : "s"}</span>
+						</span>
+					</Button>
+				{/each}
+			</div>
+		</div>
+	{/if}
+
 	<div class="mt-3.5">
 		{#if loading}
 			<div
@@ -552,23 +612,26 @@
 									>
 										<History class="h-3.5 w-3.5" />
 									</Button>
-									<Button
-										size="sm"
-										variant="secondary"
-										onclick={() =>
-											openTestFlight(
-												r.bundleId,
-												r.trackId,
-												appDisplayName(
+									{#if r.testflight}
+										<Button
+											size="sm"
+											variant="secondary"
+											onclick={() =>
+												openTestFlight(
 													r.bundleId,
-													r.trackName,
-												),
-											)}
-										title="Browse TestFlight builds"
-										aria-label="Browse TestFlight builds"
-									>
-										<FlaskConical class="h-3.5 w-3.5" />
-									</Button>
+													r.testflight?.appId ?? r.trackId,
+													appDisplayName(
+														r.bundleId,
+														r.trackName,
+													),
+													r.testflight?.devices,
+													)}
+											title="Browse TestFlight builds"
+											aria-label="Browse TestFlight builds"
+										>
+											<FlaskConical class="h-3.5 w-3.5" />
+										</Button>
+									{/if}
 								{/if}
 							</div>
 							{#if statusByBundle.has(r.bundleId)}
@@ -652,19 +715,22 @@
 								<History class="h-3.5 w-3.5" />
 								Versions
 							</Button>
-							<Button
-								size="sm"
-								variant="secondary"
-								onclick={() =>
-									openTestFlight(
-										r.bundleId,
-										r.trackId,
-										appDisplayName(r.bundleId, r.trackName),
-									)}
-							>
-								<FlaskConical class="h-3.5 w-3.5" />
-								TestFlight
-							</Button>
+							{#if r.testflight}
+								<Button
+									size="sm"
+									variant="secondary"
+									onclick={() =>
+										openTestFlight(
+											r.bundleId,
+											r.testflight?.appId ?? r.trackId,
+											appDisplayName(r.bundleId, r.trackName),
+											r.testflight?.devices,
+										)}
+								>
+									<FlaskConical class="h-3.5 w-3.5" />
+									TestFlight
+								</Button>
+							{/if}
 						{/if}
 					</div>
 				{/if}
@@ -686,6 +752,7 @@
 	bundleId={testflightBundleId}
 	appId={testflightAppId}
 	trackName={testflightTrackName}
+	devices={testflightDevices}
 	onOpenChange={(v) => (testflightOpen = v)}
 	onDecrypt={decryptTestFlightBuild}
 />

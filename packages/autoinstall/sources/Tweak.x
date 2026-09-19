@@ -313,6 +313,8 @@ static void rejectLegacyBridgeRequest(NSDictionary *request, NSString *responseP
 
 static BOOL autoinstallHandlePasswordIfPresent(void);
 static NSArray *autoinstallConfirmMatching(NSString *match);
+static BOOL autoinstallValidTestFlightInvite(NSString *urlString);
+static void autoinstallScheduleInviteControls(NSUInteger attempt);
 
 static BOOL isSpringBoard(void) {
     return [[[NSBundle mainBundle] bundleIdentifier] isEqualToString:@"com.apple.springboard"];
@@ -672,7 +674,7 @@ static NSString * const kInstallStatusPath = @"/tmp/autoinstall-install-status.j
 static NSDictionary *bridgeStatus(void) {
     return @{
         @"bridgeVersion": BRIDGE_VERSION,
-        @"capabilities": @[@"list_trains", @"list_builds", @"install", @"status", @"diagnostics", @"idempotent_install", @"protocol_v1", @"authenticated_requests", @"operation_responses", @"heartbeats", @"stale_artifact_cleanup"],
+        @"capabilities": @[@"list_trains", @"list_builds", @"install", @"status", @"diagnostics", @"subscribe_invite", @"status_invite", @"unsubscribe_invite", @"invite_lifecycle", @"idempotent_install", @"protocol_v1", @"authenticated_requests", @"operation_responses", @"heartbeats", @"stale_artifact_cleanup"],
         @"hasInstaller": gInstaller ? @YES : @NO,
         @"hasCatalogManager": gCatalogManager ? @YES : @NO,
         @"backgroundTaskActive": gBackgroundTaskId != UIBackgroundTaskInvalid ? @YES : @NO,
@@ -741,6 +743,21 @@ static void fetchJSON(NSString *urlString, void (^completion)(id json, NSDiction
     }];
 }
 
+static BOOL autoinstallValidTestFlightInvite(NSString *urlString) {
+    NSURL *url = [NSURL URLWithString:urlString];
+    if (!url || ![url.scheme.lowercaseString isEqualToString:@"https"] || ![url.host.lowercaseString isEqualToString:@"testflight.apple.com"] || url.port || url.user || url.password || url.query.length || url.fragment.length) return NO;
+    NSArray<NSString *> *parts = [url.path componentsSeparatedByString:@"/"];
+    if (parts.count != 3 || ![parts[1] isEqualToString:@"join"] || parts[2].length < 4 || parts[2].length > 32) return NO;
+    NSCharacterSet *allowed = [NSCharacterSet characterSetWithCharactersInString:@"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"];
+    return [parts[2] rangeOfCharacterFromSet:[allowed invertedSet]].location == NSNotFound;
+}
+
+static NSString *autoinstallTestFlightDeepLink(NSString *urlString) {
+    NSURL *url = [NSURL URLWithString:urlString];
+    if (!url) return nil;
+    return [NSString stringWithFormat:@"itms-beta://%@%@", url.host, url.path];
+}
+
 static void handleRequest(NSDictionary *req, NSString *responsePath, NSString *requestId) {
     void (^respond)(id) = ^(id response) { writeBridgeResponse(responsePath, requestId, response); };
     void (^fail)(NSString *, NSString *, NSString *, BOOL) = ^(NSString *code, NSString *stage, NSString *message, BOOL retryable) {
@@ -748,6 +765,108 @@ static void handleRequest(NSDictionary *req, NSString *responsePath, NSString *r
     };
     NSString *action = req[@"action"];
     autoinstallLog([NSString stringWithFormat:@"bridge: handling action=%@ req=%@", action, req]);
+
+    if ([action isEqualToString:@"subscribe_invite"]) {
+        @try {
+            NSString *url = [req[@"url"] isKindOfClass:[NSString class]] ? req[@"url"] : @"";
+            if (!autoinstallValidTestFlightInvite(url)) {
+                fail(@"invalid_request", @"subscribe_invite", @"only canonical testflight.apple.com public links are supported", NO);
+                return;
+            }
+            NSString *operationId = [req[@"operationId"] isKindOfClass:[NSString class]] ? req[@"operationId"] : [[NSUUID UUID] UUIDString];
+            NSDictionary *previous = readBridgeTransaction(@"testflight", operationId);
+            if ([previous[@"operationId"] isEqual:operationId] && ![previous[@"state"] isEqualToString:@"failed"]) {
+                respond(@{ @"ok": @YES, @"requested": @NO, @"resumed": @YES, @"operationId": operationId, @"appleMembership": @"pending" });
+                return;
+            }
+            void (^failInvite)(NSString *, NSString *, NSString *, BOOL) = ^(NSString *code, NSString *stage, NSString *message, BOOL retryable) {
+                writeBridgeTransaction(@"testflight", operationId, @"failed", @{ @"ok": @NO, @"url": url, @"error": @{ @"code": code, @"stage": stage, @"message": message, @"retryable": @(retryable) } });
+                fail(code, stage, message, retryable);
+            };
+            writeBridgeTransaction(@"testflight", operationId, @"requested", @{ @"ok": @YES, @"url": url, @"appleMembership": @"pending" });
+            dispatch_async(dispatch_get_main_queue(), ^{
+                @try {
+                    NSString *deepLink = autoinstallTestFlightDeepLink(url);
+                    NSURL *target = [NSURL URLWithString:deepLink];
+                    UIApplication *application = [UIApplication sharedApplication];
+                    if (!target) {
+                        failInvite(@"invalid_request", @"subscribe_invite", @"could not create TestFlight deep link", NO);
+                        return;
+                    }
+                    if ([application respondsToSelector:@selector(openURL:options:completionHandler:)]) {
+                        [application openURL:target options:@{} completionHandler:^(BOOL success) {
+                            autoinstallLog([NSString stringWithFormat:@"subscribe_invite openURL completed success=%@", success ? @"YES" : @"NO"]);
+                            if (!success) writeBridgeTransaction(@"testflight", operationId, @"failed", @{ @"ok": @NO, @"url": url, @"error": @{ @"code": @"open_url_rejected", @"stage": @"subscribe_invite", @"message": @"TestFlight deep link was rejected", @"retryable": @YES } });
+                        }];
+                    } else if ([application canOpenURL:target]) {
+                        ((BOOL (*)(id, SEL, NSURL *))objc_msgSend)(application, @selector(openURL:), target);
+                    } else {
+                        failInvite(@"open_url_unavailable", @"subscribe_invite", @"TestFlight deep link could not be opened", YES);
+                        return;
+                    }
+                    autoinstallScheduleInviteControls(0);
+                    respond(@{ @"ok": @YES, @"requested": @YES, @"operationId": operationId, @"appleMembership": @"pending" });
+                } @catch (NSException *exception) {
+                    failInvite(@"subscribe_invite_exception", @"subscribe_invite", [NSString stringWithFormat:@"exception: %@ %@", exception.name, exception.reason], YES);
+                }
+            });
+        } @catch (NSException *exception) {
+            fail(@"subscribe_invite_exception", @"subscribe_invite", [NSString stringWithFormat:@"exception: %@ %@", exception.name, exception.reason], YES);
+        }
+        return;
+    }
+
+    if ([action isEqualToString:@"status_invite"]) {
+        @try {
+            NSString *url = [req[@"url"] isKindOfClass:[NSString class]] ? req[@"url"] : @"";
+            NSNumber *appId = [req[@"appId"] isKindOfClass:[NSNumber class]] ? req[@"appId"] : nil;
+            if (!autoinstallValidTestFlightInvite(url) || !appId || appId.longLongValue <= 0) {
+                fail(@"invalid_request", @"status_invite", @"a canonical invite URL and positive appId are required", NO);
+                return;
+            }
+            NSString *operationId = [req[@"operationId"] isKindOfClass:[NSString class]] ? req[@"operationId"] : [[NSUUID UUID] UUIDString];
+            NSDictionary *previous = readBridgeTransaction(@"testflight", operationId);
+            if ([previous[@"operationId"] isEqual:operationId] && ![previous[@"state"] isEqualToString:@"failed"]) {
+                NSMutableDictionary *resumed = [previous mutableCopy];
+                resumed[@"requested"] = @NO;
+                resumed[@"resumed"] = @YES;
+                respond(resumed);
+                return;
+            }
+            writeBridgeTransaction(@"testflight", operationId, @"requested", @{ @"ok": @YES, @"url": url, @"appId": appId });
+            NSString *endpoint = [NSString stringWithFormat:@"https://testflight.apple.com/v2/apps/%@/platforms/ios/trains", appId];
+            fetchJSON(endpoint, ^(id json, NSDictionary *error) {
+                if (error) {
+                    writeBridgeTransaction(@"testflight", operationId, @"failed", @{ @"ok": @NO, @"url": url, @"appId": appId, @"error": error });
+                    respond(@{ @"ok": @NO, @"error": error });
+                    return;
+                }
+                BOOL verified = ([json isKindOfClass:[NSArray class]] && [json count] > 0) || ([json isKindOfClass:[NSDictionary class]] && [json count] > 0);
+                writeBridgeTransaction(@"testflight", operationId, @"completed", @{ @"ok": @YES, @"url": url, @"appId": appId, @"verified": @(verified) });
+                respond(@{ @"ok": @YES, @"requested": @NO, @"operationId": operationId, @"appId": appId, @"verified": @(verified), @"data": json ?: @[] });
+            });
+        } @catch (NSException *exception) {
+            fail(@"status_invite_exception", @"status_invite", [NSString stringWithFormat:@"exception: %@ %@", exception.name, exception.reason], YES);
+        }
+        return;
+    }
+
+    if ([action isEqualToString:@"unsubscribe_invite"]) {
+        NSString *bundleId = [req[@"bundleId"] isKindOfClass:[NSString class]] ? req[@"bundleId"] : @"";
+        if (bundleId.length == 0 || [bundleId rangeOfCharacterFromSet:[[NSCharacterSet characterSetWithCharactersInString:@"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-"] invertedSet]].location != NSNotFound) {
+            fail(@"invalid_request", @"unsubscribe_invite", @"bundleId is invalid", NO);
+            return;
+        }
+        NSString *operationId = [req[@"operationId"] isKindOfClass:[NSString class]] ? req[@"operationId"] : [NSString stringWithFormat:@"unsubscribe-%@", bundleId];
+        NSDictionary *previous = readBridgeTransaction(@"testflight", operationId);
+        if ([previous[@"operationId"] isEqual:operationId]) {
+            respond(@{ @"ok": @YES, @"requested": @NO, @"resumed": @YES, @"operationId": operationId, @"bundleId": bundleId, @"appleMembership": @"unknown" });
+            return;
+        }
+        writeBridgeTransaction(@"testflight", operationId, @"requested", @{ @"ok": @YES, @"bundleId": bundleId, @"appleMembership": @"unknown" });
+        respond(@{ @"ok": @YES, @"requested": @YES, @"operationId": operationId, @"bundleId": bundleId, @"appleMembership": @"unknown" });
+        return;
+    }
 
     if ([action isEqualToString:@"install"]) {
         @try {
@@ -1337,6 +1456,72 @@ static NSArray *autoinstallConfirmMatching(NSString *match) {
         if (acted.count > 0) break;
     }
     return acted;
+}
+
+static NSArray *autoinstallInviteRoots(void) {
+    NSMutableArray *roots = [NSMutableArray array];
+    if (gStashedConfirmVC) {
+        @try {
+            UIView *view = [(id)gStashedConfirmVC view];
+            if (view) [roots addObject:view];
+        } @catch (NSException *e) {}
+    }
+    @try {
+        for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+            if (![scene isKindOfClass:[UIWindowScene class]]) continue;
+            for (UIWindow *window in [(UIWindowScene *)scene windows]) if (window) [roots addObject:window];
+        }
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        for (UIWindow *window in [UIApplication sharedApplication].windows) if (window && ![roots containsObject:window]) [roots addObject:window];
+#pragma clang diagnostic pop
+    } @catch (NSException *e) {}
+    return roots;
+}
+
+static BOOL autoinstallInviteControlMatches(id element) {
+    if (!element || [element isKindOfClass:[UIWindow class]]) return NO;
+    NSString *label = @"";
+    NSString *title = @"";
+    NSString *text = @"";
+    @try { if ([element respondsToSelector:@selector(accessibilityLabel)]) label = [element accessibilityLabel] ?: @""; } @catch (NSException *e) {}
+    @try { if ([element respondsToSelector:@selector(currentTitle)]) title = [(UIButton *)element currentTitle] ?: @""; } @catch (NSException *e) {}
+    @try { if ([element respondsToSelector:@selector(text)]) text = [(UILabel *)element text] ?: @""; } @catch (NSException *e) {}
+    for (NSString *value in @[label, title, text]) {
+        NSString *normalized = [value stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        if ([normalized caseInsensitiveCompare:@"Accept"] == NSOrderedSame || [normalized caseInsensitiveCompare:@"Join"] == NSOrderedSame) return YES;
+    }
+    return NO;
+}
+
+static NSArray *autoinstallActivateInviteControls(void) {
+    NSMutableArray *acted = [NSMutableArray array];
+    for (id root in autoinstallInviteRoots()) {
+        __block BOOL stopped = NO;
+        autoinstallWalkAX(root, ^(id element) {
+            if (stopped || !autoinstallInviteControlMatches(element)) return;
+            @try {
+                NSString *label = [element respondsToSelector:@selector(accessibilityLabel)] ? ([element accessibilityLabel] ?: @"") : @"";
+                if ([element respondsToSelector:@selector(accessibilityActivate)]) [element accessibilityActivate];
+                if ([element isKindOfClass:[UIControl class]]) [(UIControl *)element sendActionsForControlEvents:UIControlEventTouchUpInside];
+                [acted addObject:@{ @"label": label, @"class": NSStringFromClass([element class]) }];
+                stopped = YES;
+            } @catch (NSException *e) {
+                [acted addObject:@{ @"class": NSStringFromClass([element class]), @"error": [NSString stringWithFormat:@"%@ %@", e.name, e.reason] }];
+                stopped = YES;
+            }
+        });
+        if (acted.count > 0) break;
+    }
+    return acted;
+}
+
+static void autoinstallScheduleInviteControls(NSUInteger attempt) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        NSArray *acted = autoinstallActivateInviteControls();
+        autoinstallLog([NSString stringWithFormat:@"subscribe_invite controls attempt=%lu acted=%@", (unsigned long)(attempt + 1), acted]);
+        if (acted.count == 0 && attempt < 12) autoinstallScheduleInviteControls(attempt + 1);
+    });
 }
 
 static void autoinstallScheduleConfirm(NSString *match, NSUInteger attempt) {

@@ -7,6 +7,7 @@
   import DevicesSettings from '#tabs/settings/DevicesSettings.svelte';
   import RolesSettings from '#tabs/settings/RolesSettings.svelte';
   import SchedulerSettings from '#tabs/settings/SchedulerSettings.svelte';
+  import TestFlightSettings from '#tabs/settings/TestFlightSettings.svelte';
   import UsersSettings from '#tabs/settings/UsersSettings.svelte';
 
   const ALL_SUBTABS: { id: string; label: string; requires: bigint[] }[] = [
@@ -15,6 +16,7 @@
     { id: 'users', label: 'Users', requires: [PermissionFlag.viewUsers, PermissionFlag.manageUsers] },
     { id: 'roles', label: 'Roles', requires: [PermissionFlag.viewRoles, PermissionFlag.manageRoles] },
     { id: 'backup', label: 'Backup', requires: [PermissionFlag.viewBackup, PermissionFlag.manageBackup] },
+    { id: 'testflight', label: 'TestFlight', requires: [PermissionFlag.requestTestFlightSubscriptions, PermissionFlag.manageTestFlightSubscriptions] },
   ];
 
   function hasAccess(requires: bigint[]): boolean {
@@ -55,5 +57,10 @@
 {#if hasAccess([PermissionFlag.viewBackup, PermissionFlag.manageBackup])}
   <div class:hidden={tabState.settingsSubtab !== 'backup'}>
     <BackupSettings />
+  </div>
+{/if}
+{#if hasAccess([PermissionFlag.requestTestFlightSubscriptions, PermissionFlag.manageTestFlightSubscriptions])}
+  <div class:hidden={tabState.settingsSubtab !== 'testflight'}>
+    <TestFlightSettings />
   </div>
 {/if}

@@ -11,7 +11,7 @@ import {
   withSSH,
 } from '#idevice.js';
 import { getPrimaryDevice, type DeviceRecord } from '#store/state.js';
-import { hasBridgeCapabilities } from '#bridgeProtocol.js';
+import { hasBridgeCapabilities, hasBridgeCapabilitySet, TESTFLIGHT_LIFECYCLE_CAPABILITIES } from '#bridgeProtocol.js';
 
 function primaryDevice() {
   const device = getPrimaryDevice();
@@ -63,19 +63,26 @@ async function launchTestFlight(conn: Client, wasRunning: boolean): Promise<void
   }
 }
 
-async function waitForBridgeReady(conn: Client, timeoutMs = 20_000): Promise<void> {
+async function waitForBridgeReady(conn: Client, requiredCapabilities: readonly string[] = [], timeoutMs = 20_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
       const response = await sendTestFlightBridgeRequest(conn, { action: 'status' }, 3_000);
-      if (response?.hasInstaller && response?.hasCatalogManager && hasRequiredBridgeCapabilities(response)) return;
-    } catch {}
+      const hasBaseCapabilities = hasRequiredBridgeCapabilities(response);
+      const hasRequestedCapabilities = hasBridgeCapabilitySet(response?.capabilities, requiredCapabilities);
+      if (response?.hasInstaller && response?.hasCatalogManager && hasBaseCapabilities && hasRequestedCapabilities) return;
+      if (requiredCapabilities.length > 0 && response?.hasInstaller && response?.hasCatalogManager && hasBaseCapabilities && !hasRequestedCapabilities) {
+        throw new BridgeError({ code: 'unsupported', stage: 'capability_negotiation', message: 'installed autoinstall package does not support the required TestFlight lifecycle capabilities', retryable: false });
+      }
+    } catch (error) {
+      if (error instanceof BridgeError && !error.details.retryable) throw error;
+    }
     await new Promise((r) => setTimeout(r, 1_000));
   }
   throw new Error('autoinstall bridge did not become ready within timeout');
 }
 
-export async function ensureTestFlightRunning(device = primaryDevice()): Promise<void> {
+export async function ensureTestFlightRunning(device = primaryDevice(), requiredCapabilities: readonly string[] = []): Promise<void> {
   return withSSH(device, async (conn) => {
     const wasRunning = await isTestFlightRunning(conn);
     log.info(
@@ -85,7 +92,7 @@ export async function ensureTestFlightRunning(device = primaryDevice()): Promise
     );
     await launchTestFlight(conn, wasRunning);
     await new Promise((r) => setTimeout(r, wasRunning ? 2_000 : 3_000));
-    await waitForBridgeReady(conn);
+    await waitForBridgeReady(conn, requiredCapabilities);
   });
 }
 
@@ -103,18 +110,48 @@ export async function listBuilds(appId: number, trainVersion: string, device = p
   }), device);
 }
 
-async function withReadyBridgeRequest<T>(request: () => Promise<T>, device: DeviceRecord): Promise<T> {
-  await ensureTestFlightRunning(device);
-  return withBridgeRecovery(request, device);
+const TESTFLIGHT_INVITE_URL_RE = /^https:\/\/testflight\.apple\.com\/join\/([A-Za-z0-9]{4,32})$/;
+
+export async function subscribeToTestFlightInvite(url: string, operationId: string, device = primaryDevice()): Promise<Record<string, unknown>> {
+  if (!TESTFLIGHT_INVITE_URL_RE.test(url)) throw new Error('invalid TestFlight public link');
+  return withReadyBridgeRequest(() => withSSH(device, (conn) => sendTestFlightBridgeRequest(conn, {
+    action: 'subscribe_invite',
+    url,
+    operationId,
+  })), device, TESTFLIGHT_LIFECYCLE_CAPABILITIES);
 }
 
-async function withBridgeRecovery<T>(request: () => Promise<T>, device: DeviceRecord): Promise<T> {
+export async function statusTestFlightInvite(url: string, appId: number, operationId: string, device = primaryDevice()): Promise<Record<string, unknown>> {
+  if (!TESTFLIGHT_INVITE_URL_RE.test(url) || !Number.isInteger(appId) || appId <= 0) throw new Error('invalid TestFlight invite status request');
+  return withReadyBridgeRequest(() => withSSH(device, (conn) => sendTestFlightBridgeRequest(conn, {
+    action: 'status_invite',
+    url,
+    appId,
+    operationId,
+  })), device, TESTFLIGHT_LIFECYCLE_CAPABILITIES);
+}
+
+export async function unsubscribeFromTestFlightInvite(bundleId: string, device = primaryDevice(), operationId?: string): Promise<Record<string, unknown>> {
+  if (!SAFE_BUNDLE_ID_RE.test(bundleId)) throw new Error('invalid bundle identifier');
+  return withReadyBridgeRequest(() => withSSH(device, (conn) => sendTestFlightBridgeRequest(conn, {
+    action: 'unsubscribe_invite',
+    bundleId,
+    operationId,
+  })), device, TESTFLIGHT_LIFECYCLE_CAPABILITIES);
+}
+
+async function withReadyBridgeRequest<T>(request: () => Promise<T>, device: DeviceRecord, requiredCapabilities: readonly string[] = []): Promise<T> {
+  await ensureTestFlightRunning(device, requiredCapabilities);
+  return withBridgeRecovery(request, device, requiredCapabilities);
+}
+
+async function withBridgeRecovery<T>(request: () => Promise<T>, device: DeviceRecord, requiredCapabilities: readonly string[] = []): Promise<T> {
   try {
     return await request();
   } catch (err) {
     if (!(err instanceof BridgeError) || !err.details.retryable) throw err;
     log.warn('recovering a retryable TestFlight bridge request', { code: err.details.code, stage: err.details.stage });
-    await ensureTestFlightRunning(device);
+    await ensureTestFlightRunning(device, requiredCapabilities);
     return request();
   }
 }

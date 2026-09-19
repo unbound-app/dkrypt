@@ -7,6 +7,7 @@
   import Button from '#lib/components/ui/Button.svelte';
   import Dialog from '#lib/components/ui/Dialog.svelte';
   import Input from '#lib/components/ui/Input.svelte';
+  import Select from '#lib/components/ui/Select.svelte';
   import { fmtTime } from '#lib/format';
 
   interface Props {
@@ -14,15 +15,17 @@
     bundleId: string;
     appId: number;
     trackName: string;
+    devices?: Array<{ id: string; name: string }>;
     onOpenChange: (open: boolean) => void;
-    onDecrypt: (bundleId: string, appId: number, build: TFBuild, label: string) => void;
+    onDecrypt: (bundleId: string, appId: number, build: TFBuild, label: string, deviceId?: string) => void;
   }
 
-  let { open, bundleId, appId, trackName, onOpenChange, onDecrypt }: Props = $props();
+  let { open, bundleId, appId, trackName, devices = [], onOpenChange, onDecrypt }: Props = $props();
 
   let trains = $state<TFTrain[] | null>(null);
   let error = $state('');
-  let loadedFor = $state(0);
+  let loadedFor = $state('');
+  let selectedDeviceId = $state('');
 
   let expandedTrain = $state('');
 
@@ -35,14 +38,14 @@
 
   async function refreshExpandedTrainBuilds(trainVersion: string): Promise<void> {
     const oldIds = new Set((buildsCache[trainVersion] ?? []).map((b) => b.id));
-    const data = await fetchTestFlightBuilds(appId, trainVersion);
+    const data = await fetchTestFlightBuilds(appId, trainVersion, selectedDeviceId || undefined);
     if ('error' in data) return;
     buildsCache = { ...buildsCache, [trainVersion]: data.builds };
     newBuildIds = new Set(data.builds.filter((b) => !oldIds.has(b.id)).map((b) => b.id));
   }
 
   function load(id: number, force = false): void {
-    loadedFor = id;
+    loadedFor = `${id}:${selectedDeviceId}`;
     error = '';
     if (!force) {
       expandedTrain = '';
@@ -54,7 +57,7 @@
     const prevCount = force && expandedTrain ? trains?.find((t) => t.trainVersion === expandedTrain)?.buildCount : undefined;
     if (force) refreshingTrains = true;
     else trains = null;
-    fetchTestFlightTrains(id)
+    fetchTestFlightTrains(id, selectedDeviceId || undefined)
       .then((data) => {
         if ('error' in data) {
           error = data.error;
@@ -77,7 +80,15 @@
   }
 
   $effect(() => {
-    if (!open || appId === loadedFor) return;
+    if (devices.length === 0) {
+      selectedDeviceId = '';
+      return;
+    }
+    if (!devices.some((device) => device.id === selectedDeviceId)) selectedDeviceId = devices[0].id;
+  });
+
+  $effect(() => {
+    if (!open || `${appId}:${selectedDeviceId}` === loadedFor) return;
     load(appId);
   });
 
@@ -93,7 +104,7 @@
     buildsError = '';
     loadingTrain = trainVersion;
     try {
-      const data = await fetchTestFlightBuilds(appId, trainVersion);
+      const data = await fetchTestFlightBuilds(appId, trainVersion, selectedDeviceId || undefined);
       if ('error' in data) {
         buildsError = data.error;
       } else {
@@ -128,6 +139,8 @@
     if (!q || !trains) return trains ?? [];
     return trains.filter((t) => t.trainVersion.toLowerCase().includes(q));
   });
+
+  const deviceOptions = $derived(devices.map((device) => ({ value: device.id, label: device.name })));
 </script>
 
 <Dialog {open} {onOpenChange} class="max-w-lg">
@@ -147,6 +160,14 @@
       </Button>
     {/if}
   </div>
+  {#if deviceOptions.length > 1}
+    <div class="mb-3">
+      <label for="testflight-device" class="mb-1 block text-xs text-muted">Use device</label>
+      <Select id="testflight-device" items={deviceOptions} bind:value={selectedDeviceId} onValueChange={() => load(appId)} />
+    </div>
+  {:else if deviceOptions.length === 1}
+    <div class="mb-3 text-xs text-muted">Verified on {deviceOptions[0].label}</div>
+  {/if}
   <RateLimitHint bucket="external" />
 
   {#if trains === null}
@@ -197,7 +218,7 @@
                         <div class="text-muted text-xs">{fmtTime(new Date(b.releaseDate).getTime())}</div>
                       {/if}
                     </div>
-                    <Button size="sm" onclick={() => onDecrypt(bundleId, appId, b, label(b))}>Install &amp; decrypt</Button>
+                    <Button size="sm" onclick={() => onDecrypt(bundleId, appId, b, label(b), selectedDeviceId || undefined)}>Install &amp; decrypt</Button>
                   </div>
                 {/each}
               {/if}

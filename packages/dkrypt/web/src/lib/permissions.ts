@@ -32,6 +32,8 @@ export const PermissionFlag = {
   manageApiKeys: 1n << 31n,
   viewAutomation: 1n << 32n,
   manageAutomation: 1n << 33n,
+  requestTestFlightSubscriptions: 1n << 34n,
+  manageTestFlightSubscriptions: 1n << 35n,
 } as const;
 
 export type PermissionFlagKey = keyof typeof PermissionFlag;
@@ -85,6 +87,8 @@ export const PERMISSION_META: PermissionMeta[] = [
   { key: 'manageApiKeys', label: 'Manage API keys', description: 'Approve or deny requests; revoke any key; and change expiry, limits, concurrency, TestFlight access, and priority for any key.', group: 'API Keys' },
   { key: 'viewAutomation', label: 'View automation', description: 'Read watched apps, scheduler state, notifications, and dispatch health without changing any automation configuration.', group: 'Automation & Devices' },
   { key: 'manageAutomation', label: 'Manage automation', description: 'Create and edit watches, change scheduler settings, test notifications, and run or preview dispatches.', group: 'Automation & Devices' },
+  { key: 'requestTestFlightSubscriptions', label: 'Request TestFlight subscriptions', description: 'Submit, view, and withdraw your own public TestFlight subscription requests.', group: 'Automation & Devices' },
+  { key: 'manageTestFlightSubscriptions', label: 'Manage TestFlight subscriptions', description: 'Approve, deny, synchronize, create, and unsubscribe any public TestFlight subscription.', group: 'Automation & Devices' },
   { key: 'viewDevices', label: 'View devices', description: 'Read decrypt-pool device configuration and health without adding, editing, removing, or operating devices.', group: 'Automation & Devices' },
   { key: 'manageDevices', label: 'Manage devices', description: 'Discover, set up, edit, enable, and delete decrypt-pool devices, including their connection details.', group: 'Automation & Devices' },
   { key: 'viewUsers', label: 'View members', description: 'Read member role assignments, member details, and the audit log. It does not grant the ability to change roles or alter any record.', group: 'Members & Roles' },

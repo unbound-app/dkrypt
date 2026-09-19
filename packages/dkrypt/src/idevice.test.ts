@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { Client } from 'ssh2';
 import type { BridgeEnvelope } from './idevice.js';
-import { BRIDGE_CAPABILITIES, BRIDGE_PROTOCOL_VERSION } from './bridgeProtocol.js';
+import { BRIDGE_CAPABILITIES, BRIDGE_PROTOCOL_VERSION, TESTFLIGHT_LIFECYCLE_CAPABILITIES } from './bridgeProtocol.js';
 
 const { armAppStoreAutoConfirm, buildIpadecryptRuntimeConfig, createBridgeEnvelope, execCommand, readBridgeHeartbeats, retryTransientSshConnection } = await import('./idevice.js' + '?idevice-transport-test');
 
@@ -65,13 +65,13 @@ test('createBridgeEnvelope matches the shared bridge fixture', async () => {
     requestId: string;
     issuedAt: number;
     envelope: BridgeEnvelope;
-    contract: { version: number; springboard: readonly string[]; testflight: readonly string[]; appstore: readonly string[] };
+    contract: { version: number; springboard: readonly string[]; testflight: readonly string[]; testflightLifecycle: readonly string[]; appstore: readonly string[] };
   };
   const envelope = createBridgeEnvelope(fixture.secret, fixture.channel, fixture.request, fixture.requestId, fixture.issuedAt);
 
   expect(envelope).toEqual(fixture.envelope);
   expect(createBridgeEnvelope(fixture.secret, 'appstore', fixture.request, fixture.requestId, fixture.issuedAt).signature).not.toBe(envelope.signature);
-  expect(fixture.contract).toEqual({ version: BRIDGE_PROTOCOL_VERSION, ...BRIDGE_CAPABILITIES });
+  expect(fixture.contract).toEqual({ version: BRIDGE_PROTOCOL_VERSION, ...BRIDGE_CAPABILITIES, testflightLifecycle: TESTFLIGHT_LIFECYCLE_CAPABILITIES });
 });
 
 test('uses SSH exec channels for device file reads and quoted writes', async () => {

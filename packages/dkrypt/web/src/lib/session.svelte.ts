@@ -71,6 +71,8 @@ export function sessionCanSeeSettings(): boolean {
     PermissionFlag.viewDevices,
     PermissionFlag.viewRoles,
     PermissionFlag.viewBackup,
+    PermissionFlag.requestTestFlightSubscriptions,
+    PermissionFlag.manageTestFlightSubscriptions,
   ]);
 }
 

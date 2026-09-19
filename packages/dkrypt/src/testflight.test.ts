@@ -4,6 +4,7 @@ const installedInfoPlist = '/var/containers/Bundle/Application/B7CC6241-7F24-468
 const originalSetTimeout = globalThis.setTimeout;
 let installRequests = 0;
 let installedBuild = '107127';
+const lifecycleActions: string[] = [];
 
 const idevice = await import('#idevice.js');
 const state = await import('#store/state.js');
@@ -18,7 +19,7 @@ mock.module('#idevice.js', () => ({
     if (request.action === 'status') {
       return {
         bridgeVersion: '2.0.0',
-        capabilities: ['list_trains', 'list_builds', 'install', 'diagnostics', 'idempotent_install', 'protocol_v1', 'authenticated_requests', 'operation_responses', 'heartbeats', 'stale_artifact_cleanup'],
+        capabilities: ['list_trains', 'list_builds', 'install', 'diagnostics', 'subscribe_invite', 'status_invite', 'unsubscribe_invite', 'invite_lifecycle', 'idempotent_install', 'protocol_v1', 'authenticated_requests', 'operation_responses', 'heartbeats', 'stale_artifact_cleanup'],
         hasInstaller: true,
         hasCatalogManager: true,
       };
@@ -26,6 +27,10 @@ mock.module('#idevice.js', () => ({
     if (request.action === 'install') {
       installRequests += 1;
       if (installRequests >= 2) installedBuild = '107128';
+    }
+    if (request.action === 'subscribe_invite' || request.action === 'status_invite' || request.action === 'unsubscribe_invite') {
+      lifecycleActions.push(String(request.action));
+      if (request.action === 'status_invite') return { ok: true, verified: true };
     }
     return { ok: true };
   },
@@ -37,7 +42,7 @@ mock.module('#store/state.js', () => ({
   getPrimaryDevice: () => ({ rootDir: '/device' }),
 }));
 
-const { installBuild } = await import('./testflight.js');
+const { installBuild, statusTestFlightInvite, subscribeToTestFlightInvite, unsubscribeFromTestFlightInvite } = await import('./testflight.js');
 
 describe('installBuild', () => {
   afterAll(() => {
@@ -48,6 +53,7 @@ describe('installBuild', () => {
   beforeEach(() => {
     installRequests = 0;
     installedBuild = '107127';
+    lifecycleActions.length = 0;
     globalThis.setTimeout = ((handler: () => void) => originalSetTimeout(handler, 1)) as unknown as typeof setTimeout;
   });
 
@@ -75,5 +81,12 @@ describe('installBuild', () => {
       buildVersion: '107128',
     });
     expect(installRequests).toBe(2);
+  });
+
+  test('supports authenticated invite lifecycle actions and status verification', async () => {
+    await expect(subscribeToTestFlightInvite('https://testflight.apple.com/join/AbC123', 'invite-subscribe')).resolves.toMatchObject({ ok: true });
+    await expect(statusTestFlightInvite('https://testflight.apple.com/join/AbC123', 985746746, 'invite-status')).resolves.toMatchObject({ ok: true, verified: true });
+    await expect(unsubscribeFromTestFlightInvite('com.hammerandchisel.discord', undefined, 'invite-unsubscribe')).resolves.toMatchObject({ ok: true });
+    expect(lifecycleActions).toEqual(['subscribe_invite', 'status_invite', 'unsubscribe_invite']);
   });
 });

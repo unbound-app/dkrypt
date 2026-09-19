@@ -51,6 +51,17 @@ The dashboard setup check verifies SSH, iOS, the jailbreak, and the bridge heart
 </details>
 
 <details>
+<summary>Public TestFlight links</summary>
+
+Users with **Request TestFlight subscriptions** can submit canonical public links such as `https://testflight.apple.com/join/ABC123` from **Settings → TestFlight**. A manager with **Manage TestFlight subscriptions** can approve the request, or submit a link directly.
+
+dkrypt verifies access independently on every enabled device. A link appears in search only after at least one device has verified it recently, and the build picker shows which eligible device will be used. Approving a link does not install every future build; choose and queue a build as usual.
+
+Unsubscribing stops dkrypt automation and removes the app from enabled devices when possible. Apple-side tester membership may remain active because TestFlight does not expose a reliable leave operation through the device bridge.
+
+</details>
+
+<details>
 <summary>USB and Wi-Fi discovery</summary>
 
 The Compose stack includes `libimobiledevice` and `usbmuxd` tools and mounts `/var/run/usbmuxd` for USB discovery. The host must be running `usbmuxd` and expose that socket to the container. Paired Wi-Fi devices are detected through usbmuxd; dkrypt also probes the local private network for reachable iOS SSH services.

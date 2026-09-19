@@ -6,10 +6,16 @@ export const BRIDGE_CAPABILITIES = {
   appstore: ['install', 'status', 'diagnostics', 'foreground_status', 'protocol_v1', 'authenticated_requests', 'operation_responses', 'heartbeats', 'stale_artifact_cleanup'],
 } as const;
 
+export const TESTFLIGHT_LIFECYCLE_CAPABILITIES = ['subscribe_invite', 'status_invite', 'unsubscribe_invite', 'invite_lifecycle'] as const;
+
 export type BridgeChannel = keyof typeof BRIDGE_CAPABILITIES;
 
-export function hasBridgeCapabilities(channel: BridgeChannel, capabilities: unknown): boolean {
+export function hasBridgeCapabilitySet(capabilities: unknown, required: readonly string[]): boolean {
   if (!Array.isArray(capabilities)) return false;
   const reported = capabilities.filter((value): value is string => typeof value === 'string');
-  return BRIDGE_CAPABILITIES[channel].every((capability) => reported.includes(capability));
+  return required.every((capability) => reported.includes(capability));
+}
+
+export function hasBridgeCapabilities(channel: BridgeChannel, capabilities: unknown): boolean {
+  return hasBridgeCapabilitySet(capabilities, BRIDGE_CAPABILITIES[channel]);
 }

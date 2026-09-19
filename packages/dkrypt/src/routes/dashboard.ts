@@ -25,6 +25,22 @@ import { nextCronRunAt, nextCronRuns } from '#util/cron.js';
 import { getDiskUsage } from '#util/diskUsage.js';
 import { rateLimitPerUser } from '#util/rateLimit.js';
 import { getFailureGuidance } from '#util/failureGuidance.js';
+import {
+  decorateSearchResults,
+  getVerifiedTestFlightCatalog,
+  normalizeTestFlightInvite,
+  resolveTestFlightInvite,
+  subscriptionsForUser,
+  syncTestFlightSubscription,
+  unsubscribeTestFlightSubscription,
+} from '#testflightSubscriptions.js';
+import {
+  approveTestFlightSubscription,
+  createTestFlightSubscription,
+  denyTestFlightSubscription,
+  findTestFlightSubscriptionByInviteCode,
+  getTestFlightSubscription,
+} from '#store/state.js';
 import { listAppVersions } from '#versions.js';
 import { artifactDownloadName, artifactFileAvailable, artifactKeyForAppStoreVersion, getArtifactById, getArtifactByKey, getArtifactBySourceJobId, getArtifactForJob, getArtifactStorageStats, listArtifacts, touchArtifact } from '#artifacts.js';
 import {
@@ -167,6 +183,9 @@ const canViewDiscordPerks = requirePermission(PermissionFlag.viewRoles, Permissi
 const canManageDiscordPerks = requirePermission(PermissionFlag.manageRoles);
 const canViewBackup = requirePermission(PermissionFlag.viewBackup, PermissionFlag.manageBackup);
 const canManageBackup = requirePermission(PermissionFlag.manageBackup);
+const canViewTestFlightSubscriptions = requirePermission(PermissionFlag.requestTestFlightSubscriptions, PermissionFlag.manageTestFlightSubscriptions);
+const canManageTestFlightSubscriptions = requirePermission(PermissionFlag.manageTestFlightSubscriptions);
+const canViewTestFlightCatalog = requirePermission(PermissionFlag.requestDecrypt, PermissionFlag.requestTestFlightSubscriptions, PermissionFlag.manageTestFlightSubscriptions);
 
 export const dashboardRouter = Router();
 
@@ -592,7 +611,7 @@ dashboardRouter.get('/v1/dashboard/search', async (req, res) => {
   }
 
   try {
-    const results = await searchApps(term);
+    const results = decorateSearchResults(await searchApps(term));
     upsertAppCatalogEntries(
       results.map((result) => ({
         bundleId: result.bundleId,
@@ -607,6 +626,125 @@ dashboardRouter.get('/v1/dashboard/search', async (req, res) => {
   } catch (err) {
     res.status(502).json({ error: String(err) });
   }
+});
+
+dashboardRouter.get('/v1/dashboard/testflight/subscriptions', canViewTestFlightSubscriptions, (_req, res) => {
+  const manager = hasPermission(res.locals.session.permissions, PermissionFlag.manageTestFlightSubscriptions);
+  res.json({ subscriptions: subscriptionsForUser(res.locals.session.sub, manager) });
+});
+
+dashboardRouter.post('/v1/dashboard/testflight/subscriptions', canViewTestFlightSubscriptions, async (req, res) => {
+  let normalized;
+  try {
+    normalized = normalizeTestFlightInvite(req.body?.url);
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    return;
+  }
+  const manager = hasPermission(res.locals.session.permissions, PermissionFlag.manageTestFlightSubscriptions);
+  const existing = findTestFlightSubscriptionByInviteCode(normalized.inviteCode);
+  if (existing) {
+    if (!manager && existing.requestedBy !== res.locals.session.sub.toLowerCase()) {
+      res.status(409).json({ error: 'a subscription already exists for this invite link' });
+      return;
+    }
+    if (manager && existing.status === 'pending') {
+      const approved = approveTestFlightSubscription(existing.id, res.locals.session.sub);
+      if (approved) void syncTestFlightSubscription(approved.id, res.locals.session.sub);
+      res.status(202).json({ subscription: approved ?? existing });
+      return;
+    }
+    if (manager && existing.status === 'approved') void syncTestFlightSubscription(existing.id, res.locals.session.sub);
+    res.json({ subscription: existing });
+    return;
+  }
+  try {
+    const metadata = await resolveTestFlightInvite(normalized.url);
+    const subscription = createTestFlightSubscription({
+      ...normalized,
+      ...metadata,
+      requestedBy: res.locals.session.sub,
+      status: manager ? 'approved' : 'pending',
+    }, res.locals.session.sub);
+    if (!manager && subscription.requestedBy !== res.locals.session.sub.toLowerCase()) {
+      res.status(409).json({ error: 'a subscription already exists for this invite link' });
+      return;
+    }
+    if (manager) void syncTestFlightSubscription(subscription.id, res.locals.session.sub);
+    res.status(manager ? 202 : 201).json({ subscription });
+  } catch (error) {
+    res.status(422).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+dashboardRouter.post('/v1/dashboard/testflight/subscriptions/:id/approve', canManageTestFlightSubscriptions, (req, res) => {
+  const current = getTestFlightSubscription(req.params.id);
+  if (!current) {
+    res.status(404).json({ error: 'subscription not found' });
+    return;
+  }
+  if (current.status !== 'pending') {
+    res.status(409).json({ error: `cannot approve a ${current.status} subscription` });
+    return;
+  }
+  const subscription = approveTestFlightSubscription(req.params.id, res.locals.session.sub);
+  if (!subscription) {
+    res.status(404).json({ error: 'subscription not found' });
+    return;
+  }
+  void syncTestFlightSubscription(subscription.id, res.locals.session.sub);
+  res.status(202).json({ subscription });
+});
+
+dashboardRouter.post('/v1/dashboard/testflight/subscriptions/:id/deny', canManageTestFlightSubscriptions, (req, res) => {
+  const current = getTestFlightSubscription(req.params.id);
+  if (!current) {
+    res.status(404).json({ error: 'subscription not found' });
+    return;
+  }
+  if (current.status !== 'pending') {
+    res.status(409).json({ error: `cannot deny a ${current.status} subscription` });
+    return;
+  }
+  const subscription = denyTestFlightSubscription(req.params.id, res.locals.session.sub);
+  if (!subscription) {
+    res.status(404).json({ error: 'subscription not found' });
+    return;
+  }
+  res.json({ subscription });
+});
+
+dashboardRouter.post('/v1/dashboard/testflight/subscriptions/:id/sync', canManageTestFlightSubscriptions, (req, res) => {
+  const subscription = getTestFlightSubscription(req.params.id);
+  if (!subscription) {
+    res.status(404).json({ error: 'subscription not found' });
+    return;
+  }
+  if (subscription.status !== 'approved') {
+    res.status(409).json({ error: `cannot synchronize a ${subscription.status} subscription` });
+    return;
+  }
+  void syncTestFlightSubscription(subscription.id, res.locals.session.sub);
+  res.status(202).json({ subscription });
+});
+
+dashboardRouter.post('/v1/dashboard/testflight/subscriptions/:id/unsubscribe', canViewTestFlightSubscriptions, (req, res) => {
+  const subscription = getTestFlightSubscription(req.params.id);
+  if (!subscription) {
+    res.status(404).json({ error: 'subscription not found' });
+    return;
+  }
+  const manager = hasPermission(res.locals.session.permissions, PermissionFlag.manageTestFlightSubscriptions);
+  if (!manager && subscription.requestedBy !== res.locals.session.sub.toLowerCase()) {
+    res.status(403).json({ error: 'you can only unsubscribe your own TestFlight subscriptions' });
+    return;
+  }
+  void unsubscribeTestFlightSubscription(subscription.id, res.locals.session.sub);
+  res.status(202).json({ subscription });
+});
+
+dashboardRouter.get('/v1/dashboard/testflight/catalog', canViewTestFlightCatalog, (_req, res) => {
+  res.json({ apps: getVerifiedTestFlightCatalog() });
 });
 
 dashboardRouter.get('/v1/dashboard/apps/metadata', async (req, res) => {
@@ -733,7 +871,27 @@ dashboardRouter.post('/v1/dashboard/decrypt/preflight', canDecrypt, async (req, 
   const testflight = req.body?.testflight === true;
   const versionLabel = typeof req.body?.versionLabel === 'string' ? req.body.versionLabel.trim().slice(0, 64) || undefined : undefined;
   const installSizeBytes = typeof req.body?.installSizeBytes === 'number' && Number.isFinite(req.body.installSizeBytes) && req.body.installSizeBytes > 0 ? req.body.installSizeBytes : undefined;
-  const devices = getEffectiveDevices().filter((device) => device.enabled);
+  const requestedDeviceId = typeof req.body?.deviceId === 'string' ? req.body.deviceId.trim() : '';
+  const requestedDevice = requestedDeviceId ? getDevice(requestedDeviceId) : undefined;
+  if (requestedDeviceId && (!requestedDevice || !requestedDevice.enabled)) {
+    res.status(400).json({ error: 'deviceId must refer to an enabled device' });
+    return;
+  }
+  const verifiedTestFlightApp = testflight
+    ? getVerifiedTestFlightCatalog().find((entry) => entry.bundleId === bundleId)
+    : undefined;
+  if (testflight && !verifiedTestFlightApp) {
+    res.status(409).json({ error: 'TestFlight access must be verified on an enabled device before queueing' });
+    return;
+  }
+  if (requestedDevice && verifiedTestFlightApp && !verifiedTestFlightApp.devices.some((device) => device.id === requestedDevice.id)) {
+    res.status(409).json({ error: 'TestFlight access is not verified on the selected device' });
+    return;
+  }
+  const verifiedDeviceIds = verifiedTestFlightApp ? new Set(verifiedTestFlightApp.devices.map((device) => device.id)) : undefined;
+  const devices = requestedDevice
+    ? [requestedDevice]
+    : getEffectiveDevices().filter((device) => device.enabled && (!verifiedDeviceIds || verifiedDeviceIds.has(device.id)));
   const primary = devices.find((device) => device.isPrimary) ?? devices[0];
   const checks = await Promise.all(devices.map(async (device) => {
     try {
@@ -1500,8 +1658,15 @@ dashboardRouter.get('/v1/dashboard/testflight/:appId/trains', deviceOrExternalRa
     return;
   }
 
+  const deviceId = typeof req.query.deviceId === 'string' ? req.query.deviceId : '';
+  const device = deviceId ? getDevice(deviceId) : undefined;
+  if (deviceId && (!device || !device.enabled)) {
+    res.status(400).json({ error: 'deviceId must refer to an enabled device' });
+    return;
+  }
+
   try {
-    const trains = await listTrains(appId);
+    const trains = await listTrains(appId, device);
     res.json({ trains });
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
@@ -1524,8 +1689,15 @@ dashboardRouter.get('/v1/dashboard/testflight/:appId/builds', deviceOrExternalRa
     return;
   }
 
+  const deviceId = typeof req.query.deviceId === 'string' ? req.query.deviceId : '';
+  const device = deviceId ? getDevice(deviceId) : undefined;
+  if (deviceId && (!device || !device.enabled)) {
+    res.status(400).json({ error: 'deviceId must refer to an enabled device' });
+    return;
+  }
+
   try {
-    const builds = await listBuilds(appId, trainVersion);
+    const builds = await listBuilds(appId, trainVersion, device);
     res.json({ builds });
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
@@ -1545,8 +1717,28 @@ dashboardRouter.post('/v1/dashboard/testflight/decrypt', canDecrypt, blockDuring
     return;
   }
 
+  const requestedDeviceId = typeof req.body?.deviceId === 'string' ? req.body.deviceId.trim() : '';
+  const requestedDevice = requestedDeviceId ? getDevice(requestedDeviceId) : undefined;
+  if (requestedDeviceId && (!requestedDevice || !requestedDevice.enabled)) {
+    res.status(400).json({ error: 'deviceId must refer to an enabled device' });
+    return;
+  }
+  const verifiedTestFlightApp = getVerifiedTestFlightCatalog().find((entry) => entry.appId === appId && entry.bundleId === bundleId);
+  if (!verifiedTestFlightApp) {
+    res.status(409).json({ error: 'TestFlight access must be verified on an enabled device before queueing' });
+    return;
+  }
+  if (requestedDevice && verifiedTestFlightApp && !verifiedTestFlightApp.devices.some((device) => device.id === requestedDevice.id)) {
+    res.status(409).json({ error: 'TestFlight access is not verified on the selected device' });
+    return;
+  }
   const preferPrimary = req.body?.preferPrimary === true;
-  const preferredDeviceId = preferPrimary ? getPrimaryDevice()?.id : undefined;
+  const preferredDeviceId = requestedDevice?.id
+    ?? (verifiedTestFlightApp
+      ? (preferPrimary && verifiedTestFlightApp.devices.some((device) => device.id === getPrimaryDevice()?.id)
+        ? getPrimaryDevice()?.id
+        : verifiedTestFlightApp.devices[0]?.id)
+      : (preferPrimary ? getPrimaryDevice()?.id : undefined));
 
   const job = enqueueDecryptJob(
     bundleId,

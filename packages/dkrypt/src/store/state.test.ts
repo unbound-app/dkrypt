@@ -14,6 +14,7 @@ import {
   createDevice,
   createDiscordRolePerk,
   createRole,
+  createTestFlightSubscription,
   createWatch,
   deleteDevice,
   deleteWatch,
@@ -25,6 +26,7 @@ import {
   getDiscordRolePerks,
   getInsightsSummary,
   getEffectiveDevices,
+  getTestFlightSubscription,
   getWatchDispatchTargets,
   getWatchConfigIssues,
   getWebhookDeliveryLog,
@@ -43,6 +45,9 @@ import {
   updateWatch,
   verifyApiKey,
   markNotificationsRead,
+  approveTestFlightSubscription,
+  denyTestFlightSubscription,
+  updateTestFlightSubscriptionDevice,
 } from '#store/state.js';
 
 describe('dashboard notifications', () => {
@@ -142,12 +147,49 @@ describe('Discord role perks', () => {
 });
 
 describe('exportBackup / importBackup', () => {
+  test('round-trips public TestFlight subscriptions with per-device state', () => {
+    const userId = `testflight-${randomUUID()}`;
+    const subscription = createTestFlightSubscription({
+      url: 'https://testflight.apple.com/join/AbC123',
+      inviteCode: 'AbC123',
+      requestedBy: userId,
+      status: 'pending',
+      appId: 123,
+      bundleId: 'com.example.testflight',
+      displayName: 'TestFlight app',
+    }, userId);
+    expect(denyTestFlightSubscription(subscription.id, 'manager')).toMatchObject({ status: 'denied' });
+    expect(approveTestFlightSubscription(subscription.id, 'manager')).toBeUndefined();
+
+    const second = createTestFlightSubscription({
+      url: 'https://testflight.apple.com/join/ZyX987',
+      inviteCode: 'ZyX987',
+      requestedBy: userId,
+      status: 'pending',
+      appId: 456,
+      bundleId: 'com.example.second',
+      displayName: 'Second app',
+    }, userId);
+    updateTestFlightSubscriptionDevice(second.id, 'device-for-backup', {
+      status: 'active',
+      appleMembership: 'accepted',
+      lastVerifiedAt: Date.now(),
+    });
+    const backup = exportBackup();
+    expect(backup.testFlightSubscriptions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: second.id, devices: [expect.objectContaining({ deviceId: 'device-for-backup', status: 'active' })] }),
+    ]));
+
+    expect(importBackup(backup, 'tester').ok).toBe(true);
+    expect(getTestFlightSubscription(second.id)).toMatchObject({ status: 'pending', devices: [expect.objectContaining({ deviceId: 'device-for-backup', status: 'active' })] });
+  });
+
   test('round-trips the allowlist through export and import', () => {
     const role = createRole({ name: 'Roundtrip Role', color: '#5865f2', permissions: serializeBits(PermissionFlag.requestDecrypt) }, 'tester');
     addAllowedUser('roundtrip-user', [role.id], 'tester');
     const backup = exportBackup();
 
-    expect(backup.backupVersion).toBe(4);
+    expect(backup.backupVersion).toBe(5);
     expect(backup.allowedUsers.some((u) => u.username === 'roundtrip-user')).toBe(true);
 
     const result = importBackup(backup, 'tester');

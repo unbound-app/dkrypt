@@ -6,7 +6,7 @@ import path from 'node:path';
 describe('state migrations', () => {
   test('removes v13 share records and obsolete permission bits', async () => {
     const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-state-migration-'));
-    const obsoletePermissions = ((1n << 10n) | (1n << 34n)).toString();
+    const obsoletePermissions = (1n << 10n).toString();
     await writeFile(
       path.join(stateDir, 'state.json'),
       JSON.stringify({
@@ -38,7 +38,7 @@ describe('state migrations', () => {
       roles: Array<{ permissions: string }>;
       shareLinks?: unknown;
     };
-    expect(migrated.version).toBe(14);
+    expect(migrated.version).toBe(15);
     expect(migrated.roles[0]?.permissions).toBe('0');
     expect(migrated.shareLinks).toBeUndefined();
   });
