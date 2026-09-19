@@ -2,7 +2,7 @@ export const GENERATED_CHANGELOG = [
   {
     "date": "2026-09-20",
     "title": "fix(testflight): keep device catalog available across reloads",
-    "description": "Released in cf565a8."
+    "description": "Released in fd61d05."
   },
   {
     "date": "2026-09-20",
