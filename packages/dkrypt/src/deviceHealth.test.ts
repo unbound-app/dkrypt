@@ -102,4 +102,28 @@ describe('device health coordination', () => {
     expect(stabilizeDeviceHealth(previous, failed, 3)).toBe(failed);
     expect(stabilizeDeviceHealth(undefined, failed, 1)).toBe(failed);
   });
+
+  test('keeps a ready status through transient bridge failures', () => {
+    const previous = health({ checkedAt: 100, readiness: { score: 100, state: 'ready', reasons: [] } });
+    const failed = health({
+      checkedAt: 200,
+      testFlightBridgeReachable: false,
+      readiness: { score: 50, state: 'blocked', reasons: ['autoinstall bridge is unresponsive'] },
+    });
+
+    expect(stabilizeDeviceHealth(previous, failed, 1)).toEqual({ ...previous, checkedAt: 200 });
+    expect(stabilizeDeviceHealth(previous, failed, 2)).toEqual({ ...previous, checkedAt: 200 });
+    expect(stabilizeDeviceHealth(previous, failed, 3)).toBe(failed);
+  });
+
+  test('does not hide a confirmed readiness blocker', () => {
+    const previous = health({
+      checkedAt: 100,
+      testFlightBridgeReachable: false,
+      readiness: { score: 50, state: 'blocked', reasons: ['autoinstall bridge is unresponsive'] },
+    });
+    const failed = health({ reachable: false, error: 'Connection lost before handshake', checkedAt: 200 });
+
+    expect(stabilizeDeviceHealth(previous, failed, 1)).toBe(failed);
+  });
 });

@@ -533,6 +533,7 @@ static void startSpringBoardSide(void) {
     gSBBridgeTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, gSBBridgeQueue);
     dispatch_source_set_timer(gSBBridgeTimer, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), NSEC_PER_SEC, NSEC_PER_MSEC * 200);
     dispatch_source_set_event_handler(gSBBridgeTimer, ^{
+        @autoreleasepool {
         NSFileManager *fm = [NSFileManager defaultManager];
         writeBridgeHeartbeat(@"springboard");
         sweepBridgeArtifacts(@"springboard");
@@ -594,6 +595,7 @@ static void startSpringBoardSide(void) {
             return;
         }
         rejectLegacyBridgeRequest(req, kSBResponsePath);
+        }
     });
     dispatch_resume(gSBBridgeTimer);
     autoinstallLog(@"sb-bridge: request-file watcher started");
@@ -892,6 +894,7 @@ static void startTestFlightSide(void) {
     gBridgeTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, gBridgeQueue);
     dispatch_source_set_timer(gBridgeTimer, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), NSEC_PER_SEC, NSEC_PER_MSEC * 200);
     dispatch_source_set_event_handler(gBridgeTimer, ^{
+        @autoreleasepool {
         NSFileManager *fm = [NSFileManager defaultManager];
         writeBridgeHeartbeat(@"testflight");
         sweepBridgeArtifacts(@"testflight");
@@ -911,6 +914,7 @@ static void startTestFlightSide(void) {
             return;
         }
         rejectLegacyBridgeRequest(req, kResponsePath);
+        }
     });
     dispatch_resume(gBridgeTimer);
     autoinstallLog(@"bridge: request-file watcher started");
@@ -1364,6 +1368,7 @@ static void startPassbookSide(void) {
     gPassbookBridgeTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
     dispatch_source_set_timer(gPassbookBridgeTimer, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), (uint64_t)(0.5 * NSEC_PER_SEC), (uint64_t)(0.1 * NSEC_PER_SEC));
     dispatch_source_set_event_handler(gPassbookBridgeTimer, ^{
+        @autoreleasepool {
         autoinstallHandlePasswordIfPresent();
 
         if (gConfirmDoneThisSheet) return;
@@ -1379,6 +1384,7 @@ static void startPassbookSide(void) {
             autoinstallLog([NSString stringWithFormat:@"[PB-Timer] auto-confirmed match=%@ acted=%@", match, acted]);
             gConfirmDoneThisSheet = YES;
         }
+        }
     });
     dispatch_resume(gPassbookBridgeTimer);
     autoinstallLog(@"[PB] timer watcher started");
@@ -1391,8 +1397,10 @@ static void startAuthUIServiceSide(void) {
     gAuthUIBridgeTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
     dispatch_source_set_timer(gAuthUIBridgeTimer, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), (uint64_t)(0.35 * NSEC_PER_SEC), (uint64_t)(0.1 * NSEC_PER_SEC));
     dispatch_source_set_event_handler(gAuthUIBridgeTimer, ^{
+        @autoreleasepool {
         autoinstallHandlePasswordIfPresent();
         autoinstallConfirmMatching(@"Install");
+        }
     });
     dispatch_resume(gAuthUIBridgeTimer);
     autoinstallLog(@"[AuthUI] timer watcher started");
@@ -1572,6 +1580,7 @@ static void startAppStoreSide(void) {
     gASBridgeTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, gASBridgeQueue);
     dispatch_source_set_timer(gASBridgeTimer, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), NSEC_PER_SEC, NSEC_PER_MSEC * 200);
     dispatch_source_set_event_handler(gASBridgeTimer, ^{
+        @autoreleasepool {
         NSFileManager *fm = [NSFileManager defaultManager];
         writeBridgeHeartbeat(@"appstore");
         sweepBridgeArtifacts(@"appstore");
@@ -1608,6 +1617,7 @@ static void startAppStoreSide(void) {
             return;
         }
         rejectLegacyBridgeRequest(req, kASResponsePath);
+        }
     });
     dispatch_resume(gASBridgeTimer);
     autoinstallLog(@"as-bridge: request-file watcher started");

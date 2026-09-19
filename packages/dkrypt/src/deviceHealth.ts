@@ -348,7 +348,11 @@ export function coalesceDeviceHealthRequest<T>(pending: Map<string, Promise<T>>,
 }
 
 export function stabilizeDeviceHealth(previous: DeviceHealth | undefined, next: DeviceHealth, consecutiveFailures: number): DeviceHealth {
-  if (next.reachable || !previous?.reachable || consecutiveFailures >= HEALTH_FAILURE_CONFIRMATIONS) return next;
+  const nextReadiness = next.readiness ?? getDeviceReadiness(next);
+  const previousReadiness = previous?.readiness ?? (previous ? getDeviceReadiness(previous) : undefined);
+  const nextIsHealthy = next.reachable && nextReadiness.state !== 'blocked';
+  const previousIsHealthy = previous?.reachable === true && previousReadiness?.state !== 'blocked';
+  if (nextIsHealthy || !previousIsHealthy || consecutiveFailures >= HEALTH_FAILURE_CONFIRMATIONS) return next;
   return { ...previous, checkedAt: next.checkedAt };
 }
 
@@ -357,7 +361,8 @@ const deviceHealthFailures = new Map<string, number>();
 const lastKnownGoodDeviceHealth = new Map<string, DeviceHealth>();
 
 function cacheDeviceHealth(deviceId: string, value: DeviceHealth): void {
-  if (value.reachable) {
+  const readiness = value.readiness ?? getDeviceReadiness(value);
+  if (value.reachable && readiness.state !== 'blocked') {
     deviceHealthFailures.delete(deviceId);
     lastKnownGoodDeviceHealth.set(deviceId, value);
     setCachedDeviceHealth(deviceId, value);
@@ -435,7 +440,7 @@ export async function getDeviceHealth(deviceId: string, force = false): Promise<
     cacheDeviceHealth(deviceId, result);
     return result;
   });
-  return force ? value : getCachedDeviceHealth(deviceId)?.value ?? value;
+  return getCachedDeviceHealth(deviceId)?.value ?? value;
 }
 
 const HEALTH_POLL_INTERVAL_MS = 5 * 60_000;
