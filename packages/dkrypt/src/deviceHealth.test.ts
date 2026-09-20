@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { coalesceDeviceHealthRequest, collectDeviceTelemetry, getDeviceInstallBlocker, getDeviceReadiness, isBridgeHeartbeatFresh, parseDeviceStorageDf, stabilizeDeviceHealth, type DeviceHealth } from '#deviceHealth.js';
+import { coalesceDeviceHealthRequest, collectDeviceTelemetry, formatTestFlightBridgeDownDescription, getDeviceInstallBlocker, getDeviceReadiness, isBridgeHeartbeatFresh, parseDeviceStorageDf, stabilizeDeviceHealth, type DeviceHealth } from '#deviceHealth.js';
 
 function health(overrides: Partial<DeviceHealth> = {}): DeviceHealth {
   return { reachable: true, checkedAt: 0, ...overrides };
@@ -27,6 +27,14 @@ describe('getDeviceReadiness', () => {
     const now = 1_000_000;
     expect(isBridgeHeartbeatFresh({ at: (now - 90_001) / 1000 }, now)).toBeFalse();
     expect(getDeviceInstallBlocker(health({ bridgeHeartbeats: { springboard: { at: 0 } } }))).toContain('heartbeat');
+  });
+});
+
+describe('TestFlight bridge alerts', () => {
+  test('describes the outage without speculative tweak recovery advice', () => {
+    expect(formatTestFlightBridgeDownDescription('iPad Pro', 15)).toBe(
+      "The autoinstall SpringBoard bridge on iPad Pro has stopped responding for at least 15 minutes - TestFlight installs and the scheduler's TestFlight watch can't run until it recovers.",
+    );
   });
 });
 

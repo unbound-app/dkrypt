@@ -47,6 +47,10 @@ export interface DeviceReadiness {
 const BRIDGE_HEARTBEAT_MAX_AGE_MS = 90_000;
 const INSTALL_STORAGE_SAFETY_MULTIPLIER = 2;
 
+export function formatTestFlightBridgeDownDescription(deviceName: string, alertMinutes: number): string {
+  return `The autoinstall SpringBoard bridge on ${deviceName} has stopped responding for at least ${alertMinutes} minutes - TestFlight installs and the scheduler's TestFlight watch can't run until it recovers.`;
+}
+
 function formatGigabytes(bytes: number): string {
   return `${(bytes / 1_000_000_000).toFixed(1)} GB`;
 }
@@ -594,7 +598,7 @@ async function checkTestFlightBridgeAlert(device: DeviceRecord, reachable: boole
   s.bridgeDownAlertSentAt = Date.now();
   await notify('testFlightBridgeDown', {
     title: 'TestFlight bridge unresponsive',
-    description: `The autoinstall SpringBoard bridge on ${device.name} has stopped responding for at least ${settings.testFlightBridgeAlertMinutes} minutes - TestFlight installs and the scheduler's TestFlight watch can't run until it recovers (a respring or tweak crash usually fixes it).`,
+    description: formatTestFlightBridgeDownDescription(device.name, settings.testFlightBridgeAlertMinutes),
     color: EMBED_COLOR.warn,
   });
 }
