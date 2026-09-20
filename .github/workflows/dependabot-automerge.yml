@@ -1,6 +1,8 @@
 name: Dependabot auto-merge
 
 on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
   workflow_run:
     workflows: ["CI & Deploy"]
     types: [completed]
@@ -11,15 +13,29 @@ permissions:
 
 jobs:
   merge:
-    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request'
+    if: >-
+      (github.event_name == 'pull_request_target' && github.event.pull_request.user.login == 'dependabot[bot]' && github.event.pull_request.draft == false) ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request')
     runs-on: ubuntu-latest
     steps:
-      - env:
+      - id: pull_request
+        env:
+          EVENT_NAME: ${{ github.event_name }}
           GH_TOKEN: ${{ github.token }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          pr_number="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/pulls" --jq '.[0].number // empty')"
-          [ -n "$pr_number" ] || exit 0
-          author="$(gh pr view "$pr_number" --repo "$GITHUB_REPOSITORY" --json author --jq '.author.login')"
+          if [ "$EVENT_NAME" = "pull_request_target" ]; then
+            printf 'number=%s\n' "$PULL_REQUEST_NUMBER" >> "$GITHUB_OUTPUT"
+          else
+            pr_number="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/pulls" --jq '.[0].number // empty')"
+            printf 'number=%s\n' "$pr_number" >> "$GITHUB_OUTPUT"
+          fi
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.pull_request.outputs.number }}
+        run: |
+          [ -n "$PR_NUMBER" ] || exit 0
+          author="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json author --jq '.author.login')"
           [ "$author" = "dependabot[bot]" ] || exit 0
-          gh pr merge "$pr_number" --repo "$GITHUB_REPOSITORY" --squash --delete-branch --match-head-commit "$HEAD_SHA"
+          gh pr merge "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --auto --squash --delete-branch
