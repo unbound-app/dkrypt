@@ -2,8 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import { formatSearchResultMeta, shouldShowSearchResultStatus } from './searchResultPresentation';
 
 describe('search result presentation', () => {
-  test('uses source copy instead of a fake version for TestFlight results', () => {
-    expect(formatSearchResultMeta({ bundleId: 'com.example.app', version: 'TestFlight', sellerName: 'Example', category: 'Games', testflight: {} })).toBe('Available via TestFlight · Example · Games');
+  test('omits duplicated source copy from TestFlight results', () => {
+    expect(formatSearchResultMeta({ bundleId: 'com.example.app', version: 'TestFlight', sellerName: 'Example', category: 'Games', testflight: {} })).toBe('Example · Games');
   });
 
   test('does not show bundle status for TestFlight results', () => {

@@ -7,7 +7,7 @@ interface SearchResultPresentationInput {
 }
 
 export function formatSearchResultMeta(result: SearchResultPresentationInput): string {
-  const source = result.testflight ? 'Available via TestFlight' : result.version ? `v${result.version}` : undefined;
+  const source = result.testflight ? undefined : result.version ? `v${result.version}` : undefined;
   return [source, result.sellerName, result.category].filter(Boolean).join(' · ');
 }
 
