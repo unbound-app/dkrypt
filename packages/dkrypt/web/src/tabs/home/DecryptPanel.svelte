@@ -41,6 +41,10 @@
 	import { requestNotificationPermission } from "#lib/notifications";
 	import { PermissionFlag } from "#lib/permissions";
 	import { sessionHasPermission, sessionState } from "#lib/session.svelte";
+	import {
+		formatSearchResultMeta,
+		shouldShowSearchResultStatus,
+	} from "#lib/searchResultPresentation";
 	import { showToast } from "#lib/ui.svelte";
 	import { loadTestFlightCatalog, testFlightCatalogState } from "#lib/testflightCatalog.svelte";
 	import { cn } from "#lib/utils";
@@ -307,7 +311,7 @@
 			bundleId: app.bundleId,
 			trackId: app.appId,
 			trackName: app.displayName,
-			version: "TestFlight",
+			version: "",
 			sellerName: app.sellerName ?? "",
 			artworkUrl: app.iconUrl ?? "",
 			price: 0,
@@ -570,7 +574,7 @@
 							class="break-words text-xs leading-4 text-muted"
 							title={r.bundleId}
 						>
-							v{r.version} · {r.sellerName}{r.category ? ` · ${r.category}` : ""}
+							{formatSearchResultMeta(r)}
 						</div>
 					</div>
 					{#if r.price > 0}
@@ -649,7 +653,7 @@
 									{/if}
 								{/if}
 							</div>
-							{#if statusByBundle.has(r.bundleId)}
+							{#if shouldShowSearchResultStatus(r, statusByBundle)}
 								{@const status =
 									statusByBundle.get(r.bundleId) ?? ""}
 								<Badge variant={statusToBadgeVariant(status)}
