@@ -1,6 +1,16 @@
 export const GENERATED_CHANGELOG = [
   {
     "date": "2026-09-20",
+    "title": "fix(ui): remove duplicate TestFlight source label",
+    "description": "Released in 3633fab."
+  },
+  {
+    "date": "2026-09-20",
+    "title": "chore(web): refresh generated changelog",
+    "description": "Released in 96eefb5."
+  },
+  {
+    "date": "2026-09-20",
     "title": "chore(web): refresh generated changelog",
     "description": "Released in c0933c3."
   },
@@ -28,15 +38,5 @@ export const GENERATED_CHANGELOG = [
     "date": "2026-09-20",
     "title": "chore(web): refresh generated changelog",
     "description": "Released in db5f525."
-  },
-  {
-    "date": "2026-09-20",
-    "title": "fix(testflight): keep device catalog available across reloads",
-    "description": "Released in fd61d05."
-  },
-  {
-    "date": "2026-09-20",
-    "title": "fix(autoinstall): correct package version to 1.2.0",
-    "description": "Released in a9ee1d8."
   }
 ] as const;
