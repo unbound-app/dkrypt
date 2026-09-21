@@ -10,7 +10,7 @@ It injects into SpringBoard, TestFlight, App Store, and PassbookUIService to lau
 - An Apple ID signed in to App Store and TestFlight
 - No device passcode
 
-OpenSSH is only needed for the initial package install or recovery. After installation, dkrypt reaches the device through the authenticated loopback agent on the USBMux connection. The agent is not exposed on the device network. Wi-Fi-only connections still use OpenSSH.
+OpenSSH is only needed for the initial package install and for repairing a missing device agent. After installation, dkrypt reaches the device through the authenticated loopback agent on the USBMux connection, including preflight, bridge actions, and SpringBoard recovery. The agent is not exposed on the device network. Wi-Fi-only connections still use OpenSSH.
 
 ## Build
 

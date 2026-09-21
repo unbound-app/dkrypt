@@ -46,7 +46,7 @@ AUTOINSTALL_IDEVICE_KEY="$HOME/.ssh/id_ed25519" \
 make autoinstall-deploy
 ```
 
-OpenSSH is only needed to install or repair the package. Once `autoinstall` is installed and the device is paired over USB, dkrypt uses its authenticated device agent through USBMux for runtime commands. Wi-Fi-only devices continue to use the configured SSH connection.
+OpenSSH is only needed to install or repair a missing package. Once `autoinstall` is installed and the device is paired over USB, dkrypt uses its authenticated device agent through USBMux for runtime commands, preflight, and the dashboard's **Recover** action. Wi-Fi-only devices continue to use the configured SSH connection.
 
 The dashboard setup check verifies the device connection, iOS, the jailbreak, the device agent, and the bridge heartbeat. Install or repair any item marked **attention**, then run setup again. dkrypt does not require a separate IPA installer package or a device `.ipadecrypt` directory.
 

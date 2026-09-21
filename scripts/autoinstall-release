@@ -97,7 +97,7 @@ if [[ "$installed_version" != "$expected_version" ]]; then
 fi
 agent_ready=false
 for _ in {1..15}; do
-  if ssh "${ssh_options[@]}" "$target" "test -x /var/jb/usr/libexec/autoinstall-device-agent && { launchctl print system/dev.adrian.autoinstall.device-agent >/dev/null 2>&1 || ps ax | grep -q '[a]utoinstall-device-agent'; } && tail -n 30 /var/mobile/Library/Logs/autoinstall-device-agent.log 2>/dev/null | grep -F 'version $expected_version'"; then
+  if ssh "${ssh_options[@]}" "$target" "test -x /var/jb/usr/libexec/autoinstall-device-agent && { launchctl print user/501/dev.adrian.autoinstall.device-agent >/dev/null 2>&1 || ps ax | grep -q '[a]utoinstall-device-agent'; }"; then
     agent_ready=true
     break
   fi
@@ -109,7 +109,7 @@ if [[ "$agent_ready" != true ]]; then
 fi
 heartbeat_ready=false
 for _ in {1..15}; do
-  if ssh "${ssh_options[@]}" "$target" "test -s /tmp/autoinstall/v1/springboard/state/heartbeat.json && grep -q 'springboard' /tmp/autoinstall/v1/springboard/state/heartbeat.json"; then
+  if ssh "${ssh_options[@]}" "$target" "test -s /tmp/autoinstall/v1/springboard/state/heartbeat.json && grep -Fq '\"bridgeVersion\" : \"$expected_version\"' /tmp/autoinstall/v1/springboard/state/heartbeat.json"; then
     heartbeat_ready=true
     break
   fi

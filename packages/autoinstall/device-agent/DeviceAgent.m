@@ -112,12 +112,14 @@ static NSDictionary *signedResponse(NSString *secret, NSString *requestId, BOOL 
     };
 }
 
-static NSDictionary *bootstrapResponse(NSString *requestId, BOOL ok) {
-    return @{
+static NSDictionary *bootstrapResponse(NSString *requestId, BOOL ok, NSString *errorCode) {
+    NSMutableDictionary *response = [@{
         @"version": @1,
         @"requestId": requestId ?: @"",
         @"ok": @(ok),
-    };
+    } mutableCopy];
+    if (errorCode.length > 0) response[@"error"] = errorCode;
+    return response;
 }
 
 static BOOL sendFrame(int fd, NSDictionary *frame) {
@@ -231,8 +233,11 @@ static BOOL handleConnection(int fd) {
                 if (![secretData writeToFile:kSecretPath options:NSDataWritingAtomic error:nil]) return NO;
                 chmod(kSecretPath.UTF8String, 0600);
                 secret = candidate;
+            } else if (!constantTimeEqual(secret, candidate)) {
+                if (!sendFrame(fd, bootstrapResponse(requestId, NO, @"secret_mismatch"))) return NO;
+                return NO;
             }
-            if (!sendFrame(fd, bootstrapResponse(requestId, YES))) return NO;
+            if (!sendFrame(fd, bootstrapResponse(requestId, YES, nil))) return NO;
             continue;
         }
         if (secret.length < 32) return NO;

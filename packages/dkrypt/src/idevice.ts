@@ -21,7 +21,10 @@ const REMOTE_COMMAND_TIMEOUT_MS = 10_000;
 const SSH_HANDSHAKE_RETRIES = 1;
 const SSH_HANDSHAKE_RETRY_DELAY_MS = 150;
 const SSH_SESSION_IDLE_TIMEOUT_MS = 15_000;
-const DEVICE_AGENT_UNAVAILABLE_TTL_MS = 5 * 60_000;
+const DEVICE_AGENT_CONNECT_RETRIES = 3;
+const DEVICE_AGENT_RETRY_DELAY_MS = 250;
+const DEVICE_AGENT_IDLE_TIMEOUT_MS = 60_000;
+const DEVICE_AGENT_UNAVAILABLE_TTL_MS = 15_000;
 const DEVICE_AGENT_PORT = 5913;
 
 export type { BridgeChannel } from '#bridgeProtocol.js';
@@ -530,7 +533,16 @@ async function getDeviceAgentSession(connection: DeviceConnection): Promise<{ ke
     return { key, session: existing };
   }
   if (existing) closeDeviceAgentSession(key, existing);
-  return { key, session: await openDeviceAgentSession(connection, key) };
+  let lastError: unknown;
+  for (let attempt = 0; attempt < DEVICE_AGENT_CONNECT_RETRIES; attempt += 1) {
+    try {
+      return { key, session: await openDeviceAgentSession(connection, key) };
+    } catch (error) {
+      lastError = error;
+      if (attempt + 1 < DEVICE_AGENT_CONNECT_RETRIES) await new Promise((resolve) => setTimeout(resolve, DEVICE_AGENT_RETRY_DELAY_MS));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
 function releaseDeviceAgentSession(key: string, session: DeviceAgentSession): void {
@@ -540,7 +552,7 @@ function releaseDeviceAgentSession(key: string, session: DeviceAgentSession): vo
   }
   session.idleTimer = setTimeout(() => {
     if (deviceAgentSessions.get(key) === session) closeDeviceAgentSession(key, session);
-  }, SSH_SESSION_IDLE_TIMEOUT_MS);
+  }, DEVICE_AGENT_IDLE_TIMEOUT_MS);
   session.idleTimer.unref();
 }
 

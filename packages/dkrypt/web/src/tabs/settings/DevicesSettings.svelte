@@ -11,6 +11,7 @@
     fetchDevicePreflight,
     fetchDevices,
     fetchSettings,
+    recoverDevice,
     saveSettings,
     setDeviceDarkMode,
     setupDevice,
@@ -95,6 +96,7 @@
 
   let testingId = $state<Set<string>>(new Set());
   let inspectingId = $state<Set<string>>(new Set());
+  let recoveringId = $state<Set<string>>(new Set());
   let updatingDarkModeId = $state<Set<string>>(new Set());
   let deletingId = $state<Set<string>>(new Set());
   let preflightOpen = $state(false);
@@ -142,6 +144,23 @@
       const next = new Set(inspectingId);
       next.delete(device.id);
       inspectingId = next;
+    }
+  }
+
+  async function recover(device: DeviceRecord): Promise<void> {
+    recoveringId = new Set(recoveringId).add(device.id);
+    try {
+      const result = await recoverDevice(device.id);
+      if (result.ok) {
+        health = { ...health, [device.id]: result.data };
+        showToast(`${device.name} recovery completed`, 'success');
+      }
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Device recovery failed', 'error');
+    } finally {
+      const next = new Set(recoveringId);
+      next.delete(device.id);
+      recoveringId = next;
     }
   }
 
@@ -334,7 +353,7 @@
           <div class="mt-3 grid grid-cols-2 gap-2 text-xs"><div class="bg-muted/30 rounded-lg px-2.5 py-2"><div class="text-muted">iOS</div><div class="mt-0.5 truncate font-medium">{device.iosVersion ?? 'Not reported'}</div></div><div class="bg-muted/30 rounded-lg px-2.5 py-2"><div class="text-muted">Bridge</div><div class="mt-0.5 truncate font-medium">{h?.bridgeHeartbeats?.springboard?.bridgeVersion ?? 'Not checked'}</div></div></div>
           {#if device.legacyConnection && canManageDevices}<div class="border-warn/40 bg-warn/10 text-warn mt-3 flex items-start gap-2 rounded-lg border px-3 py-2 text-xs"><AlertTriangle class="mt-0.5 h-3.5 w-3.5 shrink-0" /><span>This device still uses the old connection file. Find it again to migrate it to direct USB/Wi-Fi setup.</span><Button size="sm" variant="secondary" class="ml-auto shrink-0" onclick={() => void openDiscovery(device.id)}>Finish setup</Button></div>{/if}
           {#if h?.readiness?.reasons.length}<div class="text-warn mt-2 text-xs">{h.readiness.reasons.join(' · ')}</div>{/if}
-          <div class="border-border/70 mt-3 flex flex-wrap items-center gap-1.5 border-t pt-3"><Button size="sm" variant="secondary" loading={testingId.has(device.id)} onclick={() => void testConnection(device)}>Test connection</Button><Button size="sm" variant="secondary" loading={inspectingId.has(device.id)} onclick={() => void inspectDevice(device)}>Preflight</Button><Button size="sm" variant="secondary" loading={inspectingId.has(device.id)} onclick={() => void inspectInventory(device)}>Inventory</Button>{#if canManageDevices}{#if !device.isPrimary}<Button size="sm" variant="ghost" onclick={() => void makePrimary(device)}>Make primary</Button>{/if}<Button size="sm" variant="ghost" onclick={() => void toggleEnabled(device)}>{device.enabled ? 'Disable' : 'Enable'}</Button><Button size="icon" variant="ghost" class="ml-auto h-8 w-8 text-muted hover:text-err" loading={deletingId.has(device.id)} onclick={() => void remove(device)} aria-label={`Remove ${device.name}`} title="Remove device"><Trash2 class="h-3.5 w-3.5" /></Button>{/if}</div>
+          <div class="border-border/70 mt-3 flex flex-wrap items-center gap-1.5 border-t pt-3"><Button size="sm" variant="secondary" loading={testingId.has(device.id)} onclick={() => void testConnection(device)}>Test connection</Button><Button size="sm" variant="secondary" loading={inspectingId.has(device.id)} onclick={() => void inspectDevice(device)}>Preflight</Button><Button size="sm" variant="secondary" loading={inspectingId.has(device.id)} onclick={() => void inspectInventory(device)}>Inventory</Button>{#if canManageDevices}<Button size="sm" variant="secondary" loading={recoveringId.has(device.id)} onclick={() => void recover(device)}>Recover</Button>{#if !device.isPrimary}<Button size="sm" variant="ghost" onclick={() => void makePrimary(device)}>Make primary</Button>{/if}<Button size="sm" variant="ghost" onclick={() => void toggleEnabled(device)}>{device.enabled ? 'Disable' : 'Enable'}</Button><Button size="icon" variant="ghost" class="ml-auto h-8 w-8 text-muted hover:text-err" loading={deletingId.has(device.id)} onclick={() => void remove(device)} aria-label={`Remove ${device.name}`} title="Remove device"><Trash2 class="h-3.5 w-3.5" /></Button>{/if}</div>
           {#if device.isPrimary && h?.reachable && h.darkEnabled !== undefined}<div class="border-border/70 mt-3 flex items-center justify-between gap-3 border-t pt-3"><div class="min-w-0"><div class="text-sm">Keep display dark</div><div class="text-xs text-muted">autoinstall keeps the device awake while the display is blacked out.</div></div><Switch checked={h.darkEnabled} disabled={!canManageDevices || updatingDarkModeId.has(device.id)} onCheckedChange={(enabled) => void toggleDarkMode(device, enabled)} aria-label="Keep display dark" /></div>{/if}
           {#if activity[device.id]?.length}<div class="border-border/70 mt-3 border-t pt-3"><div class="mb-1.5 text-xs text-muted">Recent activity</div><div class="flex flex-col gap-1.5">{#each activity[device.id] as entry (entry.id)}<div class="flex items-start gap-2 text-xs"><span class="shrink-0 text-muted"><RelativeTime ms={entry.ts} /></span><span>{entry.message}{entry.bundleId ? ` · ${entry.bundleId}` : ''}</span></div>{/each}</div></div>{/if}
         </div>
