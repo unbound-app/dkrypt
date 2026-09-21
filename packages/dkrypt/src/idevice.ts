@@ -1,7 +1,7 @@
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
-import { connect as connectSocket, createServer } from 'node:net';
+import { connect as connectSocket, createServer, type Socket } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { Client, type Channel } from 'ssh2';
@@ -21,6 +21,8 @@ const REMOTE_COMMAND_TIMEOUT_MS = 10_000;
 const SSH_HANDSHAKE_RETRIES = 1;
 const SSH_HANDSHAKE_RETRY_DELAY_MS = 150;
 const SSH_SESSION_IDLE_TIMEOUT_MS = 15_000;
+const DEVICE_AGENT_UNAVAILABLE_TTL_MS = 5 * 60_000;
+const DEVICE_AGENT_PORT = 5913;
 
 export type { BridgeChannel } from '#bridgeProtocol.js';
 
@@ -84,7 +86,173 @@ interface SshSession {
   unusable: boolean;
 }
 
+export interface DeviceSession {
+  readonly transport: 'ssh' | 'autoinstall';
+  readonly rootDir: string;
+  exec(command: string, timeoutMs?: number): Promise<{ stdout: string; stderr: string; code: number | null }>;
+  close(): void;
+}
+
+export type DeviceClient = Client | DeviceSession;
+
+interface DeviceAgentEnvelope {
+  version: number;
+  requestId: string;
+  issuedAt: number;
+  payload: string;
+  signature: string;
+}
+
+interface DeviceAgentPendingRequest {
+  resolve: (result: Record<string, unknown>) => void;
+  reject: (error: Error) => void;
+  timer: NodeJS.Timeout;
+}
+
+function encodeDeviceAgentFrame(value: object): Buffer {
+  const body = Buffer.from(JSON.stringify(value), 'utf8');
+  if (body.length === 0 || body.length > 4 * 1024 * 1024) throw new Error('autoinstall device agent request is too large');
+  const frame = Buffer.allocUnsafe(body.length + 4);
+  frame.writeUInt32BE(body.length, 0);
+  body.copy(frame, 4);
+  return frame;
+}
+
+class DeviceAgentUnavailableError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = 'DeviceAgentUnavailableError';
+  }
+}
+
+class DeviceAgentRequestError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'DeviceAgentRequestError';
+  }
+}
+
+class AutoinstallDeviceClient implements DeviceSession {
+  readonly transport = 'autoinstall' as const;
+  readonly rootDir: string;
+  private readonly socket: Socket;
+  private readonly secret: string;
+  private readonly pending = new Map<string, DeviceAgentPendingRequest>();
+  private input = Buffer.alloc(0);
+  private unusable = false;
+
+  constructor(socket: Socket, secret: string, rootDir: string) {
+    this.socket = socket;
+    this.secret = secret;
+    this.rootDir = rootDir;
+    socket.setKeepAlive(true, 20_000);
+    socket.on('data', (chunk) => this.receive(typeof chunk === 'string' ? Buffer.from(chunk) : chunk));
+    socket.on('error', (error) => this.fail(error));
+    socket.on('close', () => this.fail(new Error('autoinstall device agent connection closed')));
+  }
+
+  get isUnusable(): boolean {
+    return this.unusable;
+  }
+
+  async call(action: string, payload: Record<string, unknown>, timeoutMs = REMOTE_COMMAND_TIMEOUT_MS): Promise<Record<string, unknown>> {
+    if (this.unusable) throw new Error('autoinstall device agent connection is closed');
+    const requestId = randomUUID();
+    const envelope = createDeviceAgentEnvelope(this.secret, requestId, { action, ...payload });
+    const frame = encodeDeviceAgentFrame(envelope);
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(requestId);
+        this.unusable = true;
+        reject(new Error(`autoinstall device agent request timed out: ${action}`));
+        this.socket.destroy();
+      }, Math.max(1, timeoutMs));
+      this.pending.set(requestId, { resolve, reject, timer });
+      this.socket.write(frame, (error) => {
+        if (!error) return;
+        clearTimeout(timer);
+        this.pending.delete(requestId);
+        this.unusable = true;
+        reject(error);
+        this.socket.destroy();
+      });
+    });
+  }
+
+  async exec(command: string, timeoutMs = REMOTE_COMMAND_TIMEOUT_MS): Promise<{ stdout: string; stderr: string; code: number | null }> {
+    const result = await this.call('exec', { command, timeoutMs }, timeoutMs + 1_000);
+    return {
+      stdout: typeof result.stdout === 'string' ? result.stdout : '',
+      stderr: typeof result.stderr === 'string' ? result.stderr : '',
+      code: typeof result.code === 'number' ? result.code : null,
+    };
+  }
+
+  close(): void {
+    if (this.unusable) {
+      this.socket.destroy();
+      return;
+    }
+    this.unusable = true;
+    this.fail(new Error('autoinstall device agent connection closed'));
+    this.socket.destroy();
+  }
+
+  private receive(chunk: Buffer): void {
+    this.input = Buffer.concat([this.input, chunk]);
+    while (this.input.length >= 4) {
+      const length = this.input.readUInt32BE(0);
+      if (length <= 0 || length > 4 * 1024 * 1024) {
+        this.fail(new Error(`autoinstall device agent returned an invalid frame length: ${length}`));
+        return;
+      }
+      if (this.input.length < length + 4) return;
+      const body = this.input.subarray(4, length + 4);
+      this.input = this.input.subarray(length + 4);
+      let envelope: DeviceAgentEnvelope;
+      try {
+        envelope = JSON.parse(body.toString('utf8')) as DeviceAgentEnvelope;
+      } catch (error) {
+        this.fail(error instanceof Error ? error : new Error(String(error)));
+        return;
+      }
+      const pending = this.pending.get(envelope.requestId);
+      if (!pending) continue;
+      this.pending.delete(envelope.requestId);
+      clearTimeout(pending.timer);
+      try {
+        pending.resolve(parseDeviceAgentResponse(this.secret, envelope));
+      } catch (error) {
+        const normalized = error instanceof Error ? error : new Error(String(error));
+        pending.reject(normalized);
+        if (!(normalized instanceof DeviceAgentRequestError)) {
+          this.unusable = true;
+          this.socket.destroy();
+        }
+      }
+    }
+  }
+
+  private fail(error: Error): void {
+    if (this.unusable && this.pending.size === 0) return;
+    this.unusable = true;
+    for (const [requestId, pending] of this.pending) {
+      clearTimeout(pending.timer);
+      pending.reject(error);
+      this.pending.delete(requestId);
+    }
+  }
+}
+
 const sshSessions = new Map<string, SshSession>();
+interface DeviceAgentSession {
+  client: AutoinstallDeviceClient;
+  tunnel?: { process: ChildProcess };
+  idleTimer?: NodeJS.Timeout;
+}
+
+const deviceAgentSessions = new Map<string, DeviceAgentSession>();
+const deviceAgentUnavailableUntil = new Map<string, number>();
 
 export type DeviceTransport = 'wifi' | 'usb';
 
@@ -246,6 +414,134 @@ async function startUsbmuxTunnel(udid: string, remotePort: number, network: bool
   process.kill();
   const reason = spawnError || stderr.trim();
   throw new Error(`could not open the ${network ? 'Wi-Fi' : 'USB'} device tunnel${reason ? `: ${reason}` : ''}`);
+}
+
+function connectDeviceAgentSocket(host: string, port: number): Promise<Socket> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const socket = connectSocket({ host, port });
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      reject(error);
+    };
+    socket.once('connect', () => {
+      if (settled) return;
+      settled = true;
+      socket.setTimeout(0);
+      resolve(socket);
+    });
+    socket.once('error', fail);
+    socket.setTimeout(2_000, () => fail(new Error('autoinstall device agent connection timed out')));
+  });
+}
+
+function writeDeviceAgentFrame(socket: Socket, value: Record<string, unknown>): Promise<void> {
+  const frame = encodeDeviceAgentFrame(value);
+  return new Promise((resolve, reject) => {
+    socket.write(frame, (error) => (error ? reject(error) : resolve()));
+  });
+}
+
+function readDeviceAgentFrame(socket: Socket, timeoutMs: number): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    let input = Buffer.alloc(0);
+    const finish = (error?: Error, value?: Record<string, unknown>) => {
+      socket.off('data', receive);
+      socket.off('error', fail);
+      socket.off('close', closed);
+      socket.setTimeout(0);
+      if (error) reject(error);
+      else resolve(value as Record<string, unknown>);
+    };
+    const fail = (error: Error) => finish(error);
+    const closed = () => finish(new Error('autoinstall device agent bootstrap connection closed'));
+    const receive = (chunk: Buffer) => {
+      input = Buffer.concat([input, chunk]);
+      if (input.length < 4) return;
+      const length = input.readUInt32BE(0);
+      if (length <= 0 || length > 4 * 1024 * 1024) {
+        finish(new Error(`autoinstall device agent returned an invalid frame length: ${length}`));
+        return;
+      }
+      if (input.length < length + 4) return;
+      try {
+        const value = JSON.parse(input.subarray(4, length + 4).toString('utf8')) as Record<string, unknown>;
+        finish(undefined, value);
+      } catch (error) {
+        finish(error instanceof Error ? error : new Error(String(error)));
+      }
+    };
+    socket.on('data', receive);
+    socket.once('error', fail);
+    socket.once('close', closed);
+    socket.setTimeout(timeoutMs, () => finish(new Error('autoinstall device agent bootstrap timed out')));
+  });
+}
+
+async function bootstrapDeviceAgent(host: string, port: number, secret: string): Promise<void> {
+  const socket = await connectDeviceAgentSocket(host, port);
+  try {
+    const requestId = randomUUID();
+    await writeDeviceAgentFrame(socket, { version: 1, requestId, action: 'bootstrap', secret });
+    const response = await readDeviceAgentFrame(socket, 3_000);
+    if (response.version !== 1 || response.requestId !== requestId || response.ok !== true) {
+      throw new Error('autoinstall device agent bootstrap was rejected');
+    }
+  } finally {
+    socket.destroy();
+  }
+}
+
+async function openDeviceAgentSession(connection: DeviceConnection, key: string): Promise<DeviceAgentSession> {
+  if (!connection.udid || connection.host) throw new Error('the autoinstall device agent requires a paired USB device');
+  const tunnel = await startUsbmuxTunnel(connection.udid, DEVICE_AGENT_PORT, false);
+  try {
+    const rootDir = connectionRuntimeRoot(connection);
+    const secret = await loadBridgeSecret(rootDir);
+    await bootstrapDeviceAgent(tunnel.host, tunnel.port, secret);
+    const client = new AutoinstallDeviceClient(await connectDeviceAgentSocket(tunnel.host, tunnel.port), secret, rootDir);
+    await client.call('status', {}, 3_000);
+    const session: DeviceAgentSession = { client, tunnel };
+    deviceAgentSessions.set(key, session);
+    deviceAgentUnavailableUntil.delete(key);
+    log.info('connected to the dkrypt device agent over USBMux', { deviceId: key });
+    return session;
+  } catch (error) {
+    tunnel.process.kill();
+    throw error;
+  }
+}
+
+function closeDeviceAgentSession(key: string, session: DeviceAgentSession): void {
+  if (deviceAgentSessions.get(key) === session) deviceAgentSessions.delete(key);
+  if (session.idleTimer) clearTimeout(session.idleTimer);
+  session.client.close();
+  session.tunnel?.process.kill();
+}
+
+async function getDeviceAgentSession(connection: DeviceConnection): Promise<{ key: string; session: DeviceAgentSession }> {
+  const key = sshSessionKey(connection);
+  const existing = deviceAgentSessions.get(key);
+  if (existing && !existing.client.isUnusable) {
+    if (existing.idleTimer) clearTimeout(existing.idleTimer);
+    existing.idleTimer = undefined;
+    return { key, session: existing };
+  }
+  if (existing) closeDeviceAgentSession(key, existing);
+  return { key, session: await openDeviceAgentSession(connection, key) };
+}
+
+function releaseDeviceAgentSession(key: string, session: DeviceAgentSession): void {
+  if (deviceAgentSessions.get(key) !== session || session.client.isUnusable) {
+    closeDeviceAgentSession(key, session);
+    return;
+  }
+  session.idleTimer = setTimeout(() => {
+    if (deviceAgentSessions.get(key) === session) closeDeviceAgentSession(key, session);
+  }, SSH_SESSION_IDLE_TIMEOUT_MS);
+  session.idleTimer.unref();
 }
 
 async function ensureIpadecryptRuntime(rootDir: string, auth: DeviceAuth): Promise<string> {
@@ -418,7 +714,47 @@ function invalidateAuthCache(connection: DeviceConnection | string): void {
   }
 }
 
-export async function withSSH<T>(connection: DeviceConnection | string, fn: (conn: Client) => Promise<T>): Promise<T> {
+function shouldAttemptDeviceAgent(connection: DeviceConnection | string): boolean {
+  if (typeof connection === 'string' || !connection.udid || connection.host) return false;
+  const mode = config.deviceTransport.toLowerCase();
+  if (mode === 'ssh') return false;
+  const key = sshSessionKey(connection);
+  if (mode === 'autoinstall') return true;
+  return (deviceAgentUnavailableUntil.get(key) ?? 0) <= Date.now();
+}
+
+async function withDeviceAgent<T>(connection: DeviceConnection, fn: (client: DeviceClient) => Promise<T>): Promise<T> {
+  return withSSHLock(async () => {
+    let opened: { key: string; session: DeviceAgentSession };
+    try {
+      opened = await getDeviceAgentSession(connection);
+    } catch (error) {
+      throw new DeviceAgentUnavailableError('could not connect to the dkrypt device agent', { cause: error });
+    }
+    try {
+      return await fn(opened.session.client);
+    } catch (error) {
+      if (opened.session.client.isUnusable) {
+        throw new DeviceAgentUnavailableError('the dkrypt device agent connection was lost', { cause: error });
+      }
+      throw error;
+    } finally {
+      releaseDeviceAgentSession(opened.key, opened.session);
+    }
+  });
+}
+
+export async function withSSH<T>(connection: DeviceConnection | string, fn: (conn: DeviceClient) => Promise<T>): Promise<T> {
+  if (shouldAttemptDeviceAgent(connection)) {
+    try {
+      return await withDeviceAgent(connection as DeviceConnection, fn);
+    } catch (error) {
+      const key = sshSessionKey(connection);
+      if (!(error instanceof DeviceAgentUnavailableError) || config.deviceTransport.toLowerCase() === 'autoinstall') throw error;
+      deviceAgentUnavailableUntil.set(key, Date.now() + DEVICE_AGENT_UNAVAILABLE_TTL_MS);
+      log.warn('autoinstall device agent unavailable; falling back to SSH', { deviceId: key, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
   return withSSHLock(async () => {
     let key = '';
     let session: SshSession | undefined;
@@ -672,13 +1008,13 @@ export async function discoverDevices(): Promise<DeviceDiscoveryResult> {
   return { devices: [...unique.values()].sort((a, b) => a.name.localeCompare(b.name)), scannedNetworks, warnings };
 }
 
-async function queryPackageVersion(conn: Client, packageName: string): Promise<string | undefined> {
+async function queryPackageVersion(conn: DeviceClient, packageName: string): Promise<string | undefined> {
   const result = await execCommand(conn, `/var/jb/usr/bin/dpkg-query -W -f='\${Status}|\${Version}' ${packageName} 2>/dev/null`).catch(() => ({ stdout: '', stderr: '', code: 1 }));
   if (result.code !== 0 || !result.stdout.startsWith('install ok installed|')) return undefined;
   return result.stdout.slice('install ok installed|'.length).trim() || 'installed';
 }
 
-async function readRemoteValue(conn: Client, command: string): Promise<string | undefined> {
+async function readRemoteValue(conn: DeviceClient, command: string): Promise<string | undefined> {
   const result = await execCommand(conn, command).catch(() => ({ stdout: '', stderr: '', code: 1 }));
   if (result.code !== 0) return undefined;
   const value = result.stdout.trim();
@@ -694,9 +1030,19 @@ export async function setupDeviceConnection(connection: DeviceConnection): Promi
     const name = await readRemoteValue(conn, 'scutil --get ComputerName 2>/dev/null') ?? await readRemoteValue(conn, 'hostname 2>/dev/null');
     const jailbreak = await execCommand(conn, 'test -d /var/jb').then(({ code }) => code === 0).catch(() => false);
     const ellekitVersion = await queryPackageVersion(conn, 'ellekit');
+    const autoinstallVersion = await queryPackageVersion(conn, 'dev.adrian.autoinstall');
     const openSshVersion = await queryPackageVersion(conn, 'openssh-server');
     const bridge = await execCommand(conn, 'test -s /tmp/autoinstall/v1/springboard/state/heartbeat.json').then(({ code }) => code === 0).catch(() => false);
     const systemReady = system === 'Darwin';
+    const runtimeTransport = 'transport' in conn ? conn.transport : 'ssh';
+    const usbAgentExpected = Boolean(connection.udid && !connection.host && connection.usbmuxNetwork !== true);
+    const agentReady = !usbAgentExpected || runtimeTransport === 'autoinstall';
+    const transportLabel = usbAgentExpected ? 'dkrypt device agent' : 'SSH connection';
+    const transportDetail = runtimeTransport === 'autoinstall'
+      ? `Authenticated USBMux device agent${autoinstallVersion ? ` · autoinstall ${autoinstallVersion}` : ''}`
+      : usbAgentExpected
+        ? 'USB is reachable through SSH fallback; install the current autoinstall package to enable the device agent'
+        : `${connection.user ?? config.deviceSshUser}@${connection.host ?? 'USB/Wi-Fi tunnel'}${openSshVersion ? ` · OpenSSH ${openSshVersion}` : ''}`;
     const bridgeReady = bridge;
     const info: DeviceSetupInfo = {
       name: name || model || connection.host || 'iDevice',
@@ -706,12 +1052,12 @@ export async function setupDeviceConnection(connection: DeviceConnection): Promi
       architecture,
     };
     const steps: DeviceSetupStep[] = [
-      { id: 'ssh', label: 'SSH connection', status: 'ready', detail: `${connection.user ?? config.deviceSshUser}@${connection.host ?? 'USB/Wi-Fi tunnel'}${openSshVersion ? ` · OpenSSH ${openSshVersion}` : ''}` },
-      { id: 'ios', label: 'iOS device detected', status: systemReady ? 'ready' : 'attention', detail: systemReady ? `${info.productType ?? 'iDevice'} · iOS ${info.productVersion ?? 'unknown'}` : 'The SSH target did not report Darwin.' },
+      { id: 'ssh', label: transportLabel, status: agentReady ? 'ready' : 'attention', detail: transportDetail },
+      { id: 'ios', label: 'iOS device detected', status: systemReady ? 'ready' : 'attention', detail: systemReady ? `${info.productType ?? 'iDevice'} · iOS ${info.productVersion ?? 'unknown'}` : 'The device connection did not report Darwin.' },
       { id: 'jailbreak', label: 'Rootless jailbreak', status: jailbreak ? 'ready' : 'attention', detail: jailbreak ? `/var/jb is available${ellekitVersion ? ` · ElleKit ${ellekitVersion}` : ''}` : 'Install and enable a rootless jailbreak before continuing.' },
       { id: 'bridge', label: 'autoinstall bridge', status: bridgeReady ? 'ready' : 'attention', detail: bridgeReady ? 'SpringBoard heartbeat is responding' : 'Install autoinstall, then run setup again.' },
     ];
-    if (!systemReady) steps[1] = { id: 'ios', label: 'iOS device detected', status: 'unavailable', detail: 'The SSH target did not report Darwin.' };
+    if (!systemReady) steps[1] = { id: 'ios', label: 'iOS device detected', status: 'unavailable', detail: 'The device connection did not report Darwin.' };
     return { info, steps, ready: steps.every((step) => step.status === 'ready') };
   });
 }
@@ -741,6 +1087,46 @@ function bridgeSignature(secret: string, channel: BridgeChannel, requestId: stri
     .digest('hex');
 }
 
+function deviceAgentSignature(secret: string, prefix: string, requestId: string, issuedAt: number, payload: string): string {
+  return createHmac('sha256', secret).update(`${prefix}|${requestId}|${issuedAt}|${payload}`).digest('hex');
+}
+
+function encodeBase64Url(value: string): string {
+  return Buffer.from(value, 'utf8').toString('base64url');
+}
+
+function decodeBase64Url(value: string): string {
+  return Buffer.from(value, 'base64url').toString('utf8');
+}
+
+export function createDeviceAgentEnvelope(secret: string, requestId: string, request: Record<string, unknown>, issuedAt = Math.floor(Date.now() / 1000)): DeviceAgentEnvelope {
+  const payload = encodeBase64Url(JSON.stringify(request));
+  return {
+    version: 1,
+    requestId,
+    issuedAt,
+    payload,
+    signature: deviceAgentSignature(secret, 'dkrypt-autoinstall-agent-v1', requestId, issuedAt, payload),
+  };
+}
+
+function parseDeviceAgentResponse(secret: string, envelope: DeviceAgentEnvelope): Record<string, unknown> {
+  if (envelope.version !== 1 || typeof envelope.requestId !== 'string' || typeof envelope.issuedAt !== 'number' || typeof envelope.payload !== 'string' || typeof envelope.signature !== 'string') {
+    throw new Error('autoinstall device agent returned an invalid response envelope');
+  }
+  if (Math.abs(Date.now() / 1000 - envelope.issuedAt) > 120) throw new Error('autoinstall device agent response expired');
+  const expected = deviceAgentSignature(secret, 'dkrypt-autoinstall-agent-response-v1', envelope.requestId, envelope.issuedAt, envelope.payload);
+  if (expected !== envelope.signature) throw new Error('autoinstall device agent response signature did not match');
+  const payload = JSON.parse(decodeBase64Url(envelope.payload)) as Record<string, unknown>;
+  if (payload.ok !== true) {
+    const error = payload.error;
+    const details = error && typeof error === 'object' ? (error as Record<string, unknown>) : {};
+    throw new DeviceAgentRequestError(`${typeof details.code === 'string' ? details.code : 'device_agent_error'}: ${typeof details.message === 'string' ? details.message : 'device agent request failed'}`);
+  }
+  const result = payload.result;
+  return result && typeof result === 'object' ? (result as Record<string, unknown>) : {};
+}
+
 export function createBridgeEnvelope(secret: string, channel: BridgeChannel, request: Record<string, unknown>, requestId: string = randomUUID(), issuedAt = Math.floor(Date.now() / 1000)): BridgeEnvelope {
   const payload = Buffer.from(JSON.stringify(request)).toString('base64url');
   return {
@@ -752,7 +1138,12 @@ export function createBridgeEnvelope(secret: string, channel: BridgeChannel, req
   };
 }
 
-export function execCommand(conn: Client, command: string, timeoutMs = REMOTE_COMMAND_TIMEOUT_MS): Promise<{ stdout: string; stderr: string; code: number | null }> {
+function isDeviceSession(conn: DeviceClient): conn is DeviceSession {
+  return 'transport' in conn && 'rootDir' in conn && typeof conn.exec === 'function';
+}
+
+export function execCommand(conn: DeviceClient, command: string, timeoutMs = REMOTE_COMMAND_TIMEOUT_MS): Promise<{ stdout: string; stderr: string; code: number | null }> {
+  if (isDeviceSession(conn)) return conn.exec(command, timeoutMs);
   return new Promise((resolve, reject) => {
     let stdout = '';
     let stderr = '';
@@ -809,20 +1200,20 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
-function writeRemoteFile(conn: Client, remotePath: string, content: string, timeoutMs = REMOTE_COMMAND_TIMEOUT_MS): Promise<void> {
+function writeRemoteFile(conn: DeviceClient, remotePath: string, content: string, timeoutMs = REMOTE_COMMAND_TIMEOUT_MS): Promise<void> {
   return execCommand(conn, `printf %s ${shellQuote(content)} > ${shellQuote(remotePath)}`, timeoutMs).then(({ code, stderr }) => {
     if (code !== 0) throw new Error(`could not write remote file: ${stderr.trim() || `exit code ${code ?? 'unknown'}`}`);
   });
 }
 
-async function writeRemoteFileAtomically(conn: Client, remotePath: string, content: string, timeoutMs = REMOTE_COMMAND_TIMEOUT_MS): Promise<void> {
+async function writeRemoteFileAtomically(conn: DeviceClient, remotePath: string, content: string, timeoutMs = REMOTE_COMMAND_TIMEOUT_MS): Promise<void> {
   const tempPath = `${remotePath}.${randomUUID()}.partial`;
   await writeRemoteFile(conn, tempPath, content, timeoutMs);
   const { code, stderr } = await execCommand(conn, `mv ${shellQuote(tempPath)} ${shellQuote(remotePath)}`, timeoutMs);
   if (code !== 0) throw new Error(`could not publish bridge request: ${stderr || code}`);
 }
 
-async function readRemoteFileIfExists(conn: Client, remotePath: string, timeoutMs = REMOTE_COMMAND_TIMEOUT_MS): Promise<string | undefined> {
+async function readRemoteFileIfExists(conn: DeviceClient, remotePath: string, timeoutMs = REMOTE_COMMAND_TIMEOUT_MS): Promise<string | undefined> {
   const quotedPath = shellQuote(remotePath);
   const { stdout, stderr, code } = await execCommand(conn, `if [ -f ${quotedPath} ]; then cat ${quotedPath}; else exit 44; fi`, timeoutMs);
   if (code === 0) return stdout;
@@ -830,7 +1221,7 @@ async function readRemoteFileIfExists(conn: Client, remotePath: string, timeoutM
   throw new Error(`could not read remote file: ${stderr.trim() || stdout.trim() || `exit code ${code ?? 'unknown'}`}`);
 }
 
-export async function readBridgeHeartbeats(conn: Client): Promise<Partial<Record<BridgeChannel, BridgeHeartbeat>>> {
+export async function readBridgeHeartbeats(conn: DeviceClient): Promise<Partial<Record<BridgeChannel, BridgeHeartbeat>>> {
   const channels: BridgeChannel[] = ['springboard', 'testflight', 'appstore'];
   const heartbeats: Partial<Record<BridgeChannel, BridgeHeartbeat>> = {};
   for (const channel of channels) {
@@ -845,25 +1236,25 @@ export async function readBridgeHeartbeats(conn: Client): Promise<Partial<Record
   return heartbeats;
 }
 
-export async function isTestFlightRunning(conn: Client): Promise<boolean> {
+export async function isTestFlightRunning(conn: DeviceClient): Promise<boolean> {
   const { stdout } = await execCommand(conn, "ps aux | grep -i '/TestFlight$' | grep -v grep");
   return stdout.trim().length > 0;
 }
 
-export async function isAppStoreRunning(conn: Client): Promise<boolean> {
+export async function isAppStoreRunning(conn: DeviceClient): Promise<boolean> {
   const { stdout } = await execCommand(conn, "ps aux | grep -i 'AppStore.app/AppStore$' | grep -v grep");
   return stdout.trim().length > 0;
 }
 
-export function armAppStoreAutoConfirm(conn: Client, label = 'Install'): Promise<void> {
+export function armAppStoreAutoConfirm(conn: DeviceClient, label = 'Install'): Promise<void> {
   return writeRemoteFile(conn, AUTOCONFIRM_FLAG_PATH, label);
 }
 
-export async function clearAppStoreAutoConfirm(conn: Client): Promise<void> {
+export async function clearAppStoreAutoConfirm(conn: DeviceClient): Promise<void> {
   await execCommand(conn, `rm -f ${AUTOCONFIRM_FLAG_PATH}`);
 }
 
-export async function uninstallInstalledApp(conn: Client, bundleId: string): Promise<boolean> {
+export async function uninstallInstalledApp(conn: DeviceClient, bundleId: string): Promise<boolean> {
   if (!/^[A-Za-z0-9.-]{1,200}$/.test(bundleId)) return false;
 
   const { stdout, code } = await execCommand(conn, `uicache -i "${bundleId}" 2>/dev/null`);
@@ -877,7 +1268,7 @@ export async function uninstallInstalledApp(conn: Client, bundleId: string): Pro
   return uninstallInstalledBundle(conn, bundleId, appPath);
 }
 
-export async function uninstallInstalledBundle(conn: Client, bundleId: string, appPath: string): Promise<boolean> {
+export async function uninstallInstalledBundle(conn: DeviceClient, bundleId: string, appPath: string): Promise<boolean> {
   if (!/^[A-Za-z0-9.-]{1,200}$/.test(bundleId)) return false;
   if (!appPath.endsWith('.app') || !appPath.includes('/var/containers/Bundle/Application/')) return false;
 
@@ -890,7 +1281,7 @@ export async function uninstallInstalledBundle(conn: Client, bundleId: string, a
   return true;
 }
 
-export async function findInstalledAppStoreBundle(conn: Client, bundleId: string): Promise<string | undefined> {
+export async function findInstalledAppStoreBundle(conn: DeviceClient, bundleId: string): Promise<string | undefined> {
   const { stdout } = await execCommand(
     conn,
     `for d in /var/containers/Bundle/Application/*/*.app; do ` +
@@ -900,7 +1291,7 @@ export async function findInstalledAppStoreBundle(conn: Client, bundleId: string
   return line || undefined;
 }
 
-export async function listInstalledAppStoreBundles(conn: Client): Promise<string[]> {
+export async function listInstalledAppStoreBundles(conn: DeviceClient): Promise<string[]> {
   const { stdout } = await execCommand(conn, 'for d in /var/containers/Bundle/Application/*/*.app; do [ -d "$d/SC_Info" ] && echo "$d"; done');
   return stdout.split('\n').map((entry) => entry.trim()).filter(Boolean).sort();
 }
@@ -917,7 +1308,7 @@ export interface InstallVerification extends InstalledBundleVersions {
   elapsedMs: number;
 }
 
-export async function readInstalledBundleVersions(conn: Client, appPath: string): Promise<InstalledBundleVersions> {
+export async function readInstalledBundleVersions(conn: DeviceClient, appPath: string): Promise<InstalledBundleVersions> {
   const tmp = `/tmp/dkrypt-check-${Date.now()}.plist`;
   try {
     await execCommand(conn, `cp "${appPath}/Info.plist" ${tmp} && chmod 644 ${tmp} && /cores/binpack/usr/bin/plutil -convert xml1 ${tmp}`);
@@ -932,15 +1323,15 @@ export async function readInstalledBundleVersions(conn: Client, appPath: string)
 const withBridgeLock = makeSerialQueue();
 
 async function sendBridgeRequestRawTo(
-  conn: Client,
+  conn: DeviceClient,
   channel: BridgeChannel,
   request: Record<string, unknown>,
   timeoutMs = 20_000,
 ): Promise<any> {
   return withBridgeLock(async () => {
     const requestId = typeof request.requestId === 'string' ? request.requestId : randomUUID();
-    const rootDir = connectionRoots.get(conn);
-    if (!rootDir) throw new Error('autoinstall bridge requests must run through withSSH');
+    const rootDir = isDeviceSession(conn) ? conn.rootDir : connectionRoots.get(conn);
+    if (!rootDir) throw new Error('autoinstall bridge requests must run through a managed device session');
     const secret = await loadBridgeSecret(rootDir);
     const requestDirectory = `${BRIDGE_ROOT_PATH}/${channel}/requests`;
     const responseDirectory = `${BRIDGE_ROOT_PATH}/${channel}/responses`;
@@ -993,19 +1384,19 @@ async function sendBridgeRequestRawTo(
   });
 }
 
-export function sendTestFlightBridgeRequest(conn: Client, request: Record<string, unknown>, timeoutMs = 20_000): Promise<any> {
+export function sendTestFlightBridgeRequest(conn: DeviceClient, request: Record<string, unknown>, timeoutMs = 20_000): Promise<any> {
   return sendBridgeRequestRawTo(conn, 'testflight', request, timeoutMs);
 }
 
-export function sendSpringBoardBridgeRequest(conn: Client, request: Record<string, unknown>, timeoutMs = 20_000): Promise<any> {
+export function sendSpringBoardBridgeRequest(conn: DeviceClient, request: Record<string, unknown>, timeoutMs = 20_000): Promise<any> {
   return sendBridgeRequestRawTo(conn, 'springboard', request, timeoutMs);
 }
 
-export function sendAppStoreBridgeRequest(conn: Client, request: Record<string, unknown>, timeoutMs = 20_000): Promise<any> {
+export function sendAppStoreBridgeRequest(conn: DeviceClient, request: Record<string, unknown>, timeoutMs = 20_000): Promise<any> {
   return sendBridgeRequestRawTo(conn, 'appstore', request, timeoutMs);
 }
 
-export async function tryIoregCandidates(conn: Client, ioregClass: string, candidates: string[]): Promise<string | undefined> {
+export async function tryIoregCandidates(conn: DeviceClient, ioregClass: string, candidates: string[]): Promise<string | undefined> {
   for (const bin of candidates) {
     const { stdout, stderr, code } = await execCommand(conn, `${bin} -rc ${ioregClass} -w 0 2>&1`);
     if (code === 0 && stdout.includes(ioregClass)) return stdout;

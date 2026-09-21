@@ -13,15 +13,16 @@ dkrypt provides a dashboard and API for:
 
 1. Clone the repository and copy `.env.example` to `.env`.
 2. Set `API_KEY`, `SESSION_SIGNING_SECRET`, `PUBLIC_BASE_URL`, and `ADMIN_PASSWORD`.
-3. Put the SSH key for the device at `~/.ssh/id_ed25519` so Compose can mount it into the API container.
-4. Start the service:
+3. Pair the iPhone or iPad with the host over USB and make sure the host exposes its `usbmuxd` socket.
+4. Put the SSH key for the device at `~/.ssh/id_ed25519` for the initial autoinstall install and recovery access.
+5. Start the service:
 
    ```sh
    docker compose up -d
    ```
 
-5. Open the dashboard, go to **Settings → Devices**, and choose **Find a device**.
-6. Select the USB or Wi-Fi device and choose **Set up**. dkrypt saves the direct device connection, checks the prerequisites, and shows exactly what still needs attention.
+6. Open the dashboard, go to **Settings → Devices**, and choose **Find a device**.
+7. Select the USB or Wi-Fi device and choose **Set up**. dkrypt saves the direct device connection, checks the prerequisites, and shows exactly what still needs attention.
 
 Device registration does not require `.ipadecrypt`, `config.json`, or a device setup CLI command. Existing installations using the old connection file are migrated when the service starts and can be finished from the same dashboard flow.
 
@@ -33,7 +34,6 @@ Open `http://localhost:8080`, or put an HTTPS reverse proxy in front of it.
 The device needs:
 
 - a rootless jailbreak with ElleKit;
-- OpenSSH;
 - the dkrypt `autoinstall` bridge;
 - an Apple ID signed in to the App Store; and
 - no device passcode.
@@ -46,7 +46,9 @@ AUTOINSTALL_IDEVICE_KEY="$HOME/.ssh/id_ed25519" \
 make autoinstall-deploy
 ```
 
-The dashboard setup check verifies SSH, iOS, the jailbreak, and the bridge heartbeat. Install or repair any item marked **attention**, then run setup again. dkrypt does not require a separate IPA installer package.
+OpenSSH is only needed to install or repair the package. Once `autoinstall` is installed and the device is paired over USB, dkrypt uses its authenticated device agent through USBMux for runtime commands. Wi-Fi-only devices continue to use the configured SSH connection.
+
+The dashboard setup check verifies the device connection, iOS, the jailbreak, the device agent, and the bridge heartbeat. Install or repair any item marked **attention**, then run setup again. dkrypt does not require a separate IPA installer package or a device `.ipadecrypt` directory.
 
 </details>
 
@@ -64,7 +66,7 @@ Unsubscribing stops dkrypt automation and removes the app from enabled devices w
 <details>
 <summary>USB and Wi-Fi discovery</summary>
 
-The Compose stack includes `libimobiledevice` and `usbmuxd` tools and mounts `/var/run/usbmuxd` for USB discovery. The host must be running `usbmuxd` and expose that socket to the container. Paired Wi-Fi devices are detected through usbmuxd; dkrypt also probes the local private network for reachable iOS SSH services.
+The Compose stack includes `libimobiledevice` and `usbmuxd` tools and mounts `/var/run/usbmuxd` for USB discovery and the authenticated runtime agent. The host must be running `usbmuxd` and expose that socket to the container. Paired Wi-Fi devices are detected through usbmuxd; dkrypt also probes the local private network for reachable iOS SSH services.
 
 If network scanning is restricted, set `DEVICE_DISCOVERY_HOSTS` to a comma-separated list of device addresses or set `DEVICE_DISCOVERY_SUBNETS` to the private CIDR ranges to scan. The dashboard's **Have the address already?** field is always available as a fallback.
 
@@ -75,7 +77,7 @@ If network scanning is restricted, set `DEVICE_DISCOVERY_HOSTS` to a comma-separ
 
 Docker Compose, Git, and GNU Make are required. Persistent state, device runtime data, and IPA artifacts are stored in named Docker volumes.
 
-For OAuth, Stripe, or external webhooks, use an HTTPS `PUBLIC_BASE_URL`. Keep the SSH private key outside the repository and never commit `.env` or temporary credentials.
+For OAuth, Stripe, or external webhooks, use an HTTPS `PUBLIC_BASE_URL`. Keep the bootstrap SSH private key outside the repository and never commit `.env` or temporary credentials.
 
 To update a source checkout:
 

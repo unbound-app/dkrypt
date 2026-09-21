@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import type { Client } from 'ssh2';
 import {
   armAppStoreAutoConfirm,
   clearAppStoreAutoConfirm,
@@ -12,6 +11,7 @@ import {
   uninstallInstalledBundle,
   uninstallInstalledApp,
   withSSH,
+  type DeviceClient,
   type InstallVerification,
 } from '#idevice.js';
 import { scopedLogger } from '#logger.js';
@@ -37,7 +37,7 @@ function primaryDevice() {
   return device;
 }
 
-async function ensureAppStoreForeground(conn: Client): Promise<void> {
+async function ensureAppStoreForeground(conn: DeviceClient): Promise<void> {
   const wasRunning = await isAppStoreRunning(conn);
   const response = await sendSpringBoardBridgeRequest(conn, { action: 'launch_app', bundleId: 'com.apple.AppStore' });
   if (!wasRunning && response?.launchResult !== 0) {
@@ -47,7 +47,7 @@ async function ensureAppStoreForeground(conn: Client): Promise<void> {
   await new Promise((r) => setTimeout(r, wasRunning ? 4_000 : 8_000));
 }
 
-async function ensureAppStoreBridgeReady(conn: Client): Promise<void> {
+async function ensureAppStoreBridgeReady(conn: DeviceClient): Promise<void> {
   const deadline = Date.now() + APP_STORE_BRIDGE_READY_TIMEOUT_MS;
   let lastError: Error | undefined;
 
@@ -82,7 +82,7 @@ async function ensureAppStoreBridgeReady(conn: Client): Promise<void> {
   throw new Error(`autoinstall App Store bridge did not become ready within ${APP_STORE_BRIDGE_READY_TIMEOUT_MS / 1000}s${lastError ? `: ${lastError.message}` : ''}`);
 }
 
-async function restartAppStore(conn: Client): Promise<void> {
+async function restartAppStore(conn: DeviceClient): Promise<void> {
   await execCommand(conn, 'killall AppStore PassbookUIService 2>/dev/null || true');
   await new Promise((r) => setTimeout(r, 1_000));
 }

@@ -1271,7 +1271,7 @@ dashboardRouter.get('/v1/dashboard/devices/:id/preflight', canViewDevices, async
     bridge = await getTestFlightBridgeDiagnostics(device).catch(() => undefined);
   }
   const checks = [
-    { label: 'SSH connection', ok: health.reachable, detail: health.error },
+    { label: 'Device connection', ok: health.reachable, detail: health.error },
     { label: 'Internet access', ok: health.internetAccess !== false, detail: health.internetAccess === false ? 'Device cannot reach Apple services' : undefined },
     { label: 'autoinstall bridge', ok: health.testFlightBridgeReachable === true, detail: health.testFlightBridgeReachable === true ? undefined : 'Bridge did not respond' },
     { label: 'Device readiness', ok: health.readiness?.state !== 'blocked', detail: health.readiness?.reasons.join(' · ') || undefined },

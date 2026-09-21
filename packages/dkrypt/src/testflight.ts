@@ -1,4 +1,3 @@
-import { Client } from 'ssh2';
 import { scopedLogger } from '#logger.js';
 import {
   execCommand,
@@ -7,6 +6,7 @@ import {
   readInstalledBundleVersions,
   sendSpringBoardBridgeRequest,
   sendTestFlightBridgeRequest,
+  type DeviceClient,
   type InstallVerification,
   withSSH,
 } from '#idevice.js';
@@ -70,14 +70,14 @@ function hasRequiredBridgeCapabilities(response: Record<string, unknown>): boole
   return hasBridgeCapabilities('testflight', response.capabilities);
 }
 
-async function launchTestFlight(conn: Client, wasRunning: boolean): Promise<void> {
+async function launchTestFlight(conn: DeviceClient, wasRunning: boolean): Promise<void> {
   const response = await sendSpringBoardBridgeRequest(conn, { action: 'launch_app', bundleId: 'com.apple.TestFlight' });
   if (!wasRunning && response?.launchResult !== 0) {
     throw new Error(`autoinstall SpringBoard launch_app failed: ${JSON.stringify(response)}`);
   }
 }
 
-async function waitForBridgeReady(conn: Client, requiredCapabilities: readonly string[] = [], timeoutMs = 20_000): Promise<void> {
+async function waitForBridgeReady(conn: DeviceClient, requiredCapabilities: readonly string[] = [], timeoutMs = 20_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
@@ -119,7 +119,7 @@ function invalidateTestFlightBridge(device: DeviceRecord): void {
   testFlightBridgeReady.delete(testFlightBridgeKey(device));
 }
 
-async function ensureTestFlightRunningOnConnection(conn: Client, device: DeviceRecord, requiredCapabilities: readonly string[]): Promise<void> {
+async function ensureTestFlightRunningOnConnection(conn: DeviceClient, device: DeviceRecord, requiredCapabilities: readonly string[]): Promise<void> {
   if (hasCachedTestFlightBridge(device, requiredCapabilities)) return;
   const wasRunning = await isTestFlightRunning(conn);
   log.info(
@@ -195,7 +195,7 @@ export async function listTestFlightApps(device = primaryDevice(), refreshCatalo
   }, device, TESTFLIGHT_DEVICE_CATALOG_CAPABILITIES);
 }
 
-async function withReadyBridgeRequest<T>(request: (conn: Client) => Promise<T>, device: DeviceRecord, requiredCapabilities: readonly string[] = []): Promise<T> {
+async function withReadyBridgeRequest<T>(request: (conn: DeviceClient) => Promise<T>, device: DeviceRecord, requiredCapabilities: readonly string[] = []): Promise<T> {
   return withBridgeRecovery(
     () => withSSH(device, async (conn) => {
       await ensureTestFlightRunningOnConnection(conn, device, requiredCapabilities);
@@ -223,7 +223,7 @@ export async function getTestFlightBridgeDiagnostics(device = primaryDevice()): 
   }, device);
 }
 
-async function findInstalledBundlePath(conn: Client, bundleId: string): Promise<string | undefined> {
+async function findInstalledBundlePath(conn: DeviceClient, bundleId: string): Promise<string | undefined> {
   const { stdout } = await execCommand(
     conn,
     `find /var/containers/Bundle/Application -maxdepth 1 -exec sh -c "grep -la ${bundleId} {}/*.app/Info.plist 2>/dev/null" \\; 2>/dev/null`,

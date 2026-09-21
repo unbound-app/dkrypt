@@ -5,7 +5,7 @@ import type { Client } from 'ssh2';
 import type { BridgeEnvelope } from './idevice.js';
 import { BRIDGE_CAPABILITIES, BRIDGE_PROTOCOL_VERSION, TESTFLIGHT_LIFECYCLE_CAPABILITIES } from './bridgeProtocol.js';
 
-const { armAppStoreAutoConfirm, buildIpadecryptRuntimeConfig, createBridgeEnvelope, execCommand, readBridgeHeartbeats, retryTransientSshConnection } = await import('./idevice.js' + '?idevice-transport-test');
+const { armAppStoreAutoConfirm, buildIpadecryptRuntimeConfig, createBridgeEnvelope, createDeviceAgentEnvelope, execCommand, readBridgeHeartbeats, retryTransientSshConnection } = await import('./idevice.js' + '?idevice-transport-test');
 
 type FakeExecStream = {
   stderr: {
@@ -72,6 +72,24 @@ test('createBridgeEnvelope matches the shared bridge fixture', async () => {
   expect(envelope).toEqual(fixture.envelope);
   expect(createBridgeEnvelope(fixture.secret, 'appstore', fixture.request, fixture.requestId, fixture.issuedAt).signature).not.toBe(envelope.signature);
   expect(fixture.contract).toEqual({ version: BRIDGE_PROTOCOL_VERSION, ...BRIDGE_CAPABILITIES, testflightLifecycle: TESTFLIGHT_LIFECYCLE_CAPABILITIES });
+});
+
+test('createDeviceAgentEnvelope matches the device agent protocol contract', () => {
+  const envelope = createDeviceAgentEnvelope(
+    '0123456789abcdef0123456789abcdef',
+    '11111111-1111-4111-8111-111111111111',
+    { action: 'status' },
+    1760000000,
+  );
+
+  expect(envelope).toEqual({
+    version: 1,
+    requestId: '11111111-1111-4111-8111-111111111111',
+    issuedAt: 1760000000,
+    payload: 'eyJhY3Rpb24iOiJzdGF0dXMifQ',
+    signature: 'c03e1275eea034bbfa180b4eb5b4b4c6e7095ea4ea895e9671278e5ecb82c3bd',
+  });
+  expect(JSON.parse(Buffer.from(envelope.payload, 'base64url').toString('utf8'))).toEqual({ action: 'status' });
 });
 
 test('uses SSH exec channels for device file reads and quoted writes', async () => {

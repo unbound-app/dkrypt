@@ -1,6 +1,5 @@
-import { Client } from 'ssh2';
 import { config } from '#config.js';
-import { execCommand, isTestFlightRunning, readBridgeHeartbeats, sendSpringBoardBridgeRequest, tryIoregCandidates, withSSH, type BridgeHeartbeat } from '#idevice.js';
+import { execCommand, isTestFlightRunning, readBridgeHeartbeats, sendSpringBoardBridgeRequest, tryIoregCandidates, withSSH, type BridgeHeartbeat, type DeviceClient } from '#idevice.js';
 import { scopedLogger } from '#logger.js';
 import { EMBED_COLOR, notify } from '#notify.js';
 import { releasePinnedJobsForDevice } from '#jobs/store.js';
@@ -129,11 +128,11 @@ interface BatteryStatus {
 const IOREG_CANDIDATES = ['ioreg', '/usr/sbin/ioreg', '/cores/binpack/usr/sbin/ioreg', '/cores/binpack/usr/bin/ioreg'];
 const IOREG_BATTERY_CLASS = 'AppleARMPMUCharger';
 
-async function runIoreg(conn: Client): Promise<string | undefined> {
+async function runIoreg(conn: DeviceClient): Promise<string | undefined> {
   return tryIoregCandidates(conn, IOREG_BATTERY_CLASS, IOREG_CANDIDATES);
 }
 
-async function queryBatteryStatus(conn: Client): Promise<BatteryStatus | undefined> {
+async function queryBatteryStatus(conn: DeviceClient): Promise<BatteryStatus | undefined> {
   const stdout = await runIoreg(conn);
   if (!stdout) {
     log.warn('ioreg is not available on the device via any known path - battery telemetry disabled');
@@ -206,7 +205,7 @@ export function parseDeviceStorageDf(stdout: string): DeviceStorage | undefined 
   return { totalBytes, usedBytes, freeBytes, usedPercent: usedBytes / totalBytes };
 }
 
-async function queryDeviceStorage(conn: Client): Promise<DeviceStorage | undefined> {
+async function queryDeviceStorage(conn: DeviceClient): Promise<DeviceStorage | undefined> {
   const { stdout, code } = await execCommand(conn, 'df -k /private/var 2>&1');
   if (code !== 0) {
     log.warn('device storage df query failed', { code, output: stdout.slice(0, 200) });
@@ -291,7 +290,7 @@ export async function collectDeviceTelemetry(queries: DeviceHealthQueries): Prom
   };
 }
 
-async function runIfconfig(conn: Client): Promise<string | undefined> {
+async function runIfconfig(conn: DeviceClient): Promise<string | undefined> {
   for (const bin of IFCONFIG_CANDIDATES) {
     const { stdout, code } = await execCommand(conn, `${bin} 2>/dev/null`);
     if (code === 0 && stdout.includes('inet ')) return stdout;
@@ -316,7 +315,7 @@ function parsePrimaryIPv4(ifconfigOutput: string): { ipAddress: string; iface: s
   return undefined;
 }
 
-async function queryNetworkStatus(conn: Client): Promise<NetworkStatus | undefined> {
+async function queryNetworkStatus(conn: DeviceClient): Promise<NetworkStatus | undefined> {
   const ifconfigOutput = await runIfconfig(conn);
   if (!ifconfigOutput) {
     log.warn('ifconfig is not available on the device via any known path - network telemetry disabled');
@@ -496,7 +495,7 @@ async function checkOfflineAlert(device: DeviceRecord, reachable: boolean): Prom
 
   s.offlineAlertSentAt = Date.now();
   await notify('deviceOffline', {
-    title: 'iDevice unreachable',
+    title: 'Device unreachable',
     description: `${device.name} has been unreachable for at least ${settings.deviceOfflineAlertMinutes} minutes - decrypts assigned to it can't run until it's back.`,
     color: EMBED_COLOR.err,
   });

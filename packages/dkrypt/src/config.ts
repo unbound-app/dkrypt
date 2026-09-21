@@ -48,6 +48,7 @@ export const config = {
   deviceSshKeyPath: optional('DEVICE_SSH_KEY_PATH', '/root/.ssh/id_ed25519'),
   deviceSshUser: optional('DEVICE_SSH_USER', 'mobile'),
   deviceSshPort: optionalInt('DEVICE_SSH_PORT', 22),
+  deviceTransport: optional('DEVICE_TRANSPORT', 'auto'),
   deviceDiscoveryHosts: optional('DEVICE_DISCOVERY_HOSTS', ''),
   deviceDiscoverySubnets: optional('DEVICE_DISCOVERY_SUBNETS', ''),
   ideviceIdBin: optional('IDEVICE_ID_BIN', 'idevice_id'),
