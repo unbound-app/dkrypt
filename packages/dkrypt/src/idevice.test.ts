@@ -5,7 +5,7 @@ import type { Client } from 'ssh2';
 import type { BridgeEnvelope } from './idevice.js';
 import { BRIDGE_CAPABILITIES, BRIDGE_PROTOCOL_VERSION, TESTFLIGHT_LIFECYCLE_CAPABILITIES } from './bridgeProtocol.js';
 
-const { armAppStoreAutoConfirm, buildIpadecryptRuntimeConfig, createBridgeEnvelope, createDeviceAgentEnvelope, execCommand, readBridgeHeartbeats, retryTransientSshConnection } = await import('./idevice.js' + '?idevice-transport-test');
+const { armAppStoreAutoConfirm, buildIpadecryptRuntimeConfig, createBridgeEnvelope, createDeviceAgentEnvelope, execCommand, isDirectUsbDeviceAgentConnection, readBridgeHeartbeats, retryTransientSshConnection } = await import('./idevice.js' + '?idevice-transport-test');
 
 type FakeExecStream = {
   stderr: {
@@ -141,6 +141,12 @@ test('retries a USB transport that closes before the SSH handshake', async () =>
   }, 1, 0)).resolves.toBe('ready');
 
   expect(attempts).toBe(2);
+});
+
+test('identifies direct USB connections that can recover without SSH', () => {
+  expect(isDirectUsbDeviceAgentConnection({ transport: 'usb', udid: '2a0e0924d60bbd25e9ce1398fa5543128ec5a5dd' })).toBe(true);
+  expect(isDirectUsbDeviceAgentConnection({ transport: 'wifi', udid: '2a0e0924d60bbd25e9ce1398fa5543128ec5a5dd', usbmuxNetwork: true })).toBe(false);
+  expect(isDirectUsbDeviceAgentConnection({ transport: 'wifi', host: 'ipad.local', udid: '2a0e0924d60bbd25e9ce1398fa5543128ec5a5dd' })).toBe(false);
 });
 
 test('creates an ipadecrypt runtime config without requiring bootstrap credentials', () => {

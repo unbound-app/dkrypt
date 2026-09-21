@@ -152,7 +152,8 @@
     try {
       const result = await recoverDevice(device.id);
       if (result.ok) {
-        health = { ...health, [device.id]: result.data };
+        if (result.data) health = { ...health, [device.id]: result.data };
+        void fetchDeviceHealth(device.id, true).then((value) => (health = { ...health, [device.id]: value })).catch(() => {});
         showToast(`${device.name} recovery completed`, 'success');
       }
     } catch (error) {

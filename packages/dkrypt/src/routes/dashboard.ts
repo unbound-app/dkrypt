@@ -19,7 +19,7 @@ import { getGitHubRateLimitBudget, listDispatchRepos, listRepoWorkflows, validat
 import { lookupAppMetadata, searchApps } from '#scheduler/itunes.js';
 import { requirePermission, requireSession } from '#session.js';
 import { getDeviceHealth, getDeviceInstallBlocker, getDeviceReadiness, isBridgeHeartbeatFresh } from '#deviceHealth.js';
-import { discoverDevices, execCommand, listInstalledAppStoreBundles, sendSpringBoardBridgeRequest, setupDeviceConnection, validateDeviceRootDir, withSSH, type DeviceConnection } from '#idevice.js';
+import { discoverDevices, execCommand, isDirectUsbDeviceAgentConnection, listInstalledAppStoreBundles, sendSpringBoardBridgeRequest, setupDeviceConnection, validateDeviceRootDir, withAutoinstallDeviceAgent, withSSH, type DeviceConnection } from '#idevice.js';
 import { getTestFlightBridgeDiagnostics, listBuilds, listTrains } from '#testflight.js';
 import { nextCronRunAt, nextCronRuns } from '#util/cron.js';
 import { getDiskUsage } from '#util/diskUsage.js';
@@ -1349,13 +1349,15 @@ dashboardRouter.post('/v1/dashboard/devices/:id/recover', canManageDevices, asyn
     return;
   }
   try {
-    const result = await withSSH(device, (conn) => execCommand(conn, 'sudo -n /var/jb/usr/bin/sbreload', 30_000));
+    const result = isDirectUsbDeviceAgentConnection(device)
+      ? await withAutoinstallDeviceAgent(device, (conn) => execCommand(conn, 'sudo -n /var/jb/usr/bin/sbreload', 30_000))
+      : await withSSH(device, (conn) => execCommand(conn, 'sudo -n /var/jb/usr/bin/sbreload', 30_000));
     if (result.code !== 0) {
       res.status(502).json({ error: `could not reload SpringBoard: ${result.stderr.trim() || result.stdout.trim() || `exit code ${result.code ?? 'unknown'}`}` });
       return;
     }
     recordDeviceActivity({ deviceId: device.id, kind: 'bridge', message: 'SpringBoard reloaded through the device recovery channel' });
-    res.json({ ok: true, data: await getDeviceHealth(device.id, true) });
+    res.json({ ok: true });
   } catch (err) {
     res.status(502).json({ error: `device recovery failed: ${err instanceof Error ? err.message : String(err)}` });
   }

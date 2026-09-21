@@ -719,8 +719,8 @@ export function runBridgeAction(id: string, action: 'open-testflight' | 'open-ap
   return apiAction(`/v1/dashboard/devices/${encodeURIComponent(id)}/bridge-action`, { method: 'POST', body: JSON.stringify({ action }) }, 'Bridge action completed');
 }
 
-export function recoverDevice(id: string): Promise<{ ok: boolean; data: DeviceHealth }> {
-  return apiAction(`/v1/dashboard/devices/${encodeURIComponent(id)}/recover`, { method: 'POST' }, 'Device recovery started');
+export function recoverDevice(id: string): Promise<{ ok: boolean; data?: DeviceHealth }> {
+  return apiAction(`/v1/dashboard/devices/${encodeURIComponent(id)}/recover`, { method: 'POST' });
 }
 
 export function fetchWatches(): Promise<{ watches: AppWatch[] }> {

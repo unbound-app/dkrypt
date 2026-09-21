@@ -727,12 +727,16 @@ function invalidateAuthCache(connection: DeviceConnection | string): void {
 }
 
 function shouldAttemptDeviceAgent(connection: DeviceConnection | string): boolean {
-  if (typeof connection === 'string' || !connection.udid || connection.host) return false;
+  if (!isDirectUsbDeviceAgentConnection(connection)) return false;
   const mode = config.deviceTransport.toLowerCase();
   if (mode === 'ssh') return false;
   const key = sshSessionKey(connection);
   if (mode === 'autoinstall') return true;
   return (deviceAgentUnavailableUntil.get(key) ?? 0) <= Date.now();
+}
+
+export function isDirectUsbDeviceAgentConnection(connection: DeviceConnection | string): connection is DeviceConnection {
+  return typeof connection !== 'string' && Boolean(connection.udid && !connection.host && connection.usbmuxNetwork !== true);
 }
 
 async function withDeviceAgent<T>(connection: DeviceConnection, fn: (client: DeviceClient) => Promise<T>): Promise<T> {
@@ -754,6 +758,11 @@ async function withDeviceAgent<T>(connection: DeviceConnection, fn: (client: Dev
       releaseDeviceAgentSession(opened.key, opened.session);
     }
   });
+}
+
+export async function withAutoinstallDeviceAgent<T>(connection: DeviceConnection, fn: (client: DeviceClient) => Promise<T>): Promise<T> {
+  if (!isDirectUsbDeviceAgentConnection(connection)) throw new DeviceAgentUnavailableError('the direct USB recovery channel is unavailable for this device');
+  return withDeviceAgent(connection, fn);
 }
 
 export async function withSSH<T>(connection: DeviceConnection | string, fn: (conn: DeviceClient) => Promise<T>): Promise<T> {
