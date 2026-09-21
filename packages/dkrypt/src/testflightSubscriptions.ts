@@ -32,9 +32,7 @@ const TESTFLIGHT_VERIFICATION_ATTEMPTS = 12;
 const TESTFLIGHT_VERIFICATION_DELAY_MS = 1_000;
 const TESTFLIGHT_DEVICE_CATALOG_TTL_MS = 2 * 60_000;
 const TESTFLIGHT_CATALOG_CACHE_TTL_MS = 5 * 60_000;
-const TESTFLIGHT_CATALOG_REFRESH_INTERVAL_MS = 10 * 60_000;
-const TESTFLIGHT_CATALOG_START_DELAY_MS = 1_500;
-const TESTFLIGHT_CATALOG_REFRESH_FAILURE_BACKOFF_MS = 30_000;
+const TESTFLIGHT_CATALOG_REFRESH_FAILURE_BACKOFF_MS = 5 * 60_000;
 const TESTFLIGHT_METADATA_TTL_MS = 60 * 60_000;
 export { IMMUTABLE_TESTFLIGHT_BUNDLE_ID } from '#store/state.js';
 
@@ -174,17 +172,16 @@ const deviceCatalogCache = new Map<string, DeviceCatalogCacheEntry>();
 const appMetadataCache = new Map<string, AppMetadataCacheEntry>();
 let catalogRefreshPromise: Promise<TestFlightCatalogApp[]> | undefined;
 let catalogRefreshRequiresAllDevices = false;
-let catalogRefreshTimer: NodeJS.Timeout | undefined;
 let catalogRefreshFailureAt: number | undefined;
 
 export function clearTestFlightDeviceCatalogCache(): void {
   deviceCatalogCache.clear();
 }
 
-async function getDeviceApps(device: DeviceRecord, forceRefresh = false): Promise<{ device: DeviceRecord; fetchedAt: number; apps: TFDeviceApp[] }> {
+async function getDeviceApps(device: DeviceRecord, forceRefresh = false, refreshRemoteCatalog = false): Promise<{ device: DeviceRecord; fetchedAt: number; apps: TFDeviceApp[] }> {
   const cached = deviceCatalogCache.get(device.id);
   if (!forceRefresh && cached && Date.now() - cached.fetchedAt < TESTFLIGHT_DEVICE_CATALOG_TTL_MS) return { device, ...cached };
-  const apps = await listTestFlightApps(device);
+  const apps = await listTestFlightApps(device, refreshRemoteCatalog);
   const fetchedAt = Date.now();
   deviceCatalogCache.set(device.id, { fetchedAt, apps });
   return { device, fetchedAt, apps };
@@ -284,7 +281,7 @@ export function getTestFlightCatalogCacheState(): TestFlightCatalogCacheState {
   };
 }
 
-async function refreshTestFlightCatalog(requireAllDevices = false): Promise<TestFlightCatalogApp[]> {
+async function refreshTestFlightCatalog(requireAllDevices = false, refreshRemoteCatalog = false): Promise<TestFlightCatalogApp[]> {
   if (catalogRefreshPromise && (!requireAllDevices || catalogRefreshRequiresAllDevices)) return catalogRefreshPromise;
   if (catalogRefreshPromise) await catalogRefreshPromise.catch(() => undefined);
 
@@ -295,7 +292,7 @@ async function refreshTestFlightCatalog(requireAllDevices = false): Promise<Test
       setTestFlightCatalogCache({ fetchedAt: Date.now(), deviceIds: [], apps, complete: true });
       return apps;
     }
-    const settled = await Promise.allSettled(devices.map((device) => getDeviceApps(device, true)));
+    const settled = await Promise.allSettled(devices.map((device) => getDeviceApps(device, true, refreshRemoteCatalog)));
     if (requireAllDevices && settled.some((result) => result.status === 'rejected')) throw new TestFlightCatalogUnavailableError();
     const complete = settled.every((result) => result.status === 'fulfilled');
     const entries = settled.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
@@ -333,7 +330,7 @@ async function refreshTestFlightCatalog(requireAllDevices = false): Promise<Test
 
 export function refreshTestFlightCatalogInBackground(force = false): void {
   if (!force && catalogRefreshFailureAt && Date.now() - catalogRefreshFailureAt < TESTFLIGHT_CATALOG_REFRESH_FAILURE_BACKOFF_MS) return;
-  void refreshTestFlightCatalog()
+  void refreshTestFlightCatalog(false, force)
     .then(() => {
       catalogRefreshFailureAt = undefined;
     })
@@ -352,7 +349,7 @@ export async function getVerifiedTestFlightCatalog(options: { requireAllDevices?
     refreshTestFlightCatalogInBackground();
     return [];
   }
-  return refreshTestFlightCatalog(true);
+  return refreshTestFlightCatalog(true, true);
 }
 
 export async function decorateSearchResults<T extends { bundleId: string; trackId: number }>(results: T[]): Promise<Array<T & { testflight?: Pick<TestFlightCatalogApp, 'appId' | 'devices' | 'lastVerifiedAt'> }>> {
@@ -583,9 +580,6 @@ let syncTimer: NodeJS.Timeout | undefined;
 
 export function startTestFlightSubscriptionPoller(): void {
   if (!syncTimer) syncTimer = setInterval(() => void syncApprovedTestFlightSubscriptions(), TESTFLIGHT_VERIFICATION_TTL_MS).unref();
-  if (catalogRefreshTimer) return;
-  setTimeout(refreshTestFlightCatalogInBackground, TESTFLIGHT_CATALOG_START_DELAY_MS).unref();
-  catalogRefreshTimer = setInterval(refreshTestFlightCatalogInBackground, TESTFLIGHT_CATALOG_REFRESH_INTERVAL_MS).unref();
 }
 
 export function subscriptionsForUser(userId: string, manager: boolean): TestFlightSubscription[] {

@@ -20,6 +20,7 @@ const BRIDGE_ARTIFACT_TTL_MINUTES = 30;
 const REMOTE_COMMAND_TIMEOUT_MS = 10_000;
 const SSH_HANDSHAKE_RETRIES = 1;
 const SSH_HANDSHAKE_RETRY_DELAY_MS = 150;
+const SSH_SESSION_IDLE_TIMEOUT_MS = 15_000;
 
 export type { BridgeChannel } from '#bridgeProtocol.js';
 
@@ -74,6 +75,16 @@ interface RawDeviceConfig {
 const authCache = new Map<string, DeviceAuth>();
 const bridgeSecretCache = new Map<string, string>();
 const connectionRoots = new WeakMap<Client, string>();
+
+interface SshSession {
+  conn: Client;
+  rootDir: string;
+  tunnel?: { process: ChildProcess };
+  idleTimer?: NodeJS.Timeout;
+  unusable: boolean;
+}
+
+const sshSessions = new Map<string, SshSession>();
 
 export type DeviceTransport = 'wifi' | 'usb';
 
@@ -279,9 +290,16 @@ function makeSerialQueue() {
 
 const withSSHLock = makeSerialQueue();
 
+function sshSessionKey(connection: DeviceConnection | string): string {
+  if (typeof connection === 'string') return 'root:' + connection;
+  if (connection.id) return 'id:' + connection.id;
+  if (connection.udid) return 'udid:' + connection.udid;
+  return 'host:' + (connection.host ?? 'device') + ':' + (connection.port ?? config.deviceSshPort);
+}
+
 function isTransientSshConnectionError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  return /timed out while waiting for handshake|connection reset by peer|socket hang up|ECONNRESET/i.test(message);
+  return /timed out while waiting for handshake|connection lost before handshake|connection reset by peer|socket hang up|ECONNRESET/i.test(message);
 }
 
 export async function retryTransientSshConnection<T>(operation: () => Promise<T>, maxRetries = SSH_HANDSHAKE_RETRIES, delayMs = SSH_HANDSHAKE_RETRY_DELAY_MS): Promise<T> {
@@ -320,6 +338,78 @@ function connectSshClient(auth: DeviceAuth, privateKey: Buffer): Promise<Client>
   });
 }
 
+function closeSshSession(key: string, session: SshSession): void {
+  if (sshSessions.get(key) === session) sshSessions.delete(key);
+  if (session.idleTimer) clearTimeout(session.idleTimer);
+  session.unusable = true;
+  connectionRoots.delete(session.conn);
+  session.conn.end();
+  session.tunnel?.process.kill();
+}
+
+async function openSshSession(connection: DeviceConnection | string, key: string): Promise<SshSession> {
+  const resolved = await resolveDeviceAuth(connection);
+  let privateKey: Buffer;
+  try {
+    privateKey = await readFile(resolved.auth.keyPath);
+  } catch (err) {
+    invalidateAuthCache(connection);
+    throw err;
+  }
+  let tunnel: { host: string; port: number; process: ChildProcess } | undefined;
+  try {
+    if (resolved.usesUsbmux) {
+      if (typeof connection === 'string' || !connection.udid) throw new Error('a paired device identifier is required for USB setup');
+      tunnel = await startUsbmuxTunnel(connection.udid, resolved.auth.port, resolved.networkUsbmux);
+    }
+    const auth = tunnel ? { ...resolved.auth, host: tunnel.host, port: tunnel.port } : resolved.auth;
+    const conn = await retryTransientSshConnection(() => connectSshClient(auth, privateKey));
+    const session: SshSession = { conn, rootDir: resolved.rootDir, tunnel, unusable: false };
+    conn.on('error', () => {
+      session.unusable = true;
+    });
+    conn.once('end', () => {
+      session.unusable = true;
+    });
+    conn.once('close', () => {
+      session.unusable = true;
+    });
+    connectionRoots.set(conn, resolved.rootDir);
+    sshSessions.set(key, session);
+    return session;
+  } catch (err) {
+    tunnel?.process.kill();
+    throw err;
+  }
+}
+
+async function getSshSession(connection: DeviceConnection | string): Promise<{ key: string; session: SshSession }> {
+  const key = sshSessionKey(connection);
+  const existing = sshSessions.get(key);
+  if (existing && !existing.unusable) {
+    if (existing.idleTimer) clearTimeout(existing.idleTimer);
+    existing.idleTimer = undefined;
+    return { key, session: existing };
+  }
+  if (existing) closeSshSession(key, existing);
+  return { key, session: await openSshSession(connection, key) };
+}
+
+function releaseSshSession(key: string, session: SshSession): void {
+  if (sshSessions.get(key) !== session) {
+    closeSshSession(key, session);
+    return;
+  }
+  if (session.unusable) {
+    closeSshSession(key, session);
+    return;
+  }
+  session.idleTimer = setTimeout(() => {
+    if (sshSessions.get(key) === session) closeSshSession(key, session);
+  }, SSH_SESSION_IDLE_TIMEOUT_MS);
+  session.idleTimer.unref();
+}
+
 function invalidateAuthCache(connection: DeviceConnection | string): void {
   if (typeof connection === 'string') {
     authCache.delete(connection);
@@ -329,29 +419,22 @@ function invalidateAuthCache(connection: DeviceConnection | string): void {
 }
 
 export async function withSSH<T>(connection: DeviceConnection | string, fn: (conn: Client) => Promise<T>): Promise<T> {
-  return withSSHLock(() => withDeviceTunnel(connection, async (auth, rootDir) => {
-    let privateKey: Buffer;
+  return withSSHLock(async () => {
+    let key = '';
+    let session: SshSession | undefined;
     try {
-      privateKey = await readFile(auth.keyPath);
+      const opened = await getSshSession(connection);
+      key = opened.key;
+      session = opened.session;
+      return await fn(session.conn);
     } catch (err) {
       invalidateAuthCache(connection);
-      throw err;
-    }
-    let conn: Client | undefined;
-    try {
-      conn = await retryTransientSshConnection(() => connectSshClient(auth, privateKey));
-      connectionRoots.set(conn, rootDir);
-      return await fn(conn);
-    } catch (err) {
-      invalidateAuthCache(connection);
+      if (session && (session.unusable || isTransientSshConnectionError(err))) closeSshSession(key, session);
       throw err;
     } finally {
-      if (conn) {
-        connectionRoots.delete(conn);
-        conn.end();
-      }
+      if (session) releaseSshSession(key, session);
     }
-  }));
+  });
 }
 
 export async function withIpadecrypt<T>(connection: DeviceConnection | string, fn: (rootDir: string) => Promise<T>): Promise<T> {

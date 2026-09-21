@@ -332,6 +332,7 @@ async function queryNetworkStatus(conn: Client): Promise<NetworkStatus | undefin
 }
 
 const HEALTH_CACHE_TTL_MS = 45_000;
+const HEALTH_FAILURE_CACHE_TTL_MS = 2 * 60_000;
 const HEALTH_FAILURE_CONFIRMATIONS = 3;
 
 export function coalesceDeviceHealthRequest<T>(pending: Map<string, Promise<T>>, deviceId: string, request: () => Promise<T>): Promise<T> {
@@ -433,7 +434,10 @@ export function peekPrimaryDeviceHealth(): DeviceHealth | undefined {
 
 export async function getDeviceHealth(deviceId: string, force = false): Promise<DeviceHealth> {
   const cached = getCachedDeviceHealth(deviceId);
-  if (!force && cached && Date.now() - cached.at < HEALTH_CACHE_TTL_MS) return cached.value;
+  const cacheTtl = cached?.value.reachable === true && cached.value.testFlightBridgeReachable !== false
+    ? HEALTH_CACHE_TTL_MS
+    : HEALTH_FAILURE_CACHE_TTL_MS;
+  if (!force && cached && Date.now() - cached.at < cacheTtl) return cached.value;
   const value = await coalesceDeviceHealthRequest(pendingDeviceHealth, deviceId, async () => {
     const device = getEffectiveDevices().find((d) => d.id === deviceId);
     if (!device) {
@@ -644,7 +648,7 @@ async function pollOneDevice(device: DeviceRecord): Promise<void> {
     checkBatteryHotAlert(device, health.batteryTemperatureC),
     checkBatteryLowAlert(device, health.batteryPercent, health.batteryCharging),
     checkDeviceStorageAlert(device, health.storageUsedPercent),
-    checkTestFlightBridgeAlert(device, health.testFlightBridgeReachable ?? false),
+    checkTestFlightBridgeAlert(device, health.reachable && health.testFlightBridgeReachable === false),
   ]);
 }
 

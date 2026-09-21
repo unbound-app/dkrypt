@@ -21,6 +21,9 @@ function primaryDevice() {
 
 const log = scopedLogger('testflight');
 const TESTFLIGHT_INSTALL_RETRY_AFTER_MS = 2 * 60_000;
+const TESTFLIGHT_BRIDGE_READY_CACHE_MS = 30_000;
+const TESTFLIGHT_BRIDGE_READY_POLL_INTERVAL_MS = 2_000;
+const testFlightBridgeReady = new Map<string, { expiresAt: number; capabilities: Set<string> }>();
 
 export interface TFTrain {
   trainVersion: string;
@@ -88,103 +91,136 @@ async function waitForBridgeReady(conn: Client, requiredCapabilities: readonly s
     } catch (error) {
       if (error instanceof BridgeError && !error.details.retryable) throw error;
     }
-    await new Promise((r) => setTimeout(r, 1_000));
+    await new Promise((r) => setTimeout(r, TESTFLIGHT_BRIDGE_READY_POLL_INTERVAL_MS));
   }
   throw new Error('autoinstall bridge did not become ready within timeout');
 }
 
-export async function ensureTestFlightRunning(device = primaryDevice(), requiredCapabilities: readonly string[] = []): Promise<void> {
-  return withSSH(device, async (conn) => {
-    const wasRunning = await isTestFlightRunning(conn);
-    log.info(
-      wasRunning
-        ? 'TestFlight already running, bringing to foreground to confirm the bridge is responsive'
-        : 'launching TestFlight autonomously via autoinstall SpringBoard bridge',
-    );
-    await launchTestFlight(conn, wasRunning);
-    await new Promise((r) => setTimeout(r, wasRunning ? 2_000 : 3_000));
-    await waitForBridgeReady(conn, requiredCapabilities);
+function testFlightBridgeKey(device: DeviceRecord): string {
+  return device.id ?? device.udid ?? device.rootDir ?? (device.host ?? 'device') + ':' + (device.port ?? 22);
+}
+
+function hasCachedTestFlightBridge(device: DeviceRecord, requiredCapabilities: readonly string[]): boolean {
+  const cached = testFlightBridgeReady.get(testFlightBridgeKey(device));
+  if (!cached || cached.expiresAt <= Date.now()) return false;
+  return requiredCapabilities.every((capability) => cached.capabilities.has(capability));
+}
+
+function cacheTestFlightBridge(device: DeviceRecord, capabilities: readonly string[]): void {
+  const key = testFlightBridgeKey(device);
+  const cached = testFlightBridgeReady.get(key);
+  testFlightBridgeReady.set(key, {
+    expiresAt: Date.now() + TESTFLIGHT_BRIDGE_READY_CACHE_MS,
+    capabilities: new Set([...(cached?.capabilities ?? []), ...capabilities]),
   });
 }
 
+function invalidateTestFlightBridge(device: DeviceRecord): void {
+  testFlightBridgeReady.delete(testFlightBridgeKey(device));
+}
+
+async function ensureTestFlightRunningOnConnection(conn: Client, device: DeviceRecord, requiredCapabilities: readonly string[]): Promise<void> {
+  if (hasCachedTestFlightBridge(device, requiredCapabilities)) return;
+  const wasRunning = await isTestFlightRunning(conn);
+  log.info(
+    wasRunning
+      ? 'TestFlight already running, bringing to foreground to confirm the bridge is responsive'
+      : 'launching TestFlight autonomously via autoinstall SpringBoard bridge',
+  );
+  await launchTestFlight(conn, wasRunning);
+  await new Promise((r) => setTimeout(r, wasRunning ? 2_000 : 3_000));
+  await waitForBridgeReady(conn, requiredCapabilities);
+  cacheTestFlightBridge(device, requiredCapabilities);
+}
+
+export async function ensureTestFlightRunning(device = primaryDevice(), requiredCapabilities: readonly string[] = []): Promise<void> {
+  if (hasCachedTestFlightBridge(device, requiredCapabilities)) return;
+  return withSSH(device, (conn) => ensureTestFlightRunningOnConnection(conn, device, requiredCapabilities));
+}
+
 export async function listTrains(appId: number, device = primaryDevice()): Promise<TFTrain[]> {
-  return withReadyBridgeRequest(() => withSSH(device, async (conn) => {
+  return withReadyBridgeRequest(async (conn) => {
     const response = await sendTestFlightBridgeRequest(conn, { action: 'list_trains', appId });
     return response.data as TFTrain[];
-  }), device);
+  }, device);
 }
 
 export async function listBuilds(appId: number, trainVersion: string, device = primaryDevice()): Promise<TFBuild[]> {
-  return withReadyBridgeRequest(() => withSSH(device, async (conn) => {
+  return withReadyBridgeRequest(async (conn) => {
     const response = await sendTestFlightBridgeRequest(conn, { action: 'list_builds', appId, trainVersion });
     return response.data as TFBuild[];
-  }), device);
+  }, device);
 }
 
 const TESTFLIGHT_INVITE_URL_RE = /^https:\/\/testflight\.apple\.com\/join\/([A-Za-z0-9]{4,32})$/;
 
 export async function subscribeToTestFlightInvite(url: string, operationId: string, device = primaryDevice(), appId?: number): Promise<Record<string, unknown>> {
   if (!TESTFLIGHT_INVITE_URL_RE.test(url)) throw new Error('invalid TestFlight public link');
-  return withReadyBridgeRequest(() => withSSH(device, (conn) => sendTestFlightBridgeRequest(conn, {
+  return withReadyBridgeRequest((conn) => sendTestFlightBridgeRequest(conn, {
     action: 'subscribe_invite',
     url,
     operationId,
     ...(appId && Number.isInteger(appId) && appId > 0 ? { appId } : {}),
-  })), device, TESTFLIGHT_LIFECYCLE_CAPABILITIES);
+  }), device, TESTFLIGHT_LIFECYCLE_CAPABILITIES);
 }
 
 export async function statusTestFlightInvite(url: string, appId: number, operationId: string, device = primaryDevice()): Promise<Record<string, unknown>> {
   if (!TESTFLIGHT_INVITE_URL_RE.test(url) || !Number.isInteger(appId) || appId <= 0) throw new Error('invalid TestFlight invite status request');
-  return withReadyBridgeRequest(() => withSSH(device, (conn) => sendTestFlightBridgeRequest(conn, {
+  return withReadyBridgeRequest((conn) => sendTestFlightBridgeRequest(conn, {
     action: 'status_invite',
     url,
     appId,
     operationId,
-  })), device, TESTFLIGHT_LIFECYCLE_CAPABILITIES);
+  }), device, TESTFLIGHT_LIFECYCLE_CAPABILITIES);
 }
 
 export async function unsubscribeFromTestFlightInvite(bundleId: string, device = primaryDevice(), operationId?: string): Promise<Record<string, unknown>> {
   if (!SAFE_BUNDLE_ID_RE.test(bundleId)) throw new Error('invalid bundle identifier');
-  return withReadyBridgeRequest(() => withSSH(device, (conn) => sendTestFlightBridgeRequest(conn, {
+  return withReadyBridgeRequest((conn) => sendTestFlightBridgeRequest(conn, {
     action: 'unsubscribe_invite',
     bundleId,
     operationId,
-  })), device, TESTFLIGHT_LIFECYCLE_CAPABILITIES);
+  }), device, TESTFLIGHT_LIFECYCLE_CAPABILITIES);
 }
 
-export async function listTestFlightApps(device = primaryDevice()): Promise<TFDeviceApp[]> {
-  return withReadyBridgeRequest(() => withSSH(device, async (conn) => {
-    const response = await sendTestFlightBridgeRequest(conn, { action: 'list_apps' });
+export async function listTestFlightApps(device = primaryDevice(), refreshCatalog = false): Promise<TFDeviceApp[]> {
+  return withReadyBridgeRequest(async (conn) => {
+    const response = await sendTestFlightBridgeRequest(conn, { action: 'list_apps', refresh: refreshCatalog });
     if (!Array.isArray(response.apps)) return [];
     return response.apps.filter((entry: unknown): entry is TFDeviceApp => {
       if (typeof entry !== 'object' || entry === null) return false;
       const value = entry as Record<string, unknown>;
       return Number.isInteger(value.appId) && Number(value.appId) > 0 && typeof value.bundleId === 'string' && value.bundleId.length > 0;
     });
-  }), device, TESTFLIGHT_DEVICE_CATALOG_CAPABILITIES);
+  }, device, TESTFLIGHT_DEVICE_CATALOG_CAPABILITIES);
 }
 
-async function withReadyBridgeRequest<T>(request: () => Promise<T>, device: DeviceRecord, requiredCapabilities: readonly string[] = []): Promise<T> {
-  await ensureTestFlightRunning(device, requiredCapabilities);
-  return withBridgeRecovery(request, device, requiredCapabilities);
+async function withReadyBridgeRequest<T>(request: (conn: Client) => Promise<T>, device: DeviceRecord, requiredCapabilities: readonly string[] = []): Promise<T> {
+  return withBridgeRecovery(
+    () => withSSH(device, async (conn) => {
+      await ensureTestFlightRunningOnConnection(conn, device, requiredCapabilities);
+      return request(conn);
+    }),
+    device,
+  );
 }
 
-async function withBridgeRecovery<T>(request: () => Promise<T>, device: DeviceRecord, requiredCapabilities: readonly string[] = []): Promise<T> {
+async function withBridgeRecovery<T>(request: () => Promise<T>, device: DeviceRecord): Promise<T> {
   try {
     return await request();
   } catch (err) {
     if (!(err instanceof BridgeError) || !err.details.retryable) throw err;
     log.warn('recovering a retryable TestFlight bridge request', { code: err.details.code, stage: err.details.stage });
-    await ensureTestFlightRunning(device, requiredCapabilities);
+    invalidateTestFlightBridge(device);
     return request();
   }
 }
 
 export async function getTestFlightBridgeDiagnostics(device = primaryDevice()): Promise<TestFlightBridgeDiagnostics> {
-  return withReadyBridgeRequest(() => withSSH(device, async (conn) => {
+  return withReadyBridgeRequest(async (conn) => {
     const response = await sendTestFlightBridgeRequest(conn, { action: 'diagnostics' });
     return response.data as TestFlightBridgeDiagnostics;
-  }), device);
+  }, device);
 }
 
 async function findInstalledBundlePath(conn: Client, bundleId: string): Promise<string | undefined> {
@@ -217,9 +253,8 @@ export async function installBuild(
   };
 
   report('ensuring TestFlight is running');
-  await ensureTestFlightRunning(device);
-
   return withSSH(device, async (conn) => {
+    await ensureTestFlightRunningOnConnection(conn, device, []);
     report('sending install request to TestFlight');
     await sendTestFlightBridgeRequest(conn, { action: 'install', appId, build, operationId, requestId: operationId });
     report('TestFlight accepted the install request, waiting for it to land');

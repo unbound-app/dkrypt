@@ -170,7 +170,7 @@
 		const load = () =>
 			void fetchDeviceHealth(deviceId).then((h) => (health = h));
 		load();
-		const interval = setInterval(load, 20_000);
+		const interval = setInterval(load, 60_000);
 		return () => clearInterval(interval);
 	});
 

@@ -5,6 +5,7 @@ const originalSetTimeout = globalThis.setTimeout;
 let installRequests = 0;
 let installedBuild = '107127';
 const lifecycleActions: string[] = [];
+const listAppRefreshes: boolean[] = [];
 
 const idevice = await import('#idevice.js');
 const state = await import('#store/state.js');
@@ -32,7 +33,10 @@ mock.module('#idevice.js', () => ({
       lifecycleActions.push(String(request.action));
       if (request.action === 'status_invite') return { ok: true, verified: true };
     }
-    if (request.action === 'list_apps') return { ok: true, apps: [{ appId: 985746746, bundleId: 'com.hammerandchisel.discord', name: 'Discord' }] };
+    if (request.action === 'list_apps') {
+      listAppRefreshes.push(request.refresh === true);
+      return { ok: true, apps: [{ appId: 985746746, bundleId: 'com.hammerandchisel.discord', name: 'Discord' }] };
+    }
     return { ok: true };
   },
   withSSH: async (_rootDir: string, fn: (conn: object) => Promise<void>) => fn({}),
@@ -55,6 +59,7 @@ describe('installBuild', () => {
     installRequests = 0;
     installedBuild = '107127';
     lifecycleActions.length = 0;
+    listAppRefreshes.length = 0;
     globalThis.setTimeout = ((handler: () => void) => originalSetTimeout(handler, 1)) as unknown as typeof setTimeout;
   });
 
@@ -93,5 +98,7 @@ describe('installBuild', () => {
 
   test('reads the device TestFlight catalog through the bridge', async () => {
     await expect(listTestFlightApps()).resolves.toEqual([{ appId: 985746746, bundleId: 'com.hammerandchisel.discord', name: 'Discord' }]);
+    await expect(listTestFlightApps(undefined, true)).resolves.toEqual([{ appId: 985746746, bundleId: 'com.hammerandchisel.discord', name: 'Discord' }]);
+    expect(listAppRefreshes).toEqual([false, true]);
   });
 });

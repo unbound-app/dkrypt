@@ -880,7 +880,8 @@ static void handleRequest(NSDictionary *req, NSString *responsePath, NSString *r
             };
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
                 @try {
-                    ((void (*)(id, SEL, BOOL, id))objc_msgSend)(gCatalogManager, selector, YES, [completion copy]);
+                    BOOL refresh = [req[@"refresh"] respondsToSelector:@selector(boolValue)] && [req[@"refresh"] boolValue];
+                    ((void (*)(id, SEL, BOOL, id))objc_msgSend)(gCatalogManager, selector, refresh, [completion copy]);
                 } @catch (NSException *exception) {
                     fail(@"list_apps_exception", @"list_apps", [NSString stringWithFormat:@"exception: %@ %@", exception.name, exception.reason], YES);
                 }

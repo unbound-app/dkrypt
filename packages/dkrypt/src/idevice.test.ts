@@ -113,6 +113,18 @@ test('retries transient SSH handshakes before failing', async () => {
   expect(attempts).toBe(2);
 });
 
+test('retries a USB transport that closes before the SSH handshake', async () => {
+  let attempts = 0;
+
+  await expect(retryTransientSshConnection(async () => {
+    attempts += 1;
+    if (attempts === 1) throw new Error('Connection lost before handshake');
+    return 'ready';
+  }, 1, 0)).resolves.toBe('ready');
+
+  expect(attempts).toBe(2);
+});
+
 test('creates an ipadecrypt runtime config without requiring bootstrap credentials', () => {
   const config = JSON.parse(buildIpadecryptRuntimeConfig({ host: '127.0.0.1', port: 2222, user: 'mobile', keyPath: '/root/.ssh/id_ed25519' })) as {
     version: number;

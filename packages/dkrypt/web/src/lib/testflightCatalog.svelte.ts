@@ -39,7 +39,7 @@ async function loadCatalog(force: boolean, ignoreLoaded: boolean): Promise<void>
       testFlightCatalogState.error = error instanceof Error ? error.message : String(error);
       testFlightCatalogState.refreshing = false;
       loaded = false;
-      scheduleRefresh(30_000);
+      scheduleRefresh(2 * 60_000);
     })
     .finally(() => {
       testFlightCatalogState.loading = false;
