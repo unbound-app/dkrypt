@@ -23,7 +23,7 @@ const SSH_HANDSHAKE_RETRY_DELAY_MS = 150;
 const SSH_SESSION_IDLE_TIMEOUT_MS = 15_000;
 const DEVICE_AGENT_CONNECT_RETRIES = 3;
 const DEVICE_AGENT_RETRY_DELAY_MS = 250;
-const DEVICE_AGENT_IDLE_TIMEOUT_MS = 60_000;
+const DEVICE_AGENT_IDLE_TIMEOUT_MS = 5 * 60_000;
 const DEVICE_AGENT_UNAVAILABLE_TTL_MS = 15_000;
 const DEVICE_AGENT_PORT = 5913;
 
@@ -766,6 +766,9 @@ export async function withAutoinstallDeviceAgent<T>(connection: DeviceConnection
 }
 
 export async function withSSH<T>(connection: DeviceConnection | string, fn: (conn: DeviceClient) => Promise<T>): Promise<T> {
+  if (isDirectUsbDeviceAgentConnection(connection) && config.deviceTransport.toLowerCase() !== 'ssh') {
+    return withDeviceAgent(connection, fn);
+  }
   if (shouldAttemptDeviceAgent(connection)) {
     try {
       return await withDeviceAgent(connection as DeviceConnection, fn);
