@@ -23,6 +23,8 @@ static NSString * const kAgentVersion = AGENT_VERSION;
 static const uint16_t kPort = 5913;
 static const uint32_t kMaxFrameBytes = 4u * 1024u * 1024u;
 static const NSUInteger kMaxReplayEntries = 256;
+static const int kClientReceiveTimeoutSeconds = 600;
+static const int kClientSendTimeoutSeconds = 600;
 
 static BOOL readFully(int fd, void *buffer, size_t length) {
     size_t offset = 0;
@@ -222,50 +224,52 @@ static BOOL handleConnection(int fd) {
     NSMutableArray<NSString *> *replayOrder = [NSMutableArray array];
     NSMutableSet<NSString *> *replaySet = [NSMutableSet set];
     while (YES) {
-        NSDictionary *envelope = readFrame(fd);
-        if (!envelope) return YES;
-        if ([envelope[@"action"] isEqualToString:@"bootstrap"]) {
-            NSString *candidate = envelope[@"secret"];
-            NSString *requestId = envelope[@"requestId"];
-            if (![candidate isKindOfClass:[NSString class]] || candidate.length < 32 || ![requestId isKindOfClass:[NSString class]] || requestId.length < 16) return NO;
-            if (secret.length < 32) {
-                NSData *secretData = [candidate dataUsingEncoding:NSUTF8StringEncoding];
-                if (![secretData writeToFile:kSecretPath options:NSDataWritingAtomic error:nil]) return NO;
-                chmod(kSecretPath.UTF8String, 0600);
-                secret = candidate;
-            } else if (!constantTimeEqual(secret, candidate)) {
-                if (!sendFrame(fd, bootstrapResponse(requestId, NO, @"secret_mismatch"))) return NO;
-                return NO;
+        @autoreleasepool {
+            NSDictionary *envelope = readFrame(fd);
+            if (!envelope) return YES;
+            if ([envelope[@"action"] isEqualToString:@"bootstrap"]) {
+                NSString *candidate = envelope[@"secret"];
+                NSString *requestId = envelope[@"requestId"];
+                if (![candidate isKindOfClass:[NSString class]] || candidate.length < 32 || ![requestId isKindOfClass:[NSString class]] || requestId.length < 16) return NO;
+                if (secret.length < 32) {
+                    NSData *secretData = [candidate dataUsingEncoding:NSUTF8StringEncoding];
+                    if (![secretData writeToFile:kSecretPath options:NSDataWritingAtomic error:nil]) return NO;
+                    chmod(kSecretPath.UTF8String, 0600);
+                    secret = candidate;
+                } else if (!constantTimeEqual(secret, candidate)) {
+                    if (!sendFrame(fd, bootstrapResponse(requestId, NO, @"secret_mismatch"))) return NO;
+                    return NO;
+                }
+                if (!sendFrame(fd, bootstrapResponse(requestId, YES, nil))) return NO;
+                continue;
             }
-            if (!sendFrame(fd, bootstrapResponse(requestId, YES, nil))) return NO;
-            continue;
+            if (secret.length < 32) return NO;
+            NSString *requestId = nil;
+            NSDictionary *request = validateRequest(envelope, secret, &requestId);
+            if (!request) return NO;
+            if ([replaySet containsObject:requestId]) {
+                if (!sendFrame(fd, signedResponse(secret, requestId, NO, nil, @{ @"code": @"replay", @"message": @"request id was already processed" }))) return NO;
+                continue;
+            }
+            [replaySet addObject:requestId];
+            [replayOrder addObject:requestId];
+            if (replayOrder.count > kMaxReplayEntries) {
+                [replaySet removeObject:replayOrder.firstObject];
+                [replayOrder removeObjectAtIndex:0];
+            }
+            NSString *action = request[@"action"];
+            NSDictionary *response = nil;
+            if ([action isEqualToString:@"status"]) {
+                response = signedResponse(secret, requestId, YES, @{ @"agentVersion": kAgentVersion, @"port": @(kPort) }, nil);
+            } else if ([action isEqualToString:@"exec"]) {
+                NSString *command = [request[@"command"] isKindOfClass:[NSString class]] ? request[@"command"] : @"";
+                NSInteger timeoutMs = [request[@"timeoutMs"] respondsToSelector:@selector(integerValue)] ? [request[@"timeoutMs"] integerValue] : 10000;
+                response = signedResponse(secret, requestId, YES, runCommand(command, timeoutMs), nil);
+            } else {
+                response = signedResponse(secret, requestId, NO, nil, @{ @"code": @"unsupported", @"message": @"unsupported device agent action" });
+            }
+            if (!sendFrame(fd, response)) return NO;
         }
-        if (secret.length < 32) return NO;
-        NSString *requestId = nil;
-        NSDictionary *request = validateRequest(envelope, secret, &requestId);
-        if (!request) return NO;
-        if ([replaySet containsObject:requestId]) {
-            if (!sendFrame(fd, signedResponse(secret, requestId, NO, nil, @{ @"code": @"replay", @"message": @"request id was already processed" }))) return NO;
-            continue;
-        }
-        [replaySet addObject:requestId];
-        [replayOrder addObject:requestId];
-        if (replayOrder.count > kMaxReplayEntries) {
-            [replaySet removeObject:replayOrder.firstObject];
-            [replayOrder removeObjectAtIndex:0];
-        }
-        NSString *action = request[@"action"];
-        NSDictionary *response = nil;
-        if ([action isEqualToString:@"status"]) {
-            response = signedResponse(secret, requestId, YES, @{ @"agentVersion": kAgentVersion, @"port": @(kPort) }, nil);
-        } else if ([action isEqualToString:@"exec"]) {
-            NSString *command = [request[@"command"] isKindOfClass:[NSString class]] ? request[@"command"] : @"";
-            NSInteger timeoutMs = [request[@"timeoutMs"] respondsToSelector:@selector(integerValue)] ? [request[@"timeoutMs"] integerValue] : 10000;
-            response = signedResponse(secret, requestId, YES, runCommand(command, timeoutMs), nil);
-        } else {
-            response = signedResponse(secret, requestId, NO, nil, @{ @"code": @"unsupported", @"message": @"unsupported device agent action" });
-        }
-        if (!sendFrame(fd, response)) return NO;
     }
 }
 
@@ -290,12 +294,15 @@ int main(int argc, char **argv) {
                 if (errno == EINTR) continue;
                 break;
             }
-            struct timeval timeout = { 30, 0 };
-            setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-            setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+            struct timeval receiveTimeout = { kClientReceiveTimeoutSeconds, 0 };
+            struct timeval sendTimeout = { kClientSendTimeoutSeconds, 0 };
+            setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &receiveTimeout, sizeof(receiveTimeout));
+            setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &sendTimeout, sizeof(sendTimeout));
             dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-                handleConnection(client);
-                close(client);
+                @autoreleasepool {
+                    handleConnection(client);
+                    close(client);
+                }
             });
         }
         close(server);

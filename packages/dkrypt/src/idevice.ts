@@ -21,11 +21,12 @@ const REMOTE_COMMAND_TIMEOUT_MS = 10_000;
 const SSH_HANDSHAKE_RETRIES = 1;
 const SSH_HANDSHAKE_RETRY_DELAY_MS = 150;
 const SSH_SESSION_IDLE_TIMEOUT_MS = 15_000;
-const DEVICE_AGENT_CONNECT_RETRIES = 3;
-const DEVICE_AGENT_RETRY_DELAY_MS = 250;
+const DEVICE_AGENT_CONNECT_RETRIES = 6;
+const DEVICE_AGENT_RETRY_DELAY_MS = 500;
 const DEVICE_AGENT_IDLE_TIMEOUT_MS = 5 * 60_000;
 const DEVICE_AGENT_UNAVAILABLE_TTL_MS = 15_000;
 const DEVICE_AGENT_PORT = 5913;
+const USBMUX_TUNNEL_READY_TIMEOUT_MS = 8_000;
 
 export type { BridgeChannel } from '#bridgeProtocol.js';
 
@@ -408,7 +409,7 @@ async function startUsbmuxTunnel(udid: string, remotePort: number, network: bool
   process.stderr?.on('data', (chunk) => {
     stderr += chunk.toString('utf8');
   });
-  for (let attempt = 0; attempt < 40; attempt += 1) {
+  for (let attempt = 0; attempt < USBMUX_TUNNEL_READY_TIMEOUT_MS / 100; attempt += 1) {
     if (spawnError) break;
     if (process.exitCode !== null) break;
     if (await canConnectToPort(localPort)) return { host: '127.0.0.1', port: localPort, process };
@@ -436,7 +437,7 @@ function connectDeviceAgentSocket(host: string, port: number): Promise<Socket> {
       resolve(socket);
     });
     socket.once('error', fail);
-    socket.setTimeout(2_000, () => fail(new Error('autoinstall device agent connection timed out')));
+    socket.setTimeout(5_000, () => fail(new Error('autoinstall device agent connection timed out')));
   });
 }
 
@@ -488,7 +489,7 @@ async function bootstrapDeviceAgent(host: string, port: number, secret: string):
   try {
     const requestId = randomUUID();
     await writeDeviceAgentFrame(socket, { version: 1, requestId, action: 'bootstrap', secret });
-    const response = await readDeviceAgentFrame(socket, 3_000);
+    const response = await readDeviceAgentFrame(socket, 5_000);
     if (response.version !== 1 || response.requestId !== requestId || response.ok !== true) {
       throw new Error('autoinstall device agent bootstrap was rejected');
     }
@@ -539,10 +540,16 @@ async function getDeviceAgentSession(connection: DeviceConnection): Promise<{ ke
       return { key, session: await openDeviceAgentSession(connection, key) };
     } catch (error) {
       lastError = error;
-      if (attempt + 1 < DEVICE_AGENT_CONNECT_RETRIES) await new Promise((resolve) => setTimeout(resolve, DEVICE_AGENT_RETRY_DELAY_MS));
+      if (attempt + 1 < DEVICE_AGENT_CONNECT_RETRIES) {
+        await new Promise((resolve) => setTimeout(resolve, getDeviceAgentRetryDelay(attempt)));
+      }
     }
   }
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+export function getDeviceAgentRetryDelay(attempt: number): number {
+  return Math.min(DEVICE_AGENT_RETRY_DELAY_MS * 2 ** Math.max(0, attempt), 5_000);
 }
 
 function releaseDeviceAgentSession(key: string, session: DeviceAgentSession): void {
@@ -752,7 +759,8 @@ async function withDeviceAgent<T>(connection: DeviceConnection, fn: (client: Dev
     try {
       opened = await getDeviceAgentSession(connection);
     } catch (error) {
-      throw new DeviceAgentUnavailableError('could not connect to the dkrypt device agent', { cause: error });
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new DeviceAgentUnavailableError(`could not connect to the dkrypt device agent: ${detail}`, { cause: error });
     }
     try {
       return await fn(opened.session.client);

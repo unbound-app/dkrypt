@@ -5,7 +5,7 @@ import type { Client } from 'ssh2';
 import type { BridgeEnvelope } from './idevice.js';
 import { BRIDGE_CAPABILITIES, BRIDGE_PROTOCOL_VERSION, TESTFLIGHT_LIFECYCLE_CAPABILITIES } from './bridgeProtocol.js';
 
-const { armAppStoreAutoConfirm, buildIpadecryptRuntimeConfig, createBridgeEnvelope, createDeviceAgentEnvelope, execCommand, getDeviceTransportOrder, isDirectUsbDeviceAgentConnection, readBridgeHeartbeats, retryTransientSshConnection } = await import('./idevice.js' + '?idevice-transport-test');
+const { armAppStoreAutoConfirm, buildIpadecryptRuntimeConfig, createBridgeEnvelope, createDeviceAgentEnvelope, execCommand, getDeviceAgentRetryDelay, getDeviceTransportOrder, isDirectUsbDeviceAgentConnection, readBridgeHeartbeats, retryTransientSshConnection } = await import('./idevice.js' + '?idevice-transport-test');
 
 type FakeExecStream = {
   stderr: {
@@ -154,6 +154,10 @@ test('keeps SSH as the recovery path when the USB device agent is unavailable', 
   expect(getDeviceTransportOrder(connection, 'auto')).toEqual(['autoinstall', 'ssh']);
   expect(getDeviceTransportOrder(connection, 'autoinstall')).toEqual(['autoinstall']);
   expect(getDeviceTransportOrder(connection, 'ssh')).toEqual(['ssh']);
+});
+
+test('backs off USB agent reconnects long enough for USBMux to recover', () => {
+  expect([0, 1, 2, 3, 4, 5].map(getDeviceAgentRetryDelay)).toEqual([500, 1_000, 2_000, 4_000, 5_000, 5_000]);
 });
 
 test('creates an ipadecrypt runtime config without requiring bootstrap credentials', () => {
