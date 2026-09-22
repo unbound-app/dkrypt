@@ -6,8 +6,7 @@ import {
   nowpaymentsEnvironment,
   nowpaymentsMissingConfiguration,
 } from '#config.js';
-import type { BillingCheckout, BillingTaxAddress, BillingTaxStatus, BillingSubscription, PlanId } from '#billing.js';
-import { getCryptoTaxReadiness } from '#cryptoTax.js';
+import type { BillingCheckout, BillingSubscription, PlanId } from '#billing.js';
 
 const REQUEST_TIMEOUT_MS = 15_000;
 
@@ -63,8 +62,6 @@ export interface NowPaymentsProviderStatus {
   supportedAssets: string[];
   missingConfiguration: string[];
   issues: string[];
-  taxReady: boolean;
-  taxWarning?: string;
   checkedAt?: string;
 }
 
@@ -178,7 +175,6 @@ export async function getNowPaymentsProviderStatus(client = new NowPaymentsClien
     supportedAssets: [...config.nowpaymentsSupportedAssets],
     missingConfiguration: [...nowpaymentsMissingConfiguration],
     issues: [],
-    taxReady: false,
   };
   if (!nowpaymentsConfigured) {
     status.issues.push('provider configuration is incomplete');
@@ -193,10 +189,6 @@ export async function getNowPaymentsProviderStatus(client = new NowPaymentsClien
         status.issues.push(`NOWPayments does not currently list ${asset} as available`);
       }
     }
-    const taxStatus = await getCryptoTaxReadiness();
-    status.taxReady = taxStatus.ready;
-    status.taxWarning = taxStatus.warning;
-    status.issues.push(...taxStatus.issues);
     status.ready = status.issues.length === 0;
     status.checkedAt = new Date(now).toISOString();
     readinessCache = { expiresAt: now + 60_000, status };
@@ -237,9 +229,6 @@ export function checkoutFromResponse(response: NowPaymentsInvoice, input: {
   currency: string;
   idempotencyKey: string;
   asset: string;
-  taxAddress?: BillingTaxAddress;
-  taxCalculationId?: string;
-  taxStatus?: BillingTaxStatus;
 }): BillingCheckout {
   if (response.id === undefined || !response.invoice_url) throw new Error('NOWPayments did not return an invoice URL');
   const now = new Date().toISOString();
@@ -256,9 +245,6 @@ export function checkoutFromResponse(response: NowPaymentsInvoice, input: {
     status: 'pending',
     checkoutUrl: response.invoice_url,
     asset: input.asset,
-    taxAddress: input.taxAddress,
-    taxCalculationId: input.taxCalculationId,
-    taxStatus: input.taxStatus,
     createdAt: now,
     updatedAt: now,
   };
@@ -268,9 +254,6 @@ export function subscriptionFromPayment(payment: NowPaymentsPayment, input: {
   userId: string;
   planId: Exclude<PlanId, 'viewer'>;
   checkoutId: string;
-  taxAddress?: BillingTaxAddress;
-  taxStatus?: BillingTaxStatus;
-  taxTransactionId?: string;
   occurredAt: string;
 }): BillingSubscription {
   const paymentId = payment.payment_id === undefined ? input.checkoutId : String(payment.payment_id);
@@ -297,9 +280,6 @@ export function subscriptionFromPayment(payment: NowPaymentsPayment, input: {
     lastChargeId: paymentId,
     lastChargeStatus: 'succeeded',
     lastChargeTxHash: payment.outcome_tx_hash ?? payment.payin_hash ?? payment.transaction_hash,
-    taxAddress: input.taxAddress,
-    taxStatus: input.taxStatus,
-    taxTransactionId: input.taxTransactionId,
     occurredAt: input.occurredAt,
     updatedAt: input.occurredAt,
   };

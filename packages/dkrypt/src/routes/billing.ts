@@ -27,7 +27,6 @@ import {
   verifyNowPaymentsEvent,
 } from '#cryptoBilling.js';
 import { getNowPaymentsProviderStatus } from '#nowpayments.js';
-import { normalizeTaxAddress } from '#cryptoTax.js';
 import { getAuthProfile, resolveAuthUserId } from '#identity.js';
 import { log } from '#logger.js';
 import { requirePermission, requireSession } from '#session.js';
@@ -268,12 +267,6 @@ billingRouter.post('/v1/billing/checkout', requireSession, async (req, res) => {
     res.status(400).json({ error: 'unsupported billing provider' });
     return;
   }
-  const hasAddress = provider === 'crypto' && req.body?.taxAddress !== undefined;
-  const taxAddress = hasAddress ? normalizeTaxAddress(req.body.taxAddress) : undefined;
-  if (hasAddress && !taxAddress) {
-    res.status(400).json({ error: 'a valid billing country and postal code are required' });
-    return;
-  }
   const idempotencyKey = getBillingIdempotencyKey(req, res, userId, `checkout-${provider}`);
   if (!idempotencyKey) return;
   if (!acquireBillingCheckoutLock(userId)) {
@@ -283,7 +276,7 @@ billingRouter.post('/v1/billing/checkout', requireSession, async (req, res) => {
   if (provider === 'crypto') {
     try {
       const cryptoAsset = typeof req.body?.cryptoAsset === 'string' ? req.body.cryptoAsset : undefined;
-      const result = await createCryptoCheckout({ userId, planId: target.id, idempotencyKey, taxAddress, asset: cryptoAsset });
+      const result = await createCryptoCheckout({ userId, planId: target.id, idempotencyKey, asset: cryptoAsset });
       res.status(result.reused ? 200 : 201).json({ url: result.checkout.checkoutUrl, provider: 'nowpayments', checkoutId: result.checkout.checkoutId, status: result.checkout.status });
     } catch (error) {
       if (error instanceof CryptoBillingError) {

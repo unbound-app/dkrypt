@@ -739,6 +739,13 @@ export function isDirectUsbDeviceAgentConnection(connection: DeviceConnection | 
   return typeof connection !== 'string' && Boolean(connection.udid && !connection.host && connection.usbmuxNetwork !== true);
 }
 
+export function getDeviceTransportOrder(connection: DeviceConnection | string, mode = config.deviceTransport): Array<'autoinstall' | 'ssh'> {
+  const normalizedMode = mode.toLowerCase();
+  if (normalizedMode === 'ssh') return ['ssh'];
+  if (typeof connection === 'string' || !isDirectUsbDeviceAgentConnection(connection)) return ['ssh'];
+  return normalizedMode === 'autoinstall' ? ['autoinstall'] : ['autoinstall', 'ssh'];
+}
+
 async function withDeviceAgent<T>(connection: DeviceConnection, fn: (client: DeviceClient) => Promise<T>): Promise<T> {
   return withSSHLock(async () => {
     let opened: { key: string; session: DeviceAgentSession };
@@ -766,15 +773,13 @@ export async function withAutoinstallDeviceAgent<T>(connection: DeviceConnection
 }
 
 export async function withSSH<T>(connection: DeviceConnection | string, fn: (conn: DeviceClient) => Promise<T>): Promise<T> {
-  if (isDirectUsbDeviceAgentConnection(connection) && config.deviceTransport.toLowerCase() !== 'ssh') {
-    return withDeviceAgent(connection, fn);
-  }
-  if (shouldAttemptDeviceAgent(connection)) {
+  const transportOrder = getDeviceTransportOrder(connection);
+  if (transportOrder[0] === 'autoinstall' && shouldAttemptDeviceAgent(connection)) {
     try {
       return await withDeviceAgent(connection as DeviceConnection, fn);
     } catch (error) {
       const key = sshSessionKey(connection);
-      if (!(error instanceof DeviceAgentUnavailableError) || config.deviceTransport.toLowerCase() === 'autoinstall') throw error;
+      if (!(error instanceof DeviceAgentUnavailableError) || transportOrder.length === 1) throw error;
       deviceAgentUnavailableUntil.set(key, Date.now() + DEVICE_AGENT_UNAVAILABLE_TTL_MS);
       log.warn('autoinstall device agent unavailable; falling back to SSH', { deviceId: key, error: error instanceof Error ? error.message : String(error) });
     }

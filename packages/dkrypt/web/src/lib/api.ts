@@ -1681,7 +1681,7 @@ export function fetchBillingSubscriptions(filters: { q?: string; provider?: stri
 
 export interface BillingProviderStatus {
   stripe: { enabled: boolean; environment: 'test' | 'live'; missingConfiguration: string[] };
-  crypto: { enabled: boolean; configured: boolean; ready: boolean; environment: 'test' | 'live'; settlementType?: string; settlementCurrency: string; supportedChains: string[]; supportedAssets: string[]; missingConfiguration: string[]; issues: string[]; taxReady: boolean; taxWarning?: string; checkedAt?: string };
+  crypto: { enabled: boolean; configured: boolean; ready: boolean; environment: 'test' | 'live'; settlementType?: string; settlementCurrency: string; supportedChains: string[]; supportedAssets: string[]; missingConfiguration: string[]; issues: string[]; checkedAt?: string };
 }
 
 export function fetchBillingProviderStatus(): Promise<BillingProviderStatus> {

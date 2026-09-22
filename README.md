@@ -106,14 +106,12 @@ Store the generated price IDs and webhook secret in the runtime environment. `st
 <details>
 <summary>Crypto billing</summary>
 
-Crypto billing is an optional second payment method alongside Stripe. It uses NOWPayments hosted invoices for USDC or USDT payments priced in EUR. Each verified payment grants 30 days of access; users renew with a new invoice. NOWPayments pays the configured merchant wallet, and dkrypt does not custody crypto or store wallet private keys.
+Crypto billing is an optional second payment method alongside Stripe. It uses NOWPayments hosted invoices for USDC or USDT payments priced in EUR. Each verified payment grants 30 days of access; users renew with a new invoice. Crypto checkout is separate from Stripe and does not collect a billing address. NOWPayments pays the configured merchant wallet, and dkrypt does not custody crypto or store wallet private keys.
 
 Keep crypto disabled until the NOWPayments test flow is complete. Configure these runtime values when enabling it:
 
 ```text
 CRYPTO_BILLING_ENABLED=true
-CRYPTO_TAX_MODE=stripe-tax
-CRYPTO_MANUAL_TAX_ALLOWED=false
 NOWPAYMENTS_API_KEY=...
 NOWPAYMENTS_IPN_SECRET=...
 NOWPAYMENTS_IPN_SECRET_PREVIOUS=
@@ -122,10 +120,9 @@ NOWPAYMENTS_ENVIRONMENT=live
 NOWPAYMENTS_SUPPORTED_ASSETS=USDC,USDT
 NOWPAYMENTS_DEFAULT_ASSET=USDC
 NOWPAYMENTS_PRICE_CURRENCY=EUR
-STRIPE_TAX_CODE=txcd_...
 ```
 
-Set the NOWPayments IPN destination to `https://<your-host>/v1/nowpayments/webhook` and keep the IPN secret private. Live crypto checkout remains unavailable until NOWPayments lists the selected currencies and Stripe Tax has an active live registration. Crypto payments are outside Stripe Managed Payments; Stripe Tax is used only to calculate and record the external tax transaction. `CRYPTO_TAX_MODE=manual` is only for explicitly authorized development or self-hosted operations and displays an operator warning.
+Set the NOWPayments IPN destination to `https://<your-host>/v1/nowpayments/webhook` and keep the IPN secret private. Live crypto checkout remains unavailable until NOWPayments lists the selected currencies. Crypto payments are outside Stripe Managed Payments, do not use Stripe, and do not collect country or postal code. The operator remains responsible for the tax treatment of crypto sales.
 
 </details>
 

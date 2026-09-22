@@ -29,8 +29,6 @@
     environment: 'test' | 'live';
     settlementCurrency?: string;
     issues?: string[];
-    taxReady?: boolean;
-    taxWarning?: string;
   }
 
   interface Entitlement {
@@ -76,7 +74,6 @@
   let checkoutIdempotencyProvider = $state<PaymentProvider | undefined>();
   let paymentProvider = $state<PaymentProvider>('stripe');
   let cryptoAsset = $state('USDC');
-  let taxAddress = $state({ country: '', postalCode: '' });
   const checkoutParams = new URLSearchParams(location.search);
   let checkoutState = $state<CheckoutState>((checkoutParams.get('checkout') ?? checkoutParams.get('crypto_checkout')) as CheckoutState);
 
@@ -171,7 +168,7 @@
       const response = await fetch('/v1/billing/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
-        body: JSON.stringify({ planId: plan.id, provider: paymentProvider, cryptoAsset: paymentProvider === 'crypto' ? cryptoAsset : undefined, taxAddress: paymentProvider === 'crypto' ? taxAddress : undefined }),
+        body: JSON.stringify({ planId: plan.id, provider: paymentProvider, cryptoAsset: paymentProvider === 'crypto' ? cryptoAsset : undefined }),
       });
       const data = (await response.json().catch(() => ({}))) as { url?: string; error?: string };
       if (!response.ok || !data.url) {
@@ -245,10 +242,6 @@
     return billing?.providers.crypto.ready ?? false;
   }
 
-  function validTaxAddress(): boolean {
-    return /^[A-Za-z]{2}$/.test(taxAddress.country.trim()) && taxAddress.postalCode.trim().length >= 2;
-  }
-
   onMount(() => {
     void initializeBilling().then(() => {
       if (checkoutState === 'success') void waitForActivation();
@@ -318,8 +311,8 @@
           <button class={paymentProvider === 'crypto' ? 'rounded-xl border border-accent bg-accent/5 px-3 py-3 text-left transition disabled:cursor-not-allowed disabled:opacity-50' : 'rounded-xl border px-3 py-3 text-left transition disabled:cursor-not-allowed disabled:opacity-50'} disabled={!cryptoReady()} onclick={() => (paymentProvider = 'crypto')}><div class="flex items-center justify-between gap-2 font-medium"><span>Crypto</span><Badge variant="secondary">{billing.providers.crypto.assets.join(' / ')}</Badge></div><div class="mt-1 text-xs text-muted">Hosted NOWPayments invoice priced in EUR. Renew with a new crypto payment every 30 days.</div></button>
         </div>
         {#if paymentProvider === 'crypto'}
-          <div class="mt-4 grid gap-3 border-t border-border pt-4 sm:grid-cols-3"><label class="text-xs text-muted">Crypto currency<select class="mt-1 w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text" bind:value={cryptoAsset}>{#each billing.providers.crypto.assets as asset}<option value={asset}>{asset}</option>{/each}</select></label><label class="text-xs text-muted">Billing country<input class="mt-1 w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text" maxlength="2" bind:value={taxAddress.country} placeholder="DE" /></label><label class="text-xs text-muted">Postal code<input class="mt-1 w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text" maxlength="32" bind:value={taxAddress.postalCode} placeholder="10115" /></label></div>
-          {#if !cryptoReady()}<div class="mt-3 text-xs text-muted">Crypto checkout is not available until NOWPayments, the selected currency, and tax checks are ready.</div>{/if}
+          <div class="mt-4 border-t border-border pt-4"><label class="block max-w-xs text-xs text-muted">Crypto currency<select class="mt-1 w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text" bind:value={cryptoAsset}>{#each billing.providers.crypto.assets as asset}<option value={asset}>{asset}</option>{/each}</select></label><p class="mt-3 text-xs text-muted">Crypto checkout is separate from Stripe and does not collect billing information.</p></div>
+          {#if !cryptoReady()}<div class="mt-3 text-xs text-muted">Crypto checkout is not available until NOWPayments and the selected currency are ready.</div>{/if}
         {/if}
       </Card>
     {/if}
@@ -333,7 +326,7 @@
             <div class="mb-4 flex items-start justify-between gap-3"><div><div class="flex flex-wrap items-center gap-2"><h3 class="text-base font-semibold">{plan.name}</h3>{#if highlighted}<Badge>Best value</Badge>{/if}{#if current}<Badge variant="success">Current</Badge>{/if}</div><p class="mt-1 text-sm text-muted">{plan.description}</p></div>{#if plan.id === 'priority' || plan.id === 'priority_api'}<Zap class="h-5 w-5 shrink-0 text-accent" />{:else if plan.id === 'api'}<KeyRound class="h-5 w-5 shrink-0 text-accent" />{:else}<Gauge class="h-5 w-5 shrink-0 text-accent" />{/if}</div>
             <div class="mb-5"><span class="text-3xl font-semibold">{fallbackPrice(plan)}</span><span class="text-sm text-muted">/30 days</span></div>
             <div class="mb-6 flex flex-1 flex-col gap-2 text-sm"><div class="flex items-center gap-2"><Check class="h-4 w-4 text-ok" /> Dashboard decrypts</div>{#if plan.id === 'api' || plan.id === 'priority_api'}<div class="flex items-center gap-2"><Check class="h-4 w-4 text-ok" /> API key access</div>{:else}<div class="flex items-center gap-2 text-muted"><X class="h-4 w-4" /> API key access</div>{/if}{#if plan.id === 'priority' || plan.id === 'priority_api'}<div class="flex items-center gap-2"><Check class="h-4 w-4 text-ok" /> High queue priority</div>{:else}<div class="flex items-center gap-2 text-muted"><X class="h-4 w-4" /> High queue priority</div>{/if}<div class="mt-2 flex items-center gap-2 text-xs text-muted"><ShieldCheck class="h-4 w-4 text-accent" /> {paymentProvider === 'crypto' ? 'Hosted NOWPayments invoice' : 'Hosted Stripe checkout'}</div></div>
-            <Button class="w-full" variant={highlighted ? 'default' : 'secondary'} disabled={current || openingPlan !== undefined || (!billing.enabled && !billing.entitlement.subscriptionId) || (paymentProvider === 'crypto' && (!cryptoReady() || (!validTaxAddress() && billing.entitlement.planId === 'viewer')))} loading={openingPlan === plan.id} onclick={() => choosePlan(plan)}>{current ? 'Current plan' : billing.entitlement.subscriptionId ? billing.entitlement.provider === 'nowpayments' ? billing.entitlement.status === 'past_due' ? 'Renew with crypto' : 'Stop crypto renewal first' : `Switch to ${plan.name}` : 'Subscribe'}</Button>
+            <Button class="w-full" variant={highlighted ? 'default' : 'secondary'} disabled={current || openingPlan !== undefined || (!billing.enabled && !billing.entitlement.subscriptionId) || (paymentProvider === 'crypto' && !cryptoReady())} loading={openingPlan === plan.id} onclick={() => choosePlan(plan)}>{current ? 'Current plan' : billing.entitlement.subscriptionId ? billing.entitlement.provider === 'nowpayments' ? billing.entitlement.status === 'past_due' ? 'Renew with crypto' : 'Stop crypto renewal first' : `Switch to ${plan.name}` : 'Subscribe'}</Button>
           </div>
         </Card>
       {/each}

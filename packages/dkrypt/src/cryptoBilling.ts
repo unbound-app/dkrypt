@@ -18,7 +18,6 @@ import {
   type BillingCharge,
   type BillingCheckout,
   type BillingSubscription,
-  type BillingTaxAddress,
   type PlanId,
 } from '#billing.js';
 import {
@@ -36,7 +35,6 @@ import { getAuthProfile } from '#identity.js';
 import { log } from '#logger.js';
 import { EMBED_COLOR, notify } from '#notify.js';
 import { recordAudit } from '#store/state.js';
-import { calculateCryptoTax, recordCryptoTaxTransaction } from '#cryptoTax.js';
 
 const RENEWAL_GRACE_MS = config.cryptoDunningGraceHours * 60 * 60 * 1000;
 
@@ -59,7 +57,6 @@ export async function createCryptoCheckout(input: {
   userId: string;
   planId: Exclude<PlanId, 'viewer'>;
   idempotencyKey: string;
-  taxAddress?: BillingTaxAddress;
   asset?: string;
 }): Promise<CryptoCheckoutResult> {
   const existing = findCryptoCheckout(input.userId, input.idempotencyKey);
@@ -73,7 +70,6 @@ export async function createCryptoCheckout(input: {
 
   const plan = getPlan(input.planId);
   if (!plan) throw new CryptoBillingError('unknown plan', 400);
-  if (!input.taxAddress) throw new CryptoBillingError('billing address is required for crypto checkout', 400);
 
   const asset = input.asset?.trim().toUpperCase() || config.nowpaymentsDefaultAsset;
   if (!config.nowpaymentsSupportedAssets.includes(asset)) throw new CryptoBillingError('unsupported crypto payment currency', 400);
@@ -81,12 +77,6 @@ export async function createCryptoCheckout(input: {
   const providerStatus = await getNowPaymentsProviderStatus();
   if (!providerStatus.ready) throw new CryptoBillingError(`crypto billing is not ready: ${providerStatus.issues.join(', ')}`, 503);
 
-  const tax = await calculateCryptoTax({
-    amount: plan.amount,
-    planId: plan.id,
-    address: input.taxAddress,
-    idempotencyKey: `dkrypt-tax-checkout-${input.idempotencyKey}`,
-  });
   const orderId = `dkrypt_${randomUUID()}`;
   const client = new NowPaymentsClient();
   try {
@@ -109,9 +99,6 @@ export async function createCryptoCheckout(input: {
       currency: plan.currency,
       idempotencyKey: input.idempotencyKey,
       asset,
-      taxAddress: input.taxAddress,
-      taxCalculationId: tax.calculationId,
-      taxStatus: tax.calculationId ? 'pending' : 'not_required',
     });
     upsertCryptoCheckout(checkout);
     recordAudit(input.userId, 'billing.checkout', checkout.checkoutId, `nowpayments ${plan.id}`);
@@ -274,41 +261,22 @@ async function processPaymentFinished(payment: NowPaymentsPayment, occurredAt: s
   const existing = getBillingSubscriptionById(subscriptionId);
   if (existing && Date.parse(existing.occurredAt) >= Date.parse(occurredAt)) return;
 
-  let taxTransactionId: string | undefined;
-  let taxFailed = false;
-  if (checkout.taxCalculationId) {
-    try {
-      taxTransactionId = await recordCryptoTaxTransaction({
-        calculationId: checkout.taxCalculationId,
-        reference: `dkrypt:${subscriptionId}:initial`,
-        metadata: { user_id: checkout.userId, plan_id: checkout.planId, provider: 'nowpayments' },
-      });
-    } catch (error) {
-      taxFailed = true;
-      log.error('crypto tax transaction failed', { subscriptionId, error: String(error) });
-    }
-  }
-
   const localSubscription = subscriptionFromPayment(payment, {
     userId: checkout.userId,
     planId: checkout.planId,
     checkoutId: checkout.checkoutId,
-    taxAddress: checkout.taxAddress,
-    taxStatus: checkout.taxCalculationId ? (taxFailed ? 'failed' : 'recorded') : 'not_required',
-    taxTransactionId,
     occurredAt,
   });
   deactivateOtherCryptoSubscriptions(checkout.userId, localSubscription.subscriptionId, occurredAt);
-  const subscription = taxFailed ? { ...localSubscription, flagged: true, status: 'past_due' } : localSubscription;
-  const applied = upsertBillingSubscription(subscription);
+  const applied = upsertBillingSubscription(localSubscription);
   upsertCryptoCheckout({ ...checkout, providerPaymentId: paymentId, status: 'completed', updatedAt: occurredAt });
-  upsertBillingCharge(chargeFromPayment(payment, subscription, checkout.userId, taxFailed ? 'failed' : 'succeeded', occurredAt, taxTransactionId));
+  upsertBillingCharge(chargeFromPayment(payment, localSubscription, checkout.userId, 'succeeded', occurredAt));
   if (!applied) return;
-  recordAudit(checkout.userId, 'billing.activated', subscription.subscriptionId, `nowpayments ${checkout.planId}`);
+  recordAudit(checkout.userId, 'billing.activated', localSubscription.subscriptionId, `nowpayments ${checkout.planId}`);
   await notify('cryptoBillingSuccess', {
-    title: taxFailed ? 'Crypto payment needs review' : 'Crypto plan active',
-    description: taxFailed ? 'Your payment was received, but tax recording needs administrator attention.' : `Your ${checkout.planId} crypto plan is active for 30 days.`,
-    color: taxFailed ? EMBED_COLOR.warn : EMBED_COLOR.ok,
+    title: 'Crypto plan active',
+    description: `Your ${checkout.planId} crypto plan is active for 30 days.`,
+    color: EMBED_COLOR.ok,
   });
 }
 
@@ -352,7 +320,6 @@ function chargeFromPayment(
   userId: string,
   status: BillingCharge['status'],
   occurredAt: string,
-  taxTransactionId?: string,
 ): BillingCharge {
   const paymentId = payment.payment_id === undefined ? subscription.providerPaymentId ?? subscription.subscriptionId : String(payment.payment_id);
   return {
@@ -366,7 +333,6 @@ function chargeFromPayment(
     tokenAmount: stringValue(payment.actually_paid ?? payment.pay_amount),
     asset: stringValue(payment.pay_currency)?.toUpperCase(),
     txHash: stringValue(payment.outcome_tx_hash ?? payment.payin_hash ?? payment.transaction_hash),
-    taxTransactionId,
     occurredAt,
     updatedAt: occurredAt,
   };

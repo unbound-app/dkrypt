@@ -55,11 +55,8 @@ export const config = {
   stripePriorityPriceId: optional('STRIPE_PRIORITY_PRICE_ID', ''),
   stripeApiPriceId: optional('STRIPE_API_PRICE_ID', ''),
   stripePriorityApiPriceId: optional('STRIPE_PRIORITY_API_PRICE_ID', ''),
-  stripeTaxCode: optional('STRIPE_TAX_CODE', ''),
 
   cryptoBillingEnabled: optionalBool('CRYPTO_BILLING_ENABLED', false),
-  cryptoTaxMode: optional('CRYPTO_TAX_MODE', 'stripe-tax'),
-  cryptoManualTaxAllowed: optionalBool('CRYPTO_MANUAL_TAX_ALLOWED', false),
   cryptoBillingPollIntervalSeconds: optionalInt('CRYPTO_BILLING_POLL_INTERVAL_SECONDS', 300),
   cryptoDunningGraceHours: optionalInt('CRYPTO_DUNNING_GRACE_HOURS', 72),
   nowpaymentsApiKey: optional('NOWPAYMENTS_API_KEY', ''),
@@ -124,7 +121,6 @@ const stripeRequirements = [
 export const stripeMissingConfiguration = stripeRequirements.filter(([, value]) => value === '').map(([name]) => name);
 export const stripeEnabled = stripeMissingConfiguration.length === 0;
 export const nowpaymentsEnvironment = config.nowpaymentsEnvironment as 'live' | 'test';
-if (config.cryptoTaxMode !== 'stripe-tax' && config.cryptoTaxMode !== 'manual') throw new Error(`env var CRYPTO_TAX_MODE must be stripe-tax or manual, got ${config.cryptoTaxMode}`);
 if (config.nowpaymentsEnvironment !== 'live' && config.nowpaymentsEnvironment !== 'test') throw new Error(`env var NOWPAYMENTS_ENVIRONMENT must be live or test, got ${config.nowpaymentsEnvironment}`);
 const nowpaymentsRequirements = [
   ['NOWPAYMENTS_API_KEY', config.nowpaymentsApiKey],
@@ -132,12 +128,7 @@ const nowpaymentsRequirements = [
   ['NOWPAYMENTS_API_BASE_URL', config.nowpaymentsApiBaseUrl],
   ['NOWPAYMENTS_PRICE_CURRENCY', config.nowpaymentsPriceCurrency],
 ] as const;
-const nowpaymentsTaxRequirements = config.cryptoTaxMode === 'stripe-tax'
-  ? [['STRIPE_TAX_CODE', config.stripeTaxCode] as const]
-  : config.nowpaymentsEnvironment === 'live' && !config.cryptoManualTaxAllowed
-    ? [['CRYPTO_MANUAL_TAX_ALLOWED', ''] as const]
-    : [];
-export const nowpaymentsMissingConfiguration = [...nowpaymentsRequirements, ...nowpaymentsTaxRequirements]
+export const nowpaymentsMissingConfiguration = nowpaymentsRequirements
   .filter(([, value]) => value === '')
   .map(([name]) => name);
 export const nowpaymentsConfigured = nowpaymentsMissingConfiguration.length === 0;

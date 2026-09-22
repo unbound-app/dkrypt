@@ -52,11 +52,12 @@
 
         <h2>4. Subscriptions, payments, and taxes</h2>
         <p>
-          Paid plans renew every 30 days until canceled. The applicable plan, billing frequency, price, and taxes are presented before
-          purchase. Stripe Managed Payments handles eligible card or bank purchases as merchant of record. Crypto access is purchased for
-          30 days through a NOWPayments invoice, is outside Stripe Managed Payments, and uses Stripe Tax for the configured external tax
-          calculation and transaction. NOWPayments sends funds to the merchant payout wallet. dkrypt does not store full card details,
-          crypto custody, or wallet private keys.
+          Paid plans renew every 30 days until canceled. The applicable plan, billing frequency, and price are presented before purchase;
+          Stripe shows any applicable card or bank taxes in its checkout. Stripe Managed Payments handles eligible card or bank purchases
+          as merchant of record. Crypto access is purchased for
+          30 days through a NOWPayments invoice, is outside Stripe Managed Payments, and does not use Stripe or collect a billing
+          address in the configured checkout. NOWPayments sends funds to the merchant payout wallet. dkrypt does not store full card
+          details, crypto custody, or wallet private keys.
         </p>
         <p>
           Stripe subscriptions can be canceled through the dkrypt billing portal or receipt link and normally end at the current period.

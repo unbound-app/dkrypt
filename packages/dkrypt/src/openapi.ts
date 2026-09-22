@@ -20,7 +20,34 @@ export const openApiDocument = {
     '/v1/artifacts/{id}': { get: { summary: 'Get IPA artifact metadata', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }], responses: { '200': { description: 'Artifact metadata', content: { 'application/json': { schema: { $ref: '#/components/schemas/Artifact' } } } }, '404': { description: 'Artifact not found' } } } },
     '/v1/artifacts/{id}/file': { get: { summary: 'Download an IPA artifact with an API key', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }], responses: { '200': { description: 'IPA file' }, '401': { description: 'API key required' }, '404': { description: 'Artifact not found' } } } },
     '/v1/billing': { get: { summary: 'Read the current account billing state', responses: { '200': { description: 'Provider-neutral billing state' }, '401': { description: 'Session required' } } } },
-    '/v1/billing/checkout': { post: { summary: 'Start a Stripe or crypto subscription checkout', parameters: [{ name: 'Idempotency-Key', in: 'header', required: true, schema: { type: 'string', maxLength: 200 } }], requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['planId'], properties: { planId: { type: 'string' }, provider: { type: 'string', enum: ['stripe', 'crypto'], default: 'stripe' }, taxAddress: { type: 'object', properties: { country: { type: 'string' }, postalCode: { type: 'string' }, state: { type: 'string' }, city: { type: 'string' }, line1: { type: 'string' }, line2: { type: 'string' } } } } } } } }, responses: { '201': { description: 'Hosted checkout URL' }, '400': { description: 'Invalid plan, idempotency key, or billing address' }, '409': { description: 'Existing subscription' }, '503': { description: 'Provider not ready' } } } },
+    '/v1/billing/checkout': {
+      post: {
+        summary: 'Start a Stripe or crypto subscription checkout',
+        parameters: [{ name: 'Idempotency-Key', in: 'header', required: true, schema: { type: 'string', maxLength: 200 } }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['planId'],
+                properties: {
+                  planId: { type: 'string' },
+                  provider: { type: 'string', enum: ['stripe', 'crypto'], default: 'stripe' },
+                  cryptoAsset: { type: 'string' },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '201': { description: 'Hosted checkout URL' },
+          '400': { description: 'Invalid plan, idempotency key, or crypto asset' },
+          '409': { description: 'Existing subscription' },
+          '503': { description: 'Provider not ready' },
+        },
+      },
+    },
     '/v1/billing/cancel': { post: { summary: 'Cancel the current provider subscription', parameters: [{ name: 'Idempotency-Key', in: 'header', required: true, schema: { type: 'string', maxLength: 200 } }], responses: { '200': { description: 'Cancellation accepted' }, '400': { description: 'Missing or invalid idempotency key' }, '404': { description: 'No subscription found' }, '409': { description: 'Provider conflict' } } } },
     '/v1/billing/subscriptions': { get: { summary: 'Manager subscription ledger', parameters: [{ name: 'q', in: 'query', schema: { type: 'string' } }, { name: 'provider', in: 'query', schema: { type: 'string', enum: ['stripe', 'nowpayments', 'legacy'] } }, { name: 'status', in: 'query', schema: { type: 'string' } }], responses: { '200': { description: 'Member subscriptions', content: { 'application/json': { schema: { type: 'object', properties: { subscriptions: { type: 'array', items: { $ref: '#/components/schemas/BillingSubscription' } } } } } } }, '403': { description: 'Billing view permission required' } } } },
     '/v1/billing/provider-status': { get: { summary: 'Manager billing provider readiness', responses: { '200': { description: 'Provider readiness without secrets' }, '403': { description: 'Billing management permission required' } } } },

@@ -102,7 +102,7 @@
     </div>
 
     <Card class="mx-auto mt-8 max-w-3xl text-sm leading-6 text-muted">
-      Stripe renews card or bank payments automatically. Crypto access is purchased for 30 days through a NOWPayments invoice and renewed with another crypto payment. Crypto checkout is outside Stripe Managed Payments and uses Stripe Tax when configured.
+      Stripe renews card or bank payments automatically. Crypto access is purchased for 30 days through a NOWPayments invoice and renewed with another crypto payment. Crypto checkout is separate from Stripe and does not collect billing information.
     </Card>
   </main>
   <PublicPageFooter />

@@ -82,7 +82,7 @@
   {#if providerStatus}
     <div class="grid gap-3 md:grid-cols-2">
       <Card title="Stripe"><div class="flex items-center justify-between gap-3 text-sm"><span>{providerStatus.stripe.enabled ? 'Ready for card and bank checkout' : 'Not configured'}</span><Badge variant={providerStatus.stripe.enabled ? 'success' : 'secondary'}>{providerStatus.stripe.environment}</Badge></div></Card>
-      <Card title="Crypto · NOWPayments"><div class="flex items-center justify-between gap-3 text-sm"><span>{!providerStatus.crypto.enabled ? 'Disabled for new checkouts' : providerStatus.crypto.ready ? 'Ready for EUR-priced crypto invoices' : providerStatus.crypto.issues[0] ?? 'Not ready'}</span><Badge variant={providerStatus.crypto.enabled && providerStatus.crypto.ready ? 'success' : 'warning'}>{providerStatus.crypto.environment}</Badge></div>{#if providerStatus.crypto.taxWarning}<div class="mt-2 text-xs text-warn">{providerStatus.crypto.taxWarning}</div>{/if}</Card>
+      <Card title="Crypto · NOWPayments"><div class="flex items-center justify-between gap-3 text-sm"><span>{!providerStatus.crypto.enabled ? 'Disabled for new checkouts' : providerStatus.crypto.ready ? 'Ready for EUR-priced crypto invoices' : providerStatus.crypto.issues[0] ?? 'Not ready'}</span><Badge variant={providerStatus.crypto.enabled && providerStatus.crypto.ready ? 'success' : 'warning'}>{providerStatus.crypto.environment}</Badge></div><div class="mt-2 text-xs text-muted">Crypto checkout is separate from Stripe and does not collect billing information.</div></Card>
     </div>
   {/if}
 
