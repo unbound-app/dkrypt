@@ -46,7 +46,7 @@
   }
 
   function providerLabel(provider: BillingManagerSubscription['provider']): string {
-    return provider === 'exodus' ? 'Crypto · Exodus' : provider === 'stripe' ? 'Stripe' : 'Legacy';
+    return provider === 'nowpayments' ? 'Crypto · NOWPayments' : provider === 'stripe' ? 'Stripe' : 'Legacy';
   }
 
   function money(value?: number, currency = 'EUR'): string {
@@ -73,7 +73,7 @@
     <div class="mb-4 flex flex-wrap items-center justify-between gap-2 text-sm text-muted"><span class="flex items-center gap-2"><CreditCard class="h-4 w-4" /> View active, pending, failed, and canceled member subscriptions across billing providers.</span><Button size="sm" variant="secondary" loading={refreshing} onclick={() => void load()}><RefreshCw class="h-4 w-4" /> Refresh</Button></div>
     <div class="grid gap-2 md:grid-cols-[minmax(0,1fr)_10rem_10rem_auto]">
       <Input bind:value={search} placeholder="Search member, email, plan, or subscription" aria-label="Search subscriptions" />
-      <select class="rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text" bind:value={providerFilter} onchange={() => void load()} aria-label="Filter by provider"><option value="">All providers</option><option value="stripe">Stripe</option><option value="exodus">Crypto</option><option value="legacy">Legacy</option></select>
+      <select class="rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text" bind:value={providerFilter} onchange={() => void load()} aria-label="Filter by provider"><option value="">All providers</option><option value="stripe">Stripe</option><option value="nowpayments">Crypto</option><option value="legacy">Legacy</option></select>
       <select class="rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text" bind:value={statusFilter} onchange={() => void load()} aria-label="Filter by status"><option value="">All statuses</option><option value="active">Active</option><option value="past_due">Past due</option><option value="cancelled">Canceled</option></select>
       <Button variant="secondary" onclick={() => void load()}><RefreshCw class="h-4 w-4" /> Apply</Button>
     </div>
@@ -82,7 +82,7 @@
   {#if providerStatus}
     <div class="grid gap-3 md:grid-cols-2">
       <Card title="Stripe"><div class="flex items-center justify-between gap-3 text-sm"><span>{providerStatus.stripe.enabled ? 'Ready for card and bank checkout' : 'Not configured'}</span><Badge variant={providerStatus.stripe.enabled ? 'success' : 'secondary'}>{providerStatus.stripe.environment}</Badge></div></Card>
-      <Card title="Crypto · Exodus"><div class="flex items-center justify-between gap-3 text-sm"><span>{!providerStatus.crypto.enabled ? 'Disabled for new checkouts' : providerStatus.crypto.ready ? 'Ready for Base and EUR settlement' : providerStatus.crypto.issues[0] ?? 'Not ready'}</span><Badge variant={providerStatus.crypto.enabled && providerStatus.crypto.ready ? 'success' : 'warning'}>{providerStatus.crypto.environment}</Badge></div>{#if providerStatus.crypto.taxWarning}<div class="mt-2 text-xs text-warn">{providerStatus.crypto.taxWarning}</div>{/if}</Card>
+      <Card title="Crypto · NOWPayments"><div class="flex items-center justify-between gap-3 text-sm"><span>{!providerStatus.crypto.enabled ? 'Disabled for new checkouts' : providerStatus.crypto.ready ? 'Ready for EUR-priced crypto invoices' : providerStatus.crypto.issues[0] ?? 'Not ready'}</span><Badge variant={providerStatus.crypto.enabled && providerStatus.crypto.ready ? 'success' : 'warning'}>{providerStatus.crypto.environment}</Badge></div>{#if providerStatus.crypto.taxWarning}<div class="mt-2 text-xs text-warn">{providerStatus.crypto.taxWarning}</div>{/if}</Card>
     </div>
   {/if}
 

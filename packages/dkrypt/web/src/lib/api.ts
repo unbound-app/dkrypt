@@ -1645,7 +1645,7 @@ export function testEmail(): Promise<{ ok: boolean }> {
 
 export interface BillingManagerSubscription {
   user?: { id: string; displayName: string; username?: string; email?: string };
-  provider: 'stripe' | 'exodus' | 'legacy';
+  provider: 'stripe' | 'nowpayments' | 'legacy';
   subscriptionId: string;
   checkoutId?: string;
   customerId: string;

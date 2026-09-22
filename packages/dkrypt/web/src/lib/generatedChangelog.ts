@@ -1,5 +1,15 @@
 export const GENERATED_CHANGELOG = [
   {
+    "date": "2026-09-23",
+    "title": "feat(billing): add hosted crypto payments with NOWPayments",
+    "description": "Released in 7612fab."
+  },
+  {
+    "date": "2026-09-22",
+    "title": "feat(billing): add Exodus crypto subscriptions",
+    "description": "Released in 4458614."
+  },
+  {
     "date": "2026-09-22",
     "title": "fix(appstore): normalize tagged versions",
     "description": "Released in 8bc1f54."
@@ -28,15 +38,5 @@ export const GENERATED_CHANGELOG = [
     "date": "2026-09-21",
     "title": "fix(device): stabilize bridge transport and TestFlight polling",
     "description": "Released in 62d4390."
-  },
-  {
-    "date": "2026-09-20",
-    "title": "fix(notifications): remove misleading bridge recovery advice",
-    "description": "Released in 71f7529."
-  },
-  {
-    "date": "2026-09-20",
-    "title": "chore(web): refresh generated changelog",
-    "description": "Released in 2695f85."
   }
 ] as const;

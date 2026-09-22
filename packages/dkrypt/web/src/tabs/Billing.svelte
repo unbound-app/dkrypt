@@ -38,7 +38,7 @@
     decrypt: boolean;
     api: boolean;
     priority: number;
-    provider?: 'stripe' | 'exodus' | 'legacy';
+    provider?: 'stripe' | 'nowpayments' | 'legacy';
     status?: string;
     subscriptionId?: string;
     nextBilledAt?: string;
@@ -48,7 +48,7 @@
 
   interface BillingData {
     enabled: boolean;
-    provider: 'stripe' | 'exodus' | 'legacy';
+    provider: 'stripe' | 'nowpayments' | 'legacy';
     environment: 'test' | 'live';
     managedPayments: boolean;
     missingConfiguration: string[];
@@ -59,7 +59,7 @@
     entitlement: Entitlement;
     providers: {
       stripe: ProviderStatus;
-      crypto: ProviderStatus & { provider: 'exodus'; assets: string[] };
+      crypto: ProviderStatus & { provider: 'nowpayments'; assets: string[] };
     };
   }
 
@@ -75,6 +75,7 @@
   let checkoutIdempotencyPlan = $state<PlanId | undefined>();
   let checkoutIdempotencyProvider = $state<PaymentProvider | undefined>();
   let paymentProvider = $state<PaymentProvider>('stripe');
+  let cryptoAsset = $state('USDC');
   let taxAddress = $state({ country: '', postalCode: '' });
   const checkoutParams = new URLSearchParams(location.search);
   let checkoutState = $state<CheckoutState>((checkoutParams.get('checkout') ?? checkoutParams.get('crypto_checkout')) as CheckoutState);
@@ -136,7 +137,7 @@
   }
 
   async function cancelSubscription(): Promise<void> {
-    if (!window.confirm('Cancel this crypto subscription now? Access ends when Exodus confirms cancellation.')) return;
+    if (!window.confirm('Stop this crypto renewal now? Access ends immediately.')) return;
     cancelling = true;
     cancelIdempotencyKey ??= crypto.randomUUID();
     try {
@@ -170,7 +171,7 @@
       const response = await fetch('/v1/billing/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
-        body: JSON.stringify({ planId: plan.id, provider: paymentProvider, taxAddress: paymentProvider === 'crypto' ? taxAddress : undefined }),
+        body: JSON.stringify({ planId: plan.id, provider: paymentProvider, cryptoAsset: paymentProvider === 'crypto' ? cryptoAsset : undefined, taxAddress: paymentProvider === 'crypto' ? taxAddress : undefined }),
       });
       const data = (await response.json().catch(() => ({}))) as { url?: string; error?: string };
       if (!response.ok || !data.url) {
@@ -184,7 +185,8 @@
   }
 
   async function changePlan(plan: Plan): Promise<void> {
-    if (billing?.entitlement.provider === 'exodus') {
+    if (billing?.entitlement.provider === 'nowpayments' && billing.entitlement.status === 'past_due') return void startCheckout(plan);
+    if (billing?.entitlement.provider === 'nowpayments') {
       showToast('Crypto plan changes require cancellation and a new checkout.', 'error');
       return;
     }
@@ -291,7 +293,7 @@
       {#if billing}
         <div class="flex flex-wrap items-center gap-2">
           <div class="rounded-xl border border-border bg-bg/60 px-3 py-2 text-right"><div class="text-xs text-muted">Current plan</div><div class="font-semibold capitalize">{planLabel(billing.entitlement.planId)}</div><Badge variant={statusVariant(billing.entitlement.status)} class="mt-1">{statusLabel(billing.entitlement.status)}</Badge></div>
-          {#if billing.entitlement.provider === 'stripe' && billing.customerId}<Button variant="secondary" loading={openingPortal} onclick={() => void manageSubscription()}><ExternalLink class="h-4 w-4" /> Manage billing</Button>{:else if billing.entitlement.provider === 'exodus'}<Button variant="secondary" loading={cancelling} onclick={() => void cancelSubscription()}>Cancel subscription</Button>{/if}
+          {#if billing.entitlement.provider === 'stripe' && billing.customerId}<Button variant="secondary" loading={openingPortal} onclick={() => void manageSubscription()}><ExternalLink class="h-4 w-4" /> Manage billing</Button>{:else if billing.entitlement.provider === 'nowpayments'}<Button variant="secondary" loading={cancelling} onclick={() => void cancelSubscription()}>Stop crypto renewal</Button>{/if}
         </div>
       {/if}
     </div>
@@ -313,11 +315,11 @@
         <div class="mb-3 text-sm font-medium">Payment method</div>
         <div class="grid gap-2 sm:grid-cols-2">
           <button class={paymentProvider === 'stripe' ? 'rounded-xl border border-accent bg-accent/5 px-3 py-3 text-left transition' : 'rounded-xl border px-3 py-3 text-left transition'} onclick={() => (paymentProvider = 'stripe')}><div class="font-medium">Card or bank</div><div class="mt-1 text-xs text-muted">Hosted Stripe checkout with Managed Payments.</div></button>
-          <button class={paymentProvider === 'crypto' ? 'rounded-xl border border-accent bg-accent/5 px-3 py-3 text-left transition disabled:cursor-not-allowed disabled:opacity-50' : 'rounded-xl border px-3 py-3 text-left transition disabled:cursor-not-allowed disabled:opacity-50'} disabled={!cryptoReady()} onclick={() => (paymentProvider = 'crypto')}><div class="flex items-center justify-between gap-2 font-medium"><span>USDC or USDT</span><Badge variant="secondary">Base</Badge></div><div class="mt-1 text-xs text-muted">Hosted Exodus checkout with EUR settlement.</div></button>
+          <button class={paymentProvider === 'crypto' ? 'rounded-xl border border-accent bg-accent/5 px-3 py-3 text-left transition disabled:cursor-not-allowed disabled:opacity-50' : 'rounded-xl border px-3 py-3 text-left transition disabled:cursor-not-allowed disabled:opacity-50'} disabled={!cryptoReady()} onclick={() => (paymentProvider = 'crypto')}><div class="flex items-center justify-between gap-2 font-medium"><span>Crypto</span><Badge variant="secondary">{billing.providers.crypto.assets.join(' / ')}</Badge></div><div class="mt-1 text-xs text-muted">Hosted NOWPayments invoice priced in EUR. Renew with a new crypto payment every 30 days.</div></button>
         </div>
         {#if paymentProvider === 'crypto'}
-          <div class="mt-4 grid gap-3 border-t border-border pt-4 sm:grid-cols-2"><label class="text-xs text-muted">Billing country<input class="mt-1 w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text" maxlength="2" bind:value={taxAddress.country} placeholder="DE" /></label><label class="text-xs text-muted">Postal code<input class="mt-1 w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text" maxlength="32" bind:value={taxAddress.postalCode} placeholder="10115" /></label></div>
-          {#if !cryptoReady()}<div class="mt-3 text-xs text-muted">Crypto checkout is not available until the provider, Base, EUR settlement, and tax checks are ready.</div>{/if}
+          <div class="mt-4 grid gap-3 border-t border-border pt-4 sm:grid-cols-3"><label class="text-xs text-muted">Crypto currency<select class="mt-1 w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text" bind:value={cryptoAsset}>{#each billing.providers.crypto.assets as asset}<option value={asset}>{asset}</option>{/each}</select></label><label class="text-xs text-muted">Billing country<input class="mt-1 w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text" maxlength="2" bind:value={taxAddress.country} placeholder="DE" /></label><label class="text-xs text-muted">Postal code<input class="mt-1 w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text" maxlength="32" bind:value={taxAddress.postalCode} placeholder="10115" /></label></div>
+          {#if !cryptoReady()}<div class="mt-3 text-xs text-muted">Crypto checkout is not available until NOWPayments, the selected currency, and tax checks are ready.</div>{/if}
         {/if}
       </Card>
     {/if}
@@ -330,8 +332,8 @@
           <div class="flex h-full min-h-80 flex-col">
             <div class="mb-4 flex items-start justify-between gap-3"><div><div class="flex flex-wrap items-center gap-2"><h3 class="text-base font-semibold">{plan.name}</h3>{#if highlighted}<Badge>Best value</Badge>{/if}{#if current}<Badge variant="success">Current</Badge>{/if}</div><p class="mt-1 text-sm text-muted">{plan.description}</p></div>{#if plan.id === 'priority' || plan.id === 'priority_api'}<Zap class="h-5 w-5 shrink-0 text-accent" />{:else if plan.id === 'api'}<KeyRound class="h-5 w-5 shrink-0 text-accent" />{:else}<Gauge class="h-5 w-5 shrink-0 text-accent" />{/if}</div>
             <div class="mb-5"><span class="text-3xl font-semibold">{fallbackPrice(plan)}</span><span class="text-sm text-muted">/30 days</span></div>
-            <div class="mb-6 flex flex-1 flex-col gap-2 text-sm"><div class="flex items-center gap-2"><Check class="h-4 w-4 text-ok" /> Dashboard decrypts</div>{#if plan.id === 'api' || plan.id === 'priority_api'}<div class="flex items-center gap-2"><Check class="h-4 w-4 text-ok" /> API key access</div>{:else}<div class="flex items-center gap-2 text-muted"><X class="h-4 w-4" /> API key access</div>{/if}{#if plan.id === 'priority' || plan.id === 'priority_api'}<div class="flex items-center gap-2"><Check class="h-4 w-4 text-ok" /> High queue priority</div>{:else}<div class="flex items-center gap-2 text-muted"><X class="h-4 w-4" /> High queue priority</div>{/if}<div class="mt-2 flex items-center gap-2 text-xs text-muted"><ShieldCheck class="h-4 w-4 text-accent" /> {paymentProvider === 'crypto' ? 'Hosted Exodus checkout' : 'Hosted Stripe checkout'}</div></div>
-            <Button class="w-full" variant={highlighted ? 'default' : 'secondary'} disabled={current || openingPlan !== undefined || (!billing.enabled && !billing.entitlement.subscriptionId) || (paymentProvider === 'crypto' && (!cryptoReady() || (!validTaxAddress() && billing.entitlement.planId === 'viewer')))} loading={openingPlan === plan.id} onclick={() => choosePlan(plan)}>{current ? 'Current plan' : billing.entitlement.subscriptionId ? billing.entitlement.provider === 'exodus' ? 'Cancel current plan first' : `Switch to ${plan.name}` : 'Subscribe'}</Button>
+            <div class="mb-6 flex flex-1 flex-col gap-2 text-sm"><div class="flex items-center gap-2"><Check class="h-4 w-4 text-ok" /> Dashboard decrypts</div>{#if plan.id === 'api' || plan.id === 'priority_api'}<div class="flex items-center gap-2"><Check class="h-4 w-4 text-ok" /> API key access</div>{:else}<div class="flex items-center gap-2 text-muted"><X class="h-4 w-4" /> API key access</div>{/if}{#if plan.id === 'priority' || plan.id === 'priority_api'}<div class="flex items-center gap-2"><Check class="h-4 w-4 text-ok" /> High queue priority</div>{:else}<div class="flex items-center gap-2 text-muted"><X class="h-4 w-4" /> High queue priority</div>{/if}<div class="mt-2 flex items-center gap-2 text-xs text-muted"><ShieldCheck class="h-4 w-4 text-accent" /> {paymentProvider === 'crypto' ? 'Hosted NOWPayments invoice' : 'Hosted Stripe checkout'}</div></div>
+            <Button class="w-full" variant={highlighted ? 'default' : 'secondary'} disabled={current || openingPlan !== undefined || (!billing.enabled && !billing.entitlement.subscriptionId) || (paymentProvider === 'crypto' && (!cryptoReady() || (!validTaxAddress() && billing.entitlement.planId === 'viewer')))} loading={openingPlan === plan.id} onclick={() => choosePlan(plan)}>{current ? 'Current plan' : billing.entitlement.subscriptionId ? billing.entitlement.provider === 'nowpayments' ? billing.entitlement.status === 'past_due' ? 'Renew with crypto' : 'Stop crypto renewal first' : `Switch to ${plan.name}` : 'Subscribe'}</Button>
           </div>
         </Card>
       {/each}
@@ -339,6 +341,6 @@
 
     {#if billing.entitlement.scheduledChangeAt}<Card><div class="text-sm">Your subscription is scheduled to {billing.entitlement.scheduledChangeAction ?? 'change'} on {formatDate(billing.entitlement.scheduledChangeAt)}.</div></Card>{:else if billing.entitlement.nextBilledAt}<div class="text-center text-xs text-muted">Next billing date: {formatDate(billing.entitlement.nextBilledAt)}</div>{/if}
 
-    <Card class="text-center text-xs leading-5 text-muted">Plans renew every 30 days until canceled. Stripe handles card or bank payments; Exodus handles crypto checkout and EUR settlement. dkrypt does not store payment credentials or private keys.<div class="mt-3"><LegalLinks /></div></Card>
+    <Card class="text-center text-xs leading-5 text-muted">Stripe handles automatic card or bank renewals. Crypto access lasts 30 days after a verified NOWPayments invoice and renews when you complete another crypto payment. dkrypt does not store payment credentials or private keys.<div class="mt-3"><LegalLinks /></div></Card>
   {/if}
 </div>

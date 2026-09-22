@@ -1,4 +1,4 @@
-import { config, exodusEnvironment } from '#config.js';
+import { config, nowpaymentsEnvironment } from '#config.js';
 import type { BillingTaxAddress } from '#billing.js';
 import { getStripe } from '#stripe.js';
 
@@ -16,7 +16,7 @@ export interface CryptoTaxReadiness {
 
 export async function getCryptoTaxReadiness(): Promise<CryptoTaxReadiness> {
   if (config.cryptoTaxMode === 'manual') {
-    if (exodusEnvironment === 'live' && !config.cryptoManualTaxAllowed) return { ready: false, issues: ['manual tax mode is not permitted for live crypto billing'] };
+    if (nowpaymentsEnvironment === 'live' && !config.cryptoManualTaxAllowed) return { ready: false, issues: ['manual tax mode is not permitted for live crypto billing'] };
     return {
       ready: true,
       issues: [],
@@ -31,7 +31,11 @@ export async function getCryptoTaxReadiness(): Promise<CryptoTaxReadiness> {
     const settings = await getStripe().tax.settings.retrieve();
     if (settings.status !== 'active') issues.push('Stripe Tax settings are not active');
     if (settings.defaults.provider !== 'stripe') issues.push('Stripe Tax is configured with a different tax provider');
-    if (settings.livemode !== (exodusEnvironment === 'live')) issues.push('Stripe Tax mode does not match the Exodus environment');
+    if (settings.livemode !== (nowpaymentsEnvironment === 'live')) issues.push('Stripe Tax mode does not match the NOWPayments environment');
+    if (nowpaymentsEnvironment === 'live') {
+      const registrations = await getStripe().tax.registrations.list({ status: 'active', limit: 100 });
+      if (registrations.data.length === 0) issues.push('Stripe Tax requires at least one active live registration');
+    }
   } catch {
     issues.push('Stripe Tax settings could not be verified');
   }

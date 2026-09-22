@@ -23,10 +23,10 @@ import {
   createCryptoCheckout,
   CryptoBillingError,
   listManagerBillingSubscriptions,
-  processExodusEvent,
-  verifyExodusEvent,
+  processNowPaymentsEvent,
+  verifyNowPaymentsEvent,
 } from '#cryptoBilling.js';
-import { getExodusProviderStatus } from '#exodus.js';
+import { getNowPaymentsProviderStatus } from '#nowpayments.js';
 import { normalizeTaxAddress } from '#cryptoTax.js';
 import { getAuthProfile, resolveAuthUserId } from '#identity.js';
 import { log } from '#logger.js';
@@ -173,46 +173,43 @@ stripeWebhookRouter.post('/v1/stripe/webhook', async (req, res) => {
   }
 });
 
-export const exodusWebhookRouter = Router();
+export const nowpaymentsWebhookRouter = Router();
 
-exodusWebhookRouter.post('/v1/exodus/webhook', async (req, res) => {
-  const signature = req.header('x-signature') ?? '';
-  const previousSignature = req.header('x-signature-previous') ?? '';
-  const webhookId = req.header('x-webhook-id') ?? '';
+nowpaymentsWebhookRouter.post('/v1/nowpayments/webhook', async (req, res) => {
+  const signature = req.header('x-nowpayments-sig') ?? '';
   const rawBody = Buffer.isBuffer(req.body) ? req.body : typeof req.body === 'string' ? req.body : '';
   if (!signature || !rawBody) {
     res.status(400).json({ error: 'missing signature or body' });
     return;
   }
-  if (!config.exodusWebhookSecret && !config.exodusWebhookSecretPrevious) {
-    res.status(503).json({ error: 'Exodus webhook is not configured' });
+  if (!config.nowpaymentsIpnSecret && !config.nowpaymentsIpnSecretPrevious) {
+    res.status(503).json({ error: 'NOWPayments IPN is not configured' });
     return;
   }
-  if (!verifyExodusEvent(rawBody, signature, previousSignature)) {
-    log.warn('Exodus webhook signature verification failed');
+  if (!verifyNowPaymentsEvent(rawBody, signature)) {
+    log.warn('NOWPayments IPN signature verification failed');
     res.status(400).json({ error: 'invalid webhook signature' });
     return;
   }
-  let event: unknown;
+  let payload: unknown;
   try {
-    event = JSON.parse(rawBody.toString('utf8'));
+    payload = JSON.parse(rawBody.toString('utf8'));
   } catch {
     res.status(400).json({ error: 'invalid webhook body' });
     return;
   }
-  if (typeof event !== 'object' || event === null || typeof (event as { id?: unknown }).id !== 'string' || typeof (event as { type?: unknown }).type !== 'string') {
-    res.status(400).json({ error: 'invalid webhook event' });
+  if (typeof payload !== 'object' || payload === null || typeof (payload as { payment_status?: unknown }).payment_status !== 'string') {
+    res.status(400).json({ error: 'invalid IPN payload' });
     return;
   }
-  if (webhookId && webhookId !== (event as { id: string }).id) {
-    res.status(400).json({ error: 'webhook id does not match event id' });
-    return;
-  }
+  const payment = payload as Parameters<typeof processNowPaymentsEvent>[0]['payment'];
+  const paymentId = payment.payment_id === undefined ? payment.order_id ?? 'unknown' : String(payment.payment_id);
+  const eventId = `nowpayments:${paymentId}:${payment.payment_status}:${payment.updated_at ?? payment.created_at ?? 'unknown'}`;
   try {
-    await processExodusEvent(event as Parameters<typeof processExodusEvent>[0]);
+    await processNowPaymentsEvent({ id: eventId, payment });
     res.json({ received: true });
   } catch (error) {
-    log.error('Exodus webhook failed', { error: String(error) });
+    log.error('NOWPayments IPN failed', { error: String(error) });
     res.status(500).json({ error: 'webhook processing failed' });
   }
 });
@@ -223,7 +220,7 @@ billingRouter.get('/v1/billing', requireSession, async (_req, res) => {
   const userId = res.locals.session.sub;
   const profile = getAuthProfile(userId);
   const entitlement = getBillingEntitlements(userId);
-  const crypto = await getExodusProviderStatus();
+  const crypto = await getNowPaymentsProviderStatus();
   res.json({
     enabled: stripeEnabled || crypto.enabled,
     provider: entitlement.provider ?? 'stripe',
@@ -232,7 +229,7 @@ billingRouter.get('/v1/billing', requireSession, async (_req, res) => {
     missingConfiguration: stripeEnabled ? [] : stripeMissingConfiguration,
     providers: {
       stripe: { enabled: stripeEnabled, environment: stripeEnvironment, managedPayments: true, missingConfiguration: stripeMissingConfiguration },
-      crypto: { provider: 'exodus', enabled: crypto.enabled, ready: crypto.enabled && crypto.ready, environment: crypto.environment, settlementCurrency: crypto.settlementCurrency, assets: crypto.supportedAssets },
+      crypto: { provider: 'nowpayments', enabled: crypto.enabled, ready: crypto.enabled && crypto.ready, environment: crypto.environment, settlementCurrency: crypto.settlementCurrency, assets: crypto.supportedAssets },
     },
     plans: listPlans(),
     customerId: getBillingCustomerId(userId),
@@ -285,8 +282,9 @@ billingRouter.post('/v1/billing/checkout', requireSession, async (req, res) => {
   }
   if (provider === 'crypto') {
     try {
-      const result = await createCryptoCheckout({ userId, planId: target.id, idempotencyKey, taxAddress });
-      res.status(result.reused ? 200 : 201).json({ url: result.checkout.checkoutUrl, provider: 'exodus', checkoutId: result.checkout.checkoutId, status: result.checkout.status });
+      const cryptoAsset = typeof req.body?.cryptoAsset === 'string' ? req.body.cryptoAsset : undefined;
+      const result = await createCryptoCheckout({ userId, planId: target.id, idempotencyKey, taxAddress, asset: cryptoAsset });
+      res.status(result.reused ? 200 : 201).json({ url: result.checkout.checkoutUrl, provider: 'nowpayments', checkoutId: result.checkout.checkoutId, status: result.checkout.status });
     } catch (error) {
       if (error instanceof CryptoBillingError) {
         res.status(error.statusCode).json({ error: error.message });
@@ -338,7 +336,7 @@ billingRouter.post('/v1/billing/checkout', requireSession, async (req, res) => {
 billingRouter.post('/v1/billing/portal', requireSession, async (_req, res) => {
   const userId = res.locals.session.sub;
   const entitlement = getBillingEntitlements(userId);
-  if (entitlement.provider === 'exodus') {
+  if (entitlement.provider === 'nowpayments') {
     res.status(409).json({ error: 'crypto subscriptions are managed in dkrypt' });
     return;
   }
@@ -375,14 +373,14 @@ billingRouter.post('/v1/billing/cancel', requireSession, async (req, res) => {
     res.status(404).json({ error: 'subscription does not belong to this account' });
     return;
   }
-  if (subscription.provider === 'exodus') {
+  if (subscription.provider === 'nowpayments') {
     if (subscription.status === 'cancelled') {
-      res.json({ success: true, status: 'cancelled', provider: 'exodus', idempotencyKey });
+      res.json({ success: true, status: 'cancelled', provider: 'nowpayments', idempotencyKey });
       return;
     }
     try {
       await cancelCryptoSubscription(userId, subscription);
-      res.json({ success: true, status: 'cancelled', provider: 'exodus', idempotencyKey });
+      res.json({ success: true, status: 'cancelled', provider: 'nowpayments', idempotencyKey });
     } catch (error) {
       if (error instanceof CryptoBillingError) {
         res.status(error.statusCode).json({ error: error.message });
@@ -409,7 +407,7 @@ billingRouter.post('/v1/billing/cancel', requireSession, async (req, res) => {
 });
 
 billingRouter.get('/v1/billing/provider-status', requirePermission(PermissionFlag.manageBilling), async (_req, res) => {
-  res.json({ stripe: { enabled: stripeEnabled, environment: stripeEnvironment, missingConfiguration: stripeMissingConfiguration }, crypto: await getExodusProviderStatus() });
+  res.json({ stripe: { enabled: stripeEnabled, environment: stripeEnvironment, missingConfiguration: stripeMissingConfiguration }, crypto: await getNowPaymentsProviderStatus() });
 });
 
 billingRouter.get('/v1/billing/subscriptions', requirePermission(PermissionFlag.viewBilling, PermissionFlag.manageBilling), (req, res) => {

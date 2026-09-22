@@ -62,14 +62,14 @@ export const config = {
   cryptoManualTaxAllowed: optionalBool('CRYPTO_MANUAL_TAX_ALLOWED', false),
   cryptoBillingPollIntervalSeconds: optionalInt('CRYPTO_BILLING_POLL_INTERVAL_SECONDS', 300),
   cryptoDunningGraceHours: optionalInt('CRYPTO_DUNNING_GRACE_HOURS', 72),
-  exodusApiKey: optional('EXODUS_CHECKOUT_API_KEY', ''),
-  exodusSigningKey: optional('EXODUS_CHECKOUT_SIGNING_KEY', ''),
-  exodusWebhookSecret: optional('EXODUS_CHECKOUT_WEBHOOK_SECRET', ''),
-  exodusWebhookSecretPrevious: optional('EXODUS_CHECKOUT_WEBHOOK_SECRET_PREVIOUS', ''),
-  exodusApiBaseUrl: optional('EXODUS_CHECKOUT_API_BASE_URL', 'https://checkout-api.exodus-int.com'),
-  exodusSupportedChains: optionalList('EXODUS_CHECKOUT_SUPPORTED_CHAINS', 'eip155:8453'),
-  exodusSupportedAssets: optionalList('EXODUS_CHECKOUT_SUPPORTED_ASSETS', 'USDC,USDT').map((value) => value.toUpperCase()),
-  exodusSettlementCurrency: optional('EXODUS_CHECKOUT_SETTLEMENT_CURRENCY', 'EUR').toUpperCase(),
+  nowpaymentsApiKey: optional('NOWPAYMENTS_API_KEY', ''),
+  nowpaymentsIpnSecret: optional('NOWPAYMENTS_IPN_SECRET', ''),
+  nowpaymentsIpnSecretPrevious: optional('NOWPAYMENTS_IPN_SECRET_PREVIOUS', ''),
+  nowpaymentsApiBaseUrl: optional('NOWPAYMENTS_API_BASE_URL', 'https://api.nowpayments.io/v1'),
+  nowpaymentsEnvironment: optional('NOWPAYMENTS_ENVIRONMENT', 'live'),
+  nowpaymentsSupportedAssets: optionalList('NOWPAYMENTS_SUPPORTED_ASSETS', 'USDC,USDT').map((value) => value.toUpperCase()),
+  nowpaymentsDefaultAsset: optional('NOWPAYMENTS_DEFAULT_ASSET', 'USDC').toUpperCase(),
+  nowpaymentsPriceCurrency: optional('NOWPAYMENTS_PRICE_CURRENCY', 'EUR').toUpperCase(),
 
   ipadecryptBin: optional('IPADECRYPT_BIN', 'ipadecrypt'),
   outputDir: optional('OUTPUT_DIR', '/data/tmp'),
@@ -123,21 +123,23 @@ const stripeRequirements = [
 ] as const;
 export const stripeMissingConfiguration = stripeRequirements.filter(([, value]) => value === '').map(([name]) => name);
 export const stripeEnabled = stripeMissingConfiguration.length === 0;
-export const exodusEnvironment = config.exodusApiKey.startsWith('sk_live_') ? 'live' : 'test';
+export const nowpaymentsEnvironment = config.nowpaymentsEnvironment as 'live' | 'test';
 if (config.cryptoTaxMode !== 'stripe-tax' && config.cryptoTaxMode !== 'manual') throw new Error(`env var CRYPTO_TAX_MODE must be stripe-tax or manual, got ${config.cryptoTaxMode}`);
-const exodusRequirements = [
-  ['EXODUS_CHECKOUT_API_KEY', config.exodusApiKey],
-  ['EXODUS_CHECKOUT_SIGNING_KEY', config.exodusSigningKey],
-  ['EXODUS_CHECKOUT_WEBHOOK_SECRET', config.exodusWebhookSecret],
+if (config.nowpaymentsEnvironment !== 'live' && config.nowpaymentsEnvironment !== 'test') throw new Error(`env var NOWPAYMENTS_ENVIRONMENT must be live or test, got ${config.nowpaymentsEnvironment}`);
+const nowpaymentsRequirements = [
+  ['NOWPAYMENTS_API_KEY', config.nowpaymentsApiKey],
+  ['NOWPAYMENTS_IPN_SECRET', config.nowpaymentsIpnSecret],
+  ['NOWPAYMENTS_API_BASE_URL', config.nowpaymentsApiBaseUrl],
+  ['NOWPAYMENTS_PRICE_CURRENCY', config.nowpaymentsPriceCurrency],
 ] as const;
-const exodusTaxRequirements = config.cryptoTaxMode === 'stripe-tax'
+const nowpaymentsTaxRequirements = config.cryptoTaxMode === 'stripe-tax'
   ? [['STRIPE_TAX_CODE', config.stripeTaxCode] as const]
-  : exodusEnvironment === 'live' && !config.cryptoManualTaxAllowed
+  : config.nowpaymentsEnvironment === 'live' && !config.cryptoManualTaxAllowed
     ? [['CRYPTO_MANUAL_TAX_ALLOWED', ''] as const]
     : [];
-export const exodusMissingConfiguration = [...exodusRequirements, ...exodusTaxRequirements]
+export const nowpaymentsMissingConfiguration = [...nowpaymentsRequirements, ...nowpaymentsTaxRequirements]
   .filter(([, value]) => value === '')
   .map(([name]) => name);
-export const exodusConfigured = exodusMissingConfiguration.length === 0;
-export const cryptoBillingEnabled = config.cryptoBillingEnabled && exodusConfigured;
+export const nowpaymentsConfigured = nowpaymentsMissingConfiguration.length === 0;
+export const cryptoBillingEnabled = config.cryptoBillingEnabled && nowpaymentsConfigured;
 export const emailEnabled = config.smtpHost !== '' && config.smtpUser !== '' && config.smtpPass !== '';

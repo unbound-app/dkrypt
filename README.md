@@ -106,26 +106,26 @@ Store the generated price IDs and webhook secret in the runtime environment. `st
 <details>
 <summary>Crypto billing</summary>
 
-Crypto billing is an optional second payment method alongside Stripe. It uses an Exodus Checkout Business account for hosted recurring USDC or USDT checkout on Base with EUR-denominated 30-day plans and automatic EUR settlement. dkrypt does not custody crypto or store wallet private keys.
+Crypto billing is an optional second payment method alongside Stripe. It uses NOWPayments hosted invoices for USDC or USDT payments priced in EUR. Each verified payment grants 30 days of access; users renew with a new invoice. NOWPayments pays the configured merchant wallet, and dkrypt does not custody crypto or store wallet private keys.
 
-Keep crypto disabled until the Exodus test flow is complete. Configure these runtime values when enabling it:
+Keep crypto disabled until the NOWPayments test flow is complete. Configure these runtime values when enabling it:
 
 ```text
 CRYPTO_BILLING_ENABLED=true
 CRYPTO_TAX_MODE=stripe-tax
 CRYPTO_MANUAL_TAX_ALLOWED=false
-EXODUS_CHECKOUT_API_KEY=sk_test_...
-EXODUS_CHECKOUT_SIGNING_KEY=...
-EXODUS_CHECKOUT_WEBHOOK_SECRET=...
-EXODUS_CHECKOUT_WEBHOOK_SECRET_PREVIOUS=
-EXODUS_CHECKOUT_API_BASE_URL=https://checkout-api.exodus-int.com
-EXODUS_CHECKOUT_SUPPORTED_CHAINS=eip155:8453
-EXODUS_CHECKOUT_SUPPORTED_ASSETS=USDC,USDT
-EXODUS_CHECKOUT_SETTLEMENT_CURRENCY=EUR
+NOWPAYMENTS_API_KEY=...
+NOWPAYMENTS_IPN_SECRET=...
+NOWPAYMENTS_IPN_SECRET_PREVIOUS=
+NOWPAYMENTS_API_BASE_URL=https://api.nowpayments.io/v1
+NOWPAYMENTS_ENVIRONMENT=live
+NOWPAYMENTS_SUPPORTED_ASSETS=USDC,USDT
+NOWPAYMENTS_DEFAULT_ASSET=USDC
+NOWPAYMENTS_PRICE_CURRENCY=EUR
 STRIPE_TAX_CODE=txcd_...
 ```
 
-Set the Exodus webhook destination to `https://<your-host>/v1/exodus/webhook`. The signing key is separate from the API key and is used only for recurring charges and cancellation. Live crypto checkout remains unavailable until Exodus reports FIAT settlement in EUR, Base signer readiness, and Stripe Tax settings as ready. Crypto payments are outside Stripe Managed Payments; Stripe Tax is used only to calculate and record the external tax transaction. `CRYPTO_TAX_MODE=manual` is for explicitly authorized development or self-hosted operations and displays an operator warning.
+Set the NOWPayments IPN destination to `https://<your-host>/v1/nowpayments/webhook` and keep the IPN secret private. Live crypto checkout remains unavailable until NOWPayments lists the selected currencies and Stripe Tax has an active live registration. Crypto payments are outside Stripe Managed Payments; Stripe Tax is used only to calculate and record the external tax transaction. `CRYPTO_TAX_MODE=manual` is only for explicitly authorized development or self-hosted operations and displays an operator warning.
 
 </details>
 

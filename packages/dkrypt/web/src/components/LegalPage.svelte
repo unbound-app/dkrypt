@@ -53,14 +53,15 @@
         <h2>4. Subscriptions, payments, and taxes</h2>
         <p>
           Paid plans renew every 30 days until canceled. The applicable plan, billing frequency, price, and taxes are presented before
-          purchase. Stripe Managed Payments handles eligible card or bank purchases as merchant of record. Crypto purchases use Exodus
-          Checkout with EUR settlement and are outside Stripe Managed Payments; Stripe Tax is used for the configured external tax
-          calculation and transaction. dkrypt does not store full card details, crypto custody, or wallet private keys.
+          purchase. Stripe Managed Payments handles eligible card or bank purchases as merchant of record. Crypto access is purchased for
+          30 days through a NOWPayments invoice, is outside Stripe Managed Payments, and uses Stripe Tax for the configured external tax
+          calculation and transaction. NOWPayments sends funds to the merchant payout wallet. dkrypt does not store full card details,
+          crypto custody, or wallet private keys.
         </p>
         <p>
           Stripe subscriptions can be canceled through the dkrypt billing portal or receipt link and normally end at the current period.
-          Crypto subscriptions are canceled immediately after Exodus confirms the request. Crypto plan changes require cancellation and a
-          new checkout. Access depends on the subscription remaining in an eligible status.
+          Crypto renewal is stopped immediately from dkrypt. Crypto plan changes require cancellation and a new checkout. Access depends
+          on the subscription remaining in an eligible status.
           Access to paid features depends on the subscription remaining in an eligible status.
         </p>
 
@@ -140,7 +141,7 @@
           </li>
           <li>
             <strong>Billing data:</strong> provider customer and subscription identifiers, plan, subscription status, renewal information,
-            billing email, and crypto wallet/network identifiers when applicable. Stripe and Exodus process payment details; dkrypt does
+            billing email, and crypto wallet/network identifiers when applicable. Stripe and NOWPayments process payment details; dkrypt does
             not store full card details or wallet private keys.
           </li>
           <li>
@@ -176,7 +177,7 @@
         <ul>
           <li>GitHub or Discord for authentication you choose to use;</li>
           <li>Stripe Managed Payments for eligible card or bank checkout, subscription administration, tax compliance, receipts, and fraud prevention;</li>
-          <li>Exodus Checkout for crypto checkout, wallet authorization, recurring charges, and EUR settlement;</li>
+          <li>NOWPayments for crypto invoices and payment status;</li>
           <li>hosting, network, security, email, notification, and infrastructure providers that help operate dkrypt;</li>
           <li>Apple and related services where required to fulfill an authorized request; and</li>
           <li>authorities or professional advisers where required by law or necessary to protect legal rights and safety.</li>
@@ -240,8 +241,8 @@
 
         <p>
           Stripe Managed Payments hosts eligible card or bank checkout, receipts, cancellations, and transaction support as merchant of
-          record. Exodus handles crypto checkout and recurring charge processing. dkrypt handles product-level refund decisions under this
-          policy, provider rules, and applicable law.
+          record. NOWPayments handles crypto invoices and payment status. dkrypt handles product-level refund decisions under this policy,
+          provider rules, and applicable law.
         </p>
 
         <h2>1. Refund period</h2>
@@ -260,7 +261,7 @@
         </ul>
         <p>
           Include the email address used for purchase and enough transaction information for us to locate the payment. For crypto,
-          include the Exodus checkout or subscription identifier and wallet address. Do not send full card details or private keys to dkrypt.
+          include the NOWPayments invoice or payment identifier and wallet address. Do not send full card details or private keys to dkrypt.
         </p>
 
         <h2>3. Technical problems and non-delivery</h2>
@@ -273,8 +274,8 @@
         <h2>4. Cancellations</h2>
         <p>
           You can cancel a Stripe subscription at any time through the dkrypt billing portal or the link in your Stripe receipt. Crypto
-          subscriptions can be canceled from dkrypt after Exodus confirms the request. Stripe cancellation normally takes effect at the
-          end of the current billing period; crypto cancellation prevents further charges after confirmation. Cancellation by itself does
+          crypto renewal can be stopped from dkrypt immediately. Stripe cancellation normally takes effect at the end of the current
+          billing period; crypto cancellation prevents another payment from being requested. Cancellation by itself does
           not automatically refund a completed payment.
         </p>
 

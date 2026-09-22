@@ -102,7 +102,7 @@
     </div>
 
     <Card class="mx-auto mt-8 max-w-3xl text-sm leading-6 text-muted">
-      Plans renew every 30 days until canceled. Choose Stripe for card or bank payments, or Exodus for USDC or USDT on Base with EUR settlement. Crypto checkout is outside Stripe Managed Payments and uses Stripe Tax when configured.
+      Stripe renews card or bank payments automatically. Crypto access is purchased for 30 days through a NOWPayments invoice and renewed with another crypto payment. Crypto checkout is outside Stripe Managed Payments and uses Stripe Tax when configured.
     </Card>
   </main>
   <PublicPageFooter />

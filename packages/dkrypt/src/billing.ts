@@ -3,7 +3,7 @@ import path from 'node:path';
 import { config } from '#config.js';
 import { hasPermission, PermissionFlag } from '#permissions.js';
 
-export type BillingProvider = 'stripe' | 'exodus' | 'legacy';
+export type BillingProvider = 'stripe' | 'nowpayments' | 'legacy';
 export type PlanId = 'viewer' | 'regular' | 'priority' | 'api' | 'priority_api';
 export type BillingChargeStatus = 'pending' | 'succeeded' | 'failed';
 export type BillingCheckoutStatus = 'pending' | 'completed' | 'expired' | 'cancelled';
@@ -44,6 +44,7 @@ export interface BillingSubscription {
   walletAddress?: string;
   chain?: string;
   asset?: string;
+  providerPaymentId?: string;
   nextBilledAt?: string;
   scheduledChangeAction?: string;
   scheduledChangeAt?: string;
@@ -63,8 +64,11 @@ export interface BillingSubscription {
 }
 
 export interface BillingCheckout {
-  provider: 'exodus';
+  provider: 'nowpayments' | 'legacy';
   checkoutId: string;
+  providerCheckoutId?: string;
+  providerPaymentId?: string;
+  orderId?: string;
   userId: string;
   idempotencyKey: string;
   planId: Exclude<PlanId, 'viewer'>;
@@ -72,6 +76,7 @@ export interface BillingCheckout {
   currency: string;
   status: BillingCheckoutStatus;
   checkoutUrl: string;
+  asset?: string;
   taxAddress?: BillingTaxAddress;
   taxCalculationId?: string;
   taxStatus?: BillingTaxStatus;
@@ -80,7 +85,7 @@ export interface BillingCheckout {
 }
 
 export interface BillingCharge {
-  provider: 'exodus';
+  provider: 'nowpayments' | 'legacy';
   chargeId: string;
   subscriptionId: string;
   userId: string;
@@ -100,7 +105,7 @@ export interface BillingCharge {
 }
 
 export interface BillingEventRecord {
-  provider: 'exodus';
+  provider: 'nowpayments' | 'legacy';
   eventId: string;
   occurredAt: string;
   processedAt: string;
@@ -212,7 +217,7 @@ export function planForPrice(priceId: string): Exclude<PlanId, 'viewer'> | undef
 
 export function isBillingSubscriptionActive(subscription: BillingSubscription, now = Date.now()): boolean {
   if (subscription.provider === 'stripe') return stripeActiveStatuses.has(subscription.status);
-  if (subscription.provider !== 'exodus') return false;
+  if (subscription.provider !== 'nowpayments') return false;
   if (subscription.status === 'active' && !subscription.flagged && !subscription.paused) return true;
   return subscription.status === 'past_due' && !!subscription.graceUntil && Date.parse(subscription.graceUntil) > now;
 }
@@ -382,6 +387,10 @@ export function getCryptoCheckout(checkoutId: string): BillingCheckout | undefin
   return state.cryptoCheckouts.find((checkout) => checkout.checkoutId === checkoutId);
 }
 
+export function listCryptoCheckouts(): BillingCheckout[] {
+  return state.cryptoCheckouts.map((checkout) => structuredClone(checkout));
+}
+
 export function upsertCryptoCheckout(checkout: BillingCheckout): void {
   const existing = state.cryptoCheckouts.find((item) => item.checkoutId === checkout.checkoutId);
   if (existing) {
@@ -501,6 +510,7 @@ function normalizeBillingSnapshot(value: unknown): BillingSnapshot | undefined {
       walletAddress: optionalString(record.walletAddress),
       chain: optionalString(record.chain),
       asset: optionalString(record.asset),
+      providerPaymentId: optionalString(record.providerPaymentId),
       nextBilledAt: optionalString(record.nextBilledAt),
       scheduledChangeAction: optionalString(record.scheduledChangeAction),
       scheduledChangeAt: optionalString(record.scheduledChangeAt),
@@ -531,7 +541,8 @@ function normalizeBillingSnapshot(value: unknown): BillingSnapshot | undefined {
 
 function billingProvider(value: unknown): BillingProvider | undefined {
   if (value === undefined || value === 'legacy') return 'legacy';
-  return value === 'stripe' || value === 'exodus' ? value : undefined;
+  if (value === 'exodus') return 'legacy';
+  return value === 'stripe' || value === 'nowpayments' ? value : undefined;
 }
 
 function billingChargeStatus(value: unknown): BillingChargeStatus | undefined {
@@ -572,7 +583,7 @@ function isBillingCheckout(value: unknown): value is BillingCheckout {
   if (typeof value !== 'object' || value === null) return false;
   const record = value as Record<string, unknown>;
   return (
-    record.provider === 'exodus' &&
+    (record.provider === 'nowpayments' || record.provider === 'legacy') &&
     typeof record.checkoutId === 'string' &&
     typeof record.userId === 'string' &&
     typeof record.idempotencyKey === 'string' &&
@@ -593,7 +604,7 @@ function isBillingCharge(value: unknown): value is BillingCharge {
   if (typeof value !== 'object' || value === null) return false;
   const record = value as Record<string, unknown>;
   return (
-    record.provider === 'exodus' &&
+    (record.provider === 'nowpayments' || record.provider === 'legacy') &&
     typeof record.chargeId === 'string' &&
     typeof record.subscriptionId === 'string' &&
     typeof record.userId === 'string' &&
@@ -608,5 +619,5 @@ function isBillingCharge(value: unknown): value is BillingCharge {
 function isBillingEvent(value: unknown): value is BillingEventRecord {
   if (typeof value !== 'object' || value === null) return false;
   const record = value as Record<string, unknown>;
-  return record.provider === 'exodus' && typeof record.eventId === 'string' && typeof record.occurredAt === 'string' && typeof record.processedAt === 'string';
+  return (record.provider === 'nowpayments' || record.provider === 'legacy') && typeof record.eventId === 'string' && typeof record.occurredAt === 'string' && typeof record.processedAt === 'string';
 }
