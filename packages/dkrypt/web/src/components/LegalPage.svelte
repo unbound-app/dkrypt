@@ -52,13 +52,15 @@
 
         <h2>4. Subscriptions, payments, and taxes</h2>
         <p>
-          Paid plans are monthly subscriptions that renew automatically until canceled. The applicable plan, billing frequency, price, and
-          applicable taxes are presented before purchase. Stripe Managed Payments acts as merchant of record for eligible purchases and handles
-          checkout, receipts, subscription billing, and tax compliance; dkrypt does not store full card details.
+          Paid plans renew every 30 days until canceled. The applicable plan, billing frequency, price, and taxes are presented before
+          purchase. Stripe Managed Payments handles eligible card or bank purchases as merchant of record. Crypto purchases use Exodus
+          Checkout with EUR settlement and are outside Stripe Managed Payments; Stripe Tax is used for the configured external tax
+          calculation and transaction. dkrypt does not store full card details, crypto custody, or wallet private keys.
         </p>
         <p>
-          You may cancel through the dkrypt billing portal or the link in your Stripe receipt. Unless mandatory law provides otherwise,
-          cancellation takes effect at the end of the current billing period. Plan changes may be prorated as shown before confirmation.
+          Stripe subscriptions can be canceled through the dkrypt billing portal or receipt link and normally end at the current period.
+          Crypto subscriptions are canceled immediately after Exodus confirms the request. Crypto plan changes require cancellation and a
+          new checkout. Access depends on the subscription remaining in an eligible status.
           Access to paid features depends on the subscription remaining in an eligible status.
         </p>
 
@@ -137,8 +139,9 @@
             GitHub or Discord.
           </li>
           <li>
-            <strong>Billing data:</strong> Stripe customer and subscription identifiers, plan, subscription status, renewal information,
-            and billing email. Stripe collects and processes payment details; dkrypt does not store full card details.
+            <strong>Billing data:</strong> provider customer and subscription identifiers, plan, subscription status, renewal information,
+            billing email, and crypto wallet/network identifiers when applicable. Stripe and Exodus process payment details; dkrypt does
+            not store full card details or wallet private keys.
           </li>
           <li>
             <strong>Service data:</strong> decrypt requests, application identifiers and versions, job status, results, API-key metadata,
@@ -172,13 +175,14 @@
         <p>We share data only as needed with:</p>
         <ul>
           <li>GitHub or Discord for authentication you choose to use;</li>
-          <li>Stripe Managed Payments for checkout, subscription administration, tax compliance, receipts, and fraud prevention;</li>
+          <li>Stripe Managed Payments for eligible card or bank checkout, subscription administration, tax compliance, receipts, and fraud prevention;</li>
+          <li>Exodus Checkout for crypto checkout, wallet authorization, recurring charges, and EUR settlement;</li>
           <li>hosting, network, security, email, notification, and infrastructure providers that help operate dkrypt;</li>
           <li>Apple and related services where required to fulfill an authorized request; and</li>
           <li>authorities or professional advisers where required by law or necessary to protect legal rights and safety.</li>
         </ul>
         <p>
-          Stripe handles payment data under its own
+          Stripe handles its payment data under its own
           <a href="https://stripe.com/privacy" target="_blank" rel="noopener noreferrer">Privacy Center</a>.
           We do not sell personal data or use it for third-party behavioral advertising.
         </p>
@@ -235,8 +239,9 @@
         <p class="document-date">Last updated: 23 July 2026</p>
 
         <p>
-          Stripe Managed Payments hosts checkout, receipts, cancellations, and transaction support as merchant of record. dkrypt handles
-          product-level refund decisions under this policy and applicable law.
+          Stripe Managed Payments hosts eligible card or bank checkout, receipts, cancellations, and transaction support as merchant of
+          record. Exodus handles crypto checkout and recurring charge processing. dkrypt handles product-level refund decisions under this
+          policy, provider rules, and applicable law.
         </p>
 
         <h2>1. Refund period</h2>
@@ -254,8 +259,8 @@
           <li>email <a href="mailto:contact@dylib.dev">contact@dylib.dev</a> with the purchase email and receipt details.</li>
         </ul>
         <p>
-          Include the email address used for purchase and enough transaction information for us to locate the payment. Do not send full
-          card details to dkrypt.
+          Include the email address used for purchase and enough transaction information for us to locate the payment. For crypto,
+          include the Exodus checkout or subscription identifier and wallet address. Do not send full card details or private keys to dkrypt.
         </p>
 
         <h2>3. Technical problems and non-delivery</h2>
@@ -267,8 +272,9 @@
 
         <h2>4. Cancellations</h2>
         <p>
-          You can cancel a subscription at any time through the dkrypt billing portal or the link in your Stripe receipt. Cancellation
-          normally takes effect at the end of the current billing period and prevents future renewal charges. Cancellation by itself does
+          You can cancel a Stripe subscription at any time through the dkrypt billing portal or the link in your Stripe receipt. Crypto
+          subscriptions can be canceled from dkrypt after Exodus confirms the request. Stripe cancellation normally takes effect at the
+          end of the current billing period; crypto cancellation prevents further charges after confirmation. Cancellation by itself does
           not automatically refund a completed payment.
         </p>
 

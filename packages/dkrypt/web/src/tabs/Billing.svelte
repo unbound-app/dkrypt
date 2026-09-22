@@ -1,18 +1,5 @@
 <script lang="ts">
-  import {
-    Check,
-    CircleCheck,
-    CircleX,
-    ExternalLink,
-    Gauge,
-    KeyRound,
-    LoaderCircle,
-    LockKeyhole,
-    RefreshCw,
-    ShieldCheck,
-    X,
-    Zap,
-  } from 'lucide-svelte';
+  import { Check, CircleCheck, CircleX, ExternalLink, Gauge, KeyRound, LoaderCircle, LockKeyhole, RefreshCw, ShieldCheck, X, Zap } from 'lucide-svelte';
   import { onMount } from 'svelte';
   import Badge from '#lib/components/ui/Badge.svelte';
   import Button from '#lib/components/ui/Button.svelte';
@@ -25,6 +12,7 @@
   type PlanId = 'viewer' | 'regular' | 'priority' | 'api' | 'priority_api';
   type CheckoutState = 'success' | 'cancelled' | undefined;
   type ActivationStatus = 'idle' | 'checking' | 'active' | 'pending';
+  type PaymentProvider = 'stripe' | 'crypto';
 
   interface Plan {
     id: Exclude<PlanId, 'viewer'>;
@@ -35,11 +23,22 @@
     priceId: string;
   }
 
+  interface ProviderStatus {
+    enabled: boolean;
+    ready: boolean;
+    environment: 'test' | 'live';
+    settlementCurrency?: string;
+    issues?: string[];
+    taxReady?: boolean;
+    taxWarning?: string;
+  }
+
   interface Entitlement {
     planId: PlanId;
     decrypt: boolean;
     api: boolean;
     priority: number;
+    provider?: 'stripe' | 'exodus' | 'legacy';
     status?: string;
     subscriptionId?: string;
     nextBilledAt?: string;
@@ -49,7 +48,7 @@
 
   interface BillingData {
     enabled: boolean;
-    provider: 'stripe';
+    provider: 'stripe' | 'exodus' | 'legacy';
     environment: 'test' | 'live';
     managedPayments: boolean;
     missingConfiguration: string[];
@@ -58,6 +57,10 @@
     customerEmail?: string;
     legacyBilling: boolean;
     entitlement: Entitlement;
+    providers: {
+      stripe: ProviderStatus;
+      crypto: ProviderStatus & { provider: 'exodus'; assets: string[] };
+    };
   }
 
   let billing = $state<BillingData | undefined>();
@@ -65,15 +68,22 @@
   let loadError = $state(false);
   let openingPlan = $state<PlanId | undefined>();
   let openingPortal = $state(false);
+  let cancelling = $state(false);
+  let cancelIdempotencyKey = $state<string | undefined>();
   let activationStatus = $state<ActivationStatus>('idle');
   let checkoutIdempotencyKey = $state<string | undefined>();
   let checkoutIdempotencyPlan = $state<PlanId | undefined>();
-  let checkoutState = $state<CheckoutState>(new URLSearchParams(location.search).get('checkout') as CheckoutState);
+  let checkoutIdempotencyProvider = $state<PaymentProvider | undefined>();
+  let paymentProvider = $state<PaymentProvider>('stripe');
+  let taxAddress = $state({ country: '', postalCode: '' });
+  const checkoutParams = new URLSearchParams(location.search);
+  let checkoutState = $state<CheckoutState>((checkoutParams.get('checkout') ?? checkoutParams.get('crypto_checkout')) as CheckoutState);
 
   async function loadBilling(): Promise<void> {
     const response = await fetch('/v1/billing');
     if (!response.ok) throw new Error('billing unavailable');
     billing = (await response.json()) as BillingData;
+    if (!billing.providers.stripe.enabled && billing.providers.crypto.enabled) paymentProvider = 'crypto';
   }
 
   async function initializeBilling(): Promise<void> {
@@ -125,11 +135,30 @@
     }
   }
 
+  async function cancelSubscription(): Promise<void> {
+    if (!window.confirm('Cancel this crypto subscription now? Access ends when Exodus confirms cancellation.')) return;
+    cancelling = true;
+    cancelIdempotencyKey ??= crypto.randomUUID();
+    try {
+      const response = await fetch('/v1/billing/cancel', { method: 'POST', headers: { 'Idempotency-Key': cancelIdempotencyKey } });
+      const data = (await response.json().catch(() => ({}))) as { error?: string };
+      if (!response.ok) {
+        showToast(data.error ?? "Couldn't cancel the subscription", 'error');
+        return;
+      }
+      showToast('Subscription cancelled', 'success');
+      await refreshAfterCheckout();
+    } finally {
+      cancelling = false;
+    }
+  }
+
   async function startCheckout(plan: Plan): Promise<void> {
     openingPlan = plan.id;
-    if (checkoutIdempotencyPlan !== plan.id) {
+    if (checkoutIdempotencyPlan !== plan.id || checkoutIdempotencyProvider !== paymentProvider) {
       checkoutIdempotencyKey = crypto.randomUUID();
       checkoutIdempotencyPlan = plan.id;
+      checkoutIdempotencyProvider = paymentProvider;
     }
     const idempotencyKey = checkoutIdempotencyKey;
     if (!idempotencyKey) {
@@ -141,7 +170,7 @@
       const response = await fetch('/v1/billing/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
-        body: JSON.stringify({ planId: plan.id }),
+        body: JSON.stringify({ planId: plan.id, provider: paymentProvider, taxAddress: paymentProvider === 'crypto' ? taxAddress : undefined }),
       });
       const data = (await response.json().catch(() => ({}))) as { url?: string; error?: string };
       if (!response.ok || !data.url) {
@@ -155,6 +184,10 @@
   }
 
   async function changePlan(plan: Plan): Promise<void> {
+    if (billing?.entitlement.provider === 'exodus') {
+      showToast('Crypto plan changes require cancellation and a new checkout.', 'error');
+      return;
+    }
     openingPlan = plan.id;
     try {
       const response = await fetch('/v1/billing/subscription', {
@@ -198,12 +231,20 @@
   function statusVariant(status?: string): BadgeVariant {
     if (status === 'active' || status === 'trialing') return 'success';
     if (status === 'past_due' || status === 'incomplete') return 'warning';
-    if (status === 'canceled' || status === 'unpaid') return 'destructive';
+    if (status === 'canceled' || status === 'cancelled' || status === 'unpaid') return 'destructive';
     return 'secondary';
   }
 
   function statusLabel(status?: string): string {
     return status ? status.replace('_', ' ') : 'Not subscribed';
+  }
+
+  function cryptoReady(): boolean {
+    return billing?.providers.crypto.ready ?? false;
+  }
+
+  function validTaxAddress(): boolean {
+    return /^[A-Za-z]{2}$/.test(taxAddress.country.trim()) && taxAddress.postalCode.trim().length >= 2;
   }
 
   onMount(() => {
@@ -223,12 +264,10 @@
           {#if activationStatus === 'active'}
             Your subscription is active and paid features are ready.
           {:else if activationStatus === 'pending'}
-            Stripe is still confirming your subscription. Access will remain unchanged until the webhook arrives.
-            <Button class="mt-3" size="sm" variant="secondary" onclick={() => void waitForActivation()}>
-              <RefreshCw class="h-4 w-4" /> Check again
-            </Button>
+            Your provider is still confirming the subscription. Access remains unchanged until the verified webhook arrives.
+            <Button class="mt-3" size="sm" variant="secondary" onclick={() => void waitForActivation()}><RefreshCw class="h-4 w-4" /> Check again</Button>
           {:else}
-            Stripe is confirming your subscription. This usually takes a few seconds.
+            Your provider is confirming the subscription. This usually takes a few seconds.
           {/if}
         </p>
       </div>
@@ -236,10 +275,7 @@
   {:else if checkoutState === 'cancelled'}
     <div class="flex items-start gap-3 rounded-[1.2rem] border border-border bg-panel-muted/40 px-4 py-3 text-sm" aria-live="polite">
       <CircleX class="mt-0.5 h-5 w-5 shrink-0 text-muted" />
-      <div>
-        <div class="font-semibold">Checkout canceled</div>
-        <p class="mt-1 text-muted">No charge was made. Choose a plan whenever you’re ready.</p>
-      </div>
+      <div><div class="font-semibold">Checkout canceled</div><p class="mt-1 text-muted">No charge was made. Choose a plan whenever you’re ready.</p></div>
     </div>
   {/if}
 
@@ -248,140 +284,61 @@
       <div>
         <div class="mb-1 flex flex-wrap items-center gap-2">
           <h2 class="text-lg font-semibold">Choose your dkrypt plan</h2>
-          {#if billing?.enabled && billing.environment === 'test'}
-          <Badge variant="outline">Stripe Managed Payments test mode</Badge>
-          {/if}
+          {#if billing?.providers.stripe.enabled && billing.providers.stripe.environment === 'test'}<Badge variant="outline">Test mode</Badge>{/if}
         </div>
-        <p class="max-w-2xl text-sm text-muted">
-          Subscribe to unlock authorized decrypt processing, API access, and higher queue priority. Stripe hosts checkout, handles tax and local-currency presentation, and returns you here when payment is complete.
-        </p>
+        <p class="max-w-2xl text-sm text-muted">Unlock authorized decrypt processing, API access, and higher queue priority with one monthly plan.</p>
       </div>
       {#if billing}
         <div class="flex flex-wrap items-center gap-2">
-          <div class="rounded-xl border border-border bg-bg/60 px-3 py-2 text-right">
-            <div class="text-xs text-muted">Current plan</div>
-            <div class="font-semibold capitalize">{planLabel(billing.entitlement.planId)}</div>
-            <Badge variant={statusVariant(billing.entitlement.status)} class="mt-1">{statusLabel(billing.entitlement.status)}</Badge>
-          </div>
-          {#if billing.customerId}
-            <Button variant="secondary" loading={openingPortal} onclick={() => void manageSubscription()}>
-              <ExternalLink class="h-4 w-4" />
-              Manage billing
-            </Button>
-          {/if}
+          <div class="rounded-xl border border-border bg-bg/60 px-3 py-2 text-right"><div class="text-xs text-muted">Current plan</div><div class="font-semibold capitalize">{planLabel(billing.entitlement.planId)}</div><Badge variant={statusVariant(billing.entitlement.status)} class="mt-1">{statusLabel(billing.entitlement.status)}</Badge></div>
+          {#if billing.entitlement.provider === 'stripe' && billing.customerId}<Button variant="secondary" loading={openingPortal} onclick={() => void manageSubscription()}><ExternalLink class="h-4 w-4" /> Manage billing</Button>{:else if billing.entitlement.provider === 'exodus'}<Button variant="secondary" loading={cancelling} onclick={() => void cancelSubscription()}>Cancel subscription</Button>{/if}
         </div>
       {/if}
     </div>
   </Card>
 
   {#if billing?.legacyBilling}
-    <Card class="border-accent/40 bg-accent/5">
-      <div class="text-sm">
-        <div class="font-medium">Previous billing record needs review</div>
-        <div class="mt-1 text-muted">Your previous payment-provider record was kept for reconciliation, but it does not grant Stripe access. Contact support before starting a new subscription so the account is not charged twice.</div>
-      </div>
-    </Card>
+    <Card class="border-accent/40 bg-accent/5"><div class="text-sm"><div class="font-medium">Previous billing record needs review</div><div class="mt-1 text-muted">Your previous payment-provider record was kept for reconciliation. Contact support before starting a new subscription so the account is not charged twice.</div></div></Card>
   {/if}
 
   {#if loading}
-    <Card class="flex min-h-48 items-center justify-center">
-      <LoaderCircle class="h-6 w-6 animate-spin text-muted" />
-    </Card>
+    <Card class="flex min-h-48 items-center justify-center"><LoaderCircle class="h-6 w-6 animate-spin text-muted" /></Card>
   {:else if loadError}
-    <Card class="py-12 text-center">
-      <CircleX class="mx-auto mb-3 h-8 w-8 text-err" />
-      <div class="font-medium">Billing could not be loaded</div>
-      <div class="mt-1 text-sm text-muted">Check your connection and try again.</div>
-      <Button class="mt-5" variant="secondary" onclick={() => void initializeBilling()}>Try again</Button>
-    </Card>
+    <Card class="py-12 text-center"><CircleX class="mx-auto mb-3 h-8 w-8 text-err" /><div class="font-medium">Billing could not be loaded</div><div class="mt-1 text-sm text-muted">Check your connection and try again.</div><Button class="mt-5" variant="secondary" onclick={() => void initializeBilling()}>Try again</Button></Card>
   {:else if !billing?.enabled}
-    <Card class="py-12 text-center">
-      <LockKeyhole class="mx-auto mb-3 h-8 w-8 text-muted" />
-      <div class="font-medium">Billing is not configured</div>
-      <div class="mx-auto mt-1 max-w-md text-sm text-muted">Stripe checkout is unavailable until an administrator completes the server configuration. No payment details are collected while billing is disabled.</div>
-      {#if billing}
-        <div class="mx-auto mt-4 flex max-w-xl flex-wrap justify-center gap-2" aria-label="Missing Stripe configuration">
-          {#each billing.missingConfiguration as name (name)}
-            <code class="rounded-lg border border-border bg-bg/70 px-2.5 py-1 text-xs text-muted">{name}</code>
-          {/each}
-        </div>
-      {/if}
-    </Card>
+    <Card class="py-12 text-center"><LockKeyhole class="mx-auto mb-3 h-8 w-8 text-muted" /><div class="font-medium">Billing is not configured</div><div class="mx-auto mt-1 max-w-md text-sm text-muted">No payment details are collected while billing is disabled.</div></Card>
   {:else}
+    {#if !billing.entitlement.subscriptionId}
+      <Card>
+        <div class="mb-3 text-sm font-medium">Payment method</div>
+        <div class="grid gap-2 sm:grid-cols-2">
+          <button class={paymentProvider === 'stripe' ? 'rounded-xl border border-accent bg-accent/5 px-3 py-3 text-left transition' : 'rounded-xl border px-3 py-3 text-left transition'} onclick={() => (paymentProvider = 'stripe')}><div class="font-medium">Card or bank</div><div class="mt-1 text-xs text-muted">Hosted Stripe checkout with Managed Payments.</div></button>
+          <button class={paymentProvider === 'crypto' ? 'rounded-xl border border-accent bg-accent/5 px-3 py-3 text-left transition disabled:cursor-not-allowed disabled:opacity-50' : 'rounded-xl border px-3 py-3 text-left transition disabled:cursor-not-allowed disabled:opacity-50'} disabled={!cryptoReady()} onclick={() => (paymentProvider = 'crypto')}><div class="flex items-center justify-between gap-2 font-medium"><span>USDC or USDT</span><Badge variant="secondary">Base</Badge></div><div class="mt-1 text-xs text-muted">Hosted Exodus checkout with EUR settlement.</div></button>
+        </div>
+        {#if paymentProvider === 'crypto'}
+          <div class="mt-4 grid gap-3 border-t border-border pt-4 sm:grid-cols-2"><label class="text-xs text-muted">Billing country<input class="mt-1 w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text" maxlength="2" bind:value={taxAddress.country} placeholder="DE" /></label><label class="text-xs text-muted">Postal code<input class="mt-1 w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text" maxlength="32" bind:value={taxAddress.postalCode} placeholder="10115" /></label></div>
+          {#if !cryptoReady()}<div class="mt-3 text-xs text-muted">Crypto checkout is not available until the provider, Base, EUR settlement, and tax checks are ready.</div>{/if}
+        {/if}
+      </Card>
+    {/if}
+
     <div class="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-4">
       {#each billing.plans as plan (plan.id)}
         {@const current = billing.entitlement.planId === plan.id}
         {@const highlighted = plan.id === 'priority_api'}
         <Card class={highlighted ? 'border-accent shadow-lg shadow-accent/10' : current ? 'border-ok/50' : ''}>
           <div class="flex h-full min-h-80 flex-col">
-            <div class="mb-4 flex items-start justify-between gap-3">
-              <div>
-                <div class="flex flex-wrap items-center gap-2">
-                  <h3 class="text-base font-semibold">{plan.name}</h3>
-                  {#if highlighted}<Badge>Best value</Badge>{/if}
-                  {#if current}<Badge variant="success">Current</Badge>{/if}
-                </div>
-                <p class="mt-1 text-sm text-muted">{plan.description}</p>
-              </div>
-              {#if plan.id === 'priority' || plan.id === 'priority_api'}
-                <Zap class="h-5 w-5 shrink-0 text-accent" />
-              {:else if plan.id === 'api'}
-                <KeyRound class="h-5 w-5 shrink-0 text-accent" />
-              {:else}
-                <Gauge class="h-5 w-5 shrink-0 text-accent" />
-              {/if}
-            </div>
-
-            <div class="mb-5">
-              <span class="text-3xl font-semibold">{fallbackPrice(plan)}</span>
-              <span class="text-sm text-muted">/month</span>
-            </div>
-
-            <div class="mb-6 flex flex-1 flex-col gap-2 text-sm">
-              <div class="flex items-center gap-2"><Check class="h-4 w-4 text-ok" /> Dashboard decrypts</div>
-              {#if plan.id === 'api' || plan.id === 'priority_api'}
-                <div class="flex items-center gap-2"><Check class="h-4 w-4 text-ok" /> API key access</div>
-              {:else}
-                <div class="flex items-center gap-2 text-muted"><X class="h-4 w-4" /> API key access</div>
-              {/if}
-              {#if plan.id === 'priority' || plan.id === 'priority_api'}
-                <div class="flex items-center gap-2"><Check class="h-4 w-4 text-ok" /> High queue priority</div>
-              {:else}
-                <div class="flex items-center gap-2 text-muted"><X class="h-4 w-4" /> High queue priority</div>
-              {/if}
-              <div class="mt-2 flex items-center gap-2 text-xs text-muted"><ShieldCheck class="h-4 w-4 text-accent" /> Secure Stripe checkout</div>
-            </div>
-
-            <Button
-              class="w-full"
-              variant={highlighted ? 'default' : 'secondary'}
-              disabled={current || openingPlan !== undefined || (!billing.enabled && !billing.entitlement.subscriptionId)}
-              loading={openingPlan === plan.id}
-              onclick={() => choosePlan(plan)}
-            >
-              {current ? 'Current plan' : billing.entitlement.subscriptionId ? `Switch to ${plan.name}` : 'Subscribe'}
-            </Button>
+            <div class="mb-4 flex items-start justify-between gap-3"><div><div class="flex flex-wrap items-center gap-2"><h3 class="text-base font-semibold">{plan.name}</h3>{#if highlighted}<Badge>Best value</Badge>{/if}{#if current}<Badge variant="success">Current</Badge>{/if}</div><p class="mt-1 text-sm text-muted">{plan.description}</p></div>{#if plan.id === 'priority' || plan.id === 'priority_api'}<Zap class="h-5 w-5 shrink-0 text-accent" />{:else if plan.id === 'api'}<KeyRound class="h-5 w-5 shrink-0 text-accent" />{:else}<Gauge class="h-5 w-5 shrink-0 text-accent" />{/if}</div>
+            <div class="mb-5"><span class="text-3xl font-semibold">{fallbackPrice(plan)}</span><span class="text-sm text-muted">/30 days</span></div>
+            <div class="mb-6 flex flex-1 flex-col gap-2 text-sm"><div class="flex items-center gap-2"><Check class="h-4 w-4 text-ok" /> Dashboard decrypts</div>{#if plan.id === 'api' || plan.id === 'priority_api'}<div class="flex items-center gap-2"><Check class="h-4 w-4 text-ok" /> API key access</div>{:else}<div class="flex items-center gap-2 text-muted"><X class="h-4 w-4" /> API key access</div>{/if}{#if plan.id === 'priority' || plan.id === 'priority_api'}<div class="flex items-center gap-2"><Check class="h-4 w-4 text-ok" /> High queue priority</div>{:else}<div class="flex items-center gap-2 text-muted"><X class="h-4 w-4" /> High queue priority</div>{/if}<div class="mt-2 flex items-center gap-2 text-xs text-muted"><ShieldCheck class="h-4 w-4 text-accent" /> {paymentProvider === 'crypto' ? 'Hosted Exodus checkout' : 'Hosted Stripe checkout'}</div></div>
+            <Button class="w-full" variant={highlighted ? 'default' : 'secondary'} disabled={current || openingPlan !== undefined || (!billing.enabled && !billing.entitlement.subscriptionId) || (paymentProvider === 'crypto' && (!cryptoReady() || (!validTaxAddress() && billing.entitlement.planId === 'viewer')))} loading={openingPlan === plan.id} onclick={() => choosePlan(plan)}>{current ? 'Current plan' : billing.entitlement.subscriptionId ? billing.entitlement.provider === 'exodus' ? 'Cancel current plan first' : `Switch to ${plan.name}` : 'Subscribe'}</Button>
           </div>
         </Card>
       {/each}
     </div>
 
-    {#if billing.entitlement.scheduledChangeAt}
-      <Card>
-        <div class="text-sm">
-          Your subscription is scheduled to {billing.entitlement.scheduledChangeAction ?? 'change'} on
-          {formatDate(billing.entitlement.scheduledChangeAt)}.
-        </div>
-      </Card>
-    {:else if billing.entitlement.nextBilledAt}
-      <div class="text-center text-xs text-muted">Next billing date: {formatDate(billing.entitlement.nextBilledAt)}</div>
-    {/if}
+    {#if billing.entitlement.scheduledChangeAt}<Card><div class="text-sm">Your subscription is scheduled to {billing.entitlement.scheduledChangeAction ?? 'change'} on {formatDate(billing.entitlement.scheduledChangeAt)}.</div></Card>{:else if billing.entitlement.nextBilledAt}<div class="text-center text-xs text-muted">Next billing date: {formatDate(billing.entitlement.nextBilledAt)}</div>{/if}
 
-    <Card class="text-center text-xs leading-5 text-muted">
-      Plans renew monthly until canceled. Stripe Managed Payments shows the final amount and applicable tax before payment. Stripe and Link handle payment details, receipts, and transaction support; dkrypt never stores full card details.
-      <div class="mt-3">
-        <LegalLinks />
-      </div>
-    </Card>
+    <Card class="text-center text-xs leading-5 text-muted">Plans renew every 30 days until canceled. Stripe handles card or bank payments; Exodus handles crypto checkout and EUR settlement. dkrypt does not store payment credentials or private keys.<div class="mt-3"><LegalLinks /></div></Card>
   {/if}
 </div>

@@ -16,6 +16,21 @@ function optionalInt(name: string, fallback: number): number {
   return n;
 }
 
+function optionalBool(name: string, fallback: boolean): boolean {
+  const v = process.env[name];
+  if (!v) return fallback;
+  if (v === 'true') return true;
+  if (v === 'false') return false;
+  throw new Error(`env var ${name} must be true or false, got ${v}`);
+}
+
+function optionalList(name: string, fallback: string): string[] {
+  return (process.env[name] ?? fallback)
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
 export const config = {
   port: optionalInt('PORT', 8080),
   bindHost: optional('BIND_HOST', '127.0.0.1'),
@@ -40,6 +55,21 @@ export const config = {
   stripePriorityPriceId: optional('STRIPE_PRIORITY_PRICE_ID', ''),
   stripeApiPriceId: optional('STRIPE_API_PRICE_ID', ''),
   stripePriorityApiPriceId: optional('STRIPE_PRIORITY_API_PRICE_ID', ''),
+  stripeTaxCode: optional('STRIPE_TAX_CODE', ''),
+
+  cryptoBillingEnabled: optionalBool('CRYPTO_BILLING_ENABLED', false),
+  cryptoTaxMode: optional('CRYPTO_TAX_MODE', 'stripe-tax'),
+  cryptoManualTaxAllowed: optionalBool('CRYPTO_MANUAL_TAX_ALLOWED', false),
+  cryptoBillingPollIntervalSeconds: optionalInt('CRYPTO_BILLING_POLL_INTERVAL_SECONDS', 300),
+  cryptoDunningGraceHours: optionalInt('CRYPTO_DUNNING_GRACE_HOURS', 72),
+  exodusApiKey: optional('EXODUS_CHECKOUT_API_KEY', ''),
+  exodusSigningKey: optional('EXODUS_CHECKOUT_SIGNING_KEY', ''),
+  exodusWebhookSecret: optional('EXODUS_CHECKOUT_WEBHOOK_SECRET', ''),
+  exodusWebhookSecretPrevious: optional('EXODUS_CHECKOUT_WEBHOOK_SECRET_PREVIOUS', ''),
+  exodusApiBaseUrl: optional('EXODUS_CHECKOUT_API_BASE_URL', 'https://checkout-api.exodus-int.com'),
+  exodusSupportedChains: optionalList('EXODUS_CHECKOUT_SUPPORTED_CHAINS', 'eip155:8453'),
+  exodusSupportedAssets: optionalList('EXODUS_CHECKOUT_SUPPORTED_ASSETS', 'USDC,USDT').map((value) => value.toUpperCase()),
+  exodusSettlementCurrency: optional('EXODUS_CHECKOUT_SETTLEMENT_CURRENCY', 'EUR').toUpperCase(),
 
   ipadecryptBin: optional('IPADECRYPT_BIN', 'ipadecrypt'),
   outputDir: optional('OUTPUT_DIR', '/data/tmp'),
@@ -93,4 +123,21 @@ const stripeRequirements = [
 ] as const;
 export const stripeMissingConfiguration = stripeRequirements.filter(([, value]) => value === '').map(([name]) => name);
 export const stripeEnabled = stripeMissingConfiguration.length === 0;
+export const exodusEnvironment = config.exodusApiKey.startsWith('sk_live_') ? 'live' : 'test';
+if (config.cryptoTaxMode !== 'stripe-tax' && config.cryptoTaxMode !== 'manual') throw new Error(`env var CRYPTO_TAX_MODE must be stripe-tax or manual, got ${config.cryptoTaxMode}`);
+const exodusRequirements = [
+  ['EXODUS_CHECKOUT_API_KEY', config.exodusApiKey],
+  ['EXODUS_CHECKOUT_SIGNING_KEY', config.exodusSigningKey],
+  ['EXODUS_CHECKOUT_WEBHOOK_SECRET', config.exodusWebhookSecret],
+] as const;
+const exodusTaxRequirements = config.cryptoTaxMode === 'stripe-tax'
+  ? [['STRIPE_TAX_CODE', config.stripeTaxCode] as const]
+  : exodusEnvironment === 'live' && !config.cryptoManualTaxAllowed
+    ? [['CRYPTO_MANUAL_TAX_ALLOWED', ''] as const]
+    : [];
+export const exodusMissingConfiguration = [...exodusRequirements, ...exodusTaxRequirements]
+  .filter(([, value]) => value === '')
+  .map(([name]) => name);
+export const exodusConfigured = exodusMissingConfiguration.length === 0;
+export const cryptoBillingEnabled = config.cryptoBillingEnabled && exodusConfigured;
 export const emailEnabled = config.smtpHost !== '' && config.smtpUser !== '' && config.smtpPass !== '';

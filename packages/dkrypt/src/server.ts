@@ -13,7 +13,7 @@ import { startKeyExpiryPoller } from '#keyExpiryPoller.js';
 import { log, startLogFlusher } from '#logger.js';
 import { openApiDocument } from '#openapi.js';
 import { authRouter } from '#routes/auth.js';
-import { billingRouter, stripeWebhookRouter } from '#routes/billing.js';
+import { billingRouter, exodusWebhookRouter, stripeWebhookRouter } from '#routes/billing.js';
 import { dashboardRouter } from '#routes/dashboard.js';
 import { decryptRouter } from '#routes/decrypt.js';
 import { healthRouter } from '#routes/health.js';
@@ -24,6 +24,7 @@ import { renderPublicPage } from '#publicPages.js';
 import { startNotificationDigestScheduler } from '#notify.js';
 import { initializeArtifactStore } from '#artifacts.js';
 import { startTestFlightSubscriptionPoller } from '#testflightSubscriptions.js';
+import { startCryptoBillingPoller } from '#cryptoBilling.js';
 
 const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 
@@ -31,7 +32,7 @@ export async function buildServer(options: { includePublicRoutes?: boolean } = {
   const server = Fastify({ bodyLimit: 5 * 1024 * 1024, trustProxy: 'loopback' });
 
   server.addContentTypeParser('application/json', { parseAs: 'buffer' }, (request, body, done) => {
-    if (request.url.startsWith('/v1/stripe/webhook')) return done(null, body);
+    if (request.url.startsWith('/v1/stripe/webhook') || request.url.startsWith('/v1/exodus/webhook')) return done(null, body);
     try {
       done(null, body.length === 0 ? {} : JSON.parse(body.toString('utf8')));
     } catch (error) {
@@ -77,6 +78,7 @@ export async function buildServer(options: { includePublicRoutes?: boolean } = {
   }
 
   registerRouter(server, stripeWebhookRouter);
+  registerRouter(server, exodusWebhookRouter);
   registerRouter(server, healthRouter);
   registerRouter(server, decryptRouter);
   registerRouter(server, authRouter);
@@ -99,6 +101,7 @@ async function startBackgroundServices(): Promise<void> {
   startDeviceHealthPoller();
   startKeyExpiryPoller();
   startTestFlightSubscriptionPoller();
+  startCryptoBillingPoller();
   startJobWebhookDispatcher();
   startNotificationDigestScheduler();
 }

@@ -4,6 +4,7 @@
   import { sessionHasAnyPermission } from '#lib/session.svelte';
   import { setSettingsSubtab, tabState } from '#lib/ui.svelte';
   import BackupSettings from '#tabs/settings/BackupSettings.svelte';
+  import BillingSettings from '#tabs/settings/BillingSettings.svelte';
   import DevicesSettings from '#tabs/settings/DevicesSettings.svelte';
   import RolesSettings from '#tabs/settings/RolesSettings.svelte';
   import SchedulerSettings from '#tabs/settings/SchedulerSettings.svelte';
@@ -17,6 +18,7 @@
     { id: 'roles', label: 'Roles', requires: [PermissionFlag.viewRoles, PermissionFlag.manageRoles] },
     { id: 'backup', label: 'Backup', requires: [PermissionFlag.viewBackup, PermissionFlag.manageBackup] },
     { id: 'testflight', label: 'TestFlight', requires: [PermissionFlag.manageTestFlightSubscriptions] },
+    { id: 'billing', label: 'Billing', requires: [PermissionFlag.viewBilling, PermissionFlag.manageBilling] },
   ];
 
   function hasAccess(requires: bigint[]): boolean {
@@ -62,5 +64,10 @@
 {#if hasAccess([PermissionFlag.manageTestFlightSubscriptions])}
   <div class:hidden={tabState.settingsSubtab !== 'testflight'}>
     <TestFlightSettings />
+  </div>
+{/if}
+{#if hasAccess([PermissionFlag.viewBilling, PermissionFlag.manageBilling])}
+  <div class:hidden={tabState.settingsSubtab !== 'billing'}>
+    <BillingSettings />
   </div>
 {/if}

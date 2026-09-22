@@ -104,6 +104,32 @@ Store the generated price IDs and webhook secret in the runtime environment. `st
 </details>
 
 <details>
+<summary>Crypto billing</summary>
+
+Crypto billing is an optional second payment method alongside Stripe. It uses an Exodus Checkout Business account for hosted recurring USDC or USDT checkout on Base with EUR-denominated 30-day plans and automatic EUR settlement. dkrypt does not custody crypto or store wallet private keys.
+
+Keep crypto disabled until the Exodus test flow is complete. Configure these runtime values when enabling it:
+
+```text
+CRYPTO_BILLING_ENABLED=true
+CRYPTO_TAX_MODE=stripe-tax
+CRYPTO_MANUAL_TAX_ALLOWED=false
+EXODUS_CHECKOUT_API_KEY=sk_test_...
+EXODUS_CHECKOUT_SIGNING_KEY=...
+EXODUS_CHECKOUT_WEBHOOK_SECRET=...
+EXODUS_CHECKOUT_WEBHOOK_SECRET_PREVIOUS=
+EXODUS_CHECKOUT_API_BASE_URL=https://checkout-api.exodus-int.com
+EXODUS_CHECKOUT_SUPPORTED_CHAINS=eip155:8453
+EXODUS_CHECKOUT_SUPPORTED_ASSETS=USDC,USDT
+EXODUS_CHECKOUT_SETTLEMENT_CURRENCY=EUR
+STRIPE_TAX_CODE=txcd_...
+```
+
+Set the Exodus webhook destination to `https://<your-host>/v1/exodus/webhook`. The signing key is separate from the API key and is used only for recurring charges and cancellation. Live crypto checkout remains unavailable until Exodus reports FIAT settlement in EUR, Base signer readiness, and Stripe Tax settings as ready. Crypto payments are outside Stripe Managed Payments; Stripe Tax is used only to calculate and record the external tax transaction. `CRYPTO_TAX_MODE=manual` is for explicitly authorized development or self-hosted operations and displays an operator warning.
+
+</details>
+
+<details>
 <summary>API</summary>
 
 API requests use `Authorization: Bearer <API_KEY>`. Dashboard downloads use the signed-in session.
@@ -116,6 +142,8 @@ API requests use `Authorization: Bearer <API_KEY>`. Dashboard downloads use the 
 | `GET /v1/artifacts` | List IPA artifacts. |
 | `GET /v1/artifacts/:id/file` | Download an IPA artifact. |
 | `GET /v1/health` | Read service and device health. |
+| `GET /v1/billing/subscriptions` | Read the manager billing ledger with the billing permission. |
+| `GET /v1/billing/provider-status` | Read provider readiness with the billing-management permission. |
 
 Repositories receiving scheduler dispatches need a `DKRYPT_API_KEY` Actions secret. Set `DKRYPT_BASE_URL` when the deployment uses a public host other than `https://ipa.dylib.dev`.
 

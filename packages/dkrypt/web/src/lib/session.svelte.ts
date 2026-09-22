@@ -73,6 +73,8 @@ export function sessionCanSeeSettings(): boolean {
     PermissionFlag.viewBackup,
     PermissionFlag.requestTestFlightSubscriptions,
     PermissionFlag.manageTestFlightSubscriptions,
+    PermissionFlag.viewBilling,
+    PermissionFlag.manageBilling,
   ]);
 }
 

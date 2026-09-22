@@ -19,7 +19,9 @@ export type NotifyEvent =
   | 'diskFull'
   | 'deviceStorageLow'
   | 'testFlightBridgeDown'
-  | 'jobCompleted';
+  | 'jobCompleted'
+  | 'cryptoBillingSuccess'
+  | 'cryptoBillingFailure';
 
 const EVENT_SETTING_KEY: Record<NotifyEvent, keyof SchedulerSettings> = {
   keyRequest: 'notifyOnKeyRequest',
@@ -35,6 +37,8 @@ const EVENT_SETTING_KEY: Record<NotifyEvent, keyof SchedulerSettings> = {
   deviceStorageLow: 'notifyOnDeviceStorageLow',
   testFlightBridgeDown: 'notifyOnTestFlightBridgeDown',
   jobCompleted: 'notifyOnJobCompleted',
+  cryptoBillingSuccess: 'notifyOnAutomationSuccess',
+  cryptoBillingFailure: 'notifyOnAutomationFailure',
 };
 
 export const EMBED_COLOR = {
@@ -139,7 +143,7 @@ function isWithinQuietHours(now: Date, start: string, end: string): boolean {
 }
 
 function isSuccessNotification(event: NotifyEvent, embed: NotifyEmbed): boolean {
-  return event === 'appStoreAutomationSuccess' || event === 'testFlightAutomationSuccess' || (event === 'jobCompleted' && embed.color === EMBED_COLOR.ok);
+  return event === 'appStoreAutomationSuccess' || event === 'testFlightAutomationSuccess' || event === 'cryptoBillingSuccess' || (event === 'jobCompleted' && embed.color === EMBED_COLOR.ok);
 }
 
 function queueDigest(url: string, format: SchedulerSettings['notifyFormat'], embed: NotifyEmbed): void {

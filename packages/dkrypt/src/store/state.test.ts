@@ -189,7 +189,7 @@ describe('exportBackup / importBackup', () => {
     addAllowedUser('roundtrip-user', [role.id], 'tester');
     const backup = exportBackup();
 
-    expect(backup.backupVersion).toBe(5);
+    expect(backup.backupVersion).toBe(6);
     expect(backup.allowedUsers.some((u) => u.username === 'roundtrip-user')).toBe(true);
 
     const result = importBackup(backup, 'tester');

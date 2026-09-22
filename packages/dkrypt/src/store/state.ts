@@ -413,7 +413,13 @@ export type AuditAction =
   | 'testflight-subscription.approve'
   | 'testflight-subscription.deny'
   | 'testflight-subscription.sync'
-  | 'testflight-subscription.remove';
+  | 'testflight-subscription.remove'
+  | 'billing.checkout'
+  | 'billing.activated'
+  | 'billing.charge'
+  | 'billing.charge-failed'
+  | 'billing.cancel'
+  | 'billing.webhook';
 
 export interface AuditLogEntry {
   id: string;
@@ -3073,7 +3079,7 @@ export function markNotificationsRead(userId: string, ids?: string[]): number {
   return changed;
 }
 
-const BACKUP_VERSION = 5;
+const BACKUP_VERSION = 6;
 
 export interface BackupPayload {
   backupVersion: typeof BACKUP_VERSION;
@@ -3333,8 +3339,8 @@ function validateBackupPayload(raw: unknown): { ok: true; payload: ValidatedBack
   if (typeof raw !== 'object' || raw === null) return { ok: false, error: 'not a valid backup file' };
   const b = raw as Record<string, unknown>;
 
-  if (b.backupVersion !== 3 && b.backupVersion !== 4 && b.backupVersion !== BACKUP_VERSION) {
-    return { ok: false, error: `unsupported backup version (expected 3, 4, or ${BACKUP_VERSION})` };
+  if (b.backupVersion !== 3 && b.backupVersion !== 4 && b.backupVersion !== 5 && b.backupVersion !== BACKUP_VERSION) {
+    return { ok: false, error: `unsupported backup version (expected 3, 4, 5, or ${BACKUP_VERSION})` };
   }
   if (!Array.isArray(b.allowedUsers) || !b.allowedUsers.every(isAllowedUserShape)) {
     return { ok: false, error: 'allowedUsers is missing or malformed' };
@@ -3406,7 +3412,9 @@ function validateBackupPayload(raw: unknown): { ok: true; payload: ValidatedBack
           : undefined,
       deviceActivity: Array.isArray(b.deviceActivity) ? (b.deviceActivity as DeviceActivityEntry[]) : undefined,
       testFlightSubscriptions: Array.isArray(b.testFlightSubscriptions) ? (b.testFlightSubscriptions as TestFlightSubscription[]) : [],
-      billing: isBillingSnapshot(b.billing) ? b.billing : { customers: [], subscriptions: [] },
+      billing: isBillingSnapshot(b.billing)
+        ? b.billing
+        : { customers: [], subscriptions: [], cryptoCheckouts: [], cryptoCharges: [], processedEvents: [] },
       identities: isIdentitySnapshot(b.identities) ? b.identities : { profiles: [] },
     },
   };

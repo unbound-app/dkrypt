@@ -1642,3 +1642,48 @@ export function testPush(): Promise<{ ok: boolean }> {
 export function testEmail(): Promise<{ ok: boolean }> {
   return apiAction('/v1/dashboard/email/test', { method: 'POST' }, 'Test email sent').then((r) => ({ ok: r.ok }));
 }
+
+export interface BillingManagerSubscription {
+  user?: { id: string; displayName: string; username?: string; email?: string };
+  provider: 'stripe' | 'exodus' | 'legacy';
+  subscriptionId: string;
+  checkoutId?: string;
+  customerId: string;
+  priceId: string;
+  productId: string;
+  interval?: string;
+  plan: { id: string; name?: string; amount?: number; currency?: string };
+  status: string;
+  nextBilledAt?: string;
+  occurredAt: string;
+  updatedAt: string;
+  crypto?: { walletAddress?: string; chain?: string; asset?: string };
+  tax?: { status: string; country?: string; postalCode?: string; transactionId?: string };
+  lastCharge: {
+    id?: string;
+    status?: string;
+    at?: string;
+    txHash?: string;
+    failureReason?: string;
+    graceUntil?: string;
+    attempts: Array<{ status: string; amount: number; currency: string; occurredAt: string; txHash?: string; failureReason?: string }>;
+  };
+}
+
+export function fetchBillingSubscriptions(filters: { q?: string; provider?: string; status?: string } = {}): Promise<{ subscriptions: BillingManagerSubscription[] }> {
+  const params = new URLSearchParams();
+  if (filters.q) params.set('q', filters.q);
+  if (filters.provider) params.set('provider', filters.provider);
+  if (filters.status) params.set('status', filters.status);
+  const query = params.toString();
+  return apiJson(`/v1/billing/subscriptions${query ? `?${query}` : ''}`);
+}
+
+export interface BillingProviderStatus {
+  stripe: { enabled: boolean; environment: 'test' | 'live'; missingConfiguration: string[] };
+  crypto: { enabled: boolean; configured: boolean; ready: boolean; environment: 'test' | 'live'; settlementType?: string; settlementCurrency: string; supportedChains: string[]; supportedAssets: string[]; missingConfiguration: string[]; issues: string[]; taxReady: boolean; taxWarning?: string; checkedAt?: string };
+}
+
+export function fetchBillingProviderStatus(): Promise<BillingProviderStatus> {
+  return apiJson('/v1/billing/provider-status');
+}

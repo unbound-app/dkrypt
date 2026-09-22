@@ -29,7 +29,7 @@ const pageContent: Record<string, string> = {
   '/pricing': `
     <main>
       <h1>dkrypt pricing</h1>
-        <p>All plans renew monthly until canceled. Prices start in EUR, and Stripe Managed Payments shows the final local-currency amount and applicable tax before payment.</p>
+        <p>All plans renew every 30 days until canceled. Choose hosted Stripe checkout for card or bank payments, or hosted Exodus checkout for USDC or USDT on Base with EUR settlement.</p>
       <section>
         <h2>Regular — €5/month</h2>
         <p>Dashboard decrypt access with standard queue priority.</p>
@@ -54,9 +54,9 @@ const pageContent: Record<string, string> = {
         <h2>Accounts and acceptable use</h2>
         <p>You must provide accurate account information, protect your account and API keys, and use dkrypt only for lawful purposes involving software and data you have the rights and authorization to process. You must not infringe third-party rights, distribute malware, commit fraud, bypass security controls, overload the service, or enable unauthorized access.</p>
         <h2>Subscriptions, payments, and taxes</h2>
-        <p>Paid plans renew monthly until canceled. The plan, billing frequency, price, and applicable tax are presented before purchase. Stripe Managed Payments acts as merchant of record for eligible purchases and handles checkout, tax, receipts, and transaction support. dkrypt provides the subscription and product-level support and does not store full card details.</p>
+        <p>Paid plans renew every 30 days until canceled. The plan, billing frequency, price, and applicable tax are presented before purchase. Stripe Managed Payments handles eligible card or bank purchases as merchant of record. Crypto purchases use Exodus Checkout, settle in EUR, and are outside Stripe Managed Payments; dkrypt uses Stripe Tax for the calculation and external tax transaction when configured. dkrypt does not store full card details, crypto custody, or wallet private keys.</p>
         <h2>Cancellation and refunds</h2>
-        <p>You may cancel through the billing portal or the link in your purchase receipt. Cancellation normally takes effect at the end of the current billing period. Refund requests are governed by the <a href="/refund-policy">Refund Policy</a> and mandatory consumer law.</p>
+        <p>Stripe subscriptions can be canceled through the billing portal and normally end at the current period. Crypto subscriptions are canceled immediately after Exodus confirms the cancellation. Refunds follow the provider-specific refund process, the <a href="/refund-policy">Refund Policy</a>, and mandatory consumer law.</p>
         <h2>Service availability and liability</h2>
         <p>The service is provided on an as-available basis and may change or experience interruptions. To the fullest extent permitted by law, implied warranties are disclaimed and aggregate liability will not exceed the amount paid for dkrypt during the six months before the event giving rise to the claim.</p>
         <h2>Contact</h2>
@@ -71,11 +71,11 @@ const pageContent: Record<string, string> = {
         <p>Last updated: 23 July 2026</p>
         <p>This notice explains how dkrypt handles personal data. Privacy requests may be sent to ${contactAddress}.</p>
         <h2>Data collected</h2>
-        <p>dkrypt processes identity-provider account details, billing and subscription identifiers, service requests and results, API-key metadata, preferences, support communications, session identifiers, timestamps, request records, and security audit data. Stripe processes payment details and dkrypt does not store full card details.</p>
+        <p>dkrypt processes identity-provider account details, billing and subscription identifiers, service requests and results, API-key metadata, preferences, support communications, session identifiers, timestamps, request records, and security audit data. Stripe processes card or bank payment details, and Exodus processes crypto wallet authorization and subscription payment details. dkrypt does not store full card details or wallet private keys.</p>
         <h2>How data is used</h2>
         <p>Data is used to authenticate users, provide requested features, administer subscriptions and entitlements, operate queues and notifications, provide support, secure the service, prevent abuse, diagnose faults, and meet legal obligations.</p>
         <h2>Sharing and processors</h2>
-        <p>Data is shared only as needed with GitHub or Discord for authentication, Stripe for payment and subscription administration, infrastructure providers, Apple services needed to fulfill authorized requests, and authorities where required by law. Personal data is not sold or used for third-party behavioral advertising.</p>
+        <p>Data is shared only as needed with GitHub or Discord for authentication, Stripe for payment, tax, and subscription administration, Exodus for crypto checkout and subscription administration, infrastructure providers, Apple services needed to fulfill authorized requests, and authorities where required by law. Personal data is not sold or used for third-party behavioral advertising.</p>
         <h2>Cookies, retention, and security</h2>
         <p>dkrypt uses an essential session cookie and browser storage for interface preferences. Data is retained only as long as needed for service, legal, accounting, dispute, security, and backup obligations. Technical and organizational safeguards include access controls, signed sessions, restricted secrets, and encrypted transport.</p>
         <h2>Your rights</h2>
@@ -88,13 +88,13 @@ const pageContent: Record<string, string> = {
       <article>
         <h1>Refund policy</h1>
         <p>Last updated: 23 July 2026</p>
-        <p>Stripe Managed Payments acts as merchant of record and handles checkout, receipts, subscription billing, and transaction support. dkrypt handles product-level refund decisions under this policy and applicable law.</p>
+        <p>Stripe Managed Payments acts as merchant of record for eligible card or bank purchases and handles checkout, receipts, subscription billing, and transaction support. Exodus processes crypto checkout and recurring charges with EUR settlement; dkrypt handles product-level support and any refund request under this policy, the provider rules, and applicable law.</p>
         <h2>Refund period</h2>
         <p>You may request a refund within 14 days of a transaction. Requests are assessed under this policy and applicable law. Nothing in this policy limits mandatory consumer rights.</p>
         <h2>How to request a refund</h2>
-        <p>Open the dkrypt billing portal or contact ${contactAddress}. Include the purchase email and enough transaction information to locate the payment. Do not send full card details.</p>
+        <p>For Stripe purchases, open the dkrypt billing portal or contact ${contactAddress}. For crypto purchases, include the purchase email, Exodus checkout or subscription identifier, wallet address, and enough transaction information to locate the payment. Do not send full card details or private keys.</p>
         <h2>Technical problems and cancellations</h2>
-        <p>For persistent technical defects, contact ${contactAddress}. Subscriptions can be canceled at any time through the billing portal or receipt link. Cancellation prevents future renewals but does not automatically refund a completed payment.</p>
+        <p>For persistent technical defects, contact ${contactAddress}. Stripe subscriptions can be canceled through the billing portal or receipt link. Crypto subscriptions can be canceled from dkrypt after Exodus confirms the request. Cancellation does not automatically refund a completed payment.</p>
         <h2>Processing</h2>
         <p>Approved refunds are generally returned to the original payment method. Processing times vary, and paid access may end when a transaction is refunded.</p>
       </article>

@@ -34,6 +34,8 @@ export const PermissionFlag = {
   manageAutomation: 1n << 33n,
   requestTestFlightSubscriptions: 1n << 34n,
   manageTestFlightSubscriptions: 1n << 35n,
+  viewBilling: 1n << 36n,
+  manageBilling: 1n << 37n,
 } as const;
 
 export type PermissionFlagKey = keyof typeof PermissionFlag;
@@ -81,6 +83,8 @@ export const PERMISSION_META: PermissionMeta[] = [
   { key: 'administrator', label: 'Administrator', description: 'Grants every current and future dashboard permission. This bypasses every individual permission check and should be limited to fully trusted operators.', group: 'General' },
   { key: 'requestDecrypt', label: 'Request and manage own decrypts', description: 'Submit manual and TestFlight decrypt requests, then cancel, prioritize, retry, and download only jobs owned by this account.', group: 'General' },
   { key: 'viewLogs', label: 'View operational logs', description: 'Read the live scheduler and job log stream plus webhook delivery records. This does not grant permission to change automation or webhook settings.', group: 'General' },
+  { key: 'viewBilling', label: 'View billing subscriptions', description: 'Read member subscription plans, billing providers, statuses, renewal dates, and safe payment identifiers without exposing provider secrets.', group: 'General' },
+  { key: 'manageBilling', label: 'Manage billing setup', description: 'View billing subscriptions and provider readiness, including operational billing configuration checks.', group: 'General' },
   { key: 'requestApiKeys', label: 'Request API keys', description: 'Submit a personal API-key request for approval. Requested keys remain unusable until someone with Manage API keys approves them.', group: 'API Keys' },
   { key: 'createApiKeys', label: 'Create API keys', description: 'Create, reveal, regenerate, revoke, and use personal API keys immediately. This bypasses the approval queue only for the account’s own keys.', group: 'API Keys' },
   { key: 'viewApiKeys', label: 'View API keys', description: 'Read every API key, including its owner, status, usage, and configuration. Key secrets are never exposed by this permission.', group: 'API Keys' },

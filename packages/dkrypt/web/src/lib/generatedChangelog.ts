@@ -1,42 +1,42 @@
 export const GENERATED_CHANGELOG = [
   {
+    "date": "2026-09-22",
+    "title": "fix(appstore): normalize tagged versions",
+    "description": "Released in 8bc1f54."
+  },
+  {
+    "date": "2026-09-21",
+    "title": "fix(device): remove SSH fallback for USB agent",
+    "description": "Released in 1e9ada7."
+  },
+  {
+    "date": "2026-09-21",
+    "title": "fix(device): prevent USB recovery SSH fallback",
+    "description": "Released in 015b78e."
+  },
+  {
+    "date": "2026-09-21",
+    "title": "fix(device): keep USB recovery independent of SSH",
+    "description": "Released in 2772838."
+  },
+  {
+    "date": "2026-09-21",
+    "title": "feat(device): add native autoinstall USB agent",
+    "description": "Released in de96186."
+  },
+  {
+    "date": "2026-09-21",
+    "title": "fix(device): stabilize bridge transport and TestFlight polling",
+    "description": "Released in 62d4390."
+  },
+  {
     "date": "2026-09-20",
-    "title": "fix(ui): remove duplicate TestFlight source label",
-    "description": "Released in 3633fab."
+    "title": "fix(notifications): remove misleading bridge recovery advice",
+    "description": "Released in 71f7529."
   },
   {
     "date": "2026-09-20",
     "title": "chore(web): refresh generated changelog",
-    "description": "Released in 96eefb5."
-  },
-  {
-    "date": "2026-09-20",
-    "title": "chore(web): refresh generated changelog",
-    "description": "Released in c0933c3."
-  },
-  {
-    "date": "2026-09-20",
-    "title": "fix(ci): restore Dependabot auto-merge triggers",
-    "description": "Released in 31376f0."
-  },
-  {
-    "date": "2026-09-20",
-    "title": "fix(ui): remove TestFlight result status noise",
-    "description": "Released in e8e5aa7."
-  },
-  {
-    "date": "2026-09-20",
-    "title": "chore(deps): bump the web-dependencies group in /packages/dkrypt/web with 2 updates (#24)",
-    "description": "Released in 96c3066."
-  },
-  {
-    "date": "2026-09-20",
-    "title": "chore(deps): bump the api-dependencies group in /packages/dkrypt with 6 updates (#25)",
-    "description": "Released in d04d5a2."
-  },
-  {
-    "date": "2026-09-20",
-    "title": "chore(web): refresh generated changelog",
-    "description": "Released in db5f525."
+    "description": "Released in 2695f85."
   }
 ] as const;

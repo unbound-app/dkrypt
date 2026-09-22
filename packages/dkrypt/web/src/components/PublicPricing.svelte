@@ -87,7 +87,7 @@
               {:else}
                 <div class="flex items-center gap-2 text-muted"><X class="h-4 w-4" /> High queue priority</div>
               {/if}
-              <div class="mt-2 flex items-center gap-2 text-xs text-muted"><ShieldCheck class="h-4 w-4 text-accent" /> Secure Stripe checkout</div>
+              <div class="mt-2 flex items-center gap-2 text-xs text-muted"><ShieldCheck class="h-4 w-4 text-accent" /> Stripe or crypto checkout</div>
             </div>
 
             <a
@@ -102,7 +102,7 @@
     </div>
 
     <Card class="mx-auto mt-8 max-w-3xl text-sm leading-6 text-muted">
-      Plans renew monthly until canceled. Prices start in EUR; Stripe Managed Payments shows the final local-currency amount and applicable tax before payment. You can cancel from the billing portal or your Stripe receipt, effective at the end of the current billing period.
+      Plans renew every 30 days until canceled. Choose Stripe for card or bank payments, or Exodus for USDC or USDT on Base with EUR settlement. Crypto checkout is outside Stripe Managed Payments and uses Stripe Tax when configured.
     </Card>
   </main>
   <PublicPageFooter />

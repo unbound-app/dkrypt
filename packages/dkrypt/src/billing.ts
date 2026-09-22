@@ -3,8 +3,20 @@ import path from 'node:path';
 import { config } from '#config.js';
 import { hasPermission, PermissionFlag } from '#permissions.js';
 
-export type BillingProvider = 'stripe' | 'legacy';
+export type BillingProvider = 'stripe' | 'exodus' | 'legacy';
 export type PlanId = 'viewer' | 'regular' | 'priority' | 'api' | 'priority_api';
+export type BillingChargeStatus = 'pending' | 'succeeded' | 'failed';
+export type BillingCheckoutStatus = 'pending' | 'completed' | 'expired' | 'cancelled';
+export type BillingTaxStatus = 'not_required' | 'pending' | 'recorded' | 'failed';
+
+export interface BillingTaxAddress {
+  country: string;
+  state?: string;
+  postalCode: string;
+  city?: string;
+  line1?: string;
+  line2?: string;
+}
 
 export interface BillingCustomer {
   provider: BillingProvider;
@@ -24,16 +36,82 @@ export interface BillingSubscription {
   priceId: string;
   productId: string;
   subscriptionItemId?: string;
+  checkoutId?: string;
+  externalCustomerId?: string;
+  currency?: string;
+  amount?: number;
+  interval?: string;
+  walletAddress?: string;
+  chain?: string;
+  asset?: string;
   nextBilledAt?: string;
   scheduledChangeAction?: string;
   scheduledChangeAt?: string;
+  lastChargeAt?: string;
+  lastChargeId?: string;
+  lastChargeStatus?: BillingChargeStatus;
+  lastChargeTxHash?: string;
+  failureReason?: string;
+  graceUntil?: string;
+  paused?: boolean;
+  flagged?: boolean;
+  taxAddress?: BillingTaxAddress;
+  taxStatus?: BillingTaxStatus;
+  taxTransactionId?: string;
   occurredAt: string;
   updatedAt: string;
+}
+
+export interface BillingCheckout {
+  provider: 'exodus';
+  checkoutId: string;
+  userId: string;
+  idempotencyKey: string;
+  planId: Exclude<PlanId, 'viewer'>;
+  amount: number;
+  currency: string;
+  status: BillingCheckoutStatus;
+  checkoutUrl: string;
+  taxAddress?: BillingTaxAddress;
+  taxCalculationId?: string;
+  taxStatus?: BillingTaxStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BillingCharge {
+  provider: 'exodus';
+  chargeId: string;
+  subscriptionId: string;
+  userId: string;
+  status: BillingChargeStatus;
+  amount: number;
+  currency: string;
+  tokenAmount?: string;
+  asset?: string;
+  chain?: string;
+  txHash?: string;
+  chargeNonce?: number;
+  taxTransactionId?: string;
+  failureReason?: string;
+  retryAt?: string;
+  occurredAt: string;
+  updatedAt: string;
+}
+
+export interface BillingEventRecord {
+  provider: 'exodus';
+  eventId: string;
+  occurredAt: string;
+  processedAt: string;
 }
 
 export interface BillingSnapshot {
   customers: BillingCustomer[];
   subscriptions: BillingSubscription[];
+  cryptoCheckouts: BillingCheckout[];
+  cryptoCharges: BillingCharge[];
+  processedEvents: BillingEventRecord[];
 }
 
 export interface BillingEntitlements {
@@ -41,6 +119,7 @@ export interface BillingEntitlements {
   decrypt: boolean;
   api: boolean;
   priority: number;
+  provider?: BillingProvider;
   status?: string;
   subscriptionId?: string;
   nextBilledAt?: string;
@@ -85,7 +164,7 @@ const planDefinitions = [
   {
     id: 'priority_api',
     name: 'Priority API',
-    description: 'Dashboard decrypts and API key access with high priority.',
+    description: 'Dashboard decrypts and API key access with high queue priority.',
     amount: 20,
     currency: 'EUR',
     priceId: config.stripePriorityApiPriceId,
@@ -96,15 +175,20 @@ const planDefinitions = [
 ] as const;
 
 const billingPath = path.join(config.stateDir, 'billing.json');
-const activeStatuses = new Set(['active', 'trialing', 'past_due']);
+const stripeActiveStatuses = new Set(['active', 'trialing', 'past_due']);
+const checkoutLocks = new Set<string>();
+
+function emptySnapshot(): BillingSnapshot {
+  return { customers: [], subscriptions: [], cryptoCheckouts: [], cryptoCharges: [], processedEvents: [] };
+}
 
 function load(): BillingSnapshot {
   mkdirSync(config.stateDir, { recursive: true });
-  if (!existsSync(billingPath)) return { customers: [], subscriptions: [] };
+  if (!existsSync(billingPath)) return emptySnapshot();
   try {
-    return normalizeBillingSnapshot(JSON.parse(readFileSync(billingPath, 'utf8'))) ?? { customers: [], subscriptions: [] };
+    return normalizeBillingSnapshot(JSON.parse(readFileSync(billingPath, 'utf8'))) ?? emptySnapshot();
   } catch {
-    return { customers: [], subscriptions: [] };
+    return emptySnapshot();
   }
 }
 
@@ -126,38 +210,46 @@ export function planForPrice(priceId: string): Exclude<PlanId, 'viewer'> | undef
   return planDefinitions.find((plan) => plan.priceId === priceId)?.id;
 }
 
+export function isBillingSubscriptionActive(subscription: BillingSubscription, now = Date.now()): boolean {
+  if (subscription.provider === 'stripe') return stripeActiveStatuses.has(subscription.status);
+  if (subscription.provider !== 'exodus') return false;
+  if (subscription.status === 'active' && !subscription.flagged && !subscription.paused) return true;
+  return subscription.status === 'past_due' && !!subscription.graceUntil && Date.parse(subscription.graceUntil) > now;
+}
+
 export function upsertBillingCustomer(customer: BillingCustomer): void {
-  const existing = state.customers.find((item) => item.customerId === customer.customerId);
+  const existing = state.customers.find((item) => item.provider === customer.provider && item.customerId === customer.customerId);
   if (existing) Object.assign(existing, customer, { userId: customer.userId ?? existing.userId });
   else state.customers.push(customer);
 
   if (customer.userId) {
     for (const subscription of state.subscriptions) {
-      if (subscription.customerId === customer.customerId && !subscription.userId) subscription.userId = customer.userId;
+      if (subscription.provider === customer.provider && subscription.customerId === customer.customerId && !subscription.userId) subscription.userId = customer.userId;
     }
   }
   persist();
 }
 
 export function linkBillingCustomer(customerId: string, userId: string): void {
-  const existing = state.customers.find((item) => item.customerId === customerId);
+  const existing = state.customers.find((item) => item.provider === 'stripe' && item.customerId === customerId);
   if (existing) existing.userId = userId;
   else state.customers.push({ provider: 'stripe', customerId, email: '', userId, updatedAt: new Date().toISOString() });
   for (const subscription of state.subscriptions) {
-    if (subscription.customerId === customerId && !subscription.userId) subscription.userId = userId;
+    if (subscription.provider === 'stripe' && subscription.customerId === customerId && !subscription.userId) subscription.userId = userId;
   }
   persist();
 }
 
-export function upsertBillingSubscription(subscription: BillingSubscription): void {
-  const existing = state.subscriptions.find((item) => item.subscriptionId === subscription.subscriptionId);
-  if (existing && Date.parse(existing.occurredAt) > Date.parse(subscription.occurredAt)) return;
+export function upsertBillingSubscription(subscription: BillingSubscription): boolean {
+  const existing = state.subscriptions.find((item) => item.provider === subscription.provider && item.subscriptionId === subscription.subscriptionId);
+  if (existing && Date.parse(existing.occurredAt) > Date.parse(subscription.occurredAt)) return false;
   if (existing) Object.assign(existing, subscription, { userId: subscription.userId ?? existing.userId });
   else {
-    const customer = state.customers.find((item) => item.customerId === subscription.customerId);
+    const customer = state.customers.find((item) => item.provider === subscription.provider && item.customerId === subscription.customerId);
     state.subscriptions.push({ ...subscription, userId: subscription.userId ?? customer?.userId });
   }
   persist();
+  return true;
 }
 
 export function getBillingCustomerId(userId: string): string | undefined {
@@ -169,21 +261,43 @@ export function getBillingUserId(customerId: string): string | undefined {
 }
 
 export function getBillingSubscription(userId: string, subscriptionId: string): BillingSubscription | undefined {
-  return state.subscriptions.find(
-    (subscription) => subscription.provider === 'stripe' && subscription.userId === userId && subscription.subscriptionId === subscriptionId,
-  );
+  return state.subscriptions.find((subscription) => subscription.userId === userId && subscription.subscriptionId === subscriptionId);
+}
+
+export function getBillingSubscriptionById(subscriptionId: string): BillingSubscription | undefined {
+  return state.subscriptions.find((subscription) => subscription.subscriptionId === subscriptionId);
 }
 
 export function getBillingSubscriptionIds(userId: string): string[] {
   return state.subscriptions
-    .filter((subscription) => subscription.provider === 'stripe' && subscription.userId === userId && activeStatuses.has(subscription.status))
+    .filter((subscription) => subscription.userId === userId && isBillingSubscriptionActive(subscription))
     .map((subscription) => subscription.subscriptionId);
 }
 
+export function getBillingSubscriptionsForUser(userId: string): BillingSubscription[] {
+  return state.subscriptions.filter((subscription) => subscription.userId === userId).map((subscription) => structuredClone(subscription));
+}
+
+export function listBillingSubscriptions(): BillingSubscription[] {
+  return state.subscriptions.map((subscription) => structuredClone(subscription));
+}
+
 export function getBillingEntitlements(userId: string): BillingEntitlements {
-  return resolveBillingEntitlements(
-    state.subscriptions.filter((subscription) => subscription.provider === 'stripe' && subscription.userId === userId),
-  );
+  return resolveBillingEntitlements(state.subscriptions.filter((subscription) => subscription.userId === userId));
+}
+
+export function hasActiveBillingSubscription(userId: string): boolean {
+  return state.subscriptions.some((subscription) => subscription.userId === userId && isBillingSubscriptionActive(subscription));
+}
+
+export function acquireBillingCheckoutLock(userId: string): boolean {
+  if (checkoutLocks.has(userId)) return false;
+  checkoutLocks.add(userId);
+  return true;
+}
+
+export function releaseBillingCheckoutLock(userId: string): void {
+  checkoutLocks.delete(userId);
 }
 
 export function hasLegacyBillingRecord(userId: string): boolean {
@@ -193,10 +307,7 @@ export function hasLegacyBillingRecord(userId: string): boolean {
   );
 }
 
-export function canCreateApiKeyImmediately(
-  permissions: bigint,
-  entitlements: BillingEntitlements,
-): boolean {
+export function canCreateApiKeyImmediately(permissions: bigint, entitlements: BillingEntitlements): boolean {
   return hasPermission(permissions, PermissionFlag.approveApiKeys) || entitlements.api;
 }
 
@@ -215,13 +326,23 @@ export function mergeBillingAccounts(targetUserId: string, sourceUserId: string)
       changed = true;
     }
   }
+  for (const checkout of state.cryptoCheckouts) {
+    if (checkout.userId === sourceUserId) {
+      checkout.userId = targetUserId;
+      changed = true;
+    }
+  }
+  for (const charge of state.cryptoCharges) {
+    if (charge.userId === sourceUserId) {
+      charge.userId = targetUserId;
+      changed = true;
+    }
+  }
   if (changed) persist();
 }
 
 export function resolveBillingEntitlements(subscriptions: BillingSubscription[]): BillingEntitlements {
-  const activeSubscriptions = subscriptions.filter(
-    (subscription) => subscription.provider === 'stripe' && activeStatuses.has(subscription.status),
-  );
+  const activeSubscriptions = subscriptions.filter((subscription) => isBillingSubscriptionActive(subscription));
   if (activeSubscriptions.length === 0) return { planId: 'viewer', decrypt: false, api: false, priority: 0 };
 
   const definitions = activeSubscriptions
@@ -244,12 +365,64 @@ export function resolveBillingEntitlements(subscriptions: BillingSubscription[])
     decrypt: definitions.some((entry) => entry.definition.decrypt),
     api: definitions.some((entry) => entry.definition.api),
     priority: Math.max(...definitions.map((entry) => entry.definition.priority)),
+    provider: strongest.subscription.provider,
     status: strongest.subscription.status,
     subscriptionId: strongest.subscription.subscriptionId,
     nextBilledAt: strongest.subscription.nextBilledAt,
     scheduledChangeAction: strongest.subscription.scheduledChangeAction,
     scheduledChangeAt: strongest.subscription.scheduledChangeAt,
   };
+}
+
+export function findCryptoCheckout(userId: string, idempotencyKey: string): BillingCheckout | undefined {
+  return state.cryptoCheckouts.find((checkout) => checkout.userId === userId && checkout.idempotencyKey === idempotencyKey);
+}
+
+export function getCryptoCheckout(checkoutId: string): BillingCheckout | undefined {
+  return state.cryptoCheckouts.find((checkout) => checkout.checkoutId === checkoutId);
+}
+
+export function upsertCryptoCheckout(checkout: BillingCheckout): void {
+  const existing = state.cryptoCheckouts.find((item) => item.checkoutId === checkout.checkoutId);
+  if (existing) {
+    if (existing.status === 'completed' && checkout.status !== 'completed') return;
+    if (checkout.status !== 'completed' && Date.parse(existing.updatedAt) > Date.parse(checkout.updatedAt)) return;
+    Object.assign(existing, checkout);
+  } else state.cryptoCheckouts.push(checkout);
+  persist();
+}
+
+export function upsertBillingCharge(charge: BillingCharge): void {
+  const existing = state.cryptoCharges.find((item) => item.chargeId === charge.chargeId);
+  if (existing) {
+    if (existing.status === 'succeeded' && charge.status !== 'succeeded') return;
+    if (existing.status !== 'pending' && Date.parse(existing.occurredAt) > Date.parse(charge.occurredAt)) return;
+    Object.assign(existing, charge);
+  } else state.cryptoCharges.push(charge);
+  if (state.cryptoCharges.length > 5000) state.cryptoCharges.splice(0, state.cryptoCharges.length - 5000);
+  persist();
+}
+
+export function getBillingCharge(chargeId: string): BillingCharge | undefined {
+  return state.cryptoCharges.find((charge) => charge.chargeId === chargeId);
+}
+
+export function getBillingChargeForNonce(subscriptionId: string, chargeNonce: number): BillingCharge | undefined {
+  return state.cryptoCharges.find((charge) => charge.subscriptionId === subscriptionId && charge.chargeNonce === chargeNonce);
+}
+
+export function listBillingCharges(): BillingCharge[] {
+  return state.cryptoCharges.map((charge) => structuredClone(charge));
+}
+
+export function hasProcessedBillingEvent(eventId: string): boolean {
+  return state.processedEvents.some((event) => event.eventId === eventId);
+}
+
+export function recordBillingEvent(event: BillingEventRecord): void {
+  if (!hasProcessedBillingEvent(event.eventId)) state.processedEvents.push(event);
+  if (state.processedEvents.length > 5000) state.processedEvents.splice(0, state.processedEvents.length - 5000);
+  persist();
 }
 
 export function exportBillingSnapshot(): BillingSnapshot {
@@ -260,11 +433,16 @@ export function isBillingSnapshot(value: unknown): value is BillingSnapshot {
   return normalizeBillingSnapshot(value) !== undefined;
 }
 
-export function replaceBillingSnapshot(snapshot: BillingSnapshot): void {
+export function replaceBillingSnapshot(snapshot: BillingSnapshot): void;
+export function replaceBillingSnapshot(snapshot: { customers: BillingCustomer[]; subscriptions: BillingSubscription[] }): void;
+export function replaceBillingSnapshot(snapshot: BillingSnapshot | { customers: BillingCustomer[]; subscriptions: BillingSubscription[] }): void {
   const normalized = normalizeBillingSnapshot(snapshot);
   if (!normalized) throw new Error('billing snapshot is malformed');
   state.customers = normalized.customers;
   state.subscriptions = normalized.subscriptions;
+  state.cryptoCheckouts = normalized.cryptoCheckouts;
+  state.cryptoCharges = normalized.cryptoCharges;
+  state.processedEvents = normalized.processedEvents;
   persist();
 }
 
@@ -278,9 +456,7 @@ function normalizeBillingSnapshot(value: unknown): BillingSnapshot | undefined {
     if (typeof customer !== 'object' || customer === null) return undefined;
     const record = customer as Record<string, unknown>;
     const provider = billingProvider(record.provider);
-    if (!provider || typeof record.customerId !== 'string' || typeof record.email !== 'string' || typeof record.updatedAt !== 'string') {
-      return undefined;
-    }
+    if (!provider || typeof record.customerId !== 'string' || typeof record.email !== 'string' || typeof record.updatedAt !== 'string') return undefined;
     customers.push({
       provider,
       customerId: record.customerId,
@@ -306,9 +482,7 @@ function normalizeBillingSnapshot(value: unknown): BillingSnapshot | undefined {
       typeof record.productId !== 'string' ||
       typeof record.occurredAt !== 'string' ||
       typeof record.updatedAt !== 'string'
-    ) {
-      return undefined;
-    }
+    ) return undefined;
     subscriptions.push({
       provider,
       subscriptionId: record.subscriptionId,
@@ -319,22 +493,120 @@ function normalizeBillingSnapshot(value: unknown): BillingSnapshot | undefined {
       priceId: record.priceId,
       productId: record.productId,
       subscriptionItemId: optionalString(record.subscriptionItemId),
+      checkoutId: optionalString(record.checkoutId),
+      externalCustomerId: optionalString(record.externalCustomerId),
+      currency: optionalString(record.currency),
+      amount: optionalNumber(record.amount),
+      interval: optionalString(record.interval),
+      walletAddress: optionalString(record.walletAddress),
+      chain: optionalString(record.chain),
+      asset: optionalString(record.asset),
       nextBilledAt: optionalString(record.nextBilledAt),
       scheduledChangeAction: optionalString(record.scheduledChangeAction),
       scheduledChangeAt: optionalString(record.scheduledChangeAt),
+      lastChargeAt: optionalString(record.lastChargeAt),
+      lastChargeId: optionalString(record.lastChargeId),
+      lastChargeStatus: billingChargeStatus(record.lastChargeStatus),
+      lastChargeTxHash: optionalString(record.lastChargeTxHash),
+      failureReason: optionalString(record.failureReason),
+      graceUntil: optionalString(record.graceUntil),
+      paused: optionalBoolean(record.paused),
+      flagged: optionalBoolean(record.flagged),
+      taxAddress: taxAddress(record.taxAddress),
+      taxStatus: billingTaxStatus(record.taxStatus),
+      taxTransactionId: optionalString(record.taxTransactionId),
       occurredAt: record.occurredAt,
       updatedAt: record.updatedAt,
     });
   }
 
-  return { customers, subscriptions };
+  return {
+    customers,
+    subscriptions,
+    cryptoCheckouts: Array.isArray(snapshot.cryptoCheckouts) ? snapshot.cryptoCheckouts.filter(isBillingCheckout).map((item) => structuredClone(item)) : [],
+    cryptoCharges: Array.isArray(snapshot.cryptoCharges) ? snapshot.cryptoCharges.filter(isBillingCharge).map((item) => structuredClone(item)) : [],
+    processedEvents: Array.isArray(snapshot.processedEvents) ? snapshot.processedEvents.filter(isBillingEvent).map((item) => structuredClone(item)) : [],
+  };
 }
 
 function billingProvider(value: unknown): BillingProvider | undefined {
   if (value === undefined || value === 'legacy') return 'legacy';
-  return value === 'stripe' ? 'stripe' : undefined;
+  return value === 'stripe' || value === 'exodus' ? value : undefined;
+}
+
+function billingChargeStatus(value: unknown): BillingChargeStatus | undefined {
+  return value === 'pending' || value === 'succeeded' || value === 'failed' ? value : undefined;
+}
+
+function billingTaxStatus(value: unknown): BillingTaxStatus | undefined {
+  return value === 'not_required' || value === 'pending' || value === 'recorded' || value === 'failed' ? value : undefined;
 }
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
+}
+
+function optionalNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function optionalBoolean(value: unknown): boolean | undefined {
+  return typeof value === 'boolean' ? value : undefined;
+}
+
+function taxAddress(value: unknown): BillingTaxAddress | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const record = value as Record<string, unknown>;
+  if (typeof record.country !== 'string' || typeof record.postalCode !== 'string') return undefined;
+  return {
+    country: record.country,
+    postalCode: record.postalCode,
+    state: optionalString(record.state),
+    city: optionalString(record.city),
+    line1: optionalString(record.line1),
+    line2: optionalString(record.line2),
+  };
+}
+
+function isBillingCheckout(value: unknown): value is BillingCheckout {
+  if (typeof value !== 'object' || value === null) return false;
+  const record = value as Record<string, unknown>;
+  return (
+    record.provider === 'exodus' &&
+    typeof record.checkoutId === 'string' &&
+    typeof record.userId === 'string' &&
+    typeof record.idempotencyKey === 'string' &&
+    typeof record.planId === 'string' &&
+    planDefinitions.some((plan) => plan.id === record.planId) &&
+    typeof record.amount === 'number' &&
+    typeof record.currency === 'string' &&
+    typeof record.status === 'string' &&
+    ['pending', 'completed', 'expired', 'cancelled'].includes(record.status) &&
+    typeof record.checkoutUrl === 'string' &&
+    (record.taxStatus === undefined || billingTaxStatus(record.taxStatus) !== undefined) &&
+    typeof record.createdAt === 'string' &&
+    typeof record.updatedAt === 'string'
+  );
+}
+
+function isBillingCharge(value: unknown): value is BillingCharge {
+  if (typeof value !== 'object' || value === null) return false;
+  const record = value as Record<string, unknown>;
+  return (
+    record.provider === 'exodus' &&
+    typeof record.chargeId === 'string' &&
+    typeof record.subscriptionId === 'string' &&
+    typeof record.userId === 'string' &&
+    billingChargeStatus(record.status) !== undefined &&
+    typeof record.amount === 'number' &&
+    typeof record.currency === 'string' &&
+    typeof record.occurredAt === 'string' &&
+    typeof record.updatedAt === 'string'
+  );
+}
+
+function isBillingEvent(value: unknown): value is BillingEventRecord {
+  if (typeof value !== 'object' || value === null) return false;
+  const record = value as Record<string, unknown>;
+  return record.provider === 'exodus' && typeof record.eventId === 'string' && typeof record.occurredAt === 'string' && typeof record.processedAt === 'string';
 }
