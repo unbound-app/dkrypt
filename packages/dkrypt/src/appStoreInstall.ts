@@ -18,6 +18,7 @@ import { scopedLogger } from '#logger.js';
 import { lookupCurrentVersion, type ItunesLookupResult } from '#scheduler/itunes.js';
 import { getPrimaryDevice, type DeviceRecord } from '#store/state.js';
 import { BRIDGE_CAPABILITIES, hasBridgeCapabilities } from '#bridgeProtocol.js';
+import { normalizeVersion } from '#util/version.js';
 
 const log = scopedLogger('appstore');
 
@@ -130,7 +131,11 @@ export async function installFromAppStore(bundleId: string, options: AppStoreIns
   ensureNotCancelled();
   report('resolving App Store id for bundle');
   const { trackId, version: latestVersion } = options.currentVersion ?? (await lookupCurrentVersion(bundleId));
-  const targetVersion = expectedVersion ?? (versionId === undefined ? latestVersion : undefined);
+  const targetVersion = expectedVersion
+    ? normalizeVersion(expectedVersion)
+    : versionId === undefined
+      ? normalizeVersion(latestVersion)
+      : undefined;
 
   return withSSH(options.device ?? primaryDevice(), async (conn) => {
     ensureNotCancelled();
@@ -175,7 +180,7 @@ export async function installFromAppStore(bundleId: string, options: AppStoreIns
         if (bundlePath) {
           const installedVersion = await readInstalledBundleVersions(conn, bundlePath);
           const { shortVersion } = installedVersion;
-          if (targetVersion && shortVersion !== targetVersion) {
+          if (targetVersion && normalizeVersion(shortVersion ?? '') !== targetVersion) {
             const unexpectedVersion = shortVersion ?? 'unknown';
             if (lastUnexpectedVersion !== unexpectedVersion) {
               report(`waiting for App Store version ${targetVersion}; version ${unexpectedVersion} is currently installed`);

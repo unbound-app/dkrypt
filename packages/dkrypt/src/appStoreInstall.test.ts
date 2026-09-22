@@ -153,6 +153,29 @@ describe('installFromAppStore', () => {
     expect(progress.at(-1)).toBe('install verified: 338.0 build 106000 in 0s');
   });
 
+  test('normalizes a v-prefixed App Store version before verification', async () => {
+    let now = 0;
+    Date.now = () => now;
+    globalThis.setTimeout = ((handler: () => void) => {
+      now += 20_000;
+      handler();
+      return 0;
+    }) as unknown as typeof setTimeout;
+
+    try {
+      await expect(installFromAppStore('com.hammerandchisel.discord', {
+        externalVersionId: '123456789',
+        expectedVersion: 'v338.0',
+        onProgress: (message) => progress.push(message),
+      })).resolves.toMatchObject({ bundleId: 'com.hammerandchisel.discord', shortVersion: '338.0' });
+    } finally {
+      Date.now = originalDateNow;
+      globalThis.setTimeout = originalSetTimeout;
+    }
+
+    expect(progress).not.toContain('waiting for App Store version v338.0; version 338.0 is currently installed');
+  });
+
   test('replaces an installed app before decrypting the current App Store version', async () => {
     await installFromAppStore('com.hammerandchisel.discord');
 
