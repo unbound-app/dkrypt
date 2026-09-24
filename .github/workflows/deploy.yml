@@ -46,6 +46,14 @@ jobs:
           cd packages/device-bridge
           cargo test --locked
           cargo check --locked
+      - name: Install Chromium for browser checks
+        run: |
+          cd packages/dkrypt/web
+          bunx playwright install --with-deps chromium
+      - name: Run browser checks
+        run: |
+          cd packages/dkrypt/web
+          bun run e2e
 
   image:
     name: Build immutable image

@@ -1,6 +1,11 @@
 export const GENERATED_CHANGELOG = [
   {
     "date": "2026-09-24",
+    "title": "feat(web): add discord community link",
+    "description": "Released in 2d8e47f."
+  },
+  {
+    "date": "2026-09-24",
     "title": "chore(web): refresh generated changelog",
     "description": "Released in 363a8f6."
   },
@@ -33,10 +38,5 @@ export const GENERATED_CHANGELOG = [
     "date": "2026-09-24",
     "title": "fix(ci): wait for bridge readiness during smoke tests",
     "description": "Released in adfab74."
-  },
-  {
-    "date": "2026-09-24",
-    "title": "ci(deploy): gate on ready device transport",
-    "description": "Released in ca1cb15."
   }
 ] as const;
