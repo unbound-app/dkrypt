@@ -552,6 +552,35 @@ const AllowedUserResponse = object({
   lastActiveAt: Type.Optional(Type.Number()),
   priority: Type.Optional(Type.Number()),
 });
+const AuthTokenResponse = object({ ok: Type.Boolean(), expiresAt: Type.Optional(Type.Integer()) });
+const AuthLoginResponse = object({ ok: Type.Boolean() });
+const AuthRevokeOthersResponse = object({ ok: Type.Boolean(), revoked: Type.Integer({ minimum: 0 }) });
+const PasskeySummaryResponse = object({
+  id: Identifier,
+  userId: Identifier,
+  counter: Type.Integer({ minimum: 0 }),
+  transports: Type.Optional(Type.Array(Type.String())),
+  name: Type.Optional(Type.String()),
+  createdAt: Type.Number(),
+  lastUsedAt: Type.Optional(Type.Number()),
+});
+const PasskeyListResponse = object({ passkeys: Type.Array(PasskeySummaryResponse) });
+const PasskeyOptionsResponse = object({
+  challenge: Type.String(),
+  rp: Type.Optional(JsonObject),
+  user: Type.Optional(JsonObject),
+  rpId: Type.Optional(Type.String()),
+  userVerification: Type.Optional(Type.String()),
+  timeout: Type.Optional(Type.Number({ minimum: 0 })),
+  allowCredentials: Type.Optional(Type.Array(JsonObject)),
+  excludeCredentials: Type.Optional(Type.Array(JsonObject)),
+  pubKeyCredParams: Type.Optional(Type.Array(JsonObject)),
+  attestation: Type.Optional(Type.String()),
+  authenticatorSelection: Type.Optional(JsonObject),
+});
+const PasskeyMutationResponse = object({ passkey: Type.Optional(PasskeySummaryResponse) });
+const AuthProfileResponse = object({ displayName: Type.String(), linkedProviders: Type.Array(Type.String()) });
+const AuthConnectionResponse = object({ identities: Type.Array(JsonObject), linkedProviders: Type.Array(Type.String()) });
 const DeviceConnectionInput = object({
   name: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
   existingId: Type.Optional(Identifier),
@@ -910,7 +939,11 @@ register('POST', '/v1/auth/mfa/setup', { response: { 200: object({ secret: Type.
 register('POST', '/v1/auth/mfa/confirm', { response: { 200: object({ enabled: Type.Boolean(), recoveryCodes: Type.Array(Type.String()) }) } });
 register('POST', '/v1/auth/mfa/disable', { response: { 200: object({ enabled: Type.Boolean(), recoveryCodesRemaining: Type.Integer({ minimum: 0 }) }) } });
 register('POST', '/v1/auth/mfa/recovery-codes', { response: { 200: object({ recoveryCodes: Type.Array(Type.String()) }) } });
+register('POST', '/v1/auth/mfa/verify', { response: { 200: AuthTokenResponse } });
+register('POST', '/v1/auth/reauthenticate', { response: { 200: AuthTokenResponse } });
 register('GET', '/v1/auth/sessions', { response: { 200: AuthSessionListResponse } });
+register('DELETE', '/v1/auth/sessions/:id', { params: object({ id: Identifier }), response: { 200: OkResponse } });
+register('POST', '/v1/auth/sessions/revoke-others', { response: { 200: AuthRevokeOthersResponse } });
 register('GET', '/v1/billing/provider-status', { response: { 200: BillingProviderStatusResponse } });
 register('GET', '/v1/billing/webhooks/inbox', { response: { 200: WebhookInboxPage } });
 register('GET', '/v1/dashboard/doctor', { response: { 200: DoctorResponse } });
@@ -926,6 +959,25 @@ register('GET', '/v1/dashboard/jobs/eta/:bundleId', { params: object({ bundleId:
 register('GET', '/v1/dashboard/jobs/slo', { response: { 200: JobSloResponse } });
 register('GET', '/v1/dashboard/jobs/volume', { response: { 200: DailyVolumeResponse } });
 register('GET', '/v1/dashboard/webhooks', { response: { 200: object({ deliveries: Type.Array(JsonObject) }) } });
+register('GET', '/v1/auth/privacy/export', { response: { 200: Type.String() } });
+register('POST', '/v1/auth/privacy/delete', { response: { 200: OkResponse } });
+register('PATCH', '/v1/auth/profile', { response: { 200: AuthProfileResponse } });
+register('DELETE', '/v1/auth/connections/:provider', {
+  params: object({ provider: Type.Union([Type.Literal('github'), Type.Literal('discord')]) }),
+  response: { 200: AuthConnectionResponse },
+});
+register('POST', '/v1/auth/refresh', { response: { 200: AuthTokenResponse } });
+register('POST', '/v1/auth/login', { response: { 200: AuthLoginResponse } });
+register('POST', '/v1/auth/logout', { response: { 200: OkResponse } });
+register('POST', '/v1/auth/logout-everywhere', { response: { 200: OkResponse } });
+register('GET', '/v1/auth/passkeys', { response: { 200: PasskeyListResponse } });
+register('POST', '/v1/auth/passkeys/register/options', { response: { 200: PasskeyOptionsResponse } });
+register('POST', '/v1/auth/passkeys/register', { response: { 201: PasskeyMutationResponse } });
+register('DELETE', '/v1/auth/passkeys/:id', { params: object({ id: Identifier }), response: { 200: OkResponse } });
+register('POST', '/v1/auth/passkeys/options', { response: { 200: PasskeyOptionsResponse } });
+register('POST', '/v1/auth/passkeys/verify', { response: { 200: AuthTokenResponse } });
+register('POST', '/v1/auth/passkeys/reauth/options', { response: { 200: PasskeyOptionsResponse } });
+register('POST', '/v1/auth/passkeys/reauth/verify', { response: { 200: AuthTokenResponse } });
 register('POST', '/v1/billing/checkout', {
   headers: object({ 'idempotency-key': Type.Optional(Type.String({ minLength: 1, maxLength: 200 })) }),
   body: object({ planId: Identifier, provider: Type.Optional(Type.Union([Type.Literal('stripe'), Type.Literal('crypto')])), cryptoAsset: Type.Optional(Type.String({ minLength: 2, maxLength: 32 })) }),
