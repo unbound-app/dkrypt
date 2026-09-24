@@ -41,6 +41,8 @@ jobs:
           bun run clients:generate
           python -m py_compile clients/python/dkrypt_client.py
           git diff --exit-code -- clients
+      - name: Validate container supervisor
+        run: sh -n packages/dkrypt/entrypoint.sh
       - name: Test Rust device bridge
         run: |
           cd packages/device-bridge
