@@ -133,6 +133,12 @@ jobs:
           RUNTIME_DIR=/home/adrian/.local/share/dkrypt
           RUNTIME_HOME=$(cd "$RUNTIME_DIR/../../.." && pwd)
           test -f "$RUNTIME_DIR/.env"
+          if docker container inspect dkrypt >/dev/null 2>&1; then
+            existing_key_path=$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/root/.ssh/id_ed25519"}}{{.Source}}{{end}}{{end}}' dkrypt)
+            if [ -f "$existing_key_path" ] && [ -r "$existing_key_path" ]; then
+              DEVICE_SSH_KEY_HOST_PATH="$existing_key_path"
+            fi
+          fi
           if [ -z "${DEVICE_SSH_KEY_HOST_PATH:-}" ]; then
             for candidate in "$RUNTIME_HOME"/.ssh/id_* "$HOME"/.ssh/id_*; do
               case "$candidate" in
