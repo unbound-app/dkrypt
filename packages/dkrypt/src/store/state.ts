@@ -223,6 +223,7 @@ export interface SchedulerSettings {
   notifyOnDeviceStorageLow: boolean;
   notifyOnTestFlightBridgeDown: boolean;
   notifyOnJobCompleted: boolean;
+  notifyOnQueueSloBreach: boolean;
   schedulerRetryCount: number;
   deviceOfflineAlertMinutes: number;
   batteryHotAlertC: number;
@@ -2153,6 +2154,7 @@ export function getEffectiveSettings(): SchedulerSettings {
     notifyOnDeviceStorageLow: state.settings.notifyOnDeviceStorageLow ?? true,
     notifyOnTestFlightBridgeDown: state.settings.notifyOnTestFlightBridgeDown ?? true,
     notifyOnJobCompleted: state.settings.notifyOnJobCompleted ?? false,
+    notifyOnQueueSloBreach: state.settings.notifyOnQueueSloBreach ?? true,
     schedulerRetryCount: state.settings.schedulerRetryCount ?? 0,
     deviceOfflineAlertMinutes: state.settings.deviceOfflineAlertMinutes ?? 15,
     batteryHotAlertC: state.settings.batteryHotAlertC ?? 45,

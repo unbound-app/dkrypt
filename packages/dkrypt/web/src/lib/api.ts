@@ -136,6 +136,7 @@ export interface SchedulerSettings {
   notifyOnDeviceStorageLow: boolean;
   notifyOnTestFlightBridgeDown: boolean;
   notifyOnJobCompleted: boolean;
+  notifyOnQueueSloBreach: boolean;
   schedulerRetryCount: number;
   deviceOfflineAlertMinutes: number;
   batteryHotAlertC: number;

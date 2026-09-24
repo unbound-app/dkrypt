@@ -26,6 +26,16 @@ const EXAMPLES: Record<keyof SchedulerSettings & `notifyOn${string}`, ExampleEmb
       { name: 'Size', value: '184.3 MB', inline: true },
     ],
   },
+  notifyOnQueueSloBreach: {
+    title: 'Queue service objective breached',
+    description: 'com.example.app has waited 31 minutes and is outside the 30-minute queue objective.',
+    color: COLOR.warn,
+    fields: [
+      { name: 'Job', value: '6f40e3d4-8f27-4a79-a9d8-7c5a9a6f1f9d', inline: true },
+      { name: 'Status', value: 'queued', inline: true },
+      { name: 'Queue reason', value: 'Waiting for the enabled device to become available' },
+    ],
+  },
   notifyOnKeyRequest: {
     title: 'New API key request',
     description: '**alice** requested a new key ("ci-runner") - approve it on the API Keys tab.',

@@ -9,7 +9,7 @@ import { scopedLogger } from '#logger.js';
 const log = scopedLogger('jobs');
 import { sendMailToUser } from '#mail.js';
 import { sendPushToUser } from '#push.js';
-import { getApiKeyById, getDevice, getEffectiveDevices, getUserPrefs, isBundleWatched, recordDeviceActivity, recordJobHistory, type DeviceRecord } from '#store/state.js';
+import { getAllJobHistory, getApiKeyById, getDevice, getEffectiveDevices, getUserPrefs, isBundleWatched, recordDeviceActivity, recordJobHistory, type DeviceRecord } from '#store/state.js';
 import { uninstallFromDevice } from '#appStoreInstall.js';
 import { getCachedDeviceHealth } from '#deviceHealthCache.js';
 import { runDecrypt } from '#jobs/runner.js';
@@ -20,6 +20,7 @@ import { terminateChildProcess } from '#jobs/process.js';
 import { classifyJobFailure } from '#util/failureCategory.js';
 import { incrementMetric, observeMetric } from '#metrics.js';
 import { withCorrelation } from '#correlation.js';
+import { EMBED_COLOR, notify } from '#notify.js';
 
 const jobs = new Map<string, Job>();
 
@@ -28,6 +29,7 @@ const activePath = path.join(config.stateDir, 'active-jobs.json');
 const queue: string[] = [];
 const busyDeviceIds = new Set<string>();
 const runningJobs = new Map<string, Promise<void>>();
+const queueSloNotified = new Set<string>();
 let acceptingJobs = true;
 
 function serializableJob(job: Job): Omit<Job, 'childProcess' | 'waiters'> {
@@ -738,10 +740,50 @@ async function reclaimAndMaybeUninstall(job: Job): Promise<void> {
 
 let jobSweepTimer: NodeJS.Timeout | undefined;
 
+function queueSloTarget(): { targetMs: number; historicalP95Ms: number | null } {
+  const durations = getAllJobHistory()
+    .filter((job) => job.status === 'done' && job.startedAt && job.finishedAt > job.startedAt)
+    .map((job) => job.finishedAt - (job.startedAt as number))
+    .sort((a, b) => a - b);
+  const historicalP95Ms = durations.length === 0 ? null : durations[Math.ceil(durations.length * 0.95) - 1];
+  return { targetMs: historicalP95Ms ?? config.queueSloMinutes * 60_000, historicalP95Ms };
+}
+
+function queueSloBreached(job: Job, now: number, targetMs: number, historicalP95Ms: number | null): boolean {
+  const waitedMs = now - job.createdAt;
+  const queue = job.status === 'queued' ? getQueueInfo(job.id) : undefined;
+  const predictedStartMs = queue && historicalP95Ms !== null ? Math.max(0, queue.position - 1) * historicalP95Ms : null;
+  const predictedCompletionMs = predictedStartMs === null || historicalP95Ms === null ? null : predictedStartMs + historicalP95Ms;
+  return waitedMs > targetMs || (predictedCompletionMs !== null && waitedMs + predictedCompletionMs > targetMs);
+}
+
+async function monitorQueueSlo(): Promise<void> {
+  const active = getActiveJobs();
+  const activeIds = new Set(active.map((job) => job.id));
+  for (const jobId of queueSloNotified) if (!activeIds.has(jobId)) queueSloNotified.delete(jobId);
+  const { targetMs, historicalP95Ms } = queueSloTarget();
+  const now = Date.now();
+  for (const job of active) {
+    if (!queueSloBreached(job, now, targetMs, historicalP95Ms) || queueSloNotified.has(job.id)) continue;
+    queueSloNotified.add(job.id);
+    void notify('queueSloBreach', {
+      title: 'Queue service objective breached',
+      description: `${job.bundleId} has waited ${Math.max(0, Math.round((now - job.createdAt) / 60_000))} minutes and is outside the ${Math.max(1, Math.round(targetMs / 60_000))}-minute queue objective.`,
+      color: EMBED_COLOR.warn,
+      fields: [
+        { name: 'Job', value: job.id, inline: true },
+        { name: 'Status', value: job.status, inline: true },
+        { name: 'Queue reason', value: getQueueReason(job) ?? 'assigned and running', inline: false },
+      ],
+    }).catch((error) => log.warn('queue SLO notification failed', { jobId: job.id, error: String(error) }));
+  }
+}
+
 export function startJobSweeper(): void {
   pumpWorkers();
   const intervalMs = 60_000;
   jobSweepTimer ??= setInterval(() => {
+    void monitorQueueSlo();
     const now = Date.now();
     const retentionMs = config.jobRetentionMinutes * 60_000;
 

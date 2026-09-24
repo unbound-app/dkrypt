@@ -104,6 +104,13 @@
 				"Manual or scheduler jobs, including App Store and TestFlight paths",
 		},
 		{
+			key: "notifyOnQueueSloBreach",
+			label: "Queue objective breached",
+			group: "Automation",
+			description:
+				"An active job is projected to exceed the configured queue service objective",
+		},
+		{
 			key: "notifyOnKeyRequest",
 			label: "API key requests",
 			group: "Access",
@@ -842,6 +849,7 @@
 		notifyOnDeviceStorageLow: true,
 		notifyOnTestFlightBridgeDown: true,
 		notifyOnJobCompleted: false,
+		notifyOnQueueSloBreach: true,
 		schedulerRetryCount: 0,
 		deviceOfflineAlertMinutes: 15,
 		batteryHotAlertC: 45,

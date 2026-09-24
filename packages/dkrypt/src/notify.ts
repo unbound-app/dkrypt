@@ -20,6 +20,7 @@ export type NotifyEvent =
   | 'deviceStorageLow'
   | 'testFlightBridgeDown'
   | 'jobCompleted'
+  | 'queueSloBreach'
   | 'cryptoBillingSuccess'
   | 'cryptoBillingFailure';
 
@@ -37,6 +38,7 @@ const EVENT_SETTING_KEY: Record<NotifyEvent, keyof SchedulerSettings> = {
   deviceStorageLow: 'notifyOnDeviceStorageLow',
   testFlightBridgeDown: 'notifyOnTestFlightBridgeDown',
   jobCompleted: 'notifyOnJobCompleted',
+  queueSloBreach: 'notifyOnQueueSloBreach',
   cryptoBillingSuccess: 'notifyOnAutomationSuccess',
   cryptoBillingFailure: 'notifyOnAutomationFailure',
 };
