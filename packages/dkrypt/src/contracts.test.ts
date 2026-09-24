@@ -61,11 +61,35 @@ test('core operational responses publish their required fields', async () => {
       ['/v1/dashboard/notifications', 'get', ['notifications', 'unread', 'total', 'nextCursor']],
       ['/v1/dashboard/devices/discover', 'get', ['devices', 'scannedNetworks', 'warnings']],
       ['/v1/dashboard/jobs/slo', 'get', ['targetMs', 'historicalP95Ms', 'jobs']],
+      ['/v1/decrypts', 'post', ['id', 'bundleId', 'channel', 'status', 'statusUrl', 'selector', 'resolvedVersion', 'artifact']],
+      ['/v1/artifacts', 'get', ['artifacts', 'total', 'totalBytes', 'maxBytes', 'nextCursor']],
+      ['/v1/artifacts/{id}', 'get', ['id', 'bundleId', 'channel', 'sizeBytes', 'sha256', 'fileUrl']],
+      ['/v1/jobs/{id}', 'get', ['id', 'bundleId', 'channel', 'status', 'statusUrl']],
+      ['/v1/testflight/{appId}/trains', 'get', ['trains']],
+      ['/v1/testflight/{appId}/builds', 'get', ['builds']],
+      ['/v1/dashboard/testflight/{appId}/trains', 'get', ['trains']],
+      ['/v1/dashboard/testflight/{appId}/builds', 'get', ['builds']],
     ];
     for (const [path, method, fields] of assertions) {
       const schema = document.paths?.[path]?.[method]?.responses?.['200']?.content?.['application/json']?.schema;
       expect(schema).toBeDefined();
       for (const field of fields) expect(Object.keys(schema?.properties ?? {})).toContain(field);
+    }
+  } finally {
+    await server.close();
+  }
+});
+
+test('TestFlight build contracts use the trainVersion query parameter', async () => {
+  const server = await buildServer({ includePublicRoutes: false });
+  try {
+    await server.ready();
+    const document = server.swagger() as { paths?: Record<string, Record<string, { parameters?: Array<{ name?: string; required?: boolean }> }>> };
+    for (const path of ['/v1/testflight/{appId}/builds', '/v1/dashboard/testflight/{appId}/builds']) {
+      const parameters = document.paths?.[path]?.get?.parameters ?? [];
+      const trainVersion = parameters.find((parameter) => parameter.name === 'trainVersion');
+      expect(trainVersion?.required).toBe(true);
+      expect(parameters.some((parameter) => parameter.name === 'train')).toBe(false);
     }
   } finally {
     await server.close();

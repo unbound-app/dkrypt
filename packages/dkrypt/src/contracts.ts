@@ -260,6 +260,72 @@ const DeviceHistoryResponse = object({ buckets: Type.Array(JsonObject) });
 const JobEtaResponse = object({ avgMs: Type.Union([Type.Number(), Type.Null()]) });
 const JobSloResponse = object({ targetMs: Type.Number(), historicalP95Ms: Type.Union([Type.Number(), Type.Null()]), jobs: Type.Array(JsonObject) });
 const DailyVolumeResponse = object({ days: Type.Array(object({ date: Type.String(), count: Type.Integer({ minimum: 0 }) })) });
+const ArtifactSummaryResponse = object({
+  id: Identifier,
+  bundleId: BundleId,
+  channel: Type.Union([Type.Literal('appstore'), Type.Literal('testflight')]),
+  externalVersionId: Type.Optional(Identifier),
+  testflightBuildId: Type.Optional(Type.Integer({ minimum: 1 })),
+  versionLabel: Type.Optional(Type.String()),
+  buildNumber: Type.Optional(Type.String()),
+  sizeBytes: Type.Number({ minimum: 0 }),
+  sha256: Type.String({ minLength: 64, maxLength: 64 }),
+  createdAt: Type.String(),
+  lastAccessedAt: Type.String(),
+  accessCount: Type.Integer({ minimum: 0 }),
+  fileUrl: Type.String(),
+});
+const ApiArtifactPage = object({
+  artifacts: Type.Array(ArtifactSummaryResponse),
+  total: Type.Integer({ minimum: 0 }),
+  totalBytes: Type.Number({ minimum: 0 }),
+  maxBytes: Type.Number({ minimum: 0 }),
+  nextCursor: PageCursor,
+});
+const DashboardArtifactResponse = object({
+  id: Identifier,
+  key: Type.String(),
+  bundleId: BundleId,
+  channel: Type.Union([Type.Literal('appstore'), Type.Literal('testflight')]),
+  externalVersionId: Type.Optional(Identifier),
+  testflightBuildId: Type.Optional(Type.Integer({ minimum: 1 })),
+  versionLabel: Type.Optional(Type.String()),
+  buildNumber: Type.Optional(Type.String()),
+  filePath: Type.Optional(Type.String()),
+  fileSizeBytes: Type.Number({ minimum: 0 }),
+  sha256: Type.String({ minLength: 64, maxLength: 64 }),
+  createdAt: Type.String(),
+  lastAccessedAt: Type.String(),
+  accessCount: Type.Integer({ minimum: 0 }),
+  sourceJobId: Type.Optional(Identifier),
+  fileUrl: Type.String(),
+});
+const DashboardArtifactPage = object({
+  artifacts: Type.Array(DashboardArtifactResponse),
+  total: Type.Integer({ minimum: 0 }),
+  totalBytes: Type.Number({ minimum: 0 }),
+  maxBytes: Type.Number({ minimum: 0 }),
+  nextCursor: PageCursor,
+});
+const TestFlightTrainResponse = object({ trainVersion: Type.String(), buildCount: Type.Integer({ minimum: 0 }) });
+const TestFlightBuildResponse = object({
+  id: Type.Integer({ minimum: 1 }),
+  cfBundleShortVersion: Type.String(),
+  cfBundleVersion: Type.String(),
+  bundleId: BundleId,
+  whatsNew: Type.Optional(Type.String()),
+  releaseDate: Type.Optional(Type.String()),
+  expiration: Type.Optional(Type.String()),
+  fileSize: Type.Optional(Type.Number({ minimum: 0 })),
+});
+const TestFlightTrainsResponse = object({ trains: Type.Array(TestFlightTrainResponse) });
+const TestFlightBuildsResponse = object({ builds: Type.Array(TestFlightBuildResponse) });
+const DecryptJobResponse = object({
+  ...JobSummaryResponse.properties,
+  selector: Type.Optional(Type.String()),
+  resolvedVersion: Type.Optional(Type.String()),
+  artifact: Type.Optional(ArtifactSummaryResponse),
+});
 const DeviceConnectionInput = object({
   name: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
   existingId: Type.Optional(Identifier),
@@ -437,8 +503,8 @@ register('POST', '/v1/dashboard/testflight/subscriptions/:id/sync', { params: ob
 register('POST', '/v1/dashboard/testflight/subscriptions/:id/unsubscribe', { params: object({ id: Identifier }) });
 register('GET', '/v1/dashboard/testflight/catalog', { querystring: object({ refresh: Type.Optional(Type.Literal('true')) }) });
 
-register('GET', '/v1/testflight/:appId/trains', { params: object({ appId: Type.String({ minLength: 1, maxLength: 32, pattern: '^\\d+$' }) }), querystring: object({ train: Type.Optional(Type.String({ maxLength: 64 })) }) });
-register('GET', '/v1/testflight/:appId/builds', { params: object({ appId: Type.String({ minLength: 1, maxLength: 32, pattern: '^\\d+$' }) }), querystring: object({ train: Type.Optional(Type.String({ maxLength: 64 })) }) });
+register('GET', '/v1/testflight/:appId/trains', { params: object({ appId: Type.String({ minLength: 1, maxLength: 32, pattern: '^\\d+$' }) }), querystring: object({}) });
+register('GET', '/v1/testflight/:appId/builds', { params: object({ appId: Type.String({ minLength: 1, maxLength: 32, pattern: '^\\d+$' }) }), querystring: object({ trainVersion: Type.String({ minLength: 1, maxLength: 64 }) }) });
 
 register('POST', '/v1/dashboard/devices/setup', { body: DeviceConnectionInput });
 register('POST', '/v1/dashboard/devices', { body: DeviceRecordInput });
@@ -634,6 +700,48 @@ register('GET', '/v1/dashboard/jobs/eta/:bundleId', { params: object({ bundleId:
 register('GET', '/v1/dashboard/jobs/slo', { response: { 200: JobSloResponse } });
 register('GET', '/v1/dashboard/jobs/volume', { response: { 200: DailyVolumeResponse } });
 register('GET', '/v1/dashboard/webhooks', { response: { 200: object({ deliveries: Type.Array(JsonObject) }) } });
+register('POST', '/v1/decrypts', {
+  body: object({ bundleId: BundleId, version: Type.Optional(VersionSelector) }),
+  response: { 200: DecryptJobResponse, 202: DecryptJobResponse },
+});
+register('GET', '/v1/artifacts', {
+  querystring: object({ ...PaginationQuery.properties, q: Type.Optional(Type.String({ maxLength: 200 })), channel: Type.Optional(Type.Union([Type.Literal('appstore'), Type.Literal('testflight')])) }),
+  response: { 200: ApiArtifactPage },
+});
+register('GET', '/v1/artifacts/:id', { params: object({ id: Identifier }), response: { 200: ArtifactSummaryResponse } });
+register('GET', '/v1/jobs/:id', { params: object({ id: Identifier }), response: { 200: JobSummaryResponse } });
+register('GET', '/v1/testflight/:appId/trains', {
+  params: object({ appId: Type.String({ minLength: 1, maxLength: 32, pattern: '^\\d+$' }) }),
+  querystring: object({}),
+  response: { 200: TestFlightTrainsResponse },
+});
+register('GET', '/v1/testflight/:appId/builds', {
+  params: object({ appId: Type.String({ minLength: 1, maxLength: 32, pattern: '^\\d+$' }) }),
+  querystring: object({ trainVersion: Type.String({ minLength: 1, maxLength: 64 }) }),
+  response: { 200: TestFlightBuildsResponse },
+});
+register('POST', '/v1/testflight/decrypt', {
+  body: object({ bundleId: BundleId, appId: Type.Union([Type.String({ minLength: 1, maxLength: 32 }), Type.Integer({ minimum: 1 })]), build: Type.Record(Type.String(), Type.Unknown()) }),
+  response: { 202: JobSummaryResponse },
+});
+register('GET', '/v1/dashboard/artifacts', {
+  querystring: object({ ...PaginationQuery.properties, q: Type.Optional(Type.String({ maxLength: 200 })), channel: Type.Optional(Type.Union([Type.Literal('appstore'), Type.Literal('testflight')])) }),
+  response: { 200: DashboardArtifactPage },
+});
+register('GET', '/v1/dashboard/testflight/:appId/trains', {
+  params: object({ appId: Type.String({ minLength: 1, maxLength: 32, pattern: '^\\d+$' }) }),
+  querystring: object({ deviceId: Type.Optional(Identifier) }),
+  response: { 200: TestFlightTrainsResponse },
+});
+register('GET', '/v1/dashboard/testflight/:appId/builds', {
+  params: object({ appId: Type.String({ minLength: 1, maxLength: 32, pattern: '^\\d+$' }) }),
+  querystring: object({ trainVersion: Type.String({ minLength: 1, maxLength: 64 }), deviceId: Type.Optional(Identifier) }),
+  response: { 200: TestFlightBuildsResponse },
+});
+register('POST', '/v1/dashboard/testflight/decrypt', {
+  body: object({ bundleId: BundleId, appId: Type.Union([Type.String({ minLength: 1, maxLength: 32 }), Type.Integer({ minimum: 1 })]), build: Type.Record(Type.String(), Type.Unknown()), deviceId: Type.Optional(Identifier), preferPrimary: Type.Optional(Type.Boolean()) }),
+  response: { 202: JobSummaryResponse },
+});
 
 export function getRouteContract(method: string, path: string): FastifySchema | undefined {
   const key = `${method} ${path}`;
