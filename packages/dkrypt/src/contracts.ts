@@ -688,6 +688,17 @@ const DiscordGuildsResponse = object({ guilds: Type.Array(DiscordGuildResponse) 
 const DiscordRolesResponse = object({ roles: Type.Array(JsonObject) });
 const DiscordPerksResponse = object({ perks: Type.Array(JsonObject) });
 const DiscordGuildUpdateResponse = object({ ok: Type.Boolean(), guilds: Type.Array(DiscordGuildResponse) });
+const DiscordRolePerkResponse = object({
+  id: Identifier,
+  guildId: Identifier,
+  guildName: Type.Optional(Type.String()),
+  guildIcon: Type.Union([Type.String(), Type.Null()]),
+  discordRoleId: Identifier,
+  discordRoleName: Type.Optional(Type.String()),
+  discordRoleColor: Type.Integer(),
+  appRoleId: Identifier,
+  createdAt: Type.Number(),
+});
 const ApiKeyRevokedResponse = object({ revoked: Type.Array(Identifier) });
 const ApiKeyExtendedResponse = object({ extended: Type.Array(Identifier) });
 const ApiKeyUpdatedResponse = object({ updated: Type.Array(Identifier) });
@@ -713,6 +724,44 @@ const UserPrefsResponse = object({
   accountEmail: Type.Optional(Type.String()),
 });
 const PushKeyResponse = object({ publicKey: Type.String() });
+const BackupExportResponse = object({
+  backupVersion: Type.Integer({ minimum: 1 }),
+  exportedAt: Type.Number(),
+  allowedUsers: Type.Array(JsonObject),
+  roles: Type.Array(JsonObject),
+  apiKeys: Type.Array(JsonObject),
+  settings: JsonObject,
+  watches: Type.Array(JsonObject),
+  devices: Type.Array(JsonObject),
+  jobHistory: Type.Array(JsonObject),
+  lastSchedulerRunAt: Type.Optional(Type.Number()),
+  userPrefs: JsonObject,
+  auditLog: Type.Array(JsonObject),
+  schedulerRunHistory: Type.Array(JsonObject),
+  rootSessionVersion: Type.Number(),
+  apiKeyUsage: JsonObject,
+  apiKeyBundleUsage: Type.Optional(JsonObject),
+  deviceActivity: Type.Array(JsonObject),
+  testFlightSubscriptions: Type.Array(JsonObject),
+  rootMfa: Type.Optional(JsonObject),
+  passkeys: Type.Array(JsonObject),
+  billing: JsonObject,
+  identities: JsonObject,
+});
+const WebhookReceiptResponse = object({ received: Type.Boolean(), duplicate: Type.Optional(Type.Boolean()), quarantined: Type.Optional(Type.Boolean()), inProgress: Type.Optional(Type.Boolean()) });
+const TestFlightDiagnosticsResponse = object({
+  bridge: object({
+    bridgeVersion: Type.Optional(Type.String()),
+    capabilities: Type.Optional(Type.Array(Type.String())),
+    hasInstaller: Type.Optional(Type.Boolean()),
+    hasCatalogManager: Type.Optional(Type.Boolean()),
+    backgroundTaskActive: Type.Optional(Type.Boolean()),
+    backgroundTimeRemaining: Type.Optional(Type.Number()),
+  }),
+  install: Type.Optional(JsonObject),
+  recentLog: Type.Optional(Type.Array(Type.String())),
+});
+const DispatchTriggerResponse = object({ ok: Type.Boolean(), error: Type.Optional(Type.String()) });
 const DeviceConnectionInput = object({
   name: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
   existingId: Type.Optional(Identifier),
@@ -1407,7 +1456,7 @@ register('GET', '/v1/dashboard/watches/export', {
   response: { 200: WatchExportResponse },
 });
 register('GET', '/v1/dashboard/backup/export', {
-  response: { 200: JsonObject },
+  response: { 200: BackupExportResponse },
 });
 register('GET', '/v1/dashboard/backup/history/:id/download', {
   params: object({ id: Identifier }),
@@ -1456,7 +1505,7 @@ register('POST', '/v1/dashboard/discord/perks', {
     discordRoleColor: Type.Integer({ minimum: 0 }),
     appRoleId: Identifier,
   }),
-  response: { 201: JsonObject },
+  response: { 201: DiscordRolePerkResponse },
 });
 register('DELETE', '/v1/dashboard/discord/perks/:id', {
   params: object({ id: Identifier }),
@@ -1520,6 +1569,26 @@ register('POST', '/v1/dashboard/push/test', {
 });
 register('POST', '/v1/dashboard/email/test', {
   response: { 200: OkResponse },
+});
+register('GET', '/v1/dashboard/testflight/diagnostics', {
+  response: { 200: TestFlightDiagnosticsResponse },
+});
+register('POST', '/v1/dashboard/watches/:id/trigger-dispatch', {
+  params: object({ id: Identifier }),
+  response: { 202: DispatchTriggerResponse, 409: DispatchTriggerResponse },
+});
+register('POST', '/v1/stripe/webhook', {
+  headers: object({ 'stripe-signature': Type.String({ minLength: 1, maxLength: 200 }) }),
+  body: Type.Any(),
+  response: { 200: WebhookReceiptResponse },
+});
+register('POST', '/v1/nowpayments/webhook', {
+  headers: object({ 'x-nowpayments-sig': Type.String({ minLength: 1, maxLength: 500 }) }),
+  body: Type.Any(),
+  response: { 200: WebhookReceiptResponse },
+});
+register('GET', '/v1/metrics', {
+  response: { 200: Type.String() },
 });
 
 export function getRouteContract(method: string, path: string): FastifySchema | undefined {

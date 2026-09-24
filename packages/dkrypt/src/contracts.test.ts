@@ -195,6 +195,8 @@ test('administrative, notification, and diagnostic contracts publish structured 
       ['/v1/dashboard/github/rate-limit', 'get', '200', ['limit', 'remaining', 'reset']],
       ['/v1/dashboard/discord/status', 'get', '200', ['botEnabled', 'guilds']],
       ['/v1/dashboard/discord/perks', 'get', '200', ['perks']],
+      ['/v1/dashboard/discord/perks', 'post', '201', ['id', 'guildId', 'discordRoleId', 'appRoleId']],
+      ['/v1/dashboard/backup/export', 'get', '200', ['backupVersion', 'allowedUsers', 'devices', 'billing', 'identities']],
       ['/v1/dashboard/keys/bulk-revoke', 'post', '200', ['revoked']],
       ['/v1/dashboard/keys/bulk-extend-expiry', 'post', '200', ['extended']],
       ['/v1/dashboard/keys/bulk-set-daily-limit', 'post', '200', ['updated']],
@@ -204,6 +206,10 @@ test('administrative, notification, and diagnostic contracts publish structured 
       ['/v1/dashboard/keys/{id}/allow-testflight', 'patch', '200', ['ok', 'allowTestFlight']],
       ['/v1/dashboard/me/prefs', 'get', '200', ['theme', 'density', 'preferPrimaryDevice']],
       ['/v1/dashboard/push/public-key', 'get', '200', ['publicKey']],
+      ['/v1/dashboard/testflight/diagnostics', 'get', '200', ['bridge']],
+      ['/v1/dashboard/watches/{id}/trigger-dispatch', 'post', '202', ['ok', 'error']],
+      ['/v1/stripe/webhook', 'post', '200', ['received', 'duplicate']],
+      ['/v1/nowpayments/webhook', 'post', '200', ['received', 'duplicate']],
     ];
     for (const [path, method, status, fields] of assertions) {
       const schema = document.paths?.[path]?.[method]?.responses?.[status]?.content?.['application/json']?.schema;

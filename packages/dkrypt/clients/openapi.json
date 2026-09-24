@@ -56,29 +56,25 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "anyOf": [
-                    {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    },
-                    {
-                      "type": "array",
-                      "items": {}
-                    },
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    },
-                    {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "received"
+                  ],
+                  "properties": {
+                    "received": {
                       "type": "boolean"
                     },
-                    {
-                      "type": "null"
+                    "duplicate": {
+                      "type": "boolean"
+                    },
+                    "quarantined": {
+                      "type": "boolean"
+                    },
+                    "inProgress": {
+                      "type": "boolean"
                     }
-                  ]
+                  }
                 }
               }
             }
@@ -438,29 +434,25 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "anyOf": [
-                    {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    },
-                    {
-                      "type": "array",
-                      "items": {}
-                    },
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    },
-                    {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "received"
+                  ],
+                  "properties": {
+                    "received": {
                       "type": "boolean"
                     },
-                    {
-                      "type": "null"
+                    "duplicate": {
+                      "type": "boolean"
+                    },
+                    "quarantined": {
+                      "type": "boolean"
+                    },
+                    "inProgress": {
+                      "type": "boolean"
                     }
-                  ]
+                  }
                 }
               }
             }
@@ -1769,29 +1761,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "anyOf": [
-                    {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    },
-                    {
-                      "type": "array",
-                      "items": {}
-                    },
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    },
-                    {
-                      "type": "boolean"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
+                  "type": "string"
                 }
               }
             }
@@ -54489,7 +54459,17 @@
                 "schema": {
                   "additionalProperties": true,
                   "type": "object",
-                  "properties": {}
+                  "required": [
+                    "ok"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  }
                 }
               }
             }
@@ -54661,7 +54641,17 @@
                 "schema": {
                   "additionalProperties": true,
                   "type": "object",
-                  "properties": {}
+                  "required": [
+                    "ok"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  }
                 }
               }
             }
@@ -55190,29 +55180,51 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "anyOf": [
-                    {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "bridge"
+                  ],
+                  "properties": {
+                    "bridge": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {
+                        "bridgeVersion": {
+                          "type": "string"
+                        },
+                        "capabilities": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "hasInstaller": {
+                          "type": "boolean"
+                        },
+                        "hasCatalogManager": {
+                          "type": "boolean"
+                        },
+                        "backgroundTaskActive": {
+                          "type": "boolean"
+                        },
+                        "backgroundTimeRemaining": {
+                          "type": "number"
+                        }
+                      }
+                    },
+                    "install": {
                       "additionalProperties": true,
                       "type": "object",
                       "properties": {}
                     },
-                    {
+                    "recentLog": {
                       "type": "array",
-                      "items": {}
-                    },
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    },
-                    {
-                      "type": "boolean"
-                    },
-                    {
-                      "type": "null"
+                      "items": {
+                        "type": "string"
+                      }
                     }
-                  ]
+                  }
                 }
               }
             }
@@ -75729,7 +75741,59 @@
                 "schema": {
                   "additionalProperties": true,
                   "type": "object",
-                  "properties": {}
+                  "required": [
+                    "id",
+                    "guildId",
+                    "guildIcon",
+                    "discordRoleId",
+                    "discordRoleColor",
+                    "appRoleId",
+                    "createdAt"
+                  ],
+                  "properties": {
+                    "id": {
+                      "minLength": 1,
+                      "maxLength": 200,
+                      "type": "string"
+                    },
+                    "guildId": {
+                      "minLength": 1,
+                      "maxLength": 200,
+                      "type": "string"
+                    },
+                    "guildName": {
+                      "type": "string"
+                    },
+                    "guildIcon": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "discordRoleId": {
+                      "minLength": 1,
+                      "maxLength": 200,
+                      "type": "string"
+                    },
+                    "discordRoleName": {
+                      "type": "string"
+                    },
+                    "discordRoleColor": {
+                      "type": "integer"
+                    },
+                    "appRoleId": {
+                      "minLength": 1,
+                      "maxLength": 200,
+                      "type": "string"
+                    },
+                    "createdAt": {
+                      "type": "number"
+                    }
+                  }
                 }
               }
             }
@@ -77176,7 +77240,165 @@
                 "schema": {
                   "additionalProperties": true,
                   "type": "object",
-                  "properties": {}
+                  "required": [
+                    "backupVersion",
+                    "exportedAt",
+                    "allowedUsers",
+                    "roles",
+                    "apiKeys",
+                    "settings",
+                    "watches",
+                    "devices",
+                    "jobHistory",
+                    "userPrefs",
+                    "auditLog",
+                    "schedulerRunHistory",
+                    "rootSessionVersion",
+                    "apiKeyUsage",
+                    "deviceActivity",
+                    "testFlightSubscriptions",
+                    "passkeys",
+                    "billing",
+                    "identities"
+                  ],
+                  "properties": {
+                    "backupVersion": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "exportedAt": {
+                      "type": "number"
+                    },
+                    "allowedUsers": {
+                      "type": "array",
+                      "items": {
+                        "additionalProperties": true,
+                        "type": "object",
+                        "properties": {}
+                      }
+                    },
+                    "roles": {
+                      "type": "array",
+                      "items": {
+                        "additionalProperties": true,
+                        "type": "object",
+                        "properties": {}
+                      }
+                    },
+                    "apiKeys": {
+                      "type": "array",
+                      "items": {
+                        "additionalProperties": true,
+                        "type": "object",
+                        "properties": {}
+                      }
+                    },
+                    "settings": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    },
+                    "watches": {
+                      "type": "array",
+                      "items": {
+                        "additionalProperties": true,
+                        "type": "object",
+                        "properties": {}
+                      }
+                    },
+                    "devices": {
+                      "type": "array",
+                      "items": {
+                        "additionalProperties": true,
+                        "type": "object",
+                        "properties": {}
+                      }
+                    },
+                    "jobHistory": {
+                      "type": "array",
+                      "items": {
+                        "additionalProperties": true,
+                        "type": "object",
+                        "properties": {}
+                      }
+                    },
+                    "lastSchedulerRunAt": {
+                      "type": "number"
+                    },
+                    "userPrefs": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    },
+                    "auditLog": {
+                      "type": "array",
+                      "items": {
+                        "additionalProperties": true,
+                        "type": "object",
+                        "properties": {}
+                      }
+                    },
+                    "schedulerRunHistory": {
+                      "type": "array",
+                      "items": {
+                        "additionalProperties": true,
+                        "type": "object",
+                        "properties": {}
+                      }
+                    },
+                    "rootSessionVersion": {
+                      "type": "number"
+                    },
+                    "apiKeyUsage": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    },
+                    "apiKeyBundleUsage": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    },
+                    "deviceActivity": {
+                      "type": "array",
+                      "items": {
+                        "additionalProperties": true,
+                        "type": "object",
+                        "properties": {}
+                      }
+                    },
+                    "testFlightSubscriptions": {
+                      "type": "array",
+                      "items": {
+                        "additionalProperties": true,
+                        "type": "object",
+                        "properties": {}
+                      }
+                    },
+                    "rootMfa": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    },
+                    "passkeys": {
+                      "type": "array",
+                      "items": {
+                        "additionalProperties": true,
+                        "type": "object",
+                        "properties": {}
+                      }
+                    },
+                    "billing": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    },
+                    "identities": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
                 }
               }
             }
