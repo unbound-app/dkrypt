@@ -33,7 +33,7 @@ import { requirePermission, requireSession } from '#session.js';
 import { PermissionFlag } from '#permissions.js';
 import { recordAudit } from '#store/state.js';
 import { constructStripeWebhookEvent, getStripe } from '#stripe.js';
-import { getWebhookInboxRecord, listWebhookInbox, markWebhookFailed, markWebhookProcessed, quarantineWebhook, receiveWebhook } from '#webhookInbox.js';
+import { claimWebhook, getWebhookInboxRecord, listWebhookInbox, markWebhookFailed, markWebhookProcessed, quarantineWebhook, receiveWebhook, releaseWebhookClaim } from '#webhookInbox.js';
 import { decodeCursor, nextCursor } from '#util/cursor.js';
 
 function metadataUserId(metadata: unknown): string | undefined {
@@ -170,6 +170,14 @@ stripeWebhookRouter.post('/v1/stripe/webhook', async (req, res) => {
     res.json({ received: true, duplicate: true });
     return;
   }
+  if (inbox.duplicate && inbox.record.status === 'quarantined') {
+    res.json({ received: true, duplicate: true, quarantined: true });
+    return;
+  }
+  if (!claimWebhook(inbox.record.id)) {
+    res.json({ received: true, duplicate: true, inProgress: true });
+    return;
+  }
   try {
     await processStripeEvent(event);
     markWebhookProcessed(inbox.record.id);
@@ -178,6 +186,8 @@ stripeWebhookRouter.post('/v1/stripe/webhook', async (req, res) => {
     markWebhookFailed(inbox.record.id, String(error));
     log.error('Stripe webhook failed', { eventType: event.type, error: String(error) });
     res.status(500).json({ error: 'webhook processing failed' });
+  } finally {
+    releaseWebhookClaim(inbox.record.id);
   }
 });
 
@@ -218,6 +228,14 @@ nowpaymentsWebhookRouter.post('/v1/nowpayments/webhook', async (req, res) => {
     res.json({ received: true, duplicate: true });
     return;
   }
+  if (inbox.duplicate && inbox.record.status === 'quarantined') {
+    res.json({ received: true, duplicate: true, quarantined: true });
+    return;
+  }
+  if (!claimWebhook(inbox.record.id)) {
+    res.json({ received: true, duplicate: true, inProgress: true });
+    return;
+  }
   try {
     await processNowPaymentsEvent({ id: eventId, payment });
     markWebhookProcessed(inbox.record.id);
@@ -226,6 +244,8 @@ nowpaymentsWebhookRouter.post('/v1/nowpayments/webhook', async (req, res) => {
     markWebhookFailed(inbox.record.id, String(error));
     log.error('NOWPayments IPN failed', { error: String(error) });
     res.status(500).json({ error: 'webhook processing failed' });
+  } finally {
+    releaseWebhookClaim(inbox.record.id);
   }
 });
 
@@ -483,6 +503,10 @@ billingRouter.post('/v1/billing/webhooks/inbox/:id/replay', requirePermission(Pe
     res.json({ replayed: false, duplicate: true, status: current.status });
     return;
   }
+  if (!claimWebhook(current.id)) {
+    res.status(409).json({ error: 'webhook is already being processed' });
+    return;
+  }
   try {
     const payload = JSON.parse(current.rawBody) as Record<string, unknown>;
     if (current.provider === 'stripe') {
@@ -498,6 +522,8 @@ billingRouter.post('/v1/billing/webhooks/inbox/:id/replay', requirePermission(Pe
   } catch (error) {
     markWebhookFailed(current.id, String(error));
     res.status(500).json({ error: 'webhook replay failed' });
+  } finally {
+    releaseWebhookClaim(current.id);
   }
 });
 

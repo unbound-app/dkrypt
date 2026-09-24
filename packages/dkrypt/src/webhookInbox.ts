@@ -19,6 +19,7 @@ export interface WebhookInboxRecord {
 
 const database = openStateCollectionDatabase({ stateDir: config.stateDir, filename: config.stateDatabaseFile, busyTimeoutMs: config.stateDbBusyTimeoutMs }, ['webhook_inbox', 'webhook_attempts']);
 const records = new Map<string, WebhookInboxRecord>();
+const claimedRecords = new Set<string>();
 
 for (const value of readStateCollection(database, 'webhook_inbox')) {
   if (!isWebhookInboxRecord(value)) throw new Error('webhook inbox record is malformed');
@@ -54,6 +55,17 @@ export function receiveWebhook(provider: WebhookInboxRecord['provider'], eventId
   records.set(record.id, record);
   persist();
   return { record, duplicate: false };
+}
+
+export function claimWebhook(id: string): boolean {
+  const record = records.get(id);
+  if (!record || record.status === 'processed' || record.status === 'quarantined' || claimedRecords.has(id)) return false;
+  claimedRecords.add(id);
+  return true;
+}
+
+export function releaseWebhookClaim(id: string): void {
+  claimedRecords.delete(id);
 }
 
 export function markWebhookProcessed(id: string): WebhookInboxRecord | undefined {
@@ -96,5 +108,6 @@ export function getWebhookInboxRecord(id: string): WebhookInboxRecord | undefine
 }
 
 export function closeWebhookInboxDatabase(): void {
+  claimedRecords.clear();
   database.close();
 }
