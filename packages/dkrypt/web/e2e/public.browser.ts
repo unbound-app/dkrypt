@@ -55,3 +55,61 @@ test('pricing page fits a phone viewport without horizontal overflow', async ({ 
   await page.keyboard.press('Tab');
   await expect(page.locator(':focus')).toBeVisible();
 });
+
+test('authenticated top bar exposes community links without mobile overflow', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.unroute('**/v1/auth/session');
+  await page.route('**/v1/auth/session', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        loggedIn: true,
+        sub: 'root',
+        displayName: 'Administrator',
+        permissions: '1',
+        identities: [],
+        linkedProviders: [],
+        githubOauthEnabled: false,
+        discordOauthEnabled: false,
+        mfa: { enabled: false, recoveryCodesRemaining: 0, required: false },
+      }),
+    });
+  });
+  await page.route('**/v1/auth/passkeys', async (route) => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ passkeys: [] }) });
+  });
+  await page.route('**/v1/dashboard/me/prefs', async (route) => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ theme: 'dark', accent: 'violet', sound: true }) });
+  });
+  await page.route('**/v1/dashboard/overview', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        schedulerEnabled: false,
+        settings: {},
+        watches: [],
+        devices: [],
+        schedulerRunHistory: [],
+        disk: { totalBytes: 1, freeBytes: 1, usedBytes: 0, usedPercent: 0 },
+        isPaidPlan: false,
+        maintenance: { active: false, manual: false, auto: false },
+        activeJobs: [],
+      }),
+    });
+  });
+  await page.route('**/v1/dashboard/events', async (route) => {
+    await route.fulfill({ contentType: 'text/event-stream', body: ': connected\n\n' });
+  });
+
+  await page.goto('/');
+  const github = page.getByRole('link', { name: 'Open dkrypt on GitHub' });
+  const discord = page.getByRole('link', { name: 'Join the dkrypt Discord server' });
+  await expect(github).toBeVisible();
+  await expect(discord).toBeVisible();
+  await expect(github).toHaveAttribute('href', 'https://github.com/unbound-app/dkrypt');
+  await expect(discord).toHaveAttribute('href', 'https://discord.gg/NdaBaxFKnn');
+  await expect(discord).toHaveAttribute('target', '_blank');
+
+  const dimensions = await page.evaluate(() => ({ bodyWidth: document.body.scrollWidth, viewportWidth: document.documentElement.clientWidth }));
+  expect(dimensions.bodyWidth).toBeLessThanOrEqual(dimensions.viewportWidth + 1);
+});
