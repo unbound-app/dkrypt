@@ -21,7 +21,7 @@ import { requirePermission, requireSession } from '#session.js';
 import { getDeviceHealth, getDeviceInstallBlocker, getDeviceReadiness, isBridgeHeartbeatFresh } from '#deviceHealth.js';
 import { decodeCursor, nextCursor } from '#util/cursor.js';
 import { getCachedDeviceHealth } from '#deviceHealthCache.js';
-import { discoverDevices, execCommand, isDirectUsbDeviceAgentConnection, listInstalledAppStoreBundles, sendSpringBoardBridgeRequest, setupDeviceConnection, validateDeviceRootDir, withAutoinstallDeviceAgent, withSSH, type DeviceConnection } from '#idevice.js';
+import { discoverDevices, execCommand, isDirectUsbDeviceAgentConnection, listInstalledAppStoreBundles, sendSpringBoardBridgeRequest, setupDeviceConnection, withAutoinstallDeviceAgent, withSSH, type DeviceConnection } from '#idevice.js';
 import { getTestFlightBridgeDiagnostics, listBuilds, listTrains, type TFBuild } from '#testflight.js';
 import { nextCronRunAt, nextCronRuns } from '#util/cron.js';
 import { getDiskUsage } from '#util/diskUsage.js';
@@ -1109,6 +1109,7 @@ function parseDeviceInput(body: unknown): DeviceInput | undefined {
   const b = body as Record<string, unknown>;
   const name = typeof b.name === 'string' ? b.name.trim() : '';
   const rootDir = typeof b.rootDir === 'string' ? b.rootDir.trim() : '';
+  if (rootDir) return undefined;
   const transport = b.transport === 'usb' || b.transport === 'wifi' ? b.transport : undefined;
   const host = typeof b.host === 'string' ? b.host.trim() : '';
   const user = typeof b.user === 'string' ? b.user.trim() : '';
@@ -1125,7 +1126,6 @@ function parseDeviceInput(body: unknown): DeviceInput | undefined {
     udid: udid || undefined,
     usbmuxNetwork: b.usbmuxNetwork === true,
     productType: typeof b.productType === 'string' ? b.productType.trim() || undefined : undefined,
-    rootDir: rootDir || undefined,
     iosVersion: typeof b.iosVersion === 'string' ? b.iosVersion.trim() || undefined : undefined,
     toolchain: typeof b.toolchain === 'string' ? b.toolchain.trim() || undefined : undefined,
     notes: typeof b.notes === 'string' ? b.notes.trim().slice(0, 1000) || undefined : undefined,
@@ -1223,19 +1223,16 @@ dashboardRouter.post('/v1/dashboard/devices/setup', canManageDevices, async (req
   }
 });
 
-dashboardRouter.post('/v1/dashboard/devices', canManageDevices, async (req, res) => {
+dashboardRouter.post('/v1/dashboard/devices', canManageDevices, (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  if (typeof body.rootDir === 'string' && body.rootDir.trim()) {
+    res.status(400).json({ error: 'legacy device roots are read-only; discover and set up the device instead' });
+    return;
+  }
   const input = parseDeviceInput(req.body);
   if (!input) {
     res.status(400).json({ error: 'name and a device connection are required' });
     return;
-  }
-  if (input.rootDir) {
-    try {
-      await validateDeviceRootDir(input.rootDir);
-    } catch (err) {
-      res.status(400).json({ error: `couldn't read a valid legacy device connection: ${err instanceof Error ? err.message : String(err)}` });
-      return;
-    }
   }
   const device = createDevice(input, res.locals.session.sub);
   emitJobsChanged();
@@ -1245,6 +1242,10 @@ dashboardRouter.post('/v1/dashboard/devices', canManageDevices, async (req, res)
 dashboardRouter.patch('/v1/dashboard/devices/:id', canManageDevices, async (req, res) => {
   const body = (req.body ?? {}) as Record<string, unknown>;
   const patch: Partial<DeviceInput> = {};
+  if (typeof body.rootDir === 'string' && body.rootDir.trim()) {
+    res.status(400).json({ error: 'legacy device roots are read-only; discover and set up the device instead' });
+    return;
+  }
   if (typeof body.name === 'string' && body.name.trim()) patch.name = body.name.trim();
   if (body.transport === 'usb' || body.transport === 'wifi') patch.transport = body.transport;
   if (typeof body.host === 'string') patch.host = body.host.trim() || undefined;
@@ -1253,21 +1254,11 @@ dashboardRouter.patch('/v1/dashboard/devices/:id', canManageDevices, async (req,
   if (typeof body.udid === 'string') patch.udid = body.udid.trim() || undefined;
   if (typeof body.usbmuxNetwork === 'boolean') patch.usbmuxNetwork = body.usbmuxNetwork;
   if (typeof body.productType === 'string') patch.productType = body.productType.trim() || undefined;
-  if (typeof body.rootDir === 'string' && body.rootDir.trim()) patch.rootDir = body.rootDir.trim();
   if (typeof body.iosVersion === 'string') patch.iosVersion = body.iosVersion.trim() || undefined;
   if (typeof body.toolchain === 'string') patch.toolchain = body.toolchain.trim() || undefined;
   if (typeof body.notes === 'string') patch.notes = body.notes.trim().slice(0, 1000) || undefined;
   if (typeof body.enabled === 'boolean') patch.enabled = body.enabled;
   if (typeof body.isPrimary === 'boolean') patch.isPrimary = body.isPrimary;
-
-  if (patch.rootDir) {
-    try {
-      await validateDeviceRootDir(patch.rootDir);
-    } catch (err) {
-      res.status(400).json({ error: `couldn't read a valid legacy device connection: ${err instanceof Error ? err.message : String(err)}` });
-      return;
-    }
-  }
 
   const result = updateDevice(req.params.id, patch, res.locals.session.sub);
   if (!result.ok) {

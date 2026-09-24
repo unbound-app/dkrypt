@@ -47,6 +47,40 @@ test('Fastify persists dashboard device mutations and returns the updated overvi
   }
 });
 
+test('Fastify keeps legacy device roots read-only', async () => {
+  const { server, cookie } = await signIn();
+
+  try {
+    const created = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/devices',
+      headers: { cookie },
+      payload: { name: 'legacy device', rootDir: '/root/.ipadecrypt' },
+    });
+    expect(created.statusCode).toBe(400);
+    expect((created.json() as { error: string }).error).toBe('legacy device roots are read-only; discover and set up the device instead');
+
+    const normal = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/devices',
+      headers: { cookie },
+      payload: { name: 'normal device', transport: 'wifi', host: '192.168.1.10', port: 22, user: 'mobile' },
+    });
+    const device = normal.json() as { id: string };
+    const patched = await server.inject({
+      method: 'PATCH',
+      url: `/v1/dashboard/devices/${device.id}`,
+      headers: { cookie },
+      payload: { rootDir: '/root/.ipadecrypt' },
+    });
+    expect(patched.statusCode).toBe(400);
+    expect((patched.json() as { error: string }).error).toBe('legacy device roots are read-only; discover and set up the device instead');
+    await server.inject({ method: 'DELETE', url: `/v1/dashboard/devices/${device.id}`, headers: { cookie } });
+  } finally {
+    await server.close();
+  }
+});
+
 test('Fastify sends the initial dashboard overview over SSE', async () => {
   const { server, cookie } = await signIn();
   const baseUrl = await server.listen({ port: 0, host: '127.0.0.1' });
