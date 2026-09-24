@@ -23,7 +23,6 @@ services:
       DEVICE_PAIRING_STORE: /data/state/device-pairing
       NETMUXD_BIN: /usr/local/bin/netmuxd
     volumes:
-      - appstore-config:/root/.ipadecrypt
       - ipa-storage:/data/artifacts
       - state:/data/state
       - ${DEVICE_SSH_KEY_HOST_PATH:-${HOME}/.ssh/id_ed25519}:/root/.ssh/id_ed25519:ro
@@ -39,8 +38,6 @@ services:
           memory: 4G
 
 volumes:
-  appstore-config:
-    name: dkrypt_appstore-config
   ipa-storage:
     name: dkrypt_ipa-tmp
   state:

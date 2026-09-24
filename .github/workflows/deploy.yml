@@ -180,7 +180,6 @@ jobs:
                 DEVICE_PAIRING_STORE: /data/state/device-pairing
                 NETMUXD_BIN: /usr/local/bin/netmuxd
               volumes:
-                - appstore-config:/root/.ipadecrypt
                 - ipa-storage:/data/artifacts
                 - state:/data/state
                 - ${DEVICE_SSH_KEY_HOST_PATH:?DEVICE_SSH_KEY_HOST_PATH is required}:/root/.ssh/id_ed25519:ro
@@ -195,9 +194,6 @@ jobs:
                     cpus: '4.0'
                     memory: 4G
           volumes:
-            appstore-config:
-              external: true
-              name: dkrypt_appstore-config
             ipa-storage:
               external: true
               name: dkrypt_ipa-tmp
