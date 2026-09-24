@@ -131,7 +131,7 @@ export async function buildServer(options: { includePublicRoutes?: boolean } = {
       .replaceAll('__PUBLIC_BASE_URL__', config.publicBaseUrl)
       .replaceAll('__OG_IMAGE_VERSION__', ogImageVersion);
 
-    for (const route of ['/', '/pricing', '/terms', '/privacy', '/refund-policy', '/contact']) {
+    for (const route of ['/', '/pricing', '/terms', '/privacy', '/refund-policy', '/contact', '/status']) {
       server.get(route, (request, reply) => reply.type('text/html').send(renderPublicPage(indexHtml, request.url)));
     }
 

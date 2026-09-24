@@ -17,6 +17,23 @@ const ErrorEnvelope = Type.Object(
   },
   { additionalProperties: true },
 );
+const PublicStatusState = Type.Union([
+  Type.Literal('operational'),
+  Type.Literal('degraded'),
+  Type.Literal('maintenance'),
+  Type.Literal('not_configured'),
+  Type.Literal('paused'),
+  Type.Literal('unknown'),
+]);
+const PublicStatusResponse = Type.Object({
+  status: Type.Union([Type.Literal('operational'), Type.Literal('degraded'), Type.Literal('maintenance')]),
+  checkedAt: Type.String(),
+  components: Type.Object({
+    service: Type.Object({ state: PublicStatusState }),
+    automation: Type.Object({ state: PublicStatusState }),
+    scheduler: Type.Object({ state: PublicStatusState }),
+  }),
+});
 const PaginationQuery = object({ cursor: Type.Optional(Type.String({ minLength: 1, maxLength: 512 })), offset: Type.Optional(Type.Integer({ minimum: 0 })), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })) });
 
 function object(properties: Record<string, TSchema>): TSchema {
@@ -63,6 +80,12 @@ function fallbackContract(method: string, path: string): FastifySchema {
 
 register('POST', '/v1/decrypts', {
   body: object({ bundleId: BundleId, version: Type.Optional(VersionSelector) }),
+});
+
+register('GET', '/v1/status', {
+  tags: ['public'],
+  summary: 'Public service status',
+  response: { 200: PublicStatusResponse },
 });
 
 register('GET', '/v1/decrypt', {

@@ -5,6 +5,7 @@
     { href: '/privacy', label: 'Privacy' },
     { href: '/refund-policy', label: 'Refund policy' },
     { href: '/contact', label: 'Contact' },
+    { href: '/status', label: 'Status' },
   ];
 </script>
 

@@ -1,42 +1,42 @@
 export const GENERATED_CHANGELOG = [
   {
     "date": "2026-09-24",
-    "title": "fix(devices): keep legacy roots read-only",
-    "description": "Released in 4126644."
+    "title": "fix(device): correct testflight bridge alert state",
+    "description": "Released in 55868e4."
   },
   {
     "date": "2026-09-24",
-    "title": "fix(web): recover dashboard state after live gaps",
-    "description": "Released in 7ca1850."
+    "title": "fix(ci): make legacy service smoke check portable",
+    "description": "Released in 341f14d."
   },
   {
     "date": "2026-09-24",
-    "title": "feat(reliability): complete bridge cancellation and passkey reauthentication",
-    "description": "Released in 5fb2f79."
+    "title": "fix(ci): wait for bridge readiness during smoke tests",
+    "description": "Released in adfab74."
   },
   {
     "date": "2026-09-24",
-    "title": "fix(deploy): trust host-mounted device key",
-    "description": "Released in af6d1cb."
+    "title": "ci(deploy): gate on ready device transport",
+    "description": "Released in ca1cb15."
   },
   {
     "date": "2026-09-24",
-    "title": "fix(deploy): report compatibility key sources",
-    "description": "Released in 7fc8523."
+    "title": "fix(reliability): drain background services during shutdown",
+    "description": "Released in c7101fc."
   },
   {
     "date": "2026-09-24",
-    "title": "fix(deploy): diagnose missing device key",
-    "description": "Released in bef7404."
+    "title": "fix(device): retry transient rust health gaps",
+    "description": "Released in 7c7c904."
   },
   {
     "date": "2026-09-24",
-    "title": "fix(deploy): migrate existing device key mount",
-    "description": "Released in 6581044."
+    "title": "test(bridge): cover authenticated rpc socket",
+    "description": "Released in 0255466."
   },
   {
     "date": "2026-09-24",
-    "title": "fix(deploy): resolve homelab runtime home",
-    "description": "Released in f5b80d7."
+    "title": "chore(devices): remove legacy bootstrap volume",
+    "description": "Released in 67fdcc0."
   }
 ] as const;

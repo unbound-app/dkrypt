@@ -120,6 +120,28 @@ test('Fastify serves browser identity assets from the public root', async () => 
   }
 });
 
+test('Fastify exposes coarse public service status without device details', async () => {
+  const server = await buildServer({ includePublicRoutes: false });
+
+  try {
+    const response = await server.inject({ method: 'GET', url: '/v1/status' });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      status: expect.stringMatching(/^(operational|degraded|maintenance)$/),
+      checkedAt: expect.any(String),
+      components: {
+        service: { state: expect.any(String) },
+        automation: { state: expect.any(String) },
+        scheduler: { state: expect.any(String) },
+      },
+    });
+    expect(response.body).not.toContain('deviceId');
+    expect(response.body).not.toContain('capabilities');
+  } finally {
+    await server.close();
+  }
+});
+
 test('Fastify includes a session-protected artifact download in live history events', async () => {
   const { server, cookie } = await signIn();
   const baseUrl = await server.listen({ port: 0, host: '127.0.0.1' });

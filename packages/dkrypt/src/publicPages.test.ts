@@ -13,6 +13,7 @@ describe('renderPublicPage', () => {
     ['/privacy', 'Privacy notice'],
     ['/refund-policy', '14 days'],
     ['/contact', 'Contact dkrypt'],
+    ['/status', 'dkrypt service status'],
   ])('renders public fallback content for %s', (pathname, expected) => {
     const rendered = renderPublicPage(shell, pathname);
 

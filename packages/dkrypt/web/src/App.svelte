@@ -31,6 +31,7 @@
 	import ContactPage from "#components/ContactPage.svelte";
 	import TabIcon from "#components/TabIcon.svelte";
 	import PublicPricing from "#components/PublicPricing.svelte";
+	import PublicStatus from "#components/PublicStatus.svelte";
 	import SessionExpiryBanner from "#components/SessionExpiryBanner.svelte";
 	import SessionsDialog from "#components/SessionsDialog.svelte";
 	import SetupBanner from "#components/SetupBanner.svelte";
@@ -119,12 +120,14 @@
 		"/privacy": "privacy",
 		"/refund-policy": "refund",
 		"/contact": "contact",
+		"/status": "status",
 	}[location.pathname] as
 		| "pricing"
 		| "terms"
 		| "privacy"
 		| "refund"
 		| "contact"
+		| "status"
 		| undefined;
 
 	let homeRef: Home | undefined = $state();
@@ -516,6 +519,7 @@
 				privacy: "Privacy Notice",
 				refund: "Refund Policy",
 				contact: "Contact",
+				status: "Service Status",
 			}[publicPage];
 			document.title = `${title} · ${BASE_TITLE}`;
 			return;
@@ -636,6 +640,8 @@
 	<LegalPage document="refund" />
 {:else if publicPage === "contact"}
 	<ContactPage />
+{:else if publicPage === "status"}
+	<PublicStatus />
 {:else if !sessionChecked}
 	<div class="min-h-screen"></div>
 {:else if !sessionState.loggedIn}

@@ -114,6 +114,7 @@ ROUTES = (
     "GET /v1/health",
     "GET /v1/jobs/{id}",
     "GET /v1/metrics",
+    "GET /v1/status",
     "GET /v1/testflight/{appId}/builds",
     "GET /v1/testflight/{appId}/trains",
     "PATCH /v1/auth/profile",

@@ -7,6 +7,7 @@ const navigation = `
     <a href="/privacy">Privacy</a>
     <a href="/refund-policy">Refund policy</a>
     <a href="/contact">Contact</a>
+    <a href="/status">Status</a>
   </nav>
 `;
 
@@ -105,6 +106,13 @@ const pageContent: Record<string, string> = {
       <h1>Contact dkrypt</h1>
       <p>For product, account, service, security, or privacy questions, email ${contactAddress}.</p>
       <p>For billing and refund questions, open the dkrypt billing portal or email ${contactAddress} with the purchase email and relevant receipt details.</p>
+    </main>
+  `,
+  '/status': `
+    <main>
+      <h1>dkrypt service status</h1>
+      <p>View the current service, device automation, and scheduler status.</p>
+      <p><a href="/status">Open the live status page</a> or <a href="/#sign-in">sign in</a> to manage your account.</p>
     </main>
   `,
 };
