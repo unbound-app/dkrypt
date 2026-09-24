@@ -1,6 +1,16 @@
 export const GENERATED_CHANGELOG = [
   {
     "date": "2026-09-24",
+    "title": "fix(shutdown): persist completion event",
+    "description": "Released in 18cd4ab."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "refactor(devices): remove legacy bootstrap state",
+    "description": "Released in eef413f."
+  },
+  {
+    "date": "2026-09-24",
     "title": "feat(status): add public service status page",
     "description": "Released in fe40369."
   },
@@ -28,15 +38,5 @@ export const GENERATED_CHANGELOG = [
     "date": "2026-09-24",
     "title": "fix(reliability): drain background services during shutdown",
     "description": "Released in c7101fc."
-  },
-  {
-    "date": "2026-09-24",
-    "title": "fix(device): retry transient rust health gaps",
-    "description": "Released in 7c7c904."
-  },
-  {
-    "date": "2026-09-24",
-    "title": "test(bridge): cover authenticated rpc socket",
-    "description": "Released in 0255466."
   }
 ] as const;
