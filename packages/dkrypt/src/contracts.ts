@@ -104,6 +104,22 @@ register('POST', '/v1/billing/checkout', {
 register('POST', '/v1/billing/cancel', {
   headers: object({ 'idempotency-key': Type.Optional(Type.String({ minLength: 1, maxLength: 200 })) }),
 });
+register('GET', '/v1/billing', {});
+register('POST', '/v1/billing/portal', {});
+register('GET', '/v1/billing/provider-status', {});
+register('GET', '/v1/billing/subscriptions', {
+  querystring: object({
+    ...PaginationQuery.properties,
+    q: Type.Optional(Type.String({ maxLength: 200 })),
+    provider: Type.Optional(Type.String({ maxLength: 32 })),
+    status: Type.Optional(Type.String({ maxLength: 32 })),
+    planId: Type.Optional(Identifier),
+    from: Type.Optional(Type.String({ maxLength: 64 })),
+    to: Type.Optional(Type.String({ maxLength: 64 })),
+    wallet: Type.Optional(Type.String({ maxLength: 200 })),
+    invoice: Type.Optional(Type.String({ maxLength: 200 })),
+  }),
+});
 
 register('POST', '/v1/auth/login', { body: object({ password: Type.String({ minLength: 1, maxLength: 500 }), mfaToken: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })) }) });
 register('POST', '/v1/auth/mfa/confirm', { body: object({ token: Type.String({ minLength: 1, maxLength: 100 }) }) });
@@ -150,6 +166,14 @@ register('GET', '/v1/dashboard/logs', { querystring: object({ ...PaginationQuery
 register('GET', '/v1/dashboard/devices/:id/activity', { params: object({ id: Identifier }), querystring: PaginationQuery });
 register('GET', '/v1/dashboard/audit-log', { querystring: PaginationQuery });
 register('GET', '/v1/dashboard/keys/all', { querystring: object({ ...PaginationQuery.properties, search: Type.Optional(Type.String({ maxLength: 200 })) }) });
+register('GET', '/v1/dashboard/webhooks', { querystring: object({ limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })) }) });
+register('GET', '/v1/dashboard/testflight/subscriptions', { querystring: PaginationQuery });
+register('POST', '/v1/dashboard/testflight/subscriptions', { body: object({ url: Type.String({ minLength: 1, maxLength: 500 }) }) });
+register('POST', '/v1/dashboard/testflight/subscriptions/:id/approve', { params: object({ id: Identifier }) });
+register('POST', '/v1/dashboard/testflight/subscriptions/:id/deny', { params: object({ id: Identifier }) });
+register('POST', '/v1/dashboard/testflight/subscriptions/:id/sync', { params: object({ id: Identifier }) });
+register('POST', '/v1/dashboard/testflight/subscriptions/:id/unsubscribe', { params: object({ id: Identifier }) });
+register('GET', '/v1/dashboard/testflight/catalog', { querystring: object({ refresh: Type.Optional(Type.Literal('true')) }) });
 
 register('GET', '/v1/testflight/:appId/trains', { params: object({ appId: Type.String({ minLength: 1, maxLength: 32, pattern: '^\\d+$' }) }), querystring: object({ train: Type.Optional(Type.String({ maxLength: 64 })) }) });
 register('GET', '/v1/testflight/:appId/builds', { params: object({ appId: Type.String({ minLength: 1, maxLength: 32, pattern: '^\\d+$' }) }), querystring: object({ train: Type.Optional(Type.String({ maxLength: 64 })) }) });
