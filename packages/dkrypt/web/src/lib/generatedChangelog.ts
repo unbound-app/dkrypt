@@ -1,6 +1,16 @@
 export const GENERATED_CHANGELOG = [
   {
     "date": "2026-09-24",
+    "title": "fix(ci): isolate browser tests from bun",
+    "description": "Released in 5173e13."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "test(web): add browser smoke coverage",
+    "description": "Released in e30ec5c."
+  },
+  {
+    "date": "2026-09-24",
     "title": "feat(web): add discord community link",
     "description": "Released in 2d8e47f."
   },
@@ -28,15 +38,5 @@ export const GENERATED_CHANGELOG = [
     "date": "2026-09-24",
     "title": "fix(device): correct testflight bridge alert state",
     "description": "Released in 55868e4."
-  },
-  {
-    "date": "2026-09-24",
-    "title": "fix(ci): make legacy service smoke check portable",
-    "description": "Released in 341f14d."
-  },
-  {
-    "date": "2026-09-24",
-    "title": "fix(ci): wait for bridge readiness during smoke tests",
-    "description": "Released in adfab74."
   }
 ] as const;
