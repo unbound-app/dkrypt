@@ -78,6 +78,11 @@ export function isBridgeHeartbeatFresh(heartbeat: BridgeHeartbeat | undefined, n
   return typeof heartbeat?.at === 'number' && now - heartbeat.at * 1000 <= BRIDGE_HEARTBEAT_MAX_AGE_MS;
 }
 
+export function testFlightBridgeReachability(health: Pick<DeviceHealth, 'reachable' | 'testFlightBridgeReachable'>): boolean | undefined {
+  if (!health.reachable) return undefined;
+  return health.testFlightBridgeReachable;
+}
+
 export function getDeviceInstallBlocker(health: DeviceHealth, installSizeBytes?: number): string | undefined {
   if (!health.reachable) return health.error ?? 'device is unreachable';
   if (health.subsystems?.agent === 'offline') return 'device agent is unavailable while the USB transport is still connected';
@@ -738,12 +743,13 @@ async function pollOneDevice(device: DeviceRecord): Promise<void> {
     });
   }
   lastActivityState.set(device.id, { reachable: health.reachable, bridgeReachable: health.testFlightBridgeReachable });
+  const bridgeReachable = testFlightBridgeReachability(health);
   await Promise.all([
     checkOfflineAlert(device, health.reachable),
     checkBatteryHotAlert(device, health.batteryTemperatureC),
     checkBatteryLowAlert(device, health.batteryPercent, health.batteryCharging),
     checkDeviceStorageAlert(device, health.storageUsedPercent),
-    checkTestFlightBridgeAlert(device, health.reachable && health.testFlightBridgeReachable === false),
+    ...(bridgeReachable === undefined ? [] : [checkTestFlightBridgeAlert(device, bridgeReachable)]),
   ]);
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { coalesceDeviceHealthRequest, collectDeviceTelemetry, formatTestFlightBridgeDownDescription, getDeviceInstallBlocker, getDeviceReadiness, isBridgeHeartbeatFresh, parseDeviceStorageDf, stabilizeDeviceHealth, type DeviceHealth } from '#deviceHealth.js';
+import { coalesceDeviceHealthRequest, collectDeviceTelemetry, formatTestFlightBridgeDownDescription, getDeviceInstallBlocker, getDeviceReadiness, isBridgeHeartbeatFresh, parseDeviceStorageDf, stabilizeDeviceHealth, testFlightBridgeReachability, type DeviceHealth } from '#deviceHealth.js';
 
 function health(overrides: Partial<DeviceHealth> = {}): DeviceHealth {
   return { reachable: true, checkedAt: 0, ...overrides };
@@ -31,6 +31,12 @@ describe('getDeviceReadiness', () => {
 });
 
 describe('TestFlight bridge alerts', () => {
+  test('keeps bridge reachability aligned with the health sample', () => {
+    expect(testFlightBridgeReachability(health({ testFlightBridgeReachable: true }))).toBe(true);
+    expect(testFlightBridgeReachability(health({ testFlightBridgeReachable: false }))).toBe(false);
+    expect(testFlightBridgeReachability(health({ reachable: false, testFlightBridgeReachable: false }))).toBeUndefined();
+  });
+
   test('describes the outage without speculative tweak recovery advice', () => {
     expect(formatTestFlightBridgeDownDescription('iPad Pro', 15)).toBe(
       "The autoinstall SpringBoard bridge on iPad Pro has stopped responding for at least 15 minutes - TestFlight installs and the scheduler's TestFlight watch can't run until it recovers.",
