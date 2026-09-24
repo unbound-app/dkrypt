@@ -2,18 +2,28 @@ import { createReadStream } from 'node:fs';
 import type { FastifyInstance, FastifyReply, FastifyRequest, FastifySchema } from 'fastify';
 import { getRouteContract } from '#contracts.js';
 import { withCorrelation } from '#correlation.js';
+import type { Session } from '#session.js';
+
+export interface RequestLocals {
+  session: Session;
+  apiKeyScope?: string[];
+  apiKeyOwner?: string;
+  apiKeyPriority?: number;
+  apiKeyId?: string;
+  apiKeyAllowTestFlight?: boolean;
+}
 
 export type Request = FastifyRequest & {
-  body: any;
-  params: any;
-  query: any;
+  body: Record<string, unknown>;
+  params: Record<string, string>;
+  query: Record<string, unknown>;
   header(name: string): string | undefined;
   path: string;
   on(event: string, listener: () => void): void;
 };
 
 export class Response {
-  readonly locals: any = {};
+  readonly locals: RequestLocals = {} as RequestLocals;
 
   constructor(readonly reply: FastifyReply) {}
 

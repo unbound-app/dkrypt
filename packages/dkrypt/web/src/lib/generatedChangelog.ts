@@ -1,6 +1,11 @@
 export const GENERATED_CHANGELOG = [
   {
     "date": "2026-09-24",
+    "title": "feat(reliability): complete bridge cancellation and passkey reauthentication",
+    "description": "Released in 5fb2f79."
+  },
+  {
+    "date": "2026-09-24",
     "title": "fix(deploy): trust host-mounted device key",
     "description": "Released in af6d1cb."
   },
@@ -33,10 +38,5 @@ export const GENERATED_CHANGELOG = [
     "date": "2026-09-24",
     "title": "fix(ci): use a valid trivy action ref",
     "description": "Released in 986d6a0."
-  },
-  {
-    "date": "2026-09-24",
-    "title": "feat: complete reliability and transport rollout",
-    "description": "Released in 3a188b7."
   }
 ] as const;

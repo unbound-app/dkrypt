@@ -18,6 +18,27 @@ let source: EventSource | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 let visibilityListenerInstalled = false;
 let lastSequence = 0;
+let overviewRefresh: Promise<void> | undefined;
+
+async function refreshOverview(): Promise<void> {
+	if (overviewRefresh) return overviewRefresh;
+	const controller = new AbortController();
+	const timeout = setTimeout(() => controller.abort(), 8_000);
+	overviewRefresh = fetch('/v1/dashboard/overview', { signal: controller.signal })
+		.then(async (response) => {
+			if (!response.ok) return;
+			liveState.overview = (await response.json()) as OverviewPayload;
+			liveState.overviewLoaded = true;
+			liveState.sequenceGap = false;
+			liveState.stale = false;
+		})
+		.catch(() => {})
+		.finally(() => {
+			clearTimeout(timeout);
+			overviewRefresh = undefined;
+		});
+	return overviewRefresh;
+}
 
 function scheduleReconnect(): void {
 	if (reconnectTimer || document.visibilityState === 'hidden') return;
@@ -31,7 +52,10 @@ function scheduleReconnect(): void {
 function readEvent<T>(event: Event): T {
 	const value = JSON.parse((event as MessageEvent).data) as T & { sequence?: number; data?: T };
 	if (typeof value.sequence === 'number') {
-		if (lastSequence > 0 && value.sequence > lastSequence + 1) liveState.sequenceGap = true;
+		if (lastSequence > 0 && value.sequence > lastSequence + 1) {
+			liveState.sequenceGap = true;
+			void refreshOverview();
+		}
 		lastSequence = Math.max(lastSequence, value.sequence);
 		liveState.lastEventAt = Date.now();
 		liveState.stale = false;
@@ -56,18 +80,9 @@ export function connectLive(): void {
 
   source = new EventSource('/v1/dashboard/events');
   const initialSource = source;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8_000);
-  void fetch('/v1/dashboard/overview', { signal: controller.signal })
-    .then(async (response) => {
-      if (!response.ok) return;
-      liveState.overview = (await response.json()) as OverviewPayload;
-    })
-    .catch(() => {})
-    .finally(() => {
-      clearTimeout(timeout);
-      if (source === initialSource) liveState.overviewLoaded = true;
-    });
+	void refreshOverview().finally(() => {
+		if (source === initialSource) liveState.overviewLoaded = true;
+	});
 
   source.onopen = () => {
     liveState.connected = true;

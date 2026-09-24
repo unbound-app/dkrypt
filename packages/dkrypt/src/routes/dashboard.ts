@@ -22,7 +22,7 @@ import { getDeviceHealth, getDeviceInstallBlocker, getDeviceReadiness, isBridgeH
 import { decodeCursor, nextCursor } from '#util/cursor.js';
 import { getCachedDeviceHealth } from '#deviceHealthCache.js';
 import { discoverDevices, execCommand, isDirectUsbDeviceAgentConnection, listInstalledAppStoreBundles, sendSpringBoardBridgeRequest, setupDeviceConnection, validateDeviceRootDir, withAutoinstallDeviceAgent, withSSH, type DeviceConnection } from '#idevice.js';
-import { getTestFlightBridgeDiagnostics, listBuilds, listTrains } from '#testflight.js';
+import { getTestFlightBridgeDiagnostics, listBuilds, listTrains, type TFBuild } from '#testflight.js';
 import { nextCronRunAt, nextCronRuns } from '#util/cron.js';
 import { getDiskUsage } from '#util/diskUsage.js';
 import { runConfigurationDoctor } from '#doctor.js';
@@ -1835,9 +1835,11 @@ dashboardRouter.get('/v1/dashboard/testflight/:appId/builds', deviceOrExternalRa
 
 dashboardRouter.post('/v1/dashboard/testflight/decrypt', canDecrypt, blockDuringMaintenance, async (req, res) => {
   const bundleId = typeof req.body?.bundleId === 'string' ? req.body.bundleId.trim() : '';
-  const appId = Number.parseInt(req.body?.appId, 10);
-  const build = req.body?.build;
-  if (!BUNDLE_ID_RE.test(bundleId) || !Number.isInteger(appId) || appId <= 0 || !build || typeof build !== 'object') {
+  const rawAppId = req.body?.appId;
+  const appId = Number.parseInt(typeof rawAppId === 'string' || typeof rawAppId === 'number' ? String(rawAppId) : '', 10);
+  const rawBuild = req.body?.build;
+  const build = rawBuild && typeof rawBuild === 'object' ? rawBuild as Record<string, unknown> : undefined;
+  if (!BUNDLE_ID_RE.test(bundleId) || !Number.isInteger(appId) || appId <= 0 || !build || typeof build.bundleId !== 'string') {
     res.status(400).json({ error: 'bundleId, appId, and build are required' });
     return;
   }
@@ -1882,7 +1884,7 @@ dashboardRouter.post('/v1/dashboard/testflight/decrypt', canDecrypt, blockDuring
     bundleId,
     'manual',
     undefined,
-    { appId, build },
+    { appId, build: build as unknown as TFBuild },
     undefined,
     res.locals.session.sub,
     getUserPriority(res.locals.session.sub),

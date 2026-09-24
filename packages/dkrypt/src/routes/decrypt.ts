@@ -7,7 +7,7 @@ import { blockDuringMaintenance } from '#maintenance.js';
 import { jobFileAvailable, jobSummary, streamFilePath, streamJobFile } from '#jobs/http.js';
 import { enqueueDecryptJob, getJob, waitForJob } from '#jobs/store.js';
 import { recordApiKeyBundleUsage } from '#store/state.js';
-import { listBuilds, listTrains } from '#testflight.js';
+import { listBuilds, listTrains, type TFBuild } from '#testflight.js';
 import { apiIdempotencyRegistry } from '#idempotency.js';
 import { artifactDownloadName, artifactFileAvailable, getArtifactById, listArtifacts, touchArtifact } from '#artifacts.js';
 import { resolveDecryptTarget, VERSION_SELECTOR_RE } from '#decryptTarget.js';
@@ -288,10 +288,12 @@ decryptRouter.get('/v1/testflight/:appId/builds', requireApiKey, requireTestFlig
 
 decryptRouter.post('/v1/testflight/decrypt', requireApiKey, requireTestFlightScope, blockDuringMaintenance, (req, res) => {
   const bundleId = typeof req.body?.bundleId === 'string' ? req.body.bundleId.trim() : '';
-  const appId = Number.parseInt(req.body?.appId, 10);
-  const build = req.body?.build;
+  const rawAppId = req.body?.appId;
+  const appId = Number.parseInt(typeof rawAppId === 'string' || typeof rawAppId === 'number' ? String(rawAppId) : '', 10);
+  const rawBuild = req.body?.build;
+  const build = rawBuild && typeof rawBuild === 'object' ? rawBuild as Record<string, unknown> : undefined;
 
-  if (!BUNDLE_ID_RE.test(bundleId) || !Number.isInteger(appId) || appId <= 0 || !build || typeof build !== 'object') {
+  if (!BUNDLE_ID_RE.test(bundleId) || !Number.isInteger(appId) || appId <= 0 || !build || typeof build.bundleId !== 'string') {
     res.status(400).json({ error: 'bundleId, appId, and build are required' });
     return;
   }
@@ -323,7 +325,7 @@ decryptRouter.post('/v1/testflight/decrypt', requireApiKey, requireTestFlightSco
       bundleId,
       'manual',
       undefined,
-      { appId, build },
+      { appId, build: build as unknown as TFBuild },
       undefined,
       apiRequester(res),
       (res.locals.apiKeyPriority as number | undefined) ?? 0,
