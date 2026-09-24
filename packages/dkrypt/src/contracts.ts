@@ -581,6 +581,84 @@ const PasskeyOptionsResponse = object({
 const PasskeyMutationResponse = object({ passkey: Type.Optional(PasskeySummaryResponse) });
 const AuthProfileResponse = object({ displayName: Type.String(), linkedProviders: Type.Array(Type.String()) });
 const AuthConnectionResponse = object({ identities: Type.Array(JsonObject), linkedProviders: Type.Array(Type.String()) });
+const WatchResponse = object({
+  id: Identifier,
+  bundleId: BundleId,
+  repo: Type.String(),
+  ghWorkflowFile: Type.String(),
+  dispatchTargets: Type.Optional(Type.Array(JsonObject)),
+  pollCron: Type.String(),
+  enabled: Type.Boolean(),
+  webhookUrl: Type.Optional(Type.String()),
+  testFlightPolicy: Type.Optional(Type.Union([Type.Literal('latest'), Type.Literal('latestNonExpired'), Type.Literal('train')])),
+  testFlightTrain: Type.Optional(Type.String()),
+  createdAt: Type.Number(),
+  updatedAt: Type.Number(),
+  schedulable: Type.Optional(Type.Boolean()),
+  configIssues: Type.Optional(Type.Array(Type.String())),
+});
+const WatchListResponse = object({ watches: Type.Array(WatchResponse) });
+const WatchExportResponse = object({ version: Type.Integer({ minimum: 1 }), watches: Type.Array(JsonObject) });
+const WatchHealthResponse = object({ watches: Type.Array(JsonObject) });
+const WatchCalendarResponse = object({
+  fromAt: Type.Number(),
+  untilAt: Type.Number(),
+  runs: Type.Array(object({ watchId: Identifier, bundleId: BundleId, at: Type.Number() })),
+  truncated: Type.Boolean(),
+});
+const GitHubBudgetHistoryResponse = object({ entries: Type.Array(JsonObject) });
+const GitHubReposResponse = object({ repos: Type.Array(JsonObject) });
+const GitHubWorkflowsResponse = object({ workflows: Type.Array(JsonObject) });
+const WatchImportResponse = object({ watches: Type.Array(WatchResponse), skipped: Type.Array(Type.String()) });
+const DispatchPreviewResponse = object({ appStore: JsonObject, testflight: JsonObject });
+const DispatchValidationResponse = object({ results: Type.Array(JsonObject), ok: Type.Boolean() });
+const DispatchSourcePreviewResponse = object({ source: Type.Union([Type.Literal('appStore'), Type.Literal('testflight')]), result: JsonObject });
+const AppMetadataResponse = object({ entries: Type.Array(JsonObject) });
+const AppCatalogStatsResponse = object({ entries: Type.Integer({ minimum: 0 }), icons: Type.Integer({ minimum: 0 }), oldestUpdatedAt: Type.Optional(Type.Number()), newestUpdatedAt: Type.Optional(Type.Number()) });
+const BundleStatsResponse = object({
+  bundleId: BundleId,
+  totalRuns: Type.Integer({ minimum: 0 }),
+  doneCount: Type.Integer({ minimum: 0 }),
+  failedCount: Type.Integer({ minimum: 0 }),
+  successRate: Type.Number({ minimum: 0, maximum: 1 }),
+  avgDurationMs: Type.Optional(Type.Number({ minimum: 0 })),
+  lastRunAt: Type.Optional(Type.Number()),
+  failureBreakdown: Type.Array(object({ category: Type.String(), count: Type.Integer({ minimum: 0 }) })),
+});
+const BulkPreviewResponse = object({
+  requested: Type.Integer({ minimum: 0 }),
+  eligible: Type.Integer({ minimum: 0 }),
+  projectedQueueAdds: Type.Integer({ minimum: 0 }),
+  estimatedDurationMs: Type.Number({ minimum: 0 }),
+  previousSizeBytes: Type.Number({ minimum: 0 }),
+  items: Type.Array(JsonObject),
+});
+const JobDiffResponse = object({ a: JsonObject, b: JsonObject, sizeDeltaBytes: Type.Number(), plistDiff: Type.Array(JsonObject) });
+const InsightsResponse = object({
+  totalRuns: Type.Integer({ minimum: 0 }),
+  doneCount: Type.Integer({ minimum: 0 }),
+  failedCount: Type.Integer({ minimum: 0 }),
+  successRate: Type.Number({ minimum: 0, maximum: 1 }),
+  totalSizeBytes: Type.Number({ minimum: 0 }),
+  manualCount: Type.Integer({ minimum: 0 }),
+  schedulerCount: Type.Integer({ minimum: 0 }),
+  topApps: Type.Array(JsonObject),
+  trend: Type.Array(object({ date: Type.String(), count: Type.Integer({ minimum: 0 }) })),
+  failureBreakdown: Type.Array(JsonObject),
+  byDevice: Type.Array(JsonObject),
+  anomalies: Type.Array(JsonObject),
+});
+const FailurePatternsResponse = object({ patterns: Type.Array(object({ message: Type.String(), count: Type.Integer({ minimum: 0 }), firstSeen: Type.Number(), lastSeen: Type.Number(), bundleIds: Type.Array(BundleId) })) });
+const StorageForecastResponse = object({ freeBytes: Type.Number({ minimum: 0 }), bytesPerDay: Type.Number({ minimum: 0 }), daysRemaining: Type.Union([Type.Number({ minimum: 0 }), Type.Null()]), sampleCount: Type.Integer({ minimum: 0 }) });
+const JobExportResponse = Type.Union([Type.Array(JsonObject), Type.String()]);
+const RetentionPreviewResponse = object({
+  retentionDays: Type.Integer({ minimum: 0 }),
+  cutoff: Type.Optional(Type.Number()),
+  retained: Type.Integer({ minimum: 0 }),
+  removed: Type.Integer({ minimum: 0 }),
+  artifacts: object({ retained: Type.Integer({ minimum: 0 }), retainedBytes: Type.Number({ minimum: 0 }), maxBytes: Type.Number({ minimum: 0 }), reclaimable: Type.Integer({ minimum: 0 }), reclaimableBytes: Type.Number({ minimum: 0 }) }),
+});
+const TestWebhookResponse = object({ ok: Type.Boolean(), error: Type.Optional(Type.String()) });
 const DeviceConnectionInput = object({
   name: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
   existingId: Type.Optional(Identifier),
@@ -611,6 +689,24 @@ const DeviceRecordInput = object({
   isPrimary: Type.Optional(Type.Boolean()),
 });
 const DevicePatchInput = Type.Partial(DeviceRecordInput);
+const DispatchTargetInput = object({
+  repo: Type.String({ minLength: 3, maxLength: 200, pattern: '^[\\w.-]+/[\\w.-]+$' }),
+  ghWorkflowFile: Type.String({ minLength: 1, maxLength: 200 }),
+  mode: Type.Optional(Type.Union([Type.Literal('repository_dispatch'), Type.Literal('workflow_dispatch')])),
+  ref: Type.Optional(Type.String({ maxLength: 200 })),
+  inputs: Type.Optional(Type.Record(Type.String({ minLength: 1, maxLength: 100 }), Type.String({ maxLength: 500 }))),
+});
+const WatchInput = object({
+  bundleId: BundleId,
+  repo: Type.Optional(Type.String({ minLength: 3, maxLength: 200, pattern: '^[\\w.-]+/[\\w.-]+$' })),
+  ghWorkflowFile: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
+  dispatchTargets: Type.Optional(Type.Array(DispatchTargetInput, { maxItems: 10 })),
+  pollCron: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
+  enabled: Type.Optional(Type.Boolean()),
+  webhookUrl: Type.Optional(Type.String({ maxLength: 500 })),
+  testFlightPolicy: Type.Optional(Type.Union([Type.Literal('latest'), Type.Literal('latestNonExpired'), Type.Literal('train')])),
+  testFlightTrain: Type.Optional(Type.String({ maxLength: 100 })),
+});
 
 function object(properties: Record<string, TSchema>): TSchema {
   return Type.Object(properties, { additionalProperties: true });
@@ -1131,6 +1227,97 @@ register('POST', '/v1/dashboard/devices/:id/bridge-action', {
 });
 register('POST', '/v1/dashboard/devices/:id/recover', {
   params: object({ id: Identifier }),
+  response: { 200: OkResponse },
+});
+register('GET', '/v1/dashboard/jobs/export', {
+  querystring: object({ format: Type.Optional(Type.Union([Type.Literal('json'), Type.Literal('csv')])) }),
+  response: { 200: JobExportResponse },
+});
+register('POST', '/v1/dashboard/jobs/bulk-preview', {
+  body: object({ ids: Type.Array(Identifier, { maxItems: 100 }) }),
+  response: { 200: BulkPreviewResponse },
+});
+register('GET', '/v1/dashboard/jobs/stats/:bundleId', {
+  params: object({ bundleId: BundleId }),
+  response: { 200: BundleStatsResponse },
+});
+register('GET', '/v1/dashboard/jobs/diff', {
+  querystring: object({ bundleId: BundleId, a: Identifier, b: Identifier }),
+  response: { 200: JobDiffResponse },
+});
+register('GET', '/v1/dashboard/insights', {
+  querystring: object({ topApps: Type.Optional(Type.Integer({ minimum: 1, maximum: 25 })), trendDays: Type.Optional(Type.Integer({ minimum: 1, maximum: 90 })) }),
+  response: { 200: InsightsResponse },
+});
+register('GET', '/v1/dashboard/failure-patterns', { response: { 200: FailurePatternsResponse } });
+register('GET', '/v1/dashboard/storage-forecast', { response: { 200: StorageForecastResponse } });
+register('GET', '/v1/dashboard/watches', { response: { 200: WatchListResponse } });
+register('GET', '/v1/dashboard/watches/export', { response: { 200: WatchExportResponse } });
+register('GET', '/v1/dashboard/watches/health', { response: { 200: WatchHealthResponse } });
+register('GET', '/v1/dashboard/watches/calendar', {
+  querystring: object({ hours: Type.Optional(Type.Integer({ minimum: 1, maximum: 168 })), fromAt: Type.Optional(Type.Integer()) }),
+  response: { 200: WatchCalendarResponse },
+});
+register('GET', '/v1/dashboard/github/budget-history', {
+  querystring: object({ limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })) }),
+  response: { 200: GitHubBudgetHistoryResponse },
+});
+register('GET', '/v1/dashboard/github/repos', { response: { 200: GitHubReposResponse } });
+register('GET', '/v1/dashboard/github/workflows', {
+  querystring: object({ repo: Type.String({ minLength: 3, maxLength: 200, pattern: '^[\\w.-]+/[\\w.-]+$' }) }),
+  response: { 200: GitHubWorkflowsResponse },
+});
+register('POST', '/v1/dashboard/watches', { body: WatchInput, response: { 201: WatchResponse } });
+register('PATCH', '/v1/dashboard/watches/:id', { params: object({ id: Identifier }), body: Type.Partial(WatchInput), response: { 200: WatchResponse } });
+register('DELETE', '/v1/dashboard/watches/:id', { params: object({ id: Identifier }), response: { 200: OkResponse } });
+register('POST', '/v1/dashboard/watches/import', {
+  body: object({ watches: Type.Array(WatchInput, { minItems: 1, maxItems: 100 }) }),
+  response: { 201: WatchImportResponse },
+});
+register('POST', '/v1/dashboard/watches/preview-dispatch-draft', {
+  body: object({ bundleId: BundleId, repo: Type.String({ minLength: 3, maxLength: 200, pattern: '^[\\w.-]+/[\\w.-]+$' }) }),
+  response: { 200: DispatchPreviewResponse },
+});
+register('POST', '/v1/dashboard/watches/validate-dispatch-draft', {
+  body: object({ targets: Type.Array(DispatchTargetInput, { minItems: 1, maxItems: 10 }) }),
+  response: { 200: DispatchValidationResponse },
+});
+register('GET', '/v1/dashboard/watches/:id/preview-dispatch', { params: object({ id: Identifier }), response: { 200: DispatchPreviewResponse } });
+register('GET', '/v1/dashboard/watches/:id/preview-dispatch/:source', {
+  params: object({ id: Identifier, source: Type.Union([Type.Literal('app-store'), Type.Literal('testflight')]) }),
+  response: { 200: DispatchSourcePreviewResponse },
+});
+register('POST', '/v1/dashboard/watches/:id/trigger-dispatch', { params: object({ id: Identifier }), response: { 202: JsonObject, 409: JsonObject } });
+register('GET', '/v1/dashboard/apps/metadata', {
+  querystring: object({ bundleIds: Type.Optional(Type.String({ maxLength: 20_000 })) }),
+  response: { 200: AppMetadataResponse },
+});
+register('GET', '/v1/dashboard/apps/cache', { response: { 200: AppCatalogStatsResponse } });
+register('POST', '/v1/dashboard/apps/metadata/refresh', {
+  body: object({ bundleIds: Type.Array(BundleId, { minItems: 1, maxItems: 40 }) }),
+  response: { 200: AppMetadataResponse },
+});
+register('GET', '/v1/dashboard/settings/job-history-retention/preview', {
+  querystring: object({ retentionDays: Type.Integer({ minimum: 0 }) }),
+  response: { 200: RetentionPreviewResponse },
+});
+register('GET', '/v1/dashboard/settings/validate-cron', {
+  querystring: object({ expr: Type.String({ maxLength: 100 }) }),
+  response: { 200: object({ valid: Type.Boolean() }) },
+});
+register('POST', '/v1/dashboard/settings/test-webhook', {
+  body: object({ url: Type.Optional(Type.String({ maxLength: 500 })) }),
+  response: { 200: TestWebhookResponse, 400: TestWebhookResponse },
+});
+register('POST', '/v1/dashboard/notifications/read', {
+  body: object({ ids: Type.Optional(Type.Array(Identifier, { maxItems: 100 })) }),
+  response: { 200: object({ ok: Type.Boolean(), marked: Type.Integer({ minimum: 0 }) }) },
+});
+register('POST', '/v1/dashboard/jobs/:id/cancel', { params: object({ id: Identifier }), response: { 200: OkResponse } });
+register('POST', '/v1/dashboard/jobs/:id/prioritize', { params: object({ id: Identifier }), response: { 200: OkResponse } });
+register('POST', '/v1/dashboard/jobs/:id/retry', { params: object({ id: Identifier }), response: { 202: JobSummaryResponse } });
+register('POST', '/v1/dashboard/jobs/reorder', {
+  body: object({ ids: Type.Array(Identifier, { maxItems: 100 }) }),
   response: { 200: OkResponse },
 });
 
