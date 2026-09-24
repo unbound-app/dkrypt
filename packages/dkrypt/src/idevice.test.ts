@@ -5,7 +5,7 @@ import type { Client } from 'ssh2';
 import type { BridgeEnvelope } from './idevice.js';
 import { BRIDGE_CAPABILITIES, BRIDGE_PROTOCOL_VERSION, TESTFLIGHT_LIFECYCLE_CAPABILITIES } from './bridgeProtocol.js';
 
-const { armAppStoreAutoConfirm, buildIpadecryptRuntimeConfig, createBridgeEnvelope, createDeviceAgentEnvelope, execCommand, getDeviceAgentRetryDelay, getDeviceTransportOrder, isDirectUsbDeviceAgentConnection, readBridgeHeartbeats, retryTransientSshConnection } = await import('./idevice.js' + '?idevice-transport-test');
+const { armAppStoreAutoConfirm, buildIpadecryptRuntimeConfig, createBridgeEnvelope, createDeviceAgentEnvelope, execCommand, getDeviceAgentRetryDelay, getDeviceTransportOrder, isDirectUsbDeviceAgentConnection, readBridgeHeartbeats, retryRustDeviceHealthProbe, retryTransientSshConnection } = await import('./idevice.js' + '?idevice-transport-test');
 
 type FakeExecStream = {
   stderr: {
@@ -160,6 +160,15 @@ test('uses the Rust bridge for USB and paired Wi-Fi devices after cutover', () =
 
 test('backs off USB agent reconnects long enough for USBMux to recover', () => {
   expect([0, 1, 2, 3, 4, 5].map(getDeviceAgentRetryDelay)).toEqual([500, 1_000, 2_000, 4_000, 5_000, 5_000]);
+});
+
+test('retries transient Rust device health gaps before reporting USB absence', async () => {
+  let attempts = 0;
+  await expect(retryRustDeviceHealthProbe(async () => {
+    attempts += 1;
+    return { state: 'ready', transport: 'usb', deviceCount: attempts === 3 ? 1 : 0, devicePresent: attempts === 3 };
+  }, 3, 0)).resolves.toMatchObject({ devicePresent: true, deviceCount: 1 });
+  expect(attempts).toBe(3);
 });
 
 test('creates an ipadecrypt runtime config without requiring bootstrap credentials', () => {

@@ -607,6 +607,26 @@ export function getDeviceAgentRetryDelay(attempt: number): number {
   return Math.min(DEVICE_AGENT_RETRY_DELAY_MS * 2 ** Math.max(0, attempt), 5_000);
 }
 
+export async function retryRustDeviceHealthProbe(
+  operation: () => Promise<{ state: string; transport: string; deviceCount: number; devicePresent: boolean }>,
+  attempts = 3,
+  delayMs = 250,
+): Promise<{ state: string; transport: string; deviceCount: number; devicePresent: boolean }> {
+  let lastError: unknown;
+  const totalAttempts = Math.max(1, attempts);
+  for (let attempt = 0; attempt < totalAttempts; attempt += 1) {
+    try {
+      const result = await operation();
+      if (result.devicePresent || attempt + 1 >= totalAttempts) return result;
+    } catch (error) {
+      lastError = error;
+      if (attempt + 1 >= totalAttempts) throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, Math.max(0, delayMs) * 2 ** attempt));
+  }
+  throw lastError instanceof Error ? lastError : new Error('Rust device bridge health probe did not return a result');
+}
+
 function releaseDeviceAgentSession(key: string, session: DeviceAgentSession): void {
   if (deviceAgentSessions.get(key) !== session || session.client.isUnusable) {
     closeDeviceAgentSession(key, session);
@@ -793,7 +813,7 @@ export function isDirectUsbDeviceAgentConnection(connection: DeviceConnection | 
 export async function getRustDeviceBridgeHealth(connection: DeviceConnection): Promise<{ state: 'ready' | 'offline'; transport: DeviceTransport; deviceCount: number; capabilities: string[] }> {
   if (!isRustDeviceConnection(connection)) throw new DeviceAgentUnavailableError('Rust device bridge is unavailable for this connection');
   const bridge = new RustDeviceBridgeClient();
-  const [health, capabilities] = await Promise.all([bridge.health(connection.udid), bridge.capabilities()]);
+  const [health, capabilities] = await Promise.all([retryRustDeviceHealthProbe(() => bridge.health(connection.udid)), bridge.capabilities()]);
   const values = Array.isArray(capabilities.capabilities) ? capabilities.capabilities.filter((value): value is string => typeof value === 'string') : [];
   return { state: health.devicePresent && health.state === 'ready' ? 'ready' : 'offline', transport: connection.usbmuxNetwork ? 'wifi' : 'usb', deviceCount: health.deviceCount, capabilities: values };
 }
