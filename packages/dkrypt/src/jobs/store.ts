@@ -736,10 +736,12 @@ async function reclaimAndMaybeUninstall(job: Job): Promise<void> {
   }
 }
 
+let jobSweepTimer: NodeJS.Timeout | undefined;
+
 export function startJobSweeper(): void {
   pumpWorkers();
   const intervalMs = 60_000;
-  setInterval(() => {
+  jobSweepTimer ??= setInterval(() => {
     const now = Date.now();
     const retentionMs = config.jobRetentionMinutes * 60_000;
 
@@ -753,7 +755,13 @@ export function startJobSweeper(): void {
   }, intervalMs).unref();
 }
 
+export function stopJobSweeper(): void {
+  if (jobSweepTimer) clearInterval(jobSweepTimer);
+  jobSweepTimer = undefined;
+}
+
 export async function shutdownJobs(timeoutMs = 15_000): Promise<void> {
+  stopJobSweeper();
   acceptingJobs = false;
   const now = Date.now();
   for (const jobId of queue.splice(0)) {

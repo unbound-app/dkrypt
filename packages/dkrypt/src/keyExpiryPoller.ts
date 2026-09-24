@@ -15,5 +15,12 @@ async function checkOnce(): Promise<void> {
 }
 
 export function startKeyExpiryPoller(): void {
-  setInterval(() => void checkOnce(), POLL_INTERVAL_MS).unref();
+  keyExpiryTimer ??= setInterval(() => void checkOnce(), POLL_INTERVAL_MS).unref();
+}
+
+let keyExpiryTimer: NodeJS.Timeout | undefined;
+
+export function stopKeyExpiryPoller(): void {
+  if (keyExpiryTimer) clearInterval(keyExpiryTimer);
+  keyExpiryTimer = undefined;
 }

@@ -582,6 +582,11 @@ export function startTestFlightSubscriptionPoller(): void {
   if (!syncTimer) syncTimer = setInterval(() => void syncApprovedTestFlightSubscriptions(), TESTFLIGHT_VERIFICATION_TTL_MS).unref();
 }
 
+export function stopTestFlightSubscriptionPoller(): void {
+  if (syncTimer) clearInterval(syncTimer);
+  syncTimer = undefined;
+}
+
 export function subscriptionsForUser(userId: string, manager: boolean): TestFlightSubscription[] {
   const lower = userId.toLowerCase();
   const source = manager ? getSubscriptions() : getSubscriptions().filter((subscription) => subscription.requestedBy === lower);

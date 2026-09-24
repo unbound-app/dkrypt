@@ -72,7 +72,7 @@ export function getRecentLogs(query: LogQuery = {}): { logs: LogEntry[]; total: 
 }
 
 export function startLogFlusher(): void {
-  setInterval(() => {
+  logFlushTimer ??= setInterval(() => {
     if (!logsDirty) return;
     try {
       mkdirSync(config.stateDir, { recursive: true });
@@ -82,6 +82,21 @@ export function startLogFlusher(): void {
       // best-effort persistence - logs still work in-memory even if the write fails
     }
   }, 30_000).unref();
+}
+
+let logFlushTimer: NodeJS.Timeout | undefined;
+
+export function stopLogFlusher(): void {
+  if (logFlushTimer) clearInterval(logFlushTimer);
+  logFlushTimer = undefined;
+  if (!logsDirty) return;
+  try {
+    mkdirSync(config.stateDir, { recursive: true });
+    writeFileSync(logsPath, JSON.stringify(recentLogs));
+    logsDirty = false;
+  } catch {
+    return;
+  }
 }
 
 function ts(): string {

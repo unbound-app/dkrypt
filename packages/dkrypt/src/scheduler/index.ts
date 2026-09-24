@@ -769,3 +769,11 @@ export function startScheduler(): void {
   applyBackupSchedule();
   void reconcileStuckSchedulerRuns().catch((err) => log.error('scheduler run reconciliation threw', { error: String(err) }));
 }
+
+export function stopScheduler(): void {
+  for (const scheduled of scheduledTasks.values()) scheduled.task.stop();
+  scheduledTasks.clear();
+  backupTask?.stop();
+  backupTask = undefined;
+  backupTaskCron = undefined;
+}

@@ -252,7 +252,15 @@ export async function flushNotificationDigests(now = new Date()): Promise<void> 
 }
 
 export function startNotificationDigestScheduler(): void {
-  setInterval(() => void flushNotificationDigests(), 60_000).unref();
+  notificationDigestTimer ??= setInterval(() => void flushNotificationDigests(), 60_000).unref();
+}
+
+let notificationDigestTimer: NodeJS.Timeout | undefined;
+
+export async function stopNotificationDigestScheduler(): Promise<void> {
+  if (notificationDigestTimer) clearInterval(notificationDigestTimer);
+  notificationDigestTimer = undefined;
+  await flushNotificationDigests();
 }
 
 export async function sendTestNotification(urlOverride?: string): Promise<{ ok: boolean; error?: string }> {

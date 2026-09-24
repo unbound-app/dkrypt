@@ -187,10 +187,17 @@ export async function reconcileCryptoBilling(): Promise<void> {
   }
 }
 
+let cryptoBillingTimer: NodeJS.Timeout | undefined;
+
 export function startCryptoBillingPoller(): void {
   if (!nowpaymentsConfigured) return;
   const interval = Math.max(60, config.cryptoBillingPollIntervalSeconds) * 1000;
-  setInterval(() => void reconcileCryptoBilling(), interval).unref();
+  cryptoBillingTimer ??= setInterval(() => void reconcileCryptoBilling(), interval).unref();
+}
+
+export function stopCryptoBillingPoller(): void {
+  if (cryptoBillingTimer) clearInterval(cryptoBillingTimer);
+  cryptoBillingTimer = undefined;
 }
 
 export function listManagerBillingSubscriptions(filters: { query?: string; provider?: string; status?: string; planId?: string; from?: string; to?: string; wallet?: string; invoice?: string } = {}): Array<Record<string, unknown>> {

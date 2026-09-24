@@ -12,8 +12,11 @@ function fmtBytes(bytes: number): string {
   return mb >= 1024 ? `${(mb / 1024).toFixed(2)} GB` : `${mb.toFixed(1)} MB`;
 }
 
+let historyListener: ((entry: JobHistoryEntry) => void) | undefined;
+
 export function startJobWebhookDispatcher(): void {
-  dashboardEvents.on('historyAdded', (entry: JobHistoryEntry) => {
+  if (historyListener) return;
+  historyListener = (entry: JobHistoryEntry) => {
     const labelText = label(entry);
     const artifact = entry.artifactId ? getArtifactById(entry.artifactId) : undefined;
     const hasArtifact = artifactFileAvailable(artifact);
@@ -45,5 +48,12 @@ export function startJobWebhookDispatcher(): void {
         ...(entry.status === 'failed' && entry.error ? [{ name: 'Error', value: `\`\`\`${entry.error}\`\`\`` }] : []),
       ],
     });
-  });
+  };
+  dashboardEvents.on('historyAdded', historyListener);
+}
+
+export function stopJobWebhookDispatcher(): void {
+  if (!historyListener) return;
+  dashboardEvents.off('historyAdded', historyListener);
+  historyListener = undefined;
 }

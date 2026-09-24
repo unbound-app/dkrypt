@@ -748,6 +748,7 @@ async function pollOneDevice(device: DeviceRecord): Promise<void> {
 }
 
 export function startDeviceHealthPoller(): void {
+  if (deviceHealthTimer) return;
   const poll = async () => {
     const devices = getEffectiveDevices().filter((d) => d.enabled);
     await Promise.all(devices.map((d) => pollOneDevice(d).catch((err) => log.warn('device health poll failed', { deviceId: d.id, error: String(err) }))));
@@ -755,5 +756,12 @@ export function startDeviceHealthPoller(): void {
   };
 
   void poll();
-  setInterval(() => void poll(), HEALTH_POLL_INTERVAL_MS).unref();
+  deviceHealthTimer = setInterval(() => void poll(), HEALTH_POLL_INTERVAL_MS).unref();
+}
+
+let deviceHealthTimer: NodeJS.Timeout | undefined;
+
+export function stopDeviceHealthPoller(): void {
+  if (deviceHealthTimer) clearInterval(deviceHealthTimer);
+  deviceHealthTimer = undefined;
 }

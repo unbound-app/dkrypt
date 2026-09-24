@@ -1209,9 +1209,23 @@ function verifyEncryptedBackupManifest(manifestPath: string, jsonPath: string, d
 }
 
 export function startStateFlusher(): void {
-  setInterval(() => {
+  stateFlushTimer ??= setInterval(() => {
     if (dirty) persistNow();
   }, 30_000).unref();
+}
+
+let stateFlushTimer: NodeJS.Timeout | undefined;
+let sessionSweepTimer: NodeJS.Timeout | undefined;
+let apiKeySweepTimer: NodeJS.Timeout | undefined;
+
+export function stopStateBackgroundServices(): void {
+  if (stateFlushTimer) clearInterval(stateFlushTimer);
+  if (sessionSweepTimer) clearInterval(sessionSweepTimer);
+  if (apiKeySweepTimer) clearInterval(apiKeySweepTimer);
+  stateFlushTimer = undefined;
+  sessionSweepTimer = undefined;
+  apiKeySweepTimer = undefined;
+  if (dirty) persistNow();
 }
 
 function hashKey(key: string): string {
@@ -1369,7 +1383,7 @@ export function revokeOtherSessionRecords(sub: string, keepId: string): number {
 }
 
 export function startSessionSweeper(): void {
-  setInterval(() => {
+  sessionSweepTimer ??= setInterval(() => {
     const now = Date.now();
     const before = state.activeSessions.length;
     state.activeSessions = state.activeSessions.filter((s) => now - s.lastSeenAt < SESSION_RECORD_TTL_MS);
@@ -2122,7 +2136,7 @@ export function claimExpiringApiKeysToNotify(): { id: string; name: string; owne
 }
 
 export function startApiKeySweeper(): void {
-  setInterval(() => {
+  apiKeySweepTimer ??= setInterval(() => {
     const now = Date.now();
     const before = state.apiKeys.length;
     state.apiKeys = state.apiKeys.filter((k) => !(k.expiresAt && now > k.expiresAt));
