@@ -27,6 +27,9 @@
   let subscriptions = $state<TestFlightSubscription[]>([]);
   let devices = $state<DeviceRecord[]>([]);
   let loading = $state(true);
+  let loadingMore = $state(false);
+  let nextCursor = $state<string | undefined>(undefined);
+  let total = $state(0);
   let busyId = $state<string | null>(null);
   let busyBundleId = $state<string | null>(null);
 
@@ -73,12 +76,27 @@
         canViewDevices ? fetchDevices() : Promise.resolve({ devices: [] as DeviceRecord[] }),
       ]);
       subscriptions = subscriptionData.subscriptions;
+      total = subscriptionData.total;
+      nextCursor = subscriptionData.nextCursor;
       devices = deviceData.devices;
       void loadTestFlightCatalog();
     } catch {
       subscriptions = [];
     } finally {
       loading = false;
+    }
+  }
+
+  async function loadMore(): Promise<void> {
+    if (loadingMore || !nextCursor) return;
+    loadingMore = true;
+    try {
+      const result = await fetchTestFlightSubscriptions(nextCursor);
+      subscriptions = [...subscriptions, ...result.subscriptions];
+      total = result.total;
+      nextCursor = result.nextCursor;
+    } finally {
+      loadingMore = false;
     }
   }
 
@@ -218,6 +236,11 @@
             {/if}
           </div>
         {/each}
+      </div>
+    {/if}
+    {#if nextCursor}
+      <div class="mt-4 flex justify-center border-t border-border/70 pt-4">
+        <Button size="sm" variant="secondary" loading={loadingMore} onclick={() => void loadMore()}>Load more ({Math.max(0, total - subscriptions.length)} older)</Button>
       </div>
     {/if}
     {#if testFlightCatalogState.loading && unifiedEntries.length === 0}

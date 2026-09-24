@@ -20,21 +20,41 @@
   let search = $state('');
   let statusFilter = $state('');
   let providerFilter = $state('');
+  let total = $state(0);
+  let nextCursor = $state<string | undefined>(undefined);
+  let loadingMore = $state(false);
 
   async function load(): Promise<void> {
     refreshing = true;
     try {
       const [ledger, status] = await Promise.all([
-        fetchBillingSubscriptions({ q: search, provider: providerFilter || undefined, status: statusFilter || undefined }),
+        fetchBillingSubscriptions({ q: search, provider: providerFilter || undefined, status: statusFilter || undefined, limit: 50 }),
         canManage ? fetchBillingProviderStatus() : Promise.resolve(null),
       ]);
       subscriptions = ledger.subscriptions;
+      total = ledger.total;
+      nextCursor = ledger.nextCursor;
       providerStatus = status;
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Couldn't load billing subscriptions", 'error');
     } finally {
       loading = false;
       refreshing = false;
+    }
+  }
+
+  async function loadMore(): Promise<void> {
+    if (loadingMore || !nextCursor) return;
+    loadingMore = true;
+    try {
+      const page = await fetchBillingSubscriptions({ q: search, provider: providerFilter || undefined, status: statusFilter || undefined, cursor: nextCursor, limit: 50 });
+      subscriptions = [...subscriptions, ...page.subscriptions];
+      total = page.total;
+      nextCursor = page.nextCursor;
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Couldn't load more subscriptions", 'error');
+    } finally {
+      loadingMore = false;
     }
   }
 
@@ -102,6 +122,11 @@
           </tbody>
         </table>
       </div>
+      {#if nextCursor}
+        <div class="mt-3 flex justify-center">
+          <Button size="sm" variant="secondary" loading={loadingMore} onclick={() => void loadMore()}>Load more ({Math.max(0, total - subscriptions.length)} older)</Button>
+        </div>
+      {/if}
     {/if}
   </Card>
 </div>

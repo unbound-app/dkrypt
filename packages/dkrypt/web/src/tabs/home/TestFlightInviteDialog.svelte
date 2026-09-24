@@ -16,6 +16,9 @@
   let { open, onOpenChange }: Props = $props();
   let inviteUrl = $state('');
   let subscriptions = $state<TestFlightSubscription[]>([]);
+  let nextCursor = $state<string | undefined>(undefined);
+  let total = $state(0);
+  let loadingMore = $state(false);
   let loading = $state(false);
   let submitting = $state(false);
 
@@ -34,11 +37,27 @@
   async function load(): Promise<void> {
     loading = true;
     try {
-      subscriptions = (await fetchTestFlightSubscriptions()).subscriptions;
+      const result = await fetchTestFlightSubscriptions();
+      subscriptions = result.subscriptions;
+      total = result.total;
+      nextCursor = result.nextCursor;
     } catch {
       subscriptions = [];
     } finally {
       loading = false;
+    }
+  }
+
+  async function loadMore(): Promise<void> {
+    if (loadingMore || !nextCursor) return;
+    loadingMore = true;
+    try {
+      const result = await fetchTestFlightSubscriptions(nextCursor);
+      subscriptions = [...subscriptions, ...result.subscriptions];
+      total = result.total;
+      nextCursor = result.nextCursor;
+    } finally {
+      loadingMore = false;
     }
   }
 
@@ -100,6 +119,11 @@
           {/if}
         {/each}
       </div>
+      {#if nextCursor}
+        <div class="mt-3 flex justify-center">
+          <Button size="sm" variant="secondary" loading={loadingMore} onclick={() => void loadMore()}>Load more ({Math.max(0, total - subscriptions.length)} older)</Button>
+        </div>
+      {/if}
     {/if}
   </div>
 </Dialog>

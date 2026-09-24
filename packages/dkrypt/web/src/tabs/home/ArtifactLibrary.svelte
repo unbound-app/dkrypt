@@ -20,22 +20,43 @@
   let maxBytes = $state(0);
   let query = $state('');
   let loading = $state(false);
+  let loadingMore = $state(false);
+  let nextCursor = $state<string | undefined>(undefined);
   let error = $state('');
 
   async function load(): Promise<void> {
     if (!canDecrypt) return;
     loading = true;
     error = '';
+    nextCursor = undefined;
     try {
-      const result = await fetchArtifacts(0, 50, query.trim() || undefined);
+      const result = await fetchArtifacts(undefined, 50, query.trim() || undefined);
       artifacts = result.artifacts;
       total = result.total;
       totalBytes = result.totalBytes;
       maxBytes = result.maxBytes;
+      nextCursor = result.nextCursor;
     } catch (err) {
       error = err instanceof Error ? err.message : 'Failed to load artifacts';
     } finally {
       loading = false;
+    }
+  }
+
+  async function loadMore(): Promise<void> {
+    if (loadingMore || !nextCursor) return;
+    loadingMore = true;
+    try {
+      const result = await fetchArtifacts(nextCursor, 50, query.trim() || undefined);
+      artifacts = [...artifacts, ...result.artifacts];
+      total = result.total;
+      totalBytes = result.totalBytes;
+      maxBytes = result.maxBytes;
+      nextCursor = result.nextCursor;
+    } catch (err) {
+      error = err instanceof Error ? err.message : 'Failed to load more artifacts';
+    } finally {
+      loadingMore = false;
     }
   }
 
@@ -110,6 +131,11 @@
               </article>
             {/each}
           </div>
+          {#if nextCursor}
+            <div class="mt-3 flex justify-center">
+              <Button variant="secondary" size="sm" loading={loadingMore} onclick={() => void loadMore()}>Load more ({Math.max(0, total - artifacts.length)} older)</Button>
+            </div>
+          {/if}
         {/if}
       </div>
     </div>

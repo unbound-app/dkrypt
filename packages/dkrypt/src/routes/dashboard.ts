@@ -671,9 +671,13 @@ dashboardRouter.get('/v1/dashboard/search', async (req, res) => {
   }
 });
 
-dashboardRouter.get('/v1/dashboard/testflight/subscriptions', canViewTestFlightSubscriptions, (_req, res) => {
+dashboardRouter.get('/v1/dashboard/testflight/subscriptions', canViewTestFlightSubscriptions, (req, res) => {
   const manager = hasPermission(res.locals.session.permissions, PermissionFlag.manageTestFlightSubscriptions);
-  res.json({ subscriptions: subscriptionsForUser(res.locals.session.sub, manager) });
+  const allSubscriptions = subscriptionsForUser(res.locals.session.sub, manager);
+  const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit ?? '50'), 10) || 50, 1), 100);
+  const offset = typeof req.query.cursor === 'string' ? decodeCursor(req.query.cursor) : Math.max(Number.parseInt(String(req.query.offset ?? '0'), 10) || 0, 0);
+  const subscriptions = allSubscriptions.slice(offset, offset + limit);
+  res.json({ subscriptions, total: allSubscriptions.length, nextCursor: nextCursor(offset, subscriptions.length, allSubscriptions.length) });
 });
 
 dashboardRouter.post('/v1/dashboard/testflight/subscriptions', canViewTestFlightSubscriptions, async (req, res) => {
@@ -1417,7 +1421,7 @@ dashboardRouter.get('/v1/dashboard/devices/:id/activity', canViewDevices, (req, 
     return;
   }
   const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit ?? '12'), 10) || 12, 1), 50);
-  const offset = typeof req.query.cursor === 'string' ? decodeCursor(req.query.cursor) : 0;
+  const offset = typeof req.query.cursor === 'string' ? decodeCursor(req.query.cursor) : Math.max(Number.parseInt(String(req.query.offset ?? '0'), 10) || 0, 0);
   const page = getDeviceActivityPage(device.id, offset, limit);
   res.json({ activity: page.entries, total: page.total, nextCursor: nextCursor(offset, page.entries.length, page.total) });
 });

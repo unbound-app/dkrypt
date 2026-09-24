@@ -663,8 +663,10 @@ export function fetchDeviceHealthHistory(deviceId: string, hours = 24): Promise<
   return apiJson(`/v1/dashboard/devices/${encodeURIComponent(deviceId)}/health-history?hours=${hours}`);
 }
 
-export function fetchDeviceActivity(deviceId: string, limit = 12): Promise<{ activity: DeviceActivityEntry[] }> {
-  return apiJson(`/v1/dashboard/devices/${encodeURIComponent(deviceId)}/activity?limit=${limit}`);
+export function fetchDeviceActivity(deviceId: string, cursorOrLimit: string | number | undefined = undefined, limit = 12): Promise<{ activity: DeviceActivityEntry[]; total: number } & CursorPage> {
+  const resolvedLimit = typeof cursorOrLimit === 'number' ? cursorOrLimit : limit;
+  const cursorQuery = typeof cursorOrLimit === 'string' && cursorOrLimit ? `&cursor=${encodeURIComponent(cursorOrLimit)}` : '';
+  return apiJson(`/v1/dashboard/devices/${encodeURIComponent(deviceId)}/activity?limit=${resolvedLimit}${cursorQuery}`);
 }
 
 export interface HourlyBatteryBucket {
@@ -884,10 +886,15 @@ export function fetchJobHistory(
   );
 }
 
-export function fetchArtifacts(offset = 0, limit = 50, q?: string, channel?: ArtifactRecord['channel']): Promise<{ artifacts: ArtifactRecord[]; total: number; totalBytes: number; maxBytes: number }> {
+export function fetchArtifacts(cursorOrOffset: string | number | undefined = undefined, limit = 50, q?: string, channel?: ArtifactRecord['channel']): Promise<{ artifacts: ArtifactRecord[]; total: number; totalBytes: number; maxBytes: number } & CursorPage> {
+  const pageQuery = typeof cursorOrOffset === 'number'
+    ? `&offset=${Math.max(0, cursorOrOffset)}`
+    : cursorOrOffset
+      ? `&cursor=${encodeURIComponent(cursorOrOffset)}`
+      : '';
   const query = q ? `&q=${encodeURIComponent(q)}` : '';
   const channelQuery = channel ? `&channel=${channel}` : '';
-  return apiJson(`/v1/dashboard/artifacts?offset=${offset}&limit=${limit}${query}${channelQuery}`);
+  return apiJson(`/v1/dashboard/artifacts?limit=${limit}${pageQuery}${query}${channelQuery}`);
 }
 
 export function dashboardArtifactDownloadUrl(id: string): string {
@@ -1239,8 +1246,10 @@ export function queueTestFlightDecrypt(
   return apiAction('/v1/dashboard/testflight/decrypt', { method: 'POST', body: JSON.stringify({ bundleId, appId, build, preferPrimary, deviceId }) });
 }
 
-export function fetchTestFlightSubscriptions(): Promise<{ subscriptions: TestFlightSubscription[] }> {
-  return apiJson('/v1/dashboard/testflight/subscriptions');
+export function fetchTestFlightSubscriptions(cursor?: string, limit = 50): Promise<{ subscriptions: TestFlightSubscription[]; total: number } & CursorPage> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (cursor) params.set('cursor', cursor);
+  return apiJson(`/v1/dashboard/testflight/subscriptions?${params.toString()}`);
 }
 
 export function submitTestFlightSubscription(url: string): Promise<{ ok: boolean; data: { subscription: TestFlightSubscription } }> {
@@ -1286,8 +1295,9 @@ export function previewBulkJobReplay(ids: string[]): Promise<BulkJobPreview> {
   });
 }
 
-export function fetchNotifications(limit = 50): Promise<NotificationResponse> {
-  return apiJson(`/v1/dashboard/notifications?limit=${limit}`);
+export function fetchNotifications(limit = 50, cursor?: string): Promise<NotificationResponse & { total: number } & CursorPage> {
+  const cursorQuery = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
+  return apiJson(`/v1/dashboard/notifications?limit=${limit}${cursorQuery}`);
 }
 
 export function markNotificationsRead(ids?: string[]): Promise<{ ok: boolean; data: { marked: number } }> {
@@ -1309,9 +1319,14 @@ export function fetchPendingKeys(): Promise<{ keys: ApiKeyRecord[] }> {
   return apiJson('/v1/dashboard/keys/pending');
 }
 
-export function fetchAllKeys(offset = 0, limit = 25, search?: string): Promise<{ keys: ApiKeyRecord[]; total: number }> {
+export function fetchAllKeys(cursorOrOffset: string | number | undefined = undefined, limit = 25, search?: string): Promise<{ keys: ApiKeyRecord[]; total: number } & CursorPage> {
+  const pageQuery = typeof cursorOrOffset === 'number'
+    ? `&offset=${Math.max(0, cursorOrOffset)}`
+    : cursorOrOffset
+      ? `&cursor=${encodeURIComponent(cursorOrOffset)}`
+      : '';
   const q = search?.trim() ? `&search=${encodeURIComponent(search.trim())}` : '';
-  return apiJson(`/v1/dashboard/keys/all?offset=${offset}&limit=${limit}${q}`);
+  return apiJson(`/v1/dashboard/keys/all?limit=${limit}${pageQuery}${q}`);
 }
 
 export function requestKey(
@@ -1437,8 +1452,9 @@ export function fetchUsers(): Promise<{ users: AllowedUser[] }> {
   return apiJson('/v1/dashboard/users');
 }
 
-export function fetchAuditLog(limit = 100): Promise<{ entries: AuditLogEntry[] }> {
-  return apiJson(`/v1/dashboard/audit-log?limit=${limit}`);
+export function fetchAuditLog(limit = 100, cursor?: string): Promise<{ entries: AuditLogEntry[]; total: number } & CursorPage> {
+  const cursorQuery = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
+  return apiJson(`/v1/dashboard/audit-log?limit=${limit}${cursorQuery}`);
 }
 
 export function auditLogExportUrl(format: 'csv' | 'json'): string {
@@ -1719,11 +1735,13 @@ export interface BillingManagerSubscription {
   };
 }
 
-export function fetchBillingSubscriptions(filters: { q?: string; provider?: string; status?: string } = {}): Promise<{ subscriptions: BillingManagerSubscription[] }> {
+export function fetchBillingSubscriptions(filters: { q?: string; provider?: string; status?: string; cursor?: string; limit?: number } = {}): Promise<{ subscriptions: BillingManagerSubscription[]; total: number } & CursorPage> {
   const params = new URLSearchParams();
   if (filters.q) params.set('q', filters.q);
   if (filters.provider) params.set('provider', filters.provider);
   if (filters.status) params.set('status', filters.status);
+  if (filters.cursor) params.set('cursor', filters.cursor);
+  if (filters.limit) params.set('limit', String(filters.limit));
   const query = params.toString();
   return apiJson(`/v1/billing/subscriptions${query ? `?${query}` : ''}`);
 }

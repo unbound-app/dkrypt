@@ -41,6 +41,9 @@
   let savingRoles = $state(false);
   let removing = $state(false);
   let auditLog = $state<AuditLogEntry[] | null>(null);
+  let auditTotal = $state(0);
+  let auditNextCursor = $state<string | undefined>(undefined);
+  let loadingMoreAudit = $state(false);
   let auditSearch = $state('');
 
   const AUDIT_ACTION_LABEL: Record<AuditLogEntry['action'], string> = {
@@ -149,6 +152,21 @@
     users = u.users;
     roles = r.roles;
     auditLog = a.entries;
+    auditTotal = a.total;
+    auditNextCursor = a.nextCursor;
+  }
+
+  async function loadMoreAudit(): Promise<void> {
+    if (loadingMoreAudit || !auditNextCursor) return;
+    loadingMoreAudit = true;
+    try {
+      const page = await fetchAuditLog(200, auditNextCursor);
+      auditLog = [...(auditLog ?? []), ...page.entries];
+      auditTotal = page.total;
+      auditNextCursor = page.nextCursor;
+    } finally {
+      loadingMoreAudit = false;
+    }
   }
 
   $effect(() => {
@@ -411,6 +429,11 @@
         </tbody>
       </table>
     </div>
+    {#if auditLog !== null && auditNextCursor}
+      <div class="mt-3 flex justify-center">
+        <Button size="sm" variant="secondary" loading={loadingMoreAudit} onclick={() => void loadMoreAudit()}>Load more ({Math.max(0, auditTotal - auditLog.length)} older)</Button>
+      </div>
+    {/if}
     {#if auditLog !== null && auditLog.length === 0}
       <EmptyState icon={ScrollText} message="No changes recorded yet." />
     {:else if auditLog !== null && filteredAuditLog.length === 0}

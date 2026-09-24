@@ -13,6 +13,8 @@
   let open = $state(false);
   let notifications = $state<DashboardNotification[]>([]);
   let unread = $state(0);
+  let nextCursor = $state<string | undefined>(undefined);
+  let loadingOlder = $state(false);
   let loaded = $state(false);
   let lastViewedAt = $state(Number(localStorage.getItem(LAST_VIEWED_KEY) ?? 0));
 
@@ -21,9 +23,22 @@
       const result = await fetchNotifications();
       notifications = result.notifications;
       unread = result.unread;
+      nextCursor = result.nextCursor;
       loaded = true;
     } catch {
       loaded = false;
+    }
+  }
+
+  async function loadOlder(): Promise<void> {
+    if (loadingOlder || !nextCursor) return;
+    loadingOlder = true;
+    try {
+      const result = await fetchNotifications(50, nextCursor);
+      notifications = [...notifications, ...result.notifications];
+      nextCursor = result.nextCursor;
+    } finally {
+      loadingOlder = false;
     }
   }
 
@@ -95,6 +110,9 @@
             </div>
           {/each}
         </div>
+        {#if nextCursor}
+          <Button class="mt-2 w-full" size="sm" variant="secondary" loading={loadingOlder} onclick={() => void loadOlder()}>Load older notifications</Button>
+        {/if}
       {:else if localItems.length > 0}
         <div class="flex max-h-80 flex-col gap-2 overflow-y-auto">
           {#each localItems as item (item.id)}

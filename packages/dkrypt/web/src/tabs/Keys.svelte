@@ -51,6 +51,7 @@
   let pending = $state<ApiKeyRecord[] | null>(null);
   let all = $state<ApiKeyRecord[] | null>(null);
   let allTotal = $state(0);
+  let allNextCursor = $state<string | undefined>(undefined);
   let loadingMoreAll = $state(false);
   let statusFilter = $state('all');
   let allSearch = $state('');
@@ -136,18 +137,20 @@
   const canManageTestFlight = $derived(canManage);
 
   async function loadAllKeysPage(): Promise<void> {
-    const data = await fetchAllKeys(0, PAGE_SIZE, allSearch);
+    const data = await fetchAllKeys(undefined, PAGE_SIZE, allSearch);
     all = data.keys;
     allTotal = data.total;
+    allNextCursor = data.nextCursor;
   }
 
   async function loadMoreKeys(): Promise<void> {
-    if (!all) return;
+    if (!all || !allNextCursor) return;
     loadingMoreAll = true;
     try {
-      const data = await fetchAllKeys(all.length, PAGE_SIZE, allSearch);
+      const data = await fetchAllKeys(allNextCursor, PAGE_SIZE, allSearch);
       all = [...all, ...data.keys];
       allTotal = data.total;
+      allNextCursor = data.nextCursor;
     } finally {
       loadingMoreAll = false;
     }
@@ -743,7 +746,7 @@
       {#if all !== null && filteredAll.length === 0}
         <EmptyState icon={PackageSearch} message="No keys match this filter." />
       {/if}
-      {#if all !== null && all.length < allTotal}
+      {#if all !== null && allNextCursor}
         <div class="mt-3 flex justify-center">
           <Button size="sm" variant="secondary" loading={loadingMoreAll} onclick={loadMoreKeys}>
             Load more ({allTotal - all.length} older)
