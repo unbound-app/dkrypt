@@ -250,7 +250,22 @@ jobs:
             fi
           }
           trap 'rollback' ERR
-          docker exec dkrypt bun -e "const key=process.env.API_KEY; const headers={authorization:'Bearer '+key}; const health=await (await fetch('http://127.0.0.1:'+(process.env.PORT||8080)+'/v1/health',{headers})).json(); const capabilities=health.bridge?.capabilities??[]; if (!health.ok || health.database?.integrity !== 'ok' || health.serviceReady !== true || health.bridge?.state !== 'ready' || !capabilities.includes('list_devices') || !capabilities.includes('cancel')) throw new Error(JSON.stringify(health)); if (health.device && (!health.device.reachable || health.device.readiness !== 'ready')) throw new Error('configured device is not ready: '+JSON.stringify(health.device)); const openapi=await (await fetch('http://127.0.0.1:'+(process.env.PORT||8080)+'/openapi.json')).json(); if (!openapi.paths || Object.keys(openapi.paths).length < 20) throw new Error('OpenAPI route inventory is incomplete'); const stat=await import('node:fs/promises'); await stat.stat(process.env.DEVICE_BRIDGE_SOCKET||'/run/dkrypt/device-bridge.sock'); try { await stat.stat('/root/.ipadecrypt'); throw new Error('legacy .ipadecrypt bootstrap path is present'); } catch (error) { if (error instanceof Error && !String(error.message).includes('ENOENT')) throw error; } console.log(JSON.stringify({health:health.ok,device:health.device,bridge:health.bridge,paths:Object.keys(openapi.paths).length}));"
+          smoke() {
+            docker exec dkrypt bun -e "const key=process.env.API_KEY; const headers={authorization:'Bearer '+key}; const health=await (await fetch('http://127.0.0.1:'+(process.env.PORT||8080)+'/v1/health',{headers})).json(); const capabilities=health.bridge?.capabilities??[]; if (!health.ok || health.database?.integrity !== 'ok' || health.serviceReady !== true || health.bridge?.state !== 'ready' || !capabilities.includes('list_devices') || !capabilities.includes('cancel')) throw new Error(JSON.stringify(health)); if (health.device && (!health.device.reachable || health.device.readiness !== 'ready')) throw new Error('configured device is not ready: '+JSON.stringify(health.device)); const openapi=await (await fetch('http://127.0.0.1:'+(process.env.PORT||8080)+'/openapi.json')).json(); if (!openapi.paths || Object.keys(openapi.paths).length < 20) throw new Error('OpenAPI route inventory is incomplete'); const stat=await import('node:fs/promises'); await stat.stat(process.env.DEVICE_BRIDGE_SOCKET||'/run/dkrypt/device-bridge.sock'); try { await stat.stat('/root/.ipadecrypt'); throw new Error('legacy .ipadecrypt bootstrap path is present'); } catch (error) { if (error instanceof Error && !String(error.message).includes('ENOENT')) throw error; } console.log(JSON.stringify({health:health.ok,device:health.device,bridge:health.bridge,paths:Object.keys(openapi.paths).length}));"
+          }
+          smoke_success=0
+          for i in $(seq 1 30); do
+            if smoke; then
+              smoke_success=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$smoke_success" -ne 1 ]; then
+            echo 'deployment smoke test did not become ready in time' >&2
+            docker logs --tail 100 dkrypt || true
+            false
+          fi
           if docker inspect --format '{{json .Mounts}}' dkrypt | grep -q '/root/.ipadecrypt'; then
             echo 'legacy .ipadecrypt mount is present' >&2
             exit 1
