@@ -134,7 +134,7 @@ jobs:
           RUNTIME_HOME=$(cd "$RUNTIME_DIR/../../.." && pwd)
           test -f "$RUNTIME_DIR/.env"
           if docker container inspect dkrypt >/dev/null 2>&1; then
-            existing_key_path=$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/root/.ssh/id_ed25519"}}{{.Source}}{{end}}{{end}}' dkrypt)
+            existing_key_path=$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/root/.ssh/id_ed25519"}}{{.Source}}{{end}}{{end}}' dkrypt 2>/dev/null || true)
             if [ -f "$existing_key_path" ] && [ -r "$existing_key_path" ]; then
               DEVICE_SSH_KEY_HOST_PATH="$existing_key_path"
             fi
@@ -150,8 +150,12 @@ jobs:
               fi
             done
           fi
-          test -n "${DEVICE_SSH_KEY_HOST_PATH:-}"
-          test -f "$DEVICE_SSH_KEY_HOST_PATH"
+          if [ -z "${DEVICE_SSH_KEY_HOST_PATH:-}" ] || [ ! -f "$DEVICE_SSH_KEY_HOST_PATH" ]; then
+            echo "No readable SSH key found for the dkrypt compatibility channel" >&2
+            echo "Checked $RUNTIME_HOME/.ssh and ${HOME:-unknown}/.ssh" >&2
+            find "$RUNTIME_HOME/.ssh" "$HOME/.ssh" -maxdepth 1 -type f -name 'id_*' -print 2>/dev/null || true
+            exit 1
+          fi
           printf 'DEVICE_SSH_KEY_HOST_PATH=%s\n' "$DEVICE_SSH_KEY_HOST_PATH" >> "$GITHUB_ENV"
           cat > "$RUNTIME_DIR/compose.yml" <<'EOF'
           name: dkrypt
