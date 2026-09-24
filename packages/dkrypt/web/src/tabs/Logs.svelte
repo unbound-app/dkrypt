@@ -39,6 +39,7 @@
   let autoScroll = $state(localStorage.getItem('logAutoScroll') !== 'false');
   let initialLogs = $state<LogEntry[] | null>(null);
   let totalLogs = $state(0);
+  let nextCursor = $state<string | undefined>(undefined);
   let loadingOlder = $state(false);
   let listEl: HTMLDivElement | undefined = $state();
   let stickToTop = $state(true);
@@ -163,30 +164,35 @@
     if (regexError) {
       initialLogs = [];
       totalLogs = 0;
+      nextCursor = undefined;
       return;
     }
     const sequence = ++requestSequence;
     initialLogs = null;
+    nextCursor = undefined;
     void fetchLogs({ scope, level, q, regex, limit: 100 }).then((result) => {
       if (sequence !== requestSequence) return;
       initialLogs = result.logs;
       totalLogs = result.total;
+      nextCursor = result.nextCursor;
     }).catch(() => {
       if (sequence !== requestSequence) return;
       initialLogs = [];
       totalLogs = 0;
+      nextCursor = undefined;
     });
   });
 
   async function loadOlder(): Promise<void> {
-    if (loadingOlder || !initialLogs || initialLogs.length >= totalLogs) return;
+    if (loadingOlder || !initialLogs || !nextCursor) return;
     const sequence = requestSequence;
     loadingOlder = true;
     try {
-      const result = await fetchLogs({ scope: scopeFilter, level: levelFilter, q: searchText.trim(), regex: regexMode, offset: initialLogs.length, limit: 100 });
+      const result = await fetchLogs({ scope: scopeFilter, level: levelFilter, q: searchText.trim(), regex: regexMode, cursor: nextCursor, limit: 100 });
       if (sequence !== requestSequence) return;
       initialLogs = [...initialLogs, ...result.logs];
       totalLogs = result.total;
+      nextCursor = result.nextCursor;
     } finally {
       loadingOlder = false;
     }
@@ -376,7 +382,7 @@
     {#if filtered.length === 0}
       <EmptyState icon={ScrollText} message="No log entries yet." />
     {/if}
-    {#if initialLogs && initialLogs.length < totalLogs}
+    {#if initialLogs && nextCursor}
       <Button class="mt-3" variant="secondary" loading={loadingOlder} onclick={loadOlder}>Load older logs ({totalLogs - initialLogs.length} remaining)</Button>
     {/if}
   {/if}

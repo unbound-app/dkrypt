@@ -334,6 +334,10 @@ export interface JobHistoryEntry {
   failureClass?: string;
 }
 
+export interface CursorPage {
+  nextCursor?: string;
+}
+
 export interface ArtifactRecord {
   id: string;
   bundleId: string;
@@ -854,13 +858,18 @@ export function fetchJobDiff(bundleId: string, a: string, b: string): Promise<Jo
 }
 
 export function fetchJobHistory(
-  offset: number,
+  cursorOrOffset: string | number | undefined,
   limit: number,
   q?: string,
   source?: 'manual' | 'scheduler',
   status?: 'done' | 'failed',
   opts?: { queuedBy?: string; deviceId?: string; errorQ?: string; failureCategory?: string; fromTs?: number; toTs?: number },
-): Promise<{ history: JobHistoryEntry[]; total: number }> {
+): Promise<{ history: JobHistoryEntry[]; total: number } & CursorPage> {
+  const pageQuery = typeof cursorOrOffset === 'number'
+    ? `&offset=${Math.max(0, cursorOrOffset)}`
+    : cursorOrOffset
+      ? `&cursor=${encodeURIComponent(cursorOrOffset)}`
+      : '';
   const query = q ? `&q=${encodeURIComponent(q)}` : '';
   const sourceQuery = source ? `&source=${source}` : '';
   const statusQuery = status ? `&status=${status}` : '';
@@ -871,7 +880,7 @@ export function fetchJobHistory(
   const fromTsQuery = Number.isFinite(opts?.fromTs) ? `&fromTs=${opts?.fromTs}` : '';
   const toTsQuery = Number.isFinite(opts?.toTs) ? `&toTs=${opts?.toTs}` : '';
   return apiJson(
-    `/v1/dashboard/jobs?offset=${offset}&limit=${limit}${query}${sourceQuery}${statusQuery}${queuedByQuery}${deviceIdQuery}${errorQuery}${failureCategoryQuery}${fromTsQuery}${toTsQuery}`,
+    `/v1/dashboard/jobs?limit=${limit}${pageQuery}${query}${sourceQuery}${statusQuery}${queuedByQuery}${deviceIdQuery}${errorQuery}${failureCategoryQuery}${fromTsQuery}${toTsQuery}`,
   );
 }
 
@@ -951,17 +960,19 @@ export interface LogQuery {
   level?: string;
   q?: string;
   regex?: boolean;
+  cursor?: string;
   offset?: number;
   limit?: number;
 }
 
-export function fetchLogs(query: LogQuery = {}): Promise<{ logs: LogEntry[]; total: number }> {
+export function fetchLogs(query: LogQuery = {}): Promise<{ logs: LogEntry[]; total: number } & CursorPage> {
   const params = new URLSearchParams();
   if (query.scope && query.scope !== 'all') params.set('scope', query.scope);
   if (query.level && query.level !== 'all') params.set('level', query.level);
   if (query.q?.trim()) params.set('q', query.q.trim());
   if (query.regex) params.set('regex', '1');
-  if (query.offset) params.set('offset', String(query.offset));
+  if (query.cursor) params.set('cursor', query.cursor);
+  else if (query.offset) params.set('offset', String(query.offset));
   if (query.limit) params.set('limit', String(query.limit));
   return apiJson(`/v1/dashboard/logs${params.size ? `?${params}` : ''}`);
 }

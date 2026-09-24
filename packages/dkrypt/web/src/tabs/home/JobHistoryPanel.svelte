@@ -87,6 +87,7 @@
 
 	let entries = $state<JobHistoryEntry[]>([]);
 	let total = $state(0);
+	let nextCursor = $state<string | undefined>(undefined);
 	let loaded = $state(false);
 	let loadingMore = $state(false);
 	let seenIds = new Set<string>();
@@ -216,7 +217,7 @@
 		loaded = false;
 		selected = new Set();
 		const data = await fetchJobHistory(
-			0,
+			undefined,
 			PAGE_SIZE,
 			query || undefined,
 			sourceFilter === "all" ? undefined : sourceFilter,
@@ -230,16 +231,18 @@
 		);
 		entries = data.history;
 		total = data.total;
+		nextCursor = data.nextCursor;
 		seenIds = new Set(entries.map((e) => e.id));
 		void ensureAppCatalog(entries.map((entry) => entry.bundleId));
 		loaded = true;
 	}
 
 	async function loadMore(): Promise<void> {
+		if (!nextCursor) return;
 		loadingMore = true;
 		try {
 			const data = await fetchJobHistory(
-				entries.length,
+				nextCursor,
 				PAGE_SIZE,
 				activeQuery || undefined,
 				sourceFilter === "all" ? undefined : sourceFilter,
@@ -255,6 +258,7 @@
 			for (const e of additions) seenIds.add(e.id);
 			entries = [...entries, ...additions];
 			total = data.total;
+			nextCursor = data.nextCursor;
 			void ensureAppCatalog(data.history.map((entry) => entry.bundleId));
 		} finally {
 			loadingMore = false;
@@ -948,7 +952,7 @@
 			{/if}
 		</div>
 	{/if}
-	{#if loaded && entries.length < total}
+	{#if loaded && nextCursor}
 		<div class="mt-3 flex justify-center">
 			<Button
 				size="sm"
