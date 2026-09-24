@@ -1734,17 +1734,54 @@ export interface BillingManagerSubscription {
     graceUntil?: string;
     attempts: Array<{ status: string; amount: number; currency: string; occurredAt: string; txHash?: string; failureReason?: string }>;
   };
+  entitlementHistory?: Array<{ id: string; kind: string; status: string; at: string; detail?: string }>;
 }
 
-export function fetchBillingSubscriptions(filters: { q?: string; provider?: string; status?: string; cursor?: string; limit?: number } = {}): Promise<{ subscriptions: BillingManagerSubscription[]; total: number } & CursorPage> {
+export function fetchBillingSubscriptions(filters: { q?: string; provider?: string; status?: string; planId?: string; from?: string; to?: string; wallet?: string; invoice?: string; cursor?: string; limit?: number } = {}): Promise<{ subscriptions: BillingManagerSubscription[]; total: number } & CursorPage> {
   const params = new URLSearchParams();
   if (filters.q) params.set('q', filters.q);
+  if (filters.provider) params.set('provider', filters.provider);
+  if (filters.status) params.set('status', filters.status);
+  if (filters.planId) params.set('planId', filters.planId);
+  if (filters.from) params.set('from', filters.from);
+  if (filters.to) params.set('to', filters.to);
+  if (filters.wallet) params.set('wallet', filters.wallet);
+  if (filters.invoice) params.set('invoice', filters.invoice);
+  if (filters.cursor) params.set('cursor', filters.cursor);
+  if (filters.limit) params.set('limit', String(filters.limit));
+  const query = params.toString();
+  return apiJson(`/v1/billing/subscriptions${query ? `?${query}` : ''}`);
+}
+
+export interface BillingWebhookInboxRecord {
+  id: string;
+  provider: 'stripe' | 'nowpayments';
+  eventId: string;
+  status: 'received' | 'processed' | 'failed' | 'quarantined';
+  rawBodySha256: string;
+  rawBodyBytes: number;
+  receivedAt: number;
+  processedAt?: number;
+  attempts: number;
+  lastError?: string;
+}
+
+export function fetchBillingWebhookInbox(filters: { provider?: string; status?: string; cursor?: string; limit?: number } = {}): Promise<{ inbox: BillingWebhookInboxRecord[]; total: number } & CursorPage> {
+  const params = new URLSearchParams();
   if (filters.provider) params.set('provider', filters.provider);
   if (filters.status) params.set('status', filters.status);
   if (filters.cursor) params.set('cursor', filters.cursor);
   if (filters.limit) params.set('limit', String(filters.limit));
   const query = params.toString();
-  return apiJson(`/v1/billing/subscriptions${query ? `?${query}` : ''}`);
+  return apiJson(`/v1/billing/webhooks/inbox${query ? `?${query}` : ''}`);
+}
+
+export function replayBillingWebhook(id: string): Promise<{ ok: boolean; data: { replayed?: boolean; duplicate?: boolean; status?: string } }> {
+  return apiAction(`/v1/billing/webhooks/inbox/${encodeURIComponent(id)}/replay`, { method: 'POST' }, 'Webhook replayed');
+}
+
+export function quarantineBillingWebhook(id: string, reason?: string): Promise<{ ok: boolean; data: { record?: BillingWebhookInboxRecord } }> {
+  return apiAction(`/v1/billing/webhooks/inbox/${encodeURIComponent(id)}/quarantine`, { method: 'POST', body: JSON.stringify({ reason }) }, 'Webhook quarantined');
 }
 
 export interface BillingProviderStatus {
