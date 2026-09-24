@@ -37,3 +37,29 @@ test('every versioned route is represented in generated OpenAPI', async () => {
     await server.close();
   }
 });
+
+test('core operational responses publish their required fields', async () => {
+  const server = await buildServer({ includePublicRoutes: false });
+  try {
+    await server.ready();
+    const document = server.swagger() as {
+      paths?: Record<string, Record<string, { responses?: Record<string, { content?: Record<string, { schema?: { properties?: Record<string, unknown> } }> }> }>>;
+    };
+    const assertions: Array<[string, string, string[]]> = [
+      ['/v1/health', 'get', ['ok', 'serviceReady', 'database', 'bridge', 'device']],
+      ['/v1/billing', 'get', ['enabled', 'provider', 'plans', 'providers', 'entitlement']],
+      ['/v1/dashboard/overview', 'get', ['schedulerEnabled', 'watches', 'devices', 'activeJobs']],
+      ['/v1/dashboard/jobs', 'get', ['history', 'total', 'nextCursor']],
+      ['/v1/dashboard/artifacts', 'get', ['artifacts', 'total', 'totalBytes', 'maxBytes']],
+      ['/v1/dashboard/devices', 'get', ['devices']],
+      ['/v1/dashboard/testflight/catalog', 'get', ['apps', 'refreshing']],
+    ];
+    for (const [path, method, fields] of assertions) {
+      const schema = document.paths?.[path]?.[method]?.responses?.['200']?.content?.['application/json']?.schema;
+      expect(schema).toBeDefined();
+      for (const field of fields) expect(Object.keys(schema?.properties ?? {})).toContain(field);
+    }
+  } finally {
+    await server.close();
+  }
+});
