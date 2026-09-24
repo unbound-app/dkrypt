@@ -153,7 +153,9 @@ jobs:
           if [ -z "${DEVICE_SSH_KEY_HOST_PATH:-}" ] || [ ! -f "$DEVICE_SSH_KEY_HOST_PATH" ]; then
             echo "No readable SSH key found for the dkrypt compatibility channel" >&2
             echo "Checked $RUNTIME_HOME/.ssh and ${HOME:-unknown}/.ssh" >&2
-            find "$RUNTIME_HOME/.ssh" "$HOME/.ssh" -maxdepth 1 -type f -name 'id_*' -print 2>/dev/null || true
+            find "$RUNTIME_HOME/.ssh" "$HOME/.ssh" -maxdepth 1 -type f -print 2>/dev/null || true
+            grep -E '^DEVICE_SSH_KEY_(HOST_)?PATH=' "$RUNTIME_DIR/.env" 2>/dev/null || true
+            docker inspect --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{"\\n"}}{{end}}' dkrypt 2>/dev/null || true
             exit 1
           fi
           printf 'DEVICE_SSH_KEY_HOST_PATH=%s\n' "$DEVICE_SSH_KEY_HOST_PATH" >> "$GITHUB_ENV"
