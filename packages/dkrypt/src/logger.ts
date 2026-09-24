@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import safeRegex from 'safe-regex2';
 import { config } from '#config.js';
+import { currentCorrelation } from '#correlation.js';
 import { emitLogAdded } from '#events.js';
 
 export type LogLevel = 'info' | 'warn' | 'error';
@@ -46,6 +47,12 @@ function record(entry: LogEntry): void {
   emitLogAdded(entry);
 }
 
+function contextualMeta(meta: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  const context = currentCorrelation();
+  if (!context) return meta;
+  return { ...meta, correlationId: meta?.correlationId ?? context.correlationId, ...(context.traceId ? { traceId: meta?.traceId ?? context.traceId } : {}) };
+}
+
 export function getRecentLogs(query: LogQuery = {}): { logs: LogEntry[]; total: number } {
   const search = query.query?.trim();
   if (search && query.regex && !safeRegex(search, { limit: 8 })) throw new Error('unsafe log search pattern');
@@ -84,16 +91,19 @@ function ts(): string {
 function makeLogger(scope: string) {
   return {
     info: (msg: string, meta?: Record<string, unknown>) => {
-      console.log(`[${ts()}] INFO  [${scope}] ${msg}`, meta ? JSON.stringify(meta) : '');
-      record({ ts: Date.now(), level: 'info', scope, message: msg, meta });
+      const context = contextualMeta(meta);
+      console.log(`[${ts()}] INFO  [${scope}] ${msg}`, context ? JSON.stringify(context) : '');
+      record({ ts: Date.now(), level: 'info', scope, message: msg, meta: context });
     },
     warn: (msg: string, meta?: Record<string, unknown>) => {
-      console.warn(`[${ts()}] WARN  [${scope}] ${msg}`, meta ? JSON.stringify(meta) : '');
-      record({ ts: Date.now(), level: 'warn', scope, message: msg, meta });
+      const context = contextualMeta(meta);
+      console.warn(`[${ts()}] WARN  [${scope}] ${msg}`, context ? JSON.stringify(context) : '');
+      record({ ts: Date.now(), level: 'warn', scope, message: msg, meta: context });
     },
     error: (msg: string, meta?: Record<string, unknown>) => {
-      console.error(`[${ts()}] ERROR [${scope}] ${msg}`, meta ? JSON.stringify(meta) : '');
-      record({ ts: Date.now(), level: 'error', scope, message: msg, meta });
+      const context = contextualMeta(meta);
+      console.error(`[${ts()}] ERROR [${scope}] ${msg}`, context ? JSON.stringify(context) : '');
+      record({ ts: Date.now(), level: 'error', scope, message: msg, meta: context });
     },
   };
 }

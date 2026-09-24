@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdir, stat } from 'node:fs/promises';
+import { mkdir, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { config } from '#config.js';
 import { emitJobsChanged } from '#events.js';
@@ -14,11 +14,25 @@ import { classifyIpaDecryptOutput } from '#util/ipadecryptOutput.js';
 import { artifactKeyForJob, promoteArtifact } from '#artifacts.js';
 import { withIpadecrypt } from '#idevice.js';
 import { terminateChildProcess } from '#jobs/process.js';
+import { currentCorrelation } from '#correlation.js';
+import { startSpan } from '#telemetry.js';
 
 const log = scopedLogger('jobs');
 import { appendJobTimelineEvent, type Job } from '#jobs/types.js';
 
 export async function runDecrypt(job: Job, device: DeviceRecord): Promise<void> {
+  const span = startSpan('job.decrypt', { 'job.id': job.id, 'job.bundle_id': job.bundleId, 'job.device_id': device.id }, currentCorrelation()?.traceContext);
+  try {
+    await runDecryptOperation(job, device);
+    span.end();
+  } catch (error) {
+    if (job.filePath?.includes('/.staging/')) await rm(job.filePath, { force: true }).catch(() => {});
+    span.end(error);
+    throw error;
+  }
+}
+
+async function runDecryptOperation(job: Job, device: DeviceRecord): Promise<void> {
   const recordTimeline = (label: string) => appendJobTimelineEvent(job, label, 'running');
 
   const ensureNotCancelled = () => {

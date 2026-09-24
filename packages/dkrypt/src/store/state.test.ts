@@ -10,6 +10,7 @@ import { getAuthProfile, replaceIdentitySnapshot, upsertAuthProfile } from '#ide
 import { PermissionFlag, serializeBits } from '#permissions.js';
 import {
   addAllowedUser,
+  addPasskey,
   createApiKey,
   createDevice,
   createDiscordRolePerk,
@@ -17,10 +18,12 @@ import {
   createTestFlightSubscription,
   createWatch,
   deleteDevice,
+  deletePasskey,
   deleteWatch,
   exportBackup,
   getAllJobHistory,
   getDeviceHealthHourlyBuckets,
+  getConsecutiveDeviceHealthFailures,
   getDeviceUptimePercent,
   getDiscordGuildIds,
   getDiscordRolePerks,
@@ -33,6 +36,7 @@ import {
   importBackup,
   listAllowedUsers,
   listNotifications,
+  listPasskeysForUser,
   recordDeviceHealthCheck,
   recordJobHistory,
   recordNotification,
@@ -182,6 +186,25 @@ describe('exportBackup / importBackup', () => {
 
     expect(importBackup(backup, 'tester').ok).toBe(true);
     expect(getTestFlightSubscription(second.id)).toMatchObject({ status: 'pending', devices: [expect.objectContaining({ deviceId: 'device-for-backup', status: 'active' })] });
+  });
+
+  test('round-trips passkey credentials without exposing their public key in account listings', () => {
+    const userId = `passkey-${randomUUID()}`;
+    const credential = addPasskey({
+      id: Buffer.from(randomUUID()).toString('base64url'),
+      userId,
+      publicKey: Buffer.from(`public-key-${randomUUID()}`).toString('base64url'),
+      counter: 7,
+      transports: ['internal'],
+      name: 'Test device',
+      createdAt: Date.now(),
+    });
+    const backup = exportBackup();
+    expect(backup.passkeys).toContainEqual(expect.objectContaining({ id: credential.id, userId, counter: 7 }));
+    expect(listPasskeysForUser(userId)).toContainEqual(expect.objectContaining({ id: credential.id, publicKey: credential.publicKey }));
+    expect(deletePasskey(userId, credential.id)).toBe(true);
+    expect(importBackup(backup, 'tester').ok).toBe(true);
+    expect(listPasskeysForUser(userId)).toContainEqual(expect.objectContaining({ id: credential.id, counter: 7 }));
   });
 
   test('round-trips the allowlist through export and import', () => {
@@ -446,5 +469,13 @@ describe('device health history', () => {
 
     const uptime = getDeviceUptimePercent('device-a', 2);
     expect(uptime).toBeCloseTo(2 / 3);
+  });
+
+  test('restores the consecutive failure count from persisted history', () => {
+    recordDeviceHealthCheck('device-persisted-failures', false);
+    recordDeviceHealthCheck('device-persisted-failures', false);
+    expect(getConsecutiveDeviceHealthFailures('device-persisted-failures')).toBe(2);
+    recordDeviceHealthCheck('device-persisted-failures', true);
+    expect(getConsecutiveDeviceHealthFailures('device-persisted-failures')).toBe(0);
   });
 });

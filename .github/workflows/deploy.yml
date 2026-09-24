@@ -14,6 +14,8 @@ concurrency:
 permissions:
   contents: read
   packages: write
+  id-token: write
+  attestations: write
 
 jobs:
   ci:
@@ -33,6 +35,12 @@ jobs:
           cd web && bun install --frozen-lockfile
       - name: Run Moon checks
         run: bunx @moonrepo/cli@2.4.6 run dkrypt:check
+      - name: Verify generated API clients
+        run: |
+          cd packages/dkrypt
+          bun run clients:generate
+          python -m py_compile clients/python/dkrypt_client.py
+          git diff --exit-code -- clients
       - name: Test Rust device bridge
         run: |
           cd packages/device-bridge
@@ -73,6 +81,41 @@ jobs:
           tags: |
             ghcr.io/${{ github.repository }}:${{ github.sha }}
             ghcr.io/${{ github.repository }}:main
+      - name: Generate image SBOM
+        uses: anchore/sbom-action@v0.20.10
+        with:
+          image: ghcr.io/${{ github.repository }}@${{ steps.build.outputs.digest }}
+          output-file: dkrypt-sbom.spdx.json
+          format: spdx-json
+      - name: Scan image vulnerabilities
+        uses: aquasecurity/trivy-action@0.31.0
+        with:
+          image-ref: ghcr.io/${{ github.repository }}@${{ steps.build.outputs.digest }}
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '0'
+      - name: Upload image SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: dkrypt-sbom-${{ github.sha }}
+          path: dkrypt-sbom.spdx.json
+          if-no-files-found: error
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3.8.1
+      - name: Sign image and attest SBOM
+        env:
+          COSIGN_EXPERIMENTAL: '1'
+          IMAGE: ghcr.io/${{ github.repository }}@${{ steps.build.outputs.digest }}
+        run: |
+          cosign sign --yes "$IMAGE"
+          cosign attest --yes --predicate dkrypt-sbom.spdx.json --type https://spdx.dev/Document "$IMAGE"
 
   deploy:
     name: Deploy to homelab
@@ -115,11 +158,12 @@ jobs:
                 - appstore-config:/root/.ipadecrypt
                 - ipa-storage:/data/artifacts
                 - state:/data/state
-                - /home/adrian/.ssh/id_ed25519_ipad:/root/.ssh/id_ed25519:ro
+                - ${DEVICE_SSH_KEY_HOST_PATH:?DEVICE_SSH_KEY_HOST_PATH is required}:/root/.ssh/id_ed25519:ro
               devices:
                 - /dev/bus/usb:/dev/bus/usb
               tmpfs:
                 - /run/dkrypt:mode=0770,size=16m
+                - /data/tmp:mode=1770,size=1g
               deploy:
                 resources:
                   limits:
@@ -175,3 +219,14 @@ jobs:
             echo "no previous image to roll back to" >&2
           fi
           exit 1
+      - name: Run deployment smoke tests
+        run: |
+          set -e
+          rollback() {
+            echo "deployment smoke test failed; rolling back" >&2
+            if docker image inspect dkrypt:previous >/dev/null 2>&1; then
+              DKRYPT_IMAGE=dkrypt:previous docker compose --env-file /home/adrian/.local/share/dkrypt/.env --project-name dkrypt -f /home/adrian/.local/share/dkrypt/compose.yml up -d --no-build
+            fi
+          }
+          trap 'rollback' ERR
+          docker exec dkrypt bun -e "const key=process.env.API_KEY; const headers={authorization:'Bearer '+key}; const health=await (await fetch('http://127.0.0.1:'+(process.env.PORT||8080)+'/v1/health',{headers})).json(); if (!health.ok || health.database?.integrity !== 'ok' || health.serviceReady !== true) throw new Error(JSON.stringify(health)); const openapi=await (await fetch('http://127.0.0.1:'+(process.env.PORT||8080)+'/openapi.json')).json(); if (!openapi.paths || Object.keys(openapi.paths).length < 20) throw new Error('OpenAPI route inventory is incomplete'); const stat=await import('node:fs/promises'); await stat.stat(process.env.DEVICE_BRIDGE_SOCKET||'/run/dkrypt/device-bridge.sock'); console.log(JSON.stringify({health:health.ok,bridge:health.bridge,paths:Object.keys(openapi.paths).length}));"

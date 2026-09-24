@@ -1,6 +1,7 @@
 import { createReadStream } from 'node:fs';
 import type { FastifyInstance, FastifyReply, FastifyRequest, FastifySchema } from 'fastify';
 import { getRouteContract } from '#contracts.js';
+import { withCorrelation } from '#correlation.js';
 
 export type Request = FastifyRequest & {
   body: any;
@@ -159,7 +160,8 @@ export function registerRouter(server: FastifyInstance, router: HttpRouter): voi
       url: route.path,
       schema: getRouteContract(route.method, route.path) as FastifySchema | undefined,
       handler: async (request, reply) => {
-        await runHandlers([...router.middleware, ...route.handlers], adaptRequest(request), new Response(reply));
+        const traceContext = (request as unknown as { traceSpan?: { context?: import('#telemetry.js').TraceContext } }).traceSpan?.context;
+        await withCorrelation({ correlationId: request.id, traceId: traceContext?.traceId, traceContext }, () => runHandlers([...router.middleware, ...route.handlers], adaptRequest(request), new Response(reply)));
       },
     });
   }

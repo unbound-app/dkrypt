@@ -26,11 +26,12 @@ services:
       - appstore-config:/root/.ipadecrypt
       - ipa-storage:/data/artifacts
       - state:/data/state
-      - ${HOME}/.ssh/id_ed25519:/root/.ssh/id_ed25519:ro
+      - ${DEVICE_SSH_KEY_HOST_PATH:-${HOME}/.ssh/id_ed25519}:/root/.ssh/id_ed25519:ro
     devices:
       - /dev/bus/usb:/dev/bus/usb
     tmpfs:
       - /run/dkrypt:mode=0770,size=16m
+      - /data/tmp:mode=1770,size=1g
     deploy:
       resources:
         limits:

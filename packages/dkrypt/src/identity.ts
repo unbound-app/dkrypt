@@ -264,6 +264,14 @@ export function exportIdentitySnapshot(): IdentitySnapshot {
   return structuredClone(state);
 }
 
+export function deleteAuthProfile(userId: string): boolean {
+  const profile = getAuthProfile(userId);
+  if (!profile) return false;
+  state.profiles = state.profiles.filter((candidate) => candidate !== profile);
+  persist();
+  return true;
+}
+
 function isAuthIdentity(value: unknown): value is AuthIdentity {
   if (typeof value !== 'object' || value === null) return false;
   const record = value as Record<string, unknown>;

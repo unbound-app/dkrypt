@@ -1,5 +1,20 @@
 export const GENERATED_CHANGELOG = [
   {
+    "date": "2026-09-24",
+    "title": "fix(persistence): separate scheduler history from job timelines",
+    "description": "Released in d92d94f."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "fix(deploy): make compose resource limits compatible",
+    "description": "Released in 9c3e7b0."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "feat: cut over dkrypt to rust device transport",
+    "description": "Released in 15f654b."
+  },
+  {
     "date": "2026-09-23",
     "title": "fix(device): keep autoinstall transport alive",
     "description": "Released in ec63d23."
@@ -23,20 +38,5 @@ export const GENERATED_CHANGELOG = [
     "date": "2026-09-22",
     "title": "fix(appstore): normalize tagged versions",
     "description": "Released in 8bc1f54."
-  },
-  {
-    "date": "2026-09-21",
-    "title": "fix(device): remove SSH fallback for USB agent",
-    "description": "Released in 1e9ada7."
-  },
-  {
-    "date": "2026-09-21",
-    "title": "fix(device): prevent USB recovery SSH fallback",
-    "description": "Released in 015b78e."
-  },
-  {
-    "date": "2026-09-21",
-    "title": "fix(device): keep USB recovery independent of SSH",
-    "description": "Released in 2772838."
   }
 ] as const;

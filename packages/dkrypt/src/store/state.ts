@@ -93,6 +93,26 @@ export interface AllowedUser {
   priority?: number;
 
   discordPerkRoleIds?: string[];
+  mfa?: UserMfaRecord;
+}
+
+export interface UserMfaRecord {
+  enabled: boolean;
+  secretCiphertext?: string;
+  pendingSecretCiphertext?: string;
+  recoveryCodeHashes?: string[];
+  updatedAt?: number;
+}
+
+export interface PasskeyCredential {
+  id: string;
+  userId: string;
+  publicKey: string;
+  counter: number;
+  transports?: string[];
+  name?: string;
+  createdAt: number;
+  lastUsedAt?: number;
 }
 
 export interface DiscordRolePerk {
@@ -432,7 +452,12 @@ export type AuditAction =
   | 'billing.charge-failed'
   | 'billing.cancel'
   | 'billing.webhook'
-  | 'billing.webhook.replay';
+  | 'billing.webhook.replay'
+  | 'privacy.export'
+  | 'privacy.delete'
+  | 'auth.passkey.add'
+  | 'auth.passkey.remove'
+  | 'auth.passkey.login';
 
 export interface AuditLogEntry {
   id: string;
@@ -539,6 +564,8 @@ interface PersistedState {
   testFlightCatalog?: TestFlightCatalogCache;
   notifications: NotificationRecord[];
   testFlightSubscriptions: TestFlightSubscription[];
+  rootMfa?: UserMfaRecord;
+  passkeys: PasskeyCredential[];
 }
 
 const MAX_HISTORY = 100;
@@ -596,6 +623,8 @@ function defaultState(): PersistedState {
     appCatalog: {},
     notifications: [],
     testFlightSubscriptions: [],
+    rootMfa: undefined,
+    passkeys: [],
   };
 }
 
@@ -1160,10 +1189,19 @@ function encryptedBackupManifest(value: Record<string, unknown>): string {
 function verifyEncryptedBackupManifest(manifestPath: string, jsonPath: string, databasePath: string): void {
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { version?: number; algorithm?: string; iv?: string; tag?: string; ciphertext?: string };
   if (manifest.version !== 1 || manifest.algorithm !== 'aes-256-gcm' || !manifest.iv || !manifest.tag || !manifest.ciphertext) throw new Error('backup manifest is malformed');
-  const key = createHash('sha256').update(config.sessionSigningSecret).digest();
-  const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(manifest.iv, 'base64url'));
-  decipher.setAuthTag(Buffer.from(manifest.tag, 'base64url'));
-  const payload = JSON.parse(Buffer.concat([decipher.update(Buffer.from(manifest.ciphertext, 'base64url')), decipher.final()]).toString('utf8')) as { jsonSha256?: string; databaseSha256?: string };
+  let payload: { jsonSha256?: string; databaseSha256?: string } | undefined;
+  for (const secret of [config.sessionSigningSecret, config.sessionSigningSecretPrevious].filter(Boolean)) {
+    try {
+      const key = createHash('sha256').update(secret).digest();
+      const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(manifest.iv, 'base64url'));
+      decipher.setAuthTag(Buffer.from(manifest.tag, 'base64url'));
+      payload = JSON.parse(Buffer.concat([decipher.update(Buffer.from(manifest.ciphertext, 'base64url')), decipher.final()]).toString('utf8')) as { jsonSha256?: string; databaseSha256?: string };
+      break;
+    } catch {
+      continue;
+    }
+  }
+  if (!payload) throw new Error('backup manifest encryption key did not match the current or previous session secret');
   const jsonSha256 = createHash('sha256').update(readFileSync(jsonPath)).digest('hex');
   const databaseSha256 = createHash('sha256').update(readFileSync(databasePath)).digest('hex');
   if (payload.jsonSha256 !== jsonSha256 || payload.databaseSha256 !== databaseSha256) throw new Error('backup manifest checksum verification failed');
@@ -1188,6 +1226,60 @@ function safeEqualStr(a: string, b: string): boolean {
 
 export function listAllowedUsers(): AllowedUser[] {
   return state.allowedUsers;
+}
+
+export function getUserMfa(username: string): UserMfaRecord | undefined {
+  if (username === 'root') return state.rootMfa ? { ...state.rootMfa, recoveryCodeHashes: state.rootMfa.recoveryCodeHashes ? [...state.rootMfa.recoveryCodeHashes] : undefined } : undefined;
+  const user = state.allowedUsers.find((entry) => entry.username === username.toLowerCase());
+  return user?.mfa ? { ...user.mfa, recoveryCodeHashes: user.mfa.recoveryCodeHashes ? [...user.mfa.recoveryCodeHashes] : undefined } : undefined;
+}
+
+export function setUserMfa(username: string, mfa: UserMfaRecord | undefined): boolean {
+  if (username === 'root') {
+    state.rootMfa = mfa ? { ...mfa, recoveryCodeHashes: mfa.recoveryCodeHashes ? [...mfa.recoveryCodeHashes] : undefined } : undefined;
+    persistNow();
+    return true;
+  }
+  const user = state.allowedUsers.find((entry) => entry.username === username.toLowerCase());
+  if (!user) return false;
+  user.mfa = mfa ? { ...mfa, recoveryCodeHashes: mfa.recoveryCodeHashes ? [...mfa.recoveryCodeHashes] : undefined } : undefined;
+  persistNow();
+  return true;
+}
+
+export function listPasskeysForUser(userId: string): PasskeyCredential[] {
+  const normalized = userId === 'root' ? 'root' : userId.toLowerCase();
+  return state.passkeys.filter((credential) => credential.userId === normalized).map((credential) => ({ ...credential, transports: credential.transports ? [...credential.transports] : undefined }));
+}
+
+export function getPasskeyById(id: string): PasskeyCredential | undefined {
+  const credential = state.passkeys.find((candidate) => candidate.id === id);
+  return credential ? { ...credential, transports: credential.transports ? [...credential.transports] : undefined } : undefined;
+}
+
+export function addPasskey(credential: PasskeyCredential): PasskeyCredential {
+  if (state.passkeys.some((candidate) => candidate.id === credential.id)) throw new Error('passkey credential already exists');
+  const normalized = { ...credential, userId: credential.userId === 'root' ? 'root' : credential.userId.toLowerCase(), transports: credential.transports ? [...credential.transports] : undefined };
+  state.passkeys.push(normalized);
+  persistNow();
+  return { ...normalized, transports: normalized.transports ? [...normalized.transports] : undefined };
+}
+
+export function updatePasskey(id: string, patch: Partial<Pick<PasskeyCredential, 'counter' | 'lastUsedAt' | 'name'>>): PasskeyCredential | undefined {
+  const credential = state.passkeys.find((candidate) => candidate.id === id);
+  if (!credential) return undefined;
+  Object.assign(credential, patch);
+  persistNow();
+  return { ...credential, transports: credential.transports ? [...credential.transports] : undefined };
+}
+
+export function deletePasskey(userId: string, id: string): boolean {
+  const normalized = userId === 'root' ? 'root' : userId.toLowerCase();
+  const index = state.passkeys.findIndex((credential) => credential.id === id && credential.userId === normalized);
+  if (index === -1) return false;
+  state.passkeys.splice(index, 1);
+  persistNow();
+  return true;
 }
 
 export function listRoles(): Role[] {
@@ -1334,6 +1426,10 @@ export function recordAudit(actor: string, action: AuditAction, target: string, 
 
 export function getAuditLog(limit = 100): AuditLogEntry[] {
   return state.auditLog.slice(0, limit);
+}
+
+export function getAuditLogPage(offset = 0, limit = 100): { entries: AuditLogEntry[]; total: number } {
+  return { entries: state.auditLog.slice(Math.max(offset, 0), Math.max(offset, 0) + Math.max(limit, 1)), total: state.auditLog.length };
 }
 
 function sanitizeRoleIds(roleIds: string[]): string[] {
@@ -1595,6 +1691,39 @@ export function removeAllowedUser(username: string, actor: string): boolean {
     recordAudit(actor, 'user.remove', lower, 'role assignments cleared');
   }
   return changed;
+}
+
+export function deleteUserPersonalData(username: string): boolean {
+  const lower = username.toLowerCase();
+  const existed = state.allowedUsers.some((user) => user.username === lower);
+  if (!existed || lower === 'root') return false;
+  state.allowedUsers = state.allowedUsers.filter((user) => user.username !== lower);
+  state.activeSessions = state.activeSessions.filter((session) => session.sub !== lower);
+  state.passkeys = state.passkeys.filter((credential) => credential.userId !== lower);
+  state.apiKeys = state.apiKeys.filter((key) => key.ownerId !== lower);
+  state.jobHistory = state.jobHistory.filter((entry) => entry.queuedBy?.toLowerCase() !== lower);
+  state.userPrefs = Object.fromEntries(Object.entries(state.userPrefs).filter(([userId]) => userId !== lower));
+  state.pushSubscriptions = Object.fromEntries(Object.entries(state.pushSubscriptions).filter(([userId]) => userId !== lower));
+  state.notifications = state.notifications.filter((notification) => notification.userId.toLowerCase() !== lower);
+  state.testFlightSubscriptions = state.testFlightSubscriptions.filter(
+    (subscription) => subscription.requestedBy !== lower || subscription.bundleId === IMMUTABLE_TESTFLIGHT_BUNDLE_ID,
+  );
+  for (const keyId of Object.keys(state.apiKeyUsage)) {
+    if (!state.apiKeys.some((key) => key.id === keyId)) delete state.apiKeyUsage[keyId];
+  }
+  for (const keyId of Object.keys(state.apiKeyBundleUsage)) {
+    if (!state.apiKeys.some((key) => key.id === keyId)) delete state.apiKeyBundleUsage[keyId];
+  }
+  for (const keyId of Object.keys(state.apiKeyOutcomeUsage)) {
+    if (!state.apiKeys.some((key) => key.id === keyId)) delete state.apiKeyOutcomeUsage[keyId];
+  }
+  state.auditLog = state.auditLog.map((entry) => ({
+    ...entry,
+    actor: entry.actor.toLowerCase() === lower ? 'deleted-user' : entry.actor,
+    target: entry.target.toLowerCase() === lower ? 'deleted-user' : entry.target,
+  }));
+  persistNow();
+  return true;
 }
 
 function redact(k: ApiKeyRecord) {
@@ -2284,6 +2413,11 @@ export function getTestFlightSubscription(id: string): TestFlightSubscription | 
   return subscription ? cloneTestFlightSubscription(subscription) : undefined;
 }
 
+export function listTestFlightSubscriptionsForUser(userId: string): TestFlightSubscription[] {
+  const lower = userId.toLowerCase();
+  return state.testFlightSubscriptions.filter((subscription) => subscription.requestedBy === lower).map(cloneTestFlightSubscription);
+}
+
 export function findTestFlightSubscriptionByInviteCode(inviteCode: string): TestFlightSubscription | undefined {
   const subscription = state.testFlightSubscriptions.find((entry) => entry.inviteCode === inviteCode && entry.status !== 'withdrawn');
   return subscription ? cloneTestFlightSubscription(subscription) : undefined;
@@ -2564,6 +2698,11 @@ export function getJobHistoryPage(
 
 export function getAllJobHistory(): JobHistoryEntry[] {
   return state.jobHistory;
+}
+
+export function getUserJobHistory(username: string): JobHistoryEntry[] {
+  const lower = username.toLowerCase();
+  return state.jobHistory.filter((entry) => entry.queuedBy?.toLowerCase() === lower).map((entry) => structuredClone(entry));
 }
 
 export function previewJobHistoryRetention(retentionDays: number, now = Date.now()): {
@@ -2960,6 +3099,12 @@ export function getDeviceActivity(deviceId: string, limit = 20): DeviceActivityE
   return state.deviceActivity.filter((entry) => entry.deviceId === deviceId).slice(0, limit);
 }
 
+export function getDeviceActivityPage(deviceId: string, offset = 0, limit = 20): { entries: DeviceActivityEntry[]; total: number } {
+  const owned = state.deviceActivity.filter((entry) => entry.deviceId === deviceId);
+  const normalizedOffset = Math.max(offset, 0);
+  return { entries: owned.slice(normalizedOffset, normalizedOffset + Math.max(limit, 1)), total: owned.length };
+}
+
 export function recordDeviceHealthCheck(
   deviceId: string,
   reachable: boolean,
@@ -3001,6 +3146,16 @@ export function getDeviceUptimePercent(deviceId: string, hours = 24): number | u
   const recent = historyFor(deviceId).filter((c) => c.ts >= cutoff);
   if (recent.length === 0) return undefined;
   return recent.filter((c) => c.reachable).length / recent.length;
+}
+
+export function getConsecutiveDeviceHealthFailures(deviceId: string): number {
+  const history = [...historyFor(deviceId)].reverse();
+  let failures = 0;
+  for (const check of history) {
+    if (check.reachable) break;
+    failures += 1;
+  }
+  return failures;
 }
 
 export interface HourlyBatteryBucket {
@@ -3119,11 +3274,17 @@ export function recordNotification(input: Omit<NotificationRecord, 'id' | 'creat
 }
 
 export function listNotifications(userId: string, limit = 50): { notifications: NotificationRecord[]; unread: number } {
+  const page = listNotificationsPage(userId, 0, limit);
+  return { notifications: page.notifications, unread: page.unread };
+}
+
+export function listNotificationsPage(userId: string, offset = 0, limit = 50): { notifications: NotificationRecord[]; unread: number; total: number } {
   const lower = userId.toLowerCase();
   const owned = state.notifications.filter((notification) => notification.userId.toLowerCase() === lower);
   return {
-    notifications: owned.slice(0, Math.min(Math.max(limit, 1), 100)).map((notification) => ({ ...notification })),
+    notifications: owned.slice(Math.max(offset, 0), Math.max(offset, 0) + Math.min(Math.max(limit, 1), 100)).map((notification) => ({ ...notification })),
     unread: owned.filter((notification) => !notification.readAt).length,
+    total: owned.length,
   };
 }
 
@@ -3162,6 +3323,8 @@ export interface BackupPayload {
   apiKeyBundleUsage: Record<string, Record<string, number>>;
   deviceActivity: DeviceActivityEntry[];
   testFlightSubscriptions: TestFlightSubscription[];
+  rootMfa?: UserMfaRecord;
+  passkeys: PasskeyCredential[];
   billing: BillingSnapshot;
   identities: IdentitySnapshot;
 }
@@ -3186,6 +3349,8 @@ export function exportBackup(): BackupPayload {
     apiKeyBundleUsage: state.apiKeyBundleUsage,
     deviceActivity: state.deviceActivity,
     testFlightSubscriptions: getTestFlightSubscriptions(),
+    rootMfa: state.rootMfa,
+    passkeys: state.passkeys.map((credential) => ({ ...credential, transports: credential.transports ? [...credential.transports] : undefined })),
     billing: exportBillingSnapshot(),
     identities: exportIdentitySnapshot(),
   };
@@ -3321,7 +3486,37 @@ function isAllowedUserShape(value: unknown): value is AllowedUser {
     typeof u.username === 'string' &&
     typeof u.addedAt === 'number' &&
     Array.isArray(u.roleIds) &&
-    u.roleIds.every((id) => typeof id === 'string')
+    u.roleIds.every((id) => typeof id === 'string') &&
+    (u.mfa === undefined || isUserMfaShape(u.mfa))
+  );
+}
+
+function isPasskeyCredentialShape(value: unknown): value is PasskeyCredential {
+  if (typeof value !== 'object' || value === null) return false;
+  const credential = value as Record<string, unknown>;
+  return (
+    typeof credential.id === 'string' &&
+    typeof credential.userId === 'string' &&
+    typeof credential.publicKey === 'string' &&
+    typeof credential.counter === 'number' &&
+    Number.isInteger(credential.counter) &&
+    credential.counter >= 0 &&
+    (credential.transports === undefined || (Array.isArray(credential.transports) && credential.transports.every((transport) => typeof transport === 'string'))) &&
+    (credential.name === undefined || typeof credential.name === 'string') &&
+    typeof credential.createdAt === 'number' &&
+    (credential.lastUsedAt === undefined || typeof credential.lastUsedAt === 'number')
+  );
+}
+
+function isUserMfaShape(value: unknown): value is UserMfaRecord {
+  if (typeof value !== 'object' || value === null) return false;
+  const mfa = value as Record<string, unknown>;
+  return (
+    typeof mfa.enabled === 'boolean' &&
+    (mfa.secretCiphertext === undefined || typeof mfa.secretCiphertext === 'string') &&
+    (mfa.pendingSecretCiphertext === undefined || typeof mfa.pendingSecretCiphertext === 'string') &&
+    (mfa.recoveryCodeHashes === undefined || (Array.isArray(mfa.recoveryCodeHashes) && mfa.recoveryCodeHashes.every((hash) => typeof hash === 'string'))) &&
+    (mfa.updatedAt === undefined || typeof mfa.updatedAt === 'number')
   );
 }
 
@@ -3462,6 +3657,8 @@ interface ValidatedBackupPayload {
   apiKeyBundleUsage?: Record<string, Record<string, number>>;
   deviceActivity?: DeviceActivityEntry[];
   testFlightSubscriptions: TestFlightSubscription[];
+  rootMfa?: UserMfaRecord;
+  passkeys: PasskeyCredential[];
   billing: BillingSnapshot;
   identities: IdentitySnapshot;
 }
@@ -3509,6 +3706,12 @@ function validateBackupPayload(raw: unknown): { ok: true; payload: ValidatedBack
   if (typeof b.rootSessionVersion !== 'number') {
     return { ok: false, error: 'rootSessionVersion is missing or malformed' };
   }
+  if (b.rootMfa !== undefined && !isUserMfaShape(b.rootMfa)) {
+    return { ok: false, error: 'rootMfa is malformed' };
+  }
+  if (b.passkeys !== undefined && (!Array.isArray(b.passkeys) || !b.passkeys.every(isPasskeyCredentialShape))) {
+    return { ok: false, error: 'passkeys is malformed' };
+  }
   if (b.backupVersion === BACKUP_VERSION && (!Array.isArray(b.testFlightSubscriptions) || !b.testFlightSubscriptions.every(isTestFlightSubscriptionShape))) {
     return { ok: false, error: 'testFlightSubscriptions is missing or malformed' };
   }
@@ -3543,6 +3746,8 @@ function validateBackupPayload(raw: unknown): { ok: true; payload: ValidatedBack
           : undefined,
       deviceActivity: Array.isArray(b.deviceActivity) ? (b.deviceActivity as DeviceActivityEntry[]) : undefined,
       testFlightSubscriptions: Array.isArray(b.testFlightSubscriptions) ? (b.testFlightSubscriptions as TestFlightSubscription[]) : [],
+      rootMfa: b.rootMfa as UserMfaRecord | undefined,
+      passkeys: Array.isArray(b.passkeys) ? (b.passkeys as PasskeyCredential[]) : [],
       billing: isBillingSnapshot(b.billing)
         ? b.billing
         : { customers: [], subscriptions: [], cryptoCheckouts: [], cryptoCharges: [], processedEvents: [] },
@@ -3608,7 +3813,7 @@ export interface BackupRestoreDrill {
   checks: { label: string; ok: boolean; detail: string }[];
 }
 
-function prepareBackupRestore(payload: ValidatedBackupPayload): Pick<PersistedState, 'allowedUsers' | 'roles' | 'apiKeys' | 'settings' | 'watches' | 'devices' | 'jobHistory' | 'auditLog' | 'schedulerRunHistory' | 'userPrefs' | 'apiKeyUsage' | 'rootSessionVersion' | 'apiKeyBundleUsage' | 'deviceActivity' | 'testFlightSubscriptions'> {
+function prepareBackupRestore(payload: ValidatedBackupPayload): Pick<PersistedState, 'allowedUsers' | 'roles' | 'apiKeys' | 'settings' | 'watches' | 'devices' | 'jobHistory' | 'auditLog' | 'schedulerRunHistory' | 'userPrefs' | 'apiKeyUsage' | 'rootSessionVersion' | 'apiKeyBundleUsage' | 'deviceActivity' | 'testFlightSubscriptions' | 'rootMfa' | 'passkeys'> {
   return {
     allowedUsers: payload.allowedUsers,
     roles: payload.roles.map((role) => ({ ...role, permissions: serializeBits(consolidatePermissionBits(upgradePermissionBits(parseBits(role.permissions)))) })),
@@ -3625,6 +3830,8 @@ function prepareBackupRestore(payload: ValidatedBackupPayload): Pick<PersistedSt
     apiKeyBundleUsage: payload.apiKeyBundleUsage ?? {},
     deviceActivity: payload.deviceActivity?.slice(0, MAX_DEVICE_ACTIVITY) ?? [],
     testFlightSubscriptions: payload.testFlightSubscriptions.map(cloneTestFlightSubscription),
+    rootMfa: payload.rootMfa,
+    passkeys: payload.passkeys.map((credential) => ({ ...credential, transports: credential.transports ? [...credential.transports] : undefined })),
   };
 }
 

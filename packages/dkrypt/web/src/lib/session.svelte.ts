@@ -39,6 +39,7 @@ export interface SessionInfo {
   githubOauthEnabled: boolean;
   discordOauthEnabled: boolean;
   publicBaseUrl?: string;
+  mfa?: { enabled: boolean; recoveryCodesRemaining: number; required: boolean };
 }
 
 export const sessionState = $state<SessionInfo>({ loggedIn: false, githubOauthEnabled: false, discordOauthEnabled: false });
@@ -180,19 +181,19 @@ export async function pushPreferPrimaryDevicePref(preferPrimaryDevice: boolean):
   });
 }
 
-export async function loginRoot(password: string): Promise<{ ok: boolean; error?: string; attemptsRemaining?: number }> {
+export async function loginRoot(password: string, mfaToken?: string): Promise<{ ok: boolean; error?: string; code?: string; attemptsRemaining?: number }> {
   const res = await fetch('/v1/auth/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ password }),
+    body: JSON.stringify({ password, mfaToken: mfaToken || undefined }),
   });
   if (res.ok) {
     await refreshSession();
     return { ok: true };
   }
-  const data = await res.json().catch(() => ({}) as { error?: string; attemptsRemaining?: number });
+  const data = await res.json().catch(() => ({}) as { error?: string; code?: string; attemptsRemaining?: number });
   if (res.status === 429) return { ok: false, error: data.error };
-  return { ok: false, error: 'Wrong password.', attemptsRemaining: data.attemptsRemaining };
+  return { ok: false, error: data.code === 'mfa_required' ? 'Enter your authenticator code to continue.' : 'Wrong password.', code: data.code, attemptsRemaining: data.attemptsRemaining };
 }
 
 export async function refreshSessionTtl(): Promise<boolean> {

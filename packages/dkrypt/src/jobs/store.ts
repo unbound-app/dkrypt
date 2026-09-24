@@ -19,6 +19,7 @@ import { closePersistedJobs, loadPersistedJobs, replacePersistedJobs } from '#jo
 import { terminateChildProcess } from '#jobs/process.js';
 import { classifyJobFailure } from '#util/failureCategory.js';
 import { incrementMetric, observeMetric } from '#metrics.js';
+import { withCorrelation } from '#correlation.js';
 
 const jobs = new Map<string, Job>();
 
@@ -568,7 +569,7 @@ function pumpWorkers(): void {
     if (!job) continue;
 
     busyDeviceIds.add(device.id);
-    const run = runOneJob(device, job);
+    const run = withCorrelation({ correlationId: job.correlationId ?? job.id }, () => runOneJob(device, job));
     runningJobs.set(job.id, run);
     void run.finally(() => {
       runningJobs.delete(job.id);

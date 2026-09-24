@@ -3,7 +3,7 @@ import { execCommand, getRustDeviceBridgeHealth, isRustDeviceConnection, isTestF
 import { scopedLogger } from '#logger.js';
 import { EMBED_COLOR, notify } from '#notify.js';
 import { releasePinnedJobsForDevice } from '#jobs/store.js';
-import { getEffectiveDevices, getEffectiveSettings, recordDeviceActivity, recordDeviceHealthCheck, type DeviceRecord } from '#store/state.js';
+import { getConsecutiveDeviceHealthFailures, getEffectiveDevices, getEffectiveSettings, recordDeviceActivity, recordDeviceHealthCheck, type DeviceRecord } from '#store/state.js';
 import { getDiskUsage } from '#util/diskUsage.js';
 import { getCachedDeviceHealth, setCachedDeviceHealth } from '#deviceHealthCache.js';
 
@@ -11,6 +11,11 @@ const log = scopedLogger('idevice');
 
 export interface DeviceHealth {
   reachable: boolean;
+  transport?: 'wifi' | 'usb';
+  transportState?: 'discovered' | 'pairing' | 'connecting' | 'ready' | 'degraded' | 'recovering' | 'offline' | 'unsupported';
+  capabilities?: string[];
+  lastSeenAt?: number;
+  recoveryState?: 'stable' | 'recovering' | 'degraded' | 'offline';
   error?: string;
   testFlightRunning?: boolean;
   testFlightBridgeReachable?: boolean;
@@ -411,6 +416,10 @@ async function computeDeviceHealth(device: DeviceRecord): Promise<DeviceHealth> 
       });
       const health: DeviceHealth = {
         reachable: true,
+        transport: device.transport ?? (device.udid ? 'usb' : 'wifi'),
+        transportState: 'ready',
+        lastSeenAt: Date.now(),
+        recoveryState: 'stable',
         testFlightRunning: telemetry.testFlightRunning,
         testFlightBridgeReachable: telemetry.testFlightBridgeReachable,
         darkEnabled: telemetry.darkEnabled,
@@ -456,6 +465,11 @@ async function computeDeviceHealth(device: DeviceRecord): Promise<DeviceHealth> 
         if (bridge.state === 'ready') {
           const health: DeviceHealth = {
             reachable: true,
+            transport: bridge.transport,
+            transportState: 'degraded',
+            capabilities: bridge.capabilities,
+            lastSeenAt: Date.now(),
+            recoveryState: 'degraded',
             error: `device agent unavailable: ${error}`,
             testFlightBridgeReachable: undefined,
             subsystems: {
@@ -479,6 +493,9 @@ async function computeDeviceHealth(device: DeviceRecord): Promise<DeviceHealth> 
     }
     const health: DeviceHealth = {
       reachable: false,
+      transport: device.transport ?? (device.udid ? 'usb' : 'wifi'),
+      transportState: 'offline',
+      recoveryState: 'offline',
       error,
       subsystems: {
         usb: device.transport === 'usb' ? 'offline' : 'unsupported',
@@ -502,6 +519,10 @@ export function peekPrimaryDeviceHealth(): DeviceHealth | undefined {
   const primary = devices.find((d) => d.isPrimary) ?? devices[0];
   if (!primary) return undefined;
   return getCachedDeviceHealth(primary.id)?.value;
+}
+
+export function getDeviceHealthFailureCount(deviceId: string): number {
+  return Math.max(deviceHealthFailures.get(deviceId) ?? 0, getConsecutiveDeviceHealthFailures(deviceId));
 }
 
 export async function getDeviceHealth(deviceId: string, force = false): Promise<DeviceHealth> {
@@ -555,6 +576,8 @@ async function checkOfflineAlert(device: DeviceRecord, reachable: boolean): Prom
     s.offlineAlertSentAt = undefined;
     return;
   }
+
+  if (getDeviceHealthFailureCount(device.id) < 3) return;
 
   if (s.unreachableSince === undefined) {
     s.unreachableSince = Date.now();

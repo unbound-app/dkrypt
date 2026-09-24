@@ -18,7 +18,8 @@
     "stripe:webhook": "bun scripts/configure-stripe-webhook.ts",
     "stripe:verify": "bun scripts/verify-stripe.ts",
     "build:web": "cd web && bun install --frozen-lockfile && bun run build",
-    "typecheck:web": "cd web && bun install --frozen-lockfile && bun run typecheck"
+    "typecheck:web": "cd web && bun install --frozen-lockfile && bun run typecheck",
+    "clients:generate": "bun scripts/generate-clients.ts"
   },
   "dependencies": {
     "@discordjs/rest": "^2.6.3",
@@ -27,6 +28,7 @@
     "@fastify/type-provider-typebox": "^6.1.0",
     "@scalar/fastify-api-reference": "^1.69.0",
     "@sinclair/typebox": "^0.34.52",
+    "@simplewebauthn/server": "^14.0.2",
     "adm-zip": "^0.6.1",
     "bplist-parser": "^0.5.0",
     "cron-parser": "^5",

@@ -31,6 +31,7 @@ import { closeIdentityDatabase } from '#identity.js';
 import { closeIdempotencyDatabase } from '#idempotency.js';
 import { closeWebhookInboxDatabase } from '#webhookInbox.js';
 import { incrementMetric, observeMetric } from '#metrics.js';
+import { startSpan, startTelemetry, stopTelemetry, traceContextFromHeader, type SpanHandle } from '#telemetry.js';
 
 const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 
@@ -54,6 +55,10 @@ export async function buildServer(options: { includePublicRoutes?: boolean } = {
     const requestId = typeof supplied === 'string' && /^[A-Za-z0-9._:-]{1,128}$/.test(supplied) ? supplied : randomUUID();
     (request as unknown as { id: string }).id = requestId;
     reply.header('X-Request-ID', requestId);
+    const traceparent = typeof request.headers.traceparent === 'string' ? request.headers.traceparent : undefined;
+    const trace = startSpan('http.request', { 'http.method': request.method, 'http.request_id': requestId }, traceparent ? traceContextFromHeader(traceparent) : undefined);
+    (request as unknown as { traceSpan: SpanHandle }).traceSpan = trace;
+    reply.header('traceparent', trace.context.traceparent);
     const method = request.method.toUpperCase();
     const isMutation = method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS';
     const isWebhook = request.url.startsWith('/v1/stripe/webhook') || request.url.startsWith('/v1/nowpayments/webhook');
@@ -84,6 +89,9 @@ export async function buildServer(options: { includePublicRoutes?: boolean } = {
     incrementMetric('http_requests_total', { method: request.method, path: request.routeOptions.url ?? request.url.split('?')[0], status: reply.statusCode });
     const startedAt = (request as unknown as { metricsStartedAt?: number }).metricsStartedAt;
     if (startedAt !== undefined) observeMetric('http_request_duration_ms', performance.now() - startedAt);
+    const trace = (request as unknown as { traceSpan?: SpanHandle }).traceSpan;
+    trace?.setAttributes({ 'http.route': request.routeOptions.url ?? request.url.split('?')[0], 'http.status_code': reply.statusCode });
+    trace?.end(reply.statusCode >= 500 ? new Error(`HTTP ${reply.statusCode}`) : undefined);
     done();
   });
 
@@ -159,6 +167,7 @@ export async function buildServer(options: { includePublicRoutes?: boolean } = {
 }
 
 async function startBackgroundServices(): Promise<void> {
+  startTelemetry();
   await initializeArtifactStore(getArtifactBackedJobs());
   startJobSweeper();
   startStateFlusher();
@@ -192,6 +201,7 @@ async function start(): Promise<void> {
     closeWebhookInboxDatabase();
     closeArtifactDatabase();
     closeStateDatabase();
+    await stopTelemetry();
     log.info('graceful shutdown completed', { signal });
   };
   process.once('SIGTERM', () => void shutdown('SIGTERM'));

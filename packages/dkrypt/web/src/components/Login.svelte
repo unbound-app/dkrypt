@@ -1,17 +1,20 @@
 <script lang="ts">
-  import { ChevronDown, Eye, EyeOff, Lock } from 'lucide-svelte';
+  import { startAuthentication } from '@simplewebauthn/browser';
+  import { ChevronDown, Eye, EyeOff, KeyRound, Lock } from 'lucide-svelte';
   import Button from '#lib/components/ui/Button.svelte';
   import Card from '#lib/components/ui/Card.svelte';
   import Input from '#lib/components/ui/Input.svelte';
   import Label from '#lib/components/ui/Label.svelte';
   import Separator from '#lib/components/ui/Separator.svelte';
   import { buttonVariants } from '#lib/components/ui/variants';
-  import { loginRoot, sessionState } from '#lib/session.svelte';
+  import { loginRoot, refreshSession, sessionState } from '#lib/session.svelte';
   import { cn } from '#lib/utils';
   import LegalLinks from '#components/LegalLinks.svelte';
 
   let password = $state('');
   let loginError = $state('');
+  let mfaToken = $state('');
+  let mfaRequired = $state(false);
   let attemptsRemaining = $state<number | undefined>(undefined);
   let detailsOpen = $state(!sessionState.githubOauthEnabled && !sessionState.discordOauthEnabled);
   let oauthError = $state('');
@@ -43,13 +46,40 @@
   async function submit(): Promise<void> {
     submitting = true;
     try {
-      const result = await loginRoot(password);
+      const result = await loginRoot(password, mfaToken);
       if (!result.ok) {
         loginError = result.error ?? 'Wrong password.';
+        mfaRequired = result.code === 'mfa_required' || mfaRequired;
         attemptsRemaining = result.attemptsRemaining;
       } else {
         attemptsRemaining = undefined;
+        mfaToken = '';
+        mfaRequired = false;
       }
+    } finally {
+      submitting = false;
+    }
+  }
+
+  async function submitPasskey(): Promise<void> {
+    submitting = true;
+    loginError = '';
+    try {
+      const optionsResponse = await fetch('/v1/auth/passkeys/options', { method: 'POST' });
+      if (!optionsResponse.ok) throw new Error('Passkey sign-in is unavailable.');
+      const credential = await startAuthentication({ optionsJSON: await optionsResponse.json() });
+      const verifyResponse = await fetch('/v1/auth/passkeys/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(credential),
+      });
+      if (!verifyResponse.ok) {
+        const body = (await verifyResponse.json().catch(() => ({}))) as { message?: string; error?: string };
+        throw new Error(body.message ?? body.error ?? 'Passkey sign-in failed.');
+      }
+      await refreshSession();
+    } catch (error) {
+      loginError = error instanceof Error ? error.message : 'Passkey sign-in was canceled.';
     } finally {
       submitting = false;
     }
@@ -100,6 +130,10 @@
         Sign in with Discord
       </a>
     {/if}
+    <Button variant="secondary" class="mt-3 w-full" loading={submitting} onclick={() => void submitPasskey()}>
+      <KeyRound class="h-4 w-4" />
+      Use a passkey
+    </Button>
     {#if oauthError}
       <div class="mt-3.5 text-[12.5px] text-err">{oauthError}</div>
     {/if}
@@ -146,6 +180,10 @@
             {/if}
           </Button>
         </div>
+        {#if mfaRequired}
+          <Label for="mfa-token" class="mt-3.5 mb-1 block text-left text-xs text-muted">Authenticator or recovery code</Label>
+          <Input id="mfa-token" autocomplete="one-time-code" inputmode="numeric" bind:value={mfaToken} onkeydown={onKeydown} />
+        {/if}
         <Button variant="secondary" class="mt-3.5 w-full" loading={submitting} onclick={submit}>Sign in</Button>
         {#if loginError}
           <div class="mt-2 text-[13px] text-muted">

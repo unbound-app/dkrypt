@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { Router, type Response } from '#http.js';
 import { linkOauthAccount, resolveOauthAccount } from '#account.js';
 import { config, discordBotEnabled, discordOauthEnabled, githubOauthEnabled } from '#config.js';
@@ -12,8 +12,12 @@ import {
   setAuthDisplayName,
 } from '#identity.js';
 import { log } from '#logger.js';
+import { beginMfaEnrollment, confirmMfaEnrollment, disableMfa, mfaStatus, regenerateRecoveryCodes, verifyMfa } from '#mfa.js';
 import { PermissionFlag, serializeBits } from '#permissions.js';
-import { checkRootPassword, clearSessionCookie, getSession, requireSession, sessionOptsFromReq, setSessionCookie } from '#session.js';
+import { accountDeletionBlocker, buildAccountExport, deleteAccount } from '#privacy.js';
+import { beginPasskeyAuthentication, beginPasskeyRegistration, finishPasskeyAuthentication, finishPasskeyRegistration, listUserPasskeys, removeUserPasskey } from '#passkeys.js';
+import { checkRootPassword, clearSessionCookie, getSession, requireSession, requireRecentAuthentication, sessionOptsFromReq, setSessionCookie } from '#session.js';
+import { rateLimitPerUser } from '#util/rateLimit.js';
 import {
   bumpSessionVersion,
   getDiscordGuildIds,
@@ -23,6 +27,7 @@ import {
   revokeOtherSessionRecords,
   revokeSessionRecord,
   syncDiscordPerkRoles,
+  recordAudit,
 } from '#store/state.js';
 
 export const authRouter = Router();
@@ -38,6 +43,7 @@ interface LoginAttempts {
 }
 
 const loginAttempts = new Map<string, LoginAttempts>();
+const publicAuthRateLimit = rateLimitPerUser(30, 60_000);
 
 function loginLockoutMs(key: string): number {
   const entry = loginAttempts.get(key);
@@ -81,7 +87,170 @@ authRouter.get('/v1/auth/session', (req, res) => {
     githubOauthEnabled,
     discordOauthEnabled,
     publicBaseUrl: config.publicBaseUrl,
+    mfa: session ? { ...mfaStatus(session.sub), required: !session.mfaVerified } : undefined,
   });
+});
+
+authRouter.get('/v1/auth/mfa', requireSession, (_req, res) => {
+  res.json(mfaStatus(res.locals.session.sub));
+});
+
+authRouter.post('/v1/auth/mfa/setup', requireSession, (_req, res) => {
+  const userId = res.locals.session.sub;
+  if (mfaStatus(userId).enabled) {
+    res.status(409).json({ error: 'multi-factor authentication is already enabled' });
+    return;
+  }
+  res.json(beginMfaEnrollment(userId));
+});
+
+authRouter.post('/v1/auth/mfa/confirm', requireSession, (req, res) => {
+  const token = typeof req.body?.token === 'string' ? req.body.token : '';
+  const result = confirmMfaEnrollment(res.locals.session.sub, token);
+  if (!result) {
+    res.status(400).json({ error: 'the authenticator code is invalid or the enrollment has expired' });
+    return;
+  }
+  res.json({ enabled: true, recoveryCodes: result.recoveryCodes });
+});
+
+authRouter.post('/v1/auth/mfa/verify', (req, res) => {
+  const session = getSession(req);
+  if (!session) {
+    res.status(401).json({ error: 'not signed in' });
+    return;
+  }
+  const token = typeof req.body?.token === 'string' ? req.body.token : '';
+  if (!verifyMfa(session.sub, token).ok) {
+    res.status(401).json({ error: 'the authenticator or recovery code is invalid' });
+    return;
+  }
+  const expiresAt = setSessionCookie(res, { sub: session.sub, permissions: session.permissions, mfaVerified: true, reauthenticatedAt: Date.now() }, { sid: session.sid });
+  res.json({ ok: true, expiresAt });
+});
+
+authRouter.post('/v1/auth/reauthenticate', requireSession, (req, res) => {
+  const session = res.locals.session;
+  const password = typeof req.body?.password === 'string' ? req.body.password : '';
+  const token = typeof req.body?.mfaToken === 'string' ? req.body.mfaToken : '';
+  const valid = session.sub === 'root' ? checkRootPassword(password) : mfaStatus(session.sub).enabled && verifyMfa(session.sub, token).ok;
+  if (!valid) {
+    res.error('reauthentication_failed', 'the supplied reauthentication proof is invalid', 401, false);
+    return;
+  }
+  const expiresAt = setSessionCookie(res, { sub: session.sub, permissions: session.permissions, mfaVerified: session.mfaVerified, reauthenticatedAt: Date.now() }, { sid: session.sid });
+  res.json({ ok: true, expiresAt });
+});
+
+authRouter.get('/v1/auth/passkeys', requireSession, (_req, res) => {
+  res.json({ passkeys: listUserPasskeys(res.locals.session.sub) });
+});
+
+authRouter.post('/v1/auth/passkeys/register/options', requireSession, requireRecentAuthentication(), async (_req, res) => {
+  try {
+    res.json(await beginPasskeyRegistration(res.locals.session.sub));
+  } catch (error) {
+    res.error('passkey_unavailable', error instanceof Error ? error.message : String(error), 503, true);
+  }
+});
+
+authRouter.post('/v1/auth/passkeys/register', requireSession, requireRecentAuthentication(), async (req, res) => {
+  const response = req.body as Record<string, unknown>;
+  if (!response || typeof response.id !== 'string' || typeof response.rawId !== 'string' || typeof response.response !== 'object' || response.response === null) {
+    res.error('invalid_passkey_response', 'the passkey registration response is malformed', 400, false);
+    return;
+  }
+  try {
+    const credential = await finishPasskeyRegistration(res.locals.session.sub, response as never, typeof response.name === 'string' ? response.name : undefined);
+    recordAudit(res.locals.session.sub, 'auth.passkey.add', credential.id, credential.name ?? 'passkey registered');
+    res.status(201).json({ passkey: listUserPasskeys(res.locals.session.sub).find((candidate) => candidate.id === credential.id) });
+  } catch (error) {
+    res.error('passkey_registration_failed', error instanceof Error ? error.message : String(error), 400, false);
+  }
+});
+
+authRouter.delete('/v1/auth/passkeys/:id', requireSession, requireRecentAuthentication(), (req, res) => {
+  const id = typeof req.params.id === 'string' ? req.params.id : '';
+  if (!id || !removeUserPasskey(res.locals.session.sub, id)) {
+    res.error('passkey_not_found', 'passkey not found', 404, false);
+    return;
+  }
+  recordAudit(res.locals.session.sub, 'auth.passkey.remove', id, 'passkey removed');
+  res.json({ ok: true });
+});
+
+authRouter.post('/v1/auth/passkeys/options', publicAuthRateLimit, async (_req, res) => {
+  try {
+    res.json(await beginPasskeyAuthentication());
+  } catch (error) {
+    res.error('passkey_unavailable', error instanceof Error ? error.message : String(error), 503, true);
+  }
+});
+
+authRouter.post('/v1/auth/passkeys/verify', publicAuthRateLimit, async (req, res) => {
+  const response = req.body as Record<string, unknown>;
+  if (!response || typeof response.id !== 'string' || typeof response.rawId !== 'string' || typeof response.response !== 'object' || response.response === null) {
+    res.error('invalid_passkey_response', 'the passkey authentication response is malformed', 400, false);
+    return;
+  }
+  try {
+    const result = await finishPasskeyAuthentication(response as never);
+    const permissions = result.userId === 'root' ? PermissionFlag.administrator : getUserEffectivePermissions(result.userId);
+    const expiresAt = setSessionCookie(res, { sub: result.userId, permissions, mfaVerified: true, reauthenticatedAt: Date.now() }, sessionOptsFromReq(req));
+    recordAudit(result.userId, 'auth.passkey.login', result.credential.id, 'passkey login succeeded');
+    res.json({ ok: true, expiresAt });
+  } catch (error) {
+    res.error('passkey_authentication_failed', error instanceof Error ? error.message : String(error), 401, false);
+  }
+});
+
+authRouter.post('/v1/auth/mfa/disable', requireSession, (req, res) => {
+  const token = typeof req.body?.token === 'string' ? req.body.token : '';
+  if (!disableMfa(res.locals.session.sub, token)) {
+    res.status(400).json({ error: 'the authenticator or recovery code is invalid' });
+    return;
+  }
+  res.json({ enabled: false, recoveryCodesRemaining: 0 });
+});
+
+authRouter.post('/v1/auth/mfa/recovery-codes', requireSession, (req, res) => {
+  const token = typeof req.body?.token === 'string' ? req.body.token : '';
+  const recoveryCodes = regenerateRecoveryCodes(res.locals.session.sub, token);
+  if (!recoveryCodes) {
+    res.status(400).json({ error: 'the authenticator or recovery code is invalid' });
+    return;
+  }
+  res.json({ recoveryCodes });
+});
+
+authRouter.get('/v1/auth/privacy/export', requireSession, (_req, res) => {
+  const userId = res.locals.session.sub;
+  const payload = buildAccountExport(userId);
+  recordAudit(userId, 'privacy.export', userId, 'account export generated');
+  const filename = `dkrypt-account-export-${userId.replace(/[^A-Za-z0-9._-]/g, '_')}.json`;
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.type('application/json').send(`${JSON.stringify(payload, null, 2)}\n`);
+});
+
+authRouter.post('/v1/auth/privacy/delete', requireSession, requireRecentAuthentication(), (req, res) => {
+  const userId = res.locals.session.sub;
+  const confirmation = typeof req.body?.confirmation === 'string' ? req.body.confirmation.trim() : '';
+  if (confirmation !== 'DELETE MY ACCOUNT') {
+    res.error('confirmation_required', 'type DELETE MY ACCOUNT to confirm account deletion', 400, false);
+    return;
+  }
+  const blocker = accountDeletionBlocker(userId);
+  if (blocker) {
+    res.error('account_deletion_blocked', blocker, 409, false);
+    return;
+  }
+  const result = deleteAccount(userId);
+  if (!result.ok) {
+    res.error('account_deletion_failed', result.error ?? 'account deletion failed', 400, false);
+    return;
+  }
+  clearSessionCookie(res);
+  res.json({ ok: true });
 });
 
 authRouter.patch('/v1/auth/profile', requireSession, (req, res) => {
@@ -124,7 +293,7 @@ authRouter.delete('/v1/auth/connections/:provider', requireSession, (req, res) =
     return;
   }
   bumpSessionVersion(userId);
-  setSessionCookie(res, { sub: userId, permissions: getUserEffectivePermissions(userId) ?? 0n }, sessionOptsFromReq(req));
+  setSessionCookie(res, { sub: userId, permissions: getUserEffectivePermissions(userId) ?? 0n, reauthenticatedAt: res.locals.session.reauthenticatedAt }, sessionOptsFromReq(req));
   res.json({ identities: getLinkedAuthIdentities(userId), linkedProviders: getLinkedAuthProviders(userId) });
 });
 
@@ -136,11 +305,11 @@ authRouter.post('/v1/auth/refresh', requireSession, (req, res) => {
   }
 
   const permissions = session.sub === 'root' ? PermissionFlag.administrator : getUserEffectivePermissions(session.sub);
-  const expiresAt = setSessionCookie(res, { sub: session.sub, permissions }, { sid: session.sid });
+  const expiresAt = setSessionCookie(res, { sub: session.sub, permissions, mfaVerified: session.mfaVerified, reauthenticatedAt: session.reauthenticatedAt }, { sid: session.sid });
   res.json({ ok: true, expiresAt });
 });
 
-authRouter.post('/v1/auth/login', (req, res) => {
+authRouter.post('/v1/auth/login', publicAuthRateLimit, (req, res) => {
   const key = req.ip ?? 'unknown';
   const lockedForMs = loginLockoutMs(key);
   if (lockedForMs > 0) {
@@ -157,8 +326,17 @@ authRouter.post('/v1/auth/login', (req, res) => {
     return;
   }
 
+  const mfa = mfaStatus('root');
+  const mfaToken = typeof req.body?.mfaToken === 'string' ? req.body.mfaToken : '';
+  if (mfa.enabled) {
+    if (!mfaToken || !verifyMfa('root', mfaToken).ok) {
+      res.status(401).json({ error: 'multi-factor authentication is required', code: 'mfa_required' });
+      return;
+    }
+  }
+
   loginAttempts.delete(key);
-  setSessionCookie(res, { sub: 'root', permissions: PermissionFlag.administrator }, sessionOptsFromReq(req));
+  setSessionCookie(res, { sub: 'root', permissions: PermissionFlag.administrator, mfaVerified: true, reauthenticatedAt: Date.now() }, sessionOptsFromReq(req));
   res.json({ ok: true });
 });
 
@@ -216,7 +394,7 @@ authRouter.post('/v1/auth/sessions/revoke-others', requireSession, (req, res) =>
 
 const GITHUB_OAUTH_STATE_COOKIE = 'github_oauth_state';
 const DISCORD_OAUTH_STATE_COOKIE = 'discord_oauth_state';
-const oauthConnections = new Map<string, { provider: 'github' | 'discord'; userId: string; expiresAt: number }>();
+const oauthConnections = new Map<string, { provider: 'github' | 'discord'; userId?: string; codeVerifier: string; expiresAt: number }>();
 
 function oauthCookie(name: string, value: string, maxAge: number): string {
   const secure = config.publicBaseUrl.startsWith('https://') ? '; Secure' : '';
@@ -229,17 +407,18 @@ function oauthUserId(provider: 'github' | 'discord', providerId: string, usernam
   return legacy?.username ?? stableId;
 }
 
-function createOauthState(provider: 'github' | 'discord', userId?: string): string {
+function createOauthState(provider: 'github' | 'discord', userId?: string): { state: string; codeVerifier: string } {
   const state = randomBytes(16).toString('hex');
-  if (userId) oauthConnections.set(state, { provider, userId, expiresAt: Date.now() + 600_000 });
-  return state;
+  const codeVerifier = randomBytes(32).toString('base64url');
+  oauthConnections.set(state, { provider, userId, codeVerifier, expiresAt: Date.now() + 600_000 });
+  return { state, codeVerifier };
 }
 
-function consumeOauthConnection(provider: 'github' | 'discord', state: string): string | undefined {
+function consumeOauthConnection(provider: 'github' | 'discord', state: string): { userId?: string; codeVerifier: string } | undefined {
   const connection = oauthConnections.get(state);
   oauthConnections.delete(state);
   if (!connection || connection.provider !== provider || connection.expiresAt < Date.now()) return undefined;
-  return connection.userId;
+  return { userId: connection.userId, codeVerifier: connection.codeVerifier };
 }
 
 setInterval(() => {
@@ -255,7 +434,7 @@ function startGithubLogin(res: Response, userId?: string): void {
     return;
   }
 
-  const state = createOauthState('github', userId);
+  const { state, codeVerifier } = createOauthState('github', userId);
   res.setHeader('Set-Cookie', oauthCookie(GITHUB_OAUTH_STATE_COOKIE, state, 600));
 
   const redirectUri = `${config.publicBaseUrl}/v1/auth/github/callback`;
@@ -264,6 +443,8 @@ function startGithubLogin(res: Response, userId?: string): void {
   url.searchParams.set('redirect_uri', redirectUri);
   url.searchParams.set('scope', 'read:user user:email');
   url.searchParams.set('state', state);
+  url.searchParams.set('code_challenge', createHash('sha256').update(codeVerifier).digest('base64url'));
+  url.searchParams.set('code_challenge_method', 'S256');
 
   res.redirect(url.toString());
 }
@@ -307,7 +488,8 @@ authRouter.get('/v1/auth/github/callback', async (req, res) => {
     res.redirect('/?auth_error=state_mismatch');
     return;
   }
-  const linkUserId = consumeOauthConnection('github', state);
+  const oauthConnection = consumeOauthConnection('github', state);
+  const linkUserId = oauthConnection?.userId;
 
   try {
     const tokenRes = await fetch('https://github.com/login/oauth/access_token', {
@@ -318,6 +500,7 @@ authRouter.get('/v1/auth/github/callback', async (req, res) => {
         client_secret: config.githubOauthClientSecret,
         code,
         redirect_uri: `${config.publicBaseUrl}/v1/auth/github/callback`,
+        code_verifier: oauthConnection?.codeVerifier,
       }),
     });
     const tokenBody = (await tokenRes.json()) as { access_token?: string; error?: string };
@@ -364,7 +547,7 @@ authRouter.get('/v1/auth/github/callback', async (req, res) => {
       : resolveOauthAccount({ fallbackUserId: oauthUserId('github', String(user.id), user.login), identity });
     const userId = profile.userId;
     const permissions = getUserEffectivePermissions(userId) ?? 0n;
-    setSessionCookie(res, { sub: userId, permissions }, sessionOptsFromReq(req));
+    setSessionCookie(res, { sub: userId, permissions, mfaVerified: !mfaStatus(userId).enabled, reauthenticatedAt: Date.now() }, sessionOptsFromReq(req));
     log.info('github oauth login succeeded', { login: user.login, permissions: serializeBits(permissions) });
     res.redirect('/');
   } catch (err) {
@@ -379,7 +562,7 @@ function startDiscordLogin(res: Response, userId?: string): void {
     return;
   }
 
-  const state = createOauthState('discord', userId);
+  const { state, codeVerifier } = createOauthState('discord', userId);
   res.setHeader('Set-Cookie', oauthCookie(DISCORD_OAUTH_STATE_COOKIE, state, 600));
 
   const redirectUri = `${config.publicBaseUrl}/v1/auth/discord/callback`;
@@ -389,6 +572,8 @@ function startDiscordLogin(res: Response, userId?: string): void {
   url.searchParams.set('response_type', 'code');
   url.searchParams.set('scope', 'identify email connections');
   url.searchParams.set('state', state);
+  url.searchParams.set('code_challenge', createHash('sha256').update(codeVerifier).digest('base64url'));
+  url.searchParams.set('code_challenge_method', 'S256');
   res.redirect(url.toString());
 }
 
@@ -420,7 +605,8 @@ authRouter.get('/v1/auth/discord/callback', async (req, res) => {
     res.redirect('/?auth_error=state_mismatch');
     return;
   }
-  const linkUserId = consumeOauthConnection('discord', state);
+  const oauthConnection = consumeOauthConnection('discord', state);
+  const linkUserId = oauthConnection?.userId;
 
   try {
     const redirectUri = `${config.publicBaseUrl}/v1/auth/discord/callback`;
@@ -430,6 +616,7 @@ authRouter.get('/v1/auth/discord/callback', async (req, res) => {
       grant_type: 'authorization_code',
       code,
       redirect_uri: redirectUri,
+      code_verifier: oauthConnection?.codeVerifier ?? '',
     });
     const tokenRes = await fetch('https://discord.com/api/v10/oauth2/token', {
       method: 'POST',
@@ -507,7 +694,7 @@ authRouter.get('/v1/auth/discord/callback', async (req, res) => {
       );
     }
     const permissions = getUserEffectivePermissions(userId) ?? 0n;
-    setSessionCookie(res, { sub: userId, permissions }, sessionOptsFromReq(req));
+    setSessionCookie(res, { sub: userId, permissions, mfaVerified: !mfaStatus(userId).enabled, reauthenticatedAt: Date.now() }, sessionOptsFromReq(req));
     log.info('discord oauth login succeeded', { username: user.username, permissions: serializeBits(permissions) });
     res.redirect('/');
   } catch (err) {

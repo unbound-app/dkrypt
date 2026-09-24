@@ -11,6 +11,7 @@ import { listBuilds, listTrains } from '#testflight.js';
 import { apiIdempotencyRegistry } from '#idempotency.js';
 import { artifactDownloadName, artifactFileAvailable, getArtifactById, listArtifacts, touchArtifact } from '#artifacts.js';
 import { resolveDecryptTarget, VERSION_SELECTOR_RE } from '#decryptTarget.js';
+import { decodeCursor, nextCursor } from '#util/cursor.js';
 
 export const decryptRouter = Router();
 
@@ -205,7 +206,7 @@ decryptRouter.get('/v1/decrypt', requireApiKey, blockDuringMaintenance, async (r
 });
 
 decryptRouter.get('/v1/artifacts', requireApiKey, (req, res) => {
-  const offset = Number.parseInt(String(req.query.offset ?? '0'), 10);
+  const offset = typeof req.query.cursor === 'string' ? decodeCursor(req.query.cursor) : Number.parseInt(String(req.query.offset ?? '0'), 10);
   const limit = Number.parseInt(String(req.query.limit ?? '50'), 10);
   const channel = req.query.channel === 'appstore' || req.query.channel === 'testflight' ? req.query.channel : undefined;
   const result = listArtifacts({
@@ -214,7 +215,8 @@ decryptRouter.get('/v1/artifacts', requireApiKey, (req, res) => {
     query: typeof req.query.q === 'string' ? req.query.q : undefined,
     channel,
   });
-  res.json({ ...result, artifacts: result.artifacts.map(artifactSummary) });
+  const normalizedOffset = Number.isFinite(offset) ? Math.max(offset, 0) : 0;
+  res.json({ ...result, artifacts: result.artifacts.map(artifactSummary), nextCursor: nextCursor(normalizedOffset, result.artifacts.length, result.total) });
 });
 
 decryptRouter.get('/v1/artifacts/:id', requireApiKey, (req, res) => {

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { openStateCollectionDatabase, readStateCollection, replaceStateCollection } from '#store/sqlite.js';
@@ -332,6 +333,38 @@ export function getBillingSubscriptionIds(userId: string): string[] {
 
 export function getBillingSubscriptionsForUser(userId: string): BillingSubscription[] {
   return state.subscriptions.filter((subscription) => subscription.userId === userId).map((subscription) => structuredClone(subscription));
+}
+
+export function anonymizeBillingUser(userId: string): void {
+  const replacement = `deleted+${createHash('sha256').update(userId).digest('hex').slice(0, 16)}@invalid`;
+  let changed = false;
+  for (const customer of state.customers) {
+    if (customer.userId !== userId) continue;
+    customer.userId = undefined;
+    customer.email = replacement;
+    changed = true;
+  }
+  for (const subscription of state.subscriptions) {
+    if (subscription.userId !== userId) continue;
+    subscription.userId = undefined;
+    changed = true;
+  }
+  for (const checkout of state.cryptoCheckouts) {
+    if (checkout.userId !== userId) continue;
+    checkout.userId = 'deleted-user';
+    changed = true;
+  }
+  for (const charge of state.cryptoCharges) {
+    if (charge.userId !== userId) continue;
+    charge.userId = 'deleted-user';
+    changed = true;
+  }
+  for (const event of state.entitlementHistory ?? []) {
+    if (event.userId !== userId) continue;
+    event.userId = undefined;
+    changed = true;
+  }
+  if (changed) persist();
 }
 
 export function listBillingSubscriptions(): BillingSubscription[] {

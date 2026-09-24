@@ -16,6 +16,15 @@ function optionalInt(name: string, fallback: number): number {
   return n;
 }
 
+function optionalFloat(name: string, fallback: number): number {
+  const v = process.env[name];
+  if (!v) return fallback;
+  const n = Number.parseFloat(v);
+  if (!Number.isFinite(n)) throw new Error(`env var ${name} must be a number, got ${v}`);
+  if (n < 0 || n > 1) throw new Error(`env var ${name} must be between 0 and 1, got ${v}`);
+  return n;
+}
+
 function optionalBool(name: string, fallback: boolean): boolean {
   const v = process.env[name];
   if (!v) return fallback;
@@ -37,9 +46,11 @@ export const config = {
 
   apiKey: required('API_KEY'),
   sessionSigningSecret: required('SESSION_SIGNING_SECRET'),
+  sessionSigningSecretPrevious: optional('SESSION_SIGNING_SECRET_PREVIOUS', ''),
   publicBaseUrl: optional('PUBLIC_BASE_URL', 'http://localhost:8080'),
 
   adminPassword: required('ADMIN_PASSWORD'),
+  adminPasswordPrevious: optional('ADMIN_PASSWORD_PREVIOUS', ''),
   stateDir: optional('STATE_DIR', '/data/state'),
   stateDatabaseFile: optional('STATE_DATABASE_FILE', 'dkrypt.sqlite'),
   stateDbBusyTimeoutMs: optionalInt('STATE_DB_BUSY_TIMEOUT_MS', 5000),
@@ -54,6 +65,7 @@ export const config = {
 
   stripeSecretKey: optional('STRIPE_SECRET_KEY', ''),
   stripeWebhookSecret: optional('STRIPE_WEBHOOK_SECRET', ''),
+  stripeWebhookSecretPrevious: optional('STRIPE_WEBHOOK_SECRET_PREVIOUS', ''),
   stripeRegularPriceId: optional('STRIPE_REGULAR_PRICE_ID', ''),
   stripePriorityPriceId: optional('STRIPE_PRIORITY_PRICE_ID', ''),
   stripeApiPriceId: optional('STRIPE_API_PRICE_ID', ''),
@@ -81,6 +93,7 @@ export const config = {
   deviceTransport: optional('DEVICE_TRANSPORT', 'auto'),
   deviceBridgeSocket: optional('DEVICE_BRIDGE_SOCKET', '/run/dkrypt/device-bridge.sock'),
   deviceBridgeSecret: optional('DEVICE_BRIDGE_SECRET', ''),
+  deviceBridgeSecretPrevious: optional('DEVICE_BRIDGE_SECRET_PREVIOUS', ''),
   deviceMuxSocket: optional('DEVICE_MUX_SOCKET', '/run/dkrypt/usbmuxd.sock'),
   devicePairingStore: optional('DEVICE_PAIRING_STORE', '/data/state/device-pairing'),
   deviceBridgeHostId: optional('DEVICE_BRIDGE_HOST_ID', ''),
@@ -102,8 +115,16 @@ export const config = {
   runPollTimeoutMinutes: optionalInt('RUN_POLL_TIMEOUT_MINUTES', 30),
   notifyWebhookUrl: optional('NOTIFY_WEBHOOK_URL', ''),
   outboundWebhookSecret: optional('OUTBOUND_WEBHOOK_SECRET', ''),
+  outboundWebhookSecretPrevious: optional('OUTBOUND_WEBHOOK_SECRET_PREVIOUS', ''),
   userConcurrencyCap: optionalInt('USER_CONCURRENCY_CAP', 0),
   queueSloMinutes: optionalInt('QUEUE_SLO_MINUTES', 30),
+
+  otelExporterOtlpEndpoint: optional('OTEL_EXPORTER_OTLP_ENDPOINT', ''),
+  otelExporterOtlpHeaders: optional('OTEL_EXPORTER_OTLP_HEADERS', ''),
+  otelServiceName: optional('OTEL_SERVICE_NAME', 'dkrypt'),
+  otelSampleRate: optionalFloat('OTEL_SAMPLE_RATE', 1),
+  otelBatchSize: optionalInt('OTEL_BSP_MAX_EXPORT_BATCH_SIZE', 64),
+  otelFlushIntervalMs: optionalInt('OTEL_BSP_SCHEDULE_DELAY', 5000),
 
   smtpHost: optional('SMTP_HOST', ''),
   smtpPort: optionalInt('SMTP_PORT', 587),

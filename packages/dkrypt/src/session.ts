@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { NextFunction, Request, Response } from '#http.js';
 import { config } from '#config.js';
 import { resolveAuthUserId } from '#identity.js';
+import { mfaStatus } from '#mfa.js';
 import { hasAnyPermission, parseBits, serializeBits } from '#permissions.js';
 import { createSessionRecord, getSessionVersion, getUserEffectivePermissions, isSessionRecordActive } from '#store/state.js';
 
@@ -14,6 +15,8 @@ export interface Session {
   exp: number;
   ver: number;
   sid: string;
+  mfaVerified?: boolean;
+  reauthenticatedAt?: number;
 }
 
 interface SessionPayload {
@@ -22,6 +25,8 @@ interface SessionPayload {
   exp: number;
   ver?: number;
   sid: string;
+  mfaVerified?: boolean;
+  reauthenticatedAt?: number;
 }
 
 function isSessionPayload(value: unknown): value is SessionPayload {
@@ -41,8 +46,13 @@ function sign(payload: string): string {
   return createHmac('sha256', config.sessionSigningSecret).update(payload).digest('hex');
 }
 
+function validSessionSignature(payload: string, signature: string): boolean {
+  const candidates = [config.sessionSigningSecret, config.sessionSigningSecretPrevious].filter(Boolean);
+  return candidates.some((secret) => safeEqualStr(signature, createHmac('sha256', secret).update(payload).digest('hex')));
+}
+
 function serialize(session: Omit<Session, 'exp'>, expiresAtMs: number): string {
-  const payload: SessionPayload = { sub: session.sub, permissions: serializeBits(session.permissions), ver: session.ver, exp: expiresAtMs, sid: session.sid };
+  const payload: SessionPayload = { sub: session.sub, permissions: serializeBits(session.permissions), ver: session.ver, exp: expiresAtMs, sid: session.sid, mfaVerified: session.mfaVerified, reauthenticatedAt: session.reauthenticatedAt };
   const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
   return `${body}.${sign(body)}`;
 }
@@ -50,7 +60,7 @@ function serialize(session: Omit<Session, 'exp'>, expiresAtMs: number): string {
 function deserialize(cookieValue: string): Session | undefined {
   const [body, sig] = cookieValue.split('.');
   if (!body || !sig) return undefined;
-  if (!safeEqualStr(sig, sign(body))) return undefined;
+  if (!validSessionSignature(body, sig)) return undefined;
 
   try {
     const parsed = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as unknown;
@@ -61,7 +71,7 @@ function deserialize(cookieValue: string): Session | undefined {
     if ((parsed.ver ?? 0) !== getSessionVersion(sub)) return undefined;
 
     if (!isSessionRecordActive(parsed.sid)) return undefined;
-    return { sub, permissions: parseBits(parsed.permissions), exp: parsed.exp, ver: parsed.ver ?? 0, sid: parsed.sid };
+    return { sub, permissions: parseBits(parsed.permissions), exp: parsed.exp, ver: parsed.ver ?? 0, sid: parsed.sid, mfaVerified: parsed.mfaVerified !== false, reauthenticatedAt: parsed.reauthenticatedAt };
   } catch {
     return undefined;
   }
@@ -85,7 +95,7 @@ export function sessionOptsFromReq(req: Request): { userAgent?: string; ip?: str
 }
 
 export function checkRootPassword(candidate: string): boolean {
-  return safeEqualStr(candidate, config.adminPassword);
+  return [config.adminPassword, config.adminPasswordPrevious].filter(Boolean).some((password) => safeEqualStr(candidate, password));
 }
 
 interface SessionCookieOpts {
@@ -98,13 +108,29 @@ interface SessionCookieOpts {
 export function setSessionCookie(res: Response, session: Omit<Session, 'exp' | 'ver' | 'sid'>, opts: SessionCookieOpts = {}): number {
   const expiresAtMs = Date.now() + SESSION_TTL_MS;
   const sid = opts.sid ?? createSessionRecord(session.sub, opts.userAgent, opts.ip).id;
-  const withVer: Omit<Session, 'exp'> = { ...session, ver: getSessionVersion(session.sub), sid };
+  const withVer: Omit<Session, 'exp'> = { ...session, mfaVerified: session.mfaVerified !== false, ver: getSessionVersion(session.sub), sid };
   const secure = config.publicBaseUrl.startsWith('https://') ? '; Secure' : '';
   res.setHeader(
     'Set-Cookie',
     `${COOKIE_NAME}=${serialize(withVer, expiresAtMs)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${SESSION_TTL_MS / 1000}${secure}`,
   );
   return expiresAtMs;
+}
+
+export function requireRecentAuthentication(maxAgeMs = 10 * 60_000) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    const session = getSession(req);
+    if (!session) {
+      res.error('unauthorized', 'unauthorized', 401, false);
+      return;
+    }
+    if (!session.reauthenticatedAt || Date.now() - session.reauthenticatedAt > maxAgeMs) {
+      res.error('reauthentication_required', 'reauthentication is required for this action', 401, false);
+      return;
+    }
+    res.locals.session = session;
+    next();
+  };
 }
 
 export function clearSessionCookie(res: Response): void {
@@ -127,6 +153,10 @@ export function requireSession(req: Request, res: Response, next: NextFunction):
     res.error('unauthorized', 'unauthorized', 401, false);
     return;
   }
+  if (!session.mfaVerified && mfaStatus(session.sub).enabled) {
+    res.error('mfa_required', 'multi-factor authentication is required', 401, false);
+    return;
+  }
   res.locals.session = session;
   next();
 }
@@ -136,6 +166,10 @@ export function requirePermission(...flags: bigint[]) {
     const session = getSession(req);
     if (!session) {
       res.error('unauthorized', 'unauthorized', 401, false);
+      return;
+    }
+    if (!session.mfaVerified && mfaStatus(session.sub).enabled) {
+      res.error('mfa_required', 'multi-factor authentication is required', 401, false);
       return;
     }
     if (!hasAnyPermission(session.permissions, flags)) {

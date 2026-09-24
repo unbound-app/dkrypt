@@ -1608,6 +1608,24 @@ export function backupSnapshotDownloadUrl(id: string): string {
   return `/v1/dashboard/backup/history/${encodeURIComponent(id)}/download`;
 }
 
+export function accountExportUrl(): string {
+  return '/v1/auth/privacy/export';
+}
+
+export function deleteAccount(confirmation: string): Promise<{ ok: boolean; error?: string }> {
+  return apiAction('/v1/auth/privacy/delete', { method: 'POST', body: JSON.stringify({ confirmation }) }, 'Account deleted');
+}
+
+export async function reauthenticate(input: { password?: string; mfaToken?: string }): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await fetch('/v1/auth/reauthenticate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    return res.ok ? { ok: true } : { ok: false, error: data.error ?? 'Reauthentication failed.' };
+  } catch {
+    return { ok: false, error: 'Reauthentication failed.' };
+  }
+}
+
 export interface ActiveSessionInfo {
   id: string;
   sub: string;

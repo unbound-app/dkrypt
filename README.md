@@ -65,6 +65,7 @@ Copy `.env.example` to `.env` and configure the required values. The important r
 | `ADMIN_PASSWORD` | Local administrator sign-in |
 | `PUBLIC_BASE_URL` | Public origin for OAuth, webhooks, and secure cookies |
 | `DEVICE_SSH_KEY_PATH` | Key used only by the `ipadecrypt` compatibility channel |
+| `DEVICE_SSH_KEY_HOST_PATH` | Host path mounted at `DEVICE_SSH_KEY_PATH`; use your own key path |
 | `ARTIFACT_DIR` | IPA storage volume |
 | `STATE_DIR` | SQLite database, pairing material, backups, and mirrors |
 

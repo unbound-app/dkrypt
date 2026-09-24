@@ -32,8 +32,9 @@ import { log } from '#logger.js';
 import { requirePermission, requireSession } from '#session.js';
 import { PermissionFlag } from '#permissions.js';
 import { recordAudit } from '#store/state.js';
-import { getStripe } from '#stripe.js';
+import { constructStripeWebhookEvent, getStripe } from '#stripe.js';
 import { getWebhookInboxRecord, listWebhookInbox, markWebhookFailed, markWebhookProcessed, quarantineWebhook, receiveWebhook } from '#webhookInbox.js';
+import { decodeCursor, nextCursor } from '#util/cursor.js';
 
 function metadataUserId(metadata: unknown): string | undefined {
   if (typeof metadata !== 'object' || metadata === null) return undefined;
@@ -157,7 +158,7 @@ stripeWebhookRouter.post('/v1/stripe/webhook', async (req, res) => {
 
   let event: Stripe.Event;
   try {
-    event = await getStripe().webhooks.constructEventAsync(rawBody, signature, config.stripeWebhookSecret);
+    event = await constructStripeWebhookEvent(rawBody, signature);
   } catch (error) {
     log.warn('Stripe webhook signature verification failed', { error: String(error) });
     res.status(400).json({ error: 'invalid webhook signature' });
@@ -452,11 +453,13 @@ function decodeBillingCursor(value: string | undefined): number {
 billingRouter.get('/v1/billing/webhooks/inbox', requirePermission(PermissionFlag.manageBilling), (req, res) => {
   const status = typeof req.query?.status === 'string' ? req.query.status : undefined;
   const provider = typeof req.query?.provider === 'string' ? req.query.provider : undefined;
-  const inbox = listWebhookInbox()
+  const filtered = listWebhookInbox()
     .filter((record) => !status || record.status === status)
-    .filter((record) => !provider || record.provider === provider)
-    .map(({ rawBody, ...record }) => ({ ...record, rawBodyBytes: Buffer.byteLength(rawBody) }));
-  res.json({ inbox });
+    .filter((record) => !provider || record.provider === provider);
+  const limit = Math.min(Math.max(Number.parseInt(String(req.query?.limit ?? '50'), 10) || 50, 1), 200);
+  const offset = typeof req.query?.cursor === 'string' ? decodeCursor(req.query.cursor) : Math.max(Number.parseInt(String(req.query?.offset ?? '0'), 10) || 0, 0);
+  const inbox = filtered.slice(offset, offset + limit).map(({ rawBody, ...record }) => ({ ...record, rawBodyBytes: Buffer.byteLength(rawBody) }));
+  res.json({ inbox, total: filtered.length, nextCursor: nextCursor(offset, inbox.length, filtered.length) });
 });
 
 billingRouter.post('/v1/billing/webhooks/inbox/:id/quarantine', requirePermission(PermissionFlag.manageBilling), (req, res) => {

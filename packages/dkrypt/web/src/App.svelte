@@ -3,6 +3,7 @@
 	import {
 		Command,
 		Download,
+		KeyRound,
 		Lock,
 		LogOut,
 		Monitor,
@@ -10,6 +11,7 @@
 		Pencil,
 		PanelRightOpen,
 		Sun,
+		Trash2,
 		Volume2,
 		VolumeX,
 	} from "lucide-svelte";
@@ -21,6 +23,7 @@
 	import UpdateAvailableBanner from "#components/UpdateAvailableBanner.svelte";
 	import HeaderOnlineUsers from "#components/HeaderOnlineUsers.svelte";
 	import Login from "#components/Login.svelte";
+	import MfaVerification from "#components/MfaVerification.svelte";
 	import LegalPage from "#components/LegalPage.svelte";
 	import NotificationBell from "#components/NotificationBell.svelte";
 	import WhatsNewButton from "#components/WhatsNewButton.svelte";
@@ -74,7 +77,7 @@
 		sessionState,
 		updateProfileDisplayName,
 	} from "#lib/session.svelte";
-	import { testEmail, testPush } from "#lib/api";
+	import { accountExportUrl, deleteAccount, reauthenticate, testEmail, testPush } from "#lib/api";
 	import {
 		ACCENT_PRESETS,
 		accentState,
@@ -134,6 +137,8 @@
 	let sessionChecked = $state(false);
 	let mobileStatusOpen = $state(false);
 	let mobileSwipeStartX = $state<number | null>(null);
+	let passkeys = $state<Array<{ id: string; name?: string; createdAt: number; lastUsedAt?: number }>>([]);
+	let passkeyBusy = $state(false);
 
 	const otherOnlineUsers = $derived(
 		liveState.onlineUsers.filter((u) => u !== sessionState.sub),
@@ -144,6 +149,64 @@
 	}
 
 	const myGrantedPermissions = $derived(sessionPermissionLabels());
+
+	async function loadPasskeys(): Promise<void> {
+		if (!sessionState.loggedIn) return;
+		const response = await fetch("/v1/auth/passkeys");
+		if (!response.ok) return;
+		const data = (await response.json()) as { passkeys?: typeof passkeys };
+		passkeys = data.passkeys ?? [];
+	}
+
+	async function registerPasskey(): Promise<void> {
+		passkeyBusy = true;
+		try {
+			const optionsResponse = await fetch("/v1/auth/passkeys/register/options", { method: "POST" });
+			if (!optionsResponse.ok) {
+				showToast("Re-authenticate before adding a passkey.", "error");
+				return;
+			}
+			const { startRegistration } = await import("@simplewebauthn/browser");
+			const credential = await startRegistration({ optionsJSON: await optionsResponse.json() });
+			const name = window.prompt("Name this passkey (optional)") ?? "";
+			const response = await fetch("/v1/auth/passkeys/register", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ ...credential, name }),
+			});
+			if (!response.ok) {
+				const body = (await response.json().catch(() => ({}))) as { message?: string; error?: string };
+				showToast(body.message ?? body.error ?? "Passkey registration failed.", "error");
+				return;
+			}
+			await loadPasskeys();
+			showToast("Passkey added.", "success");
+		} catch (error) {
+			showToast(error instanceof Error ? error.message : "Passkey registration was canceled.", "error");
+		} finally {
+			passkeyBusy = false;
+		}
+	}
+
+	async function removePasskey(id: string): Promise<void> {
+		if (!(await confirmDialog("Remove this passkey?", { confirmLabel: "Remove", variant: "destructive" }))) return;
+		passkeyBusy = true;
+		try {
+			const response = await fetch(`/v1/auth/passkeys/${encodeURIComponent(id)}`, { method: "DELETE" });
+			if (!response.ok) {
+				showToast("Re-authenticate before removing a passkey.", "error");
+				return;
+			}
+			await loadPasskeys();
+			showToast("Passkey removed.", "success");
+		} finally {
+			passkeyBusy = false;
+		}
+	}
+
+	$effect(() => {
+		if (sessionState.loggedIn) void loadPasskeys();
+	});
 
 	type NotifPermission = NotificationPermission | "unsupported";
 	let notifPermission = $state<NotifPermission>(
@@ -329,6 +392,40 @@
 		} finally {
 			loggingOutEverywhere = false;
 		}
+	}
+
+	async function doDeleteAccount(): Promise<void> {
+		if (sessionState.sub === "root") return;
+		if (!(await confirmDialog("Delete your dkrypt account and personal data? This cannot be undone.", { confirmLabel: "Continue", variant: "destructive" }))) return;
+		const confirmation = window.prompt("Type DELETE MY ACCOUNT to confirm.");
+		if (confirmation !== "DELETE MY ACCOUNT") {
+			showToast("Account deletion was not confirmed.", "error");
+			return;
+		}
+		if (sessionState.sub === "root") {
+			const password = window.prompt("Enter your administrator password to continue.");
+			if (!password) return;
+			const reauth = await reauthenticate({ password });
+			if (!reauth.ok) {
+				showToast(reauth.error ?? "Reauthentication failed.", "error");
+				return;
+			}
+		} else if (sessionState.mfa?.enabled) {
+			const mfaToken = window.prompt("Enter your authenticator or recovery code to continue.");
+			if (!mfaToken) return;
+			const reauth = await reauthenticate({ mfaToken });
+			if (!reauth.ok) {
+				showToast(reauth.error ?? "Reauthentication failed.", "error");
+				return;
+			}
+		}
+		const result = await deleteAccount(confirmation);
+		if (!result.ok) {
+			showToast(result.error ?? "The account could not be deleted.", "error");
+			return;
+		}
+		accountMenuOpen = false;
+		window.location.assign("/");
 	}
 
 	function startEditingProfileName(): void {
@@ -527,6 +624,8 @@
 	<div class="min-h-screen"></div>
 {:else if !sessionState.loggedIn}
 	<Login />
+{:else if sessionState.mfa?.required}
+	<MfaVerification />
 {:else}
 	<div class="app-shell min-h-screen bg-background">
 		<MaintenanceBanner />
@@ -762,15 +861,40 @@
 									</div>
 								</div>
 							{/if}
-							{#if myGrantedPermissions.length > 0}
-								<div class="mb-3 flex flex-wrap gap-1.5">
+								{#if myGrantedPermissions.length > 0}
+									<div class="mb-3 flex flex-wrap gap-1.5">
 									{#each myGrantedPermissions as label (label)}
 										<Badge variant="default">{label}</Badge>
 									{/each}
+									</div>
+								{/if}
+								<div class="border-border mb-3 border-t pt-3">
+									<div class="mb-1.5 flex items-center justify-between gap-2">
+										<div>
+											<div class="text-[13px]">Passkeys</div>
+											<div class="text-[11px] text-muted">Fast, phishing-resistant sign-in</div>
+										</div>
+										<Button size="sm" variant="secondary" loading={passkeyBusy} onclick={() => void registerPasskey()}>
+											<KeyRound class="h-3.5 w-3.5" />
+											Add
+										</Button>
+									</div>
+									{#if passkeys.length > 0}
+										<div class="flex flex-col gap-1.5">
+											{#each passkeys as passkey (passkey.id)}
+												<div class="flex items-center gap-2 text-xs text-muted">
+													<KeyRound class="h-3.5 w-3.5 shrink-0" />
+													<span class="min-w-0 flex-1 truncate">{passkey.name ?? "Unnamed passkey"}</span>
+													<Button variant="link" size="sm" class="h-auto shrink-0 p-0 text-xs text-muted hover:text-destructive" onclick={() => void removePasskey(passkey.id)}>Remove</Button>
+												</div>
+											{/each}
+										</div>
+									{:else}
+										<div class="text-[11px] text-muted">No passkeys registered.</div>
+									{/if}
 								</div>
-							{/if}
 
-							{#if otherOnlineUsers.length > 0}
+								{#if otherOnlineUsers.length > 0}
 								<div class="border-border mb-3 border-t pt-3">
 									<div class="mb-1.5 text-[11px] text-muted">
 										{otherOnlineUsers.length} other{otherOnlineUsers.length ===
@@ -937,6 +1061,15 @@
 							<div
 								class="border-border flex flex-col gap-1.5 border-t pt-3"
 							>
+								<a
+									class="bg-secondary text-secondary-foreground hover:bg-secondary/80 inline-flex h-8 w-full items-center justify-start gap-2 rounded-md px-3 text-xs font-medium transition-colors"
+									href={accountExportUrl()}
+									download
+									onclick={() => (accountMenuOpen = false)}
+								>
+									<Download class="h-3.5 w-3.5" />
+									Export my data
+								</a>
 								<Button
 									variant="secondary"
 									size="sm"
@@ -968,6 +1101,17 @@
 								>
 									Log out everywhere
 								</Button>
+								{#if sessionState.sub !== "root"}
+									<Button
+										variant="destructive"
+										size="sm"
+										class="w-full"
+										onclick={() => void doDeleteAccount()}
+									>
+										<Trash2 class="h-3.5 w-3.5" />
+										Delete account
+									</Button>
+								{/if}
 							</div>
 					</DropdownMenu.Content>
 				</DropdownMenu.Root>

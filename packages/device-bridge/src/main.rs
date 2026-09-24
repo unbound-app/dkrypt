@@ -41,6 +41,7 @@ struct RpcRequest {
     agent_secret: Option<String>,
     deadline_ms: Option<u64>,
     host_id: Option<String>,
+    follow: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -71,10 +72,11 @@ struct DeviceSummary {
 }
 
 struct BridgeState {
-    secret: String,
+    secrets: Vec<String>,
     mux_socket: PathBuf,
     host_id: String,
     tunnels: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
+    event_sequence: std::sync::atomic::AtomicU64,
 }
 
 fn error(code: impl Into<String>, message: impl Into<String>, retryable: bool) -> RpcError {
@@ -107,6 +109,35 @@ fn failure(request_id: String, rpc_error: RpcError) -> RpcResponse {
 
 fn valid_frame_length(length: usize, maximum: usize) -> bool {
     length > 0 && length <= maximum
+}
+
+fn bridge_capabilities() -> [&'static str; 13] {
+    [
+        "list_devices",
+        "pair",
+        "metadata",
+        "agent",
+        "remote_command",
+        "service_port",
+        "open_tunnel",
+        "close_tunnel",
+        "health",
+        "capabilities",
+        "events",
+        "file_read",
+        "file_write",
+    ]
+}
+
+fn next_event_sequence(state: &BridgeState) -> u64 {
+    state
+        .event_sequence
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        + 1
+}
+
+fn authorized_secret(secrets: &[String], candidate: &str) -> bool {
+    secrets.iter().any(|secret| secret == candidate)
 }
 
 fn required_env(name: &str) -> Result<String, RpcError> {
@@ -206,6 +237,37 @@ async fn list_devices(state: &BridgeState) -> Result<Value, RpcError> {
     })?;
     serde_json::to_value(devices.into_iter().map(device_summary).collect::<Vec<_>>())
         .map_err(|value| error("serialization", value.to_string(), false))
+}
+
+async fn device_event_snapshot(state: &BridgeState) -> Result<Value, RpcError> {
+    Ok(json!({
+        "type": "device_snapshot",
+        "sequence": next_event_sequence(state),
+        "devices": list_devices(state).await?,
+    }))
+}
+
+async fn stream_device_events(
+    stream: &mut UnixStream,
+    state: Arc<BridgeState>,
+    request_id: String,
+) {
+    let mut interval = tokio::time::interval(Duration::from_secs(2));
+    loop {
+        tokio::select! {
+            _ = interval.tick() => {
+                let result = device_event_snapshot(&state).await;
+                let output = match result {
+                    Ok(value) => response(request_id.clone(), value),
+                    Err(value) => failure(request_id.clone(), value),
+                };
+                if write_frame(stream, &output).await.is_err() { return; }
+            }
+            frame = read_frame(stream) => {
+                if frame.is_err() || frame.ok().flatten().is_none() { return; }
+            }
+        }
+    }
 }
 
 async fn device_metadata(state: &BridgeState, id: &str) -> Result<Value, RpcError> {
@@ -463,10 +525,30 @@ async fn close_tunnel(state: &BridgeState, tunnel_id: &str) -> Value {
 async fn execute(state: Arc<BridgeState>, request: RpcRequest) -> Result<Value, RpcError> {
     match request.operation.as_str() {
         "capabilities" => Ok(
-            json!({ "protocolVersion": RPC_VERSION, "transport": "rust-netmuxd", "capabilities": ["list_devices", "pair", "metadata", "agent", "open_tunnel", "close_tunnel", "health"] }),
+            json!({ "protocolVersion": RPC_VERSION, "transport": "rust-netmuxd", "capabilities": bridge_capabilities() }),
         ),
         "health" => {
             let devices = list_devices(&state).await?;
+            let transport = devices
+                .as_array()
+                .map(|values| {
+                    let has_usb = values
+                        .iter()
+                        .any(|value| value.get("transport").and_then(Value::as_str) == Some("usb"));
+                    let has_wifi = values.iter().any(|value| {
+                        value
+                            .get("transport")
+                            .and_then(Value::as_str)
+                            .is_some_and(|value| value.starts_with("wifi:"))
+                    });
+                    match (has_usb, has_wifi) {
+                        (true, true) => "mixed",
+                        (true, false) => "usb",
+                        (false, true) => "wifi",
+                        (false, false) => "unknown",
+                    }
+                })
+                .unwrap_or("unknown");
             let device_present = request.device_id.as_deref().map_or_else(
                 || devices.as_array().is_some_and(|values| !values.is_empty()),
                 |device_id| {
@@ -479,10 +561,11 @@ async fn execute(state: Arc<BridgeState>, request: RpcRequest) -> Result<Value, 
                 },
             );
             Ok(
-                json!({ "state": "ready", "transport": "usb", "deviceCount": devices.as_array().map_or(0, Vec::len), "devicePresent": device_present, "muxSocket": state.mux_socket }),
+                json!({ "state": "ready", "transport": transport, "deviceCount": devices.as_array().map_or(0, Vec::len), "devicePresent": device_present, "muxSocket": state.mux_socket, "capabilities": bridge_capabilities() }),
             )
         }
         "list_devices" => list_devices(&state).await,
+        "events" => device_event_snapshot(&state).await,
         "metadata" => {
             device_metadata(
                 &state,
@@ -518,6 +601,53 @@ async fn execute(state: Arc<BridgeState>, request: RpcRequest) -> Result<Value, 
                     .agent_secret
                     .ok_or_else(|| error("invalid_request", "agent_secret is required", false))?,
                 request.deadline_ms.unwrap_or(20_000),
+            )
+            .await
+        }
+        "remote_command" => {
+            request_agent(
+                &state,
+                request
+                    .device_id
+                    .as_deref()
+                    .ok_or_else(|| error("invalid_request", "device_id is required", false))?,
+                request
+                    .payload
+                    .ok_or_else(|| error("invalid_request", "payload is required", false))?,
+                request
+                    .agent_secret
+                    .ok_or_else(|| error("invalid_request", "agent_secret is required", false))?,
+                request.deadline_ms.unwrap_or(20_000),
+            )
+            .await
+        }
+        "file_read" | "file_write" => {
+            request_agent(
+                &state,
+                request
+                    .device_id
+                    .as_deref()
+                    .ok_or_else(|| error("invalid_request", "device_id is required", false))?,
+                request
+                    .payload
+                    .ok_or_else(|| error("invalid_request", "payload is required", false))?,
+                request
+                    .agent_secret
+                    .ok_or_else(|| error("invalid_request", "agent_secret is required", false))?,
+                request.deadline_ms.unwrap_or(20_000),
+            )
+            .await
+        }
+        "service_port" => {
+            open_tunnel(
+                state,
+                request
+                    .device_id
+                    .as_deref()
+                    .ok_or_else(|| error("invalid_request", "device_id is required", false))?,
+                request
+                    .port
+                    .ok_or_else(|| error("invalid_request", "port is required", false))?,
             )
             .await
         }
@@ -605,18 +735,22 @@ async fn handle_client(mut stream: UnixStream, state: Arc<BridgeState>) {
             }
         };
         let request_id = request.request_id.clone();
+        let follow_events = request.operation == "events" && request.follow == Some(true);
         let result = if request.version != RPC_VERSION {
             Err(error(
                 "protocol_version",
                 "unsupported RPC protocol version",
                 false,
             ))
-        } else if request.auth != state.secret {
+        } else if !authorized_secret(&state.secrets, &request.auth) {
             Err(error(
                 "unauthorized",
                 "device bridge authentication failed",
                 false,
             ))
+        } else if follow_events {
+            stream_device_events(&mut stream, state.clone(), request_id).await;
+            return;
         } else {
             let deadline =
                 Duration::from_millis(request.deadline_ms.unwrap_or(20_000).clamp(1, 120_000));
@@ -674,6 +808,12 @@ async fn main() -> Result<(), String> {
     if secret.len() < 32 {
         return Err("DEVICE_BRIDGE_SECRET must contain at least 32 characters".to_string());
     }
+    let mut secrets = vec![secret];
+    if let Ok(previous) = env::var("DEVICE_BRIDGE_SECRET_PREVIOUS") {
+        if previous.len() >= 32 {
+            secrets.push(previous);
+        }
+    }
     if let Some(parent) = rpc_socket.parent() {
         std::fs::create_dir_all(parent).map_err(|value| value.to_string())?;
     }
@@ -701,10 +841,11 @@ async fn main() -> Result<(), String> {
     });
     let host_id = env::var("DEVICE_BRIDGE_HOST_ID").unwrap_or_else(|_| Uuid::new_v4().to_string());
     let state = Arc::new(BridgeState {
-        secret,
+        secrets,
         mux_socket,
         host_id,
         tunnels: Mutex::new(HashMap::new()),
+        event_sequence: std::sync::atomic::AtomicU64::new(0),
     });
     let listener = UnixListener::bind(&rpc_socket).map_err(|value| value.to_string())?;
     let permissions = std::os::unix::fs::PermissionsExt::from_mode(0o660);
@@ -720,7 +861,10 @@ async fn main() -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_FRAME_BYTES, RPC_VERSION, error, failure, response, valid_frame_length};
+    use super::{
+        MAX_FRAME_BYTES, RPC_VERSION, authorized_secret, error, failure, response,
+        valid_frame_length,
+    };
     use serde_json::json;
 
     #[test]
@@ -745,5 +889,13 @@ mod tests {
         assert_eq!(failed.version, RPC_VERSION);
         assert_eq!(failed.request_id, "request-2");
         assert!(!failed.ok);
+    }
+
+    #[test]
+    fn secret_rotation_accepts_current_and_previous_only() {
+        let secrets = vec!["current-secret".to_string(), "previous-secret".to_string()];
+        assert!(authorized_secret(&secrets, "current-secret"));
+        assert!(authorized_secret(&secrets, "previous-secret"));
+        assert!(!authorized_secret(&secrets, "unknown-secret"));
     }
 }

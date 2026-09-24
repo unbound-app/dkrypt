@@ -7,6 +7,7 @@ import { config } from '#config.js';
 import { scopedLogger } from '#logger.js';
 import { BRIDGE_PROTOCOL_VERSION } from '#bridgeProtocol.js';
 import type { BridgeChannel } from '#bridgeProtocol.js';
+import { startSpan } from '#telemetry.js';
 
 const log = scopedLogger('idevice');
 
@@ -46,6 +47,12 @@ export interface BridgeHeartbeat {
   channel?: BridgeChannel;
   process?: string;
   at?: number;
+}
+
+export interface RustDeviceBridgeEvent {
+  type: string;
+  sequence: number;
+  devices: unknown[];
 }
 
 export class BridgeError extends Error {
@@ -139,6 +146,18 @@ class RustDeviceBridgeClient {
   private readonly secret = config.deviceBridgeSecret;
 
   async request(operation: string, details: Record<string, unknown>, timeoutMs = REMOTE_COMMAND_TIMEOUT_MS): Promise<unknown> {
+    const span = startSpan('device.bridge.request', { 'device.operation': operation, 'device.timeout_ms': timeoutMs });
+    try {
+      const result = await this.requestRaw(operation, details, timeoutMs);
+      span.end();
+      return result;
+    } catch (error) {
+      span.end(error);
+      throw error;
+    }
+  }
+
+  private async requestRaw(operation: string, details: Record<string, unknown>, timeoutMs = REMOTE_COMMAND_TIMEOUT_MS): Promise<unknown> {
     if (this.secret.length < 32) throw new DeviceAgentUnavailableError('DEVICE_BRIDGE_SECRET is missing or too short');
     const requestId = randomUUID();
     const body = Buffer.from(JSON.stringify({ version: 1, requestId, auth: this.secret, operation, ...details }), 'utf8');
@@ -257,6 +276,113 @@ class RustDeviceBridgeClient {
     if (typeof value.state !== 'string' || typeof value.transport !== 'string' || typeof value.deviceCount !== 'number' || typeof value.devicePresent !== 'boolean') throw new Error('Rust device bridge returned incomplete health');
     return { state: value.state, transport: value.transport, deviceCount: value.deviceCount, devicePresent: value.devicePresent };
   }
+
+  async events(): Promise<Record<string, unknown>> {
+    const result = await this.request('events', {}, 5_000);
+    if (!result || typeof result !== 'object') throw new Error('Rust device bridge returned invalid device events');
+    return result as Record<string, unknown>;
+  }
+
+  async subscribeEvents(onEvent: (event: RustDeviceBridgeEvent) => void, onError?: (error: Error) => void, signal?: AbortSignal): Promise<() => void> {
+    if (this.secret.length < 32) throw new DeviceAgentUnavailableError('DEVICE_BRIDGE_SECRET is missing or too short');
+    const requestId = randomUUID();
+    const body = Buffer.from(JSON.stringify({ version: 1, requestId, auth: this.secret, operation: 'events', follow: true }), 'utf8');
+    const frame = Buffer.allocUnsafe(body.length + 4);
+    frame.writeUInt32BE(body.length, 0);
+    body.copy(frame, 4);
+    const socket = await new Promise<Socket>((resolve, reject) => {
+      const candidate = connectSocket({ path: this.socketPath });
+      const fail = (error: Error) => {
+        candidate.destroy();
+        reject(error);
+      };
+      candidate.once('connect', () => resolve(candidate));
+      candidate.once('error', fail);
+      candidate.setTimeout(5_000, () => fail(new Error('Rust device bridge event connection timed out')));
+    }).catch((error) => {
+      throw new DeviceAgentUnavailableError(`could not connect to the Rust device bridge: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+    });
+    return await new Promise<() => void>((resolve, reject) => {
+      let input = Buffer.alloc(0);
+      let opened = false;
+      let stopped = false;
+      const stop = () => {
+        if (stopped) return;
+        stopped = true;
+        signal?.removeEventListener('abort', stop);
+        socket.destroy();
+      };
+      const fail = (error: Error) => {
+        if (!opened) reject(error);
+        else onError?.(error);
+        stop();
+      };
+      const receive = (chunk: Buffer) => {
+        input = Buffer.concat([input, chunk]);
+        while (input.length >= 4) {
+          const length = input.readUInt32BE(0);
+          if (length <= 0 || length > 16 * 1024 * 1024) {
+            fail(new Error(`Rust device bridge returned an invalid event frame length: ${length}`));
+            return;
+          }
+          if (input.length < length + 4) return;
+          let response: RustRpcResponse;
+          try {
+            response = JSON.parse(input.subarray(4, length + 4).toString('utf8')) as RustRpcResponse;
+          } catch (error) {
+            fail(error instanceof Error ? error : new Error(String(error)));
+            return;
+          }
+          input = input.subarray(length + 4);
+          if (response.version !== 1 || response.requestId !== requestId) {
+            fail(new Error('Rust device bridge returned a mismatched event response'));
+            return;
+          }
+          if (!response.ok) {
+            fail(new DeviceBridgeError(response.error?.code ?? 'device_bridge_error', response.error?.message ?? 'Rust device bridge event subscription failed', response.error?.retryable ?? false));
+            return;
+          }
+          const value = response.result;
+          if (!value || typeof value !== 'object' || typeof (value as Record<string, unknown>).type !== 'string' || typeof (value as Record<string, unknown>).sequence !== 'number' || !Array.isArray((value as Record<string, unknown>).devices)) {
+            fail(new Error('Rust device bridge returned an invalid device event'));
+            return;
+          }
+          if (!opened) {
+            opened = true;
+            resolve(stop);
+          }
+          onEvent(value as RustDeviceBridgeEvent);
+        }
+      };
+      socket.setTimeout(0);
+      socket.on('data', receive);
+      socket.once('error', fail);
+      socket.once('close', () => {
+        if (!stopped && opened) onError?.(new Error('Rust device bridge event stream closed'));
+        if (!opened && !stopped) reject(new Error('Rust device bridge event stream closed before the first snapshot'));
+      });
+      signal?.addEventListener('abort', stop, { once: true });
+      socket.write(frame, (error) => {
+        if (error) fail(error);
+      });
+    });
+  }
+
+  async fileRead(deviceId: string, agentSecret: string, remotePath: string, timeoutMs = REMOTE_COMMAND_TIMEOUT_MS): Promise<string> {
+    const envelope = createDeviceAgentEnvelope(agentSecret, randomUUID(), { action: 'exec', command: `cat -- ${shellQuote(remotePath)}`, timeoutMs });
+    const result = await this.request('file_read', { deviceId, agentSecret, payload: envelope }, timeoutMs + 1_000);
+    const value = parseDeviceAgentResponse(agentSecret, result as DeviceAgentEnvelope);
+    return typeof value.stdout === 'string' ? value.stdout : '';
+  }
+
+  async fileWrite(deviceId: string, agentSecret: string, remotePath: string, content: string, timeoutMs = REMOTE_COMMAND_TIMEOUT_MS): Promise<void> {
+    if (content.length > 16 * 1024 * 1024) throw new Error('device bridge file write exceeds the allowed size');
+    const command = `printf %s ${shellQuote(content)} > ${shellQuote(remotePath)}`;
+    const envelope = createDeviceAgentEnvelope(agentSecret, randomUUID(), { action: 'exec', command, timeoutMs });
+    const result = await this.request('file_write', { deviceId, agentSecret, payload: envelope }, timeoutMs + 1_000);
+    const value = parseDeviceAgentResponse(agentSecret, result as DeviceAgentEnvelope);
+    if (value.code !== 0) throw new Error(typeof value.stderr === 'string' && value.stderr ? value.stderr : 'device bridge file write failed');
+  }
 }
 
 class RustDeviceAgentClient implements DeviceAgentClient {
@@ -274,9 +400,14 @@ class RustDeviceAgentClient implements DeviceAgentClient {
     if (this.closed) throw new Error('Rust device agent session is closed');
     const requestId = randomUUID();
     const envelope = createDeviceAgentEnvelope(this.secret, requestId, { action, ...payload });
-    const result = await this.bridge.request('agent', { deviceId: this.deviceId, agentSecret: this.secret, payload: envelope }, timeoutMs + 1_000);
-    if (!result || typeof result !== 'object') throw new Error('Rust device bridge returned an invalid agent response');
-    return parseDeviceAgentResponse(this.secret, result as DeviceAgentEnvelope);
+    try {
+      const result = await this.bridge.request('agent', { deviceId: this.deviceId, agentSecret: this.secret, payload: envelope }, timeoutMs + 1_000);
+      if (!result || typeof result !== 'object') throw new Error('Rust device bridge returned an invalid agent response');
+      return parseDeviceAgentResponse(this.secret, result as DeviceAgentEnvelope);
+    } catch (error) {
+      this.closed = true;
+      throw error;
+    }
   }
 
   async exec(command: string, timeoutMs = REMOTE_COMMAND_TIMEOUT_MS): Promise<{ stdout: string; stderr: string; code: number | null }> {
@@ -650,10 +781,35 @@ export function isDirectUsbDeviceAgentConnection(connection: DeviceConnection | 
   return isRustDeviceConnection(connection) && connection.usbmuxNetwork !== true;
 }
 
-export async function getRustDeviceBridgeHealth(connection: DeviceConnection): Promise<{ state: 'ready' | 'offline'; transport: DeviceTransport; deviceCount: number }> {
+export async function getRustDeviceBridgeHealth(connection: DeviceConnection): Promise<{ state: 'ready' | 'offline'; transport: DeviceTransport; deviceCount: number; capabilities: string[] }> {
   if (!isRustDeviceConnection(connection)) throw new DeviceAgentUnavailableError('Rust device bridge is unavailable for this connection');
-  const health = await new RustDeviceBridgeClient().health(connection.udid);
-  return { state: health.devicePresent && health.state === 'ready' ? 'ready' : 'offline', transport: connection.usbmuxNetwork ? 'wifi' : 'usb', deviceCount: health.deviceCount };
+  const bridge = new RustDeviceBridgeClient();
+  const [health, capabilities] = await Promise.all([bridge.health(connection.udid), bridge.capabilities()]);
+  const values = Array.isArray(capabilities.capabilities) ? capabilities.capabilities.filter((value): value is string => typeof value === 'string') : [];
+  return { state: health.devicePresent && health.state === 'ready' ? 'ready' : 'offline', transport: connection.usbmuxNetwork ? 'wifi' : 'usb', deviceCount: health.deviceCount, capabilities: values };
+}
+
+export interface RustDeviceBridgeStatus {
+  state: 'ready' | 'offline';
+  transport: string;
+  deviceCount: number;
+  capabilities: string[];
+}
+
+export async function getRustDeviceBridgeStatus(): Promise<RustDeviceBridgeStatus> {
+  const bridge = new RustDeviceBridgeClient();
+  const [health, capabilities] = await Promise.all([bridge.health(), bridge.capabilities()]);
+  const values = Array.isArray(capabilities.capabilities) ? capabilities.capabilities.filter((value): value is string => typeof value === 'string') : [];
+  return {
+    state: health.state === 'ready' ? 'ready' : 'offline',
+    transport: health.transport,
+    deviceCount: health.deviceCount,
+    capabilities: values,
+  };
+}
+
+export async function subscribeRustDeviceBridgeEvents(onEvent: (event: RustDeviceBridgeEvent) => void, onError?: (error: Error) => void, signal?: AbortSignal): Promise<() => void> {
+  return new RustDeviceBridgeClient().subscribeEvents(onEvent, onError, signal);
 }
 
 export function getDeviceTransportOrder(connection: DeviceConnection | string, mode = config.deviceTransport): Array<'autoinstall' | 'ssh'> {

@@ -1,6 +1,6 @@
 import type { NextFunction, Request, Response } from '#http.js';
-import { getDeviceReadiness, peekPrimaryDeviceHealth } from '#deviceHealth.js';
-import { getEffectiveSettings } from '#store/state.js';
+import { getDeviceHealthFailureCount, getDeviceReadiness, peekPrimaryDeviceHealth } from '#deviceHealth.js';
+import { getEffectiveSettings, getPrimaryDevice } from '#store/state.js';
 
 export interface MaintenanceStatus {
   active: boolean;
@@ -17,7 +17,10 @@ export function getMaintenanceStatus(): MaintenanceStatus {
   const health = peekPrimaryDeviceHealth();
   if (health) {
     const readiness = health.readiness ?? getDeviceReadiness(health);
-    if (readiness.state === 'blocked') {
+    const primary = getPrimaryDevice();
+    const offlineConfirmed = primary !== undefined && getDeviceHealthFailureCount(primary.id) >= 3;
+    const hardBlock = readiness.reasons.some((reason) => /unreachable|storage|temperature|battery|internet access/i.test(reason));
+    if (readiness.state === 'blocked' && (health.reachable ? hardBlock : offlineConfirmed)) {
       auto = true;
       autoReason = readiness.reasons[0] ?? 'the iDevice is not ready for automation';
     }

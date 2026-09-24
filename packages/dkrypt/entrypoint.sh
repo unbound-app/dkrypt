@@ -27,7 +27,12 @@ shutdown() {
 
 trap shutdown TERM INT EXIT
 
-while kill -0 "$bridge_pid" 2>/dev/null && kill -0 "$api_pid" 2>/dev/null; do
+while kill -0 "$api_pid" 2>/dev/null; do
+  if ! kill -0 "$bridge_pid" 2>/dev/null; then
+    wait "$bridge_pid" 2>/dev/null || true
+    /usr/local/bin/dkrypt-device-bridge &
+    bridge_pid=$!
+  fi
   sleep 1
 done
 

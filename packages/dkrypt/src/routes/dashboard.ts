@@ -19,6 +19,8 @@ import { getGitHubRateLimitBudget, listDispatchRepos, listRepoWorkflows, validat
 import { lookupAppMetadata, searchApps } from '#scheduler/itunes.js';
 import { requirePermission, requireSession } from '#session.js';
 import { getDeviceHealth, getDeviceInstallBlocker, getDeviceReadiness, isBridgeHeartbeatFresh } from '#deviceHealth.js';
+import { decodeCursor, nextCursor } from '#util/cursor.js';
+import { getCachedDeviceHealth } from '#deviceHealthCache.js';
 import { discoverDevices, execCommand, isDirectUsbDeviceAgentConnection, listInstalledAppStoreBundles, sendSpringBoardBridgeRequest, setupDeviceConnection, validateDeviceRootDir, withAutoinstallDeviceAgent, withSSH, type DeviceConnection } from '#idevice.js';
 import { getTestFlightBridgeDiagnostics, listBuilds, listTrains } from '#testflight.js';
 import { nextCronRunAt, nextCronRuns } from '#util/cron.js';
@@ -26,6 +28,7 @@ import { getDiskUsage } from '#util/diskUsage.js';
 import { runConfigurationDoctor } from '#doctor.js';
 import { rateLimitPerUser } from '#util/rateLimit.js';
 import { getFailureGuidance } from '#util/failureGuidance.js';
+import { runSyntheticProbes } from '#synthetic.js';
 import {
   decorateSearchResults,
   getTestFlightCatalogCacheState,
@@ -80,6 +83,7 @@ import {
   getApiKeyOutcomeUsage,
   getApiKeyUsage,
   getAuditLog,
+  getAuditLogPage,
   getAverageJobDurationMs,
   getBackupHistory,
   getBackupSchedule,
@@ -87,7 +91,7 @@ import {
   getBundleStats,
   getDailyVolume,
   getDevice,
-  getDeviceActivity,
+  getDeviceActivityPage,
   getDiscordGuilds,
   getDiscordRolePerks,
   getDeviceBatteryHourlyBuckets,
@@ -103,7 +107,7 @@ import {
   getJobHistoryEntryById,
   getJobHistoryPage,
   getLastSchedulerRunAt,
-  listNotifications,
+  listNotificationsPage,
   markNotificationsRead,
   getPrimaryDevice,
   getSchedulerRunHistory,
@@ -287,9 +291,15 @@ dashboardRouter.get('/v1/dashboard/doctor', canManageDevices, async (_req, res) 
   res.json(await runConfigurationDoctor());
 });
 
+dashboardRouter.get('/v1/dashboard/synthetic', canManageDevices, async (_req, res) => {
+  res.json(await runSyntheticProbes());
+});
+
 dashboardRouter.get('/v1/dashboard/notifications', (req, res) => {
   const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit ?? '50'), 10) || 50, 1), 100);
-  res.json(listNotifications(res.locals.session.sub, limit));
+  const offset = typeof req.query.cursor === 'string' ? decodeCursor(req.query.cursor) : Math.max(Number.parseInt(String(req.query.offset ?? '0'), 10) || 0, 0);
+  const page = listNotificationsPage(res.locals.session.sub, offset, limit);
+  res.json({ ...page, nextCursor: nextCursor(offset, page.notifications.length, page.total) });
 });
 
 dashboardRouter.post('/v1/dashboard/notifications/read', (req, res) => {
@@ -341,7 +351,7 @@ dashboardRouter.get('/v1/dashboard/events', (_req, res) => {
 
 dashboardRouter.get('/v1/dashboard/jobs', (req, res) => {
   const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit ?? '15'), 10) || 15, 1), 100);
-  const offset = Math.max(Number.parseInt(String(req.query.offset ?? '0'), 10) || 0, 0);
+  const offset = typeof req.query.cursor === 'string' ? decodeCursor(req.query.cursor) : Math.max(Number.parseInt(String(req.query.offset ?? '0'), 10) || 0, 0);
   const q = typeof req.query.q === 'string' && req.query.q.trim() ? req.query.q.trim().slice(0, 200) : undefined;
   const source = req.query.source === 'manual' || req.query.source === 'scheduler' ? req.query.source : undefined;
   const status = req.query.status === 'done' || req.query.status === 'failed' ? req.query.status : undefined;
@@ -365,11 +375,12 @@ dashboardRouter.get('/v1/dashboard/jobs', (req, res) => {
   res.json({
     history: entries.map((entry) => dashboardHistoryEntry(entry)),
     total,
+    nextCursor: nextCursor(offset, entries.length, total),
   });
 });
 
 dashboardRouter.get('/v1/dashboard/artifacts', canDecrypt, (req, res) => {
-  const offset = Number.parseInt(String(req.query.offset ?? '0'), 10);
+  const offset = typeof req.query.cursor === 'string' ? decodeCursor(req.query.cursor) : Number.parseInt(String(req.query.offset ?? '0'), 10);
   const limit = Number.parseInt(String(req.query.limit ?? '50'), 10);
   const channel = req.query.channel === 'appstore' || req.query.channel === 'testflight' ? req.query.channel : undefined;
   const result = listArtifacts({
@@ -387,6 +398,7 @@ dashboardRouter.get('/v1/dashboard/artifacts', canDecrypt, (req, res) => {
       createdAt: new Date(artifact.createdAt).toISOString(),
       lastAccessedAt: new Date(artifact.lastAccessedAt).toISOString(),
     })),
+    nextCursor: nextCursor(Number.isFinite(offset) ? Math.max(offset, 0) : 0, result.artifacts.length, result.total),
   });
 });
 
@@ -405,10 +417,11 @@ dashboardRouter.get('/v1/dashboard/logs', canViewLogs, (req, res) => {
   const level = typeof req.query.level === 'string' && ['info', 'warn', 'error'].includes(req.query.level) ? req.query.level as LogLevel : undefined;
   const query = typeof req.query.q === 'string' && req.query.q.trim() ? req.query.q.trim().slice(0, 100) : undefined;
   const regex = req.query.regex === '1';
-  const offset = Math.max(0, Number.parseInt(String(req.query.offset ?? '0'), 10) || 0);
+  const offset = typeof req.query.cursor === 'string' ? decodeCursor(req.query.cursor) : Math.max(0, Number.parseInt(String(req.query.offset ?? '0'), 10) || 0);
   const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit ?? '100'), 10) || 100, 1), 200);
   try {
-    res.json(getRecentLogs({ scope, level, query, regex, offset, limit }));
+    const result = getRecentLogs({ scope, level, query, regex, offset, limit });
+    res.json({ ...result, nextCursor: nextCursor(offset, result.logs.length, result.total) });
   } catch {
     res.status(400).json({ error: 'log search pattern is invalid or unsafe' });
   }
@@ -1047,6 +1060,7 @@ dashboardRouter.get('/v1/dashboard/versions/:bundleId', async (req, res) => {
 
 function serializeDevice(d: DeviceRecord) {
   const { keyPath: _keyPath, rootDir: _rootDir, ...device } = d;
+  const health = getCachedDeviceHealth(d.id)?.value;
   return {
     ...device,
     transport: d.transport ?? 'wifi',
@@ -1054,6 +1068,10 @@ function serializeDevice(d: DeviceRecord) {
     user: d.user ?? config.deviceSshUser,
     setupRequired: !d.host && !d.udid,
     legacyConnection: Boolean(d.rootDir && !d.host && !d.udid),
+    transportState: health?.transportState ?? 'discovered',
+    transportCapabilities: health?.capabilities ?? [],
+    lastSeenAt: health?.lastSeenAt,
+    recoveryState: health?.recoveryState ?? 'recovering',
   };
 }
 
@@ -1413,7 +1431,9 @@ dashboardRouter.get('/v1/dashboard/devices/:id/activity', canViewDevices, (req, 
     return;
   }
   const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit ?? '12'), 10) || 12, 1), 50);
-  res.json({ activity: getDeviceActivity(device.id, limit) });
+  const offset = typeof req.query.cursor === 'string' ? decodeCursor(req.query.cursor) : 0;
+  const page = getDeviceActivityPage(device.id, offset, limit);
+  res.json({ activity: page.entries, total: page.total, nextCursor: nextCursor(offset, page.entries.length, page.total) });
 });
 
 dashboardRouter.get('/v1/dashboard/devices/:id/battery-history', canViewDevices, (req, res) => {
@@ -2179,10 +2199,10 @@ dashboardRouter.get('/v1/dashboard/keys/pending', canApproveApiKeys, (_req, res)
 
 dashboardRouter.get('/v1/dashboard/keys/all', canViewApiKeys, (req, res) => {
   const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit ?? '25'), 10) || 25, 1), 100);
-  const offset = Math.max(Number.parseInt(String(req.query.offset ?? '0'), 10) || 0, 0);
+  const offset = typeof req.query.cursor === 'string' ? decodeCursor(req.query.cursor) : Math.max(Number.parseInt(String(req.query.offset ?? '0'), 10) || 0, 0);
   const search = typeof req.query.search === 'string' ? req.query.search : undefined;
   const { keys, total } = listAllApiKeysPage(offset, limit, search);
-  res.json({ keys, total });
+  res.json({ keys, total, nextCursor: nextCursor(offset, keys.length, total) });
 });
 
 dashboardRouter.post('/v1/dashboard/keys/:id/approve', canApproveApiKeys, (req, res) => {
@@ -2431,7 +2451,9 @@ dashboardRouter.get('/v1/dashboard/users', canViewUsers, (_req, res) => {
 
 dashboardRouter.get('/v1/dashboard/audit-log', canViewUsers, (req, res) => {
   const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit ?? '100'), 10) || 100, 1), 200);
-  res.json({ entries: getAuditLog(limit) });
+  const offset = typeof req.query.cursor === 'string' ? decodeCursor(req.query.cursor) : Math.max(Number.parseInt(String(req.query.offset ?? '0'), 10) || 0, 0);
+  const page = getAuditLogPage(offset, limit);
+  res.json({ ...page, nextCursor: nextCursor(offset, page.entries.length, page.total) });
 });
 
 const AUDIT_LOG_CSV_COLUMNS = ['id', 'ts', 'actor', 'action', 'target', 'detail'] as const;
