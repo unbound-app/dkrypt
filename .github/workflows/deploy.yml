@@ -132,6 +132,20 @@ jobs:
           set -e
           RUNTIME_DIR=/home/adrian/.local/share/dkrypt
           test -f "$RUNTIME_DIR/.env"
+          if [ -z "${DEVICE_SSH_KEY_HOST_PATH:-}" ]; then
+            for candidate in "$HOME"/.ssh/id_ed25519 "$HOME"/.ssh/id_rsa "$HOME"/.ssh/id_ecdsa "$HOME"/.ssh/id_*; do
+              case "$candidate" in
+                *.pub|*.cert|*.crt) continue ;;
+              esac
+              if [ -f "$candidate" ] && [ -r "$candidate" ]; then
+                DEVICE_SSH_KEY_HOST_PATH="$candidate"
+                break
+              fi
+            done
+          fi
+          test -n "${DEVICE_SSH_KEY_HOST_PATH:-}"
+          test -f "$DEVICE_SSH_KEY_HOST_PATH"
+          printf 'DEVICE_SSH_KEY_HOST_PATH=%s\n' "$DEVICE_SSH_KEY_HOST_PATH" >> "$GITHUB_ENV"
           cat > "$RUNTIME_DIR/compose.yml" <<'EOF'
           name: dkrypt
           services:
