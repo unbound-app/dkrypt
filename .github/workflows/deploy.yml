@@ -268,7 +268,13 @@ jobs:
           fi
           if docker inspect --format '{{json .Mounts}}' dkrypt | grep -q '/root/.ipadecrypt'; then
             echo 'legacy .ipadecrypt mount is present' >&2
-            exit 1
+            false
           fi
-          test "$(systemctl is-enabled ssh-over-usb.service 2>/dev/null || true)" = disabled
-          test "$(systemctl is-active ssh-over-usb.service 2>/dev/null || true)" = inactive
+          if systemctl is-enabled --quiet ssh-over-usb.service 2>/dev/null; then
+            echo 'legacy ssh-over-usb service is enabled' >&2
+            false
+          fi
+          if systemctl is-active --quiet ssh-over-usb.service 2>/dev/null; then
+            echo 'legacy ssh-over-usb service is active' >&2
+            false
+          fi
