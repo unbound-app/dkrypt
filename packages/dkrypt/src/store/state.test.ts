@@ -227,6 +227,16 @@ describe('exportBackup / importBackup', () => {
     expect(result.error).toMatch(/version/);
   });
 
+  test('rejects backups that try to restore an obsolete connection directory', () => {
+    const backup = exportBackup();
+    const result = importBackup({
+      ...backup,
+      devices: [{ id: 'legacy-device', name: 'legacy', rootDir: '/root/.ipadecrypt', enabled: true }],
+    }, 'tester');
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/devices/);
+  });
+
   test('rejects a backup with a malformed allowedUsers entry', () => {
     const backup = exportBackup();
     const result = importBackup({ ...backup, allowedUsers: [{ username: 'bad' }] }, 'tester');
@@ -404,7 +414,7 @@ describe('device CRUD primary invariant', () => {
   test('exactly one enabled device stays primary through add/update/delete', () => {
     const a = createDevice({ name: 'device-a', transport: 'wifi', host: '192.168.1.10' }, 'tester');
     expect(a.isPrimary).toBe(true);
-    expect(getEffectiveDevices()).toEqual([expect.objectContaining({ id: a.id, host: '192.168.1.10', rootDir: undefined })]);
+    expect(getEffectiveDevices()).toEqual([expect.objectContaining({ id: a.id, host: '192.168.1.10' })]);
 
     const b = createDevice({ name: 'device-b', transport: 'wifi', host: '192.168.1.11' }, 'tester');
     expect(b.isPrimary).toBeFalsy();

@@ -191,7 +191,6 @@ export interface DeviceRecord {
   usbmuxNetwork?: boolean;
   productType?: string;
   setupRequired?: boolean;
-  legacyConnection?: boolean;
   iosVersion?: string;
   toolchain?: string;
   notes?: string;

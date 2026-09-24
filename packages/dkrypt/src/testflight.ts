@@ -97,7 +97,7 @@ async function waitForBridgeReady(conn: DeviceClient, requiredCapabilities: read
 }
 
 function testFlightBridgeKey(device: DeviceRecord): string {
-  return device.id ?? device.udid ?? device.rootDir ?? (device.host ?? 'device') + ':' + (device.port ?? 22);
+  return device.id;
 }
 
 function hasCachedTestFlightBridge(device: DeviceRecord, requiredCapabilities: readonly string[]): boolean {

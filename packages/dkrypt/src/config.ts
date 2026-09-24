@@ -85,7 +85,6 @@ export const config = {
 
   ipadecryptBin: optional('IPADECRYPT_BIN', 'ipadecrypt'),
   outputDir: optional('OUTPUT_DIR', '/data/tmp'),
-  ipadecryptRootDir: optional('IPADECRYPT_ROOT_DIR', '/root/.ipadecrypt'),
   deviceRuntimeDir: optional('DEVICE_RUNTIME_DIR', '/data/state/device-runtime'),
   deviceSshKeyPath: optional('DEVICE_SSH_KEY_PATH', '/root/.ssh/id_ed25519'),
   deviceSshUser: optional('DEVICE_SSH_USER', 'mobile'),

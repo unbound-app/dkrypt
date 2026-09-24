@@ -1,6 +1,11 @@
 export const GENERATED_CHANGELOG = [
   {
     "date": "2026-09-24",
+    "title": "feat(status): add public service status page",
+    "description": "Released in fe40369."
+  },
+  {
+    "date": "2026-09-24",
     "title": "fix(device): correct testflight bridge alert state",
     "description": "Released in 55868e4."
   },
@@ -33,10 +38,5 @@ export const GENERATED_CHANGELOG = [
     "date": "2026-09-24",
     "title": "test(bridge): cover authenticated rpc socket",
     "description": "Released in 0255466."
-  },
-  {
-    "date": "2026-09-24",
-    "title": "chore(devices): remove legacy bootstrap volume",
-    "description": "Released in 67fdcc0."
   }
 ] as const;

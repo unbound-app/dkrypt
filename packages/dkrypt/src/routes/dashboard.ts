@@ -1059,7 +1059,7 @@ dashboardRouter.get('/v1/dashboard/versions/:bundleId', async (req, res) => {
 });
 
 function serializeDevice(d: DeviceRecord) {
-  const { keyPath: _keyPath, rootDir: _rootDir, ...device } = d;
+  const { keyPath: _keyPath, ...device } = d;
   const health = getCachedDeviceHealth(d.id)?.value;
   return {
     ...device,
@@ -1067,7 +1067,6 @@ function serializeDevice(d: DeviceRecord) {
     port: d.port ?? config.deviceSshPort,
     user: d.user ?? config.deviceSshUser,
     setupRequired: !d.host && !d.udid,
-    legacyConnection: Boolean(d.rootDir && !d.host && !d.udid),
     transportState: health?.transportState ?? 'discovered',
     transportCapabilities: health?.capabilities ?? [],
     lastSeenAt: health?.lastSeenAt,
@@ -1096,7 +1095,6 @@ interface DeviceInput {
   udid?: string;
   usbmuxNetwork?: boolean;
   productType?: string;
-  rootDir?: string;
   iosVersion?: string;
   toolchain?: string;
   notes?: string;
@@ -1108,14 +1106,12 @@ function parseDeviceInput(body: unknown): DeviceInput | undefined {
   if (typeof body !== 'object' || body === null) return undefined;
   const b = body as Record<string, unknown>;
   const name = typeof b.name === 'string' ? b.name.trim() : '';
-  const rootDir = typeof b.rootDir === 'string' ? b.rootDir.trim() : '';
-  if (rootDir) return undefined;
   const transport = b.transport === 'usb' || b.transport === 'wifi' ? b.transport : undefined;
   const host = typeof b.host === 'string' ? b.host.trim() : '';
   const user = typeof b.user === 'string' ? b.user.trim() : '';
   const udid = typeof b.udid === 'string' ? b.udid.trim() : '';
   const port = typeof b.port === 'number' && Number.isInteger(b.port) && b.port >= 1 && b.port <= 65_535 ? b.port : undefined;
-  if (!name || (!rootDir && !host && !udid)) return undefined;
+  if (!name || (!host && !udid)) return undefined;
   if (transport === 'usb' && !udid) return undefined;
   return {
     name,
@@ -1188,7 +1184,6 @@ dashboardRouter.post('/v1/dashboard/devices/setup', canManageDevices, async (req
         udid: input.connection.udid,
         usbmuxNetwork: input.connection.usbmuxNetwork,
         productType: input.productType ?? setup.info.productType ?? existing.productType,
-        rootDir: undefined,
         name: input.name ?? existing.name,
         iosVersion: input.iosVersion ?? setup.info.productVersion ?? existing.iosVersion,
         enabled: true,
@@ -1226,7 +1221,7 @@ dashboardRouter.post('/v1/dashboard/devices/setup', canManageDevices, async (req
 dashboardRouter.post('/v1/dashboard/devices', canManageDevices, (req, res) => {
   const body = (req.body ?? {}) as Record<string, unknown>;
   if (typeof body.rootDir === 'string' && body.rootDir.trim()) {
-    res.status(400).json({ error: 'legacy device roots are read-only; discover and set up the device instead' });
+    res.status(400).json({ error: 'device setup requires a discovered USB or Wi-Fi connection' });
     return;
   }
   const input = parseDeviceInput(req.body);
@@ -1243,7 +1238,7 @@ dashboardRouter.patch('/v1/dashboard/devices/:id', canManageDevices, async (req,
   const body = (req.body ?? {}) as Record<string, unknown>;
   const patch: Partial<DeviceInput> = {};
   if (typeof body.rootDir === 'string' && body.rootDir.trim()) {
-    res.status(400).json({ error: 'legacy device roots are read-only; discover and set up the device instead' });
+    res.status(400).json({ error: 'device setup requires a discovered USB or Wi-Fi connection' });
     return;
   }
   if (typeof body.name === 'string' && body.name.trim()) patch.name = body.name.trim();

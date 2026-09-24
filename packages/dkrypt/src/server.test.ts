@@ -47,7 +47,7 @@ test('Fastify persists dashboard device mutations and returns the updated overvi
   }
 });
 
-test('Fastify keeps legacy device roots read-only', async () => {
+test('Fastify rejects obsolete device root submissions', async () => {
   const { server, cookie } = await signIn();
 
   try {
@@ -58,7 +58,7 @@ test('Fastify keeps legacy device roots read-only', async () => {
       payload: { name: 'legacy device', rootDir: '/root/.ipadecrypt' },
     });
     expect(created.statusCode).toBe(400);
-    expect((created.json() as { error: string }).error).toBe('legacy device roots are read-only; discover and set up the device instead');
+    expect((created.json() as { error: string }).error).toBe('device setup requires a discovered USB or Wi-Fi connection');
 
     const normal = await server.inject({
       method: 'POST',
@@ -74,7 +74,7 @@ test('Fastify keeps legacy device roots read-only', async () => {
       payload: { rootDir: '/root/.ipadecrypt' },
     });
     expect(patched.statusCode).toBe(400);
-    expect((patched.json() as { error: string }).error).toBe('legacy device roots are read-only; discover and set up the device instead');
+    expect((patched.json() as { error: string }).error).toBe('device setup requires a discovered USB or Wi-Fi connection');
     await server.inject({ method: 'DELETE', url: `/v1/dashboard/devices/${device.id}`, headers: { cookie } });
   } finally {
     await server.close();
