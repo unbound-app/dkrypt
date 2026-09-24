@@ -1,6 +1,11 @@
 export const GENERATED_CHANGELOG = [
   {
     "date": "2026-09-24",
+    "title": "chore(web): refresh generated changelog",
+    "description": "Released in 363a8f6."
+  },
+  {
+    "date": "2026-09-24",
     "title": "fix(shutdown): persist completion event",
     "description": "Released in 18cd4ab."
   },
@@ -33,10 +38,5 @@ export const GENERATED_CHANGELOG = [
     "date": "2026-09-24",
     "title": "ci(deploy): gate on ready device transport",
     "description": "Released in ca1cb15."
-  },
-  {
-    "date": "2026-09-24",
-    "title": "fix(reliability): drain background services during shutdown",
-    "description": "Released in c7101fc."
   }
 ] as const;
