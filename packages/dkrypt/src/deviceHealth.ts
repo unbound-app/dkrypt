@@ -6,6 +6,7 @@ import { releasePinnedJobsForDevice } from '#jobs/store.js';
 import { getConsecutiveDeviceHealthFailures, getEffectiveDevices, getEffectiveSettings, recordDeviceActivity, recordDeviceHealthCheck, type DeviceRecord } from '#store/state.js';
 import { getDiskUsage } from '#util/diskUsage.js';
 import { getCachedDeviceHealth, setCachedDeviceHealth } from '#deviceHealthCache.js';
+import { incrementMetric, observeMetric } from '#metrics.js';
 
 const log = scopedLogger('idevice');
 
@@ -395,7 +396,13 @@ const deviceHealthFailures = new Map<string, number>();
 const lastKnownGoodDeviceHealth = new Map<string, DeviceHealth>();
 
 function cacheDeviceHealth(deviceId: string, value: DeviceHealth): void {
+  const previous = getCachedDeviceHealth(deviceId)?.value;
   const readiness = value.readiness ?? getDeviceReadiness(value);
+  incrementMetric('device_health_probes_total', { transport: value.transport ?? 'unknown', outcome: value.reachable ? readiness.state : 'offline' });
+  if (previous?.reachable === false && value.reachable) incrementMetric('device_reconnects_total', { transport: value.transport ?? 'unknown' });
+  for (const heartbeat of Object.values(value.bridgeHeartbeats ?? {})) {
+    if (typeof heartbeat?.at === 'number') observeMetric('device_agent_heartbeat_age_ms', Math.max(0, Date.now() - heartbeat.at * 1000));
+  }
   if (value.reachable && readiness.state !== 'blocked') {
     deviceHealthFailures.delete(deviceId);
     lastKnownGoodDeviceHealth.set(deviceId, value);
