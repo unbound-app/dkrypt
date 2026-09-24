@@ -5,14 +5,14 @@
   import Button from '#lib/components/ui/Button.svelte';
   import RelativeTime from '#components/RelativeTime.svelte';
 
-  const showWarning = $derived(liveState.disconnectedAt !== null && !liveState.connected);
+  const showWarning = $derived(liveState.disconnectedAt !== null && !liveState.connected || liveState.sequenceGap);
 </script>
 
 {#if showWarning}
   <Alert variant="warning" class="mb-4 flex items-center gap-2.5 py-3 text-[13px]" role="status" aria-live="polite">
     <WifiOff class="h-4 w-4 shrink-0" />
     <span class="flex-1">
-      Disconnected - data may be stale. Reconnecting…
+      {#if liveState.sequenceGap && liveState.connected} Live updates skipped a sequence - refreshing…{:else}Disconnected - data may be stale. Reconnecting…{/if}
       {#if liveState.disconnectedAt}
         (down since <RelativeTime ms={liveState.disconnectedAt} />{#if liveState.reconnectAttempts > 1}, {liveState.reconnectAttempts} attempts{/if})
       {/if}

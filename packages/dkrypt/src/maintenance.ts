@@ -34,7 +34,7 @@ export function getMaintenanceStatus(): MaintenanceStatus {
 export function blockDuringMaintenance(_req: Request, res: Response, next: NextFunction): void {
   const status = getMaintenanceStatus();
   if (status.active) {
-    res.status(503).json({ error: `decrypts are paused for maintenance${status.reason ? ` - ${status.reason}` : ''}`, maintenance: true });
+    res.error('maintenance_mode', `decrypts are paused for maintenance${status.reason ? ` - ${status.reason}` : ''}`, 503, true, { maintenance: true });
     return;
   }
   next();

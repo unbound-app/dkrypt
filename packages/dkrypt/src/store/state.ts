@@ -1,5 +1,5 @@
-import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { generateVAPIDKeys, type VapidKeys } from 'web-push';
 import { config } from '#config.js';
@@ -20,6 +20,7 @@ import {
 import type { JobTimelineEvent, TestFlightJobSource } from '#jobs/types.js';
 import { categorizeFailure } from '#util/failureCategory.js';
 import { combineBits, hasPermission, parseBits, PermissionFlag, serializeBits } from '#permissions.js';
+import { openStateDatabase, verifyDatabaseBackup, type StateDatabase } from '#store/sqlite.js';
 
 export type ApiKeyStatus = 'pending' | 'approved' | 'denied';
 
@@ -135,6 +136,11 @@ export interface BackupHistoryEntry {
   sizeBytes: number;
   filename: string;
   trigger: 'scheduled' | 'manual';
+  databaseFilename?: string;
+  manifestFilename?: string;
+  schemaVersion?: number;
+  integrity?: 'verified' | 'failed';
+  encryptedManifest?: boolean;
 }
 
 export interface ActiveSessionRecord {
@@ -282,6 +288,7 @@ export interface IpaMetadata {
 
 export interface JobHistoryEntry {
   id: string;
+  correlationId?: string;
   bundleId: string;
   externalVersionId?: string;
   testflight?: TestFlightJobSource;
@@ -301,6 +308,11 @@ export interface JobHistoryEntry {
   ipaMetadata?: IpaMetadata;
   ipaInfoPlist?: Record<string, unknown>;
   timeline?: JobTimelineEvent[];
+  attempt?: number;
+  retryCount?: number;
+  deadlineAt?: number;
+  deadlineExceeded?: boolean;
+  failureClass?: string;
 }
 
 export interface AppCatalogEntry {
@@ -419,7 +431,8 @@ export type AuditAction =
   | 'billing.charge'
   | 'billing.charge-failed'
   | 'billing.cancel'
-  | 'billing.webhook';
+  | 'billing.webhook'
+  | 'billing.webhook.replay';
 
 export interface AuditLogEntry {
   id: string;
@@ -538,6 +551,20 @@ const MAX_WEBHOOK_LOG = 200;
 const MAX_NOTIFICATIONS = 500;
 const statePath = path.join(config.stateDir, 'state.json');
 const backupsDir = path.join(config.stateDir, 'backups');
+const stateDatabase: StateDatabase = openStateDatabase({
+  stateDir: config.stateDir,
+  filename: config.stateDatabaseFile,
+  busyTimeoutMs: config.stateDbBusyTimeoutMs,
+  migrationDryRun: config.stateDbMigrationDryRun,
+});
+
+export function getStateDatabaseStatus(): { path: string; schemaVersion: number; integrity: 'ok' } {
+  return { path: stateDatabase.path, schemaVersion: stateDatabase.schemaVersion, integrity: stateDatabase.integrityStatus() };
+}
+
+export function closeStateDatabase(): void {
+  stateDatabase.close();
+}
 
 function defaultState(): PersistedState {
   return {
@@ -965,26 +992,40 @@ function normalizeLegacySchedulerRunHistory(entries: unknown): SchedulerRunEntry
 
 function load(): PersistedState {
   mkdirSync(config.stateDir, { recursive: true });
-  if (!existsSync(statePath)) {
-    return initialStateWithLegacyDevice();
+  const stored = stateDatabase.readState();
+  if (stored !== undefined) {
+    const migrated = normalizeLoadedState(migrate(asStateRecord(stored)));
+    if (JSON.stringify(stored) !== JSON.stringify(migrated)) stateDatabase.writeState(migrated, statePath);
+    return migrated;
   }
   try {
-    const migrated = migrate(JSON.parse(readFileSync(statePath, 'utf8')));
-    migrated.devices = migrated.devices.map((device) => migrateLegacyDevice(device));
-    if (migrated.devices.length === 0) {
-      const legacy = readLegacyDevice(config.ipadecryptRootDir, 'default', 'iDevice');
-      if (legacy) migrated.devices = [legacy];
-    }
-    migrated.schedulerRunHistory = normalizeLegacySchedulerRunHistory(migrated.schedulerRunHistory);
-    migrated.appCatalog = migrated.appCatalog ?? {};
-    migrated.testFlightCatalog = isTestFlightCatalogCacheShape(migrated.testFlightCatalog) ? migrated.testFlightCatalog : undefined;
-    migrated.notifications = Array.isArray(migrated.notifications) ? migrated.notifications.slice(0, MAX_NOTIFICATIONS) : [];
-    migrated.testFlightSubscriptions = Array.isArray(migrated.testFlightSubscriptions) ? migrated.testFlightSubscriptions : [];
-    writeFileSync(statePath, JSON.stringify(migrated, null, 2));
+    const migrated = normalizeLoadedState(existsSync(statePath) ? migrate(asStateRecord(JSON.parse(readFileSync(statePath, 'utf8')))) : initialStateWithLegacyDevice());
+    stateDatabase.writeState(migrated, statePath);
     return migrated;
-  } catch {
-    return initialStateWithLegacyDevice();
+  } catch (error) {
+    throw new Error(`could not initialize persistent state: ${error instanceof Error ? error.message : String(error)}`);
   }
+}
+
+function asStateRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('persistent state must be a JSON object');
+  const record = value as Record<string, unknown>;
+  if (record.version !== undefined && typeof record.version !== 'number') throw new Error('persistent state version must be a number');
+  return record;
+}
+
+function normalizeLoadedState(migrated: PersistedState): PersistedState {
+  migrated.devices = migrated.devices.map((device) => migrateLegacyDevice(device));
+  if (migrated.devices.length === 0) {
+    const legacy = readLegacyDevice(config.ipadecryptRootDir, 'default', 'iDevice');
+    if (legacy) migrated.devices = [legacy];
+  }
+  migrated.schedulerRunHistory = normalizeLegacySchedulerRunHistory(migrated.schedulerRunHistory);
+  migrated.appCatalog = migrated.appCatalog ?? {};
+  migrated.testFlightCatalog = isTestFlightCatalogCacheShape(migrated.testFlightCatalog) ? migrated.testFlightCatalog : undefined;
+  migrated.notifications = Array.isArray(migrated.notifications) ? migrated.notifications.slice(0, MAX_NOTIFICATIONS) : [];
+  migrated.testFlightSubscriptions = Array.isArray(migrated.testFlightSubscriptions) ? migrated.testFlightSubscriptions : [];
+  return migrated;
 }
 
 function initialStateWithLegacyDevice(): PersistedState {
@@ -1103,8 +1144,29 @@ const state: PersistedState = load();
 let dirty = false;
 
 function persistNow(): void {
-  writeFileSync(statePath, JSON.stringify(state, null, 2));
+  stateDatabase.writeState(state, statePath);
   dirty = false;
+}
+
+function encryptedBackupManifest(value: Record<string, unknown>): string {
+  const key = createHash('sha256').update(config.sessionSigningSecret).digest();
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', key, iv);
+  const ciphertext = Buffer.concat([cipher.update(JSON.stringify(value), 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return JSON.stringify({ version: 1, algorithm: 'aes-256-gcm', iv: iv.toString('base64url'), tag: tag.toString('base64url'), ciphertext: ciphertext.toString('base64url') });
+}
+
+function verifyEncryptedBackupManifest(manifestPath: string, jsonPath: string, databasePath: string): void {
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { version?: number; algorithm?: string; iv?: string; tag?: string; ciphertext?: string };
+  if (manifest.version !== 1 || manifest.algorithm !== 'aes-256-gcm' || !manifest.iv || !manifest.tag || !manifest.ciphertext) throw new Error('backup manifest is malformed');
+  const key = createHash('sha256').update(config.sessionSigningSecret).digest();
+  const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(manifest.iv, 'base64url'));
+  decipher.setAuthTag(Buffer.from(manifest.tag, 'base64url'));
+  const payload = JSON.parse(Buffer.concat([decipher.update(Buffer.from(manifest.ciphertext, 'base64url')), decipher.final()]).toString('utf8')) as { jsonSha256?: string; databaseSha256?: string };
+  const jsonSha256 = createHash('sha256').update(readFileSync(jsonPath)).digest('hex');
+  const databaseSha256 = createHash('sha256').update(readFileSync(databasePath)).digest('hex');
+  if (payload.jsonSha256 !== jsonSha256 || payload.databaseSha256 !== databaseSha256) throw new Error('backup manifest checksum verification failed');
 }
 
 export function startStateFlusher(): void {
@@ -3150,9 +3212,49 @@ export function createBackupSnapshot(trigger: 'scheduled' | 'manual'): BackupHis
   const json = JSON.stringify(payload, null, 2);
   const id = randomUUID();
   const filename = `backup-${payload.exportedAt}-${id.slice(0, 8)}.json`;
-  writeFileSync(path.join(backupsDir, filename), json);
+  const databaseFilename = `${filename}.sqlite`;
+  const manifestFilename = `${filename}.manifest`;
+  const jsonPath = path.join(backupsDir, filename);
+  const databasePath = path.join(backupsDir, databaseFilename);
+  const manifestPath = path.join(backupsDir, manifestFilename);
+  const temporaryJsonPath = `${jsonPath}.${process.pid}.tmp`;
+  try {
+    writeFileSync(temporaryJsonPath, `${json}\n`, { mode: 0o600 });
+    const descriptor = openSync(temporaryJsonPath, 'r');
+    try {
+      fsyncSync(descriptor);
+    } finally {
+      closeSync(descriptor);
+    }
+    renameSync(temporaryJsonPath, jsonPath);
+    stateDatabase.backupTo(databasePath);
+    verifyDatabaseBackup(databasePath);
+    const manifest = encryptedBackupManifest({
+      backupVersion: payload.backupVersion,
+      exportedAt: payload.exportedAt,
+      stateSchemaVersion: stateDatabase.schemaVersion,
+      jsonSha256: createHash('sha256').update(readFileSync(jsonPath)).digest('hex'),
+      databaseSha256: createHash('sha256').update(readFileSync(databasePath)).digest('hex'),
+    });
+    writeFileSync(manifestPath, `${manifest}\n`, { mode: 0o600 });
+    verifyEncryptedBackupManifest(manifestPath, jsonPath, databasePath);
+  } catch (error) {
+    for (const filePath of [temporaryJsonPath, jsonPath, databasePath, manifestPath]) rmSync(filePath, { force: true });
+    throw error;
+  }
 
-  const entry: BackupHistoryEntry = { id, createdAt: payload.exportedAt, sizeBytes: Buffer.byteLength(json), filename, trigger };
+  const entry: BackupHistoryEntry = {
+    id,
+    createdAt: payload.exportedAt,
+    sizeBytes: Buffer.byteLength(json) + readFileSync(databasePath).byteLength,
+    filename,
+    databaseFilename,
+    manifestFilename,
+    schemaVersion: stateDatabase.schemaVersion,
+    integrity: 'verified',
+    encryptedManifest: true,
+    trigger,
+  };
   state.backupHistory = [entry, ...state.backupHistory];
   const retention = Math.max(1, state.backupSchedule.retentionCount);
   while (state.backupHistory.length > retention) {
@@ -3160,6 +3262,14 @@ export function createBackupSnapshot(trigger: 'scheduled' | 'manual'): BackupHis
     if (!removed) break;
     const filePath = path.join(backupsDir, removed.filename);
     if (existsSync(filePath)) rmSync(filePath);
+    if (removed.databaseFilename) {
+      const databasePath = path.join(backupsDir, removed.databaseFilename);
+      if (existsSync(databasePath)) rmSync(databasePath);
+    }
+    if (removed.manifestFilename) {
+      const manifestPath = path.join(backupsDir, removed.manifestFilename);
+      if (existsSync(manifestPath)) rmSync(manifestPath);
+    }
   }
   persistNow();
   return entry;
@@ -3172,12 +3282,33 @@ export function getBackupSnapshotPath(id: string): string | undefined {
   return existsSync(filePath) ? filePath : undefined;
 }
 
+export function verifyLatestDatabaseBackup(): { ok: boolean; detail: string } {
+  const entry = getBackupHistory().find((candidate) => candidate.databaseFilename);
+  if (!entry?.databaseFilename || !entry.manifestFilename) return { ok: false, detail: 'No verified SQLite backup has been created yet' };
+  const databasePath = path.join(backupsDir, entry.databaseFilename);
+  try {
+    const result = verifyDatabaseBackup(databasePath);
+    verifyEncryptedBackupManifest(path.join(backupsDir, entry.manifestFilename), path.join(backupsDir, entry.filename), databasePath);
+    return { ok: result.hasStateSnapshot, detail: result.hasStateSnapshot ? `SQLite schema ${result.schemaVersion} restored and verified` : 'SQLite backup has no state snapshot' };
+  } catch (error) {
+    return { ok: false, detail: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 export function deleteBackupSnapshot(id: string, actor: string): boolean {
   const idx = state.backupHistory.findIndex((e) => e.id === id);
   if (idx === -1) return false;
   const [removed] = state.backupHistory.splice(idx, 1);
   const filePath = path.join(backupsDir, removed.filename);
   if (existsSync(filePath)) rmSync(filePath);
+  if (removed.databaseFilename) {
+    const databasePath = path.join(backupsDir, removed.databaseFilename);
+    if (existsSync(databasePath)) rmSync(databasePath);
+  }
+  if (removed.manifestFilename) {
+    const manifestPath = path.join(backupsDir, removed.manifestFilename);
+    if (existsSync(manifestPath)) rmSync(manifestPath);
+  }
   persistNow();
   recordAudit(actor, 'backup.delete', removed.filename, '');
   return true;

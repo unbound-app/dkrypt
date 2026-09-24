@@ -1,5 +1,5 @@
 import { config } from '#config.js';
-import { execCommand, isTestFlightRunning, readBridgeHeartbeats, sendSpringBoardBridgeRequest, tryIoregCandidates, withSSH, type BridgeHeartbeat, type DeviceClient } from '#idevice.js';
+import { execCommand, getRustDeviceBridgeHealth, isRustDeviceConnection, isTestFlightRunning, readBridgeHeartbeats, sendSpringBoardBridgeRequest, tryIoregCandidates, withSSH, type BridgeHeartbeat, type DeviceClient } from '#idevice.js';
 import { scopedLogger } from '#logger.js';
 import { EMBED_COLOR, notify } from '#notify.js';
 import { releasePinnedJobsForDevice } from '#jobs/store.js';
@@ -33,8 +33,23 @@ export interface DeviceHealth {
   networkIpAddress?: string;
   networkInterface?: string;
   bridgeHeartbeats?: Partial<Record<'springboard' | 'testflight' | 'appstore', BridgeHeartbeat>>;
+  subsystems?: DeviceSubsystemHealth;
   readiness?: DeviceReadiness;
   checkedAt: number;
+}
+
+export type DeviceSubsystemState = 'ready' | 'degraded' | 'offline' | 'unsupported' | 'unknown';
+
+export interface DeviceSubsystemHealth {
+  usb: DeviceSubsystemState;
+  mux: DeviceSubsystemState;
+  agent: DeviceSubsystemState;
+  appStore: DeviceSubsystemState;
+  testFlight: DeviceSubsystemState;
+  sshTunnel: DeviceSubsystemState;
+  storage: DeviceSubsystemState;
+  battery: DeviceSubsystemState;
+  thermal: DeviceSubsystemState;
 }
 
 export interface DeviceReadiness {
@@ -60,6 +75,7 @@ export function isBridgeHeartbeatFresh(heartbeat: BridgeHeartbeat | undefined, n
 
 export function getDeviceInstallBlocker(health: DeviceHealth, installSizeBytes?: number): string | undefined {
   if (!health.reachable) return health.error ?? 'device is unreachable';
+  if (health.subsystems?.agent === 'offline') return 'device agent is unavailable while the USB transport is still connected';
   if (health.internetAccess === false) return 'device cannot reach Apple services';
   if (health.testFlightBridgeReachable === false) return 'autoinstall bridge is unresponsive';
   if (health.bridgeHeartbeats?.springboard && !isBridgeHeartbeatFresh(health.bridgeHeartbeats.springboard)) return 'autoinstall SpringBoard heartbeat is stale';
@@ -90,6 +106,10 @@ export function getDeviceReadiness(health: DeviceHealth): DeviceReadiness {
   if (health.testFlightBridgeReachable === false) {
     score -= 50;
     reasons.push('autoinstall bridge is unresponsive');
+  }
+  if (health.subsystems?.agent === 'degraded' || health.subsystems?.agent === 'offline') {
+    score -= 30;
+    reasons.push('device agent is unavailable');
   }
   if (health.bridgeHeartbeats?.springboard && !isBridgeHeartbeatFresh(health.bridgeHeartbeats.springboard)) {
     score -= 50;
@@ -412,6 +432,17 @@ async function computeDeviceHealth(device: DeviceRecord): Promise<DeviceHealth> 
         networkIpAddress: telemetry.network?.ipAddress,
         networkInterface: telemetry.network?.networkInterface,
         bridgeHeartbeats: telemetry.bridgeHeartbeats,
+        subsystems: {
+          usb: device.transport === 'usb' ? 'ready' : 'unsupported',
+          mux: 'ready',
+          agent: telemetry.testFlightBridgeReachable === true ? 'ready' : 'degraded',
+          appStore: isBridgeHeartbeatFresh(telemetry.bridgeHeartbeats.appstore) ? 'ready' : 'unknown',
+          testFlight: isBridgeHeartbeatFresh(telemetry.bridgeHeartbeats.testflight) ? 'ready' : 'unknown',
+          sshTunnel: device.udid || device.host ? 'ready' : 'degraded',
+          storage: telemetry.storage ? 'ready' : 'unknown',
+          battery: telemetry.battery ? 'ready' : 'unknown',
+          thermal: telemetry.battery?.batteryTemperatureC === undefined ? 'unknown' : 'ready',
+        },
         checkedAt: Date.now(),
       };
       return { ...health, readiness: getDeviceReadiness(health) };
@@ -419,7 +450,49 @@ async function computeDeviceHealth(device: DeviceRecord): Promise<DeviceHealth> 
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     log.warn('device health check failed', { deviceId: device.id, error });
-    const health: DeviceHealth = { reachable: false, error, checkedAt: Date.now() };
+    if (isRustDeviceConnection(device)) {
+      try {
+        const bridge = await getRustDeviceBridgeHealth(device);
+        if (bridge.state === 'ready') {
+          const health: DeviceHealth = {
+            reachable: true,
+            error: `device agent unavailable: ${error}`,
+            testFlightBridgeReachable: undefined,
+            subsystems: {
+              usb: bridge.transport === 'usb' ? 'ready' : 'unsupported',
+              mux: 'ready',
+              agent: 'offline',
+              appStore: 'unknown',
+              testFlight: 'unknown',
+              sshTunnel: 'ready',
+              storage: 'unknown',
+              battery: 'unknown',
+              thermal: 'unknown',
+            },
+            checkedAt: Date.now(),
+          };
+          return { ...health, readiness: getDeviceReadiness(health) };
+        }
+      } catch (bridgeError) {
+        log.warn('Rust device bridge health query failed', { deviceId: device.id, error: String(bridgeError) });
+      }
+    }
+    const health: DeviceHealth = {
+      reachable: false,
+      error,
+      subsystems: {
+        usb: device.transport === 'usb' ? 'offline' : 'unsupported',
+        mux: device.transport === 'usb' ? 'offline' : 'unsupported',
+        agent: 'offline',
+        appStore: 'offline',
+        testFlight: 'offline',
+        sshTunnel: device.transport === 'usb' ? 'offline' : 'degraded',
+        storage: 'unknown',
+        battery: 'unknown',
+        thermal: 'unknown',
+      },
+      checkedAt: Date.now(),
+    };
     return { ...health, readiness: getDeviceReadiness(health) };
   }
 }

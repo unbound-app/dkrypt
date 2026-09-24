@@ -6,6 +6,8 @@ export type JobStatus = 'queued' | 'running' | 'done' | 'failed';
 
 export type JobSource = 'manual' | 'scheduler';
 
+export type JobFailureClass = 'device_transport' | 'app_store' | 'testflight' | 'network' | 'storage' | 'decrypt' | 'cancelled' | 'unknown';
+
 export interface TestFlightJobSource {
   appId: number;
   build: TFBuild;
@@ -19,6 +21,7 @@ export interface JobTimelineEvent {
 
 export interface Job {
   id: string;
+  correlationId?: string;
   bundleId: string;
   externalVersionId?: string;
   testflight?: TestFlightJobSource;
@@ -34,6 +37,10 @@ export interface Job {
   warnings?: string[];
   error?: string;
   retryCount?: number;
+  attempt?: number;
+  deadlineAt?: number;
+  deadlineExceeded?: boolean;
+  failureClass?: JobFailureClass;
   cancelledBy?: string;
   childProcess?: ChildProcess;
   artifactId?: string;

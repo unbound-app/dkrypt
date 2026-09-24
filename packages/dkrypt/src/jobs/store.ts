@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, fsyncSync, openSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
 import { config } from '#config.js';
@@ -15,6 +15,10 @@ import { getCachedDeviceHealth } from '#deviceHealthCache.js';
 import { runDecrypt } from '#jobs/runner.js';
 import { appendJobTimelineEvent, type Job, type JobSource, type TestFlightJobSource } from '#jobs/types.js';
 import { artifactKeyForJob, buildDashboardArtifactFileUrl, getArtifactById, getArtifactByKey, getArtifactForJob, migrateLegacyPath, type ArtifactRecord } from '#artifacts.js';
+import { closePersistedJobs, loadPersistedJobs, replacePersistedJobs } from '#jobs/repository.js';
+import { terminateChildProcess } from '#jobs/process.js';
+import { classifyJobFailure } from '#util/failureCategory.js';
+import { incrementMetric, observeMetric } from '#metrics.js';
 
 const jobs = new Map<string, Job>();
 
@@ -22,24 +26,40 @@ const donePath = path.join(config.stateDir, 'done-jobs.json');
 const activePath = path.join(config.stateDir, 'active-jobs.json');
 const queue: string[] = [];
 const busyDeviceIds = new Set<string>();
+const runningJobs = new Map<string, Promise<void>>();
+let acceptingJobs = true;
 
 function serializableJob(job: Job): Omit<Job, 'childProcess' | 'waiters'> {
   const { childProcess: _childProcess, waiters: _waiters, ...rest } = job;
   return rest;
 }
 
+function writeLegacyMirror(filePath: string, value: unknown): void {
+  const temporaryPath = `${filePath}.${process.pid}.tmp`;
+  writeFileSync(temporaryPath, JSON.stringify(value), { mode: 0o600 });
+  const descriptor = openSync(temporaryPath, 'r');
+  try {
+    fsyncSync(descriptor);
+  } finally {
+    closeSync(descriptor);
+  }
+  renameSync(temporaryPath, filePath);
+}
+
 function persistDoneJobs(): void {
   const done = [...jobs.values()]
     .filter((j) => j.status === 'done')
     .map(serializableJob);
-  writeFileSync(donePath, JSON.stringify(done));
+  writeLegacyMirror(donePath, done);
+  replacePersistedJobs(jobs.values());
 }
 
 function persistActiveJobs(): void {
   const active = [...jobs.values()]
     .filter((j) => j.status === 'queued' || j.status === 'running')
     .map(serializableJob);
-  writeFileSync(activePath, JSON.stringify(active));
+  writeLegacyMirror(activePath, active);
+  replacePersistedJobs(jobs.values());
 }
 
 function loadDoneJobs(): void {
@@ -53,7 +73,7 @@ function loadDoneJobs(): void {
     }
     log.info('restored completed jobs from previous process', { count: jobs.size });
   } catch (err) {
-    log.warn('failed to restore done-jobs.json', { error: String(err) });
+    throw new Error(`could not restore done jobs: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -94,12 +114,33 @@ function loadActiveJobs(): void {
       log.warn('recovered jobs after dkrypt restart', { queued: queued.length, interrupted: interrupted.length });
     }
   } catch (err) {
-    log.warn('failed to restore active-jobs.json', { error: String(err) });
+    throw new Error(`could not restore active jobs: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
-loadDoneJobs();
-loadActiveJobs();
+function loadDatabaseJobs(): boolean {
+  const saved = loadPersistedJobs();
+  if (saved.length === 0) return false;
+  const { queued, interrupted } = recoverPersistedActiveJobs(saved as Job[]);
+  for (const job of saved.filter((entry) => entry.status === 'done' || entry.status === 'failed')) {
+    job.filePath = migrateLegacyPath(job.filePath);
+    if (job.status === 'done' && job.filePath && !existsSync(job.filePath)) job.filePath = undefined;
+    jobs.set(job.id, { ...job, waiters: [] });
+  }
+  for (const job of queued) {
+    jobs.set(job.id, { ...job, waiters: [] });
+    insertByPriority(job.id, job.priority);
+  }
+  for (const job of interrupted) recordJobHistory(toHistoryEntry(job));
+  replacePersistedJobs(jobs.values());
+  return true;
+}
+
+if (!loadDatabaseJobs()) {
+  loadDoneJobs();
+  loadActiveJobs();
+  replacePersistedJobs(jobs.values());
+}
 
 const RETRY_BACKOFF_MS = 5_000;
 
@@ -161,6 +202,7 @@ function createCachedJob(
   const resolvedLabel = versionLabel ?? artifact.versionLabel;
   const job: Job = {
     id: randomUUID(),
+    correlationId: randomUUID(),
     bundleId,
     externalVersionId,
     testflight,
@@ -181,6 +223,8 @@ function createCachedJob(
     fileSizeBytes: artifact.fileSizeBytes,
     sha256: artifact.sha256,
     createdAt: now,
+    deadlineAt: now + config.jobMaxWaitSeconds * 1000,
+    attempt: 1,
     finishedAt: now,
     waiters: [],
   };
@@ -208,6 +252,7 @@ export function enqueueDecryptJob(
   preferredDeviceId?: string,
   apiKeyId?: string,
 ): Job {
+  if (!acceptingJobs) throw new Error('dkrypt is shutting down and is not accepting new jobs');
   const existing = findActiveJobForBundle(bundleId, externalVersionId, testflight?.build.id);
   if (existing) return existing;
   const artifactKey = artifactKeyForJob({ id: 'lookup', bundleId, externalVersionId, testflight, versionLabel });
@@ -220,8 +265,10 @@ export function enqueueDecryptJob(
 
   const resolvedLabel = versionLabel ?? (testflight ? `${testflight.build.cfBundleShortVersion}_${testflight.build.cfBundleVersion}` : 'Current App Store release');
 
+  const now = Date.now();
   const job: Job = {
     id: randomUUID(),
+    correlationId: randomUUID(),
     bundleId,
     externalVersionId,
     testflight,
@@ -233,8 +280,10 @@ export function enqueueDecryptJob(
     priority,
     status: 'queued',
     progress: 'queued',
-    timeline: [{ at: Date.now(), label: 'Queued', status: 'queued' }],
-    createdAt: Date.now(),
+    timeline: [{ at: now, label: 'Queued', status: 'queued' }],
+    createdAt: now,
+    deadlineAt: now + config.jobMaxWaitSeconds * 1000,
+    attempt: 1,
     waiters: [],
   };
 
@@ -333,6 +382,7 @@ function settle(job: Job): void {
 function toHistoryEntry(job: Job) {
   return {
     id: job.id,
+    correlationId: job.correlationId,
     bundleId: job.bundleId,
     externalVersionId: job.externalVersionId,
     testflight: job.testflight,
@@ -352,6 +402,11 @@ function toHistoryEntry(job: Job) {
     artifactId: job.artifactId,
     sha256: job.sha256,
     timeline: job.timeline,
+    attempt: job.attempt,
+    retryCount: job.retryCount,
+    deadlineAt: job.deadlineAt,
+    deadlineExceeded: job.deadlineExceeded,
+    failureClass: job.failureClass,
   };
 }
 
@@ -384,7 +439,7 @@ export function cancelRunningJob(id: string, cancelledBy: string): boolean {
   job.cancelledBy = cancelledBy;
   job.progress = 'cancelling…';
   appendJobTimelineEvent(job, job.progress, 'running');
-  job.childProcess?.kill('SIGTERM');
+  terminateChildProcess(job.childProcess, 'SIGTERM');
   log.info('job cancel requested', { jobId: id, bundleId: job.bundleId, cancelledBy });
   persistActiveJobs();
   emitJobsChanged();
@@ -499,6 +554,7 @@ function takeNextDispatchableJobId(device: DeviceRecord): string | undefined {
 }
 
 function pumpWorkers(): void {
+  if (!acceptingJobs) return;
   const devices = getEffectiveDevices().filter((d) => d.enabled);
   if (devices.length === 0) return;
   const primary = devices.find((d) => d.isPrimary) ?? devices[0];
@@ -512,7 +568,10 @@ function pumpWorkers(): void {
     if (!job) continue;
 
     busyDeviceIds.add(device.id);
-    void runOneJob(device, job).finally(() => {
+    const run = runOneJob(device, job);
+    runningJobs.set(job.id, run);
+    void run.finally(() => {
+      runningJobs.delete(job.id);
       busyDeviceIds.delete(device.id);
       pumpWorkers();
     });
@@ -523,6 +582,9 @@ async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
   job.status = 'running';
   job.startedAt = Date.now();
   job.deviceId = device.id;
+  job.attempt = (job.retryCount ?? 0) + 1;
+  incrementMetric('jobs_started_total', { source: job.source });
+  observeMetric('job_queue_wait_ms', Math.max(0, job.startedAt - job.createdAt));
   appendJobTimelineEvent(job, `Started on ${device.name}`, 'running', job.startedAt);
   log.info('job started', { jobId: job.id, bundleId: job.bundleId, deviceId: device.id });
   recordDeviceActivity({ deviceId: device.id, kind: 'job', bundleId: job.bundleId, message: `Started ${job.testflight ? 'TestFlight' : 'App Store'} decrypt` });
@@ -530,9 +592,33 @@ async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
   emitJobsChanged();
 
   try {
-    await runDecrypt(job, device);
+    const operation = runDecrypt(job, device);
+    const remainingMs = job.deadlineAt === undefined ? undefined : Math.max(1, job.deadlineAt - Date.now());
+    if (remainingMs === undefined) {
+      await operation;
+    } else {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeoutSignal = new Promise<'timeout'>((resolve) => {
+        timer = setTimeout(() => {
+          job.deadlineExceeded = true;
+          job.progress = 'job deadline exceeded';
+          terminateChildProcess(job.childProcess, 'SIGTERM');
+          emitJobsChanged();
+          resolve('timeout');
+        }, remainingMs);
+      });
+      const result = await Promise.race([operation.then(() => 'done' as const), timeoutSignal]);
+      if (timer) clearTimeout(timer);
+      if (result === 'timeout') {
+        await Promise.race([operation.catch(() => undefined), sleep(config.jobProcessGraceSeconds * 1000)]);
+        terminateChildProcess(job.childProcess, 'SIGKILL');
+        throw new Error('job deadline exceeded');
+      }
+    }
     job.status = 'done';
     job.finishedAt = Date.now();
+    incrementMetric('jobs_completed_total', { source: job.source });
+    observeMetric('job_duration_ms', Math.max(0, job.finishedAt - (job.startedAt ?? job.createdAt)));
     appendJobTimelineEvent(job, 'Finished', 'done', job.finishedAt);
     log.info('job done', { jobId: job.id, bundleId: job.bundleId, deviceId: device.id, sizeBytes: job.fileSizeBytes });
     recordDeviceActivity({ deviceId: device.id, kind: 'job', bundleId: job.bundleId, message: 'Decrypt completed' });
@@ -544,7 +630,11 @@ async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
       await rm(job.filePath, { force: true }).catch(() => {});
       job.filePath = undefined;
     }
-    const canRetry = !job.cancelledBy && (job.retryCount ?? 0) === 0;
+    job.failureClass = classifyJobFailure(message);
+    const canRetry = !job.cancelledBy
+      && !job.deadlineExceeded
+      && (job.retryCount ?? 0) < config.jobMaxRetries
+      && ['device_transport', 'app_store', 'testflight', 'network', 'storage'].includes(job.failureClass);
     if (canRetry) {
       job.retryCount = (job.retryCount ?? 0) + 1;
       job.progress = 'retrying after a transient failure…';
@@ -570,6 +660,8 @@ async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
 
     job.status = 'failed';
     job.finishedAt = Date.now();
+    incrementMetric('jobs_failed_total', { source: job.source, failureClass: job.failureClass });
+    observeMetric('job_duration_ms', Math.max(0, job.finishedAt - (job.startedAt ?? job.createdAt)));
     job.error = message;
     appendJobTimelineEvent(job, `Failed: ${message}`, 'failed', job.finishedAt);
     log.error('job failed', { jobId: job.id, bundleId: job.bundleId, deviceId: device.id, error: job.error, retried: (job.retryCount ?? 0) > 0 });
@@ -658,4 +750,35 @@ export function startJobSweeper(): void {
       }
     }
   }, intervalMs).unref();
+}
+
+export async function shutdownJobs(timeoutMs = 15_000): Promise<void> {
+  acceptingJobs = false;
+  const now = Date.now();
+  for (const jobId of queue.splice(0)) {
+    const job = jobs.get(jobId);
+    if (!job || job.status !== 'queued') continue;
+    job.status = 'failed';
+    job.error = 'dkrypt is shutting down';
+    job.finishedAt = now;
+    appendJobTimelineEvent(job, job.error, 'failed', now);
+    recordJobHistory(toHistoryEntry(job));
+    settle(job);
+  }
+  for (const job of jobs.values()) {
+    if (job.status === 'running') terminateChildProcess(job.childProcess, 'SIGTERM');
+  }
+  persistActiveJobs();
+  const runs = [...runningJobs.values()];
+  if (runs.length > 0) await Promise.race([Promise.allSettled(runs), sleep(timeoutMs)]);
+  for (const job of jobs.values()) {
+    if (job.status === 'running') terminateChildProcess(job.childProcess, 'SIGKILL');
+  }
+  persistActiveJobs();
+  if (runs.length === 0) {
+    closePersistedJobs();
+    return;
+  }
+  await Promise.race([Promise.allSettled(runs), sleep(1_000)]);
+  if ([...runningJobs.keys()].length === 0) closePersistedJobs();
 }

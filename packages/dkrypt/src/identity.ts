@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { config } from '#config.js';
+import { openStateCollectionDatabase, readStateCollection, replaceStateCollection } from '#store/sqlite.js';
 
 export type AuthProvider = 'github' | 'discord';
 
@@ -34,6 +35,7 @@ export interface IdentitySnapshot {
 }
 
 const identityPath = path.join(config.stateDir, 'identities.json');
+const identityDatabase = openStateCollectionDatabase({ stateDir: config.stateDir, filename: config.stateDatabaseFile, busyTimeoutMs: config.stateDbBusyTimeoutMs }, ['auth_profiles']);
 
 function identityKey(identity: Pick<AuthIdentity, 'provider' | 'providerId'>): string {
   return `${identity.provider}:${identity.providerId}`;
@@ -76,19 +78,45 @@ function normalizeProfile(profile: AuthProfile): AuthProfile {
 
 function load(): IdentitySnapshot {
   mkdirSync(config.stateDir, { recursive: true });
+  const records = readStateCollection(identityDatabase, 'auth_profiles');
+  if (records.length > 0) {
+    const profiles = records.map((record) => {
+      if (typeof record !== 'object' || record === null || !('value' in record)) throw new Error('identity database record is malformed');
+      const profile = (record as { value?: unknown }).value;
+      if (!isAuthProfile(profile)) throw new Error('identity database profile is malformed');
+      return normalizeProfile(profile);
+    });
+    return { profiles };
+  }
   if (!existsSync(identityPath)) return { profiles: [] };
   try {
     const parsed = JSON.parse(readFileSync(identityPath, 'utf8')) as Partial<IdentitySnapshot>;
-    return { profiles: Array.isArray(parsed.profiles) ? parsed.profiles.map(normalizeProfile) : [] };
-  } catch {
-    return { profiles: [] };
+    if (!Array.isArray(parsed.profiles) || !parsed.profiles.every(isAuthProfile)) throw new Error('identity JSON snapshot is malformed');
+    const snapshot = { profiles: parsed.profiles.map(normalizeProfile) };
+    replaceStateCollection(identityDatabase, 'auth_profiles', snapshot.profiles.map((profile) => ({ id: profile.userId, payload: { kind: 'profile', value: profile }, updatedAt: Date.parse(profile.updatedAt) || Date.now() })));
+    return snapshot;
+  } catch (error) {
+    throw new Error(`could not initialize identity state: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
 const state = load();
 
 function persist(): void {
-  writeFileSync(identityPath, JSON.stringify(state, null, 2));
+  replaceStateCollection(identityDatabase, 'auth_profiles', state.profiles.map((profile) => ({ id: profile.userId, payload: { kind: 'profile', value: profile }, updatedAt: Date.parse(profile.updatedAt) || Date.now() })));
+  const temporaryPath = `${identityPath}.${process.pid}.tmp`;
+  writeFileSync(temporaryPath, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+  const descriptor = openSync(temporaryPath, 'r');
+  try {
+    fsyncSync(descriptor);
+  } finally {
+    closeSync(descriptor);
+  }
+  renameSync(temporaryPath, identityPath);
+}
+
+export function closeIdentityDatabase(): void {
+  identityDatabase.close();
 }
 
 export function upsertAuthProfile(profile: AuthProfile): AuthProfile {
@@ -247,6 +275,12 @@ function isAuthIdentity(value: unknown): value is AuthIdentity {
     (record.source === 'oauth' || record.source === 'discord_connection') &&
     typeof record.updatedAt === 'string'
   );
+}
+
+function isAuthProfile(value: unknown): value is AuthProfile {
+  if (typeof value !== 'object' || value === null) return false;
+  const record = value as Record<string, unknown>;
+  return typeof record.userId === 'string' && (record.provider === 'github' || record.provider === 'discord') && typeof record.providerId === 'string' && typeof record.username === 'string' && typeof record.displayName === 'string' && typeof record.updatedAt === 'string';
 }
 
 export function isIdentitySnapshot(value: unknown): value is IdentitySnapshot {

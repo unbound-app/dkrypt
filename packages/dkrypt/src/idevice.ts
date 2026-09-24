@@ -1,8 +1,6 @@
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
-import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
-import { connect as connectSocket, createServer, type Socket } from 'node:net';
-import os from 'node:os';
+import { connect as connectSocket, type Socket } from 'node:net';
 import path from 'node:path';
 import { Client, type Channel } from 'ssh2';
 import { config } from '#config.js';
@@ -24,8 +22,6 @@ const SSH_SESSION_IDLE_TIMEOUT_MS = 15_000;
 const DEVICE_AGENT_CONNECT_RETRIES = 6;
 const DEVICE_AGENT_RETRY_DELAY_MS = 500;
 const DEVICE_AGENT_IDLE_TIMEOUT_MS = 5 * 60_000;
-const DEVICE_AGENT_UNAVAILABLE_TTL_MS = 15_000;
-const DEVICE_AGENT_PORT = 5913;
 const USBMUX_TUNNEL_READY_TIMEOUT_MS = 8_000;
 
 export type { BridgeChannel } from '#bridgeProtocol.js';
@@ -85,7 +81,6 @@ const connectionRoots = new WeakMap<Client, string>();
 interface SshSession {
   conn: Client;
   rootDir: string;
-  tunnel?: { process: ChildProcess };
   idleTimer?: NodeJS.Timeout;
   unusable: boolean;
 }
@@ -107,21 +102,6 @@ interface DeviceAgentEnvelope {
   signature: string;
 }
 
-interface DeviceAgentPendingRequest {
-  resolve: (result: Record<string, unknown>) => void;
-  reject: (error: Error) => void;
-  timer: NodeJS.Timeout;
-}
-
-function encodeDeviceAgentFrame(value: object): Buffer {
-  const body = Buffer.from(JSON.stringify(value), 'utf8');
-  if (body.length === 0 || body.length > 4 * 1024 * 1024) throw new Error('autoinstall device agent request is too large');
-  const frame = Buffer.allocUnsafe(body.length + 4);
-  frame.writeUInt32BE(body.length, 0);
-  body.copy(frame, 4);
-  return frame;
-}
-
 class DeviceAgentUnavailableError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options);
@@ -129,134 +109,193 @@ class DeviceAgentUnavailableError extends Error {
   }
 }
 
-class DeviceAgentRequestError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'DeviceAgentRequestError';
+export class DeviceBridgeError extends Error {
+  readonly code: string;
+  readonly retryable: boolean;
+
+  constructor(code: string, message: string, retryable: boolean) {
+    super(`${code}: ${message}`);
+    this.name = 'DeviceBridgeError';
+    this.code = code;
+    this.retryable = retryable;
   }
 }
 
-class AutoinstallDeviceClient implements DeviceSession {
-  readonly transport = 'autoinstall' as const;
-  readonly rootDir: string;
-  private readonly socket: Socket;
-  private readonly secret: string;
-  private readonly pending = new Map<string, DeviceAgentPendingRequest>();
-  private input = Buffer.alloc(0);
-  private unusable = false;
+interface DeviceAgentClient extends DeviceSession {
+  readonly isUnusable: boolean;
+  call(action: string, payload: Record<string, unknown>, timeoutMs?: number): Promise<Record<string, unknown>>;
+}
 
-  constructor(socket: Socket, secret: string, rootDir: string) {
-    this.socket = socket;
-    this.secret = secret;
-    this.rootDir = rootDir;
-    socket.setKeepAlive(true, 20_000);
-    socket.on('data', (chunk) => this.receive(typeof chunk === 'string' ? Buffer.from(chunk) : chunk));
-    socket.on('error', (error) => this.fail(error));
-    socket.on('close', () => this.fail(new Error('autoinstall device agent connection closed')));
+interface RustRpcResponse {
+  version: number;
+  requestId: string;
+  ok: boolean;
+  result?: unknown;
+  error?: { code?: string; message?: string; retryable?: boolean };
+}
+
+class RustDeviceBridgeClient {
+  private readonly socketPath = config.deviceBridgeSocket;
+  private readonly secret = config.deviceBridgeSecret;
+
+  async request(operation: string, details: Record<string, unknown>, timeoutMs = REMOTE_COMMAND_TIMEOUT_MS): Promise<unknown> {
+    if (this.secret.length < 32) throw new DeviceAgentUnavailableError('DEVICE_BRIDGE_SECRET is missing or too short');
+    const requestId = randomUUID();
+    const body = Buffer.from(JSON.stringify({ version: 1, requestId, auth: this.secret, operation, ...details }), 'utf8');
+    if (body.length === 0 || body.length > 16 * 1024 * 1024) throw new Error('Rust device bridge request is too large');
+    const frame = Buffer.allocUnsafe(body.length + 4);
+    frame.writeUInt32BE(body.length, 0);
+    body.copy(frame, 4);
+    const socket = await new Promise<Socket>((resolve, reject) => {
+      const candidate = connectSocket({ path: this.socketPath });
+      const fail = (error: Error) => {
+        candidate.destroy();
+        reject(error);
+      };
+      candidate.once('connect', () => resolve(candidate));
+      candidate.once('error', fail);
+      candidate.setTimeout(Math.max(1, timeoutMs), () => fail(new Error('Rust device bridge connection timed out')));
+    }).catch((error) => {
+      throw new DeviceAgentUnavailableError(`could not connect to the Rust device bridge: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+    });
+    try {
+      return await new Promise<unknown>((resolve, reject) => {
+        let input = Buffer.alloc(0);
+        let settled = false;
+        const finish = (error?: Error, value?: unknown) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          socket.off('data', receive);
+          socket.off('error', fail);
+          socket.off('close', closed);
+          socket.setTimeout(0);
+          socket.destroy();
+          if (error) reject(error);
+          else resolve(value);
+        };
+        const fail = (error: Error) => finish(error);
+        const closed = () => finish(new Error('Rust device bridge connection closed'));
+        const receive = (chunk: Buffer) => {
+          input = Buffer.concat([input, chunk]);
+          if (input.length < 4) return;
+          const length = input.readUInt32BE(0);
+          if (length <= 0 || length > 16 * 1024 * 1024) {
+            finish(new Error(`Rust device bridge returned an invalid frame length: ${length}`));
+            return;
+          }
+          if (input.length < length + 4) return;
+          let response: RustRpcResponse;
+          try {
+            response = JSON.parse(input.subarray(4, length + 4).toString('utf8')) as RustRpcResponse;
+          } catch (error) {
+            finish(error instanceof Error ? error : new Error(String(error)));
+            return;
+          }
+          if (response.version !== 1 || response.requestId !== requestId) {
+            finish(new Error('Rust device bridge returned a mismatched protocol response'));
+            return;
+          }
+          if (!response.ok) {
+            const detail = response.error;
+            const code = detail?.code ?? 'device_bridge_error';
+            const bridgeError = new DeviceBridgeError(code, detail?.message ?? 'Rust device bridge request failed', detail?.retryable ?? false);
+            if (['mux_unavailable', 'device_not_found', 'lockdown_unavailable', 'agent_unavailable', 'agent_timeout', 'tunnel_bind'].includes(code)) {
+              finish(new DeviceAgentUnavailableError(bridgeError.message, { cause: bridgeError }));
+            } else {
+              finish(bridgeError);
+            }
+            return;
+          }
+          finish(undefined, response.result);
+        };
+        const timer = setTimeout(() => finish(new Error('Rust device bridge request timed out')), Math.max(1, timeoutMs));
+        socket.on('data', receive);
+        socket.once('error', fail);
+        socket.once('close', closed);
+        socket.setTimeout(Math.max(1, timeoutMs), () => finish(new Error('Rust device bridge request timed out')));
+        socket.write(frame, (error) => {
+          if (error) finish(error);
+        });
+      });
+    } catch (error) {
+      if (error instanceof DeviceAgentUnavailableError) throw error;
+      throw new DeviceAgentUnavailableError(`Rust device bridge request failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+    }
   }
 
+  async openTunnel(deviceId: string, port: number, timeoutMs = USBMUX_TUNNEL_READY_TIMEOUT_MS): Promise<{ tunnelId: string; host: string; port: number }> {
+    const result = await this.request('open_tunnel', { deviceId, port }, timeoutMs);
+    if (!result || typeof result !== 'object') throw new Error('Rust device bridge returned an invalid tunnel');
+    const tunnel = result as Record<string, unknown>;
+    if (typeof tunnel.tunnelId !== 'string' || typeof tunnel.host !== 'string' || typeof tunnel.port !== 'number') throw new Error('Rust device bridge returned an incomplete tunnel');
+    return { tunnelId: tunnel.tunnelId, host: tunnel.host, port: tunnel.port };
+  }
+
+  async closeTunnel(tunnelId: string): Promise<void> {
+    await this.request('close_tunnel', { payload: tunnelId }, 5_000);
+  }
+
+  async pair(deviceId: string, hostId?: string): Promise<{ deviceId: string; hostId: string; paired: boolean }> {
+    const result = await this.request('pair', { deviceId, ...(hostId ? { hostId } : {}) }, 30_000);
+    if (!result || typeof result !== 'object') throw new Error('Rust device bridge returned an invalid pairing response');
+    const value = result as Record<string, unknown>;
+    if (typeof value.deviceId !== 'string' || typeof value.hostId !== 'string' || value.paired !== true) throw new Error('Rust device bridge returned an incomplete pairing response');
+    return { deviceId: value.deviceId, hostId: value.hostId, paired: true };
+  }
+
+  async capabilities(): Promise<Record<string, unknown>> {
+    const result = await this.request('capabilities', {}, 5_000);
+    if (!result || typeof result !== 'object') throw new Error('Rust device bridge returned invalid capabilities');
+    return result as Record<string, unknown>;
+  }
+
+  async health(deviceId?: string): Promise<{ state: string; transport: string; deviceCount: number; devicePresent: boolean }> {
+    const result = await this.request('health', deviceId ? { deviceId } : {}, 5_000);
+    if (!result || typeof result !== 'object') throw new Error('Rust device bridge returned invalid health');
+    const value = result as Record<string, unknown>;
+    if (typeof value.state !== 'string' || typeof value.transport !== 'string' || typeof value.deviceCount !== 'number' || typeof value.devicePresent !== 'boolean') throw new Error('Rust device bridge returned incomplete health');
+    return { state: value.state, transport: value.transport, deviceCount: value.deviceCount, devicePresent: value.devicePresent };
+  }
+}
+
+class RustDeviceAgentClient implements DeviceAgentClient {
+  readonly transport = 'autoinstall' as const;
+  private closed = false;
+  private readonly bridge = new RustDeviceBridgeClient();
+
+  constructor(readonly deviceId: string, readonly secret: string, readonly rootDir: string) {}
+
   get isUnusable(): boolean {
-    return this.unusable;
+    return this.closed;
   }
 
   async call(action: string, payload: Record<string, unknown>, timeoutMs = REMOTE_COMMAND_TIMEOUT_MS): Promise<Record<string, unknown>> {
-    if (this.unusable) throw new Error('autoinstall device agent connection is closed');
+    if (this.closed) throw new Error('Rust device agent session is closed');
     const requestId = randomUUID();
     const envelope = createDeviceAgentEnvelope(this.secret, requestId, { action, ...payload });
-    const frame = encodeDeviceAgentFrame(envelope);
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(requestId);
-        this.unusable = true;
-        reject(new Error(`autoinstall device agent request timed out: ${action}`));
-        this.socket.destroy();
-      }, Math.max(1, timeoutMs));
-      this.pending.set(requestId, { resolve, reject, timer });
-      this.socket.write(frame, (error) => {
-        if (!error) return;
-        clearTimeout(timer);
-        this.pending.delete(requestId);
-        this.unusable = true;
-        reject(error);
-        this.socket.destroy();
-      });
-    });
+    const result = await this.bridge.request('agent', { deviceId: this.deviceId, agentSecret: this.secret, payload: envelope }, timeoutMs + 1_000);
+    if (!result || typeof result !== 'object') throw new Error('Rust device bridge returned an invalid agent response');
+    return parseDeviceAgentResponse(this.secret, result as DeviceAgentEnvelope);
   }
 
   async exec(command: string, timeoutMs = REMOTE_COMMAND_TIMEOUT_MS): Promise<{ stdout: string; stderr: string; code: number | null }> {
     const result = await this.call('exec', { command, timeoutMs }, timeoutMs + 1_000);
-    return {
-      stdout: typeof result.stdout === 'string' ? result.stdout : '',
-      stderr: typeof result.stderr === 'string' ? result.stderr : '',
-      code: typeof result.code === 'number' ? result.code : null,
-    };
+    return { stdout: typeof result.stdout === 'string' ? result.stdout : '', stderr: typeof result.stderr === 'string' ? result.stderr : '', code: typeof result.code === 'number' ? result.code : null };
   }
 
   close(): void {
-    if (this.unusable) {
-      this.socket.destroy();
-      return;
-    }
-    this.unusable = true;
-    this.fail(new Error('autoinstall device agent connection closed'));
-    this.socket.destroy();
-  }
-
-  private receive(chunk: Buffer): void {
-    this.input = Buffer.concat([this.input, chunk]);
-    while (this.input.length >= 4) {
-      const length = this.input.readUInt32BE(0);
-      if (length <= 0 || length > 4 * 1024 * 1024) {
-        this.fail(new Error(`autoinstall device agent returned an invalid frame length: ${length}`));
-        return;
-      }
-      if (this.input.length < length + 4) return;
-      const body = this.input.subarray(4, length + 4);
-      this.input = this.input.subarray(length + 4);
-      let envelope: DeviceAgentEnvelope;
-      try {
-        envelope = JSON.parse(body.toString('utf8')) as DeviceAgentEnvelope;
-      } catch (error) {
-        this.fail(error instanceof Error ? error : new Error(String(error)));
-        return;
-      }
-      const pending = this.pending.get(envelope.requestId);
-      if (!pending) continue;
-      this.pending.delete(envelope.requestId);
-      clearTimeout(pending.timer);
-      try {
-        pending.resolve(parseDeviceAgentResponse(this.secret, envelope));
-      } catch (error) {
-        const normalized = error instanceof Error ? error : new Error(String(error));
-        pending.reject(normalized);
-        if (!(normalized instanceof DeviceAgentRequestError)) {
-          this.unusable = true;
-          this.socket.destroy();
-        }
-      }
-    }
-  }
-
-  private fail(error: Error): void {
-    if (this.unusable && this.pending.size === 0) return;
-    this.unusable = true;
-    for (const [requestId, pending] of this.pending) {
-      clearTimeout(pending.timer);
-      pending.reject(error);
-      this.pending.delete(requestId);
-    }
+    this.closed = true;
   }
 }
 
 const sshSessions = new Map<string, SshSession>();
 interface DeviceAgentSession {
-  client: AutoinstallDeviceClient;
-  tunnel?: { process: ChildProcess };
+  client: DeviceAgentClient;
   idleTimer?: NodeJS.Timeout;
 }
 
 const deviceAgentSessions = new Map<string, DeviceAgentSession>();
-const deviceAgentUnavailableUntil = new Map<string, number>();
 
 export type DeviceTransport = 'wifi' | 'usb';
 
@@ -355,174 +394,50 @@ function directDeviceAuth(connection: DeviceConnection): DeviceAuth {
   };
 }
 
-async function resolveDeviceAuth(connection: DeviceConnection | string): Promise<{ auth: DeviceAuth; rootDir: string; usesUsbmux: boolean; networkUsbmux: boolean }> {
+async function resolveDeviceAuth(connection: DeviceConnection | string): Promise<{ auth: DeviceAuth; rootDir: string; usesUsbmux: boolean }> {
   if (typeof connection === 'string') {
-    return { auth: await loadDeviceAuth(connection), rootDir: connection, usesUsbmux: false, networkUsbmux: false };
+    return { auth: await loadDeviceAuth(connection), rootDir: connection, usesUsbmux: false };
   }
   if (!connection.host && !connection.udid && connection.rootDir) {
-    return { auth: await loadDeviceAuth(connection.rootDir), rootDir: connection.rootDir, usesUsbmux: false, networkUsbmux: false };
+    return { auth: await loadDeviceAuth(connection.rootDir), rootDir: connection.rootDir, usesUsbmux: false };
   }
   return {
     auth: directDeviceAuth(connection),
     rootDir: connectionRuntimeRoot(connection),
     usesUsbmux: !connection.host && Boolean(connection.udid),
-    networkUsbmux: connection.usbmuxNetwork === true,
   };
 }
 
-async function findFreePort(): Promise<number> {
-  const server = createServer();
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => resolve());
-  });
-  const address = server.address();
-  await new Promise<void>((resolve, reject) => {
-    server.close((err) => (err ? reject(err) : resolve()));
-  });
-  if (!address || typeof address === 'string') throw new Error('could not allocate a local device tunnel port');
-  return address.port;
-}
-
-function canConnectToPort(port: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    const socket = connectSocket({ host: '127.0.0.1', port });
-    const finish = (result: boolean) => {
-      socket.destroy();
-      resolve(result);
-    };
-    socket.once('connect', () => finish(true));
-    socket.once('error', () => finish(false));
-    socket.setTimeout(250, () => finish(false));
-  });
-}
-
-async function startUsbmuxTunnel(udid: string, remotePort: number, network: boolean): Promise<{ host: string; port: number; process: ChildProcess }> {
-  const localPort = await findFreePort();
-  const args = [...(network ? ['-n'] : []), '-u', udid, '-s', '127.0.0.1', `${localPort}:${remotePort}`];
-  const process = spawn(config.ideviceProxyBin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-  let stderr = '';
-  let spawnError = '';
-  process.once('error', (error) => {
-    spawnError = error.message;
-  });
-  process.stderr?.on('data', (chunk) => {
-    stderr += chunk.toString('utf8');
-  });
-  for (let attempt = 0; attempt < USBMUX_TUNNEL_READY_TIMEOUT_MS / 100; attempt += 1) {
-    if (spawnError) break;
-    if (process.exitCode !== null) break;
-    if (await canConnectToPort(localPort)) return { host: '127.0.0.1', port: localPort, process };
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  process.kill();
-  const reason = spawnError || stderr.trim();
-  throw new Error(`could not open the ${network ? 'Wi-Fi' : 'USB'} device tunnel${reason ? `: ${reason}` : ''}`);
-}
-
-function connectDeviceAgentSocket(host: string, port: number): Promise<Socket> {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const socket = connectSocket({ host, port });
-    const fail = (error: Error) => {
-      if (settled) return;
-      settled = true;
-      socket.destroy();
-      reject(error);
-    };
-    socket.once('connect', () => {
-      if (settled) return;
-      settled = true;
-      socket.setTimeout(0);
-      resolve(socket);
-    });
-    socket.once('error', fail);
-    socket.setTimeout(5_000, () => fail(new Error('autoinstall device agent connection timed out')));
-  });
-}
-
-function writeDeviceAgentFrame(socket: Socket, value: Record<string, unknown>): Promise<void> {
-  const frame = encodeDeviceAgentFrame(value);
-  return new Promise((resolve, reject) => {
-    socket.write(frame, (error) => (error ? reject(error) : resolve()));
-  });
-}
-
-function readDeviceAgentFrame(socket: Socket, timeoutMs: number): Promise<Record<string, unknown>> {
-  return new Promise((resolve, reject) => {
-    let input = Buffer.alloc(0);
-    const finish = (error?: Error, value?: Record<string, unknown>) => {
-      socket.off('data', receive);
-      socket.off('error', fail);
-      socket.off('close', closed);
-      socket.setTimeout(0);
-      if (error) reject(error);
-      else resolve(value as Record<string, unknown>);
-    };
-    const fail = (error: Error) => finish(error);
-    const closed = () => finish(new Error('autoinstall device agent bootstrap connection closed'));
-    const receive = (chunk: Buffer) => {
-      input = Buffer.concat([input, chunk]);
-      if (input.length < 4) return;
-      const length = input.readUInt32BE(0);
-      if (length <= 0 || length > 4 * 1024 * 1024) {
-        finish(new Error(`autoinstall device agent returned an invalid frame length: ${length}`));
-        return;
-      }
-      if (input.length < length + 4) return;
-      try {
-        const value = JSON.parse(input.subarray(4, length + 4).toString('utf8')) as Record<string, unknown>;
-        finish(undefined, value);
-      } catch (error) {
-        finish(error instanceof Error ? error : new Error(String(error)));
-      }
-    };
-    socket.on('data', receive);
-    socket.once('error', fail);
-    socket.once('close', closed);
-    socket.setTimeout(timeoutMs, () => finish(new Error('autoinstall device agent bootstrap timed out')));
-  });
-}
-
-async function bootstrapDeviceAgent(host: string, port: number, secret: string): Promise<void> {
-  const socket = await connectDeviceAgentSocket(host, port);
-  try {
-    const requestId = randomUUID();
-    await writeDeviceAgentFrame(socket, { version: 1, requestId, action: 'bootstrap', secret });
-    const response = await readDeviceAgentFrame(socket, 5_000);
-    if (response.version !== 1 || response.requestId !== requestId || response.ok !== true) {
-      throw new Error('autoinstall device agent bootstrap was rejected');
-    }
-  } finally {
-    socket.destroy();
-  }
-}
-
 async function openDeviceAgentSession(connection: DeviceConnection, key: string): Promise<DeviceAgentSession> {
-  if (!connection.udid || connection.host) throw new Error('the autoinstall device agent requires a paired USB device');
-  const tunnel = await startUsbmuxTunnel(connection.udid, DEVICE_AGENT_PORT, false);
+  if (!isRustDeviceConnection(connection)) throw new Error('the autoinstall device agent requires a paired Rust device connection');
+  if (!connection.udid) throw new Error('the autoinstall device agent requires a device identifier');
+  const rootDir = connectionRuntimeRoot(connection);
+  const secret = await loadBridgeSecret(rootDir);
+  const capabilities = await new RustDeviceBridgeClient().capabilities();
+  const supported = Array.isArray(capabilities.capabilities) && capabilities.capabilities.includes('agent');
+  if (!supported) throw new DeviceAgentUnavailableError('the Rust device bridge does not support the autoinstall agent capability');
+  const client = new RustDeviceAgentClient(connection.udid, secret, rootDir);
   try {
-    const rootDir = connectionRuntimeRoot(connection);
-    const secret = await loadBridgeSecret(rootDir);
-    await bootstrapDeviceAgent(tunnel.host, tunnel.port, secret);
-    const client = new AutoinstallDeviceClient(await connectDeviceAgentSocket(tunnel.host, tunnel.port), secret, rootDir);
     await client.call('status', {}, 3_000);
-    const session: DeviceAgentSession = { client, tunnel };
+    const session: DeviceAgentSession = { client };
     deviceAgentSessions.set(key, session);
-    deviceAgentUnavailableUntil.delete(key);
-    log.info('connected to the dkrypt device agent over USBMux', { deviceId: key });
+    log.info('connected to the dkrypt device agent through the Rust device bridge', { deviceId: key });
     return session;
   } catch (error) {
-    tunnel.process.kill();
+    client.close();
     throw error;
   }
+}
+
+export async function pairDevice(connection: DeviceConnection): Promise<{ deviceId: string; hostId: string; paired: boolean }> {
+  if (!connection.udid || connection.host || connection.usbmuxNetwork === true) throw new Error('Rust pairing requires a direct USB device');
+  return new RustDeviceBridgeClient().pair(connection.udid, config.deviceBridgeHostId || undefined);
 }
 
 function closeDeviceAgentSession(key: string, session: DeviceAgentSession): void {
   if (deviceAgentSessions.get(key) === session) deviceAgentSessions.delete(key);
   if (session.idleTimer) clearTimeout(session.idleTimer);
   session.client.close();
-  session.tunnel?.process.kill();
 }
 
 async function getDeviceAgentSession(connection: DeviceConnection): Promise<{ key: string; session: DeviceAgentSession }> {
@@ -583,11 +498,12 @@ async function withDeviceTunnel<T>(connection: DeviceConnection | string, fn: (a
   const resolved = await resolveDeviceAuth(connection);
   if (!resolved.usesUsbmux) return fn(resolved.auth, resolved.rootDir);
   if (typeof connection === 'string' || !connection.udid) throw new Error('a paired device identifier is required for USB setup');
-  const tunnel = await startUsbmuxTunnel(connection.udid, resolved.auth.port, resolved.networkUsbmux);
+  const bridge = new RustDeviceBridgeClient();
+  const tunnel = await bridge.openTunnel(connection.udid, resolved.auth.port);
   try {
     return await fn({ ...resolved.auth, host: tunnel.host, port: tunnel.port }, resolved.rootDir);
   } finally {
-    tunnel.process.kill();
+    await bridge.closeTunnel(tunnel.tunnelId).catch(() => {});
   }
 }
 
@@ -659,11 +575,11 @@ function closeSshSession(key: string, session: SshSession): void {
   session.unusable = true;
   connectionRoots.delete(session.conn);
   session.conn.end();
-  session.tunnel?.process.kill();
 }
 
 async function openSshSession(connection: DeviceConnection | string, key: string): Promise<SshSession> {
   const resolved = await resolveDeviceAuth(connection);
+  if (resolved.usesUsbmux) throw new DeviceAgentUnavailableError('direct USB SSH requires the Rust device bridge tunnel');
   let privateKey: Buffer;
   try {
     privateKey = await readFile(resolved.auth.keyPath);
@@ -671,15 +587,9 @@ async function openSshSession(connection: DeviceConnection | string, key: string
     invalidateAuthCache(connection);
     throw err;
   }
-  let tunnel: { host: string; port: number; process: ChildProcess } | undefined;
   try {
-    if (resolved.usesUsbmux) {
-      if (typeof connection === 'string' || !connection.udid) throw new Error('a paired device identifier is required for USB setup');
-      tunnel = await startUsbmuxTunnel(connection.udid, resolved.auth.port, resolved.networkUsbmux);
-    }
-    const auth = tunnel ? { ...resolved.auth, host: tunnel.host, port: tunnel.port } : resolved.auth;
-    const conn = await retryTransientSshConnection(() => connectSshClient(auth, privateKey));
-    const session: SshSession = { conn, rootDir: resolved.rootDir, tunnel, unusable: false };
+    const conn = await retryTransientSshConnection(() => connectSshClient(resolved.auth, privateKey));
+    const session: SshSession = { conn, rootDir: resolved.rootDir, unusable: false };
     conn.on('error', () => {
       session.unusable = true;
     });
@@ -693,7 +603,6 @@ async function openSshSession(connection: DeviceConnection | string, key: string
     sshSessions.set(key, session);
     return session;
   } catch (err) {
-    tunnel?.process.kill();
     throw err;
   }
 }
@@ -733,23 +642,25 @@ function invalidateAuthCache(connection: DeviceConnection | string): void {
   }
 }
 
-function shouldAttemptDeviceAgent(connection: DeviceConnection | string): boolean {
-  if (!isDirectUsbDeviceAgentConnection(connection)) return false;
-  const mode = config.deviceTransport.toLowerCase();
-  if (mode === 'ssh') return false;
-  const key = sshSessionKey(connection);
-  if (mode === 'autoinstall') return true;
-  return (deviceAgentUnavailableUntil.get(key) ?? 0) <= Date.now();
+export function isRustDeviceConnection(connection: DeviceConnection | string): connection is DeviceConnection {
+  return typeof connection !== 'string' && Boolean(connection.udid && !connection.host);
 }
 
 export function isDirectUsbDeviceAgentConnection(connection: DeviceConnection | string): connection is DeviceConnection {
-  return typeof connection !== 'string' && Boolean(connection.udid && !connection.host && connection.usbmuxNetwork !== true);
+  return isRustDeviceConnection(connection) && connection.usbmuxNetwork !== true;
+}
+
+export async function getRustDeviceBridgeHealth(connection: DeviceConnection): Promise<{ state: 'ready' | 'offline'; transport: DeviceTransport; deviceCount: number }> {
+  if (!isRustDeviceConnection(connection)) throw new DeviceAgentUnavailableError('Rust device bridge is unavailable for this connection');
+  const health = await new RustDeviceBridgeClient().health(connection.udid);
+  return { state: health.devicePresent && health.state === 'ready' ? 'ready' : 'offline', transport: connection.usbmuxNetwork ? 'wifi' : 'usb', deviceCount: health.deviceCount };
 }
 
 export function getDeviceTransportOrder(connection: DeviceConnection | string, mode = config.deviceTransport): Array<'autoinstall' | 'ssh'> {
   const normalizedMode = mode.toLowerCase();
+  if (typeof connection !== 'string' && isRustDeviceConnection(connection)) return ['autoinstall'];
   if (normalizedMode === 'ssh') return ['ssh'];
-  if (typeof connection === 'string' || !isDirectUsbDeviceAgentConnection(connection)) return ['ssh'];
+  if (typeof connection === 'string' || !isRustDeviceConnection(connection)) return ['ssh'];
   return normalizedMode === 'autoinstall' ? ['autoinstall'] : ['autoinstall', 'ssh'];
 }
 
@@ -782,15 +693,8 @@ export async function withAutoinstallDeviceAgent<T>(connection: DeviceConnection
 
 export async function withSSH<T>(connection: DeviceConnection | string, fn: (conn: DeviceClient) => Promise<T>): Promise<T> {
   const transportOrder = getDeviceTransportOrder(connection);
-  if (transportOrder[0] === 'autoinstall' && shouldAttemptDeviceAgent(connection)) {
-    try {
-      return await withDeviceAgent(connection as DeviceConnection, fn);
-    } catch (error) {
-      const key = sshSessionKey(connection);
-      if (!(error instanceof DeviceAgentUnavailableError) || transportOrder.length === 1) throw error;
-      deviceAgentUnavailableUntil.set(key, Date.now() + DEVICE_AGENT_UNAVAILABLE_TTL_MS);
-      log.warn('autoinstall device agent unavailable; falling back to SSH', { deviceId: key, error: error instanceof Error ? error.message : String(error) });
-    }
+  if (transportOrder[0] === 'autoinstall' && isRustDeviceConnection(connection)) {
+    return withDeviceAgent(connection as DeviceConnection, fn);
   }
   return withSSHLock(async () => {
     let key = '';
@@ -814,235 +718,49 @@ export async function withIpadecrypt<T>(connection: DeviceConnection | string, f
   return withDeviceTunnel(connection, async (auth, rootDir) => fn(typeof connection === 'string' ? rootDir : await ensureIpadecryptRuntime(rootDir, auth)));
 }
 
-interface LocalCommandResult {
-  stdout: string;
-  stderr: string;
-  code: number | null;
-}
-
-function runLocalCommand(file: string, args: string[], timeoutMs: number): Promise<LocalCommandResult> {
-  return new Promise((resolve) => {
-    const child = spawn(file, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    let settled = false;
-    const timer = setTimeout(() => {
-      child.kill();
-      if (!settled) {
-        settled = true;
-        resolve({ stdout, stderr: `${stderr}\ncommand timed out`.trim(), code: null });
-      }
-    }, timeoutMs);
-    const finish = (code: number | null) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve({ stdout, stderr, code });
-    };
-    child.stdout.on('data', (chunk) => {
-      stdout += chunk.toString('utf8');
-    });
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk.toString('utf8');
-    });
-    child.on('error', (error) => {
-      stderr = `${stderr}\n${error.message}`.trim();
-      finish(null);
-    });
-    child.on('close', finish);
-  });
-}
-
-function parseKeyValueOutput(output: string): Record<string, string> {
-  const values: Record<string, string> = {};
-  for (const line of output.split('\n')) {
-    const separator = line.indexOf(':');
-    if (separator <= 0) continue;
-    values[line.slice(0, separator).trim()] = line.slice(separator + 1).trim();
-  }
-  return values;
-}
-
-function parseIdeviceInfo(output: string): Record<string, string> {
-  return parseKeyValueOutput(output);
-}
-
-async function listUsbmuxDevices(network: boolean): Promise<{ ids: string[]; available: boolean; error?: string }> {
-  const result = await runLocalCommand(config.ideviceIdBin, network ? ['-n'] : ['-l'], 5_000);
-  if (result.code === null || result.code !== 0) {
-    return { ids: [], available: false, error: result.stderr.trim() || `${config.ideviceIdBin} exited with code ${result.code ?? 'unknown'}` };
-  }
-  return { ids: result.stdout.split('\n').map((id) => id.trim()).filter(Boolean), available: true };
-}
-
-async function getUsbmuxInfo(udid: string, network: boolean): Promise<Record<string, string>> {
-  const result = await runLocalCommand(config.ideviceInfoBin, [...(network ? ['-n'] : []), '-u', udid], 5_000);
-  return result.code === 0 ? parseIdeviceInfo(result.stdout) : {};
-}
-
-function candidateFromUsbmux(udid: string, info: Record<string, string>, network: boolean): DeviceDiscoveryCandidate {
-  const productType = info.ProductType;
-  const productVersion = info.ProductVersion;
-  const name = info.DeviceName || productType || `${network ? 'Wi-Fi' : 'USB'} iDevice`;
-  return {
-    discoveryId: `${network ? 'wifi' : 'usb'}-${udid}`,
-    name,
-    transport: network ? 'wifi' : 'usb',
-    port: config.deviceSshPort,
-    user: config.deviceSshUser,
-    udid,
-    usbmuxNetwork: network,
-    productType,
-    productVersion,
-    source: network ? 'wifi' : 'usb',
-  };
-}
-
-function isPrivateIpv4(host: string): boolean {
-  const octets = host.split('.').map(Number);
-  if (octets.length !== 4 || octets.some((value) => !Number.isInteger(value) || value < 0 || value > 255)) return false;
-  return octets[0] === 10 || (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) || (octets[0] === 192 && octets[1] === 168);
-}
-
-function ipv4ToNumber(host: string): number | undefined {
-  if (!isPrivateIpv4(host)) return undefined;
-  return host.split('.').map(Number).reduce((value, octet) => (value << 8) + octet, 0) >>> 0;
-}
-
-function numberToIpv4(value: number): string {
-  return [value >>> 24, (value >>> 16) & 255, (value >>> 8) & 255, value & 255].join('.');
-}
-
-function parseDiscoverySubnet(value: string): string | undefined {
-  const [rawHost, rawPrefix] = value.trim().split('/');
-  const host = ipv4ToNumber(rawHost);
-  const prefix = Number(rawPrefix ?? '24');
-  if (host === undefined || !Number.isInteger(prefix) || prefix < 16 || prefix > 30) return undefined;
-  const mask = prefix === 32 ? 0xffffffff : (0xffffffff << (32 - prefix)) >>> 0;
-  const network = host & mask;
-  const scanPrefix = Math.max(prefix, 24);
-  const scanMask = (0xffffffff << (32 - scanPrefix)) >>> 0;
-  return `${numberToIpv4(network & scanMask)}/${scanPrefix}`;
-}
-
-function localDiscoverySubnets(): string[] {
-  const values = new Set<string>();
-  const configured = config.deviceDiscoverySubnets.split(',').map(parseDiscoverySubnet).filter((value): value is string => Boolean(value));
-  for (const value of configured) values.add(value);
-  if (values.size > 0) return [...values];
-  for (const interfaces of Object.values(os.networkInterfaces())) {
-    for (const address of interfaces ?? []) {
-      if (address.family !== 'IPv4' || address.internal) continue;
-      const subnet = parseDiscoverySubnet(`${address.address}/${address.cidr?.split('/')[1] ?? '24'}`);
-      if (subnet) values.add(subnet);
-    }
-  }
-  return [...values];
-}
-
-function hostsInSubnet(subnet: string): string[] {
-  const [rawNetwork, rawPrefix] = subnet.split('/');
-  const network = ipv4ToNumber(rawNetwork);
-  const prefix = Number(rawPrefix);
-  if (network === undefined || !Number.isInteger(prefix) || prefix < 16 || prefix > 30) return [];
-  const size = 2 ** (32 - prefix);
-  const first = network + 1;
-  const last = network + size - 2;
-  const hosts: string[] = [];
-  for (let value = first; value <= last; value += 1) hosts.push(numberToIpv4(value >>> 0));
-  return hosts;
-}
-
-function canConnectToHost(host: string, port: number, timeoutMs: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    const socket = connectSocket({ host, port });
-    const finish = (result: boolean) => {
-      socket.destroy();
-      resolve(result);
-    };
-    socket.once('connect', () => finish(true));
-    socket.once('error', () => finish(false));
-    socket.setTimeout(timeoutMs, () => finish(false));
-  });
-}
-
-async function probeWifiHost(host: string, privateKey: Buffer): Promise<DeviceDiscoveryCandidate | undefined> {
-  if (!(await canConnectToHost(host, config.deviceSshPort, 350))) return undefined;
-  const conn = new Client();
+async function discoverRustDevices(): Promise<DeviceDiscoveryResult> {
+  const bridge = new RustDeviceBridgeClient();
+  const warnings: string[] = [];
+  let listed: unknown;
   try {
-    await new Promise<void>((resolve, reject) => {
-      conn.on('ready', () => resolve());
-      conn.on('error', reject);
-      conn.connect({ host, port: config.deviceSshPort, username: config.deviceSshUser, privateKey, readyTimeout: 1_500 });
-    });
-    const system = await readRemoteValue(conn, 'uname -s 2>/dev/null');
-    if (system !== 'Darwin') return undefined;
-    const model = await readRemoteValue(conn, 'sysctl -n hw.machine 2>/dev/null') ?? await readRemoteValue(conn, 'uname -m 2>/dev/null');
-    const productVersion = await readRemoteValue(conn, '/var/jb/usr/bin/sw_vers -productVersion 2>/dev/null');
-    const name = await readRemoteValue(conn, 'scutil --get ComputerName 2>/dev/null') ?? await readRemoteValue(conn, 'hostname 2>/dev/null');
-    return {
-      discoveryId: `wifi-${host}`,
-      name: name || model || host,
-      transport: 'wifi',
-      host,
+    listed = await bridge.request('list_devices', {}, 5_000);
+  } catch (error) {
+    return { devices: [], scannedNetworks: [], warnings: [error instanceof Error ? error.message : String(error)] };
+  }
+  if (!Array.isArray(listed)) return { devices: [], scannedNetworks: [], warnings: ['Rust device bridge returned an invalid device list'] };
+  const devices: DeviceDiscoveryCandidate[] = [];
+  for (const entry of listed) {
+    if (!entry || typeof entry !== 'object') continue;
+    const value = entry as Record<string, unknown>;
+    const udid = typeof value.udid === 'string' ? value.udid : typeof value.id === 'string' ? value.id.replace(/^id:/, '') : undefined;
+    if (!udid) continue;
+    const transport = typeof value.transport === 'string' && value.transport.startsWith('wifi') ? 'wifi' : 'usb';
+    let metadata: Record<string, unknown> = {};
+    try {
+      const result = await bridge.request('metadata', { deviceId: udid }, 5_000);
+      if (result && typeof result === 'object') metadata = result as Record<string, unknown>;
+    } catch (error) {
+      warnings.push(`Could not read metadata for ${udid}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    const name = typeof metadata.DeviceName === 'string' ? metadata.DeviceName : typeof metadata.ProductType === 'string' ? metadata.ProductType : `${transport === 'usb' ? 'USB' : 'Wi-Fi'} iDevice`;
+    devices.push({
+      discoveryId: `${transport}-${udid}`,
+      name,
+      transport,
       port: config.deviceSshPort,
       user: config.deviceSshUser,
-      productType: model,
-      productVersion,
-      source: 'wifi',
-    };
-  } catch {
-    return undefined;
-  } finally {
-    conn.end();
+      udid,
+      usbmuxNetwork: transport === 'wifi',
+      productType: typeof metadata.ProductType === 'string' ? metadata.ProductType : undefined,
+      productVersion: typeof metadata.ProductVersion === 'string' ? metadata.ProductVersion : undefined,
+      source: transport,
+    });
   }
-}
-
-async function mapWithConcurrency<T, R>(values: T[], concurrency: number, fn: (value: T) => Promise<R | undefined>): Promise<R[]> {
-  const result: R[] = [];
-  let next = 0;
-  async function worker(): Promise<void> {
-    while (next < values.length) {
-      const index = next;
-      next += 1;
-      const value = await fn(values[index]);
-      if (value !== undefined) result.push(value);
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(concurrency, values.length) }, () => worker()));
-  return result;
+  return { devices, scannedNetworks: [], warnings };
 }
 
 export async function discoverDevices(): Promise<DeviceDiscoveryResult> {
-  const devices: DeviceDiscoveryCandidate[] = [];
-  const warnings: string[] = [];
-  const usb = await listUsbmuxDevices(false);
-  if (!usb.available && usb.error) warnings.push(`USB discovery unavailable: ${usb.error}`);
-  for (const udid of usb.ids) devices.push(candidateFromUsbmux(udid, await getUsbmuxInfo(udid, false), false));
-
-  const network = await listUsbmuxDevices(true);
-  if (!network.available && network.error && usb.available) warnings.push(`paired Wi-Fi discovery unavailable: ${network.error}`);
-  for (const udid of network.ids) devices.push(candidateFromUsbmux(udid, await getUsbmuxInfo(udid, true), true));
-
-  let privateKey: Buffer | undefined;
-  try {
-    privateKey = await readFile(config.deviceSshKeyPath);
-  } catch {
-    warnings.push(`Wi-Fi SSH discovery needs a readable key at ${config.deviceSshKeyPath}`);
-  }
-  const explicitHosts = config.deviceDiscoveryHosts
-    .split(',')
-    .map((host) => host.trim())
-    .filter((host) => isPrivateIpv4(host));
-  const scannedNetworks = localDiscoverySubnets();
-  const scanHosts = [...new Set([...explicitHosts, ...scannedNetworks.flatMap(hostsInSubnet)])];
-  if (privateKey && scanHosts.length > 0) {
-    devices.push(...(await mapWithConcurrency(scanHosts, 24, (host) => probeWifiHost(host, privateKey as Buffer))));
-  }
-
-  const unique = new Map<string, DeviceDiscoveryCandidate>();
-  for (const device of devices) unique.set(device.discoveryId, device);
-  return { devices: [...unique.values()].sort((a, b) => a.name.localeCompare(b.name)), scannedNetworks, warnings };
+  return discoverRustDevices();
 }
 
 async function queryPackageVersion(conn: DeviceClient, packageName: string): Promise<string | undefined> {
@@ -1059,6 +777,7 @@ async function readRemoteValue(conn: DeviceClient, command: string): Promise<str
 }
 
 export async function setupDeviceConnection(connection: DeviceConnection): Promise<DeviceSetupResult> {
+  if (isDirectUsbDeviceAgentConnection(connection)) await pairDevice(connection);
   return withSSH(connection, async (conn) => {
     const system = await readRemoteValue(conn, 'uname -s 2>/dev/null');
     const model = await readRemoteValue(conn, 'sysctl -n hw.machine 2>/dev/null') ?? await readRemoteValue(conn, 'uname -m 2>/dev/null');
@@ -1078,7 +797,7 @@ export async function setupDeviceConnection(connection: DeviceConnection): Promi
     const transportDetail = runtimeTransport === 'autoinstall'
       ? `Authenticated USBMux device agent${autoinstallVersion ? ` · autoinstall ${autoinstallVersion}` : ''}`
       : usbAgentExpected
-        ? 'USB is reachable through SSH fallback; install the current autoinstall package to enable the device agent'
+        ? 'The Rust USB device agent is not responding'
         : `${connection.user ?? config.deviceSshUser}@${connection.host ?? 'USB/Wi-Fi tunnel'}${openSshVersion ? ` · OpenSSH ${openSshVersion}` : ''}`;
     const bridgeReady = bridge;
     const info: DeviceSetupInfo = {
@@ -1158,7 +877,7 @@ function parseDeviceAgentResponse(secret: string, envelope: DeviceAgentEnvelope)
   if (payload.ok !== true) {
     const error = payload.error;
     const details = error && typeof error === 'object' ? (error as Record<string, unknown>) : {};
-    throw new DeviceAgentRequestError(`${typeof details.code === 'string' ? details.code : 'device_agent_error'}: ${typeof details.message === 'string' ? details.message : 'device agent request failed'}`);
+    throw new Error(`${typeof details.code === 'string' ? details.code : 'device_agent_error'}: ${typeof details.message === 'string' ? details.message : 'device agent request failed'}`);
   }
   const result = payload.result;
   return result && typeof result === 'object' ? (result as Record<string, unknown>) : {};

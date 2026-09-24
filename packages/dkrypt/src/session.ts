@@ -124,7 +124,7 @@ export function getSession(req: Request): Session | undefined {
 export function requireSession(req: Request, res: Response, next: NextFunction): void {
   const session = getSession(req);
   if (!session) {
-    res.status(401).json({ error: 'unauthorized' });
+    res.error('unauthorized', 'unauthorized', 401, false);
     return;
   }
   res.locals.session = session;
@@ -135,11 +135,11 @@ export function requirePermission(...flags: bigint[]) {
   return (req: Request, res: Response, next: NextFunction): void => {
     const session = getSession(req);
     if (!session) {
-      res.status(401).json({ error: 'unauthorized' });
+      res.error('unauthorized', 'unauthorized', 401, false);
       return;
     }
     if (!hasAnyPermission(session.permissions, flags)) {
-      res.status(403).json({ error: 'you do not have permission to do that' });
+      res.error('forbidden', 'you do not have permission to do that', 403, false);
       return;
     }
     res.locals.session = session;

@@ -26,13 +26,18 @@ jobs:
       - run: git show-ref --verify --quiet refs/heads/main || git branch main origin/main
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.14
       - name: Install workspace dependencies
         run: |
           cd packages/dkrypt && bun install --frozen-lockfile
           cd web && bun install --frozen-lockfile
       - name: Run Moon checks
         run: bunx @moonrepo/cli@2.4.6 run dkrypt:check
+      - name: Test Rust device bridge
+        run: |
+          cd packages/device-bridge
+          cargo test --locked
+          cargo check --locked
 
   image:
     name: Build immutable image
@@ -47,7 +52,7 @@ jobs:
           fetch-depth: 0
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.14
       - name: Generate changelog asset
         run: |
           cd packages/dkrypt/web
@@ -91,6 +96,11 @@ jobs:
               image: ${DKRYPT_IMAGE:?DKRYPT_IMAGE is required}
               container_name: dkrypt
               restart: unless-stopped
+              init: true
+              stop_grace_period: 30s
+              pids_limit: 512
+              security_opt:
+                - no-new-privileges:true
               network_mode: host
               env_file:
                 - .env
@@ -98,12 +108,24 @@ jobs:
                 PORT: 8080
                 BIND_HOST: 127.0.0.1
                 SESSION_SIGNING_SECRET: ${SESSION_SIGNING_SECRET:?SESSION_SIGNING_SECRET is required}
+                DEVICE_BRIDGE_SOCKET: /run/dkrypt/device-bridge.sock
+                DEVICE_MUX_SOCKET: /run/dkrypt/usbmuxd.sock
+                DEVICE_PAIRING_STORE: /data/state/device-pairing
+                NETMUXD_BIN: /usr/local/bin/netmuxd
               volumes:
                 - appstore-config:/root/.ipadecrypt
                 - ipa-storage:/data/artifacts
                 - state:/data/state
                 - /home/adrian/.ssh/id_ed25519_ipad:/root/.ssh/id_ed25519:ro
-                - /var/run/usbmuxd:/var/run/usbmuxd
+              devices:
+                - /dev/bus/usb:/dev/bus/usb
+              tmpfs:
+                - /run/dkrypt:mode=0770,size=16m
+              deploy:
+                resources:
+                  limits:
+                    cpus: '4.0'
+                    memory: 4G
           volumes:
             appstore-config:
               external: true
@@ -136,10 +158,8 @@ jobs:
       - name: Wait for health, roll back on failure
         run: |
           set -e
-          for i in $(seq 1 15); do
-            page=$(curl -sf http://127.0.0.1:8080/ || true)
-            asset=$(printf '%s' "$page" | grep -oE '/assets/[^" ]+\.js' | head -n 1)
-            if [ -n "$asset" ] && curl -sf -o /dev/null "http://127.0.0.1:8080$asset"; then
+          for i in $(seq 1 30); do
+            if docker exec dkrypt bun -e "const r=await fetch('http://127.0.0.1:'+(process.env.PORT||8080)+'/v1/health',{headers:{authorization:'Bearer '+process.env.API_KEY}}); const b=await r.json(); if (!r.ok || b.database?.integrity !== 'ok') process.exit(1);"; then
               echo "healthy"
               exit 0
             fi

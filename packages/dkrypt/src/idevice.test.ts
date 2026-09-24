@@ -149,11 +149,13 @@ test('identifies direct USB connections that can recover without SSH', () => {
   expect(isDirectUsbDeviceAgentConnection({ transport: 'wifi', host: 'ipad.local', udid: '2a0e0924d60bbd25e9ce1398fa5543128ec5a5dd' })).toBe(false);
 });
 
-test('keeps SSH as the recovery path when the USB device agent is unavailable', () => {
+test('uses the Rust bridge for USB and paired Wi-Fi devices after cutover', () => {
   const connection = { transport: 'usb' as const, udid: '2a0e0924d60bbd25e9ce1398fa5543128ec5a5dd' };
-  expect(getDeviceTransportOrder(connection, 'auto')).toEqual(['autoinstall', 'ssh']);
+  const networkConnection = { transport: 'wifi' as const, udid: connection.udid, usbmuxNetwork: true };
+  expect(getDeviceTransportOrder(connection, 'auto')).toEqual(['autoinstall']);
   expect(getDeviceTransportOrder(connection, 'autoinstall')).toEqual(['autoinstall']);
-  expect(getDeviceTransportOrder(connection, 'ssh')).toEqual(['ssh']);
+  expect(getDeviceTransportOrder(connection, 'ssh')).toEqual(['autoinstall']);
+  expect(getDeviceTransportOrder(networkConnection, 'ssh')).toEqual(['autoinstall']);
 });
 
 test('backs off USB agent reconnects long enough for USBMux to recover', () => {

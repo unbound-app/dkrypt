@@ -1,0 +1,749 @@
+use idevice::{
+    IdeviceService,
+    provider::{IdeviceProvider, UsbmuxdProvider},
+    services::lockdown::LockdownClient,
+    usbmuxd::{UsbmuxdAddr, UsbmuxdConnection, UsbmuxdDevice},
+};
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value, json};
+use std::{
+    collections::HashMap,
+    env,
+    path::{Path, PathBuf},
+    process::Stdio,
+    sync::Arc,
+    time::Duration,
+};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt, copy_bidirectional},
+    net::{TcpListener, UnixListener, UnixStream},
+    process::{Child, Command},
+    sync::Mutex,
+    time::{sleep, timeout},
+};
+use uuid::Uuid;
+
+const RPC_VERSION: u16 = 1;
+const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
+const DEFAULT_AGENT_PORT: u16 = 5913;
+const DEFAULT_SSH_PORT: u16 = 22;
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RpcRequest {
+    version: u16,
+    request_id: String,
+    auth: String,
+    operation: String,
+    device_id: Option<String>,
+    port: Option<u16>,
+    payload: Option<Value>,
+    agent_secret: Option<String>,
+    deadline_ms: Option<u64>,
+    host_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RpcError {
+    code: String,
+    message: String,
+    retryable: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RpcResponse {
+    version: u16,
+    request_id: String,
+    ok: bool,
+    result: Option<Value>,
+    error: Option<RpcError>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DeviceSummary {
+    id: String,
+    udid: String,
+    device_id: u32,
+    transport: String,
+}
+
+struct BridgeState {
+    secret: String,
+    mux_socket: PathBuf,
+    host_id: String,
+    tunnels: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
+}
+
+fn error(code: impl Into<String>, message: impl Into<String>, retryable: bool) -> RpcError {
+    RpcError {
+        code: code.into(),
+        message: message.into(),
+        retryable,
+    }
+}
+
+fn response(request_id: String, result: Value) -> RpcResponse {
+    RpcResponse {
+        version: RPC_VERSION,
+        request_id,
+        ok: true,
+        result: Some(result),
+        error: None,
+    }
+}
+
+fn failure(request_id: String, rpc_error: RpcError) -> RpcResponse {
+    RpcResponse {
+        version: RPC_VERSION,
+        request_id,
+        ok: false,
+        result: None,
+        error: Some(rpc_error),
+    }
+}
+
+fn valid_frame_length(length: usize, maximum: usize) -> bool {
+    length > 0 && length <= maximum
+}
+
+fn required_env(name: &str) -> Result<String, RpcError> {
+    env::var(name).map_err(|_| error("configuration", format!("missing {name}"), false))
+}
+
+fn unix_path(name: &str, default: &str) -> PathBuf {
+    PathBuf::from(env::var(name).unwrap_or_else(|_| default.to_string()))
+}
+
+fn device_summary(device: UsbmuxdDevice) -> DeviceSummary {
+    let transport = match device.connection_type {
+        idevice::usbmuxd::Connection::Usb => "usb".to_string(),
+        idevice::usbmuxd::Connection::Network(address) => format!("wifi:{address}"),
+        idevice::usbmuxd::Connection::Unknown(value) => format!("unknown:{value}"),
+    };
+    DeviceSummary {
+        id: device.udid.clone(),
+        udid: device.udid,
+        device_id: device.device_id,
+        transport,
+    }
+}
+
+async fn mux_connection(state: &BridgeState) -> Result<UsbmuxdConnection, RpcError> {
+    UsbmuxdAddr::UnixSocket(state.mux_socket.to_string_lossy().to_string())
+        .connect(0)
+        .await
+        .map_err(|value| {
+            error(
+                "mux_unavailable",
+                format!("could not connect to netmuxd: {value}"),
+                true,
+            )
+        })
+}
+
+async fn find_device(
+    state: &BridgeState,
+    id: &str,
+) -> Result<(UsbmuxdDevice, UsbmuxdAddr), RpcError> {
+    let addr = UsbmuxdAddr::UnixSocket(state.mux_socket.to_string_lossy().to_string());
+    let mut mux = addr.connect(0).await.map_err(|value| {
+        error(
+            "mux_unavailable",
+            format!("could not connect to netmuxd: {value}"),
+            true,
+        )
+    })?;
+    let devices = mux.get_devices().await.map_err(|value| {
+        error(
+            "device_discovery",
+            format!("could not list devices: {value}"),
+            true,
+        )
+    })?;
+    devices
+        .into_iter()
+        .find(|device| device.udid == id || format!("id:{}", device.udid) == id)
+        .map(|device| (device, addr))
+        .ok_or_else(|| {
+            error(
+                "device_not_found",
+                format!("device {id} is not connected"),
+                true,
+            )
+        })
+}
+
+async fn provider_for(
+    state: &BridgeState,
+    id: &str,
+) -> Result<(UsbmuxdProvider, UsbmuxdAddr), RpcError> {
+    let (device, addr) = find_device(state, id).await?;
+    Ok((
+        device.to_provider(addr.clone(), format!("dkrypt-device-{id}")),
+        addr,
+    ))
+}
+
+async fn read_value(lockdown: &mut LockdownClient, key: &str) -> Option<String> {
+    lockdown
+        .get_value(Some(key), None)
+        .await
+        .ok()
+        .and_then(|value| value.as_string().map(ToString::to_string))
+}
+
+async fn list_devices(state: &BridgeState) -> Result<Value, RpcError> {
+    let mut mux = mux_connection(state).await?;
+    let devices = mux.get_devices().await.map_err(|value| {
+        error(
+            "device_discovery",
+            format!("could not list devices: {value}"),
+            true,
+        )
+    })?;
+    serde_json::to_value(devices.into_iter().map(device_summary).collect::<Vec<_>>())
+        .map_err(|value| error("serialization", value.to_string(), false))
+}
+
+async fn device_metadata(state: &BridgeState, id: &str) -> Result<Value, RpcError> {
+    let (provider, _) = provider_for(state, id).await?;
+    let mut lockdown = LockdownClient::connect(&provider).await.map_err(|value| {
+        error(
+            "lockdown_unavailable",
+            format!("could not open lockdown: {value}"),
+            true,
+        )
+    })?;
+    let pairing = provider.get_pairing_file().await.map_err(|value| {
+        error(
+            "pairing_unavailable",
+            format!("could not read pairing record: {value}"),
+            true,
+        )
+    })?;
+    lockdown.start_session(&pairing).await.map_err(|value| {
+        error(
+            "lockdown_session",
+            format!("could not start lockdown session: {value}"),
+            true,
+        )
+    })?;
+    let mut values = Map::new();
+    for key in [
+        "DeviceName",
+        "ProductType",
+        "ProductVersion",
+        "UniqueDeviceID",
+        "SerialNumber",
+        "BatteryCurrentCapacity",
+        "BatteryIsCharging",
+    ] {
+        if let Some(value) = read_value(&mut lockdown, key).await {
+            values.insert(key.to_string(), Value::String(value));
+        }
+    }
+    Ok(Value::Object(values))
+}
+
+async fn pair_device(
+    state: &BridgeState,
+    id: &str,
+    requested_host_id: Option<String>,
+) -> Result<Value, RpcError> {
+    let (device, addr) = find_device(state, id).await?;
+    let mut mux = addr.connect(0).await.map_err(|value| {
+        error(
+            "mux_unavailable",
+            format!("could not connect to netmuxd: {value}"),
+            true,
+        )
+    })?;
+    let system_buid = mux.get_buid().await.map_err(|value| {
+        error(
+            "pairing",
+            format!("could not read system BUID: {value}"),
+            true,
+        )
+    })?;
+    let provider = device.to_provider(addr.clone(), format!("dkrypt-pair-{id}"));
+    let mut lockdown = LockdownClient::connect(&provider).await.map_err(|value| {
+        error(
+            "lockdown_unavailable",
+            format!("could not open lockdown: {value}"),
+            true,
+        )
+    })?;
+    let host_id = requested_host_id.unwrap_or_else(|| state.host_id.clone());
+    let pairing = lockdown
+        .pair_once(host_id.clone(), system_buid, Some("dkrypt"))
+        .await
+        .map_err(|value| {
+            error(
+                "pairing_pending",
+                format!("device pairing requires trust confirmation: {value}"),
+                true,
+            )
+        })?;
+    let serialized = pairing.clone().serialize().map_err(|value| {
+        error(
+            "pairing",
+            format!("could not serialize pairing record: {value}"),
+            false,
+        )
+    })?;
+    mux.save_pair_record(&device.udid, serialized)
+        .await
+        .map_err(|value| {
+            error(
+                "pairing",
+                format!("could not save pairing record: {value}"),
+                true,
+            )
+        })?;
+    Ok(json!({ "deviceId": device.udid, "hostId": host_id, "paired": true }))
+}
+
+async fn write_agent_frame<T: tokio::io::AsyncWrite + Unpin>(
+    socket: &mut T,
+    payload: &Value,
+) -> Result<(), RpcError> {
+    let body = serde_json::to_vec(payload)
+        .map_err(|value| error("serialization", value.to_string(), false))?;
+    if !valid_frame_length(body.len(), 4 * 1024 * 1024) {
+        return Err(error(
+            "invalid_frame",
+            "agent request exceeds frame limits",
+            false,
+        ));
+    }
+    socket
+        .write_u32(body.len() as u32)
+        .await
+        .map_err(|value| error("agent_io", value.to_string(), true))?;
+    socket
+        .write_all(&body)
+        .await
+        .map_err(|value| error("agent_io", value.to_string(), true))?;
+    socket
+        .flush()
+        .await
+        .map_err(|value| error("agent_io", value.to_string(), true))
+}
+
+async fn read_agent_frame<T: tokio::io::AsyncRead + Unpin>(
+    socket: &mut T,
+) -> Result<Value, RpcError> {
+    let length = socket
+        .read_u32()
+        .await
+        .map_err(|value| error("agent_io", value.to_string(), true))? as usize;
+    if !valid_frame_length(length, 4 * 1024 * 1024) {
+        return Err(error(
+            "invalid_frame",
+            "agent response exceeds frame limits",
+            false,
+        ));
+    }
+    let mut response = vec![0; length];
+    socket
+        .read_exact(&mut response)
+        .await
+        .map_err(|value| error("agent_io", value.to_string(), true))?;
+    serde_json::from_slice(&response)
+        .map_err(|value| error("invalid_response", value.to_string(), false))
+}
+
+async fn request_agent(
+    state: &BridgeState,
+    id: &str,
+    payload: Value,
+    agent_secret: String,
+    deadline_ms: u64,
+) -> Result<Value, RpcError> {
+    let (provider, _) = provider_for(state, id).await?;
+    let device = provider
+        .connect(DEFAULT_AGENT_PORT)
+        .await
+        .map_err(|value| {
+            error(
+                "agent_unavailable",
+                format!("could not connect to autoinstall agent: {value}"),
+                true,
+            )
+        })?;
+    let mut socket = device.get_socket().ok_or_else(|| {
+        error(
+            "agent_unavailable",
+            "agent connection did not expose a socket",
+            true,
+        )
+    })?;
+    let bootstrap = json!({ "version": 1, "requestId": Uuid::new_v4().to_string(), "action": "bootstrap", "secret": agent_secret });
+    let deadline = Duration::from_millis(deadline_ms.clamp(1, 120_000));
+    timeout(deadline, async {
+        write_agent_frame(&mut socket, &bootstrap).await?;
+        let bootstrap_response = read_agent_frame(&mut socket).await?;
+        if bootstrap_response.get("ok") != Some(&Value::Bool(true)) {
+            return Err(error(
+                "agent_bootstrap",
+                "device agent rejected the bridge secret",
+                true,
+            ));
+        }
+        write_agent_frame(&mut socket, &payload).await?;
+        read_agent_frame(&mut socket).await
+    })
+    .await
+    .map_err(|_| {
+        error(
+            "agent_timeout",
+            "device agent did not respond before the deadline",
+            true,
+        )
+    })?
+}
+
+async fn open_tunnel(
+    state: Arc<BridgeState>,
+    id: &str,
+    remote_port: u16,
+) -> Result<Value, RpcError> {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .map_err(|value| error("tunnel_bind", value.to_string(), true))?;
+    let local_port = listener
+        .local_addr()
+        .map_err(|value| error("tunnel_bind", value.to_string(), true))?
+        .port();
+    let tunnel_id = Uuid::new_v4().to_string();
+    let device_id = id.to_string();
+    let task_state = state.clone();
+    let task = tokio::spawn(async move {
+        loop {
+            let accepted = listener.accept().await;
+            let (mut incoming, _) = match accepted {
+                Ok(value) => value,
+                Err(_) => break,
+            };
+            let connection = provider_for(&task_state, &device_id).await;
+            let (provider, _) = match connection {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+            let remote = provider.connect(remote_port).await;
+            let mut device = match remote.and_then(|value| {
+                value
+                    .get_socket()
+                    .ok_or_else(|| idevice::IdeviceError::NoEstablishedConnection)
+            }) {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+            let _ = copy_bidirectional(&mut incoming, &mut device).await;
+        }
+    });
+    state.tunnels.lock().await.insert(tunnel_id.clone(), task);
+    Ok(
+        json!({ "tunnelId": tunnel_id, "host": "127.0.0.1", "port": local_port, "remotePort": remote_port }),
+    )
+}
+
+async fn close_tunnel(state: &BridgeState, tunnel_id: &str) -> Value {
+    if let Some(task) = state.tunnels.lock().await.remove(tunnel_id) {
+        task.abort();
+        json!({ "closed": true })
+    } else {
+        json!({ "closed": false })
+    }
+}
+
+async fn execute(state: Arc<BridgeState>, request: RpcRequest) -> Result<Value, RpcError> {
+    match request.operation.as_str() {
+        "capabilities" => Ok(
+            json!({ "protocolVersion": RPC_VERSION, "transport": "rust-netmuxd", "capabilities": ["list_devices", "pair", "metadata", "agent", "open_tunnel", "close_tunnel", "health"] }),
+        ),
+        "health" => {
+            let devices = list_devices(&state).await?;
+            let device_present = request.device_id.as_deref().map_or_else(
+                || devices.as_array().is_some_and(|values| !values.is_empty()),
+                |device_id| {
+                    devices.as_array().is_some_and(|values| {
+                        values.iter().any(|value| {
+                            value.get("udid").and_then(Value::as_str) == Some(device_id)
+                                || value.get("id").and_then(Value::as_str) == Some(device_id)
+                        })
+                    })
+                },
+            );
+            Ok(
+                json!({ "state": "ready", "transport": "usb", "deviceCount": devices.as_array().map_or(0, Vec::len), "devicePresent": device_present, "muxSocket": state.mux_socket }),
+            )
+        }
+        "list_devices" => list_devices(&state).await,
+        "metadata" => {
+            device_metadata(
+                &state,
+                request
+                    .device_id
+                    .as_deref()
+                    .ok_or_else(|| error("invalid_request", "device_id is required", false))?,
+            )
+            .await
+        }
+        "pair" => {
+            pair_device(
+                &state,
+                request
+                    .device_id
+                    .as_deref()
+                    .ok_or_else(|| error("invalid_request", "device_id is required", false))?,
+                request.host_id,
+            )
+            .await
+        }
+        "agent" => {
+            request_agent(
+                &state,
+                request
+                    .device_id
+                    .as_deref()
+                    .ok_or_else(|| error("invalid_request", "device_id is required", false))?,
+                request
+                    .payload
+                    .ok_or_else(|| error("invalid_request", "payload is required", false))?,
+                request
+                    .agent_secret
+                    .ok_or_else(|| error("invalid_request", "agent_secret is required", false))?,
+                request.deadline_ms.unwrap_or(20_000),
+            )
+            .await
+        }
+        "open_tunnel" => {
+            open_tunnel(
+                state,
+                request
+                    .device_id
+                    .as_deref()
+                    .ok_or_else(|| error("invalid_request", "device_id is required", false))?,
+                request.port.unwrap_or(DEFAULT_SSH_PORT),
+            )
+            .await
+        }
+        "close_tunnel" => Ok(close_tunnel(
+            &state,
+            request
+                .payload
+                .as_ref()
+                .and_then(Value::as_str)
+                .ok_or_else(|| error("invalid_request", "tunnel id is required", false))?,
+        )
+        .await),
+        _ => Err(error(
+            "unsupported_operation",
+            format!("unsupported operation {}", request.operation),
+            false,
+        )),
+    }
+}
+
+async fn read_frame(stream: &mut UnixStream) -> Result<Option<Vec<u8>>, String> {
+    let mut header = [0; 4];
+    match stream.read_exact(&mut header).await {
+        Ok(_) => {}
+        Err(value) if value.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+        Err(value) => return Err(value.to_string()),
+    }
+    let length = u32::from_be_bytes(header) as usize;
+    if !valid_frame_length(length, MAX_FRAME_BYTES) {
+        return Err("frame length is outside the allowed range".to_string());
+    }
+    let mut body = vec![0; length];
+    stream
+        .read_exact(&mut body)
+        .await
+        .map_err(|value| value.to_string())?;
+    Ok(Some(body))
+}
+
+async fn write_frame(stream: &mut UnixStream, response: &RpcResponse) -> Result<(), String> {
+    let body = serde_json::to_vec(response).map_err(|value| value.to_string())?;
+    if !valid_frame_length(body.len(), MAX_FRAME_BYTES) {
+        return Err("response exceeds frame limits".to_string());
+    }
+    stream
+        .write_u32(body.len() as u32)
+        .await
+        .map_err(|value| value.to_string())?;
+    stream
+        .write_all(&body)
+        .await
+        .map_err(|value| value.to_string())?;
+    stream.flush().await.map_err(|value| value.to_string())
+}
+
+async fn handle_client(mut stream: UnixStream, state: Arc<BridgeState>) {
+    loop {
+        let frame = match read_frame(&mut stream).await {
+            Ok(Some(frame)) => frame,
+            Ok(None) | Err(_) => return,
+        };
+        let request = match serde_json::from_slice::<RpcRequest>(&frame) {
+            Ok(request) => request,
+            Err(value) => {
+                let _ = write_frame(
+                    &mut stream,
+                    &failure(
+                        String::new(),
+                        error("invalid_request", value.to_string(), false),
+                    ),
+                )
+                .await;
+                continue;
+            }
+        };
+        let request_id = request.request_id.clone();
+        let result = if request.version != RPC_VERSION {
+            Err(error(
+                "protocol_version",
+                "unsupported RPC protocol version",
+                false,
+            ))
+        } else if request.auth != state.secret {
+            Err(error(
+                "unauthorized",
+                "device bridge authentication failed",
+                false,
+            ))
+        } else {
+            let deadline =
+                Duration::from_millis(request.deadline_ms.unwrap_or(20_000).clamp(1, 120_000));
+            match timeout(deadline, execute(state.clone(), request)).await {
+                Ok(value) => value,
+                Err(_) => Err(error(
+                    "deadline_exceeded",
+                    "device bridge request exceeded its deadline",
+                    true,
+                )),
+            }
+        };
+        let output = match result {
+            Ok(result) => response(request_id, result),
+            Err(value) => failure(request_id, value),
+        };
+        if write_frame(&mut stream, &output).await.is_err() {
+            return;
+        }
+    }
+}
+
+async fn wait_for_path(path: &Path) -> Result<(), String> {
+    for _ in 0..100 {
+        if path.exists() {
+            return Ok(());
+        }
+        sleep(Duration::from_millis(100)).await;
+    }
+    Err(format!("netmuxd did not create {}", path.display()))
+}
+
+fn start_netmuxd(binary: &str, socket: &Path, pairing_store: &Path) -> Result<Child, String> {
+    Command::new(binary)
+        .arg("--socket-path")
+        .arg(socket)
+        .arg("--plist-storage")
+        .arg(pairing_store)
+        .env(
+            "RUST_LOG",
+            env::var("NETMUXD_LOG_LEVEL").unwrap_or_else(|_| "warn".to_string()),
+        )
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|value| format!("could not start netmuxd: {value}"))
+}
+
+#[tokio::main]
+async fn main() -> Result<(), String> {
+    let rpc_socket = unix_path("DEVICE_BRIDGE_SOCKET", "/run/dkrypt/device-bridge.sock");
+    let mux_socket = unix_path("DEVICE_MUX_SOCKET", "/run/dkrypt/usbmuxd.sock");
+    let pairing_store = unix_path("DEVICE_PAIRING_STORE", "/data/state/device-pairing");
+    let secret = required_env("DEVICE_BRIDGE_SECRET").map_err(|value| value.message)?;
+    if secret.len() < 32 {
+        return Err("DEVICE_BRIDGE_SECRET must contain at least 32 characters".to_string());
+    }
+    if let Some(parent) = rpc_socket.parent() {
+        std::fs::create_dir_all(parent).map_err(|value| value.to_string())?;
+    }
+    if let Some(parent) = mux_socket.parent() {
+        std::fs::create_dir_all(parent).map_err(|value| value.to_string())?;
+    }
+    std::fs::create_dir_all(&pairing_store).map_err(|value| value.to_string())?;
+    std::fs::set_permissions(
+        &pairing_store,
+        std::os::unix::fs::PermissionsExt::from_mode(0o700),
+    )
+    .map_err(|value| value.to_string())?;
+    if rpc_socket.exists() {
+        std::fs::remove_file(&rpc_socket).map_err(|value| value.to_string())?;
+    }
+    if mux_socket.exists() {
+        std::fs::remove_file(&mux_socket).map_err(|value| value.to_string())?;
+    }
+    let binary = env::var("NETMUXD_BIN").unwrap_or_else(|_| "netmuxd".to_string());
+    let mut netmuxd = start_netmuxd(&binary, &mux_socket, &pairing_store)?;
+    wait_for_path(&mux_socket).await?;
+    tokio::spawn(async move {
+        let _ = netmuxd.wait().await;
+        std::process::exit(1);
+    });
+    let host_id = env::var("DEVICE_BRIDGE_HOST_ID").unwrap_or_else(|_| Uuid::new_v4().to_string());
+    let state = Arc::new(BridgeState {
+        secret,
+        mux_socket,
+        host_id,
+        tunnels: Mutex::new(HashMap::new()),
+    });
+    let listener = UnixListener::bind(&rpc_socket).map_err(|value| value.to_string())?;
+    let permissions = std::os::unix::fs::PermissionsExt::from_mode(0o660);
+    std::fs::set_permissions(&rpc_socket, permissions).map_err(|value| value.to_string())?;
+    loop {
+        let (stream, _) = listener.accept().await.map_err(|value| value.to_string())?;
+        let client_state = state.clone();
+        tokio::spawn(async move {
+            handle_client(stream, client_state).await;
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MAX_FRAME_BYTES, RPC_VERSION, error, failure, response, valid_frame_length};
+    use serde_json::json;
+
+    #[test]
+    fn frame_limits_reject_empty_and_oversized_payloads() {
+        assert!(!valid_frame_length(0, MAX_FRAME_BYTES));
+        assert!(valid_frame_length(1, MAX_FRAME_BYTES));
+        assert!(valid_frame_length(MAX_FRAME_BYTES, MAX_FRAME_BYTES));
+        assert!(!valid_frame_length(MAX_FRAME_BYTES + 1, MAX_FRAME_BYTES));
+    }
+
+    #[test]
+    fn responses_preserve_request_ids_and_protocol_version() {
+        let success = response("request-1".to_string(), json!({ "ok": true }));
+        assert_eq!(success.version, RPC_VERSION);
+        assert_eq!(success.request_id, "request-1");
+        assert!(success.ok);
+        assert_eq!(
+            serde_json::to_value(&success).unwrap()["requestId"],
+            "request-1"
+        );
+        let failed = failure("request-2".to_string(), error("test", "failed", false));
+        assert_eq!(failed.version, RPC_VERSION);
+        assert_eq!(failed.request_id, "request-2");
+        assert!(!failed.ok);
+    }
+}

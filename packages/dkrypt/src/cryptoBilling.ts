@@ -10,6 +10,7 @@ import {
   isBillingSubscriptionActive,
   hasProcessedBillingEvent,
   listBillingCharges,
+  listBillingEntitlementHistory,
   listBillingSubscriptions,
   recordBillingEvent,
   upsertBillingCharge,
@@ -192,7 +193,7 @@ export function startCryptoBillingPoller(): void {
   setInterval(() => void reconcileCryptoBilling(), interval).unref();
 }
 
-export function listManagerBillingSubscriptions(filters: { query?: string; provider?: string; status?: string } = {}): Array<Record<string, unknown>> {
+export function listManagerBillingSubscriptions(filters: { query?: string; provider?: string; status?: string; planId?: string; from?: string; to?: string; wallet?: string; invoice?: string } = {}): Array<Record<string, unknown>> {
   const profiles = new Map(
     [...new Set(listBillingSubscriptions().map((subscription) => subscription.userId).filter((userId): userId is string => !!userId))].map((userId) => [userId, getAuthProfile(userId)]),
   );
@@ -201,6 +202,11 @@ export function listManagerBillingSubscriptions(filters: { query?: string; provi
   return listBillingSubscriptions()
     .filter((subscription) => !filters.provider || subscription.provider === filters.provider)
     .filter((subscription) => !filters.status || subscription.status === filters.status)
+    .filter((subscription) => !filters.planId || subscription.planId === filters.planId)
+    .filter((subscription) => !filters.from || Date.parse(subscription.updatedAt) >= Date.parse(filters.from))
+    .filter((subscription) => !filters.to || Date.parse(subscription.updatedAt) <= Date.parse(filters.to))
+    .filter((subscription) => !filters.wallet || subscription.walletAddress?.toLowerCase().includes(filters.wallet.toLowerCase()))
+    .filter((subscription) => !filters.invoice || [subscription.checkoutId, subscription.providerPaymentId, subscription.subscriptionId].some((value) => value?.toLowerCase().includes(filters.invoice?.toLowerCase() ?? '')))
     .filter((subscription) => {
       if (!query) return true;
       const profile = subscription.userId ? profiles.get(subscription.userId) : undefined;
@@ -242,6 +248,7 @@ export function listManagerBillingSubscriptions(filters: { query?: string; provi
           graceUntil: subscription.graceUntil,
           attempts: charges.filter((charge) => charge.subscriptionId === subscription.subscriptionId).slice(-10),
         },
+        entitlementHistory: listBillingEntitlementHistory(subscription.subscriptionId),
       };
     });
 }

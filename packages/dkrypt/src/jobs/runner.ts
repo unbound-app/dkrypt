@@ -13,6 +13,7 @@ import { extractIpaMetadata } from '#util/ipaMetadata.js';
 import { classifyIpaDecryptOutput } from '#util/ipadecryptOutput.js';
 import { artifactKeyForJob, promoteArtifact } from '#artifacts.js';
 import { withIpadecrypt } from '#idevice.js';
+import { terminateChildProcess } from '#jobs/process.js';
 
 const log = scopedLogger('jobs');
 import { appendJobTimelineEvent, type Job } from '#jobs/types.js';
@@ -22,6 +23,10 @@ export async function runDecrypt(job: Job, device: DeviceRecord): Promise<void> 
 
   const ensureNotCancelled = () => {
     if (job.cancelledBy) throw new Error(`cancelled by ${job.cancelledBy}`);
+    if (job.deadlineExceeded || (job.deadlineAt !== undefined && Date.now() >= job.deadlineAt)) {
+      job.deadlineExceeded = true;
+      throw new Error('job deadline exceeded');
+    }
   };
 
   ensureNotCancelled();
@@ -73,7 +78,7 @@ export async function runDecrypt(job: Job, device: DeviceRecord): Promise<void> 
       expectedVersion: job.externalVersionId ? job.versionLabel : undefined,
       operationId: buildAppStoreOperationId(job.id, job.retryCount ?? 0),
       onProgress: report,
-      isCancelled: () => Boolean(job.cancelledBy),
+      isCancelled: () => Boolean(job.cancelledBy || job.deadlineExceeded),
       currentVersion: currentAppStoreVersion,
       device,
     });
@@ -87,8 +92,17 @@ export async function runDecrypt(job: Job, device: DeviceRecord): Promise<void> 
   await withIpadecrypt(device, async (rootDir) => {
     const args = ['--root-dir', rootDir, 'decrypt', job.bundleId, '--use-installed', '--output', outputPath];
     await new Promise<void>((resolve, reject) => {
-      const child = spawn(config.ipadecryptBin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      const child = spawn(config.ipadecryptBin, args, { stdio: ['ignore', 'pipe', 'pipe'], detached: process.platform !== 'win32' });
       job.childProcess = child;
+
+      const remainingMs = job.deadlineAt === undefined ? undefined : Math.max(1, job.deadlineAt - Date.now());
+      const deadlineTimer = remainingMs === undefined ? undefined : setTimeout(() => {
+        job.deadlineExceeded = true;
+        job.progress = 'job deadline exceeded';
+        terminateChildProcess(child, 'SIGTERM');
+        setTimeout(() => terminateChildProcess(child, 'SIGKILL'), config.jobProcessGraceSeconds * 1000).unref();
+        emitJobsChanged();
+      }, remainingMs);
 
       let output = '';
 
@@ -111,6 +125,7 @@ export async function runDecrypt(job: Job, device: DeviceRecord): Promise<void> 
       child.on('error', (err) => reject(err));
 
       child.on('close', (code) => {
+        if (deadlineTimer) clearTimeout(deadlineTimer);
         job.childProcess = undefined;
         const result = classifyIpaDecryptOutput(output);
         if (job.cancelledBy) {
@@ -135,6 +150,7 @@ export async function runDecrypt(job: Job, device: DeviceRecord): Promise<void> 
     });
   });
 
+  ensureNotCancelled();
   const st = await stat(outputPath);
   job.fileSizeBytes = st.size;
 
@@ -146,6 +162,7 @@ export async function runDecrypt(job: Job, device: DeviceRecord): Promise<void> 
     log.warn('failed to extract IPA metadata', { jobId: job.id, bundleId: job.bundleId, error: String(err) });
   }
 
+  ensureNotCancelled();
   const artifact = await promoteArtifact({
     key: artifactKeyForJob(job),
     bundleId: job.bundleId,

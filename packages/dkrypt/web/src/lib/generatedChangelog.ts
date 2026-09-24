@@ -1,8 +1,18 @@
 export const GENERATED_CHANGELOG = [
   {
     "date": "2026-09-23",
+    "title": "fix(device): keep autoinstall transport alive",
+    "description": "Released in ec63d23."
+  },
+  {
+    "date": "2026-09-23",
+    "title": "fix: keep crypto billing independent and restore USB recovery",
+    "description": "Released in 32a510f."
+  },
+  {
+    "date": "2026-09-23",
     "title": "feat(billing): add hosted crypto payments with NOWPayments",
-    "description": "Released in 7612fab."
+    "description": "Released in 5eb01cb."
   },
   {
     "date": "2026-09-22",
@@ -28,15 +38,5 @@ export const GENERATED_CHANGELOG = [
     "date": "2026-09-21",
     "title": "fix(device): keep USB recovery independent of SSH",
     "description": "Released in 2772838."
-  },
-  {
-    "date": "2026-09-21",
-    "title": "feat(device): add native autoinstall USB agent",
-    "description": "Released in de96186."
-  },
-  {
-    "date": "2026-09-21",
-    "title": "fix(device): stabilize bridge transport and TestFlight polling",
-    "description": "Released in 62d4390."
   }
 ] as const;

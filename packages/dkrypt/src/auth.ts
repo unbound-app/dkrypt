@@ -12,11 +12,11 @@ export function requireApiKey(req: Request, res: Response, next: NextFunction): 
 
   const result = scheme === 'Bearer' && token ? verifyApiKey(token, req.ip) : undefined;
   if (result === 'rate-limited') {
-    res.status(429).json({ error: 'this API key has hit its daily request limit' });
+    res.error('api_key_rate_limited', 'this API key has hit its daily request limit', 429, true);
     return;
   }
   if (!result) {
-    res.status(401).json({ error: 'unauthorized' });
+    res.error('unauthorized', 'unauthorized', 401, false);
     return;
   }
 
@@ -31,7 +31,7 @@ export function requireApiKey(req: Request, res: Response, next: NextFunction): 
 
 export function requireTestFlightScope(_req: Request, res: Response, next: NextFunction): void {
   if (res.locals.apiKeyAllowTestFlight === false) {
-    res.status(403).json({ error: 'this API key is not scoped for TestFlight' });
+    res.error('testflight_scope_denied', 'this API key is not scoped for TestFlight', 403, false);
     return;
   }
   next();

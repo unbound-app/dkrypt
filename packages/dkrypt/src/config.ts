@@ -41,6 +41,9 @@ export const config = {
 
   adminPassword: required('ADMIN_PASSWORD'),
   stateDir: optional('STATE_DIR', '/data/state'),
+  stateDatabaseFile: optional('STATE_DATABASE_FILE', 'dkrypt.sqlite'),
+  stateDbBusyTimeoutMs: optionalInt('STATE_DB_BUSY_TIMEOUT_MS', 5000),
+  stateDbMigrationDryRun: optionalBool('STATE_DB_MIGRATION_DRY_RUN', false),
   artifactDir: optional('ARTIFACT_DIR', '/data/artifacts'),
 
   githubOauthClientId: optional('GITHUB_OAUTH_CLIENT_ID', ''),
@@ -76,14 +79,17 @@ export const config = {
   deviceSshUser: optional('DEVICE_SSH_USER', 'mobile'),
   deviceSshPort: optionalInt('DEVICE_SSH_PORT', 22),
   deviceTransport: optional('DEVICE_TRANSPORT', 'auto'),
-  deviceDiscoveryHosts: optional('DEVICE_DISCOVERY_HOSTS', ''),
-  deviceDiscoverySubnets: optional('DEVICE_DISCOVERY_SUBNETS', ''),
-  ideviceIdBin: optional('IDEVICE_ID_BIN', 'idevice_id'),
-  ideviceInfoBin: optional('IDEVICE_INFO_BIN', 'ideviceinfo'),
-  ideviceProxyBin: optional('IDEVICE_PROXY_BIN', 'iproxy'),
+  deviceBridgeSocket: optional('DEVICE_BRIDGE_SOCKET', '/run/dkrypt/device-bridge.sock'),
+  deviceBridgeSecret: optional('DEVICE_BRIDGE_SECRET', ''),
+  deviceMuxSocket: optional('DEVICE_MUX_SOCKET', '/run/dkrypt/usbmuxd.sock'),
+  devicePairingStore: optional('DEVICE_PAIRING_STORE', '/data/state/device-pairing'),
+  deviceBridgeHostId: optional('DEVICE_BRIDGE_HOST_ID', ''),
+  netmuxdBin: optional('NETMUXD_BIN', '/usr/local/bin/netmuxd'),
   artifactMaxBytes: optionalInt('ARTIFACT_MAX_BYTES', 200 * 1024 * 1024 * 1024),
 
   jobMaxWaitSeconds: optionalInt('JOB_MAX_WAIT_SECONDS', 1800),
+  jobMaxRetries: optionalInt('JOB_MAX_RETRIES', 1),
+  jobProcessGraceSeconds: optionalInt('JOB_PROCESS_GRACE_SECONDS', 10),
   jobRetentionMinutes: optionalInt('JOB_RETENTION_MINUTES', 24 * 60),
 
   watchBundleId: optional('WATCH_BUNDLE_ID', ''),

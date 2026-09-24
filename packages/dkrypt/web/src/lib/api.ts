@@ -306,6 +306,7 @@ export interface IpaMetadata {
 
 export interface JobHistoryEntry {
   id: string;
+  correlationId?: string;
   bundleId: string;
   externalVersionId?: string;
   testflight?: { appId: number; build: TFBuild };
@@ -327,6 +328,11 @@ export interface JobHistoryEntry {
   ipaInfoPlist?: Record<string, unknown>;
   downloadUrl?: string;
   fileAvailable: boolean;
+  attempt?: number;
+  retryCount?: number;
+  deadlineAt?: number;
+  deadlineExceeded?: boolean;
+  failureClass?: string;
 }
 
 export interface ArtifactRecord {
@@ -613,6 +619,7 @@ export interface DeviceHealth {
   networkIpAddress?: string;
   networkInterface?: string;
   bridgeHeartbeats?: Partial<Record<'springboard' | 'testflight' | 'appstore', { bridgeVersion?: string; channel?: string; process?: string; at?: number }>>;
+  subsystems?: Partial<Record<'usb' | 'mux' | 'agent' | 'appStore' | 'testFlight' | 'sshTunnel' | 'storage' | 'battery' | 'thermal', 'ready' | 'degraded' | 'offline' | 'unsupported' | 'unknown'>>;
   readiness?: DeviceReadiness;
   checkedAt: number;
 }

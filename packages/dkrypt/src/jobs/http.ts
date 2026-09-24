@@ -17,7 +17,7 @@ export function jobFileAvailable(job: Job | undefined): boolean {
 export function jobSummary(job: Job) {
   return {
     id: job.id,
-    correlationId: job.id,
+    correlationId: job.correlationId ?? job.id,
     bundleId: job.bundleId,
     externalVersionId: job.externalVersionId,
     testflight: job.testflight
@@ -28,6 +28,11 @@ export function jobSummary(job: Job) {
     channel: job.testflight ? 'testflight' : 'appstore',
     queuedBy: job.queuedBy,
     priority: job.priority,
+    attempt: job.attempt,
+    retryCount: job.retryCount,
+    deadlineAt: job.deadlineAt ? new Date(job.deadlineAt).toISOString() : undefined,
+    deadlineExceeded: job.deadlineExceeded,
+    failureClass: job.failureClass,
     status: job.status,
     progress: job.progress,
     warnings: job.warnings,

@@ -328,9 +328,11 @@
 				if (next === "err" || level === "ok") level = next;
 			};
 
-			if (!health.reachable) worsen("err", "iDevice unreachable");
+			if (!health.reachable) worsen("err", "Device unreachable");
+			if (health.reachable && health.subsystems?.agent === "offline")
+				worsen("warn", "USB connected · device agent unavailable");
 			if (health.reachable && health.networkConnected === false)
-				worsen("err", "iDevice not on a network");
+				worsen("err", "Device is not on a network");
 			else if (
 				health.reachable &&
 				health.networkConnected &&
@@ -554,8 +556,8 @@
 			{@const h = health}
 			<Popover>
 				{#snippet trigger()}
-					<Badge variant={h.reachable ? "success" : "destructive"}
-						>iDevice {h.reachable ? "online" : "unreachable"}</Badge
+					<Badge variant={!h.reachable ? "destructive" : h.subsystems?.agent === "offline" ? "warning" : "success"}
+						>{!h.reachable ? "Device unreachable" : h.subsystems?.agent === "offline" ? "USB connected · agent unavailable" : "Device online"}</Badge
 					>
 				{/snippet}
 				<div class="flex flex-col gap-1 whitespace-nowrap">
@@ -563,6 +565,9 @@
 						<div class="text-err max-w-xs whitespace-normal">
 							{h.error ?? "unreachable"}
 						</div>
+					{/if}
+					{#if h.reachable && h.subsystems?.agent === "offline"}
+						<div class="text-warn max-w-xs whitespace-normal">USB and mux are connected. The on-device agent needs recovery before automation can run.</div>
 					{/if}
 					{#if overview?.devices.length}
 						<div class="text-muted">Devices</div>

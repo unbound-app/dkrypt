@@ -2,7 +2,7 @@ import { Router } from '#http.js';
 import { validate as validateCronExpr } from 'node-cron';
 import { config, discordBotEnabled } from '#config.js';
 import { fetchBotGuilds, fetchGuildRoles } from '#discord.js';
-import { dashboardEvents, emitJobsChanged, getOnlineUsernames, registerPresence, unregisterPresence } from '#events.js';
+import { dashboardEvents, emitJobsChanged, getOnlineUsernames, nextDashboardSequence, registerPresence, unregisterPresence } from '#events.js';
 import { getBillingEntitlements } from '#billing.js';
 import { blockDuringMaintenance, getMaintenanceStatus } from '#maintenance.js';
 import { jobFileAvailable, jobSummary, streamFilePath } from '#jobs/http.js';
@@ -23,6 +23,7 @@ import { discoverDevices, execCommand, isDirectUsbDeviceAgentConnection, listIns
 import { getTestFlightBridgeDiagnostics, listBuilds, listTrains } from '#testflight.js';
 import { nextCronRunAt, nextCronRuns } from '#util/cron.js';
 import { getDiskUsage } from '#util/diskUsage.js';
+import { runConfigurationDoctor } from '#doctor.js';
 import { rateLimitPerUser } from '#util/rateLimit.js';
 import { getFailureGuidance } from '#util/failureGuidance.js';
 import {
@@ -106,6 +107,7 @@ import {
   markNotificationsRead,
   getPrimaryDevice,
   getSchedulerRunHistory,
+  getStateDatabaseStatus,
   getGitHubBudgetTelemetry,
   getWatchHealthRollup,
   getUserPrefs,
@@ -152,6 +154,7 @@ import {
   updateSettings,
   updateUserPrefs,
   updateWatch,
+  verifyLatestDatabaseBackup,
   wouldOrphanPermission,
 } from '#store/state.js';
 
@@ -227,6 +230,7 @@ function buildOverview(permissions: bigint, userId: string) {
     maintenance: getMaintenanceStatus(),
     activeJobs: getActiveJobs().map((j) => ({
       id: j.id,
+      correlationId: j.correlationId ?? j.id,
       bundleId: j.bundleId,
       source: j.source,
       status: j.status,
@@ -239,6 +243,11 @@ function buildOverview(permissions: bigint, userId: string) {
       queuedBy: j.queuedBy,
       priority: j.priority,
       createdAt: j.createdAt,
+      attempt: j.attempt,
+      retryCount: j.retryCount,
+      deadlineAt: j.deadlineAt,
+      deadlineExceeded: j.deadlineExceeded,
+      failureClass: j.failureClass,
       queueReason: getQueueReason(j),
     })),
   };
@@ -274,6 +283,10 @@ dashboardRouter.get('/v1/dashboard/overview', (_req, res) => {
   res.json(buildOverview(res.locals.session.permissions, res.locals.session.sub));
 });
 
+dashboardRouter.get('/v1/dashboard/doctor', canManageDevices, async (_req, res) => {
+  res.json(await runConfigurationDoctor());
+});
+
 dashboardRouter.get('/v1/dashboard/notifications', (req, res) => {
   const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit ?? '50'), 10) || 50, 1), 100);
   res.json(listNotifications(res.locals.session.sub, limit));
@@ -293,7 +306,9 @@ dashboardRouter.get('/v1/dashboard/events', (_req, res) => {
   res.raw.setTimeout(0);
 
   const sendEvent = (event: string, data: unknown) => {
-    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    const sequence = nextDashboardSequence();
+    const payload = Array.isArray(data) ? { sequence, data } : data && typeof data === 'object' ? { ...(data as Record<string, unknown>), sequence } : { sequence, data };
+    res.write(`id: ${sequence}\nevent: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
   };
 
   sendEvent('overview', buildOverview(res.locals.session.permissions, res.locals.session.sub));
@@ -588,6 +603,12 @@ dashboardRouter.get('/v1/dashboard/storage-forecast', canViewScheduler, (_req, r
 
 dashboardRouter.get('/v1/dashboard/support-bundle', canManageWatches, (_req, res) => {
   const clean = (value: string | undefined): string | undefined => value?.replace(/https?:\/\/\S+/g, '[redacted-url]').replace(/(?:token|secret|key)=\S+/gi, '$1=[redacted]');
+  const cleanStructured = (value: unknown): unknown => {
+    if (typeof value === 'string') return clean(value) ?? value;
+    if (Array.isArray(value)) return value.map(cleanStructured);
+    if (!value || typeof value !== 'object') return value;
+    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, /token|secret|password|private.?key/i.test(key) ? '[redacted]' : cleanStructured(entry)]));
+  };
   const jobs = getAllJobHistory()
     .slice(0, 100)
     .map(({ id, bundleId, status, source, versionLabel, createdAt, startedAt, finishedAt, sizeBytes, error }) => ({
@@ -596,12 +617,16 @@ dashboardRouter.get('/v1/dashboard/support-bundle', canManageWatches, (_req, res
   res.setHeader('Content-Disposition', 'attachment; filename="dkrypt-support-bundle.json"');
   res.json({
     generatedAt: new Date().toISOString(),
+    deployment: { ref: process.env.BUILD_REF ?? 'development', node: process.version },
+    database: getStateDatabaseStatus(),
+    latestBackup: verifyLatestDatabaseBackup(),
     disk: getDiskUsage(config.artifactDir),
     catalog: getAppCatalogStats(),
     devices: getEffectiveDevices().map(({ id, name, enabled, isPrimary }) => ({ id, name, enabled, isPrimary })),
     watches: getEffectiveWatches().map((watch) => ({ bundleId: watch.bundleId, enabled: watch.enabled, pollCron: watch.pollCron, destinations: getWatchDispatchTargets(watch).length })),
     watchHealth: getWatchHealthRollup(),
     schedulerRuns: getSchedulerRunHistory(50).map((run) => ({ ...run, appStore: { ...run.appStore, reason: clean(run.appStore.reason) ?? '' }, testflight: { ...run.testflight, reason: clean(run.testflight.reason) ?? '' } })),
+    logs: getRecentLogs({ limit: 200 }).logs.map((entry) => ({ ...entry, message: clean(entry.message) ?? entry.message, meta: cleanStructured(entry.meta) })),
     jobs,
   });
 });
@@ -1906,7 +1931,7 @@ dashboardRouter.get('/v1/dashboard/jobs/:id/timeline', (req, res) => {
   if (active) {
     res.json({
       id: active.id,
-      correlationId: active.id,
+      correlationId: active.correlationId ?? active.id,
       bundleId: active.bundleId,
       status: active.status,
       versionLabel: active.versionLabel,
@@ -1933,7 +1958,7 @@ dashboardRouter.get('/v1/dashboard/jobs/:id/timeline', (req, res) => {
   ];
   res.json({
     id: entry.id,
-    correlationId: entry.id,
+    correlationId: entry.correlationId ?? entry.id,
     bundleId: entry.bundleId,
     status: entry.status,
     versionLabel: entry.versionLabel,
@@ -1957,7 +1982,7 @@ dashboardRouter.get('/v1/dashboard/jobs/:id/diagnostic', canDecrypt, (req, res) 
   const job = active ?? entry;
   if (!job) return;
   res.setHeader('Content-Disposition', `attachment; filename="dkrypt-job-${job.id}-diagnostic.json"`);
-  res.json({ generatedAt: new Date().toISOString(), correlationId: job.id, job, timeline: active?.timeline ?? entry?.timeline ?? [] });
+  res.json({ generatedAt: new Date().toISOString(), correlationId: job.correlationId ?? job.id, job, timeline: active?.timeline ?? entry?.timeline ?? [] });
 });
 
 dashboardRouter.get('/v1/dashboard/keys/mine', canViewOwnApiKeys, (_req, res) => {
@@ -2693,7 +2718,8 @@ dashboardRouter.post('/v1/dashboard/backup/drill', canManageBackup, (req, res) =
     res.status(400).json({ error: result.error });
     return;
   }
-  res.json(result.drill);
+  const database = verifyLatestDatabaseBackup();
+  res.json({ ...result.drill, database });
 });
 
 dashboardRouter.get('/v1/dashboard/backup/schedule', canViewBackup, (_req, res) => {

@@ -8,18 +8,35 @@ services:
     image: ${DKRYPT_IMAGE:-dkrypt:latest}
     container_name: dkrypt
     restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
+    pids_limit: 512
+    security_opt:
+      - no-new-privileges:true
     network_mode: host
     env_file:
       - .env
     environment:
       PORT: 8080
       BIND_HOST: 127.0.0.1
+      DEVICE_BRIDGE_SOCKET: /run/dkrypt/device-bridge.sock
+      DEVICE_MUX_SOCKET: /run/dkrypt/usbmuxd.sock
+      DEVICE_PAIRING_STORE: /data/state/device-pairing
+      NETMUXD_BIN: /usr/local/bin/netmuxd
     volumes:
       - appstore-config:/root/.ipadecrypt
       - ipa-storage:/data/artifacts
       - state:/data/state
       - ${HOME}/.ssh/id_ed25519:/root/.ssh/id_ed25519:ro
-      - /var/run/usbmuxd:/var/run/usbmuxd
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+    tmpfs:
+      - /run/dkrypt:mode=0770,size=16m
+    deploy:
+      resources:
+        limits:
+          cpus: '4.0'
+          memory: 4G
 
 volumes:
   appstore-config:

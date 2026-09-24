@@ -2,82 +2,75 @@
 
 Self-hosted App Store and TestFlight decryption for jailbroken iPhone and iPad devices.
 
-dkrypt provides a dashboard and API for:
-
-- decrypting current or pinned App Store releases and TestFlight builds;
-- keeping an indexed IPA library with authenticated downloads;
-- scheduling watches and dispatching artifacts to GitHub Actions; and
-- managing users, API keys, billing, device health, backups, and notifications.
+dkrypt provides an authenticated dashboard and API for decrypting releases, retaining IPA artifacts, scheduling watches, dispatching updates, managing devices, and administering billing.
 
 ## Quick start
 
 1. Clone the repository and copy `.env.example` to `.env`.
-2. Set `API_KEY`, `SESSION_SIGNING_SECRET`, `PUBLIC_BASE_URL`, and `ADMIN_PASSWORD`.
-3. Pair the iPhone or iPad with the host over USB and make sure the host exposes its `usbmuxd` socket.
-4. Put the SSH key for the device at `~/.ssh/id_ed25519` for the initial autoinstall install and recovery access.
-5. Start the service:
+2. Set `API_KEY`, `SESSION_SIGNING_SECRET`, and `ADMIN_PASSWORD` to long random values.
+3. Connect the iPhone or iPad over USB, unlock it, and accept the trust prompt.
+4. Start dkrypt:
 
    ```sh
-   docker compose up -d
+   docker compose up -d --build
    ```
 
-6. Open the dashboard, go to **Settings → Devices**, and choose **Find a device**.
-7. Select the USB or Wi-Fi device and choose **Set up**. dkrypt saves the direct device connection, checks the prerequisites, and shows exactly what still needs attention.
+5. Open `http://localhost:8080`, sign in, open **Settings → Devices**, select the discovered device, and choose **Set up**.
 
-Device registration does not require `.ipadecrypt`, `config.json`, or a device setup CLI command. Existing installations using the old connection file are migrated when the service starts and can be finished from the same dashboard flow.
+The setup flow pairs the device, verifies iOS and the jailbreak, checks ElleKit and autoinstall, and stores the device record. A device does not need an `.ipadecrypt` directory or a setup CLI command to be recognized.
 
-Open `http://localhost:8080`, or put an HTTPS reverse proxy in front of it.
+## Requirements
+
+- Docker Engine with Compose v2
+- Linux host access to `/dev/bus/usb` for USB devices
+- A rootless jailbreak with ElleKit
+- The dkrypt autoinstall package installed on the device
+- An App Store Apple ID; TestFlight jobs also need TestFlight access
+
+The image contains the Rust device bridge, the pinned `idevice` revision, and the pinned `netmuxd` release. USB discovery, pairing, reconnects, and local service tunnels are owned by the bridge; the host does not need Apple device CLI tools or a mounted mux socket.
 
 <details>
-<summary>Device requirements</summary>
+<summary>Initial device package installation</summary>
 
-The device needs:
-
-- a rootless jailbreak with ElleKit;
-- the dkrypt `autoinstall` bridge;
-- an Apple ID signed in to the App Store; and
-- no device passcode.
-
-TestFlight builds also require TestFlight to be signed in. The bridge package can be built and deployed with:
+The dashboard manages pairing and readiness after autoinstall is present. Installing or repairing the package still needs an SSH-capable path once, because the package is the device-side execution layer.
 
 ```sh
-AUTOINSTALL_IDEVICE_TARGET=mobile@<device-ip> \
+AUTOINSTALL_IDEVICE_TARGET=mobile@<device-address> \
 AUTOINSTALL_IDEVICE_KEY="$HOME/.ssh/id_ed25519" \
 make autoinstall-deploy
 ```
 
-OpenSSH is only needed to install or repair a missing package. Once `autoinstall` is installed and the device is paired over USB, dkrypt uses its authenticated device agent through USBMux for runtime commands, preflight, and the dashboard's **Recover** action. Wi-Fi-only devices continue to use the configured SSH connection.
-
-The dashboard setup check verifies the device connection, iOS, the jailbreak, the device agent, and the bridge heartbeat. Install or repair any item marked **attention**, then run setup again. dkrypt does not require a separate IPA installer package or a device `.ipadecrypt` directory.
+After installation, reconnect the device over USB and finish **Settings → Devices → Set up**. The SSH key is not used as the USB discovery or recovery dependency. For USB decrypts, dkrypt opens a Rust-managed local service tunnel and only uses SSH credentials for the `ipadecrypt` compatibility channel.
 
 </details>
 
 <details>
-<summary>Public TestFlight links</summary>
+<summary>Wi-Fi devices and recovery</summary>
 
-Users with **Request TestFlight subscriptions** can submit canonical public links such as `https://testflight.apple.com/join/ABC123` from **Settings → TestFlight**. A manager with **Manage TestFlight subscriptions** can approve the request, or submit a link directly.
+Wi-Fi devices must already be paired and reachable on the host network. The Rust bridge uses the paired device transport and mDNS discovery; allow local multicast discovery when the host firewall or container network is restricted. USB devices remain discoverable and recoverable when device-side SSH or Wi-Fi is unavailable.
 
-dkrypt verifies access independently on every enabled device. A link appears in search only after at least one device has verified it recently, and the build picker shows which eligible device will be used. Approving a link does not install every future build; choose and queue a build as usual.
-
-Unsubscribing stops dkrypt automation and removes the app from enabled devices when possible. Apple-side tester membership may remain active because TestFlight does not expose a reliable leave operation through the device bridge.
+If the device is temporarily absent, dkrypt keeps the record and marks the affected subsystem as recovering or offline. It does not erase the device or enter maintenance mode solely because the SSH/SFTP channel needed by one decrypt is unavailable.
 
 </details>
 
 <details>
-<summary>USB and Wi-Fi discovery</summary>
+<summary>Self-hosting configuration</summary>
 
-The Compose stack includes `libimobiledevice` and `usbmuxd` tools and mounts `/var/run/usbmuxd` for USB discovery and the authenticated runtime agent. The host must be running `usbmuxd` and expose that socket to the container. Paired Wi-Fi devices are detected through usbmuxd; dkrypt also probes the local private network for reachable iOS SSH services.
+Copy `.env.example` to `.env` and configure the required values. The important runtime settings are:
 
-If network scanning is restricted, set `DEVICE_DISCOVERY_HOSTS` to a comma-separated list of device addresses or set `DEVICE_DISCOVERY_SUBNETS` to the private CIDR ranges to scan. The dashboard's **Have the address already?** field is always available as a fallback.
+| Setting | Purpose |
+| --- | --- |
+| `API_KEY` | API authentication and health checks |
+| `SESSION_SIGNING_SECRET` | Dashboard sessions and backup manifest encryption |
+| `ADMIN_PASSWORD` | Local administrator sign-in |
+| `PUBLIC_BASE_URL` | Public origin for OAuth, webhooks, and secure cookies |
+| `DEVICE_SSH_KEY_PATH` | Key used only by the `ipadecrypt` compatibility channel |
+| `ARTIFACT_DIR` | IPA storage volume |
+| `STATE_DIR` | SQLite database, pairing material, backups, and mirrors |
 
-</details>
+State and artifact data live in Docker volumes. Keep `.env`, pairing material, and SSH private keys out of Git. Use an HTTPS reverse proxy when exposing the dashboard beyond localhost.
 
-<details>
-<summary>Self-hosting notes</summary>
-
-Docker Compose, Git, and GNU Make are required. Persistent state, device runtime data, and IPA artifacts are stored in named Docker volumes.
-
-For OAuth, Stripe, or external webhooks, use an HTTPS `PUBLIC_BASE_URL`. Keep the bootstrap SSH private key outside the repository and never commit `.env` or temporary credentials.
+The SQLite database uses WAL mode, foreign keys, migration checksums, integrity checks, and an atomic pre-migration backup. Startup fails closed when the database or migration checksums are invalid. The dashboard doctor is available to managers at `/v1/dashboard/doctor`.
 
 To update a source checkout:
 
@@ -89,32 +82,32 @@ docker compose up -d --build
 </details>
 
 <details>
+<summary>Backups and restore checks</summary>
+
+Backups include the legacy export, a verified SQLite copy, and an encrypted checksum manifest. The backup scheduler can be configured in the dashboard. A restore drill opens the SQLite copy in a temporary database and verifies its integrity, schema migration checksums, state snapshot, and manifest hashes before it is reported healthy.
+
+Do not copy database files while the service is running. Use the dashboard backup action or stop the service before making an external volume snapshot.
+
+</details>
+
+<details>
 <summary>Stripe billing</summary>
 
-Stripe Managed Payments handles hosted checkout and automatic tax. Configure the eligible product tax code and secret in Stripe Dashboard, then from `packages/dkrypt` run:
-
-```sh
-bun run stripe:seed
-bun run stripe:webhook
-bun run stripe:verify
-```
-
-Store the generated price IDs and webhook secret in the runtime environment. `stripe:verify` checks the configured key mode, recurring prices, tax code, checkout compatibility, webhook events, and signed endpoint reachability.
+Stripe remains the card and bank payment path. Configure the live Stripe secret, recurring price IDs, webhook secret, and tax settings in the runtime environment. Stripe readiness is visible in the manager billing view and the configuration doctor.
 
 </details>
 
 <details>
 <summary>Crypto billing</summary>
 
-Crypto billing is an optional second payment method alongside Stripe. It uses NOWPayments hosted invoices for USDC or USDT payments priced in EUR. Each verified payment grants 30 days of access; users renew with a new invoice. Crypto checkout is separate from Stripe and does not collect a billing address. NOWPayments pays the configured merchant wallet, and dkrypt does not custody crypto or store wallet private keys.
+Crypto billing is an optional second payment method using NOWPayments hosted invoices. It supports the configured EUR plans and selected crypto assets without custody or private-key storage in dkrypt. Crypto checkout does not ask for Stripe billing-address data.
 
-Keep crypto disabled until the NOWPayments test flow is complete. Configure these runtime values when enabling it:
+Keep it disabled until the provider dashboard, wallet, IPN secret, webhook URL, and settlement settings are ready:
 
 ```text
 CRYPTO_BILLING_ENABLED=true
 NOWPAYMENTS_API_KEY=...
 NOWPAYMENTS_IPN_SECRET=...
-NOWPAYMENTS_IPN_SECRET_PREVIOUS=
 NOWPAYMENTS_API_BASE_URL=https://api.nowpayments.io/v1
 NOWPAYMENTS_ENVIRONMENT=live
 NOWPAYMENTS_SUPPORTED_ASSETS=USDC,USDT
@@ -122,7 +115,7 @@ NOWPAYMENTS_DEFAULT_ASSET=USDC
 NOWPAYMENTS_PRICE_CURRENCY=EUR
 ```
 
-Set the NOWPayments IPN destination to `https://<your-host>/v1/nowpayments/webhook` and keep the IPN secret private. Live crypto checkout remains unavailable until NOWPayments lists the selected currencies. Crypto payments are outside Stripe Managed Payments, do not use Stripe, and do not collect country or postal code. The operator remains responsible for the tax treatment of crypto sales.
+Set the IPN destination to `https://<your-host>/v1/nowpayments/webhook`. The provider webhook is durable, deduplicated, and replayable by managers. Crypto payments have provider-specific refund and tax handling; they do not inherit Stripe Managed Payments or Stripe merchant-of-record treatment.
 
 </details>
 
@@ -133,44 +126,36 @@ API requests use `Authorization: Bearer <API_KEY>`. Dashboard downloads use the 
 
 | Endpoint | Purpose |
 | --- | --- |
-| `GET /v1/decrypt?bundleId=<id>` | Queue or join a decrypt. |
-| `POST /v1/decrypts` | Queue a decrypt by release selector. |
-| `GET /v1/jobs/:id` | Read job status. |
-| `GET /v1/artifacts` | List IPA artifacts. |
-| `GET /v1/artifacts/:id/file` | Download an IPA artifact. |
-| `GET /v1/health` | Read service and device health. |
-| `GET /v1/billing/subscriptions` | Read the manager billing ledger with the billing permission. |
-| `GET /v1/billing/provider-status` | Read provider readiness with the billing-management permission. |
+| `GET /v1/health` | Service, database, and primary-device health |
+| `POST /v1/decrypts` | Queue a decrypt by release selector |
+| `GET /v1/jobs/:id` | Read job status, attempts, deadline, warnings, and transport evidence |
+| `GET /v1/artifacts` | List IPA artifacts |
+| `GET /v1/artifacts/:id/file` | Download an IPA artifact |
+| `GET /v1/billing/subscriptions` | Manager subscription ledger and filters |
+| `GET /v1/billing/provider-status` | Manager provider readiness |
 
-Repositories receiving scheduler dispatches need a `DKRYPT_API_KEY` Actions secret. Set `DKRYPT_BASE_URL` when the deployment uses a public host other than `https://ipa.dylib.dev`.
+OpenAPI is available at `/openapi.json` and the Scalar reference UI at `/reference`.
 
 </details>
 
 <details>
-<summary>Repository and development</summary>
-
-| Path | Purpose |
-| --- | --- |
-| `packages/dkrypt/` | Fastify API and Svelte dashboard |
-| `packages/autoinstall/` | Theos tweak installed on the device |
-| `scripts/autoinstall-release` | Build, install, verify, and roll back the tweak |
-
-Run the local checks with:
-
-```sh
-make check
-moon run dkrypt:check
-```
-
-Useful package commands:
+<summary>Development and deployment</summary>
 
 ```sh
 cd packages/dkrypt
+bun install --frozen-lockfile
 bun test
 bun run typecheck
 bun run typecheck:web
+cd ../device-bridge
+cargo test --locked
+cargo check --locked
 ```
 
-Pushes to `main` run the Moon check graph, build an immutable GHCR image, and deploy that exact image to the homelab runner. A failed health check rolls back to the previous image.
+The deployment workflow runs the Bun and Rust checks, builds an immutable GHCR image, starts the bridge with direct USB access, waits for database integrity and health, and rolls back to the previous image if readiness fails. The Rust bridge is cut over immediately after those gates; runtime fallback to the old C toolchain is not part of the production configuration.
 
 </details>
+
+## License
+
+See the repository license files.

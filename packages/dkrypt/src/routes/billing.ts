@@ -33,6 +33,7 @@ import { requirePermission, requireSession } from '#session.js';
 import { PermissionFlag } from '#permissions.js';
 import { recordAudit } from '#store/state.js';
 import { getStripe } from '#stripe.js';
+import { getWebhookInboxRecord, listWebhookInbox, markWebhookFailed, markWebhookProcessed, quarantineWebhook, receiveWebhook } from '#webhookInbox.js';
 
 function metadataUserId(metadata: unknown): string | undefined {
   if (typeof metadata !== 'object' || metadata === null) return undefined;
@@ -163,10 +164,17 @@ stripeWebhookRouter.post('/v1/stripe/webhook', async (req, res) => {
     return;
   }
 
+  const inbox = receiveWebhook('stripe', event.id, rawBody);
+  if (inbox.duplicate && inbox.record.status === 'processed') {
+    res.json({ received: true, duplicate: true });
+    return;
+  }
   try {
     await processStripeEvent(event);
+    markWebhookProcessed(inbox.record.id);
     res.json({ received: true });
   } catch (error) {
+    markWebhookFailed(inbox.record.id, String(error));
     log.error('Stripe webhook failed', { eventType: event.type, error: String(error) });
     res.status(500).json({ error: 'webhook processing failed' });
   }
@@ -204,10 +212,17 @@ nowpaymentsWebhookRouter.post('/v1/nowpayments/webhook', async (req, res) => {
   const payment = payload as Parameters<typeof processNowPaymentsEvent>[0]['payment'];
   const paymentId = payment.payment_id === undefined ? payment.order_id ?? 'unknown' : String(payment.payment_id);
   const eventId = `nowpayments:${paymentId}:${payment.payment_status}:${payment.updated_at ?? payment.created_at ?? 'unknown'}`;
+  const inbox = receiveWebhook('nowpayments', eventId, rawBody);
+  if (inbox.duplicate && inbox.record.status === 'processed') {
+    res.json({ received: true, duplicate: true });
+    return;
+  }
   try {
     await processNowPaymentsEvent({ id: eventId, payment });
+    markWebhookProcessed(inbox.record.id);
     res.json({ received: true });
   } catch (error) {
+    markWebhookFailed(inbox.record.id, String(error));
     log.error('NOWPayments IPN failed', { error: String(error) });
     res.status(500).json({ error: 'webhook processing failed' });
   }
@@ -407,7 +422,80 @@ billingRouter.get('/v1/billing/subscriptions', requirePermission(PermissionFlag.
   const query = typeof req.query?.q === 'string' ? req.query.q : undefined;
   const provider = typeof req.query?.provider === 'string' ? req.query.provider : undefined;
   const status = typeof req.query?.status === 'string' ? req.query.status : undefined;
-  res.json({ subscriptions: listManagerBillingSubscriptions({ query, provider, status }) });
+  const planId = typeof req.query?.planId === 'string' ? req.query.planId : undefined;
+  const from = typeof req.query?.from === 'string' ? req.query.from : undefined;
+  const to = typeof req.query?.to === 'string' ? req.query.to : undefined;
+  const wallet = typeof req.query?.wallet === 'string' ? req.query.wallet : undefined;
+  const invoice = typeof req.query?.invoice === 'string' ? req.query.invoice : undefined;
+  const limit = Math.min(Math.max(Number.parseInt(String(req.query?.limit ?? '50'), 10) || 50, 1), 100);
+  const cursor = decodeBillingCursor(typeof req.query?.cursor === 'string' ? req.query.cursor : undefined);
+  const subscriptions = listManagerBillingSubscriptions({ query, provider, status, planId, from, to, wallet, invoice });
+  const page = subscriptions.slice(cursor, cursor + limit);
+  const nextCursor = cursor + page.length < subscriptions.length ? encodeBillingCursor(cursor + page.length) : undefined;
+  res.json({ subscriptions: page, total: subscriptions.length, nextCursor });
+});
+
+function encodeBillingCursor(offset: number): string {
+  return Buffer.from(JSON.stringify({ offset }), 'utf8').toString('base64url');
+}
+
+function decodeBillingCursor(value: string | undefined): number {
+  if (!value) return 0;
+  try {
+    const parsed = JSON.parse(Buffer.from(value, 'base64url').toString('utf8')) as { offset?: unknown };
+    return typeof parsed.offset === 'number' && Number.isInteger(parsed.offset) && parsed.offset >= 0 ? parsed.offset : 0;
+  } catch {
+    return 0;
+  }
+}
+
+billingRouter.get('/v1/billing/webhooks/inbox', requirePermission(PermissionFlag.manageBilling), (req, res) => {
+  const status = typeof req.query?.status === 'string' ? req.query.status : undefined;
+  const provider = typeof req.query?.provider === 'string' ? req.query.provider : undefined;
+  const inbox = listWebhookInbox()
+    .filter((record) => !status || record.status === status)
+    .filter((record) => !provider || record.provider === provider)
+    .map(({ rawBody, ...record }) => ({ ...record, rawBodyBytes: Buffer.byteLength(rawBody) }));
+  res.json({ inbox });
+});
+
+billingRouter.post('/v1/billing/webhooks/inbox/:id/quarantine', requirePermission(PermissionFlag.manageBilling), (req, res) => {
+  const current = getWebhookInboxRecord(req.params.id);
+  if (!current) {
+    res.status(404).json({ error: 'webhook inbox record not found' });
+    return;
+  }
+  const reason = typeof req.body?.reason === 'string' && req.body.reason.trim() ? req.body.reason.trim() : 'quarantined by manager';
+  const record = quarantineWebhook(current.id, reason);
+  res.json({ record: record ? { ...record, rawBody: undefined } : undefined });
+});
+
+billingRouter.post('/v1/billing/webhooks/inbox/:id/replay', requirePermission(PermissionFlag.manageBilling), async (req, res) => {
+  const current = getWebhookInboxRecord(req.params.id);
+  if (!current) {
+    res.status(404).json({ error: 'webhook inbox record not found' });
+    return;
+  }
+  if (current.status === 'processed') {
+    res.json({ replayed: false, duplicate: true, status: current.status });
+    return;
+  }
+  try {
+    const payload = JSON.parse(current.rawBody) as Record<string, unknown>;
+    if (current.provider === 'stripe') {
+      if (typeof payload.id !== 'string' || typeof payload.type !== 'string' || typeof payload.data !== 'object' || payload.data === null) throw new Error('stored Stripe event is malformed');
+      await processStripeEvent(payload as unknown as Stripe.Event);
+    } else {
+      if (typeof payload.payment_status !== 'string') throw new Error('stored NOWPayments event is malformed');
+      await processNowPaymentsEvent({ id: current.eventId, payment: payload as Parameters<typeof processNowPaymentsEvent>[0]['payment'] });
+    }
+    markWebhookProcessed(current.id);
+    recordAudit(res.locals.session.sub, 'billing.webhook.replay', current.eventId, current.provider);
+    res.json({ replayed: true, status: 'processed' });
+  } catch (error) {
+    markWebhookFailed(current.id, String(error));
+    res.status(500).json({ error: 'webhook replay failed' });
+  }
 });
 
 billingRouter.post('/v1/billing/subscription', requireSession, async (req, res) => {

@@ -5,6 +5,13 @@ import type { JobHistoryEntry } from '#store/state.js';
 export const dashboardEvents = new EventEmitter();
 dashboardEvents.setMaxListeners(0);
 
+let dashboardSequence = 0;
+
+export function nextDashboardSequence(): number {
+  dashboardSequence += 1;
+  return dashboardSequence;
+}
+
 export function emitJobsChanged(): void {
   dashboardEvents.emit('jobsChanged');
 }

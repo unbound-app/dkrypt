@@ -37,7 +37,7 @@ export function rateLimitPerUser(maxRequests: number, windowMs: number) {
       const retryAfterS = Math.ceil((bucket.windowStartedAt + windowMs - now) / 1000);
       setHeaders(res, 0, bucket.windowStartedAt);
       res.setHeader('Retry-After', String(retryAfterS));
-      res.status(429).json({ error: `too many requests - try again in ${retryAfterS}s` });
+      res.error('rate_limited', `too many requests - try again in ${retryAfterS}s`, 429, true);
       return;
     }
 

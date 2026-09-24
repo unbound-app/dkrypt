@@ -4,6 +4,7 @@ import { mkdir, readdir, rename, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { config } from '#config.js';
 import { scopedLogger } from '#logger.js';
+import { openStateCollectionDatabase, readStateCollection, replaceStateCollection } from '#store/sqlite.js';
 
 const log = scopedLogger('artifacts');
 
@@ -48,6 +49,15 @@ interface ArtifactIndex {
 
 const indexPath = path.join(config.stateDir, 'artifacts.json');
 const stagingDir = path.join(config.artifactDir, '.staging');
+const artifactDatabase = openStateCollectionDatabase(
+  {
+    stateDir: config.stateDir,
+    filename: config.stateDatabaseFile,
+    busyTimeoutMs: config.stateDbBusyTimeoutMs,
+    migrationDryRun: config.stateDbMigrationDryRun,
+  },
+  ['artifacts'],
+);
 let index: ArtifactIndex = loadIndex();
 let mutationChain = Promise.resolve();
 
@@ -68,14 +78,18 @@ function normalizeArtifactRecord(record: ArtifactRecord): ArtifactRecord {
 
 function loadIndex(): ArtifactIndex {
   mkdirSync(config.stateDir, { recursive: true });
+  const stored = readStateCollection(artifactDatabase, 'artifacts');
+  const storedArtifacts = stored.filter(isArtifactRecord).map(normalizeArtifactRecord);
+  if (storedArtifacts.length > 0) return { version: 1, artifacts: storedArtifacts };
   if (!existsSync(indexPath)) return { version: 1, artifacts: [] };
   try {
     const parsed = JSON.parse(readFileSync(indexPath, 'utf8')) as Partial<ArtifactIndex>;
     if (parsed.version !== 1 || !Array.isArray(parsed.artifacts)) throw new Error('unsupported artifact index');
-    return { version: 1, artifacts: parsed.artifacts.filter(isArtifactRecord).map(normalizeArtifactRecord) };
+    const artifacts = parsed.artifacts.filter(isArtifactRecord).map(normalizeArtifactRecord);
+    replaceStateCollection(artifactDatabase, 'artifacts', artifacts.map((artifact) => ({ id: artifact.id, payload: artifact, updatedAt: artifact.lastAccessedAt })));
+    return { version: 1, artifacts };
   } catch (err) {
-    log.warn('failed to load artifact index; starting with an empty index', { error: String(err) });
-    return { version: 1, artifacts: [] };
+    throw new Error(`could not initialize artifact metadata: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -98,9 +112,14 @@ function isArtifactRecord(value: unknown): value is ArtifactRecord {
 
 function persistIndex(): void {
   mkdirSync(config.stateDir, { recursive: true });
+  replaceStateCollection(artifactDatabase, 'artifacts', index.artifacts.map((artifact) => ({ id: artifact.id, payload: artifact, updatedAt: artifact.lastAccessedAt })));
   const temporary = `${indexPath}.${process.pid}.${randomUUID()}.tmp`;
   writeFileSync(temporary, JSON.stringify(index));
   renameSync(temporary, indexPath);
+}
+
+export function closeArtifactDatabase(): void {
+  artifactDatabase.close();
 }
 
 function withMutation<T>(fn: () => Promise<T>): Promise<T> {

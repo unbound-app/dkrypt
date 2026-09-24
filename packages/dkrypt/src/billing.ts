@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { openStateCollectionDatabase, readStateCollection, replaceStateCollection } from '#store/sqlite.js';
 import { config } from '#config.js';
 import { hasPermission, PermissionFlag } from '#permissions.js';
 
@@ -111,12 +112,25 @@ export interface BillingEventRecord {
   processedAt: string;
 }
 
+export interface BillingEntitlementEvent {
+  id: string;
+  userId?: string;
+  subscriptionId: string;
+  provider: BillingProvider;
+  planId: Exclude<PlanId, 'viewer'>;
+  kind: 'grant' | 'renewal' | 'pause' | 'failure' | 'cancellation' | 'revocation';
+  status: string;
+  at: string;
+  detail?: string;
+}
+
 export interface BillingSnapshot {
   customers: BillingCustomer[];
   subscriptions: BillingSubscription[];
   cryptoCheckouts: BillingCheckout[];
   cryptoCharges: BillingCharge[];
   processedEvents: BillingEventRecord[];
+  entitlementHistory?: BillingEntitlementEvent[];
 }
 
 export interface BillingEntitlements {
@@ -180,27 +194,56 @@ const planDefinitions = [
 ] as const;
 
 const billingPath = path.join(config.stateDir, 'billing.json');
+const billingDatabase = openStateCollectionDatabase({ stateDir: config.stateDir, filename: config.stateDatabaseFile, busyTimeoutMs: config.stateDbBusyTimeoutMs }, ['billing_records', 'billing_events']);
 const stripeActiveStatuses = new Set(['active', 'trialing', 'past_due']);
 const checkoutLocks = new Set<string>();
+let loadedFromLegacyFile = false;
 
 function emptySnapshot(): BillingSnapshot {
-  return { customers: [], subscriptions: [], cryptoCheckouts: [], cryptoCharges: [], processedEvents: [] };
+  return { customers: [], subscriptions: [], cryptoCheckouts: [], cryptoCharges: [], processedEvents: [], entitlementHistory: [] };
 }
 
 function load(): BillingSnapshot {
   mkdirSync(config.stateDir, { recursive: true });
+  const records = readStateCollection(billingDatabase, 'billing_records');
+  if (records.length > 0) {
+    const record = records[0];
+    if (typeof record !== 'object' || record === null || (record as { kind?: unknown }).kind !== 'snapshot') throw new Error('billing database record is malformed');
+    const snapshot = normalizeBillingSnapshot((record as { value?: unknown }).value);
+    if (!snapshot) throw new Error('billing database snapshot is malformed');
+    return snapshot;
+  }
   if (!existsSync(billingPath)) return emptySnapshot();
   try {
-    return normalizeBillingSnapshot(JSON.parse(readFileSync(billingPath, 'utf8'))) ?? emptySnapshot();
-  } catch {
-    return emptySnapshot();
+    const snapshot = normalizeBillingSnapshot(JSON.parse(readFileSync(billingPath, 'utf8')));
+    if (!snapshot) throw new Error('billing JSON snapshot is malformed');
+    loadedFromLegacyFile = true;
+    return snapshot;
+  } catch (error) {
+    throw new Error(`could not initialize billing state: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
 const state = load();
+if (loadedFromLegacyFile) persist();
 
 function persist(): void {
-  writeFileSync(billingPath, JSON.stringify(state, null, 2));
+  replaceStateCollection(billingDatabase, 'billing_records', [{ id: 'billing-snapshot', payload: { kind: 'snapshot', value: state }, updatedAt: Date.now() }]);
+  replaceStateCollection(billingDatabase, 'billing_events', state.processedEvents.map((event) => ({ id: `${event.provider}:${event.eventId}`, payload: event, updatedAt: Date.parse(event.processedAt) || Date.now() })));
+  const temporaryPath = `${billingPath}.${process.pid}.tmp`;
+  mkdirSync(path.dirname(billingPath), { recursive: true });
+  writeFileSync(temporaryPath, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+  const descriptor = openSync(temporaryPath, 'r');
+  try {
+    fsyncSync(descriptor);
+  } finally {
+    closeSync(descriptor);
+  }
+  renameSync(temporaryPath, billingPath);
+}
+
+export function closeBillingDatabase(): void {
+  billingDatabase.close();
 }
 
 export function listPlans() {
@@ -248,10 +291,18 @@ export function linkBillingCustomer(customerId: string, userId: string): void {
 export function upsertBillingSubscription(subscription: BillingSubscription): boolean {
   const existing = state.subscriptions.find((item) => item.provider === subscription.provider && item.subscriptionId === subscription.subscriptionId);
   if (existing && Date.parse(existing.occurredAt) > Date.parse(subscription.occurredAt)) return false;
+  const previous = existing ? { ...existing } : undefined;
   if (existing) Object.assign(existing, subscription, { userId: subscription.userId ?? existing.userId });
   else {
     const customer = state.customers.find((item) => item.provider === subscription.provider && item.customerId === subscription.customerId);
     state.subscriptions.push({ ...subscription, userId: subscription.userId ?? customer?.userId });
+  }
+  const kind = entitlementEventKind(previous, subscription);
+  if (kind) {
+    state.entitlementHistory = [
+      ...(state.entitlementHistory ?? []),
+      { id: `${subscription.subscriptionId}:${subscription.updatedAt}:${kind}`, userId: subscription.userId ?? previous?.userId, subscriptionId: subscription.subscriptionId, provider: subscription.provider, planId: subscription.planId, kind, status: subscription.status, at: subscription.updatedAt, detail: subscription.failureReason },
+    ].slice(-5000);
   }
   persist();
   return true;
@@ -285,6 +336,13 @@ export function getBillingSubscriptionsForUser(userId: string): BillingSubscript
 
 export function listBillingSubscriptions(): BillingSubscription[] {
   return state.subscriptions.map((subscription) => structuredClone(subscription));
+}
+
+export function listBillingEntitlementHistory(subscriptionId?: string): BillingEntitlementEvent[] {
+  return (state.entitlementHistory ?? [])
+    .filter((event) => !subscriptionId || event.subscriptionId === subscriptionId)
+    .sort((a, b) => Date.parse(b.at) - Date.parse(a.at))
+    .map((event) => structuredClone(event));
 }
 
 export function getBillingEntitlements(userId: string): BillingEntitlements {
@@ -452,7 +510,21 @@ export function replaceBillingSnapshot(snapshot: BillingSnapshot | { customers: 
   state.cryptoCheckouts = normalized.cryptoCheckouts;
   state.cryptoCharges = normalized.cryptoCharges;
   state.processedEvents = normalized.processedEvents;
+  state.entitlementHistory = normalized.entitlementHistory ?? [];
   persist();
+}
+
+function entitlementEventKind(previous: BillingSubscription | undefined, next: BillingSubscription): BillingEntitlementEvent['kind'] | undefined {
+  if (!previous) return 'grant';
+  if (previous.status !== next.status) {
+    if (next.status === 'cancelled' || next.status === 'canceled') return 'cancellation';
+    if (next.status === 'past_due' || next.lastChargeStatus === 'failed') return 'failure';
+    if (next.status === 'paused' || next.paused) return 'pause';
+    if (next.status === 'active') return 'renewal';
+    if (next.status === 'revoked') return 'revocation';
+  }
+  if (previous.lastChargeId !== next.lastChargeId && next.lastChargeStatus === 'succeeded') return 'renewal';
+  return undefined;
 }
 
 function normalizeBillingSnapshot(value: unknown): BillingSnapshot | undefined {
@@ -536,6 +608,7 @@ function normalizeBillingSnapshot(value: unknown): BillingSnapshot | undefined {
     cryptoCheckouts: Array.isArray(snapshot.cryptoCheckouts) ? snapshot.cryptoCheckouts.filter(isBillingCheckout).map((item) => structuredClone(item)) : [],
     cryptoCharges: Array.isArray(snapshot.cryptoCharges) ? snapshot.cryptoCharges.filter(isBillingCharge).map((item) => structuredClone(item)) : [],
     processedEvents: Array.isArray(snapshot.processedEvents) ? snapshot.processedEvents.filter(isBillingEvent).map((item) => structuredClone(item)) : [],
+    entitlementHistory: Array.isArray(snapshot.entitlementHistory) ? snapshot.entitlementHistory.filter(isEntitlementEvent).map((item) => structuredClone(item)) : [],
   };
 }
 
@@ -620,4 +693,10 @@ function isBillingEvent(value: unknown): value is BillingEventRecord {
   if (typeof value !== 'object' || value === null) return false;
   const record = value as Record<string, unknown>;
   return (record.provider === 'nowpayments' || record.provider === 'legacy') && typeof record.eventId === 'string' && typeof record.occurredAt === 'string' && typeof record.processedAt === 'string';
+}
+
+function isEntitlementEvent(value: unknown): value is BillingEntitlementEvent {
+  if (typeof value !== 'object' || value === null) return false;
+  const record = value as Record<string, unknown>;
+  return typeof record.id === 'string' && typeof record.subscriptionId === 'string' && billingProvider(record.provider) !== undefined && typeof record.planId === 'string' && planDefinitions.some((plan) => plan.id === record.planId) && ['grant', 'renewal', 'pause', 'failure', 'cancellation', 'revocation'].includes(String(record.kind)) && typeof record.status === 'string' && typeof record.at === 'string';
 }

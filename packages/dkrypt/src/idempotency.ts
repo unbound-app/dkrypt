@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { config } from '#config.js';
+import { openStateCollectionDatabase, readStateCollection, replaceStateCollection } from '#store/sqlite.js';
 
 export interface IdempotencyRecord {
   scope: string;
@@ -41,24 +42,46 @@ export class IdempotencyRegistry {
 }
 
 const registryPath = path.join(config.stateDir, 'idempotency.json');
+const registryDatabase = openStateCollectionDatabase({ stateDir: config.stateDir, filename: config.stateDatabaseFile, busyTimeoutMs: config.stateDbBusyTimeoutMs }, ['idempotency_keys']);
 
 function loadRecords(): IdempotencyRecord[] {
+  const databaseRecords = readStateCollection(registryDatabase, 'idempotency_keys');
+  if (databaseRecords.length > 0) {
+    if (!databaseRecords.every(isIdempotencyRecord)) throw new Error('idempotency database record is malformed');
+    return databaseRecords as IdempotencyRecord[];
+  }
   if (!existsSync(registryPath)) return [];
   try {
     const parsed = JSON.parse(readFileSync(registryPath, 'utf8'));
-    return Array.isArray(parsed) ? parsed.filter((record): record is IdempotencyRecord =>
-      typeof record?.scope === 'string' &&
-      typeof record?.key === 'string' &&
-      typeof record?.fingerprint === 'string' &&
-      typeof record?.jobId === 'string' &&
-      typeof record?.expiresAt === 'number',
-    ) : [];
-  } catch {
-    return [];
+    if (!Array.isArray(parsed) || !parsed.every(isIdempotencyRecord)) throw new Error('idempotency JSON snapshot is malformed');
+    const records = parsed as IdempotencyRecord[];
+    replaceStateCollection(registryDatabase, 'idempotency_keys', records.map((record) => ({ id: `${record.scope}:${record.key}`, payload: record, updatedAt: record.expiresAt })));
+    return records;
+  } catch (error) {
+    throw new Error(`could not initialize idempotency state: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
-export const apiIdempotencyRegistry = new IdempotencyRegistry(loadRecords(), (records) => {
+function isIdempotencyRecord(value: unknown): value is IdempotencyRecord {
+  return typeof value === 'object' && value !== null && typeof (value as IdempotencyRecord).scope === 'string' && typeof (value as IdempotencyRecord).key === 'string' && typeof (value as IdempotencyRecord).fingerprint === 'string' && typeof (value as IdempotencyRecord).jobId === 'string' && typeof (value as IdempotencyRecord).expiresAt === 'number';
+}
+
+function persistRecords(records: IdempotencyRecord[]): void {
+  replaceStateCollection(registryDatabase, 'idempotency_keys', records.map((record) => ({ id: `${record.scope}:${record.key}`, payload: record, updatedAt: record.expiresAt })));
   mkdirSync(path.dirname(registryPath), { recursive: true });
-  writeFileSync(registryPath, JSON.stringify(records));
-});
+  const temporaryPath = `${registryPath}.${process.pid}.tmp`;
+  writeFileSync(temporaryPath, `${JSON.stringify(records)}\n`, { mode: 0o600 });
+  const descriptor = openSync(temporaryPath, 'r');
+  try {
+    fsyncSync(descriptor);
+  } finally {
+    closeSync(descriptor);
+  }
+  renameSync(temporaryPath, registryPath);
+}
+
+export const apiIdempotencyRegistry = new IdempotencyRegistry(loadRecords(), persistRecords);
+
+export function closeIdempotencyDatabase(): void {
+  registryDatabase.close();
+}

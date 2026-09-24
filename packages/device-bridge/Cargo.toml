@@ -1,0 +1,11 @@
+[package]
+name = "dkrypt-device-bridge"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+idevice = { git = "https://github.com/jkcoxson/idevice.git", rev = "d32c8189c51c2789496b0768039419c3705498c3", default-features = false, features = ["usbmuxd", "pair", "tcp", "rustcrypto"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+uuid = { version = "1", features = ["v4"] }
