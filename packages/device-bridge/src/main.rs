@@ -940,10 +940,21 @@ async fn main() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CancellationToken, MAX_FRAME_BYTES, RPC_VERSION, authorized_secret, bridge_capabilities,
-        error, failure, response, valid_frame_length,
+        BridgeState, CancellationToken, MAX_FRAME_BYTES, RPC_VERSION, authorized_secret,
+        bridge_capabilities, error, failure, handle_client, read_frame, response,
+        valid_frame_length,
     };
     use serde_json::json;
+    use std::{
+        collections::HashMap,
+        path::PathBuf,
+        sync::{Arc, atomic::AtomicU64},
+    };
+    use tokio::{
+        io::AsyncWriteExt,
+        net::{UnixListener, UnixStream},
+        sync::Mutex,
+    };
 
     #[test]
     fn frame_limits_reject_empty_and_oversized_payloads() {
@@ -999,5 +1010,67 @@ mod tests {
                 .expect("cancellation waiter timed out")
                 .expect("cancellation waiter panicked")
         );
+    }
+
+    #[tokio::test]
+    async fn rpc_socket_preserves_authentication_and_request_ids() {
+        let socket_path =
+            std::env::temp_dir().join(format!("dkrypt-bridge-test-{}.sock", std::process::id()));
+        let _ = std::fs::remove_file(&socket_path);
+        let listener = UnixListener::bind(&socket_path).expect("test socket bind failed");
+        let state = Arc::new(BridgeState {
+            secrets: vec!["current-secret".to_string()],
+            mux_socket: PathBuf::from("/tmp/missing-netmuxd.sock"),
+            host_id: "test-host".to_string(),
+            tunnels: Mutex::new(HashMap::new()),
+            cancellations: Mutex::new(HashMap::new()),
+            event_sequence: AtomicU64::new(0),
+        });
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("test socket accept failed");
+            handle_client(stream, state).await;
+        });
+        let mut client = UnixStream::connect(&socket_path)
+            .await
+            .expect("test socket connect failed");
+        let request = json!({
+            "version": RPC_VERSION,
+            "requestId": "capability-request",
+            "auth": "current-secret",
+            "operation": "capabilities"
+        });
+        let body = serde_json::to_vec(&request).expect("test request serialization failed");
+        client
+            .write_u32(body.len() as u32)
+            .await
+            .expect("test request header failed");
+        client
+            .write_all(&body)
+            .await
+            .expect("test request body failed");
+        let response: serde_json::Value = serde_json::from_slice(
+            &read_frame(&mut client)
+                .await
+                .expect("test response frame failed")
+                .expect("test response was empty"),
+        )
+        .expect("test response serialization failed");
+        assert_eq!(
+            response.get("requestId").and_then(|value| value.as_str()),
+            Some("capability-request")
+        );
+        assert_eq!(
+            response.get("ok").and_then(|value| value.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            response
+                .get("result")
+                .and_then(|value| value.get("transport"))
+                .and_then(|value| value.as_str()),
+            Some("rust-netmuxd")
+        );
+        server.abort();
+        let _ = std::fs::remove_file(socket_path);
     }
 }
