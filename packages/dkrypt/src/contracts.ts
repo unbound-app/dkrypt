@@ -182,7 +182,30 @@ const DashboardOverviewResponse = object({
 });
 const JobHistoryPage = object({ history: Type.Array(JsonObject), total: Type.Integer({ minimum: 0 }), nextCursor: PageCursor });
 const ArtifactPage = object({ artifacts: Type.Array(JsonObject), total: Type.Integer({ minimum: 0 }), totalBytes: Type.Number(), maxBytes: Type.Number(), nextCursor: PageCursor });
-const DeviceListResponse = object({ devices: Type.Array(JsonObject) });
+const DeviceResponse = object({
+  id: Identifier,
+  name: Type.String(),
+  enabled: Type.Boolean(),
+  isPrimary: Type.Optional(Type.Boolean()),
+  transport: Type.Union([Type.Literal('wifi'), Type.Literal('usb')]),
+  host: Type.Optional(Type.String()),
+  port: Type.Optional(Type.Integer({ minimum: 1, maximum: 65535 })),
+  user: Type.Optional(Type.String()),
+  udid: Type.Optional(Type.String()),
+  usbmuxNetwork: Type.Optional(Type.Boolean()),
+  productType: Type.Optional(Type.String()),
+  iosVersion: Type.Optional(Type.String()),
+  toolchain: Type.Optional(Type.String()),
+  notes: Type.Optional(Type.String()),
+  createdAt: Type.Number(),
+  updatedAt: Type.Number(),
+  setupRequired: Type.Boolean(),
+  transportState: DeviceTransportState,
+  transportCapabilities: Type.Array(Type.String()),
+  lastSeenAt: Type.Optional(Type.Number()),
+  recoveryState: Type.Union([Type.Literal('stable'), Type.Literal('recovering'), Type.Literal('degraded'), Type.Literal('offline')]),
+});
+const DeviceListResponse = object({ devices: Type.Array(DeviceResponse) });
 const DevicePreflightResponse = object({ device: JsonObject, health: JsonObject, bridge: JsonObject, checks: Type.Array(JsonObject), ready: Type.Boolean() });
 const JobTimelineResponse = object({
   id: Identifier,
@@ -198,7 +221,85 @@ const JobTimelineResponse = object({
   events: Type.Array(JsonObject),
   guidance: Type.Optional(JsonObject),
 });
-const TestFlightCatalogResponse = object({ apps: Type.Array(JsonObject), fetchedAt: Type.Optional(Type.String()), refreshing: Type.Boolean() });
+const TestFlightCatalogAppResponse = object({
+  appId: Type.Integer({ minimum: 1 }),
+  bundleId: BundleId,
+  displayName: Type.String(),
+  iconUrl: Type.Optional(Type.String()),
+  sellerName: Type.Optional(Type.String()),
+  category: Type.Optional(Type.String()),
+  devices: Type.Array(object({ id: Identifier, name: Type.String() })),
+  lastVerifiedAt: Type.Number(),
+  deviceSource: Type.Literal(true),
+});
+const TestFlightCatalogResponse = object({ apps: Type.Array(TestFlightCatalogAppResponse), fetchedAt: Type.Optional(Type.Number()), refreshing: Type.Boolean() });
+const TestFlightSubscriptionDeviceResponse = object({
+  deviceId: Identifier,
+  status: Type.Union([
+    Type.Literal('pending'),
+    Type.Literal('syncing'),
+    Type.Literal('active'),
+    Type.Literal('unavailable'),
+    Type.Literal('unsupported'),
+    Type.Literal('error'),
+    Type.Literal('unsubscribed'),
+  ]),
+  appleMembership: Type.Optional(Type.Union([Type.Literal('accepted'), Type.Literal('pending'), Type.Literal('unknown')])),
+  lastVerifiedAt: Type.Optional(Type.Number()),
+  lastSyncedAt: Type.Optional(Type.Number()),
+  lastError: Type.Optional(Type.String()),
+});
+const TestFlightSubscriptionResponse = object({
+  id: Identifier,
+  url: Type.String(),
+  inviteCode: Type.String(),
+  requestedBy: Identifier,
+  status: Type.Union([Type.Literal('pending'), Type.Literal('approved'), Type.Literal('denied'), Type.Literal('withdrawn')]),
+  appId: Type.Optional(Type.Integer({ minimum: 1 })),
+  bundleId: Type.Optional(BundleId),
+  displayName: Type.Optional(Type.String()),
+  iconUrl: Type.Optional(Type.String()),
+  sellerName: Type.Optional(Type.String()),
+  category: Type.Optional(Type.String()),
+  createdAt: Type.Number(),
+  updatedAt: Type.Number(),
+  approvedAt: Type.Optional(Type.Number()),
+  approvedBy: Type.Optional(Identifier),
+  deniedAt: Type.Optional(Type.Number()),
+  deniedBy: Type.Optional(Identifier),
+  withdrawnAt: Type.Optional(Type.Number()),
+  withdrawnBy: Type.Optional(Identifier),
+  devices: Type.Array(TestFlightSubscriptionDeviceResponse),
+  devicePolicy: Type.Literal('all-enabled'),
+});
+const TestFlightSubscriptionPage = object({ subscriptions: Type.Array(TestFlightSubscriptionResponse), total: Type.Integer({ minimum: 0 }), nextCursor: PageCursor });
+const TestFlightSubscriptionMutationResponse = object({ subscription: TestFlightSubscriptionResponse });
+const TestFlightDeviceUnsubscribeResponse = object({ bundleId: BundleId, removedDeviceIds: Type.Array(Identifier), failures: Type.Array(Type.String()) });
+const SearchResponse = object({ results: Type.Array(JsonObject) });
+const DashboardDecryptPreflightResponse = object({
+  bundleId: BundleId,
+  versionLabel: Type.Optional(Type.String()),
+  testflight: Type.Boolean(),
+  installSizeBytes: Type.Optional(Type.Number({ exclusiveMinimum: 0 })),
+  estimatedDurationMs: Type.Optional(Type.Number({ minimum: 0 })),
+  queueLength: Type.Integer({ minimum: 0 }),
+  canQueue: Type.Boolean(),
+  devices: Type.Array(object({
+    id: Identifier,
+    name: Type.String(),
+    isPrimary: Type.Boolean(),
+    ready: Type.Boolean(),
+    blockers: Type.Array(Type.String()),
+    readiness: Type.Optional(JsonObject),
+    reachable: Type.Optional(Type.Boolean()),
+    storageFreeBytes: Type.Optional(Type.Number({ minimum: 0 })),
+    batteryPercent: Type.Optional(Type.Number({ minimum: 0, maximum: 100 })),
+  })),
+});
+const VersionsResponse = object({ versions: Type.Array(JsonObject) });
+const DeviceSetupResponse = object({ device: DeviceResponse, setup: JsonObject });
+const DeviceInventoryResponse = object({ deviceId: Identifier, bundles: Type.Array(JsonObject) });
+const BridgeActionResponse = object({ result: JsonObject });
 const AuthMfaResponse = object({ enabled: Type.Boolean(), recoveryCodesRemaining: Type.Integer({ minimum: 0 }) });
 const AuthSessionResponse = object({
   loggedIn: Type.Boolean(),
@@ -907,6 +1008,78 @@ register('GET', '/v1/dashboard/testflight/:appId/builds', {
 register('POST', '/v1/dashboard/testflight/decrypt', {
   body: object({ bundleId: BundleId, appId: Type.Union([Type.String({ minLength: 1, maxLength: 32 }), Type.Integer({ minimum: 1 })]), build: Type.Record(Type.String(), Type.Unknown()), deviceId: Type.Optional(Identifier), preferPrimary: Type.Optional(Type.Boolean()) }),
   response: { 202: JobSummaryResponse },
+});
+register('GET', '/v1/dashboard/search', {
+  querystring: object({ q: Type.String({ minLength: 1, maxLength: 200 }) }),
+  response: { 200: SearchResponse },
+});
+register('GET', '/v1/dashboard/testflight/subscriptions', {
+  querystring: PaginationQuery,
+  response: { 200: TestFlightSubscriptionPage },
+});
+register('POST', '/v1/dashboard/testflight/subscriptions', {
+  body: object({ url: Type.String({ minLength: 1, maxLength: 500 }) }),
+  response: { 200: TestFlightSubscriptionMutationResponse, 201: TestFlightSubscriptionMutationResponse, 202: TestFlightSubscriptionMutationResponse },
+});
+register('POST', '/v1/dashboard/testflight/subscriptions/:id/approve', {
+  params: object({ id: Identifier }),
+  response: { 202: TestFlightSubscriptionMutationResponse },
+});
+register('POST', '/v1/dashboard/testflight/subscriptions/:id/deny', {
+  params: object({ id: Identifier }),
+  response: { 200: TestFlightSubscriptionMutationResponse },
+});
+register('POST', '/v1/dashboard/testflight/subscriptions/:id/sync', {
+  params: object({ id: Identifier }),
+  response: { 202: TestFlightSubscriptionMutationResponse },
+});
+register('POST', '/v1/dashboard/testflight/subscriptions/:id/unsubscribe', {
+  params: object({ id: Identifier }),
+  response: { 202: TestFlightSubscriptionMutationResponse },
+});
+register('POST', '/v1/dashboard/testflight/catalog/:bundleId/unsubscribe', {
+  params: object({ bundleId: BundleId }),
+  response: { 200: TestFlightDeviceUnsubscribeResponse },
+});
+register('POST', '/v1/dashboard/decrypt/preflight', {
+  body: object({ bundleId: BundleId, testflight: Type.Optional(Type.Boolean()), versionLabel: Type.Optional(Type.String({ maxLength: 64 })), installSizeBytes: Type.Optional(Type.Number({ exclusiveMinimum: 0 })), deviceId: Type.Optional(Identifier) }),
+  response: { 200: DashboardDecryptPreflightResponse },
+});
+register('GET', '/v1/dashboard/versions/:bundleId', {
+  params: object({ bundleId: BundleId }),
+  querystring: object({ force: Type.Optional(Type.Literal('true')) }),
+  response: { 200: VersionsResponse },
+});
+register('POST', '/v1/dashboard/devices/setup', {
+  body: DeviceConnectionInput,
+  response: { 201: DeviceSetupResponse },
+});
+register('POST', '/v1/dashboard/devices', {
+  body: DeviceRecordInput,
+  response: { 201: DeviceResponse },
+});
+register('PATCH', '/v1/dashboard/devices/:id', {
+  params: object({ id: Identifier }),
+  body: DevicePatchInput,
+  response: { 200: DeviceResponse },
+});
+register('GET', '/v1/dashboard/devices/:id/inventory', {
+  params: object({ id: Identifier }),
+  response: { 200: DeviceInventoryResponse },
+});
+register('PUT', '/v1/dashboard/devices/:id/dark-mode', {
+  params: object({ id: Identifier }),
+  body: object({ enabled: Type.Boolean() }),
+  response: { 200: DeviceHealthResponse },
+});
+register('POST', '/v1/dashboard/devices/:id/bridge-action', {
+  params: object({ id: Identifier }),
+  body: object({ action: Type.Union([Type.Literal('open-testflight'), Type.Literal('open-appstore'), Type.Literal('screen-status')]) }),
+  response: { 200: BridgeActionResponse },
+});
+register('POST', '/v1/dashboard/devices/:id/recover', {
+  params: object({ id: Identifier }),
+  response: { 200: OkResponse },
 });
 
 export function getRouteContract(method: string, path: string): FastifySchema | undefined {

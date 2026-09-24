@@ -53,6 +53,13 @@ test('core operational responses publish their required fields', async () => {
       ['/v1/dashboard/artifacts', 'get', ['artifacts', 'total', 'totalBytes', 'maxBytes']],
       ['/v1/dashboard/devices', 'get', ['devices']],
       ['/v1/dashboard/testflight/catalog', 'get', ['apps', 'refreshing']],
+      ['/v1/dashboard/search', 'get', ['results']],
+      ['/v1/dashboard/testflight/subscriptions', 'get', ['subscriptions', 'total', 'nextCursor']],
+      ['/v1/dashboard/decrypt/preflight', 'post', ['bundleId', 'testflight', 'queueLength', 'canQueue', 'devices']],
+      ['/v1/dashboard/versions/{bundleId}', 'get', ['versions']],
+      ['/v1/dashboard/devices/{id}/inventory', 'get', ['deviceId', 'bundles']],
+      ['/v1/dashboard/devices/{id}/dark-mode', 'put', ['reachable', 'checkedAt']],
+      ['/v1/dashboard/devices/{id}/bridge-action', 'post', ['result']],
       ['/v1/auth/session', 'get', ['loggedIn', 'identities', 'linkedProviders', 'publicBaseUrl', 'mfa']],
       ['/v1/billing/provider-status', 'get', ['stripe', 'crypto']],
       ['/v1/billing/webhooks/inbox', 'get', ['inbox', 'total', 'nextCursor']],
@@ -84,6 +91,34 @@ test('core operational responses publish their required fields', async () => {
       expect(schema).toBeDefined();
       const properties = schema?.properties ?? schema?.items?.properties ?? {};
       for (const field of fields) expect(Object.keys(properties)).toContain(field);
+    }
+  } finally {
+    await server.close();
+  }
+});
+
+test('device and TestFlight mutation contracts publish their success status', async () => {
+  const server = await buildServer({ includePublicRoutes: false });
+  try {
+    await server.ready();
+    const document = server.swagger() as {
+      paths?: Record<string, Record<string, { responses?: Record<string, { content?: Record<string, { schema?: { properties?: Record<string, unknown> } }> }> }>>;
+    };
+    const assertions: Array<[string, string, string, string[]]> = [
+      ['/v1/dashboard/testflight/subscriptions', 'post', '201', ['subscription']],
+      ['/v1/dashboard/testflight/subscriptions/{id}/approve', 'post', '202', ['subscription']],
+      ['/v1/dashboard/testflight/subscriptions/{id}/deny', 'post', '200', ['subscription']],
+      ['/v1/dashboard/testflight/subscriptions/{id}/sync', 'post', '202', ['subscription']],
+      ['/v1/dashboard/testflight/subscriptions/{id}/unsubscribe', 'post', '202', ['subscription']],
+      ['/v1/dashboard/devices/setup', 'post', '201', ['device', 'setup']],
+      ['/v1/dashboard/devices', 'post', '201', ['id', 'name', 'enabled', 'transport']],
+      ['/v1/dashboard/devices/{id}', 'patch', '200', ['id', 'name', 'enabled', 'transport']],
+      ['/v1/dashboard/devices/{id}/recover', 'post', '200', ['ok']],
+    ];
+    for (const [path, method, status, fields] of assertions) {
+      const schema = document.paths?.[path]?.[method]?.responses?.[status]?.content?.['application/json']?.schema;
+      expect(schema).toBeDefined();
+      for (const field of fields) expect(Object.keys(schema?.properties ?? {})).toContain(field);
     }
   } finally {
     await server.close();
