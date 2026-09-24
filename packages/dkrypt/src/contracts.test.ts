@@ -1,5 +1,19 @@
 import { expect, test } from 'bun:test';
+import { authRouter } from '#routes/auth.js';
+import { billingRouter, nowpaymentsWebhookRouter, stripeWebhookRouter } from '#routes/billing.js';
+import { dashboardRouter } from '#routes/dashboard.js';
+import { decryptRouter } from '#routes/decrypt.js';
+import { healthRouter } from '#routes/health.js';
 import { buildServer } from '#server.js';
+import { getRouteContracts } from '#contracts.js';
+
+test('every registered versioned route has an explicit TypeBox contract', () => {
+  const routers = [authRouter, billingRouter, nowpaymentsWebhookRouter, stripeWebhookRouter, dashboardRouter, decryptRouter, healthRouter];
+  const routes = routers.flatMap((router) => router.routes.map((route) => `${route.method} ${route.path}`));
+  const contracts = getRouteContracts();
+  expect(routes.length).toBe(contracts.size);
+  for (const route of routes) expect(contracts.has(route)).toBe(true);
+});
 
 test('every versioned route is represented in generated OpenAPI', async () => {
   const server = await buildServer({ includePublicRoutes: false });

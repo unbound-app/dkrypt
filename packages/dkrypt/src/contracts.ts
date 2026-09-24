@@ -63,19 +63,26 @@ function register(method: string, path: string, schema: FastifySchema): void {
   });
 }
 
-function fallbackContract(method: string, path: string): FastifySchema {
+type ContractMethod = 'DELETE' | 'GET' | 'PATCH' | 'POST' | 'PUT';
+
+function registerGenericContract(method: ContractMethod, path: string): void {
   const parameterNames = [...path.matchAll(/:([A-Za-z0-9_]+)/g)].map((match) => match[1]);
-  const schema: FastifySchema = {
-    tags: [path.startsWith('/v1/dashboard') ? 'dashboard' : 'public'],
-    summary: `${method} ${path}`,
-    response: { 200: JsonResponse, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope, 409: ErrorEnvelope, 429: ErrorEnvelope, 500: ErrorEnvelope, 503: ErrorEnvelope },
-  };
+  const schema: FastifySchema = {};
   if (parameterNames.length > 0) {
-    schema.params = Type.Object(Object.fromEntries(parameterNames.map((name) => [name, Type.String({ minLength: 1, maxLength: 200 })])), { additionalProperties: false });
+    schema.params = Type.Object(Object.fromEntries(parameterNames.map((name) => [name, Identifier])), { additionalProperties: false });
   }
-  if (method === 'GET') schema.querystring = JsonObject;
-  if (method !== 'GET') schema.body = JsonObject;
-  return schema;
+  if (method === 'GET') {
+    schema.querystring = JsonObject;
+  } else if (method !== 'DELETE') {
+    schema.body = path.endsWith('/webhook') ? Type.Any() : JsonObject;
+  }
+  if (path.endsWith('/webhook')) {
+    schema.headers = object({
+      'stripe-signature': Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
+      'x-nowpayments-sig': Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
+    });
+  }
+  register(method, path, schema);
 }
 
 register('POST', '/v1/decrypts', {
@@ -193,13 +200,155 @@ register('POST', '/v1/billing/webhooks/inbox/:id/replay', { params: object({ id:
 register('POST', '/v1/billing/webhooks/inbox/:id/quarantine', { params: object({ id: Identifier }), body: object({ reason: Type.Optional(Type.String({ maxLength: 500 })) }) });
 register('GET', '/v1/billing/webhooks/inbox', { querystring: object({ ...PaginationQuery.properties, status: Type.Optional(Type.String({ maxLength: 32 })), provider: Type.Optional(Type.String({ maxLength: 32 })) }) });
 
+const remainingContracts: Array<[ContractMethod, string]> = [
+  ['GET', '/v1/auth/session'],
+  ['GET', '/v1/auth/mfa'],
+  ['POST', '/v1/auth/mfa/setup'],
+  ['GET', '/v1/auth/privacy/export'],
+  ['PATCH', '/v1/auth/profile'],
+  ['DELETE', '/v1/auth/connections/:provider'],
+  ['POST', '/v1/auth/refresh'],
+  ['POST', '/v1/auth/logout'],
+  ['POST', '/v1/auth/logout-everywhere'],
+  ['GET', '/v1/auth/sessions'],
+  ['DELETE', '/v1/auth/sessions/:id'],
+  ['POST', '/v1/auth/sessions/revoke-others'],
+  ['GET', '/v1/auth/github/login'],
+  ['GET', '/v1/auth/github/connect'],
+  ['GET', '/v1/auth/github/callback'],
+  ['GET', '/v1/auth/discord/login'],
+  ['GET', '/v1/auth/discord/connect'],
+  ['GET', '/v1/auth/discord/callback'],
+  ['POST', '/v1/billing/subscription'],
+  ['POST', '/v1/nowpayments/webhook'],
+  ['POST', '/v1/stripe/webhook'],
+  ['GET', '/v1/dashboard/overview'],
+  ['GET', '/v1/dashboard/doctor'],
+  ['GET', '/v1/dashboard/synthetic'],
+  ['POST', '/v1/dashboard/notifications/read'],
+  ['GET', '/v1/dashboard/events'],
+  ['GET', '/v1/dashboard/artifacts/:id/file'],
+  ['GET', '/v1/dashboard/jobs/export'],
+  ['GET', '/v1/dashboard/jobs/eta/:bundleId'],
+  ['POST', '/v1/dashboard/jobs/bulk-preview'],
+  ['GET', '/v1/dashboard/jobs/slo'],
+  ['GET', '/v1/dashboard/jobs/stats/:bundleId'],
+  ['GET', '/v1/dashboard/jobs/volume'],
+  ['GET', '/v1/dashboard/jobs/diff'],
+  ['GET', '/v1/dashboard/insights'],
+  ['GET', '/v1/dashboard/failure-patterns'],
+  ['GET', '/v1/dashboard/storage-forecast'],
+  ['GET', '/v1/dashboard/support-bundle'],
+  ['GET', '/v1/dashboard/search'],
+  ['POST', '/v1/dashboard/testflight/catalog/:bundleId/unsubscribe'],
+  ['GET', '/v1/dashboard/apps/metadata'],
+  ['GET', '/v1/dashboard/apps/cache'],
+  ['POST', '/v1/dashboard/apps/metadata/refresh'],
+  ['GET', '/v1/dashboard/versions/:bundleId'],
+  ['GET', '/v1/dashboard/devices/discover'],
+  ['GET', '/v1/dashboard/devices'],
+  ['GET', '/v1/dashboard/github/rate-limit'],
+  ['GET', '/v1/dashboard/devices/:id/health-history'],
+  ['GET', '/v1/dashboard/devices/:id/battery-history'],
+  ['GET', '/v1/dashboard/devices/:id/temperature-history'],
+  ['GET', '/v1/dashboard/devices/:id/storage-history'],
+  ['GET', '/v1/dashboard/watches'],
+  ['GET', '/v1/dashboard/watches/export'],
+  ['GET', '/v1/dashboard/watches/health'],
+  ['GET', '/v1/dashboard/watches/calendar'],
+  ['GET', '/v1/dashboard/github/budget-history'],
+  ['GET', '/v1/dashboard/github/repos'],
+  ['GET', '/v1/dashboard/github/workflows'],
+  ['POST', '/v1/dashboard/watches'],
+  ['PATCH', '/v1/dashboard/watches/:id'],
+  ['DELETE', '/v1/dashboard/watches/:id'],
+  ['POST', '/v1/dashboard/watches/import'],
+  ['POST', '/v1/dashboard/watches/preview-dispatch-draft'],
+  ['POST', '/v1/dashboard/watches/validate-dispatch-draft'],
+  ['GET', '/v1/dashboard/watches/:id/preview-dispatch'],
+  ['GET', '/v1/dashboard/watches/:id/preview-dispatch/:source'],
+  ['POST', '/v1/dashboard/watches/:id/trigger-dispatch'],
+  ['GET', '/v1/dashboard/testflight/:appId/trains'],
+  ['GET', '/v1/dashboard/testflight/diagnostics'],
+  ['GET', '/v1/dashboard/testflight/:appId/builds'],
+  ['POST', '/v1/dashboard/jobs/reorder'],
+  ['GET', '/v1/dashboard/keys/mine'],
+  ['POST', '/v1/dashboard/keys/request'],
+  ['POST', '/v1/dashboard/keys/create'],
+  ['POST', '/v1/dashboard/keys/:id/reveal'],
+  ['POST', '/v1/dashboard/keys/:id/regenerate'],
+  ['DELETE', '/v1/dashboard/keys/:id'],
+  ['POST', '/v1/dashboard/keys/bulk-revoke'],
+  ['POST', '/v1/dashboard/keys/bulk-extend-expiry'],
+  ['POST', '/v1/dashboard/keys/bulk-set-daily-limit'],
+  ['POST', '/v1/dashboard/keys/bulk-set-scope'],
+  ['GET', '/v1/dashboard/keys/:id/usage'],
+  ['GET', '/v1/dashboard/keys/:id/bundle-usage'],
+  ['GET', '/v1/dashboard/keys/:id/outcomes'],
+  ['GET', '/v1/dashboard/keys/pending'],
+  ['POST', '/v1/dashboard/keys/:id/approve'],
+  ['POST', '/v1/dashboard/keys/bulk-approve'],
+  ['PATCH', '/v1/dashboard/keys/:id/priority'],
+  ['PATCH', '/v1/dashboard/keys/:id/max-concurrent'],
+  ['PATCH', '/v1/dashboard/keys/:id/allow-testflight'],
+  ['POST', '/v1/dashboard/keys/:id/deny'],
+  ['GET', '/v1/dashboard/settings'],
+  ['PUT', '/v1/dashboard/settings'],
+  ['GET', '/v1/dashboard/settings/job-history-retention/preview'],
+  ['GET', '/v1/dashboard/settings/validate-cron'],
+  ['POST', '/v1/dashboard/settings/test-webhook'],
+  ['GET', '/v1/dashboard/users'],
+  ['GET', '/v1/dashboard/audit-log/export'],
+  ['GET', '/v1/dashboard/roles'],
+  ['POST', '/v1/dashboard/roles'],
+  ['PATCH', '/v1/dashboard/roles/:id'],
+  ['DELETE', '/v1/dashboard/roles/:id'],
+  ['POST', '/v1/dashboard/roles/reorder'],
+  ['GET', '/v1/dashboard/discord/status'],
+  ['GET', '/v1/dashboard/discord/guilds'],
+  ['POST', '/v1/dashboard/discord/guilds'],
+  ['GET', '/v1/dashboard/discord/roles'],
+  ['GET', '/v1/dashboard/discord/perks'],
+  ['POST', '/v1/dashboard/discord/perks'],
+  ['DELETE', '/v1/dashboard/discord/perks/:id'],
+  ['POST', '/v1/dashboard/users'],
+  ['PATCH', '/v1/dashboard/users/:username'],
+  ['DELETE', '/v1/dashboard/users/:username'],
+  ['GET', '/v1/dashboard/backup/export'],
+  ['POST', '/v1/dashboard/backup/import'],
+  ['POST', '/v1/dashboard/backup/preview'],
+  ['POST', '/v1/dashboard/backup/drill'],
+  ['GET', '/v1/dashboard/backup/schedule'],
+  ['POST', '/v1/dashboard/backup/schedule'],
+  ['GET', '/v1/dashboard/backup/history'],
+  ['POST', '/v1/dashboard/backup/history'],
+  ['GET', '/v1/dashboard/backup/history/:id/download'],
+  ['DELETE', '/v1/dashboard/backup/history/:id'],
+  ['GET', '/v1/dashboard/me/prefs'],
+  ['GET', '/v1/dashboard/push/public-key'],
+  ['POST', '/v1/dashboard/push/subscribe'],
+  ['POST', '/v1/dashboard/push/unsubscribe'],
+  ['POST', '/v1/dashboard/push/test'],
+  ['POST', '/v1/dashboard/email/test'],
+  ['PUT', '/v1/dashboard/me/prefs'],
+  ['GET', '/v1/health'],
+  ['GET', '/v1/metrics'],
+];
+
+for (const [method, path] of remainingContracts) registerGenericContract(method, path);
+
+register('PATCH', '/v1/auth/profile', { body: object({ displayName: Type.String({ minLength: 1, maxLength: 64 }) }) });
+register('DELETE', '/v1/auth/connections/:provider', { params: object({ provider: Type.Union([Type.Literal('github'), Type.Literal('discord')]) }) });
+register('POST', '/v1/dashboard/notifications/read', { body: object({ ids: Type.Optional(Type.Array(Identifier, { maxItems: 100 })) }) });
+register('POST', '/v1/dashboard/jobs/bulk-preview', { body: object({ ids: Type.Array(Identifier, { maxItems: 100 }) }) });
+register('POST', '/v1/stripe/webhook', { headers: object({ 'stripe-signature': Type.String({ minLength: 1, maxLength: 200 }) }), body: Type.Any() });
+register('POST', '/v1/nowpayments/webhook', { headers: object({ 'x-nowpayments-sig': Type.String({ minLength: 1, maxLength: 500 }) }), body: Type.Any() });
+
 export function getRouteContract(method: string, path: string): FastifySchema | undefined {
   const key = `${method} ${path}`;
   const current = contracts.get(key);
   if (current) return current;
-  const generated = fallbackContract(method, path);
-  contracts.set(key, generated);
-  return generated;
+  throw new Error(`missing route contract for ${key}`);
 }
 
 export function getRouteContracts(): ReadonlyMap<string, FastifySchema> {
