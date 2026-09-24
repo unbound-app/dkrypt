@@ -18,9 +18,47 @@ test('SQLite state snapshots survive restart and retain independently owned coll
 
     const reopened = openStateDatabase({ stateDir, filename: 'state.sqlite' });
     expect(reopened.integrityStatus()).toBe('ok');
-    expect(reopened.schemaVersion).toBe(3);
+    expect(reopened.schemaVersion).toBe(4);
     expect(reopened.readCollection('jobs')).toEqual([{ id: 'job-1', status: 'queued' }]);
+    expect(reopened.readCollection('scheduler_runs')).toEqual([]);
     reopened.close();
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test('SQLite keeps scheduler history separate from job timelines', async () => {
+  const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-sqlite-scheduler-'));
+  try {
+    const database = openStateDatabase({ stateDir, filename: 'state.sqlite' });
+    database.writeState({
+      version: 15,
+      schedulerRunHistory: [{ id: 'run-1', ts: 100, appStore: {}, testflight: {} }],
+      devices: [],
+      settings: {},
+    });
+    expect(database.readCollection('scheduler_runs')).toHaveLength(1);
+    expect(database.readCollection('job_timelines')).toEqual([]);
+    database.replaceCollection('job_timelines', [{ id: 'job-1', payload: { jobId: 'job-1', events: [] }, updatedAt: 200 }]);
+    expect(database.readCollection('job_timelines')).toEqual([{ jobId: 'job-1', events: [] }]);
+    database.close();
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test('SQLite migrates legacy scheduler rows out of job timelines', async () => {
+  const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-sqlite-scheduler-migration-'));
+  try {
+    const database = openStateDatabase({ stateDir, filename: 'state.sqlite' });
+    database.db.query('DELETE FROM schema_migrations WHERE version = 4').run();
+    database.db.query('INSERT OR REPLACE INTO job_timelines (id, payload, updated_at) VALUES (?, ?, ?)').run('run-legacy', JSON.stringify({ id: 'run-legacy', ts: 100, appStore: {}, testflight: {} }), 100);
+    database.close();
+
+    const migrated = openStateDatabase({ stateDir, filename: 'state.sqlite' });
+    expect(migrated.readCollection('job_timelines')).toEqual([]);
+    expect(migrated.readCollection('scheduler_runs')).toEqual([{ id: 'run-legacy', ts: 100, appStore: {}, testflight: {} }]);
+    migrated.close();
   } finally {
     await rm(stateDir, { recursive: true, force: true });
   }

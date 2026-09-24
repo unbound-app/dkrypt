@@ -74,6 +74,19 @@ const migrations = [
       CREATE INDEX IF NOT EXISTS artifacts_updated_at ON artifacts(updated_at);
     `,
   },
+  {
+    version: 4,
+    sql: `
+      CREATE TABLE IF NOT EXISTS scheduler_runs (id TEXT PRIMARY KEY NOT NULL, payload TEXT NOT NULL, updated_at INTEGER NOT NULL);
+      INSERT INTO scheduler_runs (id, payload, updated_at)
+      SELECT id, payload, updated_at
+      FROM job_timelines
+      WHERE json_valid(payload) = 1 AND json_extract(payload, '$.jobId') IS NULL
+      ON CONFLICT(id) DO NOTHING;
+      DELETE FROM job_timelines
+      WHERE json_valid(payload) = 1 AND json_extract(payload, '$.jobId') IS NULL;
+    `,
+  },
 ] as const;
 
 const domainTables = [
@@ -95,6 +108,7 @@ const domainTables = [
   'backups',
   'idempotency_keys',
   'settings',
+  'scheduler_runs',
 ] as const;
 
 const stateOwnedDomainTables = domainTables.filter(
@@ -171,7 +185,8 @@ function rowsForState(state: unknown): Record<(typeof domainTables)[number], Dom
     devices: arrayRows(value.devices, 'device'),
     device_health: healthRows,
     jobs: [],
-    job_timelines: arrayRows(value.schedulerRunHistory, 'scheduler-run'),
+    job_timelines: [],
+    scheduler_runs: arrayRows(value.schedulerRunHistory, 'scheduler-run'),
     artifacts: [],
     watches: arrayRows(value.watches, 'watch'),
     notifications: arrayRows(value.notifications, 'notification'),
