@@ -179,3 +179,38 @@ test('TestFlight build contracts use the trainVersion query parameter', async ()
     await server.close();
   }
 });
+
+test('administrative, notification, and diagnostic contracts publish structured responses', async () => {
+  const server = await buildServer({ includePublicRoutes: false });
+  try {
+    await server.ready();
+    const document = server.swagger() as {
+      paths?: Record<string, Record<string, { responses?: Record<string, { content?: Record<string, { schema?: { properties?: Record<string, unknown> } }> }> }>>;
+    };
+    const assertions: Array<[string, string, string, string[]]> = [
+      ['/v1/dashboard/logs', 'get', '200', ['logs', 'total', 'nextCursor']],
+      ['/v1/dashboard/webhooks', 'get', '200', ['deliveries']],
+      ['/v1/dashboard/jobs/{id}/diagnostic', 'get', '200', ['generatedAt', 'correlationId', 'job', 'timeline']],
+      ['/v1/dashboard/support-bundle', 'get', '200', ['generatedAt', 'deployment', 'database', 'latestBackup', 'devices', 'jobs']],
+      ['/v1/dashboard/github/rate-limit', 'get', '200', ['limit', 'remaining', 'reset']],
+      ['/v1/dashboard/discord/status', 'get', '200', ['botEnabled', 'guilds']],
+      ['/v1/dashboard/discord/perks', 'get', '200', ['perks']],
+      ['/v1/dashboard/keys/bulk-revoke', 'post', '200', ['revoked']],
+      ['/v1/dashboard/keys/bulk-extend-expiry', 'post', '200', ['extended']],
+      ['/v1/dashboard/keys/bulk-set-daily-limit', 'post', '200', ['updated']],
+      ['/v1/dashboard/keys/bulk-approve', 'post', '200', ['approved']],
+      ['/v1/dashboard/keys/{id}/priority', 'patch', '200', ['ok', 'priority']],
+      ['/v1/dashboard/keys/{id}/max-concurrent', 'patch', '200', ['ok', 'maxConcurrent']],
+      ['/v1/dashboard/keys/{id}/allow-testflight', 'patch', '200', ['ok', 'allowTestFlight']],
+      ['/v1/dashboard/me/prefs', 'get', '200', ['theme', 'density', 'preferPrimaryDevice']],
+      ['/v1/dashboard/push/public-key', 'get', '200', ['publicKey']],
+    ];
+    for (const [path, method, status, fields] of assertions) {
+      const schema = document.paths?.[path]?.[method]?.responses?.[status]?.content?.['application/json']?.schema;
+      expect(schema).toBeDefined();
+      for (const field of fields) expect(Object.keys(schema?.properties ?? {})).toContain(field);
+    }
+  } finally {
+    await server.close();
+  }
+});

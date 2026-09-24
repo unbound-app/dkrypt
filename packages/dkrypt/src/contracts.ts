@@ -659,6 +659,60 @@ const RetentionPreviewResponse = object({
   artifacts: object({ retained: Type.Integer({ minimum: 0 }), retainedBytes: Type.Number({ minimum: 0 }), maxBytes: Type.Number({ minimum: 0 }), reclaimable: Type.Integer({ minimum: 0 }), reclaimableBytes: Type.Number({ minimum: 0 }) }),
 });
 const TestWebhookResponse = object({ ok: Type.Boolean(), error: Type.Optional(Type.String()) });
+const LogsPageResponse = object({ logs: Type.Array(JsonObject), total: Type.Integer({ minimum: 0 }), nextCursor: PageCursor });
+const WebhookDeliveryPageResponse = object({ deliveries: Type.Array(JsonObject) });
+const DiagnosticResponse = object({ generatedAt: Type.String(), correlationId: Identifier, job: JsonObject, timeline: Type.Array(JsonObject) });
+const GitHubRateLimitResponse = object({
+  limit: Type.Optional(Type.Integer({ minimum: 0 })),
+  remaining: Type.Optional(Type.Integer({ minimum: 0 })),
+  reset: Type.Optional(Type.Integer({ minimum: 0 })),
+});
+const SupportBundleResponse = object({
+  generatedAt: Type.String(),
+  deployment: object({ ref: Type.String(), node: Type.String() }),
+  database: JsonObject,
+  latestBackup: object({ ok: Type.Boolean(), detail: Type.String() }),
+  disk: Type.Optional(JsonObject),
+  catalog: JsonObject,
+  devices: Type.Array(JsonObject),
+  watches: Type.Array(JsonObject),
+  watchHealth: JsonObject,
+  schedulerRuns: Type.Array(JsonObject),
+  logs: Type.Array(JsonObject),
+  jobs: Type.Array(JsonObject),
+});
+const AuditExportResponse = Type.Union([Type.Array(JsonObject), Type.String()]);
+const DiscordGuildResponse = object({ id: Identifier, name: Type.String(), icon: Type.Union([Type.String(), Type.Null()]) });
+const DiscordStatusResponse = object({ botEnabled: Type.Boolean(), guilds: Type.Array(DiscordGuildResponse) });
+const DiscordGuildsResponse = object({ guilds: Type.Array(DiscordGuildResponse) });
+const DiscordRolesResponse = object({ roles: Type.Array(JsonObject) });
+const DiscordPerksResponse = object({ perks: Type.Array(JsonObject) });
+const DiscordGuildUpdateResponse = object({ ok: Type.Boolean(), guilds: Type.Array(DiscordGuildResponse) });
+const ApiKeyRevokedResponse = object({ revoked: Type.Array(Identifier) });
+const ApiKeyExtendedResponse = object({ extended: Type.Array(Identifier) });
+const ApiKeyUpdatedResponse = object({ updated: Type.Array(Identifier) });
+const ApiKeyApprovedResponse = object({ approved: Type.Array(Identifier) });
+const ApiKeyPriorityResponse = object({ ok: Type.Boolean(), priority: Type.Number() });
+const ApiKeyConcurrencyResponse = object({ ok: Type.Boolean(), maxConcurrent: Type.Optional(Type.Union([Type.Number(), Type.Null()])) });
+const ApiKeyTestFlightResponse = object({ ok: Type.Boolean(), allowTestFlight: Type.Boolean() });
+const UserPrefsResponse = object({
+  theme: Type.Optional(Type.Union([Type.Literal('dark'), Type.Literal('light'), Type.Literal('auto')])),
+  density: Type.Optional(Type.Union([Type.Literal('comfortable'), Type.Literal('compact')])),
+  accent: Type.Optional(Type.String()),
+  sound: Type.Optional(Type.Boolean()),
+  pushOnSuccess: Type.Optional(Type.Boolean()),
+  pushOnFailure: Type.Optional(Type.Boolean()),
+  pushOnAlerts: Type.Optional(Type.Boolean()),
+  pushOnKeyExpiry: Type.Optional(Type.Boolean()),
+  emailOnSuccess: Type.Optional(Type.Boolean()),
+  emailOnFailure: Type.Optional(Type.Boolean()),
+  emailOnAlerts: Type.Optional(Type.Boolean()),
+  emailOnKeyExpiry: Type.Optional(Type.Boolean()),
+  notifyEmail: Type.Optional(Type.String()),
+  preferPrimaryDevice: Type.Optional(Type.Boolean()),
+  accountEmail: Type.Optional(Type.String()),
+});
+const PushKeyResponse = object({ publicKey: Type.String() });
 const DeviceConnectionInput = object({
   name: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
   existingId: Type.Optional(Identifier),
@@ -1318,6 +1372,153 @@ register('POST', '/v1/dashboard/jobs/:id/prioritize', { params: object({ id: Ide
 register('POST', '/v1/dashboard/jobs/:id/retry', { params: object({ id: Identifier }), response: { 202: JobSummaryResponse } });
 register('POST', '/v1/dashboard/jobs/reorder', {
   body: object({ ids: Type.Array(Identifier, { maxItems: 100 }) }),
+  response: { 200: OkResponse },
+});
+register('GET', '/v1/dashboard/logs', {
+  querystring: object({ ...PaginationQuery.properties, scope: Type.Optional(Type.String({ maxLength: 100 })), level: Type.Optional(Type.Union([Type.Literal('info'), Type.Literal('warn'), Type.Literal('error')])), q: Type.Optional(Type.String({ maxLength: 100 })), regex: Type.Optional(Type.Literal('1')) }),
+  response: { 200: LogsPageResponse },
+});
+register('GET', '/v1/dashboard/webhooks', {
+  querystring: object({ limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })) }),
+  response: { 200: WebhookDeliveryPageResponse },
+});
+register('GET', '/v1/dashboard/events', {
+  response: { 200: Type.String() },
+});
+register('GET', '/v1/dashboard/jobs/:id/diagnostic', {
+  params: object({ id: Identifier }),
+  response: { 200: DiagnosticResponse },
+});
+register('GET', '/v1/dashboard/support-bundle', {
+  response: { 200: SupportBundleResponse },
+});
+register('GET', '/v1/dashboard/github/rate-limit', {
+  response: { 200: GitHubRateLimitResponse },
+});
+register('GET', '/v1/dashboard/audit-log/export', {
+  querystring: object({ format: Type.Optional(Type.Union([Type.Literal('json'), Type.Literal('csv')])) }),
+  response: { 200: AuditExportResponse },
+});
+register('GET', '/v1/dashboard/jobs/export', {
+  querystring: object({ format: Type.Optional(Type.Union([Type.Literal('json'), Type.Literal('csv')])) }),
+  response: { 200: JobExportResponse },
+});
+register('GET', '/v1/dashboard/watches/export', {
+  response: { 200: WatchExportResponse },
+});
+register('GET', '/v1/dashboard/backup/export', {
+  response: { 200: JsonObject },
+});
+register('GET', '/v1/dashboard/backup/history/:id/download', {
+  params: object({ id: Identifier }),
+  response: { 200: Type.String() },
+});
+register('POST', '/v1/dashboard/backup/import', {
+  body: JsonObject,
+  response: { 200: OkResponse },
+});
+register('POST', '/v1/dashboard/backup/preview', {
+  body: JsonObject,
+  response: { 200: BackupPreviewResponse },
+});
+register('POST', '/v1/dashboard/backup/drill', {
+  body: JsonObject,
+  response: { 200: BackupDrillResponse },
+});
+register('DELETE', '/v1/dashboard/backup/history/:id', {
+  params: object({ id: Identifier }),
+  response: { 200: OkResponse },
+});
+register('GET', '/v1/dashboard/discord/status', {
+  response: { 200: DiscordStatusResponse },
+});
+register('GET', '/v1/dashboard/discord/guilds', {
+  response: { 200: DiscordGuildsResponse },
+});
+register('POST', '/v1/dashboard/discord/guilds', {
+  body: object({ guilds: Type.Array(DiscordGuildResponse) }),
+  response: { 200: DiscordGuildUpdateResponse },
+});
+register('GET', '/v1/dashboard/discord/roles', {
+  querystring: object({ guildId: Identifier }),
+  response: { 200: DiscordRolesResponse },
+});
+register('GET', '/v1/dashboard/discord/perks', {
+  response: { 200: DiscordPerksResponse },
+});
+register('POST', '/v1/dashboard/discord/perks', {
+  body: object({
+    guildId: Identifier,
+    guildName: Type.String({ minLength: 1, maxLength: 200 }),
+    guildIcon: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+    discordRoleId: Identifier,
+    discordRoleName: Type.String({ minLength: 1, maxLength: 200 }),
+    discordRoleColor: Type.Integer({ minimum: 0 }),
+    appRoleId: Identifier,
+  }),
+  response: { 201: JsonObject },
+});
+register('DELETE', '/v1/dashboard/discord/perks/:id', {
+  params: object({ id: Identifier }),
+  response: { 200: OkResponse },
+});
+register('POST', '/v1/dashboard/keys/bulk-revoke', {
+  body: object({ ids: Type.Array(Identifier, { maxItems: 100 }) }),
+  response: { 200: ApiKeyRevokedResponse },
+});
+register('POST', '/v1/dashboard/keys/bulk-extend-expiry', {
+  body: object({ ids: Type.Array(Identifier, { maxItems: 100 }), days: Type.Integer({ minimum: 1, maximum: 3650 }) }),
+  response: { 200: ApiKeyExtendedResponse },
+});
+register('POST', '/v1/dashboard/keys/bulk-set-daily-limit', {
+  body: object({ ids: Type.Array(Identifier, { maxItems: 100 }), dailyLimit: Type.Union([Type.Number(), Type.Null()]) }),
+  response: { 200: ApiKeyUpdatedResponse },
+});
+register('POST', '/v1/dashboard/keys/bulk-set-scope', {
+  body: object({ ids: Type.Array(Identifier, { maxItems: 100 }), allowedBundleIds: Type.Union([Type.Array(BundleId, { maxItems: 25 }), Type.Null()]) }),
+  response: { 200: ApiKeyUpdatedResponse },
+});
+register('POST', '/v1/dashboard/keys/bulk-approve', {
+  body: object({ ids: Type.Array(Identifier, { maxItems: 100 }) }),
+  response: { 200: ApiKeyApprovedResponse },
+});
+register('PATCH', '/v1/dashboard/keys/:id/priority', {
+  params: object({ id: Identifier }),
+  body: object({ priority: Type.Number() }),
+  response: { 200: ApiKeyPriorityResponse },
+});
+register('PATCH', '/v1/dashboard/keys/:id/max-concurrent', {
+  params: object({ id: Identifier }),
+  body: object({ maxConcurrent: Type.Optional(Type.Union([Type.Number(), Type.Null()])) }),
+  response: { 200: ApiKeyConcurrencyResponse },
+});
+register('PATCH', '/v1/dashboard/keys/:id/allow-testflight', {
+  params: object({ id: Identifier }),
+  body: object({ allowTestFlight: Type.Boolean() }),
+  response: { 200: ApiKeyTestFlightResponse },
+});
+register('GET', '/v1/dashboard/me/prefs', {
+  response: { 200: UserPrefsResponse },
+});
+register('PUT', '/v1/dashboard/me/prefs', {
+  body: Type.Partial(UserPrefsResponse),
+  response: { 200: UserPrefsResponse },
+});
+register('GET', '/v1/dashboard/push/public-key', {
+  response: { 200: PushKeyResponse },
+});
+register('POST', '/v1/dashboard/push/subscribe', {
+  body: object({ endpoint: Type.String({ minLength: 1, maxLength: 2000 }), keys: object({ p256dh: Type.String({ minLength: 1 }), auth: Type.String({ minLength: 1 }) }) }),
+  response: { 200: OkResponse },
+});
+register('POST', '/v1/dashboard/push/unsubscribe', {
+  body: object({ endpoint: Type.String({ minLength: 1, maxLength: 2000 }) }),
+  response: { 200: OkResponse },
+});
+register('POST', '/v1/dashboard/push/test', {
+  response: { 200: OkResponse },
+});
+register('POST', '/v1/dashboard/email/test', {
   response: { 200: OkResponse },
 });
 
