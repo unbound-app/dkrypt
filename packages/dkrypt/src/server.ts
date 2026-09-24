@@ -9,7 +9,7 @@ import { TypeBoxTypeProvider } from '@fastify/type-provider-typebox';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { config } from '#config.js';
 import { registerRouter } from '#http.js';
-import { getArtifactBackedJobs, shutdownJobs, startJobSweeper, stopJobSweeper } from '#jobs/store.js';
+import { getArtifactBackedJobs, shutdownJobs, startJobSweeper, stopAcceptingJobs, stopJobSweeper } from '#jobs/store.js';
 import { startJobWebhookDispatcher, stopJobWebhookDispatcher } from '#jobWebhook.js';
 import { startKeyExpiryPoller, stopKeyExpiryPoller } from '#keyExpiryPoller.js';
 import { log, startLogFlusher, stopLogFlusher } from '#logger.js';
@@ -32,6 +32,7 @@ import { closeIdempotencyDatabase } from '#idempotency.js';
 import { closeWebhookInboxDatabase } from '#webhookInbox.js';
 import { incrementMetric, observeMetric } from '#metrics.js';
 import { stopNotificationDigestScheduler } from '#notify.js';
+import { closeDashboardConnections } from '#events.js';
 import { startSpan, startTelemetry, stopTelemetry, traceContextFromHeader, type SpanHandle } from '#telemetry.js';
 
 const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
@@ -194,7 +195,7 @@ async function start(): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     log.info('graceful shutdown started', { signal });
-    await server.close();
+    stopAcceptingJobs();
     stopScheduler();
     stopDeviceHealthPoller();
     stopTestFlightSubscriptionPoller();
@@ -202,6 +203,8 @@ async function start(): Promise<void> {
     stopKeyExpiryPoller();
     stopJobSweeper();
     stopJobWebhookDispatcher();
+    closeDashboardConnections();
+    await server.close();
     stopStateBackgroundServices();
     await stopNotificationDigestScheduler();
     await shutdownJobs();

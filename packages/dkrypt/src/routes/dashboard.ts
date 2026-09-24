@@ -2,7 +2,7 @@ import { Router } from '#http.js';
 import { validate as validateCronExpr } from 'node-cron';
 import { config, discordBotEnabled } from '#config.js';
 import { fetchBotGuilds, fetchGuildRoles } from '#discord.js';
-import { dashboardEvents, emitJobsChanged, getOnlineUsernames, nextDashboardSequence, registerPresence, unregisterPresence } from '#events.js';
+import { dashboardEvents, emitJobsChanged, getOnlineUsernames, nextDashboardSequence, registerDashboardConnection, registerPresence, unregisterPresence } from '#events.js';
 import { getBillingEntitlements } from '#billing.js';
 import { blockDuringMaintenance, getMaintenanceStatus } from '#maintenance.js';
 import { jobFileAvailable, jobSummary, streamFilePath } from '#jobs/http.js';
@@ -325,6 +325,9 @@ dashboardRouter.get('/v1/dashboard/events', (_req, res) => {
 
   const { sub } = res.locals.session;
   registerPresence(sub);
+  const unregisterDashboardConnection = registerDashboardConnection(() => {
+    if (!res.raw.destroyed && !res.raw.writableEnded) res.raw.end();
+  });
   sendEvent('presence', getOnlineUsernames());
 
   const onJobsChanged = () => sendEvent('overview', buildOverview(res.locals.session.permissions, res.locals.session.sub));
@@ -340,6 +343,7 @@ dashboardRouter.get('/v1/dashboard/events', (_req, res) => {
   const heartbeat = setInterval(() => res.write(': ping\n\n'), 15_000);
 
   res.raw.once('close', () => {
+    unregisterDashboardConnection();
     clearInterval(heartbeat);
     unregisterPresence(sub);
     dashboardEvents.off('jobsChanged', onJobsChanged);

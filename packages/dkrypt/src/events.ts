@@ -25,6 +25,18 @@ export function emitHistoryAdded(entry: JobHistoryEntry): void {
 }
 
 const onlineConnectionCounts = new Map<string, number>();
+const dashboardConnections = new Set<() => void>();
+
+export function registerDashboardConnection(close: () => void): () => void {
+  dashboardConnections.add(close);
+  return () => dashboardConnections.delete(close);
+}
+
+export function closeDashboardConnections(): void {
+  const connections = [...dashboardConnections];
+  dashboardConnections.clear();
+  for (const close of connections) close();
+}
 
 function onlineUsernames(): string[] {
   return [...onlineConnectionCounts.keys()];

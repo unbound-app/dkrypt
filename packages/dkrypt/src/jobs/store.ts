@@ -802,9 +802,13 @@ export function stopJobSweeper(): void {
   jobSweepTimer = undefined;
 }
 
+export function stopAcceptingJobs(): void {
+  acceptingJobs = false;
+}
+
 export async function shutdownJobs(timeoutMs = 15_000): Promise<void> {
   stopJobSweeper();
-  acceptingJobs = false;
+  stopAcceptingJobs();
   const now = Date.now();
   for (const jobId of queue.splice(0)) {
     const job = jobs.get(jobId);
