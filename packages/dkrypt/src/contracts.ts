@@ -326,6 +326,131 @@ const DecryptJobResponse = object({
   resolvedVersion: Type.Optional(Type.String()),
   artifact: Type.Optional(ArtifactSummaryResponse),
 });
+const SchedulerSettingsResponse = object({
+  notifyWebhookUrl: Type.String(),
+  notifyFormat: Type.Union([Type.Literal('embed'), Type.Literal('plain')]),
+  notifySuccessMode: Type.Union([Type.Literal('instant'), Type.Literal('daily'), Type.Literal('weekly')]),
+  notifyQuietHoursStart: Type.String(),
+  notifyQuietHoursEnd: Type.String(),
+  notifyOnKeyRequest: Type.Boolean(),
+  notifyOnAutomationSuccess: Type.Boolean(),
+  notifyOnAutomationFailure: Type.Boolean(),
+  notifyOnKeyExpiringSoon: Type.Boolean(),
+  notifyOnDeviceOffline: Type.Boolean(),
+  notifyOnDeviceBatteryHot: Type.Boolean(),
+  notifyOnDeviceBatteryLow: Type.Boolean(),
+  notifyOnDiskFull: Type.Boolean(),
+  notifyOnDeviceStorageLow: Type.Boolean(),
+  notifyOnTestFlightBridgeDown: Type.Boolean(),
+  notifyOnJobCompleted: Type.Boolean(),
+  notifyOnQueueSloBreach: Type.Boolean(),
+  schedulerRetryCount: Type.Integer({ minimum: 0 }),
+  deviceOfflineAlertMinutes: Type.Integer({ minimum: 0 }),
+  batteryHotAlertC: Type.Integer({ minimum: 0 }),
+  batteryLowAlertPercent: Type.Integer({ minimum: 0 }),
+  diskFullAlertPercent: Type.Integer({ minimum: 0 }),
+  deviceStorageAlertPercent: Type.Integer({ minimum: 0 }),
+  testFlightBridgeAlertMinutes: Type.Integer({ minimum: 0 }),
+  jobHistoryRetentionDays: Type.Integer({ minimum: 0 }),
+  maintenanceMode: Type.Boolean(),
+});
+const RoleResponse = object({
+  id: Identifier,
+  name: Type.String(),
+  color: Type.String(),
+  permissions: Type.String(),
+  position: Type.Integer({ minimum: 0 }),
+  isDefault: Type.Boolean(),
+  createdAt: Type.Number(),
+  updatedAt: Type.Number(),
+});
+const RolesResponse = object({ roles: Type.Array(RoleResponse) });
+const UserDirectoryResponse = object({
+  users: Type.Array(object({
+    username: Identifier,
+    displayName: Type.String(),
+    avatarUrl: Type.String(),
+    roleIds: Type.Array(Identifier),
+    addedAt: Type.Number(),
+    lastActiveAt: Type.Optional(Type.Number()),
+    priority: Type.Optional(Type.Number()),
+    activity: Type.Optional(JsonObject),
+  })),
+});
+const AuditLogPage = object({ entries: Type.Array(JsonObject), total: Type.Integer({ minimum: 0 }), nextCursor: PageCursor });
+const ApiKeyResponse = object({
+  id: Identifier,
+  name: Type.String(),
+  ownerId: Identifier,
+  status: Type.Union([Type.Literal('pending'), Type.Literal('approved'), Type.Literal('denied')]),
+  createdAt: Type.Number(),
+  approvedAt: Type.Optional(Type.Number()),
+  lastUsedAt: Type.Optional(Type.Number()),
+  expiresAt: Type.Optional(Type.Number()),
+  hasUnrevealedSecret: Type.Optional(Type.Boolean()),
+  lastUsedIp: Type.Optional(Type.String()),
+  allowedBundleIds: Type.Optional(Type.Array(BundleId)),
+  dailyLimit: Type.Optional(Type.Number()),
+  maxConcurrent: Type.Optional(Type.Number()),
+  allowTestFlight: Type.Optional(Type.Boolean()),
+  priority: Type.Optional(Type.Number()),
+  previousKeyValidUntil: Type.Optional(Type.Number()),
+});
+const ApiKeyCollectionResponse = object({ keys: Type.Array(ApiKeyResponse) });
+const ApiKeyPageResponse = object({ keys: Type.Array(ApiKeyResponse), total: Type.Integer({ minimum: 0 }), nextCursor: PageCursor });
+const ApiKeyUsageResponse = object({ usage: Type.Array(object({ date: Type.String(), count: Type.Integer({ minimum: 0 }) })) });
+const ApiKeyBundleUsageResponse = object({ bundles: Type.Array(object({ bundleId: BundleId, count: Type.Integer({ minimum: 0 }) })) });
+const ApiKeyOutcomeResponse = object({ outcomes: Type.Array(JsonObject) });
+const BackupScheduleResponse = object({ enabled: Type.Boolean(), cron: Type.String(), retentionCount: Type.Integer({ minimum: 1 }) });
+const BackupHistoryEntryResponse = object({
+  id: Identifier,
+  createdAt: Type.Number(),
+  sizeBytes: Type.Number({ minimum: 0 }),
+  filename: Type.String(),
+  trigger: Type.Union([Type.Literal('scheduled'), Type.Literal('manual')]),
+  databaseFilename: Type.Optional(Type.String()),
+  manifestFilename: Type.Optional(Type.String()),
+  schemaVersion: Type.Optional(Type.Integer({ minimum: 1 })),
+  integrity: Type.Optional(Type.Union([Type.Literal('verified'), Type.Literal('failed')])),
+  encryptedManifest: Type.Optional(Type.Boolean()),
+});
+const BackupHistoryResponse = Type.Array(BackupHistoryEntryResponse);
+const BackupPreviewResponse = object({
+  exportedAt: Type.Optional(Type.Number()),
+  incoming: object({ users: Type.Integer({ minimum: 0 }), roles: Type.Integer({ minimum: 0 }), apiKeys: Type.Integer({ minimum: 0 }), watches: Type.Integer({ minimum: 0 }), devices: Type.Integer({ minimum: 0 }), jobHistory: Type.Integer({ minimum: 0 }), auditLog: Type.Integer({ minimum: 0 }) }),
+  current: object({ users: Type.Integer({ minimum: 0 }), roles: Type.Integer({ minimum: 0 }), apiKeys: Type.Integer({ minimum: 0 }), watches: Type.Integer({ minimum: 0 }), devices: Type.Integer({ minimum: 0 }), jobHistory: Type.Integer({ minimum: 0 }), auditLog: Type.Integer({ minimum: 0 }) }),
+});
+const BackupDrillResponse = object({
+  ok: Type.Boolean(),
+  checks: Type.Array(object({ label: Type.String(), ok: Type.Boolean(), detail: Type.String() })),
+  database: Type.Optional(JsonObject),
+});
+const UrlResponse = object({ url: Type.String() });
+const BillingCheckoutResponse = object({
+  url: Type.String(),
+  provider: Type.Optional(Type.Union([Type.Literal('stripe'), Type.Literal('nowpayments')])),
+  checkoutId: Type.Optional(Type.String()),
+  status: Type.Optional(Type.String()),
+});
+const BillingCancelResponse = object({
+  success: Type.Boolean(),
+  status: Type.String(),
+  provider: Type.Union([Type.Literal('stripe'), Type.Literal('nowpayments')]),
+  idempotencyKey: Type.Optional(Type.String()),
+  cancelAtPeriodEnd: Type.Optional(Type.Boolean()),
+});
+const BillingSubscriptionUpdateResponse = object({ success: Type.Boolean(), status: Type.String(), priceId: Type.Union([Type.String(), Type.Null()]) });
+const OkResponse = object({ ok: Type.Boolean() });
+const ApiKeySecretResponse = object({ id: Identifier, name: Type.String(), key: Type.String(), createdAt: Type.Number(), expiresAt: Type.Optional(Type.Number()) });
+const ApiKeyRegenerateResponse = object({ ok: Type.Boolean(), key: Type.Optional(ApiKeyResponse) });
+const AllowedUserResponse = object({
+  username: Identifier,
+  roleIds: Type.Array(Identifier),
+  addedAt: Type.Number(),
+  sessionVersion: Type.Optional(Type.Number()),
+  lastActiveAt: Type.Optional(Type.Number()),
+  priority: Type.Optional(Type.Number()),
+});
 const DeviceConnectionInput = object({
   name: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
   existingId: Type.Optional(Identifier),
@@ -700,6 +825,47 @@ register('GET', '/v1/dashboard/jobs/eta/:bundleId', { params: object({ bundleId:
 register('GET', '/v1/dashboard/jobs/slo', { response: { 200: JobSloResponse } });
 register('GET', '/v1/dashboard/jobs/volume', { response: { 200: DailyVolumeResponse } });
 register('GET', '/v1/dashboard/webhooks', { response: { 200: object({ deliveries: Type.Array(JsonObject) }) } });
+register('POST', '/v1/billing/checkout', {
+  headers: object({ 'idempotency-key': Type.Optional(Type.String({ minLength: 1, maxLength: 200 })) }),
+  body: object({ planId: Identifier, provider: Type.Optional(Type.Union([Type.Literal('stripe'), Type.Literal('crypto')])), cryptoAsset: Type.Optional(Type.String({ minLength: 2, maxLength: 32 })) }),
+  response: { 200: BillingCheckoutResponse, 201: BillingCheckoutResponse },
+});
+register('POST', '/v1/billing/portal', { response: { 200: UrlResponse } });
+register('POST', '/v1/billing/cancel', { headers: object({ 'idempotency-key': Type.Optional(Type.String({ minLength: 1, maxLength: 200 })) }), response: { 200: BillingCancelResponse } });
+register('POST', '/v1/billing/subscription', { body: object({ planId: Identifier }), response: { 200: BillingSubscriptionUpdateResponse } });
+register('GET', '/v1/dashboard/settings', { response: { 200: SchedulerSettingsResponse } });
+register('PUT', '/v1/dashboard/settings', { response: { 200: SchedulerSettingsResponse } });
+register('GET', '/v1/dashboard/settings/validate-cron', { response: { 200: object({ valid: Type.Boolean() }) } });
+register('GET', '/v1/dashboard/users', { response: { 200: UserDirectoryResponse } });
+register('GET', '/v1/dashboard/audit-log', { querystring: PaginationQuery, response: { 200: AuditLogPage } });
+register('GET', '/v1/dashboard/roles', { response: { 200: RolesResponse } });
+register('POST', '/v1/dashboard/roles', { response: { 201: RoleResponse } });
+register('PATCH', '/v1/dashboard/roles/:id', { params: object({ id: Identifier }), response: { 200: RoleResponse } });
+register('POST', '/v1/dashboard/roles/reorder', { response: { 200: RolesResponse } });
+register('POST', '/v1/dashboard/users', { response: { 201: AllowedUserResponse } });
+register('PATCH', '/v1/dashboard/users/:username', { params: object({ username: Identifier }), response: { 200: AllowedUserResponse } });
+register('DELETE', '/v1/dashboard/users/:username', { params: object({ username: Identifier }), response: { 200: OkResponse } });
+register('GET', '/v1/dashboard/keys/mine', { response: { 200: ApiKeyCollectionResponse } });
+register('POST', '/v1/dashboard/keys/request', { response: { 201: ApiKeyResponse } });
+register('POST', '/v1/dashboard/keys/create', { response: { 201: ApiKeySecretResponse } });
+register('POST', '/v1/dashboard/keys/:id/reveal', { params: object({ id: Identifier }), response: { 200: object({ key: Type.String() }) } });
+register('POST', '/v1/dashboard/keys/:id/regenerate', { params: object({ id: Identifier }), response: { 200: ApiKeyRegenerateResponse } });
+register('DELETE', '/v1/dashboard/keys/:id', { params: object({ id: Identifier }), response: { 200: OkResponse } });
+register('GET', '/v1/dashboard/keys/pending', { response: { 200: ApiKeyCollectionResponse } });
+register('GET', '/v1/dashboard/keys/all', { querystring: object({ ...PaginationQuery.properties, search: Type.Optional(Type.String({ maxLength: 200 })) }), response: { 200: ApiKeyPageResponse } });
+register('GET', '/v1/dashboard/keys/:id/usage', { params: object({ id: Identifier }), response: { 200: ApiKeyUsageResponse } });
+register('GET', '/v1/dashboard/keys/:id/bundle-usage', { params: object({ id: Identifier }), response: { 200: ApiKeyBundleUsageResponse } });
+register('GET', '/v1/dashboard/keys/:id/outcomes', { params: object({ id: Identifier }), response: { 200: ApiKeyOutcomeResponse } });
+register('POST', '/v1/dashboard/keys/:id/approve', { params: object({ id: Identifier }), response: { 200: OkResponse } });
+register('POST', '/v1/dashboard/keys/:id/deny', { params: object({ id: Identifier }), response: { 200: OkResponse } });
+register('GET', '/v1/dashboard/backup/schedule', { response: { 200: BackupScheduleResponse } });
+register('POST', '/v1/dashboard/backup/schedule', { response: { 200: BackupScheduleResponse } });
+register('GET', '/v1/dashboard/backup/history', { response: { 200: BackupHistoryResponse } });
+register('POST', '/v1/dashboard/backup/history', { response: { 200: BackupHistoryEntryResponse } });
+register('POST', '/v1/dashboard/backup/import', { response: { 200: OkResponse } });
+register('POST', '/v1/dashboard/backup/preview', { response: { 200: BackupPreviewResponse } });
+register('POST', '/v1/dashboard/backup/drill', { response: { 200: BackupDrillResponse } });
+register('DELETE', '/v1/dashboard/backup/history/:id', { params: object({ id: Identifier }), response: { 200: OkResponse } });
 register('POST', '/v1/decrypts', {
   body: object({ bundleId: BundleId, version: Type.Optional(VersionSelector) }),
   response: { 200: DecryptJobResponse, 202: DecryptJobResponse },

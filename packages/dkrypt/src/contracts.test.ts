@@ -43,7 +43,7 @@ test('core operational responses publish their required fields', async () => {
   try {
     await server.ready();
     const document = server.swagger() as {
-      paths?: Record<string, Record<string, { responses?: Record<string, { content?: Record<string, { schema?: { properties?: Record<string, unknown> } }> }> }>>;
+      paths?: Record<string, Record<string, { responses?: Record<string, { content?: Record<string, { schema?: { properties?: Record<string, unknown>; items?: { properties?: Record<string, unknown> } } }> }> }>>;
     };
     const assertions: Array<[string, string, string[]]> = [
       ['/v1/health', 'get', ['ok', 'serviceReady', 'database', 'bridge', 'device']],
@@ -69,11 +69,21 @@ test('core operational responses publish their required fields', async () => {
       ['/v1/testflight/{appId}/builds', 'get', ['builds']],
       ['/v1/dashboard/testflight/{appId}/trains', 'get', ['trains']],
       ['/v1/dashboard/testflight/{appId}/builds', 'get', ['builds']],
+      ['/v1/billing/checkout', 'post', ['url']],
+      ['/v1/billing/cancel', 'post', ['success', 'status', 'provider']],
+      ['/v1/dashboard/settings', 'get', ['notifyFormat', 'notifySuccessMode', 'maintenanceMode']],
+      ['/v1/dashboard/users', 'get', ['users']],
+      ['/v1/dashboard/audit-log', 'get', ['entries', 'total', 'nextCursor']],
+      ['/v1/dashboard/roles', 'get', ['roles']],
+      ['/v1/dashboard/keys/all', 'get', ['keys', 'total', 'nextCursor']],
+      ['/v1/dashboard/backup/schedule', 'get', ['enabled', 'cron', 'retentionCount']],
+      ['/v1/dashboard/backup/history', 'get', ['id', 'createdAt', 'filename', 'trigger']],
     ];
     for (const [path, method, fields] of assertions) {
       const schema = document.paths?.[path]?.[method]?.responses?.['200']?.content?.['application/json']?.schema;
       expect(schema).toBeDefined();
-      for (const field of fields) expect(Object.keys(schema?.properties ?? {})).toContain(field);
+      const properties = schema?.properties ?? schema?.items?.properties ?? {};
+      for (const field of fields) expect(Object.keys(properties)).toContain(field);
     }
   } finally {
     await server.close();
