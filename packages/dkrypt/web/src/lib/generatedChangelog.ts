@@ -1,6 +1,16 @@
 export const GENERATED_CHANGELOG = [
   {
     "date": "2026-09-24",
+    "title": "fix(devices): keep legacy roots read-only",
+    "description": "Released in 4126644."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "fix(web): recover dashboard state after live gaps",
+    "description": "Released in 7ca1850."
+  },
+  {
+    "date": "2026-09-24",
     "title": "feat(reliability): complete bridge cancellation and passkey reauthentication",
     "description": "Released in 5fb2f79."
   },
@@ -28,15 +38,5 @@ export const GENERATED_CHANGELOG = [
     "date": "2026-09-24",
     "title": "fix(deploy): resolve homelab runtime home",
     "description": "Released in f5b80d7."
-  },
-  {
-    "date": "2026-09-24",
-    "title": "fix(deploy): infer device key on homelab",
-    "description": "Released in 2b3fa28."
-  },
-  {
-    "date": "2026-09-24",
-    "title": "fix(ci): use a valid trivy action ref",
-    "description": "Released in 986d6a0."
   }
 ] as const;
