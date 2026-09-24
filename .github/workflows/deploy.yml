@@ -131,9 +131,10 @@ jobs:
         run: |
           set -e
           RUNTIME_DIR=/home/adrian/.local/share/dkrypt
+          RUNTIME_HOME=$(cd "$RUNTIME_DIR/../../.." && pwd)
           test -f "$RUNTIME_DIR/.env"
           if [ -z "${DEVICE_SSH_KEY_HOST_PATH:-}" ]; then
-            for candidate in "$HOME"/.ssh/id_ed25519 "$HOME"/.ssh/id_rsa "$HOME"/.ssh/id_ecdsa "$HOME"/.ssh/id_*; do
+            for candidate in "$RUNTIME_HOME"/.ssh/id_* "$HOME"/.ssh/id_*; do
               case "$candidate" in
                 *.pub|*.cert|*.crt) continue ;;
               esac
