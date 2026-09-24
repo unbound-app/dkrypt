@@ -21,6 +21,7 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt, copy_bidirectional},
     net::{TcpListener, UnixListener, UnixStream},
     process::{Child, Command},
+    signal::unix::{SignalKind, signal},
     sync::{Mutex, Notify},
     time::{sleep, timeout},
 };
@@ -860,6 +861,11 @@ async fn wait_for_path(path: &Path) -> Result<(), String> {
     Err(format!("netmuxd did not create {}", path.display()))
 }
 
+async fn stop_netmuxd(child: &mut Child) {
+    let _ = child.kill().await;
+    let _ = child.wait().await;
+}
+
 fn start_netmuxd(binary: &str, socket: &Path, pairing_store: &Path) -> Result<Child, String> {
     Command::new(binary)
         .arg("--socket-path")
@@ -911,11 +917,10 @@ async fn main() -> Result<(), String> {
     }
     let binary = env::var("NETMUXD_BIN").unwrap_or_else(|_| "netmuxd".to_string());
     let mut netmuxd = start_netmuxd(&binary, &mux_socket, &pairing_store)?;
-    wait_for_path(&mux_socket).await?;
-    tokio::spawn(async move {
-        let _ = netmuxd.wait().await;
-        std::process::exit(1);
-    });
+    if let Err(error) = wait_for_path(&mux_socket).await {
+        stop_netmuxd(&mut netmuxd).await;
+        return Err(error);
+    }
     let host_id = env::var("DEVICE_BRIDGE_HOST_ID").unwrap_or_else(|_| Uuid::new_v4().to_string());
     let state = Arc::new(BridgeState {
         secrets,
@@ -928,12 +933,36 @@ async fn main() -> Result<(), String> {
     let listener = UnixListener::bind(&rpc_socket).map_err(|value| value.to_string())?;
     let permissions = std::os::unix::fs::PermissionsExt::from_mode(0o660);
     std::fs::set_permissions(&rpc_socket, permissions).map_err(|value| value.to_string())?;
+    let mut terminate = signal(SignalKind::terminate()).map_err(|value| value.to_string())?;
+    let mut interrupt = signal(SignalKind::interrupt()).map_err(|value| value.to_string())?;
     loop {
-        let (stream, _) = listener.accept().await.map_err(|value| value.to_string())?;
-        let client_state = state.clone();
-        tokio::spawn(async move {
-            handle_client(stream, client_state).await;
-        });
+        tokio::select! {
+            accepted = listener.accept() => {
+                let (stream, _) = accepted.map_err(|value| value.to_string())?;
+                let client_state = state.clone();
+                tokio::spawn(async move {
+                    handle_client(stream, client_state).await;
+                });
+            }
+            _ = terminate.recv() => {
+                stop_netmuxd(&mut netmuxd).await;
+                let _ = std::fs::remove_file(&rpc_socket);
+                let _ = std::fs::remove_file(&state.mux_socket);
+                return Ok(());
+            }
+            _ = interrupt.recv() => {
+                stop_netmuxd(&mut netmuxd).await;
+                let _ = std::fs::remove_file(&rpc_socket);
+                let _ = std::fs::remove_file(&state.mux_socket);
+                return Ok(());
+            }
+            exited = netmuxd.wait() => {
+                let status = exited.map_err(|value| value.to_string())?;
+                let _ = std::fs::remove_file(&rpc_socket);
+                let _ = std::fs::remove_file(&state.mux_socket);
+                return Err(format!("netmuxd exited with {status}"));
+            }
+        }
     }
 }
 
