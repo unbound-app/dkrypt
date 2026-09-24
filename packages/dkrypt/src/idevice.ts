@@ -8,6 +8,7 @@ import { scopedLogger } from '#logger.js';
 import { BRIDGE_PROTOCOL_VERSION } from '#bridgeProtocol.js';
 import type { BridgeChannel } from '#bridgeProtocol.js';
 import { startSpan } from '#telemetry.js';
+import { incrementMetric, observeMetric } from '#metrics.js';
 
 const log = scopedLogger('idevice');
 
@@ -146,12 +147,18 @@ class RustDeviceBridgeClient {
   private readonly secret = config.deviceBridgeSecret;
 
   async request(operation: string, details: Record<string, unknown>, timeoutMs = REMOTE_COMMAND_TIMEOUT_MS): Promise<unknown> {
+    const startedAt = performance.now();
     const span = startSpan('device.bridge.request', { 'device.operation': operation, 'device.timeout_ms': timeoutMs });
     try {
       const result = await this.requestRaw(operation, details, timeoutMs);
+      incrementMetric('device_bridge_requests_total', { operation, outcome: 'success' });
+      observeMetric('device_bridge_request_duration_ms', performance.now() - startedAt);
       span.end();
       return result;
     } catch (error) {
+      const category = error instanceof DeviceBridgeError ? error.code : error instanceof DeviceAgentUnavailableError ? 'unavailable' : 'unknown';
+      incrementMetric('device_bridge_requests_total', { operation, outcome: 'error', category });
+      observeMetric('device_bridge_request_duration_ms', performance.now() - startedAt);
       span.end(error);
       throw error;
     }
