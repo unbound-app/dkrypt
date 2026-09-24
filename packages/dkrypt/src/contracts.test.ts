@@ -53,6 +53,14 @@ test('core operational responses publish their required fields', async () => {
       ['/v1/dashboard/artifacts', 'get', ['artifacts', 'total', 'totalBytes', 'maxBytes']],
       ['/v1/dashboard/devices', 'get', ['devices']],
       ['/v1/dashboard/testflight/catalog', 'get', ['apps', 'refreshing']],
+      ['/v1/auth/session', 'get', ['loggedIn', 'identities', 'linkedProviders', 'publicBaseUrl', 'mfa']],
+      ['/v1/billing/provider-status', 'get', ['stripe', 'crypto']],
+      ['/v1/billing/webhooks/inbox', 'get', ['inbox', 'total', 'nextCursor']],
+      ['/v1/dashboard/doctor', 'get', ['ok', 'checkedAt', 'checks']],
+      ['/v1/dashboard/synthetic', 'get', ['ok', 'checkedAt', 'probes']],
+      ['/v1/dashboard/notifications', 'get', ['notifications', 'unread', 'total', 'nextCursor']],
+      ['/v1/dashboard/devices/discover', 'get', ['devices', 'scannedNetworks', 'warnings']],
+      ['/v1/dashboard/jobs/slo', 'get', ['targetMs', 'historicalP95Ms', 'jobs']],
     ];
     for (const [path, method, fields] of assertions) {
       const schema = document.paths?.[path]?.[method]?.responses?.['200']?.content?.['application/json']?.schema;

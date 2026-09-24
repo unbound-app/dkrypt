@@ -5633,29 +5633,82 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "anyOf": [
-                    {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    },
-                    {
-                      "type": "array",
-                      "items": {}
-                    },
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    },
-                    {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "loggedIn",
+                    "identities",
+                    "linkedProviders",
+                    "githubOauthEnabled",
+                    "discordOauthEnabled",
+                    "publicBaseUrl"
+                  ],
+                  "properties": {
+                    "loggedIn": {
                       "type": "boolean"
                     },
-                    {
-                      "type": "null"
+                    "sub": {
+                      "minLength": 1,
+                      "maxLength": 200,
+                      "type": "string"
+                    },
+                    "displayName": {
+                      "type": "string"
+                    },
+                    "avatarUrl": {
+                      "type": "string"
+                    },
+                    "identities": {
+                      "type": "array",
+                      "items": {
+                        "additionalProperties": true,
+                        "type": "object",
+                        "properties": {}
+                      }
+                    },
+                    "linkedProviders": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "permissions": {
+                      "type": "string"
+                    },
+                    "expiresAt": {
+                      "type": "integer"
+                    },
+                    "githubOauthEnabled": {
+                      "type": "boolean"
+                    },
+                    "discordOauthEnabled": {
+                      "type": "boolean"
+                    },
+                    "publicBaseUrl": {
+                      "type": "string"
+                    },
+                    "mfa": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "required": [
+                        "enabled",
+                        "recoveryCodesRemaining",
+                        "required"
+                      ],
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "recoveryCodesRemaining": {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "required": {
+                          "type": "boolean"
+                        }
+                      }
                     }
-                  ]
+                  }
                 }
               }
             }
@@ -5995,29 +6048,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "anyOf": [
-                    {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    },
-                    {
-                      "type": "array",
-                      "items": {}
-                    },
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    },
-                    {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "enabled",
+                    "recoveryCodesRemaining"
+                  ],
+                  "properties": {
+                    "enabled": {
                       "type": "boolean"
                     },
-                    {
-                      "type": "null"
+                    "recoveryCodesRemaining": {
+                      "minimum": 0,
+                      "type": "integer"
                     }
-                  ]
+                  }
                 }
               }
             }
@@ -6351,47 +6396,26 @@
         "tags": [
           "public"
         ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "additionalProperties": true,
-                "type": "object",
-                "properties": {}
-              }
-            }
-          }
-        },
         "responses": {
           "200": {
             "description": "Default Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "anyOf": [
-                    {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    },
-                    {
-                      "type": "array",
-                      "items": {}
-                    },
-                    {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "secret",
+                    "otpauthUrl"
+                  ],
+                  "properties": {
+                    "secret": {
                       "type": "string"
                     },
-                    {
-                      "type": "number"
-                    },
-                    {
-                      "type": "boolean"
-                    },
-                    {
-                      "type": "null"
+                    "otpauthUrl": {
+                      "type": "string"
                     }
-                  ]
+                  }
                 }
               }
             }
@@ -6725,56 +6749,29 @@
         "tags": [
           "public"
         ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "additionalProperties": true,
-                "type": "object",
-                "required": [
-                  "token"
-                ],
-                "properties": {
-                  "token": {
-                    "minLength": 1,
-                    "maxLength": 100,
-                    "type": "string"
-                  }
-                }
-              }
-            }
-          }
-        },
         "responses": {
           "200": {
             "description": "Default Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "anyOf": [
-                    {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    },
-                    {
-                      "type": "array",
-                      "items": {}
-                    },
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    },
-                    {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "enabled",
+                    "recoveryCodes"
+                  ],
+                  "properties": {
+                    "enabled": {
                       "type": "boolean"
                     },
-                    {
-                      "type": "null"
+                    "recoveryCodes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
                     }
-                  ]
+                  }
                 }
               }
             }
@@ -10841,56 +10838,27 @@
         "tags": [
           "public"
         ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "additionalProperties": true,
-                "type": "object",
-                "required": [
-                  "token"
-                ],
-                "properties": {
-                  "token": {
-                    "minLength": 1,
-                    "maxLength": 100,
-                    "type": "string"
-                  }
-                }
-              }
-            }
-          }
-        },
         "responses": {
           "200": {
             "description": "Default Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "anyOf": [
-                    {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    },
-                    {
-                      "type": "array",
-                      "items": {}
-                    },
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    },
-                    {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "enabled",
+                    "recoveryCodesRemaining"
+                  ],
+                  "properties": {
+                    "enabled": {
                       "type": "boolean"
                     },
-                    {
-                      "type": "null"
+                    "recoveryCodesRemaining": {
+                      "minimum": 0,
+                      "type": "integer"
                     }
-                  ]
+                  }
                 }
               }
             }
@@ -11224,56 +11192,25 @@
         "tags": [
           "public"
         ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "additionalProperties": true,
-                "type": "object",
-                "required": [
-                  "token"
-                ],
-                "properties": {
-                  "token": {
-                    "minLength": 1,
-                    "maxLength": 100,
-                    "type": "string"
-                  }
-                }
-              }
-            }
-          }
-        },
         "responses": {
           "200": {
             "description": "Default Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "anyOf": [
-                    {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    },
-                    {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "recoveryCodes"
+                  ],
+                  "properties": {
+                    "recoveryCodes": {
                       "type": "array",
-                      "items": {}
-                    },
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    },
-                    {
-                      "type": "boolean"
-                    },
-                    {
-                      "type": "null"
+                      "items": {
+                        "type": "string"
+                      }
                     }
-                  ]
+                  }
                 }
               }
             }
@@ -14637,29 +14574,45 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "anyOf": [
-                    {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    },
-                    {
-                      "type": "array",
-                      "items": {}
-                    },
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    },
-                    {
-                      "type": "boolean"
-                    },
-                    {
-                      "type": "null"
+                  "type": "array",
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object",
+                    "required": [
+                      "id",
+                      "sub",
+                      "createdAt",
+                      "lastSeenAt",
+                      "current"
+                    ],
+                    "properties": {
+                      "id": {
+                        "minLength": 1,
+                        "maxLength": 200,
+                        "type": "string"
+                      },
+                      "sub": {
+                        "minLength": 1,
+                        "maxLength": 200,
+                        "type": "string"
+                      },
+                      "createdAt": {
+                        "type": "integer"
+                      },
+                      "lastSeenAt": {
+                        "type": "integer"
+                      },
+                      "userAgent": {
+                        "type": "string"
+                      },
+                      "ip": {
+                        "type": "string"
+                      },
+                      "current": {
+                        "type": "boolean"
+                      }
                     }
-                  ]
+                  }
                 }
               }
             }
@@ -19666,29 +19619,126 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "anyOf": [
-                    {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "stripe",
+                    "crypto"
+                  ],
+                  "properties": {
+                    "stripe": {
                       "additionalProperties": true,
                       "type": "object",
-                      "properties": {}
+                      "required": [
+                        "enabled",
+                        "environment",
+                        "missingConfiguration"
+                      ],
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "environment": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "test"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "live"
+                              ]
+                            }
+                          ]
+                        },
+                        "missingConfiguration": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      }
                     },
-                    {
-                      "type": "array",
-                      "items": {}
-                    },
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    },
-                    {
-                      "type": "boolean"
-                    },
-                    {
-                      "type": "null"
+                    "crypto": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "required": [
+                        "enabled",
+                        "configured",
+                        "ready",
+                        "environment",
+                        "settlementType",
+                        "settlementCurrency",
+                        "supportedChains",
+                        "supportedAssets",
+                        "missingConfiguration",
+                        "issues"
+                      ],
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "configured": {
+                          "type": "boolean"
+                        },
+                        "ready": {
+                          "type": "boolean"
+                        },
+                        "environment": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "test"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "live"
+                              ]
+                            }
+                          ]
+                        },
+                        "settlementType": {
+                          "type": "string"
+                        },
+                        "settlementCurrency": {
+                          "type": "string"
+                        },
+                        "supportedChains": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "supportedAssets": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "missingConfiguration": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "issues": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "checkedAt": {
+                          "type": "string"
+                        }
+                      }
                     }
-                  ]
+                  }
                 }
               }
             }
@@ -20384,84 +20434,35 @@
         "tags": [
           "public"
         ],
-        "parameters": [
-          {
-            "schema": {
-              "minLength": 1,
-              "maxLength": 512,
-              "type": "string"
-            },
-            "in": "query",
-            "name": "cursor",
-            "required": false
-          },
-          {
-            "schema": {
-              "minimum": 0,
-              "type": "integer"
-            },
-            "in": "query",
-            "name": "offset",
-            "required": false
-          },
-          {
-            "schema": {
-              "minimum": 1,
-              "maximum": 200,
-              "type": "integer"
-            },
-            "in": "query",
-            "name": "limit",
-            "required": false
-          },
-          {
-            "schema": {
-              "maxLength": 32,
-              "type": "string"
-            },
-            "in": "query",
-            "name": "status",
-            "required": false
-          },
-          {
-            "schema": {
-              "maxLength": 32,
-              "type": "string"
-            },
-            "in": "query",
-            "name": "provider",
-            "required": false
-          }
-        ],
         "responses": {
           "200": {
             "description": "Default Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "anyOf": [
-                    {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    },
-                    {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "inbox",
+                    "total"
+                  ],
+                  "properties": {
+                    "inbox": {
                       "type": "array",
-                      "items": {}
+                      "items": {
+                        "additionalProperties": true,
+                        "type": "object",
+                        "properties": {}
+                      }
                     },
-                    {
+                    "total": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "nextCursor": {
                       "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    },
-                    {
-                      "type": "boolean"
-                    },
-                    {
-                      "type": "null"
                     }
-                  ]
+                  }
                 }
               }
             }
@@ -22349,29 +22350,65 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "anyOf": [
-                    {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    },
-                    {
-                      "type": "array",
-                      "items": {}
-                    },
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    },
-                    {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "checkedAt",
+                    "checks"
+                  ],
+                  "properties": {
+                    "ok": {
                       "type": "boolean"
                     },
-                    {
-                      "type": "null"
+                    "checkedAt": {
+                      "type": "string"
+                    },
+                    "checks": {
+                      "type": "array",
+                      "items": {
+                        "additionalProperties": true,
+                        "type": "object",
+                        "required": [
+                          "id",
+                          "status",
+                          "detail"
+                        ],
+                        "properties": {
+                          "id": {
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "type": "string"
+                          },
+                          "status": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "ok"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "warn"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "error"
+                                ]
+                              }
+                            ]
+                          },
+                          "detail": {
+                            "type": "string"
+                          }
+                        }
+                      }
                     }
-                  ]
+                  }
                 }
               }
             }
@@ -22711,29 +22748,75 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "anyOf": [
-                    {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    },
-                    {
-                      "type": "array",
-                      "items": {}
-                    },
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    },
-                    {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "checkedAt",
+                    "probes"
+                  ],
+                  "properties": {
+                    "ok": {
                       "type": "boolean"
                     },
-                    {
-                      "type": "null"
+                    "checkedAt": {
+                      "type": "string"
+                    },
+                    "probes": {
+                      "type": "array",
+                      "items": {
+                        "additionalProperties": true,
+                        "type": "object",
+                        "required": [
+                          "id",
+                          "status",
+                          "durationMs",
+                          "detail"
+                        ],
+                        "properties": {
+                          "id": {
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "type": "string"
+                          },
+                          "status": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "ok"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "warn"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "error"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "skipped"
+                                ]
+                              }
+                            ]
+                          },
+                          "durationMs": {
+                            "type": "number"
+                          },
+                          "detail": {
+                            "type": "string"
+                          }
+                        }
+                      }
                     }
-                  ]
+                  }
                 }
               }
             }
@@ -23067,66 +23150,40 @@
         "tags": [
           "dashboard"
         ],
-        "parameters": [
-          {
-            "schema": {
-              "minLength": 1,
-              "maxLength": 512,
-              "type": "string"
-            },
-            "in": "query",
-            "name": "cursor",
-            "required": false
-          },
-          {
-            "schema": {
-              "minimum": 0,
-              "type": "integer"
-            },
-            "in": "query",
-            "name": "offset",
-            "required": false
-          },
-          {
-            "schema": {
-              "minimum": 1,
-              "maximum": 200,
-              "type": "integer"
-            },
-            "in": "query",
-            "name": "limit",
-            "required": false
-          }
-        ],
         "responses": {
           "200": {
             "description": "Default Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "anyOf": [
-                    {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    },
-                    {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "notifications",
+                    "unread",
+                    "total"
+                  ],
+                  "properties": {
+                    "notifications": {
                       "type": "array",
-                      "items": {}
+                      "items": {
+                        "additionalProperties": true,
+                        "type": "object",
+                        "properties": {}
+                      }
                     },
-                    {
+                    "unread": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "total": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "nextCursor": {
                       "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    },
-                    {
-                      "type": "boolean"
-                    },
-                    {
-                      "type": "null"
                     }
-                  ]
+                  }
                 }
               }
             }
@@ -25761,47 +25818,27 @@
         "tags": [
           "dashboard"
         ],
-        "parameters": [
-          {
-            "schema": {
-              "minimum": 1,
-              "maximum": 200,
-              "type": "integer"
-            },
-            "in": "query",
-            "name": "limit",
-            "required": false
-          }
-        ],
         "responses": {
           "200": {
             "description": "Default Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "anyOf": [
-                    {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    },
-                    {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "deliveries"
+                  ],
+                  "properties": {
+                    "deliveries": {
                       "type": "array",
-                      "items": {}
-                    },
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    },
-                    {
-                      "type": "boolean"
-                    },
-                    {
-                      "type": "null"
+                      "items": {
+                        "additionalProperties": true,
+                        "type": "object",
+                        "properties": {}
+                      }
                     }
-                  ]
+                  }
                 }
               }
             }
@@ -26500,8 +26537,9 @@
         "parameters": [
           {
             "schema": {
-              "minLength": 1,
+              "minLength": 3,
               "maxLength": 200,
+              "pattern": "^[A-Za-z0-9.-]+$",
               "type": "string"
             },
             "in": "path",
@@ -26515,29 +26553,23 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "anyOf": [
-                    {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    },
-                    {
-                      "type": "array",
-                      "items": {}
-                    },
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    },
-                    {
-                      "type": "boolean"
-                    },
-                    {
-                      "type": "null"
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "avgMs"
+                  ],
+                  "properties": {
+                    "avgMs": {
+                      "anyOf": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     }
-                  ]
+                  }
                 }
               }
             }
@@ -27264,29 +27296,36 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "anyOf": [
-                    {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    },
-                    {
-                      "type": "array",
-                      "items": {}
-                    },
-                    {
-                      "type": "string"
-                    },
-                    {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "targetMs",
+                    "historicalP95Ms",
+                    "jobs"
+                  ],
+                  "properties": {
+                    "targetMs": {
                       "type": "number"
                     },
-                    {
-                      "type": "boolean"
+                    "historicalP95Ms": {
+                      "anyOf": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     },
-                    {
-                      "type": "null"
+                    "jobs": {
+                      "type": "array",
+                      "items": {
+                        "additionalProperties": true,
+                        "type": "object",
+                        "properties": {}
+                      }
                     }
-                  ]
+                  }
                 }
               }
             }
@@ -28000,29 +28039,33 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "anyOf": [
-                    {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    },
-                    {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "days"
+                  ],
+                  "properties": {
+                    "days": {
                       "type": "array",
-                      "items": {}
-                    },
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    },
-                    {
-                      "type": "boolean"
-                    },
-                    {
-                      "type": "null"
+                      "items": {
+                        "additionalProperties": true,
+                        "type": "object",
+                        "required": [
+                          "date",
+                          "count"
+                        ],
+                        "properties": {
+                          "date": {
+                            "type": "string"
+                          },
+                          "count": {
+                            "minimum": 0,
+                            "type": "integer"
+                          }
+                        }
+                      }
                     }
-                  ]
+                  }
                 }
               }
             }
@@ -35832,29 +35875,35 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "anyOf": [
-                    {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    },
-                    {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "devices",
+                    "scannedNetworks",
+                    "warnings"
+                  ],
+                  "properties": {
+                    "devices": {
                       "type": "array",
-                      "items": {}
+                      "items": {
+                        "additionalProperties": true,
+                        "type": "object",
+                        "properties": {}
+                      }
                     },
-                    {
-                      "type": "string"
+                    "scannedNetworks": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
                     },
-                    {
-                      "type": "number"
-                    },
-                    {
-                      "type": "boolean"
-                    },
-                    {
-                      "type": "null"
+                    "warnings": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
                     }
-                  ]
+                  }
                 }
               }
             }
@@ -41462,29 +41511,32 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "anyOf": [
-                    {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    },
-                    {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "buckets",
+                    "uptimePercent"
+                  ],
+                  "properties": {
+                    "buckets": {
                       "type": "array",
-                      "items": {}
+                      "items": {
+                        "additionalProperties": true,
+                        "type": "object",
+                        "properties": {}
+                      }
                     },
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    },
-                    {
-                      "type": "boolean"
-                    },
-                    {
-                      "type": "null"
+                    "uptimePercent": {
+                      "anyOf": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     }
-                  ]
+                  }
                 }
               }
             }
@@ -41865,29 +41917,29 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "anyOf": [
-                    {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    },
-                    {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "activity",
+                    "total"
+                  ],
+                  "properties": {
+                    "activity": {
                       "type": "array",
-                      "items": {}
+                      "items": {
+                        "additionalProperties": true,
+                        "type": "object",
+                        "properties": {}
+                      }
                     },
-                    {
+                    "total": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "nextCursor": {
                       "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    },
-                    {
-                      "type": "boolean"
-                    },
-                    {
-                      "type": "null"
                     }
-                  ]
+                  }
                 }
               }
             }
@@ -42239,29 +42291,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "anyOf": [
-                    {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    },
-                    {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "buckets"
+                  ],
+                  "properties": {
+                    "buckets": {
                       "type": "array",
-                      "items": {}
-                    },
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    },
-                    {
-                      "type": "boolean"
-                    },
-                    {
-                      "type": "null"
+                      "items": {
+                        "additionalProperties": true,
+                        "type": "object",
+                        "properties": {}
+                      }
                     }
-                  ]
+                  }
                 }
               }
             }
@@ -42613,29 +42657,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "anyOf": [
-                    {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    },
-                    {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "buckets"
+                  ],
+                  "properties": {
+                    "buckets": {
                       "type": "array",
-                      "items": {}
-                    },
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    },
-                    {
-                      "type": "boolean"
-                    },
-                    {
-                      "type": "null"
+                      "items": {
+                        "additionalProperties": true,
+                        "type": "object",
+                        "properties": {}
+                      }
                     }
-                  ]
+                  }
                 }
               }
             }
@@ -42987,29 +43023,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "anyOf": [
-                    {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    },
-                    {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "buckets"
+                  ],
+                  "properties": {
+                    "buckets": {
                       "type": "array",
-                      "items": {}
-                    },
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    },
-                    {
-                      "type": "boolean"
-                    },
-                    {
-                      "type": "null"
+                      "items": {
+                        "additionalProperties": true,
+                        "type": "object",
+                        "properties": {}
+                      }
                     }
-                  ]
+                  }
                 }
               }
             }

@@ -199,6 +199,67 @@ const JobTimelineResponse = object({
   guidance: Type.Optional(JsonObject),
 });
 const TestFlightCatalogResponse = object({ apps: Type.Array(JsonObject), fetchedAt: Type.Optional(Type.String()), refreshing: Type.Boolean() });
+const AuthMfaResponse = object({ enabled: Type.Boolean(), recoveryCodesRemaining: Type.Integer({ minimum: 0 }) });
+const AuthSessionResponse = object({
+  loggedIn: Type.Boolean(),
+  sub: Type.Optional(Identifier),
+  displayName: Type.Optional(Type.String()),
+  avatarUrl: Type.Optional(Type.String()),
+  identities: Type.Array(JsonObject),
+  linkedProviders: Type.Array(Type.String()),
+  permissions: Type.Optional(Type.String()),
+  expiresAt: Type.Optional(Type.Integer()),
+  githubOauthEnabled: Type.Boolean(),
+  discordOauthEnabled: Type.Boolean(),
+  publicBaseUrl: Type.String(),
+  mfa: Type.Optional(object({ ...AuthMfaResponse.properties, required: Type.Boolean() })),
+});
+const AuthSessionListResponse = Type.Array(
+  object({
+    id: Identifier,
+    sub: Identifier,
+    createdAt: Type.Integer(),
+    lastSeenAt: Type.Integer(),
+    userAgent: Type.Optional(Type.String()),
+    ip: Type.Optional(Type.String()),
+    current: Type.Boolean(),
+  }),
+);
+const BillingProviderStatusResponse = object({
+  stripe: object({ enabled: Type.Boolean(), environment: ProviderEnvironment, missingConfiguration: Type.Array(Type.String()) }),
+  crypto: object({
+    enabled: Type.Boolean(),
+    configured: Type.Boolean(),
+    ready: Type.Boolean(),
+    environment: ProviderEnvironment,
+    settlementType: Type.String(),
+    settlementCurrency: Type.String(),
+    supportedChains: Type.Array(Type.String()),
+    supportedAssets: Type.Array(Type.String()),
+    missingConfiguration: Type.Array(Type.String()),
+    issues: Type.Array(Type.String()),
+    checkedAt: Type.Optional(Type.String()),
+  }),
+});
+const DoctorResponse = object({
+  ok: Type.Boolean(),
+  checkedAt: Type.String(),
+  checks: Type.Array(object({ id: Identifier, status: Type.Union([Type.Literal('ok'), Type.Literal('warn'), Type.Literal('error')]), detail: Type.String() })),
+});
+const SyntheticResponse = object({
+  ok: Type.Boolean(),
+  checkedAt: Type.String(),
+  probes: Type.Array(object({ id: Identifier, status: Type.Union([Type.Literal('ok'), Type.Literal('warn'), Type.Literal('error'), Type.Literal('skipped')]), durationMs: Type.Number(), detail: Type.String() })),
+});
+const NotificationPage = object({ notifications: Type.Array(JsonObject), unread: Type.Integer({ minimum: 0 }), total: Type.Integer({ minimum: 0 }), nextCursor: PageCursor });
+const WebhookInboxPage = object({ inbox: Type.Array(JsonObject), total: Type.Integer({ minimum: 0 }), nextCursor: PageCursor });
+const DeviceDiscoveryResponse = object({ devices: Type.Array(JsonObject), scannedNetworks: Type.Array(Type.String()), warnings: Type.Array(Type.String()) });
+const DeviceHealthHistoryResponse = object({ buckets: Type.Array(JsonObject), uptimePercent: Type.Union([Type.Number(), Type.Null()]) });
+const DeviceActivityResponse = object({ activity: Type.Array(JsonObject), total: Type.Integer({ minimum: 0 }), nextCursor: PageCursor });
+const DeviceHistoryResponse = object({ buckets: Type.Array(JsonObject) });
+const JobEtaResponse = object({ avgMs: Type.Union([Type.Number(), Type.Null()]) });
+const JobSloResponse = object({ targetMs: Type.Number(), historicalP95Ms: Type.Union([Type.Number(), Type.Null()]), jobs: Type.Array(JsonObject) });
+const DailyVolumeResponse = object({ days: Type.Array(object({ date: Type.String(), count: Type.Integer({ minimum: 0 }) })) });
 const DeviceConnectionInput = object({
   name: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
   existingId: Type.Optional(Identifier),
@@ -551,6 +612,28 @@ register('GET', '/v1/dashboard/devices/:id/preflight', { params: object({ id: Id
 register('GET', '/v1/dashboard/jobs/:id/status', { params: object({ id: Identifier }), response: { 200: JobSummaryResponse } });
 register('GET', '/v1/dashboard/jobs/:id/timeline', { params: object({ id: Identifier }), response: { 200: JobTimelineResponse } });
 register('GET', '/v1/dashboard/testflight/catalog', { querystring: object({ refresh: Type.Optional(Type.Literal('true')) }), response: { 200: TestFlightCatalogResponse } });
+register('GET', '/v1/auth/session', { response: { 200: AuthSessionResponse } });
+register('GET', '/v1/auth/mfa', { response: { 200: AuthMfaResponse } });
+register('POST', '/v1/auth/mfa/setup', { response: { 200: object({ secret: Type.String(), otpauthUrl: Type.String() }) } });
+register('POST', '/v1/auth/mfa/confirm', { response: { 200: object({ enabled: Type.Boolean(), recoveryCodes: Type.Array(Type.String()) }) } });
+register('POST', '/v1/auth/mfa/disable', { response: { 200: object({ enabled: Type.Boolean(), recoveryCodesRemaining: Type.Integer({ minimum: 0 }) }) } });
+register('POST', '/v1/auth/mfa/recovery-codes', { response: { 200: object({ recoveryCodes: Type.Array(Type.String()) }) } });
+register('GET', '/v1/auth/sessions', { response: { 200: AuthSessionListResponse } });
+register('GET', '/v1/billing/provider-status', { response: { 200: BillingProviderStatusResponse } });
+register('GET', '/v1/billing/webhooks/inbox', { response: { 200: WebhookInboxPage } });
+register('GET', '/v1/dashboard/doctor', { response: { 200: DoctorResponse } });
+register('GET', '/v1/dashboard/synthetic', { response: { 200: SyntheticResponse } });
+register('GET', '/v1/dashboard/notifications', { response: { 200: NotificationPage } });
+register('GET', '/v1/dashboard/devices/discover', { response: { 200: DeviceDiscoveryResponse } });
+register('GET', '/v1/dashboard/devices/:id/health-history', { params: object({ id: Identifier }), response: { 200: DeviceHealthHistoryResponse } });
+register('GET', '/v1/dashboard/devices/:id/activity', { params: object({ id: Identifier }), querystring: PaginationQuery, response: { 200: DeviceActivityResponse } });
+register('GET', '/v1/dashboard/devices/:id/battery-history', { params: object({ id: Identifier }), response: { 200: DeviceHistoryResponse } });
+register('GET', '/v1/dashboard/devices/:id/temperature-history', { params: object({ id: Identifier }), response: { 200: DeviceHistoryResponse } });
+register('GET', '/v1/dashboard/devices/:id/storage-history', { params: object({ id: Identifier }), response: { 200: DeviceHistoryResponse } });
+register('GET', '/v1/dashboard/jobs/eta/:bundleId', { params: object({ bundleId: BundleId }), response: { 200: JobEtaResponse } });
+register('GET', '/v1/dashboard/jobs/slo', { response: { 200: JobSloResponse } });
+register('GET', '/v1/dashboard/jobs/volume', { response: { 200: DailyVolumeResponse } });
+register('GET', '/v1/dashboard/webhooks', { response: { 200: object({ deliveries: Type.Array(JsonObject) }) } });
 
 export function getRouteContract(method: string, path: string): FastifySchema | undefined {
   const key = `${method} ${path}`;
