@@ -203,7 +203,6 @@ async function start(): Promise<void> {
     stopJobSweeper();
     stopJobWebhookDispatcher();
     stopStateBackgroundServices();
-    stopLogFlusher();
     await stopNotificationDigestScheduler();
     await shutdownJobs();
     closeBillingDatabase();
@@ -214,6 +213,7 @@ async function start(): Promise<void> {
     closeStateDatabase();
     await stopTelemetry();
     log.info('graceful shutdown completed', { signal });
+    stopLogFlusher();
   };
   process.once('SIGTERM', () => void shutdown('SIGTERM'));
   process.once('SIGINT', () => void shutdown('SIGINT'));
