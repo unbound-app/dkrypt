@@ -11,14 +11,17 @@ use std::{
     env,
     path::{Path, PathBuf},
     process::Stdio,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
     time::Duration,
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt, copy_bidirectional},
     net::{TcpListener, UnixListener, UnixStream},
     process::{Child, Command},
-    sync::Mutex,
+    sync::{Mutex, Notify},
     time::{sleep, timeout},
 };
 use uuid::Uuid;
@@ -71,12 +74,66 @@ struct DeviceSummary {
     transport: String,
 }
 
+#[derive(Clone)]
+struct CancellationToken {
+    cancelled: Arc<AtomicBool>,
+    notify: Arc<Notify>,
+}
+
+impl CancellationToken {
+    fn new() -> Self {
+        Self {
+            cancelled: Arc::new(AtomicBool::new(false)),
+            notify: Arc::new(Notify::new()),
+        }
+    }
+
+    fn cancel(&self) {
+        if !self.cancelled.swap(true, Ordering::Release) {
+            self.notify.notify_one();
+        }
+    }
+
+    async fn cancelled(&self) {
+        if self.cancelled.load(Ordering::Acquire) {
+            return;
+        }
+        self.notify.notified().await;
+    }
+}
+
 struct BridgeState {
     secrets: Vec<String>,
     mux_socket: PathBuf,
     host_id: String,
     tunnels: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
-    event_sequence: std::sync::atomic::AtomicU64,
+    cancellations: Mutex<HashMap<String, CancellationToken>>,
+    event_sequence: AtomicU64,
+}
+
+impl BridgeState {
+    async fn register_cancellation(&self, request_id: &str) -> CancellationToken {
+        let token = CancellationToken::new();
+        self.cancellations
+            .lock()
+            .await
+            .insert(request_id.to_string(), token.clone());
+        token
+    }
+
+    async fn remove_cancellation(&self, request_id: &str) {
+        self.cancellations.lock().await.remove(request_id);
+    }
+
+    async fn cancel_request(&self, request_id: &str) -> bool {
+        let token = self.cancellations.lock().await.get(request_id).cloned();
+        if let Some(token) = token {
+            token.cancel();
+            true
+        } else {
+            false
+        }
+    }
 }
 
 fn error(code: impl Into<String>, message: impl Into<String>, retryable: bool) -> RpcError {
@@ -111,7 +168,7 @@ fn valid_frame_length(length: usize, maximum: usize) -> bool {
     length > 0 && length <= maximum
 }
 
-fn bridge_capabilities() -> [&'static str; 13] {
+fn bridge_capabilities() -> [&'static str; 14] {
     [
         "list_devices",
         "pair",
@@ -126,14 +183,12 @@ fn bridge_capabilities() -> [&'static str; 13] {
         "events",
         "file_read",
         "file_write",
+        "cancel",
     ]
 }
 
 fn next_event_sequence(state: &BridgeState) -> u64 {
-    state
-        .event_sequence
-        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-        + 1
+    state.event_sequence.fetch_add(1, Ordering::Relaxed) + 1
 }
 
 fn authorized_secret(secrets: &[String], candidate: &str) -> bool {
@@ -527,6 +582,16 @@ async fn execute(state: Arc<BridgeState>, request: RpcRequest) -> Result<Value, 
         "capabilities" => Ok(
             json!({ "protocolVersion": RPC_VERSION, "transport": "rust-netmuxd", "capabilities": bridge_capabilities() }),
         ),
+        "cancel" => {
+            let request_id = request
+                .payload
+                .as_ref()
+                .and_then(Value::as_str)
+                .ok_or_else(|| error("invalid_request", "request id is required", false))?;
+            Ok(
+                json!({ "cancelled": state.cancel_request(request_id).await, "requestId": request_id }),
+            )
+        }
         "health" => {
             let devices = list_devices(&state).await?;
             let transport = devices
@@ -735,7 +800,8 @@ async fn handle_client(mut stream: UnixStream, state: Arc<BridgeState>) {
             }
         };
         let request_id = request.request_id.clone();
-        let follow_events = request.operation == "events" && request.follow == Some(true);
+        let operation = request.operation.clone();
+        let follow_events = operation == "events" && request.follow == Some(true);
         let result = if request.version != RPC_VERSION {
             Err(error(
                 "protocol_version",
@@ -754,13 +820,24 @@ async fn handle_client(mut stream: UnixStream, state: Arc<BridgeState>) {
         } else {
             let deadline =
                 Duration::from_millis(request.deadline_ms.unwrap_or(20_000).clamp(1, 120_000));
-            match timeout(deadline, execute(state.clone(), request)).await {
-                Ok(value) => value,
-                Err(_) => Err(error(
-                    "deadline_exceeded",
-                    "device bridge request exceeded its deadline",
-                    true,
-                )),
+            if operation == "cancel" {
+                match timeout(deadline, execute(state.clone(), request)).await {
+                    Ok(value) => value,
+                    Err(_) => Err(error(
+                        "deadline_exceeded",
+                        "device bridge request exceeded its deadline",
+                        true,
+                    )),
+                }
+            } else {
+                let cancellation = state.register_cancellation(&request_id).await;
+                let result = tokio::select! {
+                    value = execute(state.clone(), request) => value,
+                    _ = cancellation.cancelled() => Err(error("cancelled", "device bridge request was cancelled", true)),
+                    _ = sleep(deadline) => Err(error("deadline_exceeded", "device bridge request exceeded its deadline", true)),
+                };
+                state.remove_cancellation(&request_id).await;
+                result
             }
         };
         let output = match result {
@@ -845,7 +922,8 @@ async fn main() -> Result<(), String> {
         mux_socket,
         host_id,
         tunnels: Mutex::new(HashMap::new()),
-        event_sequence: std::sync::atomic::AtomicU64::new(0),
+        cancellations: Mutex::new(HashMap::new()),
+        event_sequence: AtomicU64::new(0),
     });
     let listener = UnixListener::bind(&rpc_socket).map_err(|value| value.to_string())?;
     let permissions = std::os::unix::fs::PermissionsExt::from_mode(0o660);
@@ -862,8 +940,8 @@ async fn main() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_FRAME_BYTES, RPC_VERSION, authorized_secret, error, failure, response,
-        valid_frame_length,
+        CancellationToken, MAX_FRAME_BYTES, RPC_VERSION, authorized_secret, bridge_capabilities,
+        error, failure, response, valid_frame_length,
     };
     use serde_json::json;
 
@@ -897,5 +975,29 @@ mod tests {
         assert!(authorized_secret(&secrets, "current-secret"));
         assert!(authorized_secret(&secrets, "previous-secret"));
         assert!(!authorized_secret(&secrets, "unknown-secret"));
+    }
+
+    #[test]
+    fn cancellation_is_advertised_as_a_bridge_capability() {
+        assert!(bridge_capabilities().contains(&"cancel"));
+    }
+
+    #[tokio::test]
+    async fn cancellation_wakes_waiting_requests() {
+        let token = CancellationToken::new();
+        let waiter = {
+            let token = token.clone();
+            tokio::spawn(async move {
+                token.cancelled().await;
+                true
+            })
+        };
+        token.cancel();
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(1), waiter)
+                .await
+                .expect("cancellation waiter timed out")
+                .expect("cancellation waiter panicked")
+        );
     }
 }

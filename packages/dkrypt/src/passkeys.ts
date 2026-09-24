@@ -81,23 +81,30 @@ export async function finishPasskeyRegistration(userId: string, response: Regist
   });
 }
 
-export async function beginPasskeyAuthentication(): Promise<Record<string, unknown>> {
+export async function beginPasskeyAuthentication(userId?: string): Promise<Record<string, unknown>> {
   const { id } = relyingParty();
+  const normalized = userId ? normalizedUserId(userId) : undefined;
+  const credentials = normalized
+    ? listPasskeysForUser(normalized).map((credential) => ({ id: credential.id, transports: credential.transports }))
+    : undefined;
   const options = await generateAuthenticationOptions({
     rpID: id,
     userVerification: 'preferred',
+    ...(credentials && credentials.length > 0 ? { allowCredentials: credentials } : {}),
   });
-  rememberChallenge(options.challenge, { kind: 'authentication' });
+  rememberChallenge(options.challenge, { kind: 'authentication', userId: normalized });
   return { ...options } as Record<string, unknown>;
 }
 
-export async function finishPasskeyAuthentication(response: AuthenticationResponseJSON): Promise<{ userId: string; credential: PasskeyCredential }> {
+export async function finishPasskeyAuthentication(response: AuthenticationResponseJSON, expectedUserId?: string): Promise<{ userId: string; credential: PasskeyCredential }> {
   const stored = getPasskeyById(response.id);
   if (!stored) throw new Error('passkey is not registered');
+  const normalized = expectedUserId ? normalizedUserId(expectedUserId) : undefined;
+  if (normalized && stored.userId !== normalized) throw new Error('passkey is not registered for this account');
   const { origin, id } = relyingParty();
   const result = await verifyAuthenticationResponse({
     response,
-    expectedChallenge: (challenge) => consumeChallenge(challenge, 'authentication'),
+    expectedChallenge: (challenge) => consumeChallenge(challenge, 'authentication', normalized),
     expectedOrigin: origin,
     expectedRPID: id,
     credential: {
@@ -111,6 +118,15 @@ export async function finishPasskeyAuthentication(response: AuthenticationRespon
   const credential = updatePasskey(stored.id, { counter: result.authenticationInfo.newCounter, lastUsedAt: Date.now() });
   if (!credential) throw new Error('passkey record disappeared during authentication');
   return { userId: stored.userId, credential };
+}
+
+export async function beginPasskeyReauthentication(userId: string): Promise<Record<string, unknown>> {
+  return beginPasskeyAuthentication(userId);
+}
+
+export async function finishPasskeyReauthentication(userId: string, response: AuthenticationResponseJSON): Promise<PasskeyCredential> {
+  const result = await finishPasskeyAuthentication(response, userId);
+  return result.credential;
 }
 
 export function listUserPasskeys(userId: string): Array<Omit<PasskeyCredential, 'publicKey'>> {

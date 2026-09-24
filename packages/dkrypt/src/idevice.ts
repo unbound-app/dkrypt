@@ -157,7 +157,7 @@ class RustDeviceBridgeClient {
     }
   }
 
-  private async requestRaw(operation: string, details: Record<string, unknown>, timeoutMs = REMOTE_COMMAND_TIMEOUT_MS): Promise<unknown> {
+  private async requestRaw(operation: string, details: Record<string, unknown>, timeoutMs = REMOTE_COMMAND_TIMEOUT_MS, cancelOnTimeout = true): Promise<unknown> {
     if (this.secret.length < 32) throw new DeviceAgentUnavailableError('DEVICE_BRIDGE_SECRET is missing or too short');
     const requestId = randomUUID();
     const body = Buffer.from(JSON.stringify({ version: 1, requestId, auth: this.secret, operation, ...details }), 'utf8');
@@ -228,11 +228,15 @@ class RustDeviceBridgeClient {
           }
           finish(undefined, response.result);
         };
-        const timer = setTimeout(() => finish(new Error('Rust device bridge request timed out')), Math.max(1, timeoutMs));
+        const timeoutRequest = () => {
+          if (cancelOnTimeout) void this.requestRaw('cancel', { payload: requestId }, 5_000, false).catch(() => undefined);
+          finish(new Error('Rust device bridge request timed out'));
+        };
+        const timer = setTimeout(timeoutRequest, Math.max(1, timeoutMs));
         socket.on('data', receive);
         socket.once('error', fail);
         socket.once('close', closed);
-        socket.setTimeout(Math.max(1, timeoutMs), () => finish(new Error('Rust device bridge request timed out')));
+        socket.setTimeout(Math.max(1, timeoutMs), timeoutRequest);
         socket.write(frame, (error) => {
           if (error) finish(error);
         });
@@ -253,6 +257,11 @@ class RustDeviceBridgeClient {
 
   async closeTunnel(tunnelId: string): Promise<void> {
     await this.request('close_tunnel', { payload: tunnelId }, 5_000);
+  }
+
+  async cancel(requestId: string): Promise<boolean> {
+    const result = await this.request('cancel', { payload: requestId }, 5_000);
+    return Boolean(result && typeof result === 'object' && (result as Record<string, unknown>).cancelled === true);
   }
 
   async pair(deviceId: string, hostId?: string): Promise<{ deviceId: string; hostId: string; paired: boolean }> {

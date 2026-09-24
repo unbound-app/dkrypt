@@ -1626,6 +1626,20 @@ export async function reauthenticate(input: { password?: string; mfaToken?: stri
   }
 }
 
+export async function reauthenticateWithPasskey(response: unknown): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await fetch('/v1/auth/passkeys/reauth/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(response),
+    });
+    const data = (await res.json().catch(() => ({}))) as { error?: string; message?: string };
+    return res.ok ? { ok: true } : { ok: false, error: data.message ?? data.error ?? 'Reauthentication failed.' };
+  } catch {
+    return { ok: false, error: 'Reauthentication failed.' };
+  }
+}
+
 export interface ActiveSessionInfo {
   id: string;
   sub: string;

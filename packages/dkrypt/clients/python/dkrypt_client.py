@@ -133,6 +133,8 @@ ROUTES = (
     "POST /v1/auth/mfa/setup",
     "POST /v1/auth/mfa/verify",
     "POST /v1/auth/passkeys/options",
+    "POST /v1/auth/passkeys/reauth/options",
+    "POST /v1/auth/passkeys/reauth/verify",
     "POST /v1/auth/passkeys/register",
     "POST /v1/auth/passkeys/register/options",
     "POST /v1/auth/passkeys/verify",

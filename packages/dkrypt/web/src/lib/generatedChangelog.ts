@@ -1,42 +1,42 @@
 export const GENERATED_CHANGELOG = [
   {
     "date": "2026-09-24",
-    "title": "fix(persistence): separate scheduler history from job timelines",
-    "description": "Released in d92d94f."
+    "title": "fix(deploy): trust host-mounted device key",
+    "description": "Released in af6d1cb."
   },
   {
     "date": "2026-09-24",
-    "title": "fix(deploy): make compose resource limits compatible",
-    "description": "Released in 9c3e7b0."
+    "title": "fix(deploy): report compatibility key sources",
+    "description": "Released in 7fc8523."
   },
   {
     "date": "2026-09-24",
-    "title": "feat: cut over dkrypt to rust device transport",
-    "description": "Released in 15f654b."
+    "title": "fix(deploy): diagnose missing device key",
+    "description": "Released in bef7404."
   },
   {
-    "date": "2026-09-23",
-    "title": "fix(device): keep autoinstall transport alive",
-    "description": "Released in ec63d23."
+    "date": "2026-09-24",
+    "title": "fix(deploy): migrate existing device key mount",
+    "description": "Released in 6581044."
   },
   {
-    "date": "2026-09-23",
-    "title": "fix: keep crypto billing independent and restore USB recovery",
-    "description": "Released in 32a510f."
+    "date": "2026-09-24",
+    "title": "fix(deploy): resolve homelab runtime home",
+    "description": "Released in f5b80d7."
   },
   {
-    "date": "2026-09-23",
-    "title": "feat(billing): add hosted crypto payments with NOWPayments",
-    "description": "Released in 5eb01cb."
+    "date": "2026-09-24",
+    "title": "fix(deploy): infer device key on homelab",
+    "description": "Released in 2b3fa28."
   },
   {
-    "date": "2026-09-22",
-    "title": "feat(billing): add Exodus crypto subscriptions",
-    "description": "Released in 4458614."
+    "date": "2026-09-24",
+    "title": "fix(ci): use a valid trivy action ref",
+    "description": "Released in 986d6a0."
   },
   {
-    "date": "2026-09-22",
-    "title": "fix(appstore): normalize tagged versions",
-    "description": "Released in 8bc1f54."
+    "date": "2026-09-24",
+    "title": "feat: complete reliability and transport rollout",
+    "description": "Released in 3a188b7."
   }
 ] as const;

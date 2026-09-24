@@ -457,7 +457,8 @@ export type AuditAction =
   | 'privacy.delete'
   | 'auth.passkey.add'
   | 'auth.passkey.remove'
-  | 'auth.passkey.login';
+  | 'auth.passkey.login'
+  | 'auth.passkey.reauthenticate';
 
 export interface AuditLogEntry {
   id: string;

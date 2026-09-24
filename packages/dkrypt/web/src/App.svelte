@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { DropdownMenu } from "bits-ui";
+	import { startAuthentication } from "@simplewebauthn/browser";
 	import {
 		Command,
 		Download,
@@ -77,7 +78,7 @@
 		sessionState,
 		updateProfileDisplayName,
 	} from "#lib/session.svelte";
-	import { accountExportUrl, deleteAccount, reauthenticate, testEmail, testPush } from "#lib/api";
+	import { accountExportUrl, deleteAccount, reauthenticate, reauthenticateWithPasskey, testEmail, testPush } from "#lib/api";
 	import {
 		ACCENT_PRESETS,
 		accentState,
@@ -394,6 +395,20 @@
 		}
 	}
 
+	async function tryPasskeyReauthentication(): Promise<boolean> {
+		try {
+			const optionsResponse = await fetch("/v1/auth/passkeys/reauth/options", { method: "POST" });
+			if (!optionsResponse.ok) return false;
+			const credential = await startAuthentication({ optionsJSON: await optionsResponse.json() });
+			const result = await reauthenticateWithPasskey(credential);
+			if (!result.ok) showToast(result.error ?? "Reauthentication failed.", "error");
+			return result.ok;
+		} catch (error) {
+			showToast(error instanceof Error ? error.message : "Passkey reauthentication was canceled.", "error");
+			return false;
+		}
+	}
+
 	async function doDeleteAccount(): Promise<void> {
 		if (sessionState.sub === "root") return;
 		if (!(await confirmDialog("Delete your dkrypt account and personal data? This cannot be undone.", { confirmLabel: "Continue", variant: "destructive" }))) return;
@@ -402,7 +417,8 @@
 			showToast("Account deletion was not confirmed.", "error");
 			return;
 		}
-		if (sessionState.sub === "root") {
+		const passkeyReauthenticated = passkeys.length > 0 ? await tryPasskeyReauthentication() : false;
+		if (!passkeyReauthenticated && sessionState.sub === "root") {
 			const password = window.prompt("Enter your administrator password to continue.");
 			if (!password) return;
 			const reauth = await reauthenticate({ password });
@@ -410,7 +426,7 @@
 				showToast(reauth.error ?? "Reauthentication failed.", "error");
 				return;
 			}
-		} else if (sessionState.mfa?.enabled) {
+		} else if (!passkeyReauthenticated && sessionState.mfa?.enabled) {
 			const mfaToken = window.prompt("Enter your authenticator or recovery code to continue.");
 			if (!mfaToken) return;
 			const reauth = await reauthenticate({ mfaToken });

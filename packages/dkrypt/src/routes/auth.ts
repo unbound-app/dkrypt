@@ -15,7 +15,7 @@ import { log } from '#logger.js';
 import { beginMfaEnrollment, confirmMfaEnrollment, disableMfa, mfaStatus, regenerateRecoveryCodes, verifyMfa } from '#mfa.js';
 import { PermissionFlag, serializeBits } from '#permissions.js';
 import { accountDeletionBlocker, buildAccountExport, deleteAccount } from '#privacy.js';
-import { beginPasskeyAuthentication, beginPasskeyRegistration, finishPasskeyAuthentication, finishPasskeyRegistration, listUserPasskeys, removeUserPasskey } from '#passkeys.js';
+import { beginPasskeyAuthentication, beginPasskeyReauthentication, beginPasskeyRegistration, finishPasskeyAuthentication, finishPasskeyReauthentication, finishPasskeyRegistration, listUserPasskeys, removeUserPasskey } from '#passkeys.js';
 import { checkRootPassword, clearSessionCookie, getSession, requireSession, requireRecentAuthentication, sessionOptsFromReq, setSessionCookie } from '#session.js';
 import { rateLimitPerUser } from '#util/rateLimit.js';
 import {
@@ -201,6 +201,34 @@ authRouter.post('/v1/auth/passkeys/verify', publicAuthRateLimit, async (req, res
     res.json({ ok: true, expiresAt });
   } catch (error) {
     res.error('passkey_authentication_failed', error instanceof Error ? error.message : String(error), 401, false);
+  }
+});
+
+authRouter.post('/v1/auth/passkeys/reauth/options', requireSession, async (_req, res) => {
+  try {
+    res.json(await beginPasskeyReauthentication(res.locals.session.sub));
+  } catch (error) {
+    res.error('passkey_unavailable', error instanceof Error ? error.message : String(error), 503, true);
+  }
+});
+
+authRouter.post('/v1/auth/passkeys/reauth/verify', requireSession, async (req, res) => {
+  const response = req.body as Record<string, unknown>;
+  if (!response || typeof response.id !== 'string' || typeof response.rawId !== 'string' || typeof response.response !== 'object' || response.response === null) {
+    res.error('invalid_passkey_response', 'the passkey authentication response is malformed', 400, false);
+    return;
+  }
+  try {
+    const credential = await finishPasskeyReauthentication(res.locals.session.sub, response as never);
+    const expiresAt = setSessionCookie(
+      res,
+      { sub: res.locals.session.sub, permissions: res.locals.session.permissions, mfaVerified: res.locals.session.mfaVerified, reauthenticatedAt: Date.now() },
+      { sid: res.locals.session.sid },
+    );
+    recordAudit(res.locals.session.sub, 'auth.passkey.reauthenticate', credential.id, 'passkey reauthentication succeeded');
+    res.json({ ok: true, expiresAt });
+  } catch (error) {
+    res.error('passkey_reauthentication_failed', error instanceof Error ? error.message : String(error), 401, false);
   }
 });
 

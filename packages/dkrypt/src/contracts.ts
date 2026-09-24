@@ -92,6 +92,8 @@ register('POST', '/v1/auth/privacy/delete', { body: object({ confirmation: Type.
 register('GET', '/v1/auth/passkeys', {});
 register('POST', '/v1/auth/passkeys/options', { body: JsonObject });
 register('POST', '/v1/auth/passkeys/verify', { body: Type.Record(Type.String({ minLength: 1, maxLength: 120 }), Type.Unknown()) });
+register('POST', '/v1/auth/passkeys/reauth/options', {});
+register('POST', '/v1/auth/passkeys/reauth/verify', { body: Type.Record(Type.String({ minLength: 1, maxLength: 120 }), Type.Unknown()) });
 register('POST', '/v1/auth/passkeys/register/options', { body: JsonObject });
 register('POST', '/v1/auth/passkeys/register', { body: Type.Record(Type.String({ minLength: 1, maxLength: 120 }), Type.Unknown()) });
 register('DELETE', '/v1/auth/passkeys/:id', { params: object({ id: Identifier }) });
