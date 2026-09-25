@@ -92,11 +92,29 @@ const migrations = [
       WHERE json_valid(payload) = 1 AND json_extract(payload, '$.jobId') IS NULL;
     `,
   },
+  {
+    version: 5,
+    sql: `
+      CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY NOT NULL, payload TEXT NOT NULL, updated_at INTEGER NOT NULL);
+    `,
+  },
+  {
+    version: 6,
+    sql: `
+      UPDATE jobs
+      SET payload = json_set(payload, '$.projectId', 'default')
+      WHERE json_valid(payload) = 1 AND json_type(payload, '$.projectId') IS NULL;
+      UPDATE artifacts
+      SET payload = json_set(payload, '$.projectIds', json_array('default'))
+      WHERE json_valid(payload) = 1 AND json_type(payload, '$.projectIds') IS NULL;
+    `,
+  },
 ] as const;
 
 const domainTables = [
   'users',
   'roles',
+  'projects',
   'sessions',
   'api_keys',
   'devices',
@@ -185,6 +203,7 @@ function rowsForState(state: unknown): Record<(typeof domainTables)[number], Dom
   return {
     users: arrayRows(value.allowedUsers, 'user'),
     roles: arrayRows(value.roles, 'role'),
+    projects: arrayRows(value.projects, 'project'),
     sessions: arrayRows(value.activeSessions, 'session'),
     api_keys: arrayRows(value.apiKeys, 'api-key'),
     devices: arrayRows(value.devices, 'device'),
@@ -308,7 +327,13 @@ export class StateDatabase {
     return JSON.parse(row.payload) as unknown;
   }
 
-  writeState(state: unknown, legacyMirrorPath?: string): void {
+  writeState(state: unknown, legacyMirrorPath?: string, additionalCollections: readonly StateCollectionReplacement[] = []): void {
+    const updatedTables = new Set<string>();
+    for (const replacement of additionalCollections) {
+      assertCollectionTable(replacement.table);
+      if (updatedTables.has(replacement.table)) throw new Error(`duplicate SQLite collection update: ${replacement.table}`);
+      updatedTables.add(replacement.table);
+    }
     const payload = json(state);
     const checksum = sha256(payload);
     const stateVersion = typeof state === 'object' && state !== null && typeof (state as StateRecord).version === 'number' ? (state as StateRecord).version as number : 0;
@@ -324,6 +349,11 @@ export class StateDatabase {
         this.db.exec(`DELETE FROM ${table};`);
         const statement = this.db.query(`INSERT INTO ${table} (id, payload, updated_at) VALUES (?, ?, ?);`);
         for (const row of rows[table]) statement.run(row.id, json(row.payload), row.updatedAt ?? Date.now());
+      }
+      for (const replacement of additionalCollections) {
+        this.db.exec(`DELETE FROM ${replacement.table};`);
+        const statement = this.db.query(`INSERT INTO ${replacement.table} (id, payload, updated_at) VALUES (?, ?, ?);`);
+        for (const row of replacement.rows) statement.run(row.id, json(row.payload), row.updatedAt ?? Date.now());
       }
       this.db.exec('COMMIT;');
     } catch (error) {

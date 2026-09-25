@@ -7,7 +7,8 @@ import Fastify from 'fastify';
 import type { ArtifactRecord } from '#artifacts.js';
 import { createArtifactCatalogRoutes, createDecryptRoutes, createTestFlightCatalogRoutes } from '#routes/decrypt.js';
 import type { Job } from '#jobs/types.js';
-import { bulkSetApiKeyAllowedBundleIds, createApiKey, getEffectiveSettings, revokeApiKey, updateSettings } from '#store/state.js';
+import { PermissionFlag, serializeBits } from '#permissions.js';
+import { addAllowedUser, bulkSetApiKeyAllowedBundleIds, createApiKey, createProject, createRole, getEffectiveSettings, revokeApiKey, updateProject, updateSettings } from '#store/state.js';
 
 test('typed TestFlight catalog routes enforce key scopes and normalize bridge failures', async () => {
   let trainLookupAppId = 0;
@@ -102,6 +103,7 @@ test('typed artifact routes enforce API-key bundle scopes and stream downloads',
   const allowedArtifact: ArtifactRecord = {
     id: 'allowed-artifact',
     key: 'allowed-key',
+    projectIds: ['default'],
     bundleId: 'com.example.allowed',
     channel: 'appstore',
     versionLabel: '1.0',
@@ -185,6 +187,127 @@ test('typed artifact routes enforce API-key bundle scopes and stream downloads',
     revokeApiKey(emptyScopeApiKey.id, 'root', true);
     await server.close();
     rmSync(artifactDirectory, { recursive: true, force: true });
+  }
+});
+
+test('API artifact access follows project membership and keeps project selectors isolated', async () => {
+  const ownerId = `api-project-owner-${crypto.randomUUID()}`;
+  const outsiderId = `api-project-outsider-${crypto.randomUUID()}`;
+  const role = createRole({ name: `API project role ${crypto.randomUUID()}`, color: '#3498db', permissions: serializeBits(PermissionFlag.createApiKeys) }, 'test');
+  const managerId = `api-project-manager-${crypto.randomUUID()}`;
+  const managerRole = createRole({ name: `API project manager ${crypto.randomUUID()}`, color: '#5865f2', permissions: serializeBits(PermissionFlag.createApiKeys | PermissionFlag.viewProjects) }, 'test');
+  addAllowedUser(ownerId, [role.id], 'test');
+  addAllowedUser(outsiderId, [role.id], 'test');
+  addAllowedUser(managerId, [managerRole.id], 'test');
+  const ownerProject = createProject({ name: `API owner project ${crypto.randomUUID()}`, memberIds: [ownerId] }, 'root').project;
+  const outsiderProject = createProject({ name: `API outsider project ${crypto.randomUUID()}`, memberIds: [outsiderId] }, 'root').project;
+  if (!ownerProject || !outsiderProject) throw new Error('project setup failed');
+  const apiKey = createApiKey('Project-scoped API artifact access test', ownerId);
+  const outsiderKey = createApiKey('Unrelated API project access test', outsiderId);
+  const managerKey = createApiKey('Archived project manager access test', managerId);
+  const projectJob: Job = {
+    id: 'project-scoped-api-job',
+    bundleId: 'com.example.project',
+    projectId: ownerProject.id,
+    artifactId: 'project-api-artifact',
+    source: 'manual',
+    priority: 0,
+    status: 'queued',
+    progress: 'queued',
+    createdAt: Date.now(),
+    waiters: [],
+  };
+  const enqueuedProjectIds: (string | undefined)[] = [];
+  const projectArtifact: ArtifactRecord = {
+    id: 'project-api-artifact',
+    key: 'project-api-key',
+    projectIds: [ownerProject.id],
+    bundleId: 'com.example.project',
+    channel: 'appstore',
+    filePath: '/unused/project.ipa',
+    fileSizeBytes: 12,
+    sha256: 'b'.repeat(64),
+    createdAt: 1_700_000_000_000,
+    lastAccessedAt: 1_700_000_000_000,
+    accessCount: 0,
+  };
+  const requestedProjectIds: (string[] | undefined)[] = [];
+  const server = Fastify().withTypeProvider<TypeBoxTypeProvider>();
+
+  try {
+    await server.register(createArtifactCatalogRoutes({
+      listArtifacts: (options) => {
+        requestedProjectIds.push(options?.projectIds);
+        const artifacts = options?.projectIds?.includes(ownerProject.id) ? [projectArtifact] : [];
+        return { artifacts, total: artifacts.length, totalBytes: artifacts.reduce((sum, artifact) => sum + artifact.fileSizeBytes, 0), maxBytes: 100 };
+      },
+      getArtifactById: (id) => id === projectArtifact.id ? projectArtifact : undefined,
+      artifactFileAvailable: () => true,
+      touchArtifact: async () => {},
+    }));
+    await server.register(createDecryptRoutes({
+      resolveDecryptTarget: async (bundleId) => ({ bundleId, selector: undefined, channel: 'appstore', externalVersionId: 'project-build', versionLabel: '1.0', artifactKey: 'project-build' }),
+      enqueueDecryptJob: (...args) => {
+        enqueuedProjectIds.push(args[9]);
+        return { ...projectJob, projectId: args[9] };
+      },
+      getJob: (id) => id === projectJob.id ? projectJob : undefined,
+      waitForJob: async (job) => job,
+      getArtifactById: () => undefined,
+      recordApiKeyBundleUsage: () => {},
+    }));
+    await server.ready();
+
+    const headers = { authorization: `Bearer ${apiKey.key}` };
+    const owned = await server.inject({ method: 'GET', url: `/v1/artifacts?projectId=${ownerProject.id}`, headers });
+    expect(owned.statusCode).toBe(200);
+    expect(requestedProjectIds.at(-1)).toEqual([ownerProject.id]);
+    expect((owned.json() as { artifacts: { id: string }[] }).artifacts.map((artifact) => artifact.id)).toEqual([projectArtifact.id]);
+
+    const defaultProject = await server.inject({ method: 'GET', url: '/v1/artifacts', headers });
+    expect(defaultProject.statusCode).toBe(200);
+    expect(requestedProjectIds.at(-1)).toEqual(['default']);
+
+    const unrelated = await server.inject({ method: 'GET', url: `/v1/artifacts?projectId=${outsiderProject.id}`, headers });
+    expect(unrelated.statusCode).toBe(404);
+
+    const detail = await server.inject({ method: 'GET', url: `/v1/artifacts/${projectArtifact.id}?projectId=${ownerProject.id}`, headers });
+    expect(detail.statusCode).toBe(200);
+    const hiddenDefault = await server.inject({ method: 'GET', url: `/v1/artifacts/${projectArtifact.id}`, headers });
+    expect(hiddenDefault.statusCode).toBe(404);
+
+    const ownerJob = await server.inject({ method: 'GET', url: `/v1/jobs/${projectJob.id}`, headers });
+    expect(ownerJob.statusCode).toBe(200);
+    expect((ownerJob.json() as { artifactUrl?: string }).artifactUrl).toBe(`/v1/artifacts/${projectArtifact.id}/file?projectId=${ownerProject.id}`);
+    const outsiderHeaders = { authorization: `Bearer ${outsiderKey.key}` };
+    const hiddenJob = await server.inject({ method: 'GET', url: `/v1/jobs/${projectJob.id}`, headers: outsiderHeaders });
+    expect(hiddenJob.statusCode).toBe(404);
+
+    const queued = await server.inject({ method: 'POST', url: '/v1/decrypts', headers, payload: { bundleId: 'com.example.project', projectId: ownerProject.id } });
+    expect(queued.statusCode).toBe(202);
+    expect(enqueuedProjectIds).toEqual([ownerProject.id]);
+    const deniedQueue = await server.inject({ method: 'POST', url: '/v1/decrypts', headers: outsiderHeaders, payload: { bundleId: 'com.example.project', projectId: ownerProject.id } });
+    expect(deniedQueue.statusCode).toBe(404);
+    expect(enqueuedProjectIds).toEqual([ownerProject.id]);
+
+    updateProject(ownerProject.id, { archived: true }, 'root');
+    const ownerArchivedArtifacts = await server.inject({ method: 'GET', url: `/v1/artifacts?projectId=${ownerProject.id}`, headers });
+    const managerArchivedArtifacts = await server.inject({ method: 'GET', url: `/v1/artifacts?projectId=${ownerProject.id}`, headers: { authorization: `Bearer ${managerKey.key}` } });
+    const managerArchivedJob = await server.inject({ method: 'GET', url: `/v1/jobs/${projectJob.id}`, headers: { authorization: `Bearer ${managerKey.key}` } });
+    const managerArchivedQueue = await server.inject({ method: 'POST', url: '/v1/decrypts', headers: { authorization: `Bearer ${managerKey.key}` }, payload: { bundleId: 'com.example.project', projectId: ownerProject.id } });
+    expect(ownerArchivedArtifacts.statusCode).toBe(404);
+    expect(managerArchivedArtifacts.statusCode).toBe(200);
+    expect(managerArchivedJob.statusCode).toBe(200);
+    expect(managerArchivedQueue.statusCode).toBe(409);
+    expect(managerArchivedQueue.json()).toMatchObject({ code: 'project_archived', message: 'project is archived; restore it before queuing work' });
+    expect(enqueuedProjectIds).toEqual([ownerProject.id]);
+  } finally {
+    revokeApiKey(apiKey.id, ownerId, true);
+    revokeApiKey(outsiderKey.id, outsiderId, true);
+    revokeApiKey(managerKey.id, managerId, true);
+    updateProject(ownerProject.id, { archived: true }, 'root');
+    updateProject(outsiderProject.id, { archived: true }, 'root');
+    await server.close();
   }
 });
 
@@ -292,7 +415,7 @@ test('typed decrypt submission routes preserve API-key scopes and resolved job r
       cacheHit: false,
     });
     expect(enqueued).toHaveLength(1);
-    expect(enqueued[0]).toMatchObject(['com.example.allowed', 'manual', '12345', undefined, '2.0', 'root', 0, undefined, allowedKey.id]);
+    expect(enqueued[0]).toMatchObject(['com.example.allowed', 'manual', '12345', undefined, '2.0', 'root', 0, undefined, allowedKey.id, 'default']);
     expect(usage).toEqual([[allowedKey.id, 'com.example.allowed']]);
     const resolvedBeforeRetry = resolved.length;
 
@@ -381,6 +504,7 @@ test('typed decrypt submission routes preserve API-key scopes and resolved job r
       0,
       undefined,
       testFlightKey.id,
+      'default',
     ]);
 
     const duplicateTestFlight = await server.inject({ method: 'POST', url: '/v1/testflight/decrypt', headers: testFlightHeaders, payload: testFlightPayload });

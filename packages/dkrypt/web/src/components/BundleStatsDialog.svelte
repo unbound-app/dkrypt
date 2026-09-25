@@ -19,6 +19,7 @@
 	import { fmtBytesGB, fmtDurationApprox } from "#lib/format";
 	import RelativeTime from "#components/RelativeTime.svelte";
 	import RateLimitHint from "#components/RateLimitHint.svelte";
+	import { projectSelectionState } from "#lib/projectSelection.svelte";
 
 	let {
 		open = $bindable(),
@@ -68,6 +69,7 @@
 
 	$effect(() => {
 		if (open && bundleId) {
+			projectSelectionState.id;
 			stats = null;
 			versions = null;
 			versionsOffset = 0;

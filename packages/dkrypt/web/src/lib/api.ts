@@ -2,6 +2,7 @@ import { markLoggedOut, type Role } from '#lib/session.svelte';
 import { liveState } from '#lib/live.svelte';
 import { rateLimitState } from '#lib/rateLimit.svelte';
 import { showToast } from '#lib/ui.svelte';
+import { projectSelectionState } from '#lib/projectSelection.svelte';
 
 export type { Role };
 export { rateLimitState, type RateLimitInfo } from '#lib/rateLimit.svelte';
@@ -79,6 +80,7 @@ export interface JobTestFlightSummary {
 
 export interface JobSummary {
   id: string;
+  projectId?: string;
   bundleId: string;
   externalVersionId?: string;
   testflight?: JobTestFlightSummary;
@@ -157,6 +159,7 @@ export interface MaintenanceStatus {
 
 export interface AppWatch {
   id: string;
+  projectId?: string;
   bundleId: string;
   repo: string;
   ghWorkflowFile: string;
@@ -278,6 +281,7 @@ export interface DiskUsage {
 }
 
 export interface OverviewPayload {
+  projectId?: string;
   schedulerEnabled: boolean;
   settings: SchedulerSettings;
   watches: AppWatch[];
@@ -307,6 +311,7 @@ export interface IpaMetadata {
 export interface JobHistoryEntry {
   id: string;
   correlationId?: string;
+  projectId?: string;
   bundleId: string;
   externalVersionId?: string;
   testflight?: { appId: number; build: TFBuild };
@@ -341,6 +346,7 @@ export interface CursorPage {
 
 export interface ArtifactRecord {
   id: string;
+  projectIds?: string[];
   bundleId: string;
   key: string;
   channel: 'appstore' | 'testflight';
@@ -486,6 +492,28 @@ export interface AllowedUser {
   };
 }
 
+export interface ProjectRecord {
+  id: string;
+  name: string;
+  description?: string;
+  memberIds?: string[];
+  isDefault: boolean;
+  archivedAt?: number;
+  storageQuotaBytes?: number;
+  dailyJobQuota?: number;
+  maxConcurrentJobs?: number;
+  createdBy: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ProjectMember {
+  id: string;
+  username: string;
+  displayName: string;
+  avatarUrl?: string;
+}
+
 export interface AuditLogEntry {
   id: string;
   ts: number;
@@ -504,7 +532,10 @@ export interface AuditLogEntry {
     | 'device.remove'
     | 'role.add'
     | 'role.update'
-    | 'role.remove';
+    | 'role.remove'
+    | 'project.add'
+    | 'project.update'
+    | 'project.archive';
   target: string;
   detail?: string;
 }
@@ -597,7 +628,7 @@ export interface AppCatalogEntry {
 }
 
 export function fetchOverview(): Promise<OverviewPayload> {
-  return apiJson('/v1/dashboard/overview');
+  return apiJson(`/v1/dashboard/overview?projectId=${encodeURIComponent(projectSelectionState.id)}`);
 }
 
 export interface DeviceHealth {
@@ -742,6 +773,7 @@ export function fetchWatches(): Promise<{ watches: AppWatch[] }> {
 }
 
 export interface WatchInput {
+  projectId?: string;
   bundleId: string;
   repo: string;
   ghWorkflowFile: string;
@@ -855,7 +887,7 @@ export interface JobDiffResult {
 
 export function fetchJobDiff(bundleId: string, a: string, b: string): Promise<JobDiffResult> {
   return apiJson(
-    `/v1/dashboard/jobs/diff?bundleId=${encodeURIComponent(bundleId)}&a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`,
+    `/v1/dashboard/jobs/diff?bundleId=${encodeURIComponent(bundleId)}&a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}&projectId=${encodeURIComponent(projectSelectionState.id)}`,
     undefined,
     'jobDiff',
   );
@@ -884,7 +916,7 @@ export function fetchJobHistory(
   const fromTsQuery = Number.isFinite(opts?.fromTs) ? `&fromTs=${opts?.fromTs}` : '';
   const toTsQuery = Number.isFinite(opts?.toTs) ? `&toTs=${opts?.toTs}` : '';
   return apiJson(
-    `/v1/dashboard/jobs?limit=${limit}${pageQuery}${query}${sourceQuery}${statusQuery}${queuedByQuery}${deviceIdQuery}${errorQuery}${failureCategoryQuery}${fromTsQuery}${toTsQuery}`,
+    `/v1/dashboard/jobs?limit=${limit}&projectId=${encodeURIComponent(projectSelectionState.id)}${pageQuery}${query}${sourceQuery}${statusQuery}${queuedByQuery}${deviceIdQuery}${errorQuery}${failureCategoryQuery}${fromTsQuery}${toTsQuery}`,
   );
 }
 
@@ -896,7 +928,7 @@ export function fetchArtifacts(cursorOrOffset: string | number | undefined = und
       : '';
   const query = q ? `&q=${encodeURIComponent(q)}` : '';
   const channelQuery = channel ? `&channel=${channel}` : '';
-  return apiJson(`/v1/dashboard/artifacts?limit=${limit}${pageQuery}${query}${channelQuery}`);
+  return apiJson(`/v1/dashboard/artifacts?limit=${limit}&projectId=${encodeURIComponent(projectSelectionState.id)}${pageQuery}${query}${channelQuery}`);
 }
 
 export function dashboardArtifactDownloadUrl(id: string): string {
@@ -919,7 +951,7 @@ export interface BundleStats {
 }
 
 export function fetchBundleStats(bundleId: string): Promise<BundleStats> {
-  return apiJson(`/v1/dashboard/jobs/stats/${encodeURIComponent(bundleId)}`);
+  return apiJson(`/v1/dashboard/jobs/stats/${encodeURIComponent(bundleId)}?projectId=${encodeURIComponent(projectSelectionState.id)}`);
 }
 
 export function cancelJob(id: string): Promise<{ ok: boolean }> {
@@ -931,7 +963,7 @@ export function prioritizeJob(id: string): Promise<{ ok: boolean }> {
 }
 
 export function reorderQueue(ids: string[]): Promise<{ ok: boolean }> {
-  return apiAction('/v1/dashboard/jobs/reorder', { method: 'POST', body: JSON.stringify({ ids }) }).then((r) => ({ ok: r.ok }));
+  return apiAction('/v1/dashboard/jobs/reorder', { method: 'POST', body: JSON.stringify({ ids, projectId: projectSelectionState.id }) }).then((r) => ({ ok: r.ok }));
 }
 
 export interface ApiKeyUsageBucket {
@@ -976,6 +1008,7 @@ export interface LogQuery {
 
 export function fetchLogs(query: LogQuery = {}): Promise<{ logs: LogEntry[]; total: number } & CursorPage> {
   const params = new URLSearchParams();
+  params.set('projectId', projectSelectionState.id);
   if (query.scope && query.scope !== 'all') params.set('scope', query.scope);
   if (query.level && query.level !== 'all') params.set('level', query.level);
   if (query.q?.trim()) params.set('q', query.q.trim());
@@ -987,15 +1020,15 @@ export function fetchLogs(query: LogQuery = {}): Promise<{ logs: LogEntry[]; tot
 }
 
 export function jobHistoryExportUrl(format: 'csv' | 'json'): string {
-  return `/v1/dashboard/jobs/export?format=${format}`;
+  return `/v1/dashboard/jobs/export?format=${format}&projectId=${encodeURIComponent(projectSelectionState.id)}`;
 }
 
 export function fetchJobEta(bundleId: string): Promise<{ avgMs: number | null }> {
-  return apiJson(`/v1/dashboard/jobs/eta/${encodeURIComponent(bundleId)}`);
+  return apiJson(`/v1/dashboard/jobs/eta/${encodeURIComponent(bundleId)}?projectId=${encodeURIComponent(projectSelectionState.id)}`);
 }
 
 export function fetchJobVolume(days = 14): Promise<{ days: { date: string; count: number }[] }> {
-  return apiJson(`/v1/dashboard/jobs/volume?days=${days}`);
+  return apiJson(`/v1/dashboard/jobs/volume?days=${days}&projectId=${encodeURIComponent(projectSelectionState.id)}`);
 }
 
 export interface InsightsAppStats {
@@ -1036,7 +1069,7 @@ export interface DeviceThroughputStats {
 }
 
 export function fetchInsights(trendDays = 14, topApps = 5): Promise<InsightsSummary> {
-  return apiJson(`/v1/dashboard/insights?trendDays=${trendDays}&topApps=${topApps}`);
+  return apiJson(`/v1/dashboard/insights?trendDays=${trendDays}&topApps=${topApps}&projectId=${encodeURIComponent(projectSelectionState.id)}`);
 }
 
 export interface FailurePattern {
@@ -1048,7 +1081,7 @@ export interface FailurePattern {
 }
 
 export function fetchFailurePatterns(): Promise<{ patterns: FailurePattern[] }> {
-  return apiJson('/v1/dashboard/failure-patterns');
+  return apiJson(`/v1/dashboard/failure-patterns?projectId=${encodeURIComponent(projectSelectionState.id)}`);
 }
 
 export interface StorageForecast {
@@ -1059,11 +1092,11 @@ export interface StorageForecast {
 }
 
 export function fetchStorageForecast(): Promise<StorageForecast> {
-  return apiJson('/v1/dashboard/storage-forecast');
+  return apiJson(`/v1/dashboard/storage-forecast?projectId=${encodeURIComponent(projectSelectionState.id)}`);
 }
 
 export function supportBundleUrl(): string {
-  return '/v1/dashboard/support-bundle';
+  return `/v1/dashboard/support-bundle?projectId=${encodeURIComponent(projectSelectionState.id)}`;
 }
 
 export interface WatchHealthSummary {
@@ -1091,8 +1124,8 @@ export interface SchedulerCalendarRun {
   at: number;
 }
 
-export function fetchWatchCalendar(hours = 24, fromAt?: number): Promise<{ fromAt: number; untilAt: number; runs: SchedulerCalendarRun[]; truncated: boolean }> {
-  return apiJson(`/v1/dashboard/watches/calendar?hours=${hours}${fromAt ? `&fromAt=${fromAt}` : ''}`);
+export function fetchWatchCalendar(hours = 24, fromAt?: number, projectId?: string): Promise<{ fromAt: number; untilAt: number; runs: SchedulerCalendarRun[]; truncated: boolean }> {
+  return apiJson(`/v1/dashboard/watches/calendar?hours=${hours}${fromAt ? `&fromAt=${fromAt}` : ''}${projectId ? `&projectId=${encodeURIComponent(projectId)}` : ''}`);
 }
 
 export interface GitHubBudgetTelemetryEntry {
@@ -1108,8 +1141,8 @@ export interface GitHubBudgetTelemetryEntry {
   resetAt: number;
 }
 
-export function fetchGitHubBudgetTelemetry(limit = 30): Promise<{ entries: GitHubBudgetTelemetryEntry[] }> {
-  return apiJson(`/v1/dashboard/github/budget-history?limit=${limit}`);
+export function fetchGitHubBudgetTelemetry(limit = 30, projectId?: string): Promise<{ entries: GitHubBudgetTelemetryEntry[] }> {
+  return apiJson(`/v1/dashboard/github/budget-history?limit=${limit}${projectId ? `&projectId=${encodeURIComponent(projectId)}` : ''}`);
 }
 
 export function fetchGithubRepos(): Promise<{ repos: GithubRepoOption[] }> {
@@ -1166,14 +1199,14 @@ export function queueDecrypt(
 ): Promise<{ ok: boolean; data: JobSummary }> {
   return apiAction('/v1/dashboard/decrypt', {
     method: 'POST',
-    body: JSON.stringify({ bundleId, externalVersionId, versionLabel, preferPrimary }),
+    body: JSON.stringify({ bundleId, externalVersionId, versionLabel, preferPrimary, projectId: projectSelectionState.id }),
   });
 }
 
 export function fetchDecryptPreflight(input: { bundleId: string; versionLabel?: string; testflight?: boolean; installSizeBytes?: number; deviceId?: string }): Promise<DecryptPreflight> {
   return apiJson('/v1/dashboard/decrypt/preflight', {
     method: 'POST',
-    body: JSON.stringify(input),
+    body: JSON.stringify({ ...input, projectId: projectSelectionState.id }),
   });
 }
 
@@ -1245,7 +1278,7 @@ export function queueTestFlightDecrypt(
   preferPrimary = false,
   deviceId?: string,
 ): Promise<{ ok: boolean; data: JobSummary }> {
-  return apiAction('/v1/dashboard/testflight/decrypt', { method: 'POST', body: JSON.stringify({ bundleId, appId, build, preferPrimary, deviceId }) });
+  return apiAction('/v1/dashboard/testflight/decrypt', { method: 'POST', body: JSON.stringify({ bundleId, appId, build, preferPrimary, deviceId, projectId: projectSelectionState.id }) });
 }
 
 export function fetchTestFlightSubscriptions(cursor?: string, limit = 50): Promise<{ subscriptions: TestFlightSubscription[]; total: number } & CursorPage> {
@@ -1293,7 +1326,7 @@ export function fetchJobTimeline(id: string): Promise<JobTimeline> {
 export function previewBulkJobReplay(ids: string[]): Promise<BulkJobPreview> {
   return apiJson('/v1/dashboard/jobs/bulk-preview', {
     method: 'POST',
-    body: JSON.stringify({ ids }),
+    body: JSON.stringify({ ids, projectId: projectSelectionState.id }),
   });
 }
 
@@ -1512,6 +1545,22 @@ export function auditLogExportUrl(format: 'csv' | 'json'): string {
 
 export function fetchRoles(): Promise<{ roles: Role[] }> {
   return apiJson('/v1/dashboard/roles');
+}
+
+export function fetchProjects(): Promise<{ projects: ProjectRecord[] }> {
+  return apiJson('/v1/dashboard/projects');
+}
+
+export function fetchProjectMembers(): Promise<{ members: ProjectMember[] }> {
+  return apiJson('/v1/dashboard/projects/members');
+}
+
+export function createProject(input: Pick<ProjectRecord, 'name'> & Partial<Omit<ProjectRecord, 'id' | 'name' | 'isDefault' | 'createdBy' | 'createdAt' | 'updatedAt'>>): Promise<{ ok: boolean; data: ProjectRecord }> {
+  return apiAction<ProjectRecord>('/v1/dashboard/projects', { method: 'POST', body: JSON.stringify(input) }, `Project "${input.name}" created`);
+}
+
+export function updateProject(id: string, patch: { name?: string; description?: string | null; memberIds?: string[]; storageQuotaBytes?: number | null; dailyJobQuota?: number | null; maxConcurrentJobs?: number | null; archived?: boolean }): Promise<{ ok: boolean; data: ProjectRecord }> {
+  return apiAction<ProjectRecord>(`/v1/dashboard/projects/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) }, 'Project updated');
 }
 
 export function addUser(username: string, roleIds: string[]): Promise<{ ok: boolean }> {

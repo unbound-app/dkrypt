@@ -36,6 +36,8 @@ export const PermissionFlag = {
   manageTestFlightSubscriptions: 1n << 35n,
   viewBilling: 1n << 36n,
   manageBilling: 1n << 37n,
+  viewProjects: 1n << 38n,
+  manageProjects: 1n << 39n,
 } as const;
 
 export type PermissionFlagKey = keyof typeof PermissionFlag;

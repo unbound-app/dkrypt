@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, test } from 'bun:test';
+import { config } from '#config.js';
 import {
   getBillingCustomerId,
   replaceBillingSnapshot,
@@ -14,6 +15,7 @@ import {
   createApiKey,
   createDevice,
   createDiscordRolePerk,
+  createProject,
   createRole,
   createTestFlightSubscription,
   createWatch,
@@ -21,20 +23,25 @@ import {
   deletePasskey,
   deleteWatch,
   exportBackup,
+  getAuditLog,
   getAllJobHistory,
+  getJobHistoryPage,
   getDeviceHealthHourlyBuckets,
   getConsecutiveDeviceHealthFailures,
   getDeviceUptimePercent,
   getDiscordGuildIds,
   getDiscordRolePerks,
   getInsightsSummary,
+  getProject,
   getEffectiveDevices,
   getTestFlightSubscription,
   getWatchDispatchTargets,
   getWatchConfigIssues,
+  isWatchSchedulable,
   getWebhookDeliveryLog,
   importBackup,
   listAllowedUsers,
+  listProjectsForUser,
   listNotifications,
   listPasskeysForUser,
   recordDeviceHealthCheck,
@@ -44,6 +51,8 @@ import {
   setDiscordGuildIds,
   syncDiscordPerkRoles,
   updateAllowedUserRoles,
+  updateProject,
+  userCanAccessProject,
   updateDevice,
   updateSettings,
   updateWatch,
@@ -55,6 +64,7 @@ import {
   simulateJobHistoryRetention,
   updateTestFlightSubscriptionDevice,
 } from '#store/state.js';
+import { openStateCollectionDatabase, readStateCollection, replaceStateCollection } from '#store/sqlite.js';
 
 describe('dashboard notifications', () => {
   test('stores notifications per user and marks selected entries read', () => {
@@ -66,6 +76,60 @@ describe('dashboard notifications', () => {
     expect(listNotifications(userId)).toMatchObject({ unread: 2, notifications: expect.arrayContaining([expect.objectContaining({ id: first.id })]) });
     expect(markNotificationsRead(userId, [first.id])).toBe(1);
     expect(listNotifications(userId)).toMatchObject({ unread: 1 });
+  });
+});
+
+describe('projects', () => {
+  test('limits project visibility to assigned members while keeping the default workspace shared', () => {
+    const firstUser = `github:project-first-${randomUUID()}`;
+    const secondUser = `github:project-second-${randomUUID()}`;
+    addAllowedUser(firstUser, [], 'tester');
+    addAllowedUser(secondUser, [], 'tester');
+    const created = createProject({ name: `Private ${randomUUID()}`, memberIds: [firstUser], dailyJobQuota: 25 }, 'root');
+    const project = created.project!;
+
+    expect(created.ok).toBe(true);
+    expect(project.memberIds).toContain(firstUser);
+    expect(listProjectsForUser(firstUser).map((entry) => entry.id)).toContain(project.id);
+    expect(listProjectsForUser(secondUser).map((entry) => entry.id)).not.toContain(project.id);
+    expect(listProjectsForUser(secondUser).some((project) => project.id === 'default')).toBe(true);
+    expect(userCanAccessProject(firstUser, project.id)).toBe(true);
+    expect(userCanAccessProject(secondUser, project.id)).toBe(false);
+  });
+
+  test('validates project updates before mutating and prevents archiving the default workspace', () => {
+    const firstUser = `github:project-member-${randomUUID()}`;
+    addAllowedUser(firstUser, [], 'tester');
+    const created = createProject({ name: `Project ${randomUUID()}`, memberIds: [firstUser] }, 'root');
+    const project = created.project!;
+    const invalid = updateProject(project.id, { name: 'Should not persist', maxConcurrentJobs: 0 }, 'root');
+
+    expect(invalid.ok).toBe(false);
+    expect(getProject(project.id)?.name).toBe(project.name);
+    expect(updateProject('default', { archived: true }, 'root')).toMatchObject({ ok: false });
+    expect(updateProject(project.id, { archived: true }, 'root').ok).toBe(true);
+    expect(userCanAccessProject(firstUser, project.id)).toBe(false);
+  });
+
+  test('records project restoration as a distinct audit action', () => {
+    const project = createProject({ name: `Audited ${randomUUID()}` }, 'root').project!;
+    updateProject(project.id, { archived: true }, 'root');
+    updateProject(project.id, { archived: false }, 'root');
+
+    const actions = getAuditLog(10).filter((entry) => entry.target === project.id).map((entry) => entry.action);
+    expect(actions).toEqual(['project.restore', 'project.archive', 'project.add']);
+  });
+
+  test('filters history to one project without leaking records from another', () => {
+    const sharedBundleId = `com.example.workspace-history.${randomUUID()}`;
+    const finishedAt = Date.now();
+    const projectA = createProject({ name: `History project A ${randomUUID()}` }, 'root').project!.id;
+    const projectB = createProject({ name: `History project B ${randomUUID()}` }, 'root').project!.id;
+    recordJobHistory({ id: `workspace-a-${randomUUID()}`, projectId: projectA, bundleId: sharedBundleId, status: 'done', source: 'manual', createdAt: finishedAt, finishedAt });
+    recordJobHistory({ id: `workspace-b-${randomUUID()}`, projectId: projectB, bundleId: sharedBundleId, status: 'done', source: 'manual', createdAt: finishedAt, finishedAt });
+
+    expect(getJobHistoryPage(0, 20, { projectId: projectA, bundleIdSearch: sharedBundleId }).entries).toHaveLength(1);
+    expect(getJobHistoryPage(0, 20, { projectId: projectA, bundleIdSearch: sharedBundleId }).entries[0]?.projectId).toBe(projectA);
   });
 });
 
@@ -212,14 +276,48 @@ describe('exportBackup / importBackup', () => {
   test('round-trips the allowlist through export and import', () => {
     const role = createRole({ name: 'Roundtrip Role', color: '#5865f2', permissions: serializeBits(PermissionFlag.requestDecrypt) }, 'tester');
     addAllowedUser('roundtrip-user', [role.id], 'tester');
+    const project = createProject({ name: `Roundtrip project ${randomUUID()}`, memberIds: ['roundtrip-user'] }, 'tester').project!;
     const backup = exportBackup();
 
-    expect(backup.backupVersion).toBe(6);
+    expect(backup.backupVersion).toBe(9);
     expect(backup.allowedUsers.some((u) => u.username === 'roundtrip-user')).toBe(true);
+    expect(backup.projects).toContainEqual(expect.objectContaining({ id: project.id, memberIds: expect.arrayContaining(['roundtrip-user']) }));
 
     const result = importBackup(backup, 'tester');
     expect(result.ok).toBe(true);
     expect(listAllowedUsers().some((u) => u.username === 'roundtrip-user')).toBe(true);
+    expect(getProject(project.id)?.memberIds).toContain('roundtrip-user');
+  });
+
+  test('preserves project records referenced by persisted jobs during backup import', () => {
+    const project = createProject({ name: `Persisted job project ${randomUUID()}` }, 'root').project!;
+    const database = openStateCollectionDatabase({
+      stateDir: config.stateDir,
+      filename: config.stateDatabaseFile,
+      busyTimeoutMs: config.stateDbBusyTimeoutMs,
+    }, ['jobs']);
+    const previousJobs = readStateCollection(database, 'jobs');
+    const previousRows = previousJobs.flatMap((value) => {
+      if (!value || typeof value !== 'object' || typeof (value as Record<string, unknown>).id !== 'string') return [];
+      const row = value as Record<string, unknown>;
+      return [{ id: row.id as string, payload: value, updatedAt: typeof row.updatedAt === 'number' ? row.updatedAt : Date.now() }];
+    });
+    const jobId = `backup-job-${randomUUID()}`;
+
+    try {
+      replaceStateCollection(database, 'jobs', [
+        ...previousRows,
+        { id: jobId, payload: { id: jobId, projectId: project.id, status: 'queued' }, updatedAt: Date.now() },
+      ]);
+      const backup = exportBackup();
+      backup.projects = backup.projects.filter((entry) => entry.id !== project.id);
+
+      expect(importBackup(backup, 'tester').ok).toBe(true);
+      expect(getProject(project.id)).toMatchObject({ id: project.id, name: project.name });
+    } finally {
+      replaceStateCollection(database, 'jobs', previousRows);
+      database.close();
+    }
   });
 
   test('rejects a backup with the wrong version', () => {
@@ -409,6 +507,29 @@ describe('watch CRUD', () => {
 
     deleteWatch(a.watch!.id, 'tester');
     deleteWatch(b.watch!.id, 'tester');
+  });
+
+  test('scopes watch uniqueness and scheduled jobs to an active project', () => {
+    const projectA = createProject({ name: `Watch project A ${randomUUID()}` }, 'root').project!;
+    const projectB = createProject({ name: `Watch project B ${randomUUID()}` }, 'root').project!;
+    const bundleId = `com.example.project-watch.${randomUUID()}`;
+    const watchA = createWatch({ projectId: projectA.id, bundleId, repo: 'me/app-a', ghWorkflowFile: 'deploy.yml', pollCron: '0 * * * *' }, 'root');
+    const watchB = createWatch({ projectId: projectB.id, bundleId, repo: 'me/app-b', ghWorkflowFile: 'deploy.yml', pollCron: '0 * * * *' }, 'root');
+    const duplicateA = createWatch({ projectId: projectA.id, bundleId, repo: 'me/app-c', ghWorkflowFile: 'deploy.yml', pollCron: '0 * * * *' }, 'root');
+
+    expect(watchA.ok && watchB.ok).toBe(true);
+    expect(watchA.watch?.projectId).toBe(projectA.id);
+    expect(watchB.watch?.projectId).toBe(projectB.id);
+    expect(duplicateA.ok).toBe(false);
+
+    updateProject(projectA.id, { archived: true }, 'root');
+    expect(isWatchSchedulable(watchA.watch!)).toBe(false);
+    expect(getWatchConfigIssues(watchA.watch!)).toContain('The assigned project is unavailable; restore it or choose an active project.');
+    expect(createWatch({ projectId: projectA.id, bundleId: `${bundleId}.archived`, repo: 'me/app-d', ghWorkflowFile: 'deploy.yml', pollCron: '0 * * * *' }, 'root').ok).toBe(false);
+
+    updateProject(projectA.id, { archived: false }, 'root');
+    deleteWatch(watchA.watch!.id, 'root');
+    deleteWatch(watchB.watch!.id, 'root');
   });
 });
 

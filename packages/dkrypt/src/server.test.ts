@@ -6,8 +6,19 @@ import { buildArtifactFileUrl, promoteArtifact, touchArtifact } from '#artifacts
 import { exportBillingSnapshot, replaceBillingSnapshot, upsertBillingSubscription } from '#billing.js';
 import { upsertAuthProfile } from '#identity.js';
 import { scopedLogger } from '#logger.js';
+import { emitJobsChanged } from '#events.js';
+import { PermissionFlag, serializeBits } from '#permissions.js';
 import { buildServer } from '#server.js';
-import { createApiKey, createTestFlightSubscription, recordAudit, recordDeviceActivity, recordJobHistory, recordNotification, revokeApiKey, withdrawTestFlightSubscription } from '#store/state.js';
+import type { Response } from '#http.js';
+import { addAllowedUser, createApiKey, createProject, createRole, createTestFlightSubscription, createWatch, deleteWatch, recordAudit, recordDeviceActivity, recordGitHubBudgetTelemetry, recordJobHistory, recordNotification, revokeApiKey, updateRole, withdrawTestFlightSubscription } from '#store/state.js';
+import { setSessionCookie } from '#session.js';
+
+function createSessionCookie(userId: string, permissions: bigint): string {
+  let cookieHeader = '';
+  const response = { setHeader: (_name: string, value: string) => { cookieHeader = value; } } as unknown as Response;
+  setSessionCookie(response, { sub: userId, permissions });
+  return cookieHeader.split(';', 1)[0];
+}
 
 async function signIn() {
   const server = await buildServer({ includePublicRoutes: false });
@@ -45,6 +56,213 @@ test('Fastify persists dashboard device mutations and returns the updated overvi
     const deleted = await server.inject({ method: 'DELETE', url: `/v1/dashboard/devices/${device.id}`, headers: { cookie } });
     expect(deleted.statusCode).toBe(200);
   } finally {
+    await server.close();
+  }
+});
+
+test('project administration is permission-gated and project membership controls visibility', async () => {
+  const root = await signIn();
+  const managerId = `github:project-manager-${crypto.randomUUID()}`;
+  const firstMemberId = `github:project-member-a-${crypto.randomUUID()}`;
+  const secondMemberId = `github:project-member-b-${crypto.randomUUID()}`;
+  const managerPermissions = PermissionFlag.viewProjects | PermissionFlag.manageProjects | PermissionFlag.requestDecrypt;
+  const managerRole = createRole({ name: `Project manager ${crypto.randomUUID()}`, color: '#5865f2', permissions: serializeBits(managerPermissions) }, 'test');
+  const memberPermissions = PermissionFlag.requestDecrypt | PermissionFlag.viewLogs;
+  const memberRole = createRole({ name: `Project member ${crypto.randomUUID()}`, color: '#3498db', permissions: serializeBits(memberPermissions) }, 'test');
+  addAllowedUser(managerId, [managerRole.id], 'test');
+  addAllowedUser(firstMemberId, [memberRole.id], 'test');
+  addAllowedUser(secondMemberId, [memberRole.id], 'test');
+  const managerCookie = createSessionCookie(managerId, managerPermissions);
+  const memberCookie = createSessionCookie(firstMemberId, memberPermissions);
+  const secondMemberCookie = createSessionCookie(secondMemberId, memberPermissions);
+  let projectArtifactPath = '';
+
+  try {
+    const server = root.server;
+    const deniedCreate = await server.inject({ method: 'POST', url: '/v1/dashboard/projects', headers: { cookie: memberCookie }, payload: { name: `Denied ${crypto.randomUUID()}` } });
+    expect(deniedCreate.statusCode).toBe(403);
+
+    const created = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/projects',
+      headers: { cookie: managerCookie },
+      payload: { name: `Team ${crypto.randomUUID()}`, memberIds: [firstMemberId], dailyJobQuota: 40 },
+    });
+    expect(created.statusCode).toBe(201);
+    const project = created.json() as { id: string; memberIds: string[]; dailyJobQuota: number };
+    expect(project.memberIds).toContain(managerId);
+    expect(project.memberIds).toContain(firstMemberId);
+    expect(project.dailyJobQuota).toBe(40);
+
+    const firstMemberProjects = await server.inject({ method: 'GET', url: '/v1/dashboard/projects', headers: { cookie: memberCookie } });
+    const firstProjectIds = (firstMemberProjects.json() as { projects: { id: string }[] }).projects.map((entry) => entry.id);
+    expect(firstProjectIds).toContain('default');
+    expect(firstProjectIds).toContain(project.id);
+
+    const secondMemberProjects = await server.inject({ method: 'GET', url: '/v1/dashboard/projects', headers: { cookie: secondMemberCookie } });
+    const secondProjectIds = (secondMemberProjects.json() as { projects: { id: string }[] }).projects.map((entry) => entry.id);
+    expect(secondProjectIds).not.toContain(project.id);
+
+    const bundleId = `com.example.project-scope.${crypto.randomUUID()}`;
+    const historyId = `project-history-${crypto.randomUUID()}`;
+    const defaultHistoryId = `default-history-${crypto.randomUUID()}`;
+    const createdAt = Date.now();
+    recordJobHistory({ id: historyId, correlationId: `project-correlation-${historyId}`, projectId: project.id, bundleId, status: 'done', source: 'manual', createdAt, finishedAt: createdAt, sizeBytes: 5, ipaInfoPlist: { CFBundleVersion: 'project' } });
+    recordJobHistory({ id: defaultHistoryId, correlationId: `default-correlation-${defaultHistoryId}`, projectId: 'default', bundleId, status: 'done', source: 'manual', createdAt, finishedAt: createdAt, sizeBytes: 13, ipaInfoPlist: { CFBundleVersion: 'default' } });
+    scopedLogger('project-scope-test').info('project scope marker', { jobId: historyId });
+    scopedLogger('project-scope-test').info('project scope marker', { jobId: defaultHistoryId });
+    const memberHistory = await server.inject({ method: 'GET', url: `/v1/dashboard/jobs?projectId=${project.id}&q=${bundleId}`, headers: { cookie: memberCookie } });
+    const otherMemberHistory = await server.inject({ method: 'GET', url: `/v1/dashboard/jobs?projectId=${project.id}&q=${bundleId}`, headers: { cookie: secondMemberCookie } });
+    const crossProjectDiff = await server.inject({ method: 'GET', url: `/v1/dashboard/jobs/diff?projectId=${project.id}&bundleId=${bundleId}&a=${historyId}&b=${defaultHistoryId}`, headers: { cookie: memberCookie } });
+    const scopedBulkPreview = await server.inject({ method: 'POST', url: '/v1/dashboard/jobs/bulk-preview', headers: { cookie: memberCookie }, payload: { projectId: project.id, ids: [historyId, defaultHistoryId] } });
+    const scopedStats = await server.inject({ method: 'GET', url: `/v1/dashboard/jobs/stats/${bundleId}?projectId=${project.id}`, headers: { cookie: memberCookie } });
+    const scopedInsights = await server.inject({ method: 'GET', url: `/v1/dashboard/insights?projectId=${project.id}`, headers: { cookie: memberCookie } });
+    const scopedLogs = await server.inject({ method: 'GET', url: `/v1/dashboard/logs?projectId=${project.id}&scope=project-scope-test&q=marker`, headers: { cookie: memberCookie } });
+    expect(memberHistory.statusCode).toBe(200);
+    expect((memberHistory.json() as { history: { id: string }[] }).history.map((entry) => entry.id)).toContain(historyId);
+    expect(otherMemberHistory.statusCode).toBe(404);
+    expect(crossProjectDiff.statusCode).toBe(404);
+    expect(scopedBulkPreview.statusCode).toBe(200);
+    expect(scopedBulkPreview.json()).toMatchObject({ requested: 2, eligible: 1, previousSizeBytes: 5, items: [{ id: historyId }] });
+    expect(scopedStats.json()).toMatchObject({ totalRuns: 1, doneCount: 1, failedCount: 0 });
+    expect((scopedInsights.json() as { totalRuns: number }).totalRuns).toBe(1);
+    expect((scopedLogs.json() as { logs: { meta?: { jobId?: string } }[] }).logs.map((entry) => entry.meta?.jobId)).toEqual([historyId]);
+
+    const artifactDirectory = await mkdtemp(path.join(tmpdir(), 'dkrypt-project-artifact-'));
+    projectArtifactPath = path.join(artifactDirectory, 'project.ipa');
+    await writeFile(projectArtifactPath, 'project ipa');
+    const projectArtifact = await promoteArtifact({
+      key: `${bundleId}|appstore|project-build`,
+      bundleId,
+      channel: 'appstore',
+      projectId: project.id,
+      stagingPath: projectArtifactPath,
+    });
+    projectArtifactPath = projectArtifact.filePath;
+    const memberArtifacts = await server.inject({ method: 'GET', url: `/v1/dashboard/artifacts?projectId=${project.id}&q=${bundleId}`, headers: { cookie: memberCookie } });
+    const otherMemberArtifact = await server.inject({ method: 'GET', url: `/v1/dashboard/artifacts/${projectArtifact.id}/file`, headers: { cookie: secondMemberCookie } });
+    expect(memberArtifacts.statusCode).toBe(200);
+    expect((memberArtifacts.json() as { artifacts: { id: string }[] }).artifacts.map((entry) => entry.id)).toContain(projectArtifact.id);
+    expect(otherMemberArtifact.statusCode).toBe(404);
+
+    const members = await server.inject({ method: 'GET', url: '/v1/dashboard/projects/members', headers: { cookie: managerCookie } });
+    expect((members.json() as { members: { id: string }[] }).members.map((member) => member.id)).toContain(firstMemberId);
+
+    const archived = await server.inject({ method: 'PATCH', url: `/v1/dashboard/projects/${project.id}`, headers: { cookie: managerCookie }, payload: { archived: true } });
+    expect(archived.statusCode).toBe(200);
+    const archivedDecrypt = await server.inject({ method: 'POST', url: '/v1/dashboard/decrypt', headers: { cookie: managerCookie }, payload: { projectId: project.id, bundleId: 'com.example.archived' } });
+    const archivedPreflight = await server.inject({ method: 'POST', url: '/v1/dashboard/decrypt/preflight', headers: { cookie: managerCookie }, payload: { projectId: project.id, bundleId: 'com.example.archived' } });
+    const archivedRetry = await server.inject({ method: 'POST', url: `/v1/dashboard/jobs/${historyId}/retry`, headers: { cookie: managerCookie } });
+    expect(archivedDecrypt.statusCode).toBe(409);
+    expect(archivedPreflight.statusCode).toBe(409);
+    expect(archivedRetry.statusCode).toBe(409);
+  } finally {
+    if (projectArtifactPath) await rm(projectArtifactPath, { force: true });
+    await root.server.close();
+  }
+});
+
+test('project event streams close immediately after membership is revoked', async () => {
+  const { server, cookie } = await signIn();
+  const memberId = `github:project-stream-${crypto.randomUUID()}`;
+  const memberPermissions = PermissionFlag.requestDecrypt | PermissionFlag.viewDevices;
+  const role = createRole({ name: `Stream ${crypto.randomUUID()}`, color: '#3498db', permissions: serializeBits(memberPermissions) }, 'test');
+  addAllowedUser(memberId, [role.id], 'test');
+  const memberCookie = createSessionCookie(memberId, memberPermissions);
+  const projectResponse = await server.inject({
+    method: 'POST',
+    url: '/v1/dashboard/projects',
+    headers: { cookie },
+    payload: { name: `Stream ${crypto.randomUUID()}`, memberIds: [memberId] },
+  });
+  const project = projectResponse.json() as { id: string };
+  const baseUrl = await server.listen({ port: 0, host: '127.0.0.1' });
+  const controller = new AbortController();
+
+  try {
+    const response = await fetch(`${baseUrl}/v1/dashboard/events?projectId=${project.id}`, { headers: { cookie: memberCookie }, signal: controller.signal });
+    expect(response.status).toBe(200);
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('dashboard event stream has no reader');
+    const initial = await reader.read();
+    expect(new TextDecoder().decode(initial.value)).toContain('event: overview');
+
+    expect(updateRole(role.id, { permissions: serializeBits(PermissionFlag.requestDecrypt) }, 'test').ok).toBe(true);
+    emitJobsChanged();
+    const permissionRevokedEvent = await reader.read();
+    expect(new TextDecoder().decode(permissionRevokedEvent.value)).toContain('event: project-access-revoked');
+    expect((await reader.read()).done).toBe(true);
+
+    const refreshedResponse = await fetch(`${baseUrl}/v1/dashboard/events?projectId=${project.id}`, { headers: { cookie: memberCookie } });
+    expect(refreshedResponse.status).toBe(200);
+    const refreshedReader = refreshedResponse.body?.getReader();
+    if (!refreshedReader) throw new Error('refreshed dashboard event stream has no reader');
+    expect(new TextDecoder().decode((await refreshedReader.read()).value)).toContain('event: overview');
+
+    const revoked = await server.inject({ method: 'PATCH', url: `/v1/dashboard/projects/${project.id}`, headers: { cookie }, payload: { memberIds: [] } });
+    expect(revoked.statusCode).toBe(200);
+    const event = await refreshedReader.read();
+    expect(new TextDecoder().decode(event.value)).toContain('event: project-access-revoked');
+    expect((await refreshedReader.read()).done).toBe(true);
+
+    const deniedReconnect = await fetch(`${baseUrl}/v1/dashboard/events?projectId=${project.id}`, { headers: { cookie: memberCookie } });
+    expect(deniedReconnect.status).toBe(404);
+  } finally {
+    controller.abort();
+    await server.close();
+  }
+});
+
+test('scheduler watch lists and budget history stay within the selected project', async () => {
+  const { server } = await signIn();
+  const memberId = `github:project-watch-${crypto.randomUUID()}`;
+  const permissions = PermissionFlag.viewAutomation | PermissionFlag.manageAutomation;
+  const role = createRole({ name: `Watch manager ${crypto.randomUUID()}`, color: '#3498db', permissions: serializeBits(permissions) }, 'test');
+  addAllowedUser(memberId, [role.id], 'test');
+  const memberCookie = createSessionCookie(memberId, permissions);
+  const accessibleProject = createProject({ name: `Accessible ${crypto.randomUUID()}`, memberIds: [memberId] }, 'root').project!;
+  const hiddenProject = createProject({ name: `Hidden ${crypto.randomUUID()}` }, 'root').project!;
+  const accessibleWatch = createWatch({
+    projectId: accessibleProject.id,
+    bundleId: `com.example.watch.${crypto.randomUUID()}`,
+    repo: 'owner/repo',
+    ghWorkflowFile: 'release.yml',
+    pollCron: '0 * * * *',
+    enabled: false,
+  }, 'test').watch!;
+  const hiddenWatch = createWatch({
+    projectId: hiddenProject.id,
+    bundleId: `com.example.watch.${crypto.randomUUID()}`,
+    repo: 'owner/repo',
+    ghWorkflowFile: 'release.yml',
+    pollCron: '0 * * * *',
+    enabled: false,
+  }, 'test').watch!;
+  const telemetry = (watchId: string, bundleId: string) => recordGitHubBudgetTelemetry({
+    watchId,
+    bundleId,
+    estimatedRequests: 5,
+    limit: 5000,
+    remainingBefore: 4995,
+    resetAt: Date.now() + 60_000,
+  });
+  telemetry(accessibleWatch.id, accessibleWatch.bundleId);
+  telemetry(hiddenWatch.id, hiddenWatch.bundleId);
+
+  try {
+    const watchesResponse = await server.inject({ method: 'GET', url: '/v1/dashboard/watches', headers: { cookie: memberCookie } });
+    const watches = (watchesResponse.json() as { watches: { id: string }[] }).watches;
+    const budgetResponse = await server.inject({ method: 'GET', url: `/v1/dashboard/github/budget-history?projectId=${accessibleProject.id}`, headers: { cookie: memberCookie } });
+    const entries = (budgetResponse.json() as { entries: { watchId: string }[] }).entries;
+
+    expect(watchesResponse.statusCode).toBe(200);
+    expect(watches.map((watch) => watch.id)).toContain(accessibleWatch.id);
+    expect(watches.map((watch) => watch.id)).not.toContain(hiddenWatch.id);
+    expect(budgetResponse.statusCode).toBe(200);
+    expect(entries.map((entry) => entry.watchId)).toEqual([accessibleWatch.id]);
+  } finally {
+    deleteWatch(accessibleWatch.id, 'test');
+    deleteWatch(hiddenWatch.id, 'test');
     await server.close();
   }
 });

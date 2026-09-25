@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { config } from '#config.js';
 import { artifactKeyForJob, promoteArtifact } from '#artifacts.js';
-import { createDevice, deleteDevice } from '#store/state.js';
+import { createDevice, createProject, deleteDevice } from '#store/state.js';
 import type { Job } from '#jobs/types.js';
 
 let retryDeadlineAttempts = 0;
@@ -25,7 +25,7 @@ mock.module('./runner.js', () => ({
   },
 }));
 
-const { cancelJob, cancelQueuedJob, enqueueDecryptJob, getActiveJobs, getJob, getQueueInfo, getQueueReason, isJobDispatchable, reclaimJobFile, recoverPersistedActiveJobs, waitForJob } = await import('./store.js');
+const { cancelJob, cancelQueuedJob, enqueueDecryptJob, getActiveJobs, getJob, getQueueInfo, getQueueReason, isJobDispatchable, prioritizeQueuedJob, reclaimJobFile, recoverPersistedActiveJobs, reorderQueue, waitForJob } = await import('./store.js');
 
 let testDeviceId = '';
 
@@ -147,6 +147,52 @@ describe('enqueueDecryptJob', () => {
     expect(retry.artifactId).toBe(artifact.id);
   });
 
+  test('keeps active-job deduplication within a project and links shared cache hits', async () => {
+    const bundleId = `com.test.project-cache.${crypto.randomUUID()}`;
+    const projectA = createProject({ name: `Cache project A ${crypto.randomUUID()}` }, 'root').project!.id;
+    const projectB = createProject({ name: `Cache project B ${crypto.randomUUID()}` }, 'root').project!.id;
+    const firstProjectJob = enqueueDecryptJob(bundleId, 'manual', undefined, undefined, undefined, undefined, 0, undefined, undefined, projectA);
+    const duplicateFirstProjectJob = enqueueDecryptJob(bundleId, 'manual', undefined, undefined, undefined, undefined, 0, undefined, undefined, projectA);
+    const secondProjectJob = enqueueDecryptJob(bundleId, 'manual', undefined, undefined, undefined, undefined, 0, undefined, undefined, projectB);
+
+    expect(firstProjectJob.id).toBe(duplicateFirstProjectJob.id);
+    expect(secondProjectJob.id).not.toBe(firstProjectJob.id);
+    expect(firstProjectJob.projectId).toBe(projectA);
+    expect(secondProjectJob.projectId).toBe(projectB);
+
+    cancelQueuedJob(firstProjectJob.id, 'project test cleanup');
+    cancelQueuedJob(secondProjectJob.id, 'project test cleanup');
+
+    const outputDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-project-cache-'));
+    const outputPath = path.join(outputDir, 'app.ipa');
+    await writeFile(outputPath, 'ipa');
+    const artifact = await promoteArtifact({
+      key: artifactKeyForJob({ id: 'lookup', bundleId, externalVersionId: 'project-cache-build' }),
+      bundleId,
+      channel: 'appstore',
+      externalVersionId: 'project-cache-build',
+      projectId: projectA,
+      stagingPath: outputPath,
+    });
+    const shared = enqueueDecryptJob(bundleId, 'manual', 'project-cache-build', undefined, undefined, undefined, 0, undefined, undefined, projectB);
+
+    expect(shared).toMatchObject({ status: 'done', projectId: projectB, artifactId: artifact.id, cacheHit: true });
+    expect(artifact.projectIds).toContain(projectB);
+  });
+
+  test('enforces a project concurrent-job quota without affecting another project', async () => {
+    const project = createProject({ name: `Concurrency quota ${crypto.randomUUID()}`, maxConcurrentJobs: 1 }, 'root').project!;
+    const first = enqueueDecryptJob(`com.test.project-quota.${crypto.randomUUID()}`, 'manual', undefined, undefined, undefined, undefined, 0, undefined, undefined, project.id);
+
+    expect(() => enqueueDecryptJob(`com.test.project-quota.${crypto.randomUUID()}`, 'manual', undefined, undefined, undefined, undefined, 0, undefined, undefined, project.id)).toThrow('project concurrency limit reached');
+    const otherProject = createProject({ name: `Independent quota ${crypto.randomUUID()}` }, 'root').project!;
+    const independent = enqueueDecryptJob(`com.test.project-quota.${crypto.randomUUID()}`, 'manual', undefined, undefined, undefined, undefined, 0, undefined, undefined, otherProject.id);
+    expect(independent.projectId).toBe(otherProject.id);
+
+    cancelQueuedJob(first.id, 'project quota test cleanup');
+    cancelQueuedJob(independent.id, 'project quota test cleanup');
+  });
+
   test('reclaims a completed job file without an artifact exception', async () => {
     const outputDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-job-retention-'));
     const outputPath = path.join(outputDir, 'app.ipa');
@@ -255,5 +301,38 @@ test('cancels a running job while it is waiting for transient retry backoff', as
     expect(retryDeadlineAttempts).toBe(1);
   } finally {
     config.jobMaxRetries = originalRetries;
+  }
+});
+
+test('reordering and prioritizing a project queue leaves other project positions intact', async () => {
+  await clearActiveTestJobs();
+  const blocker = enqueueDecryptJob(`com.test.queue-blocker.${crypto.randomUUID()}`, 'manual');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const projectA = createProject({ name: `Queue project A ${crypto.randomUUID()}` }, 'root').project!.id;
+  const projectB = createProject({ name: `Queue project B ${crypto.randomUUID()}` }, 'root').project!.id;
+  const firstA = enqueueDecryptJob(`com.test.queue-a1.${crypto.randomUUID()}`, 'manual', undefined, undefined, undefined, undefined, 0, undefined, undefined, projectA);
+  const firstB = enqueueDecryptJob(`com.test.queue-b1.${crypto.randomUUID()}`, 'manual', undefined, undefined, undefined, undefined, 0, undefined, undefined, projectB);
+  const secondA = enqueueDecryptJob(`com.test.queue-a2.${crypto.randomUUID()}`, 'manual', undefined, undefined, undefined, undefined, 0, undefined, undefined, projectA);
+  const secondB = enqueueDecryptJob(`com.test.queue-b2.${crypto.randomUUID()}`, 'manual', undefined, undefined, undefined, undefined, 0, undefined, undefined, projectB);
+
+  try {
+    expect(blocker.status).toBe('running');
+    const firstBPosition = getQueueInfo(firstB.id)?.position;
+    const secondBPosition = getQueueInfo(secondB.id)?.position;
+    expect(reorderQueue([secondA.id, firstA.id], projectA)).toBe(true);
+    expect(getQueueInfo(secondA.id)!.position).toBeLessThan(firstBPosition!);
+    expect(firstBPosition).toBe(getQueueInfo(firstB.id)?.position);
+    expect(getQueueInfo(firstB.id)!.position).toBeLessThan(getQueueInfo(firstA.id)!.position);
+    expect(getQueueInfo(firstA.id)!.position).toBeLessThan(secondBPosition!);
+    expect(secondBPosition).toBe(getQueueInfo(secondB.id)?.position);
+    expect(prioritizeQueuedJob(firstA.id, projectA)).toBe(true);
+    expect(getQueueInfo(firstA.id)!.position).toBeLessThan(firstBPosition!);
+    expect(firstBPosition).toBe(getQueueInfo(firstB.id)?.position);
+    expect(getQueueInfo(firstB.id)!.position).toBeLessThan(getQueueInfo(secondA.id)!.position);
+    expect(getQueueInfo(secondA.id)!.position).toBeLessThan(secondBPosition!);
+    expect(secondBPosition).toBe(getQueueInfo(secondB.id)?.position);
+    expect(prioritizeQueuedJob(firstB.id, projectA)).toBe(false);
+  } finally {
+    await clearActiveTestJobs();
   }
 });

@@ -37,6 +37,7 @@
 	import { liveState } from "#lib/live.svelte";
 	import { createSavedViews } from "#lib/savedViews.svelte";
 	import { sessionState } from "#lib/session.svelte";
+	import { projectSelectionState } from "#lib/projectSelection.svelte";
 	import {
 		historyJumpState,
 		requestFocusSearch,
@@ -297,6 +298,7 @@
 		deviceFilter;
 		errorFilter;
 		failureCategoryFilter;
+		projectSelectionState.id;
 		if (!hasSearched) {
 			hasSearched = true;
 			activeQuery = query;

@@ -1,4 +1,4 @@
-import { Router } from '#http.js';
+import { Router, type Request, type Response } from '#http.js';
 import { validate as validateCronExpr } from 'node-cron';
 import { config, discordBotEnabled } from '#config.js';
 import { fetchBotGuilds, fetchGuildRoles } from '#discord.js';
@@ -62,6 +62,7 @@ import {
   getArtifactStorageStats,
   listArtifacts,
   previewArtifactQuotaRetention,
+  reloadArtifactIndex,
   touchArtifact,
 } from '#artifacts.js';
 import {
@@ -77,9 +78,11 @@ import {
   createBackupSnapshot,
   createDevice,
   createDiscordRolePerk,
+  createProject,
   createRole,
   createWatch,
   DEFAULT_ROLE_ID,
+  DEFAULT_PROJECT_ID,
   deleteBackupSnapshot,
   deleteDevice,
   deleteDiscordRolePerk,
@@ -114,11 +117,12 @@ import {
   getEffectiveDevices,
   getEffectiveSettings,
   getEffectiveWatches,
+  getProject,
+  getUserEffectivePermissions,
   getInsightsSummary,
   getUserActivityStats,
   getJobHistoryEntryById,
   getJobHistoryPage,
-  getLastSchedulerRunAt,
   listNotificationsPage,
   markNotificationsRead,
   getPrimaryDevice,
@@ -136,11 +140,14 @@ import {
   getAppCatalogStats,
   importBackup,
   isWatchSchedulable,
+  type CreateProjectInput,
   type JobHistoryEntry,
+  type UpdateProjectInput,
   listAllApiKeysPage,
   listAllowedUsers,
   listApiKeysForOwner,
   listPendingApiKeys,
+  listProjectsForUser,
   listRoles,
   previewJobHistoryRetention,
   previewBackup,
@@ -166,10 +173,12 @@ import {
   upsertAppCatalogEntries,
   updateAllowedUserRoles,
   updateDevice,
+  updateProject,
   updateRole,
   updateSettings,
   updateUserPrefs,
   updateWatch,
+  userCanAccessProject,
   verifyLatestDatabaseBackup,
   wouldOrphanPermission,
 } from '#store/state.js';
@@ -203,6 +212,7 @@ const canViewUsers = requirePermission(PermissionFlag.viewUsers, PermissionFlag.
 const canViewRoles = requirePermission(PermissionFlag.viewRoles, PermissionFlag.manageRoles);
 const canManageUsers = requirePermission(PermissionFlag.manageUsers);
 const canManageRoles = requirePermission(PermissionFlag.manageRoles);
+const canManageProjects = requirePermission(PermissionFlag.manageProjects);
 const canViewDiscordPerks = requirePermission(PermissionFlag.viewRoles, PermissionFlag.manageRoles);
 const canManageDiscordPerks = requirePermission(PermissionFlag.manageRoles);
 const canViewBackup = requirePermission(PermissionFlag.viewBackup, PermissionFlag.manageBackup);
@@ -223,15 +233,20 @@ dashboardRouter.use((_req, res, next) => {
 const deviceOrExternalRateLimit = rateLimitPerUser(10, 60_000);
 const jobDiffRateLimit = rateLimitPerUser(30, 60_000);
 
-function buildOverview(permissions: bigint, userId: string) {
+function buildOverview(permissions: bigint, userId: string, projectId = DEFAULT_PROJECT_ID) {
   const canViewAutomation = hasPermission(permissions, PermissionFlag.viewAutomation) || hasPermission(permissions, PermissionFlag.manageAutomation);
   const canViewDeviceData = hasPermission(permissions, PermissionFlag.viewDevices) || hasPermission(permissions, PermissionFlag.manageDevices);
-  const watches = canViewAutomation ? getEffectiveWatches().map((w) => ({
+  const watches = canViewAutomation ? getEffectiveWatches().filter((watch) =>
+    (watch.projectId ?? DEFAULT_PROJECT_ID) === projectId && canAccessProject(userId, permissions, watch.projectId ?? DEFAULT_PROJECT_ID),
+  ).map((w) => ({
     ...w,
     nextRunAt: isWatchSchedulable(w) ? nextCronRunAt(w.pollCron) : undefined,
     schedulable: isWatchSchedulable(w),
     configIssues: getWatchConfigIssues(w),
   })) : [];
+  const schedulerRunHistory = canViewAutomation
+    ? getSchedulerRunHistory(200).filter((run) => watches.some((watch) => watch.id === run.watchId)).slice(0, 10)
+    : [];
   const devices = canViewDeviceData ? getEffectiveDevices().map((d) => ({ ...d })) : [];
   const settings = getEffectiveSettings();
   return {
@@ -239,12 +254,13 @@ function buildOverview(permissions: bigint, userId: string) {
     settings: canViewAutomation ? settings : { ...settings, notifyWebhookUrl: '' },
     watches,
     devices,
-    lastSchedulerRunAt: canViewAutomation ? getLastSchedulerRunAt() : undefined,
-    schedulerRunHistory: canViewAutomation ? getSchedulerRunHistory(10) : [],
+    lastSchedulerRunAt: schedulerRunHistory[0]?.ts,
+    schedulerRunHistory,
     disk: getDiskUsage(config.artifactDir),
     isPaidPlan: getBillingEntitlements(userId).planId !== 'viewer',
     maintenance: getMaintenanceStatus(),
-    activeJobs: getActiveJobs().map((j) => ({
+    projectId,
+    activeJobs: getActiveJobs().filter((job) => (job.projectId ?? DEFAULT_PROJECT_ID) === projectId).map((j) => ({
       id: j.id,
       correlationId: j.correlationId ?? j.id,
       bundleId: j.bundleId,
@@ -295,8 +311,10 @@ function dashboardJobRequester(entry: JobHistoryEntry) {
   };
 }
 
-dashboardRouter.get('/v1/dashboard/overview', (_req, res) => {
-  res.json(buildOverview(res.locals.session.permissions, res.locals.session.sub));
+dashboardRouter.get('/v1/dashboard/overview', (req, res) => {
+  const projectId = resolveRequestProjectId(req, res, 'query');
+  if (!projectId) return;
+  res.json(buildOverview(res.locals.session.permissions, res.locals.session.sub, projectId));
 });
 
 dashboardRouter.get('/v1/dashboard/doctor', canManageDevices, async (_req, res) => {
@@ -320,7 +338,9 @@ dashboardRouter.post('/v1/dashboard/notifications/read', (req, res) => {
   res.json({ ok: true, marked: markNotificationsRead(res.locals.session.sub, ids) });
 });
 
-dashboardRouter.get('/v1/dashboard/events', (_req, res) => {
+dashboardRouter.get('/v1/dashboard/events', (req, res) => {
+  const projectId = resolveRequestProjectId(req, res, 'query');
+  if (!projectId) return;
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
@@ -328,32 +348,58 @@ dashboardRouter.get('/v1/dashboard/events', (_req, res) => {
   res.flushHeaders();
   res.raw.setTimeout(0);
 
+  const { sub } = res.locals.session;
+  let projectAccessRevoked = false;
+  const closeForRevokedProject = (): boolean => {
+    if (projectAccessRevoked) return false;
+    const currentPermissions = sub === 'root' ? res.locals.session.permissions : getUserEffectivePermissions(sub);
+    const permissionsRemainValid = isSubsetPermission(res.locals.session.permissions, currentPermissions);
+    if (permissionsRemainValid && canAccessProject(sub, currentPermissions, projectId)) return true;
+    projectAccessRevoked = true;
+    const sequence = nextDashboardSequence();
+    res.write(`id: ${sequence}\nevent: project-access-revoked\ndata: ${JSON.stringify({ sequence, data: { projectId } })}\n\n`);
+    res.raw.end();
+    return false;
+  };
   const sendEvent = (event: string, data: unknown) => {
+    if (!closeForRevokedProject()) return;
     const sequence = nextDashboardSequence();
     const payload = Array.isArray(data) ? { sequence, data } : data && typeof data === 'object' ? { ...(data as Record<string, unknown>), sequence } : { sequence, data };
     res.write(`id: ${sequence}\nevent: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
   };
 
-  sendEvent('overview', buildOverview(res.locals.session.permissions, res.locals.session.sub));
+  sendEvent('overview', buildOverview(res.locals.session.permissions, res.locals.session.sub, projectId));
 
-  const { sub } = res.locals.session;
   registerPresence(sub);
   const unregisterDashboardConnection = registerDashboardConnection(() => {
     if (!res.raw.destroyed && !res.raw.writableEnded) res.raw.end();
   });
   sendEvent('presence', getOnlineUsernames());
 
-  const onJobsChanged = () => sendEvent('overview', buildOverview(res.locals.session.permissions, res.locals.session.sub));
-  const onLogAdded = (entry: LogEntry) => sendEvent('log', entry);
-  const onHistoryAdded = (entry: JobHistoryEntry) => sendEvent('history', dashboardHistoryEntry(entry));
+  const onJobsChanged = () => sendEvent('overview', buildOverview(res.locals.session.permissions, res.locals.session.sub, projectId));
+  const onLogAdded = (entry: LogEntry) => {
+    if (logBelongsToProject(entry, projectId)) sendEvent('log', entry);
+  };
+  const onHistoryAdded = (entry: JobHistoryEntry) => {
+    if ((entry.projectId ?? DEFAULT_PROJECT_ID) === projectId) sendEvent('history', dashboardHistoryEntry(entry));
+  };
   const onPresenceChanged = (usernames: string[]) => sendEvent('presence', usernames);
+  const onProjectChanged = (changedProjectId?: string) => {
+    if (changedProjectId === undefined || changedProjectId === projectId) {
+      if (closeForRevokedProject()) sendEvent('overview', buildOverview(res.locals.session.permissions, sub, projectId));
+    }
+  };
 
   dashboardEvents.on('jobsChanged', onJobsChanged);
   if (hasPermission(res.locals.session.permissions, PermissionFlag.viewLogs)) dashboardEvents.on('logAdded', onLogAdded);
   dashboardEvents.on('historyAdded', onHistoryAdded);
   dashboardEvents.on('presenceChanged', onPresenceChanged);
+  dashboardEvents.on('projectChanged', onProjectChanged);
+  dashboardEvents.on('projectsChanged', onProjectChanged);
 
-  const heartbeat = setInterval(() => res.write(': ping\n\n'), 15_000);
+  const heartbeat = setInterval(() => {
+    if (closeForRevokedProject()) res.write(': ping\n\n');
+  }, 15_000);
 
   res.raw.once('close', () => {
     unregisterDashboardConnection();
@@ -363,10 +409,14 @@ dashboardRouter.get('/v1/dashboard/events', (_req, res) => {
     dashboardEvents.off('logAdded', onLogAdded);
     dashboardEvents.off('historyAdded', onHistoryAdded);
     dashboardEvents.off('presenceChanged', onPresenceChanged);
+    dashboardEvents.off('projectChanged', onProjectChanged);
+    dashboardEvents.off('projectsChanged', onProjectChanged);
   });
 });
 
 dashboardRouter.get('/v1/dashboard/jobs', (req, res) => {
+  const projectId = resolveRequestProjectId(req, res, 'query');
+  if (!projectId) return;
   const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit ?? '15'), 10) || 15, 1), 100);
   const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
   const offset = cursor ? 0 : Math.max(Number.parseInt(String(req.query.offset ?? '0'), 10) || 0, 0);
@@ -380,6 +430,7 @@ dashboardRouter.get('/v1/dashboard/jobs', (req, res) => {
   const fromTs = Number.parseInt(String(req.query.fromTs ?? ''), 10);
   const toTs = Number.parseInt(String(req.query.toTs ?? ''), 10);
   const { entries, total, nextCursor } = getJobHistoryPage(offset, limit, {
+    projectId,
     bundleIdSearch: q,
     source,
     status,
@@ -398,6 +449,8 @@ dashboardRouter.get('/v1/dashboard/jobs', (req, res) => {
 });
 
 dashboardRouter.get('/v1/dashboard/artifacts', canDecrypt, (req, res) => {
+  const projectId = resolveRequestProjectId(req, res, 'query');
+  if (!projectId) return;
   const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
   const offset = cursor ? 0 : Number.parseInt(String(req.query.offset ?? '0'), 10);
   const limit = Number.parseInt(String(req.query.limit ?? '50'), 10);
@@ -408,6 +461,7 @@ dashboardRouter.get('/v1/dashboard/artifacts', canDecrypt, (req, res) => {
     cursor,
     query: typeof req.query.q === 'string' ? req.query.q : undefined,
     channel,
+    projectIds: [projectId],
   });
   res.json({
     ...result,
@@ -424,7 +478,10 @@ dashboardRouter.get('/v1/dashboard/artifacts', canDecrypt, (req, res) => {
 
 dashboardRouter.get('/v1/dashboard/artifacts/:id/file', canDecrypt, async (req, res) => {
   const artifact = getArtifactById(req.params.id);
-  if (!artifact || !artifactFileAvailable(artifact)) {
+  const permissions = res.locals.session.permissions;
+  const sub = res.locals.session.sub;
+  const allowed = artifact?.projectIds.some((projectId) => canAccessProject(sub, permissions, projectId)) ?? false;
+  if (!artifact || !artifactFileAvailable(artifact) || !allowed) {
     res.status(404).json({ error: 'artifact not found' });
     return;
   }
@@ -433,6 +490,8 @@ dashboardRouter.get('/v1/dashboard/artifacts/:id/file', canDecrypt, async (req, 
 });
 
 dashboardRouter.get('/v1/dashboard/logs', canViewLogs, (req, res) => {
+  const projectId = resolveRequestProjectId(req, res, 'query');
+  if (!projectId) return;
   const scope = typeof req.query.scope === 'string' && req.query.scope !== 'all' ? req.query.scope.slice(0, 100) : undefined;
   const level = typeof req.query.level === 'string' && ['info', 'warn', 'error'].includes(req.query.level) ? req.query.level as LogLevel : undefined;
   const query = typeof req.query.q === 'string' && req.query.q.trim() ? req.query.q.trim().slice(0, 100) : undefined;
@@ -441,7 +500,7 @@ dashboardRouter.get('/v1/dashboard/logs', canViewLogs, (req, res) => {
   const offset = cursor ? 0 : Math.max(0, Number.parseInt(String(req.query.offset ?? '0'), 10) || 0);
   const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit ?? '100'), 10) || 100, 1), 200);
   try {
-    const result = getRecentLogs({ scope, level, query, regex, cursor, offset, limit });
+    const result = getRecentLogs({ scope, level, query, regex, cursor, offset, limit, filter: (entry) => logBelongsToProject(entry, projectId) });
     res.json(result);
   } catch {
     res.status(400).json({ error: 'log search pattern is invalid or unsafe' });
@@ -475,8 +534,10 @@ function csvCell(value: unknown): string {
 }
 
 dashboardRouter.get('/v1/dashboard/jobs/export', (req, res) => {
+  const projectId = resolveRequestProjectId(req, res, 'query');
+  if (!projectId) return;
   const format = req.query.format === 'csv' ? 'csv' : 'json';
-  const entries = getAllJobHistory();
+  const entries = getAllJobHistory().filter((entry) => (entry.projectId ?? DEFAULT_PROJECT_ID) === projectId);
 
   if (format === 'json') {
     res.setHeader('Content-Disposition', 'attachment; filename="dkrypt-job-history.json"');
@@ -494,17 +555,21 @@ dashboardRouter.get('/v1/dashboard/jobs/export', (req, res) => {
 });
 
 dashboardRouter.get('/v1/dashboard/jobs/eta/:bundleId', (req, res) => {
-  res.json({ avgMs: getAverageJobDurationMs(req.params.bundleId) ?? null });
+  const projectId = resolveRequestProjectId(req, res, 'query');
+  if (!projectId) return;
+  res.json({ avgMs: getAverageJobDurationMs(req.params.bundleId, projectId) ?? null });
 });
 
 dashboardRouter.post('/v1/dashboard/jobs/bulk-preview', canDecrypt, (req, res) => {
+  const projectId = resolveRequestProjectId(req, res, 'body');
+  if (!projectId) return;
   const rawIds: string[] = Array.isArray(req.body?.ids) ? req.body.ids.filter((id: unknown): id is string => typeof id === 'string') : [];
   const ids = [...new Set<string>(rawIds)].slice(0, 100);
   const activeJobs = getActiveJobs();
   const items = ids.flatMap((id) => {
     const entry = getJobHistoryEntryById(id);
-    if (!entry) return [];
-    const active = activeJobs.find((job) => job.bundleId === entry.bundleId && job.externalVersionId === entry.externalVersionId && job.testflight?.build.id === entry.testflight?.build.id);
+    if (!entry || (entry.projectId ?? DEFAULT_PROJECT_ID) !== projectId) return [];
+    const active = activeJobs.find((job) => (job.projectId ?? DEFAULT_PROJECT_ID) === projectId && job.bundleId === entry.bundleId && job.externalVersionId === entry.externalVersionId && job.testflight?.build.id === entry.testflight?.build.id);
     return [{
       id: entry.id,
       bundleId: entry.bundleId,
@@ -512,7 +577,7 @@ dashboardRouter.post('/v1/dashboard/jobs/bulk-preview', canDecrypt, (req, res) =
       status: entry.status,
       action: active ? 'join-existing' as const : 'queue' as const,
       reason: active ? `Already active as ${active.id.slice(0, 8)}` : undefined,
-      estimatedDurationMs: getAverageJobDurationMs(entry.bundleId),
+      estimatedDurationMs: getAverageJobDurationMs(entry.bundleId, projectId),
     }];
   });
   res.json({
@@ -520,18 +585,20 @@ dashboardRouter.post('/v1/dashboard/jobs/bulk-preview', canDecrypt, (req, res) =
     eligible: items.length,
     projectedQueueAdds: items.filter((item) => item.action === 'queue').length,
     estimatedDurationMs: items.filter((item) => item.action === 'queue').reduce((sum, item) => sum + (item.estimatedDurationMs ?? 0), 0),
-    previousSizeBytes: ids.reduce((sum, id) => sum + (getJobHistoryEntryById(id)?.sizeBytes ?? 0), 0),
+    previousSizeBytes: items.reduce((sum, item) => sum + (getJobHistoryEntryById(item.id)?.sizeBytes ?? 0), 0),
     items,
   });
 });
 
-dashboardRouter.get('/v1/dashboard/jobs/slo', canViewScheduler, (_req, res) => {
+dashboardRouter.get('/v1/dashboard/jobs/slo', canViewScheduler, (req, res) => {
+  const projectId = resolveRequestProjectId(req, res, 'query');
+  if (!projectId) return;
   const now = Date.now();
-  const completed = getAllJobHistory().filter((job) => job.status === 'done' && job.startedAt && job.finishedAt > job.startedAt);
+  const completed = getAllJobHistory().filter((job) => (job.projectId ?? DEFAULT_PROJECT_ID) === projectId && job.status === 'done' && job.startedAt && job.finishedAt > job.startedAt);
   const durations = completed.map((job) => job.finishedAt - (job.startedAt as number)).sort((a, b) => a - b);
   const historicalP95Ms = durations.length === 0 ? null : durations[Math.ceil(durations.length * 0.95) - 1];
   const targetMs = historicalP95Ms ?? config.queueSloMinutes * 60_000;
-  const jobs = getActiveJobs().map((job) => {
+  const jobs = getActiveJobs().filter((job) => (job.projectId ?? DEFAULT_PROJECT_ID) === projectId).map((job) => {
     const queue = job.status === 'queued' ? getQueueInfo(job.id) : undefined;
     const waitedMs = now - job.createdAt;
     const predictedStartMs = queue && historicalP95Ms !== null ? Math.max(0, queue.position - 1) * historicalP95Ms : null;
@@ -550,21 +617,27 @@ dashboardRouter.get('/v1/dashboard/jobs/slo', canViewScheduler, (_req, res) => {
 });
 
 dashboardRouter.get('/v1/dashboard/jobs/stats/:bundleId', (req, res) => {
-  res.json(getBundleStats(req.params.bundleId));
+  const projectId = resolveRequestProjectId(req, res, 'query');
+  if (!projectId) return;
+  res.json(getBundleStats(req.params.bundleId, projectId));
 });
 
 dashboardRouter.get('/v1/dashboard/jobs/volume', (req, res) => {
+  const projectId = resolveRequestProjectId(req, res, 'query');
+  if (!projectId) return;
   const days = Math.min(Math.max(Number.parseInt(String(req.query.days ?? '14'), 10) || 14, 1), 90);
-  res.json({ days: getDailyVolume(days) });
+  res.json({ days: getDailyVolume(days, projectId) });
 });
 
 dashboardRouter.get('/v1/dashboard/jobs/diff', jobDiffRateLimit, (req, res) => {
+  const projectId = resolveRequestProjectId(req, res, 'query');
+  if (!projectId) return;
   const bundleId = typeof req.query.bundleId === 'string' ? req.query.bundleId : '';
   const aId = typeof req.query.a === 'string' ? req.query.a : '';
   const bId = typeof req.query.b === 'string' ? req.query.b : '';
   const a = getJobHistoryEntryById(aId);
   const b = getJobHistoryEntryById(bId);
-  if (!a || !b) {
+  if (!a || !b || (a.projectId ?? DEFAULT_PROJECT_ID) !== projectId || (b.projectId ?? DEFAULT_PROJECT_ID) !== projectId) {
     res.status(404).json({ error: 'one or both job history entries not found' });
     return;
   }
@@ -593,12 +666,16 @@ dashboardRouter.get('/v1/dashboard/jobs/diff', jobDiffRateLimit, (req, res) => {
 });
 
 dashboardRouter.get('/v1/dashboard/insights', (req, res) => {
+  const projectId = resolveRequestProjectId(req, res, 'query');
+  if (!projectId) return;
   const topAppsLimit = Math.min(Math.max(Number.parseInt(String(req.query.topApps ?? '5'), 10) || 5, 1), 25);
   const trendDays = Math.min(Math.max(Number.parseInt(String(req.query.trendDays ?? '14'), 10) || 14, 1), 90);
-  res.json(getInsightsSummary(topAppsLimit, trendDays));
+  res.json(getInsightsSummary(topAppsLimit, trendDays, projectId));
 });
 
-dashboardRouter.get('/v1/dashboard/failure-patterns', canViewScheduler, (_req, res) => {
+dashboardRouter.get('/v1/dashboard/failure-patterns', canViewScheduler, (req, res) => {
+  const projectId = resolveRequestProjectId(req, res, 'query');
+  if (!projectId) return;
   const normalize = (message: string) => message
     .replace(/https?:\/\/\S+/g, '[url]')
     .replace(/(?:authorization:\s*bearer\s+|(?:token|secret|key|cookie)\s*[:=]\s*)[^\s,;"']+/gi, '[redacted]')
@@ -606,7 +683,7 @@ dashboardRouter.get('/v1/dashboard/failure-patterns', canViewScheduler, (_req, r
     .replace(/\b\d{4,}\b/g, '[number]')
     .slice(0, 180);
   const patterns = new Map<string, { count: number; firstSeen: number; lastSeen: number; bundleIds: Set<string> }>();
-  for (const job of getAllJobHistory().filter((entry) => entry.status === 'failed' && entry.error)) {
+  for (const job of getAllJobHistory().filter((entry) => (entry.projectId ?? DEFAULT_PROJECT_ID) === projectId && entry.status === 'failed' && entry.error)) {
     const key = normalize(job.error as string);
     const current = patterns.get(key) ?? { count: 0, firstSeen: job.finishedAt, lastSeen: job.finishedAt, bundleIds: new Set<string>() };
     current.count += 1;
@@ -618,9 +695,11 @@ dashboardRouter.get('/v1/dashboard/failure-patterns', canViewScheduler, (_req, r
   res.json({ patterns: [...patterns.entries()].map(([message, pattern]) => ({ message, count: pattern.count, firstSeen: pattern.firstSeen, lastSeen: pattern.lastSeen, bundleIds: [...pattern.bundleIds] })).sort((a, b) => b.count - a.count || b.lastSeen - a.lastSeen).slice(0, 20) });
 });
 
-dashboardRouter.get('/v1/dashboard/storage-forecast', canViewScheduler, (_req, res) => {
+dashboardRouter.get('/v1/dashboard/storage-forecast', canViewScheduler, (req, res) => {
+  const projectId = resolveRequestProjectId(req, res, 'query');
+  if (!projectId) return;
   const cutoff = Date.now() - 30 * 86_400_000;
-  const completed = getAllJobHistory().filter((entry) => entry.status === 'done' && entry.finishedAt >= cutoff && entry.sizeBytes && entry.sizeBytes > 0);
+  const completed = getAllJobHistory().filter((entry) => (entry.projectId ?? DEFAULT_PROJECT_ID) === projectId && entry.status === 'done' && entry.finishedAt >= cutoff && entry.sizeBytes && entry.sizeBytes > 0);
   const bytesPerDay = completed.reduce((total, entry) => total + (entry.sizeBytes ?? 0), 0) / 30;
   const disk = getDiskUsage(config.artifactDir);
   if (!disk) {
@@ -635,7 +714,9 @@ dashboardRouter.get('/v1/dashboard/storage-forecast', canViewScheduler, (_req, r
   });
 });
 
-dashboardRouter.get('/v1/dashboard/support-bundle', canManageWatches, (_req, res) => {
+dashboardRouter.get('/v1/dashboard/support-bundle', canManageWatches, (req, res) => {
+  const projectId = resolveRequestProjectId(req, res, 'query');
+  if (!projectId) return;
   const clean = (value: string | undefined): string | undefined => value?.replace(/https?:\/\/\S+/g, '[redacted-url]').replace(/(?:token|secret|key)=\S+/gi, '$1=[redacted]');
   const cleanStructured = (value: unknown): unknown => {
     if (typeof value === 'string') return clean(value) ?? value;
@@ -644,6 +725,7 @@ dashboardRouter.get('/v1/dashboard/support-bundle', canManageWatches, (_req, res
     return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, /token|secret|password|private.?key/i.test(key) ? '[redacted]' : cleanStructured(entry)]));
   };
   const jobs = getAllJobHistory()
+    .filter((entry) => (entry.projectId ?? DEFAULT_PROJECT_ID) === projectId)
     .slice(0, 100)
     .map(({ id, bundleId, status, source, versionLabel, createdAt, startedAt, finishedAt, sizeBytes, error }) => ({
       id, bundleId, status, source, versionLabel, createdAt, startedAt, finishedAt, sizeBytes, error: clean(error),
@@ -660,7 +742,7 @@ dashboardRouter.get('/v1/dashboard/support-bundle', canManageWatches, (_req, res
     watches: getEffectiveWatches().map((watch) => ({ bundleId: watch.bundleId, enabled: watch.enabled, pollCron: watch.pollCron, destinations: getWatchDispatchTargets(watch).length })),
     watchHealth: getWatchHealthRollup(),
     schedulerRuns: getSchedulerRunHistory(50).map((run) => ({ ...run, appStore: { ...run.appStore, reason: clean(run.appStore.reason) ?? '' }, testflight: { ...run.testflight, reason: clean(run.testflight.reason) ?? '' } })),
-    logs: getRecentLogs({ limit: 200 }).logs.map((entry) => ({ ...entry, message: clean(entry.message) ?? entry.message, meta: cleanStructured(entry.meta) })),
+    logs: getRecentLogs({ limit: 200, filter: (entry) => logBelongsToProject(entry, projectId) }).logs.map((entry) => ({ ...entry, message: clean(entry.message) ?? entry.message, meta: cleanStructured(entry.meta) })),
     jobs,
   });
 });
@@ -954,6 +1036,8 @@ dashboardRouter.post('/v1/dashboard/apps/metadata/refresh', canManageWatches, as
 const EXTERNAL_VERSION_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
 dashboardRouter.post('/v1/dashboard/decrypt', canDecrypt, blockDuringMaintenance, (req, res) => {
+  const projectId = resolveRequestProjectId(req, res, 'body', { requireActive: true });
+  if (!projectId) return;
   const bundleId = typeof req.body?.bundleId === 'string' ? req.body.bundleId.trim() : '';
   if (!BUNDLE_ID_RE.test(bundleId)) {
     res.status(400).json({ error: 'bundleId is required and must look like a bundle identifier' });
@@ -979,11 +1063,15 @@ dashboardRouter.post('/v1/dashboard/decrypt', canDecrypt, blockDuringMaintenance
     res.locals.session.sub,
     getUserPriority(res.locals.session.sub),
     preferredDeviceId,
+    undefined,
+    projectId,
   );
   res.status(202).json(jobSummary(job));
 });
 
 dashboardRouter.post('/v1/dashboard/decrypt/preflight', canDecrypt, async (req, res) => {
+  const projectId = resolveRequestProjectId(req, res, 'body', { requireActive: true });
+  if (!projectId) return;
   const bundleId = typeof req.body?.bundleId === 'string' ? req.body.bundleId.trim() : '';
   if (!BUNDLE_ID_RE.test(bundleId)) {
     res.status(400).json({ error: 'bundleId is required and must look like a bundle identifier' });
@@ -1063,8 +1151,8 @@ dashboardRouter.post('/v1/dashboard/decrypt/preflight', canDecrypt, async (req, 
     versionLabel,
     testflight,
     installSizeBytes,
-    estimatedDurationMs: getAverageJobDurationMs(bundleId),
-    queueLength: getActiveJobs().length,
+    estimatedDurationMs: getAverageJobDurationMs(bundleId, projectId),
+    queueLength: getActiveJobs().filter((job) => (job.projectId ?? DEFAULT_PROJECT_ID) === projectId).length,
     canQueue: checks.some((check) => check.ready),
     devices: checks,
   });
@@ -1475,19 +1563,26 @@ function serializeWatch(w: AppWatch) {
 }
 
 dashboardRouter.get('/v1/dashboard/watches', canViewScheduler, (_req, res) => {
-  res.json({ watches: getEffectiveWatches().map(serializeWatch) });
+  res.json({ watches: getEffectiveWatches()
+    .filter((watch) => canAccessProject(res.locals.session.sub, res.locals.session.permissions, watch.projectId ?? DEFAULT_PROJECT_ID))
+    .map(serializeWatch) });
 });
 
 dashboardRouter.get('/v1/dashboard/watches/export', canManageWatches, (_req, res) => {
   res.setHeader('Content-Disposition', 'attachment; filename="dkrypt-watches.json"');
-  res.json({ version: 1, watches: getEffectiveWatches() });
+  res.json({ version: 1, watches: getEffectiveWatches().filter((watch) => canAccessProject(res.locals.session.sub, res.locals.session.permissions, watch.projectId ?? DEFAULT_PROJECT_ID)) });
 });
 
 dashboardRouter.get('/v1/dashboard/watches/health', canViewScheduler, (_req, res) => {
-  res.json({ watches: getWatchHealthRollup() });
+  const accessibleWatchIds = new Set(getEffectiveWatches()
+    .filter((watch) => canAccessProject(res.locals.session.sub, res.locals.session.permissions, watch.projectId ?? DEFAULT_PROJECT_ID))
+    .map((watch) => watch.id));
+  res.json({ watches: getWatchHealthRollup().filter((watch) => accessibleWatchIds.has(watch.watchId)) });
 });
 
 dashboardRouter.get('/v1/dashboard/watches/calendar', canViewScheduler, (req, res) => {
+  const projectId = resolveRequestProjectId(req, res, 'query');
+  if (!projectId) return;
   const hours = Math.min(Math.max(Number.parseInt(String(req.query.hours ?? '24'), 10) || 24, 1), 168);
   const requestedFromAt = Number.parseInt(String(req.query.fromAt ?? ''), 10);
   const now = Date.now();
@@ -1496,7 +1591,7 @@ dashboardRouter.get('/v1/dashboard/watches/calendar', canViewScheduler, (req, re
   const maxRuns = 200;
   const runs: { watchId: string; bundleId: string; at: number }[] = [];
   const pending = getEffectiveWatches()
-    .filter(isWatchSchedulable)
+    .filter((watch) => (watch.projectId ?? DEFAULT_PROJECT_ID) === projectId && isWatchSchedulable(watch))
     .flatMap((watch) => {
       const at = nextCronRuns(watch.pollCron, untilAt, fromAt, 1)[0];
       return at === undefined ? [] : [{ watch, at }];
@@ -1513,7 +1608,12 @@ dashboardRouter.get('/v1/dashboard/watches/calendar', canViewScheduler, (req, re
 
 dashboardRouter.get('/v1/dashboard/github/budget-history', canManageWatches, (req, res) => {
   const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit ?? '30'), 10) || 30, 1), 200);
-  res.json({ entries: getGitHubBudgetTelemetry(limit) });
+  const projectId = resolveRequestProjectId(req, res, 'query');
+  if (!projectId) return;
+  const watchIds = new Set(getEffectiveWatches()
+    .filter((watch) => (watch.projectId ?? DEFAULT_PROJECT_ID) === projectId)
+    .map((watch) => watch.id));
+  res.json({ entries: getGitHubBudgetTelemetry(200).filter((entry) => watchIds.has(entry.watchId)).slice(0, limit) });
 });
 
 dashboardRouter.get('/v1/dashboard/github/repos', canManageWatches, async (_req, res) => {
@@ -1551,6 +1651,7 @@ dashboardRouter.get('/v1/dashboard/github/workflows', canManageWatches, async (r
 });
 
 interface WatchInput {
+  projectId?: string;
   bundleId: string;
   repo: string;
   ghWorkflowFile: string;
@@ -1581,6 +1682,7 @@ function parseWatchInput(body: unknown): WatchInput | undefined {
     : undefined;
   const primary = dispatchTargets?.[0];
   return {
+    projectId: typeof b.projectId === 'string' ? b.projectId : undefined,
     bundleId,
     repo: primary?.repo ?? (typeof b.repo === 'string' ? b.repo.trim() : ''),
     ghWorkflowFile: primary?.ghWorkflowFile ?? (typeof b.ghWorkflowFile === 'string' ? b.ghWorkflowFile.trim() : 'remote-ipa-update.yml'),
@@ -1609,6 +1711,9 @@ dashboardRouter.post('/v1/dashboard/watches', canManageWatches, (req, res) => {
     res.status(400).json({ error: 'bundleId is required' });
     return;
   }
+  const projectId = resolveRequestProjectId(req, res, 'body', { requireActive: true });
+  if (!projectId) return;
+  input.projectId = projectId;
   if (input.pollCron && !validateCronExpr(input.pollCron)) {
     res.status(400).json({ error: 'pollCron is not a valid cron expression' });
     return;
@@ -1656,13 +1761,18 @@ dashboardRouter.patch('/v1/dashboard/watches/:id', canManageWatches, (req, res) 
     patch.testFlightPolicy = body.testFlightPolicy;
   }
   if (typeof body.testFlightTrain === 'string') patch.testFlightTrain = body.testFlightTrain.trim() || undefined;
+  if (Object.hasOwn(body, 'projectId')) {
+    const projectId = resolveRequestProjectId(req, res, 'body', { requireActive: true });
+    if (!projectId) return;
+    patch.projectId = projectId;
+  }
 
   if (patch.pollCron && !validateCronExpr(patch.pollCron)) {
     res.status(400).json({ error: 'pollCron is not a valid cron expression' });
     return;
   }
   const existingWatch = getWatch(req.params.id);
-  if (!existingWatch) {
+  if (!existingWatch || !canAccessProject(res.locals.session.sub, res.locals.session.permissions, existingWatch.projectId ?? DEFAULT_PROJECT_ID)) {
     res.status(404).json({ error: 'watch not found' });
     return;
   }
@@ -1682,6 +1792,11 @@ dashboardRouter.patch('/v1/dashboard/watches/:id', canManageWatches, (req, res) 
 });
 
 dashboardRouter.delete('/v1/dashboard/watches/:id', canManageWatches, (req, res) => {
+  const watch = getWatch(req.params.id);
+  if (!watch || !canAccessProject(res.locals.session.sub, res.locals.session.permissions, watch.projectId ?? DEFAULT_PROJECT_ID)) {
+    res.status(404).json({ error: 'watch not found' });
+    return;
+  }
   const ok = deleteWatch(req.params.id, res.locals.session.sub);
   if (!ok) {
     res.status(404).json({ error: 'watch not found' });
@@ -1707,6 +1822,12 @@ dashboardRouter.post('/v1/dashboard/watches/import', canManageWatches, (req, res
       skipped.push('invalid watch');
       continue;
     }
+    const projectId = input.projectId ?? DEFAULT_PROJECT_ID;
+    if (!canAccessProject(res.locals.session.sub, res.locals.session.permissions, projectId) || getProject(projectId)?.archivedAt !== undefined) {
+      skipped.push(`${input.bundleId}: project is unavailable`);
+      continue;
+    }
+    input.projectId = projectId;
     const result = createWatch({ ...input, enabled: false }, res.locals.session.sub);
     if (result.watch) imported.push(serializeWatch(result.watch));
     else skipped.push(result.error ?? 'could not import watch');
@@ -1768,7 +1889,7 @@ dashboardRouter.post('/v1/dashboard/watches/validate-dispatch-draft', canManageW
 
 dashboardRouter.get('/v1/dashboard/watches/:id/preview-dispatch', canTriggerDispatch, deviceOrExternalRateLimit, async (req, res) => {
   const watch = getWatch(req.params.id);
-  if (!watch) {
+  if (!watch || !canAccessProject(res.locals.session.sub, res.locals.session.permissions, watch.projectId ?? DEFAULT_PROJECT_ID)) {
     res.status(404).json({ error: 'watch not found' });
     return;
   }
@@ -1778,7 +1899,7 @@ dashboardRouter.get('/v1/dashboard/watches/:id/preview-dispatch', canTriggerDisp
 
 dashboardRouter.get('/v1/dashboard/watches/:id/preview-dispatch/:source', canTriggerDispatch, deviceOrExternalRateLimit, async (req, res) => {
   const watch = getWatch(req.params.id);
-  if (!watch) {
+  if (!watch || !canAccessProject(res.locals.session.sub, res.locals.session.permissions, watch.projectId ?? DEFAULT_PROJECT_ID)) {
     res.status(404).json({ error: 'watch not found' });
     return;
   }
@@ -1795,6 +1916,11 @@ dashboardRouter.get('/v1/dashboard/watches/:id/preview-dispatch/:source', canTri
 });
 
 dashboardRouter.post('/v1/dashboard/watches/:id/trigger-dispatch', canTriggerDispatch, async (req, res) => {
+  const watch = getWatch(req.params.id);
+  if (!watch || !canAccessProject(res.locals.session.sub, res.locals.session.permissions, watch.projectId ?? DEFAULT_PROJECT_ID)) {
+    res.status(404).json({ error: 'watch not found' });
+    return;
+  }
   const result = await triggerTickNow(req.params.id);
   res.status(result.ok ? 202 : 409).json(result);
 });
@@ -1853,6 +1979,8 @@ dashboardRouter.get('/v1/dashboard/testflight/:appId/builds', deviceOrExternalRa
 });
 
 dashboardRouter.post('/v1/dashboard/testflight/decrypt', canDecrypt, blockDuringMaintenance, async (req, res) => {
+  const projectId = resolveRequestProjectId(req, res, 'body', { requireActive: true });
+  if (!projectId) return;
   const bundleId = typeof req.body?.bundleId === 'string' ? req.body.bundleId.trim() : '';
   const rawAppId = req.body?.appId;
   const appId = Number.parseInt(typeof rawAppId === 'string' || typeof rawAppId === 'number' ? String(rawAppId) : '', 10);
@@ -1908,13 +2036,15 @@ dashboardRouter.post('/v1/dashboard/testflight/decrypt', canDecrypt, blockDuring
     res.locals.session.sub,
     getUserPriority(res.locals.session.sub),
     preferredDeviceId,
+    undefined,
+    projectId,
   );
   res.status(202).json(jobSummary(job));
 });
 
 dashboardRouter.get('/v1/dashboard/jobs/:id/status', (req, res) => {
   const job = getJob(req.params.id);
-  if (!job) {
+  if (!job || !canAccessProject(res.locals.session.sub, res.locals.session.permissions, job.projectId ?? DEFAULT_PROJECT_ID)) {
     res.status(404).json({ error: 'job not found (finished jobs are pruned after retention window)' });
     return;
   }
@@ -1922,6 +2052,11 @@ dashboardRouter.get('/v1/dashboard/jobs/:id/status', (req, res) => {
 });
 
 dashboardRouter.post('/v1/dashboard/jobs/:id/cancel', canDecrypt, (req, res) => {
+  const job = getJob(req.params.id);
+  if (!job || !canAccessProject(res.locals.session.sub, res.locals.session.permissions, job.projectId ?? DEFAULT_PROJECT_ID)) {
+    res.status(404).json({ error: 'job not found' });
+    return;
+  }
   const ok = cancelJob(req.params.id, res.locals.session.sub);
   if (!ok) {
     res.status(409).json({ error: 'job is not queued or running (already finished, or not found)' });
@@ -1931,7 +2066,12 @@ dashboardRouter.post('/v1/dashboard/jobs/:id/cancel', canDecrypt, (req, res) => 
 });
 
 dashboardRouter.post('/v1/dashboard/jobs/:id/prioritize', canDecrypt, (req, res) => {
-  const ok = prioritizeQueuedJob(req.params.id);
+  const job = getJob(req.params.id);
+  if (!job || !canAccessProject(res.locals.session.sub, res.locals.session.permissions, job.projectId ?? DEFAULT_PROJECT_ID)) {
+    res.status(404).json({ error: 'job not found' });
+    return;
+  }
+  const ok = prioritizeQueuedJob(req.params.id, job.projectId ?? DEFAULT_PROJECT_ID);
   if (!ok) {
     res.status(409).json({ error: 'job is not queued (already running, finished, or not found)' });
     return;
@@ -1940,15 +2080,25 @@ dashboardRouter.post('/v1/dashboard/jobs/:id/prioritize', canDecrypt, (req, res)
 });
 
 dashboardRouter.post('/v1/dashboard/jobs/reorder', canDecrypt, (req, res) => {
+  const projectId = resolveRequestProjectId(req, res, 'body');
+  if (!projectId) return;
   const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter((id: unknown) => typeof id === 'string') : [];
-  const ok = reorderQueue(ids);
+  const scopedJobs = ids.every((id) => {
+    const job = getJob(id);
+    return job && (job.projectId ?? DEFAULT_PROJECT_ID) === projectId;
+  });
+  const ok = scopedJobs && reorderQueue(ids, projectId);
   res.json({ ok });
 });
 
 dashboardRouter.post('/v1/dashboard/jobs/:id/retry', canDecrypt, blockDuringMaintenance, (req, res) => {
   const entry = getJobHistoryEntryById(req.params.id);
-  if (!entry) {
+  if (!entry || !canAccessProject(res.locals.session.sub, res.locals.session.permissions, entry.projectId ?? DEFAULT_PROJECT_ID)) {
     res.status(404).json({ error: 'job history entry not found' });
+    return;
+  }
+  if (getProject(entry.projectId ?? DEFAULT_PROJECT_ID)?.archivedAt !== undefined) {
+    res.status(409).json({ error: 'project is archived' });
     return;
   }
 
@@ -1963,13 +2113,15 @@ dashboardRouter.post('/v1/dashboard/jobs/:id/retry', canDecrypt, blockDuringMain
     res.locals.session.sub,
     getUserPriority(res.locals.session.sub),
     preferredDeviceId,
+    undefined,
+    entry.projectId ?? DEFAULT_PROJECT_ID,
   );
   res.status(202).json(jobSummary(job));
 });
 
 dashboardRouter.get('/v1/dashboard/jobs/:id/timeline', (req, res) => {
   const active = getJob(req.params.id);
-  if (active) {
+  if (active && canAccessProject(res.locals.session.sub, res.locals.session.permissions, active.projectId ?? DEFAULT_PROJECT_ID)) {
     res.json({
       id: active.id,
       correlationId: active.correlationId ?? active.id,
@@ -1988,7 +2140,7 @@ dashboardRouter.get('/v1/dashboard/jobs/:id/timeline', (req, res) => {
   }
 
   const entry = getJobHistoryEntryById(req.params.id);
-  if (!entry) {
+  if (!entry || !canAccessProject(res.locals.session.sub, res.locals.session.permissions, entry.projectId ?? DEFAULT_PROJECT_ID)) {
     res.status(404).json({ error: 'job not found' });
     return;
   }
@@ -2016,7 +2168,8 @@ dashboardRouter.get('/v1/dashboard/jobs/:id/timeline', (req, res) => {
 dashboardRouter.get('/v1/dashboard/jobs/:id/diagnostic', canDecrypt, (req, res) => {
   const active = getJob(req.params.id);
   const entry = active ? undefined : getJobHistoryEntryById(req.params.id);
-  if (!active && !entry) {
+  const projectId = active?.projectId ?? entry?.projectId ?? DEFAULT_PROJECT_ID;
+  if ((!active && !entry) || !canAccessProject(res.locals.session.sub, res.locals.session.permissions, projectId)) {
     res.status(404).json({ error: 'job not found' });
     return;
   }
@@ -2508,6 +2661,161 @@ dashboardRouter.get('/v1/dashboard/audit-log/export', canViewUsers, (req, res) =
   res.send(rows.join('\n'));
 });
 
+function canViewAllProjects(permissions: bigint): boolean {
+  return hasPermission(permissions, PermissionFlag.viewProjects) || hasPermission(permissions, PermissionFlag.manageProjects);
+}
+
+function canAccessProject(userId: string, permissions: bigint, projectId: string): boolean {
+  const project = getProject(projectId);
+  if (!project) return false;
+  return canViewAllProjects(permissions) || userCanAccessProject(userId, projectId);
+}
+
+function logBelongsToProject(entry: LogEntry, projectId: string): boolean {
+  const explicitProjectId = typeof entry.meta?.projectId === 'string' ? entry.meta.projectId : undefined;
+  if (explicitProjectId) return explicitProjectId === projectId;
+  const jobId = typeof entry.meta?.jobId === 'string' ? entry.meta.jobId : undefined;
+  const correlationId = typeof entry.meta?.correlationId === 'string' ? entry.meta.correlationId : undefined;
+  const activeJob = jobId
+    ? getJob(jobId)
+    : correlationId
+      ? getActiveJobs().find((job) => job.correlationId === correlationId)
+      : undefined;
+  const historyEntry = jobId
+    ? getJobHistoryEntryById(jobId)
+    : correlationId
+      ? getAllJobHistory().find((job) => job.correlationId === correlationId)
+      : undefined;
+  const relatedProjectId = activeJob?.projectId ?? historyEntry?.projectId;
+  if (relatedProjectId) return relatedProjectId === projectId;
+  return projectId === DEFAULT_PROJECT_ID && !jobId && !correlationId;
+}
+
+function resolveRequestProjectId(req: Request, res: Response, source: 'body' | 'query', options: { requireActive?: boolean } = {}): string | undefined {
+  const value = source === 'body' ? req.body?.projectId : req.query.projectId;
+  if (value !== undefined && (typeof value !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(value))) {
+    res.status(400).json({ error: 'projectId must be a valid project identifier' });
+    return undefined;
+  }
+  const projectId = typeof value === 'string' ? value : DEFAULT_PROJECT_ID;
+  const project = getProject(projectId);
+  if (!project || !canAccessProject(res.locals.session.sub, res.locals.session.permissions, projectId)) {
+    res.status(404).json({ error: 'project not found' });
+    return undefined;
+  }
+  if (options.requireActive && project.archivedAt !== undefined) {
+    res.status(409).json({ error: 'project is archived' });
+    return undefined;
+  }
+  return projectId;
+}
+
+function projectMemberResponse(userId: string) {
+  const profile = getAuthProfile(userId);
+  return {
+    id: userId,
+    username: profile?.username ?? userId,
+    displayName: profile?.displayName ?? userId,
+    avatarUrl: profile?.avatarUrl,
+  };
+}
+
+dashboardRouter.get('/v1/dashboard/projects', (_req, res) => {
+  const canViewAll = canViewAllProjects(res.locals.session.permissions);
+  const projects = listProjectsForUser(res.locals.session.sub, canViewAll).map((project) => ({
+    ...project,
+    memberIds: canViewAll ? project.memberIds : undefined,
+  }));
+  res.json({ projects });
+});
+
+dashboardRouter.get('/v1/dashboard/projects/members', canManageProjects, (_req, res) => {
+  res.json({ members: listAllowedUsers().map((user) => projectMemberResponse(user.username)) });
+});
+
+function projectQuotaValue(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+}
+
+dashboardRouter.post('/v1/dashboard/projects', canManageProjects, (req, res) => {
+  const body = req.body as Record<string, unknown> | null;
+  if (!body || typeof body.name !== 'string' || (body.description !== undefined && typeof body.description !== 'string') || (body.memberIds !== undefined && (!Array.isArray(body.memberIds) || body.memberIds.length > 500 || !body.memberIds.every((memberId) => typeof memberId === 'string'))) || ['storageQuotaBytes', 'dailyJobQuota', 'maxConcurrentJobs'].some((key) => body[key] !== undefined && !projectQuotaValue(body[key]))) {
+    res.status(400).json({ error: 'project name, description, members, or quotas are malformed' });
+    return;
+  }
+  const input: CreateProjectInput = {
+    name: body.name,
+    description: body.description as string | undefined,
+    memberIds: body.memberIds as string[] | undefined,
+    storageQuotaBytes: body.storageQuotaBytes as number | undefined,
+    dailyJobQuota: body.dailyJobQuota as number | undefined,
+    maxConcurrentJobs: body.maxConcurrentJobs as number | undefined,
+  };
+  const result = createProject(input, res.locals.session.sub);
+  if (!result.ok) {
+    res.status(400).json({ error: result.error });
+    return;
+  }
+  res.status(201).json(result.project);
+});
+
+dashboardRouter.patch('/v1/dashboard/projects/:id', canManageProjects, (req, res) => {
+  const body = req.body as Record<string, unknown> | null;
+  if (!body) {
+    res.status(400).json({ error: 'project updates must be an object' });
+    return;
+  }
+  const patch: UpdateProjectInput = {};
+  if (Object.hasOwn(body, 'name')) {
+    if (typeof body.name !== 'string') {
+      res.status(400).json({ error: 'project name must be text' });
+      return;
+    }
+    patch.name = body.name;
+  }
+  if (Object.hasOwn(body, 'description')) {
+    if (body.description !== null && typeof body.description !== 'string') {
+      res.status(400).json({ error: 'project description must be text or null' });
+      return;
+    }
+    patch.description = body.description as string | null;
+  }
+  if (Object.hasOwn(body, 'memberIds')) {
+    if (!Array.isArray(body.memberIds) || body.memberIds.length > 500 || !body.memberIds.every((memberId) => typeof memberId === 'string')) {
+      res.status(400).json({ error: 'project members must be an array of user IDs' });
+      return;
+    }
+    patch.memberIds = body.memberIds as string[];
+  }
+  for (const key of ['storageQuotaBytes', 'dailyJobQuota', 'maxConcurrentJobs'] as const) {
+    if (!Object.hasOwn(body, key)) continue;
+    if (body[key] !== null && !projectQuotaValue(body[key])) {
+      res.status(400).json({ error: 'project quotas must be positive whole numbers or null' });
+      return;
+    }
+    patch[key] = body[key] as number | null;
+  }
+  if (Object.hasOwn(body, 'archived')) {
+    if (typeof body.archived !== 'boolean') {
+      res.status(400).json({ error: 'archived must be a boolean' });
+      return;
+    }
+    patch.archived = body.archived;
+  }
+  if (Object.keys(patch).length === 0) {
+    res.status(400).json({ error: 'no supported project fields were provided' });
+    return;
+  }
+  const result = updateProject(req.params.id, patch, res.locals.session.sub);
+  if (!result.ok) {
+    res.status(result.error === 'project not found' ? 404 : 400).json({ error: result.error });
+    return;
+  }
+  dashboardEvents.emit('projectChanged', req.params.id);
+  applyWatchSchedules();
+  res.json(result.project);
+});
+
 dashboardRouter.get('/v1/dashboard/roles', canViewRoles, (_req, res) => {
   res.json({ roles: listRoles() });
 });
@@ -2751,7 +3059,9 @@ dashboardRouter.post('/v1/dashboard/backup/import', canManageBackup, (req, res) 
     res.status(400).json({ error: result.error });
     return;
   }
+  reloadArtifactIndex();
   applyWatchSchedules();
+  dashboardEvents.emit('projectsChanged');
   emitJobsChanged();
   res.json({ ok: true });
 });

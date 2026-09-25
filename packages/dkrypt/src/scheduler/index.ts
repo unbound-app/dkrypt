@@ -23,6 +23,7 @@ import {
   recordGitHubBudgetTelemetry,
   type SchedulerRunOutcome,
   type SchedulerSettings,
+  DEFAULT_PROJECT_ID,
   updateSchedulerRunOutcome,
 } from '#store/state.js';
 import type { TFBuild } from '#testflight.js';
@@ -442,7 +443,7 @@ async function tickAppStore(watch: AppWatch): Promise<DispatchResult> {
 
   log.info('no matching release found, decrypting', { bundleId: watch.bundleId, version: normalized, externalVersionId });
 
-  const job = enqueueDecryptJob(watch.bundleId, 'scheduler', externalVersionId, undefined, normalized);
+  const job = enqueueDecryptJob(watch.bundleId, 'scheduler', externalVersionId, undefined, normalized, undefined, 0, undefined, undefined, watch.projectId ?? DEFAULT_PROJECT_ID);
   const result = await decryptAndDispatch(job, watch, false, `v${normalized}`, dispatchTargets);
   result.outcome = { ...result.outcome, observedVersion: normalized, installMode: externalVersionId ? 'pinned' : 'current' };
   return result;
@@ -491,7 +492,7 @@ async function tickTestFlight(watch: AppWatch): Promise<DispatchResult> {
     tag: check.latestTag,
   });
 
-  const job = enqueueDecryptJob(watch.bundleId, 'scheduler', undefined, { appId: check.appId as number, build: check.build });
+  const job = enqueueDecryptJob(watch.bundleId, 'scheduler', undefined, { appId: check.appId as number, build: check.build }, undefined, undefined, 0, undefined, undefined, watch.projectId ?? DEFAULT_PROJECT_ID);
   return decryptAndDispatch(job, watch, true, check.latestTag as string, dispatchTargets);
 }
 

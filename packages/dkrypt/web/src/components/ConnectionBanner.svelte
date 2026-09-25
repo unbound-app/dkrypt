@@ -17,6 +17,6 @@
         (down since <RelativeTime ms={liveState.disconnectedAt} />{#if liveState.reconnectAttempts > 1}, {liveState.reconnectAttempts} attempts{/if})
       {/if}
     </span>
-    <Button variant="secondary" size="sm" onclick={reconnectLive}>Reconnect now</Button>
+    <Button variant="secondary" size="sm" onclick={() => reconnectLive()}>Reconnect now</Button>
   </Alert>
 {/if}

@@ -1,5 +1,6 @@
 <script lang="ts">
   import DonationNudge from '#components/DonationNudge.svelte';
+  import ProjectSelector from '#components/ProjectSelector.svelte';
   import DecryptCompletion from '#components/DecryptCompletion.svelte';
   import OnboardingBanner from '#components/OnboardingBanner.svelte';
   import { batchDecryptJumpState, focusSearchJumpState } from '#lib/ui.svelte';
@@ -34,6 +35,7 @@
 </script>
 
 <div class="flex flex-col gap-4">
+  <ProjectSelector />
   <OnboardingBanner />
   <DecryptPanel bind:this={decryptPanel} />
   <DonationNudge />

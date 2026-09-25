@@ -9,12 +9,12 @@ import { scopedLogger } from '#logger.js';
 const log = scopedLogger('jobs');
 import { sendMailToUser } from '#mail.js';
 import { sendPushToUser } from '#push.js';
-import { getAllJobHistory, getApiKeyById, getDevice, getEffectiveDevices, getUserPrefs, isBundleWatched, recordDeviceActivity, recordJobHistory, type DeviceRecord } from '#store/state.js';
+import { DEFAULT_PROJECT_ID, getAllJobHistory, getApiKeyById, getDevice, getEffectiveDevices, getProject, getUserPrefs, isBundleWatched, recordDeviceActivity, recordJobHistory, type DeviceRecord } from '#store/state.js';
 import { uninstallFromDevice } from '#appStoreInstall.js';
 import { getCachedDeviceHealth } from '#deviceHealthCache.js';
 import { runDecrypt } from '#jobs/runner.js';
 import { appendJobTimelineEvent, type Job, type JobSource, type TestFlightJobSource } from '#jobs/types.js';
-import { artifactKeyForJob, buildDashboardArtifactFileUrl, getArtifactById, getArtifactByKey, getArtifactForJob, migrateLegacyPath, type ArtifactRecord } from '#artifacts.js';
+import { artifactKeyForJob, buildDashboardArtifactFileUrl, getArtifactById, getArtifactByKey, getArtifactForJob, linkArtifactToProject, migrateLegacyPath, type ArtifactRecord } from '#artifacts.js';
 import { closePersistedJobs, loadPersistedJobs, replacePersistedJobs } from '#jobs/repository.js';
 import { terminateChildProcess } from '#jobs/process.js';
 import { classifyJobFailure } from '#util/failureCategory.js';
@@ -77,7 +77,7 @@ function loadDoneJobs(): void {
     for (const job of restored) {
       job.filePath = migrateLegacyPath(job.filePath);
       if (!job.filePath || !existsSync(job.filePath)) continue;
-      jobs.set(job.id, { ...job, waiters: [] });
+      jobs.set(job.id, { ...job, projectId: job.projectId ?? DEFAULT_PROJECT_ID, waiters: [] });
     }
     log.info('restored completed jobs from previous process', { count: jobs.size });
   } catch (err) {
@@ -89,7 +89,7 @@ export function recoverPersistedActiveJobs(saved: Job[], now = Date.now()): { qu
   const queued: Job[] = [];
   const interrupted: Job[] = [];
   for (const job of saved) {
-    const restored = { ...job, childProcess: undefined, waiters: [] };
+    const restored = { ...job, projectId: job.projectId ?? DEFAULT_PROJECT_ID, childProcess: undefined, waiters: [] };
     if (restored.status === 'queued') {
       queued.push(restored);
       continue;
@@ -134,7 +134,7 @@ function loadDatabaseJobs(): boolean {
   for (const job of saved.filter((entry) => entry.status === 'done' || entry.status === 'failed')) {
     job.filePath = migrateLegacyPath(job.filePath);
     if (job.status === 'done' && job.filePath && !existsSync(job.filePath)) job.filePath = undefined;
-    jobs.set(job.id, { ...job, waiters: [] });
+    jobs.set(job.id, { ...job, projectId: job.projectId ?? DEFAULT_PROJECT_ID, waiters: [] });
   }
   for (const job of queued) {
     jobs.set(job.id, { ...job, waiters: [] });
@@ -162,12 +162,14 @@ function findActiveJobForBundle(
   bundleId: string,
   externalVersionId: string | undefined,
   testflightBuildId: number | undefined,
+  projectId: string,
 ): Job | undefined {
   for (const job of jobs.values()) {
     if (
       job.bundleId === bundleId &&
       job.externalVersionId === externalVersionId &&
       job.testflight?.build.id === testflightBuildId &&
+      (job.projectId ?? DEFAULT_PROJECT_ID) === projectId &&
       (job.status === 'queued' || job.status === 'running')
     ) {
       return job;
@@ -180,6 +182,7 @@ function findReusableCompletedJob(
   bundleId: string,
   externalVersionId: string | undefined,
   testflightBuildId: number | undefined,
+  projectId: string,
 ): Job | undefined {
   if (externalVersionId === undefined && testflightBuildId === undefined) return undefined;
   for (const job of jobs.values()) {
@@ -187,6 +190,7 @@ function findReusableCompletedJob(
       job.bundleId === bundleId &&
       job.externalVersionId === externalVersionId &&
       job.testflight?.build.id === testflightBuildId &&
+      (job.projectId ?? DEFAULT_PROJECT_ID) === projectId &&
       job.status === 'done' &&
       job.filePath &&
       existsSync(job.filePath)
@@ -206,6 +210,7 @@ function createCachedJob(
   queuedBy: string | undefined,
   priority: number,
   apiKeyId: string | undefined,
+  projectId: string,
   artifact: ArtifactRecord,
 ): Job {
   const now = Date.now();
@@ -213,6 +218,7 @@ function createCachedJob(
   const job: Job = {
     id: randomUUID(),
     correlationId: randomUUID(),
+    projectId,
     bundleId,
     externalVersionId,
     testflight,
@@ -320,16 +326,19 @@ export function enqueueDecryptJob(
   priority = 0,
   preferredDeviceId?: string,
   apiKeyId?: string,
+  projectId = DEFAULT_PROJECT_ID,
 ): Job {
   if (!acceptingJobs) throw new Error('dkrypt is shutting down and is not accepting new jobs');
-  const existing = findActiveJobForBundle(bundleId, externalVersionId, testflight?.build.id);
+  const existing = findActiveJobForBundle(bundleId, externalVersionId, testflight?.build.id, projectId);
   if (existing) return existing;
+  enforceProjectQuotas(projectId);
   const artifactKey = artifactKeyForJob({ id: 'lookup', bundleId, externalVersionId, testflight, versionLabel });
   const artifact = getArtifactByKey(artifactKey);
   if (artifact) {
-    return createCachedJob(bundleId, source, externalVersionId, testflight, versionLabel, queuedBy, priority, apiKeyId, artifact);
+    linkArtifactToProject(artifact.id, projectId);
+    return createCachedJob(bundleId, source, externalVersionId, testflight, versionLabel, queuedBy, priority, apiKeyId, projectId, artifact);
   }
-  const reusable = findReusableCompletedJob(bundleId, externalVersionId, testflight?.build.id);
+  const reusable = findReusableCompletedJob(bundleId, externalVersionId, testflight?.build.id, projectId);
   if (reusable) return reusable;
 
   const resolvedLabel = versionLabel ?? (testflight ? `${testflight.build.cfBundleShortVersion}_${testflight.build.cfBundleVersion}` : 'Current App Store release');
@@ -338,6 +347,7 @@ export function enqueueDecryptJob(
   const job: Job = {
     id: randomUUID(),
     correlationId: randomUUID(),
+    projectId,
     bundleId,
     externalVersionId,
     testflight,
@@ -369,6 +379,35 @@ export function enqueueDecryptJob(
 
   pumpWorkers();
   return job;
+}
+
+class ProjectQuotaExceededError extends Error {
+  readonly statusCode = 429;
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'ProjectQuotaExceededError';
+  }
+}
+
+function enforceProjectQuotas(projectId: string): void {
+  const project = getProject(projectId);
+  if (!project || project.archivedAt !== undefined) {
+    const error = new Error('project is unavailable');
+    Object.assign(error, { statusCode: 404 });
+    throw error;
+  }
+  const active = [...jobs.values()].filter((job) => (job.projectId ?? DEFAULT_PROJECT_ID) === projectId && (job.status === 'queued' || job.status === 'running'));
+  if (project.maxConcurrentJobs && active.length >= project.maxConcurrentJobs) {
+    throw new ProjectQuotaExceededError('project concurrency limit reached');
+  }
+  if (!project.dailyJobQuota) return;
+  const now = new Date();
+  const dayStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const knownIds = new Set([...jobs.values()].map((job) => job.id));
+  const jobsToday = [...jobs.values()].filter((job) => (job.projectId ?? DEFAULT_PROJECT_ID) === projectId && job.createdAt >= dayStart).length;
+  const historyToday = getAllJobHistory().filter((entry) => (entry.projectId ?? DEFAULT_PROJECT_ID) === projectId && entry.createdAt >= dayStart && !knownIds.has(entry.id)).length;
+  if (jobsToday + historyToday >= project.dailyJobQuota) throw new ProjectQuotaExceededError('project daily job limit reached');
 }
 
 export function getJob(id: string): Job | undefined {
@@ -453,6 +492,7 @@ function toHistoryEntry(job: Job) {
   return {
     id: job.id,
     correlationId: job.correlationId,
+    projectId: job.projectId ?? DEFAULT_PROJECT_ID,
     bundleId: job.bundleId,
     externalVersionId: job.externalVersionId,
     testflight: job.testflight,
@@ -539,28 +579,37 @@ export function releasePinnedJobsForDevice(deviceId: string): number {
   return released;
 }
 
-export function prioritizeQueuedJob(id: string): boolean {
+export function prioritizeQueuedJob(id: string, projectId?: string): boolean {
   const job = jobs.get(id);
-  if (!job || job.status !== 'queued') return false;
+  if (!job || job.status !== 'queued' || (projectId && (job.projectId ?? DEFAULT_PROJECT_ID) !== projectId)) return false;
 
-  const idx = queue.indexOf(id);
+  const targetProjectId = projectId ?? job.projectId ?? DEFAULT_PROJECT_ID;
+  const scopedQueue = queue.filter((jobId) => (jobs.get(jobId)?.projectId ?? DEFAULT_PROJECT_ID) === targetProjectId);
+  const idx = scopedQueue.indexOf(id);
   if (idx <= 0) return idx === 0;
 
-  queue.splice(idx, 1);
-  queue.unshift(id);
+  const reordered = [id, ...scopedQueue.filter((jobId) => jobId !== id)];
+  let scopedIndex = 0;
+  const nextQueue = queue.map((jobId) => (jobs.get(jobId)?.projectId ?? DEFAULT_PROJECT_ID) === targetProjectId ? reordered[scopedIndex++]! : jobId);
+  queue.length = 0;
+  queue.push(...nextQueue);
   log.info('job bumped to front of queue', { jobId: id, bundleId: job.bundleId });
   emitJobsChanged();
   return true;
 }
 
-export function reorderQueue(orderedIds: string[]): boolean {
-  const known = new Set(queue);
-  const requested = orderedIds.filter((id) => known.has(id));
+export function reorderQueue(orderedIds: string[], projectId?: string): boolean {
+  const known = new Set(queue.filter((id) => !projectId || (jobs.get(id)?.projectId ?? DEFAULT_PROJECT_ID) === projectId));
+  const requested = [...new Set(orderedIds.filter((id) => known.has(id)))];
   if (requested.length === 0) return false;
 
   const requestedSet = new Set(requested);
-  const remainder = queue.filter((id) => !requestedSet.has(id));
-  const next = [...requested, ...remainder];
+  const scopedRemainder = queue.filter((id) => known.has(id) && !requestedSet.has(id));
+  const scopedOrder = [...requested, ...scopedRemainder];
+  let scopedIndex = 0;
+  const next = projectId
+    ? queue.map((id) => known.has(id) ? scopedOrder[scopedIndex++]! : id)
+    : [...scopedOrder];
 
   const changed = next.some((id, i) => id !== queue[i]);
   if (!changed) return false;

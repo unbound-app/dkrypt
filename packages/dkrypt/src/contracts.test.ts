@@ -238,7 +238,7 @@ test('administrative, notification, and diagnostic contracts publish structured 
       ['/v1/dashboard/discord/status', 'get', '200', ['botEnabled', 'guilds']],
       ['/v1/dashboard/discord/perks', 'get', '200', ['perks']],
       ['/v1/dashboard/discord/perks', 'post', '201', ['id', 'guildId', 'discordRoleId', 'appRoleId']],
-      ['/v1/dashboard/backup/export', 'get', '200', ['backupVersion', 'allowedUsers', 'devices', 'billing', 'identities']],
+      ['/v1/dashboard/backup/export', 'get', '200', ['backupVersion', 'allowedUsers', 'projects', 'artifactProjectLinks', 'devices', 'billing', 'identities']],
       ['/v1/dashboard/keys/bulk-revoke', 'post', '200', ['revoked']],
       ['/v1/dashboard/keys/bulk-extend-expiry', 'post', '200', ['extended']],
       ['/v1/dashboard/keys/bulk-set-daily-limit', 'post', '200', ['updated']],

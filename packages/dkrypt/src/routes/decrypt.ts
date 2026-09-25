@@ -6,7 +6,8 @@ import { fastifyRequireApiKey, fastifyRequireTestFlightScope, getFastifyApiKeyCo
 import { fastifyBlockDuringMaintenance } from '#maintenance.js';
 import { jobFileAvailable, jobSummary, streamFilePath, streamJobFile } from '#jobs/http.js';
 import { enqueueDecryptJob, getJob, waitForJob } from '#jobs/store.js';
-import { recordApiKeyBundleUsage } from '#store/state.js';
+import { DEFAULT_PROJECT_ID, getProject, getUserEffectivePermissions, recordApiKeyBundleUsage, userCanAccessProject } from '#store/state.js';
+import { hasPermission, PermissionFlag } from '#permissions.js';
 import { listBuilds, listTrains, type TFBuild } from '#testflight.js';
 import { apiIdempotencyRegistry } from '#idempotency.js';
 import { artifactDownloadName, artifactFileAvailable, getArtifactById, listArtifacts, touchArtifact } from '#artifacts.js';
@@ -48,7 +49,7 @@ class IdempotencyRequestError extends Error {
 
 class DecryptTargetRequestError extends Error {}
 
-function artifactSummary(artifact: ReturnType<typeof getArtifactById>) {
+function artifactSummary(artifact: ReturnType<typeof getArtifactById>, projectId: string) {
   if (!artifact) return undefined;
   return {
     id: artifact.id,
@@ -63,7 +64,7 @@ function artifactSummary(artifact: ReturnType<typeof getArtifactById>) {
     createdAt: new Date(artifact.createdAt).toISOString(),
     lastAccessedAt: new Date(artifact.lastAccessedAt).toISOString(),
     accessCount: artifact.accessCount,
-    fileUrl: `/v1/artifacts/${artifact.id}/file`,
+    fileUrl: `/v1/artifacts/${artifact.id}/file?projectId=${encodeURIComponent(projectId)}`,
   };
 }
 
@@ -135,6 +136,43 @@ function normalizeBundleScope(scope: string[] | undefined): string[] | undefined
   return scope && scope.length > 0 ? scope : undefined;
 }
 
+function apiKeyCanAccessProject(apiKey: ReturnType<typeof getFastifyApiKeyContext>, projectId: string, requireActive = false): boolean {
+  const project = getProject(projectId);
+  if (!project || (requireActive && project.archivedAt !== undefined)) return false;
+  if (!apiKey?.ownerId || apiKey.ownerId === 'root') return true;
+  const permissions = getUserEffectivePermissions(apiKey.ownerId);
+  if (hasPermission(permissions, PermissionFlag.viewProjects) || hasPermission(permissions, PermissionFlag.manageProjects)) return true;
+  return project.archivedAt === undefined && userCanAccessProject(apiKey.ownerId, projectId);
+}
+
+function resolveApiProjectId(
+  value: unknown,
+  apiKey: ReturnType<typeof getFastifyApiKeyContext>,
+  reply: { code: (status: number) => unknown; statusCode: number },
+  options: { requireActive?: boolean } = {},
+): string | undefined {
+  if (value !== undefined && (typeof value !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(value))) {
+    reply.code(400);
+    return undefined;
+  }
+  const projectId = typeof value === 'string' ? value : DEFAULT_PROJECT_ID;
+  if (!apiKeyCanAccessProject(apiKey, projectId)) {
+    reply.code(404);
+    return undefined;
+  }
+  if (options.requireActive && getProject(projectId)?.archivedAt !== undefined) {
+    reply.code(409);
+    return undefined;
+  }
+  return projectId;
+}
+
+function projectResolutionError(reply: { statusCode: number }, requestId: string) {
+  return reply.statusCode === 409
+    ? apiErrorEnvelope('project is archived; restore it before queuing work', 'project_archived', requestId)
+    : apiErrorEnvelope('project not found', 'request_error', requestId);
+}
+
 function isTestFlightBuild(value: unknown): value is TFBuild {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   const build = value as Record<string, unknown>;
@@ -180,6 +218,8 @@ export function createDecryptRoutes(
           reply.code(401);
           return apiErrorEnvelope('unauthorized', 'unauthorized', request.id);
         }
+        const projectId = resolveApiProjectId(query.projectId, apiKey, reply, { requireActive: true });
+        if (!projectId) return projectResolutionError(reply, request.id);
         if (!isBundleIdAllowed(apiKey.allowedBundleIds, bundleId)) {
           reply.code(403);
           return apiErrorEnvelope('this API key is not scoped to this bundleId', 'request_error', request.id);
@@ -189,7 +229,7 @@ export function createDecryptRoutes(
           return apiErrorEnvelope('version must match a release tag such as 240, 234.2, or 240_109440', 'request_error', request.id);
         }
 
-        const fingerprint = requestFingerprint('/v1/decrypt', { bundleId, externalVersionId: versionId ?? null, version: normalizeVersionSelector(selector) ?? null });
+        const fingerprint = requestFingerprint('/v1/decrypt', { bundleId, externalVersionId: versionId ?? null, version: normalizeVersionSelector(selector) ?? null, projectId });
         try {
           const job = await resolveIdempotentJob({
             key: idempotencyKeyFromHeader(request.headers['idempotency-key']),
@@ -209,6 +249,7 @@ export function createDecryptRoutes(
                   apiKey.priority ?? 0,
                   undefined,
                   apiKey.keyId,
+                  projectId,
                 );
               }
 
@@ -231,6 +272,7 @@ export function createDecryptRoutes(
                 apiKey.priority ?? 0,
                 undefined,
                 apiKey.keyId,
+                projectId,
               );
             },
           });
@@ -271,7 +313,7 @@ export function createDecryptRoutes(
         const apiKey = getFastifyApiKeyContext(request);
         const params = request.params as { id: string };
         const job = services.getJob(params.id);
-        if (!job) {
+        if (!job || !apiKeyCanAccessProject(apiKey, job.projectId ?? DEFAULT_PROJECT_ID)) {
           reply.code(404);
           return apiErrorEnvelope('job not found (finished jobs are pruned after retention window)', 'request_error', request.id);
         }
@@ -307,13 +349,15 @@ export function createDecryptRoutes(
           reply.code(401);
           return apiErrorEnvelope('unauthorized', 'unauthorized', request.id);
         }
+        const projectId = resolveApiProjectId(body.projectId, apiKey, reply, { requireActive: true });
+        if (!projectId) return projectResolutionError(reply, request.id);
         if (!isBundleIdAllowed(apiKey.allowedBundleIds, bundleId)) {
           reply.code(403);
           return apiErrorEnvelope('this API key is not scoped to this bundleId', 'request_error', request.id);
         }
 
         try {
-          const fingerprint = requestFingerprint('/v1/decrypts', { bundleId, version: normalizeVersionSelector(selector) ?? null });
+          const fingerprint = requestFingerprint('/v1/decrypts', { bundleId, version: normalizeVersionSelector(selector) ?? null, projectId });
           const key = idempotencyKeyFromHeader(request.headers['idempotency-key']);
           const job = await resolveIdempotentJob({
             key,
@@ -336,6 +380,7 @@ export function createDecryptRoutes(
                 apiKey.priority ?? 0,
                 undefined,
                 apiKey.keyId,
+                projectId,
               );
             },
           });
@@ -349,7 +394,7 @@ export function createDecryptRoutes(
             channel: job.testflight ? 'testflight' : 'appstore',
             resolvedVersion: job.versionLabel,
             cacheHit: job.cacheHit === true,
-            artifact: job.artifactId ? artifactSummary(services.getArtifactById(job.artifactId)) : undefined,
+            artifact: job.artifactId ? artifactSummary(services.getArtifactById(job.artifactId), job.projectId ?? DEFAULT_PROJECT_ID) : undefined,
           };
           return reply.code(job.status === 'done' ? 200 : 202).send(payload);
         } catch (error) {
@@ -395,8 +440,10 @@ export function createDecryptRoutes(
           reply.code(401);
           return apiErrorEnvelope('unauthorized', 'unauthorized', request.id);
         }
+        const projectId = resolveApiProjectId(body.projectId, apiKey, reply, { requireActive: true });
+        if (!projectId) return projectResolutionError(reply, request.id);
 
-        const fingerprint = requestFingerprint('/v1/testflight/decrypt', { bundleId, appId, build });
+        const fingerprint = requestFingerprint('/v1/testflight/decrypt', { bundleId, appId, build, projectId });
         try {
           const job = await resolveIdempotentJob({
             key: idempotencyKeyFromHeader(request.headers['idempotency-key']),
@@ -415,6 +462,7 @@ export function createDecryptRoutes(
                 apiKey.priority ?? 0,
                 undefined,
                 apiKey.keyId,
+                projectId,
               );
             },
           });
@@ -440,14 +488,18 @@ export function createArtifactCatalogRoutes(
     server.get(
       '/v1/artifacts',
       { schema: getRouteContract('GET', '/v1/artifacts'), preHandler: fastifyRequireApiKey },
-      async (request) => {
+      async (request, reply) => {
         const query = request.query as {
           cursor?: string;
           offset?: string | number;
           limit?: string | number;
           q?: string;
           channel?: 'appstore' | 'testflight';
+          projectId?: string;
         };
+        const apiKey = getFastifyApiKeyContext(request);
+        const projectId = resolveApiProjectId(query.projectId, apiKey, reply);
+        if (!projectId) return projectResolutionError(reply, request.id);
         const offset = query.cursor ? 0 : Number.parseInt(String(query.offset ?? '0'), 10);
         const limit = Number.parseInt(String(query.limit ?? '50'), 10);
         const result = services.listArtifacts({
@@ -456,11 +508,12 @@ export function createArtifactCatalogRoutes(
           cursor: query.cursor,
           query: query.q,
           channel: query.channel,
-          bundleIds: normalizeBundleScope(getFastifyApiKeyContext(request)?.allowedBundleIds),
+          bundleIds: normalizeBundleScope(apiKey?.allowedBundleIds),
+          projectIds: [projectId],
         });
         return {
           ...result,
-          artifacts: result.artifacts.map(artifactSummary),
+          artifacts: result.artifacts.map((artifact) => artifactSummary(artifact, projectId)),
         };
       },
     );
@@ -470,16 +523,20 @@ export function createArtifactCatalogRoutes(
       { schema: getRouteContract('GET', '/v1/artifacts/:id'), preHandler: fastifyRequireApiKey },
       async (request, reply) => {
         const params = request.params as { id: string };
+        const query = request.query as { projectId?: string };
+        const apiKey = getFastifyApiKeyContext(request);
+        const projectId = resolveApiProjectId(query.projectId, apiKey, reply);
+        if (!projectId) return projectResolutionError(reply, request.id);
         const artifact = services.getArtifactById(params.id);
-        if (!artifact || !services.artifactFileAvailable(artifact)) {
+        if (!artifact || !artifact.projectIds.includes(projectId) || !services.artifactFileAvailable(artifact)) {
           reply.code(404);
           return apiErrorEnvelope('artifact not found', 'request_error', request.id);
         }
-        if (!isBundleIdAllowed(getFastifyApiKeyContext(request)?.allowedBundleIds, artifact.bundleId)) {
+        if (!isBundleIdAllowed(apiKey?.allowedBundleIds, artifact.bundleId)) {
           reply.code(403);
           return apiErrorEnvelope('this API key is not scoped to this bundleId', 'bundle_scope_denied', request.id);
         }
-        return artifactSummary(artifact);
+        return artifactSummary(artifact, projectId);
       },
     );
 
@@ -488,12 +545,16 @@ export function createArtifactCatalogRoutes(
       { schema: getRouteContract('GET', '/v1/artifacts/:id/file'), preHandler: fastifyRequireApiKey },
       async (request, reply) => {
         const params = request.params as { id: string };
+        const query = request.query as { projectId?: string };
+        const apiKey = getFastifyApiKeyContext(request);
+        const projectId = resolveApiProjectId(query.projectId, apiKey, reply);
+        if (!projectId) return projectResolutionError(reply, request.id);
         const artifact = services.getArtifactById(params.id);
-        if (!artifact || !services.artifactFileAvailable(artifact)) {
+        if (!artifact || !artifact.projectIds.includes(projectId) || !services.artifactFileAvailable(artifact)) {
           reply.code(404);
           return apiErrorEnvelope('artifact not found', 'request_error', request.id);
         }
-        if (!isBundleIdAllowed(getFastifyApiKeyContext(request)?.allowedBundleIds, artifact.bundleId)) {
+        if (!isBundleIdAllowed(apiKey?.allowedBundleIds, artifact.bundleId)) {
           reply.code(403);
           return apiErrorEnvelope('this API key is not scoped to this bundleId', 'bundle_scope_denied', request.id);
         }

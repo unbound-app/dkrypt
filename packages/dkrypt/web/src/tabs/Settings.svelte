@@ -6,6 +6,7 @@
   import BackupSettings from '#tabs/settings/BackupSettings.svelte';
   import BillingSettings from '#tabs/settings/BillingSettings.svelte';
   import DevicesSettings from '#tabs/settings/DevicesSettings.svelte';
+  import ProjectsSettings from '#tabs/settings/ProjectsSettings.svelte';
   import RolesSettings from '#tabs/settings/RolesSettings.svelte';
   import SchedulerSettings from '#tabs/settings/SchedulerSettings.svelte';
   import TestFlightSettings from '#tabs/settings/TestFlightSettings.svelte';
@@ -16,6 +17,7 @@
     { id: 'devices', label: 'Devices', requires: [PermissionFlag.viewDevices, PermissionFlag.manageDevices] },
     { id: 'users', label: 'Users', requires: [PermissionFlag.viewUsers, PermissionFlag.manageUsers] },
     { id: 'roles', label: 'Roles', requires: [PermissionFlag.viewRoles, PermissionFlag.manageRoles] },
+    { id: 'projects', label: 'Projects', requires: [PermissionFlag.viewProjects, PermissionFlag.manageProjects] },
     { id: 'backup', label: 'Backup', requires: [PermissionFlag.viewBackup, PermissionFlag.manageBackup] },
     { id: 'testflight', label: 'TestFlight', requires: [PermissionFlag.manageTestFlightSubscriptions] },
     { id: 'billing', label: 'Billing', requires: [PermissionFlag.viewBilling, PermissionFlag.manageBilling] },
@@ -54,6 +56,11 @@
 {#if hasAccess([PermissionFlag.viewRoles, PermissionFlag.manageRoles])}
   <div class:hidden={tabState.settingsSubtab !== 'roles'}>
     <RolesSettings />
+  </div>
+{/if}
+{#if hasAccess([PermissionFlag.viewProjects, PermissionFlag.manageProjects])}
+  <div class:hidden={tabState.settingsSubtab !== 'projects'}>
+    <ProjectsSettings />
   </div>
 {/if}
 {#if hasAccess([PermissionFlag.viewBackup, PermissionFlag.manageBackup])}

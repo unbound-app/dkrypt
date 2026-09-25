@@ -61,6 +61,9 @@
     'role.add': 'added role',
     'role.update': 'updated role',
     'role.remove': 'removed role',
+    'project.add': 'created project',
+    'project.update': 'updated project',
+    'project.archive': 'changed project availability',
   };
 
   const assignableRoles = $derived((roles ?? []).filter((r) => !r.isDefault).sort((a, b) => b.position - a.position));

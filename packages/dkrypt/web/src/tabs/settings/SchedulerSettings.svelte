@@ -14,6 +14,7 @@
 		createWatch,
 		deleteWatch,
 		fetchSettings,
+		fetchProjects,
 		previewJobHistoryRetention,
 		fetchWebhookDeliveries,
 		fetchGithubRepos,
@@ -49,6 +50,7 @@
 		type WatchInput,
 		type WatchHealthSummary,
 		type WebhookDeliveryEntry,
+		type ProjectRecord,
 	} from "#lib/api";
 	import Badge from "#lib/components/ui/Badge.svelte";
 	import Button from "#lib/components/ui/Button.svelte";
@@ -68,6 +70,7 @@
 		refreshAppCatalog,
 	} from "#lib/appCatalog.svelte";
 	import { liveState } from "#lib/live.svelte";
+	import { projectSelectionState } from "#lib/projectSelection.svelte";
 	import { PermissionFlag } from "#lib/permissions";
 	import { sessionHasPermission } from "#lib/session.svelte";
 	import { confirmDialog, showToast } from "#lib/ui.svelte";
@@ -270,6 +273,7 @@
 	);
 
 	const DEFAULT_WATCH_FORM: WatchInput = {
+		projectId: "default",
 		bundleId: "",
 		repo: "",
 		ghWorkflowFile: "remote-ipa-update.yml",
@@ -282,6 +286,8 @@
 	};
 
 	let watchDialogOpen = $state(false);
+	let availableProjects = $state<ProjectRecord[]>([]);
+	const projectItems = $derived(availableProjects.length > 0 ? availableProjects.map((project) => ({ value: project.id, label: project.name })) : [{ value: "default", label: "Default" }]);
 	let editingWatchId = $state<string | null>(null);
 	let watchForm = $state<WatchInput>({ ...DEFAULT_WATCH_FORM });
 	let dispatchTargets = $state<DispatchTarget[]>([...(DEFAULT_WATCH_FORM.dispatchTargets ?? [])]);
@@ -313,6 +319,17 @@
 	let refreshingCatalog = $state(false);
 
 	const watches = $derived(liveState.overview?.watches ?? []);
+	$effect(() => {
+		void fetchProjects().then(({ projects }) => {
+			availableProjects = projects.filter((project) => project.archivedAt === undefined);
+		}).catch(() => {
+			availableProjects = [];
+		});
+	});
+	function projectName(projectId?: string): string {
+		const id = projectId ?? "default";
+		return availableProjects.find((project) => project.id === id)?.name ?? (id === "default" ? "Default" : "Unavailable project");
+	}
 	const failedWatchCount = $derived(watchHealth.filter((watch) => watch.lastCheckOk === false || watch.consecutiveFailures > 0).length);
 	const healthyWatchCount = $derived(watchHealth.filter((watch) => watch.lastCheckOk && watch.consecutiveFailures === 0).length);
 
@@ -413,7 +430,8 @@
 
 	function openAddWatch(): void {
 		editingWatchId = null;
-		watchForm = { ...DEFAULT_WATCH_FORM };
+		const selectedProjectId = availableProjects.some((project) => project.id === projectSelectionState.id) ? projectSelectionState.id : "default";
+		watchForm = { ...DEFAULT_WATCH_FORM, projectId: selectedProjectId };
 		watchSearchTerm = "";
 		watchSearchResults = [];
 		watchSearchSearched = false;
@@ -427,6 +445,7 @@
 	function openEditWatch(w: AppWatch): void {
 		editingWatchId = w.id;
 		watchForm = {
+			projectId: w.projectId ?? "default",
 			bundleId: w.bundleId,
 			repo: w.repo,
 			ghWorkflowFile: w.ghWorkflowFile,
@@ -1088,6 +1107,7 @@
 						<div
 							class="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 font-mono text-[11px] text-muted"
 						>
+							<span>{projectName(w.projectId)}</span>
 							<span title={w.repo}>{w.dispatchTargets?.length ? `${w.dispatchTargets.length} destinations` : w.repo || "-"}</span>
 							<span title="poll cron">{w.pollCron}</span>
 							{#if healthForWatch(w.id)?.schedulerJobSuccessRate !== undefined}
@@ -1340,6 +1360,15 @@
 					? appDisplayName(watchForm.bundleId)
 					: "Choose an app from search"}
 			</div>
+
+			<label for="w-project" class="mt-3 mb-1 block text-xs text-muted">Project</label>
+			<Select
+				id="w-project"
+				items={projectItems}
+				value={watchForm.projectId ?? "default"}
+				onValueChange={(projectId) => (watchForm = { ...watchForm, projectId })}
+				class="w-full"
+			/>
 
 			<label for="w-testFlightPolicy" class="mt-3 mb-1 block text-xs text-muted"
 				>TestFlight build policy</label

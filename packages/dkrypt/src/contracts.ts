@@ -121,6 +121,7 @@ const DeviceHealthResponse = object({
 const JobSummaryResponse = object({
   id: Identifier,
   correlationId: Identifier,
+  projectId: Type.Optional(Identifier),
   bundleId: BundleId,
   externalVersionId: Type.Optional(Identifier),
   testflight: Type.Optional(object({ appId: Type.Number(), buildId: Type.Number(), version: Type.Optional(Type.String()), buildNumber: Type.Optional(Type.String()) })),
@@ -207,6 +208,7 @@ const BillingResponse = object({
 });
 const BillingSubscriptionPage = object({ subscriptions: Type.Array(JsonObject), total: Type.Integer({ minimum: 0 }), nextCursor: PageCursor });
 const DashboardOverviewResponse = object({
+  projectId: Identifier,
   schedulerEnabled: Type.Boolean(),
   settings: JsonObject,
   watches: Type.Array(JsonObject),
@@ -504,6 +506,39 @@ const RoleResponse = object({
   updatedAt: Type.Number(),
 });
 const RolesResponse = object({ roles: Type.Array(RoleResponse) });
+const ProjectResponse = object({
+  id: Identifier,
+  name: Type.String({ minLength: 1, maxLength: 80 }),
+  description: Type.Optional(Type.String({ maxLength: 240 })),
+  memberIds: Type.Optional(Type.Array(Identifier)),
+  isDefault: Type.Boolean(),
+  archivedAt: Type.Optional(Type.Number()),
+  storageQuotaBytes: Type.Optional(Type.Integer({ minimum: 1 })),
+  dailyJobQuota: Type.Optional(Type.Integer({ minimum: 1 })),
+  maxConcurrentJobs: Type.Optional(Type.Integer({ minimum: 1 })),
+  createdBy: Identifier,
+  createdAt: Type.Number(),
+  updatedAt: Type.Number(),
+});
+const ProjectListResponse = object({ projects: Type.Array(ProjectResponse) });
+const ProjectMembersResponse = object({ members: Type.Array(object({ id: Identifier, username: Identifier, displayName: Type.String(), avatarUrl: Type.Optional(Type.String()) })) });
+const ProjectInput = object({
+  name: Type.String({ minLength: 1, maxLength: 80 }),
+  description: Type.Optional(Type.String({ maxLength: 240 })),
+  memberIds: Type.Optional(Type.Array(Identifier, { maxItems: 500 })),
+  storageQuotaBytes: Type.Optional(Type.Integer({ minimum: 1 })),
+  dailyJobQuota: Type.Optional(Type.Integer({ minimum: 1 })),
+  maxConcurrentJobs: Type.Optional(Type.Integer({ minimum: 1 })),
+});
+const ProjectPatchInput = Type.Partial(object({
+  name: Type.String({ minLength: 1, maxLength: 80 }),
+  description: Type.Union([Type.String({ maxLength: 240 }), Type.Null()]),
+  memberIds: Type.Array(Identifier, { maxItems: 500 }),
+  storageQuotaBytes: Type.Union([Type.Integer({ minimum: 1 }), Type.Null()]),
+  dailyJobQuota: Type.Union([Type.Integer({ minimum: 1 }), Type.Null()]),
+  maxConcurrentJobs: Type.Union([Type.Integer({ minimum: 1 }), Type.Null()]),
+  archived: Type.Boolean(),
+}));
 const UserDirectoryResponse = object({
   users: Type.Array(object({
     username: Identifier,
@@ -621,6 +656,7 @@ const AuthProfileResponse = object({ displayName: Type.String(), linkedProviders
 const AuthConnectionResponse = object({ identities: Type.Array(JsonObject), linkedProviders: Type.Array(Type.String()) });
 const WatchResponse = object({
   id: Identifier,
+  projectId: Type.Optional(Identifier),
   bundleId: BundleId,
   repo: Type.String(),
   ghWorkflowFile: Type.String(),
@@ -791,6 +827,8 @@ const BackupExportResponse = object({
   exportedAt: Type.Number(),
   allowedUsers: Type.Array(JsonObject),
   roles: Type.Array(JsonObject),
+  projects: Type.Array(JsonObject),
+  artifactProjectLinks: Type.Array(JsonObject),
   apiKeys: Type.Array(JsonObject),
   settings: JsonObject,
   watches: Type.Array(JsonObject),
@@ -867,6 +905,7 @@ const DispatchTargetInput = object({
   inputs: Type.Optional(Type.Record(Type.String({ minLength: 1, maxLength: 100 }), Type.String({ maxLength: 500 }))),
 });
 const WatchInput = object({
+  projectId: Type.Optional(Identifier),
   bundleId: BundleId,
   repo: Type.Optional(Type.String({ minLength: 3, maxLength: 200, pattern: '^[\\w.-]+/[\\w.-]+$' })),
   ghWorkflowFile: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
@@ -948,11 +987,11 @@ register('GET', '/v1/status', {
 });
 
 register('GET', '/v1/decrypt', {
-  querystring: object({ bundleId: BundleId, externalVersionId: Type.Optional(Identifier), version: Type.Optional(VersionSelector) }),
+  querystring: object({ bundleId: BundleId, externalVersionId: Type.Optional(Identifier), version: Type.Optional(VersionSelector), projectId: Type.Optional(Identifier) }),
 });
 
 register('POST', '/v1/testflight/decrypt', {
-  body: object({ bundleId: BundleId, appId: TestFlightAppId, build: TestFlightBuildInput }),
+  body: object({ bundleId: BundleId, appId: TestFlightAppId, build: TestFlightBuildInput, projectId: Type.Optional(Identifier) }),
 });
 
 register('POST', '/v1/billing/checkout', {
@@ -996,15 +1035,15 @@ register('DELETE', '/v1/auth/passkeys/:id', { params: object({ id: Identifier })
 register('GET', '/v1/artifacts', { querystring: object({ ...PaginationQuery.properties, q: Type.Optional(Type.String({ maxLength: 200 })), channel: Type.Optional(Type.Union([Type.Literal('appstore'), Type.Literal('testflight')])) }) });
 
 register('POST', '/v1/dashboard/decrypt', {
-  body: object({ bundleId: BundleId, externalVersionId: Type.Optional(Identifier), versionLabel: Type.Optional(Type.String({ maxLength: 64 })), preferPrimary: Type.Optional(Type.Boolean()) }),
+  body: object({ bundleId: BundleId, externalVersionId: Type.Optional(Identifier), versionLabel: Type.Optional(Type.String({ maxLength: 64 })), preferPrimary: Type.Optional(Type.Boolean()), projectId: Type.Optional(Identifier) }),
 });
 
 register('POST', '/v1/dashboard/decrypt/preflight', {
-  body: object({ bundleId: BundleId, testflight: Type.Optional(Type.Boolean()), versionLabel: Type.Optional(Type.String({ maxLength: 64 })), installSizeBytes: Type.Optional(Type.Number({ exclusiveMinimum: 0 })), deviceId: Type.Optional(Identifier) }),
+  body: object({ bundleId: BundleId, testflight: Type.Optional(Type.Boolean()), versionLabel: Type.Optional(Type.String({ maxLength: 64 })), installSizeBytes: Type.Optional(Type.Number({ exclusiveMinimum: 0 })), deviceId: Type.Optional(Identifier), projectId: Type.Optional(Identifier) }),
 });
 
 register('POST', '/v1/dashboard/testflight/decrypt', {
-  body: object({ bundleId: BundleId, appId: TestFlightAppId, build: TestFlightBuildInput, deviceId: Type.Optional(Identifier), preferPrimary: Type.Optional(Type.Boolean()) }),
+  body: object({ bundleId: BundleId, appId: TestFlightAppId, build: TestFlightBuildInput, deviceId: Type.Optional(Identifier), preferPrimary: Type.Optional(Type.Boolean()), projectId: Type.Optional(Identifier) }),
 });
 
 register('GET', '/v1/jobs/:id', { params: object({ id: Identifier }) });
@@ -1017,10 +1056,10 @@ register('POST', '/v1/dashboard/jobs/:id/cancel', { params: object({ id: Identif
 register('POST', '/v1/dashboard/jobs/:id/prioritize', { params: object({ id: Identifier }) });
 register('POST', '/v1/dashboard/jobs/:id/retry', { params: object({ id: Identifier }) });
 register('GET', '/v1/dashboard/notifications', { querystring: PaginationQuery });
-register('GET', '/v1/dashboard/jobs', { querystring: object({ ...PaginationQuery.properties, q: Type.Optional(Type.String({ maxLength: 200 })), source: Type.Optional(Type.Union([Type.Literal('manual'), Type.Literal('scheduler')])), status: Type.Optional(Type.Union([Type.Literal('done'), Type.Literal('failed')])), queuedBy: Type.Optional(Type.String({ maxLength: 120 })), deviceId: Type.Optional(Identifier), errorQ: Type.Optional(Type.String({ maxLength: 200 })), failureCategory: Type.Optional(Type.String({ maxLength: 64 })), fromTs: Type.Optional(Type.Integer()), toTs: Type.Optional(Type.Integer()) }) });
-register('GET', '/v1/dashboard/artifacts', { querystring: object({ ...PaginationQuery.properties, q: Type.Optional(Type.String({ maxLength: 200 })), channel: Type.Optional(Type.Union([Type.Literal('appstore'), Type.Literal('testflight')])) }) });
+register('GET', '/v1/dashboard/jobs', { querystring: object({ ...PaginationQuery.properties, projectId: Type.Optional(Identifier), q: Type.Optional(Type.String({ maxLength: 200 })), source: Type.Optional(Type.Union([Type.Literal('manual'), Type.Literal('scheduler')])), status: Type.Optional(Type.Union([Type.Literal('done'), Type.Literal('failed')])), queuedBy: Type.Optional(Type.String({ maxLength: 120 })), deviceId: Type.Optional(Identifier), errorQ: Type.Optional(Type.String({ maxLength: 200 })), failureCategory: Type.Optional(Type.String({ maxLength: 64 })), fromTs: Type.Optional(Type.Integer()), toTs: Type.Optional(Type.Integer()) }) });
+register('GET', '/v1/dashboard/artifacts', { querystring: object({ ...PaginationQuery.properties, projectId: Type.Optional(Identifier), q: Type.Optional(Type.String({ maxLength: 200 })), channel: Type.Optional(Type.Union([Type.Literal('appstore'), Type.Literal('testflight')])) }) });
 register('GET', '/v1/dashboard/artifacts/retention-preview', { querystring: object({ maxBytes: Type.Integer({ minimum: 1 }) }) });
-register('GET', '/v1/dashboard/logs', { querystring: object({ ...PaginationQuery.properties, scope: Type.Optional(Type.String({ maxLength: 100 })), level: Type.Optional(Type.Union([Type.Literal('info'), Type.Literal('warn'), Type.Literal('error')])), q: Type.Optional(Type.String({ maxLength: 100 })), regex: Type.Optional(Type.Literal('1')) }) });
+register('GET', '/v1/dashboard/logs', { querystring: object({ ...PaginationQuery.properties, projectId: Type.Optional(Identifier), scope: Type.Optional(Type.String({ maxLength: 100 })), level: Type.Optional(Type.Union([Type.Literal('info'), Type.Literal('warn'), Type.Literal('error')])), q: Type.Optional(Type.String({ maxLength: 100 })), regex: Type.Optional(Type.Literal('1')) }) });
 register('GET', '/v1/dashboard/devices/:id/activity', { params: object({ id: Identifier }), querystring: PaginationQuery });
 register('GET', '/v1/dashboard/audit-log', { querystring: PaginationQuery });
 register('GET', '/v1/dashboard/keys/all', { querystring: object({ ...PaginationQuery.properties, search: Type.Optional(Type.String({ maxLength: 200 })) }) });
@@ -1152,6 +1191,10 @@ const remainingContracts: Array<[ContractMethod, string]> = [
   ['GET', '/v1/dashboard/users'],
   ['GET', '/v1/dashboard/audit-log/export'],
   ['GET', '/v1/dashboard/roles'],
+  ['GET', '/v1/dashboard/projects'],
+  ['GET', '/v1/dashboard/projects/members'],
+  ['POST', '/v1/dashboard/projects'],
+  ['PATCH', '/v1/dashboard/projects/:id'],
   ['POST', '/v1/dashboard/roles'],
   ['PATCH', '/v1/dashboard/roles/:id'],
   ['DELETE', '/v1/dashboard/roles/:id'],
@@ -1192,15 +1235,15 @@ for (const [method, path] of remainingContracts) registerGenericContract(method,
 register('PATCH', '/v1/auth/profile', { body: object({ displayName: Type.String({ minLength: 1, maxLength: 64 }) }) });
 register('DELETE', '/v1/auth/connections/:provider', { params: object({ provider: Type.Union([Type.Literal('github'), Type.Literal('discord')]) }) });
 register('POST', '/v1/dashboard/notifications/read', { body: object({ ids: Type.Optional(Type.Array(Identifier, { maxItems: 100 })) }) });
-register('POST', '/v1/dashboard/jobs/bulk-preview', { body: object({ ids: Type.Array(Identifier, { maxItems: 100 }) }) });
-register('POST', '/v1/dashboard/jobs/reorder', { body: object({ ids: Type.Array(Identifier, { maxItems: 100 }) }) });
+register('POST', '/v1/dashboard/jobs/bulk-preview', { body: object({ ids: Type.Array(Identifier, { maxItems: 100 }), projectId: Type.Optional(Identifier) }) });
+register('POST', '/v1/dashboard/jobs/reorder', { body: object({ ids: Type.Array(Identifier, { maxItems: 100 }), projectId: Type.Optional(Identifier) }) });
 register('POST', '/v1/stripe/webhook', { headers: object({ 'stripe-signature': Type.String({ minLength: 1, maxLength: 200 }) }), body: Type.Any() });
 register('POST', '/v1/nowpayments/webhook', { headers: object({ 'x-nowpayments-sig': Type.String({ minLength: 1, maxLength: 500 }) }), body: Type.Any() });
 
 register('GET', '/v1/health', { response: { 200: HealthResponse } });
 register('GET', '/v1/billing', { response: { 200: BillingResponse } });
 register('GET', '/v1/billing/subscriptions', { response: { 200: BillingSubscriptionPage } });
-register('GET', '/v1/dashboard/overview', { response: { 200: DashboardOverviewResponse } });
+register('GET', '/v1/dashboard/overview', { querystring: object({ projectId: Type.Optional(Identifier) }), response: { 200: DashboardOverviewResponse } });
 register('GET', '/v1/dashboard/jobs', { response: { 200: JobHistoryPage } });
 register('GET', '/v1/dashboard/artifacts', { response: { 200: ArtifactPage } });
 register('GET', '/v1/dashboard/devices', { response: { 200: DeviceListResponse } });
@@ -1268,6 +1311,10 @@ register('GET', '/v1/dashboard/settings/validate-cron', { response: { 200: objec
 register('GET', '/v1/dashboard/users', { response: { 200: UserDirectoryResponse } });
 register('GET', '/v1/dashboard/audit-log', { querystring: PaginationQuery, response: { 200: AuditLogPage } });
 register('GET', '/v1/dashboard/roles', { response: { 200: RolesResponse } });
+register('GET', '/v1/dashboard/projects', { response: { 200: ProjectListResponse } });
+register('GET', '/v1/dashboard/projects/members', { response: { 200: ProjectMembersResponse } });
+register('POST', '/v1/dashboard/projects', { body: ProjectInput, response: { 201: ProjectResponse } });
+register('PATCH', '/v1/dashboard/projects/:id', { params: object({ id: Identifier }), body: ProjectPatchInput, response: { 200: ProjectResponse } });
 register('POST', '/v1/dashboard/roles', { response: { 201: RoleResponse } });
 register('PATCH', '/v1/dashboard/roles/:id', { params: object({ id: Identifier }), response: { 200: RoleResponse } });
 register('POST', '/v1/dashboard/roles/reorder', { response: { 200: RolesResponse } });
@@ -1297,14 +1344,14 @@ register('POST', '/v1/dashboard/backup/drill', { response: { 200: BackupDrillRes
 register('DELETE', '/v1/dashboard/backup/history/:id', { params: object({ id: Identifier }), response: { 200: OkResponse } });
 register('POST', '/v1/decrypts', {
   headers: IdempotencyKeyHeaders,
-  body: object({ bundleId: BundleId, version: Type.Optional(VersionSelector) }),
-  response: { 200: DecryptJobResponse, 202: DecryptJobResponse, 410: ErrorEnvelope, 502: ErrorEnvelope },
+  body: object({ bundleId: BundleId, version: Type.Optional(VersionSelector), projectId: Type.Optional(Identifier) }),
+  response: { 200: DecryptJobResponse, 202: DecryptJobResponse, 409: ErrorEnvelope, 410: ErrorEnvelope, 502: ErrorEnvelope },
 });
 register('GET', '/v1/artifacts', {
-  querystring: object({ ...PaginationQuery.properties, q: Type.Optional(Type.String({ maxLength: 200 })), channel: Type.Optional(Type.Union([Type.Literal('appstore'), Type.Literal('testflight')])) }),
+  querystring: object({ ...PaginationQuery.properties, projectId: Type.Optional(Identifier), q: Type.Optional(Type.String({ maxLength: 200 })), channel: Type.Optional(Type.Union([Type.Literal('appstore'), Type.Literal('testflight')])) }),
   response: { 200: ApiArtifactPage },
 });
-register('GET', '/v1/artifacts/:id', { params: object({ id: Identifier }), response: { 200: ArtifactSummaryResponse } });
+register('GET', '/v1/artifacts/:id', { params: object({ id: Identifier }), querystring: object({ projectId: Type.Optional(Identifier) }), response: { 200: ArtifactSummaryResponse } });
 register('GET', '/v1/jobs/:id', { params: object({ id: Identifier }), response: { 200: JobSummaryResponse } });
 register('GET', '/v1/testflight/:appId/trains', {
   params: object({ appId: Type.String({ minLength: 1, maxLength: 32, pattern: '^\\d+$' }) }),
@@ -1318,11 +1365,11 @@ register('GET', '/v1/testflight/:appId/builds', {
 });
 register('POST', '/v1/testflight/decrypt', {
   headers: IdempotencyKeyHeaders,
-  body: object({ bundleId: BundleId, appId: TestFlightAppId, build: TestFlightBuildInput }),
-  response: { 202: JobSummaryResponse, 410: ErrorEnvelope },
+  body: object({ bundleId: BundleId, appId: TestFlightAppId, build: TestFlightBuildInput, projectId: Type.Optional(Identifier) }),
+  response: { 202: JobSummaryResponse, 409: ErrorEnvelope, 410: ErrorEnvelope },
 });
 register('GET', '/v1/dashboard/artifacts', {
-  querystring: object({ ...PaginationQuery.properties, q: Type.Optional(Type.String({ maxLength: 200 })), channel: Type.Optional(Type.Union([Type.Literal('appstore'), Type.Literal('testflight')])) }),
+  querystring: object({ ...PaginationQuery.properties, projectId: Type.Optional(Identifier), q: Type.Optional(Type.String({ maxLength: 200 })), channel: Type.Optional(Type.Union([Type.Literal('appstore'), Type.Literal('testflight')])) }),
   response: { 200: DashboardArtifactPage },
 });
 register('GET', '/v1/dashboard/artifacts/retention-preview', {
@@ -1340,7 +1387,7 @@ register('GET', '/v1/dashboard/testflight/:appId/builds', {
   response: { 200: TestFlightBuildsResponse },
 });
 register('POST', '/v1/dashboard/testflight/decrypt', {
-  body: object({ bundleId: BundleId, appId: TestFlightAppId, build: TestFlightBuildInput, deviceId: Type.Optional(Identifier), preferPrimary: Type.Optional(Type.Boolean()) }),
+  body: object({ bundleId: BundleId, appId: TestFlightAppId, build: TestFlightBuildInput, deviceId: Type.Optional(Identifier), preferPrimary: Type.Optional(Type.Boolean()), projectId: Type.Optional(Identifier) }),
   response: { 202: JobSummaryResponse },
 });
 register('GET', '/v1/dashboard/search', {
@@ -1376,7 +1423,7 @@ register('POST', '/v1/dashboard/testflight/catalog/:bundleId/unsubscribe', {
   response: { 200: TestFlightDeviceUnsubscribeResponse },
 });
 register('POST', '/v1/dashboard/decrypt/preflight', {
-  body: object({ bundleId: BundleId, testflight: Type.Optional(Type.Boolean()), versionLabel: Type.Optional(Type.String({ maxLength: 64 })), installSizeBytes: Type.Optional(Type.Number({ exclusiveMinimum: 0 })), deviceId: Type.Optional(Identifier) }),
+  body: object({ bundleId: BundleId, testflight: Type.Optional(Type.Boolean()), versionLabel: Type.Optional(Type.String({ maxLength: 64 })), installSizeBytes: Type.Optional(Type.Number({ exclusiveMinimum: 0 })), deviceId: Type.Optional(Identifier), projectId: Type.Optional(Identifier) }),
   response: { 200: DashboardDecryptPreflightResponse },
 });
 register('GET', '/v1/dashboard/versions/:bundleId', {
@@ -1416,36 +1463,50 @@ register('POST', '/v1/dashboard/devices/:id/recover', {
   response: { 200: OkResponse },
 });
 register('GET', '/v1/dashboard/jobs/export', {
-  querystring: object({ format: Type.Optional(Type.Union([Type.Literal('json'), Type.Literal('csv')])) }),
+  querystring: object({ format: Type.Optional(Type.Union([Type.Literal('json'), Type.Literal('csv')])), projectId: Type.Optional(Identifier) }),
   response: { 200: JobExportResponse },
 });
 register('POST', '/v1/dashboard/jobs/bulk-preview', {
-  body: object({ ids: Type.Array(Identifier, { maxItems: 100 }) }),
+  body: object({ ids: Type.Array(Identifier, { maxItems: 100 }), projectId: Type.Optional(Identifier) }),
   response: { 200: BulkPreviewResponse },
+});
+register('GET', '/v1/dashboard/jobs/eta/:bundleId', {
+  params: object({ bundleId: BundleId }),
+  querystring: object({ projectId: Type.Optional(Identifier) }),
+  response: { 200: JobEtaResponse },
 });
 register('GET', '/v1/dashboard/jobs/stats/:bundleId', {
   params: object({ bundleId: BundleId }),
+  querystring: object({ projectId: Type.Optional(Identifier) }),
   response: { 200: BundleStatsResponse },
 });
+register('GET', '/v1/dashboard/jobs/volume', {
+  querystring: object({ days: Type.Optional(Type.Integer({ minimum: 1, maximum: 90 })), projectId: Type.Optional(Identifier) }),
+  response: { 200: DailyVolumeResponse },
+});
+register('GET', '/v1/dashboard/jobs/slo', {
+  querystring: object({ projectId: Type.Optional(Identifier) }),
+  response: { 200: JobSloResponse },
+});
 register('GET', '/v1/dashboard/jobs/diff', {
-  querystring: object({ bundleId: BundleId, a: Identifier, b: Identifier }),
+  querystring: object({ bundleId: BundleId, a: Identifier, b: Identifier, projectId: Type.Optional(Identifier) }),
   response: { 200: JobDiffResponse },
 });
 register('GET', '/v1/dashboard/insights', {
-  querystring: object({ topApps: Type.Optional(Type.Integer({ minimum: 1, maximum: 25 })), trendDays: Type.Optional(Type.Integer({ minimum: 1, maximum: 90 })) }),
+  querystring: object({ topApps: Type.Optional(Type.Integer({ minimum: 1, maximum: 25 })), trendDays: Type.Optional(Type.Integer({ minimum: 1, maximum: 90 })), projectId: Type.Optional(Identifier) }),
   response: { 200: InsightsResponse },
 });
-register('GET', '/v1/dashboard/failure-patterns', { response: { 200: FailurePatternsResponse } });
-register('GET', '/v1/dashboard/storage-forecast', { response: { 200: StorageForecastResponse } });
+register('GET', '/v1/dashboard/failure-patterns', { querystring: object({ projectId: Type.Optional(Identifier) }), response: { 200: FailurePatternsResponse } });
+register('GET', '/v1/dashboard/storage-forecast', { querystring: object({ projectId: Type.Optional(Identifier) }), response: { 200: StorageForecastResponse } });
 register('GET', '/v1/dashboard/watches', { response: { 200: WatchListResponse } });
 register('GET', '/v1/dashboard/watches/export', { response: { 200: WatchExportResponse } });
 register('GET', '/v1/dashboard/watches/health', { response: { 200: WatchHealthResponse } });
 register('GET', '/v1/dashboard/watches/calendar', {
-  querystring: object({ hours: Type.Optional(Type.Integer({ minimum: 1, maximum: 168 })), fromAt: Type.Optional(Type.Integer()) }),
+  querystring: object({ hours: Type.Optional(Type.Integer({ minimum: 1, maximum: 168 })), fromAt: Type.Optional(Type.Integer()), projectId: Type.Optional(Identifier) }),
   response: { 200: WatchCalendarResponse },
 });
 register('GET', '/v1/dashboard/github/budget-history', {
-  querystring: object({ limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })) }),
+  querystring: object({ limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })), projectId: Type.Optional(Identifier) }),
   response: { 200: GitHubBudgetHistoryResponse },
 });
 register('GET', '/v1/dashboard/github/repos', { response: { 200: GitHubReposResponse } });
@@ -1503,11 +1564,11 @@ register('POST', '/v1/dashboard/jobs/:id/cancel', { params: object({ id: Identif
 register('POST', '/v1/dashboard/jobs/:id/prioritize', { params: object({ id: Identifier }), response: { 200: OkResponse } });
 register('POST', '/v1/dashboard/jobs/:id/retry', { params: object({ id: Identifier }), response: { 202: JobSummaryResponse } });
 register('POST', '/v1/dashboard/jobs/reorder', {
-  body: object({ ids: Type.Array(Identifier, { maxItems: 100 }) }),
+  body: object({ ids: Type.Array(Identifier, { maxItems: 100 }), projectId: Type.Optional(Identifier) }),
   response: { 200: OkResponse },
 });
 register('GET', '/v1/dashboard/logs', {
-  querystring: object({ ...PaginationQuery.properties, scope: Type.Optional(Type.String({ maxLength: 100 })), level: Type.Optional(Type.Union([Type.Literal('info'), Type.Literal('warn'), Type.Literal('error')])), q: Type.Optional(Type.String({ maxLength: 100 })), regex: Type.Optional(Type.Literal('1')) }),
+  querystring: object({ ...PaginationQuery.properties, projectId: Type.Optional(Identifier), scope: Type.Optional(Type.String({ maxLength: 100 })), level: Type.Optional(Type.Union([Type.Literal('info'), Type.Literal('warn'), Type.Literal('error')])), q: Type.Optional(Type.String({ maxLength: 100 })), regex: Type.Optional(Type.Literal('1')) }),
   response: { 200: LogsPageResponse },
 });
 register('GET', '/v1/dashboard/webhooks', {
@@ -1515,6 +1576,7 @@ register('GET', '/v1/dashboard/webhooks', {
   response: { 200: WebhookDeliveryPageResponse },
 });
 register('GET', '/v1/dashboard/events', {
+  querystring: object({ projectId: Type.Optional(Identifier) }),
   response: { 200: EventStreamResponse },
 });
 register('GET', '/v1/dashboard/jobs/:id/diagnostic', {
@@ -1522,6 +1584,7 @@ register('GET', '/v1/dashboard/jobs/:id/diagnostic', {
   response: { 200: DiagnosticResponse },
 });
 register('GET', '/v1/dashboard/support-bundle', {
+  querystring: object({ projectId: Type.Optional(Identifier) }),
   response: { 200: SupportBundleResponse },
 });
 register('GET', '/v1/dashboard/github/rate-limit', {
@@ -1532,7 +1595,7 @@ register('GET', '/v1/dashboard/audit-log/export', {
   response: { 200: AuditExportResponse },
 });
 register('GET', '/v1/dashboard/jobs/export', {
-  querystring: object({ format: Type.Optional(Type.Union([Type.Literal('json'), Type.Literal('csv')])) }),
+  querystring: object({ format: Type.Optional(Type.Union([Type.Literal('json'), Type.Literal('csv')])), projectId: Type.Optional(Identifier) }),
   response: { 200: JobExportResponse },
 });
 register('GET', '/v1/dashboard/watches/export', {
@@ -1675,7 +1738,7 @@ register('GET', '/v1/metrics', {
 });
 register('GET', '/v1/decrypt', {
   headers: IdempotencyKeyHeaders,
-  querystring: object({ bundleId: BundleId, externalVersionId: Type.Optional(Identifier), version: Type.Optional(VersionSelector) }),
+  querystring: object({ bundleId: BundleId, externalVersionId: Type.Optional(Identifier), version: Type.Optional(VersionSelector), projectId: Type.Optional(Identifier) }),
   response: {
     200: BinaryFileResponse,
     202: JobSummaryResponse,
@@ -1685,11 +1748,12 @@ register('GET', '/v1/decrypt', {
   },
 });
 register('POST', '/v1/dashboard/decrypt', {
-  body: object({ bundleId: BundleId, externalVersionId: Type.Optional(Identifier), versionLabel: Type.Optional(Type.String({ maxLength: 64 })), preferPrimary: Type.Optional(Type.Boolean()) }),
+  body: object({ bundleId: BundleId, externalVersionId: Type.Optional(Identifier), versionLabel: Type.Optional(Type.String({ maxLength: 64 })), preferPrimary: Type.Optional(Type.Boolean()), projectId: Type.Optional(Identifier) }),
   response: { 202: JobSummaryResponse },
 });
 register('GET', '/v1/artifacts/:id/file', {
   params: object({ id: Identifier }),
+  querystring: object({ projectId: Type.Optional(Identifier) }),
   response: { 200: BinaryFileResponse },
 });
 register('GET', '/v1/dashboard/artifacts/:id/file', {

@@ -26,6 +26,7 @@ export interface LogQuery {
   cursor?: string;
   offset?: number;
   limit?: number;
+  filter?: (entry: LogEntry) => boolean;
 }
 
 const MAX_LOG_ENTRIES = 500;
@@ -66,6 +67,7 @@ export function getRecentLogs(query: LogQuery = {}): { logs: LogEntry[]; total: 
   const matcher = search && query.regex ? new RegExp(search, 'i') : undefined;
   const normalizedSearch = search?.toLowerCase();
   const matches = (entry: LogEntry): boolean => {
+    if (query.filter && !query.filter(entry)) return false;
     if (query.scope && entry.scope !== query.scope) return false;
     if (query.level && entry.level !== query.level) return false;
     if (!search) return true;

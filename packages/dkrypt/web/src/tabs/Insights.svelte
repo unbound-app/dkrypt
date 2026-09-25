@@ -28,6 +28,7 @@
 	} from "#lib/format";
 	import { liveState } from "#lib/live.svelte";
 	import { PermissionFlag } from "#lib/permissions";
+	import { projectSelectionState } from "#lib/projectSelection.svelte";
 	import { createSavedViews } from "#lib/savedViews.svelte";
 	import { sessionHasAnyPermission } from "#lib/session.svelte";
 	import {
@@ -96,6 +97,7 @@
 	let failurePatterns = $state<FailurePattern[]>([]);
 
 	$effect(() => {
+		projectSelectionState.id;
 		if (!canViewScheduler) return;
 		void fetchWatchHealth().then((r) => (watchHealth = r.watches));
 		void fetchStorageForecast().then((forecast) => (storageForecast = forecast));
@@ -128,6 +130,7 @@
 	$effect(() => {
 		void trendDays;
 		void topAppsLimit;
+		projectSelectionState.id;
 		load();
 	});
 

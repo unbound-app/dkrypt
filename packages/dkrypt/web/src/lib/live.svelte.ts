@@ -1,4 +1,5 @@
 import type { JobHistoryEntry, LogEntry, OverviewPayload } from '#lib/api';
+import { projectSelectionState, setProjectSelection } from '#lib/projectSelection.svelte';
 
 export const liveState = $state<{
   overview: OverviewPayload | null;
@@ -24,7 +25,7 @@ async function refreshOverview(): Promise<void> {
 	if (overviewRefresh) return overviewRefresh;
 	const controller = new AbortController();
 	const timeout = setTimeout(() => controller.abort(), 8_000);
-	overviewRefresh = fetch('/v1/dashboard/overview', { signal: controller.signal })
+	overviewRefresh = fetch(`/v1/dashboard/overview?projectId=${encodeURIComponent(projectSelectionState.id)}`, { signal: controller.signal })
 		.then(async (response) => {
 			if (!response.ok) return;
 			liveState.overview = (await response.json()) as OverviewPayload;
@@ -78,13 +79,14 @@ export function connectLive(): void {
 		visibilityListenerInstalled = true;
 	}
 
-  source = new EventSource('/v1/dashboard/events');
-  const initialSource = source;
+  const eventSource = new EventSource(`/v1/dashboard/events?projectId=${encodeURIComponent(projectSelectionState.id)}`);
+  source = eventSource;
+  const initialSource = eventSource;
 	void refreshOverview().finally(() => {
 		if (source === initialSource) liveState.overviewLoaded = true;
 	});
 
-  source.onopen = () => {
+  eventSource.onopen = () => {
     liveState.connected = true;
     liveState.disconnectedAt = null;
     liveState.reconnectAttempts = 0;
@@ -92,7 +94,7 @@ export function connectLive(): void {
     liveState.sequenceGap = false;
   };
 
-  source.addEventListener('overview', (e) => {
+  eventSource.addEventListener('overview', (e) => {
     liveState.overview = readEvent<OverviewPayload>(e);
     liveState.overviewLoaded = true;
     liveState.connected = true;
@@ -100,22 +102,36 @@ export function connectLive(): void {
     liveState.reconnectAttempts = 0;
   });
 
-  source.addEventListener('log', (e) => {
+  eventSource.addEventListener('log', (e) => {
     const entry = readEvent<LogEntry>(e);
     liveState.logs = [entry, ...liveState.logs].slice(0, 500);
   });
 
-  source.addEventListener('history', (e) => {
+  eventSource.addEventListener('history', (e) => {
     const entry = readEvent<JobHistoryEntry>(e);
     liveState.historyAdditions = [entry, ...liveState.historyAdditions].slice(0, 200);
   });
 
-  source.addEventListener('presence', (e) => {
+  eventSource.addEventListener('presence', (e) => {
     liveState.onlineUsers = readEvent<string[]>(e);
   });
 
-  source.onerror = () => {
-    source?.close();
+  eventSource.addEventListener('project-access-revoked', () => {
+    eventSource.close();
+    if (source !== eventSource) return;
+    source = null;
+    setProjectSelection('default');
+    liveState.overview = null;
+    liveState.logs = [];
+    liveState.historyAdditions = [];
+    liveState.overviewLoaded = false;
+    lastSequence = 0;
+    connectLive();
+  });
+
+  eventSource.onerror = () => {
+    eventSource.close();
+    if (source !== eventSource) return;
     source = null;
     liveState.connected = false;
     if (liveState.disconnectedAt === null) liveState.disconnectedAt = Date.now();
@@ -144,10 +160,16 @@ export function disconnectLive(): void {
   lastSequence = 0;
 }
 
-export function reconnectLive(): void {
+export function reconnectLive(resetProjectState = false): void {
   source?.close();
   source = null;
   if (reconnectTimer) clearTimeout(reconnectTimer);
   reconnectTimer = undefined;
+  if (resetProjectState) {
+    liveState.overview = null;
+    liveState.logs = [];
+    liveState.historyAdditions = [];
+    liveState.overviewLoaded = false;
+  }
   connectLive();
 }

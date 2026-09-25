@@ -8,7 +8,7 @@ test('SQLite state snapshots survive restart and retain independently owned coll
   const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-sqlite-'));
   try {
     const database = openStateDatabase({ stateDir, filename: 'state.sqlite' });
-    const state = { version: 15, devices: [{ id: 'device-1', updatedAt: 10 }], settings: { maintenanceMode: false } };
+    const state = { version: 16, devices: [{ id: 'device-1', updatedAt: 10 }], projects: [{ id: 'project-1', name: 'Default workspace', memberIds: [], isDefault: true, createdBy: 'system', createdAt: 10, updatedAt: 10 }], settings: { maintenanceMode: false } };
     database.writeState(state);
     database.replaceCollection('jobs', [{ id: 'job-1', payload: { id: 'job-1', status: 'queued' }, updatedAt: 20 }]);
     database.writeState({ ...state, settings: { maintenanceMode: true } });
@@ -18,9 +18,10 @@ test('SQLite state snapshots survive restart and retain independently owned coll
 
     const reopened = openStateDatabase({ stateDir, filename: 'state.sqlite' });
     expect(reopened.integrityStatus()).toBe('ok');
-    expect(reopened.schemaVersion).toBe(4);
+    expect(reopened.schemaVersion).toBe(6);
     expect(reopened.readCollection('jobs')).toEqual([{ id: 'job-1', status: 'queued' }]);
     expect(reopened.readCollection('scheduler_runs')).toEqual([]);
+    expect(reopened.readCollection('projects')).toEqual(state.projects);
     reopened.close();
   } finally {
     await rm(stateDir, { recursive: true, force: true });

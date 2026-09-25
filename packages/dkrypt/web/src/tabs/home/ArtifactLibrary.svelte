@@ -12,6 +12,7 @@
   import { PermissionFlag } from '#lib/permissions';
   import { sessionHasPermission } from '#lib/session.svelte';
   import { buttonVariants } from '#lib/components/ui/variants';
+  import { projectSelectionState } from '#lib/projectSelection.svelte';
 
   const canDecrypt = $derived(sessionHasPermission(PermissionFlag.requestDecrypt));
   const canManageStorage = $derived(sessionHasPermission(PermissionFlag.manageAutomation));
@@ -68,6 +69,7 @@
   }
 
   $effect(() => {
+    projectSelectionState.id;
     if (canDecrypt) void load();
   });
 

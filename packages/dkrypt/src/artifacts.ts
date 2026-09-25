@@ -7,6 +7,7 @@ import { scopedLogger } from '#logger.js';
 import { openStateCollectionDatabase, readStateCollection, replaceStateCollection } from '#store/sqlite.js';
 import { throwIfAborted } from '#util/abort.js';
 import { paginateCursor } from '#util/cursor.js';
+import { getProject } from '#store/state.js';
 
 const log = scopedLogger('artifacts');
 
@@ -15,6 +16,7 @@ export type ArtifactChannel = 'appstore' | 'testflight';
 export interface ArtifactRecord {
   id: string;
   key: string;
+  projectIds: string[];
   bundleId: string;
   channel: ArtifactChannel;
   externalVersionId?: string;
@@ -37,6 +39,7 @@ export interface ArtifactListOptions {
   query?: string;
   channel?: ArtifactChannel;
   bundleIds?: string[];
+  projectIds?: string[];
 }
 
 export interface ArtifactListResult {
@@ -91,7 +94,8 @@ function normalizeArtifactVersionLabel(value: string | undefined, channel: Artif
 
 function normalizeArtifactRecord(record: ArtifactRecord): ArtifactRecord {
   const versionLabel = normalizeArtifactVersionLabel(record.versionLabel, record.channel);
-  return versionLabel === record.versionLabel ? record : { ...record, versionLabel };
+  const projectIds = Array.isArray(record.projectIds) && record.projectIds.length > 0 ? [...new Set(record.projectIds)] : ['default'];
+  return versionLabel === record.versionLabel && projectIds === record.projectIds ? record : { ...record, versionLabel, projectIds };
 }
 
 function loadIndex(): ArtifactIndex {
@@ -143,6 +147,10 @@ function persistIndex(): void {
     }
     log.warn('failed to refresh the compatibility artifact index after persisting metadata', { error: String(error) });
   }
+}
+
+export function reloadArtifactIndex(): void {
+  index = { version: 1, artifacts: readStateCollection(artifactDatabase, 'artifacts').filter(isArtifactRecord).map(normalizeArtifactRecord) };
 }
 
 export function closeArtifactDatabase(): void {
@@ -219,18 +227,41 @@ export function getArtifactByKey(key: string): ArtifactRecord | undefined {
   return artifact;
 }
 
+export function linkArtifactToProject(id: string, projectId: string): ArtifactRecord | undefined {
+  const artifact = getArtifactById(id);
+  if (!artifact) return undefined;
+  if (artifact.projectIds.includes(projectId)) return artifact;
+  assertProjectStorageQuota(projectId, artifact.fileSizeBytes);
+  artifact.projectIds = [...artifact.projectIds, projectId];
+  persistIndex();
+  return artifact;
+}
+
+function assertProjectStorageQuota(projectId: string, additionalBytes: number): void {
+  const project = getProject(projectId);
+  const projectBytes = index.artifacts
+    .filter((candidate) => candidate.projectIds.includes(projectId) && existsSync(candidate.filePath))
+    .reduce((total, candidate) => total + candidate.fileSizeBytes, 0);
+  if (project?.storageQuotaBytes && projectBytes + additionalBytes > project.storageQuotaBytes) {
+    const error = new Error('project storage quota would be exceeded');
+    Object.assign(error, { statusCode: 429 });
+    throw error;
+  }
+}
+
 export function artifactFileAvailable(artifact: ArtifactRecord | undefined): boolean {
   return !!artifact && existsSync(artifact.filePath);
 }
 
-export function getArtifactStorageStats(bundleIds?: string[]): { usedBytes: number; maxBytes: number; count: number } {
+export function getArtifactStorageStats(bundleIds?: string[], projectIds?: string[]): { usedBytes: number; maxBytes: number; count: number } {
   const available = index.artifacts
     .filter((artifact) => existsSync(artifact.filePath))
     .filter((artifact) => !bundleIds || bundleIds.includes(artifact.bundleId));
+  const scoped = projectIds ? available.filter((artifact) => artifact.projectIds.some((id) => projectIds.includes(id))) : available;
   return {
-    usedBytes: available.reduce((total, artifact) => total + artifact.fileSizeBytes, 0),
-    maxBytes: config.artifactMaxBytes,
-    count: available.length,
+    usedBytes: scoped.reduce((total, artifact) => total + artifact.fileSizeBytes, 0),
+    maxBytes: projectIds?.length === 1 ? getProject(projectIds[0]!)?.storageQuotaBytes ?? config.artifactMaxBytes : config.artifactMaxBytes,
+    count: scoped.length,
   };
 }
 
@@ -269,6 +300,7 @@ export function listArtifacts(options: ArtifactListOptions = {}): ArtifactListRe
   const query = options.query?.trim().toLowerCase();
   const filtered = index.artifacts
     .filter((artifact) => artifactFileAvailable(artifact))
+    .filter((artifact) => !options.projectIds || artifact.projectIds.some((id) => options.projectIds!.includes(id)))
     .filter((artifact) => !options.bundleIds || options.bundleIds.includes(artifact.bundleId))
     .filter((artifact) => !options.channel || artifact.channel === options.channel)
     .filter((artifact) => {
@@ -287,7 +319,7 @@ export function listArtifacts(options: ArtifactListOptions = {}): ArtifactListRe
     keyOf: (artifact) => [artifact.createdAt, artifact.id],
     order: 'desc',
   });
-  const stats = getArtifactStorageStats(options.bundleIds);
+  const stats = getArtifactStorageStats(options.bundleIds, options.projectIds);
   return {
     artifacts: page.items,
     total: filtered.length,
@@ -366,6 +398,7 @@ export async function promoteArtifact(input: {
   buildNumber?: string;
   stagingPath: string;
   sourceJobId?: string;
+  projectId?: string;
   signal?: AbortSignal;
 }): Promise<ArtifactRecord> {
   return withMutation(async () => {
@@ -374,14 +407,17 @@ export async function promoteArtifact(input: {
     throwIfAborted(input.signal);
     const existing = getArtifactByKey(input.key);
     if (existing) {
+      if (input.projectId && !existing.projectIds.includes(input.projectId)) assertProjectStorageQuota(input.projectId, existing.fileSizeBytes);
       await rm(input.stagingPath, { force: true });
       throwIfAborted(input.signal);
+      if (input.projectId) linkArtifactToProject(existing.id, input.projectId);
       if (updateArtifactMetadata(existing, input.channel, input.versionLabel, input.buildNumber)) persistIndex();
       touchArtifactUnsafe(existing);
       return existing;
     }
 
     const file = await stat(input.stagingPath);
+    if (input.projectId) assertProjectStorageQuota(input.projectId, file.size);
     throwIfAborted(input.signal);
     const sha256 = await sha256File(input.stagingPath);
     throwIfAborted(input.signal);
@@ -393,6 +429,7 @@ export async function promoteArtifact(input: {
     const artifact: ArtifactRecord = {
       id: randomUUID(),
       key: input.key,
+      projectIds: [input.projectId ?? 'default'],
       bundleId: input.bundleId,
       channel: input.channel,
       externalVersionId: input.externalVersionId,
@@ -442,6 +479,7 @@ export async function promoteArtifact(input: {
 
 export async function registerLegacyJobArtifact(job: {
   id: string;
+  projectId?: string;
   bundleId: string;
   externalVersionId?: string;
   testflight?: { build: { id: number; cfBundleShortVersion: string; cfBundleVersion: string } };
@@ -459,6 +497,7 @@ export async function registerLegacyJobArtifact(job: {
     const versionLabel = job.ipaMetadata?.shortVersion ?? job.testflight?.build.cfBundleShortVersion ?? job.versionLabel;
     const buildNumber = job.ipaMetadata?.bundleVersion ?? job.testflight?.build.cfBundleVersion;
     if (existing && existsSync(existing.filePath)) {
+      linkArtifactToProject(existing.id, job.projectId ?? 'default');
       if (updateArtifactMetadata(existing, channel, versionLabel, buildNumber)) persistIndex();
       return existing;
     }
@@ -468,6 +507,7 @@ export async function registerLegacyJobArtifact(job: {
     const record: ArtifactRecord = {
       id: randomUUID(),
       key,
+      projectIds: [job.projectId ?? 'default'],
       bundleId: job.bundleId,
       channel,
       externalVersionId: job.externalVersionId,
@@ -562,7 +602,7 @@ export async function initializeArtifactStore(jobs: Array<{
   await reconcileArtifactStore();
 }
 
-export function getArtifactForJob(job: { artifactId?: string; filePath?: string }): ArtifactRecord | undefined {
+export function getArtifactForJob(job: { artifactId?: string; filePath?: string; projectId?: string }): ArtifactRecord | undefined {
   if (job.artifactId) return getArtifactById(job.artifactId);
   return index.artifacts.find((artifact) => artifact.filePath === job.filePath);
 }

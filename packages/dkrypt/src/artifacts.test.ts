@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { config } from '#config.js';
+import { createProject, exportBackup, importBackup } from '#store/state.js';
 import {
   artifactFileAvailable,
   getArtifactById,
@@ -11,6 +12,7 @@ import {
   listArtifacts,
   previewArtifactQuotaRetention,
   promoteArtifact,
+  reloadArtifactIndex,
   reconcileArtifactStore,
   touchArtifact,
 } from './artifacts.js';
@@ -126,6 +128,74 @@ describe('persistent artifact store', () => {
     expect(result.total).toBeGreaterThanOrEqual(1);
     expect(result.totalBytes).toBeGreaterThan(0);
     expect(result.maxBytes).toBe(1024 * 1024);
+  });
+
+  test('keeps artifact availability scoped to the projects that can access it', async () => {
+    const bundleId = `com.example.project.${crypto.randomUUID()}`;
+    const artifact = await promoteArtifact({
+      key: `test-project-scope-${crypto.randomUUID()}`,
+      bundleId,
+      channel: 'appstore',
+      externalVersionId: '789',
+      projectId: 'project-a',
+      stagingPath: await stagingFile('project ipa'),
+    });
+
+    expect(artifact.projectIds).toEqual(['project-a']);
+    expect(listArtifacts({ projectIds: ['project-a'], query: bundleId }).total).toBe(1);
+    expect(listArtifacts({ projectIds: ['project-b'], query: bundleId }).total).toBe(0);
+
+    const linked = await promoteArtifact({
+      key: artifact.key,
+      bundleId,
+      channel: 'appstore',
+      externalVersionId: '789',
+      projectId: 'project-b',
+      stagingPath: await stagingFile('duplicate project ipa'),
+    });
+
+    expect(linked.id).toBe(artifact.id);
+    expect(linked.projectIds).toEqual(['project-a', 'project-b']);
+    expect(listArtifacts({ projectIds: ['project-b'], query: bundleId }).total).toBe(1);
+  });
+
+  test('enforces a project storage quota before promoting an artifact', async () => {
+    const project = createProject({ name: `Storage quota ${crypto.randomUUID()}`, storageQuotaBytes: 3 }, 'root').project!;
+    const stagingPath = await stagingFile('four');
+
+    await expect(promoteArtifact({
+      key: `test-project-quota-${crypto.randomUUID()}`,
+      bundleId: `com.example.project-quota.${crypto.randomUUID()}`,
+      channel: 'appstore',
+      projectId: project.id,
+      stagingPath,
+    })).rejects.toThrow('project storage quota would be exceeded');
+    await rm(stagingPath, { force: true });
+  });
+
+  test('backup restore preserves artifact project links without exposing file paths', async () => {
+    const project = createProject({ name: `Artifact backup ${crypto.randomUUID()}` }, 'root').project!;
+    const artifact = await promoteArtifact({
+      key: `test-artifact-backup-${crypto.randomUUID()}`,
+      bundleId: `com.example.artifact-backup.${crypto.randomUUID()}`,
+      channel: 'appstore',
+      projectId: project.id,
+      stagingPath: await stagingFile('backup ipa'),
+    });
+    const backup = exportBackup();
+    const link = backup.artifactProjectLinks.find((entry) => entry.artifactId === artifact.id);
+
+    expect(link).toEqual({ artifactId: artifact.id, projectIds: [project.id] });
+    expect(JSON.stringify(link)).not.toContain(artifact.filePath);
+
+    const changedLinks = backup.artifactProjectLinks.map((entry) => entry.artifactId === artifact.id ? { ...entry, projectIds: ['default'] } : entry);
+    expect(importBackup({ ...backup, artifactProjectLinks: changedLinks }, 'test').ok).toBe(true);
+    reloadArtifactIndex();
+    expect(getArtifactById(artifact.id)?.projectIds).toEqual(['default']);
+
+    expect(importBackup(backup, 'test').ok).toBe(true);
+    reloadArtifactIndex();
+    expect(getArtifactById(artifact.id)?.projectIds).toEqual([project.id]);
   });
 
   test('previews least-recently-used quota evictions without changing artifact storage', async () => {
