@@ -1,5 +1,5 @@
 import { config } from '#config.js';
-import { execCommand, getRustDeviceBridgeHealth, isRustDeviceConnection, isTestFlightRunning, readBridgeHeartbeats, sendSpringBoardBridgeRequest, tryIoregCandidates, withSSH, type BridgeHeartbeat, type DeviceClient } from '#idevice.js';
+import { execCommand, getRustDeviceBridgeHealth, isRustDeviceConnection, isTestFlightRunning, readBridgeHeartbeats, sendSpringBoardBridgeRequest, tryIoregCandidates, withSSH, type BridgeHeartbeat, type DeviceClient, type DeviceConnection } from '#idevice.js';
 import { scopedLogger } from '#logger.js';
 import { EMBED_COLOR, notify } from '#notify.js';
 import { releasePinnedJobsForDevice } from '#jobs/store.js';
@@ -57,6 +57,11 @@ export interface DeviceSubsystemHealth {
   storage: DeviceSubsystemState;
   battery: DeviceSubsystemState;
   thermal: DeviceSubsystemState;
+}
+
+export function getDeviceAgentSubsystemState(connection: Pick<DeviceConnection, 'udid' | 'host'>, agentRequestSucceeded: boolean): DeviceSubsystemState {
+  if (!isRustDeviceConnection(connection)) return 'unsupported';
+  return agentRequestSucceeded ? 'ready' : 'offline';
 }
 
 export interface DeviceReadiness {
@@ -461,7 +466,7 @@ async function computeDeviceHealth(device: DeviceRecord, signal?: AbortSignal): 
         subsystems: {
           usb: device.transport === 'usb' ? 'ready' : 'unsupported',
           mux: 'ready',
-          agent: telemetry.testFlightBridgeReachable === true ? 'ready' : 'degraded',
+          agent: getDeviceAgentSubsystemState(device, true),
           appStore: isBridgeHeartbeatFresh(telemetry.bridgeHeartbeats.appstore) ? 'ready' : 'unknown',
           testFlight: isBridgeHeartbeatFresh(telemetry.bridgeHeartbeats.testflight) ? 'ready' : 'unknown',
           sshTunnel: device.udid || device.host ? 'ready' : 'degraded',
@@ -494,7 +499,7 @@ async function computeDeviceHealth(device: DeviceRecord, signal?: AbortSignal): 
             subsystems: {
               usb: bridge.transport === 'usb' ? 'ready' : 'unsupported',
               mux: 'ready',
-              agent: 'offline',
+              agent: getDeviceAgentSubsystemState(device, false),
               appStore: 'unknown',
               testFlight: 'unknown',
               sshTunnel: 'ready',
@@ -519,7 +524,7 @@ async function computeDeviceHealth(device: DeviceRecord, signal?: AbortSignal): 
       subsystems: {
         usb: device.transport === 'usb' ? 'offline' : 'unsupported',
         mux: device.transport === 'usb' ? 'offline' : 'unsupported',
-        agent: 'offline',
+        agent: getDeviceAgentSubsystemState(device, false),
         appStore: 'offline',
         testFlight: 'offline',
         sshTunnel: device.transport === 'usb' ? 'offline' : 'degraded',

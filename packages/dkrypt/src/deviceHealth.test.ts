@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { coalesceDeviceHealthRequest, collectDeviceTelemetry, formatTestFlightBridgeDownDescription, getDeviceInstallBlocker, getDeviceReadiness, isBridgeHeartbeatFresh, parseDeviceStorageDf, stabilizeDeviceHealth, testFlightBridgeReachability, type DeviceHealth } from '#deviceHealth.js';
+import { coalesceDeviceHealthRequest, collectDeviceTelemetry, formatTestFlightBridgeDownDescription, getDeviceAgentSubsystemState, getDeviceInstallBlocker, getDeviceReadiness, isBridgeHeartbeatFresh, parseDeviceStorageDf, stabilizeDeviceHealth, testFlightBridgeReachability, type DeviceHealth } from '#deviceHealth.js';
 
 function health(overrides: Partial<DeviceHealth> = {}): DeviceHealth {
   return { reachable: true, checkedAt: 0, ...overrides };
@@ -27,6 +27,14 @@ describe('getDeviceReadiness', () => {
     const now = 1_000_000;
     expect(isBridgeHeartbeatFresh({ at: (now - 90_001) / 1000 }, now)).toBeFalse();
     expect(getDeviceInstallBlocker(health({ bridgeHeartbeats: { springboard: { at: 0 } } }))).toContain('heartbeat');
+  });
+});
+
+describe('device agent subsystem health', () => {
+  test('separates a connected Rust agent from SpringBoard bridge reachability', () => {
+    expect(getDeviceAgentSubsystemState({ udid: 'usb-device' }, true)).toBe('ready');
+    expect(getDeviceAgentSubsystemState({ udid: 'usb-device' }, false)).toBe('offline');
+    expect(getDeviceAgentSubsystemState({ host: '192.0.2.10' }, true)).toBe('unsupported');
   });
 });
 
