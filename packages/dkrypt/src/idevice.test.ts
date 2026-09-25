@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
-import { createHmac } from 'node:crypto';
-import { createServer } from 'node:net';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { createHmac, generateKeyPairSync } from 'node:crypto';
+import { createServer, type AddressInfo } from 'node:net';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { Client } from 'ssh2';
@@ -9,7 +9,7 @@ import type { BridgeEnvelope, DeviceClient, DeviceSession } from './idevice.js';
 import { config } from '#config.js';
 import { BRIDGE_CAPABILITIES, BRIDGE_PROTOCOL_VERSION, TESTFLIGHT_LIFECYCLE_CAPABILITIES } from './bridgeProtocol.js';
 
-const { armAppStoreAutoConfirm, buildIpadecryptRuntimeConfig, clearAppStoreAutoConfirm, createBridgeEnvelope, createDeviceAgentEnvelope, execCommand, getDeviceAgentRetryDelay, getDeviceTransportOrder, isDirectUsbDeviceAgentConnection, readBridgeHeartbeats, retryRustDeviceHealthProbe, retryTransientSshConnection, sendAppStoreBridgeRequest, withSSH } = await import('./idevice.js' + '?idevice-transport-test');
+const { armAppStoreAutoConfirm, buildIpadecryptRuntimeConfig, clearAppStoreAutoConfirm, createBridgeEnvelope, createDeviceAgentEnvelope, execCommand, getDeviceAgentRetryDelay, getDeviceTransportOrder, isDirectUsbDeviceAgentConnection, probeDeviceSshTunnel, readBridgeHeartbeats, retryRustDeviceHealthProbe, retryTransientSshConnection, sendAppStoreBridgeRequest, withSSH } = await import('./idevice.js' + '?idevice-transport-test');
 
 type FakeExecStream = {
   stderr: {
@@ -365,6 +365,60 @@ test('retries transient Rust device health gaps before reporting USB absence', a
     return { state: 'ready', transport: 'usb', deviceCount: attempts === 3 ? 1 : 0, devicePresent: attempts === 3 };
   }, 3, 0)).resolves.toMatchObject({ devicePresent: true, deviceCount: 1 });
   expect(attempts).toBe(3);
+});
+
+test('closes the Rust-managed SSH tunnel when the SFTP service cannot be reached', async () => {
+  const runtimeDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-ssh-tunnel-probe-'));
+  const socketPath = path.join(runtimeDir, 'bridge.sock');
+  const keyPath = path.join(runtimeDir, 'device-key');
+  const secret = '0123456789abcdef0123456789abcdef';
+  const oldSocket = config.deviceBridgeSocket;
+  const oldSecret = config.deviceBridgeSecret;
+  const oldKeyPath = config.deviceSshKeyPath;
+  const oldPort = config.deviceSshPort;
+  const oldUser = config.deviceSshUser;
+  const keyPair = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  await writeFile(keyPath, keyPair.privateKey.export({ format: 'pem', type: 'pkcs1' }), { mode: 0o600 });
+  const unavailableService = createServer();
+  await new Promise<void>((resolve) => unavailableService.listen(0, '127.0.0.1', resolve));
+  const port = (unavailableService.address() as AddressInfo).port;
+  await new Promise<void>((resolve) => unavailableService.close(() => resolve()));
+  const operations: string[] = [];
+  let invalidAuthentication = false;
+  const bridge = createServer((socket) => {
+    socket.once('data', (chunk) => {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      const length = buffer.readUInt32BE(0);
+      const request = JSON.parse(buffer.subarray(4, length + 4).toString('utf8')) as { version: number; requestId: string; auth: string; operation: string };
+      operations.push(request.operation);
+      invalidAuthentication ||= request.auth !== secret;
+      const result = request.operation === 'open_tunnel'
+        ? { tunnelId: 'fixture-tunnel', host: '127.0.0.1', port }
+        : { closed: true };
+      writeFrame(socket, { version: 1, requestId: request.requestId, ok: true, result, error: null });
+    });
+  });
+  await new Promise<void>((resolve) => bridge.listen(socketPath, resolve));
+
+  config.deviceBridgeSocket = socketPath;
+  config.deviceBridgeSecret = secret;
+  config.deviceSshKeyPath = keyPath;
+  config.deviceSshPort = 22;
+  config.deviceSshUser = 'mobile';
+
+  try {
+    await expect(probeDeviceSshTunnel({ transport: 'usb', udid: 'fixture-device' })).resolves.toBe(false);
+    expect(operations).toEqual(['open_tunnel', 'close_tunnel']);
+    expect(invalidAuthentication).toBe(false);
+  } finally {
+    config.deviceBridgeSocket = oldSocket;
+    config.deviceBridgeSecret = oldSecret;
+    config.deviceSshKeyPath = oldKeyPath;
+    config.deviceSshPort = oldPort;
+    config.deviceSshUser = oldUser;
+    await new Promise<void>((resolve) => bridge.close(() => resolve()));
+    await rm(runtimeDir, { recursive: true, force: true });
+  }
 });
 
 test('creates an ipadecrypt runtime config without requiring bootstrap credentials', () => {

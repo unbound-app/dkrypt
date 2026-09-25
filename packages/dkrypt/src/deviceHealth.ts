@@ -1,5 +1,5 @@
 import { config } from '#config.js';
-import { execCommand, getRustDeviceBridgeHealth, isRustDeviceConnection, isTestFlightRunning, readBridgeHeartbeats, sendSpringBoardBridgeRequest, tryIoregCandidates, withSSH, type BridgeHeartbeat, type DeviceClient, type DeviceConnection } from '#idevice.js';
+import { execCommand, getRustDeviceBridgeHealth, isRustDeviceConnection, isTestFlightRunning, probeDeviceSshTunnel, readBridgeHeartbeats, sendSpringBoardBridgeRequest, tryIoregCandidates, withSSH, type BridgeHeartbeat, type DeviceClient, type DeviceConnection } from '#idevice.js';
 import { scopedLogger } from '#logger.js';
 import { EMBED_COLOR, notify } from '#notify.js';
 import { releasePinnedJobsForDevice } from '#jobs/store.js';
@@ -64,6 +64,11 @@ export function getDeviceAgentSubsystemState(connection: Pick<DeviceConnection, 
   return agentRequestSucceeded ? 'ready' : 'offline';
 }
 
+export function getDeviceSshTunnelSubsystemState(connection: Pick<DeviceConnection, 'udid' | 'host'>, sshSftpReady: boolean): DeviceSubsystemState {
+  if (isRustDeviceConnection(connection)) return sshSftpReady ? 'ready' : 'degraded';
+  return sshSftpReady ? 'ready' : 'offline';
+}
+
 export interface DeviceReadiness {
   score: number;
   state: 'ready' | 'caution' | 'blocked';
@@ -93,6 +98,7 @@ export function testFlightBridgeReachability(health: Pick<DeviceHealth, 'reachab
 export function getDeviceInstallBlocker(health: DeviceHealth, installSizeBytes?: number): string | undefined {
   if (!health.reachable) return health.error ?? 'device is unreachable';
   if (health.subsystems?.agent === 'offline') return 'device agent is unavailable while the USB transport is still connected';
+  if (health.subsystems?.sshTunnel === 'degraded' || health.subsystems?.sshTunnel === 'offline') return 'device SSH/SFTP tunnel is unavailable for decrypt';
   if (health.internetAccess === false) return 'device cannot reach Apple services';
   if (health.testFlightBridgeReachable === false) return 'autoinstall bridge is unresponsive';
   if (health.bridgeHeartbeats?.springboard && !isBridgeHeartbeatFresh(health.bridgeHeartbeats.springboard)) return 'autoinstall SpringBoard heartbeat is stale';
@@ -427,57 +433,56 @@ function cacheDeviceHealth(deviceId: string, value: DeviceHealth): void {
 
 async function computeDeviceHealth(device: DeviceRecord, signal?: AbortSignal): Promise<DeviceHealth> {
   try {
-    return await withSSH(device, async (conn) => {
-      const telemetry = await collectDeviceTelemetry({
+    const telemetry = await withSSH(device, async (conn) => collectDeviceTelemetry({
         testFlightRunning: () => isTestFlightRunning(conn),
         springBoardStatus: () => sendSpringBoardBridgeRequest(conn, { action: 'screen_status' }, 8_000).then((value) => ({ ok: true, value })),
         battery: () => queryBatteryStatus(conn),
         storage: () => queryDeviceStorage(conn),
         network: () => queryNetworkStatus(conn),
         bridgeHeartbeats: () => readBridgeHeartbeats(conn),
-      }, signal);
-      const health: DeviceHealth = {
-        reachable: true,
-        transport: device.transport ?? (device.udid ? 'usb' : 'wifi'),
-        transportState: 'ready',
-        lastSeenAt: Date.now(),
-        recoveryState: 'stable',
-        testFlightRunning: telemetry.testFlightRunning,
-        testFlightBridgeReachable: telemetry.testFlightBridgeReachable,
-        darkEnabled: telemetry.darkEnabled,
-        screenIsOn: telemetry.screenIsOn,
-        backlightState: telemetry.backlightState,
-        batteryPercent: telemetry.battery?.batteryPercent,
-        batteryCharging: telemetry.battery?.batteryCharging,
-        batteryTemperatureC: telemetry.battery?.batteryTemperatureC,
-        batteryCycleCount: telemetry.battery?.batteryCycleCount,
-        batteryHealthPercent: telemetry.battery?.batteryHealthPercent,
-        batteryDesignCapacityMah: telemetry.battery?.batteryDesignCapacityMah,
-        batteryMaxCapacityMah: telemetry.battery?.batteryMaxCapacityMah,
-        storageTotalBytes: telemetry.storage?.totalBytes,
-        storageUsedBytes: telemetry.storage?.usedBytes,
-        storageFreeBytes: telemetry.storage?.freeBytes,
-        storageUsedPercent: telemetry.storage?.usedPercent,
-        networkConnected: telemetry.network?.networkConnected,
-        internetAccess: telemetry.network?.internetAccess,
-        networkIpAddress: telemetry.network?.ipAddress,
-        networkInterface: telemetry.network?.networkInterface,
-        bridgeHeartbeats: telemetry.bridgeHeartbeats,
-        subsystems: {
-          usb: device.transport === 'usb' ? 'ready' : 'unsupported',
-          mux: 'ready',
-          agent: getDeviceAgentSubsystemState(device, true),
-          appStore: isBridgeHeartbeatFresh(telemetry.bridgeHeartbeats.appstore) ? 'ready' : 'unknown',
-          testFlight: isBridgeHeartbeatFresh(telemetry.bridgeHeartbeats.testflight) ? 'ready' : 'unknown',
-          sshTunnel: device.udid || device.host ? 'ready' : 'degraded',
-          storage: telemetry.storage ? 'ready' : 'unknown',
-          battery: telemetry.battery ? 'ready' : 'unknown',
-          thermal: telemetry.battery?.batteryTemperatureC === undefined ? 'unknown' : 'ready',
-        },
-        checkedAt: Date.now(),
-      };
-      return { ...health, readiness: getDeviceReadiness(health) };
-    }, signal);
+      }, signal), signal);
+    const sshSftpReady = await probeDeviceSshTunnel(device, signal);
+    const health: DeviceHealth = {
+      reachable: true,
+      transport: device.transport ?? (device.udid ? 'usb' : 'wifi'),
+      transportState: 'ready',
+      lastSeenAt: Date.now(),
+      recoveryState: 'stable',
+      testFlightRunning: telemetry.testFlightRunning,
+      testFlightBridgeReachable: telemetry.testFlightBridgeReachable,
+      darkEnabled: telemetry.darkEnabled,
+      screenIsOn: telemetry.screenIsOn,
+      backlightState: telemetry.backlightState,
+      batteryPercent: telemetry.battery?.batteryPercent,
+      batteryCharging: telemetry.battery?.batteryCharging,
+      batteryTemperatureC: telemetry.battery?.batteryTemperatureC,
+      batteryCycleCount: telemetry.battery?.batteryCycleCount,
+      batteryHealthPercent: telemetry.battery?.batteryHealthPercent,
+      batteryDesignCapacityMah: telemetry.battery?.batteryDesignCapacityMah,
+      batteryMaxCapacityMah: telemetry.battery?.batteryMaxCapacityMah,
+      storageTotalBytes: telemetry.storage?.totalBytes,
+      storageUsedBytes: telemetry.storage?.usedBytes,
+      storageFreeBytes: telemetry.storage?.freeBytes,
+      storageUsedPercent: telemetry.storage?.usedPercent,
+      networkConnected: telemetry.network?.networkConnected,
+      internetAccess: telemetry.network?.internetAccess,
+      networkIpAddress: telemetry.network?.ipAddress,
+      networkInterface: telemetry.network?.networkInterface,
+      bridgeHeartbeats: telemetry.bridgeHeartbeats,
+      subsystems: {
+        usb: device.transport === 'usb' ? 'ready' : 'unsupported',
+        mux: 'ready',
+        agent: getDeviceAgentSubsystemState(device, true),
+        appStore: isBridgeHeartbeatFresh(telemetry.bridgeHeartbeats.appstore) ? 'ready' : 'unknown',
+        testFlight: isBridgeHeartbeatFresh(telemetry.bridgeHeartbeats.testflight) ? 'ready' : 'unknown',
+        sshTunnel: getDeviceSshTunnelSubsystemState(device, sshSftpReady),
+        storage: telemetry.storage ? 'ready' : 'unknown',
+        battery: telemetry.battery ? 'ready' : 'unknown',
+        thermal: telemetry.battery?.batteryTemperatureC === undefined ? 'unknown' : 'ready',
+      },
+      checkedAt: Date.now(),
+    };
+    return { ...health, readiness: getDeviceReadiness(health) };
   } catch (err) {
     throwIfAborted(signal);
     const error = err instanceof Error ? err.message : String(err);
@@ -487,6 +492,7 @@ async function computeDeviceHealth(device: DeviceRecord, signal?: AbortSignal): 
         const bridge = await getRustDeviceBridgeHealth(device);
         throwIfAborted(signal);
         if (bridge.state === 'ready') {
+          const sshSftpReady = await probeDeviceSshTunnel(device, signal);
           const health: DeviceHealth = {
             reachable: true,
             transport: bridge.transport,
@@ -502,7 +508,7 @@ async function computeDeviceHealth(device: DeviceRecord, signal?: AbortSignal): 
               agent: getDeviceAgentSubsystemState(device, false),
               appStore: 'unknown',
               testFlight: 'unknown',
-              sshTunnel: 'ready',
+              sshTunnel: getDeviceSshTunnelSubsystemState(device, sshSftpReady),
               storage: 'unknown',
               battery: 'unknown',
               thermal: 'unknown',
@@ -512,6 +518,7 @@ async function computeDeviceHealth(device: DeviceRecord, signal?: AbortSignal): 
           return { ...health, readiness: getDeviceReadiness(health) };
         }
       } catch (bridgeError) {
+        throwIfAborted(signal);
         log.warn('Rust device bridge health query failed', { deviceId: device.id, error: String(bridgeError) });
       }
     }

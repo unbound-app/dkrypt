@@ -33,6 +33,7 @@ const DEVICE_AGENT_CONNECT_RETRIES = 6;
 const DEVICE_AGENT_RETRY_DELAY_MS = 500;
 const DEVICE_AGENT_IDLE_TIMEOUT_MS = 5 * 60_000;
 const USBMUX_TUNNEL_READY_TIMEOUT_MS = 8_000;
+const SSH_SFTP_PROBE_TIMEOUT_MS = 5_000;
 
 export type { BridgeChannel } from '#bridgeProtocol.js';
 
@@ -736,6 +737,63 @@ async function withDeviceTunnel<T>(connection: DeviceConnection | string, fn: (a
   }
 }
 
+export async function probeDeviceSshTunnel(connection: DeviceConnection, signal?: AbortSignal): Promise<boolean> {
+  const startedAt = performance.now();
+  let ready = false;
+  try {
+    await withDeviceTunnel(connection, async (auth) => {
+      const privateKey = await readFile(auth.keyPath);
+      throwIfAborted(signal);
+      const client = await retryTransientSshConnection(
+        () => connectSshClient(auth, privateKey, signal, 5_000),
+        SSH_HANDSHAKE_RETRIES,
+        SSH_HANDSHAKE_RETRY_DELAY_MS,
+        signal,
+      );
+      try {
+        await new Promise<void>((resolve, reject) => {
+          let settled = false;
+          let timeout: NodeJS.Timeout;
+          const finish = (error?: Error) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeout);
+            signal?.removeEventListener('abort', onAbort);
+            if (error) reject(error);
+            else resolve();
+          };
+          const onAbort = () => finish(abortedOperationError(signal as AbortSignal));
+          timeout = setTimeout(() => finish(new Error('SSH SFTP subsystem probe timed out')), SSH_SFTP_PROBE_TIMEOUT_MS);
+          signal?.addEventListener('abort', onAbort, { once: true });
+          if (signal?.aborted) {
+            onAbort();
+            return;
+          }
+          client.sftp((error, sftp) => {
+            if (error) {
+              finish(error);
+              return;
+            }
+            sftp.end();
+            finish();
+          });
+        });
+      } finally {
+        client.end();
+      }
+    }, signal);
+    throwIfAborted(signal);
+    ready = true;
+    return ready;
+  } catch {
+    throwIfAborted(signal);
+    return ready;
+  } finally {
+    incrementMetric('device_ssh_sftp_probes_total', { outcome: ready ? 'ready' : 'unavailable' });
+    observeMetric('device_ssh_sftp_probe_duration_ms', performance.now() - startedAt);
+  }
+}
+
 function makeSerialQueue() {
   let queue: Promise<unknown> = Promise.resolve();
   return function withLock<T>(fn: () => Promise<T>): Promise<T> {
@@ -779,7 +837,7 @@ export async function retryTransientSshConnection<T>(operation: () => Promise<T>
   }
 }
 
-function connectSshClient(auth: DeviceAuth, privateKey: Buffer, signal?: AbortSignal): Promise<Client> {
+function connectSshClient(auth: DeviceAuth, privateKey: Buffer, signal?: AbortSignal, readyTimeoutMs = 15_000): Promise<Client> {
   const conn = new Client();
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -802,7 +860,7 @@ function connectSshClient(auth: DeviceAuth, privateKey: Buffer, signal?: AbortSi
     if (signal?.aborted) onAbort();
     try {
       if (settled) return;
-      conn.connect({ host: auth.host, port: auth.port, username: auth.user, privateKey, readyTimeout: 15_000 });
+      conn.connect({ host: auth.host, port: auth.port, username: auth.user, privateKey, readyTimeout: readyTimeoutMs });
     } catch (error) {
       fail(error instanceof Error ? error : new Error(String(error)));
     }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { coalesceDeviceHealthRequest, collectDeviceTelemetry, formatTestFlightBridgeDownDescription, getDeviceAgentSubsystemState, getDeviceInstallBlocker, getDeviceReadiness, isBridgeHeartbeatFresh, parseDeviceStorageDf, stabilizeDeviceHealth, testFlightBridgeReachability, type DeviceHealth } from '#deviceHealth.js';
+import { coalesceDeviceHealthRequest, collectDeviceTelemetry, formatTestFlightBridgeDownDescription, getDeviceAgentSubsystemState, getDeviceInstallBlocker, getDeviceReadiness, getDeviceSshTunnelSubsystemState, isBridgeHeartbeatFresh, parseDeviceStorageDf, stabilizeDeviceHealth, testFlightBridgeReachability, type DeviceHealth } from '#deviceHealth.js';
 
 function health(overrides: Partial<DeviceHealth> = {}): DeviceHealth {
   return { reachable: true, checkedAt: 0, ...overrides };
@@ -28,6 +28,26 @@ describe('getDeviceReadiness', () => {
     expect(isBridgeHeartbeatFresh({ at: (now - 90_001) / 1000 }, now)).toBeFalse();
     expect(getDeviceInstallBlocker(health({ bridgeHeartbeats: { springboard: { at: 0 } } }))).toContain('heartbeat');
   });
+
+  test('blocks decrypt when USB SSH or SFTP is unavailable without marking the device offline', () => {
+    const deviceHealth = health({
+      subsystems: {
+        usb: 'ready',
+        mux: 'ready',
+        agent: 'ready',
+        appStore: 'unknown',
+        testFlight: 'unknown',
+        sshTunnel: 'degraded',
+        storage: 'unknown',
+        battery: 'unknown',
+        thermal: 'unknown',
+      },
+    });
+
+    expect(deviceHealth.reachable).toBe(true);
+    expect(getDeviceReadiness(deviceHealth).state).toBe('ready');
+    expect(getDeviceInstallBlocker(deviceHealth)).toBe('device SSH/SFTP tunnel is unavailable for decrypt');
+  });
 });
 
 describe('device agent subsystem health', () => {
@@ -35,6 +55,14 @@ describe('device agent subsystem health', () => {
     expect(getDeviceAgentSubsystemState({ udid: 'usb-device' }, true)).toBe('ready');
     expect(getDeviceAgentSubsystemState({ udid: 'usb-device' }, false)).toBe('offline');
     expect(getDeviceAgentSubsystemState({ host: '192.0.2.10' }, true)).toBe('unsupported');
+  });
+});
+
+describe('device SSH/SFTP subsystem health', () => {
+  test('keeps tunnel failure decrypt-specific for a working Rust device connection', () => {
+    expect(getDeviceSshTunnelSubsystemState({ udid: 'usb-device' }, true)).toBe('ready');
+    expect(getDeviceSshTunnelSubsystemState({ udid: 'usb-device' }, false)).toBe('degraded');
+    expect(getDeviceSshTunnelSubsystemState({ host: '192.0.2.10' }, false)).toBe('offline');
   });
 });
 
