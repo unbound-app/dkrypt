@@ -49,6 +49,7 @@
     "@types/ssh2": "^1.15.6",
     "@types/web-push": "^3.6.4",
     "bun-types": "^1.4.2",
+    "fast-check": "^4.10.2",
     "typescript": "^5.7.2"
   }
 }
