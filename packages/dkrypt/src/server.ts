@@ -51,6 +51,35 @@ function shouldRateLimitApiRequest(url: string): boolean {
   ].includes(path);
 }
 
+function normalizeApiErrorPayload(
+  request: { url: string; id: string },
+  reply: { statusCode: number; getHeader(name: string): unknown },
+  payload: unknown,
+): unknown {
+  if (!request.url.startsWith('/v1/') || reply.statusCode < 400) return payload;
+  const contentType = reply.getHeader('content-type');
+  if (typeof contentType !== 'string' || !contentType.includes('application/json')) return payload;
+  const raw = typeof payload === 'string' ? payload : Buffer.isBuffer(payload) ? payload.toString('utf8') : undefined;
+  if (!raw) return payload;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return payload;
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return payload;
+  const body = parsed as Record<string, unknown>;
+  const message = typeof body.message === 'string' ? body.message : typeof body.error === 'string' ? body.error : 'request failed';
+  return JSON.stringify({
+    ...body,
+    error: typeof body.error === 'string' ? body.error : message,
+    code: typeof body.code === 'string' ? body.code : `http_${reply.statusCode}`,
+    message,
+    requestId: typeof body.requestId === 'string' ? body.requestId : request.id,
+    retryable: typeof body.retryable === 'boolean' ? body.retryable : reply.statusCode >= 500 || reply.statusCode === 429 || reply.statusCode === 503,
+  });
+}
+
 export async function buildServer(options: { includePublicRoutes?: boolean } = {}): Promise<FastifyInstance> {
   const server = Fastify({ bodyLimit: 5 * 1024 * 1024, trustProxy: 'loopback' }).withTypeProvider<TypeBoxTypeProvider>();
 
@@ -142,13 +171,14 @@ export async function buildServer(options: { includePublicRoutes?: boolean } = {
   }
 
   server.addHook('onSend', (request, reply, payload, done) => {
+    const normalizedPayload = normalizeApiErrorPayload(request, reply, payload);
     if (!request.url.startsWith('/assets/') && !reply.hasHeader('Cache-Control')) reply.header('Cache-Control', 'no-store');
     reply.header('X-Content-Type-Options', 'nosniff');
     reply.header('Referrer-Policy', 'strict-origin-when-cross-origin');
     reply.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), usb=()');
     reply.header('Content-Security-Policy', "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; object-src 'none'; img-src 'self' data: https:; style-src 'self'; style-src-elem 'self'; style-src-attr 'unsafe-inline'; script-src 'self'; connect-src 'self'; font-src 'self' data:");
     if (config.publicBaseUrl.startsWith('https://')) reply.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-    done(null, payload);
+    done(null, normalizedPayload);
   });
 
   server.get('/openapi.json', (_request, reply) => reply.send(server.swagger()));

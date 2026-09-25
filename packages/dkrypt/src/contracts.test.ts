@@ -230,3 +230,31 @@ test('successful route responses never fall back to generic JSON', () => {
     }
   }
 });
+
+test('response declarations preserve earlier request schemas', () => {
+  const login = getRouteContracts().get('POST /v1/auth/login');
+  const loginBody = login?.body as { properties?: Record<string, unknown> } | undefined;
+  expect(loginBody?.properties).toHaveProperty('password');
+  expect(login?.response).toHaveProperty('200');
+
+  const decrypt = getRouteContracts().get('GET /v1/decrypt');
+  const decryptQuery = decrypt?.querystring as { properties?: Record<string, unknown> } | undefined;
+  expect(decryptQuery?.properties).toHaveProperty('bundleId');
+  expect(decrypt?.response).toHaveProperty('200');
+});
+
+test('streaming and file responses publish their wire formats', async () => {
+  const server = await buildServer({ includePublicRoutes: false });
+  try {
+    await server.ready();
+    const document = server.swagger() as {
+      paths?: Record<string, Record<string, { responses?: Record<string, { content?: Record<string, unknown> }> }>>;
+    };
+    expect(Object.keys(document.paths?.['/v1/dashboard/events']?.get?.responses?.['200']?.content ?? {})).toEqual(['text/event-stream']);
+    expect(Object.keys(document.paths?.['/v1/metrics']?.get?.responses?.['200']?.content ?? {})).toEqual(['text/plain']);
+    expect(Object.keys(document.paths?.['/v1/artifacts/{id}/file']?.get?.responses?.['200']?.content ?? {})).toEqual(['application/octet-stream']);
+    expect(Object.keys(document.paths?.['/v1/dashboard/backup/history/{id}/download']?.get?.responses?.['200']?.content ?? {})).toEqual(['application/octet-stream']);
+  } finally {
+    await server.close();
+  }
+});

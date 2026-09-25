@@ -135,6 +135,24 @@ test('Fastify emits a narrow content security policy', async () => {
   }
 });
 
+test('Fastify normalizes API errors into the shared error envelope', async () => {
+  const server = await buildServer({ includePublicRoutes: false });
+
+  try {
+    const response = await server.inject({ method: 'GET', url: '/v1/dashboard/overview' });
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toMatchObject({
+      error: expect.any(String),
+      code: expect.any(String),
+      message: expect.any(String),
+      requestId: expect.any(String),
+      retryable: false,
+    });
+  } finally {
+    await server.close();
+  }
+});
+
 test('Fastify exposes coarse public service status without device details', async () => {
   const server = await buildServer({ includePublicRoutes: false });
 

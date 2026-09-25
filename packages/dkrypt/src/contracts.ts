@@ -762,7 +762,9 @@ const TestFlightDiagnosticsResponse = object({
   recentLog: Type.Optional(Type.Array(Type.String())),
 });
 const DispatchTriggerResponse = object({ ok: Type.Boolean(), error: Type.Optional(Type.String()) });
-const BinaryFileResponse = Type.String({ format: 'binary' });
+const BinaryFileResponse = { content: { 'application/octet-stream': { schema: Type.String({ format: 'binary' }) } } };
+const EventStreamResponse = { content: { 'text/event-stream': { schema: Type.String() } } };
+const PrometheusResponse = { content: { 'text/plain': { schema: Type.String() } } };
 const WebhookReplayResponse = object({ replayed: Type.Boolean(), duplicate: Type.Optional(Type.Boolean()), status: Type.String() });
 const WebhookQuarantineResponse = object({ record: Type.Optional(JsonObject) });
 const DeviceConnectionInput = object({
@@ -821,12 +823,19 @@ function object(properties: Record<string, TSchema>): TSchema {
 const contracts = new Map<string, FastifySchema>();
 
 function register(method: string, path: string, schema: FastifySchema): void {
+  const key = `${method} ${path}`;
+  const previous = contracts.get(key);
   const customResponses = schema.response as Record<string, unknown> | undefined;
-  contracts.set(`${method} ${path}`, {
-    tags: schema.tags ?? [path.startsWith('/v1/dashboard') ? 'dashboard' : 'public'],
-    summary: schema.summary ?? `${method} ${path}`,
+  const previousResponses = previous?.response as Record<string, unknown> | undefined;
+  const inheritedResponses = { ...(previousResponses ?? {}) };
+  if (inheritedResponses[200] === JsonResponse && customResponses) delete inheritedResponses[200];
+  contracts.set(key, {
+    ...previous,
+    tags: schema.tags ?? previous?.tags ?? [path.startsWith('/v1/dashboard') ? 'dashboard' : 'public'],
+    summary: schema.summary ?? previous?.summary ?? `${method} ${path}`,
     ...schema,
     response: {
+      ...inheritedResponses,
       ...(customResponses ? {} : { 200: JsonResponse }),
       400: ErrorEnvelope,
       401: ErrorEnvelope,
@@ -1435,7 +1444,7 @@ register('GET', '/v1/dashboard/webhooks', {
   response: { 200: WebhookDeliveryPageResponse },
 });
 register('GET', '/v1/dashboard/events', {
-  response: { 200: Type.String() },
+  response: { 200: EventStreamResponse },
 });
 register('GET', '/v1/dashboard/jobs/:id/diagnostic', {
   params: object({ id: Identifier }),
@@ -1463,7 +1472,7 @@ register('GET', '/v1/dashboard/backup/export', {
 });
 register('GET', '/v1/dashboard/backup/history/:id/download', {
   params: object({ id: Identifier }),
-  response: { 200: Type.String() },
+  response: { 200: BinaryFileResponse },
 });
 register('POST', '/v1/dashboard/backup/import', {
   body: JsonObject,
@@ -1591,7 +1600,7 @@ register('POST', '/v1/nowpayments/webhook', {
   response: { 200: WebhookReceiptResponse },
 });
 register('GET', '/v1/metrics', {
-  response: { 200: Type.String() },
+  response: { 200: PrometheusResponse },
 });
 register('GET', '/v1/decrypt', {
   querystring: object({ bundleId: BundleId, externalVersionId: Type.Optional(Identifier), version: Type.Optional(VersionSelector) }),
