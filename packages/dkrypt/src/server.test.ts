@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test } from 'bun:test';
-import { buildArtifactFileUrl, promoteArtifact } from '#artifacts.js';
+import { buildArtifactFileUrl, promoteArtifact, touchArtifact } from '#artifacts.js';
 import { exportBillingSnapshot, replaceBillingSnapshot, upsertBillingSubscription } from '#billing.js';
 import { upsertAuthProfile } from '#identity.js';
 import { scopedLogger } from '#logger.js';
@@ -716,6 +716,7 @@ test('artifact cursors keep their boundary when a newer artifact is promoted', a
       externalVersionId: 'new',
       stagingPath,
     }));
+    await touchArtifact(artifacts[1]);
     const secondResponse = await server.inject({
       method: 'GET',
       url: `/v1/dashboard/artifacts?limit=2&q=${encodeURIComponent(bundleId)}&cursor=${encodeURIComponent(first.nextCursor as string)}`,
@@ -905,7 +906,7 @@ test('log cursors keep their boundary when a newer log entry is recorded', async
   }
 });
 
-test('billing subscription cursors keep their boundary when a newer subscription is added', async () => {
+test('billing subscription cursors keep their boundary when subscriptions change between pages', async () => {
   const { server, cookie } = await signIn();
   const previousSnapshot = exportBillingSnapshot();
   const idPrefix = `cursor-billing-${crypto.randomUUID()}`;
@@ -922,10 +923,10 @@ test('billing subscription cursors keep their boundary when a newer subscription
     occurredAt: new Date(at).toISOString(),
     updatedAt: new Date(at).toISOString(),
   });
-  const older = subscription('m-older', baseTime - 1_000);
-  const current = subscription('z-current', baseTime);
-  upsertBillingSubscription(older);
+  const current = subscription('current', baseTime);
+  const older = subscription('older', baseTime - 1_000);
   upsertBillingSubscription(current);
+  upsertBillingSubscription(older);
 
   try {
     const firstResponse = await server.inject({
@@ -938,8 +939,8 @@ test('billing subscription cursors keep their boundary when a newer subscription
     expect(first.subscriptions[0].subscriptionId).toBe(current.subscriptionId);
     expect(first.nextCursor).toEqual(expect.any(String));
 
-    upsertBillingSubscription(subscription('zz-new', baseTime + 1_000));
-    upsertBillingSubscription(subscription('m-older', baseTime + 2_000));
+    upsertBillingSubscription(subscription('new', baseTime + 1_000));
+    upsertBillingSubscription(subscription('older', baseTime + 2_000));
     const secondResponse = await server.inject({
       method: 'GET',
       url: `/v1/billing/subscriptions?limit=1&q=${encodeURIComponent(idPrefix)}&cursor=${encodeURIComponent(first.nextCursor as string)}`,

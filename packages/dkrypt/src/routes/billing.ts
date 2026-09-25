@@ -11,6 +11,7 @@ import {
   hasActiveBillingSubscription,
   hasLegacyBillingRecord,
   linkBillingCustomer,
+  listBillingSubscriptions,
   listPlans,
   planForPrice,
   upsertBillingCustomer,
@@ -451,16 +452,20 @@ billingRouter.get('/v1/billing/subscriptions', requirePermission(PermissionFlag.
   const limit = Math.min(Math.max(Number.parseInt(String(req.query?.limit ?? '50'), 10) || 50, 1), 100);
   const cursor = typeof req.query?.cursor === 'string' ? req.query.cursor : undefined;
   const offset = cursor ? 0 : Math.max(Number.parseInt(String(req.query?.offset ?? '0'), 10) || 0, 0);
+  const subscriptionOrder = new Map(
+    listBillingSubscriptions().map((subscription, index) => [`${subscription.provider}:${subscription.subscriptionId}`, index]),
+  );
   const subscriptions = listManagerBillingSubscriptions({ query, provider, status, planId, from, to, wallet, invoice });
   const page = paginateCursor(subscriptions, {
     cursor,
     offset,
     limit,
     keyOf: (subscription) => [
+      subscriptionOrder.get(`${String(subscription.provider)}:${String(subscription.subscriptionId)}`) ?? Number.MAX_SAFE_INTEGER,
       typeof subscription.provider === 'string' ? subscription.provider : '',
       typeof subscription.subscriptionId === 'string' ? subscription.subscriptionId : '',
     ],
-    order: 'desc',
+    order: 'asc',
   });
   res.json({ subscriptions: page.items, total: subscriptions.length, nextCursor: page.nextCursor });
 });
