@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import Stripe from 'stripe';
 import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
-import { Router, type Request, type Response } from '#http.js';
+import type { FastifyReply, FastifyRequest } from 'fastify';
 import { getRouteContract } from '#contracts.js';
 import {
   acquireBillingCheckoutLock,
@@ -32,7 +32,7 @@ import {
 import { getNowPaymentsProviderStatus } from '#nowpayments.js';
 import { getAuthProfile, resolveAuthUserId } from '#identity.js';
 import { log } from '#logger.js';
-import { requirePermission, requireSession } from '#session.js';
+import { fastifyRequirePermission, fastifyRequireSession, getFastifySession } from '#session.js';
 import { PermissionFlag } from '#permissions.js';
 import { recordAudit } from '#store/state.js';
 import { constructStripeWebhookEvent, getStripe } from '#stripe.js';
@@ -45,9 +45,19 @@ function metadataUserId(metadata: unknown): string | undefined {
   return typeof value === 'string' && value.length <= 160 ? resolveAuthUserId(value) : undefined;
 }
 
-function requireStripeBilling(res: Response): boolean {
+function sendBillingError(request: FastifyRequest, reply: FastifyReply, statusCode: number, message: string) {
+  return reply.code(statusCode).send({
+    error: message,
+    code: statusCode >= 500 ? 'internal_error' : 'request_error',
+    message,
+    requestId: request.id,
+    retryable: statusCode >= 500 || statusCode === 429 || statusCode === 503,
+  });
+}
+
+function requireStripeBilling(request: FastifyRequest, reply: FastifyReply): boolean {
   if (stripeEnabled) return true;
-  res.status(503).json({ error: 'Stripe billing is not configured' });
+  sendBillingError(request, reply, 503, 'Stripe billing is not configured');
   return false;
 }
 
@@ -187,15 +197,15 @@ export const billingWebhookRoutes: FastifyPluginAsyncTypebox = async (server) =>
   server.post('/v1/stripe/webhook', { schema: getRouteContract('POST', '/v1/stripe/webhook') }, async (request, reply) => {
     const signature = webhookSignatureHeader(request.headers['stripe-signature']);
     const rawBody = webhookRawBody(request.body);
-    if (!signature || !rawBody) return reply.code(400).send({ error: 'missing signature or body' });
-    if (!config.stripeSecretKey || !config.stripeWebhookSecret) return reply.code(503).send({ error: 'Stripe webhook is not configured' });
+    if (!signature || !rawBody) return sendBillingError(request, reply, 400, 'missing signature or body');
+    if (!config.stripeSecretKey || !config.stripeWebhookSecret) return sendBillingError(request, reply, 503, 'Stripe webhook is not configured');
 
     let event: Stripe.Event;
     try {
       event = await constructStripeWebhookEvent(rawBody, signature);
     } catch (error) {
       log.warn('Stripe webhook signature verification failed', { error: String(error) });
-      return reply.code(400).send({ error: 'invalid webhook signature' });
+      return sendBillingError(request, reply, 400, 'invalid webhook signature');
     }
 
     const result = await processWebhookDelivery('stripe', event.id, rawBody, () => processStripeEvent(event), (error) => {
@@ -207,20 +217,20 @@ export const billingWebhookRoutes: FastifyPluginAsyncTypebox = async (server) =>
   server.post('/v1/nowpayments/webhook', { schema: getRouteContract('POST', '/v1/nowpayments/webhook') }, async (request, reply) => {
     const signature = webhookSignatureHeader(request.headers['x-nowpayments-sig']);
     const rawBody = webhookRawBody(request.body);
-    if (!signature || !rawBody) return reply.code(400).send({ error: 'missing signature or body' });
-    if (!config.nowpaymentsIpnSecret && !config.nowpaymentsIpnSecretPrevious) return reply.code(503).send({ error: 'NOWPayments IPN is not configured' });
+    if (!signature || !rawBody) return sendBillingError(request, reply, 400, 'missing signature or body');
+    if (!config.nowpaymentsIpnSecret && !config.nowpaymentsIpnSecretPrevious) return sendBillingError(request, reply, 503, 'NOWPayments IPN is not configured');
     if (!verifyNowPaymentsEvent(rawBody, signature)) {
       log.warn('NOWPayments IPN signature verification failed');
-      return reply.code(400).send({ error: 'invalid webhook signature' });
+      return sendBillingError(request, reply, 400, 'invalid webhook signature');
     }
     let payload: unknown;
     try {
       payload = JSON.parse(rawBody.toString('utf8'));
     } catch {
-      return reply.code(400).send({ error: 'invalid webhook body' });
+      return sendBillingError(request, reply, 400, 'invalid webhook body');
     }
     if (typeof payload !== 'object' || payload === null || typeof (payload as { payment_status?: unknown }).payment_status !== 'string') {
-      return reply.code(400).send({ error: 'invalid IPN payload' });
+      return sendBillingError(request, reply, 400, 'invalid IPN payload');
     }
     const payment = payload as Parameters<typeof processNowPaymentsEvent>[0]['payment'];
     const paymentId = payment.payment_id === undefined ? payment.order_id ?? 'unknown' : String(payment.payment_id);
@@ -232,332 +242,273 @@ export const billingWebhookRoutes: FastifyPluginAsyncTypebox = async (server) =>
   });
 };
 
-export const billingRouter = Router();
-
-billingRouter.get('/v1/billing', requireSession, async (_req, res) => {
-  const userId = res.locals.session.sub;
-  const profile = getAuthProfile(userId);
-  const entitlement = getBillingEntitlements(userId);
-  const crypto = await getNowPaymentsProviderStatus();
-  res.json({
-    enabled: stripeEnabled || crypto.enabled,
-    provider: entitlement.provider ?? 'stripe',
-    environment: stripeEnvironment,
-    managedPayments: true,
-    missingConfiguration: stripeEnabled ? [] : stripeMissingConfiguration,
-    providers: {
-      stripe: { enabled: stripeEnabled, environment: stripeEnvironment, managedPayments: true, missingConfiguration: stripeMissingConfiguration },
-      crypto: { provider: 'nowpayments', enabled: crypto.enabled, ready: crypto.enabled && crypto.ready, environment: crypto.environment, settlementCurrency: crypto.settlementCurrency, assets: crypto.supportedAssets },
-    },
-    plans: listPlans(),
-    customerId: getBillingCustomerId(userId),
-    customerEmail: profile?.email,
-    legacyBilling: hasLegacyBillingRecord(userId),
-    entitlement,
+export const billingRoutes: FastifyPluginAsyncTypebox = async (server) => {
+  server.get('/v1/billing', { schema: getRouteContract('GET', '/v1/billing'), preHandler: fastifyRequireSession }, async (request, reply) => {
+    const userId = getFastifySession(request)!.sub;
+    const profile = getAuthProfile(userId);
+    const entitlement = getBillingEntitlements(userId);
+    const crypto = await getNowPaymentsProviderStatus();
+    return reply.send({
+      enabled: stripeEnabled || crypto.enabled,
+      provider: entitlement.provider ?? 'stripe',
+      environment: stripeEnvironment,
+      managedPayments: true,
+      missingConfiguration: stripeEnabled ? [] : stripeMissingConfiguration,
+      providers: {
+        stripe: { enabled: stripeEnabled, environment: stripeEnvironment, managedPayments: true, missingConfiguration: stripeMissingConfiguration },
+        crypto: { provider: 'nowpayments', enabled: crypto.enabled, ready: crypto.enabled && crypto.ready, environment: crypto.environment, settlementCurrency: crypto.settlementCurrency, assets: crypto.supportedAssets },
+      },
+      plans: listPlans(),
+      customerId: getBillingCustomerId(userId),
+      customerEmail: profile?.email,
+      legacyBilling: hasLegacyBillingRecord(userId),
+      entitlement,
+    });
   });
-});
 
-const billingIdempotencyKeyPattern = /^[A-Za-z0-9._~-]{1,200}$/;
+  const billingIdempotencyKeyPattern = /^[A-Za-z0-9._~-]{1,200}$/;
 
-function getBillingIdempotencyKey(req: Request, res: Response, userId: string, operation: string): string | undefined {
-  const key = req.header('idempotency-key') ?? '';
-  if (!billingIdempotencyKeyPattern.test(key)) {
-    res.status(400).json({ error: 'Idempotency-Key must be 1-200 URL-safe characters' });
-    return undefined;
+  function getBillingIdempotencyKey(request: FastifyRequest, reply: FastifyReply, userId: string, operation: string): string | undefined {
+    const header = request.headers['idempotency-key'];
+    const key = Array.isArray(header) ? header[0] ?? '' : header ?? '';
+    if (!billingIdempotencyKeyPattern.test(key)) {
+      sendBillingError(request, reply, 400, 'Idempotency-Key must be 1-200 URL-safe characters');
+      return undefined;
+    }
+    return `dkrypt-${operation}-${createHash('sha256').update(`${operation}:${userId}:${key}`).digest('hex')}`;
   }
-  return `dkrypt-${operation}-${createHash('sha256').update(`${operation}:${userId}:${key}`).digest('hex')}`;
-}
 
-function createIntegrationIdentifier(): string {
-  const alphabet = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
-  const suffix = Array.from(randomBytes(8), (byte) => alphabet[byte % alphabet.length]).join('');
-  return `dkrypt_${suffix}`;
-}
+  function createIntegrationIdentifier(): string {
+    const alphabet = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    const suffix = Array.from(randomBytes(8), (byte) => alphabet[byte % alphabet.length]).join('');
+    return `dkrypt_${suffix}`;
+  }
 
-billingRouter.post('/v1/billing/checkout', requireSession, async (req, res) => {
-  const userId = res.locals.session.sub;
-  const target = getPlan(typeof req.body?.planId === 'string' ? req.body.planId : '');
-  if (!target) {
-    res.status(400).json({ error: 'unknown plan' });
-    return;
-  }
-  const provider = req.body?.provider === undefined ? 'stripe' : req.body.provider;
-  if (provider !== 'stripe' && provider !== 'crypto') {
-    res.status(400).json({ error: 'unsupported billing provider' });
-    return;
-  }
-  const idempotencyKey = getBillingIdempotencyKey(req, res, userId, `checkout-${provider}`);
-  if (!idempotencyKey) return;
-  if (!acquireBillingCheckoutLock(userId)) {
-    res.status(409).json({ error: 'another checkout is already in progress for this account' });
-    return;
-  }
-  if (provider === 'crypto') {
-    try {
-      const cryptoAsset = typeof req.body?.cryptoAsset === 'string' ? req.body.cryptoAsset : undefined;
-      const result = await createCryptoCheckout({ userId, planId: target.id, idempotencyKey, asset: cryptoAsset });
-      res.status(result.reused ? 200 : 201).json({ url: result.checkout.checkoutUrl, provider: 'nowpayments', checkoutId: result.checkout.checkoutId, status: result.checkout.status });
-    } catch (error) {
-      if (error instanceof CryptoBillingError) {
-        res.status(error.statusCode).json({ error: error.message });
-        return;
+  server.post('/v1/billing/checkout', { schema: getRouteContract('POST', '/v1/billing/checkout'), preHandler: fastifyRequireSession }, async (request, reply) => {
+    const userId = getFastifySession(request)!.sub;
+    const body = request.body as { planId?: unknown; provider?: unknown; cryptoAsset?: unknown };
+    const target = getPlan(typeof body?.planId === 'string' ? body.planId : '');
+    if (!target) return sendBillingError(request, reply, 400, 'unknown plan');
+    const provider = body?.provider === undefined ? 'stripe' : body.provider;
+    if (provider !== 'stripe' && provider !== 'crypto') return sendBillingError(request, reply, 400, 'unsupported billing provider');
+    const idempotencyKey = getBillingIdempotencyKey(request, reply, userId, `checkout-${provider}`);
+    if (!idempotencyKey) return;
+    if (!acquireBillingCheckoutLock(userId)) return sendBillingError(request, reply, 409, 'another checkout is already in progress for this account');
+    if (provider === 'crypto') {
+      try {
+        const cryptoAsset = typeof body?.cryptoAsset === 'string' ? body.cryptoAsset : undefined;
+        const result = await createCryptoCheckout({ userId, planId: target.id, idempotencyKey, asset: cryptoAsset });
+        return reply.code(result.reused ? 200 : 201).send({ url: result.checkout.checkoutUrl, provider: 'nowpayments', checkoutId: result.checkout.checkoutId, status: result.checkout.status });
+      } catch (error) {
+        if (error instanceof CryptoBillingError) return sendBillingError(request, reply, error.statusCode, error.message);
+        log.error('crypto checkout route failed', { userId, planId: target.id, error: String(error) });
+        return sendBillingError(request, reply, 502, 'could not start crypto checkout');
+      } finally {
+        releaseBillingCheckoutLock(userId);
       }
-      log.error('crypto checkout route failed', { userId, planId: target.id, error: String(error) });
-      res.status(502).json({ error: 'could not start crypto checkout' });
+    }
+    try {
+      if (!requireStripeBilling(request, reply)) return;
+      if (hasActiveBillingSubscription(userId)) return sendBillingError(request, reply, 409, 'this account already has a subscription');
+
+      const profile = getAuthProfile(userId);
+      const customerId = getBillingCustomerId(userId);
+      const session = await getStripe().checkout.sessions.create({
+        mode: 'subscription',
+        line_items: [{ price: target.priceId, quantity: 1 }],
+        customer: customerId,
+        customer_email: customerId ? undefined : profile?.email,
+        client_reference_id: userId,
+        metadata: { dkrypt_user_id: userId, plan_id: target.id },
+        subscription_data: { metadata: { dkrypt_user_id: userId, plan_id: target.id } },
+        success_url: `${config.publicBaseUrl}/?tab=billing&checkout=success&session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${config.publicBaseUrl}/?tab=billing&checkout=cancelled`,
+        billing_address_collection: 'required',
+        managed_payments: { enabled: true },
+        integration_identifier: createIntegrationIdentifier(),
+      }, { idempotencyKey });
+      if (!session.url) return sendBillingError(request, reply, 502, 'Stripe did not return a checkout URL');
+      return reply.send({ url: session.url });
+    } catch (error) {
+      log.error('Stripe checkout session failed', { userId, planId: target.id, error: String(error) });
+      return sendBillingError(request, reply, 502, 'could not start checkout');
     } finally {
       releaseBillingCheckoutLock(userId);
     }
-    return;
-  }
-  try {
-    if (!requireStripeBilling(res)) return;
-    if (hasActiveBillingSubscription(userId)) {
-      res.status(409).json({ error: 'this account already has a subscription' });
-      return;
-    }
-
-    const profile = getAuthProfile(userId);
-    const customerId = getBillingCustomerId(userId);
-    const session = await getStripe().checkout.sessions.create({
-      mode: 'subscription',
-      line_items: [{ price: target.priceId, quantity: 1 }],
-      customer: customerId,
-      customer_email: customerId ? undefined : profile?.email,
-      client_reference_id: userId,
-      metadata: { dkrypt_user_id: userId, plan_id: target.id },
-      subscription_data: { metadata: { dkrypt_user_id: userId, plan_id: target.id } },
-      success_url: `${config.publicBaseUrl}/?tab=billing&checkout=success&session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${config.publicBaseUrl}/?tab=billing&checkout=cancelled`,
-      billing_address_collection: 'required',
-      managed_payments: { enabled: true },
-      integration_identifier: createIntegrationIdentifier(),
-    }, { idempotencyKey });
-    if (!session.url) {
-      res.status(502).json({ error: 'Stripe did not return a checkout URL' });
-      return;
-    }
-    res.json({ url: session.url });
-  } catch (error) {
-    log.error('Stripe checkout session failed', { userId, planId: target.id, error: String(error) });
-    res.status(502).json({ error: 'could not start checkout' });
-  } finally {
-    releaseBillingCheckoutLock(userId);
-  }
-});
-
-billingRouter.post('/v1/billing/portal', requireSession, async (_req, res) => {
-  const userId = res.locals.session.sub;
-  const entitlement = getBillingEntitlements(userId);
-  if (entitlement.provider === 'nowpayments') {
-    res.status(409).json({ error: 'crypto subscriptions are managed in dkrypt' });
-    return;
-  }
-  const customerId = getBillingCustomerId(userId);
-  if (!customerId) {
-    res.status(404).json({ error: 'no Stripe customer exists for this account' });
-    return;
-  }
-  if (!requireStripeBilling(res)) return;
-
-  try {
-    const portal = await getStripe().billingPortal.sessions.create({
-      customer: customerId,
-      return_url: `${config.publicBaseUrl}/?tab=billing`,
-    });
-    res.json({ url: portal.url });
-  } catch (error) {
-    log.error('Stripe portal session failed', { userId, error: String(error) });
-    res.status(502).json({ error: 'could not open the billing portal' });
-  }
-});
-
-billingRouter.post('/v1/billing/cancel', requireSession, async (req, res) => {
-  const userId = res.locals.session.sub;
-  const idempotencyKey = getBillingIdempotencyKey(req, res, userId, 'cancel');
-  if (!idempotencyKey) return;
-  const entitlement = getBillingEntitlements(userId);
-  if (!entitlement.subscriptionId) {
-    res.status(404).json({ error: 'no active subscription exists for this account' });
-    return;
-  }
-  const subscription = getBillingSubscription(userId, entitlement.subscriptionId);
-  if (!subscription) {
-    res.status(404).json({ error: 'subscription does not belong to this account' });
-    return;
-  }
-  if (subscription.provider === 'nowpayments') {
-    if (subscription.status === 'cancelled') {
-      res.json({ success: true, status: 'cancelled', provider: 'nowpayments', idempotencyKey });
-      return;
-    }
-    try {
-      await cancelCryptoSubscription(userId, subscription);
-      res.json({ success: true, status: 'cancelled', provider: 'nowpayments', idempotencyKey });
-    } catch (error) {
-      if (error instanceof CryptoBillingError) {
-        res.status(error.statusCode).json({ error: error.message });
-        return;
-      }
-      res.status(502).json({ error: 'could not cancel the crypto subscription' });
-    }
-    return;
-  }
-  if (!requireStripeBilling(res)) return;
-  if (subscription.scheduledChangeAction === 'cancel') {
-    res.json({ success: true, status: subscription.status, cancelAtPeriodEnd: true, provider: 'stripe', idempotencyKey });
-    return;
-  }
-  try {
-    const updated = await getStripe().subscriptions.update(subscription.subscriptionId, { cancel_at_period_end: true });
-    persistStripeSubscription(updated, new Date().toISOString(), userId);
-    recordAudit(userId, 'billing.cancel', subscription.subscriptionId, 'Stripe cancellation scheduled');
-    res.json({ success: true, status: updated.status, cancelAtPeriodEnd: true, provider: 'stripe', idempotencyKey });
-  } catch (error) {
-    log.error('Stripe subscription cancellation failed', { userId, subscriptionId: subscription.subscriptionId, error: String(error) });
-    res.status(502).json({ error: 'could not cancel the subscription' });
-  }
-});
-
-billingRouter.get('/v1/billing/provider-status', requirePermission(PermissionFlag.manageBilling), async (_req, res) => {
-  res.json({ stripe: { enabled: stripeEnabled, environment: stripeEnvironment, missingConfiguration: stripeMissingConfiguration }, crypto: await getNowPaymentsProviderStatus() });
-});
-
-billingRouter.get('/v1/billing/subscriptions', requirePermission(PermissionFlag.viewBilling, PermissionFlag.manageBilling), (req, res) => {
-  const query = typeof req.query?.q === 'string' ? req.query.q : undefined;
-  const provider = typeof req.query?.provider === 'string' ? req.query.provider : undefined;
-  const status = typeof req.query?.status === 'string' ? req.query.status : undefined;
-  const planId = typeof req.query?.planId === 'string' ? req.query.planId : undefined;
-  const from = typeof req.query?.from === 'string' ? req.query.from : undefined;
-  const to = typeof req.query?.to === 'string' ? req.query.to : undefined;
-  const wallet = typeof req.query?.wallet === 'string' ? req.query.wallet : undefined;
-  const invoice = typeof req.query?.invoice === 'string' ? req.query.invoice : undefined;
-  const limit = Math.min(Math.max(Number.parseInt(String(req.query?.limit ?? '50'), 10) || 50, 1), 100);
-  const cursor = typeof req.query?.cursor === 'string' ? req.query.cursor : undefined;
-  const offset = cursor ? 0 : Math.max(Number.parseInt(String(req.query?.offset ?? '0'), 10) || 0, 0);
-  const subscriptionOrder = new Map(
-    listBillingSubscriptions().map((subscription, index) => [`${subscription.provider}:${subscription.subscriptionId}`, index]),
-  );
-  const subscriptions = listManagerBillingSubscriptions({ query, provider, status, planId, from, to, wallet, invoice });
-  const page = paginateCursor(subscriptions, {
-    cursor,
-    offset,
-    limit,
-    keyOf: (subscription) => [
-      subscriptionOrder.get(`${String(subscription.provider)}:${String(subscription.subscriptionId)}`) ?? Number.MAX_SAFE_INTEGER,
-      typeof subscription.provider === 'string' ? subscription.provider : '',
-      typeof subscription.subscriptionId === 'string' ? subscription.subscriptionId : '',
-    ],
-    order: 'asc',
   });
-  res.json({ subscriptions: page.items, total: subscriptions.length, nextCursor: page.nextCursor });
-});
 
-billingRouter.get('/v1/billing/webhooks/inbox', requirePermission(PermissionFlag.manageBilling), (req, res) => {
-  const status = typeof req.query?.status === 'string' ? req.query.status : undefined;
-  const provider = typeof req.query?.provider === 'string' ? req.query.provider : undefined;
-  const filtered = listWebhookInbox()
-    .filter((record) => !status || record.status === status)
-    .filter((record) => !provider || record.provider === provider);
-  const limit = Math.min(Math.max(Number.parseInt(String(req.query?.limit ?? '50'), 10) || 50, 1), 200);
-  const offset = typeof req.query?.cursor === 'string' ? decodeCursor(req.query.cursor) : Math.max(Number.parseInt(String(req.query?.offset ?? '0'), 10) || 0, 0);
-  const page = filtered.slice(offset, offset + limit).map(({ rawBody, ...record }) => ({ ...record, rawBodyBytes: Buffer.byteLength(rawBody) }));
-  res.json({ inbox: page, total: filtered.length, nextCursor: nextCursor(offset, page.length, filtered.length) });
-});
+  server.post('/v1/billing/portal', { schema: getRouteContract('POST', '/v1/billing/portal'), preHandler: fastifyRequireSession }, async (request, reply) => {
+    const userId = getFastifySession(request)!.sub;
+    const entitlement = getBillingEntitlements(userId);
+    if (entitlement.provider === 'nowpayments') return sendBillingError(request, reply, 409, 'crypto subscriptions are managed in dkrypt');
+    const customerId = getBillingCustomerId(userId);
+    if (!customerId) return sendBillingError(request, reply, 404, 'no Stripe customer exists for this account');
+    if (!requireStripeBilling(request, reply)) return;
 
-billingRouter.post('/v1/billing/webhooks/inbox/:id/quarantine', requirePermission(PermissionFlag.manageBilling), (req, res) => {
-  const current = getWebhookInboxRecord(req.params.id);
-  if (!current) {
-    res.status(404).json({ error: 'webhook inbox record not found' });
-    return;
-  }
-  const reason = typeof req.body?.reason === 'string' && req.body.reason.trim() ? req.body.reason.trim() : 'quarantined by manager';
-  const record = quarantineWebhook(current.id, reason);
-  res.json({ record: record ? { ...record, rawBody: undefined } : undefined });
-});
-
-billingRouter.post('/v1/billing/webhooks/inbox/:id/replay', requirePermission(PermissionFlag.manageBilling), async (req, res) => {
-  const current = getWebhookInboxRecord(req.params.id);
-  if (!current) {
-    res.status(404).json({ error: 'webhook inbox record not found' });
-    return;
-  }
-  if (current.status === 'processed') {
-    res.json({ replayed: false, duplicate: true, status: current.status });
-    return;
-  }
-  if (!claimWebhook(current.id)) {
-    res.status(409).json({ error: 'webhook is already being processed' });
-    return;
-  }
-  try {
-    const payload = JSON.parse(current.rawBody) as Record<string, unknown>;
-    if (current.provider === 'stripe') {
-      if (typeof payload.id !== 'string' || typeof payload.type !== 'string' || typeof payload.data !== 'object' || payload.data === null) throw new Error('stored Stripe event is malformed');
-      await processStripeEvent(payload as unknown as Stripe.Event);
-    } else {
-      if (typeof payload.payment_status !== 'string') throw new Error('stored NOWPayments event is malformed');
-      await processNowPaymentsEvent({ id: current.eventId, payment: payload as Parameters<typeof processNowPaymentsEvent>[0]['payment'] });
+    try {
+      const portal = await getStripe().billingPortal.sessions.create({
+        customer: customerId,
+        return_url: `${config.publicBaseUrl}/?tab=billing`,
+      });
+      return reply.send({ url: portal.url });
+    } catch (error) {
+      log.error('Stripe portal session failed', { userId, error: String(error) });
+      return sendBillingError(request, reply, 502, 'could not open the billing portal');
     }
-    markWebhookProcessed(current.id);
-    recordAudit(res.locals.session.sub, 'billing.webhook.replay', current.eventId, current.provider);
-    res.json({ replayed: true, status: 'processed' });
-  } catch (error) {
-    markWebhookFailed(current.id, String(error));
-    res.status(500).json({ error: 'webhook replay failed' });
-  } finally {
-    releaseWebhookClaim(current.id);
-  }
-});
+  });
 
-billingRouter.post('/v1/billing/subscription', requireSession, async (req, res) => {
-  const userId = res.locals.session.sub;
-  const target = getPlan(typeof req.body?.planId === 'string' ? req.body.planId : '');
-  if (!target) {
-    res.status(400).json({ error: 'unknown plan' });
-    return;
-  }
-  if (!requireStripeBilling(res)) return;
-
-  const entitlement = getBillingEntitlements(userId);
-  if (!entitlement.subscriptionId) {
-    res.status(409).json({ error: 'complete checkout before changing plans' });
-    return;
-  }
-  const subscription = getBillingSubscription(userId, entitlement.subscriptionId);
-  if (!subscription) {
-    res.status(403).json({ error: 'subscription does not belong to this account' });
-    return;
-  }
-  if (subscription.provider !== 'stripe') {
-    res.status(409).json({ error: 'crypto plan changes require cancellation and a new checkout' });
-    return;
-  }
-  const current = getPlan(subscription.planId);
-
-  try {
-    const stripeSubscription = await getStripe().subscriptions.retrieve(subscription.subscriptionId);
-    const item = stripeSubscription.items.data.find((candidate) => candidate.id === subscription.subscriptionItemId) ?? stripeSubscription.items.data[0];
-    if (!item) {
-      res.status(502).json({ error: 'subscription has no billable item' });
-      return;
+  server.post('/v1/billing/cancel', { schema: getRouteContract('POST', '/v1/billing/cancel'), preHandler: fastifyRequireSession }, async (request, reply) => {
+    const userId = getFastifySession(request)!.sub;
+    const idempotencyKey = getBillingIdempotencyKey(request, reply, userId, 'cancel');
+    if (!idempotencyKey) return;
+    const entitlement = getBillingEntitlements(userId);
+    if (!entitlement.subscriptionId) return sendBillingError(request, reply, 404, 'no active subscription exists for this account');
+    const subscription = getBillingSubscription(userId, entitlement.subscriptionId);
+    if (!subscription) return sendBillingError(request, reply, 404, 'subscription does not belong to this account');
+    if (subscription.provider === 'nowpayments') {
+      if (subscription.status === 'cancelled') return reply.send({ success: true, status: 'cancelled', provider: 'nowpayments', idempotencyKey });
+      try {
+        await cancelCryptoSubscription(userId, subscription);
+        return reply.send({ success: true, status: 'cancelled', provider: 'nowpayments', idempotencyKey });
+      } catch (error) {
+        if (error instanceof CryptoBillingError) return sendBillingError(request, reply, error.statusCode, error.message);
+        return sendBillingError(request, reply, 502, 'could not cancel the crypto subscription');
+      }
     }
-    const updated = await getStripe().subscriptions.update(subscription.subscriptionId, {
-      items: [{ id: item.id, price: target.priceId, quantity: item.quantity ?? 1 }],
-      proration_behavior: current && target.amount > current.amount ? 'always_invoice' : 'create_prorations',
-      payment_behavior: 'error_if_incomplete',
+    if (!requireStripeBilling(request, reply)) return;
+    if (subscription.scheduledChangeAction === 'cancel') return reply.send({ success: true, status: subscription.status, cancelAtPeriodEnd: true, provider: 'stripe', idempotencyKey });
+    try {
+      const updated = await getStripe().subscriptions.update(subscription.subscriptionId, { cancel_at_period_end: true });
+      persistStripeSubscription(updated, new Date().toISOString(), userId);
+      recordAudit(userId, 'billing.cancel', subscription.subscriptionId, 'Stripe cancellation scheduled');
+      return reply.send({ success: true, status: updated.status, cancelAtPeriodEnd: true, provider: 'stripe', idempotencyKey });
+    } catch (error) {
+      log.error('Stripe subscription cancellation failed', { userId, subscriptionId: subscription.subscriptionId, error: String(error) });
+      return sendBillingError(request, reply, 502, 'could not cancel the subscription');
+    }
+  });
+
+  const requireBillingManager = fastifyRequirePermission(PermissionFlag.manageBilling);
+
+  server.get('/v1/billing/provider-status', { schema: getRouteContract('GET', '/v1/billing/provider-status'), preHandler: requireBillingManager }, async (_request, reply) => {
+    return reply.send({ stripe: { enabled: stripeEnabled, environment: stripeEnvironment, missingConfiguration: stripeMissingConfiguration }, crypto: await getNowPaymentsProviderStatus() });
+  });
+
+  server.get('/v1/billing/subscriptions', { schema: getRouteContract('GET', '/v1/billing/subscriptions'), preHandler: fastifyRequirePermission(PermissionFlag.viewBilling, PermissionFlag.manageBilling) }, (request, reply) => {
+    const input = request.query as Record<string, unknown>;
+    const query = typeof input?.q === 'string' ? input.q : undefined;
+    const provider = typeof input?.provider === 'string' ? input.provider : undefined;
+    const status = typeof input?.status === 'string' ? input.status : undefined;
+    const planId = typeof input?.planId === 'string' ? input.planId : undefined;
+    const from = typeof input?.from === 'string' ? input.from : undefined;
+    const to = typeof input?.to === 'string' ? input.to : undefined;
+    const wallet = typeof input?.wallet === 'string' ? input.wallet : undefined;
+    const invoice = typeof input?.invoice === 'string' ? input.invoice : undefined;
+    const limit = Math.min(Math.max(Number.parseInt(String(input?.limit ?? '50'), 10) || 50, 1), 100);
+    const cursor = typeof input?.cursor === 'string' ? input.cursor : undefined;
+    const offset = cursor ? 0 : Math.max(Number.parseInt(String(input?.offset ?? '0'), 10) || 0, 0);
+    const subscriptionOrder = new Map(
+      listBillingSubscriptions().map((subscription, index) => [`${subscription.provider}:${subscription.subscriptionId}`, index]),
+    );
+    const subscriptions = listManagerBillingSubscriptions({ query, provider, status, planId, from, to, wallet, invoice });
+    const page = paginateCursor(subscriptions, {
+      cursor,
+      offset,
+      limit,
+      keyOf: (subscription) => [
+        subscriptionOrder.get(`${String(subscription.provider)}:${String(subscription.subscriptionId)}`) ?? Number.MAX_SAFE_INTEGER,
+        typeof subscription.provider === 'string' ? subscription.provider : '',
+        typeof subscription.subscriptionId === 'string' ? subscription.subscriptionId : '',
+      ],
+      order: 'asc',
     });
-    persistStripeSubscription(updated, new Date().toISOString(), userId);
-    res.json({
-      success: true,
-      status: updated.status,
-      priceId: typeof updated.items.data[0]?.price === 'string' ? updated.items.data[0].price : updated.items.data[0]?.price.id ?? null,
-    });
-  } catch (error) {
-    log.error('Stripe subscription update failed', { userId, planId: target.id, error: String(error) });
-    if (typeof error === 'object' && error !== null && (error as { statusCode?: unknown }).statusCode === 402) {
-      res.status(402).json({ error: 'payment confirmation is required; use Manage billing to complete the change' });
-      return;
+    return reply.send({ subscriptions: page.items, total: subscriptions.length, nextCursor: page.nextCursor });
+  });
+
+  server.get('/v1/billing/webhooks/inbox', { schema: getRouteContract('GET', '/v1/billing/webhooks/inbox'), preHandler: requireBillingManager }, (request, reply) => {
+    const input = request.query as Record<string, unknown>;
+    const status = typeof input?.status === 'string' ? input.status : undefined;
+    const provider = typeof input?.provider === 'string' ? input.provider : undefined;
+    const filtered = listWebhookInbox()
+      .filter((record) => !status || record.status === status)
+      .filter((record) => !provider || record.provider === provider);
+    const limit = Math.min(Math.max(Number.parseInt(String(input?.limit ?? '50'), 10) || 50, 1), 200);
+    const offset = typeof input?.cursor === 'string' ? decodeCursor(input.cursor) : Math.max(Number.parseInt(String(input?.offset ?? '0'), 10) || 0, 0);
+    const page = filtered.slice(offset, offset + limit).map(({ rawBody, ...record }) => ({ ...record, rawBodyBytes: Buffer.byteLength(rawBody) }));
+    return reply.send({ inbox: page, total: filtered.length, nextCursor: nextCursor(offset, page.length, filtered.length) });
+  });
+
+  server.post('/v1/billing/webhooks/inbox/:id/quarantine', { schema: getRouteContract('POST', '/v1/billing/webhooks/inbox/:id/quarantine'), preHandler: requireBillingManager }, (request, reply) => {
+    const params = request.params as { id: string };
+    const current = getWebhookInboxRecord(params.id);
+    if (!current) return sendBillingError(request, reply, 404, 'webhook inbox record not found');
+    const body = request.body as { reason?: unknown };
+    const reason = typeof body?.reason === 'string' && body.reason.trim() ? body.reason.trim() : 'quarantined by manager';
+    const record = quarantineWebhook(current.id, reason);
+    return reply.send({ record: record ? { ...record, rawBody: undefined } : undefined });
+  });
+
+  server.post('/v1/billing/webhooks/inbox/:id/replay', { schema: getRouteContract('POST', '/v1/billing/webhooks/inbox/:id/replay'), preHandler: requireBillingManager }, async (request, reply) => {
+    const params = request.params as { id: string };
+    const current = getWebhookInboxRecord(params.id);
+    if (!current) return sendBillingError(request, reply, 404, 'webhook inbox record not found');
+    if (current.status === 'processed') return reply.send({ replayed: false, duplicate: true, status: current.status });
+    if (!claimWebhook(current.id)) return sendBillingError(request, reply, 409, 'webhook is already being processed');
+    try {
+      const payload = JSON.parse(current.rawBody) as Record<string, unknown>;
+      if (current.provider === 'stripe') {
+        if (typeof payload.id !== 'string' || typeof payload.type !== 'string' || typeof payload.data !== 'object' || payload.data === null) throw new Error('stored Stripe event is malformed');
+        await processStripeEvent(payload as unknown as Stripe.Event);
+      } else {
+        if (typeof payload.payment_status !== 'string') throw new Error('stored NOWPayments event is malformed');
+        await processNowPaymentsEvent({ id: current.eventId, payment: payload as Parameters<typeof processNowPaymentsEvent>[0]['payment'] });
+      }
+      markWebhookProcessed(current.id);
+      recordAudit(getFastifySession(request)!.sub, 'billing.webhook.replay', current.eventId, current.provider);
+      return reply.send({ replayed: true, status: 'processed' });
+    } catch (error) {
+      markWebhookFailed(current.id, String(error));
+      return sendBillingError(request, reply, 500, 'webhook replay failed');
+    } finally {
+      releaseWebhookClaim(current.id);
     }
-    res.status(502).json({ error: 'subscription update failed; your existing plan was not changed' });
-  }
-});
+  });
+
+  server.post('/v1/billing/subscription', { schema: getRouteContract('POST', '/v1/billing/subscription'), preHandler: fastifyRequireSession }, async (request, reply) => {
+    const userId = getFastifySession(request)!.sub;
+    const body = request.body as { planId?: unknown };
+    const target = getPlan(typeof body?.planId === 'string' ? body.planId : '');
+    if (!target) return sendBillingError(request, reply, 400, 'unknown plan');
+    if (!requireStripeBilling(request, reply)) return;
+
+    const entitlement = getBillingEntitlements(userId);
+    if (!entitlement.subscriptionId) return sendBillingError(request, reply, 409, 'complete checkout before changing plans');
+    const subscription = getBillingSubscription(userId, entitlement.subscriptionId);
+    if (!subscription) return sendBillingError(request, reply, 403, 'subscription does not belong to this account');
+    if (subscription.provider !== 'stripe') return sendBillingError(request, reply, 409, 'crypto plan changes require cancellation and a new checkout');
+    const current = getPlan(subscription.planId);
+
+    try {
+      const stripeSubscription = await getStripe().subscriptions.retrieve(subscription.subscriptionId);
+      const item = stripeSubscription.items.data.find((candidate) => candidate.id === subscription.subscriptionItemId) ?? stripeSubscription.items.data[0];
+      if (!item) return sendBillingError(request, reply, 502, 'subscription has no billable item');
+      const updated = await getStripe().subscriptions.update(subscription.subscriptionId, {
+        items: [{ id: item.id, price: target.priceId, quantity: item.quantity ?? 1 }],
+        proration_behavior: current && target.amount > current.amount ? 'always_invoice' : 'create_prorations',
+        payment_behavior: 'error_if_incomplete',
+      });
+      persistStripeSubscription(updated, new Date().toISOString(), userId);
+      return reply.send({
+        success: true,
+        status: updated.status,
+        priceId: typeof updated.items.data[0]?.price === 'string' ? updated.items.data[0].price : updated.items.data[0]?.price.id ?? null,
+      });
+    } catch (error) {
+      log.error('Stripe subscription update failed', { userId, planId: target.id, error: String(error) });
+      if (typeof error === 'object' && error !== null && (error as { statusCode?: unknown }).statusCode === 402) {
+        return sendBillingError(request, reply, 402, 'payment confirmation is required; use Manage billing to complete the change');
+      }
+      return sendBillingError(request, reply, 502, 'subscription update failed; your existing plan was not changed');
+    }
+  });
+};

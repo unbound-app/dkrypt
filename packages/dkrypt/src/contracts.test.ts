@@ -1,12 +1,11 @@
 import { expect, test } from 'bun:test';
 import { authRouter } from '#routes/auth.js';
-import { billingRouter } from '#routes/billing.js';
 import { dashboardRouter } from '#routes/dashboard.js';
 import { buildServer } from '#server.js';
 import { getRouteContracts } from '#contracts.js';
 
 test('every registered versioned route has an explicit TypeBox contract', () => {
-  const routers = [authRouter, billingRouter, dashboardRouter];
+  const routers = [authRouter, dashboardRouter];
   const routes = routers.flatMap((router) => router.routes.map((route) => `${route.method} ${route.path}`));
   const directRoutes = [
     'GET /v1/health',
@@ -23,6 +22,16 @@ test('every registered versioned route has an explicit TypeBox contract', () => 
     'POST /v1/testflight/decrypt',
     'POST /v1/stripe/webhook',
     'POST /v1/nowpayments/webhook',
+    'GET /v1/billing',
+    'POST /v1/billing/checkout',
+    'POST /v1/billing/portal',
+    'POST /v1/billing/cancel',
+    'GET /v1/billing/provider-status',
+    'GET /v1/billing/subscriptions',
+    'GET /v1/billing/webhooks/inbox',
+    'POST /v1/billing/webhooks/inbox/:id/quarantine',
+    'POST /v1/billing/webhooks/inbox/:id/replay',
+    'POST /v1/billing/subscription',
   ];
   const allRoutes = [...routes, ...directRoutes];
   const contracts = getRouteContracts();

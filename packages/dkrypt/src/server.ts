@@ -14,7 +14,7 @@ import { startJobWebhookDispatcher, stopJobWebhookDispatcher } from '#jobWebhook
 import { startKeyExpiryPoller, stopKeyExpiryPoller } from '#keyExpiryPoller.js';
 import { log, startLogFlusher, stopLogFlusher } from '#logger.js';
 import { authRouter } from '#routes/auth.js';
-import { billingRouter, billingWebhookRoutes } from '#routes/billing.js';
+import { billingRoutes, billingWebhookRoutes } from '#routes/billing.js';
 import { dashboardRouter } from '#routes/dashboard.js';
 import { artifactCatalogRoutes, decryptRoutes, testFlightCatalogRoutes } from '#routes/decrypt.js';
 import { healthRoutes } from '#routes/health.js';
@@ -208,12 +208,12 @@ export async function buildServer(options: { includePublicRoutes?: boolean } = {
   }
 
   await server.register(billingWebhookRoutes);
+  await server.register(billingRoutes);
   await server.register(healthRoutes);
   await server.register(decryptRoutes);
   await server.register(artifactCatalogRoutes);
   await server.register(testFlightCatalogRoutes);
   registerRouter(server, authRouter);
-  registerRouter(server, billingRouter);
   registerRouter(server, dashboardRouter);
 
   server.setNotFoundHandler((request, reply) => reply.code(404).send({ error: 'not found', code: 'not_found', message: 'not found', requestId: request.id, retryable: false }));

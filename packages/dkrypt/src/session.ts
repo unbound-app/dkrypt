@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { NextFunction, Request, Response } from '#http.js';
+import type { FastifyReply, FastifyRequest, HookHandlerDoneFunction } from 'fastify';
 import { config } from '#config.js';
 import { resolveAuthUserId } from '#identity.js';
 import { mfaStatus } from '#mfa.js';
@@ -8,6 +9,7 @@ import { createSessionRecord, getSessionVersion, getUserEffectivePermissions, is
 
 const COOKIE_NAME = 'session';
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+const fastifySessionContext = new WeakMap<FastifyRequest, Session>();
 
 export interface Session {
   sub: string;
@@ -77,8 +79,7 @@ function deserialize(cookieValue: string): Session | undefined {
   }
 }
 
-function parseCookies(req: Request): Record<string, string> {
-  const header = req.header('cookie');
+function parseCookies(header: string | undefined): Record<string, string> {
   if (!header) return {};
 
   const out: Record<string, string> = {};
@@ -139,12 +140,52 @@ export function clearSessionCookie(res: Response): void {
 }
 
 export function getSession(req: Request): Session | undefined {
-  const value = parseCookies(req)[COOKIE_NAME];
+  return sessionFromCookieHeader(req.header('cookie'));
+}
+
+export function getFastifySession(request: FastifyRequest): Session | undefined {
+  return fastifySessionContext.get(request) ?? sessionFromCookieHeader(request.headers.cookie);
+}
+
+function sessionFromCookieHeader(cookieHeader: string | undefined): Session | undefined {
+  const value = parseCookies(cookieHeader)[COOKIE_NAME];
   const session = value ? deserialize(value) : undefined;
   if (!session || session.sub === 'root') return session;
   const sub = resolveAuthUserId(session.sub);
   const permissions = getUserEffectivePermissions(sub);
   return { ...session, sub, permissions };
+}
+
+function fastifySessionError(request: FastifyRequest, reply: FastifyReply, statusCode: number, code: string, message: string): void {
+  reply.code(statusCode).send({ error: message, code, message, requestId: request.id, retryable: false });
+}
+
+function authorizeFastifySession(request: FastifyRequest, reply: FastifyReply, done: HookHandlerDoneFunction, flags?: bigint[]): void {
+  const session = sessionFromCookieHeader(request.headers.cookie);
+  if (!session) {
+    fastifySessionError(request, reply, 401, 'unauthorized', 'unauthorized');
+    return;
+  }
+  if (!session.mfaVerified && mfaStatus(session.sub).enabled) {
+    fastifySessionError(request, reply, 401, 'mfa_required', 'multi-factor authentication is required');
+    return;
+  }
+  if (flags && !hasAnyPermission(session.permissions, flags)) {
+    fastifySessionError(request, reply, 403, 'forbidden', 'you do not have permission to do that');
+    return;
+  }
+  fastifySessionContext.set(request, session);
+  done();
+}
+
+export function fastifyRequireSession(request: FastifyRequest, reply: FastifyReply, done: HookHandlerDoneFunction): void {
+  authorizeFastifySession(request, reply, done);
+}
+
+export function fastifyRequirePermission(...flags: bigint[]) {
+  return (request: FastifyRequest, reply: FastifyReply, done: HookHandlerDoneFunction): void => {
+    authorizeFastifySession(request, reply, done, flags);
+  };
 }
 
 export function requireSession(req: Request, res: Response, next: NextFunction): void {
