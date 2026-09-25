@@ -52,6 +52,7 @@ import {
   approveTestFlightSubscription,
   denyTestFlightSubscription,
   previewJobHistoryRetention,
+  simulateJobHistoryRetention,
   updateTestFlightSubscriptionDevice,
 } from '#store/state.js';
 
@@ -480,6 +481,35 @@ describe('job history retention', () => {
 
     expect(preview).toMatchObject({ retentionDays: 30, cutoff, removed: expectedRemoved, retained: expectedRetained });
     expect(getAllJobHistory().map((entry) => entry.id)).toEqual(before);
+  });
+
+  test('simulates both age pruning and the 100-entry cap on the next write', () => {
+    const now = Date.now();
+    const entries = Array.from({ length: 100 }, (_, index) => ({
+      id: `retention-preview-${index}`,
+      bundleId: 'com.example.retention-preview',
+      status: 'done' as const,
+      source: 'manual' as const,
+      createdAt: index >= 95 ? now - 40 * 86_400_000 : now - index * 1_000,
+      finishedAt: index >= 95 ? now - 40 * 86_400_000 : now - index * 1_000,
+    }));
+
+    expect(simulateJobHistoryRetention(entries, 30, now)).toMatchObject({
+      currentEntries: 100,
+      retained: 95,
+      removed: 5,
+      agePruned: 4,
+      capacityPruned: 1,
+      afterNextWrite: 96,
+      maxEntries: 100,
+    });
+    expect(simulateJobHistoryRetention(entries, 0, now)).toMatchObject({
+      retained: 99,
+      removed: 1,
+      agePruned: 0,
+      capacityPruned: 1,
+      afterNextWrite: 100,
+    });
   });
 });
 

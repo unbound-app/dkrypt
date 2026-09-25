@@ -70924,8 +70924,13 @@
                   "type": "object",
                   "required": [
                     "retentionDays",
+                    "currentEntries",
                     "retained",
                     "removed",
+                    "agePruned",
+                    "capacityPruned",
+                    "afterNextWrite",
+                    "maxEntries",
                     "artifacts"
                   ],
                   "properties": {
@@ -70936,12 +70941,32 @@
                     "cutoff": {
                       "type": "number"
                     },
+                    "currentEntries": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
                     "retained": {
                       "minimum": 0,
                       "type": "integer"
                     },
                     "removed": {
                       "minimum": 0,
+                      "type": "integer"
+                    },
+                    "agePruned": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "capacityPruned": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "afterNextWrite": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "maxEntries": {
+                      "minimum": 1,
                       "type": "integer"
                     },
                     "artifacts": {
@@ -70976,6 +71001,461 @@
                           "type": "number"
                         }
                       }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/dashboard/artifacts/retention-preview": {
+      "get": {
+        "summary": "GET /v1/dashboard/artifacts/retention-preview",
+        "tags": [
+          "dashboard"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "in": "query",
+            "name": "maxBytes",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "targetMaxBytes",
+                    "currentMaxBytes",
+                    "currentCount",
+                    "currentBytes",
+                    "retainedCount",
+                    "retainedBytes",
+                    "evictedCount",
+                    "reclaimedBytes",
+                    "evictionExamples",
+                    "additionalEvictions"
+                  ],
+                  "properties": {
+                    "targetMaxBytes": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "currentMaxBytes": {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "currentCount": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "currentBytes": {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "retainedCount": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "retainedBytes": {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "evictedCount": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "reclaimedBytes": {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "evictionExamples": {
+                      "type": "array",
+                      "items": {
+                        "additionalProperties": true,
+                        "type": "object",
+                        "required": [
+                          "id",
+                          "bundleId",
+                          "channel",
+                          "fileSizeBytes",
+                          "lastAccessedAt"
+                        ],
+                        "properties": {
+                          "id": {
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "type": "string"
+                          },
+                          "bundleId": {
+                            "minLength": 3,
+                            "maxLength": 200,
+                            "pattern": "^[A-Za-z0-9.-]+$",
+                            "type": "string"
+                          },
+                          "channel": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "appstore"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "testflight"
+                                ]
+                              }
+                            ]
+                          },
+                          "versionLabel": {
+                            "type": "string"
+                          },
+                          "fileSizeBytes": {
+                            "minimum": 0,
+                            "type": "number"
+                          },
+                          "lastAccessedAt": {
+                            "type": "number"
+                          }
+                        }
+                      }
+                    },
+                    "additionalEvictions": {
+                      "minimum": 0,
+                      "type": "integer"
                     }
                   }
                 }

@@ -9,6 +9,7 @@ import {
   getArtifactById,
   getArtifactStorageStats,
   listArtifacts,
+  previewArtifactQuotaRetention,
   promoteArtifact,
   reconcileArtifactStore,
   touchArtifact,
@@ -125,6 +126,53 @@ describe('persistent artifact store', () => {
     expect(result.total).toBeGreaterThanOrEqual(1);
     expect(result.totalBytes).toBeGreaterThan(0);
     expect(result.maxBytes).toBe(1024 * 1024);
+  });
+
+  test('previews least-recently-used quota evictions without changing artifact storage', async () => {
+    config.artifactMaxBytes = 1024 * 1024;
+    const existing = listArtifacts({ limit: 200 }).artifacts;
+    const oldest = await promoteArtifact({
+      key: `test-retention-preview-oldest-${crypto.randomUUID()}`,
+      bundleId: 'com.example.retention-preview',
+      channel: 'appstore',
+      stagingPath: await stagingFile('aaaa'),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    await promoteArtifact({
+      key: `test-retention-preview-middle-${crypto.randomUUID()}`,
+      bundleId: 'com.example.retention-preview',
+      channel: 'appstore',
+      stagingPath: await stagingFile('bbbb'),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    await promoteArtifact({
+      key: `test-retention-preview-newest-${crypto.randomUUID()}`,
+      bundleId: 'com.example.retention-preview',
+      channel: 'appstore',
+      stagingPath: await stagingFile('cccc'),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    for (const artifact of existing) await touchArtifact(artifact);
+
+    const before = listArtifacts({ limit: 200 }).artifacts;
+    const beforeStats = getArtifactStorageStats();
+    const targetMaxBytes = beforeStats.usedBytes - oldest.fileSizeBytes;
+    const preview = previewArtifactQuotaRetention(targetMaxBytes);
+
+    expect(preview.currentBytes).toBe(beforeStats.usedBytes);
+    expect(preview.targetMaxBytes).toBe(targetMaxBytes);
+    expect(preview.evictedCount).toBe(1);
+    expect(preview.evictionExamples.map((artifact) => artifact.id)).toEqual([oldest.id]);
+    expect(preview.retainedCount).toBe(before.length - 1);
+    expect(preview.retainedBytes).toBeLessThanOrEqual(targetMaxBytes);
+    expect(preview.currentBytes - preview.retainedBytes).toBe(preview.reclaimedBytes);
+    expect(getArtifactStorageStats().usedBytes).toBe(beforeStats.usedBytes);
+    expect(before.every(artifactFileAvailable)).toBe(true);
+  });
+
+  test('rejects invalid simulated artifact quotas', () => {
+    expect(() => previewArtifactQuotaRetention(0)).toThrow('artifact quota must be a positive safe integer');
+    expect(() => previewArtifactQuotaRetention(Number.MAX_SAFE_INTEGER + 1)).toThrow('artifact quota must be a positive safe integer');
   });
 
   test('applies bundle scopes before artifact pagination and storage totals', async () => {

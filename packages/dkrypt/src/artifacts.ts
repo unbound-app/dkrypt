@@ -44,6 +44,19 @@ export interface ArtifactListResult {
   maxBytes: number;
 }
 
+export interface ArtifactQuotaRetentionPreview {
+  targetMaxBytes: number;
+  currentMaxBytes: number;
+  currentCount: number;
+  currentBytes: number;
+  retainedCount: number;
+  retainedBytes: number;
+  evictedCount: number;
+  reclaimedBytes: number;
+  evictionExamples: Array<Pick<ArtifactRecord, 'id' | 'bundleId' | 'channel' | 'versionLabel' | 'fileSizeBytes' | 'lastAccessedAt'>>;
+  additionalEvictions: number;
+}
+
 interface ArtifactIndex {
   version: 1;
   artifacts: ArtifactRecord[];
@@ -218,6 +231,37 @@ export function getArtifactStorageStats(bundleIds?: string[]): { usedBytes: numb
   };
 }
 
+export function previewArtifactQuotaRetention(targetMaxBytes: number): ArtifactQuotaRetentionPreview {
+  if (!Number.isSafeInteger(targetMaxBytes) || targetMaxBytes < 1) {
+    throw new Error('artifact quota must be a positive safe integer');
+  }
+  const available = index.artifacts.filter((artifact) => existsSync(artifact.filePath));
+  const evicted = planArtifactEvictions(available, 0, targetMaxBytes, new Set());
+  const evictedIds = new Set(evicted.map((artifact) => artifact.id));
+  const retained = available.filter((artifact) => !evictedIds.has(artifact.id));
+  const currentBytes = available.reduce((total, artifact) => total + artifact.fileSizeBytes, 0);
+  const reclaimedBytes = evicted.reduce((total, artifact) => total + artifact.fileSizeBytes, 0);
+  return {
+    targetMaxBytes,
+    currentMaxBytes: config.artifactMaxBytes,
+    currentCount: available.length,
+    currentBytes,
+    retainedCount: retained.length,
+    retainedBytes: retained.reduce((total, artifact) => total + artifact.fileSizeBytes, 0),
+    evictedCount: evicted.length,
+    reclaimedBytes,
+    evictionExamples: evicted.slice(0, 8).map(({ id, bundleId, channel, versionLabel, fileSizeBytes, lastAccessedAt }) => ({
+      id,
+      bundleId,
+      channel,
+      versionLabel,
+      fileSizeBytes,
+      lastAccessedAt,
+    })),
+    additionalEvictions: Math.max(0, evicted.length - 8),
+  };
+}
+
 export function listArtifacts(options: ArtifactListOptions = {}): ArtifactListResult {
   const query = options.query?.trim().toLowerCase();
   const filtered = index.artifacts
@@ -268,28 +312,38 @@ async function sha256File(filePath: string): Promise<string> {
   return hash.digest('hex');
 }
 
-function artifactsToEvict(requiredBytes: number, protectedKeys: Set<string>): ArtifactRecord[] {
-  let usedBytes = getArtifactStorageStats().usedBytes;
-  if (requiredBytes > config.artifactMaxBytes) {
-    throw new Error(`artifact is ${requiredBytes} bytes, larger than the ${config.artifactMaxBytes}-byte storage limit`);
+function planArtifactEvictions(
+  available: ArtifactRecord[],
+  requiredBytes: number,
+  maxBytes: number,
+  protectedKeys: Set<string>,
+): ArtifactRecord[] {
+  let usedBytes = available.reduce((total, artifact) => total + artifact.fileSizeBytes, 0);
+  if (requiredBytes > maxBytes) {
+    throw new Error(`artifact is ${requiredBytes} bytes, larger than the ${maxBytes}-byte storage limit`);
   }
 
-  const candidates = index.artifacts
-    .filter((artifact) => existsSync(artifact.filePath) && !protectedKeys.has(artifact.key))
+  const candidates = available
+    .filter((artifact) => !protectedKeys.has(artifact.key))
     .sort((a, b) => a.lastAccessedAt - b.lastAccessedAt || a.createdAt - b.createdAt);
   const evictions: ArtifactRecord[] = [];
 
   for (const candidate of candidates) {
-    if (usedBytes + requiredBytes <= config.artifactMaxBytes) break;
+    if (usedBytes + requiredBytes <= maxBytes) break;
     evictions.push(candidate);
     usedBytes -= candidate.fileSizeBytes;
   }
 
-  if (usedBytes + requiredBytes > config.artifactMaxBytes) {
+  if (usedBytes + requiredBytes > maxBytes) {
     throw new Error('unable to free enough artifact storage');
   }
 
   return evictions;
+}
+
+function artifactsToEvict(requiredBytes: number, protectedKeys: Set<string>): ArtifactRecord[] {
+  const available = index.artifacts.filter((artifact) => existsSync(artifact.filePath));
+  return planArtifactEvictions(available, requiredBytes, config.artifactMaxBytes, protectedKeys);
 }
 
 export async function promoteArtifact(input: {

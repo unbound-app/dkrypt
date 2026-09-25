@@ -2693,17 +2693,45 @@ export function getUserJobHistory(username: string): JobHistoryEntry[] {
   return state.jobHistory.filter((entry) => entry.queuedBy?.toLowerCase() === lower).map((entry) => structuredClone(entry));
 }
 
-export function previewJobHistoryRetention(retentionDays: number, now = Date.now()): {
+export function simulateJobHistoryRetention(
+  entries: readonly JobHistoryEntry[],
+  retentionDays: number,
+  now = Date.now(),
+): {
   retentionDays: number;
   cutoff?: number;
+  currentEntries: number;
   retained: number;
   removed: number;
+  agePruned: number;
+  capacityPruned: number;
+  afterNextWrite: number;
+  maxEntries: number;
 } {
   const normalizedDays = Math.max(0, Math.round(retentionDays));
-  if (normalizedDays === 0) return { retentionDays: normalizedDays, retained: state.jobHistory.length, removed: 0 };
-  const cutoff = now - normalizedDays * 86_400_000;
-  const retained = state.jobHistory.filter((entry) => entry.finishedAt >= cutoff).length;
-  return { retentionDays: normalizedDays, cutoff, retained, removed: state.jobHistory.length - retained };
+  const capacityCandidates = entries.slice(0, MAX_HISTORY - 1);
+  const capacityPruned = entries.length - capacityCandidates.length;
+  const cutoff = normalizedDays > 0 ? now - normalizedDays * 86_400_000 : undefined;
+  const retainedEntries = cutoff === undefined
+    ? capacityCandidates
+    : capacityCandidates.filter((entry) => entry.finishedAt >= cutoff);
+  const agePruned = capacityCandidates.length - retainedEntries.length;
+  const removed = capacityPruned + agePruned;
+  return {
+    retentionDays: normalizedDays,
+    cutoff,
+    currentEntries: entries.length,
+    retained: retainedEntries.length,
+    removed,
+    agePruned,
+    capacityPruned,
+    afterNextWrite: retainedEntries.length + 1,
+    maxEntries: MAX_HISTORY,
+  };
+}
+
+export function previewJobHistoryRetention(retentionDays: number, now = Date.now()): ReturnType<typeof simulateJobHistoryRetention> {
+  return simulateJobHistoryRetention(state.jobHistory, retentionDays, now);
 }
 
 export interface UserActivityStats {

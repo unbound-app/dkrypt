@@ -38,6 +38,7 @@ ROUTES = (
     "GET /v1/dashboard/apps/cache",
     "GET /v1/dashboard/apps/metadata",
     "GET /v1/dashboard/artifacts",
+    "GET /v1/dashboard/artifacts/retention-preview",
     "GET /v1/dashboard/artifacts/{id}/file",
     "GET /v1/dashboard/audit-log",
     "GET /v1/dashboard/audit-log/export",

@@ -1720,10 +1720,13 @@
 			{:else if retentionPreview}
 				<div class="mt-1 text-muted">
 					{#if retentionPreview.removed > 0}
-						{retentionPreview.removed} of {retentionPreview.retained + retentionPreview.removed} current history entries would be removed the next time a job is recorded.
+						{retentionPreview.removed} current entries would be removed on the next recorded job ({retentionPreview.agePruned} by age, {retentionPreview.capacityPruned} by the {retentionPreview.maxEntries}-entry cap).
 					{:else}
-						No current history entries fall outside this window.
+						No current entries would be pruned on the next recorded job.
 					{/if}
+				</div>
+				<div class="mt-1 text-muted">
+					{retentionPreview.retained} existing entries plus the next job would leave {retentionPreview.afterNextWrite} of {retentionPreview.maxEntries} history rows.
 				</div>
 				<div class="mt-1 text-muted">
 					IPA files remain available: {retentionPreview.artifacts.retained} files · {fmtSize(retentionPreview.artifacts.retainedBytes)} of {fmtSize(retentionPreview.artifacts.maxBytes)} used. Job-history retention does not delete library files.

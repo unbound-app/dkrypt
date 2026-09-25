@@ -692,9 +692,33 @@ const JobExportResponse = Type.Union([Type.Array(JsonObject), Type.String()]);
 const RetentionPreviewResponse = object({
   retentionDays: Type.Integer({ minimum: 0 }),
   cutoff: Type.Optional(Type.Number()),
+  currentEntries: Type.Integer({ minimum: 0 }),
   retained: Type.Integer({ minimum: 0 }),
   removed: Type.Integer({ minimum: 0 }),
+  agePruned: Type.Integer({ minimum: 0 }),
+  capacityPruned: Type.Integer({ minimum: 0 }),
+  afterNextWrite: Type.Integer({ minimum: 0 }),
+  maxEntries: Type.Integer({ minimum: 1 }),
   artifacts: object({ retained: Type.Integer({ minimum: 0 }), retainedBytes: Type.Number({ minimum: 0 }), maxBytes: Type.Number({ minimum: 0 }), reclaimable: Type.Integer({ minimum: 0 }), reclaimableBytes: Type.Number({ minimum: 0 }) }),
+});
+const ArtifactQuotaRetentionPreviewResponse = object({
+  targetMaxBytes: Type.Integer({ minimum: 1 }),
+  currentMaxBytes: Type.Number({ minimum: 0 }),
+  currentCount: Type.Integer({ minimum: 0 }),
+  currentBytes: Type.Number({ minimum: 0 }),
+  retainedCount: Type.Integer({ minimum: 0 }),
+  retainedBytes: Type.Number({ minimum: 0 }),
+  evictedCount: Type.Integer({ minimum: 0 }),
+  reclaimedBytes: Type.Number({ minimum: 0 }),
+  evictionExamples: Type.Array(object({
+    id: Identifier,
+    bundleId: BundleId,
+    channel: Type.Union([Type.Literal('appstore'), Type.Literal('testflight')]),
+    versionLabel: Type.Optional(Type.String()),
+    fileSizeBytes: Type.Number({ minimum: 0 }),
+    lastAccessedAt: Type.Number(),
+  })),
+  additionalEvictions: Type.Integer({ minimum: 0 }),
 });
 const TestWebhookResponse = object({ ok: Type.Boolean(), error: Type.Optional(Type.String()) });
 const LogsPageResponse = object({ logs: Type.Array(JsonObject), total: Type.Integer({ minimum: 0 }), nextCursor: PageCursor });
@@ -995,6 +1019,7 @@ register('POST', '/v1/dashboard/jobs/:id/retry', { params: object({ id: Identifi
 register('GET', '/v1/dashboard/notifications', { querystring: PaginationQuery });
 register('GET', '/v1/dashboard/jobs', { querystring: object({ ...PaginationQuery.properties, q: Type.Optional(Type.String({ maxLength: 200 })), source: Type.Optional(Type.Union([Type.Literal('manual'), Type.Literal('scheduler')])), status: Type.Optional(Type.Union([Type.Literal('done'), Type.Literal('failed')])), queuedBy: Type.Optional(Type.String({ maxLength: 120 })), deviceId: Type.Optional(Identifier), errorQ: Type.Optional(Type.String({ maxLength: 200 })), failureCategory: Type.Optional(Type.String({ maxLength: 64 })), fromTs: Type.Optional(Type.Integer()), toTs: Type.Optional(Type.Integer()) }) });
 register('GET', '/v1/dashboard/artifacts', { querystring: object({ ...PaginationQuery.properties, q: Type.Optional(Type.String({ maxLength: 200 })), channel: Type.Optional(Type.Union([Type.Literal('appstore'), Type.Literal('testflight')])) }) });
+register('GET', '/v1/dashboard/artifacts/retention-preview', { querystring: object({ maxBytes: Type.Integer({ minimum: 1 }) }) });
 register('GET', '/v1/dashboard/logs', { querystring: object({ ...PaginationQuery.properties, scope: Type.Optional(Type.String({ maxLength: 100 })), level: Type.Optional(Type.Union([Type.Literal('info'), Type.Literal('warn'), Type.Literal('error')])), q: Type.Optional(Type.String({ maxLength: 100 })), regex: Type.Optional(Type.Literal('1')) }) });
 register('GET', '/v1/dashboard/devices/:id/activity', { params: object({ id: Identifier }), querystring: PaginationQuery });
 register('GET', '/v1/dashboard/audit-log', { querystring: PaginationQuery });
@@ -1054,6 +1079,7 @@ const remainingContracts: Array<[ContractMethod, string]> = [
   ['POST', '/v1/dashboard/notifications/read'],
   ['GET', '/v1/dashboard/events'],
   ['GET', '/v1/dashboard/artifacts/:id/file'],
+  ['GET', '/v1/dashboard/artifacts/retention-preview'],
   ['GET', '/v1/dashboard/jobs/export'],
   ['GET', '/v1/dashboard/jobs/eta/:bundleId'],
   ['POST', '/v1/dashboard/jobs/bulk-preview'],
@@ -1298,6 +1324,10 @@ register('POST', '/v1/testflight/decrypt', {
 register('GET', '/v1/dashboard/artifacts', {
   querystring: object({ ...PaginationQuery.properties, q: Type.Optional(Type.String({ maxLength: 200 })), channel: Type.Optional(Type.Union([Type.Literal('appstore'), Type.Literal('testflight')])) }),
   response: { 200: DashboardArtifactPage },
+});
+register('GET', '/v1/dashboard/artifacts/retention-preview', {
+  querystring: object({ maxBytes: Type.Integer({ minimum: 1 }) }),
+  response: { 200: ArtifactQuotaRetentionPreviewResponse },
 });
 register('GET', '/v1/dashboard/testflight/:appId/trains', {
   params: object({ appId: Type.String({ minLength: 1, maxLength: 32, pattern: '^\\d+$' }) }),

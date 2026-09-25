@@ -51,7 +51,19 @@ import {
   getTestFlightSubscription,
 } from '#store/state.js';
 import { listAppVersions } from '#versions.js';
-import { artifactDownloadName, artifactFileAvailable, artifactKeyForAppStoreVersion, getArtifactById, getArtifactByKey, getArtifactBySourceJobId, getArtifactForJob, getArtifactStorageStats, listArtifacts, touchArtifact } from '#artifacts.js';
+import {
+  artifactDownloadName,
+  artifactFileAvailable,
+  artifactKeyForAppStoreVersion,
+  getArtifactById,
+  getArtifactByKey,
+  getArtifactBySourceJobId,
+  getArtifactForJob,
+  getArtifactStorageStats,
+  listArtifacts,
+  previewArtifactQuotaRetention,
+  touchArtifact,
+} from '#artifacts.js';
 import {
   addAllowedUser,
   addPushSubscription,
@@ -2390,6 +2402,15 @@ dashboardRouter.get('/v1/dashboard/settings/job-history-retention/preview', canM
       reclaimableBytes: 0,
     },
   });
+});
+
+dashboardRouter.get('/v1/dashboard/artifacts/retention-preview', canManageSchedulerSettings, canDecrypt, (req, res) => {
+  const maxBytes = Number(req.query.maxBytes);
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) {
+    res.status(400).json({ error: 'maxBytes must be a positive safe integer' });
+    return;
+  }
+  res.json(previewArtifactQuotaRetention(maxBytes));
 });
 
 dashboardRouter.get('/v1/dashboard/settings/validate-cron', canValidateCron, (req, res) => {

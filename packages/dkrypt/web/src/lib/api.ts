@@ -1425,8 +1425,13 @@ export function saveSettings(patch: Partial<SchedulerSettings>): Promise<{ ok: b
 export interface JobHistoryRetentionPreview {
   retentionDays: number;
   cutoff?: number;
+  currentEntries: number;
   retained: number;
   removed: number;
+  agePruned: number;
+  capacityPruned: number;
+  afterNextWrite: number;
+  maxEntries: number;
   artifacts: {
     retained: number;
     retainedBytes: number;
@@ -1438,6 +1443,30 @@ export interface JobHistoryRetentionPreview {
 
 export function previewJobHistoryRetention(retentionDays: number): Promise<JobHistoryRetentionPreview> {
   return apiJson(`/v1/dashboard/settings/job-history-retention/preview?retentionDays=${encodeURIComponent(retentionDays)}`);
+}
+
+export interface ArtifactQuotaRetentionPreview {
+  targetMaxBytes: number;
+  currentMaxBytes: number;
+  currentCount: number;
+  currentBytes: number;
+  retainedCount: number;
+  retainedBytes: number;
+  evictedCount: number;
+  reclaimedBytes: number;
+  evictionExamples: Array<{
+    id: string;
+    bundleId: string;
+    channel: 'appstore' | 'testflight';
+    versionLabel?: string;
+    fileSizeBytes: number;
+    lastAccessedAt: number;
+  }>;
+  additionalEvictions: number;
+}
+
+export function previewArtifactQuotaRetention(maxBytes: number): Promise<ArtifactQuotaRetentionPreview> {
+  return apiJson(`/v1/dashboard/artifacts/retention-preview?maxBytes=${encodeURIComponent(maxBytes)}`);
 }
 
 export function validateCron(expr: string): Promise<{ valid: boolean }> {

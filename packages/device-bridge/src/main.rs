@@ -474,6 +474,45 @@ async fn read_agent_frame<T: tokio::io::AsyncRead + Unpin>(
         .map_err(|value| error("invalid_response", value.to_string(), false))
 }
 
+async fn request_agent_exchange<T>(
+    socket: &mut T,
+    agent_secret: &str,
+    payload: &Value,
+    deadline_ms: u64,
+) -> Result<Value, RpcError>
+where
+    T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    let bootstrap = json!({
+        "version": 1,
+        "requestId": Uuid::new_v4().to_string(),
+        "action": "bootstrap",
+        "secret": agent_secret
+    });
+    let deadline = Duration::from_millis(deadline_ms.clamp(1, 120_000));
+    timeout(deadline, async {
+        write_agent_frame(socket, &bootstrap).await?;
+        let bootstrap_response = read_agent_frame(socket).await?;
+        if bootstrap_response.get("ok") != Some(&Value::Bool(true)) {
+            return Err(error(
+                "agent_bootstrap",
+                "device agent rejected the bridge secret",
+                true,
+            ));
+        }
+        write_agent_frame(socket, payload).await?;
+        read_agent_frame(socket).await
+    })
+    .await
+    .map_err(|_| {
+        error(
+            "agent_timeout",
+            "device agent did not respond before the deadline",
+            true,
+        )
+    })?
+}
+
 async fn request_agent(
     state: &BridgeState,
     id: &str,
@@ -499,29 +538,7 @@ async fn request_agent(
             true,
         )
     })?;
-    let bootstrap = json!({ "version": 1, "requestId": Uuid::new_v4().to_string(), "action": "bootstrap", "secret": agent_secret });
-    let deadline = Duration::from_millis(deadline_ms.clamp(1, 120_000));
-    timeout(deadline, async {
-        write_agent_frame(&mut socket, &bootstrap).await?;
-        let bootstrap_response = read_agent_frame(&mut socket).await?;
-        if bootstrap_response.get("ok") != Some(&Value::Bool(true)) {
-            return Err(error(
-                "agent_bootstrap",
-                "device agent rejected the bridge secret",
-                true,
-            ));
-        }
-        write_agent_frame(&mut socket, &payload).await?;
-        read_agent_frame(&mut socket).await
-    })
-    .await
-    .map_err(|_| {
-        error(
-            "agent_timeout",
-            "device agent did not respond before the deadline",
-            true,
-        )
-    })?
+    request_agent_exchange(&mut socket, &agent_secret, &payload, deadline_ms).await
 }
 
 async fn open_tunnel(
@@ -970,10 +987,10 @@ async fn main() -> Result<(), String> {
 mod tests {
     use super::{
         BridgeState, CancellationToken, MAX_FRAME_BYTES, RPC_VERSION, authorized_secret,
-        bridge_capabilities, error, failure, handle_client, read_frame, response,
-        valid_frame_length,
+        bridge_capabilities, error, failure, handle_client, read_agent_frame, read_frame,
+        request_agent_exchange, response, valid_frame_length, write_agent_frame,
     };
-    use serde_json::json;
+    use serde_json::{Value, json};
     use std::{
         collections::HashMap,
         path::PathBuf,
@@ -1039,6 +1056,83 @@ mod tests {
                 .expect("cancellation waiter timed out")
                 .expect("cancellation waiter panicked")
         );
+    }
+
+    #[tokio::test]
+    async fn device_agent_fixture_bootstraps_then_accepts_the_signed_request() {
+        let (mut bridge, mut agent) = tokio::io::duplex(16 * 1024);
+        let fixture: Value =
+            serde_json::from_str(include_str!("../fixtures/device-agent-v1.fixture.json"))
+                .expect("device-agent fixture should be valid JSON");
+        let request = fixture["envelope"].clone();
+        let agent_secret = fixture["secret"]
+            .as_str()
+            .expect("device-agent fixture should contain a secret")
+            .to_string();
+        let response_payload = json!({ "ok": true, "result": { "agentVersion": "1.4.0" } });
+        let expected_request = request.clone();
+        let expected_response = response_payload.clone();
+        let expected_secret = agent_secret.clone();
+        let fixture = tokio::spawn(async move {
+            let bootstrap = read_agent_frame(&mut agent)
+                .await
+                .expect("bootstrap frame should be readable");
+            assert_eq!(
+                bootstrap.get("action").and_then(Value::as_str),
+                Some("bootstrap")
+            );
+            assert_eq!(
+                bootstrap.get("secret").and_then(Value::as_str),
+                Some(expected_secret.as_str())
+            );
+            write_agent_frame(&mut agent, &json!({ "ok": true }))
+                .await
+                .expect("bootstrap response should be writable");
+            let forwarded = read_agent_frame(&mut agent)
+                .await
+                .expect("authenticated request frame should be readable");
+            assert_eq!(forwarded, expected_request);
+            write_agent_frame(&mut agent, &expected_response)
+                .await
+                .expect("agent response should be writable");
+        });
+
+        let response = request_agent_exchange(&mut bridge, &agent_secret, &request, 1_000)
+            .await
+            .expect("device-agent exchange should succeed");
+        fixture.await.expect("device-agent fixture should complete");
+        assert_eq!(response, response_payload);
+    }
+
+    #[tokio::test]
+    async fn device_agent_fixture_rejects_a_failed_bootstrap() {
+        let (mut bridge, mut agent) = tokio::io::duplex(16 * 1024);
+        let fixture = tokio::spawn(async move {
+            let _bootstrap = read_agent_frame(&mut agent)
+                .await
+                .expect("bootstrap frame should be readable");
+            write_agent_frame(
+                &mut agent,
+                &json!({ "ok": false, "error": "invalid_secret" }),
+            )
+            .await
+            .expect("bootstrap rejection should be writable");
+        });
+
+        let error = request_agent_exchange(&mut bridge, "wrong-secret", &json!({}), 1_000)
+            .await
+            .expect_err("a rejected bootstrap must fail the exchange");
+        fixture.await.expect("device-agent fixture should complete");
+        assert_eq!(error.code, "agent_bootstrap");
+    }
+
+    #[tokio::test]
+    async fn device_agent_fixture_times_out_when_the_bridge_stops_responding() {
+        let (mut bridge, _agent) = tokio::io::duplex(16 * 1024);
+        let error = request_agent_exchange(&mut bridge, "fixture-secret", &json!({}), 50)
+            .await
+            .expect_err("an unresponsive agent must time out");
+        assert_eq!(error.code, "agent_timeout");
     }
 
     #[tokio::test]

@@ -1,6 +1,16 @@
 export const GENERATED_CHANGELOG = [
   {
     "date": "2026-09-25",
+    "title": "feat(reliability): add retention simulation and bridge fixtures",
+    "description": "Released in ba99d61."
+  },
+  {
+    "date": "2026-09-25",
+    "title": "feat(settings): preview job retention impact",
+    "description": "Released in 2e456d8."
+  },
+  {
+    "date": "2026-09-25",
     "title": "fix(reliability): make job cancellation crash-safe",
     "description": "Released in 1c70496."
   },
@@ -28,15 +38,5 @@ export const GENERATED_CHANGELOG = [
     "date": "2026-09-25",
     "title": "feat(api): type TestFlight catalog routes",
     "description": "Released in 71ca126."
-  },
-  {
-    "date": "2026-09-25",
-    "title": "feat(api): expose detailed device transport health",
-    "description": "Released in 4b14e60."
-  },
-  {
-    "date": "2026-09-25",
-    "title": "fix(api): preserve request schemas and error contracts",
-    "description": "Released in cd27757."
   }
 ] as const;

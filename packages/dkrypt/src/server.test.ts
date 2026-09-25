@@ -512,7 +512,27 @@ test('Fastify previews retention and reports queue service objectives', async ()
       headers: { cookie },
     });
     expect(retention.statusCode).toBe(200);
-    expect(retention.json()).toMatchObject({ retentionDays: 0, removed: 0 });
+    expect(retention.json()).toMatchObject({
+      retentionDays: 0,
+      removed: 0,
+      agePruned: 0,
+      afterNextWrite: expect.any(Number),
+      maxEntries: 100,
+    });
+
+    const artifactRetention = await server.inject({
+      method: 'GET',
+      url: '/v1/dashboard/artifacts/retention-preview?maxBytes=1',
+      headers: { cookie },
+    });
+    expect(artifactRetention.statusCode).toBe(200);
+    expect(artifactRetention.json()).toMatchObject({
+      targetMaxBytes: 1,
+      currentCount: expect.any(Number),
+      currentBytes: expect.any(Number),
+      evictedCount: expect.any(Number),
+      evictionExamples: expect.any(Array),
+    });
 
     const slo = await server.inject({
       method: 'GET',

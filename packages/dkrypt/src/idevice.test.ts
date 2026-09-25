@@ -93,22 +93,19 @@ test('createBridgeEnvelope matches the shared bridge fixture', async () => {
   expect(fixture.contract).toEqual({ version: BRIDGE_PROTOCOL_VERSION, ...BRIDGE_CAPABILITIES, testflightLifecycle: TESTFLIGHT_LIFECYCLE_CAPABILITIES });
 });
 
-test('createDeviceAgentEnvelope matches the device agent protocol contract', () => {
-  const envelope = createDeviceAgentEnvelope(
-    '0123456789abcdef0123456789abcdef',
-    '11111111-1111-4111-8111-111111111111',
-    { action: 'status' },
-    1760000000,
-  );
+test('createDeviceAgentEnvelope matches the shared bridge fixture', async () => {
+  const fixturePath = path.resolve(import.meta.dir, '../../device-bridge/fixtures/device-agent-v1.fixture.json');
+  const fixture = JSON.parse(await readFile(fixturePath, 'utf8')) as {
+    secret: string;
+    request: Record<string, unknown>;
+    requestId: string;
+    issuedAt: number;
+    envelope: Record<string, unknown> & { payload: string };
+  };
+  const envelope = createDeviceAgentEnvelope(fixture.secret, fixture.requestId, fixture.request, fixture.issuedAt);
 
-  expect(envelope).toEqual({
-    version: 1,
-    requestId: '11111111-1111-4111-8111-111111111111',
-    issuedAt: 1760000000,
-    payload: 'eyJhY3Rpb24iOiJzdGF0dXMifQ',
-    signature: 'c03e1275eea034bbfa180b4eb5b4b4c6e7095ea4ea895e9671278e5ecb82c3bd',
-  });
-  expect(JSON.parse(Buffer.from(envelope.payload, 'base64url').toString('utf8'))).toEqual({ action: 'status' });
+  expect(envelope).toEqual(fixture.envelope);
+  expect(JSON.parse(Buffer.from(envelope.payload, 'base64url').toString('utf8'))).toEqual(fixture.request);
 });
 
 test('uses SSH exec channels for device file reads and quoted writes', async () => {
