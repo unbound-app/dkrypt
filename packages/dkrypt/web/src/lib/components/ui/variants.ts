@@ -28,7 +28,7 @@ export function buttonVariants(variant: ButtonVariant = 'default', size: ButtonS
 export type BadgeVariant = 'default' | 'success' | 'warning' | 'destructive' | 'secondary' | 'outline';
 
 export const badgeVariantClasses: Record<BadgeVariant, string> = {
-  default: 'border-transparent bg-primary/15 text-primary',
+  default: 'border-transparent bg-primary/15 text-foreground',
   success: 'border-transparent bg-ok/15 text-ok',
   warning: 'border-transparent bg-warn/15 text-warn',
   destructive: 'border-transparent bg-destructive/15 text-destructive',

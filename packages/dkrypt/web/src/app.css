@@ -44,7 +44,7 @@
 	--color-muted: var(--muted-foreground);
 	--color-accent: #386fe8;
 	--color-accent-contrast: #ffffff;
-	--ok: #1f9d67;
+	--ok: #176f4a;
 	--warn: #a8650a;
 	--err: #cf3540;
 	--color-ok: var(--ok);
@@ -62,7 +62,7 @@
 	--secondary: #1d2430;
 	--secondary-foreground: #e6eaf2;
 	--muted: #1a212d;
-	--muted-foreground: #9aa6b9;
+	--muted-foreground: #a5b1c5;
 	--accent: #232c3b;
 	--accent-foreground: #f1f4f9;
 	--destructive: #d24d5b;

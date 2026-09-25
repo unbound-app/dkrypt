@@ -806,12 +806,11 @@
 	{:else}
 		<div class="history-feed">
 			{#if !loaded}
-				{#each Array(5) as _, i (i)}
-					<div
-						class="skeleton border-border h-20 border-b"
-						aria-label="Loading job history"
-					></div>
-				{/each}
+				<div role="status" aria-label="Loading job history">
+					{#each Array(5) as _, i (i)}
+						<div class="skeleton border-border h-20 border-b" aria-hidden="true"></div>
+					{/each}
+				</div>
 			{:else}
 				{#each grouped as g (g.label)}
 					<section class="mb-5">

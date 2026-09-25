@@ -665,7 +665,7 @@
 					</div>
 				</div>
 				<nav class="flex flex-1 flex-col gap-1 p-4" aria-label="Workspace">
-					<div class="mb-2 px-3 text-[10px] font-semibold tracking-[0.14em] text-sidebar-foreground/45 uppercase">Workspace</div>
+					<div class="mb-2 px-3 text-[10px] font-semibold tracking-[0.14em] text-sidebar-foreground/65 uppercase">Workspace</div>
 					{#each visibleTabs as t (t.id)}
 						<Button
 							variant={tabState.active === t.id ? "secondary" : "ghost"}
