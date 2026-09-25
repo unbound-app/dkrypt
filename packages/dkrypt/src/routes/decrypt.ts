@@ -16,7 +16,7 @@ import { decodeCursor, nextCursor } from '#util/cursor.js';
 import { getRouteContract } from '#contracts.js';
 
 export const decryptRouter = Router();
-export const artifactFileRouter = Router();
+export const artifactAndJobRouter = Router();
 export const testFlightDecryptRouter = Router();
 
 interface TestFlightCatalogServices {
@@ -69,9 +69,12 @@ function requestFingerprint(route: string, body: Record<string, unknown>): strin
   return createHash('sha256').update(JSON.stringify({ route, body })).digest('hex');
 }
 
-function isBundleIdAllowed(res: Response, bundleId: string): boolean {
-  const scope = res.locals.apiKeyScope as string[] | undefined;
+function isBundleIdAllowed(scope: string[] | undefined, bundleId: string): boolean {
   return !scope || scope.length === 0 || scope.includes(bundleId);
+}
+
+function normalizeBundleScope(scope: string[] | undefined): string[] | undefined {
+  return scope && scope.length > 0 ? scope : undefined;
 }
 
 function apiRequester(res: Response): string {
@@ -98,7 +101,7 @@ decryptRouter.post('/v1/decrypts', requireApiKey, blockDuringMaintenance, async 
     res.status(400).json({ error: 'version must match a release tag such as 240, 234.2, or 240_109440' });
     return;
   }
-  if (!isBundleIdAllowed(res, bundleId)) {
+  if (!isBundleIdAllowed(res.locals.apiKeyScope, bundleId)) {
     res.status(403).json({ error: 'this API key is not scoped to this bundleId' });
     return;
   }
@@ -144,7 +147,7 @@ decryptRouter.get('/v1/decrypt', requireApiKey, blockDuringMaintenance, async (r
     return;
   }
 
-  if (!isBundleIdAllowed(res, bundleId)) {
+  if (!isBundleIdAllowed(res.locals.apiKeyScope, bundleId)) {
     res.status(403).json({ error: 'this API key is not scoped to this bundleId' });
     return;
   }
@@ -229,13 +232,13 @@ decryptRouter.get('/v1/decrypt', requireApiKey, blockDuringMaintenance, async (r
   await streamJobFile(finished, req, res);
 });
 
-artifactFileRouter.get('/v1/artifacts/:id/file', requireApiKey, async (req, res) => {
+artifactAndJobRouter.get('/v1/artifacts/:id/file', requireApiKey, async (req, res) => {
   const artifact = getArtifactById(req.params.id);
   if (!artifact || !artifactFileAvailable(artifact)) {
     res.status(404).json({ error: 'artifact not found' });
     return;
   }
-  if (!isBundleIdAllowed(res, artifact.bundleId)) {
+  if (!isBundleIdAllowed(res.locals.apiKeyScope, artifact.bundleId)) {
     res.status(403).json({ error: 'this API key is not scoped to this bundleId' });
     return;
   }
@@ -243,13 +246,13 @@ artifactFileRouter.get('/v1/artifacts/:id/file', requireApiKey, async (req, res)
   await streamFilePath(artifact.filePath, req, res, artifactDownloadName(artifact), artifact.fileSizeBytes, artifact.id);
 });
 
-artifactFileRouter.get('/v1/jobs/:id', requireApiKey, (req, res) => {
+artifactAndJobRouter.get('/v1/jobs/:id', requireApiKey, (req, res) => {
   const job = getJob(req.params.id);
   if (!job) {
     res.status(404).json({ error: 'job not found (finished jobs are pruned after retention window)' });
     return;
   }
-  if (!isBundleIdAllowed(res, job.bundleId)) {
+  if (!isBundleIdAllowed(res.locals.apiKeyScope, job.bundleId)) {
     res.status(403).json({ error: 'this API key is not scoped to this bundleId' });
     return;
   }
@@ -267,7 +270,7 @@ testFlightDecryptRouter.post('/v1/testflight/decrypt', requireApiKey, requireTes
     res.status(400).json({ error: 'bundleId, appId, and build are required' });
     return;
   }
-  if (!isBundleIdAllowed(res, bundleId)) {
+  if (!isBundleIdAllowed(res.locals.apiKeyScope, bundleId)) {
     res.status(403).json({ error: 'this API key is not scoped to this bundleId' });
     return;
   }
@@ -329,7 +332,7 @@ export function createArtifactCatalogRoutes(
           limit: Number.isFinite(limit) ? limit : 50,
           query: query.q,
           channel: query.channel,
-          bundleIds: getFastifyApiKeyContext(request)?.allowedBundleIds,
+          bundleIds: normalizeBundleScope(getFastifyApiKeyContext(request)?.allowedBundleIds),
         });
         const normalizedOffset = Number.isFinite(offset) ? Math.max(offset, 0) : 0;
         return {
@@ -348,10 +351,9 @@ export function createArtifactCatalogRoutes(
         const artifact = services.getArtifactById(params.id);
         if (!artifact || !services.artifactFileAvailable(artifact)) {
           reply.code(404);
-          return apiErrorEnvelope('artifact not found', 'not_found', request.id);
+          return apiErrorEnvelope('artifact not found', 'request_error', request.id);
         }
-        const allowedBundleIds = getFastifyApiKeyContext(request)?.allowedBundleIds;
-        if (allowedBundleIds && !allowedBundleIds.includes(artifact.bundleId)) {
+        if (!isBundleIdAllowed(getFastifyApiKeyContext(request)?.allowedBundleIds, artifact.bundleId)) {
           reply.code(403);
           return apiErrorEnvelope('this API key is not scoped to this bundleId', 'bundle_scope_denied', request.id);
         }

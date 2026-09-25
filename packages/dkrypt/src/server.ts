@@ -16,7 +16,7 @@ import { log, startLogFlusher, stopLogFlusher } from '#logger.js';
 import { authRouter } from '#routes/auth.js';
 import { billingRouter, nowpaymentsWebhookRouter, stripeWebhookRouter } from '#routes/billing.js';
 import { dashboardRouter } from '#routes/dashboard.js';
-import { artifactCatalogRoutes, artifactFileRouter, decryptRouter, testFlightCatalogRoutes, testFlightDecryptRouter } from '#routes/decrypt.js';
+import { artifactAndJobRouter, artifactCatalogRoutes, decryptRouter, testFlightCatalogRoutes, testFlightDecryptRouter } from '#routes/decrypt.js';
 import { healthRoutes } from '#routes/health.js';
 import { startScheduler, stopScheduler } from '#scheduler/index.js';
 import { closeStateDatabase, startApiKeySweeper, startSessionSweeper, startStateFlusher, stopStateBackgroundServices } from '#store/state.js';
@@ -210,7 +210,7 @@ export async function buildServer(options: { includePublicRoutes?: boolean } = {
   await server.register(healthRoutes);
   registerRouter(server, decryptRouter);
   await server.register(artifactCatalogRoutes);
-  registerRouter(server, artifactFileRouter);
+  registerRouter(server, artifactAndJobRouter);
   await server.register(testFlightCatalogRoutes);
   registerRouter(server, testFlightDecryptRouter);
   registerRouter(server, authRouter);

@@ -3,7 +3,7 @@ import { TypeBoxTypeProvider } from '@fastify/type-provider-typebox';
 import Fastify from 'fastify';
 import type { ArtifactRecord } from '#artifacts.js';
 import { createArtifactCatalogRoutes, createTestFlightCatalogRoutes } from '#routes/decrypt.js';
-import { createApiKey, revokeApiKey } from '#store/state.js';
+import { bulkSetApiKeyAllowedBundleIds, createApiKey, revokeApiKey } from '#store/state.js';
 
 test('typed TestFlight catalog routes enforce key scopes and normalize bridge failures', async () => {
   let trainLookupAppId = 0;
@@ -113,6 +113,8 @@ test('typed artifact metadata routes enforce API-key bundle scopes', async () =>
   };
   let listedBundleIds: string[] | undefined;
   const apiKey = createApiKey('Scoped artifact metadata route test', 'root', undefined, ['com.example.allowed']);
+  const emptyScopeApiKey = createApiKey('Empty-scope artifact metadata route test', 'root');
+  bulkSetApiKeyAllowedBundleIds([emptyScopeApiKey.id], []);
   const server = Fastify().withTypeProvider<TypeBoxTypeProvider>();
 
   try {
@@ -143,8 +145,21 @@ test('typed artifact metadata routes enforce API-key bundle scopes', async () =>
     const denied = await server.inject({ method: 'GET', url: `/v1/artifacts/${deniedArtifact.id}`, headers });
     expect(denied.statusCode).toBe(403);
     expect(denied.json()).toMatchObject({ code: 'bundle_scope_denied', retryable: false });
+
+    const missing = await server.inject({ method: 'GET', url: '/v1/artifacts/missing-artifact', headers });
+    expect(missing.statusCode).toBe(404);
+    expect(missing.json()).toMatchObject({ code: 'request_error', error: 'artifact not found' });
+
+    const emptyScopeHeaders = { authorization: `Bearer ${emptyScopeApiKey.key}` };
+    const emptyScopeListing = await server.inject({ method: 'GET', url: '/v1/artifacts', headers: emptyScopeHeaders });
+    expect(emptyScopeListing.statusCode).toBe(200);
+    expect(listedBundleIds).toBeUndefined();
+
+    const emptyScopeDetail = await server.inject({ method: 'GET', url: `/v1/artifacts/${deniedArtifact.id}`, headers: emptyScopeHeaders });
+    expect(emptyScopeDetail.statusCode).toBe(200);
   } finally {
     revokeApiKey(apiKey.id, 'root', true);
+    revokeApiKey(emptyScopeApiKey.id, 'root', true);
     await server.close();
   }
 });
