@@ -1422,6 +1422,24 @@ export function saveSettings(patch: Partial<SchedulerSettings>): Promise<{ ok: b
   return apiAction('/v1/dashboard/settings', { method: 'PUT', body: JSON.stringify(patch) }, 'Settings saved');
 }
 
+export interface JobHistoryRetentionPreview {
+  retentionDays: number;
+  cutoff?: number;
+  retained: number;
+  removed: number;
+  artifacts: {
+    retained: number;
+    retainedBytes: number;
+    maxBytes: number;
+    reclaimable: number;
+    reclaimableBytes: number;
+  };
+}
+
+export function previewJobHistoryRetention(retentionDays: number): Promise<JobHistoryRetentionPreview> {
+  return apiJson(`/v1/dashboard/settings/job-history-retention/preview?retentionDays=${encodeURIComponent(retentionDays)}`);
+}
+
 export function validateCron(expr: string): Promise<{ valid: boolean }> {
   return apiJson(`/v1/dashboard/settings/validate-cron?expr=${encodeURIComponent(expr)}`);
 }

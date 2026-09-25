@@ -14,6 +14,7 @@
 		createWatch,
 		deleteWatch,
 		fetchSettings,
+		previewJobHistoryRetention,
 		fetchWebhookDeliveries,
 		fetchGithubRepos,
 		fetchGithubRateLimit,
@@ -41,6 +42,7 @@
 		type GithubRateLimit,
 		type GithubWorkflowOption,
 		type SchedulerSettings,
+		type JobHistoryRetentionPreview,
 		type TestFlightUpdateCheck,
 		type TestFlightBridgeDiagnostics,
 		type UpdateCheck,
@@ -57,7 +59,7 @@
 	import SearchSelect from "#lib/components/ui/SearchSelect.svelte";
 	import Switch from "#lib/components/ui/Switch.svelte";
 	import { buttonVariants } from "#lib/components/ui/variants";
-	import { debounce } from "#lib/format";
+	import { debounce, fmtSize } from "#lib/format";
 	import {
 		appDisplayName,
 		appIconUrl,
@@ -867,6 +869,10 @@
 	let testingWebhook = $state(false);
 	let saving = $state(false);
 	let deliveries = $state<WebhookDeliveryEntry[] | null>(null);
+	let retentionPreview = $state<JobHistoryRetentionPreview | null>(null);
+	let retentionPreviewLoading = $state(false);
+	let retentionPreviewError = $state("");
+	let retentionPreviewRequestId = 0;
 
 	$effect(() => {
 		void fetchSettings().then((s) => {
@@ -890,6 +896,24 @@
 	function openSettingsDialog(): void {
 		form = { ...savedForm };
 		settingsDialogOpen = true;
+		void loadRetentionPreview(form.jobHistoryRetentionDays);
+	}
+
+	async function loadRetentionPreview(retentionDays: number): Promise<void> {
+		if (!canManageSchedulerSettings) return;
+		const requestId = ++retentionPreviewRequestId;
+		retentionPreviewLoading = true;
+		retentionPreviewError = "";
+		try {
+			const preview = await previewJobHistoryRetention(retentionDays);
+			if (requestId === retentionPreviewRequestId) retentionPreview = preview;
+		} catch (error) {
+			if (requestId === retentionPreviewRequestId) {
+				retentionPreviewError = error instanceof Error ? error.message : String(error);
+			}
+		} finally {
+			if (requestId === retentionPreviewRequestId) retentionPreviewLoading = false;
+		}
 	}
 
 	const repoErrors = $derived({
@@ -1679,11 +1703,35 @@
 			id="s-retention"
 			items={RETENTION_OPTIONS}
 			value={String(form.jobHistoryRetentionDays)}
-			onValueChange={(v) =>
-				(form = { ...form, jobHistoryRetentionDays: Number(v) })}
+			onValueChange={(v) => {
+				const retentionDays = Number(v);
+				form = { ...form, jobHistoryRetentionDays: retentionDays };
+				void loadRetentionPreview(retentionDays);
+			}}
 			disabled={!canManageSchedulerSettings}
 			class="w-full"
 		/>
+		<div class="mt-2 rounded-md border border-border bg-muted/20 p-3 text-xs" aria-live="polite">
+			<div class="font-medium text-foreground">Retention preview</div>
+			{#if retentionPreviewLoading}
+				<div class="mt-1 text-muted">Calculating the impact…</div>
+			{:else if retentionPreviewError}
+				<div class="mt-1 text-err">Preview unavailable: {retentionPreviewError}</div>
+			{:else if retentionPreview}
+				<div class="mt-1 text-muted">
+					{#if retentionPreview.removed > 0}
+						{retentionPreview.removed} of {retentionPreview.retained + retentionPreview.removed} current history entries would be removed the next time a job is recorded.
+					{:else}
+						No current history entries fall outside this window.
+					{/if}
+				</div>
+				<div class="mt-1 text-muted">
+					IPA files remain available: {retentionPreview.artifacts.retained} files · {fmtSize(retentionPreview.artifacts.retainedBytes)} of {fmtSize(retentionPreview.artifacts.maxBytes)} used. Job-history retention does not delete library files.
+				</div>
+			{:else}
+				<div class="mt-1 text-muted">Choose a retention window to preview its impact.</div>
+			{/if}
+		</div>
 
 		<label for="s-offlineMinutes" class="mt-3 mb-1 block text-xs text-muted"
 			>iDevice offline alert threshold</label

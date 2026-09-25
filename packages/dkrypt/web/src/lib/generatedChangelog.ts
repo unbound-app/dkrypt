@@ -1,42 +1,42 @@
 export const GENERATED_CHANGELOG = [
   {
     "date": "2026-09-25",
-    "title": "test(web): cover authenticated community links",
-    "description": "Released in 6040e41."
+    "title": "fix(reliability): make job cancellation crash-safe",
+    "description": "Released in 1c70496."
   },
   {
     "date": "2026-09-25",
-    "title": "fix(ops): coordinate graceful shutdown",
-    "description": "Released in ba1c0b1."
+    "title": "fix(storage): persist related collections atomically",
+    "description": "Released in 711fd37."
   },
   {
     "date": "2026-09-25",
-    "title": "feat(api): publish typed operational contracts",
-    "description": "Released in 6005465."
+    "title": "feat(api): migrate decrypt submission routes to Fastify",
+    "description": "Released in 1b802cc."
   },
   {
-    "date": "2026-09-24",
-    "title": "feat(ops): record device recovery metrics",
-    "description": "Released in da84896."
+    "date": "2026-09-25",
+    "title": "fix(api): preserve artifact route compatibility",
+    "description": "Released in 0685906."
   },
   {
-    "date": "2026-09-24",
-    "title": "fix(billing): serialize webhook processing",
-    "description": "Released in b5373ca."
+    "date": "2026-09-25",
+    "title": "fix(api): enforce artifact bundle scopes",
+    "description": "Released in d118ace."
   },
   {
-    "date": "2026-09-24",
-    "title": "feat(api): require explicit route contracts",
-    "description": "Released in 7181ef8."
+    "date": "2026-09-25",
+    "title": "feat(api): type TestFlight catalog routes",
+    "description": "Released in 71ca126."
   },
   {
-    "date": "2026-09-24",
-    "title": "feat(ops): add device bridge metrics",
-    "description": "Released in a52609a."
+    "date": "2026-09-25",
+    "title": "feat(api): expose detailed device transport health",
+    "description": "Released in 4b14e60."
   },
   {
-    "date": "2026-09-24",
-    "title": "feat(web): add billing operations console",
-    "description": "Released in b2251c6."
+    "date": "2026-09-25",
+    "title": "fix(api): preserve request schemas and error contracts",
+    "description": "Released in cd27757."
   }
 ] as const;

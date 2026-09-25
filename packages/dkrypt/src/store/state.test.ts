@@ -51,6 +51,7 @@ import {
   markNotificationsRead,
   approveTestFlightSubscription,
   denyTestFlightSubscription,
+  previewJobHistoryRetention,
   updateTestFlightSubscriptionDevice,
 } from '#store/state.js';
 
@@ -447,6 +448,38 @@ describe('job history retention', () => {
     } finally {
       updateSettings({ jobHistoryRetentionDays: 0 });
     }
+  });
+
+  test('previews job history pruning without mutating the current history', () => {
+    const now = Date.now();
+    updateSettings({ jobHistoryRetentionDays: 0 });
+    const old = {
+      id: randomUUID(),
+      bundleId: 'com.example.preview-old',
+      status: 'done' as const,
+      source: 'manual' as const,
+      createdAt: now - 90 * 86_400_000,
+      finishedAt: now - 90 * 86_400_000,
+    };
+    const fresh = {
+      id: randomUUID(),
+      bundleId: 'com.example.preview-fresh',
+      status: 'done' as const,
+      source: 'manual' as const,
+      createdAt: now,
+      finishedAt: now,
+    };
+    recordJobHistory(old);
+    recordJobHistory(fresh);
+
+    const before = getAllJobHistory().map((entry) => entry.id);
+    const preview = previewJobHistoryRetention(30, now);
+    const cutoff = now - 30 * 86_400_000;
+    const expectedRemoved = getAllJobHistory().filter((entry) => entry.finishedAt < cutoff).length;
+    const expectedRetained = getAllJobHistory().length - expectedRemoved;
+
+    expect(preview).toMatchObject({ retentionDays: 30, cutoff, removed: expectedRemoved, retained: expectedRetained });
+    expect(getAllJobHistory().map((entry) => entry.id)).toEqual(before);
   });
 });
 
