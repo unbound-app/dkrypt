@@ -17,7 +17,7 @@ import { authRouter } from '#routes/auth.js';
 import { billingRouter, nowpaymentsWebhookRouter, stripeWebhookRouter } from '#routes/billing.js';
 import { dashboardRouter } from '#routes/dashboard.js';
 import { decryptRouter } from '#routes/decrypt.js';
-import { healthRouter } from '#routes/health.js';
+import { healthRoutes } from '#routes/health.js';
 import { startScheduler, stopScheduler } from '#scheduler/index.js';
 import { closeStateDatabase, startApiKeySweeper, startSessionSweeper, startStateFlusher, stopStateBackgroundServices } from '#store/state.js';
 import { startDeviceHealthPoller, stopDeviceHealthPoller } from '#deviceHealth.js';
@@ -207,7 +207,7 @@ export async function buildServer(options: { includePublicRoutes?: boolean } = {
 
   registerRouter(server, stripeWebhookRouter);
   registerRouter(server, nowpaymentsWebhookRouter);
-  registerRouter(server, healthRouter);
+  await server.register(healthRoutes);
   registerRouter(server, decryptRouter);
   registerRouter(server, authRouter);
   registerRouter(server, billingRouter);

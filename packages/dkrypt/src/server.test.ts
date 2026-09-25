@@ -153,6 +153,28 @@ test('Fastify normalizes API errors into the shared error envelope', async () =>
   }
 });
 
+test('health responses expose transport and subsystem recovery states', async () => {
+  const server = await buildServer({ includePublicRoutes: false });
+
+  try {
+    const response = await server.inject({
+      method: 'GET',
+      url: '/v1/health',
+      headers: { authorization: `Bearer ${process.env.API_KEY}` },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      device: {
+        transportState: expect.stringMatching(/^(discovered|pairing|connecting|ready|degraded|recovering|offline|unsupported)$/),
+        capabilities: expect.any(Array),
+        recoveryState: expect.stringMatching(/^(stable|recovering|degraded|offline)$/),
+      },
+    });
+  } finally {
+    await server.close();
+  }
+});
+
 test('Fastify exposes coarse public service status without device details', async () => {
   const server = await buildServer({ includePublicRoutes: false });
 

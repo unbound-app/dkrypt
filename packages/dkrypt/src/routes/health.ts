@@ -1,12 +1,51 @@
-import { Router } from '#http.js';
-import { requireApiKey } from '#auth.js';
+import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
+import { fastifyRequireApiKey } from '#auth.js';
 import { peekPrimaryDeviceHealth } from '#deviceHealth.js';
 import { getRustDeviceBridgeStatus } from '#idevice.js';
 import { getEffectiveWatches, getPrimaryDevice, getStateDatabaseStatus, isWatchSchedulable } from '#store/state.js';
 import { renderMetrics } from '#metrics.js';
 import { getMaintenanceStatus } from '#maintenance.js';
+import { getRouteContract } from '#contracts.js';
 
-export const healthRouter = Router();
+export const healthRoutes: FastifyPluginAsyncTypebox = async (server) => {
+  server.get('/v1/health', { schema: getRouteContract('GET', '/v1/health'), preHandler: fastifyRequireApiKey }, async (_req, reply) => {
+    const primary = getPrimaryDevice();
+    const device = peekPrimaryDeviceHealth();
+    const schedulerEnabled = getEffectiveWatches().some(isWatchSchedulable);
+    let bridge: { state: 'ready' | 'offline'; transport: string; deviceCount: number; capabilities: string[] };
+    try {
+      bridge = await getRustDeviceBridgeStatus();
+    } catch {
+      bridge = { state: 'offline', transport: 'rust-netmuxd', deviceCount: 0, capabilities: [] };
+    }
+    const database = getStateDatabaseStatus();
+    return reply.send({
+      ok: database.integrity === 'ok',
+      serviceReady: database.integrity === 'ok' && bridge.state === 'ready',
+      schedulerEnabled,
+      database,
+      bridge,
+      device: {
+        reachable: device?.reachable ?? false,
+        bridgeReachable: device?.testFlightBridgeReachable ?? false,
+        transport: primary?.transport ?? (primary?.udid ? 'usb' : primary ? 'wifi' : undefined),
+        transportState: device?.transportState ?? (primary ? 'connecting' : 'unsupported'),
+        capabilities: device?.capabilities ?? [],
+        lastSeenAt: device?.lastSeenAt,
+        recoveryState: device?.recoveryState ?? (primary ? 'recovering' : 'offline'),
+        readiness: device?.readiness?.state ?? (primary ? 'unknown' : 'setup_required'),
+        subsystems: device?.subsystems,
+        bridgeHeartbeats: device?.bridgeHeartbeats,
+      },
+    });
+  });
+
+  server.get('/v1/status', { schema: getRouteContract('GET', '/v1/status') }, async () => getPublicStatus());
+
+  server.get('/v1/metrics', { schema: getRouteContract('GET', '/v1/metrics'), preHandler: fastifyRequireApiKey }, async (_request, reply) => {
+    return reply.type('text/plain; version=0.0.4; charset=utf-8').send(renderMetrics());
+  });
+};
 
 type PublicStatusState = 'operational' | 'degraded' | 'maintenance' | 'not_configured' | 'paused' | 'unknown';
 
@@ -71,33 +110,3 @@ export async function getPublicStatus(): Promise<PublicStatusResponse> {
     },
   };
 }
-
-healthRouter.get('/v1/health', requireApiKey, async (_req, res) => {
-  const primary = getPrimaryDevice();
-  const device = peekPrimaryDeviceHealth();
-  const schedulerEnabled = getEffectiveWatches().some(isWatchSchedulable);
-  let bridge: { state: 'ready' | 'offline'; transport: string; deviceCount: number; capabilities: string[] };
-  try {
-    bridge = await getRustDeviceBridgeStatus();
-  } catch {
-    bridge = { state: 'offline', transport: 'rust-netmuxd', deviceCount: 0, capabilities: [] };
-  }
-  const database = getStateDatabaseStatus();
-  res.json({
-    ok: database.integrity === 'ok',
-    serviceReady: database.integrity === 'ok' && bridge.state === 'ready',
-    schedulerEnabled,
-    database,
-    bridge,
-    device: { reachable: device?.reachable ?? false, bridgeReachable: device?.testFlightBridgeReachable ?? false, readiness: device?.readiness?.state ?? (primary ? 'unknown' : 'setup_required') },
-  });
-});
-
-healthRouter.get('/v1/status', async (_req, res) => {
-  res.json(await getPublicStatus());
-});
-
-healthRouter.get('/v1/metrics', requireApiKey, (_req, res) => {
-  res.setHeader('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
-  res.send(renderMetrics());
-});

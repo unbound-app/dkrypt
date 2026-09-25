@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from '#http.js';
+import type { FastifyReply, FastifyRequest } from 'fastify';
 import { recordApiKeyOutcome, verifyApiKey } from '#store/state.js';
 
 function trackApiKeyOutcome(req: Request, res: Response, keyId: string | undefined): void {
@@ -27,6 +28,30 @@ export function requireApiKey(req: Request, res: Response, next: NextFunction): 
   res.locals.apiKeyAllowTestFlight = result.allowTestFlight ?? true;
   trackApiKeyOutcome(req, res, result.keyId);
   next();
+}
+
+export async function fastifyRequireApiKey(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const header = request.headers.authorization ?? '';
+  const [scheme, token] = header.split(' ');
+  const result = scheme === 'Bearer' && token ? verifyApiKey(token, request.ip) : undefined;
+  if (result === 'rate-limited') {
+    reply.code(429).send({
+      error: 'this API key has hit its daily request limit',
+      code: 'api_key_rate_limited',
+      message: 'this API key has hit its daily request limit',
+      requestId: request.id,
+      retryable: true,
+    });
+    return;
+  }
+  if (!result) {
+    reply.code(401).send({ error: 'unauthorized', code: 'unauthorized', message: 'unauthorized', requestId: request.id, retryable: false });
+    return;
+  }
+  const keyId = result.keyId;
+  if (keyId) {
+    reply.raw.once('finish', () => recordApiKeyOutcome(keyId, request.method, request.routeOptions.url ?? request.url.split('?')[0], reply.raw.statusCode));
+  }
 }
 
 export function requireTestFlightScope(_req: Request, res: Response, next: NextFunction): void {

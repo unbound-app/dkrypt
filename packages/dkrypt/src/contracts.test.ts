@@ -3,16 +3,16 @@ import { authRouter } from '#routes/auth.js';
 import { billingRouter, nowpaymentsWebhookRouter, stripeWebhookRouter } from '#routes/billing.js';
 import { dashboardRouter } from '#routes/dashboard.js';
 import { decryptRouter } from '#routes/decrypt.js';
-import { healthRouter } from '#routes/health.js';
 import { buildServer } from '#server.js';
 import { getRouteContracts } from '#contracts.js';
 
 test('every registered versioned route has an explicit TypeBox contract', () => {
-  const routers = [authRouter, billingRouter, nowpaymentsWebhookRouter, stripeWebhookRouter, dashboardRouter, decryptRouter, healthRouter];
+  const routers = [authRouter, billingRouter, nowpaymentsWebhookRouter, stripeWebhookRouter, dashboardRouter, decryptRouter];
   const routes = routers.flatMap((router) => router.routes.map((route) => `${route.method} ${route.path}`));
   const contracts = getRouteContracts();
-  expect(routes.length).toBe(contracts.size);
+  expect(routes.length + 3).toBe(contracts.size);
   for (const route of routes) expect(contracts.has(route)).toBe(true);
+  for (const route of ['GET /v1/health', 'GET /v1/status', 'GET /v1/metrics']) expect(contracts.has(route)).toBe(true);
 });
 
 test('every versioned route is represented in generated OpenAPI', async () => {
@@ -112,6 +112,8 @@ test('core operational responses publish their required fields', async () => {
       const properties = schema?.properties ?? schema?.items?.properties ?? {};
       for (const field of fields) expect(Object.keys(properties)).toContain(field);
     }
+    const healthDevice = document.paths?.['/v1/health']?.get?.responses?.['200']?.content?.['application/json']?.schema?.properties?.device as { properties?: Record<string, unknown> } | undefined;
+    for (const field of ['transportState', 'capabilities', 'recoveryState', 'subsystems', 'bridgeHeartbeats']) expect(Object.keys(healthDevice?.properties ?? {})).toContain(field);
   } finally {
     await server.close();
   }
