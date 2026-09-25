@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 
@@ -63,6 +64,33 @@ async function mockAuthenticatedDashboard(page: Page, permissions: string): Prom
   await page.addInitScript(() => {
     localStorage.setItem('onboardingTourSeen', 'true');
     localStorage.setItem('onboardingDismissed', 'true');
+  });
+}
+
+async function mockStableDashboardEvents(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    class StableEventSource extends EventTarget {
+      static readonly CONNECTING = 0;
+      static readonly OPEN = 1;
+      static readonly CLOSED = 2;
+      readonly url: string;
+      readonly withCredentials = false;
+      readyState = StableEventSource.OPEN;
+      onopen: ((event: Event) => void) | null = null;
+      onerror: ((event: Event) => void) | null = null;
+
+      constructor(url: string | URL) {
+        super();
+        this.url = String(url);
+        queueMicrotask(() => this.onopen?.(new Event('open')));
+      }
+
+      close(): void {
+        this.readyState = StableEventSource.CLOSED;
+      }
+    }
+
+    Object.defineProperty(window, 'EventSource', { configurable: true, value: StableEventSource });
   });
 }
 
@@ -132,13 +160,15 @@ test('pricing page fits a phone viewport without horizontal overflow', async ({ 
 });
 
 test('pricing plan checkout actions share a bottom baseline', async ({ page }) => {
-  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.setViewportSize({ width: 1280, height: 1000 });
   await page.goto('/pricing');
 
   const buttons = page.getByRole('link', { name: 'Sign in to subscribe' });
   const paymentDetails = page.getByText('Stripe or crypto checkout', { exact: true });
   await expect(buttons).toHaveCount(4);
   await expect(paymentDetails).toHaveCount(4);
+  const priceTops = await page.locator('[data-slot="card"] .text-3xl').evaluateAll((prices) => prices.map((price) => price.getBoundingClientRect().top));
+  expect(Math.max(...priceTops) - Math.min(...priceTops)).toBeLessThanOrEqual(2);
   const bottoms = await buttons.evaluateAll((links) => links.map((link) => link.getBoundingClientRect().bottom));
   expect(Math.max(...bottoms) - Math.min(...bottoms)).toBeLessThanOrEqual(2);
   const widths = await buttons.evaluateAll((links) => links.map((link) => link.getBoundingClientRect().width));
@@ -273,30 +303,7 @@ test('IPA Library reveals artifact provenance and decrypt warnings on demand', a
     });
   });
 
-  await page.addInitScript(() => {
-    class StableEventSource extends EventTarget {
-      static readonly CONNECTING = 0;
-      static readonly OPEN = 1;
-      static readonly CLOSED = 2;
-      readonly url: string;
-      readonly withCredentials = false;
-      readyState = StableEventSource.OPEN;
-      onopen: ((event: Event) => void) | null = null;
-      onerror: ((event: Event) => void) | null = null;
-
-      constructor(url: string | URL) {
-        super();
-        this.url = String(url);
-        queueMicrotask(() => this.onopen?.(new Event('open')));
-      }
-
-      close(): void {
-        this.readyState = StableEventSource.CLOSED;
-      }
-    }
-
-    Object.defineProperty(window, 'EventSource', { configurable: true, value: StableEventSource });
-  });
+  await mockStableDashboardEvents(page);
 
   const artifactResponse = page.waitForResponse((response) => response.url().includes('/v1/dashboard/artifacts?') && response.ok());
   await page.goto('/');
@@ -311,6 +318,131 @@ test('IPA Library reveals artifact provenance and decrypt warnings on demand', a
   await expect(artifact.getByText(sha256, { exact: true })).toBeVisible();
   await expect(artifact.getByText('job-provenance-1', { exact: true })).toBeVisible();
   await expect(artifact.getByText(warning, { exact: true })).toBeVisible();
+});
+
+test('bulk retry queues only failures, continues after an error, and exports per-job results', async ({ page }) => {
+  const entries = [
+    {
+      id: 'job-done',
+      bundleId: 'com.example.done',
+      status: 'done',
+      source: 'manual',
+      createdAt: 1000,
+      finishedAt: 2000,
+      fileAvailable: true,
+    },
+    {
+      id: 'job-network-failure',
+      bundleId: 'com.example.network-failure',
+      status: 'failed',
+      source: 'manual',
+      createdAt: 1000,
+      finishedAt: 3000,
+      error: 'device transport failed',
+      fileAvailable: false,
+    },
+    {
+      id: 'job-queued-success',
+      bundleId: 'com.example.queued-success',
+      status: 'failed',
+      source: 'manual',
+      createdAt: 1000,
+      finishedAt: 4000,
+      error: 'device transport failed',
+      fileAvailable: false,
+    },
+  ];
+  const attemptedBundleIds: string[] = [];
+  const queuedBundleIds: string[] = [];
+
+  await mockAuthenticatedDashboard(page, '1');
+  await mockStableDashboardEvents(page);
+  await page.route('**/v1/dashboard/jobs?*', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ history: entries, total: entries.length }),
+    });
+  });
+  await page.route('**/v1/dashboard/jobs/bulk-preview', async (route) => {
+    const body = route.request().postDataJSON() as { ids: string[] };
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        requested: body.ids.length,
+        eligible: body.ids.length,
+        projectedQueueAdds: body.ids.length,
+        estimatedDurationMs: 60_000,
+        previousSizeBytes: 0,
+        items: body.ids.map((id) => ({
+          id,
+          bundleId: entries.find((entry) => entry.id === id)?.bundleId,
+          status: entries.find((entry) => entry.id === id)?.status,
+          action: 'queue',
+        })),
+      }),
+    });
+  });
+  await page.route('**/v1/dashboard/decrypt', async (route) => {
+    const body = route.request().postDataJSON() as { bundleId: string };
+    attemptedBundleIds.push(body.bundleId);
+    if (body.bundleId === 'com.example.network-failure') {
+      await route.abort('failed');
+      return;
+    }
+    queuedBundleIds.push(body.bundleId);
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        id: 'job-retry',
+        bundleId: body.bundleId,
+        source: 'manual',
+        status: 'queued',
+        progress: 'Queued',
+        createdAt: new Date().toISOString(),
+        queue: { position: 1, total: 1 },
+      }),
+    });
+  });
+
+  await page.goto('/');
+  await expect(page.getByRole('checkbox', { name: 'Select or unselect all loaded jobs' })).toBeVisible();
+  await page.getByRole('checkbox', { name: 'Select or unselect all loaded jobs' }).click();
+
+  const retryFailedOnly = page.getByRole('button', { name: 'Retry failed only (2)' });
+  await expect(retryFailedOnly).toBeVisible();
+  const previewRequest = page.waitForRequest((request) => request.url().includes('/v1/dashboard/jobs/bulk-preview'));
+  await retryFailedOnly.click();
+  expect((await previewRequest).postDataJSON()).toMatchObject({ ids: ['job-network-failure', 'job-queued-success'], projectId: 'default' });
+
+  await expect(page.getByText('Preview bulk decrypt')).toBeVisible();
+  await page.getByRole('button', { name: 'Queue 2', exact: true }).click();
+  await expect.poll(() => attemptedBundleIds).toEqual(['com.example.network-failure', 'com.example.queued-success']);
+  await expect.poll(() => queuedBundleIds).toEqual(['com.example.queued-success']);
+
+  const retryResults = page.getByRole('region', { name: 'Bulk retry results' });
+  await expect(retryResults.getByRole('status')).toContainText('1 queued · 1 failed · 0 already active');
+  await expect(retryResults).toContainText('network error');
+
+  const csvDownloadPromise = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Export retry results CSV' }).click();
+  const csvDownload = await csvDownloadPromise;
+  expect(csvDownload.suggestedFilename()).toBe('dkrypt-bulk-retry-results.csv');
+  const csvPath = await csvDownload.path();
+  expect(csvPath).toBeTruthy();
+  const csvContent = await readFile(csvPath as string, 'utf8');
+  expect(csvContent).toContain('com.example.network-failure');
+  expect(csvContent).toContain('com.example.queued-success');
+
+  const jsonDownloadPromise = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Export retry results JSON' }).click();
+  const jsonDownload = await jsonDownloadPromise;
+  expect(jsonDownload.suggestedFilename()).toBe('dkrypt-bulk-retry-results.json');
+  const jsonPath = await jsonDownload.path();
+  expect(jsonPath).toBeTruthy();
+  expect(JSON.parse(await readFile(jsonPath as string, 'utf8'))).toMatchObject([
+    { historyJobId: 'job-network-failure', bundleId: 'com.example.network-failure', outcome: 'failed' },
+    { historyJobId: 'job-queued-success', bundleId: 'com.example.queued-success', outcome: 'queued' },
+  ]);
 });
 
 test('TestFlight shortcuts reappear from the account cache while a reload refresh is pending', async ({ page }) => {

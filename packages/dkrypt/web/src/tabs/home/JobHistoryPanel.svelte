@@ -65,6 +65,14 @@
 		failureCategory: string;
 	}
 
+	interface BulkRetryResult {
+		historyJobId: string;
+		bundleId: string;
+		outcome: "queued" | "failed" | "already-active";
+		queuedJobId?: string;
+		message?: string;
+	}
+
 	const CANCELLED_RE = /^cancelled by/i;
 	const TIMEOUT_RE = /timed? ?out/i;
 	const UNREACHABLE_RE =
@@ -143,6 +151,9 @@
 			"",
 	);
 	let selected = $state<Set<string>>(new Set());
+	let bulkPreviewIds = $state<string[]>([]);
+	let bulkRetryResults = $state<BulkRetryResult[] | null>(null);
+	const selectedFailedCount = $derived(entries.filter((entry) => isSelectedForBulkReplay(entry, true)).length);
 	let bulkRequeueing = $state(false);
 	let bulkPreviewOpen = $state(false);
 	let bulkPreviewLoading = $state(false);
@@ -474,7 +485,14 @@
 		return `curl -H "Authorization: Bearer <YOUR_API_KEY>" "${url}" -o ${entry.bundleId}.ipa`;
 	}
 
-	async function decryptAgain(entry: JobHistoryEntry): Promise<void> {
+	function downloadCsv(filename: string, headers: string[], rows: unknown[][]): void {
+		const content = [headers, ...rows]
+			.map((row) => row.map(csvCell).join(","))
+			.join("\n");
+		downloadBlob(content, filename, "text/csv");
+	}
+
+	async function decryptAgain(entry: JobHistoryEntry, notifySuccess = true): Promise<BulkRetryResult> {
 		const { bundleId, testflight, externalVersionId, versionLabel } = entry;
 		requeueing = new Set(requeueing).add(entry.id);
 		try {
@@ -485,7 +503,15 @@
 						testflight.build,
 					)
 				: await queueDecrypt(bundleId, externalVersionId, versionLabel);
-			if (!ok) return;
+			if (!ok) {
+				const responseError = (data as unknown as { error?: unknown }).error;
+				return {
+					historyJobId: entry.id,
+					bundleId,
+					outcome: "failed",
+					message: typeof responseError === "string" ? responseError : "The retry request was rejected",
+				};
+			}
 			addDecrypt({
 				id: data.id,
 				bundleId,
@@ -498,10 +524,20 @@
 				artifactUrl: data.artifactUrl,
 			});
 			pushRecentBundleId(bundleId);
-			showToast(
-				`Queued ${appDisplayName(bundleId)}${versionLabel ? ` (${versionLabel})` : ""}`,
-				"success",
-			);
+			if (notifySuccess) {
+				showToast(
+					`Queued ${appDisplayName(bundleId)}${versionLabel ? ` (${versionLabel})` : ""}`,
+					"success",
+				);
+			}
+			return { historyJobId: entry.id, bundleId, outcome: "queued", queuedJobId: data.id };
+		} catch (error) {
+			return {
+				historyJobId: entry.id,
+				bundleId,
+				outcome: "failed",
+				message: error instanceof Error ? error.message : String(error),
+			};
 		} finally {
 			const next = new Set(requeueing);
 			next.delete(entry.id);
@@ -569,14 +605,23 @@
 				: new Set(entries.map((e) => e.id));
 	}
 
-	async function openBulkPreview(): Promise<void> {
-		const ids = entries.filter((entry) => selected.has(entry.id)).map((entry) => entry.id);
+	function isSelectedForBulkReplay(entry: JobHistoryEntry, failedOnly: boolean): boolean {
+		return selected.has(entry.id) && (!failedOnly || entry.status === "failed");
+	}
+
+	async function openBulkPreview(failedOnly = false): Promise<void> {
+		const ids = entries
+			.filter((entry) => isSelectedForBulkReplay(entry, failedOnly))
+			.map((entry) => entry.id);
 		if (ids.length === 0) return;
 		bulkPreviewLoading = true;
+		bulkPreviewIds = ids;
+		bulkPreview = null;
 		try {
 			bulkPreview = await previewBulkJobReplay(ids);
 			bulkPreviewOpen = true;
 		} catch {
+			bulkPreviewIds = [];
 			showToast("Could not prepare the bulk preview", "error");
 		} finally {
 			bulkPreviewLoading = false;
@@ -584,44 +629,88 @@
 	}
 
 	async function confirmBulkDecryptAgain(): Promise<void> {
-		const targets = entries.filter((entry) => bulkPreview?.items.some((item) => item.id === entry.id && item.action === "queue"));
+		const requestedIds = [...bulkPreviewIds];
+		const previewItems = new Map(bulkPreview?.items.map((item) => [item.id, item]) ?? []);
 		bulkPreviewOpen = false;
-		if (targets.length === 0) return;
+		if (requestedIds.length === 0) return;
 		bulkRequeueing = true;
+		bulkRetryResults = null;
 		try {
-			for (const entry of targets) await decryptAgain(entry);
+			const results: BulkRetryResult[] = [];
+			for (const id of requestedIds) {
+				const entry = entries.find((candidate) => candidate.id === id);
+				const previewItem = previewItems.get(id);
+				if (!entry || !previewItem) {
+					results.push({ historyJobId: id, bundleId: entry?.bundleId ?? id, outcome: "failed", message: "Job is no longer available for retry" });
+					continue;
+				}
+				if (previewItem.action === "join-existing") {
+					results.push({ historyJobId: id, bundleId: entry.bundleId, outcome: "already-active", message: previewItem.reason });
+					continue;
+				}
+				results.push(await decryptAgain(entry, false));
+			}
+			bulkRetryResults = results;
 			selected = new Set();
 			bulkPreview = null;
+			bulkPreviewIds = [];
 		} finally {
 			bulkRequeueing = false;
 		}
 	}
 
+	function exportBulkRetryResultsCsv(): void {
+		if (!bulkRetryResults) return;
+		const rows = bulkRetryResults.map((result) => [
+			result.historyJobId,
+			result.bundleId,
+			result.outcome,
+			result.queuedJobId ?? "",
+			result.message ?? "",
+		]);
+		downloadCsv(
+			"dkrypt-bulk-retry-results.csv",
+			["historyJobId", "bundleId", "outcome", "queuedJobId", "message"],
+			rows,
+		);
+	}
+
+	function exportBulkRetryResultsJson(): void {
+		if (!bulkRetryResults) return;
+		downloadBlob(JSON.stringify(bulkRetryResults, null, 2), "dkrypt-bulk-retry-results.json", "application/json");
+	}
+
+	const bulkRetryOutcomeCounts = $derived({
+		queued: bulkRetryResults?.filter((result) => result.outcome === "queued").length ?? 0,
+		failed: bulkRetryResults?.filter((result) => result.outcome === "failed").length ?? 0,
+		alreadyActive: bulkRetryResults?.filter((result) => result.outcome === "already-active").length ?? 0,
+	});
+
 	function bulkExportCsv(): void {
 		const targets = entries.filter((e) => selected.has(e.id));
-		const rows = [
-			"bundleId,version,source,queuedBy,status,size,finishedAt,error",
-		];
-		for (const j of targets) {
-			rows.push(
-				[
-					j.bundleId,
-					j.versionLabel ?? "",
-					j.source,
-					j.queuedBy ?? "",
-					j.status,
-					j.sizeBytes ?? "",
-					new Date(j.finishedAt).toISOString(),
-					j.error ?? "",
-				]
-					.map(csvCell)
-					.join(","),
-			);
-		}
-		downloadBlob(
-			rows.join("\n"),
+		const rows = targets.map((j) => [
+			j.bundleId,
+			j.versionLabel ?? "",
+			j.source,
+			j.queuedBy ?? "",
+			j.status,
+			j.sizeBytes ?? "",
+			new Date(j.finishedAt).toISOString(),
+			j.error ?? "",
+		]);
+		downloadCsv(
 			"dkrypt-job-history-selected.csv",
-			"text/csv",
+			[
+				"bundleId",
+				"version",
+				"source",
+				"queuedBy",
+				"status",
+				"size",
+				"finishedAt",
+				"error",
+			],
+			rows,
 		);
 	}
 
@@ -681,6 +770,15 @@
 					onclick={() => void openBulkPreview()}
 					>Decrypt {selected.size} again</Button
 				>
+				{#if selectedFailedCount > 0}
+					<Button
+						size="sm"
+						variant="secondary"
+						loading={bulkRequeueing || bulkPreviewLoading}
+						onclick={() => void openBulkPreview(true)}
+						>Retry failed only ({selectedFailedCount})</Button
+					>
+				{/if}
 				<Button size="sm" variant="secondary" onclick={bulkExportCsv}
 					>Export {selected.size} CSV</Button
 				>
@@ -837,6 +935,36 @@
 			</div>
 		</div>
 	</details>
+	{#if bulkRetryResults}
+		<section class="border-border bg-panel mb-3 space-y-3 rounded-xl border p-3" aria-label="Bulk retry results">
+			<div class="flex flex-wrap items-center justify-between gap-2">
+				<div>
+					<h3 class="text-sm font-semibold">Bulk retry results</h3>
+					<p class="text-muted text-xs" role="status" aria-live="polite">
+						{bulkRetryOutcomeCounts.queued} queued · {bulkRetryOutcomeCounts.failed} failed · {bulkRetryOutcomeCounts.alreadyActive} already active
+					</p>
+				</div>
+				<div class="flex flex-wrap gap-1.5">
+					<Button size="sm" variant="secondary" onclick={exportBulkRetryResultsCsv}>Export retry results CSV</Button>
+					<Button size="sm" variant="secondary" onclick={exportBulkRetryResultsJson}>Export retry results JSON</Button>
+				</div>
+			</div>
+			<div class="divide-border divide-y rounded-lg border border-border/70" role="list">
+				{#each bulkRetryResults as result (result.historyJobId)}
+					<div class="flex flex-wrap items-start justify-between gap-2 px-3 py-2.5" role="listitem">
+						<div class="min-w-0">
+							<div class="truncate text-xs font-medium">{appDisplayName(result.bundleId)}</div>
+							<div class="text-muted break-all font-mono text-[10px]">{result.bundleId}</div>
+							{#if result.message}<div class="text-muted mt-1 text-xs">{result.message}</div>{/if}
+						</div>
+						<span class="text-xs font-medium {result.outcome === 'queued' ? 'text-ok' : result.outcome === 'failed' ? 'text-destructive' : 'text-muted'}">
+							{result.outcome === 'already-active' ? 'Already active' : result.outcome === 'queued' ? 'Queued' : 'Failed'}
+						</span>
+					</div>
+				{/each}
+			</div>
+		</section>
+	{/if}
 	{#if historyError}
 		<div class="border-destructive/40 bg-destructive/5 mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2 text-xs" role="alert">
 			<span>{historyError}</span>
@@ -1051,7 +1179,10 @@
 	preview={bulkPreview}
 	onOpenChange={(v) => {
 		bulkPreviewOpen = v;
-		if (!v) bulkPreview = null;
+		if (!v) {
+			bulkPreview = null;
+			bulkPreviewIds = [];
+		}
 	}}
 	onConfirm={() => void confirmBulkDecryptAgain()}
 />
