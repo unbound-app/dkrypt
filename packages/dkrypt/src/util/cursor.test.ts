@@ -1,7 +1,15 @@
 import { describe, expect, test } from 'bun:test';
-import { paginateCursor } from '#util/cursor.js';
+import { decodeCursor, encodeCursor, nextCursor, paginateCursor } from '#util/cursor.js';
 
 describe('cursor pagination', () => {
+  test('preserves legacy offset cursor helpers for unconverted lists', () => {
+    const cursor = encodeCursor(42);
+    expect(decodeCursor(cursor)).toBe(42);
+    expect(decodeCursor('not-a-cursor')).toBe(0);
+    expect(nextCursor(0, 10, 20)).toBe(encodeCursor(10));
+    expect(nextCursor(10, 10, 20)).toBeUndefined();
+  });
+
   test('continues after the last item even when newer rows arrive between pages', () => {
     const rows = [
       { id: 'job-d', finishedAt: 400 },

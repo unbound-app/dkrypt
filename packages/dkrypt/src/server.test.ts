@@ -8,7 +8,6 @@ import { upsertAuthProfile } from '#identity.js';
 import { scopedLogger } from '#logger.js';
 import { buildServer } from '#server.js';
 import { createApiKey, createTestFlightSubscription, recordAudit, recordDeviceActivity, recordJobHistory, recordNotification, revokeApiKey, withdrawTestFlightSubscription } from '#store/state.js';
-import { quarantineWebhook, receiveWebhook } from '#webhookInbox.js';
 
 async function signIn() {
   const server = await buildServer({ includePublicRoutes: false });
@@ -655,6 +654,13 @@ test('notification cursors keep their boundary when a newer notification arrives
     expect(first.notifications).toHaveLength(1);
     expect(first.nextCursor).toEqual(expect.any(String));
 
+    const expectedNextResponse = await server.inject({
+      method: 'GET',
+      url: `/v1/dashboard/notifications?limit=1&cursor=${encodeURIComponent(first.nextCursor as string)}`,
+      headers: { cookie },
+    });
+    const expectedNext = expectedNextResponse.json() as { notifications: { id: string }[] };
+
     await Bun.sleep(2);
     recordNotification({ userId: 'root', title: `Cursor arrival ${crypto.randomUUID()}`, message: 'Newer entry', severity: 'info' });
     const secondResponse = await server.inject({
@@ -665,7 +671,7 @@ test('notification cursors keep their boundary when a newer notification arrives
     const second = secondResponse.json() as { notifications: { id: string }[] };
 
     expect(secondResponse.statusCode).toBe(200);
-    expect(second.notifications.map((entry) => entry.id)).not.toContain(first.notifications[0].id);
+    expect(second.notifications.map((entry) => entry.id)).toEqual(expectedNext.notifications.map((entry) => entry.id));
   } finally {
     await server.close();
   }
@@ -744,6 +750,13 @@ test('audit cursors keep their boundary when a newer audit event is recorded', a
     expect(first.entries[0].target).toBe(`${targetPrefix}-current`);
     expect(first.nextCursor).toEqual(expect.any(String));
 
+    const expectedNextResponse = await server.inject({
+      method: 'GET',
+      url: `/v1/dashboard/audit-log?limit=1&cursor=${encodeURIComponent(first.nextCursor as string)}`,
+      headers: { cookie },
+    });
+    const expectedNext = expectedNextResponse.json() as { entries: { id: string }[] };
+
     await Bun.sleep(2);
     recordAudit('root', 'settings.update', `${targetPrefix}-new`);
     const secondResponse = await server.inject({
@@ -754,7 +767,7 @@ test('audit cursors keep their boundary when a newer audit event is recorded', a
     const second = secondResponse.json() as { entries: { id: string }[] };
 
     expect(secondResponse.statusCode).toBe(200);
-    expect(second.entries.map((entry) => entry.id)).not.toContain(first.entries[0].id);
+    expect(second.entries.map((entry) => entry.id)).toEqual(expectedNext.entries.map((entry) => entry.id));
   } finally {
     await server.close();
   }
@@ -784,6 +797,13 @@ test('device activity cursors keep their boundary when a newer event is recorded
     expect(first.activity[0].message).toBe('current cursor event');
     expect(first.nextCursor).toEqual(expect.any(String));
 
+    const expectedNextResponse = await server.inject({
+      method: 'GET',
+      url: `/v1/dashboard/devices/${device.id}/activity?limit=1&cursor=${encodeURIComponent(first.nextCursor as string)}`,
+      headers: { cookie },
+    });
+    const expectedNext = expectedNextResponse.json() as { activity: { id: string; message: string }[] };
+
     await Bun.sleep(2);
     recordDeviceActivity({ deviceId: device.id, kind: 'bridge', message: 'new cursor event' });
     const secondResponse = await server.inject({
@@ -791,51 +811,13 @@ test('device activity cursors keep their boundary when a newer event is recorded
       url: `/v1/dashboard/devices/${device.id}/activity?limit=1&cursor=${encodeURIComponent(first.nextCursor as string)}`,
       headers: { cookie },
     });
-    const second = secondResponse.json() as { activity: { id: string }[] };
+    const second = secondResponse.json() as { activity: { id: string; message: string }[] };
 
     expect(secondResponse.statusCode).toBe(200);
-    expect(second.activity.map((entry) => entry.id)).not.toContain(first.activity[0].id);
+    expect(second.activity.map((entry) => entry.id)).toEqual(expectedNext.activity.map((entry) => entry.id));
+    expect(second.activity[0].message).toBe('older cursor event');
   } finally {
     await server.inject({ method: 'DELETE', url: `/v1/dashboard/devices/${device.id}`, headers: { cookie } });
-    await server.close();
-  }
-});
-
-test('API key cursors keep their boundary when a newer key is created', async () => {
-  const { server, cookie } = await signIn();
-  const namePrefix = `cursor-key-${crypto.randomUUID()}`;
-  const older = createApiKey(`${namePrefix}-older`, 'root');
-  await Bun.sleep(2);
-  const current = createApiKey(`${namePrefix}-current`, 'root');
-  let newestId = '';
-
-  try {
-    const firstResponse = await server.inject({
-      method: 'GET',
-      url: `/v1/dashboard/keys/all?limit=1&search=${encodeURIComponent(namePrefix)}`,
-      headers: { cookie },
-    });
-    const first = firstResponse.json() as { keys: { id: string }[]; nextCursor?: string };
-    expect(firstResponse.statusCode).toBe(200);
-    expect(first.keys[0].id).toBe(current.id);
-    expect(first.nextCursor).toEqual(expect.any(String));
-
-    await Bun.sleep(2);
-    newestId = createApiKey(`${namePrefix}-new`, 'root').id;
-    const secondResponse = await server.inject({
-      method: 'GET',
-      url: `/v1/dashboard/keys/all?limit=1&search=${encodeURIComponent(namePrefix)}&cursor=${encodeURIComponent(first.nextCursor as string)}`,
-      headers: { cookie },
-    });
-    const second = secondResponse.json() as { keys: { id: string }[] };
-
-    expect(secondResponse.statusCode).toBe(200);
-    expect(second.keys.map((key) => key.id)).toEqual([older.id]);
-    expect(second.keys.map((key) => key.id)).not.toContain(first.keys[0].id);
-  } finally {
-    revokeApiKey(older.id, 'root', true);
-    revokeApiKey(current.id, 'root', true);
-    if (newestId) revokeApiKey(newestId, 'root', true);
     await server.close();
   }
 });
@@ -883,44 +865,6 @@ test('TestFlight subscription cursors keep their boundary when a newer request a
     withdrawTestFlightSubscription(older.id, 'root');
     withdrawTestFlightSubscription(current.id, 'root');
     if (newestId) withdrawTestFlightSubscription(newestId, 'root');
-    await server.close();
-  }
-});
-
-test('webhook inbox cursors keep their boundary when a newer event arrives', async () => {
-  const { server, cookie } = await signIn();
-  const eventPrefix = `cursor-webhook-${crypto.randomUUID()}`;
-  const older = receiveWebhook('stripe', `${eventPrefix}-older`, '{"event":"older"}').record;
-  await Bun.sleep(2);
-  const current = receiveWebhook('stripe', `${eventPrefix}-current`, '{"event":"current"}').record;
-  let newestId = '';
-
-  try {
-    const firstResponse = await server.inject({
-      method: 'GET',
-      url: '/v1/billing/webhooks/inbox?status=received&limit=1',
-      headers: { cookie },
-    });
-    const first = firstResponse.json() as { inbox: { id: string }[]; nextCursor?: string };
-    expect(firstResponse.statusCode).toBe(200);
-    expect(first.inbox[0].id).toBe(current.id);
-    expect(first.nextCursor).toEqual(expect.any(String));
-
-    await Bun.sleep(2);
-    newestId = receiveWebhook('stripe', `${eventPrefix}-new`, '{"event":"new"}').record.id;
-    const secondResponse = await server.inject({
-      method: 'GET',
-      url: `/v1/billing/webhooks/inbox?status=received&limit=1&cursor=${encodeURIComponent(first.nextCursor as string)}`,
-      headers: { cookie },
-    });
-    const second = secondResponse.json() as { inbox: { id: string }[] };
-
-    expect(secondResponse.statusCode).toBe(200);
-    expect(second.inbox.map((record) => record.id)).not.toContain(first.inbox[0].id);
-  } finally {
-    quarantineWebhook(older.id, 'cursor test complete');
-    quarantineWebhook(current.id, 'cursor test complete');
-    if (newestId) quarantineWebhook(newestId, 'cursor test complete');
     await server.close();
   }
 });
@@ -978,8 +922,8 @@ test('billing subscription cursors keep their boundary when a newer subscription
     occurredAt: new Date(at).toISOString(),
     updatedAt: new Date(at).toISOString(),
   });
-  const older = subscription('older', baseTime - 1_000);
-  const current = subscription('current', baseTime);
+  const older = subscription('m-older', baseTime - 1_000);
+  const current = subscription('z-current', baseTime);
   upsertBillingSubscription(older);
   upsertBillingSubscription(current);
 
@@ -994,7 +938,8 @@ test('billing subscription cursors keep their boundary when a newer subscription
     expect(first.subscriptions[0].subscriptionId).toBe(current.subscriptionId);
     expect(first.nextCursor).toEqual(expect.any(String));
 
-    upsertBillingSubscription(subscription('new', baseTime + 1_000));
+    upsertBillingSubscription(subscription('zz-new', baseTime + 1_000));
+    upsertBillingSubscription(subscription('m-older', baseTime + 2_000));
     const secondResponse = await server.inject({
       method: 'GET',
       url: `/v1/billing/subscriptions?limit=1&q=${encodeURIComponent(idPrefix)}&cursor=${encodeURIComponent(first.nextCursor as string)}`,

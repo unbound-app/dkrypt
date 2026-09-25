@@ -34,7 +34,7 @@ import { PermissionFlag } from '#permissions.js';
 import { recordAudit } from '#store/state.js';
 import { constructStripeWebhookEvent, getStripe } from '#stripe.js';
 import { claimWebhook, getWebhookInboxRecord, listWebhookInbox, markWebhookFailed, markWebhookProcessed, quarantineWebhook, receiveWebhook, releaseWebhookClaim } from '#webhookInbox.js';
-import { paginateCursor } from '#util/cursor.js';
+import { decodeCursor, nextCursor, paginateCursor } from '#util/cursor.js';
 
 function metadataUserId(metadata: unknown): string | undefined {
   if (typeof metadata !== 'object' || metadata === null) return undefined;
@@ -457,7 +457,6 @@ billingRouter.get('/v1/billing/subscriptions', requirePermission(PermissionFlag.
     offset,
     limit,
     keyOf: (subscription) => [
-      typeof subscription.updatedAt === 'string' ? subscription.updatedAt : '',
       typeof subscription.provider === 'string' ? subscription.provider : '',
       typeof subscription.subscriptionId === 'string' ? subscription.subscriptionId : '',
     ],
@@ -473,17 +472,9 @@ billingRouter.get('/v1/billing/webhooks/inbox', requirePermission(PermissionFlag
     .filter((record) => !status || record.status === status)
     .filter((record) => !provider || record.provider === provider);
   const limit = Math.min(Math.max(Number.parseInt(String(req.query?.limit ?? '50'), 10) || 50, 1), 200);
-  const cursor = typeof req.query?.cursor === 'string' ? req.query.cursor : undefined;
-  const offset = cursor ? 0 : Math.max(Number.parseInt(String(req.query?.offset ?? '0'), 10) || 0, 0);
-  const page = paginateCursor(filtered, {
-    cursor,
-    offset,
-    limit,
-    keyOf: (record) => [record.receivedAt, record.id],
-    order: 'desc',
-  });
-  const inbox = page.items.map(({ rawBody, ...record }) => ({ ...record, rawBodyBytes: Buffer.byteLength(rawBody) }));
-  res.json({ inbox, total: filtered.length, nextCursor: page.nextCursor });
+  const offset = typeof req.query?.cursor === 'string' ? decodeCursor(req.query.cursor) : Math.max(Number.parseInt(String(req.query?.offset ?? '0'), 10) || 0, 0);
+  const page = filtered.slice(offset, offset + limit).map(({ rawBody, ...record }) => ({ ...record, rawBodyBytes: Buffer.byteLength(rawBody) }));
+  res.json({ inbox: page, total: filtered.length, nextCursor: nextCursor(offset, page.length, filtered.length) });
 });
 
 billingRouter.post('/v1/billing/webhooks/inbox/:id/quarantine', requirePermission(PermissionFlag.manageBilling), (req, res) => {

@@ -277,14 +277,14 @@ export function listArtifacts(options: ArtifactListOptions = {}): ArtifactListRe
         .filter(Boolean)
         .some((value) => value!.toLowerCase().includes(query));
     })
-    .sort((a, b) => b.createdAt - a.createdAt || b.id.localeCompare(a.id));
+    .sort((a, b) => b.lastAccessedAt - a.lastAccessedAt || b.id.localeCompare(a.id));
 
   const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
   const page = paginateCursor(filtered, {
     cursor: options.cursor,
     offset: options.offset,
     limit,
-    keyOf: (artifact) => [artifact.createdAt, artifact.id],
+    keyOf: (artifact) => [artifact.lastAccessedAt, artifact.id],
     order: 'desc',
   });
   const stats = getArtifactStorageStats(options.bundleIds);

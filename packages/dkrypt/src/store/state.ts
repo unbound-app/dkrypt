@@ -1871,17 +1871,11 @@ export function listAllApiKeys() {
   return state.apiKeys.map(redact);
 }
 
-export function listAllApiKeysPage(offset: number, limit: number, search?: string, cursor?: string): { keys: ReturnType<typeof redact>[]; total: number; nextCursor?: string } {
+export function listAllApiKeysPage(offset: number, limit: number, search?: string): { keys: ReturnType<typeof redact>[]; total: number } {
   const needle = search?.trim().toLowerCase();
   const matching = needle ? state.apiKeys.filter((k) => k.name.toLowerCase().includes(needle) || k.ownerId.toLowerCase().includes(needle)) : state.apiKeys;
-  const page = paginateCursor(matching, {
-    cursor,
-    offset,
-    limit,
-    keyOf: (key) => [key.createdAt, key.id],
-    order: 'desc',
-  });
-  return { keys: page.items.map(redact), total: matching.length, nextCursor: page.nextCursor };
+  const sorted = [...matching].sort((a, b) => b.createdAt - a.createdAt);
+  return { keys: sorted.slice(offset, offset + limit).map(redact), total: sorted.length };
 }
 
 export function listPendingApiKeys() {

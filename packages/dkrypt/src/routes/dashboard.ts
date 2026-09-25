@@ -19,7 +19,7 @@ import { getGitHubRateLimitBudget, listDispatchRepos, listRepoWorkflows, validat
 import { lookupAppMetadata, searchApps } from '#scheduler/itunes.js';
 import { requirePermission, requireSession } from '#session.js';
 import { getDeviceHealth, getDeviceInstallBlocker, getDeviceReadiness, isBridgeHeartbeatFresh } from '#deviceHealth.js';
-import { paginateCursor } from '#util/cursor.js';
+import { decodeCursor, nextCursor, paginateCursor } from '#util/cursor.js';
 import { getCachedDeviceHealth } from '#deviceHealthCache.js';
 import { discoverDevices, execCommand, isDirectUsbDeviceAgentConnection, listInstalledAppStoreBundles, sendSpringBoardBridgeRequest, setupDeviceConnection, withAutoinstallDeviceAgent, withSSH, type DeviceConnection } from '#idevice.js';
 import { getTestFlightBridgeDiagnostics, listBuilds, listTrains, type TFBuild } from '#testflight.js';
@@ -2220,11 +2220,10 @@ dashboardRouter.get('/v1/dashboard/keys/pending', canApproveApiKeys, (_req, res)
 
 dashboardRouter.get('/v1/dashboard/keys/all', canViewApiKeys, (req, res) => {
   const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit ?? '25'), 10) || 25, 1), 100);
-  const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
-  const offset = cursor ? 0 : Math.max(Number.parseInt(String(req.query.offset ?? '0'), 10) || 0, 0);
+  const offset = typeof req.query.cursor === 'string' ? decodeCursor(req.query.cursor) : Math.max(Number.parseInt(String(req.query.offset ?? '0'), 10) || 0, 0);
   const search = typeof req.query.search === 'string' ? req.query.search : undefined;
-  const page = listAllApiKeysPage(offset, limit, search, cursor);
-  res.json(page);
+  const page = listAllApiKeysPage(offset, limit, search);
+  res.json({ ...page, nextCursor: nextCursor(offset, page.keys.length, page.total) });
 });
 
 dashboardRouter.post('/v1/dashboard/keys/:id/approve', canApproveApiKeys, (req, res) => {
