@@ -69,6 +69,22 @@ export function getDeviceSshTunnelSubsystemState(connection: Pick<DeviceConnecti
   return sshSftpReady ? 'ready' : 'offline';
 }
 
+export function applyDeviceSshTunnelHealth(
+  health: DeviceHealth,
+  connection: Pick<DeviceConnection, 'udid' | 'host'>,
+  sshSftpReady: boolean,
+): DeviceHealth {
+  if (!health.subsystems) return health;
+  const updated: DeviceHealth = {
+    ...health,
+    subsystems: {
+      ...health.subsystems,
+      sshTunnel: getDeviceSshTunnelSubsystemState(connection, sshSftpReady),
+    },
+  };
+  return { ...updated, readiness: getDeviceReadiness(updated) };
+}
+
 export interface DeviceReadiness {
   score: number;
   state: 'ready' | 'caution' | 'blocked';
@@ -482,7 +498,7 @@ async function computeDeviceHealth(device: DeviceRecord, signal?: AbortSignal): 
       },
       checkedAt: Date.now(),
     };
-    return { ...health, readiness: getDeviceReadiness(health) };
+    return applyDeviceSshTunnelHealth(health, device, sshSftpReady);
   } catch (err) {
     throwIfAborted(signal);
     const error = err instanceof Error ? err.message : String(err);
@@ -515,7 +531,7 @@ async function computeDeviceHealth(device: DeviceRecord, signal?: AbortSignal): 
             },
             checkedAt: Date.now(),
           };
-          return { ...health, readiness: getDeviceReadiness(health) };
+          return applyDeviceSshTunnelHealth(health, device, sshSftpReady);
         }
       } catch (bridgeError) {
         throwIfAborted(signal);

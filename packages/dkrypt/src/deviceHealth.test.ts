@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { coalesceDeviceHealthRequest, collectDeviceTelemetry, formatTestFlightBridgeDownDescription, getDeviceAgentSubsystemState, getDeviceInstallBlocker, getDeviceReadiness, getDeviceSshTunnelSubsystemState, isBridgeHeartbeatFresh, parseDeviceStorageDf, stabilizeDeviceHealth, testFlightBridgeReachability, type DeviceHealth } from '#deviceHealth.js';
+import { applyDeviceSshTunnelHealth, coalesceDeviceHealthRequest, collectDeviceTelemetry, formatTestFlightBridgeDownDescription, getDeviceAgentSubsystemState, getDeviceInstallBlocker, getDeviceReadiness, getDeviceSshTunnelSubsystemState, isBridgeHeartbeatFresh, parseDeviceStorageDf, stabilizeDeviceHealth, testFlightBridgeReachability, type DeviceHealth } from '#deviceHealth.js';
 
 function health(overrides: Partial<DeviceHealth> = {}): DeviceHealth {
   return { reachable: true, checkedAt: 0, ...overrides };
@@ -30,21 +30,24 @@ describe('getDeviceReadiness', () => {
   });
 
   test('blocks decrypt when USB SSH or SFTP is unavailable without marking the device offline', () => {
-    const deviceHealth = health({
+    const deviceHealth = applyDeviceSshTunnelHealth({
+      reachable: true,
+      checkedAt: 0,
       subsystems: {
         usb: 'ready',
         mux: 'ready',
         agent: 'ready',
         appStore: 'unknown',
         testFlight: 'unknown',
-        sshTunnel: 'degraded',
+        sshTunnel: 'unknown',
         storage: 'unknown',
         battery: 'unknown',
         thermal: 'unknown',
       },
-    });
+    }, { udid: 'usb-device' }, false);
 
     expect(deviceHealth.reachable).toBe(true);
+    expect(deviceHealth.subsystems?.sshTunnel).toBe('degraded');
     expect(getDeviceReadiness(deviceHealth).state).toBe('ready');
     expect(getDeviceInstallBlocker(deviceHealth)).toBe('device SSH/SFTP tunnel is unavailable for decrypt');
   });
