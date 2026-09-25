@@ -131,7 +131,7 @@
   }
 
   function entryKey(l: LogEntry): string {
-    return `${l.ts}-${l.scope}-${l.level}-${l.message}`;
+    return l.id;
   }
 
   const combined = $derived.by((): LogEntry[] => {

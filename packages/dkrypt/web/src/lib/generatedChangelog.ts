@@ -1,6 +1,16 @@
 export const GENERATED_CHANGELOG = [
   {
     "date": "2026-09-25",
+    "title": "fix(observability): bound event retries and validate OTLP replies",
+    "description": "Released in 7bcdb1d."
+  },
+  {
+    "date": "2026-09-25",
+    "title": "chore(web): refresh generated changelog",
+    "description": "Released in 90fbe44."
+  },
+  {
+    "date": "2026-09-25",
     "title": "fix(observability): track native USB and OTLP rejections",
     "description": "Released in 257eb07."
   },
@@ -28,15 +38,5 @@ export const GENERATED_CHANGELOG = [
     "date": "2026-09-25",
     "title": "test(deploy): require fresh Rust USB agent health",
     "description": "Released in 73bfcdc."
-  },
-  {
-    "date": "2026-09-25",
-    "title": "test(device-bridge): verify bun rpc interoperability",
-    "description": "Released in 93b77ae."
-  },
-  {
-    "date": "2026-09-25",
-    "title": "test(device-bridge): cover authenticated agent rpc",
-    "description": "Released in 4f53e84."
   }
 ] as const;

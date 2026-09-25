@@ -6,6 +6,7 @@ import { config } from '#config.js';
 import { scopedLogger } from '#logger.js';
 import { openStateCollectionDatabase, readStateCollection, replaceStateCollection } from '#store/sqlite.js';
 import { throwIfAborted } from '#util/abort.js';
+import { paginateCursor } from '#util/cursor.js';
 
 const log = scopedLogger('artifacts');
 
@@ -32,6 +33,7 @@ export interface ArtifactRecord {
 export interface ArtifactListOptions {
   offset?: number;
   limit?: number;
+  cursor?: string;
   query?: string;
   channel?: ArtifactChannel;
   bundleIds?: string[];
@@ -42,6 +44,7 @@ export interface ArtifactListResult {
   total: number;
   totalBytes: number;
   maxBytes: number;
+  nextCursor?: string;
 }
 
 export interface ArtifactQuotaRetentionPreview {
@@ -274,16 +277,23 @@ export function listArtifacts(options: ArtifactListOptions = {}): ArtifactListRe
         .filter(Boolean)
         .some((value) => value!.toLowerCase().includes(query));
     })
-    .sort((a, b) => b.lastAccessedAt - a.lastAccessedAt);
+    .sort((a, b) => b.createdAt - a.createdAt || b.id.localeCompare(a.id));
 
-  const offset = Math.max(options.offset ?? 0, 0);
   const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
+  const page = paginateCursor(filtered, {
+    cursor: options.cursor,
+    offset: options.offset,
+    limit,
+    keyOf: (artifact) => [artifact.createdAt, artifact.id],
+    order: 'desc',
+  });
   const stats = getArtifactStorageStats(options.bundleIds);
   return {
-    artifacts: filtered.slice(offset, offset + limit),
+    artifacts: page.items,
     total: filtered.length,
     totalBytes: stats.usedBytes,
     maxBytes: stats.maxBytes,
+    nextCursor: page.nextCursor,
   };
 }
 

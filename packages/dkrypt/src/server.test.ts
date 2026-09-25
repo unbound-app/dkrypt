@@ -3,9 +3,12 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test } from 'bun:test';
 import { buildArtifactFileUrl, promoteArtifact } from '#artifacts.js';
+import { exportBillingSnapshot, replaceBillingSnapshot, upsertBillingSubscription } from '#billing.js';
 import { upsertAuthProfile } from '#identity.js';
+import { scopedLogger } from '#logger.js';
 import { buildServer } from '#server.js';
-import { createApiKey, recordJobHistory, recordNotification, revokeApiKey } from '#store/state.js';
+import { createApiKey, createTestFlightSubscription, recordAudit, recordDeviceActivity, recordJobHistory, recordNotification, revokeApiKey, withdrawTestFlightSubscription } from '#store/state.js';
+import { quarantineWebhook, receiveWebhook } from '#webhookInbox.js';
 
 async function signIn() {
   const server = await buildServer({ includePublicRoutes: false });
@@ -587,6 +590,422 @@ test('Fastify previews bulk decrypts and serves durable notifications', async ()
     expect(marked.statusCode).toBe(200);
     expect(marked.json()).toMatchObject({ ok: true, marked: expect.any(Number) });
   } finally {
+    await server.close();
+  }
+});
+
+test('job history cursors do not repeat rows when a newer job is added between pages', async () => {
+  const { server, cookie } = await signIn();
+  const bundlePrefix = `com.example.cursor-${crypto.randomUUID()}`;
+  const historyEntry = (suffix: string, finishedAt: number) => ({
+    id: `${bundlePrefix}-${suffix}`,
+    bundleId: `${bundlePrefix}.${suffix}`,
+    status: 'done' as const,
+    source: 'manual' as const,
+    createdAt: finishedAt - 1_000,
+    finishedAt,
+  });
+  const existing = [
+    historyEntry('a', 1_000),
+    historyEntry('b', 2_000),
+    historyEntry('c', 3_000),
+    historyEntry('d', 4_000),
+  ];
+  for (const entry of existing) recordJobHistory(entry);
+
+  try {
+    const firstResponse = await server.inject({
+      method: 'GET',
+      url: `/v1/dashboard/jobs?limit=2&q=${encodeURIComponent(bundlePrefix)}`,
+      headers: { cookie },
+    });
+    const first = firstResponse.json() as { history: { id: string }[]; nextCursor?: string };
+    expect(firstResponse.statusCode).toBe(200);
+    expect(first.history.map((entry) => entry.id)).toEqual([existing[3].id, existing[2].id]);
+    expect(first.nextCursor).toEqual(expect.any(String));
+
+    recordJobHistory(historyEntry('new', 5_000));
+    const secondResponse = await server.inject({
+      method: 'GET',
+      url: `/v1/dashboard/jobs?limit=2&q=${encodeURIComponent(bundlePrefix)}&cursor=${encodeURIComponent(first.nextCursor as string)}`,
+      headers: { cookie },
+    });
+    const second = secondResponse.json() as { history: { id: string }[] };
+
+    expect(secondResponse.statusCode).toBe(200);
+    expect(second.history.map((entry) => entry.id)).toEqual([existing[1].id, existing[0].id]);
+  } finally {
+    await server.close();
+  }
+});
+
+test('notification cursors keep their boundary when a newer notification arrives', async () => {
+  const { server, cookie } = await signIn();
+  recordNotification({ userId: 'root', title: `Cursor seed ${crypto.randomUUID()}`, message: 'Older entry', severity: 'info' });
+  recordNotification({ userId: 'root', title: `Cursor seed ${crypto.randomUUID()}`, message: 'Oldest entry', severity: 'info' });
+
+  try {
+    const firstResponse = await server.inject({
+      method: 'GET',
+      url: '/v1/dashboard/notifications?limit=1',
+      headers: { cookie },
+    });
+    const first = firstResponse.json() as { notifications: { id: string }[]; nextCursor?: string };
+    expect(firstResponse.statusCode).toBe(200);
+    expect(first.notifications).toHaveLength(1);
+    expect(first.nextCursor).toEqual(expect.any(String));
+
+    await Bun.sleep(2);
+    recordNotification({ userId: 'root', title: `Cursor arrival ${crypto.randomUUID()}`, message: 'Newer entry', severity: 'info' });
+    const secondResponse = await server.inject({
+      method: 'GET',
+      url: `/v1/dashboard/notifications?limit=1&cursor=${encodeURIComponent(first.nextCursor as string)}`,
+      headers: { cookie },
+    });
+    const second = secondResponse.json() as { notifications: { id: string }[] };
+
+    expect(secondResponse.statusCode).toBe(200);
+    expect(second.notifications.map((entry) => entry.id)).not.toContain(first.notifications[0].id);
+  } finally {
+    await server.close();
+  }
+});
+
+test('artifact cursors keep their boundary when a newer artifact is promoted', async () => {
+  const { server, cookie } = await signIn();
+  const bundleId = `com.example.cursor-${crypto.randomUUID()}`;
+  const outputDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-artifact-cursor-'));
+  const artifacts = [];
+  for (const [index, suffix] of ['a', 'b', 'c', 'd'].entries()) {
+    const stagingPath = path.join(outputDir, `${suffix}.ipa`);
+    await writeFile(stagingPath, `cursor artifact ${suffix}`);
+    artifacts.push(await promoteArtifact({
+      key: `${bundleId}|appstore|${suffix}`,
+      bundleId,
+      channel: 'appstore',
+      externalVersionId: suffix,
+      stagingPath,
+    }));
+    if (index < 3) await Bun.sleep(2);
+  }
+
+  try {
+    const firstResponse = await server.inject({
+      method: 'GET',
+      url: `/v1/dashboard/artifacts?limit=2&q=${encodeURIComponent(bundleId)}`,
+      headers: { cookie },
+    });
+    const first = firstResponse.json() as { artifacts: { id: string }[]; nextCursor?: string };
+    expect(firstResponse.statusCode).toBe(200);
+    expect(first.artifacts.map((artifact) => artifact.id)).toEqual([artifacts[3].id, artifacts[2].id]);
+    expect(first.nextCursor).toEqual(expect.any(String));
+
+    await Bun.sleep(2);
+    const stagingPath = path.join(outputDir, 'new.ipa');
+    await writeFile(stagingPath, 'cursor artifact newer');
+    artifacts.push(await promoteArtifact({
+      key: `${bundleId}|appstore|new`,
+      bundleId,
+      channel: 'appstore',
+      externalVersionId: 'new',
+      stagingPath,
+    }));
+    const secondResponse = await server.inject({
+      method: 'GET',
+      url: `/v1/dashboard/artifacts?limit=2&q=${encodeURIComponent(bundleId)}&cursor=${encodeURIComponent(first.nextCursor as string)}`,
+      headers: { cookie },
+    });
+    const second = secondResponse.json() as { artifacts: { id: string }[] };
+
+    expect(secondResponse.statusCode).toBe(200);
+    expect(second.artifacts.map((artifact) => artifact.id)).toEqual([artifacts[1].id, artifacts[0].id]);
+  } finally {
+    await Promise.all(artifacts.map((artifact) => rm(artifact.filePath, { force: true })));
+    await rm(outputDir, { recursive: true, force: true });
+    await server.close();
+  }
+});
+
+test('audit cursors keep their boundary when a newer audit event is recorded', async () => {
+  const { server, cookie } = await signIn();
+  const targetPrefix = `cursor-audit-${crypto.randomUUID()}`;
+  recordAudit('root', 'settings.update', `${targetPrefix}-older`);
+  await Bun.sleep(2);
+  recordAudit('root', 'settings.update', `${targetPrefix}-current`);
+
+  try {
+    const firstResponse = await server.inject({
+      method: 'GET',
+      url: '/v1/dashboard/audit-log?limit=1',
+      headers: { cookie },
+    });
+    const first = firstResponse.json() as { entries: { id: string; target: string }[]; nextCursor?: string };
+    expect(firstResponse.statusCode).toBe(200);
+    expect(first.entries[0].target).toBe(`${targetPrefix}-current`);
+    expect(first.nextCursor).toEqual(expect.any(String));
+
+    await Bun.sleep(2);
+    recordAudit('root', 'settings.update', `${targetPrefix}-new`);
+    const secondResponse = await server.inject({
+      method: 'GET',
+      url: `/v1/dashboard/audit-log?limit=1&cursor=${encodeURIComponent(first.nextCursor as string)}`,
+      headers: { cookie },
+    });
+    const second = secondResponse.json() as { entries: { id: string }[] };
+
+    expect(secondResponse.statusCode).toBe(200);
+    expect(second.entries.map((entry) => entry.id)).not.toContain(first.entries[0].id);
+  } finally {
+    await server.close();
+  }
+});
+
+test('device activity cursors keep their boundary when a newer event is recorded', async () => {
+  const { server, cookie } = await signIn();
+  const createdResponse = await server.inject({
+    method: 'POST',
+    url: '/v1/dashboard/devices',
+    headers: { cookie },
+    payload: { name: `Cursor device ${crypto.randomUUID()}`, transport: 'wifi', host: '192.0.2.15', port: 22, user: 'mobile' },
+  });
+  const device = createdResponse.json() as { id: string };
+  recordDeviceActivity({ deviceId: device.id, kind: 'bridge', message: 'older cursor event' });
+  await Bun.sleep(2);
+  recordDeviceActivity({ deviceId: device.id, kind: 'bridge', message: 'current cursor event' });
+
+  try {
+    const firstResponse = await server.inject({
+      method: 'GET',
+      url: `/v1/dashboard/devices/${device.id}/activity?limit=1`,
+      headers: { cookie },
+    });
+    const first = firstResponse.json() as { activity: { id: string; message: string }[]; nextCursor?: string };
+    expect(firstResponse.statusCode).toBe(200);
+    expect(first.activity[0].message).toBe('current cursor event');
+    expect(first.nextCursor).toEqual(expect.any(String));
+
+    await Bun.sleep(2);
+    recordDeviceActivity({ deviceId: device.id, kind: 'bridge', message: 'new cursor event' });
+    const secondResponse = await server.inject({
+      method: 'GET',
+      url: `/v1/dashboard/devices/${device.id}/activity?limit=1&cursor=${encodeURIComponent(first.nextCursor as string)}`,
+      headers: { cookie },
+    });
+    const second = secondResponse.json() as { activity: { id: string }[] };
+
+    expect(secondResponse.statusCode).toBe(200);
+    expect(second.activity.map((entry) => entry.id)).not.toContain(first.activity[0].id);
+  } finally {
+    await server.inject({ method: 'DELETE', url: `/v1/dashboard/devices/${device.id}`, headers: { cookie } });
+    await server.close();
+  }
+});
+
+test('API key cursors keep their boundary when a newer key is created', async () => {
+  const { server, cookie } = await signIn();
+  const namePrefix = `cursor-key-${crypto.randomUUID()}`;
+  const older = createApiKey(`${namePrefix}-older`, 'root');
+  await Bun.sleep(2);
+  const current = createApiKey(`${namePrefix}-current`, 'root');
+  let newestId = '';
+
+  try {
+    const firstResponse = await server.inject({
+      method: 'GET',
+      url: `/v1/dashboard/keys/all?limit=1&search=${encodeURIComponent(namePrefix)}`,
+      headers: { cookie },
+    });
+    const first = firstResponse.json() as { keys: { id: string }[]; nextCursor?: string };
+    expect(firstResponse.statusCode).toBe(200);
+    expect(first.keys[0].id).toBe(current.id);
+    expect(first.nextCursor).toEqual(expect.any(String));
+
+    await Bun.sleep(2);
+    newestId = createApiKey(`${namePrefix}-new`, 'root').id;
+    const secondResponse = await server.inject({
+      method: 'GET',
+      url: `/v1/dashboard/keys/all?limit=1&search=${encodeURIComponent(namePrefix)}&cursor=${encodeURIComponent(first.nextCursor as string)}`,
+      headers: { cookie },
+    });
+    const second = secondResponse.json() as { keys: { id: string }[] };
+
+    expect(secondResponse.statusCode).toBe(200);
+    expect(second.keys.map((key) => key.id)).toEqual([older.id]);
+    expect(second.keys.map((key) => key.id)).not.toContain(first.keys[0].id);
+  } finally {
+    revokeApiKey(older.id, 'root', true);
+    revokeApiKey(current.id, 'root', true);
+    if (newestId) revokeApiKey(newestId, 'root', true);
+    await server.close();
+  }
+});
+
+test('TestFlight subscription cursors keep their boundary when a newer request arrives', async () => {
+  const { server, cookie } = await signIn();
+  const invitePrefix = crypto.randomUUID().replaceAll('-', '').slice(0, 24);
+  const subscriptionInput = (suffix: string) => ({
+    url: `https://testflight.apple.com/join/${invitePrefix}${suffix}`,
+    inviteCode: `${invitePrefix}${suffix}`,
+    requestedBy: 'root',
+    status: 'denied' as const,
+    bundleId: `com.example.cursor.${suffix}`,
+    displayName: `Cursor ${suffix}`,
+  });
+  const older = createTestFlightSubscription(subscriptionInput('old'), 'root');
+  await Bun.sleep(2);
+  const current = createTestFlightSubscription(subscriptionInput('now'), 'root');
+  let newestId = '';
+
+  try {
+    const firstResponse = await server.inject({
+      method: 'GET',
+      url: '/v1/dashboard/testflight/subscriptions?limit=1',
+      headers: { cookie },
+    });
+    const first = firstResponse.json() as { subscriptions: { id: string }[]; nextCursor?: string };
+    expect(firstResponse.statusCode).toBe(200);
+    expect(first.subscriptions[0].id).toBe(current.id);
+    expect(first.nextCursor).toEqual(expect.any(String));
+
+    await Bun.sleep(2);
+    newestId = createTestFlightSubscription(subscriptionInput('new'), 'root').id;
+    const secondResponse = await server.inject({
+      method: 'GET',
+      url: `/v1/dashboard/testflight/subscriptions?limit=1&cursor=${encodeURIComponent(first.nextCursor as string)}`,
+      headers: { cookie },
+    });
+    const second = secondResponse.json() as { subscriptions: { id: string }[] };
+
+    expect(secondResponse.statusCode).toBe(200);
+    expect(second.subscriptions.map((subscription) => subscription.id)).toEqual([older.id]);
+    expect(second.subscriptions.map((subscription) => subscription.id)).not.toContain(current.id);
+  } finally {
+    withdrawTestFlightSubscription(older.id, 'root');
+    withdrawTestFlightSubscription(current.id, 'root');
+    if (newestId) withdrawTestFlightSubscription(newestId, 'root');
+    await server.close();
+  }
+});
+
+test('webhook inbox cursors keep their boundary when a newer event arrives', async () => {
+  const { server, cookie } = await signIn();
+  const eventPrefix = `cursor-webhook-${crypto.randomUUID()}`;
+  const older = receiveWebhook('stripe', `${eventPrefix}-older`, '{"event":"older"}').record;
+  await Bun.sleep(2);
+  const current = receiveWebhook('stripe', `${eventPrefix}-current`, '{"event":"current"}').record;
+  let newestId = '';
+
+  try {
+    const firstResponse = await server.inject({
+      method: 'GET',
+      url: '/v1/billing/webhooks/inbox?status=received&limit=1',
+      headers: { cookie },
+    });
+    const first = firstResponse.json() as { inbox: { id: string }[]; nextCursor?: string };
+    expect(firstResponse.statusCode).toBe(200);
+    expect(first.inbox[0].id).toBe(current.id);
+    expect(first.nextCursor).toEqual(expect.any(String));
+
+    await Bun.sleep(2);
+    newestId = receiveWebhook('stripe', `${eventPrefix}-new`, '{"event":"new"}').record.id;
+    const secondResponse = await server.inject({
+      method: 'GET',
+      url: `/v1/billing/webhooks/inbox?status=received&limit=1&cursor=${encodeURIComponent(first.nextCursor as string)}`,
+      headers: { cookie },
+    });
+    const second = secondResponse.json() as { inbox: { id: string }[] };
+
+    expect(secondResponse.statusCode).toBe(200);
+    expect(second.inbox.map((record) => record.id)).not.toContain(first.inbox[0].id);
+  } finally {
+    quarantineWebhook(older.id, 'cursor test complete');
+    quarantineWebhook(current.id, 'cursor test complete');
+    if (newestId) quarantineWebhook(newestId, 'cursor test complete');
+    await server.close();
+  }
+});
+
+test('log cursors keep their boundary when a newer log entry is recorded', async () => {
+  const { server, cookie } = await signIn();
+  const scope = `cursor-${crypto.randomUUID()}`;
+  const logger = scopedLogger(scope);
+  logger.info('older cursor log');
+  await Bun.sleep(2);
+  logger.info('current cursor log');
+
+  try {
+    const firstResponse = await server.inject({
+      method: 'GET',
+      url: `/v1/dashboard/logs?scope=${encodeURIComponent(scope)}&limit=1`,
+      headers: { cookie },
+    });
+    const first = firstResponse.json() as { logs: { id: string; message: string }[]; nextCursor?: string };
+    expect(firstResponse.statusCode).toBe(200);
+    expect(first.logs[0].message).toBe('current cursor log');
+    expect(first.nextCursor).toEqual(expect.any(String));
+
+    await Bun.sleep(2);
+    logger.info('new cursor log');
+    const secondResponse = await server.inject({
+      method: 'GET',
+      url: `/v1/dashboard/logs?scope=${encodeURIComponent(scope)}&limit=1&cursor=${encodeURIComponent(first.nextCursor as string)}`,
+      headers: { cookie },
+    });
+    const second = secondResponse.json() as { logs: { id: string; message: string }[] };
+
+    expect(secondResponse.statusCode).toBe(200);
+    expect(second.logs[0].message).toBe('older cursor log');
+    expect(second.logs.map((entry) => entry.id)).not.toContain(first.logs[0].id);
+  } finally {
+    await server.close();
+  }
+});
+
+test('billing subscription cursors keep their boundary when a newer subscription is added', async () => {
+  const { server, cookie } = await signIn();
+  const previousSnapshot = exportBillingSnapshot();
+  const idPrefix = `cursor-billing-${crypto.randomUUID()}`;
+  const baseTime = Date.now() - 10_000;
+  const subscription = (suffix: string, at: number) => ({
+    provider: 'nowpayments' as const,
+    subscriptionId: `${idPrefix}-${suffix}`,
+    customerId: `${idPrefix}-customer`,
+    userId: 'root',
+    status: 'active',
+    planId: 'regular' as const,
+    priceId: `${idPrefix}-price`,
+    productId: 'dkrypt-regular',
+    occurredAt: new Date(at).toISOString(),
+    updatedAt: new Date(at).toISOString(),
+  });
+  const older = subscription('older', baseTime - 1_000);
+  const current = subscription('current', baseTime);
+  upsertBillingSubscription(older);
+  upsertBillingSubscription(current);
+
+  try {
+    const firstResponse = await server.inject({
+      method: 'GET',
+      url: `/v1/billing/subscriptions?limit=1&q=${encodeURIComponent(idPrefix)}`,
+      headers: { cookie },
+    });
+    const first = firstResponse.json() as { subscriptions: { subscriptionId: string }[]; nextCursor?: string };
+    expect(firstResponse.statusCode).toBe(200);
+    expect(first.subscriptions[0].subscriptionId).toBe(current.subscriptionId);
+    expect(first.nextCursor).toEqual(expect.any(String));
+
+    upsertBillingSubscription(subscription('new', baseTime + 1_000));
+    const secondResponse = await server.inject({
+      method: 'GET',
+      url: `/v1/billing/subscriptions?limit=1&q=${encodeURIComponent(idPrefix)}&cursor=${encodeURIComponent(first.nextCursor as string)}`,
+      headers: { cookie },
+    });
+    const second = secondResponse.json() as { subscriptions: { subscriptionId: string }[] };
+
+    expect(secondResponse.statusCode).toBe(200);
+    expect(second.subscriptions.map((entry) => entry.subscriptionId)).toEqual([older.subscriptionId]);
+  } finally {
+    replaceBillingSnapshot(previousSnapshot);
     await server.close();
   }
 });

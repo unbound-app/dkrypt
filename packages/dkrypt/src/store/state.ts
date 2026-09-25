@@ -21,6 +21,7 @@ import type { JobTimelineEvent, TestFlightJobSource } from '#jobs/types.js';
 import { categorizeFailure } from '#util/failureCategory.js';
 import { combineBits, hasPermission, parseBits, PermissionFlag, serializeBits } from '#permissions.js';
 import { openStateDatabase, verifyDatabaseBackup, type StateDatabase } from '#store/sqlite.js';
+import { paginateCursor } from '#util/cursor.js';
 
 export type ApiKeyStatus = 'pending' | 'approved' | 'denied';
 
@@ -1417,8 +1418,15 @@ export function getAuditLog(limit = 100): AuditLogEntry[] {
   return state.auditLog.slice(0, limit);
 }
 
-export function getAuditLogPage(offset = 0, limit = 100): { entries: AuditLogEntry[]; total: number } {
-  return { entries: state.auditLog.slice(Math.max(offset, 0), Math.max(offset, 0) + Math.max(limit, 1)), total: state.auditLog.length };
+export function getAuditLogPage(offset = 0, limit = 100, cursor?: string): { entries: AuditLogEntry[]; total: number; nextCursor?: string } {
+  const page = paginateCursor(state.auditLog, {
+    cursor,
+    offset,
+    limit,
+    keyOf: (entry) => [entry.ts, entry.id],
+    order: 'desc',
+  });
+  return { entries: page.items, total: state.auditLog.length, nextCursor: page.nextCursor };
 }
 
 function sanitizeRoleIds(roleIds: string[]): string[] {
@@ -1863,11 +1871,17 @@ export function listAllApiKeys() {
   return state.apiKeys.map(redact);
 }
 
-export function listAllApiKeysPage(offset: number, limit: number, search?: string): { keys: ReturnType<typeof redact>[]; total: number } {
+export function listAllApiKeysPage(offset: number, limit: number, search?: string, cursor?: string): { keys: ReturnType<typeof redact>[]; total: number; nextCursor?: string } {
   const needle = search?.trim().toLowerCase();
   const matching = needle ? state.apiKeys.filter((k) => k.name.toLowerCase().includes(needle) || k.ownerId.toLowerCase().includes(needle)) : state.apiKeys;
-  const sorted = [...matching].sort((a, b) => b.createdAt - a.createdAt);
-  return { keys: sorted.slice(offset, offset + limit).map(redact), total: sorted.length };
+  const page = paginateCursor(matching, {
+    cursor,
+    offset,
+    limit,
+    keyOf: (key) => [key.createdAt, key.id],
+    order: 'desc',
+  });
+  return { keys: page.items.map(redact), total: matching.length, nextCursor: page.nextCursor };
 }
 
 export function listPendingApiKeys() {
@@ -2658,7 +2672,8 @@ export function getJobHistoryPage(
     fromTs?: number;
     toTs?: number;
   },
-): { entries: JobHistoryEntry[]; total: number } {
+  cursor?: string,
+): { entries: JobHistoryEntry[]; total: number; nextCursor?: string } {
   const bundleIdSearch = filters?.bundleIdSearch?.toLowerCase();
   const source = filters?.source;
   const status = filters?.status;
@@ -2681,7 +2696,14 @@ export function getJobHistoryPage(
       (!fromTs || e.finishedAt >= fromTs) &&
       (!toTs || e.finishedAt <= toTs),
   );
-  return { entries: filtered.slice(offset, offset + limit), total: filtered.length };
+  const page = paginateCursor(filtered, {
+    cursor,
+    offset,
+    limit,
+    keyOf: (entry) => [entry.finishedAt, entry.id],
+    order: 'desc',
+  });
+  return { entries: page.items, total: filtered.length, nextCursor: page.nextCursor };
 }
 
 export function getAllJobHistory(): JobHistoryEntry[] {
@@ -3115,10 +3137,16 @@ export function getDeviceActivity(deviceId: string, limit = 20): DeviceActivityE
   return state.deviceActivity.filter((entry) => entry.deviceId === deviceId).slice(0, limit);
 }
 
-export function getDeviceActivityPage(deviceId: string, offset = 0, limit = 20): { entries: DeviceActivityEntry[]; total: number } {
+export function getDeviceActivityPage(deviceId: string, offset = 0, limit = 20, cursor?: string): { entries: DeviceActivityEntry[]; total: number; nextCursor?: string } {
   const owned = state.deviceActivity.filter((entry) => entry.deviceId === deviceId);
-  const normalizedOffset = Math.max(offset, 0);
-  return { entries: owned.slice(normalizedOffset, normalizedOffset + Math.max(limit, 1)), total: owned.length };
+  const page = paginateCursor(owned, {
+    cursor,
+    offset,
+    limit,
+    keyOf: (entry) => [entry.ts, entry.id],
+    order: 'desc',
+  });
+  return { entries: page.items, total: owned.length, nextCursor: page.nextCursor };
 }
 
 export function recordDeviceHealthCheck(
@@ -3294,13 +3322,21 @@ export function listNotifications(userId: string, limit = 50): { notifications: 
   return { notifications: page.notifications, unread: page.unread };
 }
 
-export function listNotificationsPage(userId: string, offset = 0, limit = 50): { notifications: NotificationRecord[]; unread: number; total: number } {
+export function listNotificationsPage(userId: string, offset = 0, limit = 50, cursor?: string): { notifications: NotificationRecord[]; unread: number; total: number; nextCursor?: string } {
   const lower = userId.toLowerCase();
   const owned = state.notifications.filter((notification) => notification.userId.toLowerCase() === lower);
+  const page = paginateCursor(owned, {
+    cursor,
+    offset,
+    limit: Math.min(Math.max(limit, 1), 100),
+    keyOf: (notification) => [notification.createdAt, notification.id],
+    order: 'desc',
+  });
   return {
-    notifications: owned.slice(Math.max(offset, 0), Math.max(offset, 0) + Math.min(Math.max(limit, 1), 100)).map((notification) => ({ ...notification })),
+    notifications: page.items.map((notification) => ({ ...notification })),
     unread: owned.filter((notification) => !notification.readAt).length,
     total: owned.length,
+    nextCursor: page.nextCursor,
   };
 }
 

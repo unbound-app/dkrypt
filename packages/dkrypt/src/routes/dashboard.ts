@@ -19,7 +19,7 @@ import { getGitHubRateLimitBudget, listDispatchRepos, listRepoWorkflows, validat
 import { lookupAppMetadata, searchApps } from '#scheduler/itunes.js';
 import { requirePermission, requireSession } from '#session.js';
 import { getDeviceHealth, getDeviceInstallBlocker, getDeviceReadiness, isBridgeHeartbeatFresh } from '#deviceHealth.js';
-import { decodeCursor, nextCursor } from '#util/cursor.js';
+import { paginateCursor } from '#util/cursor.js';
 import { getCachedDeviceHealth } from '#deviceHealthCache.js';
 import { discoverDevices, execCommand, isDirectUsbDeviceAgentConnection, listInstalledAppStoreBundles, sendSpringBoardBridgeRequest, setupDeviceConnection, withAutoinstallDeviceAgent, withSSH, type DeviceConnection } from '#idevice.js';
 import { getTestFlightBridgeDiagnostics, listBuilds, listTrains, type TFBuild } from '#testflight.js';
@@ -309,9 +309,10 @@ dashboardRouter.get('/v1/dashboard/synthetic', canManageDevices, async (_req, re
 
 dashboardRouter.get('/v1/dashboard/notifications', (req, res) => {
   const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit ?? '50'), 10) || 50, 1), 100);
-  const offset = typeof req.query.cursor === 'string' ? decodeCursor(req.query.cursor) : Math.max(Number.parseInt(String(req.query.offset ?? '0'), 10) || 0, 0);
-  const page = listNotificationsPage(res.locals.session.sub, offset, limit);
-  res.json({ ...page, nextCursor: nextCursor(offset, page.notifications.length, page.total) });
+  const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
+  const offset = cursor ? 0 : Math.max(Number.parseInt(String(req.query.offset ?? '0'), 10) || 0, 0);
+  const page = listNotificationsPage(res.locals.session.sub, offset, limit, cursor);
+  res.json(page);
 });
 
 dashboardRouter.post('/v1/dashboard/notifications/read', (req, res) => {
@@ -367,7 +368,8 @@ dashboardRouter.get('/v1/dashboard/events', (_req, res) => {
 
 dashboardRouter.get('/v1/dashboard/jobs', (req, res) => {
   const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit ?? '15'), 10) || 15, 1), 100);
-  const offset = typeof req.query.cursor === 'string' ? decodeCursor(req.query.cursor) : Math.max(Number.parseInt(String(req.query.offset ?? '0'), 10) || 0, 0);
+  const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
+  const offset = cursor ? 0 : Math.max(Number.parseInt(String(req.query.offset ?? '0'), 10) || 0, 0);
   const q = typeof req.query.q === 'string' && req.query.q.trim() ? req.query.q.trim().slice(0, 200) : undefined;
   const source = req.query.source === 'manual' || req.query.source === 'scheduler' ? req.query.source : undefined;
   const status = req.query.status === 'done' || req.query.status === 'failed' ? req.query.status : undefined;
@@ -377,7 +379,7 @@ dashboardRouter.get('/v1/dashboard/jobs', (req, res) => {
   const failureCategory = typeof req.query.failureCategory === 'string' && req.query.failureCategory.trim() ? req.query.failureCategory.trim().slice(0, 64) : undefined;
   const fromTs = Number.parseInt(String(req.query.fromTs ?? ''), 10);
   const toTs = Number.parseInt(String(req.query.toTs ?? ''), 10);
-  const { entries, total } = getJobHistoryPage(offset, limit, {
+  const { entries, total, nextCursor } = getJobHistoryPage(offset, limit, {
     bundleIdSearch: q,
     source,
     status,
@@ -387,21 +389,23 @@ dashboardRouter.get('/v1/dashboard/jobs', (req, res) => {
     failureCategory,
     fromTs: Number.isFinite(fromTs) ? fromTs : undefined,
     toTs: Number.isFinite(toTs) ? toTs : undefined,
-  });
+  }, cursor);
   res.json({
     history: entries.map((entry) => dashboardHistoryEntry(entry)),
     total,
-    nextCursor: nextCursor(offset, entries.length, total),
+    nextCursor,
   });
 });
 
 dashboardRouter.get('/v1/dashboard/artifacts', canDecrypt, (req, res) => {
-  const offset = typeof req.query.cursor === 'string' ? decodeCursor(req.query.cursor) : Number.parseInt(String(req.query.offset ?? '0'), 10);
+  const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
+  const offset = cursor ? 0 : Number.parseInt(String(req.query.offset ?? '0'), 10);
   const limit = Number.parseInt(String(req.query.limit ?? '50'), 10);
   const channel = req.query.channel === 'appstore' || req.query.channel === 'testflight' ? req.query.channel : undefined;
   const result = listArtifacts({
     offset: Number.isFinite(offset) ? offset : 0,
     limit: Number.isFinite(limit) ? limit : 50,
+    cursor,
     query: typeof req.query.q === 'string' ? req.query.q : undefined,
     channel,
   });
@@ -414,7 +418,7 @@ dashboardRouter.get('/v1/dashboard/artifacts', canDecrypt, (req, res) => {
       createdAt: new Date(artifact.createdAt).toISOString(),
       lastAccessedAt: new Date(artifact.lastAccessedAt).toISOString(),
     })),
-    nextCursor: nextCursor(Number.isFinite(offset) ? Math.max(offset, 0) : 0, result.artifacts.length, result.total),
+    nextCursor: result.nextCursor,
   });
 });
 
@@ -433,11 +437,12 @@ dashboardRouter.get('/v1/dashboard/logs', canViewLogs, (req, res) => {
   const level = typeof req.query.level === 'string' && ['info', 'warn', 'error'].includes(req.query.level) ? req.query.level as LogLevel : undefined;
   const query = typeof req.query.q === 'string' && req.query.q.trim() ? req.query.q.trim().slice(0, 100) : undefined;
   const regex = req.query.regex === '1';
-  const offset = typeof req.query.cursor === 'string' ? decodeCursor(req.query.cursor) : Math.max(0, Number.parseInt(String(req.query.offset ?? '0'), 10) || 0);
+  const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
+  const offset = cursor ? 0 : Math.max(0, Number.parseInt(String(req.query.offset ?? '0'), 10) || 0);
   const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit ?? '100'), 10) || 100, 1), 200);
   try {
-    const result = getRecentLogs({ scope, level, query, regex, offset, limit });
-    res.json({ ...result, nextCursor: nextCursor(offset, result.logs.length, result.total) });
+    const result = getRecentLogs({ scope, level, query, regex, cursor, offset, limit });
+    res.json(result);
   } catch {
     res.status(400).json({ error: 'log search pattern is invalid or unsafe' });
   }
@@ -691,9 +696,16 @@ dashboardRouter.get('/v1/dashboard/testflight/subscriptions', canViewTestFlightS
   const manager = hasPermission(res.locals.session.permissions, PermissionFlag.manageTestFlightSubscriptions);
   const allSubscriptions = subscriptionsForUser(res.locals.session.sub, manager);
   const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit ?? '50'), 10) || 50, 1), 100);
-  const offset = typeof req.query.cursor === 'string' ? decodeCursor(req.query.cursor) : Math.max(Number.parseInt(String(req.query.offset ?? '0'), 10) || 0, 0);
-  const subscriptions = allSubscriptions.slice(offset, offset + limit);
-  res.json({ subscriptions, total: allSubscriptions.length, nextCursor: nextCursor(offset, subscriptions.length, allSubscriptions.length) });
+  const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
+  const offset = cursor ? 0 : Math.max(Number.parseInt(String(req.query.offset ?? '0'), 10) || 0, 0);
+  const page = paginateCursor(allSubscriptions, {
+    cursor,
+    offset,
+    limit,
+    keyOf: (subscription) => [subscription.createdAt, subscription.id],
+    order: 'desc',
+  });
+  res.json({ subscriptions: page.items, total: allSubscriptions.length, nextCursor: page.nextCursor });
 });
 
 dashboardRouter.post('/v1/dashboard/testflight/subscriptions', canViewTestFlightSubscriptions, async (req, res) => {
@@ -1437,9 +1449,10 @@ dashboardRouter.get('/v1/dashboard/devices/:id/activity', canViewDevices, (req, 
     return;
   }
   const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit ?? '12'), 10) || 12, 1), 50);
-  const offset = typeof req.query.cursor === 'string' ? decodeCursor(req.query.cursor) : Math.max(Number.parseInt(String(req.query.offset ?? '0'), 10) || 0, 0);
-  const page = getDeviceActivityPage(device.id, offset, limit);
-  res.json({ activity: page.entries, total: page.total, nextCursor: nextCursor(offset, page.entries.length, page.total) });
+  const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
+  const offset = cursor ? 0 : Math.max(Number.parseInt(String(req.query.offset ?? '0'), 10) || 0, 0);
+  const page = getDeviceActivityPage(device.id, offset, limit, cursor);
+  res.json({ activity: page.entries, total: page.total, nextCursor: page.nextCursor });
 });
 
 dashboardRouter.get('/v1/dashboard/devices/:id/battery-history', canViewDevices, (req, res) => {
@@ -2207,10 +2220,11 @@ dashboardRouter.get('/v1/dashboard/keys/pending', canApproveApiKeys, (_req, res)
 
 dashboardRouter.get('/v1/dashboard/keys/all', canViewApiKeys, (req, res) => {
   const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit ?? '25'), 10) || 25, 1), 100);
-  const offset = typeof req.query.cursor === 'string' ? decodeCursor(req.query.cursor) : Math.max(Number.parseInt(String(req.query.offset ?? '0'), 10) || 0, 0);
+  const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
+  const offset = cursor ? 0 : Math.max(Number.parseInt(String(req.query.offset ?? '0'), 10) || 0, 0);
   const search = typeof req.query.search === 'string' ? req.query.search : undefined;
-  const { keys, total } = listAllApiKeysPage(offset, limit, search);
-  res.json({ keys, total, nextCursor: nextCursor(offset, keys.length, total) });
+  const page = listAllApiKeysPage(offset, limit, search, cursor);
+  res.json(page);
 });
 
 dashboardRouter.post('/v1/dashboard/keys/:id/approve', canApproveApiKeys, (req, res) => {
@@ -2468,9 +2482,10 @@ dashboardRouter.get('/v1/dashboard/users', canViewUsers, (_req, res) => {
 
 dashboardRouter.get('/v1/dashboard/audit-log', canViewUsers, (req, res) => {
   const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit ?? '100'), 10) || 100, 1), 200);
-  const offset = typeof req.query.cursor === 'string' ? decodeCursor(req.query.cursor) : Math.max(Number.parseInt(String(req.query.offset ?? '0'), 10) || 0, 0);
-  const page = getAuditLogPage(offset, limit);
-  res.json({ ...page, nextCursor: nextCursor(offset, page.entries.length, page.total) });
+  const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
+  const offset = cursor ? 0 : Math.max(Number.parseInt(String(req.query.offset ?? '0'), 10) || 0, 0);
+  const page = getAuditLogPage(offset, limit, cursor);
+  res.json(page);
 });
 
 const AUDIT_LOG_CSV_COLUMNS = ['id', 'ts', 'actor', 'action', 'target', 'detail'] as const;

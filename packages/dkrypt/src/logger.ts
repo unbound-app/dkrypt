@@ -1,13 +1,16 @@
+import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import safeRegex from 'safe-regex2';
 import { config } from '#config.js';
 import { currentCorrelation } from '#correlation.js';
 import { emitLogAdded } from '#events.js';
+import { paginateCursor } from '#util/cursor.js';
 
 export type LogLevel = 'info' | 'warn' | 'error';
 
 export interface LogEntry {
+  id: string;
   ts: number;
   level: LogLevel;
   scope: string;
@@ -20,6 +23,7 @@ export interface LogQuery {
   level?: LogLevel;
   query?: string;
   regex?: boolean;
+  cursor?: string;
   offset?: number;
   limit?: number;
 }
@@ -31,7 +35,9 @@ function loadPersistedLogs(): LogEntry[] {
   try {
     if (!existsSync(logsPath)) return [];
     const raw: unknown = JSON.parse(readFileSync(logsPath, 'utf8'));
-    return Array.isArray(raw) ? (raw as LogEntry[]) : [];
+    return Array.isArray(raw)
+      ? (raw as Array<Omit<LogEntry, 'id'> & { id?: string }>).map((entry, index) => ({ ...entry, id: entry.id ?? `legacy-${entry.ts}-${index}` }))
+      : [];
   } catch {
     return [];
   }
@@ -40,11 +46,12 @@ function loadPersistedLogs(): LogEntry[] {
 const recentLogs: LogEntry[] = loadPersistedLogs();
 let logsDirty = false;
 
-function record(entry: LogEntry): void {
-  recentLogs.push(entry);
+function record(entry: Omit<LogEntry, 'id'>): void {
+  const identifiedEntry = { ...entry, id: randomUUID() };
+  recentLogs.push(identifiedEntry);
   if (recentLogs.length > MAX_LOG_ENTRIES) recentLogs.shift();
   logsDirty = true;
-  emitLogAdded(entry);
+  emitLogAdded(identifiedEntry);
 }
 
 function contextualMeta(meta: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
@@ -53,7 +60,7 @@ function contextualMeta(meta: Record<string, unknown> | undefined): Record<strin
   return { ...meta, correlationId: meta?.correlationId ?? context.correlationId, ...(context.traceId ? { traceId: meta?.traceId ?? context.traceId } : {}) };
 }
 
-export function getRecentLogs(query: LogQuery = {}): { logs: LogEntry[]; total: number } {
+export function getRecentLogs(query: LogQuery = {}): { logs: LogEntry[]; total: number; nextCursor?: string } {
   const search = query.query?.trim();
   if (search && query.regex && !safeRegex(search, { limit: 8 })) throw new Error('unsafe log search pattern');
   const matcher = search && query.regex ? new RegExp(search, 'i') : undefined;
@@ -65,10 +72,17 @@ export function getRecentLogs(query: LogQuery = {}): { logs: LogEntry[]; total: 
     const content = `${entry.message} ${entry.meta ? JSON.stringify(entry.meta) : ''}`;
     return matcher ? matcher.test(content) : content.toLowerCase().includes(normalizedSearch as string);
   };
-  const filtered = recentLogs.filter(matches).reverse();
+  const filtered = recentLogs.filter(matches);
   const offset = Math.max(0, query.offset ?? 0);
   const limit = Math.max(1, query.limit ?? 100);
-  return { logs: filtered.slice(offset, offset + limit), total: filtered.length };
+  const page = paginateCursor(filtered, {
+    cursor: query.cursor,
+    offset,
+    limit,
+    keyOf: (entry) => [entry.ts, entry.id],
+    order: 'desc',
+  });
+  return { logs: page.items, total: filtered.length, nextCursor: page.nextCursor };
 }
 
 export function startLogFlusher(): void {

@@ -34,7 +34,7 @@ import { PermissionFlag } from '#permissions.js';
 import { recordAudit } from '#store/state.js';
 import { constructStripeWebhookEvent, getStripe } from '#stripe.js';
 import { claimWebhook, getWebhookInboxRecord, listWebhookInbox, markWebhookFailed, markWebhookProcessed, quarantineWebhook, receiveWebhook, releaseWebhookClaim } from '#webhookInbox.js';
-import { decodeCursor, nextCursor } from '#util/cursor.js';
+import { paginateCursor } from '#util/cursor.js';
 
 function metadataUserId(metadata: unknown): string | undefined {
   if (typeof metadata !== 'object' || metadata === null) return undefined;
@@ -449,26 +449,22 @@ billingRouter.get('/v1/billing/subscriptions', requirePermission(PermissionFlag.
   const wallet = typeof req.query?.wallet === 'string' ? req.query.wallet : undefined;
   const invoice = typeof req.query?.invoice === 'string' ? req.query.invoice : undefined;
   const limit = Math.min(Math.max(Number.parseInt(String(req.query?.limit ?? '50'), 10) || 50, 1), 100);
-  const cursor = decodeBillingCursor(typeof req.query?.cursor === 'string' ? req.query.cursor : undefined);
+  const cursor = typeof req.query?.cursor === 'string' ? req.query.cursor : undefined;
+  const offset = cursor ? 0 : Math.max(Number.parseInt(String(req.query?.offset ?? '0'), 10) || 0, 0);
   const subscriptions = listManagerBillingSubscriptions({ query, provider, status, planId, from, to, wallet, invoice });
-  const page = subscriptions.slice(cursor, cursor + limit);
-  const nextCursor = cursor + page.length < subscriptions.length ? encodeBillingCursor(cursor + page.length) : undefined;
-  res.json({ subscriptions: page, total: subscriptions.length, nextCursor });
+  const page = paginateCursor(subscriptions, {
+    cursor,
+    offset,
+    limit,
+    keyOf: (subscription) => [
+      typeof subscription.updatedAt === 'string' ? subscription.updatedAt : '',
+      typeof subscription.provider === 'string' ? subscription.provider : '',
+      typeof subscription.subscriptionId === 'string' ? subscription.subscriptionId : '',
+    ],
+    order: 'desc',
+  });
+  res.json({ subscriptions: page.items, total: subscriptions.length, nextCursor: page.nextCursor });
 });
-
-function encodeBillingCursor(offset: number): string {
-  return Buffer.from(JSON.stringify({ offset }), 'utf8').toString('base64url');
-}
-
-function decodeBillingCursor(value: string | undefined): number {
-  if (!value) return 0;
-  try {
-    const parsed = JSON.parse(Buffer.from(value, 'base64url').toString('utf8')) as { offset?: unknown };
-    return typeof parsed.offset === 'number' && Number.isInteger(parsed.offset) && parsed.offset >= 0 ? parsed.offset : 0;
-  } catch {
-    return 0;
-  }
-}
 
 billingRouter.get('/v1/billing/webhooks/inbox', requirePermission(PermissionFlag.manageBilling), (req, res) => {
   const status = typeof req.query?.status === 'string' ? req.query.status : undefined;
@@ -477,9 +473,17 @@ billingRouter.get('/v1/billing/webhooks/inbox', requirePermission(PermissionFlag
     .filter((record) => !status || record.status === status)
     .filter((record) => !provider || record.provider === provider);
   const limit = Math.min(Math.max(Number.parseInt(String(req.query?.limit ?? '50'), 10) || 50, 1), 200);
-  const offset = typeof req.query?.cursor === 'string' ? decodeCursor(req.query.cursor) : Math.max(Number.parseInt(String(req.query?.offset ?? '0'), 10) || 0, 0);
-  const inbox = filtered.slice(offset, offset + limit).map(({ rawBody, ...record }) => ({ ...record, rawBodyBytes: Buffer.byteLength(rawBody) }));
-  res.json({ inbox, total: filtered.length, nextCursor: nextCursor(offset, inbox.length, filtered.length) });
+  const cursor = typeof req.query?.cursor === 'string' ? req.query.cursor : undefined;
+  const offset = cursor ? 0 : Math.max(Number.parseInt(String(req.query?.offset ?? '0'), 10) || 0, 0);
+  const page = paginateCursor(filtered, {
+    cursor,
+    offset,
+    limit,
+    keyOf: (record) => [record.receivedAt, record.id],
+    order: 'desc',
+  });
+  const inbox = page.items.map(({ rawBody, ...record }) => ({ ...record, rawBodyBytes: Buffer.byteLength(rawBody) }));
+  res.json({ inbox, total: filtered.length, nextCursor: page.nextCursor });
 });
 
 billingRouter.post('/v1/billing/webhooks/inbox/:id/quarantine', requirePermission(PermissionFlag.manageBilling), (req, res) => {

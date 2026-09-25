@@ -510,6 +510,7 @@ export interface AuditLogEntry {
 }
 
 export interface LogEntry {
+  id: string;
   ts: number;
   level: 'info' | 'warn' | 'error';
   scope: string;

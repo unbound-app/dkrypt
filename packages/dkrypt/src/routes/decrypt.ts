@@ -11,7 +11,6 @@ import { listBuilds, listTrains, type TFBuild } from '#testflight.js';
 import { apiIdempotencyRegistry } from '#idempotency.js';
 import { artifactDownloadName, artifactFileAvailable, getArtifactById, listArtifacts, touchArtifact } from '#artifacts.js';
 import { normalizeVersionSelector, resolveDecryptTarget, VERSION_SELECTOR_RE } from '#decryptTarget.js';
-import { decodeCursor, nextCursor } from '#util/cursor.js';
 import { getRouteContract } from '#contracts.js';
 
 interface TestFlightCatalogServices {
@@ -449,20 +448,19 @@ export function createArtifactCatalogRoutes(
           q?: string;
           channel?: 'appstore' | 'testflight';
         };
-        const offset = typeof query.cursor === 'string' ? decodeCursor(query.cursor) : Number.parseInt(String(query.offset ?? '0'), 10);
+        const offset = query.cursor ? 0 : Number.parseInt(String(query.offset ?? '0'), 10);
         const limit = Number.parseInt(String(query.limit ?? '50'), 10);
         const result = services.listArtifacts({
           offset: Number.isFinite(offset) ? offset : 0,
           limit: Number.isFinite(limit) ? limit : 50,
+          cursor: query.cursor,
           query: query.q,
           channel: query.channel,
           bundleIds: normalizeBundleScope(getFastifyApiKeyContext(request)?.allowedBundleIds),
         });
-        const normalizedOffset = Number.isFinite(offset) ? Math.max(offset, 0) : 0;
         return {
           ...result,
           artifacts: result.artifacts.map(artifactSummary),
-          nextCursor: nextCursor(normalizedOffset, result.artifacts.length, result.total),
         };
       },
     );
