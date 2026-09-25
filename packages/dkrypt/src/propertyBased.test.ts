@@ -6,7 +6,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { build as buildPlist } from 'plist';
 import { tmpdir } from 'node:os';
-import { createBridgeEnvelope, createDeviceAgentEnvelope } from '#idevice.js';
+import { createBridgeEnvelope, createDeviceAgentEnvelope, parseDeviceAgentResponse, type DeviceAgentEnvelope } from '#idevice.js';
 import { BRIDGE_PROTOCOL_VERSION } from '#bridgeProtocol.js';
 import { openStateDatabase, verifyDatabaseBackup } from '#store/sqlite.js';
 import { normalizeTestFlightInvite } from '#testflightSubscriptions.js';
@@ -48,8 +48,34 @@ function deviceAgentSignature(secret: string, requestId: string, issuedAt: numbe
     .digest('hex');
 }
 
+function signDeviceAgentResponse(secret: string, requestId: string, issuedAt: number, result: Record<string, unknown>): DeviceAgentEnvelope {
+  const payload = Buffer.from(JSON.stringify({ ok: true, result })).toString('base64url');
+  const signature = createHmac('sha256', secret)
+    .update(`dkrypt-autoinstall-agent-response-v1|${requestId}|${issuedAt}|${payload}`)
+    .digest('hex');
+  return { version: 1, requestId, issuedAt, payload, signature };
+}
+
 function jsonRoundTrip<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function sortById<T extends { id: string }>(records: T[]): T[] {
+  return [...records].sort((left, right) => left.id.localeCompare(right.id));
+}
+
+function restoreSchemaAtVersion(database: ReturnType<typeof openStateDatabase>, version: number): void {
+  if (version < 5) database.db.exec('DROP TABLE IF EXISTS projects;');
+  if (version < 4) database.db.exec('DROP TABLE IF EXISTS scheduler_runs;');
+  if (version < 3) database.db.exec('DROP INDEX IF EXISTS artifacts_updated_at;');
+  if (version < 2) {
+    database.db.exec('DROP TABLE IF EXISTS auth_profiles;');
+    database.db.exec('DROP TABLE IF EXISTS device_history;');
+    database.db.exec('DROP TABLE IF EXISTS billing_events;');
+    database.db.exec('DROP TABLE IF EXISTS correlation_events;');
+    database.db.exec('DROP TABLE IF EXISTS webhook_attempts;');
+  }
+  database.db.query('DELETE FROM schema_migrations WHERE version > ?').run(version);
 }
 
 test('version parsing agrees with numeric tuple ordering for generated releases', () => {
@@ -83,7 +109,7 @@ test('TestFlight invite normalization is idempotent for generated public invite 
   }), { numRuns: 150, seed: 20260928 });
 });
 
-test('SQLite schema migration and backup restore preserve generated state', async () => {
+test('SQLite upgrades generated records from every prior schema and restores them from backup', async () => {
   const stateArbitrary = fc.record({
     version: fc.constant(16),
     devices: fc.uniqueArray(
@@ -100,39 +126,68 @@ test('SQLite schema migration and backup restore preserve generated state', asyn
     fc.record({ id: fc.uuid(), bundleId: fc.string({ maxLength: 32 }), sizeBytes: fc.nat({ max: 2_000_000_000 }) }),
     { selector: (artifact) => artifact.id, maxLength: 8 },
   );
+  const jobTimelinesArbitrary = fc.uniqueArray(
+    fc.record({ id: fc.uuid(), events: fc.array(fc.string({ maxLength: 24 }), { maxLength: 6 }) }),
+    { selector: (timeline) => timeline.id, maxLength: 8 },
+  );
+  const schedulerRunsArbitrary = fc.uniqueArray(
+    fc.record({ id: fc.uuid(), ts: fc.nat({ max: 2_000_000_000_000 }), label: fc.string({ maxLength: 24 }) }),
+    { selector: (run) => run.id, maxLength: 8 },
+  );
 
-  await fc.assert(fc.asyncProperty(stateArbitrary, legacyJobsArbitrary, legacyArtifactsArbitrary, async (generatedState, legacyJobs, legacyArtifacts) => {
-    const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-property-sqlite-'));
-    const backupPath = path.join(stateDir, 'restore.sqlite');
-    let database: ReturnType<typeof openStateDatabase> | undefined;
-    try {
-      const expected = jsonRoundTrip(generatedState);
-      database = openStateDatabase({ stateDir, filename: 'state.sqlite' });
-      database.writeState(generatedState);
-      expect(database.readState()).toEqual(expected);
-      database.replaceCollection('jobs', legacyJobs.map((job, index) => ({ id: job.id, payload: job, updatedAt: index + 1 })));
-      database.replaceCollection('artifacts', legacyArtifacts.map((artifact, index) => ({ id: artifact.id, payload: artifact, updatedAt: index + 1 })));
-      database.db.query('DELETE FROM schema_migrations WHERE version = 6').run();
-      database.close();
-      database = undefined;
-      database = openStateDatabase({ stateDir, filename: 'state.sqlite' });
-      expect(database.schemaVersion).toBe(6);
-      expect(database.integrityStatus()).toBe('ok');
-      expect(database.readState()).toEqual(expected);
-      expect((database.readCollection('jobs') as Array<{ id: string; projectId: string }>).map((job) => [job.id, job.projectId]).sort()).toEqual(legacyJobs.map((job) => [job.id, 'default']).sort());
-      expect((database.readCollection('artifacts') as Array<{ id: string; projectIds: string[] }>).map((artifact) => [artifact.id, artifact.projectIds]).sort()).toEqual(legacyArtifacts.map((artifact) => [artifact.id, ['default']]).sort());
-      database.backupTo(backupPath);
-      expect(verifyDatabaseBackup(backupPath)).toEqual({ schemaVersion: 6, integrity: 'ok', hasStateSnapshot: true });
-      database.close();
-      database = undefined;
-      database = openStateDatabase({ stateDir, filename: 'restore.sqlite' });
-      expect(database.integrityStatus()).toBe('ok');
-      expect(database.readState()).toEqual(expected);
-    } finally {
-      database?.close();
-      await rm(stateDir, { recursive: true, force: true });
-    }
-  }), { numRuns: 24, seed: 20260929 });
+  for (const baselineVersion of [1, 2, 3, 4, 5]) {
+    await fc.assert(fc.asyncProperty(stateArbitrary, legacyJobsArbitrary, legacyArtifactsArbitrary, jobTimelinesArbitrary, schedulerRunsArbitrary, async (generatedState, legacyJobs, legacyArtifacts, jobTimelines, schedulerRuns) => {
+      const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-property-sqlite-'));
+      const backupPath = path.join(stateDir, 'restore.sqlite');
+      let database: ReturnType<typeof openStateDatabase> | undefined;
+      try {
+        const expectedState = jsonRoundTrip(generatedState);
+        const expectedJobs = sortById(legacyJobs.map((job) => ({ ...job, projectId: 'default' })));
+        const expectedArtifacts = sortById(legacyArtifacts.map((artifact) => ({ ...artifact, projectIds: ['default'] })));
+        const expectedTimelines = jobTimelines.map((timeline) => ({ jobId: timeline.id, events: timeline.events }));
+        const expectedSchedulerRuns = schedulerRuns.map((run) => ({ id: run.id, ts: run.ts, appStore: { label: run.label }, testflight: {} }));
+        database = openStateDatabase({ stateDir, filename: 'state.sqlite' });
+        database.writeState(generatedState);
+        expect(database.readState()).toEqual(expectedState);
+        database.replaceCollection('jobs', legacyJobs.map((job, index) => ({ id: job.id, payload: job, updatedAt: index + 1 })));
+        database.replaceCollection('artifacts', legacyArtifacts.map((artifact, index) => ({ id: artifact.id, payload: artifact, updatedAt: index + 1 })));
+        const legacyTimelineRows: Array<{ id: string; payload: unknown; updatedAt: number }> = jobTimelines.map((timeline, index) => ({ id: `timeline-${timeline.id}`, payload: { jobId: timeline.id, events: timeline.events }, updatedAt: index + 1 }));
+        if (baselineVersion < 4) {
+          legacyTimelineRows.push(...expectedSchedulerRuns.map((run, index) => ({ id: `legacy-scheduler-${run.id}`, payload: run, updatedAt: jobTimelines.length + index + 1 })));
+        } else {
+          database.replaceCollection('scheduler_runs', expectedSchedulerRuns.map((run, index) => ({ id: run.id, payload: run, updatedAt: index + 1 })));
+        }
+        database.replaceCollection('job_timelines', legacyTimelineRows);
+        restoreSchemaAtVersion(database, baselineVersion);
+        database.close();
+        database = undefined;
+        database = openStateDatabase({ stateDir, filename: 'state.sqlite' });
+        expect(database.schemaVersion).toBe(6);
+        expect(database.integrityStatus()).toBe('ok');
+        expect(database.readState()).toEqual(expectedState);
+        expect(sortById(database.readCollection('jobs') as typeof expectedJobs)).toEqual(expectedJobs);
+        expect(sortById(database.readCollection('artifacts') as typeof expectedArtifacts)).toEqual(expectedArtifacts);
+        const migratedTimelines = database.readCollection('job_timelines') as Array<{ jobId: string; events: string[] }>;
+        expect(sortById(migratedTimelines.map((timeline) => ({ id: timeline.jobId, events: timeline.events })))).toEqual(sortById(expectedTimelines.map((timeline) => ({ id: timeline.jobId, events: timeline.events }))));
+        expect(sortById(database.readCollection('scheduler_runs') as typeof expectedSchedulerRuns)).toEqual(sortById(expectedSchedulerRuns));
+        database.backupTo(backupPath);
+        expect(verifyDatabaseBackup(backupPath)).toEqual({ schemaVersion: 6, integrity: 'ok', hasStateSnapshot: true });
+        database.close();
+        database = undefined;
+        database = openStateDatabase({ stateDir, filename: 'restore.sqlite' });
+        expect(database.integrityStatus()).toBe('ok');
+        expect(database.readState()).toEqual(expectedState);
+        expect(sortById(database.readCollection('jobs') as typeof expectedJobs)).toEqual(expectedJobs);
+        expect(sortById(database.readCollection('artifacts') as typeof expectedArtifacts)).toEqual(expectedArtifacts);
+        const restoredTimelines = database.readCollection('job_timelines') as Array<{ jobId: string; events: string[] }>;
+        expect(sortById(restoredTimelines.map((timeline) => ({ id: timeline.jobId, events: timeline.events })))).toEqual(sortById(expectedTimelines.map((timeline) => ({ id: timeline.jobId, events: timeline.events }))));
+        expect(sortById(database.readCollection('scheduler_runs') as typeof expectedSchedulerRuns)).toEqual(sortById(expectedSchedulerRuns));
+      } finally {
+        database?.close();
+        await rm(stateDir, { recursive: true, force: true });
+      }
+    }), { numRuns: 5, seed: 20260929 + baselineVersion });
+  }
 });
 
 test('IPA metadata extraction preserves generated versions and Mach-O architectures', async () => {
@@ -185,4 +240,16 @@ test('authenticated bridge envelopes bind generated payloads to their channel an
     expect(envelope.signature).toBe(deviceAgentSignature(secret, requestId, issuedAt, envelope.payload));
     expect(envelope.signature).not.toBe(deviceAgentSignature(secret, `${requestId}x`, issuedAt, envelope.payload));
   }), { numRuns: 400, seed: 20261002 });
+
+  const responseArbitrary = fc.record({ result: fc.record({ value: fc.jsonValue({ maxDepth: 3 }), enabled: fc.boolean() }) });
+  const responseIssuedAt = Math.floor(Date.now() / 1000);
+  fc.assert(fc.property(secretArbitrary, fc.uuid(), responseArbitrary, (secret, requestId, { result }) => {
+    const envelope = signDeviceAgentResponse(secret, requestId, responseIssuedAt, result);
+    expect(parseDeviceAgentResponse(secret, envelope)).toEqual(jsonRoundTrip(result));
+    expect(() => parseDeviceAgentResponse(secret, { ...envelope, requestId: `${requestId}x` })).toThrow('signature');
+    expect(() => parseDeviceAgentResponse(secret, { ...envelope, payload: `${envelope.payload}x` })).toThrow('signature');
+    const changedSignature = `${envelope.signature.slice(0, -1)}${envelope.signature.endsWith('0') ? '1' : '0'}`;
+    expect(() => parseDeviceAgentResponse(secret, { ...envelope, signature: changedSignature })).toThrow('signature');
+    expect(() => parseDeviceAgentResponse(secret, { ...envelope, issuedAt: responseIssuedAt - 121 })).toThrow('expired');
+  }), { numRuns: 400, seed: 20261003 });
 });

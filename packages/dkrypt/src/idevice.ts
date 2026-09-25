@@ -112,7 +112,7 @@ export interface DeviceSession {
 
 export type DeviceClient = Client | DeviceSession;
 
-interface DeviceAgentEnvelope {
+export interface DeviceAgentEnvelope {
   version: number;
   requestId: string;
   issuedAt: number;
@@ -1233,7 +1233,7 @@ export function createDeviceAgentEnvelope(secret: string, requestId: string, req
   };
 }
 
-function parseDeviceAgentResponse(secret: string, envelope: DeviceAgentEnvelope): Record<string, unknown> {
+export function parseDeviceAgentResponse(secret: string, envelope: DeviceAgentEnvelope): Record<string, unknown> {
   if (envelope.version !== 1 || typeof envelope.requestId !== 'string' || typeof envelope.issuedAt !== 'number' || typeof envelope.payload !== 'string' || typeof envelope.signature !== 'string') {
     throw new Error('autoinstall device agent returned an invalid response envelope');
   }
