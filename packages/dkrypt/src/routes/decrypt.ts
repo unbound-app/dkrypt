@@ -1,23 +1,18 @@
-import type { Request, Response } from '#http.js';
-import { Router } from '#http.js';
+import { Response } from '#http.js';
 import { createHash } from 'node:crypto';
 import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
 import { config } from '#config.js';
-import { fastifyRequireApiKey, fastifyRequireTestFlightScope, getFastifyApiKeyContext, requireApiKey, requireTestFlightScope } from '#auth.js';
-import { blockDuringMaintenance } from '#maintenance.js';
+import { fastifyRequireApiKey, fastifyRequireTestFlightScope, getFastifyApiKeyContext } from '#auth.js';
+import { fastifyBlockDuringMaintenance } from '#maintenance.js';
 import { jobFileAvailable, jobSummary, streamFilePath, streamJobFile } from '#jobs/http.js';
 import { enqueueDecryptJob, getJob, waitForJob } from '#jobs/store.js';
 import { recordApiKeyBundleUsage } from '#store/state.js';
 import { listBuilds, listTrains, type TFBuild } from '#testflight.js';
 import { apiIdempotencyRegistry } from '#idempotency.js';
 import { artifactDownloadName, artifactFileAvailable, getArtifactById, listArtifacts, touchArtifact } from '#artifacts.js';
-import { resolveDecryptTarget, VERSION_SELECTOR_RE } from '#decryptTarget.js';
+import { normalizeVersionSelector, resolveDecryptTarget, VERSION_SELECTOR_RE } from '#decryptTarget.js';
 import { decodeCursor, nextCursor } from '#util/cursor.js';
 import { getRouteContract } from '#contracts.js';
-
-export const decryptRouter = Router();
-export const artifactAndJobRouter = Router();
-export const testFlightDecryptRouter = Router();
 
 interface TestFlightCatalogServices {
   listTrains: typeof listTrains;
@@ -28,12 +23,31 @@ interface ArtifactCatalogServices {
   listArtifacts: typeof listArtifacts;
   getArtifactById: typeof getArtifactById;
   artifactFileAvailable: typeof artifactFileAvailable;
+  touchArtifact: typeof touchArtifact;
+}
+
+interface DecryptSubmissionServices {
+  resolveDecryptTarget: typeof resolveDecryptTarget;
+  enqueueDecryptJob: typeof enqueueDecryptJob;
+  getJob: typeof getJob;
+  waitForJob: typeof waitForJob;
+  getArtifactById: typeof getArtifactById;
+  recordApiKeyBundleUsage: typeof recordApiKeyBundleUsage;
 }
 
 const BUNDLE_ID_RE = /^[A-Za-z0-9.-]{3,200}$/;
 const EXTERNAL_VERSION_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const IDEMPOTENCY_KEY_RE = /^[A-Za-z0-9._:-]{1,200}$/;
 const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
+const idempotencyLocks = new Map<string, Promise<void>>();
+
+class IdempotencyRequestError extends Error {
+  constructor(readonly statusCode: 403 | 409 | 410, message: string) {
+    super(message);
+  }
+}
+
+class DecryptTargetRequestError extends Error {}
 
 function artifactSummary(artifact: ReturnType<typeof getArtifactById>) {
   if (!artifact) return undefined;
@@ -54,19 +68,64 @@ function artifactSummary(artifact: ReturnType<typeof getArtifactById>) {
   };
 }
 
-function idempotencyJobId(req: Request, res: Response, fingerprint: string): { jobId?: string; error?: string; key?: string } {
-  const key = req.header('idempotency-key');
+function idempotencyJobId(key: string | undefined, apiKeyId: string | undefined, fingerprint: string): { jobId?: string; error?: string; key?: string } {
   if (!key) return {};
   if (!IDEMPOTENCY_KEY_RE.test(key)) return { error: 'Idempotency-Key must be 1-200 URL-safe characters' };
-  const scope = res.locals.apiKeyId as string | undefined;
-  if (!scope) return { error: 'API key identity is unavailable' };
-  const existing = apiIdempotencyRegistry.lookup(scope, key, fingerprint);
+  if (!apiKeyId) return { error: 'API key identity is unavailable' };
+  const existing = apiIdempotencyRegistry.lookup(apiKeyId, key, fingerprint);
   if (existing.conflict) return { error: 'Idempotency-Key was already used with a different request' };
   return { jobId: existing.jobId, key };
 }
 
+async function withIdempotencyLock<T>(scope: string, key: string, operation: () => Promise<T>): Promise<T> {
+  const lockKey = `${scope}:${key}`;
+  const previous = idempotencyLocks.get(lockKey) ?? Promise.resolve();
+  let releaseLock = () => {};
+  const current = new Promise<void>((resolve) => {
+    releaseLock = resolve;
+  });
+  idempotencyLocks.set(lockKey, current);
+  await previous;
+  try {
+    return await operation();
+  } finally {
+    releaseLock();
+    if (idempotencyLocks.get(lockKey) === current) idempotencyLocks.delete(lockKey);
+  }
+}
+
+async function resolveIdempotentJob<T extends { id: string }>(options: {
+  key?: string;
+  scope?: string;
+  fingerprint: string;
+  getJob: (id: string) => T | undefined;
+  createJob: () => Promise<T>;
+}): Promise<T> {
+  const { key, scope, fingerprint, getJob, createJob } = options;
+  if (!key) return createJob();
+  if (!scope) throw new IdempotencyRequestError(409, 'API key identity is unavailable');
+
+  return withIdempotencyLock(scope, key, async () => {
+    const idempotency = idempotencyJobId(key, scope, fingerprint);
+    if (idempotency.error) throw new IdempotencyRequestError(409, idempotency.error);
+    if (idempotency.jobId) {
+      const existingJob = getJob(idempotency.jobId);
+      if (!existingJob) throw new IdempotencyRequestError(410, 'the result for this Idempotency-Key is no longer retained');
+      return existingJob;
+    }
+
+    const job = await createJob();
+    apiIdempotencyRegistry.record(scope, key, fingerprint, job.id, IDEMPOTENCY_TTL_MS);
+    return job;
+  });
+}
+
 function requestFingerprint(route: string, body: Record<string, unknown>): string {
   return createHash('sha256').update(JSON.stringify({ route, body })).digest('hex');
+}
+
+function idempotencyKeyFromHeader(header: string | string[] | undefined): string | undefined {
+  return typeof header === 'string' ? header : undefined;
 }
 
 function isBundleIdAllowed(scope: string[] | undefined, bundleId: string): boolean {
@@ -77,8 +136,14 @@ function normalizeBundleScope(scope: string[] | undefined): string[] | undefined
   return scope && scope.length > 0 ? scope : undefined;
 }
 
-function apiRequester(res: Response): string {
-  return (res.locals.apiKeyOwner as string | undefined) ?? 'api-key';
+function isTestFlightBuild(value: unknown): value is TFBuild {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const build = value as Record<string, unknown>;
+  return typeof build.id === 'number'
+    && Number.isSafeInteger(build.id)
+    && typeof build.cfBundleShortVersion === 'string'
+    && typeof build.cfBundleVersion === 'string'
+    && typeof build.bundleId === 'string';
 }
 
 function apiErrorEnvelope(message: string, code: string, requestId: string, retryable = false) {
@@ -90,228 +155,287 @@ function testFlightLookupFailure(error: unknown, requestId: string) {
   return { error: message, code: 'testflight_lookup_failed', message, requestId, retryable: true };
 }
 
-decryptRouter.post('/v1/decrypts', requireApiKey, blockDuringMaintenance, async (req, res) => {
-  const bundleId = typeof req.body?.bundleId === 'string' ? req.body.bundleId.trim() : '';
-  const selector = typeof req.body?.version === 'string' ? req.body.version.trim() : undefined;
-  if (!BUNDLE_ID_RE.test(bundleId)) {
-    res.status(400).json({ error: 'bundleId is required and must look like a bundle identifier' });
-    return;
-  }
-  if (selector && !VERSION_SELECTOR_RE.test(selector)) {
-    res.status(400).json({ error: 'version must match a release tag such as 240, 234.2, or 240_109440' });
-    return;
-  }
-  if (!isBundleIdAllowed(res.locals.apiKeyScope, bundleId)) {
-    res.status(403).json({ error: 'this API key is not scoped to this bundleId' });
-    return;
-  }
+export function createDecryptRoutes(
+  services: DecryptSubmissionServices = { resolveDecryptTarget, enqueueDecryptJob, getJob, waitForJob, getArtifactById, recordApiKeyBundleUsage },
+): FastifyPluginAsyncTypebox {
+  return async (server) => {
+    server.get(
+      '/v1/decrypt',
+      {
+        schema: getRouteContract('GET', '/v1/decrypt'),
+        preHandler: [fastifyRequireApiKey, fastifyBlockDuringMaintenance],
+      },
+      async (request, reply) => {
+        const query = request.query as Record<string, unknown>;
+        const bundleId = typeof query?.bundleId === 'string' ? query.bundleId : '';
+        const externalVersionId = query?.externalVersionId;
+        const versionId = typeof externalVersionId === 'string' && EXTERNAL_VERSION_ID_RE.test(externalVersionId) ? externalVersionId : undefined;
+        const selector = typeof query?.version === 'string' ? query.version.trim() : undefined;
+        const apiKey = getFastifyApiKeyContext(request);
 
-  try {
-    const target = await resolveDecryptTarget(bundleId, selector);
-    if (target.channel === 'testflight' && res.locals.apiKeyAllowTestFlight === false) {
-      res.status(403).json({ error: 'this API key is not scoped for TestFlight' });
-      return;
-    }
-    const apiKeyId = res.locals.apiKeyId as string | undefined;
-    if (apiKeyId) recordApiKeyBundleUsage(apiKeyId, bundleId);
-    const job = enqueueDecryptJob(
-      bundleId,
-      'manual',
-      target.externalVersionId,
-      target.testflight,
-      target.versionLabel,
-      apiRequester(res),
-      (res.locals.apiKeyPriority as number | undefined) ?? 0,
-      undefined,
-      apiKeyId,
-    );
-    const payload = {
-      ...jobSummary(job),
-      selector: target.selector,
-      channel: target.channel,
-      resolvedVersion: target.versionLabel,
-      cacheHit: job.cacheHit === true,
-      artifact: job.artifactId ? artifactSummary(getArtifactById(job.artifactId)) : undefined,
-    };
-    res.status(job.status === 'done' ? 200 : 202).json(payload);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    res.status(message.includes('version') || message.includes('build') || message.includes('train') ? 404 : 502).json({ error: message });
-  }
-});
-
-decryptRouter.get('/v1/decrypt', requireApiKey, blockDuringMaintenance, async (req, res) => {
-  const bundleId = req.query.bundleId;
-  if (typeof bundleId !== 'string' || !BUNDLE_ID_RE.test(bundleId)) {
-    res.status(400).json({ error: 'query param bundleId is required and must look like a bundle identifier' });
-    return;
-  }
-
-  if (!isBundleIdAllowed(res.locals.apiKeyScope, bundleId)) {
-    res.status(403).json({ error: 'this API key is not scoped to this bundleId' });
-    return;
-  }
-
-  const externalVersionId = req.query.externalVersionId;
-  const versionId =
-    typeof externalVersionId === 'string' && EXTERNAL_VERSION_ID_RE.test(externalVersionId) ? externalVersionId : undefined;
-  const selector = typeof req.query.version === 'string' ? req.query.version.trim() : undefined;
-  if (selector && !VERSION_SELECTOR_RE.test(selector)) {
-    res.status(400).json({ error: 'version must match a release tag such as 240, 234.2, or 240_109440' });
-    return;
-  }
-
-  const apiKeyId = res.locals.apiKeyId as string | undefined;
-  const fingerprint = requestFingerprint('/v1/decrypt', { bundleId, externalVersionId: versionId ?? null, version: selector ?? null });
-  const idempotency = idempotencyJobId(req, res, fingerprint);
-  if (idempotency.error) {
-    res.status(409).json({ error: idempotency.error });
-    return;
-  }
-
-  let job = idempotency.jobId ? getJob(idempotency.jobId) : undefined;
-  if (idempotency.jobId && !job) {
-    res.status(410).json({ error: 'the result for this Idempotency-Key is no longer retained' });
-    return;
-  }
-  if (!job) {
-    if (apiKeyId) recordApiKeyBundleUsage(apiKeyId, bundleId);
-    if (selector) {
-      try {
-        const target = await resolveDecryptTarget(bundleId, selector);
-        if (target.channel === 'testflight' && res.locals.apiKeyAllowTestFlight === false) {
-          res.status(403).json({ error: 'this API key is not scoped for TestFlight' });
-          return;
+        if (!BUNDLE_ID_RE.test(bundleId)) {
+          reply.code(400);
+          return apiErrorEnvelope('query param bundleId is required and must look like a bundle identifier', 'request_error', request.id);
         }
-        job = enqueueDecryptJob(
-          bundleId,
-          'manual',
-          target.externalVersionId,
-          target.testflight,
-          target.versionLabel,
-          apiRequester(res),
-          (res.locals.apiKeyPriority as number | undefined) ?? 0,
-          undefined,
-          apiKeyId,
-        );
-      } catch (err) {
-        res.status(404).json({ error: err instanceof Error ? err.message : String(err) });
-        return;
-      }
-    } else {
-      job = enqueueDecryptJob(
-        bundleId,
-        'manual',
-        versionId,
-        undefined,
-        undefined,
-        apiRequester(res),
-        (res.locals.apiKeyPriority as number | undefined) ?? 0,
-        undefined,
-        apiKeyId,
-      );
-    }
-    if (idempotency.key && apiKeyId) apiIdempotencyRegistry.record(apiKeyId, idempotency.key, fingerprint, job.id, IDEMPOTENCY_TTL_MS);
-  }
-  if (job.status === 'done' && !jobFileAvailable(job)) {
-    res.status(410).json({ error: 'the result for this Idempotency-Key is no longer retained' });
-    return;
-  }
-  const finished = await waitForJob(job, config.jobMaxWaitSeconds * 1000);
+        if (!apiKey) {
+          reply.code(401);
+          return apiErrorEnvelope('unauthorized', 'unauthorized', request.id);
+        }
+        if (!isBundleIdAllowed(apiKey.allowedBundleIds, bundleId)) {
+          reply.code(403);
+          return apiErrorEnvelope('this API key is not scoped to this bundleId', 'request_error', request.id);
+        }
+        if (selector && !VERSION_SELECTOR_RE.test(selector)) {
+          reply.code(400);
+          return apiErrorEnvelope('version must match a release tag such as 240, 234.2, or 240_109440', 'request_error', request.id);
+        }
 
-  if (finished.status === 'queued' || finished.status === 'running') {
-    res.status(202).json(jobSummary(finished));
-    return;
-  }
+        const fingerprint = requestFingerprint('/v1/decrypt', { bundleId, externalVersionId: versionId ?? null, version: normalizeVersionSelector(selector) ?? null });
+        try {
+          const job = await resolveIdempotentJob({
+            key: idempotencyKeyFromHeader(request.headers['idempotency-key']),
+            scope: apiKey.keyId,
+            fingerprint,
+            getJob: services.getJob,
+            createJob: async () => {
+              if (apiKey.keyId) services.recordApiKeyBundleUsage(apiKey.keyId, bundleId);
+              if (!selector) {
+                return services.enqueueDecryptJob(
+                  bundleId,
+                  'manual',
+                  versionId,
+                  undefined,
+                  undefined,
+                  apiKey.ownerId,
+                  apiKey.priority ?? 0,
+                  undefined,
+                  apiKey.keyId,
+                );
+              }
 
-  if (finished.status === 'failed') {
-    res.status(500).json(jobSummary(finished));
-    return;
-  }
+              let target;
+              try {
+                target = await services.resolveDecryptTarget(bundleId, selector);
+              } catch (error) {
+                throw new DecryptTargetRequestError(error instanceof Error ? error.message : String(error));
+              }
+              if (target.channel === 'testflight' && apiKey.allowTestFlight === false) {
+                throw new IdempotencyRequestError(403, 'this API key is not scoped for TestFlight');
+              }
+              return services.enqueueDecryptJob(
+                bundleId,
+                'manual',
+                target.externalVersionId,
+                target.testflight,
+                target.versionLabel,
+                apiKey.ownerId,
+                apiKey.priority ?? 0,
+                undefined,
+                apiKey.keyId,
+              );
+            },
+          });
 
-  await streamJobFile(finished, req, res);
-});
+          if (job.testflight && apiKey.allowTestFlight === false) {
+            reply.code(403);
+            return apiErrorEnvelope('this API key is not scoped for TestFlight', 'request_error', request.id);
+          }
+          if (job.status === 'done' && !jobFileAvailable(job)) {
+            reply.code(410);
+            return apiErrorEnvelope('the result for this Idempotency-Key is no longer retained', 'request_error', request.id);
+          }
 
-artifactAndJobRouter.get('/v1/artifacts/:id/file', requireApiKey, async (req, res) => {
-  const artifact = getArtifactById(req.params.id);
-  if (!artifact || !artifactFileAvailable(artifact)) {
-    res.status(404).json({ error: 'artifact not found' });
-    return;
-  }
-  if (!isBundleIdAllowed(res.locals.apiKeyScope, artifact.bundleId)) {
-    res.status(403).json({ error: 'this API key is not scoped to this bundleId' });
-    return;
-  }
-  await touchArtifact(artifact);
-  await streamFilePath(artifact.filePath, req, res, artifactDownloadName(artifact), artifact.fileSizeBytes, artifact.id);
-});
+          const finished = await services.waitForJob(job, config.jobMaxWaitSeconds * 1000);
+          if (finished.status === 'queued' || finished.status === 'running') return reply.code(202).send(jobSummary(finished));
+          if (finished.status === 'failed') return reply.code(500).send(jobSummary(finished));
 
-artifactAndJobRouter.get('/v1/jobs/:id', requireApiKey, (req, res) => {
-  const job = getJob(req.params.id);
-  if (!job) {
-    res.status(404).json({ error: 'job not found (finished jobs are pruned after retention window)' });
-    return;
-  }
-  if (!isBundleIdAllowed(res.locals.apiKeyScope, job.bundleId)) {
-    res.status(403).json({ error: 'this API key is not scoped to this bundleId' });
-    return;
-  }
-  res.json(jobSummary(job));
-});
-
-testFlightDecryptRouter.post('/v1/testflight/decrypt', requireApiKey, requireTestFlightScope, blockDuringMaintenance, (req, res) => {
-  const bundleId = typeof req.body?.bundleId === 'string' ? req.body.bundleId.trim() : '';
-  const rawAppId = req.body?.appId;
-  const appId = Number.parseInt(typeof rawAppId === 'string' || typeof rawAppId === 'number' ? String(rawAppId) : '', 10);
-  const rawBuild = req.body?.build;
-  const build = rawBuild && typeof rawBuild === 'object' ? rawBuild as Record<string, unknown> : undefined;
-
-  if (!BUNDLE_ID_RE.test(bundleId) || !Number.isInteger(appId) || appId <= 0 || !build || typeof build.bundleId !== 'string') {
-    res.status(400).json({ error: 'bundleId, appId, and build are required' });
-    return;
-  }
-  if (!isBundleIdAllowed(res.locals.apiKeyScope, bundleId)) {
-    res.status(403).json({ error: 'this API key is not scoped to this bundleId' });
-    return;
-  }
-  if (build.bundleId !== bundleId) {
-    res.status(400).json({ error: 'build.bundleId does not match bundleId' });
-    return;
-  }
-
-  const apiKeyId = res.locals.apiKeyId as string | undefined;
-  const fingerprint = requestFingerprint('/v1/testflight/decrypt', { bundleId, appId, build });
-  const idempotency = idempotencyJobId(req, res, fingerprint);
-  if (idempotency.error) {
-    res.status(409).json({ error: idempotency.error });
-    return;
-  }
-
-  let job = idempotency.jobId ? getJob(idempotency.jobId) : undefined;
-  if (idempotency.jobId && !job) {
-    res.status(410).json({ error: 'the result for this Idempotency-Key is no longer retained' });
-    return;
-  }
-  if (!job) {
-    if (apiKeyId) recordApiKeyBundleUsage(apiKeyId, bundleId);
-    job = enqueueDecryptJob(
-      bundleId,
-      'manual',
-      undefined,
-      { appId, build: build as unknown as TFBuild },
-      undefined,
-      apiRequester(res),
-      (res.locals.apiKeyPriority as number | undefined) ?? 0,
-      undefined,
-      apiKeyId,
+          await streamJobFile(finished, request.raw, new Response(reply));
+          return;
+        } catch (error) {
+          if (error instanceof IdempotencyRequestError) {
+            reply.code(error.statusCode);
+            return apiErrorEnvelope(error.message, 'request_error', request.id);
+          }
+          if (error instanceof DecryptTargetRequestError) {
+            reply.code(404);
+            return apiErrorEnvelope(error.message, 'request_error', request.id);
+          }
+          throw error;
+        }
+      },
     );
-    if (idempotency.key && apiKeyId) apiIdempotencyRegistry.record(apiKeyId, idempotency.key, fingerprint, job.id, IDEMPOTENCY_TTL_MS);
-  }
-  res.status(202).json(jobSummary(job));
-});
+
+    server.get(
+      '/v1/jobs/:id',
+      { schema: getRouteContract('GET', '/v1/jobs/:id'), preHandler: fastifyRequireApiKey },
+      async (request, reply) => {
+        const apiKey = getFastifyApiKeyContext(request);
+        const params = request.params as { id: string };
+        const job = services.getJob(params.id);
+        if (!job) {
+          reply.code(404);
+          return apiErrorEnvelope('job not found (finished jobs are pruned after retention window)', 'request_error', request.id);
+        }
+        if (!isBundleIdAllowed(apiKey?.allowedBundleIds, job.bundleId)) {
+          reply.code(403);
+          return apiErrorEnvelope('this API key is not scoped to this bundleId', 'request_error', request.id);
+        }
+        return jobSummary(job);
+      },
+    );
+
+    server.post(
+      '/v1/decrypts',
+      {
+        schema: getRouteContract('POST', '/v1/decrypts'),
+        preHandler: [fastifyRequireApiKey, fastifyBlockDuringMaintenance],
+      },
+      async (request, reply) => {
+        const body = request.body as Record<string, unknown>;
+        const bundleId = typeof body?.bundleId === 'string' ? body.bundleId.trim() : '';
+        const selector = typeof body?.version === 'string' ? body.version.trim() : undefined;
+        const apiKey = getFastifyApiKeyContext(request);
+
+        if (!BUNDLE_ID_RE.test(bundleId)) {
+          reply.code(400);
+          return apiErrorEnvelope('bundleId is required and must look like a bundle identifier', 'request_error', request.id);
+        }
+        if (selector && !VERSION_SELECTOR_RE.test(selector)) {
+          reply.code(400);
+          return apiErrorEnvelope('version must match a release tag such as 240, 234.2, or 240_109440', 'request_error', request.id);
+        }
+        if (!apiKey) {
+          reply.code(401);
+          return apiErrorEnvelope('unauthorized', 'unauthorized', request.id);
+        }
+        if (!isBundleIdAllowed(apiKey.allowedBundleIds, bundleId)) {
+          reply.code(403);
+          return apiErrorEnvelope('this API key is not scoped to this bundleId', 'request_error', request.id);
+        }
+
+        try {
+          const fingerprint = requestFingerprint('/v1/decrypts', { bundleId, version: normalizeVersionSelector(selector) ?? null });
+          const key = idempotencyKeyFromHeader(request.headers['idempotency-key']);
+          const job = await resolveIdempotentJob({
+            key,
+            scope: apiKey.keyId,
+            fingerprint,
+            getJob: services.getJob,
+            createJob: async () => {
+              const target = await services.resolveDecryptTarget(bundleId, selector);
+              if (target.channel === 'testflight' && apiKey.allowTestFlight === false) {
+                throw new IdempotencyRequestError(403, 'this API key is not scoped for TestFlight');
+              }
+              if (apiKey.keyId) services.recordApiKeyBundleUsage(apiKey.keyId, bundleId);
+              return services.enqueueDecryptJob(
+                bundleId,
+                'manual',
+                target.externalVersionId,
+                target.testflight,
+                target.versionLabel,
+                apiKey.ownerId,
+                apiKey.priority ?? 0,
+                undefined,
+                apiKey.keyId,
+              );
+            },
+          });
+          if (job.testflight && apiKey.allowTestFlight === false) {
+            reply.code(403);
+            return apiErrorEnvelope('this API key is not scoped for TestFlight', 'request_error', request.id);
+          }
+          const payload = {
+            ...jobSummary(job),
+            selector: normalizeVersionSelector(selector),
+            channel: job.testflight ? 'testflight' : 'appstore',
+            resolvedVersion: job.versionLabel,
+            cacheHit: job.cacheHit === true,
+            artifact: job.artifactId ? artifactSummary(services.getArtifactById(job.artifactId)) : undefined,
+          };
+          return reply.code(job.status === 'done' ? 200 : 202).send(payload);
+        } catch (error) {
+          if (error instanceof IdempotencyRequestError) {
+            reply.code(error.statusCode);
+            return apiErrorEnvelope(error.message, 'request_error', request.id);
+          }
+          const message = error instanceof Error ? error.message : String(error);
+          const status = message.includes('version') || message.includes('build') || message.includes('train') ? 404 : 502;
+          reply.code(status);
+          return apiErrorEnvelope(message, status >= 500 ? 'internal_error' : 'request_error', request.id, status >= 500);
+        }
+      },
+    );
+
+    server.post(
+      '/v1/testflight/decrypt',
+      {
+        schema: getRouteContract('POST', '/v1/testflight/decrypt'),
+        preHandler: [fastifyRequireApiKey, fastifyRequireTestFlightScope, fastifyBlockDuringMaintenance],
+      },
+      async (request, reply) => {
+        const body = request.body as Record<string, unknown>;
+        const bundleId = typeof body?.bundleId === 'string' ? body.bundleId.trim() : '';
+        const rawAppId = body?.appId;
+        const appId = Number(typeof rawAppId === 'string' || typeof rawAppId === 'number' ? String(rawAppId) : '');
+        const build = body?.build;
+        const apiKey = getFastifyApiKeyContext(request);
+
+        if (!BUNDLE_ID_RE.test(bundleId) || !Number.isSafeInteger(appId) || appId <= 0 || !isTestFlightBuild(build)) {
+          reply.code(400);
+          return apiErrorEnvelope('bundleId, appId, and build are required', 'request_error', request.id);
+        }
+        if (!isBundleIdAllowed(apiKey?.allowedBundleIds, bundleId)) {
+          reply.code(403);
+          return apiErrorEnvelope('this API key is not scoped to this bundleId', 'request_error', request.id);
+        }
+        if (build.bundleId !== bundleId) {
+          reply.code(400);
+          return apiErrorEnvelope('build.bundleId does not match bundleId', 'request_error', request.id);
+        }
+        if (!apiKey) {
+          reply.code(401);
+          return apiErrorEnvelope('unauthorized', 'unauthorized', request.id);
+        }
+
+        const fingerprint = requestFingerprint('/v1/testflight/decrypt', { bundleId, appId, build });
+        try {
+          const job = await resolveIdempotentJob({
+            key: idempotencyKeyFromHeader(request.headers['idempotency-key']),
+            scope: apiKey.keyId,
+            fingerprint,
+            getJob: services.getJob,
+            createJob: async () => {
+              if (apiKey.keyId) services.recordApiKeyBundleUsage(apiKey.keyId, bundleId);
+              return services.enqueueDecryptJob(
+                bundleId,
+                'manual',
+                undefined,
+                { appId, build },
+                undefined,
+                apiKey.ownerId,
+                apiKey.priority ?? 0,
+                undefined,
+                apiKey.keyId,
+              );
+            },
+          });
+          return reply.code(202).send(jobSummary(job));
+        } catch (error) {
+          if (error instanceof IdempotencyRequestError) {
+            reply.code(error.statusCode);
+            return apiErrorEnvelope(error.message, 'request_error', request.id);
+          }
+          throw error;
+        }
+      },
+    );
+  };
+}
+
+export const decryptRoutes = createDecryptRoutes();
 
 export function createArtifactCatalogRoutes(
-  services: ArtifactCatalogServices = { listArtifacts, getArtifactById, artifactFileAvailable },
+  services: ArtifactCatalogServices = { listArtifacts, getArtifactById, artifactFileAvailable, touchArtifact },
 ): FastifyPluginAsyncTypebox {
   return async (server) => {
     server.get(
@@ -358,6 +482,26 @@ export function createArtifactCatalogRoutes(
           return apiErrorEnvelope('this API key is not scoped to this bundleId', 'bundle_scope_denied', request.id);
         }
         return artifactSummary(artifact);
+      },
+    );
+
+    server.get(
+      '/v1/artifacts/:id/file',
+      { schema: getRouteContract('GET', '/v1/artifacts/:id/file'), preHandler: fastifyRequireApiKey },
+      async (request, reply) => {
+        const params = request.params as { id: string };
+        const artifact = services.getArtifactById(params.id);
+        if (!artifact || !services.artifactFileAvailable(artifact)) {
+          reply.code(404);
+          return apiErrorEnvelope('artifact not found', 'request_error', request.id);
+        }
+        if (!isBundleIdAllowed(getFastifyApiKeyContext(request)?.allowedBundleIds, artifact.bundleId)) {
+          reply.code(403);
+          return apiErrorEnvelope('this API key is not scoped to this bundleId', 'bundle_scope_denied', request.id);
+        }
+        await services.touchArtifact(artifact);
+        await streamFilePath(artifact.filePath, request.raw, new Response(reply), artifactDownloadName(artifact), artifact.fileSizeBytes, artifact.id);
+        return;
       },
     );
   };

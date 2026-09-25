@@ -2,15 +2,14 @@ import { expect, test } from 'bun:test';
 import { authRouter } from '#routes/auth.js';
 import { billingRouter, nowpaymentsWebhookRouter, stripeWebhookRouter } from '#routes/billing.js';
 import { dashboardRouter } from '#routes/dashboard.js';
-import { artifactAndJobRouter, decryptRouter, testFlightDecryptRouter } from '#routes/decrypt.js';
 import { buildServer } from '#server.js';
 import { getRouteContracts } from '#contracts.js';
 
 test('every registered versioned route has an explicit TypeBox contract', () => {
-  const routers = [authRouter, billingRouter, nowpaymentsWebhookRouter, stripeWebhookRouter, dashboardRouter, decryptRouter, artifactAndJobRouter, testFlightDecryptRouter];
+  const routers = [authRouter, billingRouter, nowpaymentsWebhookRouter, stripeWebhookRouter, dashboardRouter];
   const routes = routers.flatMap((router) => router.routes.map((route) => `${route.method} ${route.path}`));
   const contracts = getRouteContracts();
-  expect(routes.length + 7).toBe(contracts.size);
+  expect(routes.length + 12).toBe(contracts.size);
   for (const route of routes) expect(contracts.has(route)).toBe(true);
   for (const route of [
     'GET /v1/health',
@@ -18,8 +17,13 @@ test('every registered versioned route has an explicit TypeBox contract', () => 
     'GET /v1/metrics',
     'GET /v1/artifacts',
     'GET /v1/artifacts/:id',
+    'GET /v1/artifacts/:id/file',
+    'GET /v1/jobs/:id',
+    'GET /v1/decrypt',
     'GET /v1/testflight/:appId/trains',
     'GET /v1/testflight/:appId/builds',
+    'POST /v1/decrypts',
+    'POST /v1/testflight/decrypt',
   ]) {
     expect(contracts.has(route)).toBe(true);
   }
@@ -42,6 +46,31 @@ test('every versioned route is represented in generated OpenAPI', async () => {
           expect(schema).toBeDefined();
         }
       }
+    }
+  } finally {
+    await server.close();
+  }
+});
+
+test('idempotency header contracts match their endpoint validators', async () => {
+  const server = await buildServer({ includePublicRoutes: false });
+  try {
+    await server.ready();
+    const document = server.swagger() as {
+      paths?: Record<string, Record<string, { parameters?: Array<{ in?: string; name?: string; schema?: { pattern?: string } }> }>>;
+    };
+    const assertions: Array<[string, string, string]> = [
+      ['/v1/decrypt', 'get', '^[A-Za-z0-9._:-]+$'],
+      ['/v1/decrypts', 'post', '^[A-Za-z0-9._:-]+$'],
+      ['/v1/testflight/decrypt', 'post', '^[A-Za-z0-9._:-]+$'],
+      ['/v1/billing/checkout', 'post', '^[A-Za-z0-9._~-]+$'],
+      ['/v1/billing/cancel', 'post', '^[A-Za-z0-9._~-]+$'],
+    ];
+    for (const [path, method, pattern] of assertions) {
+      const parameters = document.paths?.[path]?.[method]?.parameters ?? [];
+      const keyHeader = parameters.find((parameter) => parameter.in === 'header' && parameter.name === 'idempotency-key');
+      expect(keyHeader).toBeDefined();
+      expect(keyHeader?.schema?.pattern).toBe(pattern);
     }
   } finally {
     await server.close();

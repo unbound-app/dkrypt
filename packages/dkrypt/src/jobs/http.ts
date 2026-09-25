@@ -1,4 +1,4 @@
-import type { Request, Response } from '#http.js';
+import type { Response } from '#http.js';
 import { createReadStream, existsSync } from 'node:fs';
 import { scopedLogger } from '#logger.js';
 
@@ -6,6 +6,10 @@ const log = scopedLogger('jobs');
 import { getQueueInfo, getQueueReason } from '#jobs/store.js';
 import type { Job } from '#jobs/types.js';
 import { artifactDownloadName, artifactFileAvailable, getArtifactForJob, touchArtifact } from '#artifacts.js';
+
+interface CloseAwareRequest {
+  on(event: 'close', listener: () => void): unknown;
+}
 
 export function jobFileAvailable(job: Job | undefined): boolean {
   if (!job || job.status !== 'done') return false;
@@ -53,7 +57,7 @@ export function jobSummary(job: Job) {
 
 export async function streamFilePath(
   filePath: string,
-  req: Request,
+  req: CloseAwareRequest,
   res: Response,
   filename: string,
   fileSizeBytes: number | undefined,
@@ -90,7 +94,7 @@ export async function streamFilePath(
   });
 }
 
-export async function streamJobFile(job: Job, req: Request, res: Response): Promise<void> {
+export async function streamJobFile(job: Job, req: CloseAwareRequest, res: Response): Promise<void> {
   const artifact = getArtifactForJob(job);
   const filePath = artifact?.filePath ?? job.filePath;
   if (!jobFileAvailable(job) || !filePath) {

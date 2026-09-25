@@ -6,6 +6,23 @@ const VersionSelector = Type.String({ minLength: 1, maxLength: 64, pattern: '^v?
 const Identifier = Type.String({ minLength: 1, maxLength: 200 });
 const JsonObject = Type.Object({}, { additionalProperties: true });
 const JsonResponse = Type.Union([JsonObject, Type.Array(Type.Unknown()), Type.String(), Type.Number(), Type.Boolean(), Type.Null()]);
+const TestFlightAppId = Type.Union([
+  Type.String({ minLength: 1, maxLength: 32, pattern: '^\\d+$' }),
+  Type.Integer({ minimum: 1 }),
+]);
+const TestFlightBuildInput = Type.Object(
+  {
+    id: Type.Integer({ minimum: 1 }),
+    cfBundleShortVersion: Type.String({ minLength: 1, maxLength: 64 }),
+    cfBundleVersion: Type.String({ minLength: 1, maxLength: 64 }),
+    bundleId: BundleId,
+    whatsNew: Type.Optional(Type.String({ maxLength: 5000 })),
+    releaseDate: Type.Optional(Type.String({ maxLength: 64 })),
+    expiration: Type.Optional(Type.String({ maxLength: 64 })),
+    fileSize: Type.Optional(Type.Number({ minimum: 0 })),
+  },
+  { additionalProperties: true },
+);
 const ErrorEnvelope = Type.Object(
   {
     error: Type.String(),
@@ -841,6 +858,13 @@ function object(properties: Record<string, TSchema>): TSchema {
   return Type.Object(properties, { additionalProperties: true });
 }
 
+const IdempotencyKeyHeaders = object({
+  'idempotency-key': Type.Optional(Type.String({ minLength: 1, maxLength: 200, pattern: '^[A-Za-z0-9._:-]+$' })),
+});
+const BillingIdempotencyKeyHeaders = object({
+  'idempotency-key': Type.Optional(Type.String({ minLength: 1, maxLength: 200, pattern: '^[A-Za-z0-9._~-]+$' })),
+});
+
 const contracts = new Map<string, FastifySchema>();
 
 function register(method: string, path: string, schema: FastifySchema): void {
@@ -893,10 +917,6 @@ function registerGenericContract(method: ContractMethod, path: string): void {
   register(method, path, schema);
 }
 
-register('POST', '/v1/decrypts', {
-  body: object({ bundleId: BundleId, version: Type.Optional(VersionSelector) }),
-});
-
 register('GET', '/v1/status', {
   tags: ['public'],
   summary: 'Public service status',
@@ -908,17 +928,15 @@ register('GET', '/v1/decrypt', {
 });
 
 register('POST', '/v1/testflight/decrypt', {
-  body: object({ bundleId: BundleId, appId: Type.Union([Type.String({ minLength: 1, maxLength: 32 }), Type.Integer({ minimum: 1 })]), build: Type.Record(Type.String(), Type.Unknown()) }),
+  body: object({ bundleId: BundleId, appId: TestFlightAppId, build: TestFlightBuildInput }),
 });
 
 register('POST', '/v1/billing/checkout', {
-  headers: object({ 'idempotency-key': Type.Optional(Type.String({ minLength: 1, maxLength: 200 })) }),
+  headers: BillingIdempotencyKeyHeaders,
   body: object({ planId: Identifier, provider: Type.Optional(Type.Union([Type.Literal('stripe'), Type.Literal('crypto')])), cryptoAsset: Type.Optional(Type.String({ minLength: 2, maxLength: 32 })) }),
 });
 
-register('POST', '/v1/billing/cancel', {
-  headers: object({ 'idempotency-key': Type.Optional(Type.String({ minLength: 1, maxLength: 200 })) }),
-});
+register('POST', '/v1/billing/cancel', { headers: BillingIdempotencyKeyHeaders });
 register('GET', '/v1/billing', {});
 register('POST', '/v1/billing/portal', {});
 register('GET', '/v1/billing/provider-status', {});
@@ -962,7 +980,7 @@ register('POST', '/v1/dashboard/decrypt/preflight', {
 });
 
 register('POST', '/v1/dashboard/testflight/decrypt', {
-  body: object({ bundleId: BundleId, appId: Type.Union([Type.String({ minLength: 1, maxLength: 32 }), Type.Integer({ minimum: 1 })]), build: Type.Record(Type.String(), Type.Unknown()), deviceId: Type.Optional(Identifier), preferPrimary: Type.Optional(Type.Boolean()) }),
+  body: object({ bundleId: BundleId, appId: TestFlightAppId, build: TestFlightBuildInput, deviceId: Type.Optional(Identifier), preferPrimary: Type.Optional(Type.Boolean()) }),
 });
 
 register('GET', '/v1/jobs/:id', { params: object({ id: Identifier }) });
@@ -1211,12 +1229,12 @@ register('POST', '/v1/auth/passkeys/verify', { response: { 200: AuthTokenRespons
 register('POST', '/v1/auth/passkeys/reauth/options', { response: { 200: PasskeyOptionsResponse } });
 register('POST', '/v1/auth/passkeys/reauth/verify', { response: { 200: AuthTokenResponse } });
 register('POST', '/v1/billing/checkout', {
-  headers: object({ 'idempotency-key': Type.Optional(Type.String({ minLength: 1, maxLength: 200 })) }),
+  headers: BillingIdempotencyKeyHeaders,
   body: object({ planId: Identifier, provider: Type.Optional(Type.Union([Type.Literal('stripe'), Type.Literal('crypto')])), cryptoAsset: Type.Optional(Type.String({ minLength: 2, maxLength: 32 })) }),
   response: { 200: BillingCheckoutResponse, 201: BillingCheckoutResponse },
 });
 register('POST', '/v1/billing/portal', { response: { 200: UrlResponse } });
-register('POST', '/v1/billing/cancel', { headers: object({ 'idempotency-key': Type.Optional(Type.String({ minLength: 1, maxLength: 200 })) }), response: { 200: BillingCancelResponse } });
+register('POST', '/v1/billing/cancel', { headers: BillingIdempotencyKeyHeaders, response: { 200: BillingCancelResponse } });
 register('POST', '/v1/billing/subscription', { body: object({ planId: Identifier }), response: { 200: BillingSubscriptionUpdateResponse } });
 register('GET', '/v1/dashboard/settings', { response: { 200: SchedulerSettingsResponse } });
 register('PUT', '/v1/dashboard/settings', { response: { 200: SchedulerSettingsResponse } });
@@ -1252,8 +1270,9 @@ register('POST', '/v1/dashboard/backup/preview', { response: { 200: BackupPrevie
 register('POST', '/v1/dashboard/backup/drill', { response: { 200: BackupDrillResponse } });
 register('DELETE', '/v1/dashboard/backup/history/:id', { params: object({ id: Identifier }), response: { 200: OkResponse } });
 register('POST', '/v1/decrypts', {
+  headers: IdempotencyKeyHeaders,
   body: object({ bundleId: BundleId, version: Type.Optional(VersionSelector) }),
-  response: { 200: DecryptJobResponse, 202: DecryptJobResponse },
+  response: { 200: DecryptJobResponse, 202: DecryptJobResponse, 410: ErrorEnvelope, 502: ErrorEnvelope },
 });
 register('GET', '/v1/artifacts', {
   querystring: object({ ...PaginationQuery.properties, q: Type.Optional(Type.String({ maxLength: 200 })), channel: Type.Optional(Type.Union([Type.Literal('appstore'), Type.Literal('testflight')])) }),
@@ -1272,8 +1291,9 @@ register('GET', '/v1/testflight/:appId/builds', {
   response: { 200: TestFlightBuildsResponse, 502: ErrorEnvelope },
 });
 register('POST', '/v1/testflight/decrypt', {
-  body: object({ bundleId: BundleId, appId: Type.Union([Type.String({ minLength: 1, maxLength: 32 }), Type.Integer({ minimum: 1 })]), build: Type.Record(Type.String(), Type.Unknown()) }),
-  response: { 202: JobSummaryResponse },
+  headers: IdempotencyKeyHeaders,
+  body: object({ bundleId: BundleId, appId: TestFlightAppId, build: TestFlightBuildInput }),
+  response: { 202: JobSummaryResponse, 410: ErrorEnvelope },
 });
 register('GET', '/v1/dashboard/artifacts', {
   querystring: object({ ...PaginationQuery.properties, q: Type.Optional(Type.String({ maxLength: 200 })), channel: Type.Optional(Type.Union([Type.Literal('appstore'), Type.Literal('testflight')])) }),
@@ -1290,7 +1310,7 @@ register('GET', '/v1/dashboard/testflight/:appId/builds', {
   response: { 200: TestFlightBuildsResponse },
 });
 register('POST', '/v1/dashboard/testflight/decrypt', {
-  body: object({ bundleId: BundleId, appId: Type.Union([Type.String({ minLength: 1, maxLength: 32 }), Type.Integer({ minimum: 1 })]), build: Type.Record(Type.String(), Type.Unknown()), deviceId: Type.Optional(Identifier), preferPrimary: Type.Optional(Type.Boolean()) }),
+  body: object({ bundleId: BundleId, appId: TestFlightAppId, build: TestFlightBuildInput, deviceId: Type.Optional(Identifier), preferPrimary: Type.Optional(Type.Boolean()) }),
   response: { 202: JobSummaryResponse },
 });
 register('GET', '/v1/dashboard/search', {
@@ -1624,8 +1644,15 @@ register('GET', '/v1/metrics', {
   response: { 200: PrometheusResponse },
 });
 register('GET', '/v1/decrypt', {
+  headers: IdempotencyKeyHeaders,
   querystring: object({ bundleId: BundleId, externalVersionId: Type.Optional(Identifier), version: Type.Optional(VersionSelector) }),
-  response: { 200: BinaryFileResponse, 202: JobSummaryResponse, 500: JobSummaryResponse },
+  response: {
+    200: BinaryFileResponse,
+    202: JobSummaryResponse,
+    409: Type.Union([JobSummaryResponse, ErrorEnvelope]),
+    410: ErrorEnvelope,
+    500: Type.Union([JobSummaryResponse, ErrorEnvelope]),
+  },
 });
 register('POST', '/v1/dashboard/decrypt', {
   body: object({ bundleId: BundleId, externalVersionId: Type.Optional(Identifier), versionLabel: Type.Optional(Type.String({ maxLength: 64 })), preferPrimary: Type.Optional(Type.Boolean()) }),

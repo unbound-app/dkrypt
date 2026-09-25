@@ -2525,1038 +2525,6 @@
         }
       }
     },
-    "/v1/decrypts": {
-      "post": {
-        "summary": "POST /v1/decrypts",
-        "tags": [
-          "public"
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "additionalProperties": true,
-                "type": "object",
-                "required": [
-                  "bundleId"
-                ],
-                "properties": {
-                  "bundleId": {
-                    "minLength": 3,
-                    "maxLength": 200,
-                    "pattern": "^[A-Za-z0-9.-]+$",
-                    "type": "string"
-                  },
-                  "version": {
-                    "minLength": 1,
-                    "maxLength": 64,
-                    "pattern": "^v?\\d+(?:\\.\\d+)*(?:_\\d+)?$",
-                    "type": "string"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Default Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "required": [
-                    "id",
-                    "correlationId",
-                    "bundleId",
-                    "source",
-                    "channel",
-                    "priority",
-                    "status",
-                    "progress",
-                    "createdAt",
-                    "statusUrl"
-                  ],
-                  "properties": {
-                    "id": {
-                      "minLength": 1,
-                      "maxLength": 200,
-                      "type": "string"
-                    },
-                    "correlationId": {
-                      "minLength": 1,
-                      "maxLength": 200,
-                      "type": "string"
-                    },
-                    "bundleId": {
-                      "minLength": 3,
-                      "maxLength": 200,
-                      "pattern": "^[A-Za-z0-9.-]+$",
-                      "type": "string"
-                    },
-                    "externalVersionId": {
-                      "minLength": 1,
-                      "maxLength": 200,
-                      "type": "string"
-                    },
-                    "testflight": {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "required": [
-                        "appId",
-                        "buildId"
-                      ],
-                      "properties": {
-                        "appId": {
-                          "type": "number"
-                        },
-                        "buildId": {
-                          "type": "number"
-                        },
-                        "version": {
-                          "type": "string"
-                        },
-                        "buildNumber": {
-                          "type": "string"
-                        }
-                      }
-                    },
-                    "versionLabel": {
-                      "type": "string"
-                    },
-                    "source": {
-                      "anyOf": [
-                        {
-                          "type": "string",
-                          "enum": [
-                            "manual"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "scheduler"
-                          ]
-                        }
-                      ]
-                    },
-                    "channel": {
-                      "anyOf": [
-                        {
-                          "type": "string",
-                          "enum": [
-                            "appstore"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "testflight"
-                          ]
-                        }
-                      ]
-                    },
-                    "queuedBy": {
-                      "type": "string"
-                    },
-                    "priority": {
-                      "type": "number"
-                    },
-                    "attempt": {
-                      "type": "number"
-                    },
-                    "retryCount": {
-                      "type": "number"
-                    },
-                    "deadlineAt": {
-                      "type": "string"
-                    },
-                    "deadlineExceeded": {
-                      "type": "boolean"
-                    },
-                    "failureClass": {
-                      "anyOf": [
-                        {
-                          "type": "string",
-                          "enum": [
-                            "device_transport"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "app_store"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "testflight"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "network"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "storage"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "decrypt"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "cancelled"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "unknown"
-                          ]
-                        }
-                      ]
-                    },
-                    "status": {
-                      "anyOf": [
-                        {
-                          "type": "string",
-                          "enum": [
-                            "queued"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "running"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "done"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "failed"
-                          ]
-                        }
-                      ]
-                    },
-                    "progress": {
-                      "type": "string"
-                    },
-                    "warnings": {
-                      "type": "array",
-                      "items": {
-                        "type": "string"
-                      }
-                    },
-                    "error": {
-                      "type": "string"
-                    },
-                    "artifactId": {
-                      "minLength": 1,
-                      "maxLength": 200,
-                      "type": "string"
-                    },
-                    "artifactUrl": {
-                      "type": "string"
-                    },
-                    "cacheHit": {
-                      "type": "boolean"
-                    },
-                    "sizeBytes": {
-                      "type": "number"
-                    },
-                    "sha256": {
-                      "type": "string"
-                    },
-                    "createdAt": {
-                      "type": "string"
-                    },
-                    "startedAt": {
-                      "type": "string"
-                    },
-                    "finishedAt": {
-                      "type": "string"
-                    },
-                    "queue": {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    },
-                    "queueReason": {
-                      "type": "string"
-                    },
-                    "statusUrl": {
-                      "type": "string"
-                    },
-                    "selector": {
-                      "type": "string"
-                    },
-                    "resolvedVersion": {
-                      "type": "string"
-                    },
-                    "artifact": {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "required": [
-                        "id",
-                        "bundleId",
-                        "channel",
-                        "sizeBytes",
-                        "sha256",
-                        "createdAt",
-                        "lastAccessedAt",
-                        "accessCount",
-                        "fileUrl"
-                      ],
-                      "properties": {
-                        "id": {
-                          "minLength": 1,
-                          "maxLength": 200,
-                          "type": "string"
-                        },
-                        "bundleId": {
-                          "minLength": 3,
-                          "maxLength": 200,
-                          "pattern": "^[A-Za-z0-9.-]+$",
-                          "type": "string"
-                        },
-                        "channel": {
-                          "anyOf": [
-                            {
-                              "type": "string",
-                              "enum": [
-                                "appstore"
-                              ]
-                            },
-                            {
-                              "type": "string",
-                              "enum": [
-                                "testflight"
-                              ]
-                            }
-                          ]
-                        },
-                        "externalVersionId": {
-                          "minLength": 1,
-                          "maxLength": 200,
-                          "type": "string"
-                        },
-                        "testflightBuildId": {
-                          "minimum": 1,
-                          "type": "integer"
-                        },
-                        "versionLabel": {
-                          "type": "string"
-                        },
-                        "buildNumber": {
-                          "type": "string"
-                        },
-                        "sizeBytes": {
-                          "minimum": 0,
-                          "type": "number"
-                        },
-                        "sha256": {
-                          "minLength": 64,
-                          "maxLength": 64,
-                          "type": "string"
-                        },
-                        "createdAt": {
-                          "type": "string"
-                        },
-                        "lastAccessedAt": {
-                          "type": "string"
-                        },
-                        "accessCount": {
-                          "minimum": 0,
-                          "type": "integer"
-                        },
-                        "fileUrl": {
-                          "type": "string"
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "202": {
-            "description": "Default Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "required": [
-                    "id",
-                    "correlationId",
-                    "bundleId",
-                    "source",
-                    "channel",
-                    "priority",
-                    "status",
-                    "progress",
-                    "createdAt",
-                    "statusUrl"
-                  ],
-                  "properties": {
-                    "id": {
-                      "minLength": 1,
-                      "maxLength": 200,
-                      "type": "string"
-                    },
-                    "correlationId": {
-                      "minLength": 1,
-                      "maxLength": 200,
-                      "type": "string"
-                    },
-                    "bundleId": {
-                      "minLength": 3,
-                      "maxLength": 200,
-                      "pattern": "^[A-Za-z0-9.-]+$",
-                      "type": "string"
-                    },
-                    "externalVersionId": {
-                      "minLength": 1,
-                      "maxLength": 200,
-                      "type": "string"
-                    },
-                    "testflight": {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "required": [
-                        "appId",
-                        "buildId"
-                      ],
-                      "properties": {
-                        "appId": {
-                          "type": "number"
-                        },
-                        "buildId": {
-                          "type": "number"
-                        },
-                        "version": {
-                          "type": "string"
-                        },
-                        "buildNumber": {
-                          "type": "string"
-                        }
-                      }
-                    },
-                    "versionLabel": {
-                      "type": "string"
-                    },
-                    "source": {
-                      "anyOf": [
-                        {
-                          "type": "string",
-                          "enum": [
-                            "manual"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "scheduler"
-                          ]
-                        }
-                      ]
-                    },
-                    "channel": {
-                      "anyOf": [
-                        {
-                          "type": "string",
-                          "enum": [
-                            "appstore"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "testflight"
-                          ]
-                        }
-                      ]
-                    },
-                    "queuedBy": {
-                      "type": "string"
-                    },
-                    "priority": {
-                      "type": "number"
-                    },
-                    "attempt": {
-                      "type": "number"
-                    },
-                    "retryCount": {
-                      "type": "number"
-                    },
-                    "deadlineAt": {
-                      "type": "string"
-                    },
-                    "deadlineExceeded": {
-                      "type": "boolean"
-                    },
-                    "failureClass": {
-                      "anyOf": [
-                        {
-                          "type": "string",
-                          "enum": [
-                            "device_transport"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "app_store"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "testflight"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "network"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "storage"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "decrypt"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "cancelled"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "unknown"
-                          ]
-                        }
-                      ]
-                    },
-                    "status": {
-                      "anyOf": [
-                        {
-                          "type": "string",
-                          "enum": [
-                            "queued"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "running"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "done"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "failed"
-                          ]
-                        }
-                      ]
-                    },
-                    "progress": {
-                      "type": "string"
-                    },
-                    "warnings": {
-                      "type": "array",
-                      "items": {
-                        "type": "string"
-                      }
-                    },
-                    "error": {
-                      "type": "string"
-                    },
-                    "artifactId": {
-                      "minLength": 1,
-                      "maxLength": 200,
-                      "type": "string"
-                    },
-                    "artifactUrl": {
-                      "type": "string"
-                    },
-                    "cacheHit": {
-                      "type": "boolean"
-                    },
-                    "sizeBytes": {
-                      "type": "number"
-                    },
-                    "sha256": {
-                      "type": "string"
-                    },
-                    "createdAt": {
-                      "type": "string"
-                    },
-                    "startedAt": {
-                      "type": "string"
-                    },
-                    "finishedAt": {
-                      "type": "string"
-                    },
-                    "queue": {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    },
-                    "queueReason": {
-                      "type": "string"
-                    },
-                    "statusUrl": {
-                      "type": "string"
-                    },
-                    "selector": {
-                      "type": "string"
-                    },
-                    "resolvedVersion": {
-                      "type": "string"
-                    },
-                    "artifact": {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "required": [
-                        "id",
-                        "bundleId",
-                        "channel",
-                        "sizeBytes",
-                        "sha256",
-                        "createdAt",
-                        "lastAccessedAt",
-                        "accessCount",
-                        "fileUrl"
-                      ],
-                      "properties": {
-                        "id": {
-                          "minLength": 1,
-                          "maxLength": 200,
-                          "type": "string"
-                        },
-                        "bundleId": {
-                          "minLength": 3,
-                          "maxLength": 200,
-                          "pattern": "^[A-Za-z0-9.-]+$",
-                          "type": "string"
-                        },
-                        "channel": {
-                          "anyOf": [
-                            {
-                              "type": "string",
-                              "enum": [
-                                "appstore"
-                              ]
-                            },
-                            {
-                              "type": "string",
-                              "enum": [
-                                "testflight"
-                              ]
-                            }
-                          ]
-                        },
-                        "externalVersionId": {
-                          "minLength": 1,
-                          "maxLength": 200,
-                          "type": "string"
-                        },
-                        "testflightBuildId": {
-                          "minimum": 1,
-                          "type": "integer"
-                        },
-                        "versionLabel": {
-                          "type": "string"
-                        },
-                        "buildNumber": {
-                          "type": "string"
-                        },
-                        "sizeBytes": {
-                          "minimum": 0,
-                          "type": "number"
-                        },
-                        "sha256": {
-                          "minLength": 64,
-                          "maxLength": 64,
-                          "type": "string"
-                        },
-                        "createdAt": {
-                          "type": "string"
-                        },
-                        "lastAccessedAt": {
-                          "type": "string"
-                        },
-                        "accessCount": {
-                          "minimum": 0,
-                          "type": "integer"
-                        },
-                        "fileUrl": {
-                          "type": "string"
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Default Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "required": [
-                    "error",
-                    "code",
-                    "message",
-                    "requestId",
-                    "retryable"
-                  ],
-                  "properties": {
-                    "error": {
-                      "type": "string"
-                    },
-                    "code": {
-                      "type": "string"
-                    },
-                    "message": {
-                      "type": "string"
-                    },
-                    "requestId": {
-                      "type": "string"
-                    },
-                    "retryable": {
-                      "type": "boolean"
-                    },
-                    "remediation": {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Default Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "required": [
-                    "error",
-                    "code",
-                    "message",
-                    "requestId",
-                    "retryable"
-                  ],
-                  "properties": {
-                    "error": {
-                      "type": "string"
-                    },
-                    "code": {
-                      "type": "string"
-                    },
-                    "message": {
-                      "type": "string"
-                    },
-                    "requestId": {
-                      "type": "string"
-                    },
-                    "retryable": {
-                      "type": "boolean"
-                    },
-                    "remediation": {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Default Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "required": [
-                    "error",
-                    "code",
-                    "message",
-                    "requestId",
-                    "retryable"
-                  ],
-                  "properties": {
-                    "error": {
-                      "type": "string"
-                    },
-                    "code": {
-                      "type": "string"
-                    },
-                    "message": {
-                      "type": "string"
-                    },
-                    "requestId": {
-                      "type": "string"
-                    },
-                    "retryable": {
-                      "type": "boolean"
-                    },
-                    "remediation": {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Default Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "required": [
-                    "error",
-                    "code",
-                    "message",
-                    "requestId",
-                    "retryable"
-                  ],
-                  "properties": {
-                    "error": {
-                      "type": "string"
-                    },
-                    "code": {
-                      "type": "string"
-                    },
-                    "message": {
-                      "type": "string"
-                    },
-                    "requestId": {
-                      "type": "string"
-                    },
-                    "retryable": {
-                      "type": "boolean"
-                    },
-                    "remediation": {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Default Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "required": [
-                    "error",
-                    "code",
-                    "message",
-                    "requestId",
-                    "retryable"
-                  ],
-                  "properties": {
-                    "error": {
-                      "type": "string"
-                    },
-                    "code": {
-                      "type": "string"
-                    },
-                    "message": {
-                      "type": "string"
-                    },
-                    "requestId": {
-                      "type": "string"
-                    },
-                    "retryable": {
-                      "type": "boolean"
-                    },
-                    "remediation": {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Default Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "required": [
-                    "error",
-                    "code",
-                    "message",
-                    "requestId",
-                    "retryable"
-                  ],
-                  "properties": {
-                    "error": {
-                      "type": "string"
-                    },
-                    "code": {
-                      "type": "string"
-                    },
-                    "message": {
-                      "type": "string"
-                    },
-                    "requestId": {
-                      "type": "string"
-                    },
-                    "retryable": {
-                      "type": "boolean"
-                    },
-                    "remediation": {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Default Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "required": [
-                    "error",
-                    "code",
-                    "message",
-                    "requestId",
-                    "retryable"
-                  ],
-                  "properties": {
-                    "error": {
-                      "type": "string"
-                    },
-                    "code": {
-                      "type": "string"
-                    },
-                    "message": {
-                      "type": "string"
-                    },
-                    "requestId": {
-                      "type": "string"
-                    },
-                    "retryable": {
-                      "type": "boolean"
-                    },
-                    "remediation": {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Default Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "required": [
-                    "error",
-                    "code",
-                    "message",
-                    "requestId",
-                    "retryable"
-                  ],
-                  "properties": {
-                    "error": {
-                      "type": "string"
-                    },
-                    "code": {
-                      "type": "string"
-                    },
-                    "message": {
-                      "type": "string"
-                    },
-                    "requestId": {
-                      "type": "string"
-                    },
-                    "retryable": {
-                      "type": "boolean"
-                    },
-                    "remediation": {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/v1/decrypt": {
       "get": {
         "summary": "GET /v1/decrypt",
@@ -3594,6 +2562,17 @@
             },
             "in": "query",
             "name": "version",
+            "required": false
+          },
+          {
+            "schema": {
+              "minLength": 1,
+              "maxLength": 200,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "type": "string"
+            },
+            "in": "header",
+            "name": "idempotency-key",
             "required": false
           }
         ],
@@ -4024,6 +3003,293 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "correlationId",
+                        "bundleId",
+                        "source",
+                        "channel",
+                        "priority",
+                        "status",
+                        "progress",
+                        "createdAt",
+                        "statusUrl"
+                      ],
+                      "properties": {
+                        "id": {
+                          "minLength": 1,
+                          "maxLength": 200,
+                          "type": "string"
+                        },
+                        "correlationId": {
+                          "minLength": 1,
+                          "maxLength": 200,
+                          "type": "string"
+                        },
+                        "bundleId": {
+                          "minLength": 3,
+                          "maxLength": 200,
+                          "pattern": "^[A-Za-z0-9.-]+$",
+                          "type": "string"
+                        },
+                        "externalVersionId": {
+                          "minLength": 1,
+                          "maxLength": 200,
+                          "type": "string"
+                        },
+                        "testflight": {
+                          "additionalProperties": true,
+                          "type": "object",
+                          "required": [
+                            "appId",
+                            "buildId"
+                          ],
+                          "properties": {
+                            "appId": {
+                              "type": "number"
+                            },
+                            "buildId": {
+                              "type": "number"
+                            },
+                            "version": {
+                              "type": "string"
+                            },
+                            "buildNumber": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "versionLabel": {
+                          "type": "string"
+                        },
+                        "source": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "manual"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "scheduler"
+                              ]
+                            }
+                          ]
+                        },
+                        "channel": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "appstore"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "testflight"
+                              ]
+                            }
+                          ]
+                        },
+                        "queuedBy": {
+                          "type": "string"
+                        },
+                        "priority": {
+                          "type": "number"
+                        },
+                        "attempt": {
+                          "type": "number"
+                        },
+                        "retryCount": {
+                          "type": "number"
+                        },
+                        "deadlineAt": {
+                          "type": "string"
+                        },
+                        "deadlineExceeded": {
+                          "type": "boolean"
+                        },
+                        "failureClass": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "device_transport"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "app_store"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "testflight"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "network"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "storage"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "decrypt"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "cancelled"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "unknown"
+                              ]
+                            }
+                          ]
+                        },
+                        "status": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "queued"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "running"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "done"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "failed"
+                              ]
+                            }
+                          ]
+                        },
+                        "progress": {
+                          "type": "string"
+                        },
+                        "warnings": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "error": {
+                          "type": "string"
+                        },
+                        "artifactId": {
+                          "minLength": 1,
+                          "maxLength": 200,
+                          "type": "string"
+                        },
+                        "artifactUrl": {
+                          "type": "string"
+                        },
+                        "cacheHit": {
+                          "type": "boolean"
+                        },
+                        "sizeBytes": {
+                          "type": "number"
+                        },
+                        "sha256": {
+                          "type": "string"
+                        },
+                        "createdAt": {
+                          "type": "string"
+                        },
+                        "startedAt": {
+                          "type": "string"
+                        },
+                        "finishedAt": {
+                          "type": "string"
+                        },
+                        "queue": {
+                          "additionalProperties": true,
+                          "type": "object",
+                          "properties": {}
+                        },
+                        "queueReason": {
+                          "type": "string"
+                        },
+                        "statusUrl": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "required": [
+                        "error",
+                        "code",
+                        "message",
+                        "requestId",
+                        "retryable"
+                      ],
+                      "properties": {
+                        "error": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "requestId": {
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "type": "boolean"
+                        },
+                        "remediation": {
+                          "additionalProperties": true,
+                          "type": "object",
+                          "properties": {}
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
                   "additionalProperties": true,
                   "type": "object",
                   "required": [
@@ -4100,6 +3366,355 @@
             }
           },
           "500": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "correlationId",
+                        "bundleId",
+                        "source",
+                        "channel",
+                        "priority",
+                        "status",
+                        "progress",
+                        "createdAt",
+                        "statusUrl"
+                      ],
+                      "properties": {
+                        "id": {
+                          "minLength": 1,
+                          "maxLength": 200,
+                          "type": "string"
+                        },
+                        "correlationId": {
+                          "minLength": 1,
+                          "maxLength": 200,
+                          "type": "string"
+                        },
+                        "bundleId": {
+                          "minLength": 3,
+                          "maxLength": 200,
+                          "pattern": "^[A-Za-z0-9.-]+$",
+                          "type": "string"
+                        },
+                        "externalVersionId": {
+                          "minLength": 1,
+                          "maxLength": 200,
+                          "type": "string"
+                        },
+                        "testflight": {
+                          "additionalProperties": true,
+                          "type": "object",
+                          "required": [
+                            "appId",
+                            "buildId"
+                          ],
+                          "properties": {
+                            "appId": {
+                              "type": "number"
+                            },
+                            "buildId": {
+                              "type": "number"
+                            },
+                            "version": {
+                              "type": "string"
+                            },
+                            "buildNumber": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "versionLabel": {
+                          "type": "string"
+                        },
+                        "source": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "manual"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "scheduler"
+                              ]
+                            }
+                          ]
+                        },
+                        "channel": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "appstore"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "testflight"
+                              ]
+                            }
+                          ]
+                        },
+                        "queuedBy": {
+                          "type": "string"
+                        },
+                        "priority": {
+                          "type": "number"
+                        },
+                        "attempt": {
+                          "type": "number"
+                        },
+                        "retryCount": {
+                          "type": "number"
+                        },
+                        "deadlineAt": {
+                          "type": "string"
+                        },
+                        "deadlineExceeded": {
+                          "type": "boolean"
+                        },
+                        "failureClass": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "device_transport"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "app_store"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "testflight"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "network"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "storage"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "decrypt"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "cancelled"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "unknown"
+                              ]
+                            }
+                          ]
+                        },
+                        "status": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "queued"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "running"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "done"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "failed"
+                              ]
+                            }
+                          ]
+                        },
+                        "progress": {
+                          "type": "string"
+                        },
+                        "warnings": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "error": {
+                          "type": "string"
+                        },
+                        "artifactId": {
+                          "minLength": 1,
+                          "maxLength": 200,
+                          "type": "string"
+                        },
+                        "artifactUrl": {
+                          "type": "string"
+                        },
+                        "cacheHit": {
+                          "type": "boolean"
+                        },
+                        "sizeBytes": {
+                          "type": "number"
+                        },
+                        "sha256": {
+                          "type": "string"
+                        },
+                        "createdAt": {
+                          "type": "string"
+                        },
+                        "startedAt": {
+                          "type": "string"
+                        },
+                        "finishedAt": {
+                          "type": "string"
+                        },
+                        "queue": {
+                          "additionalProperties": true,
+                          "type": "object",
+                          "properties": {}
+                        },
+                        "queueReason": {
+                          "type": "string"
+                        },
+                        "statusUrl": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "required": [
+                        "error",
+                        "code",
+                        "message",
+                        "requestId",
+                        "retryable"
+                      ],
+                      "properties": {
+                        "error": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "requestId": {
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "type": "boolean"
+                        },
+                        "remediation": {
+                          "additionalProperties": true,
+                          "type": "object",
+                          "properties": {}
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/jobs/{id}": {
+      "get": {
+        "summary": "GET /v1/jobs/:id",
+        "tags": [
+          "public"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "minLength": 1,
+              "maxLength": 200,
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
             "description": "Default Response",
             "content": {
               "application/json": {
@@ -4343,6 +3958,2130 @@
                     },
                     "statusUrl": {
                       "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/decrypts": {
+      "post": {
+        "summary": "POST /v1/decrypts",
+        "tags": [
+          "public"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "required": [
+                  "bundleId"
+                ],
+                "properties": {
+                  "bundleId": {
+                    "minLength": 3,
+                    "maxLength": 200,
+                    "pattern": "^[A-Za-z0-9.-]+$",
+                    "type": "string"
+                  },
+                  "version": {
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "pattern": "^v?\\d+(?:\\.\\d+)*(?:_\\d+)?$",
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "minLength": 1,
+              "maxLength": 200,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "type": "string"
+            },
+            "in": "header",
+            "name": "idempotency-key",
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "correlationId",
+                    "bundleId",
+                    "source",
+                    "channel",
+                    "priority",
+                    "status",
+                    "progress",
+                    "createdAt",
+                    "statusUrl"
+                  ],
+                  "properties": {
+                    "id": {
+                      "minLength": 1,
+                      "maxLength": 200,
+                      "type": "string"
+                    },
+                    "correlationId": {
+                      "minLength": 1,
+                      "maxLength": 200,
+                      "type": "string"
+                    },
+                    "bundleId": {
+                      "minLength": 3,
+                      "maxLength": 200,
+                      "pattern": "^[A-Za-z0-9.-]+$",
+                      "type": "string"
+                    },
+                    "externalVersionId": {
+                      "minLength": 1,
+                      "maxLength": 200,
+                      "type": "string"
+                    },
+                    "testflight": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "required": [
+                        "appId",
+                        "buildId"
+                      ],
+                      "properties": {
+                        "appId": {
+                          "type": "number"
+                        },
+                        "buildId": {
+                          "type": "number"
+                        },
+                        "version": {
+                          "type": "string"
+                        },
+                        "buildNumber": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "versionLabel": {
+                      "type": "string"
+                    },
+                    "source": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": [
+                            "manual"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "scheduler"
+                          ]
+                        }
+                      ]
+                    },
+                    "channel": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": [
+                            "appstore"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "testflight"
+                          ]
+                        }
+                      ]
+                    },
+                    "queuedBy": {
+                      "type": "string"
+                    },
+                    "priority": {
+                      "type": "number"
+                    },
+                    "attempt": {
+                      "type": "number"
+                    },
+                    "retryCount": {
+                      "type": "number"
+                    },
+                    "deadlineAt": {
+                      "type": "string"
+                    },
+                    "deadlineExceeded": {
+                      "type": "boolean"
+                    },
+                    "failureClass": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": [
+                            "device_transport"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "app_store"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "testflight"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "network"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "storage"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "decrypt"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "cancelled"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "unknown"
+                          ]
+                        }
+                      ]
+                    },
+                    "status": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": [
+                            "queued"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "running"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "done"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "failed"
+                          ]
+                        }
+                      ]
+                    },
+                    "progress": {
+                      "type": "string"
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "artifactId": {
+                      "minLength": 1,
+                      "maxLength": 200,
+                      "type": "string"
+                    },
+                    "artifactUrl": {
+                      "type": "string"
+                    },
+                    "cacheHit": {
+                      "type": "boolean"
+                    },
+                    "sizeBytes": {
+                      "type": "number"
+                    },
+                    "sha256": {
+                      "type": "string"
+                    },
+                    "createdAt": {
+                      "type": "string"
+                    },
+                    "startedAt": {
+                      "type": "string"
+                    },
+                    "finishedAt": {
+                      "type": "string"
+                    },
+                    "queue": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    },
+                    "queueReason": {
+                      "type": "string"
+                    },
+                    "statusUrl": {
+                      "type": "string"
+                    },
+                    "selector": {
+                      "type": "string"
+                    },
+                    "resolvedVersion": {
+                      "type": "string"
+                    },
+                    "artifact": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "bundleId",
+                        "channel",
+                        "sizeBytes",
+                        "sha256",
+                        "createdAt",
+                        "lastAccessedAt",
+                        "accessCount",
+                        "fileUrl"
+                      ],
+                      "properties": {
+                        "id": {
+                          "minLength": 1,
+                          "maxLength": 200,
+                          "type": "string"
+                        },
+                        "bundleId": {
+                          "minLength": 3,
+                          "maxLength": 200,
+                          "pattern": "^[A-Za-z0-9.-]+$",
+                          "type": "string"
+                        },
+                        "channel": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "appstore"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "testflight"
+                              ]
+                            }
+                          ]
+                        },
+                        "externalVersionId": {
+                          "minLength": 1,
+                          "maxLength": 200,
+                          "type": "string"
+                        },
+                        "testflightBuildId": {
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        "versionLabel": {
+                          "type": "string"
+                        },
+                        "buildNumber": {
+                          "type": "string"
+                        },
+                        "sizeBytes": {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        "sha256": {
+                          "minLength": 64,
+                          "maxLength": 64,
+                          "type": "string"
+                        },
+                        "createdAt": {
+                          "type": "string"
+                        },
+                        "lastAccessedAt": {
+                          "type": "string"
+                        },
+                        "accessCount": {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "fileUrl": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "correlationId",
+                    "bundleId",
+                    "source",
+                    "channel",
+                    "priority",
+                    "status",
+                    "progress",
+                    "createdAt",
+                    "statusUrl"
+                  ],
+                  "properties": {
+                    "id": {
+                      "minLength": 1,
+                      "maxLength": 200,
+                      "type": "string"
+                    },
+                    "correlationId": {
+                      "minLength": 1,
+                      "maxLength": 200,
+                      "type": "string"
+                    },
+                    "bundleId": {
+                      "minLength": 3,
+                      "maxLength": 200,
+                      "pattern": "^[A-Za-z0-9.-]+$",
+                      "type": "string"
+                    },
+                    "externalVersionId": {
+                      "minLength": 1,
+                      "maxLength": 200,
+                      "type": "string"
+                    },
+                    "testflight": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "required": [
+                        "appId",
+                        "buildId"
+                      ],
+                      "properties": {
+                        "appId": {
+                          "type": "number"
+                        },
+                        "buildId": {
+                          "type": "number"
+                        },
+                        "version": {
+                          "type": "string"
+                        },
+                        "buildNumber": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "versionLabel": {
+                      "type": "string"
+                    },
+                    "source": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": [
+                            "manual"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "scheduler"
+                          ]
+                        }
+                      ]
+                    },
+                    "channel": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": [
+                            "appstore"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "testflight"
+                          ]
+                        }
+                      ]
+                    },
+                    "queuedBy": {
+                      "type": "string"
+                    },
+                    "priority": {
+                      "type": "number"
+                    },
+                    "attempt": {
+                      "type": "number"
+                    },
+                    "retryCount": {
+                      "type": "number"
+                    },
+                    "deadlineAt": {
+                      "type": "string"
+                    },
+                    "deadlineExceeded": {
+                      "type": "boolean"
+                    },
+                    "failureClass": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": [
+                            "device_transport"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "app_store"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "testflight"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "network"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "storage"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "decrypt"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "cancelled"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "unknown"
+                          ]
+                        }
+                      ]
+                    },
+                    "status": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": [
+                            "queued"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "running"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "done"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "failed"
+                          ]
+                        }
+                      ]
+                    },
+                    "progress": {
+                      "type": "string"
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "artifactId": {
+                      "minLength": 1,
+                      "maxLength": 200,
+                      "type": "string"
+                    },
+                    "artifactUrl": {
+                      "type": "string"
+                    },
+                    "cacheHit": {
+                      "type": "boolean"
+                    },
+                    "sizeBytes": {
+                      "type": "number"
+                    },
+                    "sha256": {
+                      "type": "string"
+                    },
+                    "createdAt": {
+                      "type": "string"
+                    },
+                    "startedAt": {
+                      "type": "string"
+                    },
+                    "finishedAt": {
+                      "type": "string"
+                    },
+                    "queue": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    },
+                    "queueReason": {
+                      "type": "string"
+                    },
+                    "statusUrl": {
+                      "type": "string"
+                    },
+                    "selector": {
+                      "type": "string"
+                    },
+                    "resolvedVersion": {
+                      "type": "string"
+                    },
+                    "artifact": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "bundleId",
+                        "channel",
+                        "sizeBytes",
+                        "sha256",
+                        "createdAt",
+                        "lastAccessedAt",
+                        "accessCount",
+                        "fileUrl"
+                      ],
+                      "properties": {
+                        "id": {
+                          "minLength": 1,
+                          "maxLength": 200,
+                          "type": "string"
+                        },
+                        "bundleId": {
+                          "minLength": 3,
+                          "maxLength": 200,
+                          "pattern": "^[A-Za-z0-9.-]+$",
+                          "type": "string"
+                        },
+                        "channel": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "appstore"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "testflight"
+                              ]
+                            }
+                          ]
+                        },
+                        "externalVersionId": {
+                          "minLength": 1,
+                          "maxLength": 200,
+                          "type": "string"
+                        },
+                        "testflightBuildId": {
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        "versionLabel": {
+                          "type": "string"
+                        },
+                        "buildNumber": {
+                          "type": "string"
+                        },
+                        "sizeBytes": {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        "sha256": {
+                          "minLength": 64,
+                          "maxLength": 64,
+                          "type": "string"
+                        },
+                        "createdAt": {
+                          "type": "string"
+                        },
+                        "lastAccessedAt": {
+                          "type": "string"
+                        },
+                        "accessCount": {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "fileUrl": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/testflight/decrypt": {
+      "post": {
+        "summary": "POST /v1/testflight/decrypt",
+        "tags": [
+          "public"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "required": [
+                  "bundleId",
+                  "appId",
+                  "build"
+                ],
+                "properties": {
+                  "bundleId": {
+                    "minLength": 3,
+                    "maxLength": 200,
+                    "pattern": "^[A-Za-z0-9.-]+$",
+                    "type": "string"
+                  },
+                  "appId": {
+                    "anyOf": [
+                      {
+                        "minLength": 1,
+                        "maxLength": 32,
+                        "pattern": "^\\d+$",
+                        "type": "string"
+                      },
+                      {
+                        "minimum": 1,
+                        "type": "integer"
+                      }
+                    ]
+                  },
+                  "build": {
+                    "additionalProperties": true,
+                    "type": "object",
+                    "required": [
+                      "id",
+                      "cfBundleShortVersion",
+                      "cfBundleVersion",
+                      "bundleId"
+                    ],
+                    "properties": {
+                      "id": {
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "cfBundleShortVersion": {
+                        "minLength": 1,
+                        "maxLength": 64,
+                        "type": "string"
+                      },
+                      "cfBundleVersion": {
+                        "minLength": 1,
+                        "maxLength": 64,
+                        "type": "string"
+                      },
+                      "bundleId": {
+                        "minLength": 3,
+                        "maxLength": 200,
+                        "pattern": "^[A-Za-z0-9.-]+$",
+                        "type": "string"
+                      },
+                      "whatsNew": {
+                        "maxLength": 5000,
+                        "type": "string"
+                      },
+                      "releaseDate": {
+                        "maxLength": 64,
+                        "type": "string"
+                      },
+                      "expiration": {
+                        "maxLength": 64,
+                        "type": "string"
+                      },
+                      "fileSize": {
+                        "minimum": 0,
+                        "type": "number"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "minLength": 1,
+              "maxLength": 200,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "type": "string"
+            },
+            "in": "header",
+            "name": "idempotency-key",
+            "required": false
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "correlationId",
+                    "bundleId",
+                    "source",
+                    "channel",
+                    "priority",
+                    "status",
+                    "progress",
+                    "createdAt",
+                    "statusUrl"
+                  ],
+                  "properties": {
+                    "id": {
+                      "minLength": 1,
+                      "maxLength": 200,
+                      "type": "string"
+                    },
+                    "correlationId": {
+                      "minLength": 1,
+                      "maxLength": 200,
+                      "type": "string"
+                    },
+                    "bundleId": {
+                      "minLength": 3,
+                      "maxLength": 200,
+                      "pattern": "^[A-Za-z0-9.-]+$",
+                      "type": "string"
+                    },
+                    "externalVersionId": {
+                      "minLength": 1,
+                      "maxLength": 200,
+                      "type": "string"
+                    },
+                    "testflight": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "required": [
+                        "appId",
+                        "buildId"
+                      ],
+                      "properties": {
+                        "appId": {
+                          "type": "number"
+                        },
+                        "buildId": {
+                          "type": "number"
+                        },
+                        "version": {
+                          "type": "string"
+                        },
+                        "buildNumber": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "versionLabel": {
+                      "type": "string"
+                    },
+                    "source": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": [
+                            "manual"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "scheduler"
+                          ]
+                        }
+                      ]
+                    },
+                    "channel": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": [
+                            "appstore"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "testflight"
+                          ]
+                        }
+                      ]
+                    },
+                    "queuedBy": {
+                      "type": "string"
+                    },
+                    "priority": {
+                      "type": "number"
+                    },
+                    "attempt": {
+                      "type": "number"
+                    },
+                    "retryCount": {
+                      "type": "number"
+                    },
+                    "deadlineAt": {
+                      "type": "string"
+                    },
+                    "deadlineExceeded": {
+                      "type": "boolean"
+                    },
+                    "failureClass": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": [
+                            "device_transport"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "app_store"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "testflight"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "network"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "storage"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "decrypt"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "cancelled"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "unknown"
+                          ]
+                        }
+                      ]
+                    },
+                    "status": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": [
+                            "queued"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "running"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "done"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "failed"
+                          ]
+                        }
+                      ]
+                    },
+                    "progress": {
+                      "type": "string"
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "artifactId": {
+                      "minLength": 1,
+                      "maxLength": 200,
+                      "type": "string"
+                    },
+                    "artifactUrl": {
+                      "type": "string"
+                    },
+                    "cacheHit": {
+                      "type": "boolean"
+                    },
+                    "sizeBytes": {
+                      "type": "number"
+                    },
+                    "sha256": {
+                      "type": "string"
+                    },
+                    "createdAt": {
+                      "type": "string"
+                    },
+                    "startedAt": {
+                      "type": "string"
+                    },
+                    "finishedAt": {
+                      "type": "string"
+                    },
+                    "queue": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    },
+                    "queueReason": {
+                      "type": "string"
+                    },
+                    "statusUrl": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
                     }
                   }
                 }
@@ -5684,598 +7423,6 @@
         }
       }
     },
-    "/v1/jobs/{id}": {
-      "get": {
-        "summary": "GET /v1/jobs/:id",
-        "tags": [
-          "public"
-        ],
-        "parameters": [
-          {
-            "schema": {
-              "minLength": 1,
-              "maxLength": 200,
-              "type": "string"
-            },
-            "in": "path",
-            "name": "id",
-            "required": true
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Default Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "required": [
-                    "id",
-                    "correlationId",
-                    "bundleId",
-                    "source",
-                    "channel",
-                    "priority",
-                    "status",
-                    "progress",
-                    "createdAt",
-                    "statusUrl"
-                  ],
-                  "properties": {
-                    "id": {
-                      "minLength": 1,
-                      "maxLength": 200,
-                      "type": "string"
-                    },
-                    "correlationId": {
-                      "minLength": 1,
-                      "maxLength": 200,
-                      "type": "string"
-                    },
-                    "bundleId": {
-                      "minLength": 3,
-                      "maxLength": 200,
-                      "pattern": "^[A-Za-z0-9.-]+$",
-                      "type": "string"
-                    },
-                    "externalVersionId": {
-                      "minLength": 1,
-                      "maxLength": 200,
-                      "type": "string"
-                    },
-                    "testflight": {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "required": [
-                        "appId",
-                        "buildId"
-                      ],
-                      "properties": {
-                        "appId": {
-                          "type": "number"
-                        },
-                        "buildId": {
-                          "type": "number"
-                        },
-                        "version": {
-                          "type": "string"
-                        },
-                        "buildNumber": {
-                          "type": "string"
-                        }
-                      }
-                    },
-                    "versionLabel": {
-                      "type": "string"
-                    },
-                    "source": {
-                      "anyOf": [
-                        {
-                          "type": "string",
-                          "enum": [
-                            "manual"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "scheduler"
-                          ]
-                        }
-                      ]
-                    },
-                    "channel": {
-                      "anyOf": [
-                        {
-                          "type": "string",
-                          "enum": [
-                            "appstore"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "testflight"
-                          ]
-                        }
-                      ]
-                    },
-                    "queuedBy": {
-                      "type": "string"
-                    },
-                    "priority": {
-                      "type": "number"
-                    },
-                    "attempt": {
-                      "type": "number"
-                    },
-                    "retryCount": {
-                      "type": "number"
-                    },
-                    "deadlineAt": {
-                      "type": "string"
-                    },
-                    "deadlineExceeded": {
-                      "type": "boolean"
-                    },
-                    "failureClass": {
-                      "anyOf": [
-                        {
-                          "type": "string",
-                          "enum": [
-                            "device_transport"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "app_store"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "testflight"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "network"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "storage"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "decrypt"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "cancelled"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "unknown"
-                          ]
-                        }
-                      ]
-                    },
-                    "status": {
-                      "anyOf": [
-                        {
-                          "type": "string",
-                          "enum": [
-                            "queued"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "running"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "done"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "failed"
-                          ]
-                        }
-                      ]
-                    },
-                    "progress": {
-                      "type": "string"
-                    },
-                    "warnings": {
-                      "type": "array",
-                      "items": {
-                        "type": "string"
-                      }
-                    },
-                    "error": {
-                      "type": "string"
-                    },
-                    "artifactId": {
-                      "minLength": 1,
-                      "maxLength": 200,
-                      "type": "string"
-                    },
-                    "artifactUrl": {
-                      "type": "string"
-                    },
-                    "cacheHit": {
-                      "type": "boolean"
-                    },
-                    "sizeBytes": {
-                      "type": "number"
-                    },
-                    "sha256": {
-                      "type": "string"
-                    },
-                    "createdAt": {
-                      "type": "string"
-                    },
-                    "startedAt": {
-                      "type": "string"
-                    },
-                    "finishedAt": {
-                      "type": "string"
-                    },
-                    "queue": {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    },
-                    "queueReason": {
-                      "type": "string"
-                    },
-                    "statusUrl": {
-                      "type": "string"
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Default Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "required": [
-                    "error",
-                    "code",
-                    "message",
-                    "requestId",
-                    "retryable"
-                  ],
-                  "properties": {
-                    "error": {
-                      "type": "string"
-                    },
-                    "code": {
-                      "type": "string"
-                    },
-                    "message": {
-                      "type": "string"
-                    },
-                    "requestId": {
-                      "type": "string"
-                    },
-                    "retryable": {
-                      "type": "boolean"
-                    },
-                    "remediation": {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Default Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "required": [
-                    "error",
-                    "code",
-                    "message",
-                    "requestId",
-                    "retryable"
-                  ],
-                  "properties": {
-                    "error": {
-                      "type": "string"
-                    },
-                    "code": {
-                      "type": "string"
-                    },
-                    "message": {
-                      "type": "string"
-                    },
-                    "requestId": {
-                      "type": "string"
-                    },
-                    "retryable": {
-                      "type": "boolean"
-                    },
-                    "remediation": {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Default Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "required": [
-                    "error",
-                    "code",
-                    "message",
-                    "requestId",
-                    "retryable"
-                  ],
-                  "properties": {
-                    "error": {
-                      "type": "string"
-                    },
-                    "code": {
-                      "type": "string"
-                    },
-                    "message": {
-                      "type": "string"
-                    },
-                    "requestId": {
-                      "type": "string"
-                    },
-                    "retryable": {
-                      "type": "boolean"
-                    },
-                    "remediation": {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Default Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "required": [
-                    "error",
-                    "code",
-                    "message",
-                    "requestId",
-                    "retryable"
-                  ],
-                  "properties": {
-                    "error": {
-                      "type": "string"
-                    },
-                    "code": {
-                      "type": "string"
-                    },
-                    "message": {
-                      "type": "string"
-                    },
-                    "requestId": {
-                      "type": "string"
-                    },
-                    "retryable": {
-                      "type": "boolean"
-                    },
-                    "remediation": {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Default Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "required": [
-                    "error",
-                    "code",
-                    "message",
-                    "requestId",
-                    "retryable"
-                  ],
-                  "properties": {
-                    "error": {
-                      "type": "string"
-                    },
-                    "code": {
-                      "type": "string"
-                    },
-                    "message": {
-                      "type": "string"
-                    },
-                    "requestId": {
-                      "type": "string"
-                    },
-                    "retryable": {
-                      "type": "boolean"
-                    },
-                    "remediation": {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Default Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "required": [
-                    "error",
-                    "code",
-                    "message",
-                    "requestId",
-                    "retryable"
-                  ],
-                  "properties": {
-                    "error": {
-                      "type": "string"
-                    },
-                    "code": {
-                      "type": "string"
-                    },
-                    "message": {
-                      "type": "string"
-                    },
-                    "requestId": {
-                      "type": "string"
-                    },
-                    "retryable": {
-                      "type": "boolean"
-                    },
-                    "remediation": {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Default Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "required": [
-                    "error",
-                    "code",
-                    "message",
-                    "requestId",
-                    "retryable"
-                  ],
-                  "properties": {
-                    "error": {
-                      "type": "string"
-                    },
-                    "code": {
-                      "type": "string"
-                    },
-                    "message": {
-                      "type": "string"
-                    },
-                    "requestId": {
-                      "type": "string"
-                    },
-                    "retryable": {
-                      "type": "boolean"
-                    },
-                    "remediation": {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Default Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "required": [
-                    "error",
-                    "code",
-                    "message",
-                    "requestId",
-                    "retryable"
-                  ],
-                  "properties": {
-                    "error": {
-                      "type": "string"
-                    },
-                    "code": {
-                      "type": "string"
-                    },
-                    "message": {
-                      "type": "string"
-                    },
-                    "requestId": {
-                      "type": "string"
-                    },
-                    "retryable": {
-                      "type": "boolean"
-                    },
-                    "remediation": {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/v1/testflight/{appId}/trains": {
       "get": {
         "summary": "GET /v1/testflight/:appId/trains",
@@ -7066,627 +8213,6 @@
             }
           },
           "502": {
-            "description": "Default Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "required": [
-                    "error",
-                    "code",
-                    "message",
-                    "requestId",
-                    "retryable"
-                  ],
-                  "properties": {
-                    "error": {
-                      "type": "string"
-                    },
-                    "code": {
-                      "type": "string"
-                    },
-                    "message": {
-                      "type": "string"
-                    },
-                    "requestId": {
-                      "type": "string"
-                    },
-                    "retryable": {
-                      "type": "boolean"
-                    },
-                    "remediation": {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Default Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "required": [
-                    "error",
-                    "code",
-                    "message",
-                    "requestId",
-                    "retryable"
-                  ],
-                  "properties": {
-                    "error": {
-                      "type": "string"
-                    },
-                    "code": {
-                      "type": "string"
-                    },
-                    "message": {
-                      "type": "string"
-                    },
-                    "requestId": {
-                      "type": "string"
-                    },
-                    "retryable": {
-                      "type": "boolean"
-                    },
-                    "remediation": {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/testflight/decrypt": {
-      "post": {
-        "summary": "POST /v1/testflight/decrypt",
-        "tags": [
-          "public"
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "additionalProperties": true,
-                "type": "object",
-                "required": [
-                  "bundleId",
-                  "appId",
-                  "build"
-                ],
-                "properties": {
-                  "bundleId": {
-                    "minLength": 3,
-                    "maxLength": 200,
-                    "pattern": "^[A-Za-z0-9.-]+$",
-                    "type": "string"
-                  },
-                  "appId": {
-                    "anyOf": [
-                      {
-                        "minLength": 1,
-                        "maxLength": 32,
-                        "type": "string"
-                      },
-                      {
-                        "minimum": 1,
-                        "type": "integer"
-                      }
-                    ]
-                  },
-                  "build": {
-                    "type": "object",
-                    "additionalProperties": {}
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "202": {
-            "description": "Default Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "required": [
-                    "id",
-                    "correlationId",
-                    "bundleId",
-                    "source",
-                    "channel",
-                    "priority",
-                    "status",
-                    "progress",
-                    "createdAt",
-                    "statusUrl"
-                  ],
-                  "properties": {
-                    "id": {
-                      "minLength": 1,
-                      "maxLength": 200,
-                      "type": "string"
-                    },
-                    "correlationId": {
-                      "minLength": 1,
-                      "maxLength": 200,
-                      "type": "string"
-                    },
-                    "bundleId": {
-                      "minLength": 3,
-                      "maxLength": 200,
-                      "pattern": "^[A-Za-z0-9.-]+$",
-                      "type": "string"
-                    },
-                    "externalVersionId": {
-                      "minLength": 1,
-                      "maxLength": 200,
-                      "type": "string"
-                    },
-                    "testflight": {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "required": [
-                        "appId",
-                        "buildId"
-                      ],
-                      "properties": {
-                        "appId": {
-                          "type": "number"
-                        },
-                        "buildId": {
-                          "type": "number"
-                        },
-                        "version": {
-                          "type": "string"
-                        },
-                        "buildNumber": {
-                          "type": "string"
-                        }
-                      }
-                    },
-                    "versionLabel": {
-                      "type": "string"
-                    },
-                    "source": {
-                      "anyOf": [
-                        {
-                          "type": "string",
-                          "enum": [
-                            "manual"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "scheduler"
-                          ]
-                        }
-                      ]
-                    },
-                    "channel": {
-                      "anyOf": [
-                        {
-                          "type": "string",
-                          "enum": [
-                            "appstore"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "testflight"
-                          ]
-                        }
-                      ]
-                    },
-                    "queuedBy": {
-                      "type": "string"
-                    },
-                    "priority": {
-                      "type": "number"
-                    },
-                    "attempt": {
-                      "type": "number"
-                    },
-                    "retryCount": {
-                      "type": "number"
-                    },
-                    "deadlineAt": {
-                      "type": "string"
-                    },
-                    "deadlineExceeded": {
-                      "type": "boolean"
-                    },
-                    "failureClass": {
-                      "anyOf": [
-                        {
-                          "type": "string",
-                          "enum": [
-                            "device_transport"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "app_store"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "testflight"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "network"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "storage"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "decrypt"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "cancelled"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "unknown"
-                          ]
-                        }
-                      ]
-                    },
-                    "status": {
-                      "anyOf": [
-                        {
-                          "type": "string",
-                          "enum": [
-                            "queued"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "running"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "done"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "failed"
-                          ]
-                        }
-                      ]
-                    },
-                    "progress": {
-                      "type": "string"
-                    },
-                    "warnings": {
-                      "type": "array",
-                      "items": {
-                        "type": "string"
-                      }
-                    },
-                    "error": {
-                      "type": "string"
-                    },
-                    "artifactId": {
-                      "minLength": 1,
-                      "maxLength": 200,
-                      "type": "string"
-                    },
-                    "artifactUrl": {
-                      "type": "string"
-                    },
-                    "cacheHit": {
-                      "type": "boolean"
-                    },
-                    "sizeBytes": {
-                      "type": "number"
-                    },
-                    "sha256": {
-                      "type": "string"
-                    },
-                    "createdAt": {
-                      "type": "string"
-                    },
-                    "startedAt": {
-                      "type": "string"
-                    },
-                    "finishedAt": {
-                      "type": "string"
-                    },
-                    "queue": {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    },
-                    "queueReason": {
-                      "type": "string"
-                    },
-                    "statusUrl": {
-                      "type": "string"
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Default Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "required": [
-                    "error",
-                    "code",
-                    "message",
-                    "requestId",
-                    "retryable"
-                  ],
-                  "properties": {
-                    "error": {
-                      "type": "string"
-                    },
-                    "code": {
-                      "type": "string"
-                    },
-                    "message": {
-                      "type": "string"
-                    },
-                    "requestId": {
-                      "type": "string"
-                    },
-                    "retryable": {
-                      "type": "boolean"
-                    },
-                    "remediation": {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Default Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "required": [
-                    "error",
-                    "code",
-                    "message",
-                    "requestId",
-                    "retryable"
-                  ],
-                  "properties": {
-                    "error": {
-                      "type": "string"
-                    },
-                    "code": {
-                      "type": "string"
-                    },
-                    "message": {
-                      "type": "string"
-                    },
-                    "requestId": {
-                      "type": "string"
-                    },
-                    "retryable": {
-                      "type": "boolean"
-                    },
-                    "remediation": {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Default Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "required": [
-                    "error",
-                    "code",
-                    "message",
-                    "requestId",
-                    "retryable"
-                  ],
-                  "properties": {
-                    "error": {
-                      "type": "string"
-                    },
-                    "code": {
-                      "type": "string"
-                    },
-                    "message": {
-                      "type": "string"
-                    },
-                    "requestId": {
-                      "type": "string"
-                    },
-                    "retryable": {
-                      "type": "boolean"
-                    },
-                    "remediation": {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Default Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "required": [
-                    "error",
-                    "code",
-                    "message",
-                    "requestId",
-                    "retryable"
-                  ],
-                  "properties": {
-                    "error": {
-                      "type": "string"
-                    },
-                    "code": {
-                      "type": "string"
-                    },
-                    "message": {
-                      "type": "string"
-                    },
-                    "requestId": {
-                      "type": "string"
-                    },
-                    "retryable": {
-                      "type": "boolean"
-                    },
-                    "remediation": {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Default Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "required": [
-                    "error",
-                    "code",
-                    "message",
-                    "requestId",
-                    "retryable"
-                  ],
-                  "properties": {
-                    "error": {
-                      "type": "string"
-                    },
-                    "code": {
-                      "type": "string"
-                    },
-                    "message": {
-                      "type": "string"
-                    },
-                    "requestId": {
-                      "type": "string"
-                    },
-                    "retryable": {
-                      "type": "boolean"
-                    },
-                    "remediation": {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Default Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "required": [
-                    "error",
-                    "code",
-                    "message",
-                    "requestId",
-                    "retryable"
-                  ],
-                  "properties": {
-                    "error": {
-                      "type": "string"
-                    },
-                    "code": {
-                      "type": "string"
-                    },
-                    "message": {
-                      "type": "string"
-                    },
-                    "requestId": {
-                      "type": "string"
-                    },
-                    "retryable": {
-                      "type": "boolean"
-                    },
-                    "remediation": {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "500": {
             "description": "Default Response",
             "content": {
               "application/json": {
@@ -20601,6 +21127,7 @@
             "schema": {
               "minLength": 1,
               "maxLength": 200,
+              "pattern": "^[A-Za-z0-9._~-]+$",
               "type": "string"
             },
             "in": "header",
@@ -21374,6 +21901,7 @@
             "schema": {
               "minLength": 1,
               "maxLength": 200,
+              "pattern": "^[A-Za-z0-9._~-]+$",
               "type": "string"
             },
             "in": "header",
@@ -57287,6 +57815,7 @@
                       {
                         "minLength": 1,
                         "maxLength": 32,
+                        "pattern": "^\\d+$",
                         "type": "string"
                       },
                       {
@@ -57296,8 +57825,52 @@
                     ]
                   },
                   "build": {
+                    "additionalProperties": true,
                     "type": "object",
-                    "additionalProperties": {}
+                    "required": [
+                      "id",
+                      "cfBundleShortVersion",
+                      "cfBundleVersion",
+                      "bundleId"
+                    ],
+                    "properties": {
+                      "id": {
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "cfBundleShortVersion": {
+                        "minLength": 1,
+                        "maxLength": 64,
+                        "type": "string"
+                      },
+                      "cfBundleVersion": {
+                        "minLength": 1,
+                        "maxLength": 64,
+                        "type": "string"
+                      },
+                      "bundleId": {
+                        "minLength": 3,
+                        "maxLength": 200,
+                        "pattern": "^[A-Za-z0-9.-]+$",
+                        "type": "string"
+                      },
+                      "whatsNew": {
+                        "maxLength": 5000,
+                        "type": "string"
+                      },
+                      "releaseDate": {
+                        "maxLength": 64,
+                        "type": "string"
+                      },
+                      "expiration": {
+                        "maxLength": 64,
+                        "type": "string"
+                      },
+                      "fileSize": {
+                        "minimum": 0,
+                        "type": "number"
+                      }
+                    }
                   },
                   "deviceId": {
                     "minLength": 1,

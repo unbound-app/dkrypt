@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from '#http.js';
+import type { FastifyReply, FastifyRequest, HookHandlerDoneFunction } from 'fastify';
 import { getDeviceHealthFailureCount, getDeviceReadiness, peekPrimaryDeviceHealth } from '#deviceHealth.js';
 import { getEffectiveSettings, getPrimaryDevice } from '#store/state.js';
 
@@ -41,4 +42,14 @@ export function blockDuringMaintenance(_req: Request, res: Response, next: NextF
     return;
   }
   next();
+}
+
+export function fastifyBlockDuringMaintenance(request: FastifyRequest, reply: FastifyReply, done: HookHandlerDoneFunction): void {
+  const status = getMaintenanceStatus();
+  if (status.active) {
+    const message = `decrypts are paused for maintenance${status.reason ? ` - ${status.reason}` : ''}`;
+    reply.code(503).send({ error: message, code: 'maintenance_mode', message, requestId: request.id, retryable: true, remediation: { maintenance: true } });
+    return;
+  }
+  done();
 }
