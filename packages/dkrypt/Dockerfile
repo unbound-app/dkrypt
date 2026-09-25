@@ -35,8 +35,11 @@ RUN bun run build
 FROM oven/bun:1.3.14-slim
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libusb-1.0-0 \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates findutils libusb-1.0-0 passwd util-linux \
   && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd --system --gid 10001 dkrypt && useradd --system --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin dkrypt
+RUN touch /device-ssh-key-source && chmod 0600 /device-ssh-key-source
 
 COPY --from=ipadecrypt /go/bin/ipadecrypt /usr/local/bin/ipadecrypt
 COPY --from=device-bridge /bridge/target/release/dkrypt-device-bridge /usr/local/bin/dkrypt-device-bridge

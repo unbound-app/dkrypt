@@ -64,12 +64,12 @@ Copy `.env.example` to `.env` and configure the required values. The important r
 | `SESSION_SIGNING_SECRET` | Dashboard sessions and backup manifest encryption |
 | `ADMIN_PASSWORD` | Local administrator sign-in |
 | `PUBLIC_BASE_URL` | Public origin for OAuth, webhooks, and secure cookies |
-| `DEVICE_SSH_KEY_PATH` | Key used only by the `ipadecrypt` compatibility channel |
-| `DEVICE_SSH_KEY_HOST_PATH` | Host path mounted at `DEVICE_SSH_KEY_PATH`; use your own key path |
+| `DEVICE_SSH_KEY_PATH` | Runtime path to the key used only by the `ipadecrypt` compatibility channel |
+| `DEVICE_SSH_KEY_HOST_PATH` | Host key copied read-only into the container runtime directory |
 | `ARTIFACT_DIR` | IPA storage volume |
 | `STATE_DIR` | SQLite database, pairing material, backups, and mirrors |
 
-State and artifact data live in Docker volumes. Keep `.env`, pairing material, and SSH private keys out of Git. Use an HTTPS reverse proxy when exposing the dashboard beyond localhost.
+The Bun API runs as an unprivileged service account; the USB bridge retains root access for direct device transport, with a small root supervisor managing both processes. Startup migrates existing state and artifact volume permissions once, keeps pairing records root-only, and exposes the SSH key to the API through a read-only group-readable copy in tmpfs. Keep `.env`, pairing material, and SSH private keys out of Git. Use an HTTPS reverse proxy when exposing the dashboard beyond localhost.
 
 The SQLite database uses WAL mode, foreign keys, migration checksums, integrity checks, and an atomic pre-migration backup. Startup fails closed when the database or migration checksums are invalid. The dashboard doctor is available to managers at `/v1/dashboard/doctor`.
 

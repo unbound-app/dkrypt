@@ -22,15 +22,17 @@ services:
       DEVICE_MUX_SOCKET: /run/dkrypt/usbmuxd.sock
       DEVICE_PAIRING_STORE: /data/state/device-pairing
       NETMUXD_BIN: /usr/local/bin/netmuxd
+      DEVICE_SSH_KEY_PATH: /run/dkrypt/device_ssh_key
+      DEVICE_SSH_KEY_SOURCE: /device-ssh-key-source
     volumes:
       - ipa-storage:/data/artifacts
       - state:/data/state
-      - ${DEVICE_SSH_KEY_HOST_PATH:-${HOME}/.ssh/id_ed25519}:/root/.ssh/id_ed25519:ro
+      - ${DEVICE_SSH_KEY_HOST_PATH:-${HOME}/.ssh/id_ed25519}:/device-ssh-key-source:ro
     devices:
       - /dev/bus/usb:/dev/bus/usb
     tmpfs:
-      - /run/dkrypt:mode=0770,size=16m
-      - /data/tmp:mode=1770,size=1g
+      - /run/dkrypt:mode=0710,size=16m
+      - /data/tmp:mode=1770,uid=10001,gid=10001,size=1g
     deploy:
       resources:
         limits:
