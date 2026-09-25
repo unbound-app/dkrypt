@@ -10,6 +10,7 @@ const listAppRefreshes: boolean[] = [];
 
 const idevice = await import('#idevice.js');
 const state = await import('#store/state.js');
+const metrics = await import('#metrics.js');
 
 mock.module('#idevice.js', () => ({
   ...idevice,
@@ -39,6 +40,8 @@ mock.module('#idevice.js', () => ({
       listAppRefreshes.push(request.refresh === true);
       return { ok: true, apps: [{ appId: 985746746, bundleId: 'com.hammerandchisel.discord', name: 'Discord' }] };
     }
+    if (request.action === 'list_trains') return { data: [{ trainVersion: '341.0', buildCount: 1 }] };
+    if (request.action === 'list_builds') return { data: [{ id: 1, cfBundleShortVersion: '341.0', cfBundleVersion: '107127', bundleId: 'com.hammerandchisel.discord' }] };
     return { ok: true };
   },
   withSSH: async (_rootDir: string, fn: (conn: object) => Promise<void>) => fn({}),
@@ -49,7 +52,7 @@ mock.module('#store/state.js', () => ({
   getPrimaryDevice: () => ({ rootDir: '/device' }),
 }));
 
-const { installBuild, listTestFlightApps, statusTestFlightInvite, subscribeToTestFlightInvite, unsubscribeFromTestFlightInvite } = await import('./testflight.js');
+const { installBuild, listTestFlightApps, listTrains, statusTestFlightInvite, subscribeToTestFlightInvite, unsubscribeFromTestFlightInvite } = await import('./testflight.js');
 
 describe('installBuild', () => {
   afterAll(() => {
@@ -117,5 +120,15 @@ describe('installBuild', () => {
     await expect(listTestFlightApps()).resolves.toEqual([{ appId: 985746746, bundleId: 'com.hammerandchisel.discord', name: 'Discord' }]);
     await expect(listTestFlightApps(undefined, true)).resolves.toEqual([{ appId: 985746746, bundleId: 'com.hammerandchisel.discord', name: 'Discord' }]);
     expect(listAppRefreshes).toEqual([false, true]);
+  });
+
+  test('records TestFlight lookup counts and latency', async () => {
+    metrics.resetMetrics();
+    await expect(listTrains(985746746)).resolves.toEqual([{ trainVersion: '341.0', buildCount: 1 }]);
+    const output = metrics.renderMetrics();
+    expect(output).toContain('dkrypt_testflight_lookups_total{operation="trains",outcome="success"} 1');
+    expect(output).toContain('# TYPE dkrypt_testflight_lookup_duration_ms summary');
+    expect(output).toContain('dkrypt_testflight_lookup_duration_ms_count{operation="trains"} 1');
+    metrics.resetMetrics();
   });
 });

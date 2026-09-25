@@ -1,6 +1,6 @@
 import { getDeviceHealth } from '#deviceHealth.js';
 import { getRustDeviceBridgeStatus } from '#idevice.js';
-import { observeMetric } from '#metrics.js';
+import { incrementMetric, observeMetric, setGaugeMetric } from '#metrics.js';
 import { getEffectiveDevices, getStateDatabaseStatus } from '#store/state.js';
 import { getDiskUsage } from '#util/diskUsage.js';
 import { config, cryptoBillingEnabled, stripeEnabled } from '#config.js';
@@ -19,11 +19,12 @@ async function probe<T extends SyntheticProbeResult['id']>(id: T, action: () => 
   try {
     const result = await action();
     const durationMs = Math.round(performance.now() - startedAt);
-    observeMetric('synthetic_probe_duration_ms', durationMs);
+    observeMetric('synthetic_probe_duration_ms', durationMs, { probe: id, outcome: result.status });
     return { id, durationMs, ...result };
   } catch (error) {
     const durationMs = Math.round(performance.now() - startedAt);
-    observeMetric('synthetic_probe_duration_ms', durationMs);
+    incrementMetric('synthetic_probe_failures_total', { probe: id });
+    observeMetric('synthetic_probe_duration_ms', durationMs, { probe: id, outcome: 'error' });
     return { id, durationMs, status: 'error', detail: error instanceof Error ? error.message : String(error) };
   }
 }
@@ -38,7 +39,13 @@ export async function runSyntheticProbes(): Promise<{ ok: boolean; checkedAt: st
     }),
     probe('artifacts', async () => {
       const usage = getDiskUsage(config.artifactDir);
-      if (!usage) return { status: 'error' as const, detail: 'Artifact storage is unavailable' };
+      if (!usage) {
+        setGaugeMetric('artifact_storage_available', 0);
+        return { status: 'error' as const, detail: 'Artifact storage is unavailable' };
+      }
+      setGaugeMetric('artifact_storage_available', 1);
+      setGaugeMetric('artifact_storage_used_percent', usage.usedPercent * 100);
+      setGaugeMetric('artifact_storage_free_bytes', usage.freeBytes);
       if (usage.usedPercent >= 0.95) return { status: 'error' as const, detail: `${Math.round(usage.usedPercent * 100)}% of artifact storage is used` };
       if (usage.usedPercent >= 0.85) return { status: 'warn' as const, detail: `${Math.round(usage.usedPercent * 100)}% of artifact storage is used` };
       return { status: 'ok' as const, detail: `${Math.round(usage.usedPercent * 100)}% of artifact storage is used` };

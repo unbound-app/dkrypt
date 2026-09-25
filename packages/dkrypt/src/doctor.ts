@@ -66,7 +66,11 @@ export async function runConfigurationDoctor(): Promise<{ ok: boolean; checkedAt
   checks.push(rotationCheck('crypto-webhook-rotation', config.nowpaymentsIpnSecret, config.nowpaymentsIpnSecretPrevious, 16));
   checks.push(rotationCheck('outbound-webhook-rotation', config.outboundWebhookSecret, config.outboundWebhookSecretPrevious, 16));
   checks.push({ id: 'pairing-store', status: existsSync(config.devicePairingStore) ? 'ok' : 'warn', detail: existsSync(config.devicePairingStore) ? 'Device pairing store exists' : 'Device pairing store will be created on first bridge start' });
-  checks.push({ id: 'otel', status: config.otelExporterOtlpEndpoint ? 'ok' : 'warn', detail: config.otelExporterOtlpEndpoint ? `OTLP tracing is configured for ${config.otelServiceName}` : 'OTLP tracing is disabled; Prometheus metrics remain available' });
+  const otelSignals = [
+    config.otelExporterOtlpEndpoint || config.otelExporterOtlpTracesEndpoint ? 'traces' : undefined,
+    config.otelExporterOtlpEndpoint || config.otelExporterOtlpMetricsEndpoint ? 'metrics' : undefined,
+  ].filter((signal): signal is string => !!signal);
+  checks.push({ id: 'otel', status: otelSignals.length ? 'ok' : 'warn', detail: otelSignals.length ? `OTLP ${otelSignals.join(' and ')} configured for ${config.otelServiceName}` : 'OTLP export is disabled; Prometheus metrics remain available' });
   checks.push({ id: 'stripe', status: stripeEnabled ? 'ok' : 'warn', detail: stripeEnabled ? `Stripe is configured in ${stripeEnvironment} mode` : 'Stripe billing is missing runtime configuration' });
   if (cryptoBillingEnabled || nowpaymentsConfigured) {
     const crypto = await getNowPaymentsProviderStatus();

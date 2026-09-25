@@ -6,7 +6,7 @@ import { releasePinnedJobsForDevice } from '#jobs/store.js';
 import { getConsecutiveDeviceHealthFailures, getEffectiveDevices, getEffectiveSettings, recordDeviceActivity, recordDeviceHealthCheck, type DeviceRecord } from '#store/state.js';
 import { getDiskUsage } from '#util/diskUsage.js';
 import { getCachedDeviceHealth, setCachedDeviceHealth } from '#deviceHealthCache.js';
-import { incrementMetric, observeMetric } from '#metrics.js';
+import { incrementMetric, observeMetric, setGaugeMetric } from '#metrics.js';
 import { throwIfAborted } from '#util/abort.js';
 
 const log = scopedLogger('idevice');
@@ -426,25 +426,62 @@ export function stabilizeDeviceHealth(previous: DeviceHealth | undefined, next: 
 const pendingDeviceHealth = new Map<string, Promise<DeviceHealth>>();
 const deviceHealthFailures = new Map<string, number>();
 const lastKnownGoodDeviceHealth = new Map<string, DeviceHealth>();
+const deviceAvailabilityTransports = new Set<string>();
+
+function updateDeviceAvailabilityMetrics(): void {
+  const devices = getEffectiveDevices().filter((device) => device.enabled);
+  const groups = new Map<string, { enabled: number; available: number; storageDevices: number; storageUsedPercent?: number; storageFreeBytes: number }>();
+  for (const device of devices) {
+    const health = getCachedDeviceHealth(device.id)?.value;
+    const transport = health?.transport ?? device.transport ?? (device.udid ? 'usb' : 'wifi');
+    const group = groups.get(transport) ?? { enabled: 0, available: 0, storageDevices: 0, storageFreeBytes: 0 };
+    group.enabled += 1;
+    if (health?.reachable) group.available += 1;
+    const hasStorage = typeof health?.storageUsedPercent === 'number' || typeof health?.storageFreeBytes === 'number';
+    if (hasStorage) group.storageDevices += 1;
+    if (typeof health?.storageUsedPercent === 'number') group.storageUsedPercent = Math.max(group.storageUsedPercent ?? 0, health.storageUsedPercent);
+    if (typeof health?.storageFreeBytes === 'number') group.storageFreeBytes += health.storageFreeBytes;
+    groups.set(transport, group);
+  }
+  for (const transport of deviceAvailabilityTransports) {
+    if (groups.has(transport)) continue;
+    setGaugeMetric('devices_available', 0, { transport });
+    setGaugeMetric('devices_enabled', 0, { transport });
+    setGaugeMetric('device_storage_available', 0, { transport });
+    setGaugeMetric('device_storage_used_percent', 0, { transport });
+    setGaugeMetric('device_storage_free_bytes', 0, { transport });
+  }
+  deviceAvailabilityTransports.clear();
+  for (const [transport, group] of groups) {
+    deviceAvailabilityTransports.add(transport);
+    setGaugeMetric('devices_available', group.available, { transport });
+    setGaugeMetric('devices_enabled', group.enabled, { transport });
+    setGaugeMetric('device_storage_available', group.storageDevices, { transport });
+    setGaugeMetric('device_storage_used_percent', group.storageUsedPercent ?? 0, { transport });
+    setGaugeMetric('device_storage_free_bytes', group.storageFreeBytes, { transport });
+  }
+}
 
 function cacheDeviceHealth(deviceId: string, value: DeviceHealth): void {
   const previous = getCachedDeviceHealth(deviceId)?.value;
   const readiness = value.readiness ?? getDeviceReadiness(value);
   incrementMetric('device_health_probes_total', { transport: value.transport ?? 'unknown', outcome: value.reachable ? readiness.state : 'offline' });
   if (previous?.reachable === false && value.reachable) incrementMetric('device_reconnects_total', { transport: value.transport ?? 'unknown' });
-  for (const heartbeat of Object.values(value.bridgeHeartbeats ?? {})) {
-    if (typeof heartbeat?.at === 'number') observeMetric('device_agent_heartbeat_age_ms', Math.max(0, Date.now() - heartbeat.at * 1000));
+  for (const [service, heartbeat] of Object.entries(value.bridgeHeartbeats ?? {})) {
+    if (typeof heartbeat?.at === 'number') observeMetric('device_agent_heartbeat_age_ms', Math.max(0, Date.now() - heartbeat.at * 1000), { service, transport: value.transport ?? 'unknown' });
   }
   if (value.reachable && readiness.state !== 'blocked') {
     deviceHealthFailures.delete(deviceId);
     lastKnownGoodDeviceHealth.set(deviceId, value);
     setCachedDeviceHealth(deviceId, value);
+    updateDeviceAvailabilityMetrics();
     return;
   }
 
   const failures = (deviceHealthFailures.get(deviceId) ?? 0) + 1;
   deviceHealthFailures.set(deviceId, failures);
   setCachedDeviceHealth(deviceId, stabilizeDeviceHealth(lastKnownGoodDeviceHealth.get(deviceId), value, failures));
+  updateDeviceAvailabilityMetrics();
 }
 
 async function computeDeviceHealth(device: DeviceRecord, signal?: AbortSignal): Promise<DeviceHealth> {

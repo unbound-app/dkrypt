@@ -12,6 +12,7 @@ import {
 } from '#idevice.js';
 import { getPrimaryDevice, type DeviceRecord } from '#store/state.js';
 import { hasBridgeCapabilities, hasBridgeCapabilitySet, TESTFLIGHT_DEVICE_CATALOG_CAPABILITIES, TESTFLIGHT_LIFECYCLE_CAPABILITIES } from '#bridgeProtocol.js';
+import { incrementMetric, observeMetric } from '#metrics.js';
 import { delayWithSignal, throwIfAborted } from '#util/abort.js';
 
 function primaryDevice() {
@@ -54,6 +55,20 @@ export interface TestFlightBridgeDiagnostics {
   };
   install?: Record<string, unknown>;
   recentLog?: string[];
+}
+
+async function observeTestFlightLookup<T>(operation: 'trains' | 'builds', action: () => Promise<T>): Promise<T> {
+  const startedAt = performance.now();
+  try {
+    const result = await action();
+    incrementMetric('testflight_lookups_total', { operation, outcome: 'success' });
+    return result;
+  } catch (error) {
+    incrementMetric('testflight_lookups_total', { operation, outcome: 'error' });
+    throw error;
+  } finally {
+    observeMetric('testflight_lookup_duration_ms', performance.now() - startedAt, { operation });
+  }
 }
 
 export interface TFDeviceApp {
@@ -147,17 +162,17 @@ export async function ensureTestFlightRunning(device = primaryDevice(), required
 }
 
 export async function listTrains(appId: number, device = primaryDevice()): Promise<TFTrain[]> {
-  return withReadyBridgeRequest(async (conn) => {
+  return observeTestFlightLookup('trains', () => withReadyBridgeRequest(async (conn) => {
     const response = await sendTestFlightBridgeRequest(conn, { action: 'list_trains', appId });
     return response.data as TFTrain[];
-  }, device);
+  }, device));
 }
 
 export async function listBuilds(appId: number, trainVersion: string, device = primaryDevice()): Promise<TFBuild[]> {
-  return withReadyBridgeRequest(async (conn) => {
+  return observeTestFlightLookup('builds', () => withReadyBridgeRequest(async (conn) => {
     const response = await sendTestFlightBridgeRequest(conn, { action: 'list_builds', appId, trainVersion });
     return response.data as TFBuild[];
-  }, device);
+  }, device));
 }
 
 const TESTFLIGHT_INVITE_URL_RE = /^https:\/\/testflight\.apple\.com\/join\/([A-Za-z0-9]{4,32})$/;

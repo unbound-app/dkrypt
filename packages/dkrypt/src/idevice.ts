@@ -163,13 +163,13 @@ class RustDeviceBridgeClient {
       throwIfAborted(signal);
       const result = await this.requestRaw(operation, details, timeoutMs, true, signal);
       incrementMetric('device_bridge_requests_total', { operation, outcome: 'success' });
-      observeMetric('device_bridge_request_duration_ms', performance.now() - startedAt);
+      observeMetric('device_bridge_request_duration_ms', performance.now() - startedAt, { operation });
       span.end();
       return result;
     } catch (error) {
       const category = error instanceof DeviceBridgeError ? error.code : error instanceof DeviceAgentUnavailableError ? 'unavailable' : 'unknown';
       incrementMetric('device_bridge_requests_total', { operation, outcome: 'error', category });
-      observeMetric('device_bridge_request_duration_ms', performance.now() - startedAt);
+      observeMetric('device_bridge_request_duration_ms', performance.now() - startedAt, { operation });
       span.end(error);
       throw error;
     }
@@ -790,7 +790,7 @@ export async function probeDeviceSshTunnel(connection: DeviceConnection, signal?
     return ready;
   } finally {
     incrementMetric('device_ssh_sftp_probes_total', { outcome: ready ? 'ready' : 'unavailable' });
-    observeMetric('device_ssh_sftp_probe_duration_ms', performance.now() - startedAt);
+    observeMetric('device_ssh_sftp_probe_duration_ms', performance.now() - startedAt, { outcome: ready ? 'ready' : 'unavailable', transport: connection.transport ?? (connection.udid ? 'usb' : 'wifi') });
   }
 }
 

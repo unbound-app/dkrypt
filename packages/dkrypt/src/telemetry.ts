@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { config } from '#config.js';
-import { incrementMetric } from '#metrics.js';
+import { createOtlpMetricsPayload, incrementMetric } from '#metrics.js';
 
 export interface TraceContext {
   traceId: string;
@@ -28,6 +28,7 @@ export interface SpanHandle {
 const pendingSpans: SpanRecord[] = [];
 let flushTimer: ReturnType<typeof setInterval> | undefined;
 let flushInFlight: Promise<void> | undefined;
+let metricsFlushInFlight: Promise<void> | undefined;
 
 function hexBytes(bytes: number): string {
   return randomBytes(bytes).toString('hex');
@@ -54,23 +55,42 @@ function attributeEntries(attributes: Record<string, string | number | boolean |
     .map(([key, value]) => ({ key, value: { stringValue: String(value) } }));
 }
 
-function endpoint(): string | undefined {
-  if (!config.otelExporterOtlpEndpoint) return undefined;
-  const value = config.otelExporterOtlpEndpoint.replace(/\/$/, '');
-  return value.endsWith('/v1/traces') ? value : `${value}/v1/traces`;
+export function resolveOtlpEndpoint(signal: 'traces' | 'metrics', signalEndpoint: string | undefined, sharedEndpoint: string | undefined): string | undefined {
+  const direct = signalEndpoint?.trim();
+  if (direct) return direct;
+  const shared = sharedEndpoint?.trim();
+  if (!shared) return undefined;
+  const normalized = shared.replace(/\/+$/, '');
+  const signalPath = `/v1/${signal}`;
+  if (normalized.endsWith(signalPath)) return normalized;
+  if (/\/v1\/(traces|metrics)$/.test(normalized)) return normalized.replace(/\/v1\/(traces|metrics)$/, signalPath);
+  return `${normalized}${signalPath}`;
 }
 
-function exporterHeaders(): Record<string, string> {
-  return Object.fromEntries(
-    config.otelExporterOtlpHeaders
-      .split(',')
-      .map((entry) => entry.trim())
-      .filter(Boolean)
-      .map((entry) => {
-        const separator = entry.indexOf('=');
-        return separator === -1 ? [entry, ''] : [entry.slice(0, separator).trim(), entry.slice(separator + 1).trim()];
-      }),
+function endpoint(signal: 'traces' | 'metrics'): string | undefined {
+  return resolveOtlpEndpoint(
+    signal,
+    signal === 'traces' ? config.otelExporterOtlpTracesEndpoint : config.otelExporterOtlpMetricsEndpoint,
+    config.otelExporterOtlpEndpoint,
   );
+}
+
+function parseHeaders(value: string): Array<[string, string]> {
+  return value.split(',').map((entry) => entry.trim()).filter(Boolean).map((entry) => {
+    const separator = entry.indexOf('=');
+    return separator === -1 ? [entry, ''] : [entry.slice(0, separator).trim(), entry.slice(separator + 1).trim()];
+  });
+}
+
+function exporterHeaders(signal: 'traces' | 'metrics'): Record<string, string> {
+  const signalHeaders = signal === 'traces' ? config.otelExporterOtlpTracesHeaders : config.otelExporterOtlpMetricsHeaders;
+  const values = new Map<string, [string, string]>([[
+    'user-agent', ['User-Agent', `dkrypt-otlp-exporter/1.0.0 (Bun/${process.versions.bun ?? process.version})`],
+  ]]);
+  for (const [name, value] of [...parseHeaders(config.otelExporterOtlpHeaders), ...parseHeaders(signalHeaders)]) {
+    values.set(name.toLowerCase(), [name, value]);
+  }
+  return Object.fromEntries(values.values());
 }
 
 export function startSpan(name: string, attributes: Record<string, string | number | boolean | undefined> = {}, parent?: TraceContext): SpanHandle {
@@ -113,13 +133,13 @@ export function startSpan(name: string, attributes: Record<string, string | numb
 }
 
 export async function flushTelemetry(): Promise<void> {
-  const url = endpoint();
+  const url = endpoint('traces');
   if (!url || pendingSpans.length === 0) return;
   if (flushInFlight) return flushInFlight;
   const spans = pendingSpans.splice(0, Math.max(1, config.otelBatchSize));
   flushInFlight = fetch(url, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', ...exporterHeaders() },
+    headers: { 'content-type': 'application/json', ...exporterHeaders('traces') },
     body: JSON.stringify({
       resourceSpans: [{
         resource: { attributes: [{ key: 'service.name', value: { stringValue: config.otelServiceName } }] },
@@ -142,14 +162,49 @@ export async function flushTelemetry(): Promise<void> {
   return flushInFlight;
 }
 
+export interface OtlpMetricsFlushOptions {
+  endpoint?: string;
+  headers?: Record<string, string>;
+  fetcher?: (input: string, init?: RequestInit) => Promise<Response>;
+  serviceName?: string;
+}
+
+export async function flushOtlpMetrics(options: OtlpMetricsFlushOptions = {}): Promise<void> {
+  const url = options.endpoint ?? endpoint('metrics');
+  if (!url) return;
+  if (metricsFlushInFlight) return metricsFlushInFlight;
+  const payload = createOtlpMetricsPayload(options.serviceName ?? config.otelServiceName);
+  if (payload.resourceMetrics[0].scopeMetrics[0].metrics.length === 0) return;
+  const fetcher = options.fetcher ?? fetch;
+  metricsFlushInFlight = fetcher(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...exporterHeaders('metrics'), ...options.headers },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(5000),
+  })
+    .then((response) => {
+      if (!response.ok) throw new Error(`OTLP metrics exporter returned HTTP ${response.status}`);
+      incrementMetric('telemetry_metrics_exported_total');
+    })
+    .catch(() => {
+      incrementMetric('telemetry_metrics_export_failures_total');
+    })
+    .finally(() => {
+      metricsFlushInFlight = undefined;
+    });
+  return metricsFlushInFlight;
+}
+
 export function startTelemetry(): void {
-  if (flushTimer || !endpoint()) return;
-  flushTimer = setInterval(() => void flushTelemetry(), Math.max(1000, config.otelFlushIntervalMs));
+  if (flushTimer || (!endpoint('traces') && !endpoint('metrics'))) return;
+  flushTimer = setInterval(() => {
+    void Promise.all([flushTelemetry(), flushOtlpMetrics()]);
+  }, Math.max(1000, config.otelFlushIntervalMs));
   flushTimer.unref();
 }
 
-export function stopTelemetry(): Promise<void> {
+export async function stopTelemetry(): Promise<void> {
   if (flushTimer) clearInterval(flushTimer);
   flushTimer = undefined;
-  return flushTelemetry();
+  await Promise.all([flushTelemetry(), flushOtlpMetrics()]);
 }

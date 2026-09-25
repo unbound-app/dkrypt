@@ -659,7 +659,7 @@ async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
   job.deviceId = device.id;
   job.attempt = (job.retryCount ?? 0) + 1;
   incrementMetric('jobs_started_total', { source: job.source });
-  observeMetric('job_queue_wait_ms', Math.max(0, job.startedAt - job.createdAt));
+  observeMetric('job_queue_wait_ms', Math.max(0, job.startedAt - job.createdAt), { source: job.source });
   appendJobTimelineEvent(job, `Started on ${device.name}`, 'running', job.startedAt);
   log.info('job started', { jobId: job.id, bundleId: job.bundleId, deviceId: device.id });
   recordDeviceActivity({ deviceId: device.id, kind: 'job', bundleId: job.bundleId, message: `Started ${job.testflight ? 'TestFlight' : 'App Store'} decrypt` });
@@ -693,7 +693,7 @@ async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
     job.status = 'done';
     job.finishedAt = Date.now();
     incrementMetric('jobs_completed_total', { source: job.source });
-    observeMetric('job_duration_ms', Math.max(0, job.finishedAt - (job.startedAt ?? job.createdAt)));
+    observeMetric('job_duration_ms', Math.max(0, job.finishedAt - (job.startedAt ?? job.createdAt)), { source: job.source });
     appendJobTimelineEvent(job, 'Finished', 'done', job.finishedAt);
     log.info('job done', { jobId: job.id, bundleId: job.bundleId, deviceId: device.id, sizeBytes: job.fileSizeBytes });
     recordDeviceActivity({ deviceId: device.id, kind: 'job', bundleId: job.bundleId, message: 'Decrypt completed' });
@@ -753,7 +753,7 @@ async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
     job.status = 'failed';
     job.finishedAt = Date.now();
     incrementMetric('jobs_failed_total', { source: job.source, failureClass: job.failureClass });
-    observeMetric('job_duration_ms', Math.max(0, job.finishedAt - (job.startedAt ?? job.createdAt)));
+    observeMetric('job_duration_ms', Math.max(0, job.finishedAt - (job.startedAt ?? job.createdAt)), { source: job.source });
     job.error = message;
     appendJobTimelineEvent(job, `Failed: ${message}`, 'failed', job.finishedAt);
     log.error('job failed', { jobId: job.id, bundleId: job.bundleId, deviceId: device.id, error: job.error, retried: (job.retryCount ?? 0) > 0 });

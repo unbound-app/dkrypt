@@ -121,6 +121,10 @@ export const config = {
 
   otelExporterOtlpEndpoint: optional('OTEL_EXPORTER_OTLP_ENDPOINT', ''),
   otelExporterOtlpHeaders: optional('OTEL_EXPORTER_OTLP_HEADERS', ''),
+  otelExporterOtlpTracesEndpoint: optional('OTEL_EXPORTER_OTLP_TRACES_ENDPOINT', ''),
+  otelExporterOtlpTracesHeaders: optional('OTEL_EXPORTER_OTLP_TRACES_HEADERS', ''),
+  otelExporterOtlpMetricsEndpoint: optional('OTEL_EXPORTER_OTLP_METRICS_ENDPOINT', ''),
+  otelExporterOtlpMetricsHeaders: optional('OTEL_EXPORTER_OTLP_METRICS_HEADERS', ''),
   otelServiceName: optional('OTEL_SERVICE_NAME', 'dkrypt'),
   otelSampleRate: optionalFloat('OTEL_SAMPLE_RATE', 1),
   otelBatchSize: optionalInt('OTEL_BSP_MAX_EXPORT_BATCH_SIZE', 64),
