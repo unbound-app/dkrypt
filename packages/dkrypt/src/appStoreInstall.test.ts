@@ -107,6 +107,14 @@ describe('installFromAppStore', () => {
     expect(retryAttempt).not.toBe(firstAttempt);
   });
 
+  test('rejects an already cancelled job before contacting the device', async () => {
+    const controller = new AbortController();
+    controller.abort(new Error('job deadline exceeded'));
+
+    await expect(installFromAppStore('com.hammerandchisel.discord', { signal: controller.signal })).rejects.toThrow('job deadline exceeded');
+    expect(calls).toEqual([]);
+  });
+
   test('retries after a temporarily unavailable bridge before purchasing', async () => {
     bridgeStatusErrors = 1;
     installedBundles = [undefined, { path: '/apps/Discord.app', shortVersion: '338.0' }];

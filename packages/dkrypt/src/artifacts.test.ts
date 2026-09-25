@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { existsSync } from 'node:fs';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -78,6 +79,23 @@ describe('persistent artifact store', () => {
       }),
     ).rejects.toThrow(/larger than/);
     await expect(rm(stagingPath)).resolves.toBeUndefined();
+  });
+
+  test('does not promote an artifact after the job has been aborted', async () => {
+    const stagingPath = await stagingFile('cancelled ipa');
+    const controller = new AbortController();
+    controller.abort(new Error('job deadline exceeded'));
+
+    await expect(promoteArtifact({
+      key: `test-aborted-${crypto.randomUUID()}`,
+      bundleId: 'com.example.aborted',
+      channel: 'appstore',
+      stagingPath,
+      signal: controller.signal,
+    })).rejects.toThrow('job deadline exceeded');
+
+    expect(existsSync(stagingPath)).toBe(true);
+    await rm(stagingPath, { force: true });
   });
 
   test('reconcile removes stale partials and unindexed IPA files', async () => {

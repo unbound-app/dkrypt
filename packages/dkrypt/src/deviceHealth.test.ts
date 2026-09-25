@@ -84,6 +84,29 @@ describe('collectDeviceTelemetry', () => {
     expect(telemetry.testFlightBridgeReachable).toBeFalse();
     expect(telemetry.bridgeHeartbeats).toEqual({});
   });
+
+  test('stops collecting telemetry as soon as the job is aborted', async () => {
+    const controller = new AbortController();
+    const calls: string[] = [];
+
+    await expect(collectDeviceTelemetry({
+      testFlightRunning: async () => {
+        calls.push('testFlightRunning');
+        controller.abort(new Error('job deadline exceeded'));
+        return true;
+      },
+      springBoardStatus: async () => {
+        calls.push('springBoardStatus');
+        return { ok: true };
+      },
+      battery: async () => undefined,
+      storage: async () => undefined,
+      network: async () => undefined,
+      bridgeHeartbeats: async () => ({}),
+    }, controller.signal)).rejects.toThrow('job deadline exceeded');
+
+    expect(calls).toEqual(['testFlightRunning']);
+  });
 });
 
 describe('device health coordination', () => {

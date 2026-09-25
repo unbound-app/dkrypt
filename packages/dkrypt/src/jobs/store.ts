@@ -21,6 +21,8 @@ import { classifyJobFailure } from '#util/failureCategory.js';
 import { incrementMetric, observeMetric } from '#metrics.js';
 import { withCorrelation } from '#correlation.js';
 import { EMBED_COLOR, notify } from '#notify.js';
+import { runWithJobDeadline } from '#jobs/deadline.js';
+import { delayWithSignal } from '#util/abort.js';
 
 const jobs = new Map<string, Job>();
 
@@ -29,6 +31,8 @@ const activePath = path.join(config.stateDir, 'active-jobs.json');
 const queue: string[] = [];
 const busyDeviceIds = new Set<string>();
 const runningJobs = new Map<string, Promise<void>>();
+const runningJobControllers = new Map<string, AbortController>();
+const queuedDeadlineTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const queueSloNotified = new Set<string>();
 let acceptingJobs = true;
 
@@ -110,6 +114,7 @@ function loadActiveJobs(): void {
     for (const job of queued) {
       jobs.set(job.id, job);
       insertByPriority(job.id, job.priority);
+      scheduleQueuedDeadline(job);
     }
     for (const job of interrupted) recordJobHistory(toHistoryEntry(job));
     persistActiveJobs();
@@ -133,6 +138,7 @@ function loadDatabaseJobs(): boolean {
   for (const job of queued) {
     jobs.set(job.id, { ...job, waiters: [] });
     insertByPriority(job.id, job.priority);
+    scheduleQueuedDeadline(job);
   }
   for (const job of interrupted) recordJobHistory(toHistoryEntry(job));
   replacePersistedJobs(jobs.values());
@@ -244,6 +250,65 @@ function insertByPriority(id: string, priority: number): void {
   else queue.splice(idx, 0, id);
 }
 
+function clearQueuedDeadline(id: string): void {
+  const timer = queuedDeadlineTimers.get(id);
+  if (timer) clearTimeout(timer);
+  queuedDeadlineTimers.delete(id);
+}
+
+function failExpiredQueuedJob(job: Job, now = Date.now()): void {
+  if (job.status !== 'queued' || job.deadlineAt === undefined || job.deadlineAt > now) return;
+  clearQueuedDeadline(job.id);
+  const index = queue.indexOf(job.id);
+  if (index !== -1) queue.splice(index, 1);
+  job.status = 'failed';
+  job.deadlineExceeded = true;
+  job.progress = 'job deadline exceeded';
+  job.error = 'job deadline exceeded while waiting in the queue';
+  job.failureClass = classifyJobFailure('job deadline exceeded');
+  job.finishedAt = now;
+  appendJobTimelineEvent(job, `Failed: ${job.error}`, 'failed', now);
+  incrementMetric('jobs_failed_total', { source: job.source, failureClass: job.failureClass });
+  log.warn('queued job expired before it could start', { jobId: job.id, bundleId: job.bundleId });
+  recordJobHistory(toHistoryEntry(job));
+  settle(job);
+  persistActiveJobs();
+  emitJobsChanged();
+}
+
+function scheduleQueuedDeadline(job: Job): void {
+  clearQueuedDeadline(job.id);
+  if (job.status !== 'queued' || job.deadlineAt === undefined) return;
+  const timer = setTimeout(() => {
+    queuedDeadlineTimers.delete(job.id);
+    if (job.status !== 'queued') return;
+    if (job.deadlineAt !== undefined && job.deadlineAt > Date.now()) {
+      scheduleQueuedDeadline(job);
+      return;
+    }
+    failExpiredQueuedJob(job);
+  }, Math.max(1, job.deadlineAt - Date.now()));
+  timer.unref();
+  queuedDeadlineTimers.set(job.id, timer);
+}
+
+function terminateJobProcess(job: Job): void {
+  const child = job.childProcess;
+  if (!child) return;
+  terminateChildProcess(child, 'SIGTERM');
+  const timer = setTimeout(() => {
+    if (job.childProcess === child) terminateChildProcess(child, 'SIGKILL');
+  }, config.jobProcessGraceSeconds * 1000);
+  timer.unref();
+}
+
+function expireOverdueQueuedJobs(now = Date.now()): void {
+  for (const id of [...queue]) {
+    const job = jobs.get(id);
+    if (job) failExpiredQueuedJob(job, now);
+  }
+}
+
 export function enqueueDecryptJob(
   bundleId: string,
   source: JobSource,
@@ -296,6 +361,7 @@ export function enqueueDecryptJob(
   } else {
     insertByPriority(job.id, priority);
   }
+  scheduleQueuedDeadline(job);
   log.info('job queued', { jobId: job.id, bundleId, externalVersionId, source, priority });
   persistActiveJobs();
   emitJobsChanged();
@@ -419,6 +485,7 @@ export function cancelQueuedJob(id: string, cancelledBy: string): boolean {
 
   const idx = queue.indexOf(id);
   if (idx !== -1) queue.splice(idx, 1);
+  clearQueuedDeadline(id);
 
   job.status = 'failed';
   job.error = `cancelled by ${cancelledBy}`;
@@ -442,7 +509,8 @@ export function cancelRunningJob(id: string, cancelledBy: string): boolean {
   job.cancelledBy = cancelledBy;
   job.progress = 'cancelling…';
   appendJobTimelineEvent(job, job.progress, 'running');
-  terminateChildProcess(job.childProcess, 'SIGTERM');
+  runningJobControllers.get(id)?.abort(new Error(`cancelled by ${cancelledBy}`));
+  terminateJobProcess(job);
   log.info('job cancel requested', { jobId: id, bundleId: job.bundleId, cancelledBy });
   persistActiveJobs();
   emitJobsChanged();
@@ -557,6 +625,7 @@ function takeNextDispatchableJobId(device: DeviceRecord): string | undefined {
 }
 
 function pumpWorkers(): void {
+  expireOverdueQueuedJobs();
   if (!acceptingJobs) return;
   const devices = getEffectiveDevices().filter((d) => d.enabled);
   if (devices.length === 0) return;
@@ -582,7 +651,10 @@ function pumpWorkers(): void {
 }
 
 async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
+  clearQueuedDeadline(job.id);
   job.status = 'running';
+  const controller = new AbortController();
+  runningJobControllers.set(job.id, controller);
   job.startedAt = Date.now();
   job.deviceId = device.id;
   job.attempt = (job.retryCount ?? 0) + 1;
@@ -595,29 +667,29 @@ async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
   emitJobsChanged();
 
   try {
-    const operation = runDecrypt(job, device);
     const remainingMs = job.deadlineAt === undefined ? undefined : Math.max(1, job.deadlineAt - Date.now());
-    if (remainingMs === undefined) {
-      await operation;
-    } else {
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const timeoutSignal = new Promise<'timeout'>((resolve) => {
-        timer = setTimeout(() => {
+    await runWithJobDeadline(
+      (signal) => runDecrypt(job, device, signal),
+      controller,
+      {
+        timeoutMs: remainingMs,
+        graceMs: config.jobProcessGraceSeconds * 1000,
+        onDeadline: () => {
           job.deadlineExceeded = true;
           job.progress = 'job deadline exceeded';
-          terminateChildProcess(job.childProcess, 'SIGTERM');
           emitJobsChanged();
-          resolve('timeout');
-        }, remainingMs);
-      });
-      const result = await Promise.race([operation.then(() => 'done' as const), timeoutSignal]);
-      if (timer) clearTimeout(timer);
-      if (result === 'timeout') {
-        await Promise.race([operation.catch(() => undefined), sleep(config.jobProcessGraceSeconds * 1000)]);
-        terminateChildProcess(job.childProcess, 'SIGKILL');
-        throw new Error('job deadline exceeded');
-      }
-    }
+        },
+        forceStop: () => terminateChildProcess(job.childProcess, 'SIGKILL'),
+        onForceStopTimeout: (error) => {
+          job.progress = 'deadline exceeded; waiting for device work to stop';
+          appendJobTimelineEvent(job, job.progress, 'running');
+          log.error('device work did not stop after force-kill; keeping the device worker reserved', { jobId: job.id, bundleId: job.bundleId, deviceId: device.id, error: error ? String(error) : undefined });
+          emitJobsChanged();
+        },
+      },
+    ).finally(() => {
+      if (runningJobControllers.get(job.id) === controller) runningJobControllers.delete(job.id);
+    });
     job.status = 'done';
     job.finishedAt = Date.now();
     incrementMetric('jobs_completed_total', { source: job.source });
@@ -628,28 +700,37 @@ async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
     persistDoneJobs();
     persistActiveJobs();
   } catch (err) {
-    const message = job.cancelledBy ? `cancelled by ${job.cancelledBy}` : err instanceof Error ? err.message : String(err);
+    let message = job.cancelledBy ? `cancelled by ${job.cancelledBy}` : err instanceof Error ? err.message : String(err);
     if (job.filePath?.startsWith(`${config.artifactDir}/.staging/`)) {
       await rm(job.filePath, { force: true }).catch(() => {});
       job.filePath = undefined;
     }
     job.failureClass = classifyJobFailure(message);
+    const remainingDeadlineMs = job.deadlineAt === undefined ? Number.POSITIVE_INFINITY : job.deadlineAt - Date.now();
     const canRetry = !job.cancelledBy
       && !job.deadlineExceeded
+      && remainingDeadlineMs > 0
       && (job.retryCount ?? 0) < config.jobMaxRetries
       && ['device_transport', 'app_store', 'testflight', 'network', 'storage'].includes(job.failureClass);
     if (canRetry) {
-      job.retryCount = (job.retryCount ?? 0) + 1;
       job.progress = 'retrying after a transient failure…';
       appendJobTimelineEvent(job, job.progress, 'running');
       log.warn('job failed, retrying once after backoff', { jobId: job.id, bundleId: job.bundleId, deviceId: device.id, error: message });
       persistActiveJobs();
       emitJobsChanged();
-      await sleep(RETRY_BACKOFF_MS);
+      runningJobControllers.set(job.id, controller);
+      try {
+        await delayWithSignal(Math.min(RETRY_BACKOFF_MS, remainingDeadlineMs), controller.signal);
+      } catch (error) {
+        message = error instanceof Error ? error.message : String(error);
+      } finally {
+        if (runningJobControllers.get(job.id) === controller) runningJobControllers.delete(job.id);
+      }
       if (job.cancelledBy) {
         job.status = 'failed';
         job.finishedAt = Date.now();
         job.error = `cancelled by ${job.cancelledBy}`;
+        job.failureClass = classifyJobFailure(job.error);
         appendJobTimelineEvent(job, job.error, 'failed', job.finishedAt);
         log.info('job cancelled during retry backoff', { jobId: job.id, bundleId: job.bundleId, cancelledBy: job.cancelledBy });
         persistActiveJobs();
@@ -658,9 +739,17 @@ async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
         settle(job);
         return;
       }
-      return runOneJob(device, job);
+      if (job.deadlineAt !== undefined && Date.now() >= job.deadlineAt) {
+        job.deadlineExceeded = true;
+        job.progress = 'job deadline exceeded';
+        message = job.progress;
+      } else if (!controller.signal.aborted) {
+        job.retryCount = (job.retryCount ?? 0) + 1;
+        return runOneJob(device, job);
+      }
     }
 
+    job.failureClass = classifyJobFailure(message);
     job.status = 'failed';
     job.finishedAt = Date.now();
     incrementMetric('jobs_failed_total', { source: job.source, failureClass: job.failureClass });
@@ -811,6 +900,7 @@ export async function shutdownJobs(timeoutMs = 15_000): Promise<void> {
   stopAcceptingJobs();
   const now = Date.now();
   for (const jobId of queue.splice(0)) {
+    clearQueuedDeadline(jobId);
     const job = jobs.get(jobId);
     if (!job || job.status !== 'queued') continue;
     job.status = 'failed';
@@ -820,8 +910,12 @@ export async function shutdownJobs(timeoutMs = 15_000): Promise<void> {
     recordJobHistory(toHistoryEntry(job));
     settle(job);
   }
+  for (const jobId of [...queuedDeadlineTimers.keys()]) clearQueuedDeadline(jobId);
   for (const job of jobs.values()) {
-    if (job.status === 'running') terminateChildProcess(job.childProcess, 'SIGTERM');
+    if (job.status === 'running') {
+      runningJobControllers.get(job.id)?.abort(new Error('dkrypt is shutting down'));
+      terminateJobProcess(job);
+    }
   }
   persistActiveJobs();
   const runs = [...runningJobs.values()];

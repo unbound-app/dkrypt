@@ -12,6 +12,7 @@ import {
 } from '#idevice.js';
 import { getPrimaryDevice, type DeviceRecord } from '#store/state.js';
 import { hasBridgeCapabilities, hasBridgeCapabilitySet, TESTFLIGHT_DEVICE_CATALOG_CAPABILITIES, TESTFLIGHT_LIFECYCLE_CAPABILITIES } from '#bridgeProtocol.js';
+import { delayWithSignal, throwIfAborted } from '#util/abort.js';
 
 function primaryDevice() {
   const device = getPrimaryDevice();
@@ -70,18 +71,21 @@ function hasRequiredBridgeCapabilities(response: Record<string, unknown>): boole
   return hasBridgeCapabilities('testflight', response.capabilities);
 }
 
-async function launchTestFlight(conn: DeviceClient, wasRunning: boolean): Promise<void> {
-  const response = await sendSpringBoardBridgeRequest(conn, { action: 'launch_app', bundleId: 'com.apple.TestFlight' });
+async function launchTestFlight(conn: DeviceClient, wasRunning: boolean, signal?: AbortSignal): Promise<void> {
+  const response = await sendSpringBoardBridgeRequest(conn, { action: 'launch_app', bundleId: 'com.apple.TestFlight' }, 20_000, signal);
+  throwIfAborted(signal);
   if (!wasRunning && response?.launchResult !== 0) {
     throw new Error(`autoinstall SpringBoard launch_app failed: ${JSON.stringify(response)}`);
   }
 }
 
-async function waitForBridgeReady(conn: DeviceClient, requiredCapabilities: readonly string[] = [], timeoutMs = 20_000): Promise<void> {
+async function waitForBridgeReady(conn: DeviceClient, requiredCapabilities: readonly string[] = [], timeoutMs = 20_000, signal?: AbortSignal): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
+    throwIfAborted(signal);
     try {
-      const response = await sendTestFlightBridgeRequest(conn, { action: 'status' }, 3_000);
+      const response = await sendTestFlightBridgeRequest(conn, { action: 'status' }, 3_000, signal);
+      throwIfAborted(signal);
       const hasBaseCapabilities = hasRequiredBridgeCapabilities(response);
       const hasRequestedCapabilities = hasBridgeCapabilitySet(response?.capabilities, requiredCapabilities);
       if (response?.hasInstaller && response?.hasCatalogManager && hasBaseCapabilities && hasRequestedCapabilities) return;
@@ -89,9 +93,10 @@ async function waitForBridgeReady(conn: DeviceClient, requiredCapabilities: read
         throw new BridgeError({ code: 'unsupported', stage: 'capability_negotiation', message: 'installed autoinstall package does not support the required TestFlight lifecycle capabilities', retryable: false });
       }
     } catch (error) {
+      throwIfAborted(signal);
       if (error instanceof BridgeError && !error.details.retryable) throw error;
     }
-    await new Promise((r) => setTimeout(r, TESTFLIGHT_BRIDGE_READY_POLL_INTERVAL_MS));
+    await delayWithSignal(TESTFLIGHT_BRIDGE_READY_POLL_INTERVAL_MS, signal);
   }
   throw new Error('autoinstall bridge did not become ready within timeout');
 }
@@ -119,17 +124,20 @@ function invalidateTestFlightBridge(device: DeviceRecord): void {
   testFlightBridgeReady.delete(testFlightBridgeKey(device));
 }
 
-async function ensureTestFlightRunningOnConnection(conn: DeviceClient, device: DeviceRecord, requiredCapabilities: readonly string[]): Promise<void> {
+async function ensureTestFlightRunningOnConnection(conn: DeviceClient, device: DeviceRecord, requiredCapabilities: readonly string[], signal?: AbortSignal): Promise<void> {
+  throwIfAborted(signal);
   if (hasCachedTestFlightBridge(device, requiredCapabilities)) return;
   const wasRunning = await isTestFlightRunning(conn);
+  throwIfAborted(signal);
   log.info(
     wasRunning
       ? 'TestFlight already running, bringing to foreground to confirm the bridge is responsive'
       : 'launching TestFlight autonomously via autoinstall SpringBoard bridge',
   );
-  await launchTestFlight(conn, wasRunning);
-  await new Promise((r) => setTimeout(r, wasRunning ? 2_000 : 3_000));
-  await waitForBridgeReady(conn, requiredCapabilities);
+  await launchTestFlight(conn, wasRunning, signal);
+  throwIfAborted(signal);
+  await delayWithSignal(wasRunning ? 2_000 : 3_000, signal);
+  await waitForBridgeReady(conn, requiredCapabilities, 20_000, signal);
   cacheTestFlightBridge(device, requiredCapabilities);
 }
 
@@ -242,7 +250,9 @@ export async function installBuild(
   operationId?: string,
   retryAfterMs = TESTFLIGHT_INSTALL_RETRY_AFTER_MS,
   device = primaryDevice(),
+  signal?: AbortSignal,
 ): Promise<InstallVerification> {
+  throwIfAborted(signal);
   if (!SAFE_BUNDLE_ID_RE.test(build.bundleId)) {
     throw new Error(`refusing to install build with unsafe bundleId: ${JSON.stringify(build.bundleId)}`);
   }
@@ -254,9 +264,12 @@ export async function installBuild(
 
   report('ensuring TestFlight is running');
   return withSSH(device, async (conn) => {
-    await ensureTestFlightRunningOnConnection(conn, device, []);
+    throwIfAborted(signal);
+    await ensureTestFlightRunningOnConnection(conn, device, [], signal);
+    throwIfAborted(signal);
     report('sending install request to TestFlight');
-    await sendTestFlightBridgeRequest(conn, { action: 'install', appId, build, operationId, requestId: operationId });
+    await sendTestFlightBridgeRequest(conn, { action: 'install', appId, build, operationId, requestId: operationId }, 20_000, signal);
+    throwIfAborted(signal);
     report('TestFlight accepted the install request, waiting for it to land');
 
     const start = Date.now();
@@ -265,9 +278,12 @@ export async function installBuild(
     let lastUnexpectedBuild: string | undefined;
     let installRetried = false;
     while (Date.now() < deadline) {
+      throwIfAborted(signal);
       const bundlePath = await findInstalledBundlePath(conn, build.bundleId);
+      throwIfAborted(signal);
       if (bundlePath) {
         const installedVersion = await readInstalledBundleVersions(conn, bundlePath);
+        throwIfAborted(signal);
         const { buildVersion } = installedVersion;
         if (buildVersion === build.cfBundleVersion) {
           report(`install verified: ${installedVersion.shortVersion ?? build.cfBundleShortVersion} build ${buildVersion} in ${Math.round((Date.now() - start) / 1000)}s`);
@@ -281,15 +297,16 @@ export async function installBuild(
       if (!installRetried && Date.now() - start >= retryAfterMs) {
         installRetried = true;
         report('reissuing the TestFlight install request after no version change');
-        await sendTestFlightBridgeRequest(conn, { action: 'install', appId, build, operationId, requestId: operationId });
+        await sendTestFlightBridgeRequest(conn, { action: 'install', appId, build, operationId, requestId: operationId }, 20_000, signal);
+        throwIfAborted(signal);
       }
       const elapsedSec = Math.round((Date.now() - start) / 1000);
       if (elapsedSec - lastReportedAt >= 10) {
         lastReportedAt = elapsedSec;
         report(`still waiting for TestFlight to finish installing (${elapsedSec}s elapsed)`);
       }
-      await new Promise((r) => setTimeout(r, 5_000));
+      await delayWithSignal(5_000, signal);
     }
     throw new Error(`timed out waiting for ${build.bundleId} to reach build ${build.cfBundleVersion} after ${Math.round(waitTimeoutMs / 1000)}s`);
-  });
+  }, signal);
 }

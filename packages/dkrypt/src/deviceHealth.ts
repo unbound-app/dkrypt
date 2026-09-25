@@ -7,6 +7,7 @@ import { getConsecutiveDeviceHealthFailures, getEffectiveDevices, getEffectiveSe
 import { getDiskUsage } from '#util/diskUsage.js';
 import { getCachedDeviceHealth, setCachedDeviceHealth } from '#deviceHealthCache.js';
 import { incrementMetric, observeMetric } from '#metrics.js';
+import { throwIfAborted } from '#util/abort.js';
 
 const log = scopedLogger('idevice');
 
@@ -291,22 +292,26 @@ export interface DeviceTelemetry {
   bridgeHeartbeats: Partial<Record<'springboard' | 'testflight' | 'appstore', BridgeHeartbeat>>;
 }
 
-async function runHealthQuery<T>(name: string, query: () => Promise<T>, fallback: T): Promise<T> {
+async function runHealthQuery<T>(name: string, query: () => Promise<T>, fallback: T, signal?: AbortSignal): Promise<T> {
+  throwIfAborted(signal);
   try {
-    return await query();
+    const result = await query();
+    throwIfAborted(signal);
+    return result;
   } catch (err) {
+    throwIfAborted(signal);
     log.warn('device telemetry query failed', { name, error: String(err) });
     return fallback;
   }
 }
 
-export async function collectDeviceTelemetry(queries: DeviceHealthQueries): Promise<DeviceTelemetry> {
-  const testFlightRunning = await runHealthQuery('TestFlight process status', queries.testFlightRunning, false);
-  const springBoardStatus = await runHealthQuery('SpringBoard bridge status', queries.springBoardStatus, { ok: false });
-  const battery = await runHealthQuery('battery status', queries.battery, undefined);
-  const storage = await runHealthQuery('storage status', queries.storage, undefined);
-  const network = await runHealthQuery('network status', queries.network, undefined);
-  const bridgeHeartbeats = await runHealthQuery('autoinstall heartbeats', queries.bridgeHeartbeats, {});
+export async function collectDeviceTelemetry(queries: DeviceHealthQueries, signal?: AbortSignal): Promise<DeviceTelemetry> {
+  const testFlightRunning = await runHealthQuery('TestFlight process status', queries.testFlightRunning, false, signal);
+  const springBoardStatus = await runHealthQuery('SpringBoard bridge status', queries.springBoardStatus, { ok: false }, signal);
+  const battery = await runHealthQuery('battery status', queries.battery, undefined, signal);
+  const storage = await runHealthQuery('storage status', queries.storage, undefined, signal);
+  const network = await runHealthQuery('network status', queries.network, undefined, signal);
+  const bridgeHeartbeats = await runHealthQuery('autoinstall heartbeats', queries.bridgeHeartbeats, {}, signal);
 
   return {
     testFlightRunning,
@@ -415,7 +420,7 @@ function cacheDeviceHealth(deviceId: string, value: DeviceHealth): void {
   setCachedDeviceHealth(deviceId, stabilizeDeviceHealth(lastKnownGoodDeviceHealth.get(deviceId), value, failures));
 }
 
-async function computeDeviceHealth(device: DeviceRecord): Promise<DeviceHealth> {
+async function computeDeviceHealth(device: DeviceRecord, signal?: AbortSignal): Promise<DeviceHealth> {
   try {
     return await withSSH(device, async (conn) => {
       const telemetry = await collectDeviceTelemetry({
@@ -425,7 +430,7 @@ async function computeDeviceHealth(device: DeviceRecord): Promise<DeviceHealth> 
         storage: () => queryDeviceStorage(conn),
         network: () => queryNetworkStatus(conn),
         bridgeHeartbeats: () => readBridgeHeartbeats(conn),
-      });
+      }, signal);
       const health: DeviceHealth = {
         reachable: true,
         transport: device.transport ?? (device.udid ? 'usb' : 'wifi'),
@@ -467,13 +472,15 @@ async function computeDeviceHealth(device: DeviceRecord): Promise<DeviceHealth> 
         checkedAt: Date.now(),
       };
       return { ...health, readiness: getDeviceReadiness(health) };
-    });
+    }, signal);
   } catch (err) {
+    throwIfAborted(signal);
     const error = err instanceof Error ? err.message : String(err);
     log.warn('device health check failed', { deviceId: device.id, error });
     if (isRustDeviceConnection(device)) {
       try {
         const bridge = await getRustDeviceBridgeHealth(device);
+        throwIfAborted(signal);
         if (bridge.state === 'ready') {
           const health: DeviceHealth = {
             reachable: true,
@@ -537,22 +544,28 @@ export function getDeviceHealthFailureCount(deviceId: string): number {
   return Math.max(deviceHealthFailures.get(deviceId) ?? 0, getConsecutiveDeviceHealthFailures(deviceId));
 }
 
-export async function getDeviceHealth(deviceId: string, force = false): Promise<DeviceHealth> {
+export async function getDeviceHealth(deviceId: string, force = false, signal?: AbortSignal): Promise<DeviceHealth> {
+  throwIfAborted(signal);
   const cached = getCachedDeviceHealth(deviceId);
   const cacheTtl = cached?.value.reachable === true && cached.value.testFlightBridgeReachable !== false
     ? HEALTH_CACHE_TTL_MS
     : HEALTH_FAILURE_CACHE_TTL_MS;
   if (!force && cached && Date.now() - cached.at < cacheTtl) return cached.value;
-  const value = await coalesceDeviceHealthRequest(pendingDeviceHealth, deviceId, async () => {
+  const request = async () => {
     const device = getEffectiveDevices().find((d) => d.id === deviceId);
     if (!device) {
       const missing: DeviceHealth = { reachable: false, error: 'device not found', checkedAt: Date.now(), readiness: { score: 0, state: 'blocked', reasons: ['device is unreachable'] } };
       return missing;
     }
-    const result = await computeDeviceHealth(device);
+    const result = await computeDeviceHealth(device, signal);
+    throwIfAborted(signal);
     cacheDeviceHealth(deviceId, result);
     return result;
-  });
+  };
+  const value = signal
+    ? await request()
+    : await coalesceDeviceHealthRequest(pendingDeviceHealth, deviceId, request);
+  throwIfAborted(signal);
   return getCachedDeviceHealth(deviceId)?.value ?? value;
 }
 

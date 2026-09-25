@@ -1,10 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { createReadStream, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { createReadStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdir, readdir, rename, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { config } from '#config.js';
 import { scopedLogger } from '#logger.js';
 import { openStateCollectionDatabase, readStateCollection, replaceStateCollection } from '#store/sqlite.js';
+import { throwIfAborted } from '#util/abort.js';
 
 const log = scopedLogger('artifacts');
 
@@ -115,8 +116,17 @@ function persistIndex(): void {
   mkdirSync(config.stateDir, { recursive: true });
   replaceStateCollection(artifactDatabase, 'artifacts', index.artifacts.map((artifact) => ({ id: artifact.id, payload: artifact, updatedAt: artifact.lastAccessedAt })));
   const temporary = `${indexPath}.${process.pid}.${randomUUID()}.tmp`;
-  writeFileSync(temporary, JSON.stringify(index));
-  renameSync(temporary, indexPath);
+  try {
+    writeFileSync(temporary, JSON.stringify(index));
+    renameSync(temporary, indexPath);
+  } catch (error) {
+    try {
+      rmSync(temporary, { force: true });
+    } catch (cleanupError) {
+      log.warn('failed to remove a temporary compatibility artifact index', { path: temporary, error: String(cleanupError) });
+    }
+    log.warn('failed to refresh the compatibility artifact index after persisting metadata', { error: String(error) });
+  }
 }
 
 export function closeArtifactDatabase(): void {
@@ -258,28 +268,28 @@ async function sha256File(filePath: string): Promise<string> {
   return hash.digest('hex');
 }
 
-async function evictForBytes(requiredBytes: number, protectedKeys: Set<string>): Promise<void> {
+function artifactsToEvict(requiredBytes: number, protectedKeys: Set<string>): ArtifactRecord[] {
   let usedBytes = getArtifactStorageStats().usedBytes;
   if (requiredBytes > config.artifactMaxBytes) {
     throw new Error(`artifact is ${requiredBytes} bytes, larger than the ${config.artifactMaxBytes}-byte storage limit`);
   }
 
   const candidates = index.artifacts
-    .filter((artifact) => !protectedKeys.has(artifact.key))
+    .filter((artifact) => existsSync(artifact.filePath) && !protectedKeys.has(artifact.key))
     .sort((a, b) => a.lastAccessedAt - b.lastAccessedAt || a.createdAt - b.createdAt);
+  const evictions: ArtifactRecord[] = [];
 
   for (const candidate of candidates) {
     if (usedBytes + requiredBytes <= config.artifactMaxBytes) break;
-    const size = existsSync(candidate.filePath) ? candidate.fileSizeBytes : 0;
-    await rm(candidate.filePath, { force: true });
-    index.artifacts = index.artifacts.filter((artifact) => artifact.id !== candidate.id);
-    usedBytes -= size;
-    log.info('evicted artifact for storage quota', { artifactId: candidate.id, bundleId: candidate.bundleId, sizeBytes: size });
+    evictions.push(candidate);
+    usedBytes -= candidate.fileSizeBytes;
   }
 
   if (usedBytes + requiredBytes > config.artifactMaxBytes) {
     throw new Error('unable to free enough artifact storage');
   }
+
+  return evictions;
 }
 
 export async function promoteArtifact(input: {
@@ -292,21 +302,29 @@ export async function promoteArtifact(input: {
   buildNumber?: string;
   stagingPath: string;
   sourceJobId?: string;
+  signal?: AbortSignal;
 }): Promise<ArtifactRecord> {
   return withMutation(async () => {
+    throwIfAborted(input.signal);
     await mkdir(config.artifactDir, { recursive: true });
+    throwIfAborted(input.signal);
     const existing = getArtifactByKey(input.key);
     if (existing) {
       await rm(input.stagingPath, { force: true });
+      throwIfAborted(input.signal);
       if (updateArtifactMetadata(existing, input.channel, input.versionLabel, input.buildNumber)) persistIndex();
       touchArtifactUnsafe(existing);
       return existing;
     }
 
     const file = await stat(input.stagingPath);
+    throwIfAborted(input.signal);
     const sha256 = await sha256File(input.stagingPath);
-    index.artifacts = index.artifacts.filter((artifact) => artifact.key !== input.key || existsSync(artifact.filePath));
-    await evictForBytes(file.size, new Set([input.key]));
+    throwIfAborted(input.signal);
+    const previousArtifacts = index.artifacts;
+    const staleArtifacts = previousArtifacts.filter((artifact) => !existsSync(artifact.filePath));
+    const evictedArtifacts = artifactsToEvict(file.size, new Set([input.key]));
+    throwIfAborted(input.signal);
     const now = Date.now();
     const artifact: ArtifactRecord = {
       id: randomUUID(),
@@ -326,8 +344,34 @@ export async function promoteArtifact(input: {
       sourceJobId: input.sourceJobId,
     };
     await rename(input.stagingPath, artifact.filePath);
-    index.artifacts.push(artifact);
-    persistIndex();
+    if (input.signal?.aborted) {
+      await rm(artifact.filePath, { force: true }).catch((error) => log.warn('failed to remove an artifact after cancellation', { path: artifact.filePath, error: String(error) }));
+      throwIfAborted(input.signal);
+    }
+    const removedIds = new Set([...staleArtifacts, ...evictedArtifacts].map((candidate) => candidate.id));
+    index.artifacts = [...previousArtifacts.filter((candidate) => !removedIds.has(candidate.id)), artifact];
+    try {
+      persistIndex();
+    } catch (error) {
+      index.artifacts = previousArtifacts;
+      await rm(artifact.filePath, { force: true }).catch((cleanupError) => log.warn('failed to remove an artifact after promotion failed', { path: artifact.filePath, error: String(cleanupError) }));
+      throw error;
+    }
+    for (const evicted of evictedArtifacts) {
+      try {
+        rmSync(evicted.filePath, { force: true });
+        log.info('evicted artifact for storage quota', { artifactId: evicted.id, bundleId: evicted.bundleId, sizeBytes: evicted.fileSizeBytes });
+      } catch (error) {
+        log.warn('failed to remove an evicted artifact file', { artifactId: evicted.id, path: evicted.filePath, error: String(error) });
+      }
+    }
+    for (const stale of staleArtifacts) {
+      try {
+        rmSync(stale.filePath, { force: true });
+      } catch (error) {
+        log.warn('failed to remove a stale artifact file', { artifactId: stale.id, path: stale.filePath, error: String(error) });
+      }
+    }
     return artifact;
   });
 }
@@ -406,8 +450,28 @@ export async function reconcileArtifactStore(): Promise<void> {
     }
 
     const stats = getArtifactStorageStats();
-    if (stats.usedBytes > config.artifactMaxBytes) await evictForBytes(0, new Set());
-    persistIndex();
+    if (stats.usedBytes > config.artifactMaxBytes) {
+      const previousArtifacts = index.artifacts;
+      const evictedArtifacts = artifactsToEvict(0, new Set());
+      const evictedIds = new Set(evictedArtifacts.map((artifact) => artifact.id));
+      index.artifacts = previousArtifacts.filter((artifact) => !evictedIds.has(artifact.id));
+      try {
+        persistIndex();
+      } catch (error) {
+        index.artifacts = previousArtifacts;
+        throw error;
+      }
+      for (const evicted of evictedArtifacts) {
+        try {
+          await rm(evicted.filePath, { force: true });
+          log.info('evicted artifact for storage quota', { artifactId: evicted.id, bundleId: evicted.bundleId, sizeBytes: evicted.fileSizeBytes });
+        } catch (error) {
+          log.warn('failed to remove an evicted artifact file', { artifactId: evicted.id, path: evicted.filePath, error: String(error) });
+        }
+      }
+    } else {
+      persistIndex();
+    }
   });
 }
 

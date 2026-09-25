@@ -4,6 +4,7 @@ const installedInfoPlist = '/var/containers/Bundle/Application/B7CC6241-7F24-468
 const originalSetTimeout = globalThis.setTimeout;
 let installRequests = 0;
 let installedBuild = '107127';
+let abortOnInstall: AbortController | undefined;
 const lifecycleActions: string[] = [];
 const listAppRefreshes: boolean[] = [];
 
@@ -27,6 +28,7 @@ mock.module('#idevice.js', () => ({
     }
     if (request.action === 'install') {
       installRequests += 1;
+      abortOnInstall?.abort(new Error('job deadline exceeded'));
       if (installRequests >= 2) installedBuild = '107128';
     }
     if (request.action === 'subscribe_invite' || request.action === 'status_invite' || request.action === 'unsubscribe_invite') {
@@ -57,6 +59,7 @@ describe('installBuild', () => {
 
   beforeEach(() => {
     installRequests = 0;
+    abortOnInstall = undefined;
     installedBuild = '107127';
     lifecycleActions.length = 0;
     listAppRefreshes.length = 0;
@@ -87,6 +90,20 @@ describe('installBuild', () => {
       buildVersion: '107128',
     });
     expect(installRequests).toBe(2);
+  });
+
+  test('stops TestFlight install polling as soon as the job is aborted', async () => {
+    const controller = new AbortController();
+    abortOnInstall = controller;
+
+    await expect(installBuild(985746746, {
+      id: 225052693,
+      bundleId: 'com.hammerandchisel.discord',
+      cfBundleShortVersion: '341.0',
+      cfBundleVersion: '999999',
+    }, undefined, 30, 'testflight-abort', 0, undefined, controller.signal)).rejects.toThrow('job deadline exceeded');
+
+    expect(installRequests).toBe(1);
   });
 
   test('supports authenticated invite lifecycle actions and status verification', async () => {

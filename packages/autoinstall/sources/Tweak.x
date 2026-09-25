@@ -316,6 +316,73 @@ static NSArray *autoinstallConfirmMatching(NSString *match);
 static BOOL autoinstallValidTestFlightInvite(NSString *urlString);
 static void autoinstallScheduleInviteControls(NSUInteger attempt);
 
+static NSString * const kAutoConfirmFlagPath = @"/tmp/autoinstall-autoconfirm.flag";
+static NSTimeInterval const kAutoConfirmLifetimeSeconds = 360.0;
+
+static NSArray *autoinstallAutoConfirmFlagPaths(void) {
+    return @[
+        kAutoConfirmFlagPath,
+        @"/private/var/mobile/Library/Caches/com.apple.PassbookUIService/autoinstall-autoconfirm.flag",
+        @"/private/var/mobile/Library/Caches/com.apple.AuthKitUIService/autoinstall-autoconfirm.flag",
+        @"/private/var/mobile/Library/Caches/com.apple.ios.StoreKitUIService/autoinstall-autoconfirm.flag"
+    ];
+}
+
+static void autoinstallClearAutoConfirmFlags(void) {
+    NSFileManager *fileManager = [NSFileManager defaultManager];
+    for (NSString *path in autoinstallAutoConfirmFlagPaths()) [fileManager removeItemAtPath:path error:nil];
+}
+
+static NSString *autoinstallAutoConfirmMatchAtPath(NSString *path) {
+    NSFileManager *fileManager = [NSFileManager defaultManager];
+    if (![fileManager fileExistsAtPath:path]) return nil;
+    NSString *contents = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
+    NSString *trimmed = [contents stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if (!trimmed.length) {
+        autoinstallClearAutoConfirmFlags();
+        return nil;
+    }
+
+    NSArray *lines = [trimmed componentsSeparatedByString:@"\n"];
+    NSString *header = lines.firstObject ?: @"";
+    NSString *match = trimmed;
+    if ([header hasPrefix:@"expiresAtMs="]) {
+        NSString *expiryValue = [header substringFromIndex:[@"expiresAtMs=" length]];
+        NSScanner *scanner = [NSScanner scannerWithString:expiryValue];
+        long long expiryMs = 0;
+        if (![scanner scanLongLong:&expiryMs] || !scanner.isAtEnd || expiryMs <= (long long)(NSDate.date.timeIntervalSince1970 * 1000.0)) {
+            autoinstallClearAutoConfirmFlags();
+            return nil;
+        }
+        match = lines.count > 1 ? [[lines subarrayWithRange:NSMakeRange(1, lines.count - 1)] componentsJoinedByString:@"\n"] : @"";
+    } else {
+        NSDictionary *attributes = [fileManager attributesOfItemAtPath:path error:nil];
+        NSDate *modifiedAt = attributes[NSFileModificationDate];
+        if (!modifiedAt || -modifiedAt.timeIntervalSinceNow > kAutoConfirmLifetimeSeconds) {
+            autoinstallClearAutoConfirmFlags();
+            return nil;
+        }
+    }
+
+    match = [match stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    return match.length ? match : @"Install";
+}
+
+static NSString *autoinstallSyncAutoConfirmFlag(void) {
+    NSString *match = autoinstallAutoConfirmMatchAtPath(kAutoConfirmFlagPath);
+    if (!match) return nil;
+    NSString *contents = [NSString stringWithContentsOfFile:kAutoConfirmFlagPath encoding:NSUTF8StringEncoding error:nil];
+    NSArray *paths = autoinstallAutoConfirmFlagPaths();
+    NSFileManager *fileManager = [NSFileManager defaultManager];
+    for (NSUInteger index = 1; index < paths.count; index++) {
+        NSString *path = paths[index];
+        [fileManager createDirectoryAtPath:[path stringByDeletingLastPathComponent] withIntermediateDirectories:YES attributes:nil error:nil];
+        NSString *existing = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
+        if (![existing isEqualToString:contents]) [contents writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    }
+    return match;
+}
+
 static BOOL isSpringBoard(void) {
     return [[[NSBundle mainBundle] bundleIdentifier] isEqualToString:@"com.apple.springboard"];
 }
@@ -569,19 +636,14 @@ static void startSpringBoardSide(void) {
             }
         }
 
-        if ([fm fileExistsAtPath:@"/tmp/autoinstall-autoconfirm.flag"]) {
-            for (NSString *dir in syncDirs) {
-                [fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
-                NSString *dst = [dir stringByAppendingPathComponent:@"autoinstall-autoconfirm.flag"];
-                if (![fm fileExistsAtPath:dst]) {
-                    [fm copyItemAtPath:@"/tmp/autoinstall-autoconfirm.flag" toPath:dst error:nil];
-                }
-            }
-        }
+        autoinstallSyncAutoConfirmFlag();
 
         dispatch_async(dispatch_get_main_queue(), ^{
             autoinstallHandlePasswordIfPresent();
-            autoinstallConfirmMatching(@"Install");
+            NSString *match = autoinstallAutoConfirmMatchAtPath(kAutoConfirmFlagPath);
+            if (!match) return;
+            NSArray *acted = autoinstallConfirmMatching(match);
+            if (acted.count > 0) autoinstallClearAutoConfirmFlags();
         });
 
         if (![fm fileExistsAtPath:kSBRequestPath]) return;
@@ -1604,25 +1666,25 @@ static void autoinstallScheduleInviteControls(NSUInteger attempt) {
     });
 }
 
-static void autoinstallScheduleConfirm(NSString *match, NSUInteger attempt) {
+static void autoinstallScheduleConfirm(NSUInteger attempt) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        NSString *pbFlag = @"/private/var/mobile/Library/Caches/com.apple.PassbookUIService/autoinstall-autoconfirm.flag";
-        BOOL flagExists = [[NSFileManager defaultManager] fileExistsAtPath:@"/tmp/autoinstall-autoconfirm.flag"] ||
-                          [[NSFileManager defaultManager] fileExistsAtPath:pbFlag];
-        if (!gIsPassbookProcess && !flagExists) {
+        NSString *activeMatch = autoinstallAutoConfirmMatchAtPath(kAutoConfirmFlagPath) ?:
+                                autoinstallAutoConfirmMatchAtPath(@"/private/var/mobile/Library/Caches/com.apple.PassbookUIService/autoinstall-autoconfirm.flag");
+        if (!activeMatch) {
             gConfirmAttemptActive = NO;
             return;
         }
 
-        NSArray *acted = autoinstallConfirmMatching(match);
-        autoinstallLog([NSString stringWithFormat:@"auto-confirm match=%@ attempt=%lu acted=%@", match, (unsigned long)(attempt + 1), acted]);
+        NSArray *acted = autoinstallConfirmMatching(activeMatch);
+        autoinstallLog([NSString stringWithFormat:@"auto-confirm match=%@ attempt=%lu acted=%@", activeMatch, (unsigned long)(attempt + 1), acted]);
+        if (acted.count > 0) autoinstallClearAutoConfirmFlags();
         if (acted.count > 0 || attempt >= 20) {
             gConfirmDoneThisSheet = acted.count > 0;
             gConfirmAttemptActive = NO;
             return;
         }
 
-        autoinstallScheduleConfirm(match, attempt + 1);
+        autoinstallScheduleConfirm(attempt + 1);
     });
 }
 
@@ -1637,16 +1699,13 @@ static void startPassbookSide(void) {
         autoinstallHandlePasswordIfPresent();
 
         if (gConfirmDoneThisSheet) return;
-        NSString *match = @"Install";
-        NSString *pbFlag = @"/private/var/mobile/Library/Caches/com.apple.PassbookUIService/autoinstall-autoconfirm.flag";
-        if ([[NSFileManager defaultManager] fileExistsAtPath:pbFlag]) {
-            NSString *m = [NSString stringWithContentsOfFile:pbFlag encoding:NSUTF8StringEncoding error:nil];
-            m = [m stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-            if (m.length) match = m;
-        }
+        NSString *match = autoinstallAutoConfirmMatchAtPath(kAutoConfirmFlagPath) ?:
+                          autoinstallAutoConfirmMatchAtPath(@"/private/var/mobile/Library/Caches/com.apple.PassbookUIService/autoinstall-autoconfirm.flag");
+        if (!match) return;
         NSArray *acted = autoinstallConfirmMatching(match);
         if (acted.count > 0) {
             autoinstallLog([NSString stringWithFormat:@"[PB-Timer] auto-confirmed match=%@ acted=%@", match, acted]);
+            autoinstallClearAutoConfirmFlags();
             gConfirmDoneThisSheet = YES;
         }
         }
@@ -1664,7 +1723,11 @@ static void startAuthUIServiceSide(void) {
     dispatch_source_set_event_handler(gAuthUIBridgeTimer, ^{
         @autoreleasepool {
         autoinstallHandlePasswordIfPresent();
-        autoinstallConfirmMatching(@"Install");
+        NSString *match = autoinstallAutoConfirmMatchAtPath(kAutoConfirmFlagPath) ?:
+                          autoinstallAutoConfirmMatchAtPath(@"/private/var/mobile/Library/Caches/com.apple.AuthKitUIService/autoinstall-autoconfirm.flag");
+        if (!match) return;
+        NSArray *acted = autoinstallConfirmMatching(match);
+        if (acted.count > 0) autoinstallClearAutoConfirmFlags();
         }
     });
     dispatch_resume(gAuthUIBridgeTimer);
@@ -1683,22 +1746,11 @@ static void startAuthUIServiceSide(void) {
         autoinstallEnableAX();
         autoinstallHandlePasswordIfPresent();
         if (gConfirmDoneThisSheet || gConfirmAttemptActive) return;
-        NSString *pbFlag = @"/private/var/mobile/Library/Caches/com.apple.PassbookUIService/autoinstall-autoconfirm.flag";
-        BOOL flagExists = [[NSFileManager defaultManager] fileExistsAtPath:@"/tmp/autoinstall-autoconfirm.flag"] ||
-                          [[NSFileManager defaultManager] fileExistsAtPath:pbFlag];
-        if (!gIsPassbookProcess && !gIsAuthUIService && !flagExists) return;
+        NSString *match = autoinstallAutoConfirmMatchAtPath(kAutoConfirmFlagPath) ?:
+                          autoinstallAutoConfirmMatchAtPath(@"/private/var/mobile/Library/Caches/com.apple.PassbookUIService/autoinstall-autoconfirm.flag");
+        if (!match) return;
         gConfirmAttemptActive = YES;
-        NSString *match = @"Install";
-        if ([[NSFileManager defaultManager] fileExistsAtPath:@"/tmp/autoinstall-autoconfirm.flag"]) {
-            NSString *m = [NSString stringWithContentsOfFile:@"/tmp/autoinstall-autoconfirm.flag" encoding:NSUTF8StringEncoding error:nil];
-            m = [m stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-            if (m.length) match = m;
-        } else if ([[NSFileManager defaultManager] fileExistsAtPath:pbFlag]) {
-            NSString *m = [NSString stringWithContentsOfFile:pbFlag encoding:NSUTF8StringEncoding error:nil];
-            m = [m stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-            if (m.length) match = m;
-        }
-        autoinstallScheduleConfirm(match, 0);
+        autoinstallScheduleConfirm(0);
     } @catch (NSException *e) {}
 }
 
@@ -1719,7 +1771,7 @@ static void startAuthUIServiceSide(void) {
     if (gIsPassbookProcess) {
         gConfirmDoneThisSheet = NO;
         gConfirmAttemptActive = NO;
-        autoinstallScheduleConfirm(@"Install", 0);
+        autoinstallScheduleConfirm(0);
     }
 }
 
@@ -1857,14 +1909,15 @@ static void startAppStoreSide(void) {
             autoinstallHandlePasswordIfPresent();
         });
 
-        if ([fm fileExistsAtPath:@"/tmp/autoinstall-autoconfirm.flag"]) {
+        NSString *autoConfirmMatch = autoinstallAutoConfirmMatchAtPath(kAutoConfirmFlagPath);
+        if (autoConfirmMatch) {
             dispatch_async(dispatch_get_main_queue(), ^{
-                NSString *match = [NSString stringWithContentsOfFile:@"/tmp/autoinstall-autoconfirm.flag" encoding:NSUTF8StringEncoding error:nil] ?: @"Install";
-                match = [match stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-                if (!match.length) match = @"Install";
+                NSString *match = autoinstallAutoConfirmMatchAtPath(kAutoConfirmFlagPath);
+                if (!match) return;
                 NSArray *acted = autoinstallConfirmMatching(match);
                 if (acted.count > 0) {
                     autoinstallLog([NSString stringWithFormat:@"[AS] auto-confirmed match=%@ acted=%@", match, acted]);
+                    autoinstallClearAutoConfirmFlags();
                 }
             });
         }

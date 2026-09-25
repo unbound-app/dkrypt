@@ -1,4 +1,5 @@
 import { describeHttpError } from '#util/httpError.js';
+import { throwIfAborted } from '#util/abort.js';
 
 const DEFAULT_ITUNES_COUNTRY = 'US';
 
@@ -53,12 +54,15 @@ function parseFileSizeBytes(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
-export async function lookupCurrentVersion(bundleId: string): Promise<ItunesLookupResult> {
+export async function lookupCurrentVersion(bundleId: string, signal?: AbortSignal): Promise<ItunesLookupResult> {
+  throwIfAborted(signal);
   const url = buildItunesUrl('lookup', { bundleId });
-  const res = await fetch(url);
+  const res = await fetch(url, { signal });
+  throwIfAborted(signal);
   if (!res.ok) throw new Error(describeHttpError('itunes lookup failed', res));
 
   const body = (await res.json()) as ItunesLookupResponse;
+  throwIfAborted(signal);
   const result = body.results[0];
   if (body.resultCount < 1 || !result) throw new Error(`itunes lookup returned no results for ${bundleId}`);
 

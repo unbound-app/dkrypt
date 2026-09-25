@@ -46,6 +46,28 @@ async function runCurrentVersionLookupInIsolatedProcess(): Promise<{ url: string
   return JSON.parse(stdout) as { url: string; version: string };
 }
 
+async function runAbortableVersionLookupInIsolatedProcess(): Promise<string> {
+  const script = [
+    'globalThis.fetch = async (_input, init) => {',
+    '  if (!init?.signal) return new Response(JSON.stringify({ resultCount: 1, results: [{ version: "340.0", bundleId: "com.hammerandchisel.discord", trackId: 985746746 }] }), { status: 200 });',
+    '  return new Promise((resolve, reject) => init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true }));',
+    '};',
+    "const { lookupCurrentVersion } = await import('./src/scheduler/itunes.ts');",
+    'const controller = new AbortController();',
+    'const lookup = lookupCurrentVersion("com.hammerandchisel.discord", controller.signal);',
+    'controller.abort(new Error("job deadline exceeded"));',
+    'try { await lookup; console.log("resolved"); } catch (error) { console.log(error.message); }',
+  ].join('\n');
+  const child = Bun.spawn([process.execPath, '-e', script], { cwd: process.cwd(), stdout: 'pipe', stderr: 'pipe' });
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ]);
+  if (exitCode !== 0) throw new Error(`isolated abortable lookup failed: ${stderr}`);
+  return stdout.trim();
+}
+
 describe('iTunes storefront selection', () => {
   test('uses the US storefront for current version lookup', async () => {
     const result = await runCurrentVersionLookupInIsolatedProcess();
@@ -65,5 +87,9 @@ describe('iTunes storefront selection', () => {
     } finally {
       restoreFetch();
     }
+  });
+
+  test('cancels the current version lookup when the job deadline expires', async () => {
+    await expect(runAbortableVersionLookupInIsolatedProcess()).resolves.toBe('job deadline exceeded');
   });
 });

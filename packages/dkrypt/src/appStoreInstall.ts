@@ -19,6 +19,7 @@ import { lookupCurrentVersion, type ItunesLookupResult } from '#scheduler/itunes
 import { getPrimaryDevice, type DeviceRecord } from '#store/state.js';
 import { BRIDGE_CAPABILITIES, hasBridgeCapabilities } from '#bridgeProtocol.js';
 import { normalizeVersion } from '#util/version.js';
+import { delayWithSignal, throwIfAborted } from '#util/abort.js';
 
 const log = scopedLogger('appstore');
 
@@ -38,25 +39,31 @@ function primaryDevice() {
   return device;
 }
 
-async function ensureAppStoreForeground(conn: DeviceClient): Promise<void> {
+async function ensureAppStoreForeground(conn: DeviceClient, signal?: AbortSignal): Promise<void> {
+  throwIfAborted(signal);
   const wasRunning = await isAppStoreRunning(conn);
-  const response = await sendSpringBoardBridgeRequest(conn, { action: 'launch_app', bundleId: 'com.apple.AppStore' });
+  throwIfAborted(signal);
+  const response = await sendSpringBoardBridgeRequest(conn, { action: 'launch_app', bundleId: 'com.apple.AppStore' }, 20_000, signal);
+  throwIfAborted(signal);
   if (!wasRunning && response?.launchResult !== 0) {
     throw new Error(`autoinstall SpringBoard launch_app (AppStore) failed: ${JSON.stringify(response)}`);
   }
 
-  await new Promise((r) => setTimeout(r, wasRunning ? 4_000 : 8_000));
+  await delayWithSignal(wasRunning ? 4_000 : 8_000, signal);
 }
 
-async function ensureAppStoreBridgeReady(conn: DeviceClient): Promise<void> {
+async function ensureAppStoreBridgeReady(conn: DeviceClient, signal?: AbortSignal): Promise<void> {
   const deadline = Date.now() + APP_STORE_BRIDGE_READY_TIMEOUT_MS;
   let lastError: Error | undefined;
 
   while (Date.now() < deadline) {
+    throwIfAborted(signal);
     let response: Record<string, unknown> | undefined;
     try {
-      response = await sendAppStoreBridgeRequest(conn, { action: 'status' }, APP_STORE_BRIDGE_STATUS_TIMEOUT_MS);
+      response = await sendAppStoreBridgeRequest(conn, { action: 'status' }, APP_STORE_BRIDGE_STATUS_TIMEOUT_MS, signal);
+      throwIfAborted(signal);
     } catch (err) {
+      throwIfAborted(signal);
       lastError = err instanceof Error ? err : new Error(String(err));
     }
 
@@ -70,22 +77,26 @@ async function ensureAppStoreBridgeReady(conn: DeviceClient): Promise<void> {
     }
 
     try {
-      const launch = await sendSpringBoardBridgeRequest(conn, { action: 'launch_app', bundleId: 'com.apple.AppStore' }, APP_STORE_BRIDGE_STATUS_TIMEOUT_MS);
+      const launch = await sendSpringBoardBridgeRequest(conn, { action: 'launch_app', bundleId: 'com.apple.AppStore' }, APP_STORE_BRIDGE_STATUS_TIMEOUT_MS, signal);
+      throwIfAborted(signal);
       if (launch?.launchResult !== 0) {
         lastError = new Error(`autoinstall SpringBoard launch_app (AppStore) failed: ${JSON.stringify(launch)}`);
       }
     } catch (err) {
+      throwIfAborted(signal);
       lastError = err instanceof Error ? err : new Error(String(err));
     }
-    await new Promise((resolve) => setTimeout(resolve, APP_STORE_BRIDGE_POLL_INTERVAL_MS));
+    await delayWithSignal(APP_STORE_BRIDGE_POLL_INTERVAL_MS, signal);
   }
 
   throw new Error(`autoinstall App Store bridge did not become ready within ${APP_STORE_BRIDGE_READY_TIMEOUT_MS / 1000}s${lastError ? `: ${lastError.message}` : ''}`);
 }
 
-async function restartAppStore(conn: DeviceClient): Promise<void> {
+async function restartAppStore(conn: DeviceClient, signal?: AbortSignal): Promise<void> {
+  throwIfAborted(signal);
   await execCommand(conn, 'killall AppStore PassbookUIService 2>/dev/null || true');
-  await new Promise((r) => setTimeout(r, 1_000));
+  throwIfAborted(signal);
+  await delayWithSignal(1_000, signal);
 }
 
 export async function uninstallFromDevice(bundleId: string, device = primaryDevice()): Promise<boolean> {
@@ -107,6 +118,7 @@ export interface AppStoreInstallOptions {
   onProgress?: (message: string) => void;
   waitTimeoutMs?: number;
   isCancelled?: () => boolean;
+  signal?: AbortSignal;
 }
 
 export async function installFromAppStore(bundleId: string, options: AppStoreInstallOptions = {}): Promise<InstallVerification> {
@@ -126,11 +138,13 @@ export async function installFromAppStore(bundleId: string, options: AppStoreIns
   };
   const ensureNotCancelled = () => {
     if (options.isCancelled?.()) throw new Error('App Store install cancelled');
+    throwIfAborted(options.signal);
   };
 
   ensureNotCancelled();
   report('resolving App Store id for bundle');
-  const { trackId, version: latestVersion } = options.currentVersion ?? (await lookupCurrentVersion(bundleId));
+  const { trackId, version: latestVersion } = options.currentVersion ?? (await lookupCurrentVersion(bundleId, options.signal));
+  ensureNotCancelled();
   const targetVersion = expectedVersion
     ? normalizeVersion(expectedVersion)
     : versionId === undefined
@@ -140,30 +154,35 @@ export async function installFromAppStore(bundleId: string, options: AppStoreIns
   return withSSH(options.device ?? primaryDevice(), async (conn) => {
     ensureNotCancelled();
     const existing = await findInstalledAppStoreBundle(conn, bundleId);
+    ensureNotCancelled();
     if (existing) {
       report('removing the installed app before the App Store install');
       const removed = (await uninstallInstalledApp(conn, bundleId)) || (await uninstallInstalledBundle(conn, bundleId, existing));
+      ensureNotCancelled();
       if (!removed) {
         throw new Error(`failed to remove the existing ${bundleId} before installing from the App Store`);
       }
     }
 
     report('restarting the App Store to clear pending purchases');
-    await restartAppStore(conn);
+    await restartAppStore(conn, options.signal);
 
     report('bringing the App Store to the foreground');
-    await ensureAppStoreForeground(conn);
-    await ensureAppStoreBridgeReady(conn);
+    await ensureAppStoreForeground(conn, options.signal);
+    ensureNotCancelled();
+    await ensureAppStoreBridgeReady(conn, options.signal);
 
     try {
       ensureNotCancelled();
       report('arming headless auto-confirm and sending install request');
       await armAppStoreAutoConfirm(conn, 'Install');
+      ensureNotCancelled();
 
       const operationId = options.operationId ?? randomUUID();
       const request: Record<string, unknown> = { action: 'install', adamId: trackId, contextMode: 'fallback', operationId };
       if (versionId !== undefined) request.versionId = versionId;
-      await sendAppStoreBridgeRequest(conn, request);
+      await sendAppStoreBridgeRequest(conn, request, 20_000, options.signal);
+      ensureNotCancelled();
       report(
         versionId !== undefined
           ? `App Store accepted the install request (version ${versionId}), waiting for it to land`
@@ -177,8 +196,10 @@ export async function installFromAppStore(bundleId: string, options: AppStoreIns
       while (Date.now() < deadline) {
         ensureNotCancelled();
         const bundlePath = await findInstalledAppStoreBundle(conn, bundleId);
+        ensureNotCancelled();
         if (bundlePath) {
           const installedVersion = await readInstalledBundleVersions(conn, bundlePath);
+          ensureNotCancelled();
           const { shortVersion } = installedVersion;
           if (targetVersion && normalizeVersion(shortVersion ?? '') !== targetVersion) {
             const unexpectedVersion = shortVersion ?? 'unknown';
@@ -196,7 +217,7 @@ export async function installFromAppStore(bundleId: string, options: AppStoreIns
           lastReportedAt = elapsedSec;
           report(`still waiting for the App Store to finish installing (${elapsedSec}s elapsed)`);
         }
-        await new Promise((r) => setTimeout(r, 5_000));
+        await delayWithSignal(5_000, options.signal);
       }
       if (lastUnexpectedVersion && targetVersion) {
         throw new Error(`timed out waiting for ${bundleId} version ${targetVersion}; version ${lastUnexpectedVersion} remained installed after ${Math.round(waitTimeoutMs / 1000)}s`);
@@ -205,5 +226,5 @@ export async function installFromAppStore(bundleId: string, options: AppStoreIns
     } finally {
       await clearAppStoreAutoConfirm(conn).catch(() => {});
     }
-  });
+  }, options.signal);
 }

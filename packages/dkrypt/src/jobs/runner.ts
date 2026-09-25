@@ -16,14 +16,15 @@ import { withIpadecrypt } from '#idevice.js';
 import { terminateChildProcess } from '#jobs/process.js';
 import { currentCorrelation } from '#correlation.js';
 import { startSpan } from '#telemetry.js';
+import { abortedOperationError, throwIfAborted } from '#util/abort.js';
 
 const log = scopedLogger('jobs');
 import { appendJobTimelineEvent, type Job } from '#jobs/types.js';
 
-export async function runDecrypt(job: Job, device: DeviceRecord): Promise<void> {
+export async function runDecrypt(job: Job, device: DeviceRecord, signal?: AbortSignal): Promise<void> {
   const span = startSpan('job.decrypt', { 'job.id': job.id, 'job.bundle_id': job.bundleId, 'job.device_id': device.id }, currentCorrelation()?.traceContext);
   try {
-    await runDecryptOperation(job, device);
+    await runDecryptOperation(job, device, signal);
     span.end();
   } catch (error) {
     if (job.filePath?.includes('/.staging/')) await rm(job.filePath, { force: true }).catch(() => {});
@@ -32,11 +33,12 @@ export async function runDecrypt(job: Job, device: DeviceRecord): Promise<void> 
   }
 }
 
-async function runDecryptOperation(job: Job, device: DeviceRecord): Promise<void> {
+async function runDecryptOperation(job: Job, device: DeviceRecord, signal?: AbortSignal): Promise<void> {
   const recordTimeline = (label: string) => appendJobTimelineEvent(job, label, 'running');
 
   const ensureNotCancelled = () => {
     if (job.cancelledBy) throw new Error(`cancelled by ${job.cancelledBy}`);
+    throwIfAborted(signal);
     if (job.deadlineExceeded || (job.deadlineAt !== undefined && Date.now() >= job.deadlineAt)) {
       job.deadlineExceeded = true;
       throw new Error('job deadline exceeded');
@@ -45,15 +47,18 @@ async function runDecryptOperation(job: Job, device: DeviceRecord): Promise<void
 
   ensureNotCancelled();
   job.warnings = undefined;
-  const health = await getDeviceHealth(device.id, true);
+  const health = await getDeviceHealth(device.id, true, signal);
+  ensureNotCancelled();
   let currentAppStoreVersion: ItunesLookupResult | undefined;
   if (!job.testflight && !job.externalVersionId) {
     try {
-      currentAppStoreVersion = await lookupCurrentVersion(job.bundleId);
+      currentAppStoreVersion = await lookupCurrentVersion(job.bundleId, signal);
     } catch (err) {
+      ensureNotCancelled();
       log.warn('could not resolve current App Store file size before install', { bundleId: job.bundleId, error: String(err) });
     }
   }
+  ensureNotCancelled();
   const installBlocker = getDeviceInstallBlocker(health, job.testflight?.build.fileSize ?? currentAppStoreVersion?.fileSizeBytes);
   if (installBlocker) throw new Error(`decrypt deferred: ${installBlocker}`);
   const stagingDir = path.join(config.artifactDir, '.staging');
@@ -85,7 +90,7 @@ async function runDecryptOperation(job: Job, device: DeviceRecord): Promise<void
   report(`autoinstall transaction ${job.id}`);
 
   if (job.testflight) {
-    await installBuild(job.testflight.appId, job.testflight.build, report, undefined, job.id, undefined, device);
+    await installBuild(job.testflight.appId, job.testflight.build, report, undefined, job.id, undefined, device, signal);
   } else {
     const installed = await installFromAppStore(job.bundleId, {
       externalVersionId: job.externalVersionId,
@@ -95,6 +100,7 @@ async function runDecryptOperation(job: Job, device: DeviceRecord): Promise<void
       isCancelled: () => Boolean(job.cancelledBy || job.deadlineExceeded),
       currentVersion: currentAppStoreVersion,
       device,
+      signal,
     });
     if (installed.shortVersion) job.versionLabel = installed.shortVersion;
   }
@@ -104,19 +110,14 @@ async function runDecryptOperation(job: Job, device: DeviceRecord): Promise<void
   recordDeviceActivity({ deviceId: device.id, kind: 'job', bundleId: job.bundleId, message: 'Decrypting app bundle' });
 
   await withIpadecrypt(device, async (rootDir) => {
+    ensureNotCancelled();
     const args = ['--root-dir', rootDir, 'decrypt', job.bundleId, '--use-installed', '--output', outputPath];
     await new Promise<void>((resolve, reject) => {
       const child = spawn(config.ipadecryptBin, args, { stdio: ['ignore', 'pipe', 'pipe'], detached: process.platform !== 'win32' });
       job.childProcess = child;
-
-      const remainingMs = job.deadlineAt === undefined ? undefined : Math.max(1, job.deadlineAt - Date.now());
-      const deadlineTimer = remainingMs === undefined ? undefined : setTimeout(() => {
-        job.deadlineExceeded = true;
-        job.progress = 'job deadline exceeded';
-        terminateChildProcess(child, 'SIGTERM');
-        setTimeout(() => terminateChildProcess(child, 'SIGKILL'), config.jobProcessGraceSeconds * 1000).unref();
-        emitJobsChanged();
-      }, remainingMs);
+      const abortChild = () => terminateChildProcess(child, 'SIGTERM');
+      signal?.addEventListener('abort', abortChild, { once: true });
+      if (signal?.aborted) abortChild();
 
       let output = '';
 
@@ -136,11 +137,19 @@ async function runDecryptOperation(job: Job, device: DeviceRecord): Promise<void
       child.stdout.on('data', onOutput);
       child.stderr.on('data', onOutput);
 
-      child.on('error', (err) => reject(err));
+      child.on('error', (err) => {
+        signal?.removeEventListener('abort', abortChild);
+        if (job.childProcess === child) job.childProcess = undefined;
+        reject(err);
+      });
 
       child.on('close', (code) => {
-        if (deadlineTimer) clearTimeout(deadlineTimer);
-        job.childProcess = undefined;
+        signal?.removeEventListener('abort', abortChild);
+        if (job.childProcess === child) job.childProcess = undefined;
+        if (signal?.aborted) {
+          reject(abortedOperationError(signal));
+          return;
+        }
         const result = classifyIpaDecryptOutput(output);
         if (job.cancelledBy) {
           reject(new Error(`cancelled by ${job.cancelledBy}`));
@@ -162,7 +171,7 @@ async function runDecryptOperation(job: Job, device: DeviceRecord): Promise<void
         }
       });
     });
-  });
+  }, signal);
 
   ensureNotCancelled();
   const st = await stat(outputPath);
@@ -187,6 +196,7 @@ async function runDecryptOperation(job: Job, device: DeviceRecord): Promise<void
     buildNumber: job.ipaMetadata?.bundleVersion ?? job.testflight?.build.cfBundleVersion,
     stagingPath: outputPath,
     sourceJobId: job.id,
+    signal,
   });
   job.artifactId = artifact.id;
   job.filePath = artifact.filePath;

@@ -9,10 +9,18 @@ import { BRIDGE_PROTOCOL_VERSION } from '#bridgeProtocol.js';
 import type { BridgeChannel } from '#bridgeProtocol.js';
 import { startSpan } from '#telemetry.js';
 import { incrementMetric, observeMetric } from '#metrics.js';
+import { abortedOperationError, delayWithSignal, throwIfAborted } from '#util/abort.js';
 
 const log = scopedLogger('idevice');
 
 const AUTOCONFIRM_FLAG_PATH = '/tmp/autoinstall-autoconfirm.flag';
+const AUTOCONFIRM_FLAG_PATHS = [
+  AUTOCONFIRM_FLAG_PATH,
+  '/private/var/mobile/Library/Caches/com.apple.PassbookUIService/autoinstall-autoconfirm.flag',
+  '/private/var/mobile/Library/Caches/com.apple.AuthKitUIService/autoinstall-autoconfirm.flag',
+  '/private/var/mobile/Library/Caches/com.apple.ios.StoreKitUIService/autoinstall-autoconfirm.flag',
+];
+const AUTOCONFIRM_TTL_MS = 6 * 60_000;
 const BRIDGE_ROOT_PATH = '/tmp/autoinstall/v1';
 const BRIDGE_SECRET_FILE_NAME = 'autoinstall-bridge-secret';
 const BRIDGE_SECRET_REMOTE_PATH = '/var/mobile/Library/Preferences/dev.adrian.autoinstall-bridge.secret';
@@ -96,7 +104,7 @@ interface SshSession {
 export interface DeviceSession {
   readonly transport: 'ssh' | 'autoinstall';
   readonly rootDir: string;
-  exec(command: string, timeoutMs?: number): Promise<{ stdout: string; stderr: string; code: number | null }>;
+  exec(command: string, timeoutMs?: number, signal?: AbortSignal): Promise<{ stdout: string; stderr: string; code: number | null }>;
   close(): void;
 }
 
@@ -131,7 +139,8 @@ export class DeviceBridgeError extends Error {
 
 interface DeviceAgentClient extends DeviceSession {
   readonly isUnusable: boolean;
-  call(action: string, payload: Record<string, unknown>, timeoutMs?: number): Promise<Record<string, unknown>>;
+  call(action: string, payload: Record<string, unknown>, timeoutMs?: number, signal?: AbortSignal): Promise<Record<string, unknown>>;
+  cancelPending(): void;
 }
 
 interface RustRpcResponse {
@@ -146,11 +155,12 @@ class RustDeviceBridgeClient {
   private readonly socketPath = config.deviceBridgeSocket;
   private readonly secret = config.deviceBridgeSecret;
 
-  async request(operation: string, details: Record<string, unknown>, timeoutMs = REMOTE_COMMAND_TIMEOUT_MS): Promise<unknown> {
+  async request(operation: string, details: Record<string, unknown>, timeoutMs = REMOTE_COMMAND_TIMEOUT_MS, signal?: AbortSignal): Promise<unknown> {
     const startedAt = performance.now();
     const span = startSpan('device.bridge.request', { 'device.operation': operation, 'device.timeout_ms': timeoutMs });
     try {
-      const result = await this.requestRaw(operation, details, timeoutMs);
+      throwIfAborted(signal);
+      const result = await this.requestRaw(operation, details, timeoutMs, true, signal);
       incrementMetric('device_bridge_requests_total', { operation, outcome: 'success' });
       observeMetric('device_bridge_request_duration_ms', performance.now() - startedAt);
       span.end();
@@ -164,7 +174,8 @@ class RustDeviceBridgeClient {
     }
   }
 
-  private async requestRaw(operation: string, details: Record<string, unknown>, timeoutMs = REMOTE_COMMAND_TIMEOUT_MS, cancelOnTimeout = true): Promise<unknown> {
+  private async requestRaw(operation: string, details: Record<string, unknown>, timeoutMs = REMOTE_COMMAND_TIMEOUT_MS, cancelOnTimeout = true, signal?: AbortSignal): Promise<unknown> {
+    throwIfAborted(signal);
     if (this.secret.length < 32) throw new DeviceAgentUnavailableError('DEVICE_BRIDGE_SECRET is missing or too short');
     const requestId = randomUUID();
     const body = Buffer.from(JSON.stringify({ version: 1, requestId, auth: this.secret, operation, ...details }), 'utf8');
@@ -174,24 +185,47 @@ class RustDeviceBridgeClient {
     body.copy(frame, 4);
     const socket = await new Promise<Socket>((resolve, reject) => {
       const candidate = connectSocket({ path: this.socketPath });
+      let settled = false;
+      const cleanup = () => {
+        signal?.removeEventListener('abort', onAbort);
+        candidate.off('connect', connected);
+        candidate.off('error', fail);
+        candidate.setTimeout(0);
+      };
       const fail = (error: Error) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
         candidate.destroy();
         reject(error);
       };
-      candidate.once('connect', () => resolve(candidate));
+      const connected = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(candidate);
+      };
+      const onAbort = () => fail(abortedOperationError(signal as AbortSignal));
+      candidate.once('connect', connected);
       candidate.once('error', fail);
       candidate.setTimeout(Math.max(1, timeoutMs), () => fail(new Error('Rust device bridge connection timed out')));
+      signal?.addEventListener('abort', onAbort, { once: true });
+      if (signal?.aborted) onAbort();
     }).catch((error) => {
+      throwIfAborted(signal);
       throw new DeviceAgentUnavailableError(`could not connect to the Rust device bridge: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
     });
     try {
       return await new Promise<unknown>((resolve, reject) => {
         let input = Buffer.alloc(0);
         let settled = false;
+        let onAbort: (() => void) | undefined;
+        let timer: ReturnType<typeof setTimeout>;
         const finish = (error?: Error, value?: unknown) => {
           if (settled) return;
           settled = true;
           clearTimeout(timer);
+          if (onAbort) signal?.removeEventListener('abort', onAbort);
           socket.off('data', receive);
           socket.off('error', fail);
           socket.off('close', closed);
@@ -235,27 +269,35 @@ class RustDeviceBridgeClient {
           }
           finish(undefined, response.result);
         };
-        const timeoutRequest = () => {
-          if (cancelOnTimeout) void this.requestRaw('cancel', { payload: requestId }, 5_000, false).catch(() => undefined);
+        const cancelRequest = () => {
           finish(new Error('Rust device bridge request timed out'));
+          if (cancelOnTimeout) void this.requestRaw('cancel', { payload: requestId }, 5_000, false).catch(() => undefined);
         };
-        const timer = setTimeout(timeoutRequest, Math.max(1, timeoutMs));
+        const timeoutRequest = () => cancelRequest();
+        onAbort = () => {
+          finish(abortedOperationError(signal as AbortSignal));
+          if (cancelOnTimeout) void this.requestRaw('cancel', { payload: requestId }, 5_000, false).catch(() => undefined);
+        };
+        timer = setTimeout(timeoutRequest, Math.max(1, timeoutMs));
         socket.on('data', receive);
         socket.once('error', fail);
         socket.once('close', closed);
         socket.setTimeout(Math.max(1, timeoutMs), timeoutRequest);
+        signal?.addEventListener('abort', onAbort, { once: true });
+        if (signal?.aborted) onAbort();
         socket.write(frame, (error) => {
           if (error) finish(error);
         });
       });
     } catch (error) {
+      throwIfAborted(signal);
       if (error instanceof DeviceAgentUnavailableError) throw error;
       throw new DeviceAgentUnavailableError(`Rust device bridge request failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
     }
   }
 
-  async openTunnel(deviceId: string, port: number, timeoutMs = USBMUX_TUNNEL_READY_TIMEOUT_MS): Promise<{ tunnelId: string; host: string; port: number }> {
-    const result = await this.request('open_tunnel', { deviceId, port }, timeoutMs);
+  async openTunnel(deviceId: string, port: number, timeoutMs = USBMUX_TUNNEL_READY_TIMEOUT_MS, signal?: AbortSignal): Promise<{ tunnelId: string; host: string; port: number }> {
+    const result = await this.request('open_tunnel', { deviceId, port }, timeoutMs, signal);
     if (!result || typeof result !== 'object') throw new Error('Rust device bridge returned an invalid tunnel');
     const tunnel = result as Record<string, unknown>;
     if (typeof tunnel.tunnelId !== 'string' || typeof tunnel.host !== 'string' || typeof tunnel.port !== 'number') throw new Error('Rust device bridge returned an incomplete tunnel');
@@ -279,8 +321,8 @@ class RustDeviceBridgeClient {
     return { deviceId: value.deviceId, hostId: value.hostId, paired: true };
   }
 
-  async capabilities(): Promise<Record<string, unknown>> {
-    const result = await this.request('capabilities', {}, 5_000);
+  async capabilities(signal?: AbortSignal): Promise<Record<string, unknown>> {
+    const result = await this.request('capabilities', {}, 5_000, signal);
     if (!result || typeof result !== 'object') throw new Error('Rust device bridge returned invalid capabilities');
     return result as Record<string, unknown>;
   }
@@ -405,6 +447,8 @@ class RustDeviceAgentClient implements DeviceAgentClient {
   readonly transport = 'autoinstall' as const;
   private closed = false;
   private readonly bridge = new RustDeviceBridgeClient();
+  private readonly abortController = new AbortController();
+  private readonly pendingRequests = new Set<AbortController>();
 
   constructor(readonly deviceId: string, readonly secret: string, readonly rootDir: string) {}
 
@@ -412,31 +456,44 @@ class RustDeviceAgentClient implements DeviceAgentClient {
     return this.closed;
   }
 
-  async call(action: string, payload: Record<string, unknown>, timeoutMs = REMOTE_COMMAND_TIMEOUT_MS): Promise<Record<string, unknown>> {
+  async call(action: string, payload: Record<string, unknown>, timeoutMs = REMOTE_COMMAND_TIMEOUT_MS, signal?: AbortSignal): Promise<Record<string, unknown>> {
     if (this.closed) throw new Error('Rust device agent session is closed');
     const requestId = randomUUID();
     const envelope = createDeviceAgentEnvelope(this.secret, requestId, { action, ...payload });
+    const requestController = new AbortController();
+    this.pendingRequests.add(requestController);
+    const requestSignal = signal
+      ? AbortSignal.any([this.abortController.signal, requestController.signal, signal])
+      : AbortSignal.any([this.abortController.signal, requestController.signal]);
     try {
-      const result = await this.bridge.request('agent', { deviceId: this.deviceId, agentSecret: this.secret, payload: envelope }, timeoutMs + 1_000);
+      const result = await this.bridge.request('agent', { deviceId: this.deviceId, agentSecret: this.secret, payload: envelope }, timeoutMs + 1_000, requestSignal);
       if (!result || typeof result !== 'object') throw new Error('Rust device bridge returned an invalid agent response');
       return parseDeviceAgentResponse(this.secret, result as DeviceAgentEnvelope);
     } catch (error) {
-      this.closed = true;
+      if (!requestController.signal.aborted && !signal?.aborted) this.closed = true;
       throw error;
+    } finally {
+      this.pendingRequests.delete(requestController);
     }
   }
 
-  async exec(command: string, timeoutMs = REMOTE_COMMAND_TIMEOUT_MS): Promise<{ stdout: string; stderr: string; code: number | null }> {
-    const result = await this.call('exec', { command, timeoutMs }, timeoutMs + 1_000);
+  async exec(command: string, timeoutMs = REMOTE_COMMAND_TIMEOUT_MS, signal?: AbortSignal): Promise<{ stdout: string; stderr: string; code: number | null }> {
+    const result = await this.call('exec', { command, timeoutMs }, timeoutMs + 1_000, signal);
     return { stdout: typeof result.stdout === 'string' ? result.stdout : '', stderr: typeof result.stderr === 'string' ? result.stderr : '', code: typeof result.code === 'number' ? result.code : null };
   }
 
   close(): void {
+    if (!this.closed) this.abortController.abort(new Error('Rust device agent session is closed'));
     this.closed = true;
+  }
+
+  cancelPending(): void {
+    for (const controller of this.pendingRequests) controller.abort(new Error('Rust device agent request cancelled'));
   }
 }
 
 const sshSessions = new Map<string, SshSession>();
+const sshCommandSignals = new WeakMap<Client, AbortSignal>();
 interface DeviceAgentSession {
   client: DeviceAgentClient;
   idleTimer?: NodeJS.Timeout;
@@ -555,17 +612,17 @@ async function resolveDeviceAuth(connection: DeviceConnection | string): Promise
   };
 }
 
-async function openDeviceAgentSession(connection: DeviceConnection, key: string): Promise<DeviceAgentSession> {
+async function openDeviceAgentSession(connection: DeviceConnection, key: string, signal?: AbortSignal): Promise<DeviceAgentSession> {
   if (!isRustDeviceConnection(connection)) throw new Error('the autoinstall device agent requires a paired Rust device connection');
   if (!connection.udid) throw new Error('the autoinstall device agent requires a device identifier');
   const rootDir = connectionRuntimeRoot(connection);
   const secret = await loadBridgeSecret(rootDir);
-  const capabilities = await new RustDeviceBridgeClient().capabilities();
+  const capabilities = await new RustDeviceBridgeClient().capabilities(signal);
   const supported = Array.isArray(capabilities.capabilities) && capabilities.capabilities.includes('agent');
   if (!supported) throw new DeviceAgentUnavailableError('the Rust device bridge does not support the autoinstall agent capability');
   const client = new RustDeviceAgentClient(connection.udid, secret, rootDir);
   try {
-    await client.call('status', {}, 3_000);
+    await client.call('status', {}, 3_000, signal);
     const session: DeviceAgentSession = { client };
     deviceAgentSessions.set(key, session);
     log.info('connected to the dkrypt device agent through the Rust device bridge', { deviceId: key });
@@ -587,7 +644,8 @@ function closeDeviceAgentSession(key: string, session: DeviceAgentSession): void
   session.client.close();
 }
 
-async function getDeviceAgentSession(connection: DeviceConnection): Promise<{ key: string; session: DeviceAgentSession }> {
+async function getDeviceAgentSession(connection: DeviceConnection, signal?: AbortSignal): Promise<{ key: string; session: DeviceAgentSession }> {
+  throwIfAborted(signal);
   const key = sshSessionKey(connection);
   const existing = deviceAgentSessions.get(key);
   if (existing && !existing.client.isUnusable) {
@@ -599,11 +657,12 @@ async function getDeviceAgentSession(connection: DeviceConnection): Promise<{ ke
   let lastError: unknown;
   for (let attempt = 0; attempt < DEVICE_AGENT_CONNECT_RETRIES; attempt += 1) {
     try {
-      return { key, session: await openDeviceAgentSession(connection, key) };
+      return { key, session: await openDeviceAgentSession(connection, key, signal) };
     } catch (error) {
+      throwIfAborted(signal);
       lastError = error;
       if (attempt + 1 < DEVICE_AGENT_CONNECT_RETRIES) {
-        await new Promise((resolve) => setTimeout(resolve, getDeviceAgentRetryDelay(attempt)));
+        await delayWithSignal(getDeviceAgentRetryDelay(attempt), signal);
       }
     }
   }
@@ -661,13 +720,16 @@ export function buildIpadecryptRuntimeConfig(auth: { host: string; port: number;
   })}\n`;
 }
 
-async function withDeviceTunnel<T>(connection: DeviceConnection | string, fn: (auth: DeviceAuth, rootDir: string) => Promise<T>): Promise<T> {
+async function withDeviceTunnel<T>(connection: DeviceConnection | string, fn: (auth: DeviceAuth, rootDir: string) => Promise<T>, signal?: AbortSignal): Promise<T> {
+  throwIfAborted(signal);
   const resolved = await resolveDeviceAuth(connection);
+  throwIfAborted(signal);
   if (!resolved.usesUsbmux) return fn(resolved.auth, resolved.rootDir);
   if (typeof connection === 'string' || !connection.udid) throw new Error('a paired device identifier is required for USB setup');
   const bridge = new RustDeviceBridgeClient();
-  const tunnel = await bridge.openTunnel(connection.udid, resolved.auth.port);
+  const tunnel = await bridge.openTunnel(connection.udid, resolved.auth.port, undefined, signal);
   try {
+    throwIfAborted(signal);
     return await fn({ ...resolved.auth, host: tunnel.host, port: tunnel.port }, resolved.rootDir);
   } finally {
     await bridge.closeTunnel(tunnel.tunnelId).catch(() => {});
@@ -700,35 +762,46 @@ function isTransientSshConnectionError(error: unknown): boolean {
   return /timed out while waiting for handshake|connection lost before handshake|connection reset by peer|socket hang up|ECONNRESET/i.test(message);
 }
 
-export async function retryTransientSshConnection<T>(operation: () => Promise<T>, maxRetries = SSH_HANDSHAKE_RETRIES, delayMs = SSH_HANDSHAKE_RETRY_DELAY_MS): Promise<T> {
+export async function retryTransientSshConnection<T>(operation: () => Promise<T>, maxRetries = SSH_HANDSHAKE_RETRIES, delayMs = SSH_HANDSHAKE_RETRY_DELAY_MS, signal?: AbortSignal): Promise<T> {
   let retries = 0;
   while (true) {
+    throwIfAborted(signal);
     try {
-      return await operation();
+      const result = await operation();
+      throwIfAborted(signal);
+      return result;
     } catch (error) {
+      throwIfAborted(signal);
       if (!isTransientSshConnectionError(error) || retries >= maxRetries) throw error;
       retries += 1;
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      await delayWithSignal(delayMs, signal);
     }
   }
 }
 
-function connectSshClient(auth: DeviceAuth, privateKey: Buffer): Promise<Client> {
+function connectSshClient(auth: DeviceAuth, privateKey: Buffer, signal?: AbortSignal): Promise<Client> {
   const conn = new Client();
   return new Promise((resolve, reject) => {
     let settled = false;
+    const cleanup = () => signal?.removeEventListener('abort', onAbort);
     const fail = (error: Error) => {
       if (settled) return;
       settled = true;
+      cleanup();
       conn.destroy();
       reject(error);
     };
+    const onAbort = () => fail(abortedOperationError(signal as AbortSignal));
     conn.on('error', fail);
     conn.once('ready', () => {
       settled = true;
+      cleanup();
       resolve(conn);
     });
+    signal?.addEventListener('abort', onAbort, { once: true });
+    if (signal?.aborted) onAbort();
     try {
+      if (settled) return;
       conn.connect({ host: auth.host, port: auth.port, username: auth.user, privateKey, readyTimeout: 15_000 });
     } catch (error) {
       fail(error instanceof Error ? error : new Error(String(error)));
@@ -744,18 +817,21 @@ function closeSshSession(key: string, session: SshSession): void {
   session.conn.end();
 }
 
-async function openSshSession(connection: DeviceConnection | string, key: string): Promise<SshSession> {
+async function openSshSession(connection: DeviceConnection | string, key: string, signal?: AbortSignal): Promise<SshSession> {
+  throwIfAborted(signal);
   const resolved = await resolveDeviceAuth(connection);
+  throwIfAborted(signal);
   if (resolved.usesUsbmux) throw new DeviceAgentUnavailableError('direct USB SSH requires the Rust device bridge tunnel');
   let privateKey: Buffer;
   try {
     privateKey = await readFile(resolved.auth.keyPath);
+    throwIfAborted(signal);
   } catch (err) {
     invalidateAuthCache(connection);
     throw err;
   }
   try {
-    const conn = await retryTransientSshConnection(() => connectSshClient(resolved.auth, privateKey));
+    const conn = await retryTransientSshConnection(() => connectSshClient(resolved.auth, privateKey, signal), SSH_HANDSHAKE_RETRIES, SSH_HANDSHAKE_RETRY_DELAY_MS, signal);
     const session: SshSession = { conn, rootDir: resolved.rootDir, unusable: false };
     conn.on('error', () => {
       session.unusable = true;
@@ -774,7 +850,8 @@ async function openSshSession(connection: DeviceConnection | string, key: string
   }
 }
 
-async function getSshSession(connection: DeviceConnection | string): Promise<{ key: string; session: SshSession }> {
+async function getSshSession(connection: DeviceConnection | string, signal?: AbortSignal): Promise<{ key: string; session: SshSession }> {
+  throwIfAborted(signal);
   const key = sshSessionKey(connection);
   const existing = sshSessions.get(key);
   if (existing && !existing.unusable) {
@@ -783,7 +860,7 @@ async function getSshSession(connection: DeviceConnection | string): Promise<{ k
     return { key, session: existing };
   }
   if (existing) closeSshSession(key, existing);
-  return { key, session: await openSshSession(connection, key) };
+  return { key, session: await openSshSession(connection, key, signal) };
 }
 
 function releaseSshSession(key: string, session: SshSession): void {
@@ -856,58 +933,90 @@ export function getDeviceTransportOrder(connection: DeviceConnection | string, m
   return normalizedMode === 'autoinstall' ? ['autoinstall'] : ['autoinstall', 'ssh'];
 }
 
-async function withDeviceAgent<T>(connection: DeviceConnection, fn: (client: DeviceClient) => Promise<T>): Promise<T> {
+async function withDeviceAgent<T>(connection: DeviceConnection, fn: (client: DeviceClient) => Promise<T>, signal?: AbortSignal): Promise<T> {
   return withSSHLock(async () => {
+    throwIfAborted(signal);
     let opened: { key: string; session: DeviceAgentSession };
     try {
-      opened = await getDeviceAgentSession(connection);
+      opened = await getDeviceAgentSession(connection, signal);
     } catch (error) {
+      throwIfAborted(signal);
       const detail = error instanceof Error ? error.message : String(error);
       throw new DeviceAgentUnavailableError(`could not connect to the dkrypt device agent: ${detail}`, { cause: error });
     }
+    const cancelPending = () => opened.session.client.cancelPending();
+    signal?.addEventListener('abort', cancelPending, { once: true });
     try {
-      return await fn(opened.session.client);
+      throwIfAborted(signal);
+      const result = await fn(opened.session.client);
+      throwIfAborted(signal);
+      return result;
     } catch (error) {
+      throwIfAborted(signal);
       if (opened.session.client.isUnusable) {
         throw new DeviceAgentUnavailableError('the dkrypt device agent connection was lost', { cause: error });
       }
       throw error;
     } finally {
+      signal?.removeEventListener('abort', cancelPending);
       releaseDeviceAgentSession(opened.key, opened.session);
     }
   });
 }
 
-export async function withAutoinstallDeviceAgent<T>(connection: DeviceConnection, fn: (client: DeviceClient) => Promise<T>): Promise<T> {
+export async function withAutoinstallDeviceAgent<T>(connection: DeviceConnection, fn: (client: DeviceClient) => Promise<T>, signal?: AbortSignal): Promise<T> {
   if (!isDirectUsbDeviceAgentConnection(connection)) throw new DeviceAgentUnavailableError('the direct USB recovery channel is unavailable for this device');
-  return withDeviceAgent(connection, fn);
+  return withDeviceAgent(connection, fn, signal);
 }
 
-export async function withSSH<T>(connection: DeviceConnection | string, fn: (conn: DeviceClient) => Promise<T>): Promise<T> {
+export async function withSSH<T>(connection: DeviceConnection | string, fn: (conn: DeviceClient) => Promise<T>, signal?: AbortSignal): Promise<T> {
+  throwIfAborted(signal);
   const transportOrder = getDeviceTransportOrder(connection);
   if (transportOrder[0] === 'autoinstall' && isRustDeviceConnection(connection)) {
-    return withDeviceAgent(connection as DeviceConnection, fn);
+    return withDeviceAgent(connection as DeviceConnection, fn, signal);
   }
   return withSSHLock(async () => {
+    throwIfAborted(signal);
     let key = '';
     let session: SshSession | undefined;
+    let clearCommandSignal: (() => void) | undefined;
     try {
-      const opened = await getSshSession(connection);
+      const opened = await getSshSession(connection, signal);
       key = opened.key;
       session = opened.session;
-      return await fn(session.conn);
+      throwIfAborted(signal);
+      if (signal) {
+        const currentConnection = session.conn;
+        clearCommandSignal = () => sshCommandSignals.delete(currentConnection);
+        sshCommandSignals.set(currentConnection, signal);
+        signal.addEventListener('abort', clearCommandSignal, { once: true });
+      }
+      const result = await fn(session.conn);
+      throwIfAborted(signal);
+      return result;
     } catch (err) {
+      throwIfAborted(signal);
       invalidateAuthCache(connection);
       if (session && (session.unusable || isTransientSshConnectionError(err))) closeSshSession(key, session);
       throw err;
     } finally {
-      if (session) releaseSshSession(key, session);
+      if (clearCommandSignal) signal?.removeEventListener('abort', clearCommandSignal);
+      if (session) {
+        if (signal && sshCommandSignals.get(session.conn) === signal) sshCommandSignals.delete(session.conn);
+        releaseSshSession(key, session);
+      }
     }
   });
 }
 
-export async function withIpadecrypt<T>(connection: DeviceConnection | string, fn: (rootDir: string) => Promise<T>): Promise<T> {
-  return withDeviceTunnel(connection, async (auth, rootDir) => fn(typeof connection === 'string' ? rootDir : await ensureIpadecryptRuntime(rootDir, auth)));
+export async function withIpadecrypt<T>(connection: DeviceConnection | string, fn: (rootDir: string) => Promise<T>, signal?: AbortSignal): Promise<T> {
+  throwIfAborted(signal);
+  return withDeviceTunnel(connection, async (auth, rootDir) => {
+    throwIfAborted(signal);
+    const runtimeRoot = typeof connection === 'string' ? rootDir : await ensureIpadecryptRuntime(rootDir, auth);
+    throwIfAborted(signal);
+    return fn(runtimeRoot);
+  }, signal);
 }
 
 async function discoverRustDevices(): Promise<DeviceDiscoveryResult> {
@@ -1090,8 +1199,9 @@ function isDeviceSession(conn: DeviceClient): conn is DeviceSession {
   return 'transport' in conn && 'rootDir' in conn && typeof conn.exec === 'function';
 }
 
-export function execCommand(conn: DeviceClient, command: string, timeoutMs = REMOTE_COMMAND_TIMEOUT_MS): Promise<{ stdout: string; stderr: string; code: number | null }> {
-  if (isDeviceSession(conn)) return conn.exec(command, timeoutMs);
+export function execCommand(conn: DeviceClient, command: string, timeoutMs = REMOTE_COMMAND_TIMEOUT_MS, signal?: AbortSignal): Promise<{ stdout: string; stderr: string; code: number | null }> {
+  if (isDeviceSession(conn)) return conn.exec(command, timeoutMs, signal);
+  const commandSignal = signal ?? sshCommandSignals.get(conn);
   return new Promise((resolve, reject) => {
     let stdout = '';
     let stderr = '';
@@ -1099,20 +1209,29 @@ export function execCommand(conn: DeviceClient, command: string, timeoutMs = REM
     let settled = false;
     let timer: ReturnType<typeof setTimeout>;
     const effectiveTimeoutMs = Math.max(1, timeoutMs);
+    const cleanupSignal = () => commandSignal?.removeEventListener('abort', abort);
     const fail = (error: Error) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      cleanupSignal();
       stream?.destroy();
       reject(error);
     };
+    const abort = () => fail(abortedOperationError(commandSignal as AbortSignal));
     timer = setTimeout(() => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      cleanupSignal();
       stream?.destroy();
       resolve({ stdout, stderr: `${stderr}\ncommand timed out after ${effectiveTimeoutMs}ms`.trim(), code: null });
     }, effectiveTimeoutMs);
+    commandSignal?.addEventListener('abort', abort, { once: true });
+    if (commandSignal?.aborted) {
+      abort();
+      return;
+    }
     try {
       conn.exec(command, (err, nextStream) => {
         if (settled) {
@@ -1134,6 +1253,7 @@ export function execCommand(conn: DeviceClient, command: string, timeoutMs = REM
           if (settled) return;
           settled = true;
           clearTimeout(timer);
+          cleanupSignal();
           resolve({ stdout, stderr, code });
         });
         nextStream.on('error', fail);
@@ -1156,9 +1276,14 @@ function writeRemoteFile(conn: DeviceClient, remotePath: string, content: string
 
 async function writeRemoteFileAtomically(conn: DeviceClient, remotePath: string, content: string, timeoutMs = REMOTE_COMMAND_TIMEOUT_MS): Promise<void> {
   const tempPath = `${remotePath}.${randomUUID()}.partial`;
-  await writeRemoteFile(conn, tempPath, content, timeoutMs);
-  const { code, stderr } = await execCommand(conn, `mv ${shellQuote(tempPath)} ${shellQuote(remotePath)}`, timeoutMs);
-  if (code !== 0) throw new Error(`could not publish bridge request: ${stderr || code}`);
+  try {
+    await writeRemoteFile(conn, tempPath, content, timeoutMs);
+    const { code, stderr } = await execCommand(conn, `mv ${shellQuote(tempPath)} ${shellQuote(remotePath)}`, timeoutMs);
+    if (code !== 0) throw new Error(`could not publish bridge request: ${stderr || code}`);
+  } catch (error) {
+    await execCommand(conn, `rm -f ${shellQuote(tempPath)}`, Math.max(1, Math.min(timeoutMs, 5_000))).catch(() => {});
+    throw error;
+  }
 }
 
 async function readRemoteFileIfExists(conn: DeviceClient, remotePath: string, timeoutMs = REMOTE_COMMAND_TIMEOUT_MS): Promise<string | undefined> {
@@ -1195,11 +1320,11 @@ export async function isAppStoreRunning(conn: DeviceClient): Promise<boolean> {
 }
 
 export function armAppStoreAutoConfirm(conn: DeviceClient, label = 'Install'): Promise<void> {
-  return writeRemoteFile(conn, AUTOCONFIRM_FLAG_PATH, label);
+  return writeRemoteFile(conn, AUTOCONFIRM_FLAG_PATH, `expiresAtMs=${Date.now() + AUTOCONFIRM_TTL_MS}\n${label}`);
 }
 
 export async function clearAppStoreAutoConfirm(conn: DeviceClient): Promise<void> {
-  await execCommand(conn, `rm -f ${AUTOCONFIRM_FLAG_PATH}`);
+  await execCommand(conn, `rm -f ${AUTOCONFIRM_FLAG_PATHS.map(shellQuote).join(' ')}`);
 }
 
 export async function uninstallInstalledApp(conn: DeviceClient, bundleId: string): Promise<boolean> {
@@ -1275,8 +1400,10 @@ async function sendBridgeRequestRawTo(
   channel: BridgeChannel,
   request: Record<string, unknown>,
   timeoutMs = 20_000,
+  signal?: AbortSignal,
 ): Promise<any> {
   return withBridgeLock(async () => {
+    throwIfAborted(signal);
     const requestId = typeof request.requestId === 'string' ? request.requestId : randomUUID();
     const rootDir = isDeviceSession(conn) ? conn.rootDir : connectionRoots.get(conn);
     if (!rootDir) throw new Error('autoinstall bridge requests must run through a managed device session');
@@ -1288,60 +1415,76 @@ async function sendBridgeRequestRawTo(
     const envelope = createBridgeEnvelope(secret, channel, request, requestId);
     const deadline = Date.now() + timeoutMs;
     const commandTimeout = () => Math.max(1, Math.min(REMOTE_COMMAND_TIMEOUT_MS, deadline - Date.now()));
+    let requestMayExist = false;
+    let completed = false;
     log.info('sending authenticated autoinstall bridge request', { requestId, channel, action: request.action });
-    const { code, stderr } = await execCommand(
-      conn,
-      `mkdir -p "${requestDirectory}" "${responseDirectory}" && chmod 700 "${BRIDGE_ROOT_PATH}" "${BRIDGE_ROOT_PATH}/${channel}" "${requestDirectory}" "${responseDirectory}"`,
-      commandTimeout(),
-    );
-    if (code !== 0) throw new Error(`could not prepare autoinstall bridge directories: ${stderr || code}`);
-    await writeRemoteFileAtomically(conn, BRIDGE_SECRET_REMOTE_PATH, `${secret}\n`, commandTimeout());
-    const secretMode = await execCommand(conn, `chmod 600 "${BRIDGE_SECRET_REMOTE_PATH}"`, commandTimeout());
-    if (secretMode.code !== 0) throw new Error(`could not secure autoinstall bridge secret: ${secretMode.stderr || secretMode.code}`);
-    await execCommand(conn, `find "${BRIDGE_ROOT_PATH}" -type f -mmin +${BRIDGE_ARTIFACT_TTL_MINUTES} -delete`, commandTimeout());
-    await writeRemoteFileAtomically(conn, requestPath, JSON.stringify(envelope), commandTimeout());
+    try {
+      const { code, stderr } = await execCommand(
+        conn,
+        `mkdir -p "${requestDirectory}" "${responseDirectory}" && chmod 700 "${BRIDGE_ROOT_PATH}" "${BRIDGE_ROOT_PATH}/${channel}" "${requestDirectory}" "${responseDirectory}"`,
+        commandTimeout(),
+      );
+      throwIfAborted(signal);
+      if (code !== 0) throw new Error(`could not prepare autoinstall bridge directories: ${stderr || code}`);
+      await writeRemoteFileAtomically(conn, BRIDGE_SECRET_REMOTE_PATH, `${secret}\n`, commandTimeout());
+      throwIfAborted(signal);
+      const secretMode = await execCommand(conn, `chmod 600 "${BRIDGE_SECRET_REMOTE_PATH}"`, commandTimeout());
+      throwIfAborted(signal);
+      if (secretMode.code !== 0) throw new Error(`could not secure autoinstall bridge secret: ${secretMode.stderr || secretMode.code}`);
+      await execCommand(conn, `find "${BRIDGE_ROOT_PATH}" -type f -mmin +${BRIDGE_ARTIFACT_TTL_MINUTES} -delete`, commandTimeout());
+      throwIfAborted(signal);
+      requestMayExist = true;
+      await writeRemoteFileAtomically(conn, requestPath, JSON.stringify(envelope), commandTimeout());
+      throwIfAborted(signal);
 
-    while (Date.now() < deadline) {
-      const raw = await readRemoteFileIfExists(conn, responsePath, commandTimeout());
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (typeof parsed.requestId === 'string' && parsed.requestId !== requestId) {
-          log.warn('discarding autoinstall bridge response with a mismatched request id', { requestId, responseRequestId: parsed.requestId, channel });
-          await execCommand(conn, `rm -f ${responsePath}`, commandTimeout());
-          continue;
-        }
-        await execCommand(conn, `rm -f "${responsePath}"`, commandTimeout());
-        if (parsed.ok === false) {
-          const error = parsed.error;
-          if (error && typeof error === 'object') {
-            throw new BridgeError({
-              code: typeof error.code === 'string' ? error.code : undefined,
-              stage: typeof error.stage === 'string' ? error.stage : undefined,
-              message: typeof error.message === 'string' ? error.message : JSON.stringify(error),
-              retryable: error.retryable === true,
-            });
+      while (Date.now() < deadline) {
+        throwIfAborted(signal);
+        const raw = await readRemoteFileIfExists(conn, responsePath, commandTimeout());
+        throwIfAborted(signal);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (typeof parsed.requestId === 'string' && parsed.requestId !== requestId) {
+            log.warn('discarding autoinstall bridge response with a mismatched request id', { requestId, responseRequestId: parsed.requestId, channel });
+            await execCommand(conn, `rm -f ${responsePath}`, commandTimeout());
+            throwIfAborted(signal);
+            continue;
           }
-          throw new BridgeError({ message: typeof error === 'string' ? error : String(error), retryable: false });
+          await execCommand(conn, `rm -f "${responsePath}"`, commandTimeout());
+          throwIfAborted(signal);
+          if (parsed.ok === false) {
+            const error = parsed.error;
+            if (error && typeof error === 'object') {
+              throw new BridgeError({
+                code: typeof error.code === 'string' ? error.code : undefined,
+                stage: typeof error.stage === 'string' ? error.stage : undefined,
+                message: typeof error.message === 'string' ? error.message : JSON.stringify(error),
+                retryable: error.retryable === true,
+              });
+            }
+            throw new BridgeError({ message: typeof error === 'string' ? error : String(error), retryable: false });
+          }
+          completed = true;
+          return { ...parsed, requestId };
         }
-        return { ...parsed, requestId };
+        await delayWithSignal(Math.min(500, Math.max(1, deadline - Date.now())), signal);
       }
-      await new Promise((r) => setTimeout(r, Math.min(500, Math.max(1, deadline - Date.now()))));
+      throw new Error(`autoinstall bridge request timed out (${requestId}) on ${channel}: ${JSON.stringify(request)}`);
+    } finally {
+      if (requestMayExist && !completed) await execCommand(conn, `rm -f "${requestPath}" "${responsePath}"`, Math.min(5_000, REMOTE_COMMAND_TIMEOUT_MS)).catch(() => {});
     }
-    await execCommand(conn, `rm -f "${requestPath}" "${responsePath}"`, commandTimeout()).catch(() => {});
-    throw new Error(`autoinstall bridge request timed out (${requestId}) on ${channel}: ${JSON.stringify(request)}`);
   });
 }
 
-export function sendTestFlightBridgeRequest(conn: DeviceClient, request: Record<string, unknown>, timeoutMs = 20_000): Promise<any> {
-  return sendBridgeRequestRawTo(conn, 'testflight', request, timeoutMs);
+export function sendTestFlightBridgeRequest(conn: DeviceClient, request: Record<string, unknown>, timeoutMs = 20_000, signal?: AbortSignal): Promise<any> {
+  return sendBridgeRequestRawTo(conn, 'testflight', request, timeoutMs, signal);
 }
 
-export function sendSpringBoardBridgeRequest(conn: DeviceClient, request: Record<string, unknown>, timeoutMs = 20_000): Promise<any> {
-  return sendBridgeRequestRawTo(conn, 'springboard', request, timeoutMs);
+export function sendSpringBoardBridgeRequest(conn: DeviceClient, request: Record<string, unknown>, timeoutMs = 20_000, signal?: AbortSignal): Promise<any> {
+  return sendBridgeRequestRawTo(conn, 'springboard', request, timeoutMs, signal);
 }
 
-export function sendAppStoreBridgeRequest(conn: DeviceClient, request: Record<string, unknown>, timeoutMs = 20_000): Promise<any> {
-  return sendBridgeRequestRawTo(conn, 'appstore', request, timeoutMs);
+export function sendAppStoreBridgeRequest(conn: DeviceClient, request: Record<string, unknown>, timeoutMs = 20_000, signal?: AbortSignal): Promise<any> {
+  return sendBridgeRequestRawTo(conn, 'appstore', request, timeoutMs, signal);
 }
 
 export async function tryIoregCandidates(conn: DeviceClient, ioregClass: string, candidates: string[]): Promise<string | undefined> {
