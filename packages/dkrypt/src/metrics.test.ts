@@ -79,7 +79,7 @@ describe('OpenTelemetry metrics', () => {
         expect(new Headers(init?.headers).get('content-type')).toBe('application/json');
         expect(new Headers(init?.headers).get('user-agent')).toStartWith('dkrypt-otlp-exporter/1.0.0 (Bun/');
         body = JSON.parse(String(init?.body));
-        return new Response(null, { status: 200 });
+        return Response.json({});
       },
     });
     const retriedMetrics = body?.resourceMetrics[0].scopeMetrics[0].metrics;
@@ -88,7 +88,7 @@ describe('OpenTelemetry metrics', () => {
       endpoint: 'https://collector.example/v1/metrics',
       fetcher: async (_input, init) => {
         successfulBody = JSON.parse(String(init?.body));
-        return new Response(null, { status: 200 });
+        return Response.json({});
       },
     });
     const successfulMetrics = successfulBody?.resourceMetrics[0].scopeMetrics[0].metrics;
@@ -113,7 +113,7 @@ describe('OpenTelemetry metrics', () => {
       endpoint: 'https://collector.example/v1/metrics',
       fetcher: async (_input, init) => {
         nextBody = JSON.parse(String(init?.body));
-        return new Response(null, { status: 200 });
+        return Response.json({});
       },
     });
     const metrics = nextBody?.resourceMetrics[0].scopeMetrics[0].metrics;
@@ -137,5 +137,26 @@ describe('OpenTelemetry metrics', () => {
     } finally {
       config.otelSampleRate = originalSampleRate;
     }
+  });
+
+  it('treats empty and malformed 2xx responses as exporter failures', async () => {
+    incrementMetric('jobs_completed_total', { source: 'appstore' });
+    for (const response of [new Response(null, { status: 200 }), new Response('{', { status: 200 })]) {
+      await flushOtlpMetrics({
+        endpoint: 'https://collector.example/v1/metrics',
+        fetcher: async () => response,
+      });
+    }
+    let body: Record<string, any> | undefined;
+    await flushOtlpMetrics({
+      endpoint: 'https://collector.example/v1/metrics',
+      fetcher: async (_input, init) => {
+        body = JSON.parse(String(init?.body));
+        return Response.json({});
+      },
+    });
+    const metrics = body?.resourceMetrics[0].scopeMetrics[0].metrics;
+
+    expect(metrics.find((metric: any) => metric.name === 'dkrypt_telemetry_metrics_export_failures_total')?.sum.dataPoints[0].asInt).toBe('2');
   });
 });

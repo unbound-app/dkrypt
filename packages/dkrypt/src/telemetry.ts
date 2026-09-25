@@ -102,12 +102,32 @@ async function postOtlpJson(signal: 'traces' | 'metrics', url: string, payload: 
     signal: AbortSignal.timeout(5000),
   });
   if (!response.ok) throw new Error(`OTLP ${signal} exporter returned HTTP ${response.status}`);
-  const body = await response.json().catch(() => undefined) as Record<string, unknown> | undefined;
-  const partialSuccess = (body?.partialSuccess ?? body?.partial_success) as Record<string, unknown> | undefined;
+  const responseText = await response.text();
+  if (!responseText.trim()) throw new Error(`OTLP ${signal} exporter returned an empty success response`);
+  let body: Record<string, unknown>;
+  try {
+    const parsed: unknown = JSON.parse(responseText);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('response must be a JSON object');
+    body = parsed as Record<string, unknown>;
+  } catch (error) {
+    throw new Error(`OTLP ${signal} exporter returned an invalid success response: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const partialSuccessValue = Object.hasOwn(body, 'partialSuccess') ? body.partialSuccess : body.partial_success;
+  if (partialSuccessValue !== undefined && (!partialSuccessValue || typeof partialSuccessValue !== 'object' || Array.isArray(partialSuccessValue))) {
+    throw new Error(`OTLP ${signal} exporter returned an invalid partial success response`);
+  }
+  const partialSuccess = partialSuccessValue as Record<string, unknown> | undefined;
   const rejectedField = signal === 'metrics' ? 'rejectedDataPoints' : 'rejectedSpans';
   const snakeField = signal === 'metrics' ? 'rejected_data_points' : 'rejected_spans';
-  const rejected = Number(partialSuccess?.[rejectedField] ?? partialSuccess?.[snakeField] ?? 0);
-  return Number.isSafeInteger(rejected) && rejected > 0 ? rejected : 0;
+  const rejectedValue = partialSuccess && Object.hasOwn(partialSuccess, rejectedField)
+    ? partialSuccess[rejectedField]
+    : partialSuccess?.[snakeField];
+  if (rejectedValue === undefined) return 0;
+  const rejected = typeof rejectedValue === 'string' && /^\d+$/.test(rejectedValue) ? Number(rejectedValue) : rejectedValue;
+  if (typeof rejected !== 'number' || !Number.isSafeInteger(rejected) || rejected < 0) {
+    throw new Error(`OTLP ${signal} exporter returned an invalid rejected count`);
+  }
+  return rejected;
 }
 
 export function startSpan(name: string, attributes: Record<string, string | number | boolean | undefined> = {}, parent?: TraceContext): SpanHandle {

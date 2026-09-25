@@ -408,35 +408,45 @@ async fn stream_native_device_events(
     sender: mpsc::Sender<RpcResponse>,
     stop: oneshot::Receiver<()>,
 ) {
-    let mut mux = match mux_connection(&state).await {
-        Ok(value) => value,
-        Err(value) => {
-            let _ = sender.send(failure(request_id, value)).await;
-            return;
-        }
+    tokio::pin!(stop);
+    let mut mux = tokio::select! {
+        _ = &mut stop => return,
+        result = mux_connection(&state) => match result {
+            Ok(value) => value,
+            Err(value) => {
+                let _ = sender.send(failure(request_id, value)).await;
+                return;
+            }
+        },
     };
-    let mut events = match mux.listen().await {
-        Ok(value) => value,
-        Err(value) => {
-            let _ = sender
-                .send(failure(
-                    request_id,
-                    error(
-                        "device_events",
-                        format!("could not listen for usbmuxd events: {value}"),
-                        true,
-                    ),
-                ))
-                .await;
-            return;
-        }
+    let mut events = tokio::select! {
+        _ = &mut stop => return,
+        result = mux.listen() => match result {
+            Ok(value) => value,
+            Err(value) => {
+                let _ = sender
+                    .send(failure(
+                        request_id,
+                        error(
+                            "device_events",
+                            format!("could not listen for usbmuxd events: {value}"),
+                            true,
+                        ),
+                    ))
+                    .await;
+                return;
+            }
+        },
     };
-    let initial = match list_device_records(&state).await {
-        Ok(value) => value,
-        Err(value) => {
-            let _ = sender.send(failure(request_id, value)).await;
-            return;
-        }
+    let initial = tokio::select! {
+        _ = &mut stop => return,
+        result = list_device_records(&state) => match result {
+            Ok(value) => value,
+            Err(value) => {
+                let _ = sender.send(failure(request_id, value)).await;
+                return;
+            }
+        },
     };
     let mut devices = initial
         .into_iter()
@@ -454,7 +464,6 @@ async fn stream_native_device_events(
     {
         return;
     }
-    tokio::pin!(stop);
     loop {
         tokio::select! {
             _ = &mut stop => return,

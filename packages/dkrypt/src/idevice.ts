@@ -34,6 +34,7 @@ const DEVICE_AGENT_RETRY_DELAY_MS = 500;
 const DEVICE_AGENT_IDLE_TIMEOUT_MS = 5 * 60_000;
 const USBMUX_TUNNEL_READY_TIMEOUT_MS = 8_000;
 const SSH_SFTP_PROBE_TIMEOUT_MS = 5_000;
+const DEVICE_BRIDGE_EVENT_INITIAL_SNAPSHOT_TIMEOUT_MS = 10_000;
 
 export type { BridgeChannel } from '#bridgeProtocol.js';
 
@@ -410,20 +411,24 @@ class RustDeviceBridgeClient {
           }
           if (!opened) {
             opened = true;
+            socket.setTimeout(0);
             resolve(stop);
           }
           onEvent(value as RustDeviceBridgeEvent);
         }
       };
-      socket.setTimeout(0);
       socket.on('data', receive);
       socket.once('error', fail);
       socket.once('close', () => {
         if (!stopped && opened) onError?.(new Error('Rust device bridge event stream closed'));
         if (!opened && !stopped) reject(new Error('Rust device bridge event stream closed before the first snapshot'));
       });
-      if (signal?.aborted) stop();
-      else signal?.addEventListener('abort', stop, { once: true });
+      if (signal?.aborted) {
+        stop();
+        return;
+      }
+      signal?.addEventListener('abort', stop, { once: true });
+      socket.setTimeout(DEVICE_BRIDGE_EVENT_INITIAL_SNAPSHOT_TIMEOUT_MS, () => fail(new Error('Rust device bridge initial event snapshot timed out')));
       socket.write(frame, (error) => {
         if (error) fail(error);
       });
