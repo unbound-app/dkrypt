@@ -1,6 +1,6 @@
 import { config } from '#config.js';
 import type { Job } from '#jobs/types.js';
-import { openStateCollectionDatabase, readStateCollection, replaceStateCollection } from '#store/sqlite.js';
+import { openStateCollectionDatabase, readStateCollection, replaceStateCollections } from '#store/sqlite.js';
 
 type StoredJob = Omit<Job, 'childProcess' | 'waiters'>;
 
@@ -31,8 +31,10 @@ export function loadPersistedJobs(): StoredJob[] {
 
 export function replacePersistedJobs(jobs: Iterable<Job>): void {
   const values = [...jobs];
-  replaceStateCollection(database, 'jobs', values.map((job) => ({ id: job.id, payload: serializableJob(job), updatedAt: job.finishedAt ?? job.startedAt ?? job.createdAt })));
-  replaceStateCollection(database, 'job_timelines', values.map((job) => ({ id: job.id, payload: { jobId: job.id, events: job.timeline ?? [] }, updatedAt: job.finishedAt ?? job.startedAt ?? job.createdAt })));
+  replaceStateCollections(database, [
+    { table: 'jobs', rows: values.map((job) => ({ id: job.id, payload: serializableJob(job), updatedAt: job.finishedAt ?? job.startedAt ?? job.createdAt })) },
+    { table: 'job_timelines', rows: values.map((job) => ({ id: job.id, payload: { jobId: job.id, events: job.timeline ?? [] }, updatedAt: job.finishedAt ?? job.startedAt ?? job.createdAt })) },
+  ]);
 }
 
 export function closePersistedJobs(): void {

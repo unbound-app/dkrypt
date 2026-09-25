@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { openStateCollectionDatabase, readStateCollection, replaceStateCollection } from '#store/sqlite.js';
+import { openStateCollectionDatabase, readStateCollection, replaceStateCollections } from '#store/sqlite.js';
 import { config } from '#config.js';
 
 export type WebhookInboxStatus = 'received' | 'processed' | 'failed' | 'quarantined';
@@ -34,8 +34,10 @@ function isWebhookInboxRecord(value: unknown): value is WebhookInboxRecord {
 
 function persist(): void {
   const values = [...records.values()].sort((a, b) => b.receivedAt - a.receivedAt).slice(0, 5000);
-  replaceStateCollection(database, 'webhook_inbox', values.map((record) => ({ id: record.id, payload: record, updatedAt: record.processedAt ?? record.receivedAt })));
-  replaceStateCollection(database, 'webhook_attempts', values.map((record) => ({ id: `${record.id}:${record.attempts}`, payload: { inboxId: record.id, attempt: record.attempts, status: record.status, at: record.processedAt ?? record.receivedAt, error: record.lastError }, updatedAt: record.processedAt ?? record.receivedAt })));
+  replaceStateCollections(database, [
+    { table: 'webhook_inbox', rows: values.map((record) => ({ id: record.id, payload: record, updatedAt: record.processedAt ?? record.receivedAt })) },
+    { table: 'webhook_attempts', rows: values.map((record) => ({ id: `${record.id}:${record.attempts}`, payload: { inboxId: record.id, attempt: record.attempts, status: record.status, at: record.processedAt ?? record.receivedAt, error: record.lastError }, updatedAt: record.processedAt ?? record.receivedAt })) },
+  ]);
 }
 
 export function receiveWebhook(provider: WebhookInboxRecord['provider'], eventId: string, rawBody: Buffer | string): { record: WebhookInboxRecord; duplicate: boolean } {

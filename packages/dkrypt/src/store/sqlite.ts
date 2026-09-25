@@ -16,6 +16,11 @@ interface DomainRow {
   updatedAt?: number;
 }
 
+export interface StateCollectionReplacement {
+  table: string;
+  rows: Array<{ id: string; payload: unknown; updatedAt?: number }>;
+}
+
 export interface StateDatabaseOptions {
   stateDir: string;
   filename?: string;
@@ -352,17 +357,7 @@ export class StateDatabase {
   }
 
   replaceCollection(table: string, rows: Array<{ id: string; payload: unknown; updatedAt?: number }>): void {
-    assertCollectionTable(table);
-    this.db.exec('BEGIN IMMEDIATE;');
-    try {
-      this.db.exec(`DELETE FROM ${table};`);
-      const statement = this.db.query(`INSERT INTO ${table} (id, payload, updated_at) VALUES (?, ?, ?);`);
-      for (const row of rows) statement.run(row.id, json(row.payload), row.updatedAt ?? Date.now());
-      this.db.exec('COMMIT;');
-    } catch (error) {
-      this.db.exec('ROLLBACK;');
-      throw error;
-    }
+    replaceStateCollections(this.db, [{ table, rows }]);
   }
 
   close(): void {
@@ -398,12 +393,24 @@ export function readStateCollection(database: Database, table: string): unknown[
 }
 
 export function replaceStateCollection(database: Database, table: string, rows: Array<{ id: string; payload: unknown; updatedAt?: number }>): void {
-  assertCollectionTable(table);
+  replaceStateCollections(database, [{ table, rows }]);
+}
+
+export function replaceStateCollections(database: Database, replacements: readonly StateCollectionReplacement[]): void {
+  const tables = new Set<string>();
+  for (const replacement of replacements) {
+    assertCollectionTable(replacement.table);
+    if (tables.has(replacement.table)) throw new Error(`duplicate SQLite collection update: ${replacement.table}`);
+    tables.add(replacement.table);
+  }
+  if (replacements.length === 0) return;
   database.exec('BEGIN IMMEDIATE;');
   try {
-    database.exec(`DELETE FROM ${table};`);
-    const statement = database.query(`INSERT INTO ${table} (id, payload, updated_at) VALUES (?, ?, ?);`);
-    for (const row of rows) statement.run(row.id, json(row.payload), row.updatedAt ?? Date.now());
+    for (const replacement of replacements) {
+      database.exec(`DELETE FROM ${replacement.table};`);
+      const statement = database.query(`INSERT INTO ${replacement.table} (id, payload, updated_at) VALUES (?, ?, ?);`);
+      for (const row of replacement.rows) statement.run(row.id, json(row.payload), row.updatedAt ?? Date.now());
+    }
     database.exec('COMMIT;');
   } catch (error) {
     database.exec('ROLLBACK;');

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { openStateCollectionDatabase, readStateCollection, replaceStateCollection } from '#store/sqlite.js';
+import { openStateCollectionDatabase, readStateCollection, replaceStateCollections } from '#store/sqlite.js';
 import { config } from '#config.js';
 import { hasPermission, PermissionFlag } from '#permissions.js';
 
@@ -229,8 +229,10 @@ const state = load();
 if (loadedFromLegacyFile) persist();
 
 function persist(): void {
-  replaceStateCollection(billingDatabase, 'billing_records', [{ id: 'billing-snapshot', payload: { kind: 'snapshot', value: state }, updatedAt: Date.now() }]);
-  replaceStateCollection(billingDatabase, 'billing_events', state.processedEvents.map((event) => ({ id: `${event.provider}:${event.eventId}`, payload: event, updatedAt: Date.parse(event.processedAt) || Date.now() })));
+  replaceStateCollections(billingDatabase, [
+    { table: 'billing_records', rows: [{ id: 'billing-snapshot', payload: { kind: 'snapshot', value: state }, updatedAt: Date.now() }] },
+    { table: 'billing_events', rows: state.processedEvents.map((event) => ({ id: `${event.provider}:${event.eventId}`, payload: event, updatedAt: Date.parse(event.processedAt) || Date.now() })) },
+  ]);
   const temporaryPath = `${billingPath}.${process.pid}.tmp`;
   mkdirSync(path.dirname(billingPath), { recursive: true });
   writeFileSync(temporaryPath, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });

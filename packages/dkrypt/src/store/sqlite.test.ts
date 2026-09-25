@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test } from 'bun:test';
-import { openStateDatabase } from '#store/sqlite.js';
+import { openStateCollectionDatabase, openStateDatabase, readStateCollection, replaceStateCollections } from '#store/sqlite.js';
 
 test('SQLite state snapshots survive restart and retain independently owned collections', async () => {
   const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-sqlite-'));
@@ -60,6 +60,39 @@ test('SQLite migrates legacy scheduler rows out of job timelines', async () => {
     expect(migrated.readCollection('scheduler_runs')).toEqual([{ id: 'run-legacy', ts: 100, appStore: {}, testflight: {} }]);
     migrated.close();
   } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test('SQLite collection updates commit together and roll back together on failure', async () => {
+  const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-sqlite-transaction-'));
+  const database = openStateCollectionDatabase({ stateDir, filename: 'state.sqlite' }, ['jobs', 'job_timelines']);
+  try {
+    replaceStateCollections(database, [
+      { table: 'jobs', rows: [{ id: 'job-1', payload: { id: 'job-1', status: 'queued' }, updatedAt: 10 }] },
+      { table: 'job_timelines', rows: [{ id: 'job-1', payload: { jobId: 'job-1', events: [{ at: 10, label: 'queued' }] }, updatedAt: 10 }] },
+    ]);
+
+    expect(() => replaceStateCollections(database, [
+      { table: 'jobs', rows: [{ id: 'job-1', payload: { id: 'job-1', status: 'done' }, updatedAt: 20 }] },
+      { table: 'job_timelines', rows: [
+        { id: 'duplicate', payload: { jobId: 'job-1', events: [] }, updatedAt: 20 },
+        { id: 'duplicate', payload: { jobId: 'job-2', events: [] }, updatedAt: 20 },
+      ] },
+    ])).toThrow();
+
+    expect(readStateCollection(database, 'jobs')).toEqual([{ id: 'job-1', status: 'queued' }]);
+    expect(readStateCollection(database, 'job_timelines')).toEqual([{ jobId: 'job-1', events: [{ at: 10, label: 'queued' }] }]);
+
+    replaceStateCollections(database, [
+      { table: 'jobs', rows: [{ id: 'job-1', payload: { id: 'job-1', status: 'done' }, updatedAt: 30 }] },
+      { table: 'job_timelines', rows: [{ id: 'job-1', payload: { jobId: 'job-1', events: [{ at: 30, label: 'done' }] }, updatedAt: 30 }] },
+    ]);
+
+    expect(readStateCollection(database, 'jobs')).toEqual([{ id: 'job-1', status: 'done' }]);
+    expect(readStateCollection(database, 'job_timelines')).toEqual([{ jobId: 'job-1', events: [{ at: 30, label: 'done' }] }]);
+  } finally {
+    database.close();
     await rm(stateDir, { recursive: true, force: true });
   }
 });
