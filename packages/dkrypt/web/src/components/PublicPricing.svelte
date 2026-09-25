@@ -59,7 +59,7 @@
                   <h2 class="text-base font-semibold">{plan.name}</h2>
                   {#if plan.name === 'Priority API'}<Badge>Best value</Badge>{/if}
                 </div>
-                <p class="mt-1 min-h-[3.75rem] text-sm leading-5 text-muted">{plan.description}</p>
+                <p class="mt-1 min-h-20 text-sm leading-5 text-muted">{plan.description}</p>
               </div>
               {#if plan.priority}
                 <Zap class="h-5 w-5 shrink-0 text-accent" />
