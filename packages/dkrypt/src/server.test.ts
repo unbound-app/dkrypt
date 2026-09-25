@@ -120,6 +120,21 @@ test('Fastify serves browser identity assets from the public root', async () => 
   }
 });
 
+test('Fastify emits a narrow content security policy', async () => {
+  const server = await buildServer({ includePublicRoutes: false });
+
+  try {
+    const response = await server.inject({ method: 'GET', url: '/v1/status' });
+    const policy = response.headers['content-security-policy'];
+    expect(policy).toContain("style-src 'self'");
+    expect(policy).toContain("style-src-elem 'self'");
+    expect(policy).toContain("style-src-attr 'unsafe-inline'");
+    expect(policy).not.toContain("style-src 'self' 'unsafe-inline'");
+  } finally {
+    await server.close();
+  }
+});
+
 test('Fastify exposes coarse public service status without device details', async () => {
   const server = await buildServer({ includePublicRoutes: false });
 
