@@ -75,7 +75,7 @@
               <span class="text-sm text-muted">/month</span>
             </div>
 
-            <div class="mb-6 flex flex-1 flex-col gap-2 text-sm">
+            <div class="mb-5 flex flex-col gap-2 text-sm">
               <div class="flex items-center gap-2"><Check class="h-4 w-4 text-ok" /> Dashboard decrypts</div>
               {#if plan.api}
                 <div class="flex items-center gap-2"><Check class="h-4 w-4 text-ok" /> API key access</div>
@@ -87,15 +87,17 @@
               {:else}
                 <div class="flex items-center gap-2 text-muted"><X class="h-4 w-4" /> High queue priority</div>
               {/if}
-              <div class="mt-2 flex items-center gap-2 text-xs text-muted"><ShieldCheck class="h-4 w-4 text-accent" /> Stripe or crypto checkout</div>
             </div>
 
-            <a
-              href="/#sign-in"
-              class="{buttonVariants('default')} mt-auto"
-            >
-              Sign in to subscribe
-            </a>
+            <div class="mt-auto">
+              <div class="mb-3 flex items-center gap-2 text-xs text-muted"><ShieldCheck class="h-4 w-4 shrink-0 text-accent" /> Stripe or crypto checkout</div>
+              <a
+                href="/#sign-in"
+                class="{buttonVariants('default')} w-full"
+              >
+                Sign in to subscribe
+              </a>
+            </div>
           </div>
         </Card>
       {/each}
