@@ -262,7 +262,36 @@ jobs:
           }
           trap 'rollback' ERR
           smoke() {
-            docker exec dkrypt bun -e "const key=process.env.API_KEY; const headers={authorization:'Bearer '+key}; const base='http://127.0.0.1:'+(process.env.PORT||8080); const health=await (await fetch(base+'/v1/health',{headers})).json(); const capabilities=health.bridge?.capabilities??[]; if (!health.ok || health.database?.integrity !== 'ok' || health.serviceReady !== true || health.bridge?.state !== 'ready' || !capabilities.includes('list_devices') || !capabilities.includes('cancel')) throw new Error(JSON.stringify(health)); if (health.device && (!health.device.reachable || health.device.readiness !== 'ready')) throw new Error('configured device is not ready: '+JSON.stringify(health.device)); const openapi=await (await fetch(base+'/openapi.json')).json(); if (!openapi.paths || Object.keys(openapi.paths).length < 20) throw new Error('OpenAPI route inventory is incomplete'); const status=await fetch(base+'/v1/status'); const csp=status.headers.get('content-security-policy')??''; if (!csp.includes('style-src-elem')) throw new Error('content security policy is incomplete'); const session=await fetch(base+'/v1/auth/session'); if (!session.headers.get('x-ratelimit-limit')) throw new Error('shared API rate limit is not active'); const stat=await import('node:fs/promises'); await stat.stat(process.env.DEVICE_BRIDGE_SOCKET||'/run/dkrypt/device-bridge.sock'); try { await stat.stat('/root/.ipadecrypt'); throw new Error('legacy .ipadecrypt bootstrap path is present'); } catch (error) { if (error instanceof Error && !String(error.message).includes('ENOENT')) throw error; } console.log(JSON.stringify({health:health.ok,device:health.device,bridge:health.bridge,paths:Object.keys(openapi.paths).length,csp:true,rateLimit:true}));"
+            docker exec -i dkrypt bun - <<'JS'
+          const headers = { authorization: `Bearer ${process.env.API_KEY}` };
+          const base = `http://127.0.0.1:${process.env.PORT || 8080}`;
+          const health = await (await fetch(`${base}/v1/health`, { headers })).json();
+          const capabilities = health.bridge?.capabilities ?? [];
+          if (!health.ok || health.database?.integrity !== 'ok' || health.serviceReady !== true || health.bridge?.state !== 'ready' || !capabilities.includes('list_devices') || !capabilities.includes('cancel')) {
+            throw new Error(JSON.stringify(health));
+          }
+          const device = health.device;
+          const lastSeenAt = typeof device?.lastSeenAt === 'number' ? device.lastSeenAt : 0;
+          if (!device || device.transport !== 'usb' || !device.reachable || device.transportState !== 'ready' || device.readiness !== 'ready' || device.subsystems?.agent !== 'ready' || Date.now() - lastSeenAt > 90_000) {
+            throw new Error(`configured Rust USB device or signed Autoinstall agent is not ready: ${JSON.stringify(device)}`);
+          }
+          const openapi = await (await fetch(`${base}/openapi.json`)).json();
+          if (!openapi.paths || Object.keys(openapi.paths).length < 20) throw new Error('OpenAPI route inventory is incomplete');
+          const status = await fetch(`${base}/v1/status`);
+          const csp = status.headers.get('content-security-policy') ?? '';
+          if (!csp.includes('style-src-elem')) throw new Error('content security policy is incomplete');
+          const session = await fetch(`${base}/v1/auth/session`);
+          if (!session.headers.get('x-ratelimit-limit')) throw new Error('shared API rate limit is not active');
+          const stat = await import('node:fs/promises');
+          await stat.stat(process.env.DEVICE_BRIDGE_SOCKET || '/run/dkrypt/device-bridge.sock');
+          try {
+            await stat.stat('/root/.ipadecrypt');
+            throw new Error('legacy .ipadecrypt bootstrap path is present');
+          } catch (error) {
+            if (error instanceof Error && !String(error.message).includes('ENOENT')) throw error;
+          }
+          console.log(JSON.stringify({ health: health.ok, device, bridge: health.bridge, paths: Object.keys(openapi.paths).length, csp: true, rateLimit: true }));
+          JS
           }
           smoke_success=0
           for i in $(seq 1 30); do
