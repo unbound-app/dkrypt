@@ -156,25 +156,37 @@ function sessionFromCookieHeader(cookieHeader: string | undefined): Session | un
   return { ...session, sub, permissions };
 }
 
+type SessionAuthorizationFailure = {
+  statusCode: 401 | 403;
+  code: 'unauthorized' | 'mfa_required' | 'forbidden';
+  message: string;
+};
+
+type SessionAuthorizationResult = { session: Session } | { failure: SessionAuthorizationFailure };
+
+function authorizeSession(session: Session | undefined, flags?: bigint[]): SessionAuthorizationResult {
+  if (!session) return { failure: { statusCode: 401, code: 'unauthorized', message: 'unauthorized' } };
+  if (!session.mfaVerified && mfaStatus(session.sub).enabled) {
+    return { failure: { statusCode: 401, code: 'mfa_required', message: 'multi-factor authentication is required' } };
+  }
+  if (flags && !hasAnyPermission(session.permissions, flags)) {
+    return { failure: { statusCode: 403, code: 'forbidden', message: 'you do not have permission to do that' } };
+  }
+  return { session };
+}
+
 function fastifySessionError(request: FastifyRequest, reply: FastifyReply, statusCode: number, code: string, message: string): void {
   reply.code(statusCode).send({ error: message, code, message, requestId: request.id, retryable: false });
 }
 
 function authorizeFastifySession(request: FastifyRequest, reply: FastifyReply, done: HookHandlerDoneFunction, flags?: bigint[]): void {
-  const session = sessionFromCookieHeader(request.headers.cookie);
-  if (!session) {
-    fastifySessionError(request, reply, 401, 'unauthorized', 'unauthorized');
+  const authorization = authorizeSession(sessionFromCookieHeader(request.headers.cookie), flags);
+  if ('failure' in authorization) {
+    const { statusCode, code, message } = authorization.failure;
+    fastifySessionError(request, reply, statusCode, code, message);
     return;
   }
-  if (!session.mfaVerified && mfaStatus(session.sub).enabled) {
-    fastifySessionError(request, reply, 401, 'mfa_required', 'multi-factor authentication is required');
-    return;
-  }
-  if (flags && !hasAnyPermission(session.permissions, flags)) {
-    fastifySessionError(request, reply, 403, 'forbidden', 'you do not have permission to do that');
-    return;
-  }
-  fastifySessionContext.set(request, session);
+  fastifySessionContext.set(request, authorization.session);
   done();
 }
 
@@ -189,35 +201,25 @@ export function fastifyRequirePermission(...flags: bigint[]) {
 }
 
 export function requireSession(req: Request, res: Response, next: NextFunction): void {
-  const session = getSession(req);
-  if (!session) {
-    res.error('unauthorized', 'unauthorized', 401, false);
+  const authorization = authorizeSession(getSession(req));
+  if ('failure' in authorization) {
+    const { statusCode, code, message } = authorization.failure;
+    res.error(code, message, statusCode, false);
     return;
   }
-  if (!session.mfaVerified && mfaStatus(session.sub).enabled) {
-    res.error('mfa_required', 'multi-factor authentication is required', 401, false);
-    return;
-  }
-  res.locals.session = session;
+  res.locals.session = authorization.session;
   next();
 }
 
 export function requirePermission(...flags: bigint[]) {
   return (req: Request, res: Response, next: NextFunction): void => {
-    const session = getSession(req);
-    if (!session) {
-      res.error('unauthorized', 'unauthorized', 401, false);
+    const authorization = authorizeSession(getSession(req), flags);
+    if ('failure' in authorization) {
+      const { statusCode, code, message } = authorization.failure;
+      res.error(code, message, statusCode, false);
       return;
     }
-    if (!session.mfaVerified && mfaStatus(session.sub).enabled) {
-      res.error('mfa_required', 'multi-factor authentication is required', 401, false);
-      return;
-    }
-    if (!hasAnyPermission(session.permissions, flags)) {
-      res.error('forbidden', 'you do not have permission to do that', 403, false);
-      return;
-    }
-    res.locals.session = session;
+    res.locals.session = authorization.session;
     next();
   };
 }

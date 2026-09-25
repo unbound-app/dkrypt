@@ -100,6 +100,29 @@ describe('Stripe billing webhooks', () => {
     }
   });
 
+  test('returns the standard error envelope for an invalid webhook signature', async () => {
+    const server = await buildServer({ includePublicRoutes: false });
+
+    try {
+      const response = await server.inject({
+        method: 'POST',
+        url: '/v1/stripe/webhook',
+        headers: { 'content-type': 'application/json', 'stripe-signature': 'invalid' },
+        payload: '{}',
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json()).toMatchObject({
+        error: 'invalid webhook signature',
+        code: 'request_error',
+        message: 'invalid webhook signature',
+        retryable: false,
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
   test('exposes Stripe billing metadata without returning a client secret', async () => {
     const server = await buildServer({ includePublicRoutes: false });
     const login = await server.inject({

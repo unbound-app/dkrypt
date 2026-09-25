@@ -2,6 +2,15 @@ import { createHash, randomBytes } from 'node:crypto';
 import Stripe from 'stripe';
 import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
 import type { FastifyReply, FastifyRequest } from 'fastify';
+import type {
+  BillingCancelRoute,
+  BillingCheckoutRoute,
+  BillingSubscriptionRoute,
+  BillingSubscriptionsRoute,
+  BillingWebhookInboxParamsRoute,
+  BillingWebhookInboxRoute,
+  BillingWebhookQuarantineRoute,
+} from '#billingContracts.js';
 import { getRouteContract } from '#contracts.js';
 import {
   acquireBillingCheckoutLock,
@@ -284,20 +293,17 @@ export const billingRoutes: FastifyPluginAsyncTypebox = async (server) => {
     return `dkrypt_${suffix}`;
   }
 
-  server.post('/v1/billing/checkout', { schema: getRouteContract('POST', '/v1/billing/checkout'), preHandler: fastifyRequireSession }, async (request, reply) => {
+  server.post<BillingCheckoutRoute>('/v1/billing/checkout', { schema: getRouteContract('POST', '/v1/billing/checkout'), preHandler: fastifyRequireSession }, async (request, reply) => {
     const userId = getFastifySession(request)!.sub;
-    const body = request.body as { planId?: unknown; provider?: unknown; cryptoAsset?: unknown };
-    const target = getPlan(typeof body?.planId === 'string' ? body.planId : '');
+    const target = getPlan(request.body.planId);
     if (!target) return sendBillingError(request, reply, 400, 'unknown plan');
-    const provider = body?.provider === undefined ? 'stripe' : body.provider;
-    if (provider !== 'stripe' && provider !== 'crypto') return sendBillingError(request, reply, 400, 'unsupported billing provider');
+    const provider = request.body.provider ?? 'stripe';
     const idempotencyKey = getBillingIdempotencyKey(request, reply, userId, `checkout-${provider}`);
     if (!idempotencyKey) return;
     if (!acquireBillingCheckoutLock(userId)) return sendBillingError(request, reply, 409, 'another checkout is already in progress for this account');
     if (provider === 'crypto') {
       try {
-        const cryptoAsset = typeof body?.cryptoAsset === 'string' ? body.cryptoAsset : undefined;
-        const result = await createCryptoCheckout({ userId, planId: target.id, idempotencyKey, asset: cryptoAsset });
+        const result = await createCryptoCheckout({ userId, planId: target.id, idempotencyKey, asset: request.body.cryptoAsset });
         return reply.code(result.reused ? 200 : 201).send({ url: result.checkout.checkoutUrl, provider: 'nowpayments', checkoutId: result.checkout.checkoutId, status: result.checkout.status });
       } catch (error) {
         if (error instanceof CryptoBillingError) return sendBillingError(request, reply, error.statusCode, error.message);
@@ -357,7 +363,7 @@ export const billingRoutes: FastifyPluginAsyncTypebox = async (server) => {
     }
   });
 
-  server.post('/v1/billing/cancel', { schema: getRouteContract('POST', '/v1/billing/cancel'), preHandler: fastifyRequireSession }, async (request, reply) => {
+  server.post<BillingCancelRoute>('/v1/billing/cancel', { schema: getRouteContract('POST', '/v1/billing/cancel'), preHandler: fastifyRequireSession }, async (request, reply) => {
     const userId = getFastifySession(request)!.sub;
     const idempotencyKey = getBillingIdempotencyKey(request, reply, userId, 'cancel');
     if (!idempotencyKey) return;
@@ -394,19 +400,10 @@ export const billingRoutes: FastifyPluginAsyncTypebox = async (server) => {
     return reply.send({ stripe: { enabled: stripeEnabled, environment: stripeEnvironment, missingConfiguration: stripeMissingConfiguration }, crypto: await getNowPaymentsProviderStatus() });
   });
 
-  server.get('/v1/billing/subscriptions', { schema: getRouteContract('GET', '/v1/billing/subscriptions'), preHandler: fastifyRequirePermission(PermissionFlag.viewBilling, PermissionFlag.manageBilling) }, (request, reply) => {
-    const input = request.query as Record<string, unknown>;
-    const query = typeof input?.q === 'string' ? input.q : undefined;
-    const provider = typeof input?.provider === 'string' ? input.provider : undefined;
-    const status = typeof input?.status === 'string' ? input.status : undefined;
-    const planId = typeof input?.planId === 'string' ? input.planId : undefined;
-    const from = typeof input?.from === 'string' ? input.from : undefined;
-    const to = typeof input?.to === 'string' ? input.to : undefined;
-    const wallet = typeof input?.wallet === 'string' ? input.wallet : undefined;
-    const invoice = typeof input?.invoice === 'string' ? input.invoice : undefined;
-    const limit = Math.min(Math.max(Number.parseInt(String(input?.limit ?? '50'), 10) || 50, 1), 100);
-    const cursor = typeof input?.cursor === 'string' ? input.cursor : undefined;
-    const offset = cursor ? 0 : Math.max(Number.parseInt(String(input?.offset ?? '0'), 10) || 0, 0);
+  server.get<BillingSubscriptionsRoute>('/v1/billing/subscriptions', { schema: getRouteContract('GET', '/v1/billing/subscriptions'), preHandler: fastifyRequirePermission(PermissionFlag.viewBilling, PermissionFlag.manageBilling) }, (request, reply) => {
+    const { q: query, provider, status, planId, from, to, wallet, invoice, limit: requestedLimit, cursor, offset: requestedOffset } = request.query;
+    const limit = Math.min(Math.max(requestedLimit ?? 50, 1), 100);
+    const offset = cursor ? 0 : Math.max(requestedOffset ?? 0, 0);
     const subscriptionOrder = new Map(
       listBillingSubscriptions().map((subscription, index) => [`${subscription.provider}:${subscription.subscriptionId}`, index]),
     );
@@ -425,32 +422,27 @@ export const billingRoutes: FastifyPluginAsyncTypebox = async (server) => {
     return reply.send({ subscriptions: page.items, total: subscriptions.length, nextCursor: page.nextCursor });
   });
 
-  server.get('/v1/billing/webhooks/inbox', { schema: getRouteContract('GET', '/v1/billing/webhooks/inbox'), preHandler: requireBillingManager }, (request, reply) => {
-    const input = request.query as Record<string, unknown>;
-    const status = typeof input?.status === 'string' ? input.status : undefined;
-    const provider = typeof input?.provider === 'string' ? input.provider : undefined;
+  server.get<BillingWebhookInboxRoute>('/v1/billing/webhooks/inbox', { schema: getRouteContract('GET', '/v1/billing/webhooks/inbox'), preHandler: requireBillingManager }, (request, reply) => {
+    const { status, provider, limit: requestedLimit, cursor, offset: requestedOffset } = request.query;
     const filtered = listWebhookInbox()
       .filter((record) => !status || record.status === status)
       .filter((record) => !provider || record.provider === provider);
-    const limit = Math.min(Math.max(Number.parseInt(String(input?.limit ?? '50'), 10) || 50, 1), 200);
-    const offset = typeof input?.cursor === 'string' ? decodeCursor(input.cursor) : Math.max(Number.parseInt(String(input?.offset ?? '0'), 10) || 0, 0);
+    const limit = Math.min(Math.max(requestedLimit ?? 50, 1), 200);
+    const offset = cursor ? decodeCursor(cursor) : Math.max(requestedOffset ?? 0, 0);
     const page = filtered.slice(offset, offset + limit).map(({ rawBody, ...record }) => ({ ...record, rawBodyBytes: Buffer.byteLength(rawBody) }));
     return reply.send({ inbox: page, total: filtered.length, nextCursor: nextCursor(offset, page.length, filtered.length) });
   });
 
-  server.post('/v1/billing/webhooks/inbox/:id/quarantine', { schema: getRouteContract('POST', '/v1/billing/webhooks/inbox/:id/quarantine'), preHandler: requireBillingManager }, (request, reply) => {
-    const params = request.params as { id: string };
-    const current = getWebhookInboxRecord(params.id);
+  server.post<BillingWebhookQuarantineRoute>('/v1/billing/webhooks/inbox/:id/quarantine', { schema: getRouteContract('POST', '/v1/billing/webhooks/inbox/:id/quarantine'), preHandler: requireBillingManager }, (request, reply) => {
+    const current = getWebhookInboxRecord(request.params.id);
     if (!current) return sendBillingError(request, reply, 404, 'webhook inbox record not found');
-    const body = request.body as { reason?: unknown };
-    const reason = typeof body?.reason === 'string' && body.reason.trim() ? body.reason.trim() : 'quarantined by manager';
+    const reason = request.body.reason?.trim() || 'quarantined by manager';
     const record = quarantineWebhook(current.id, reason);
     return reply.send({ record: record ? { ...record, rawBody: undefined } : undefined });
   });
 
-  server.post('/v1/billing/webhooks/inbox/:id/replay', { schema: getRouteContract('POST', '/v1/billing/webhooks/inbox/:id/replay'), preHandler: requireBillingManager }, async (request, reply) => {
-    const params = request.params as { id: string };
-    const current = getWebhookInboxRecord(params.id);
+  server.post<BillingWebhookInboxParamsRoute>('/v1/billing/webhooks/inbox/:id/replay', { schema: getRouteContract('POST', '/v1/billing/webhooks/inbox/:id/replay'), preHandler: requireBillingManager }, async (request, reply) => {
+    const current = getWebhookInboxRecord(request.params.id);
     if (!current) return sendBillingError(request, reply, 404, 'webhook inbox record not found');
     if (current.status === 'processed') return reply.send({ replayed: false, duplicate: true, status: current.status });
     if (!claimWebhook(current.id)) return sendBillingError(request, reply, 409, 'webhook is already being processed');
@@ -474,10 +466,9 @@ export const billingRoutes: FastifyPluginAsyncTypebox = async (server) => {
     }
   });
 
-  server.post('/v1/billing/subscription', { schema: getRouteContract('POST', '/v1/billing/subscription'), preHandler: fastifyRequireSession }, async (request, reply) => {
+  server.post<BillingSubscriptionRoute>('/v1/billing/subscription', { schema: getRouteContract('POST', '/v1/billing/subscription'), preHandler: fastifyRequireSession }, async (request, reply) => {
     const userId = getFastifySession(request)!.sub;
-    const body = request.body as { planId?: unknown };
-    const target = getPlan(typeof body?.planId === 'string' ? body.planId : '');
+    const target = getPlan(request.body.planId);
     if (!target) return sendBillingError(request, reply, 400, 'unknown plan');
     if (!requireStripeBilling(request, reply)) return;
 

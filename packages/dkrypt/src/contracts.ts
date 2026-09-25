@@ -1,5 +1,14 @@
 import { Type, type TSchema } from '@sinclair/typebox';
 import type { FastifySchema } from 'fastify';
+import {
+  billingCheckoutBodySchema,
+  billingIdempotencyKeyHeadersSchema,
+  billingSubscriptionBodySchema,
+  billingSubscriptionsQuerySchema,
+  billingWebhookInboxParamsSchema,
+  billingWebhookInboxQuerySchema,
+  billingWebhookQuarantineBodySchema,
+} from '#billingContracts.js';
 
 const BundleId = Type.String({ minLength: 3, maxLength: 200, pattern: '^[A-Za-z0-9.-]+$' });
 const VersionSelector = Type.String({ minLength: 1, maxLength: 64, pattern: '^v?\\d+(?:\\.\\d+)*(?:_\\d+)?$' });
@@ -935,10 +944,6 @@ function object(properties: Record<string, TSchema>): TSchema {
 const IdempotencyKeyHeaders = object({
   'idempotency-key': Type.Optional(Type.String({ minLength: 1, maxLength: 200, pattern: '^[A-Za-z0-9._:-]+$' })),
 });
-const BillingIdempotencyKeyHeaders = object({
-  'idempotency-key': Type.Optional(Type.String({ minLength: 1, maxLength: 200, pattern: '^[A-Za-z0-9._~-]+$' })),
-});
-
 const contracts = new Map<string, FastifySchema>();
 
 function register(method: string, path: string, schema: FastifySchema): void {
@@ -1006,26 +1011,16 @@ register('POST', '/v1/testflight/decrypt', {
 });
 
 register('POST', '/v1/billing/checkout', {
-  headers: BillingIdempotencyKeyHeaders,
-  body: object({ planId: Identifier, provider: Type.Optional(Type.Union([Type.Literal('stripe'), Type.Literal('crypto')])), cryptoAsset: Type.Optional(Type.String({ minLength: 2, maxLength: 32 })) }),
+  headers: billingIdempotencyKeyHeadersSchema,
+  body: billingCheckoutBodySchema,
 });
 
-register('POST', '/v1/billing/cancel', { headers: BillingIdempotencyKeyHeaders });
+register('POST', '/v1/billing/cancel', { headers: billingIdempotencyKeyHeadersSchema });
 register('GET', '/v1/billing', {});
 register('POST', '/v1/billing/portal', {});
 register('GET', '/v1/billing/provider-status', {});
 register('GET', '/v1/billing/subscriptions', {
-  querystring: object({
-    ...PaginationQuery.properties,
-    q: Type.Optional(Type.String({ maxLength: 200 })),
-    provider: Type.Optional(Type.String({ maxLength: 32 })),
-    status: Type.Optional(Type.String({ maxLength: 32 })),
-    planId: Type.Optional(Identifier),
-    from: Type.Optional(Type.String({ maxLength: 64 })),
-    to: Type.Optional(Type.String({ maxLength: 64 })),
-    wallet: Type.Optional(Type.String({ maxLength: 200 })),
-    invoice: Type.Optional(Type.String({ maxLength: 200 })),
-  }),
+  querystring: billingSubscriptionsQuerySchema,
 });
 
 register('POST', '/v1/auth/login', { body: object({ password: Type.String({ minLength: 1, maxLength: 500 }), mfaToken: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })) }) });
@@ -1098,9 +1093,9 @@ register('PUT', '/v1/dashboard/devices/:id/dark-mode', { params: object({ id: Id
 register('POST', '/v1/dashboard/devices/:id/bridge-action', { params: object({ id: Identifier }), body: object({ action: Identifier }) });
 register('POST', '/v1/dashboard/devices/:id/recover', { params: object({ id: Identifier }) });
 
-register('POST', '/v1/billing/webhooks/inbox/:id/replay', { params: object({ id: Identifier }) });
-register('POST', '/v1/billing/webhooks/inbox/:id/quarantine', { params: object({ id: Identifier }), body: object({ reason: Type.Optional(Type.String({ maxLength: 500 })) }) });
-register('GET', '/v1/billing/webhooks/inbox', { querystring: object({ ...PaginationQuery.properties, status: Type.Optional(Type.String({ maxLength: 32 })), provider: Type.Optional(Type.String({ maxLength: 32 })) }) });
+register('POST', '/v1/billing/webhooks/inbox/:id/replay', { params: billingWebhookInboxParamsSchema });
+register('POST', '/v1/billing/webhooks/inbox/:id/quarantine', { params: billingWebhookInboxParamsSchema, body: billingWebhookQuarantineBodySchema });
+register('GET', '/v1/billing/webhooks/inbox', { querystring: billingWebhookInboxQuerySchema });
 
 const remainingContracts: Array<[ContractMethod, string]> = [
   ['GET', '/v1/auth/session'],
@@ -1310,13 +1305,13 @@ register('POST', '/v1/auth/passkeys/verify', { response: { 200: AuthTokenRespons
 register('POST', '/v1/auth/passkeys/reauth/options', { response: { 200: PasskeyOptionsResponse } });
 register('POST', '/v1/auth/passkeys/reauth/verify', { response: { 200: AuthTokenResponse } });
 register('POST', '/v1/billing/checkout', {
-  headers: BillingIdempotencyKeyHeaders,
-  body: object({ planId: Identifier, provider: Type.Optional(Type.Union([Type.Literal('stripe'), Type.Literal('crypto')])), cryptoAsset: Type.Optional(Type.String({ minLength: 2, maxLength: 32 })) }),
+  headers: billingIdempotencyKeyHeadersSchema,
+  body: billingCheckoutBodySchema,
   response: { 200: BillingCheckoutResponse, 201: BillingCheckoutResponse },
 });
 register('POST', '/v1/billing/portal', { response: { 200: UrlResponse } });
-register('POST', '/v1/billing/cancel', { headers: BillingIdempotencyKeyHeaders, response: { 200: BillingCancelResponse } });
-register('POST', '/v1/billing/subscription', { body: object({ planId: Identifier }), response: { 200: BillingSubscriptionUpdateResponse } });
+register('POST', '/v1/billing/cancel', { headers: billingIdempotencyKeyHeadersSchema, response: { 200: BillingCancelResponse } });
+register('POST', '/v1/billing/subscription', { body: billingSubscriptionBodySchema, response: { 200: BillingSubscriptionUpdateResponse } });
 register('GET', '/v1/dashboard/settings', { response: { 200: SchedulerSettingsResponse } });
 register('PUT', '/v1/dashboard/settings', { response: { 200: SchedulerSettingsResponse } });
 register('GET', '/v1/dashboard/settings/validate-cron', { response: { 200: object({ valid: Type.Boolean() }) } });
@@ -1786,12 +1781,12 @@ register('DELETE', '/v1/dashboard/roles/:id', {
   response: { 200: OkResponse },
 });
 register('POST', '/v1/billing/webhooks/inbox/:id/replay', {
-  params: object({ id: Identifier }),
+  params: billingWebhookInboxParamsSchema,
   response: { 200: WebhookReplayResponse },
 });
 register('POST', '/v1/billing/webhooks/inbox/:id/quarantine', {
-  params: object({ id: Identifier }),
-  body: object({ reason: Type.Optional(Type.String({ maxLength: 500 })) }),
+  params: billingWebhookInboxParamsSchema,
+  body: billingWebhookQuarantineBodySchema,
   response: { 200: WebhookQuarantineResponse },
 });
 for (const provider of ['github', 'discord'] as const) {
