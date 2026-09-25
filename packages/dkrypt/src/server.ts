@@ -34,8 +34,22 @@ import { incrementMetric, observeMetric } from '#metrics.js';
 import { stopNotificationDigestScheduler } from '#notify.js';
 import { closeDashboardConnections } from '#events.js';
 import { startSpan, startTelemetry, stopTelemetry, traceContextFromHeader, type SpanHandle } from '#telemetry.js';
+import { FixedWindowRateLimiter } from '#util/rateLimit.js';
 
 const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
+const sharedApiRateLimiter = new FixedWindowRateLimiter(config.apiRateLimitPerMinute, 60_000);
+
+function shouldRateLimitApiRequest(url: string): boolean {
+  const path = url.split('?', 1)[0];
+  return path.startsWith('/v1/') && ![
+    '/v1/health',
+    '/v1/status',
+    '/v1/metrics',
+    '/v1/dashboard/events',
+    '/v1/stripe/webhook',
+    '/v1/nowpayments/webhook',
+  ].includes(path);
+}
 
 export async function buildServer(options: { includePublicRoutes?: boolean } = {}): Promise<FastifyInstance> {
   const server = Fastify({ bodyLimit: 5 * 1024 * 1024, trustProxy: 'loopback' }).withTypeProvider<TypeBoxTypeProvider>();
@@ -82,6 +96,19 @@ export async function buildServer(options: { includePublicRoutes?: boolean } = {
           reply.code(403).send({ error: 'request origin is not allowed', code: 'csrf_origin_rejected', message: 'request origin is not allowed', requestId, retryable: false });
           return;
         }
+      }
+    }
+    if (shouldRateLimitApiRequest(request.url)) {
+      const credential = request.headers.authorization ?? request.headers.cookie ?? request.ip ?? 'unknown';
+      const subject = createHash('sha256').update(credential).digest('hex');
+      const decision = sharedApiRateLimiter.consume(subject);
+      reply.header('X-RateLimit-Limit', String(decision.limit));
+      reply.header('X-RateLimit-Remaining', String(decision.remaining));
+      reply.header('X-RateLimit-Reset', String(Math.ceil(decision.resetAt / 1000)));
+      if (!decision.allowed) {
+        reply.header('Retry-After', String(decision.retryAfterSeconds));
+        reply.code(429).send({ error: 'too many requests', code: 'rate_limited', message: 'too many requests', requestId, retryable: true });
+        return;
       }
     }
     done();

@@ -116,6 +116,7 @@ export const config = {
   outboundWebhookSecret: optional('OUTBOUND_WEBHOOK_SECRET', ''),
   outboundWebhookSecretPrevious: optional('OUTBOUND_WEBHOOK_SECRET_PREVIOUS', ''),
   userConcurrencyCap: optionalInt('USER_CONCURRENCY_CAP', 0),
+  apiRateLimitPerMinute: Math.max(1, optionalInt('API_RATE_LIMIT_PER_MINUTE', 600)),
   queueSloMinutes: optionalInt('QUEUE_SLO_MINUTES', 30),
 
   otelExporterOtlpEndpoint: optional('OTEL_EXPORTER_OTLP_ENDPOINT', ''),
