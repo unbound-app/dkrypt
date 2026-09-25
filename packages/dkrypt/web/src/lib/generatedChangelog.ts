@@ -1,6 +1,16 @@
 export const GENERATED_CHANGELOG = [
   {
     "date": "2026-09-25",
+    "title": "fix(api): use immutable pagination keys",
+    "description": "Released in 1c0d09d."
+  },
+  {
+    "date": "2026-09-25",
+    "title": "chore(web): refresh generated changelog",
+    "description": "Released in 1f20ef2."
+  },
+  {
+    "date": "2026-09-25",
     "title": "fix(api): stabilize billing subscription cursors",
     "description": "Released in 577b6c3."
   },
@@ -28,15 +38,5 @@ export const GENERATED_CHANGELOG = [
     "date": "2026-09-25",
     "title": "feat(observability): export backend metrics over OTLP",
     "description": "Released in 5f3f703."
-  },
-  {
-    "date": "2026-09-25",
-    "title": "fix(device): preserve USB health when SFTP is unavailable",
-    "description": "Released in 7b404f9."
-  },
-  {
-    "date": "2026-09-25",
-    "title": "fix(device): probe USB SFTP tunnel readiness",
-    "description": "Released in d37f1a0."
   }
 ] as const;
