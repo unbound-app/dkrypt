@@ -196,6 +196,7 @@ async function runDecryptOperation(job: Job, device: DeviceRecord, signal?: Abor
     buildNumber: job.ipaMetadata?.bundleVersion ?? job.testflight?.build.cfBundleVersion,
     stagingPath: outputPath,
     sourceJobId: job.id,
+    warnings: job.warnings,
     projectId: job.projectId,
     signal,
   });

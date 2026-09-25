@@ -27882,6 +27882,12 @@
                             "maxLength": 200,
                             "type": "string"
                           },
+                          "warnings": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
                           "fileUrl": {
                             "type": "string"
                           }

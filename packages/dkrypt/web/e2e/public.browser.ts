@@ -240,6 +240,79 @@ test('populated device management and preflight dialog meet accessibility checks
   await expectAccessible(page);
 });
 
+test('IPA Library reveals artifact provenance and decrypt warnings on demand', async ({ page }) => {
+  const sha256 = 'a'.repeat(64);
+  const warning = 'Payload/Example.app/Extensions/Share.appex/Share still encrypted (cryptid != 0)';
+
+  await mockAuthenticatedDashboard(page, '1');
+  await page.route('**/v1/dashboard/artifacts*', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        artifacts: [{
+          id: 'artifact-1',
+          key: 'com.example.provenance:appstore:123',
+          projectIds: ['default'],
+          bundleId: 'com.example.provenance',
+          channel: 'appstore',
+          versionLabel: '2.4.0',
+          buildNumber: '240',
+          fileSizeBytes: 1024 * 1024,
+          sha256,
+          createdAt: '2026-09-25T12:00:00.000Z',
+          lastAccessedAt: '2026-09-25T13:00:00.000Z',
+          accessCount: 3,
+          sourceJobId: 'job-provenance-1',
+          warnings: [warning],
+          fileUrl: '/v1/dashboard/artifacts/artifact-1/file',
+        }],
+        total: 1,
+        totalBytes: 1024 * 1024,
+        maxBytes: 1024 * 1024 * 10,
+      }),
+    });
+  });
+
+  await page.addInitScript(() => {
+    class StableEventSource extends EventTarget {
+      static readonly CONNECTING = 0;
+      static readonly OPEN = 1;
+      static readonly CLOSED = 2;
+      readonly url: string;
+      readonly withCredentials = false;
+      readyState = StableEventSource.OPEN;
+      onopen: ((event: Event) => void) | null = null;
+      onerror: ((event: Event) => void) | null = null;
+
+      constructor(url: string | URL) {
+        super();
+        this.url = String(url);
+        queueMicrotask(() => this.onopen?.(new Event('open')));
+      }
+
+      close(): void {
+        this.readyState = StableEventSource.CLOSED;
+      }
+    }
+
+    Object.defineProperty(window, 'EventSource', { configurable: true, value: StableEventSource });
+  });
+
+  const artifactResponse = page.waitForResponse((response) => response.url().includes('/v1/dashboard/artifacts?') && response.ok());
+  await page.goto('/');
+  await artifactResponse;
+  const artifact = page.locator('article').filter({ hasText: 'com.example.provenance' });
+  await expect(artifact).toBeVisible();
+  const details = artifact.locator('summary').filter({ hasText: 'Artifact details' });
+  await expect(details).toBeVisible();
+  await expect(artifact.getByText(sha256, { exact: true })).not.toBeVisible();
+
+  await details.click();
+  await expect(artifact.getByText(sha256, { exact: true })).toBeVisible();
+  await expect(artifact.getByText('job-provenance-1', { exact: true })).toBeVisible();
+  await expect(artifact.getByText(warning, { exact: true })).toBeVisible();
+});
+
 test('TestFlight shortcuts reappear from the account cache while a reload refresh is pending', async ({ page }) => {
   await mockAuthenticatedDashboard(page, '17179869186');
 

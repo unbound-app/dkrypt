@@ -398,6 +398,8 @@ export interface ArtifactRecord {
   pinnedAt?: string;
   accessCount: number;
   fileUrl: string;
+  sourceJobId?: string;
+  warnings?: string[];
 }
 
 export interface JobTimelineEvent {

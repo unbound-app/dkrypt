@@ -962,6 +962,8 @@ test('artifact pinning is scoped, persistent, audited, and available in the libr
     channel: 'appstore',
     externalVersionId: `pin-${crypto.randomUUID()}`,
     stagingPath,
+    sourceJobId: 'job-pin-route',
+    warnings: ['An embedded extension remains encrypted'],
   });
 
   try {
@@ -976,7 +978,12 @@ test('artifact pinning is scoped, persistent, audited, and available in the libr
 
     const library = await server.inject({ method: 'GET', url: '/v1/dashboard/artifacts?q=com.example.pin-route', headers: { cookie } });
     expect(library.statusCode).toBe(200);
-    expect(library.json().artifacts[0]).toMatchObject({ id: artifact.id, pinnedAt: expect.any(String) });
+    expect(library.json().artifacts[0]).toMatchObject({
+      id: artifact.id,
+      pinnedAt: expect.any(String),
+      sourceJobId: 'job-pin-route',
+      warnings: ['An embedded extension remains encrypted'],
+    });
 
     const audit = await server.inject({ method: 'GET', url: '/v1/dashboard/audit-log?limit=10', headers: { cookie } });
     expect(audit.statusCode).toBe(200);

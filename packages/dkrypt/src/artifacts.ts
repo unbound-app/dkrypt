@@ -31,6 +31,7 @@ export interface ArtifactRecord {
   accessCount: number;
   pinnedAt?: number;
   sourceJobId?: string;
+  warnings?: string[];
 }
 
 export interface ArtifactListOptions {
@@ -133,7 +134,9 @@ function isArtifactRecord(value: unknown): value is ArtifactRecord {
     typeof record.createdAt === 'number' &&
     typeof record.lastAccessedAt === 'number' &&
     typeof record.accessCount === 'number' &&
-    (record.pinnedAt === undefined || Number.isFinite(record.pinnedAt))
+    (record.pinnedAt === undefined || Number.isFinite(record.pinnedAt)) &&
+    (record.sourceJobId === undefined || typeof record.sourceJobId === 'string') &&
+    (record.warnings === undefined || (Array.isArray(record.warnings) && record.warnings.every((warning) => typeof warning === 'string')))
   );
 }
 
@@ -181,6 +184,18 @@ function updateArtifactMetadata(artifact: ArtifactRecord, channel: ArtifactChann
     changed = true;
   }
   return changed;
+}
+
+function mergeArtifactWarnings(artifact: ArtifactRecord, warnings: string[] | undefined): boolean {
+  const currentWarnings = artifact.warnings ?? [];
+  const mergedWarnings = [...new Set([
+    ...currentWarnings,
+    ...(warnings ?? []).filter((warning) => typeof warning === 'string' && warning.length > 0),
+  ])];
+  const changed = mergedWarnings.length !== currentWarnings.length || mergedWarnings.some((warning, index) => warning !== currentWarnings[index]);
+  if (!changed) return false;
+  artifact.warnings = mergedWarnings.length ? mergedWarnings : undefined;
+  return true;
 }
 
 export function artifactKeyForAppStore(bundleId: string, externalVersionId: string): string {
@@ -427,6 +442,7 @@ export async function promoteArtifact(input: {
   buildNumber?: string;
   stagingPath: string;
   sourceJobId?: string;
+  warnings?: string[];
   projectId?: string;
   signal?: AbortSignal;
 }): Promise<ArtifactRecord> {
@@ -440,7 +456,9 @@ export async function promoteArtifact(input: {
       await rm(input.stagingPath, { force: true });
       throwIfAborted(input.signal);
       if (input.projectId) linkArtifactToProject(existing.id, input.projectId);
-      if (updateArtifactMetadata(existing, input.channel, input.versionLabel, input.buildNumber)) persistIndex();
+      const metadataChanged = updateArtifactMetadata(existing, input.channel, input.versionLabel, input.buildNumber);
+      const warningsChanged = mergeArtifactWarnings(existing, input.warnings);
+      if (metadataChanged || warningsChanged) persistIndex();
       touchArtifactUnsafe(existing);
       return existing;
     }
@@ -472,6 +490,7 @@ export async function promoteArtifact(input: {
       lastAccessedAt: now,
       accessCount: 0,
       sourceJobId: input.sourceJobId,
+      warnings: input.warnings?.filter((warning) => typeof warning === 'string' && warning.length > 0),
     };
     await rename(input.stagingPath, artifact.filePath);
     if (input.signal?.aborted) {

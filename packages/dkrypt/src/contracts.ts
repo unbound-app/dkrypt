@@ -446,6 +446,7 @@ const DashboardArtifactResponse = object({
   accessCount: Type.Integer({ minimum: 0 }),
   pinnedAt: Type.Optional(Type.String({ format: 'date-time' })),
   sourceJobId: Type.Optional(Identifier),
+  warnings: Type.Optional(Type.Array(Type.String())),
   fileUrl: Type.String(),
 });
 const DashboardArtifactPage = object({

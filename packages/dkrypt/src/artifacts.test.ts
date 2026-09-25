@@ -47,6 +47,48 @@ describe('persistent artifact store', () => {
     expect(getArtifactById(artifact.id)?.accessCount).toBe(before + 1);
   });
 
+  test('persists the source job and decrypt warnings with the artifact', async () => {
+    const warnings = ['Some embedded extensions remained encrypted: Payload/Example.app/Extensions/Share.appex/Share'];
+    const artifact = await promoteArtifact({
+      key: `test-provenance-${crypto.randomUUID()}`,
+      bundleId: 'com.example.provenance',
+      channel: 'appstore',
+      stagingPath: await stagingFile('artifact provenance'),
+      sourceJobId: 'job-provenance-1',
+      warnings,
+    });
+
+    reloadArtifactIndex();
+    expect(getArtifactById(artifact.id)).toMatchObject({ sourceJobId: 'job-provenance-1', warnings });
+  });
+
+  test('adds newly discovered warnings when reusing an existing artifact', async () => {
+    const key = `test-reused-provenance-${crypto.randomUUID()}`;
+    const artifact = await promoteArtifact({
+      key,
+      bundleId: 'com.example.reused-provenance',
+      channel: 'appstore',
+      stagingPath: await stagingFile('original artifact'),
+      sourceJobId: 'job-original',
+    });
+    const warning = 'An embedded extension remains encrypted';
+    const duplicateStagingPath = await stagingFile('duplicate artifact');
+
+    const reusedArtifact = await promoteArtifact({
+      key,
+      bundleId: artifact.bundleId,
+      channel: artifact.channel,
+      stagingPath: duplicateStagingPath,
+      sourceJobId: 'job-with-warning',
+      warnings: [warning],
+    });
+
+    reloadArtifactIndex();
+    expect(reusedArtifact.id).toBe(artifact.id);
+    expect(existsSync(duplicateStagingPath)).toBe(false);
+    expect(getArtifactById(artifact.id)).toMatchObject({ sourceJobId: 'job-original', warnings: [warning] });
+  });
+
   test('serializes promotion and evicts the least recently accessed artifact', async () => {
     config.artifactMaxBytes = 7;
     const first = await promoteArtifact({

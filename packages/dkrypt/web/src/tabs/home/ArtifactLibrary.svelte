@@ -9,7 +9,7 @@
   import Input from '#lib/components/ui/Input.svelte';
   import { fetchArtifacts, observeArtifacts, previewArtifactQuotaRetention, setDashboardArtifactPinned, type ArtifactQuotaRetentionPreview, type ArtifactRecord } from '#lib/api';
   import { appDisplayName, appIconUrl, ensureAppCatalog } from '#lib/appCatalog.svelte';
-  import { fmtBytesGB, fmtSize } from '#lib/format';
+  import { fmtBytesGB, fmtSize, fmtTime } from '#lib/format';
   import { PermissionFlag } from '#lib/permissions';
   import { sessionHasPermission } from '#lib/session.svelte';
   import { isServerQueryCancelled, mergeServerPage, serverQueryStatus } from '#lib/serverStateCache.svelte';
@@ -287,6 +287,39 @@
                     <Download class="h-3.5 w-3.5" />Download
                   </a>
                 </div>
+                <details class="col-span-full rounded-lg border border-border/70 px-3 py-2">
+                  <summary class="cursor-pointer text-xs font-medium">Artifact details</summary>
+                  <div class="mt-3 space-y-3">
+                    <dl class="grid gap-x-5 gap-y-3 text-xs sm:grid-cols-2">
+                      <div class="min-w-0">
+                        <dt class="text-muted text-[10px] font-semibold tracking-[0.08em] uppercase">SHA-256</dt>
+                        <dd class="mt-1 break-all font-mono">{artifact.sha256}</dd>
+                      </div>
+                      <div class="min-w-0">
+                        <dt class="text-muted text-[10px] font-semibold tracking-[0.08em] uppercase">Source job</dt>
+                        <dd class="mt-1 break-all font-mono">{artifact.sourceJobId ?? 'Unavailable'}</dd>
+                      </div>
+                      <div>
+                        <dt class="text-muted text-[10px] font-semibold tracking-[0.08em] uppercase">Created</dt>
+                        <dd class="mt-1">{fmtTime(Date.parse(artifact.createdAt))}</dd>
+                      </div>
+                      <div>
+                        <dt class="text-muted text-[10px] font-semibold tracking-[0.08em] uppercase">Last accessed</dt>
+                        <dd class="mt-1">{fmtTime(Date.parse(artifact.lastAccessedAt))}</dd>
+                      </div>
+                    </dl>
+                    {#if artifact.warnings?.length}
+                      <div class="rounded-md border border-warn/30 bg-warn/5 p-2.5 text-xs" role="note">
+                        <div class="font-semibold text-warn">Decrypt warnings</div>
+                        <ul class="mt-1 max-h-40 space-y-1 overflow-y-auto break-words text-muted">
+                          {#each artifact.warnings as warning, index (`${artifact.id}-${index}`)}
+                            <li>{warning}</li>
+                          {/each}
+                        </ul>
+                      </div>
+                    {/if}
+                  </div>
+                </details>
               </article>
             {/each}
           </div>
