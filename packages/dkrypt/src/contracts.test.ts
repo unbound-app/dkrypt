@@ -2,17 +2,19 @@ import { expect, test } from 'bun:test';
 import { authRouter } from '#routes/auth.js';
 import { billingRouter, nowpaymentsWebhookRouter, stripeWebhookRouter } from '#routes/billing.js';
 import { dashboardRouter } from '#routes/dashboard.js';
-import { decryptRouter } from '#routes/decrypt.js';
+import { decryptRouter, testFlightDecryptRouter } from '#routes/decrypt.js';
 import { buildServer } from '#server.js';
 import { getRouteContracts } from '#contracts.js';
 
 test('every registered versioned route has an explicit TypeBox contract', () => {
-  const routers = [authRouter, billingRouter, nowpaymentsWebhookRouter, stripeWebhookRouter, dashboardRouter, decryptRouter];
+  const routers = [authRouter, billingRouter, nowpaymentsWebhookRouter, stripeWebhookRouter, dashboardRouter, decryptRouter, testFlightDecryptRouter];
   const routes = routers.flatMap((router) => router.routes.map((route) => `${route.method} ${route.path}`));
   const contracts = getRouteContracts();
-  expect(routes.length + 3).toBe(contracts.size);
+  expect(routes.length + 5).toBe(contracts.size);
   for (const route of routes) expect(contracts.has(route)).toBe(true);
-  for (const route of ['GET /v1/health', 'GET /v1/status', 'GET /v1/metrics']) expect(contracts.has(route)).toBe(true);
+  for (const route of ['GET /v1/health', 'GET /v1/status', 'GET /v1/metrics', 'GET /v1/testflight/:appId/trains', 'GET /v1/testflight/:appId/builds']) {
+    expect(contracts.has(route)).toBe(true);
+  }
 });
 
 test('every versioned route is represented in generated OpenAPI', async () => {
@@ -243,6 +245,15 @@ test('response declarations preserve earlier request schemas', () => {
   const decryptQuery = decrypt?.querystring as { properties?: Record<string, unknown> } | undefined;
   expect(decryptQuery?.properties).toHaveProperty('bundleId');
   expect(decrypt?.response).toHaveProperty('200');
+});
+
+test('TestFlight catalog contracts include the normalized bridge failure envelope', () => {
+  for (const route of ['GET /v1/testflight/:appId/trains', 'GET /v1/testflight/:appId/builds']) {
+    const responses = getRouteContracts().get(route)?.response as Record<string, { properties?: Record<string, unknown> }> | undefined;
+    for (const field of ['error', 'code', 'message', 'requestId', 'retryable']) {
+      expect(Object.keys(responses?.['502']?.properties ?? {})).toContain(field);
+    }
+  }
 });
 
 test('streaming and file responses publish their wire formats', async () => {

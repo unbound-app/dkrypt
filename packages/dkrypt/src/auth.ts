@@ -1,6 +1,8 @@
 import type { NextFunction, Request, Response } from '#http.js';
-import type { FastifyReply, FastifyRequest } from 'fastify';
-import { recordApiKeyOutcome, verifyApiKey } from '#store/state.js';
+import type { FastifyReply, FastifyRequest, HookHandlerDoneFunction } from 'fastify';
+import { recordApiKeyOutcome, verifyApiKey, type ApiKeyAuthResult } from '#store/state.js';
+
+const fastifyApiKeyContext = new WeakMap<FastifyRequest, ApiKeyAuthResult>();
 
 function trackApiKeyOutcome(req: Request, res: Response, keyId: string | undefined): void {
   if (!keyId) return;
@@ -30,7 +32,7 @@ export function requireApiKey(req: Request, res: Response, next: NextFunction): 
   next();
 }
 
-export async function fastifyRequireApiKey(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+export function fastifyRequireApiKey(request: FastifyRequest, reply: FastifyReply, done: HookHandlerDoneFunction): void {
   const header = request.headers.authorization ?? '';
   const [scheme, token] = header.split(' ');
   const result = scheme === 'Bearer' && token ? verifyApiKey(token, request.ip) : undefined;
@@ -48,10 +50,31 @@ export async function fastifyRequireApiKey(request: FastifyRequest, reply: Fasti
     reply.code(401).send({ error: 'unauthorized', code: 'unauthorized', message: 'unauthorized', requestId: request.id, retryable: false });
     return;
   }
+  fastifyApiKeyContext.set(request, result);
   const keyId = result.keyId;
   if (keyId) {
     reply.raw.once('finish', () => recordApiKeyOutcome(keyId, request.method, request.routeOptions.url ?? request.url.split('?')[0], reply.raw.statusCode));
   }
+  done();
+}
+
+export function fastifyRequireTestFlightScope(request: FastifyRequest, reply: FastifyReply, done: HookHandlerDoneFunction): void {
+  const apiKey = fastifyApiKeyContext.get(request);
+  if (!apiKey) {
+    reply.code(401).send({ error: 'unauthorized', code: 'unauthorized', message: 'unauthorized', requestId: request.id, retryable: false });
+    return;
+  }
+  if (apiKey.allowTestFlight === false) {
+    reply.code(403).send({
+      error: 'this API key is not scoped for TestFlight',
+      code: 'testflight_scope_denied',
+      message: 'this API key is not scoped for TestFlight',
+      requestId: request.id,
+      retryable: false,
+    });
+    return;
+  }
+  done();
 }
 
 export function requireTestFlightScope(_req: Request, res: Response, next: NextFunction): void {

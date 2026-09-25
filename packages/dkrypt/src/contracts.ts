@@ -1264,12 +1264,12 @@ register('GET', '/v1/jobs/:id', { params: object({ id: Identifier }), response: 
 register('GET', '/v1/testflight/:appId/trains', {
   params: object({ appId: Type.String({ minLength: 1, maxLength: 32, pattern: '^\\d+$' }) }),
   querystring: object({}),
-  response: { 200: TestFlightTrainsResponse },
+  response: { 200: TestFlightTrainsResponse, 502: ErrorEnvelope },
 });
 register('GET', '/v1/testflight/:appId/builds', {
   params: object({ appId: Type.String({ minLength: 1, maxLength: 32, pattern: '^\\d+$' }) }),
   querystring: object({ trainVersion: Type.String({ minLength: 1, maxLength: 64 }) }),
-  response: { 200: TestFlightBuildsResponse },
+  response: { 200: TestFlightBuildsResponse, 502: ErrorEnvelope },
 });
 register('POST', '/v1/testflight/decrypt', {
   body: object({ bundleId: BundleId, appId: Type.Union([Type.String({ minLength: 1, maxLength: 32 }), Type.Integer({ minimum: 1 })]), build: Type.Record(Type.String(), Type.Unknown()) }),

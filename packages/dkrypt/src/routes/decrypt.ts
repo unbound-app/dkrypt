@@ -1,8 +1,9 @@
 import type { Request, Response } from '#http.js';
 import { Router } from '#http.js';
 import { createHash } from 'node:crypto';
+import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
 import { config } from '#config.js';
-import { requireApiKey, requireTestFlightScope } from '#auth.js';
+import { fastifyRequireApiKey, fastifyRequireTestFlightScope, requireApiKey, requireTestFlightScope } from '#auth.js';
 import { blockDuringMaintenance } from '#maintenance.js';
 import { jobFileAvailable, jobSummary, streamFilePath, streamJobFile } from '#jobs/http.js';
 import { enqueueDecryptJob, getJob, waitForJob } from '#jobs/store.js';
@@ -12,8 +13,15 @@ import { apiIdempotencyRegistry } from '#idempotency.js';
 import { artifactDownloadName, artifactFileAvailable, getArtifactById, listArtifacts, touchArtifact } from '#artifacts.js';
 import { resolveDecryptTarget, VERSION_SELECTOR_RE } from '#decryptTarget.js';
 import { decodeCursor, nextCursor } from '#util/cursor.js';
+import { getRouteContract } from '#contracts.js';
 
 export const decryptRouter = Router();
+export const testFlightDecryptRouter = Router();
+
+interface TestFlightCatalogServices {
+  listTrains: typeof listTrains;
+  listBuilds: typeof listBuilds;
+}
 
 const BUNDLE_ID_RE = /^[A-Za-z0-9.-]{3,200}$/;
 const EXTERNAL_VERSION_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
@@ -61,6 +69,11 @@ function isBundleIdAllowed(res: Response, bundleId: string): boolean {
 
 function apiRequester(res: Response): string {
   return (res.locals.apiKeyOwner as string | undefined) ?? 'api-key';
+}
+
+function testFlightLookupFailure(error: unknown, requestId: string) {
+  const message = error instanceof Error ? error.message : String(error);
+  return { error: message, code: 'testflight_lookup_failed', message, requestId, retryable: true };
 }
 
 decryptRouter.post('/v1/decrypts', requireApiKey, blockDuringMaintenance, async (req, res) => {
@@ -255,38 +268,7 @@ decryptRouter.get('/v1/jobs/:id', requireApiKey, (req, res) => {
   res.json(jobSummary(job));
 });
 
-decryptRouter.get('/v1/testflight/:appId/trains', requireApiKey, requireTestFlightScope, async (req, res) => {
-  const appId = Number.parseInt(req.params.appId, 10);
-  if (!Number.isInteger(appId) || appId <= 0) {
-    res.status(400).json({ error: 'appId must be a positive integer' });
-    return;
-  }
-
-  try {
-    const trains = await listTrains(appId);
-    res.json({ trains });
-  } catch (err) {
-    res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
-  }
-});
-
-decryptRouter.get('/v1/testflight/:appId/builds', requireApiKey, requireTestFlightScope, async (req, res) => {
-  const appId = Number.parseInt(req.params.appId, 10);
-  const trainVersion = typeof req.query.trainVersion === 'string' ? req.query.trainVersion : '';
-  if (!Number.isInteger(appId) || appId <= 0 || !trainVersion) {
-    res.status(400).json({ error: 'appId (positive integer) and trainVersion are required' });
-    return;
-  }
-
-  try {
-    const builds = await listBuilds(appId, trainVersion);
-    res.json({ builds });
-  } catch (err) {
-    res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
-  }
-});
-
-decryptRouter.post('/v1/testflight/decrypt', requireApiKey, requireTestFlightScope, blockDuringMaintenance, (req, res) => {
+testFlightDecryptRouter.post('/v1/testflight/decrypt', requireApiKey, requireTestFlightScope, blockDuringMaintenance, (req, res) => {
   const bundleId = typeof req.body?.bundleId === 'string' ? req.body.bundleId.trim() : '';
   const rawAppId = req.body?.appId;
   const appId = Number.parseInt(typeof rawAppId === 'string' || typeof rawAppId === 'number' ? String(rawAppId) : '', 10);
@@ -336,3 +318,46 @@ decryptRouter.post('/v1/testflight/decrypt', requireApiKey, requireTestFlightSco
   }
   res.status(202).json(jobSummary(job));
 });
+
+export function createTestFlightCatalogRoutes(
+  services: TestFlightCatalogServices = { listTrains, listBuilds },
+): FastifyPluginAsyncTypebox {
+  return async (server) => {
+    server.get(
+      '/v1/testflight/:appId/trains',
+      {
+        schema: getRouteContract('GET', '/v1/testflight/:appId/trains'),
+        preHandler: [fastifyRequireApiKey, fastifyRequireTestFlightScope],
+      },
+      async (request, reply) => {
+        try {
+          const params = request.params as { appId: string };
+          return { trains: await services.listTrains(Number.parseInt(params.appId, 10)) };
+        } catch (error) {
+          reply.code(502);
+          return testFlightLookupFailure(error, request.id);
+        }
+      },
+    );
+
+    server.get(
+      '/v1/testflight/:appId/builds',
+      {
+        schema: getRouteContract('GET', '/v1/testflight/:appId/builds'),
+        preHandler: [fastifyRequireApiKey, fastifyRequireTestFlightScope],
+      },
+      async (request, reply) => {
+        try {
+          const params = request.params as { appId: string };
+          const query = request.query as { trainVersion: string };
+          return { builds: await services.listBuilds(Number.parseInt(params.appId, 10), query.trainVersion) };
+        } catch (error) {
+          reply.code(502);
+          return testFlightLookupFailure(error, request.id);
+        }
+      },
+    );
+  };
+}
+
+export const testFlightCatalogRoutes = createTestFlightCatalogRoutes();
