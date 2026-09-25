@@ -344,6 +344,7 @@ class RustDeviceBridgeClient {
 
   async subscribeEvents(onEvent: (event: RustDeviceBridgeEvent) => void, onError?: (error: Error) => void, signal?: AbortSignal): Promise<() => void> {
     if (this.secret.length < 32) throw new DeviceAgentUnavailableError('DEVICE_BRIDGE_SECRET is missing or too short');
+    throwIfAborted(signal);
     const requestId = randomUUID();
     const body = Buffer.from(JSON.stringify({ version: 1, requestId, auth: this.secret, operation: 'events', follow: true }), 'utf8');
     const frame = Buffer.allocUnsafe(body.length + 4);
@@ -370,6 +371,7 @@ class RustDeviceBridgeClient {
         stopped = true;
         signal?.removeEventListener('abort', stop);
         socket.destroy();
+        if (!opened) reject(signal?.aborted ? abortedOperationError(signal) : new Error('Rust device bridge event subscription stopped before the first snapshot'));
       };
       const fail = (error: Error) => {
         if (!opened) reject(error);
@@ -420,7 +422,8 @@ class RustDeviceBridgeClient {
         if (!stopped && opened) onError?.(new Error('Rust device bridge event stream closed'));
         if (!opened && !stopped) reject(new Error('Rust device bridge event stream closed before the first snapshot'));
       });
-      signal?.addEventListener('abort', stop, { once: true });
+      if (signal?.aborted) stop();
+      else signal?.addEventListener('abort', stop, { once: true });
       socket.write(frame, (error) => {
         if (error) fail(error);
       });

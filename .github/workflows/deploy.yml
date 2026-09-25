@@ -275,6 +275,8 @@ jobs:
           if (!device || device.transport !== 'usb' || !device.reachable || device.transportState !== 'ready' || device.readiness !== 'ready' || device.subsystems?.agent !== 'ready' || Date.now() - lastSeenAt > 90_000) {
             throw new Error(`configured Rust USB device or signed Autoinstall agent is not ready: ${JSON.stringify(device)}`);
           }
+          const metrics = await (await fetch(`${base}/v1/metrics`, { headers })).text();
+          if (!metrics.includes('dkrypt_device_bridge_event_stream_connected{transport="usbmux"} 1')) throw new Error('Rust usbmuxd event stream is not connected');
           const openapi = await (await fetch(`${base}/openapi.json`)).json();
           if (!openapi.paths || Object.keys(openapi.paths).length < 20) throw new Error('OpenAPI route inventory is incomplete');
           const status = await fetch(`${base}/v1/status`);

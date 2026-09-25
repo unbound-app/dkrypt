@@ -29,6 +29,10 @@ const pendingSpans: SpanRecord[] = [];
 let flushTimer: ReturnType<typeof setInterval> | undefined;
 let flushInFlight: Promise<void> | undefined;
 let metricsFlushInFlight: Promise<void> | undefined;
+const otlpSignalConfig = {
+  traces: { endpoint: config.otelExporterOtlpTracesEndpoint, headers: config.otelExporterOtlpTracesHeaders },
+  metrics: { endpoint: config.otelExporterOtlpMetricsEndpoint, headers: config.otelExporterOtlpMetricsHeaders },
+};
 
 function hexBytes(bytes: number): string {
   return randomBytes(bytes).toString('hex');
@@ -68,11 +72,7 @@ export function resolveOtlpEndpoint(signal: 'traces' | 'metrics', signalEndpoint
 }
 
 function endpoint(signal: 'traces' | 'metrics'): string | undefined {
-  return resolveOtlpEndpoint(
-    signal,
-    signal === 'traces' ? config.otelExporterOtlpTracesEndpoint : config.otelExporterOtlpMetricsEndpoint,
-    config.otelExporterOtlpEndpoint,
-  );
+  return resolveOtlpEndpoint(signal, otlpSignalConfig[signal].endpoint, config.otelExporterOtlpEndpoint);
 }
 
 function parseHeaders(value: string): Array<[string, string]> {
@@ -83,14 +83,31 @@ function parseHeaders(value: string): Array<[string, string]> {
 }
 
 function exporterHeaders(signal: 'traces' | 'metrics'): Record<string, string> {
-  const signalHeaders = signal === 'traces' ? config.otelExporterOtlpTracesHeaders : config.otelExporterOtlpMetricsHeaders;
   const values = new Map<string, [string, string]>([[
     'user-agent', ['User-Agent', `dkrypt-otlp-exporter/1.0.0 (Bun/${process.versions.bun ?? process.version})`],
   ]]);
-  for (const [name, value] of [...parseHeaders(config.otelExporterOtlpHeaders), ...parseHeaders(signalHeaders)]) {
+  for (const [name, value] of [...parseHeaders(config.otelExporterOtlpHeaders), ...parseHeaders(otlpSignalConfig[signal].headers)]) {
     values.set(name.toLowerCase(), [name, value]);
   }
   return Object.fromEntries(values.values());
+}
+
+type OtlpFetcher = (input: string, init?: RequestInit) => Promise<Response>;
+
+async function postOtlpJson(signal: 'traces' | 'metrics', url: string, payload: unknown, fetcher: OtlpFetcher = fetch): Promise<number> {
+  const response = await fetcher(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...exporterHeaders(signal) },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(5000),
+  });
+  if (!response.ok) throw new Error(`OTLP ${signal} exporter returned HTTP ${response.status}`);
+  const body = await response.json().catch(() => undefined) as Record<string, unknown> | undefined;
+  const partialSuccess = (body?.partialSuccess ?? body?.partial_success) as Record<string, unknown> | undefined;
+  const rejectedField = signal === 'metrics' ? 'rejectedDataPoints' : 'rejectedSpans';
+  const snakeField = signal === 'metrics' ? 'rejected_data_points' : 'rejected_spans';
+  const rejected = Number(partialSuccess?.[rejectedField] ?? partialSuccess?.[snakeField] ?? 0);
+  return Number.isSafeInteger(rejected) && rejected > 0 ? rejected : 0;
 }
 
 export function startSpan(name: string, attributes: Record<string, string | number | boolean | undefined> = {}, parent?: TraceContext): SpanHandle {
@@ -132,25 +149,27 @@ export function startSpan(name: string, attributes: Record<string, string | numb
   };
 }
 
-export async function flushTelemetry(): Promise<void> {
-  const url = endpoint('traces');
+export interface OtlpTraceFlushOptions {
+  endpoint?: string;
+  fetcher?: OtlpFetcher;
+}
+
+export async function flushTelemetry(options: OtlpTraceFlushOptions = {}): Promise<void> {
+  const url = options.endpoint ?? endpoint('traces');
   if (!url || pendingSpans.length === 0) return;
   if (flushInFlight) return flushInFlight;
   const spans = pendingSpans.splice(0, Math.max(1, config.otelBatchSize));
-  flushInFlight = fetch(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', ...exporterHeaders('traces') },
-    body: JSON.stringify({
+  const fetcher = options.fetcher ?? fetch;
+  flushInFlight = Promise.resolve()
+    .then(() => postOtlpJson('traces', url, {
       resourceSpans: [{
         resource: { attributes: [{ key: 'service.name', value: { stringValue: config.otelServiceName } }] },
         scopeSpans: [{ spans }],
       }],
-    }),
-    signal: AbortSignal.timeout(5000),
-  })
-    .then((response) => {
-      if (!response.ok) throw new Error(`OTLP exporter returned HTTP ${response.status}`);
-      incrementMetric('telemetry_spans_exported_total', {}, spans.length);
+    }, fetcher))
+    .then((rejectedSpans) => {
+      incrementMetric('telemetry_spans_exported_total', {}, Math.max(0, spans.length - rejectedSpans));
+      if (rejectedSpans > 0) incrementMetric('telemetry_spans_rejected_total', {}, rejectedSpans);
     })
     .catch(() => {
       pendingSpans.unshift(...spans);
@@ -164,27 +183,21 @@ export async function flushTelemetry(): Promise<void> {
 
 export interface OtlpMetricsFlushOptions {
   endpoint?: string;
-  headers?: Record<string, string>;
-  fetcher?: (input: string, init?: RequestInit) => Promise<Response>;
-  serviceName?: string;
+  fetcher?: OtlpFetcher;
 }
 
 export async function flushOtlpMetrics(options: OtlpMetricsFlushOptions = {}): Promise<void> {
   const url = options.endpoint ?? endpoint('metrics');
   if (!url) return;
   if (metricsFlushInFlight) return metricsFlushInFlight;
-  const payload = createOtlpMetricsPayload(options.serviceName ?? config.otelServiceName);
+  const payload = createOtlpMetricsPayload(config.otelServiceName);
   if (payload.resourceMetrics[0].scopeMetrics[0].metrics.length === 0) return;
   const fetcher = options.fetcher ?? fetch;
-  metricsFlushInFlight = fetcher(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', ...exporterHeaders('metrics'), ...options.headers },
-    body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(5000),
-  })
-    .then((response) => {
-      if (!response.ok) throw new Error(`OTLP metrics exporter returned HTTP ${response.status}`);
+  metricsFlushInFlight = Promise.resolve()
+    .then(() => postOtlpJson('metrics', url, payload, fetcher))
+    .then((rejectedDataPoints) => {
       incrementMetric('telemetry_metrics_exported_total');
+      if (rejectedDataPoints > 0) incrementMetric('telemetry_metrics_rejected_points_total', {}, rejectedDataPoints);
     })
     .catch(() => {
       incrementMetric('telemetry_metrics_export_failures_total');

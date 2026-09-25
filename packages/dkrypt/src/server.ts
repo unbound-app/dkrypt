@@ -35,9 +35,11 @@ import { stopNotificationDigestScheduler } from '#notify.js';
 import { closeDashboardConnections } from '#events.js';
 import { startSpan, startTelemetry, stopTelemetry, traceContextFromHeader, type SpanHandle } from '#telemetry.js';
 import { FixedWindowRateLimiter } from '#util/rateLimit.js';
+import { startRustDeviceEventMonitoring } from '#deviceBridgeEvents.js';
 
 const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 const sharedApiRateLimiter = new FixedWindowRateLimiter(config.apiRateLimitPerMinute, 60_000);
+let stopRustDeviceEventMonitoring: (() => Promise<void>) | undefined;
 
 function shouldRateLimitApiRequest(url: string): boolean {
   const path = url.split('?', 1)[0];
@@ -229,6 +231,7 @@ export async function buildServer(options: { includePublicRoutes?: boolean } = {
 
 async function startBackgroundServices(): Promise<void> {
   startTelemetry();
+  stopRustDeviceEventMonitoring = startRustDeviceEventMonitoring();
   await initializeArtifactStore(getArtifactBackedJobs());
   startJobSweeper();
   startStateFlusher();
@@ -257,6 +260,8 @@ async function start(): Promise<void> {
     stopAcceptingJobs();
     stopScheduler();
     stopDeviceHealthPoller();
+    await stopRustDeviceEventMonitoring?.();
+    stopRustDeviceEventMonitoring = undefined;
     stopTestFlightSubscriptionPoller();
     stopCryptoBillingPoller();
     stopKeyExpiryPoller();

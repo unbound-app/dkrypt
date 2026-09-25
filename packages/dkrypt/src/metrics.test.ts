@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { createOtlpMetricsPayload, incrementMetric, observeMetric, renderMetrics, resetMetrics, setGaugeMetric } from '#metrics.js';
-import { flushOtlpMetrics, resolveOtlpEndpoint } from '#telemetry.js';
+import { config } from '#config.js';
+import { flushOtlpMetrics, flushTelemetry, resolveOtlpEndpoint, startSpan } from '#telemetry.js';
 
 describe('OpenTelemetry metrics', () => {
   beforeEach(() => resetMetrics());
@@ -95,5 +96,46 @@ describe('OpenTelemetry metrics', () => {
     expect(retriedMetrics.find((metric: any) => metric.name === 'dkrypt_jobs_completed_total')?.sum.dataPoints[0].asInt).toBe('1');
     expect(retriedMetrics.find((metric: any) => metric.name === 'dkrypt_telemetry_metrics_export_failures_total')?.sum.dataPoints[0].asInt).toBe('1');
     expect(successfulMetrics.find((metric: any) => metric.name === 'dkrypt_telemetry_metrics_exported_total')?.sum.dataPoints[0].asInt).toBe('1');
+  });
+
+  it('records OTLP partial rejection without retrying accepted metrics', async () => {
+    incrementMetric('jobs_completed_total', { source: 'appstore' });
+    let requests = 0;
+    await flushOtlpMetrics({
+      endpoint: 'https://collector.example/v1/metrics',
+      fetcher: async () => {
+        requests += 1;
+        return Response.json({ partialSuccess: { rejectedDataPoints: '2', errorMessage: 'one series rejected' } });
+      },
+    });
+    let nextBody: Record<string, any> | undefined;
+    await flushOtlpMetrics({
+      endpoint: 'https://collector.example/v1/metrics',
+      fetcher: async (_input, init) => {
+        nextBody = JSON.parse(String(init?.body));
+        return new Response(null, { status: 200 });
+      },
+    });
+    const metrics = nextBody?.resourceMetrics[0].scopeMetrics[0].metrics;
+
+    expect(requests).toBe(1);
+    expect(metrics.find((metric: any) => metric.name === 'dkrypt_telemetry_metrics_rejected_points_total')?.sum.dataPoints[0].asInt).toBe('2');
+  });
+
+  it('records OTLP partial rejection for spans', async () => {
+    const originalSampleRate = config.otelSampleRate;
+    config.otelSampleRate = 1;
+    try {
+      startSpan('test.partial-span').end();
+      await flushTelemetry({
+        endpoint: 'https://collector.example/v1/traces',
+        fetcher: async () => Response.json({ partialSuccess: { rejectedSpans: '1', errorMessage: 'span rejected' } }),
+      });
+      const metrics = createOtlpMetricsPayload('dkrypt').resourceMetrics[0].scopeMetrics[0].metrics;
+
+      expect(metrics.find((metric) => metric.name === 'dkrypt_telemetry_spans_rejected_total')?.sum?.dataPoints[0].asInt).toBe('1');
+    } finally {
+      config.otelSampleRate = originalSampleRate;
+    }
   });
 });

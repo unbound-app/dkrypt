@@ -19,6 +19,7 @@ import { closePersistedJobs, loadPersistedJobs, replacePersistedJobs } from '#jo
 import { terminateChildProcess } from '#jobs/process.js';
 import { classifyJobFailure } from '#util/failureCategory.js';
 import { incrementMetric, observeMetric } from '#metrics.js';
+import { recordJobStarted } from '#jobs/metrics.js';
 import { withCorrelation } from '#correlation.js';
 import { EMBED_COLOR, notify } from '#notify.js';
 import { runWithJobDeadline } from '#jobs/deadline.js';
@@ -658,8 +659,7 @@ async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
   job.startedAt = Date.now();
   job.deviceId = device.id;
   job.attempt = (job.retryCount ?? 0) + 1;
-  incrementMetric('jobs_started_total', { source: job.source });
-  observeMetric('job_queue_wait_ms', Math.max(0, job.startedAt - job.createdAt), { source: job.source });
+  recordJobStarted(job, job.startedAt);
   appendJobTimelineEvent(job, `Started on ${device.name}`, 'running', job.startedAt);
   log.info('job started', { jobId: job.id, bundleId: job.bundleId, deviceId: device.id });
   recordDeviceActivity({ deviceId: device.id, kind: 'job', bundleId: job.bundleId, message: `Started ${job.testflight ? 'TestFlight' : 'App Store'} decrypt` });

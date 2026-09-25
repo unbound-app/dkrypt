@@ -85,7 +85,7 @@ docker compose up -d --build
 <details>
 <summary>OpenTelemetry export</summary>
 
-Set `OTEL_EXPORTER_OTLP_ENDPOINT` to a collector base URL to send traces and metrics to its `/v1/traces` and `/v1/metrics` paths. Signal-specific `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` and `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` values are sent to exactly the URLs provided. Configure shared or signal-specific authorization headers with the matching `OTEL_EXPORTER_OTLP_*_HEADERS` variables as comma-separated `name=value` pairs.
+Set `OTEL_EXPORTER_OTLP_ENDPOINT` to a collector base URL to send traces and metrics to its `/v1/traces` and `/v1/metrics` paths. Signal-specific `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` and `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` values are sent to exactly the URLs provided. Configure shared or signal-specific authorization headers with the matching `OTEL_EXPORTER_OTLP_*_HEADERS` variables as comma-separated `name=value` pairs. Device reconnect metrics come from the Rust bridge's native usbmuxd attach/detach events; `device_bridge_event_stream_connected` reports whether that event feed is live.
 
 dkrypt sends OTLP over HTTP using JSON encoding. Exported metrics include job queue and decrypt duration, device availability and reconnects, bridge and agent health, TestFlight lookup performance, artifact and device storage pressure, and webhook reconciliation. The authenticated `GET /v1/metrics` endpoint continues to provide Prometheus text format using `Authorization: Bearer <API_KEY>`.
 

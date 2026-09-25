@@ -439,7 +439,7 @@ function updateDeviceAvailabilityMetrics(): void {
     if (health?.reachable) group.available += 1;
     const hasStorage = typeof health?.storageUsedPercent === 'number' || typeof health?.storageFreeBytes === 'number';
     if (hasStorage) group.storageDevices += 1;
-    if (typeof health?.storageUsedPercent === 'number') group.storageUsedPercent = Math.max(group.storageUsedPercent ?? 0, health.storageUsedPercent);
+    if (typeof health?.storageUsedPercent === 'number') group.storageUsedPercent = Math.max(group.storageUsedPercent ?? 0, health.storageUsedPercent * 100);
     if (typeof health?.storageFreeBytes === 'number') group.storageFreeBytes += health.storageFreeBytes;
     groups.set(transport, group);
   }

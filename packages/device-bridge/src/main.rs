@@ -1,13 +1,14 @@
+use futures::StreamExt;
 use idevice::{
     IdeviceService,
     provider::{IdeviceProvider, UsbmuxdProvider},
     services::lockdown::LockdownClient,
-    usbmuxd::{UsbmuxdAddr, UsbmuxdConnection, UsbmuxdDevice},
+    usbmuxd::{UsbmuxdAddr, UsbmuxdConnection, UsbmuxdDevice, UsbmuxdListenEvent},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     env,
     future::Future,
     path::{Path, PathBuf},
@@ -24,7 +25,7 @@ use tokio::{
     net::{TcpListener, UnixListener, UnixStream},
     process::{Child, Command},
     signal::unix::{SignalKind, signal},
-    sync::{Mutex, Notify},
+    sync::{Mutex, Notify, mpsc, oneshot},
     time::{sleep, timeout},
 };
 use uuid::Uuid;
@@ -324,17 +325,26 @@ async fn read_value(lockdown: &mut LockdownClient, key: &str) -> Option<String> 
         .and_then(|value| value.as_string().map(ToString::to_string))
 }
 
-async fn list_devices(state: &BridgeState) -> Result<Value, RpcError> {
+async fn list_device_records(state: &BridgeState) -> Result<Vec<UsbmuxdDevice>, RpcError> {
     let mut mux = mux_connection(state).await?;
-    let devices = mux.get_devices().await.map_err(|value| {
+    mux.get_devices().await.map_err(|value| {
         error(
             "device_discovery",
             format!("could not list devices: {value}"),
             true,
         )
-    })?;
-    serde_json::to_value(devices.into_iter().map(device_summary).collect::<Vec<_>>())
-        .map_err(|value| error("serialization", value.to_string(), false))
+    })
+}
+
+async fn list_devices(state: &BridgeState) -> Result<Value, RpcError> {
+    serde_json::to_value(
+        list_device_records(state)
+            .await?
+            .into_iter()
+            .map(device_summary)
+            .collect::<Vec<_>>(),
+    )
+    .map_err(|value| error("serialization", value.to_string(), false))
 }
 
 async fn device_event_snapshot(state: &BridgeState) -> Result<Value, RpcError> {
@@ -350,19 +360,129 @@ async fn stream_device_events(
     state: Arc<BridgeState>,
     request_id: String,
 ) {
-    let mut interval = tokio::time::interval(Duration::from_secs(2));
+    let (events_tx, mut events_rx) = mpsc::channel(64);
+    let (stop_tx, stop_rx) = oneshot::channel();
+    let event_request_id = request_id.clone();
+    std::thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build();
+        match runtime {
+            Ok(runtime) => runtime.block_on(stream_native_device_events(
+                state,
+                event_request_id,
+                events_tx,
+                stop_rx,
+            )),
+            Err(value) => {
+                let _ = events_tx.blocking_send(failure(
+                    event_request_id,
+                    error(
+                        "device_events",
+                        format!("could not start device event listener: {value}"),
+                        true,
+                    ),
+                ));
+            }
+        }
+    });
     loop {
         tokio::select! {
-            _ = interval.tick() => {
-                let result = device_event_snapshot(&state).await;
-                let output = match result {
-                    Ok(value) => response(request_id.clone(), value),
-                    Err(value) => failure(request_id.clone(), value),
-                };
-                if write_frame(stream, &output).await.is_err() { return; }
-            }
+            event = events_rx.recv() => match event {
+                Some(value) => if write_frame(stream, &value).await.is_err() { return; },
+                None => return,
+            },
             frame = read_frame(stream) => {
-                if frame.is_err() || frame.ok().flatten().is_none() { return; }
+                if frame.is_err() || frame.ok().flatten().is_none() {
+                    let _ = stop_tx.send(());
+                    return;
+                }
+            }
+        }
+    }
+}
+
+async fn stream_native_device_events(
+    state: Arc<BridgeState>,
+    request_id: String,
+    sender: mpsc::Sender<RpcResponse>,
+    stop: oneshot::Receiver<()>,
+) {
+    let mut mux = match mux_connection(&state).await {
+        Ok(value) => value,
+        Err(value) => {
+            let _ = sender.send(failure(request_id, value)).await;
+            return;
+        }
+    };
+    let mut events = match mux.listen().await {
+        Ok(value) => value,
+        Err(value) => {
+            let _ = sender
+                .send(failure(
+                    request_id,
+                    error(
+                        "device_events",
+                        format!("could not listen for usbmuxd events: {value}"),
+                        true,
+                    ),
+                ))
+                .await;
+            return;
+        }
+    };
+    let initial = match list_device_records(&state).await {
+        Ok(value) => value,
+        Err(value) => {
+            let _ = sender.send(failure(request_id, value)).await;
+            return;
+        }
+    };
+    let mut devices = initial
+        .into_iter()
+        .map(|device| (device.device_id, device))
+        .collect::<BTreeMap<_, _>>();
+    let snapshot = json!({
+        "type": "device_snapshot",
+        "sequence": next_event_sequence(&state),
+        "devices": devices.values().cloned().map(device_summary).collect::<Vec<_>>(),
+    });
+    if sender
+        .send(response(request_id.clone(), snapshot))
+        .await
+        .is_err()
+    {
+        return;
+    }
+    tokio::pin!(stop);
+    loop {
+        tokio::select! {
+            _ = &mut stop => return,
+            event = events.next() => {
+                let (event_type, event_device_id) = match event {
+                    Some(Ok(UsbmuxdListenEvent::Connected(device))) => {
+                        let device_id = device.device_id;
+                        devices.insert(device_id, device);
+                        ("device_connected", device_id)
+                    }
+                    Some(Ok(UsbmuxdListenEvent::Disconnected(device_id))) => {
+                        devices.remove(&device_id);
+                        ("device_disconnected", device_id)
+                    }
+                    Some(Err(value)) => {
+                        let output = failure(request_id.clone(), error("device_events", format!("usbmuxd event stream failed: {value}"), true));
+                        let _ = sender.send(output).await;
+                        return;
+                    }
+                    None => return,
+                };
+                let output = response(request_id.clone(), json!({
+                    "type": event_type,
+                    "sequence": next_event_sequence(&state),
+                    "deviceId": event_device_id,
+                    "devices": devices.values().cloned().map(device_summary).collect::<Vec<_>>(),
+                }));
+                if sender.send(output).await.is_err() { return; }
             }
         }
     }
