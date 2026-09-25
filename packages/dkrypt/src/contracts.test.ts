@@ -220,3 +220,13 @@ test('administrative, notification, and diagnostic contracts publish structured 
     await server.close();
   }
 });
+
+test('successful route responses never fall back to generic JSON', () => {
+  const exportRoutes = new Set(['GET /v1/dashboard/jobs/export', 'GET /v1/dashboard/audit-log/export']);
+  for (const [route, schema] of getRouteContracts()) {
+    const responses = schema.response as Record<string, { anyOf?: unknown }> | undefined;
+    for (const [status, response] of Object.entries(responses ?? {})) {
+      if (status === '200' && response.anyOf) expect(exportRoutes.has(route)).toBe(true);
+    }
+  }
+});

@@ -762,6 +762,9 @@ const TestFlightDiagnosticsResponse = object({
   recentLog: Type.Optional(Type.Array(Type.String())),
 });
 const DispatchTriggerResponse = object({ ok: Type.Boolean(), error: Type.Optional(Type.String()) });
+const BinaryFileResponse = Type.String({ format: 'binary' });
+const WebhookReplayResponse = object({ replayed: Type.Boolean(), duplicate: Type.Optional(Type.Boolean()), status: Type.String() });
+const WebhookQuarantineResponse = object({ record: Type.Optional(JsonObject) });
 const DeviceConnectionInput = object({
   name: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
   existingId: Type.Optional(Identifier),
@@ -824,7 +827,7 @@ function register(method: string, path: string, schema: FastifySchema): void {
     summary: schema.summary ?? `${method} ${path}`,
     ...schema,
     response: {
-      200: JsonResponse,
+      ...(customResponses ? {} : { 200: JsonResponse }),
       400: ErrorEnvelope,
       401: ErrorEnvelope,
       403: ErrorEnvelope,
@@ -1590,6 +1593,44 @@ register('POST', '/v1/nowpayments/webhook', {
 register('GET', '/v1/metrics', {
   response: { 200: Type.String() },
 });
+register('GET', '/v1/decrypt', {
+  querystring: object({ bundleId: BundleId, externalVersionId: Type.Optional(Identifier), version: Type.Optional(VersionSelector) }),
+  response: { 200: BinaryFileResponse, 202: JobSummaryResponse, 500: JobSummaryResponse },
+});
+register('POST', '/v1/dashboard/decrypt', {
+  body: object({ bundleId: BundleId, externalVersionId: Type.Optional(Identifier), versionLabel: Type.Optional(Type.String({ maxLength: 64 })), preferPrimary: Type.Optional(Type.Boolean()) }),
+  response: { 202: JobSummaryResponse },
+});
+register('GET', '/v1/artifacts/:id/file', {
+  params: object({ id: Identifier }),
+  response: { 200: BinaryFileResponse },
+});
+register('GET', '/v1/dashboard/artifacts/:id/file', {
+  params: object({ id: Identifier }),
+  response: { 200: BinaryFileResponse },
+});
+register('DELETE', '/v1/dashboard/devices/:id', {
+  params: object({ id: Identifier }),
+  response: { 200: OkResponse },
+});
+register('DELETE', '/v1/dashboard/roles/:id', {
+  params: object({ id: Identifier }),
+  response: { 200: OkResponse },
+});
+register('POST', '/v1/billing/webhooks/inbox/:id/replay', {
+  params: object({ id: Identifier }),
+  response: { 200: WebhookReplayResponse },
+});
+register('POST', '/v1/billing/webhooks/inbox/:id/quarantine', {
+  params: object({ id: Identifier }),
+  body: object({ reason: Type.Optional(Type.String({ maxLength: 500 })) }),
+  response: { 200: WebhookQuarantineResponse },
+});
+for (const provider of ['github', 'discord'] as const) {
+  register('GET', `/v1/auth/${provider}/login`, { response: { 302: Type.String() } });
+  register('GET', `/v1/auth/${provider}/connect`, { response: { 302: Type.String() } });
+  register('GET', `/v1/auth/${provider}/callback`, { response: { 302: Type.String() } });
+}
 
 export function getRouteContract(method: string, path: string): FastifySchema | undefined {
   const key = `${method} ${path}`;
