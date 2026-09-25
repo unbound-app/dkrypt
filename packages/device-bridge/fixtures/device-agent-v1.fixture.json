@@ -11,5 +11,6 @@
     "issuedAt": 1760000000,
     "payload": "eyJhY3Rpb24iOiJzdGF0dXMifQ",
     "signature": "c03e1275eea034bbfa180b4eb5b4b4c6e7095ea4ea895e9671278e5ecb82c3bd"
-  }
+  },
+  "responsePayload": "eyJvayI6dHJ1ZSwicmVzdWx0Ijp7ImFnZW50VmVyc2lvbiI6IjEuNC4wIn19"
 }
