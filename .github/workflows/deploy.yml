@@ -176,7 +176,6 @@ jobs:
               restart: unless-stopped
               init: true
               stop_grace_period: 30s
-              pids_limit: 512
               security_opt:
                 - no-new-privileges:true
               network_mode: host
@@ -204,6 +203,7 @@ jobs:
                   limits:
                     cpus: '4.0'
                     memory: 4G
+                    pids: 512
           volumes:
             ipa-storage:
               external: true
