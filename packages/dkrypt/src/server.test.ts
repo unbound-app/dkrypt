@@ -951,6 +951,98 @@ test('artifact cursors keep their boundary when a newer artifact is promoted', a
   }
 });
 
+test('artifact pinning is scoped, persistent, audited, and available in the library response', async () => {
+  const { server, cookie } = await signIn();
+  const outputDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-artifact-pin-route-'));
+  const stagingPath = path.join(outputDir, 'pinned.ipa');
+  await writeFile(stagingPath, 'pinned ipa');
+  const artifact = await promoteArtifact({
+    key: `test-pin-route-${crypto.randomUUID()}`,
+    bundleId: 'com.example.pin-route',
+    channel: 'appstore',
+    externalVersionId: `pin-${crypto.randomUUID()}`,
+    stagingPath,
+  });
+
+  try {
+    const pinned = await server.inject({
+      method: 'PUT',
+      url: `/v1/dashboard/artifacts/${artifact.id}/pin`,
+      headers: { cookie },
+      payload: { pinned: true },
+    });
+    expect(pinned.statusCode).toBe(200);
+    expect(pinned.json()).toMatchObject({ ok: true, artifactId: artifact.id, pinned: true, pinnedAt: expect.any(String) });
+
+    const library = await server.inject({ method: 'GET', url: '/v1/dashboard/artifacts?q=com.example.pin-route', headers: { cookie } });
+    expect(library.statusCode).toBe(200);
+    expect(library.json().artifacts[0]).toMatchObject({ id: artifact.id, pinnedAt: expect.any(String) });
+
+    const audit = await server.inject({ method: 'GET', url: '/v1/dashboard/audit-log?limit=10', headers: { cookie } });
+    expect(audit.statusCode).toBe(200);
+    expect(audit.json().entries).toContainEqual(expect.objectContaining({ action: 'artifact.pin', target: artifact.id }));
+
+    const unpinned = await server.inject({
+      method: 'PUT',
+      url: `/v1/dashboard/artifacts/${artifact.id}/pin`,
+      headers: { cookie },
+      payload: { pinned: false },
+    });
+    expect(unpinned.statusCode).toBe(200);
+    expect(unpinned.json()).toMatchObject({ ok: true, artifactId: artifact.id, pinned: false });
+  } finally {
+    await rm(artifact.filePath, { force: true });
+    await rm(outputDir, { recursive: true, force: true });
+    await server.close();
+  }
+});
+
+test('artifact pinning requires storage permission and project access', async () => {
+  const { server } = await signIn();
+  const managerId = `github:artifact-pin-manager-${crypto.randomUUID()}`;
+  const readerId = `github:artifact-pin-reader-${crypto.randomUUID()}`;
+  const managerPermissions = PermissionFlag.requestDecrypt | PermissionFlag.manageAutomation;
+  const readerPermissions = PermissionFlag.requestDecrypt;
+  const managerRole = createRole({ name: `Artifact storage manager ${crypto.randomUUID()}`, color: '#5865f2', permissions: serializeBits(managerPermissions) }, 'root');
+  const readerRole = createRole({ name: `Artifact reader ${crypto.randomUUID()}`, color: '#3498db', permissions: serializeBits(readerPermissions) }, 'root');
+  addAllowedUser(managerId, [managerRole.id], 'root');
+  addAllowedUser(readerId, [readerRole.id], 'root');
+  const managerCookie = createSessionCookie(managerId, managerPermissions);
+  const readerCookie = createSessionCookie(readerId, readerPermissions);
+  const project = createProject({ name: `Artifact pin scope ${crypto.randomUUID()}` }, 'root').project!;
+  const outputDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-artifact-pin-scope-'));
+  const stagingPath = path.join(outputDir, 'restricted.ipa');
+  await writeFile(stagingPath, 'restricted ipa');
+  const artifact = await promoteArtifact({
+    key: `test-pin-scope-${crypto.randomUUID()}`,
+    bundleId: 'com.example.pin-scope',
+    channel: 'appstore',
+    projectId: project.id,
+    stagingPath,
+  });
+
+  try {
+    const outOfProject = await server.inject({
+      method: 'PUT',
+      url: `/v1/dashboard/artifacts/${artifact.id}/pin`,
+      headers: { cookie: managerCookie },
+      payload: { pinned: true },
+    });
+    const missingPermission = await server.inject({
+      method: 'PUT',
+      url: `/v1/dashboard/artifacts/${artifact.id}/pin`,
+      headers: { cookie: readerCookie },
+      payload: { pinned: true },
+    });
+    expect(outOfProject.statusCode).toBe(404);
+    expect(missingPermission.statusCode).toBe(403);
+  } finally {
+    await rm(artifact.filePath, { force: true });
+    await rm(outputDir, { recursive: true, force: true });
+    await server.close();
+  }
+});
+
 test('audit cursors keep their boundary when a newer audit event is recorded', async () => {
   const { server, cookie } = await signIn();
   const targetPrefix = `cursor-audit-${crypto.randomUUID()}`;

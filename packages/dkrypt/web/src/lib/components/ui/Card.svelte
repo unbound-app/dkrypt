@@ -5,11 +5,12 @@
 
   interface Props extends HTMLAttributes<HTMLDivElement> {
     title?: string;
+    contentClass?: string;
     children?: Snippet;
     headerExtra?: Snippet;
   }
 
-  let { title, class: className, children, headerExtra, ...rest }: Props = $props();
+  let { title, contentClass, class: className, children, headerExtra, ...rest }: Props = $props();
 </script>
 
 <div data-slot="card" class={cn('bg-card text-card-foreground min-w-0 rounded-xl border border-border/80 shadow-sm', className)} {...rest}>
@@ -23,7 +24,7 @@
       {/if}
     </div>
   {/if}
-  <div class={cn('p-5', title || headerExtra ? '' : 'pt-5')}>
+  <div class={cn('p-5', title || headerExtra ? '' : 'pt-5', contentClass)}>
     {@render children?.()}
   </div>
 </div>

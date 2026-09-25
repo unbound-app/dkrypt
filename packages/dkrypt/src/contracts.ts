@@ -416,6 +416,12 @@ const ArtifactSummaryResponse = object({
   accessCount: Type.Integer({ minimum: 0 }),
   fileUrl: Type.String(),
 });
+const ArtifactPinResponse = object({
+  ok: Type.Boolean(),
+  artifactId: Identifier,
+  pinned: Type.Boolean(),
+  pinnedAt: Type.Optional(Type.String({ format: 'date-time' })),
+});
 const ApiArtifactPage = object({
   artifacts: Type.Array(ArtifactSummaryResponse),
   total: Type.Integer({ minimum: 0 }),
@@ -438,6 +444,7 @@ const DashboardArtifactResponse = object({
   createdAt: Type.String(),
   lastAccessedAt: Type.String(),
   accessCount: Type.Integer({ minimum: 0 }),
+  pinnedAt: Type.Optional(Type.String({ format: 'date-time' })),
   sourceJobId: Type.Optional(Identifier),
   fileUrl: Type.String(),
 });
@@ -746,6 +753,9 @@ const ArtifactQuotaRetentionPreviewResponse = object({
   retainedBytes: Type.Number({ minimum: 0 }),
   evictedCount: Type.Integer({ minimum: 0 }),
   reclaimedBytes: Type.Number({ minimum: 0 }),
+  pinnedCount: Type.Integer({ minimum: 0 }),
+  pinnedBytes: Type.Number({ minimum: 0 }),
+  remainingOverQuotaBytes: Type.Number({ minimum: 0 }),
   evictionExamples: Type.Array(object({
     id: Identifier,
     bundleId: BundleId,
@@ -1058,6 +1068,7 @@ register('POST', '/v1/dashboard/jobs/:id/retry', { params: object({ id: Identifi
 register('GET', '/v1/dashboard/notifications', { querystring: PaginationQuery });
 register('GET', '/v1/dashboard/jobs', { querystring: object({ ...PaginationQuery.properties, projectId: Type.Optional(Identifier), q: Type.Optional(Type.String({ maxLength: 200 })), source: Type.Optional(Type.Union([Type.Literal('manual'), Type.Literal('scheduler')])), status: Type.Optional(Type.Union([Type.Literal('done'), Type.Literal('failed')])), queuedBy: Type.Optional(Type.String({ maxLength: 120 })), deviceId: Type.Optional(Identifier), errorQ: Type.Optional(Type.String({ maxLength: 200 })), failureCategory: Type.Optional(Type.String({ maxLength: 64 })), fromTs: Type.Optional(Type.Integer()), toTs: Type.Optional(Type.Integer()) }) });
 register('GET', '/v1/dashboard/artifacts', { querystring: object({ ...PaginationQuery.properties, projectId: Type.Optional(Identifier), q: Type.Optional(Type.String({ maxLength: 200 })), channel: Type.Optional(Type.Union([Type.Literal('appstore'), Type.Literal('testflight')])) }) });
+register('PUT', '/v1/dashboard/artifacts/:id/pin', { params: object({ id: Identifier }), body: object({ pinned: Type.Boolean() }) });
 register('GET', '/v1/dashboard/artifacts/retention-preview', { querystring: object({ maxBytes: Type.Integer({ minimum: 1 }) }) });
 register('GET', '/v1/dashboard/logs', { querystring: object({ ...PaginationQuery.properties, projectId: Type.Optional(Identifier), scope: Type.Optional(Type.String({ maxLength: 100 })), level: Type.Optional(Type.Union([Type.Literal('info'), Type.Literal('warn'), Type.Literal('error')])), q: Type.Optional(Type.String({ maxLength: 100 })), regex: Type.Optional(Type.Literal('1')) }) });
 register('GET', '/v1/dashboard/devices/:id/activity', { params: object({ id: Identifier }), querystring: PaginationQuery });
@@ -1371,6 +1382,11 @@ register('POST', '/v1/testflight/decrypt', {
 register('GET', '/v1/dashboard/artifacts', {
   querystring: object({ ...PaginationQuery.properties, projectId: Type.Optional(Identifier), q: Type.Optional(Type.String({ maxLength: 200 })), channel: Type.Optional(Type.Union([Type.Literal('appstore'), Type.Literal('testflight')])) }),
   response: { 200: DashboardArtifactPage },
+});
+register('PUT', '/v1/dashboard/artifacts/:id/pin', {
+  params: object({ id: Identifier }),
+  body: object({ pinned: Type.Boolean() }),
+  response: { 200: ArtifactPinResponse },
 });
 register('GET', '/v1/dashboard/artifacts/retention-preview', {
   querystring: object({ maxBytes: Type.Integer({ minimum: 1 }) }),

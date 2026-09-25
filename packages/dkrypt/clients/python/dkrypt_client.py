@@ -209,6 +209,7 @@ ROUTES = (
     "POST /v1/nowpayments/webhook",
     "POST /v1/stripe/webhook",
     "POST /v1/testflight/decrypt",
+    "PUT /v1/dashboard/artifacts/{id}/pin",
     "PUT /v1/dashboard/devices/{id}/dark-mode",
     "PUT /v1/dashboard/me/prefs",
     "PUT /v1/dashboard/settings",

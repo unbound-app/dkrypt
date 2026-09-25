@@ -1,5 +1,7 @@
 import { hasPermission, parseBits, PermissionFlag, permissionLabels } from '#lib/permissions';
 import { serverStateCache } from '#lib/serverStateCache.svelte';
+import { resetTestFlightCatalogState } from '#lib/testFlightCatalogState.svelte';
+import { clearPersistedTestFlightCatalog } from '#lib/testFlightCatalogPersistence';
 import {
   accentState,
   setAccent,
@@ -83,11 +85,19 @@ export function sessionCanSeeSettings(): boolean {
 export async function refreshSession(): Promise<SessionInfo> {
   const res = await fetch('/v1/auth/session');
   const data = (await res.json()) as SessionInfo;
+  const previousSub = sessionState.sub?.trim();
   const identityChanged = data.loggedIn !== sessionState.loggedIn || data.sub !== sessionState.sub;
-  if (identityChanged) serverStateCache.clear();
+  const permissionsChanged = data.permissions !== sessionState.permissions;
+  const accessChanged = identityChanged || permissionsChanged;
+  if (accessChanged) {
+    serverStateCache.clear();
+    const leavingIdentity = previousSub && (!data.loggedIn || previousSub.toLowerCase() !== data.sub?.trim().toLowerCase());
+    if (previousSub && (leavingIdentity || permissionsChanged)) clearPersistedTestFlightCatalog(previousSub);
+    resetTestFlightCatalogState();
+  }
   Object.assign(sessionState, data);
   if (data.loggedIn) {
-    if (identityChanged) serverStateCache.invalidateAll();
+    if (accessChanged) serverStateCache.invalidateAll();
     void syncThemeFromServer();
   }
   return data;
@@ -221,5 +231,7 @@ export async function logoutEverywhere(): Promise<void> {
 
 export function markLoggedOut(): void {
   if (sessionState.loggedIn) serverStateCache.clear();
+  if (sessionState.sub) clearPersistedTestFlightCatalog(sessionState.sub);
+  resetTestFlightCatalogState();
   sessionState.loggedIn = false;
 }

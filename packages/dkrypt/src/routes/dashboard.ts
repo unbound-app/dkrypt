@@ -63,6 +63,7 @@ import {
   listArtifacts,
   previewArtifactQuotaRetention,
   reloadArtifactIndex,
+  setArtifactPinned,
   touchArtifact,
 } from '#artifacts.js';
 import {
@@ -184,6 +185,7 @@ import {
 } from '#store/state.js';
 
 const canDecrypt = requirePermission(PermissionFlag.requestDecrypt);
+const canManageStorage = requirePermission(PermissionFlag.manageAutomation);
 const canRequestApiKeys = requirePermission(PermissionFlag.requestApiKeys);
 const canAccessApi = requirePermission(PermissionFlag.createApiKeys);
 const canViewOwnApiKeys = requirePermission(PermissionFlag.requestApiKeys, PermissionFlag.createApiKeys);
@@ -471,8 +473,37 @@ dashboardRouter.get('/v1/dashboard/artifacts', canDecrypt, (req, res) => {
       fileUrl: `/v1/dashboard/artifacts/${artifact.id}/file`,
       createdAt: new Date(artifact.createdAt).toISOString(),
       lastAccessedAt: new Date(artifact.lastAccessedAt).toISOString(),
+      pinnedAt: artifact.pinnedAt === undefined ? undefined : new Date(artifact.pinnedAt).toISOString(),
     })),
     nextCursor: result.nextCursor,
+  });
+});
+
+dashboardRouter.put('/v1/dashboard/artifacts/:id/pin', canManageStorage, async (req, res) => {
+  const artifact = getArtifactById(req.params.id);
+  const permissions = res.locals.session.permissions;
+  const sub = res.locals.session.sub;
+  const allowed = artifact?.projectIds.some((projectId) => canAccessProject(sub, permissions, projectId)) ?? false;
+  const requestedPinned = req.body?.pinned;
+  if (!artifact || !artifactFileAvailable(artifact) || !allowed) {
+    res.status(404).json({ error: 'artifact not found' });
+    return;
+  }
+  if (typeof requestedPinned !== 'boolean') {
+    res.status(400).json({ error: 'pinned must be a boolean' });
+    return;
+  }
+  const result = await setArtifactPinned(artifact.id, requestedPinned);
+  if (!result.artifact) {
+    res.status(404).json({ error: 'artifact not found' });
+    return;
+  }
+  if (result.changed) recordAudit(sub, requestedPinned ? 'artifact.pin' : 'artifact.unpin', artifact.id);
+  res.json({
+    ok: true,
+    artifactId: artifact.id,
+    pinned: result.artifact.pinnedAt !== undefined,
+    pinnedAt: result.artifact.pinnedAt === undefined ? undefined : new Date(result.artifact.pinnedAt).toISOString(),
   });
 });
 

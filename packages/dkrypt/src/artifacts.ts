@@ -29,6 +29,7 @@ export interface ArtifactRecord {
   createdAt: number;
   lastAccessedAt: number;
   accessCount: number;
+  pinnedAt?: number;
   sourceJobId?: string;
 }
 
@@ -59,6 +60,9 @@ export interface ArtifactQuotaRetentionPreview {
   retainedBytes: number;
   evictedCount: number;
   reclaimedBytes: number;
+  pinnedCount: number;
+  pinnedBytes: number;
+  remainingOverQuotaBytes: number;
   evictionExamples: Array<Pick<ArtifactRecord, 'id' | 'bundleId' | 'channel' | 'versionLabel' | 'fileSizeBytes' | 'lastAccessedAt'>>;
   additionalEvictions: number;
 }
@@ -128,7 +132,8 @@ function isArtifactRecord(value: unknown): value is ArtifactRecord {
     typeof record.sha256 === 'string' &&
     typeof record.createdAt === 'number' &&
     typeof record.lastAccessedAt === 'number' &&
-    typeof record.accessCount === 'number'
+    typeof record.accessCount === 'number' &&
+    (record.pinnedAt === undefined || Number.isFinite(record.pinnedAt))
   );
 }
 
@@ -227,6 +232,24 @@ export function getArtifactByKey(key: string): ArtifactRecord | undefined {
   return artifact;
 }
 
+export async function setArtifactPinned(id: string, pinned: boolean): Promise<{ artifact?: ArtifactRecord; changed: boolean }> {
+  return withMutation(async () => {
+    const artifact = getArtifactById(id);
+    if (!artifact) return { changed: false };
+    if ((artifact.pinnedAt !== undefined) === pinned) return { artifact, changed: false };
+
+    const previousPinnedAt = artifact.pinnedAt;
+    artifact.pinnedAt = pinned ? Date.now() : undefined;
+    try {
+      persistIndex();
+    } catch (error) {
+      artifact.pinnedAt = previousPinnedAt;
+      throw error;
+    }
+    return { artifact, changed: true };
+  });
+}
+
 export function linkArtifactToProject(id: string, projectId: string): ArtifactRecord | undefined {
   const artifact = getArtifactById(id);
   if (!artifact) return undefined;
@@ -270,11 +293,13 @@ export function previewArtifactQuotaRetention(targetMaxBytes: number): ArtifactQ
     throw new Error('artifact quota must be a positive safe integer');
   }
   const available = index.artifacts.filter((artifact) => existsSync(artifact.filePath));
-  const evicted = planArtifactEvictions(available, 0, targetMaxBytes, new Set());
+  const evicted = planArtifactEvictions(available, 0, targetMaxBytes, new Set(), false);
   const evictedIds = new Set(evicted.map((artifact) => artifact.id));
   const retained = available.filter((artifact) => !evictedIds.has(artifact.id));
   const currentBytes = available.reduce((total, artifact) => total + artifact.fileSizeBytes, 0);
   const reclaimedBytes = evicted.reduce((total, artifact) => total + artifact.fileSizeBytes, 0);
+  const pinned = available.filter((artifact) => artifact.pinnedAt !== undefined);
+  const retainedBytes = retained.reduce((total, artifact) => total + artifact.fileSizeBytes, 0);
   return {
     targetMaxBytes,
     currentMaxBytes: config.artifactMaxBytes,
@@ -284,6 +309,9 @@ export function previewArtifactQuotaRetention(targetMaxBytes: number): ArtifactQ
     retainedBytes: retained.reduce((total, artifact) => total + artifact.fileSizeBytes, 0),
     evictedCount: evicted.length,
     reclaimedBytes,
+    pinnedCount: pinned.length,
+    pinnedBytes: pinned.reduce((total, artifact) => total + artifact.fileSizeBytes, 0),
+    remainingOverQuotaBytes: Math.max(0, retainedBytes - targetMaxBytes),
     evictionExamples: evicted.slice(0, 8).map(({ id, bundleId, channel, versionLabel, fileSizeBytes, lastAccessedAt }) => ({
       id,
       bundleId,
@@ -359,6 +387,7 @@ function planArtifactEvictions(
   requiredBytes: number,
   maxBytes: number,
   protectedKeys: Set<string>,
+  rejectIfOverQuota = true,
 ): ArtifactRecord[] {
   let usedBytes = available.reduce((total, artifact) => total + artifact.fileSizeBytes, 0);
   if (requiredBytes > maxBytes) {
@@ -366,7 +395,7 @@ function planArtifactEvictions(
   }
 
   const candidates = available
-    .filter((artifact) => !protectedKeys.has(artifact.key))
+    .filter((artifact) => artifact.pinnedAt === undefined && !protectedKeys.has(artifact.key))
     .sort((a, b) => a.lastAccessedAt - b.lastAccessedAt || a.createdAt - b.createdAt);
   const evictions: ArtifactRecord[] = [];
 
@@ -376,7 +405,7 @@ function planArtifactEvictions(
     usedBytes -= candidate.fileSizeBytes;
   }
 
-  if (usedBytes + requiredBytes > maxBytes) {
+  if (rejectIfOverQuota && usedBytes + requiredBytes > maxBytes) {
     throw new Error('unable to free enough artifact storage');
   }
 
@@ -556,7 +585,7 @@ export async function reconcileArtifactStore(): Promise<void> {
     const stats = getArtifactStorageStats();
     if (stats.usedBytes > config.artifactMaxBytes) {
       const previousArtifacts = index.artifacts;
-      const evictedArtifacts = artifactsToEvict(0, new Set());
+      const evictedArtifacts = planArtifactEvictions(index.artifacts, 0, config.artifactMaxBytes, new Set(), false);
       const evictedIds = new Set(evictedArtifacts.map((artifact) => artifact.id));
       index.artifacts = previousArtifacts.filter((artifact) => !evictedIds.has(artifact.id));
       try {
@@ -572,6 +601,10 @@ export async function reconcileArtifactStore(): Promise<void> {
         } catch (error) {
           log.warn('failed to remove an evicted artifact file', { artifactId: evicted.id, path: evicted.filePath, error: String(error) });
         }
+      }
+      const remaining = getArtifactStorageStats();
+      if (remaining.usedBytes > remaining.maxBytes) {
+        log.warn('pinned artifacts exceed the configured storage quota', { usedBytes: remaining.usedBytes, maxBytes: remaining.maxBytes });
       }
     } else {
       persistIndex();

@@ -1218,6 +1218,7 @@
 			)}
 			aria-label="Status drawer"
 			aria-hidden={!mobileStatusOpen}
+			inert={!mobileStatusOpen}
 		>
 			<div class="mb-3 flex items-center justify-between">
 				<span class="text-sm font-semibold">Status</span>

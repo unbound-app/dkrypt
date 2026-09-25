@@ -51,8 +51,8 @@
 
     <div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
       {#each plans as plan (plan.name)}
-        <Card class={plan.name === 'Priority API' ? 'border-accent shadow-lg shadow-accent/10' : ''}>
-          <div class="flex h-full min-h-72 flex-col">
+        <Card class={plan.name === 'Priority API' ? 'flex h-full flex-col border-accent shadow-lg shadow-accent/10' : 'flex h-full flex-col'} contentClass="flex flex-1 flex-col">
+          <div class="flex min-h-72 flex-1 flex-col">
             <div class="mb-4 flex items-start justify-between gap-3">
               <div>
                 <div class="flex flex-wrap items-center gap-2">
@@ -92,7 +92,7 @@
 
             <a
               href="/#sign-in"
-              class={buttonVariants('default')}
+              class="{buttonVariants('default')} mt-auto"
             >
               Sign in to subscribe
             </a>

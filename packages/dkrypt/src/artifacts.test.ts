@@ -14,6 +14,7 @@ import {
   promoteArtifact,
   reloadArtifactIndex,
   reconcileArtifactStore,
+  setArtifactPinned,
   touchArtifact,
 } from './artifacts.js';
 
@@ -67,6 +68,46 @@ describe('persistent artifact store', () => {
     expect(getArtifactById(first.id)).toBeUndefined();
     expect(getArtifactById(second.id)).toBeDefined();
     expect(getArtifactStorageStats().usedBytes).toBe(4);
+  });
+
+  test('pinned artifacts survive quota pressure and can be evicted after unpinning', async () => {
+    config.artifactMaxBytes = 4;
+    const protectedArtifact = await promoteArtifact({
+      key: `test-pinned-${crypto.randomUUID()}`,
+      bundleId: 'com.example.pinned',
+      channel: 'appstore',
+      externalVersionId: 'pinned',
+      stagingPath: await stagingFile('1234'),
+    });
+
+    const pinned = await setArtifactPinned(protectedArtifact.id, true);
+    expect(pinned.changed).toBe(true);
+    expect(pinned.artifact?.pinnedAt).toBeTypeOf('number');
+    reloadArtifactIndex();
+    expect(getArtifactById(protectedArtifact.id)?.pinnedAt).toBe(pinned.artifact?.pinnedAt);
+
+    const preview = previewArtifactQuotaRetention(1);
+    expect(preview).toMatchObject({ pinnedCount: 1, pinnedBytes: 4, retainedCount: 1, retainedBytes: 4, evictedCount: 0, remainingOverQuotaBytes: 3 });
+    await expect(promoteArtifact({
+      key: `test-pinned-blocked-${crypto.randomUUID()}`,
+      bundleId: 'com.example.pinned-blocked',
+      channel: 'appstore',
+      stagingPath: await stagingFile('x'),
+    })).rejects.toThrow('unable to free enough artifact storage');
+    expect(artifactFileAvailable(getArtifactById(protectedArtifact.id))).toBe(true);
+    await expect(setArtifactPinned(protectedArtifact.id, true)).resolves.toMatchObject({ changed: false });
+
+    const unpinned = await setArtifactPinned(protectedArtifact.id, false);
+    expect(unpinned.changed).toBe(true);
+    expect(unpinned.artifact?.pinnedAt).toBeUndefined();
+    const replacement = await promoteArtifact({
+      key: `test-after-unpin-${crypto.randomUUID()}`,
+      bundleId: 'com.example.after-unpin',
+      channel: 'appstore',
+      stagingPath: await stagingFile('5678'),
+    });
+    expect(getArtifactById(protectedArtifact.id)).toBeUndefined();
+    expect(artifactFileAvailable(replacement)).toBe(true);
   });
 
   test('rejects an artifact larger than the quota without promoting it', async () => {

@@ -395,6 +395,7 @@ export interface ArtifactRecord {
   sha256: string;
   createdAt: string;
   lastAccessedAt: string;
+  pinnedAt?: string;
   accessCount: number;
   fileUrl: string;
 }
@@ -1019,6 +1020,21 @@ export function observeArtifacts(
   return serverStateCache.observe(path, () => apiJson<ArtifactPage>(path), listener, SERVER_QUERY_STALE_TIME_MS);
 }
 
+export interface ArtifactPinResult {
+  ok: boolean;
+  artifactId: string;
+  pinned: boolean;
+  pinnedAt?: string;
+}
+
+export function setDashboardArtifactPinned(id: string, pinned: boolean): Promise<{ ok: boolean; data: ArtifactPinResult }> {
+  return apiAction(`/v1/dashboard/artifacts/${encodeURIComponent(id)}/pin`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pinned }),
+  });
+}
+
 export function dashboardArtifactDownloadUrl(id: string): string {
   return `/v1/dashboard/artifacts/${encodeURIComponent(id)}/file`;
 }
@@ -1576,6 +1592,9 @@ export interface ArtifactQuotaRetentionPreview {
   retainedBytes: number;
   evictedCount: number;
   reclaimedBytes: number;
+  pinnedCount: number;
+  pinnedBytes: number;
+  remainingOverQuotaBytes: number;
   evictionExamples: Array<{
     id: string;
     bundleId: string;

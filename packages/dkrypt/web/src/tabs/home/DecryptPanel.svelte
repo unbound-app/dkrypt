@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Ellipsis, FlaskConical, History, Link2, Star, X } from "lucide-svelte";
+	import { CircleAlert, Clock3, Ellipsis, FlaskConical, History, Link2, RefreshCw, Star, X } from "lucide-svelte";
 	import BatchDecryptDialog from "#components/BatchDecryptDialog.svelte";
 	import CopyButton from "#components/CopyButton.svelte";
 	import EmptyState from "#components/EmptyState.svelte";
@@ -144,6 +144,14 @@
 	const canRequestTestFlight = $derived(
 		sessionHasPermission(PermissionFlag.requestTestFlightSubscriptions),
 	);
+	const testFlightAvailabilityStale = $derived.by(() => {
+		const refreshing = testFlightCatalogState.refreshing;
+		return testFlightCatalogState.error !== undefined || (!refreshing && testFlightCatalogState.apps.some((app) => Date.now() - app.lastVerifiedAt > 30 * 60_000));
+	});
+
+	function testFlightAvailabilityTitle(app: TestFlightCatalogApp): string {
+		return `${app.displayName} · ${app.bundleId} · Access last checked ${new Date(app.lastVerifiedAt).toLocaleString()}`;
+	}
 
 	let versionsOpen = $state(false);
 	let versionsBundleId = $state("");
@@ -347,7 +355,7 @@
 	});
 
 	$effect(() => {
-		if (!canDecrypt && !canRequestTestFlight) return;
+		if (!sessionState.loggedIn || !sessionState.sub || sessionState.permissions === undefined || (!canDecrypt && !canRequestTestFlight)) return;
 		void loadTestFlightCatalog();
 	});
 
@@ -501,7 +509,16 @@
 	{#if !term.trim() && testFlightCatalogState.apps.length > 0}
 		<div class="mt-3">
 			<div class="mb-1.5 flex items-center justify-between gap-2 text-[11px] font-medium uppercase tracking-[0.12em] text-muted">
-				<span>Available via TestFlight</span>
+				<div class="flex min-w-0 items-center gap-1.5">
+					<span>Available via TestFlight</span>
+					{#if testFlightCatalogState.refreshing}
+						<span role="status" aria-label="Refreshing TestFlight availability" title="Checking current device access"><RefreshCw aria-hidden="true" class="h-3 w-3 animate-spin" /></span>
+					{:else if testFlightCatalogState.error}
+						<span role="status" aria-label="Showing saved TestFlight results after a refresh failure" title="Showing saved results; the latest access check failed"><CircleAlert aria-hidden="true" class="h-3 w-3 text-warn" /></span>
+					{:else if testFlightAvailabilityStale}
+						<span role="status" aria-label="TestFlight availability may be out of date" title="Device access was last verified more than 30 minutes ago"><Clock3 aria-hidden="true" class="h-3 w-3" /></span>
+					{/if}
+				</div>
 				{#if canRequestTestFlight}
 					<Button size="sm" variant="ghost" class="h-7 px-2 text-[11px] normal-case tracking-normal" onclick={() => (inviteDialogOpen = true)}><Link2 class="h-3.5 w-3.5" /> Request an app</Button>
 				{/if}
@@ -513,7 +530,7 @@
 						size="sm"
 						class="h-auto min-w-[10rem] shrink-0 snap-start justify-start gap-2 rounded-xl px-2.5 py-2 text-left"
 						onclick={() => showTestFlightShortcut(app)}
-						title={`${app.displayName} · ${app.bundleId}`}
+						title={testFlightAvailabilityTitle(app)}
 					>
 						{#if app.iconUrl}<img src={app.iconUrl} alt="" class="h-7 w-7 shrink-0 rounded-lg" />{/if}
 						<span class="min-w-0">
@@ -529,6 +546,14 @@
 	{#if !term.trim() && testFlightCatalogState.apps.length === 0 && testFlightCatalogState.loading}
 		<div class="mt-3 rounded-xl border border-border px-3 py-2.5 text-xs text-muted">
 			Checking TestFlight availability…
+		</div>
+	{:else if !term.trim() && testFlightCatalogState.apps.length === 0 && testFlightCatalogState.error}
+		<div class="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dashed border-border px-3 py-2.5 text-xs text-muted">
+			<span role="status" class="inline-flex items-center gap-1.5"><CircleAlert aria-hidden="true" class="h-3.5 w-3.5 text-warn" />Couldn’t check TestFlight availability.</span>
+			<div class="flex items-center gap-1.5">
+				<Button size="sm" variant="ghost" aria-label="Retry TestFlight availability" onclick={() => void loadTestFlightCatalog(true)}>Retry</Button>
+				{#if canRequestTestFlight}<Button size="sm" variant="secondary" onclick={() => (inviteDialogOpen = true)}><Link2 class="h-3.5 w-3.5" /> Request an app</Button>{/if}
+			</div>
 		</div>
 	{:else if !term.trim() && testFlightCatalogState.apps.length === 0 && canRequestTestFlight}
 		<div class="mt-3 flex items-center justify-between gap-3 rounded-xl border border-dashed border-border px-3 py-2.5 text-xs text-muted">

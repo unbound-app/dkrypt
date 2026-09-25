@@ -70,6 +70,7 @@
 
   async function load(): Promise<void> {
     loading = true;
+    void loadTestFlightCatalog();
     try {
       const [subscriptionData, deviceData] = await Promise.all([
         fetchTestFlightSubscriptions(),
@@ -79,7 +80,6 @@
       total = subscriptionData.total;
       nextCursor = subscriptionData.nextCursor;
       devices = deviceData.devices;
-      void loadTestFlightCatalog();
     } catch {
       subscriptions = [];
     } finally {

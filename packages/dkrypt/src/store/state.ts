@@ -500,7 +500,9 @@ export type AuditAction =
   | 'project.add'
   | 'project.update'
   | 'project.archive'
-  | 'project.restore';
+  | 'project.restore'
+  | 'artifact.pin'
+  | 'artifact.unpin';
 
 export interface AuditLogEntry {
   id: string;

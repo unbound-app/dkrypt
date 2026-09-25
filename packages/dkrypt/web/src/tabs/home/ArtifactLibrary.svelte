@@ -1,13 +1,13 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
-  import { Download, RefreshCw } from 'lucide-svelte';
+  import { Download, Pin, PinOff, RefreshCw } from 'lucide-svelte';
   import AppIcon from '#components/AppIcon.svelte';
   import EmptyState from '#components/EmptyState.svelte';
   import Badge from '#lib/components/ui/Badge.svelte';
   import Button from '#lib/components/ui/Button.svelte';
   import Card from '#lib/components/ui/Card.svelte';
   import Input from '#lib/components/ui/Input.svelte';
-  import { fetchArtifacts, observeArtifacts, previewArtifactQuotaRetention, type ArtifactQuotaRetentionPreview, type ArtifactRecord } from '#lib/api';
+  import { fetchArtifacts, observeArtifacts, previewArtifactQuotaRetention, setDashboardArtifactPinned, type ArtifactQuotaRetentionPreview, type ArtifactRecord } from '#lib/api';
   import { appDisplayName, appIconUrl, ensureAppCatalog } from '#lib/appCatalog.svelte';
   import { fmtBytesGB, fmtSize } from '#lib/format';
   import { PermissionFlag } from '#lib/permissions';
@@ -25,6 +25,7 @@
   let query = $state('');
   let loading = $state(false);
   let loadingMore = $state(false);
+  let pinningArtifactIds = $state<string[]>([]);
   let nextCursor = $state<string | undefined>(undefined);
   let error = $state('');
   let cacheStatus = $state('');
@@ -148,6 +149,20 @@
       quotaPreviewLoading = false;
     }
   }
+
+  async function toggleArtifactPin(artifact: ArtifactRecord): Promise<void> {
+    if (pinningArtifactIds.includes(artifact.id)) return;
+    pinningArtifactIds = [...pinningArtifactIds, artifact.id];
+    try {
+      const result = await setDashboardArtifactPinned(artifact.id, artifact.pinnedAt === undefined);
+      if (!result.ok) return;
+      artifacts = artifacts.map((candidate) => candidate.id === artifact.id
+        ? { ...candidate, pinnedAt: result.data.pinnedAt }
+        : candidate);
+    } finally {
+      pinningArtifactIds = pinningArtifactIds.filter((id) => id !== artifact.id);
+    }
+  }
 </script>
 
 {#if canDecrypt}
@@ -193,13 +208,15 @@
                 {:else if quotaPreview}
                   <div class="mt-3 rounded-md bg-muted/20 p-2.5 text-xs">
                     <div class="font-medium">
-                      {#if quotaPreview.evictedCount > 0}
+                      {#if quotaPreview.remainingOverQuotaBytes > 0}
+                        Pinned files exceed this quota by {fmtBytesGB(quotaPreview.remainingOverQuotaBytes)}. Unpin files or raise the quota before storing more.
+                      {:else if quotaPreview.evictedCount > 0}
                         Would keep {quotaPreview.retainedCount} of {quotaPreview.currentCount} files, reclaiming {fmtBytesGB(quotaPreview.reclaimedBytes)}.
                       {:else}
                         No files would be evicted at this quota.
                       {/if}
                     </div>
-                    <div class="text-muted mt-1">Retained storage: {fmtBytesGB(quotaPreview.retainedBytes)} / {fmtBytesGB(quotaPreview.targetMaxBytes)}. The simulation does not change settings or delete files.</div>
+                    <div class="text-muted mt-1">Retained storage: {fmtBytesGB(quotaPreview.retainedBytes)} / {fmtBytesGB(quotaPreview.targetMaxBytes)}. {quotaPreview.pinnedCount} pinned files ({fmtBytesGB(quotaPreview.pinnedBytes)}) are protected. The simulation does not change settings or delete files.</div>
                     {#if quotaPreview.evictionExamples.length > 0}
                       <ul class="mt-2 divide-y divide-border/70">
                         {#each quotaPreview.evictionExamples.slice(0, 5) as candidate (candidate.id)}
@@ -234,6 +251,7 @@
                   <AppIcon bundleId={artifact.bundleId} src={appIconUrl(artifact.bundleId)} label={appDisplayName(artifact.bundleId)} class="h-9 w-9" />
                   <div class="min-w-0 flex-1">
                     <div class="truncate text-[13px] font-semibold" title={appDisplayName(artifact.bundleId)}>{appDisplayName(artifact.bundleId)}</div>
+                    {#if artifact.pinnedAt}<div class="text-muted mt-0.5 text-[10px]">Pinned</div>{/if}
                     <div class="text-muted mt-0.5 truncate font-mono text-[11px]" title={artifact.bundleId}>{artifact.bundleId}</div>
                   </div>
                 </div>
@@ -251,9 +269,24 @@
                     <dd class="mt-0.5 text-[13px]">{fmtSize(artifact.fileSizeBytes)}</dd>
                   </div>
                 </dl>
-                <a href={artifact.fileUrl} download class="{buttonVariants('secondary', 'sm')} w-full justify-center sm:col-start-2 sm:row-start-1 sm:w-auto lg:col-start-3 lg:row-start-1">
-                  <Download class="h-3.5 w-3.5" />Download
-                </a>
+                <div class="flex items-center justify-end gap-1 sm:col-start-2 sm:row-start-1 lg:col-start-3 lg:row-start-1">
+                  {#if canManageStorage}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      class="h-8 w-8 shrink-0"
+                      disabled={pinningArtifactIds.includes(artifact.id)}
+                      onclick={() => void toggleArtifactPin(artifact)}
+                      aria-label={artifact.pinnedAt ? `Unpin ${artifact.bundleId}` : `Pin ${artifact.bundleId}`}
+                      title={artifact.pinnedAt ? 'Unpin artifact' : 'Keep artifact from automatic eviction'}
+                    >
+                      {#if artifact.pinnedAt}<PinOff class="h-4 w-4" />{:else}<Pin class="h-4 w-4" />{/if}
+                    </Button>
+                  {/if}
+                  <a href={artifact.fileUrl} download class="{buttonVariants('secondary', 'sm')} justify-center">
+                    <Download class="h-3.5 w-3.5" />Download
+                  </a>
+                </div>
               </article>
             {/each}
           </div>

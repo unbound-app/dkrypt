@@ -39,6 +39,33 @@ async function mockAuthenticatedSession(page: Page, permissions: string): Promis
   });
 }
 
+async function mockAuthenticatedDashboard(page: Page, permissions: string): Promise<void> {
+  await mockAuthenticatedSession(page, permissions);
+  await page.route('**/v1/dashboard/overview*', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        schedulerEnabled: false,
+        settings: {},
+        watches: [],
+        devices: [],
+        schedulerRunHistory: [],
+        disk: { totalBytes: 1, freeBytes: 1, usedBytes: 0, usedPercent: 0 },
+        isPaidPlan: false,
+        maintenance: { active: false, manual: false, auto: false },
+        activeJobs: [],
+      }),
+    });
+  });
+  await page.route('**/v1/dashboard/events', async (route) => {
+    await route.fulfill({ contentType: 'text/event-stream', body: ': connected\n\n' });
+  });
+  await page.addInitScript(() => {
+    localStorage.setItem('onboardingTourSeen', 'true');
+    localStorage.setItem('onboardingDismissed', 'true');
+  });
+}
+
 test.beforeEach(async ({ page }) => {
   await page.route('**/v1/**', async (route) => {
     await route.fulfill({
@@ -104,28 +131,19 @@ test('pricing page fits a phone viewport without horizontal overflow', async ({ 
   await expectAccessible(page);
 });
 
+test('pricing plan checkout actions share a bottom baseline', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto('/pricing');
+
+  const buttons = page.getByRole('link', { name: 'Sign in to subscribe' });
+  await expect(buttons).toHaveCount(4);
+  const bottoms = await buttons.evaluateAll((links) => links.map((link) => link.getBoundingClientRect().bottom));
+  expect(Math.max(...bottoms) - Math.min(...bottoms)).toBeLessThanOrEqual(2);
+});
+
 test('authenticated top bar exposes community links without mobile overflow', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await mockAuthenticatedSession(page, '1');
-  await page.route('**/v1/dashboard/overview', async (route) => {
-    await route.fulfill({
-      contentType: 'application/json',
-      body: JSON.stringify({
-        schedulerEnabled: false,
-        settings: {},
-        watches: [],
-        devices: [],
-        schedulerRunHistory: [],
-        disk: { totalBytes: 1, freeBytes: 1, usedBytes: 0, usedPercent: 0 },
-        isPaidPlan: false,
-        maintenance: { active: false, manual: false, auto: false },
-        activeJobs: [],
-      }),
-    });
-  });
-  await page.route('**/v1/dashboard/events', async (route) => {
-    await route.fulfill({ contentType: 'text/event-stream', body: ': connected\n\n' });
-  });
+  await mockAuthenticatedDashboard(page, '1');
 
   await page.goto('/');
   const github = page.getByRole('link', { name: 'Open dkrypt on GitHub' });
@@ -212,5 +230,99 @@ test('populated device management and preflight dialog meet accessibility checks
   await page.getByRole('button', { name: 'Preflight' }).click();
   await expect(page.getByText('Device preflight')).toBeVisible();
   await expect(page.getByText('ready for automation')).toBeVisible();
+  await expectAccessible(page);
+});
+
+test('TestFlight shortcuts reappear from the account cache while a reload refresh is pending', async ({ page }) => {
+  await mockAuthenticatedDashboard(page, '17179869186');
+
+  let catalogCalls = 0;
+  let holdCatalogResponse = false;
+  let refreshingEmptyCatalogDelivered = false;
+  let releaseReloadResponse!: () => void;
+  let reloadRequestStarted!: () => void;
+  const reloadResponse = new Promise<void>((resolve) => (releaseReloadResponse = resolve));
+  const reloadRequest = new Promise<void>((resolve) => (reloadRequestStarted = resolve));
+  await page.route('**/v1/dashboard/testflight/catalog*', async (route) => {
+    catalogCalls += 1;
+    if (holdCatalogResponse) {
+      reloadRequestStarted();
+      await reloadResponse;
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ apps: [], fetchedAt: Date.now(), refreshing: true }),
+      });
+      refreshingEmptyCatalogDelivered = true;
+      return;
+    }
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        apps: [{
+          appId: 123,
+          bundleId: 'com.example.testflight',
+          displayName: 'Example TestFlight App',
+          devices: [{ id: 'ipad-1', name: 'Lab iPad' }],
+          lastVerifiedAt: Date.now() - 60 * 60_000,
+          deviceSource: true,
+        }],
+        fetchedAt: Date.now(),
+        refreshing: false,
+      }),
+    });
+  });
+
+  await page.goto('/');
+  const shortcut = page.getByRole('button', { name: /Example TestFlight App/ });
+  await expect(shortcut).toBeVisible();
+  await expect(page.getByRole('status', { name: 'TestFlight availability may be out of date' })).toBeVisible();
+  holdCatalogResponse = true;
+  try {
+    await page.reload();
+    await reloadRequest;
+    await expect(shortcut).toBeVisible();
+  } finally {
+    releaseReloadResponse();
+  }
+  await expect.poll(() => refreshingEmptyCatalogDelivered).toBe(true);
+  await expect.poll(() => catalogCalls).toBeGreaterThanOrEqual(2);
+  await expect(shortcut).toBeVisible();
+  await expect(page.getByRole('status', { name: 'Refreshing TestFlight availability' })).toBeVisible();
+  const cachedBundleId = await page.evaluate(() => {
+    const cached = sessionStorage.getItem('dkrypt:testflight-catalog:v1:member');
+    return cached ? (JSON.parse(cached) as { apps?: Array<{ bundleId?: string }> }).apps?.[0]?.bundleId : undefined;
+  });
+  expect(cachedBundleId).toBe('com.example.testflight');
+  await expectAccessible(page);
+});
+
+test('TestFlight catalog refresh failures offer a retry instead of an empty-state message', async ({ page }) => {
+  await mockAuthenticatedDashboard(page, '17179869186');
+  let catalogCalls = 0;
+  let retryRequested = false;
+  await page.route('**/v1/dashboard/testflight/catalog*', async (route) => {
+    catalogCalls += 1;
+    if (!retryRequested) {
+      await route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'TestFlight is temporarily unavailable' }),
+      });
+      return;
+    }
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ apps: [], fetchedAt: Date.now(), refreshing: false }),
+    });
+  });
+
+  await page.goto('/');
+  await expect.poll(() => catalogCalls).toBeGreaterThan(0);
+  await expect(page.getByText('Couldn’t check TestFlight availability.', { exact: true })).toBeVisible();
+  await expect(page.getByText('No TestFlight apps yet.')).toHaveCount(0);
+  retryRequested = true;
+  await page.getByRole('button', { name: 'Retry TestFlight availability' }).click();
+  await expect(page.getByText('No TestFlight apps yet.')).toBeVisible();
+  await expect.poll(() => catalogCalls).toBeGreaterThanOrEqual(2);
   await expectAccessible(page);
 });
