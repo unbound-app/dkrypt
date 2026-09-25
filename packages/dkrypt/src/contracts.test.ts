@@ -2,17 +2,25 @@ import { expect, test } from 'bun:test';
 import { authRouter } from '#routes/auth.js';
 import { billingRouter, nowpaymentsWebhookRouter, stripeWebhookRouter } from '#routes/billing.js';
 import { dashboardRouter } from '#routes/dashboard.js';
-import { decryptRouter, testFlightDecryptRouter } from '#routes/decrypt.js';
+import { artifactFileRouter, decryptRouter, testFlightDecryptRouter } from '#routes/decrypt.js';
 import { buildServer } from '#server.js';
 import { getRouteContracts } from '#contracts.js';
 
 test('every registered versioned route has an explicit TypeBox contract', () => {
-  const routers = [authRouter, billingRouter, nowpaymentsWebhookRouter, stripeWebhookRouter, dashboardRouter, decryptRouter, testFlightDecryptRouter];
+  const routers = [authRouter, billingRouter, nowpaymentsWebhookRouter, stripeWebhookRouter, dashboardRouter, decryptRouter, artifactFileRouter, testFlightDecryptRouter];
   const routes = routers.flatMap((router) => router.routes.map((route) => `${route.method} ${route.path}`));
   const contracts = getRouteContracts();
-  expect(routes.length + 5).toBe(contracts.size);
+  expect(routes.length + 7).toBe(contracts.size);
   for (const route of routes) expect(contracts.has(route)).toBe(true);
-  for (const route of ['GET /v1/health', 'GET /v1/status', 'GET /v1/metrics', 'GET /v1/testflight/:appId/trains', 'GET /v1/testflight/:appId/builds']) {
+  for (const route of [
+    'GET /v1/health',
+    'GET /v1/status',
+    'GET /v1/metrics',
+    'GET /v1/artifacts',
+    'GET /v1/artifacts/:id',
+    'GET /v1/testflight/:appId/trains',
+    'GET /v1/testflight/:appId/builds',
+  ]) {
     expect(contracts.has(route)).toBe(true);
   }
 });

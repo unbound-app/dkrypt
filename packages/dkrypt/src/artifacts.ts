@@ -33,6 +33,7 @@ export interface ArtifactListOptions {
   limit?: number;
   query?: string;
   channel?: ArtifactChannel;
+  bundleIds?: string[];
 }
 
 export interface ArtifactListResult {
@@ -196,8 +197,10 @@ export function artifactFileAvailable(artifact: ArtifactRecord | undefined): boo
   return !!artifact && existsSync(artifact.filePath);
 }
 
-export function getArtifactStorageStats(): { usedBytes: number; maxBytes: number; count: number } {
-  const available = index.artifacts.filter((artifact) => existsSync(artifact.filePath));
+export function getArtifactStorageStats(bundleIds?: string[]): { usedBytes: number; maxBytes: number; count: number } {
+  const available = index.artifacts
+    .filter((artifact) => existsSync(artifact.filePath))
+    .filter((artifact) => !bundleIds || bundleIds.includes(artifact.bundleId));
   return {
     usedBytes: available.reduce((total, artifact) => total + artifact.fileSizeBytes, 0),
     maxBytes: config.artifactMaxBytes,
@@ -209,6 +212,7 @@ export function listArtifacts(options: ArtifactListOptions = {}): ArtifactListRe
   const query = options.query?.trim().toLowerCase();
   const filtered = index.artifacts
     .filter((artifact) => artifactFileAvailable(artifact))
+    .filter((artifact) => !options.bundleIds || options.bundleIds.includes(artifact.bundleId))
     .filter((artifact) => !options.channel || artifact.channel === options.channel)
     .filter((artifact) => {
       if (!query) return true;
@@ -220,7 +224,7 @@ export function listArtifacts(options: ArtifactListOptions = {}): ArtifactListRe
 
   const offset = Math.max(options.offset ?? 0, 0);
   const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
-  const stats = getArtifactStorageStats();
+  const stats = getArtifactStorageStats(options.bundleIds);
   return {
     artifacts: filtered.slice(offset, offset + limit),
     total: filtered.length,

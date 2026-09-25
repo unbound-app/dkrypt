@@ -4,6 +4,10 @@ import { recordApiKeyOutcome, verifyApiKey, type ApiKeyAuthResult } from '#store
 
 const fastifyApiKeyContext = new WeakMap<FastifyRequest, ApiKeyAuthResult>();
 
+export function getFastifyApiKeyContext(request: FastifyRequest): ApiKeyAuthResult | undefined {
+  return fastifyApiKeyContext.get(request);
+}
+
 function trackApiKeyOutcome(req: Request, res: Response, keyId: string | undefined): void {
   if (!keyId) return;
   res.raw.once('finish', () => recordApiKeyOutcome(keyId, req.method, req.path ?? req.url.split('?')[0], res.raw.statusCode));
@@ -59,7 +63,7 @@ export function fastifyRequireApiKey(request: FastifyRequest, reply: FastifyRepl
 }
 
 export function fastifyRequireTestFlightScope(request: FastifyRequest, reply: FastifyReply, done: HookHandlerDoneFunction): void {
-  const apiKey = fastifyApiKeyContext.get(request);
+  const apiKey = getFastifyApiKeyContext(request);
   if (!apiKey) {
     reply.code(401).send({ error: 'unauthorized', code: 'unauthorized', message: 'unauthorized', requestId: request.id, retryable: false });
     return;

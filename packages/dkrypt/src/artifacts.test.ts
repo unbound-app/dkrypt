@@ -109,6 +109,35 @@ describe('persistent artifact store', () => {
     expect(result.maxBytes).toBe(1024 * 1024);
   });
 
+  test('applies bundle scopes before artifact pagination and storage totals', async () => {
+    config.artifactMaxBytes = 1024 * 1024;
+    const allowedBundleId = `com.example.scoped-${crypto.randomUUID().slice(0, 8)}`;
+    const deniedBundleId = `com.example.other-${crypto.randomUUID().slice(0, 8)}`;
+    const allowed = await promoteArtifact({
+      key: `test-scoped-list-allowed-${crypto.randomUUID()}`,
+      bundleId: allowedBundleId,
+      channel: 'appstore',
+      stagingPath: await stagingFile('allowed scoped ipa'),
+    });
+    const denied = await promoteArtifact({
+      key: `test-scoped-list-denied-${crypto.randomUUID()}`,
+      bundleId: deniedBundleId,
+      channel: 'appstore',
+      stagingPath: await stagingFile('denied scoped ipa'),
+    });
+
+    try {
+      const result = listArtifacts({ bundleIds: [allowedBundleId] });
+      expect(result.artifacts.map((artifact) => artifact.bundleId)).toEqual([allowedBundleId]);
+      expect(result.total).toBe(1);
+      expect(result.totalBytes).toBe(allowed.fileSizeBytes);
+      expect(result.artifacts.some((artifact) => artifact.id === denied.id)).toBe(false);
+    } finally {
+      await rm(allowed.filePath, { force: true });
+      await rm(denied.filePath, { force: true });
+    }
+  });
+
   test('stores Apple version and build metadata separately from TestFlight release tags', async () => {
     const key = `test-metadata-${crypto.randomUUID()}`;
     const artifact = await promoteArtifact({

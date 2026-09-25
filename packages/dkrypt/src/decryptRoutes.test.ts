@@ -1,7 +1,8 @@
 import { expect, test } from 'bun:test';
 import { TypeBoxTypeProvider } from '@fastify/type-provider-typebox';
 import Fastify from 'fastify';
-import { createTestFlightCatalogRoutes } from '#routes/decrypt.js';
+import type { ArtifactRecord } from '#artifacts.js';
+import { createArtifactCatalogRoutes, createTestFlightCatalogRoutes } from '#routes/decrypt.js';
 import { createApiKey, revokeApiKey } from '#store/state.js';
 
 test('typed TestFlight catalog routes enforce key scopes and normalize bridge failures', async () => {
@@ -85,6 +86,65 @@ test('typed TestFlight catalog routes enforce key scopes and normalize bridge fa
   } finally {
     revokeApiKey(deniedKey.id, 'root', true);
     revokeApiKey(allowedKey.id, 'root', true);
+    await server.close();
+  }
+});
+
+test('typed artifact metadata routes enforce API-key bundle scopes', async () => {
+  const allowedArtifact: ArtifactRecord = {
+    id: 'allowed-artifact',
+    key: 'allowed-key',
+    bundleId: 'com.example.allowed',
+    channel: 'appstore',
+    versionLabel: '1.0',
+    filePath: '/unused/allowed.ipa',
+    fileSizeBytes: 17,
+    sha256: 'a'.repeat(64),
+    createdAt: 1_700_000_000_000,
+    lastAccessedAt: 1_700_000_000_000,
+    accessCount: 1,
+  };
+  const deniedArtifact: ArtifactRecord = {
+    ...allowedArtifact,
+    id: 'denied-artifact',
+    key: 'denied-key',
+    bundleId: 'com.example.denied',
+    filePath: '/unused/denied.ipa',
+  };
+  let listedBundleIds: string[] | undefined;
+  const apiKey = createApiKey('Scoped artifact metadata route test', 'root', undefined, ['com.example.allowed']);
+  const server = Fastify().withTypeProvider<TypeBoxTypeProvider>();
+
+  try {
+    await server.register(createArtifactCatalogRoutes({
+      listArtifacts: (options) => {
+        listedBundleIds = options?.bundleIds;
+        return { artifacts: [allowedArtifact], total: 1, totalBytes: allowedArtifact.fileSizeBytes, maxBytes: 100 };
+      },
+      getArtifactById: (id) => id === allowedArtifact.id ? allowedArtifact : id === deniedArtifact.id ? deniedArtifact : undefined,
+      artifactFileAvailable: (artifact) => Boolean(artifact),
+    }));
+    await server.ready();
+
+    const headers = { authorization: `Bearer ${apiKey.key}` };
+    const listing = await server.inject({ method: 'GET', url: '/v1/artifacts', headers });
+    expect(listing.statusCode).toBe(200);
+    expect(listedBundleIds).toEqual(['com.example.allowed']);
+    expect(listing.json() as unknown).toMatchObject({
+      artifacts: [{ bundleId: 'com.example.allowed' }],
+      total: 1,
+      totalBytes: 17,
+    });
+
+    const allowed = await server.inject({ method: 'GET', url: `/v1/artifacts/${allowedArtifact.id}`, headers });
+    expect(allowed.statusCode).toBe(200);
+    expect(allowed.json() as unknown).toMatchObject({ id: allowedArtifact.id, bundleId: 'com.example.allowed' });
+
+    const denied = await server.inject({ method: 'GET', url: `/v1/artifacts/${deniedArtifact.id}`, headers });
+    expect(denied.statusCode).toBe(403);
+    expect(denied.json()).toMatchObject({ code: 'bundle_scope_denied', retryable: false });
+  } finally {
+    revokeApiKey(apiKey.id, 'root', true);
     await server.close();
   }
 });

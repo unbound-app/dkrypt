@@ -3,7 +3,7 @@ import { Router } from '#http.js';
 import { createHash } from 'node:crypto';
 import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
 import { config } from '#config.js';
-import { fastifyRequireApiKey, fastifyRequireTestFlightScope, requireApiKey, requireTestFlightScope } from '#auth.js';
+import { fastifyRequireApiKey, fastifyRequireTestFlightScope, getFastifyApiKeyContext, requireApiKey, requireTestFlightScope } from '#auth.js';
 import { blockDuringMaintenance } from '#maintenance.js';
 import { jobFileAvailable, jobSummary, streamFilePath, streamJobFile } from '#jobs/http.js';
 import { enqueueDecryptJob, getJob, waitForJob } from '#jobs/store.js';
@@ -16,11 +16,18 @@ import { decodeCursor, nextCursor } from '#util/cursor.js';
 import { getRouteContract } from '#contracts.js';
 
 export const decryptRouter = Router();
+export const artifactFileRouter = Router();
 export const testFlightDecryptRouter = Router();
 
 interface TestFlightCatalogServices {
   listTrains: typeof listTrains;
   listBuilds: typeof listBuilds;
+}
+
+interface ArtifactCatalogServices {
+  listArtifacts: typeof listArtifacts;
+  getArtifactById: typeof getArtifactById;
+  artifactFileAvailable: typeof artifactFileAvailable;
 }
 
 const BUNDLE_ID_RE = /^[A-Za-z0-9.-]{3,200}$/;
@@ -69,6 +76,10 @@ function isBundleIdAllowed(res: Response, bundleId: string): boolean {
 
 function apiRequester(res: Response): string {
   return (res.locals.apiKeyOwner as string | undefined) ?? 'api-key';
+}
+
+function apiErrorEnvelope(message: string, code: string, requestId: string, retryable = false) {
+  return { error: message, code, message, requestId, retryable };
 }
 
 function testFlightLookupFailure(error: unknown, requestId: string) {
@@ -218,30 +229,7 @@ decryptRouter.get('/v1/decrypt', requireApiKey, blockDuringMaintenance, async (r
   await streamJobFile(finished, req, res);
 });
 
-decryptRouter.get('/v1/artifacts', requireApiKey, (req, res) => {
-  const offset = typeof req.query.cursor === 'string' ? decodeCursor(req.query.cursor) : Number.parseInt(String(req.query.offset ?? '0'), 10);
-  const limit = Number.parseInt(String(req.query.limit ?? '50'), 10);
-  const channel = req.query.channel === 'appstore' || req.query.channel === 'testflight' ? req.query.channel : undefined;
-  const result = listArtifacts({
-    offset: Number.isFinite(offset) ? offset : 0,
-    limit: Number.isFinite(limit) ? limit : 50,
-    query: typeof req.query.q === 'string' ? req.query.q : undefined,
-    channel,
-  });
-  const normalizedOffset = Number.isFinite(offset) ? Math.max(offset, 0) : 0;
-  res.json({ ...result, artifacts: result.artifacts.map(artifactSummary), nextCursor: nextCursor(normalizedOffset, result.artifacts.length, result.total) });
-});
-
-decryptRouter.get('/v1/artifacts/:id', requireApiKey, (req, res) => {
-  const artifact = getArtifactById(req.params.id);
-  if (!artifact || !artifactFileAvailable(artifact)) {
-    res.status(404).json({ error: 'artifact not found' });
-    return;
-  }
-  res.json(artifactSummary(artifact));
-});
-
-decryptRouter.get('/v1/artifacts/:id/file', requireApiKey, async (req, res) => {
+artifactFileRouter.get('/v1/artifacts/:id/file', requireApiKey, async (req, res) => {
   const artifact = getArtifactById(req.params.id);
   if (!artifact || !artifactFileAvailable(artifact)) {
     res.status(404).json({ error: 'artifact not found' });
@@ -255,7 +243,7 @@ decryptRouter.get('/v1/artifacts/:id/file', requireApiKey, async (req, res) => {
   await streamFilePath(artifact.filePath, req, res, artifactDownloadName(artifact), artifact.fileSizeBytes, artifact.id);
 });
 
-decryptRouter.get('/v1/jobs/:id', requireApiKey, (req, res) => {
+artifactFileRouter.get('/v1/jobs/:id', requireApiKey, (req, res) => {
   const job = getJob(req.params.id);
   if (!job) {
     res.status(404).json({ error: 'job not found (finished jobs are pruned after retention window)' });
@@ -318,6 +306,62 @@ testFlightDecryptRouter.post('/v1/testflight/decrypt', requireApiKey, requireTes
   }
   res.status(202).json(jobSummary(job));
 });
+
+export function createArtifactCatalogRoutes(
+  services: ArtifactCatalogServices = { listArtifacts, getArtifactById, artifactFileAvailable },
+): FastifyPluginAsyncTypebox {
+  return async (server) => {
+    server.get(
+      '/v1/artifacts',
+      { schema: getRouteContract('GET', '/v1/artifacts'), preHandler: fastifyRequireApiKey },
+      async (request) => {
+        const query = request.query as {
+          cursor?: string;
+          offset?: string | number;
+          limit?: string | number;
+          q?: string;
+          channel?: 'appstore' | 'testflight';
+        };
+        const offset = typeof query.cursor === 'string' ? decodeCursor(query.cursor) : Number.parseInt(String(query.offset ?? '0'), 10);
+        const limit = Number.parseInt(String(query.limit ?? '50'), 10);
+        const result = services.listArtifacts({
+          offset: Number.isFinite(offset) ? offset : 0,
+          limit: Number.isFinite(limit) ? limit : 50,
+          query: query.q,
+          channel: query.channel,
+          bundleIds: getFastifyApiKeyContext(request)?.allowedBundleIds,
+        });
+        const normalizedOffset = Number.isFinite(offset) ? Math.max(offset, 0) : 0;
+        return {
+          ...result,
+          artifacts: result.artifacts.map(artifactSummary),
+          nextCursor: nextCursor(normalizedOffset, result.artifacts.length, result.total),
+        };
+      },
+    );
+
+    server.get(
+      '/v1/artifacts/:id',
+      { schema: getRouteContract('GET', '/v1/artifacts/:id'), preHandler: fastifyRequireApiKey },
+      async (request, reply) => {
+        const params = request.params as { id: string };
+        const artifact = services.getArtifactById(params.id);
+        if (!artifact || !services.artifactFileAvailable(artifact)) {
+          reply.code(404);
+          return apiErrorEnvelope('artifact not found', 'not_found', request.id);
+        }
+        const allowedBundleIds = getFastifyApiKeyContext(request)?.allowedBundleIds;
+        if (allowedBundleIds && !allowedBundleIds.includes(artifact.bundleId)) {
+          reply.code(403);
+          return apiErrorEnvelope('this API key is not scoped to this bundleId', 'bundle_scope_denied', request.id);
+        }
+        return artifactSummary(artifact);
+      },
+    );
+  };
+}
+
+export const artifactCatalogRoutes = createArtifactCatalogRoutes();
 
 export function createTestFlightCatalogRoutes(
   services: TestFlightCatalogServices = { listTrains, listBuilds },
