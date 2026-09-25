@@ -1,6 +1,8 @@
 import { createHmac } from 'node:crypto';
 import { describe, expect, test } from 'bun:test';
+import { config } from '#config.js';
 import { checkoutFromResponse, NowPaymentsClient, subscriptionFromPayment, verifyNowPaymentsWebhook } from '#nowpayments.js';
+import { buildServer } from '#server.js';
 
 describe('NOWPayments adapter', () => {
   test('creates a EUR invoice with the selected crypto currency', async () => {
@@ -35,6 +37,48 @@ describe('NOWPayments adapter', () => {
     const signature = createHmac('sha512', 'ipn_secret').update(canonical).digest('hex');
     expect(verifyNowPaymentsWebhook(payload, signature, 'ipn_secret')).toBe(true);
     expect(verifyNowPaymentsWebhook(payload, `${signature}0`, 'ipn_secret')).toBe(false);
+  });
+
+  test('accepts a signed raw IPN request and deduplicates delivery', async () => {
+    const originalSecret = config.nowpaymentsIpnSecret;
+    const originalPreviousSecret = config.nowpaymentsIpnSecretPrevious;
+    const secret = `ipn_${crypto.randomUUID()}`;
+    config.nowpaymentsIpnSecret = secret;
+    config.nowpaymentsIpnSecretPrevious = '';
+    const payment = {
+      payment_id: `payment_${crypto.randomUUID()}`,
+      payment_status: 'waiting',
+      order_id: `dkrypt_${crypto.randomUUID()}`,
+      updated_at: new Date().toISOString(),
+    };
+    const rawBody = JSON.stringify(payment);
+    const canonicalBody = JSON.stringify(Object.fromEntries(Object.entries(payment).sort(([left], [right]) => left.localeCompare(right))));
+    const signature = createHmac('sha512', secret).update(canonicalBody).digest('hex');
+    const server = await buildServer({ includePublicRoutes: false });
+
+    try {
+      const first = await server.inject({
+        method: 'POST',
+        url: '/v1/nowpayments/webhook',
+        headers: { 'content-type': 'application/json', 'x-nowpayments-sig': signature },
+        payload: rawBody,
+      });
+      const duplicate = await server.inject({
+        method: 'POST',
+        url: '/v1/nowpayments/webhook',
+        headers: { 'content-type': 'application/json', 'x-nowpayments-sig': signature },
+        payload: rawBody,
+      });
+
+      expect(first.statusCode).toBe(200);
+      expect(first.json()).toMatchObject({ received: true });
+      expect(duplicate.statusCode).toBe(200);
+      expect(duplicate.json()).toMatchObject({ received: true, duplicate: true });
+    } finally {
+      await server.close();
+      config.nowpaymentsIpnSecret = originalSecret;
+      config.nowpaymentsIpnSecretPrevious = originalPreviousSecret;
+    }
   });
 
   test('normalizes invoices and payments for the billing ledger', () => {

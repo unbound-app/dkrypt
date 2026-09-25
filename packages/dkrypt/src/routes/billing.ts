@@ -1,6 +1,8 @@
 import { createHash, randomBytes } from 'node:crypto';
 import Stripe from 'stripe';
+import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
 import { Router, type Request, type Response } from '#http.js';
+import { getRouteContract } from '#contracts.js';
 import {
   acquireBillingCheckoutLock,
   getBillingCustomerId,
@@ -143,112 +145,92 @@ export async function processStripeEvent(event: Stripe.Event): Promise<void> {
   }
 }
 
-export const stripeWebhookRouter = Router();
+interface WebhookDeliveryResult {
+  statusCode: 200 | 500;
+  payload: Record<string, unknown>;
+}
 
-stripeWebhookRouter.post('/v1/stripe/webhook', async (req, res) => {
-  const signature = req.header('stripe-signature') ?? '';
-  const rawBody = Buffer.isBuffer(req.body) ? req.body : typeof req.body === 'string' ? req.body : '';
-  if (!signature || !rawBody) {
-    res.status(400).json({ error: 'missing signature or body' });
-    return;
-  }
-  if (!config.stripeSecretKey || !config.stripeWebhookSecret) {
-    res.status(503).json({ error: 'Stripe webhook is not configured' });
-    return;
-  }
+function webhookSignatureHeader(value: string | string[] | undefined): string {
+  return Array.isArray(value) ? value[0] ?? '' : value ?? '';
+}
 
-  let event: Stripe.Event;
+function webhookRawBody(body: unknown): Buffer | undefined {
+  const rawBody = Buffer.isBuffer(body) ? body : typeof body === 'string' ? Buffer.from(body) : undefined;
+  return rawBody?.length ? rawBody : undefined;
+}
+
+async function processWebhookDelivery(
+  provider: 'stripe' | 'nowpayments',
+  eventId: string,
+  rawBody: Buffer,
+  processEvent: () => Promise<void>,
+  onFailure: (error: unknown) => void,
+): Promise<WebhookDeliveryResult> {
+  const inbox = receiveWebhook(provider, eventId, rawBody);
+  if (inbox.duplicate && inbox.record.status === 'processed') return { statusCode: 200, payload: { received: true, duplicate: true } };
+  if (inbox.duplicate && inbox.record.status === 'quarantined') return { statusCode: 200, payload: { received: true, duplicate: true, quarantined: true } };
+  if (!claimWebhook(inbox.record.id)) return { statusCode: 200, payload: { received: true, duplicate: true, inProgress: true } };
   try {
-    event = await constructStripeWebhookEvent(rawBody, signature);
-  } catch (error) {
-    log.warn('Stripe webhook signature verification failed', { error: String(error) });
-    res.status(400).json({ error: 'invalid webhook signature' });
-    return;
-  }
-
-  const inbox = receiveWebhook('stripe', event.id, rawBody);
-  if (inbox.duplicate && inbox.record.status === 'processed') {
-    res.json({ received: true, duplicate: true });
-    return;
-  }
-  if (inbox.duplicate && inbox.record.status === 'quarantined') {
-    res.json({ received: true, duplicate: true, quarantined: true });
-    return;
-  }
-  if (!claimWebhook(inbox.record.id)) {
-    res.json({ received: true, duplicate: true, inProgress: true });
-    return;
-  }
-  try {
-    await processStripeEvent(event);
+    await processEvent();
     markWebhookProcessed(inbox.record.id);
-    res.json({ received: true });
+    return { statusCode: 200, payload: { received: true } };
   } catch (error) {
     markWebhookFailed(inbox.record.id, String(error));
-    log.error('Stripe webhook failed', { eventType: event.type, error: String(error) });
-    res.status(500).json({ error: 'webhook processing failed' });
+    onFailure(error);
+    return { statusCode: 500, payload: { error: 'webhook processing failed' } };
   } finally {
     releaseWebhookClaim(inbox.record.id);
   }
-});
+}
 
-export const nowpaymentsWebhookRouter = Router();
+export const billingWebhookRoutes: FastifyPluginAsyncTypebox = async (server) => {
+  server.post('/v1/stripe/webhook', { schema: getRouteContract('POST', '/v1/stripe/webhook') }, async (request, reply) => {
+    const signature = webhookSignatureHeader(request.headers['stripe-signature']);
+    const rawBody = webhookRawBody(request.body);
+    if (!signature || !rawBody) return reply.code(400).send({ error: 'missing signature or body' });
+    if (!config.stripeSecretKey || !config.stripeWebhookSecret) return reply.code(503).send({ error: 'Stripe webhook is not configured' });
 
-nowpaymentsWebhookRouter.post('/v1/nowpayments/webhook', async (req, res) => {
-  const signature = req.header('x-nowpayments-sig') ?? '';
-  const rawBody = Buffer.isBuffer(req.body) ? req.body : typeof req.body === 'string' ? req.body : '';
-  if (!signature || !rawBody) {
-    res.status(400).json({ error: 'missing signature or body' });
-    return;
-  }
-  if (!config.nowpaymentsIpnSecret && !config.nowpaymentsIpnSecretPrevious) {
-    res.status(503).json({ error: 'NOWPayments IPN is not configured' });
-    return;
-  }
-  if (!verifyNowPaymentsEvent(rawBody, signature)) {
-    log.warn('NOWPayments IPN signature verification failed');
-    res.status(400).json({ error: 'invalid webhook signature' });
-    return;
-  }
-  let payload: unknown;
-  try {
-    payload = JSON.parse(rawBody.toString('utf8'));
-  } catch {
-    res.status(400).json({ error: 'invalid webhook body' });
-    return;
-  }
-  if (typeof payload !== 'object' || payload === null || typeof (payload as { payment_status?: unknown }).payment_status !== 'string') {
-    res.status(400).json({ error: 'invalid IPN payload' });
-    return;
-  }
-  const payment = payload as Parameters<typeof processNowPaymentsEvent>[0]['payment'];
-  const paymentId = payment.payment_id === undefined ? payment.order_id ?? 'unknown' : String(payment.payment_id);
-  const eventId = `nowpayments:${paymentId}:${payment.payment_status}:${payment.updated_at ?? payment.created_at ?? 'unknown'}`;
-  const inbox = receiveWebhook('nowpayments', eventId, rawBody);
-  if (inbox.duplicate && inbox.record.status === 'processed') {
-    res.json({ received: true, duplicate: true });
-    return;
-  }
-  if (inbox.duplicate && inbox.record.status === 'quarantined') {
-    res.json({ received: true, duplicate: true, quarantined: true });
-    return;
-  }
-  if (!claimWebhook(inbox.record.id)) {
-    res.json({ received: true, duplicate: true, inProgress: true });
-    return;
-  }
-  try {
-    await processNowPaymentsEvent({ id: eventId, payment });
-    markWebhookProcessed(inbox.record.id);
-    res.json({ received: true });
-  } catch (error) {
-    markWebhookFailed(inbox.record.id, String(error));
-    log.error('NOWPayments IPN failed', { error: String(error) });
-    res.status(500).json({ error: 'webhook processing failed' });
-  } finally {
-    releaseWebhookClaim(inbox.record.id);
-  }
-});
+    let event: Stripe.Event;
+    try {
+      event = await constructStripeWebhookEvent(rawBody, signature);
+    } catch (error) {
+      log.warn('Stripe webhook signature verification failed', { error: String(error) });
+      return reply.code(400).send({ error: 'invalid webhook signature' });
+    }
+
+    const result = await processWebhookDelivery('stripe', event.id, rawBody, () => processStripeEvent(event), (error) => {
+      log.error('Stripe webhook failed', { eventType: event.type, error: String(error) });
+    });
+    return reply.code(result.statusCode).send(result.payload);
+  });
+
+  server.post('/v1/nowpayments/webhook', { schema: getRouteContract('POST', '/v1/nowpayments/webhook') }, async (request, reply) => {
+    const signature = webhookSignatureHeader(request.headers['x-nowpayments-sig']);
+    const rawBody = webhookRawBody(request.body);
+    if (!signature || !rawBody) return reply.code(400).send({ error: 'missing signature or body' });
+    if (!config.nowpaymentsIpnSecret && !config.nowpaymentsIpnSecretPrevious) return reply.code(503).send({ error: 'NOWPayments IPN is not configured' });
+    if (!verifyNowPaymentsEvent(rawBody, signature)) {
+      log.warn('NOWPayments IPN signature verification failed');
+      return reply.code(400).send({ error: 'invalid webhook signature' });
+    }
+    let payload: unknown;
+    try {
+      payload = JSON.parse(rawBody.toString('utf8'));
+    } catch {
+      return reply.code(400).send({ error: 'invalid webhook body' });
+    }
+    if (typeof payload !== 'object' || payload === null || typeof (payload as { payment_status?: unknown }).payment_status !== 'string') {
+      return reply.code(400).send({ error: 'invalid IPN payload' });
+    }
+    const payment = payload as Parameters<typeof processNowPaymentsEvent>[0]['payment'];
+    const paymentId = payment.payment_id === undefined ? payment.order_id ?? 'unknown' : String(payment.payment_id);
+    const eventId = `nowpayments:${paymentId}:${payment.payment_status}:${payment.updated_at ?? payment.created_at ?? 'unknown'}`;
+    const result = await processWebhookDelivery('nowpayments', eventId, rawBody, () => processNowPaymentsEvent({ id: eventId, payment }), (error) => {
+      log.error('NOWPayments IPN failed', { error: String(error) });
+    });
+    return reply.code(result.statusCode).send(result.payload);
+  });
+};
 
 export const billingRouter = Router();
 

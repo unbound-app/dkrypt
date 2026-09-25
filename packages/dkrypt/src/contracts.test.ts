@@ -1,17 +1,14 @@
 import { expect, test } from 'bun:test';
 import { authRouter } from '#routes/auth.js';
-import { billingRouter, nowpaymentsWebhookRouter, stripeWebhookRouter } from '#routes/billing.js';
+import { billingRouter } from '#routes/billing.js';
 import { dashboardRouter } from '#routes/dashboard.js';
 import { buildServer } from '#server.js';
 import { getRouteContracts } from '#contracts.js';
 
 test('every registered versioned route has an explicit TypeBox contract', () => {
-  const routers = [authRouter, billingRouter, nowpaymentsWebhookRouter, stripeWebhookRouter, dashboardRouter];
+  const routers = [authRouter, billingRouter, dashboardRouter];
   const routes = routers.flatMap((router) => router.routes.map((route) => `${route.method} ${route.path}`));
-  const contracts = getRouteContracts();
-  expect(routes.length + 12).toBe(contracts.size);
-  for (const route of routes) expect(contracts.has(route)).toBe(true);
-  for (const route of [
+  const directRoutes = [
     'GET /v1/health',
     'GET /v1/status',
     'GET /v1/metrics',
@@ -24,9 +21,13 @@ test('every registered versioned route has an explicit TypeBox contract', () => 
     'GET /v1/testflight/:appId/builds',
     'POST /v1/decrypts',
     'POST /v1/testflight/decrypt',
-  ]) {
-    expect(contracts.has(route)).toBe(true);
-  }
+    'POST /v1/stripe/webhook',
+    'POST /v1/nowpayments/webhook',
+  ];
+  const allRoutes = [...routes, ...directRoutes];
+  const contracts = getRouteContracts();
+  expect(allRoutes.length).toBe(contracts.size);
+  for (const route of allRoutes) expect(contracts.has(route)).toBe(true);
 });
 
 test('every versioned route is represented in generated OpenAPI', async () => {
