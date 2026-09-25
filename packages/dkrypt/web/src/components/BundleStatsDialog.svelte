@@ -20,6 +20,7 @@
 	import RelativeTime from "#components/RelativeTime.svelte";
 	import RateLimitHint from "#components/RateLimitHint.svelte";
 	import { projectSelectionState } from "#lib/projectSelection.svelte";
+	import { isServerQueryCancelled } from "#lib/serverStateCache.svelte";
 
 	let {
 		open = $bindable(),
@@ -45,17 +46,20 @@
 	let diffing = $state(false);
 
 	async function loadVersionsPage(offset: number): Promise<void> {
-		const r = await fetchJobHistory(
-			offset,
-			VERSIONS_PAGE_SIZE,
-			bundleId,
-			undefined,
-			"done",
-		);
-		const matched = r.history.filter((h) => h.bundleId === bundleId);
-		versions = offset === 0 ? matched : [...(versions ?? []), ...matched];
-		versionsOffset = offset + r.history.length;
-		versionsHasMore = r.history.length === VERSIONS_PAGE_SIZE;
+		try {
+			const r = await fetchJobHistory({
+				cursorOrOffset: offset,
+				limit: VERSIONS_PAGE_SIZE,
+				q: bundleId,
+				status: "done",
+			});
+			const matched = r.history.filter((h) => h.bundleId === bundleId);
+			versions = offset === 0 ? matched : [...(versions ?? []), ...matched];
+			versionsOffset = offset + r.history.length;
+			versionsHasMore = r.history.length === VERSIONS_PAGE_SIZE;
+		} catch (error) {
+			if (!isServerQueryCancelled(error)) throw error;
+		}
 	}
 
 	async function loadMoreVersions(): Promise<void> {

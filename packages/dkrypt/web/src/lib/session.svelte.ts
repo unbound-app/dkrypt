@@ -1,4 +1,5 @@
 import { hasPermission, parseBits, PermissionFlag, permissionLabels } from '#lib/permissions';
+import { serverStateCache } from '#lib/serverStateCache.svelte';
 import {
   accentState,
   setAccent,
@@ -82,8 +83,13 @@ export function sessionCanSeeSettings(): boolean {
 export async function refreshSession(): Promise<SessionInfo> {
   const res = await fetch('/v1/auth/session');
   const data = (await res.json()) as SessionInfo;
+  const identityChanged = data.loggedIn !== sessionState.loggedIn || data.sub !== sessionState.sub;
+  if (identityChanged) serverStateCache.clear();
   Object.assign(sessionState, data);
-  if (data.loggedIn) void syncThemeFromServer();
+  if (data.loggedIn) {
+    if (identityChanged) serverStateCache.invalidateAll();
+    void syncThemeFromServer();
+  }
   return data;
 }
 
@@ -214,5 +220,6 @@ export async function logoutEverywhere(): Promise<void> {
 }
 
 export function markLoggedOut(): void {
+  if (sessionState.loggedIn) serverStateCache.clear();
   sessionState.loggedIn = false;
 }

@@ -1,5 +1,6 @@
 import type { JobHistoryEntry, LogEntry, OverviewPayload } from '#lib/api';
 import { projectSelectionState, setProjectSelection } from '#lib/projectSelection.svelte';
+import { serverStateCache } from '#lib/serverStateCache.svelte';
 
 export const liveState = $state<{
   overview: OverviewPayload | null;
@@ -20,6 +21,7 @@ let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 let visibilityListenerInstalled = false;
 let lastSequence = 0;
 let overviewRefresh: Promise<void> | undefined;
+let hasConnectedBefore = false;
 
 async function refreshOverview(): Promise<void> {
 	if (overviewRefresh) return overviewRefresh;
@@ -55,6 +57,7 @@ function readEvent<T>(event: Event): T {
 	if (typeof value.sequence === 'number') {
 		if (lastSequence > 0 && value.sequence > lastSequence + 1) {
 			liveState.sequenceGap = true;
+			serverStateCache.invalidateAll();
 			void refreshOverview();
 		}
 		lastSequence = Math.max(lastSequence, value.sequence);
@@ -87,6 +90,8 @@ export function connectLive(): void {
 	});
 
   eventSource.onopen = () => {
+    if (hasConnectedBefore && liveState.disconnectedAt !== null) serverStateCache.invalidateAll();
+    hasConnectedBefore = true;
     liveState.connected = true;
     liveState.disconnectedAt = null;
     liveState.reconnectAttempts = 0;
@@ -96,6 +101,7 @@ export function connectLive(): void {
 
   eventSource.addEventListener('overview', (e) => {
     liveState.overview = readEvent<OverviewPayload>(e);
+    serverStateCache.invalidatePrefix('/v1/dashboard/devices');
     liveState.overviewLoaded = true;
     liveState.connected = true;
     liveState.disconnectedAt = null;
@@ -104,11 +110,15 @@ export function connectLive(): void {
 
   eventSource.addEventListener('log', (e) => {
     const entry = readEvent<LogEntry>(e);
+    serverStateCache.invalidatePrefix('/v1/dashboard/logs');
     liveState.logs = [entry, ...liveState.logs].slice(0, 500);
   });
 
   eventSource.addEventListener('history', (e) => {
     const entry = readEvent<JobHistoryEntry>(e);
+    serverStateCache.invalidatePrefix('/v1/dashboard/jobs');
+    serverStateCache.invalidatePrefix('/v1/dashboard/artifacts');
+    serverStateCache.invalidatePrefix('/v1/dashboard/overview');
     liveState.historyAdditions = [entry, ...liveState.historyAdditions].slice(0, 200);
   });
 
@@ -124,6 +134,7 @@ export function connectLive(): void {
     liveState.overview = null;
     liveState.logs = [];
     liveState.historyAdditions = [];
+    serverStateCache.clear();
     liveState.overviewLoaded = false;
     lastSequence = 0;
     connectLive();
@@ -136,6 +147,7 @@ export function connectLive(): void {
     liveState.connected = false;
     if (liveState.disconnectedAt === null) liveState.disconnectedAt = Date.now();
     liveState.stale = true;
+    serverStateCache.markAllStale();
     liveState.reconnectAttempts += 1;
     scheduleReconnect();
   };
@@ -157,6 +169,8 @@ export function disconnectLive(): void {
   liveState.stale = false;
   liveState.lastEventAt = null;
   liveState.sequenceGap = false;
+  serverStateCache.markAllStale();
+  hasConnectedBefore = false;
   lastSequence = 0;
 }
 
@@ -170,6 +184,7 @@ export function reconnectLive(resetProjectState = false): void {
     liveState.logs = [];
     liveState.historyAdditions = [];
     liveState.overviewLoaded = false;
+    serverStateCache.invalidateAll();
   }
   connectLive();
 }

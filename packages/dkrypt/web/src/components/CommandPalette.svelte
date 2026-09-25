@@ -91,7 +91,7 @@
 	$effect(() => {
 		if (!paletteState.open) return;
 		recentIds = loadRecents();
-		void fetchJobHistory(0, 8).then((r) => {
+		void fetchJobHistory({ cursorOrOffset: 0, limit: 8 }).then((r) => {
 			const seen = new Set<string>();
 			const jobs: RecentJob[] = [];
 			for (const h of r.history) {
@@ -108,7 +108,7 @@
 				});
 			}
 			recentJobs = jobs;
-		});
+		}).catch(() => {});
 		void fetchMyKeys().then((r) => {
 			myKeys = r.keys.map((k) => ({ id: k.id, name: k.name }));
 		});
@@ -127,7 +127,7 @@
 
 	const searchJobHistory = debounce((q: string) => {
 		const token = ++historyQueryToken;
-		void fetchJobHistory(0, 5, q).then((r) => {
+		void fetchJobHistory({ cursorOrOffset: 0, limit: 5, q }).then((r) => {
 			if (
 				!paletteState.open ||
 				query.trim() !== q ||
@@ -150,7 +150,7 @@
 				});
 			}
 			queryJobs = jobs;
-		});
+		}).catch(() => {});
 	}, 250);
 
 	$effect(() => {

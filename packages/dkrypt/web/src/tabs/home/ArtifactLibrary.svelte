@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
   import { Download, RefreshCw } from 'lucide-svelte';
   import AppIcon from '#components/AppIcon.svelte';
   import EmptyState from '#components/EmptyState.svelte';
@@ -6,11 +7,12 @@
   import Button from '#lib/components/ui/Button.svelte';
   import Card from '#lib/components/ui/Card.svelte';
   import Input from '#lib/components/ui/Input.svelte';
-  import { fetchArtifacts, previewArtifactQuotaRetention, type ArtifactQuotaRetentionPreview, type ArtifactRecord } from '#lib/api';
+  import { fetchArtifacts, observeArtifacts, previewArtifactQuotaRetention, type ArtifactQuotaRetentionPreview, type ArtifactRecord } from '#lib/api';
   import { appDisplayName, appIconUrl, ensureAppCatalog } from '#lib/appCatalog.svelte';
   import { fmtBytesGB, fmtSize } from '#lib/format';
   import { PermissionFlag } from '#lib/permissions';
   import { sessionHasPermission } from '#lib/session.svelte';
+  import { isServerQueryCancelled, mergeServerPage, serverQueryStatus } from '#lib/serverStateCache.svelte';
   import { buttonVariants } from '#lib/components/ui/variants';
   import { projectSelectionState } from '#lib/projectSelection.svelte';
 
@@ -25,44 +27,78 @@
   let loadingMore = $state(false);
   let nextCursor = $state<string | undefined>(undefined);
   let error = $state('');
+  let cacheStatus = $state('');
   let showQuotaSimulation = $state(false);
   let proposedQuotaGb = $state('');
   let quotaPreview = $state<ArtifactQuotaRetentionPreview | null>(null);
   let quotaPreviewLoading = $state(false);
   let quotaPreviewError = $state('');
+  let stopObservingArtifacts: (() => void) | undefined;
+  let artifactLoadVersion = 0;
+  let activeArtifactQueryKey = '';
 
-  async function load(): Promise<void> {
+  async function load(force = false): Promise<void> {
     if (!canDecrypt) return;
+    const loadVersion = ++artifactLoadVersion;
+    stopObservingArtifacts?.();
     loading = true;
     error = '';
     nextCursor = undefined;
-    try {
-      const result = await fetchArtifacts(undefined, 50, query.trim() || undefined);
-      artifacts = result.artifacts;
+    const searchQuery = query.trim() || undefined;
+    const artifactQuery = { cursorOrOffset: undefined, limit: 50, q: searchQuery };
+    const artifactQueryKey = JSON.stringify([projectSelectionState.id, artifactQuery]);
+    const previousArtifactQueryKey = activeArtifactQueryKey;
+    activeArtifactQueryKey = artifactQueryKey;
+    const request = fetchArtifacts(artifactQuery, force);
+    const applyPage = (result: Awaited<ReturnType<typeof fetchArtifacts>>) => {
+      artifacts = mergeServerPage(result.artifacts, artifacts, previousArtifactQueryKey, artifactQueryKey);
       total = result.total;
       totalBytes = result.totalBytes;
       maxBytes = result.maxBytes;
       if (!proposedQuotaGb) proposedQuotaGb = formatQuotaInput(result.maxBytes);
       nextCursor = result.nextCursor;
+    };
+    stopObservingArtifacts = observeArtifacts(artifactQuery, (snapshot) => {
+      if (loadVersion !== artifactLoadVersion) return;
+      if (snapshot.data) {
+        applyPage(snapshot.data);
+        cacheStatus = serverQueryStatus(snapshot);
+        if (!snapshot.error) error = '';
+      } else {
+        cacheStatus = '';
+        artifacts = [];
+        total = 0;
+        totalBytes = 0;
+        maxBytes = 0;
+        nextCursor = undefined;
+      }
+      loading = snapshot.isFetching;
+    });
+    try {
+      await request;
     } catch (err) {
-      error = err instanceof Error ? err.message : 'Failed to load artifacts';
-    } finally {
-      loading = false;
+      if (loadVersion === artifactLoadVersion && !isServerQueryCancelled(err)) error = err instanceof Error ? err.message : 'Failed to load artifacts';
     }
   }
+
+  onDestroy(() => {
+    artifactLoadVersion += 1;
+    stopObservingArtifacts?.();
+  });
 
   async function loadMore(): Promise<void> {
     if (loadingMore || !nextCursor) return;
     loadingMore = true;
     try {
-      const result = await fetchArtifacts(nextCursor, 50, query.trim() || undefined);
-      artifacts = [...artifacts, ...result.artifacts];
+      const result = await fetchArtifacts({ cursorOrOffset: nextCursor, limit: 50, q: query.trim() || undefined });
+      const seenIds = new Set(artifacts.map((artifact) => artifact.id));
+      artifacts = [...artifacts, ...result.artifacts.filter((artifact) => !seenIds.has(artifact.id))];
       total = result.total;
       totalBytes = result.totalBytes;
       maxBytes = result.maxBytes;
       nextCursor = result.nextCursor;
     } catch (err) {
-      error = err instanceof Error ? err.message : 'Failed to load more artifacts';
+      if (!isServerQueryCancelled(err)) error = err instanceof Error ? err.message : 'Failed to load more artifacts';
     } finally {
       loadingMore = false;
     }
@@ -126,8 +162,8 @@
           <div class="text-muted mt-0.5 text-xs">{fmtBytesGB(totalBytes)} / {fmtBytesGB(maxBytes)} used</div>
         </div>
         <div class="flex w-full items-center gap-2 sm:w-auto sm:min-w-[18rem]">
-          <Input bind:value={query} onkeydown={(event) => event.key === 'Enter' && void load()} placeholder="Search apps or versions…" class="min-w-0 flex-1 sm:w-64" />
-          <Button variant="ghost" size="icon" class="text-muted hover:text-foreground h-8 w-8 shrink-0 p-0" disabled={loading} onclick={() => void load()} aria-label="Refresh IPA Library" title="Refresh IPA Library">
+          <Input bind:value={query} onkeydown={(event) => event.key === 'Enter' && void load(true)} placeholder="Search apps or versions…" class="min-w-0 flex-1 sm:w-64" />
+          <Button variant="ghost" size="icon" class="text-muted hover:text-foreground h-8 w-8 shrink-0 p-0" disabled={loading} onclick={() => void load(true)} aria-label="Refresh IPA Library" title="Refresh IPA Library">
             <RefreshCw class={loading ? 'h-3.5 w-3.5 animate-spin' : 'h-3.5 w-3.5'} />
           </Button>
         </div>
@@ -183,7 +219,10 @@
             {/if}
           </div>
         {/if}
-        {#if error}
+        {#if cacheStatus}
+          <div class="mb-3 rounded-md border border-border/70 px-3 py-2 text-xs text-muted" role="status" aria-live="polite">{cacheStatus}</div>
+        {/if}
+        {#if error && artifacts.length === 0}
           <div class="text-err text-[13px]" role="alert">{error}</div>
         {:else if artifacts.length === 0 && !loading}
           <EmptyState message="No artifacts match this search." />

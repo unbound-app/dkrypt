@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onDestroy } from "svelte";
 	import { Eye, History, X } from "lucide-svelte";
 	import BundleStatsDialog from "#components/BundleStatsDialog.svelte";
 	import BulkJobPreviewDialog from "#components/BulkJobPreviewDialog.svelte";
@@ -9,6 +10,7 @@
 	import RelativeTime from "#components/RelativeTime.svelte";
 	import {
 		fetchJobHistory,
+		observeJobHistory,
 		jobHistoryExportUrl,
 		artifactDownloadUrl,
 		previewBulkJobReplay,
@@ -38,6 +40,7 @@
 	import { createSavedViews } from "#lib/savedViews.svelte";
 	import { sessionState } from "#lib/session.svelte";
 	import { projectSelectionState } from "#lib/projectSelection.svelte";
+	import { isServerQueryCancelled, mergeServerPage, serverQueryStatus } from "#lib/serverStateCache.svelte";
 	import {
 		historyJumpState,
 		requestFocusSearch,
@@ -91,7 +94,13 @@
 	let nextCursor = $state<string | undefined>(undefined);
 	let loaded = $state(false);
 	let loadingMore = $state(false);
+	let historyError = $state("");
+	let historyCacheStatus = $state("");
+	let historyRefreshing = $state(false);
+	let activeHistoryQueryKey = "";
 	let seenIds = new Set<string>();
+	let stopObservingHistory: (() => void) | undefined;
+	let historyLoadVersion = 0;
 	let requeueing = $state<Set<string>>(new Set());
 	let searchText = $state(
 		getQueryParam("hq") ??
@@ -215,52 +224,101 @@
 	}
 
 	async function loadInitial(query: string): Promise<void> {
+		const loadVersion = ++historyLoadVersion;
+		stopObservingHistory?.();
 		loaded = false;
+		historyError = "";
 		selected = new Set();
-		const data = await fetchJobHistory(
-			undefined,
-			PAGE_SIZE,
-			query || undefined,
-			sourceFilter === "all" ? undefined : sourceFilter,
-			statusFilter === "all" ? undefined : statusFilter,
-			{
-				queuedBy: queuedByFilter.trim() || undefined,
-				deviceId: deviceFilter.trim() || undefined,
-				errorQ: errorFilter.trim() || undefined,
-				failureCategory: failureCategoryFilter.trim() || undefined,
+		const filters = {
+			queuedBy: queuedByFilter.trim() || undefined,
+			deviceId: deviceFilter.trim() || undefined,
+			errorQ: errorFilter.trim() || undefined,
+			failureCategory: failureCategoryFilter.trim() || undefined,
+		};
+		const source = sourceFilter === "all" ? undefined : sourceFilter;
+		const status = statusFilter === "all" ? undefined : statusFilter;
+		const historyQuery = {
+			cursorOrOffset: undefined,
+			limit: PAGE_SIZE,
+			q: query || undefined,
+			source,
+			status,
+			opts: filters,
+		};
+		const historyQueryKey = JSON.stringify([projectSelectionState.id, historyQuery]);
+		const previousHistoryQueryKey = activeHistoryQueryKey;
+		activeHistoryQueryKey = historyQueryKey;
+		const applyPage = (data: Awaited<ReturnType<typeof fetchJobHistory>>) => {
+			entries = mergeServerPage(data.history, entries, previousHistoryQueryKey, historyQueryKey);
+			total = data.total;
+			nextCursor = data.nextCursor;
+			seenIds = new Set(entries.map((entry) => entry.id));
+			historyError = "";
+			void ensureAppCatalog(entries.map((entry) => entry.bundleId));
+			loaded = true;
+		};
+		stopObservingHistory = observeJobHistory(
+			historyQuery,
+			(snapshot) => {
+				if (loadVersion !== historyLoadVersion) return;
+				if (snapshot.data) {
+					applyPage(snapshot.data);
+					historyCacheStatus = serverQueryStatus(snapshot);
+				} else {
+					entries = [];
+					total = 0;
+					nextCursor = undefined;
+					seenIds = new Set();
+					loaded = false;
+					historyCacheStatus = "";
+					historyError = snapshot.error ? "Could not load job history. Check your connection and retry." : "";
+					if (snapshot.error && !snapshot.isFetching) loaded = true;
+				}
+				historyRefreshing = snapshot.isFetching;
 			},
 		);
-		entries = data.history;
-		total = data.total;
-		nextCursor = data.nextCursor;
-		seenIds = new Set(entries.map((e) => e.id));
-		void ensureAppCatalog(entries.map((entry) => entry.bundleId));
-		loaded = true;
+		try {
+			await fetchJobHistory(historyQuery);
+			if (loadVersion === historyLoadVersion) loaded = true;
+		} catch (error) {
+			if (isServerQueryCancelled(error)) return;
+			if (loadVersion === historyLoadVersion) {
+				loaded = true;
+				if (entries.length === 0) historyError = "Could not load job history. Check your connection and retry.";
+			}
+		}
 	}
+
+	onDestroy(() => {
+		historyLoadVersion += 1;
+		stopObservingHistory?.();
+	});
 
 	async function loadMore(): Promise<void> {
 		if (!nextCursor) return;
 		loadingMore = true;
 		try {
-			const data = await fetchJobHistory(
-				nextCursor,
-				PAGE_SIZE,
-				activeQuery || undefined,
-				sourceFilter === "all" ? undefined : sourceFilter,
-				statusFilter === "all" ? undefined : statusFilter,
-				{
+			const data = await fetchJobHistory({
+				cursorOrOffset: nextCursor,
+				limit: PAGE_SIZE,
+				q: activeQuery || undefined,
+				source: sourceFilter === "all" ? undefined : sourceFilter,
+				status: statusFilter === "all" ? undefined : statusFilter,
+				opts: {
 					queuedBy: queuedByFilter.trim() || undefined,
 					deviceId: deviceFilter.trim() || undefined,
 					errorQ: errorFilter.trim() || undefined,
 					failureCategory: failureCategoryFilter.trim() || undefined,
 				},
-			);
+			});
 			const additions = data.history.filter((e) => !seenIds.has(e.id));
 			for (const e of additions) seenIds.add(e.id);
 			entries = [...entries, ...additions];
 			total = data.total;
 			nextCursor = data.nextCursor;
 			void ensureAppCatalog(data.history.map((entry) => entry.bundleId));
+		} catch (error) {
+			if (!isServerQueryCancelled(error)) showToast("Could not load more job history", "error");
 		} finally {
 			loadingMore = false;
 		}
@@ -779,8 +837,22 @@
 			</div>
 		</div>
 	</details>
+	{#if historyError}
+		<div class="border-destructive/40 bg-destructive/5 mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2 text-xs" role="alert">
+			<span>{historyError}</span>
+			<Button size="sm" variant="secondary" onclick={() => void loadInitial(activeQuery)}>Retry</Button>
+		</div>
+	{/if}
+	{#if historyCacheStatus}
+		<div class="border-border/70 text-muted mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2 text-xs" role="status" aria-live="polite">
+			<span>{historyCacheStatus}</span>
+			<Button size="sm" variant="secondary" disabled={historyRefreshing} onclick={() => void loadInitial(activeQuery)}>
+				{historyRefreshing ? "Refreshing" : "Refresh"}
+			</Button>
+		</div>
+	{/if}
 
-	{#if loaded && entries.length === 0}
+	{#if loaded && entries.length === 0 && !historyError}
 		<EmptyState
 			icon={History}
 			message={hasActiveFilters

@@ -1,8 +1,8 @@
 import { markLoggedOut, type Role } from '#lib/session.svelte';
-import { liveState } from '#lib/live.svelte';
 import { rateLimitState } from '#lib/rateLimit.svelte';
 import { showToast } from '#lib/ui.svelte';
 import { projectSelectionState } from '#lib/projectSelection.svelte';
+import { serverStateCache, type ServerQueryListener } from '#lib/serverStateCache.svelte';
 
 export type { Role };
 export { rateLimitState, type RateLimitInfo } from '#lib/rateLimit.svelte';
@@ -47,16 +47,52 @@ export async function apiJson<T>(path: string, opts?: RequestInit, bucket?: stri
   return data as T;
 }
 
+function invalidateQueriesForMutation(path: string): void {
+  const endpoint = path.split('?', 1)[0];
+  if (endpoint === '/v1/dashboard/backup/import') {
+    serverStateCache.clear();
+    serverStateCache.invalidateAll();
+    return;
+  }
+  if (endpoint === '/v1/auth/privacy/delete') {
+    serverStateCache.clear();
+    return;
+  }
+
+  const prefixes = new Set<string>();
+  if (endpoint.startsWith('/v1/dashboard/jobs') || endpoint === '/v1/dashboard/decrypt' || endpoint === '/v1/dashboard/testflight/decrypt') {
+    prefixes.add('/v1/dashboard/jobs');
+    prefixes.add('/v1/dashboard/artifacts');
+    prefixes.add('/v1/dashboard/overview');
+  }
+  if (endpoint.startsWith('/v1/dashboard/devices')) {
+    prefixes.add('/v1/dashboard/devices');
+    prefixes.add('/v1/dashboard/overview');
+  }
+  if (endpoint.startsWith('/v1/dashboard/artifacts')) {
+    prefixes.add('/v1/dashboard/artifacts');
+    prefixes.add('/v1/dashboard/overview');
+  }
+  if (endpoint.startsWith('/v1/dashboard/testflight')) {
+    prefixes.add('/v1/dashboard/testflight');
+    prefixes.add('/v1/dashboard/jobs');
+    prefixes.add('/v1/dashboard/artifacts');
+    prefixes.add('/v1/dashboard/overview');
+  }
+  if (endpoint.startsWith('/v1/dashboard/watches')) {
+    prefixes.add('/v1/dashboard/watches');
+    prefixes.add('/v1/dashboard/overview');
+  }
+  if (endpoint.startsWith('/v1/billing/')) prefixes.add('/v1/billing');
+  for (const prefix of prefixes) serverStateCache.invalidatePrefix(prefix);
+}
+
 export async function apiAction<T = Record<string, unknown>>(
   path: string,
   opts: RequestInit,
   successMsg?: string,
 ): Promise<{ ok: boolean; data: T }> {
   const method = String(opts.method ?? 'GET').toUpperCase();
-  if (method !== 'GET' && liveState.overview !== null && !liveState.connected) {
-    showToast('Live connection is down - reconnect before making changes', 'error');
-    return { ok: false, data: {} as T };
-  }
 
   const res = await request(path, opts);
   let data = {} as T;
@@ -67,6 +103,7 @@ export async function apiAction<T = Record<string, unknown>>(
     showToast((data as { error?: string }).error ?? `Request failed (${res.status})`, 'error');
     return { ok: false, data };
   }
+  if (method !== 'GET') invalidateQueriesForMutation(path);
   if (successMsg) showToast(successMsg, 'success');
   return { ok: true, data };
 }
@@ -893,19 +930,33 @@ export function fetchJobDiff(bundleId: string, a: string, b: string): Promise<Jo
   );
 }
 
-export function fetchJobHistory(
-  cursorOrOffset: string | number | undefined,
-  limit: number,
-  q?: string,
-  source?: 'manual' | 'scheduler',
-  status?: 'done' | 'failed',
-  opts?: { queuedBy?: string; deviceId?: string; errorQ?: string; failureCategory?: string; fromTs?: number; toTs?: number },
-): Promise<{ history: JobHistoryEntry[]; total: number } & CursorPage> {
-  const pageQuery = typeof cursorOrOffset === 'number'
-    ? `&offset=${Math.max(0, cursorOrOffset)}`
-    : cursorOrOffset
-      ? `&cursor=${encodeURIComponent(cursorOrOffset)}`
-      : '';
+export type JobHistoryPage = { history: JobHistoryEntry[]; total: number } & CursorPage;
+
+export interface JobHistoryQuery {
+  cursorOrOffset: string | number | undefined;
+  limit: number;
+  q?: string;
+  source?: 'manual' | 'scheduler';
+  status?: 'done' | 'failed';
+  opts?: JobHistoryFilters;
+}
+
+export interface JobHistoryFilters {
+  queuedBy?: string;
+  deviceId?: string;
+  errorQ?: string;
+  failureCategory?: string;
+  fromTs?: number;
+  toTs?: number;
+}
+
+function paginationQuery(cursorOrOffset: string | number | undefined): string {
+  if (typeof cursorOrOffset === 'number') return `&offset=${Math.max(0, cursorOrOffset)}`;
+  return cursorOrOffset ? `&cursor=${encodeURIComponent(cursorOrOffset)}` : '';
+}
+
+function jobHistoryPath({ cursorOrOffset, limit, q, source, status, opts }: JobHistoryQuery): string {
+  const pageQuery = paginationQuery(cursorOrOffset);
   const query = q ? `&q=${encodeURIComponent(q)}` : '';
   const sourceQuery = source ? `&source=${source}` : '';
   const statusQuery = status ? `&status=${status}` : '';
@@ -915,20 +966,57 @@ export function fetchJobHistory(
   const failureCategoryQuery = opts?.failureCategory ? `&failureCategory=${encodeURIComponent(opts.failureCategory)}` : '';
   const fromTsQuery = Number.isFinite(opts?.fromTs) ? `&fromTs=${opts?.fromTs}` : '';
   const toTsQuery = Number.isFinite(opts?.toTs) ? `&toTs=${opts?.toTs}` : '';
-  return apiJson(
-    `/v1/dashboard/jobs?limit=${limit}&projectId=${encodeURIComponent(projectSelectionState.id)}${pageQuery}${query}${sourceQuery}${statusQuery}${queuedByQuery}${deviceIdQuery}${errorQuery}${failureCategoryQuery}${fromTsQuery}${toTsQuery}`,
-  );
+  return `/v1/dashboard/jobs?limit=${limit}&projectId=${encodeURIComponent(projectSelectionState.id)}${pageQuery}${query}${sourceQuery}${statusQuery}${queuedByQuery}${deviceIdQuery}${errorQuery}${failureCategoryQuery}${fromTsQuery}${toTsQuery}`;
 }
 
-export function fetchArtifacts(cursorOrOffset: string | number | undefined = undefined, limit = 50, q?: string, channel?: ArtifactRecord['channel']): Promise<{ artifacts: ArtifactRecord[]; total: number; totalBytes: number; maxBytes: number } & CursorPage> {
-  const pageQuery = typeof cursorOrOffset === 'number'
-    ? `&offset=${Math.max(0, cursorOrOffset)}`
-    : cursorOrOffset
-      ? `&cursor=${encodeURIComponent(cursorOrOffset)}`
-      : '';
+const SERVER_QUERY_STALE_TIME_MS = 15_000;
+
+export function fetchJobHistory(
+  query: JobHistoryQuery,
+): Promise<JobHistoryPage> {
+  const path = jobHistoryPath(query);
+  return serverStateCache.query(path, () => apiJson<JobHistoryPage>(path), SERVER_QUERY_STALE_TIME_MS);
+}
+
+export function observeJobHistory(
+  query: JobHistoryQuery,
+  listener: ServerQueryListener<JobHistoryPage>,
+): () => void {
+  const path = jobHistoryPath(query);
+  return serverStateCache.observe(path, () => apiJson<JobHistoryPage>(path), listener, SERVER_QUERY_STALE_TIME_MS);
+}
+
+export type ArtifactPage = { artifacts: ArtifactRecord[]; total: number; totalBytes: number; maxBytes: number } & CursorPage;
+
+export interface ArtifactQuery {
+  cursorOrOffset?: string | number;
+  limit: number;
+  q?: string;
+  channel?: ArtifactRecord['channel'];
+}
+
+function artifactsPath({ cursorOrOffset, limit, q, channel }: ArtifactQuery): string {
+  const pageQuery = paginationQuery(cursorOrOffset);
   const query = q ? `&q=${encodeURIComponent(q)}` : '';
   const channelQuery = channel ? `&channel=${channel}` : '';
-  return apiJson(`/v1/dashboard/artifacts?limit=${limit}&projectId=${encodeURIComponent(projectSelectionState.id)}${pageQuery}${query}${channelQuery}`);
+  return `/v1/dashboard/artifacts?limit=${limit}&projectId=${encodeURIComponent(projectSelectionState.id)}${pageQuery}${query}${channelQuery}`;
+}
+
+export function fetchArtifacts(
+  query: ArtifactQuery,
+  refresh = false,
+): Promise<ArtifactPage> {
+  const path = artifactsPath(query);
+  if (refresh) serverStateCache.invalidatePrefix(path);
+  return serverStateCache.query(path, () => apiJson<ArtifactPage>(path), SERVER_QUERY_STALE_TIME_MS);
+}
+
+export function observeArtifacts(
+  query: ArtifactQuery,
+  listener: ServerQueryListener<ArtifactPage>,
+): () => void {
+  const path = artifactsPath(query);
+  return serverStateCache.observe(path, () => apiJson<ArtifactPage>(path), listener, SERVER_QUERY_STALE_TIME_MS);
 }
 
 export function dashboardArtifactDownloadUrl(id: string): string {
