@@ -208,12 +208,12 @@ export async function buildServer(options: { includePublicRoutes?: boolean } = {
   }
 
   await server.register(billingWebhookRoutes);
-  await server.register(billingRoutes);
   await server.register(healthRoutes);
   await server.register(decryptRoutes);
   await server.register(artifactCatalogRoutes);
   await server.register(testFlightCatalogRoutes);
   registerRouter(server, authRouter);
+  await server.register(billingRoutes);
   registerRouter(server, dashboardRouter);
 
   server.setNotFoundHandler((request, reply) => reply.code(404).send({ error: 'not found', code: 'not_found', message: 'not found', requestId: request.id, retryable: false }));
