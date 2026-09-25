@@ -313,6 +313,7 @@ dependencies = [
 name = "dkrypt-device-bridge"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "hmac",
  "idevice",
  "serde",

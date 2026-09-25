@@ -1022,6 +1022,7 @@ mod tests {
         bridge_capabilities, error, failure, handle_client, read_agent_frame, read_frame,
         request_agent_exchange, response, valid_frame_length, write_agent_frame,
     };
+    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
     use hmac::{Hmac, Mac};
     use serde_json::{Value, json};
     use sha2::Sha256;
@@ -1029,12 +1030,14 @@ mod tests {
         collections::HashMap,
         path::PathBuf,
         sync::{Arc, atomic::AtomicU64},
-        time::{SystemTime, UNIX_EPOCH},
+        time::{Duration, SystemTime, UNIX_EPOCH},
     };
     use tokio::{
         io::{AsyncWriteExt, DuplexStream},
         net::{UnixListener, UnixStream},
+        process::Command,
         sync::Mutex,
+        time::timeout,
     };
 
     #[derive(Clone)]
@@ -1066,19 +1069,7 @@ mod tests {
         }
     }
 
-    fn current_agent_response(fixture: &Value, secret: &str) -> Value {
-        let issued_at = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock should be after Unix epoch")
-            .as_secs();
-        let request_id = fixture["requestId"]
-            .as_str()
-            .expect("fixture request ID should be a string");
-        let payload = fixture["responsePayload"]
-            .as_str()
-            .expect("fixture response payload should be a string");
-        let message =
-            format!("dkrypt-autoinstall-agent-response-v1|{request_id}|{issued_at}|{payload}");
+    fn hmac_signature(secret: &str, message: &str) -> String {
         let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes())
             .expect("HMAC accepts any secret length");
         mac.update(message.as_bytes());
@@ -1088,6 +1079,20 @@ mod tests {
             signature.push(char::from(b"0123456789abcdef"[(byte >> 4) as usize]));
             signature.push(char::from(b"0123456789abcdef"[(byte & 0x0f) as usize]));
         }
+        signature
+    }
+
+    fn current_agent_response(fixture: &Value, secret: &str, request_id: &str) -> Value {
+        let issued_at = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after Unix epoch")
+            .as_secs();
+        let payload = fixture["responsePayload"]
+            .as_str()
+            .expect("fixture response payload should be a string");
+        let message =
+            format!("dkrypt-autoinstall-agent-response-v1|{request_id}|{issued_at}|{payload}");
+        let signature = hmac_signature(secret, &message);
         json!({
             "version": 1,
             "requestId": request_id,
@@ -1244,7 +1249,10 @@ mod tests {
             .as_str()
             .expect("device-agent fixture should contain a secret")
             .to_string();
-        let expected_response = current_agent_response(&fixture, &expected_secret);
+        let request_id = fixture["requestId"]
+            .as_str()
+            .expect("fixture request ID should be a string");
+        let expected_response = current_agent_response(&fixture, &expected_secret, request_id);
         let response_to_device = expected_response.clone();
         let device_agent_task = tokio::spawn(async move {
             let bootstrap = read_agent_frame(&mut device_agent)
@@ -1318,6 +1326,142 @@ mod tests {
             .expect("mock device agent should complete");
         server.abort();
         let _ = std::fs::remove_file(socket_path);
+    }
+
+    #[tokio::test]
+    async fn bun_device_agent_client_roundtrips_through_authenticated_rust_rpc() {
+        let socket_path =
+            PathBuf::from(format!("/tmp/dkrypt-bun-rpc-{}.sock", uuid::Uuid::new_v4()));
+        let runtime_dir =
+            std::env::temp_dir().join(format!("dkrypt-bun-rpc-runtime-{}", uuid::Uuid::new_v4()));
+        let listener = UnixListener::bind(&socket_path).expect("test socket bind failed");
+        let fixture: Value =
+            serde_json::from_str(include_str!("../fixtures/device-agent-v1.fixture.json"))
+                .expect("device-agent fixture should be valid JSON");
+        let bridge_secret = fixture["secret"]
+            .as_str()
+            .expect("device-agent fixture should contain a secret")
+            .to_string();
+        let (bridge_agent, mut device_agent) = tokio::io::duplex(16 * 1024);
+        let connector = FixtureAgentConnector::new(bridge_agent);
+        let state = Arc::new(BridgeState {
+            secrets: vec![bridge_secret.clone()],
+            mux_socket: PathBuf::from("/tmp/missing-netmuxd.sock"),
+            host_id: "test-host".to_string(),
+            agent_connector: Arc::new(connector.clone()),
+            tunnels: Mutex::new(HashMap::new()),
+            cancellations: Mutex::new(HashMap::new()),
+            event_sequence: AtomicU64::new(0),
+        });
+        let server = tokio::spawn(async move {
+            for _ in 0..2 {
+                let (stream, _) = listener.accept().await.expect("test socket accept failed");
+                let client_state = state.clone();
+                tokio::spawn(async move {
+                    handle_client(stream, client_state).await;
+                });
+            }
+        });
+        let fixture_for_agent = fixture.clone();
+        let device_agent_task = tokio::spawn(async move {
+            let bootstrap = read_agent_frame(&mut device_agent)
+                .await
+                .expect("bootstrap frame should be readable");
+            assert_eq!(bootstrap["action"], "bootstrap");
+            let agent_secret = bootstrap["secret"]
+                .as_str()
+                .expect("bootstrap should contain the device-agent secret");
+            assert_eq!(agent_secret.len(), 43);
+            write_agent_frame(&mut device_agent, &json!({ "ok": true }))
+                .await
+                .expect("bootstrap response should be writable");
+            let request = read_agent_frame(&mut device_agent)
+                .await
+                .expect("signed request should be readable");
+            assert_eq!(request["version"], 1);
+            let request_id = request["requestId"]
+                .as_str()
+                .expect("signed request should contain a request ID");
+            let request_issued_at = request["issuedAt"]
+                .as_u64()
+                .expect("signed request should contain an issue time");
+            let request_payload = request["payload"]
+                .as_str()
+                .expect("signed request should contain a payload");
+            let request_signature = request["signature"]
+                .as_str()
+                .expect("signed request should contain a signature");
+            let signing_message = format!(
+                "dkrypt-autoinstall-agent-v1|{request_id}|{request_issued_at}|{request_payload}"
+            );
+            assert_eq!(
+                request_signature,
+                hmac_signature(agent_secret, &signing_message)
+            );
+            let request_payload = URL_SAFE_NO_PAD
+                .decode(request_payload)
+                .expect("signed request payload should be base64url");
+            let request_payload: Value = serde_json::from_slice(&request_payload)
+                .expect("signed request payload should be valid JSON");
+            assert_eq!(request_payload["action"], "status");
+            let response = current_agent_response(&fixture_for_agent, agent_secret, request_id);
+            write_agent_frame(&mut device_agent, &response)
+                .await
+                .expect("signed response should be writable");
+        });
+        let client_script = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../dkrypt/scripts/device-agent-client.integration.mjs");
+        let output = timeout(
+            Duration::from_secs(20),
+            Command::new("bun")
+                .args(["run"])
+                .arg(client_script)
+                .env("API_KEY", "rpc-integration-test")
+                .env("SESSION_SIGNING_SECRET", "rpc-integration-test")
+                .env("ADMIN_PASSWORD", "rpc-integration-test")
+                .env("DEVICE_BRIDGE_SOCKET", &socket_path)
+                .env("DEVICE_BRIDGE_SECRET", &bridge_secret)
+                .env("DEVICE_RUNTIME_DIR", &runtime_dir)
+                .kill_on_drop(true)
+                .output(),
+        )
+        .await;
+        let output = match output {
+            Ok(Ok(output)) => output,
+            Ok(Err(error)) => {
+                server.abort();
+                device_agent_task.abort();
+                let _ = std::fs::remove_file(&socket_path);
+                let _ = std::fs::remove_dir_all(&runtime_dir);
+                panic!(
+                    "Bun should be installed to run the Rust/Bun device-agent integration test: {error}"
+                );
+            }
+            Err(_) => {
+                server.abort();
+                device_agent_task.abort();
+                let _ = std::fs::remove_file(&socket_path);
+                let _ = std::fs::remove_dir_all(&runtime_dir);
+                panic!("Bun device-agent integration timed out");
+            }
+        };
+        if !output.status.success() {
+            server.abort();
+            device_agent_task.abort();
+            let _ = std::fs::remove_file(&socket_path);
+            let _ = std::fs::remove_dir_all(&runtime_dir);
+            panic!(
+                "Bun device-agent client failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        let agent_result = device_agent_task.await;
+        let server_result = server.await;
+        let _ = std::fs::remove_file(&socket_path);
+        let _ = std::fs::remove_dir_all(&runtime_dir);
+        assert!(String::from_utf8_lossy(&output.stdout).contains("DKRYPT_RPC_OK"));
+        agent_result.expect("mock device agent should complete");
+        server_result.expect("RPC server should accept both Bun requests");
     }
 
     #[tokio::test]
