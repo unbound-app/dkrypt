@@ -117,6 +117,37 @@ test('dashboard job history and inspection endpoints are not registered through 
   expect(routes).not.toContain('GET /v1/dashboard/jobs/:id/timeline');
 });
 
+test('dashboard diagnostics use native Fastify routes with session and device-management gates', async () => {
+  const server = await buildServer({ includePublicRoutes: false });
+  const administratorCookie = createSessionCookie('root', PermissionFlag.administrator);
+  const decryptOnlyCookie = createSessionCookie('root', PermissionFlag.requestDecrypt);
+  const legacyRoutes = dashboardRouter.routes.map((route) => `${route.method} ${route.path}`);
+
+  try {
+    expect(legacyRoutes).not.toContain('GET /v1/dashboard/doctor');
+    expect(legacyRoutes).not.toContain('GET /v1/dashboard/synthetic');
+
+    const unauthenticated = await server.inject({ method: 'GET', url: '/v1/dashboard/doctor' });
+    expect(unauthenticated.statusCode).toBe(401);
+
+    const deniedDoctor = await server.inject({ method: 'GET', url: '/v1/dashboard/doctor', headers: { cookie: decryptOnlyCookie } });
+    expect(deniedDoctor.statusCode).toBe(403);
+
+    const deniedSynthetic = await server.inject({ method: 'GET', url: '/v1/dashboard/synthetic', headers: { cookie: decryptOnlyCookie } });
+    expect(deniedSynthetic.statusCode).toBe(403);
+
+    const doctor = await server.inject({ method: 'GET', url: '/v1/dashboard/doctor', headers: { cookie: administratorCookie } });
+    expect(doctor.statusCode).toBe(200);
+    expect(doctor.json()).toMatchObject({ ok: expect.any(Boolean), checkedAt: expect.any(String), checks: expect.arrayContaining([expect.objectContaining({ id: 'database', status: expect.any(String), detail: expect.any(String) })]) });
+
+    const synthetic = await server.inject({ method: 'GET', url: '/v1/dashboard/synthetic', headers: { cookie: administratorCookie } });
+    expect(synthetic.statusCode).toBe(200);
+    expect(synthetic.json()).toMatchObject({ ok: expect.any(Boolean), checkedAt: expect.any(String), probes: expect.arrayContaining([expect.objectContaining({ id: 'database', status: expect.any(String), detail: expect.any(String) })]) });
+  } finally {
+    await server.close();
+  }
+});
+
 test('native dashboard logs and audit routes preserve permissions, paging, and project checks', async () => {
   const logsUserId = `github:logs-reader-${crypto.randomUUID()}`;
   const auditUserId = `github:audit-reader-${crypto.randomUUID()}`;

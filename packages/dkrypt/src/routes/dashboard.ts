@@ -26,9 +26,7 @@ import { discoverDevices, execCommand, isDirectUsbDeviceAgentConnection, listIns
 import { getTestFlightBridgeDiagnostics, listBuilds, listTrains, type TFBuild } from '#testflight.js';
 import { nextCronRunAt, nextCronRuns } from '#util/cron.js';
 import { getDiskUsage } from '#util/diskUsage.js';
-import { runConfigurationDoctor } from '#doctor.js';
 import { rateLimitPerUser } from '#util/rateLimit.js';
-import { runSyntheticProbes } from '#synthetic.js';
 import {
   decorateSearchResults,
   getTestFlightCatalogCacheState,
@@ -273,14 +271,6 @@ dashboardRouter.get('/v1/dashboard/overview', (req, res) => {
   const projectId = resolveRequestProjectId(req, res, 'query');
   if (!projectId) return;
   res.json(buildOverview(res.locals.session.permissions, res.locals.session.sub, projectId));
-});
-
-dashboardRouter.get('/v1/dashboard/doctor', canManageDevices, async (_req, res) => {
-  res.json(await runConfigurationDoctor());
-});
-
-dashboardRouter.get('/v1/dashboard/synthetic', canManageDevices, async (_req, res) => {
-  res.json(await runSyntheticProbes());
 });
 
 dashboardRouter.get('/v1/dashboard/events', (req, res) => {

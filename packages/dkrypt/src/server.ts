@@ -16,6 +16,7 @@ import { log, startLogFlusher, stopLogFlusher } from '#logger.js';
 import { authRoutes } from '#routes/authRoutes.js';
 import { dashboardAccountRoutes } from '#routes/dashboardAccountRoutes.js';
 import { dashboardDeviceRoutes } from '#routes/dashboardDeviceRoutes.js';
+import { dashboardDiagnosticsRoutes } from '#routes/dashboardDiagnosticsRoutes.js';
 import { dashboardObservabilityRoutes } from '#routes/dashboardObservabilityRoutes.js';
 import { dashboardNotificationRoutes } from '#routes/dashboardNotificationRoutes.js';
 import { dashboardJobRoutes } from '#routes/dashboardJobRoutes.js';
@@ -230,6 +231,7 @@ export async function buildServer(options: { includePublicRoutes?: boolean } = {
   await server.register(authRoutes);
   await server.register(dashboardAccountRoutes);
   await server.register(dashboardDeviceRoutes);
+  await server.register(dashboardDiagnosticsRoutes);
   await server.register(dashboardObservabilityRoutes);
   await server.register(dashboardNotificationRoutes);
   await server.register(dashboardJobRoutes);

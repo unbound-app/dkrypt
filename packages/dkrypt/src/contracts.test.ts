@@ -298,6 +298,8 @@ test('administrative, notification, and diagnostic contracts publish structured 
     };
     const assertions: Array<[string, string, string, string[]]> = [
       ['/v1/dashboard/logs', 'get', '200', ['logs', 'total', 'nextCursor']],
+      ['/v1/dashboard/doctor', 'get', '200', ['ok', 'checkedAt', 'checks']],
+      ['/v1/dashboard/synthetic', 'get', '200', ['ok', 'checkedAt', 'probes']],
       ['/v1/dashboard/webhooks', 'get', '200', ['deliveries']],
       ['/v1/dashboard/jobs/{id}/diagnostic', 'get', '200', ['generatedAt', 'correlationId', 'job', 'timeline']],
       ['/v1/dashboard/support-bundle', 'get', '200', ['generatedAt', 'deployment', 'database', 'latestBackup', 'devices', 'jobs']],
@@ -324,6 +326,26 @@ test('administrative, notification, and diagnostic contracts publish structured 
       const schema = document.paths?.[path]?.[method]?.responses?.[status]?.content?.['application/json']?.schema;
       expect(schema).toBeDefined();
       for (const field of fields) expect(Object.keys(schema?.properties ?? {})).toContain(field);
+    }
+  } finally {
+    await server.close();
+  }
+});
+
+test('dashboard diagnostics document their session and permission errors', async () => {
+  const server = await buildServer({ includePublicRoutes: false });
+  try {
+    await server.ready();
+    const document = server.swagger() as {
+      paths?: Record<string, Record<string, { responses?: Record<string, { content?: Record<string, { schema?: { properties?: Record<string, unknown> } }> }> }>>;
+    };
+    for (const path of ['/v1/dashboard/doctor', '/v1/dashboard/synthetic']) {
+      const responses = document.paths?.[path]?.get?.responses ?? {};
+      for (const status of ['401', '403']) {
+        const schema = responses[status]?.content?.['application/json']?.schema;
+        expect(schema).toBeDefined();
+        expect(Object.keys(schema?.properties ?? {})).toEqual(expect.arrayContaining(['code', 'message', 'requestId', 'retryable']));
+      }
     }
   } finally {
     await server.close();

@@ -36,6 +36,7 @@ import {
   notificationReadResponseSchema,
 } from '#dashboardNotificationContracts.js';
 import { dashboardDeviceActivityQuerySchema, dashboardDeviceHistoryQuerySchema, dashboardDeviceParamsSchema } from '#dashboardDeviceContracts.js';
+import { dashboardDoctorResponseSchema, dashboardSyntheticResponseSchema } from '#dashboardDiagnosticsContracts.js';
 import { dashboardAuditLogQuerySchema, dashboardAuditLogResponseSchema, dashboardLogsQuerySchema, dashboardLogsResponseSchema } from '#dashboardObservabilityContracts.js';
 import { dashboardJobHistoryPageSchema, dashboardJobListQuerySchema, dashboardJobParamsSchema, dashboardJobTimelineEventSchema } from '#dashboardJobContracts.js';
 
@@ -453,16 +454,6 @@ const BillingProviderStatusResponse = object({
     issues: Type.Array(Type.String()),
     checkedAt: Type.Optional(Type.String()),
   }),
-});
-const DoctorResponse = object({
-  ok: Type.Boolean(),
-  checkedAt: Type.String(),
-  checks: Type.Array(object({ id: Identifier, status: Type.Union([Type.Literal('ok'), Type.Literal('warn'), Type.Literal('error')]), detail: Type.String() })),
-});
-const SyntheticResponse = object({
-  ok: Type.Boolean(),
-  checkedAt: Type.String(),
-  probes: Type.Array(object({ id: Identifier, status: Type.Union([Type.Literal('ok'), Type.Literal('warn'), Type.Literal('error'), Type.Literal('skipped')]), durationMs: Type.Number(), detail: Type.String() })),
 });
 const WebhookInboxPage = object({ inbox: Type.Array(JsonObject), total: Type.Integer({ minimum: 0 }), nextCursor: PageCursor });
 const DeviceDiscoveryResponse = object({ devices: Type.Array(JsonObject), scannedNetworks: Type.Array(Type.String()), warnings: Type.Array(Type.String()) });
@@ -1336,8 +1327,8 @@ register('DELETE', '/v1/auth/sessions/:id', { params: object({ id: Identifier })
 register('POST', '/v1/auth/sessions/revoke-others', { response: { 200: AuthRevokeOthersResponse } });
 register('GET', '/v1/billing/provider-status', { response: { 200: BillingProviderStatusResponse } });
 register('GET', '/v1/billing/webhooks/inbox', { response: { 200: WebhookInboxPage } });
-register('GET', '/v1/dashboard/doctor', { response: { 200: DoctorResponse } });
-register('GET', '/v1/dashboard/synthetic', { response: { 200: SyntheticResponse } });
+register('GET', '/v1/dashboard/doctor', { response: { 200: dashboardDoctorResponseSchema } });
+register('GET', '/v1/dashboard/synthetic', { response: { 200: dashboardSyntheticResponseSchema } });
 register('GET', '/v1/dashboard/notifications', { response: { 200: notificationPageResponseSchema } });
 register('GET', '/v1/dashboard/devices/discover', { response: { 200: DeviceDiscoveryResponse } });
 register('GET', '/v1/dashboard/devices/:id/health-history', { params: dashboardDeviceParamsSchema, querystring: dashboardDeviceHistoryQuerySchema, response: { 200: DeviceHealthHistoryResponse, 401: ErrorEnvelope, 403: ErrorEnvelope } });
