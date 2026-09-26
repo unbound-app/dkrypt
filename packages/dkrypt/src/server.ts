@@ -26,6 +26,7 @@ import { dashboardSettingsRoutes } from '#routes/dashboardSettingsRoutes.js';
 import { dashboardUserRoutes } from '#routes/dashboardUserRoutes.js';
 import { dashboardWatchRoutes } from '#routes/dashboardWatchRoutes.js';
 import { dashboardObservabilityRoutes } from '#routes/dashboardObservabilityRoutes.js';
+import { dashboardArtifactRoutes } from '#routes/dashboardArtifactRoutes.js';
 import { dashboardNotificationRoutes } from '#routes/dashboardNotificationRoutes.js';
 import { dashboardJobRoutes } from '#routes/dashboardJobRoutes.js';
 import { dashboardJobActionRoutes } from '#routes/dashboardJobActionRoutes.js';
@@ -255,6 +256,7 @@ export async function buildServer(options: { includePublicRoutes?: boolean } = {
   await server.register(dashboardSettingsRoutes);
   await server.register(dashboardUserRoutes);
   await server.register(dashboardObservabilityRoutes);
+  await server.register(dashboardArtifactRoutes);
   await server.register(dashboardNotificationRoutes);
   await server.register(dashboardJobRoutes);
   await server.register(dashboardJobActionRoutes);

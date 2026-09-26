@@ -37759,7 +37759,8 @@
           {
             "schema": {
               "minLength": 1,
-              "maxLength": 200,
+              "maxLength": 80,
+              "pattern": "^[A-Za-z0-9_-]{1,80}$",
               "type": "string"
             },
             "in": "query",
@@ -37875,9 +37876,6 @@
                           "buildNumber": {
                             "type": "string"
                           },
-                          "filePath": {
-                            "type": "string"
-                          },
                           "fileSizeBytes": {
                             "minimum": 0,
                             "type": "number"
@@ -37888,9 +37886,11 @@
                             "type": "string"
                           },
                           "createdAt": {
+                            "format": "date-time",
                             "type": "string"
                           },
                           "lastAccessedAt": {
+                            "format": "date-time",
                             "type": "string"
                           },
                           "accessCount": {

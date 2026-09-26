@@ -73,6 +73,13 @@ import {
   dashboardAppVersionsResponseSchema,
 } from '#dashboardAppCatalogContracts.js';
 import {
+  dashboardArtifactListQuerySchema,
+  dashboardArtifactListResponseSchema,
+  dashboardArtifactPinBodySchema,
+  dashboardArtifactPinResponseSchema,
+  dashboardArtifactParamsSchema,
+} from '#dashboardArtifactContracts.js';
+import {
   dashboardDeviceResponseSchema as DeviceResponse,
   dashboardWatchResponseSchema as WatchResponse,
   bridgeHeartbeatsSchema,
@@ -492,41 +499,8 @@ const ArtifactSummaryResponse = object({
   accessCount: Type.Integer({ minimum: 0 }),
   fileUrl: Type.String(),
 });
-const ArtifactPinResponse = object({
-  ok: Type.Boolean(),
-  artifactId: Identifier,
-  pinned: Type.Boolean(),
-  pinnedAt: Type.Optional(Type.String({ format: 'date-time' })),
-});
 const ApiArtifactPage = object({
   artifacts: Type.Array(ArtifactSummaryResponse),
-  total: Type.Integer({ minimum: 0 }),
-  totalBytes: Type.Number({ minimum: 0 }),
-  maxBytes: Type.Number({ minimum: 0 }),
-  nextCursor: PageCursor,
-});
-const DashboardArtifactResponse = object({
-  id: Identifier,
-  key: Type.String(),
-  bundleId: BundleId,
-  channel: Type.Union([Type.Literal('appstore'), Type.Literal('testflight')]),
-  externalVersionId: Type.Optional(Identifier),
-  testflightBuildId: Type.Optional(Type.Integer({ minimum: 1 })),
-  versionLabel: Type.Optional(Type.String()),
-  buildNumber: Type.Optional(Type.String()),
-  filePath: Type.Optional(Type.String()),
-  fileSizeBytes: Type.Number({ minimum: 0 }),
-  sha256: Type.String({ minLength: 64, maxLength: 64 }),
-  createdAt: Type.String(),
-  lastAccessedAt: Type.String(),
-  accessCount: Type.Integer({ minimum: 0 }),
-  pinnedAt: Type.Optional(Type.String({ format: 'date-time' })),
-  sourceJobId: Type.Optional(Identifier),
-  warnings: Type.Optional(Type.Array(Type.String())),
-  fileUrl: Type.String(),
-});
-const DashboardArtifactPage = object({
-  artifacts: Type.Array(DashboardArtifactResponse),
   total: Type.Integer({ minimum: 0 }),
   totalBytes: Type.Number({ minimum: 0 }),
   maxBytes: Type.Number({ minimum: 0 }),
@@ -1296,13 +1270,13 @@ register('POST', '/v1/testflight/decrypt', {
   response: { 202: JobSummaryResponse, 409: ErrorEnvelope, 410: ErrorEnvelope },
 });
 register('GET', '/v1/dashboard/artifacts', {
-  querystring: object({ ...PaginationQuery.properties, projectId: Type.Optional(Identifier), q: Type.Optional(Type.String({ maxLength: 200 })), channel: Type.Optional(Type.Union([Type.Literal('appstore'), Type.Literal('testflight')])) }),
-  response: { 200: DashboardArtifactPage },
+  querystring: dashboardArtifactListQuerySchema,
+  response: { 200: dashboardArtifactListResponseSchema, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope, 500: ErrorEnvelope },
 });
 register('PUT', '/v1/dashboard/artifacts/:id/pin', {
-  params: object({ id: Identifier }),
-  body: object({ pinned: Type.Boolean() }),
-  response: { 200: ArtifactPinResponse },
+  params: dashboardArtifactParamsSchema,
+  body: dashboardArtifactPinBodySchema,
+  response: { 200: dashboardArtifactPinResponseSchema, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope, 500: ErrorEnvelope },
 });
 register('GET', '/v1/dashboard/artifacts/retention-preview', {
   querystring: dashboardArtifactRetentionQuerySchema,

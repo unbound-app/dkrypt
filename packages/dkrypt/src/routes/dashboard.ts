@@ -4,7 +4,7 @@ import { discordBotEnabled } from '#config.js';
 import { fetchBotGuilds, fetchGuildRoles } from '#discord.js';
 import { dashboardEvents, getOnlineUsernames, nextDashboardSequence, registerDashboardConnection, registerPresence, unregisterPresence } from '#events.js';
 import { blockDuringMaintenance } from '#maintenance.js';
-import { jobSummary, streamFilePath } from '#jobs/http.js';
+import { jobSummary } from '#jobs/http.js';
 import { enqueueDecryptJob, getActiveJobs } from '#jobs/store.js';
 import type { LogEntry } from '#logger.js';
 import { hasPermission, isSubsetPermission, PermissionFlag } from '#permissions.js';
@@ -16,14 +16,6 @@ import { buildDashboardOverview } from '#dashboardOverview.js';
 import { getDeviceHealth, getDeviceInstallBlocker, getDeviceReadiness } from '#deviceHealth.js';
 import { logBelongsToProject } from '#dashboardLogPresentation.js';
 import { getVerifiedTestFlightCatalog, TestFlightCatalogUnavailableError } from '#testflightSubscriptions.js';
-import {
-  artifactDownloadName,
-  artifactFileAvailable,
-  getArtifactById,
-  listArtifacts,
-  setArtifactPinned,
-  touchArtifact,
-} from '#artifacts.js';
 import {
   createDiscordRolePerk,
   DEFAULT_PROJECT_ID,
@@ -40,12 +32,10 @@ import {
   getUserPriority,
   type JobHistoryEntry,
   listRoles,
-  recordAudit,
   setDiscordGuilds,
 } from '#store/state.js';
 
 const canDecrypt = requirePermission(PermissionFlag.requestDecrypt);
-const canManageStorage = requirePermission(PermissionFlag.manageAutomation);
 const canViewDiscordPerks = requirePermission(PermissionFlag.viewRoles, PermissionFlag.manageRoles);
 const canManageDiscordPerks = requirePermission(PermissionFlag.manageRoles);
 export const dashboardRouter = Router();
@@ -130,76 +120,6 @@ dashboardRouter.get('/v1/dashboard/events', (req, res) => {
     dashboardEvents.off('projectChanged', onProjectChanged);
     dashboardEvents.off('projectsChanged', onProjectChanged);
   });
-});
-
-dashboardRouter.get('/v1/dashboard/artifacts', canDecrypt, (req, res) => {
-  const projectId = resolveRequestProjectId(req, res, 'query');
-  if (!projectId) return;
-  const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
-  const offset = cursor ? 0 : Number.parseInt(String(req.query.offset ?? '0'), 10);
-  const limit = Number.parseInt(String(req.query.limit ?? '50'), 10);
-  const channel = req.query.channel === 'appstore' || req.query.channel === 'testflight' ? req.query.channel : undefined;
-  const result = listArtifacts({
-    offset: Number.isFinite(offset) ? offset : 0,
-    limit: Number.isFinite(limit) ? limit : 50,
-    cursor,
-    query: typeof req.query.q === 'string' ? req.query.q : undefined,
-    channel,
-    projectIds: [projectId],
-  });
-  res.json({
-    ...result,
-    artifacts: result.artifacts.map((artifact) => ({
-      ...artifact,
-      filePath: undefined,
-      fileUrl: `/v1/dashboard/artifacts/${artifact.id}/file`,
-      createdAt: new Date(artifact.createdAt).toISOString(),
-      lastAccessedAt: new Date(artifact.lastAccessedAt).toISOString(),
-      pinnedAt: artifact.pinnedAt === undefined ? undefined : new Date(artifact.pinnedAt).toISOString(),
-    })),
-    nextCursor: result.nextCursor,
-  });
-});
-
-dashboardRouter.put('/v1/dashboard/artifacts/:id/pin', canManageStorage, async (req, res) => {
-  const artifact = getArtifactById(req.params.id);
-  const permissions = res.locals.session.permissions;
-  const sub = res.locals.session.sub;
-  const allowed = artifact?.projectIds.some((projectId) => canAccessProject(sub, permissions, projectId)) ?? false;
-  const requestedPinned = req.body?.pinned;
-  if (!artifact || !artifactFileAvailable(artifact) || !allowed) {
-    res.status(404).json({ error: 'artifact not found' });
-    return;
-  }
-  if (typeof requestedPinned !== 'boolean') {
-    res.status(400).json({ error: 'pinned must be a boolean' });
-    return;
-  }
-  const result = await setArtifactPinned(artifact.id, requestedPinned);
-  if (!result.artifact) {
-    res.status(404).json({ error: 'artifact not found' });
-    return;
-  }
-  if (result.changed) recordAudit(sub, requestedPinned ? 'artifact.pin' : 'artifact.unpin', artifact.id);
-  res.json({
-    ok: true,
-    artifactId: artifact.id,
-    pinned: result.artifact.pinnedAt !== undefined,
-    pinnedAt: result.artifact.pinnedAt === undefined ? undefined : new Date(result.artifact.pinnedAt).toISOString(),
-  });
-});
-
-dashboardRouter.get('/v1/dashboard/artifacts/:id/file', canDecrypt, async (req, res) => {
-  const artifact = getArtifactById(req.params.id);
-  const permissions = res.locals.session.permissions;
-  const sub = res.locals.session.sub;
-  const allowed = artifact?.projectIds.some((projectId) => canAccessProject(sub, permissions, projectId)) ?? false;
-  if (!artifact || !artifactFileAvailable(artifact) || !allowed) {
-    res.status(404).json({ error: 'artifact not found' });
-    return;
-  }
-  await touchArtifact(artifact);
-  await streamFilePath(artifact.filePath, req, res, artifactDownloadName(artifact), artifact.fileSizeBytes, artifact.id);
 });
 
 const BUNDLE_ID_RE = /^[A-Za-z0-9.-]{3,200}$/;
