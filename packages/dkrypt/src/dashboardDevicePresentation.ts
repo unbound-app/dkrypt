@@ -2,9 +2,8 @@ import { config } from '#config.js';
 import { getCachedDeviceHealth } from '#deviceHealthCache.js';
 import type { DeviceRecord } from '#store/state.js';
 
-export function serializeDashboardDevice(deviceRecord: DeviceRecord) {
+export function serializeDashboardDevice(deviceRecord: DeviceRecord, health = getCachedDeviceHealth(deviceRecord.id)?.value) {
   const { keyPath: _keyPath, ...device } = deviceRecord;
-  const health = getCachedDeviceHealth(deviceRecord.id)?.value;
   return {
     ...device,
     transport: deviceRecord.transport ?? 'wifi',
@@ -15,5 +14,6 @@ export function serializeDashboardDevice(deviceRecord: DeviceRecord) {
     transportCapabilities: health?.capabilities ?? [],
     lastSeenAt: health?.lastSeenAt,
     recoveryState: health?.recoveryState ?? 'recovering',
+    ...(health?.bridgeHeartbeats ? { bridgeHeartbeats: health.bridgeHeartbeats } : {}),
   };
 }

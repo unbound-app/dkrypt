@@ -36,12 +36,29 @@ import {
   notificationReadResponseSchema,
 } from '#dashboardNotificationContracts.js';
 import { dashboardDeviceActivityQuerySchema, dashboardDeviceHistoryQuerySchema, dashboardDeviceParamsSchema } from '#dashboardDeviceContracts.js';
+import {
+  deviceConnectionInputSchema as DeviceConnectionInput,
+  deviceDiscoveryResponseSchema as DeviceDiscoveryResponse,
+  devicePatchInputSchema as DevicePatchInput,
+  deviceRecordInputSchema as DeviceRecordInput,
+  deviceSetupResponseSchema as DeviceSetupResponse,
+} from '#dashboardDeviceManagementContracts.js';
+import {
+  deviceBridgeActionBodySchema as DeviceBridgeActionInput,
+  deviceBridgeActionResponseSchema as DeviceBridgeActionResponse,
+  deviceForceQuerySchema,
+  deviceHealthResponseSchema as DeviceHealthResponse,
+  deviceInventoryResponseSchema as DeviceInventoryResponse,
+  devicePreflightResponseSchema as DevicePreflightResponse,
+  deviceRecoveryResponseSchema as DeviceRecoveryResponse,
+} from '#dashboardDeviceOperationContracts.js';
 import { dashboardDoctorResponseSchema, dashboardSyntheticResponseSchema } from '#dashboardDiagnosticsContracts.js';
 import { dashboardOverviewQuerySchema, dashboardOverviewResponseSchema } from '#dashboardOverviewContracts.js';
 import {
   dashboardDeviceResponseSchema as DeviceResponse,
   dashboardDispatchTargetSchema as DispatchTargetInput,
   dashboardWatchResponseSchema as WatchResponse,
+  bridgeHeartbeatsSchema,
   deviceTransportStateSchema as DeviceTransportState,
   schedulerSettingsResponseSchema as SchedulerSettingsResponse,
 } from '#dashboardModelsContracts.js';
@@ -111,49 +128,6 @@ const JobFailureClass = Type.Union([
   Type.Literal('unknown'),
 ]);
 const DeviceSubsystemState = Type.Union([Type.Literal('ready'), Type.Literal('degraded'), Type.Literal('offline'), Type.Literal('unsupported'), Type.Literal('unknown')]);
-const DeviceHealthResponse = object({
-  reachable: Type.Boolean(),
-  transport: Type.Optional(deviceTransportSchema),
-  transportState: Type.Optional(DeviceTransportState),
-  capabilities: Type.Optional(Type.Array(Type.String())),
-  lastSeenAt: Type.Optional(Type.Number()),
-  recoveryState: Type.Optional(Type.Union([Type.Literal('stable'), Type.Literal('recovering'), Type.Literal('degraded'), Type.Literal('offline')])),
-  error: Type.Optional(Type.String()),
-  testFlightRunning: Type.Optional(Type.Boolean()),
-  testFlightBridgeReachable: Type.Optional(Type.Boolean()),
-  darkEnabled: Type.Optional(Type.Boolean()),
-  screenIsOn: Type.Optional(Type.Boolean()),
-  backlightState: Type.Optional(Type.Number()),
-  batteryPercent: Type.Optional(Type.Number()),
-  batteryCharging: Type.Optional(Type.Boolean()),
-  batteryTemperatureC: Type.Optional(Type.Number()),
-  batteryCycleCount: Type.Optional(Type.Number()),
-  batteryHealthPercent: Type.Optional(Type.Number()),
-  batteryDesignCapacityMah: Type.Optional(Type.Number()),
-  batteryMaxCapacityMah: Type.Optional(Type.Number()),
-  storageTotalBytes: Type.Optional(Type.Number()),
-  storageUsedBytes: Type.Optional(Type.Number()),
-  storageFreeBytes: Type.Optional(Type.Number()),
-  storageUsedPercent: Type.Optional(Type.Number()),
-  networkConnected: Type.Optional(Type.Boolean()),
-  internetAccess: Type.Optional(Type.Boolean()),
-  networkIpAddress: Type.Optional(Type.String()),
-  networkInterface: Type.Optional(Type.String()),
-  bridgeHeartbeats: Type.Optional(JsonObject),
-  subsystems: Type.Optional(object({
-    usb: DeviceSubsystemState,
-    mux: DeviceSubsystemState,
-    agent: DeviceSubsystemState,
-    appStore: DeviceSubsystemState,
-    testFlight: DeviceSubsystemState,
-    sshTunnel: DeviceSubsystemState,
-    storage: DeviceSubsystemState,
-    battery: DeviceSubsystemState,
-    thermal: DeviceSubsystemState,
-  })),
-  readiness: Type.Optional(object({ score: Type.Number(), state: Type.Union([Type.Literal('ready'), Type.Literal('caution'), Type.Literal('blocked')]), reasons: Type.Array(Type.String()) })),
-  checkedAt: Type.String(),
-});
 export const JobSummaryResponse = object({
   id: Identifier,
   correlationId: Identifier,
@@ -216,7 +190,7 @@ const HealthResponse = object({
       battery: DeviceSubsystemState,
       thermal: DeviceSubsystemState,
     })),
-    bridgeHeartbeats: Type.Optional(JsonObject),
+    bridgeHeartbeats: Type.Optional(bridgeHeartbeatsSchema),
   }),
 });
 const BillingProviderResponse = object({
@@ -247,7 +221,6 @@ const BillingResponse = object({
 const BillingSubscriptionPage = object({ subscriptions: Type.Array(JsonObject), total: Type.Integer({ minimum: 0 }), nextCursor: PageCursor });
 const ArtifactPage = object({ artifacts: Type.Array(JsonObject), total: Type.Integer({ minimum: 0 }), totalBytes: Type.Number(), maxBytes: Type.Number(), nextCursor: PageCursor });
 const DeviceListResponse = object({ devices: Type.Array(DeviceResponse) });
-const DevicePreflightResponse = object({ device: JsonObject, health: JsonObject, bridge: JsonObject, checks: Type.Array(JsonObject), ready: Type.Boolean() });
 export const JobTimelineResponse = object({
   id: Identifier,
   correlationId: Identifier,
@@ -350,9 +323,6 @@ const DashboardDecryptPreflightResponse = object({
   })),
 });
 const VersionsResponse = object({ versions: Type.Array(JsonObject) });
-const DeviceSetupResponse = object({ device: DeviceResponse, setup: JsonObject });
-const DeviceInventoryResponse = object({ deviceId: Identifier, bundles: Type.Array(JsonObject) });
-const BridgeActionResponse = object({ result: JsonObject });
 const AuthMfaResponse = object({ enabled: Type.Boolean(), recoveryCodesRemaining: Type.Integer({ minimum: 0 }) });
 const AuthSessionResponse = object({
   loggedIn: Type.Boolean(),
@@ -396,7 +366,6 @@ const BillingProviderStatusResponse = object({
   }),
 });
 const WebhookInboxPage = object({ inbox: Type.Array(JsonObject), total: Type.Integer({ minimum: 0 }), nextCursor: PageCursor });
-const DeviceDiscoveryResponse = object({ devices: Type.Array(JsonObject), scannedNetworks: Type.Array(Type.String()), warnings: Type.Array(Type.String()) });
 const DeviceHealthHistoryResponse = object({
   buckets: Type.Array(object({ hourStart: Type.Number(), reachablePercent: Type.Union([Type.Number(), Type.Null()]) })),
   uptimePercent: Type.Union([Type.Number(), Type.Null()]),
@@ -831,36 +800,6 @@ const EventStreamResponse = { content: { 'text/event-stream': { schema: Type.Str
 const PrometheusResponse = { content: { 'text/plain': { schema: Type.String() } } };
 const WebhookReplayResponse = object({ replayed: Type.Boolean(), duplicate: Type.Optional(Type.Boolean()), status: Type.String() });
 const WebhookQuarantineResponse = object({ record: Type.Optional(JsonObject) });
-const DeviceConnectionInput = object({
-  name: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
-  existingId: Type.Optional(Identifier),
-  transport: Type.Optional(deviceTransportSchema),
-  host: Type.Optional(Type.String({ minLength: 1, maxLength: 253, pattern: '^[A-Za-z0-9._-]+$' })),
-  port: Type.Optional(Type.Integer({ minimum: 1, maximum: 65535 })),
-  user: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
-  udid: Type.Optional(Type.String({ minLength: 8, maxLength: 80, pattern: '^[A-Za-z0-9-]+$' })),
-  usbmuxNetwork: Type.Optional(Type.Boolean()),
-  productType: Type.Optional(Type.String({ maxLength: 120 })),
-  iosVersion: Type.Optional(Type.String({ maxLength: 64 })),
-  toolchain: Type.Optional(Type.String({ maxLength: 120 })),
-  notes: Type.Optional(Type.String({ maxLength: 1000 })),
-});
-const DeviceRecordInput = object({
-  name: Type.String({ minLength: 1, maxLength: 120 }),
-  transport: Type.Optional(deviceTransportSchema),
-  host: Type.Optional(Type.String({ minLength: 1, maxLength: 253, pattern: '^[A-Za-z0-9._-]+$' })),
-  port: Type.Optional(Type.Integer({ minimum: 1, maximum: 65535 })),
-  user: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
-  udid: Type.Optional(Type.String({ minLength: 8, maxLength: 80, pattern: '^[A-Za-z0-9-]+$' })),
-  usbmuxNetwork: Type.Optional(Type.Boolean()),
-  productType: Type.Optional(Type.String({ maxLength: 120 })),
-  iosVersion: Type.Optional(Type.String({ maxLength: 64 })),
-  toolchain: Type.Optional(Type.String({ maxLength: 120 })),
-  notes: Type.Optional(Type.String({ maxLength: 1000 })),
-  enabled: Type.Optional(Type.Boolean()),
-  isPrimary: Type.Optional(Type.Boolean()),
-});
-const DevicePatchInput = Type.Partial(DeviceRecordInput);
 const WatchInput = object({
   projectId: Type.Optional(Identifier),
   bundleId: BundleId,
@@ -1032,11 +971,11 @@ register('POST', '/v1/dashboard/devices/setup', { body: DeviceConnectionInput })
 register('POST', '/v1/dashboard/devices', { body: DeviceRecordInput });
 register('PATCH', '/v1/dashboard/devices/:id', { params: object({ id: Identifier }), body: DevicePatchInput });
 register('DELETE', '/v1/dashboard/devices/:id', { params: object({ id: Identifier }) });
-register('GET', '/v1/dashboard/devices/:id/health', { params: object({ id: Identifier }) });
+register('GET', '/v1/dashboard/devices/:id/health', { params: object({ id: Identifier }), querystring: deviceForceQuerySchema });
 register('GET', '/v1/dashboard/devices/:id/preflight', { params: object({ id: Identifier }) });
 register('GET', '/v1/dashboard/devices/:id/inventory', { params: object({ id: Identifier }) });
 register('PUT', '/v1/dashboard/devices/:id/dark-mode', { params: object({ id: Identifier }), body: object({ enabled: Type.Boolean() }) });
-register('POST', '/v1/dashboard/devices/:id/bridge-action', { params: object({ id: Identifier }), body: object({ action: Identifier }) });
+register('POST', '/v1/dashboard/devices/:id/bridge-action', { params: object({ id: Identifier }), body: DeviceBridgeActionInput });
 register('POST', '/v1/dashboard/devices/:id/recover', { params: object({ id: Identifier }) });
 
 register('POST', '/v1/billing/webhooks/inbox/:id/replay', { params: billingWebhookInboxParamsSchema });
@@ -1197,8 +1136,12 @@ register('GET', '/v1/dashboard/overview', { querystring: dashboardOverviewQueryS
 register('GET', '/v1/dashboard/jobs', { response: { 200: dashboardJobHistoryPageSchema, 404: ErrorEnvelope } });
 register('GET', '/v1/dashboard/artifacts', { response: { 200: ArtifactPage } });
 register('GET', '/v1/dashboard/devices', { response: { 200: DeviceListResponse, 401: ErrorEnvelope, 403: ErrorEnvelope } });
-register('GET', '/v1/dashboard/devices/:id/health', { params: object({ id: Identifier }), response: { 200: DeviceHealthResponse } });
-register('GET', '/v1/dashboard/devices/:id/preflight', { params: object({ id: Identifier }), response: { 200: DevicePreflightResponse } });
+register('GET', '/v1/dashboard/devices/:id/health', { params: object({ id: Identifier }), querystring: deviceForceQuerySchema, response: { 200: DeviceHealthResponse, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope, 502: ErrorEnvelope } });
+register('GET', '/v1/dashboard/devices/:id/preflight', { params: object({ id: Identifier }), response: { 200: DevicePreflightResponse, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope, 502: ErrorEnvelope } });
+register('GET', '/v1/dashboard/devices/:id/inventory', { params: object({ id: Identifier }), response: { 200: DeviceInventoryResponse, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope, 502: ErrorEnvelope } });
+register('PUT', '/v1/dashboard/devices/:id/dark-mode', { params: object({ id: Identifier }), body: object({ enabled: Type.Boolean() }), response: { 200: DeviceHealthResponse, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope, 502: ErrorEnvelope } });
+register('POST', '/v1/dashboard/devices/:id/bridge-action', { params: object({ id: Identifier }), body: DeviceBridgeActionInput, response: { 200: DeviceBridgeActionResponse, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope, 502: ErrorEnvelope } });
+register('POST', '/v1/dashboard/devices/:id/recover', { params: object({ id: Identifier }), response: { 200: DeviceRecoveryResponse, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope, 502: ErrorEnvelope } });
 register('GET', '/v1/dashboard/jobs/:id/status', { params: dashboardJobParamsSchema, response: { 200: JobSummaryResponse, 404: ErrorEnvelope } });
 register('GET', '/v1/dashboard/jobs/:id/timeline', { params: dashboardJobParamsSchema, response: { 200: JobTimelineResponse, 404: ErrorEnvelope } });
 register('GET', '/v1/dashboard/testflight/catalog', { querystring: object({ refresh: Type.Optional(Type.Literal('true')) }), response: { 200: TestFlightCatalogResponse } });
@@ -1218,7 +1161,7 @@ register('GET', '/v1/billing/webhooks/inbox', { response: { 200: WebhookInboxPag
 register('GET', '/v1/dashboard/doctor', { response: { 200: dashboardDoctorResponseSchema } });
 register('GET', '/v1/dashboard/synthetic', { response: { 200: dashboardSyntheticResponseSchema } });
 register('GET', '/v1/dashboard/notifications', { response: { 200: notificationPageResponseSchema } });
-register('GET', '/v1/dashboard/devices/discover', { response: { 200: DeviceDiscoveryResponse } });
+register('GET', '/v1/dashboard/devices/discover', { response: { 200: DeviceDiscoveryResponse, 401: ErrorEnvelope, 403: ErrorEnvelope, 502: ErrorEnvelope } });
 register('GET', '/v1/dashboard/devices/:id/health-history', { params: dashboardDeviceParamsSchema, querystring: dashboardDeviceHistoryQuerySchema, response: { 200: DeviceHealthHistoryResponse, 401: ErrorEnvelope, 403: ErrorEnvelope } });
 register('GET', '/v1/dashboard/devices/:id/activity', { params: dashboardDeviceParamsSchema, querystring: dashboardDeviceActivityQuerySchema, response: { 200: DeviceActivityResponse, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope } });
 register('GET', '/v1/dashboard/devices/:id/battery-history', { params: dashboardDeviceParamsSchema, querystring: dashboardDeviceHistoryQuerySchema, response: { 200: DeviceBatteryHistoryResponse, 401: ErrorEnvelope, 403: ErrorEnvelope } });
@@ -1388,34 +1331,16 @@ register('GET', '/v1/dashboard/versions/:bundleId', {
 });
 register('POST', '/v1/dashboard/devices/setup', {
   body: DeviceConnectionInput,
-  response: { 201: DeviceSetupResponse },
+  response: { 201: DeviceSetupResponse, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope, 502: ErrorEnvelope },
 });
 register('POST', '/v1/dashboard/devices', {
   body: DeviceRecordInput,
-  response: { 201: DeviceResponse },
+  response: { 201: DeviceResponse, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope },
 });
 register('PATCH', '/v1/dashboard/devices/:id', {
   params: object({ id: Identifier }),
   body: DevicePatchInput,
-  response: { 200: DeviceResponse },
-});
-register('GET', '/v1/dashboard/devices/:id/inventory', {
-  params: object({ id: Identifier }),
-  response: { 200: DeviceInventoryResponse },
-});
-register('PUT', '/v1/dashboard/devices/:id/dark-mode', {
-  params: object({ id: Identifier }),
-  body: object({ enabled: Type.Boolean() }),
-  response: { 200: DeviceHealthResponse },
-});
-register('POST', '/v1/dashboard/devices/:id/bridge-action', {
-  params: object({ id: Identifier }),
-  body: object({ action: Type.Union([Type.Literal('open-testflight'), Type.Literal('open-appstore'), Type.Literal('screen-status')]) }),
-  response: { 200: BridgeActionResponse },
-});
-register('POST', '/v1/dashboard/devices/:id/recover', {
-  params: object({ id: Identifier }),
-  response: { 200: OkResponse },
+  response: { 200: DeviceResponse, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope },
 });
 register('GET', '/v1/dashboard/jobs/export', {
   querystring: object({ format: Type.Optional(Type.Union([Type.Literal('json'), Type.Literal('csv')])), projectId: Type.Optional(Identifier) }),
@@ -1717,7 +1642,7 @@ register('GET', '/v1/dashboard/artifacts/:id/file', {
 });
 register('DELETE', '/v1/dashboard/devices/:id', {
   params: object({ id: Identifier }),
-  response: { 200: OkResponse },
+  response: { 200: OkResponse, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope },
 });
 register('DELETE', '/v1/dashboard/roles/:id', {
   params: object({ id: Identifier }),

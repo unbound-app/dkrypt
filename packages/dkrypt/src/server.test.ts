@@ -11,6 +11,7 @@ import { cancelQueuedJob, enqueueDecryptJob } from '#jobs/store.js';
 import { PermissionFlag, serializeBits } from '#permissions.js';
 import { buildServer } from '#server.js';
 import { dashboardRouter } from '#routes/dashboard.js';
+import { parseDeviceConnection } from '#routes/dashboardDeviceRoutes.js';
 import type { Response } from '#http.js';
 import { addAllowedUser, createApiKey, createDevice, createProject, createRole, createTestFlightSubscription, createWatch, deleteDevice, deleteRole, deleteUserPersonalData, deleteWatch, recordAudit, recordDeviceActivity, recordGitHubBudgetTelemetry, recordJobHistory, recordNotification, revokeApiKey, updateRole, withdrawTestFlightSubscription } from '#store/state.js';
 import { setSessionCookie } from '#session.js';
@@ -108,6 +109,96 @@ test('dashboard notification endpoints are not registered through the legacy ada
   const routes = dashboardRouter.routes.map((route) => `${route.method} ${route.path}`);
   expect(routes).not.toContain('GET /v1/dashboard/notifications');
   expect(routes).not.toContain('POST /v1/dashboard/notifications/read');
+});
+
+test('device dashboard routes are not registered through the legacy adapter', () => {
+  const routes = dashboardRouter.routes.map((route) => `${route.method} ${route.path}`);
+  expect(routes).not.toContain('GET /v1/dashboard/devices/discover');
+  expect(routes).not.toContain('POST /v1/dashboard/devices/setup');
+  expect(routes).not.toContain('POST /v1/dashboard/devices');
+  expect(routes).not.toContain('PATCH /v1/dashboard/devices/:id');
+  expect(routes).not.toContain('DELETE /v1/dashboard/devices/:id');
+  expect(routes).not.toContain('GET /v1/dashboard/devices/:id/health');
+  expect(routes).not.toContain('GET /v1/dashboard/devices/:id/preflight');
+  expect(routes).not.toContain('GET /v1/dashboard/devices/:id/inventory');
+  expect(routes).not.toContain('PUT /v1/dashboard/devices/:id/dark-mode');
+  expect(routes).not.toContain('POST /v1/dashboard/devices/:id/bridge-action');
+  expect(routes).not.toContain('POST /v1/dashboard/devices/:id/recover');
+});
+
+test('native device discovery and setup retain manager gates and input errors', async () => {
+  const server = await buildServer({ includePublicRoutes: false });
+  const administratorCookie = createSessionCookie('root', PermissionFlag.administrator);
+  const decryptOnlyCookie = createSessionCookie('root', PermissionFlag.requestDecrypt);
+
+  try {
+    const unauthenticated = await server.inject({ method: 'GET', url: '/v1/dashboard/devices/discover' });
+    expect(unauthenticated.statusCode).toBe(401);
+
+    const deniedDiscovery = await server.inject({ method: 'GET', url: '/v1/dashboard/devices/discover', headers: { cookie: decryptOnlyCookie } });
+    expect(deniedDiscovery.statusCode).toBe(403);
+
+    const invalidSetup = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/devices/setup',
+      headers: { cookie: administratorCookie },
+      payload: { transport: 'usb' },
+    });
+    expect(invalidSetup.statusCode).toBe(400);
+    expect(invalidSetup.json()).toMatchObject({ error: 'a discovered device connection is required' });
+
+    const invalidDevice = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/devices',
+      headers: { cookie: administratorCookie },
+      payload: { name: 'Invalid port', transport: 'wifi', host: 'device.local', port: 65_536 },
+    });
+    expect(invalidDevice.statusCode).toBe(400);
+    expect(invalidDevice.json()).toMatchObject({ error: 'device record contains invalid fields' });
+  } finally {
+    await server.close();
+  }
+});
+
+test('device setup parser accepts IPv6 hosts declared by the device contract', () => {
+  expect(parseDeviceConnection({ transport: 'wifi', host: '2001:db8::10', port: 22 })).toMatchObject({
+    connection: { transport: 'wifi', host: '2001:db8::10', port: 22 },
+  });
+  expect(parseDeviceConnection({ transport: 'wifi', host: 'bad/host', port: 22 })).toBeUndefined();
+});
+
+test('native device operations validate inputs and preserve view and manage permissions', async () => {
+  const server = await buildServer({ includePublicRoutes: false });
+  const administratorCookie = createSessionCookie('root', PermissionFlag.administrator);
+  const decryptOnlyCookie = createSessionCookie('root', PermissionFlag.requestDecrypt);
+
+  try {
+    const unauthenticated = await server.inject({ method: 'GET', url: '/v1/dashboard/devices/missing/health' });
+    expect(unauthenticated.statusCode).toBe(401);
+
+    const deniedHealth = await server.inject({ method: 'GET', url: '/v1/dashboard/devices/missing/health', headers: { cookie: decryptOnlyCookie } });
+    expect(deniedHealth.statusCode).toBe(403);
+
+    const invalidHealthQuery = await server.inject({ method: 'GET', url: '/v1/dashboard/devices/missing/health?force=invalid', headers: { cookie: administratorCookie } });
+    expect(invalidHealthQuery.statusCode).toBe(400);
+
+    const missingPreflight = await server.inject({ method: 'GET', url: '/v1/dashboard/devices/missing/preflight', headers: { cookie: administratorCookie } });
+    expect(missingPreflight.statusCode).toBe(404);
+
+    const missingInventory = await server.inject({ method: 'GET', url: '/v1/dashboard/devices/missing/inventory', headers: { cookie: administratorCookie } });
+    expect(missingInventory.statusCode).toBe(404);
+
+    const invalidDarkMode = await server.inject({ method: 'PUT', url: '/v1/dashboard/devices/missing/dark-mode', headers: { cookie: administratorCookie }, payload: { enabled: 'yes' } });
+    expect(invalidDarkMode.statusCode).toBe(400);
+
+    const invalidBridgeAction = await server.inject({ method: 'POST', url: '/v1/dashboard/devices/missing/bridge-action', headers: { cookie: administratorCookie }, payload: { action: 'reboot' } });
+    expect(invalidBridgeAction.statusCode).toBe(400);
+
+    const missingRecoveryTarget = await server.inject({ method: 'POST', url: '/v1/dashboard/devices/missing/recover', headers: { cookie: administratorCookie } });
+    expect(missingRecoveryTarget.statusCode).toBe(404);
+  } finally {
+    await server.close();
+  }
 });
 
 test('dashboard job history and inspection endpoints are not registered through the legacy adapter', () => {
@@ -464,6 +555,38 @@ test('Fastify persists dashboard device mutations and returns the updated overvi
     expect(device.name).toBe('test device');
     expect(device.host).toBe('192.168.1.10');
     expect(device.rootDir).toBeUndefined();
+
+    const invalidHostUpdate = await server.inject({
+      method: 'PATCH',
+      url: `/v1/dashboard/devices/${device.id}`,
+      headers: { cookie },
+      payload: { host: 'bad/host' },
+    });
+    expect(invalidHostUpdate.statusCode).toBe(400);
+    expect(invalidHostUpdate.json()).toMatchObject({ message: 'device host is invalid' });
+    const devicesAfterInvalidUpdate = await server.inject({ method: 'GET', url: '/v1/dashboard/devices', headers: { cookie } });
+    const persistedDevice = (devicesAfterInvalidUpdate.json() as { devices: Array<{ id: string; host?: string }> }).devices.find((candidate) => candidate.id === device.id);
+    expect(persistedDevice?.host).toBe('192.168.1.10');
+
+    const updated = await server.inject({
+      method: 'PATCH',
+      url: `/v1/dashboard/devices/${device.id}`,
+      headers: { cookie },
+      payload: { name: 'updated device', notes: 'managed through Fastify' },
+    });
+    expect(updated.statusCode).toBe(200);
+    expect(updated.json()).toMatchObject({ id: device.id, name: 'updated device', notes: 'managed through Fastify' });
+
+    const ipv6 = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/devices',
+      headers: { cookie },
+      payload: { name: 'IPv6 device', transport: 'wifi', host: '2001:db8::10', port: 22 },
+    });
+    expect(ipv6.statusCode).toBe(201);
+    const ipv6Device = ipv6.json() as { id: string; host?: string };
+    expect(ipv6Device.host).toBe('2001:db8::10');
+    await server.inject({ method: 'DELETE', url: `/v1/dashboard/devices/${ipv6Device.id}`, headers: { cookie } });
 
     const overview = await server.inject({ method: 'GET', url: '/v1/dashboard/overview', headers: { cookie } });
     expect(overview.statusCode).toBe(200);

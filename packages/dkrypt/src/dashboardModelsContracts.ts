@@ -12,6 +12,19 @@ export const deviceTransportStateSchema = Type.Union([
   Type.Literal('unsupported'),
 ]);
 
+const bridgeHeartbeatSchema = Type.Object({
+  bridgeVersion: Type.Optional(Type.String()),
+  channel: Type.Optional(Type.Union([Type.Literal('springboard'), Type.Literal('testflight'), Type.Literal('appstore')])),
+  process: Type.Optional(Type.String()),
+  at: Type.Optional(Type.Number()),
+}, { additionalProperties: true });
+
+export const bridgeHeartbeatsSchema = Type.Object({
+  springboard: Type.Optional(bridgeHeartbeatSchema),
+  testflight: Type.Optional(bridgeHeartbeatSchema),
+  appstore: Type.Optional(bridgeHeartbeatSchema),
+}, { additionalProperties: true });
+
 export const dashboardDeviceResponseSchema = Type.Object({
   id: identifierSchema,
   name: Type.String(),
@@ -33,6 +46,7 @@ export const dashboardDeviceResponseSchema = Type.Object({
   transportState: deviceTransportStateSchema,
   transportCapabilities: Type.Array(Type.String()),
   lastSeenAt: Type.Optional(Type.Number()),
+  bridgeHeartbeats: Type.Optional(bridgeHeartbeatsSchema),
   recoveryState: Type.Union([Type.Literal('stable'), Type.Literal('recovering'), Type.Literal('degraded'), Type.Literal('offline')]),
 }, { additionalProperties: true });
 

@@ -159,6 +159,8 @@ test('core operational responses publish their required fields', async () => {
     }
     const healthDevice = document.paths?.['/v1/health']?.get?.responses?.['200']?.content?.['application/json']?.schema?.properties?.device as { properties?: Record<string, unknown> } | undefined;
     for (const field of ['transportState', 'capabilities', 'recoveryState', 'subsystems', 'bridgeHeartbeats']) expect(Object.keys(healthDevice?.properties ?? {})).toContain(field);
+    const healthHeartbeats = healthDevice?.properties?.bridgeHeartbeats as { properties?: Record<string, unknown> } | undefined;
+    expect(Object.keys(healthHeartbeats?.properties ?? {})).toEqual(expect.arrayContaining(['springboard', 'testflight', 'appstore']));
   } finally {
     await server.close();
   }
@@ -215,6 +217,8 @@ test('dashboard overview publishes typed nested dashboard records', async () => 
 
     const device = properties.devices?.items?.properties ?? {};
     expect(Object.keys(device)).toEqual(expect.arrayContaining(['id', 'transportState', 'transportCapabilities', 'setupRequired', 'recoveryState']));
+    expect(device.bridgeHeartbeats).toBeDefined();
+    expect(Object.keys(device.bridgeHeartbeats?.properties?.springboard?.properties ?? {})).toEqual(expect.arrayContaining(['at', 'bridgeVersion', 'channel', 'process']));
     expect(device).not.toHaveProperty('keyPath');
 
     expect(Object.keys(properties.maintenance?.properties ?? {})).toEqual(expect.arrayContaining(['active', 'manual', 'auto', 'reason']));
@@ -245,6 +249,34 @@ test('device route contracts describe subsystem history and query bounds', async
     const activity = document.paths?.['/v1/dashboard/devices/{id}/activity']?.get?.responses?.['200']?.content?.['application/json']?.schema;
     const activityFields = activity?.properties?.activity?.items?.properties ?? {};
     expect(Object.keys(activityFields)).toEqual(expect.arrayContaining(['id', 'ts', 'deviceId', 'kind', 'message']));
+  } finally {
+    await server.close();
+  }
+});
+
+test('device operation contracts publish typed health, inventory, bridge, and recovery responses', async () => {
+  const server = await buildServer({ includePublicRoutes: false });
+  try {
+    await server.ready();
+    type Schema = { properties?: Record<string, Schema>; items?: Schema; type?: string; minimum?: number; maximum?: number };
+    const document = server.swagger() as {
+      paths?: Record<string, Record<string, { responses?: Record<string, { content?: Record<string, { schema?: Schema }> }> }>>;
+    };
+    const paths = document.paths ?? {};
+    const health = paths['/v1/dashboard/devices/{id}/health']?.get?.responses?.['200']?.content?.['application/json']?.schema?.properties ?? {};
+    expect(health.checkedAt).toMatchObject({ type: 'number' });
+    expect(health.bridgeHeartbeats?.properties?.springboard).toBeDefined();
+
+    const preflight = paths['/v1/dashboard/devices/{id}/preflight']?.get?.responses?.['200']?.content?.['application/json']?.schema?.properties ?? {};
+    expect(Object.keys(preflight)).toEqual(expect.arrayContaining(['device', 'health', 'bridge', 'checks', 'ready']));
+    expect(preflight.checks?.items?.properties?.label).toMatchObject({ type: 'string' });
+    expect(preflight.checks?.items?.properties?.ok).toMatchObject({ type: 'boolean' });
+
+    const inventory = paths['/v1/dashboard/devices/{id}/inventory']?.get?.responses?.['200']?.content?.['application/json']?.schema?.properties ?? {};
+    expect(inventory.bundles?.items).toMatchObject({ type: 'string' });
+
+    const recovery = paths['/v1/dashboard/devices/{id}/recover']?.post?.responses?.['200']?.content?.['application/json']?.schema?.properties ?? {};
+    expect(recovery.ok).toMatchObject({ enum: [true], type: 'boolean' });
   } finally {
     await server.close();
   }
@@ -311,6 +343,35 @@ test('device and TestFlight mutation contracts publish their success status', as
       expect(schema).toBeDefined();
       for (const field of fields) expect(Object.keys(schema?.properties ?? {})).toContain(field);
     }
+  } finally {
+    await server.close();
+  }
+});
+
+test('device discovery and setup contracts describe bridge results in detail', async () => {
+  const server = await buildServer({ includePublicRoutes: false });
+  try {
+    await server.ready();
+    const document = server.swagger() as {
+      paths?: Record<string, Record<string, {
+        responses?: Record<string, { content?: Record<string, { schema?: unknown }> }>;
+      }>>;
+    };
+    const responseSchema = (path: string, method: string, status: string): unknown =>
+      document.paths?.[path]?.[method]?.responses?.[status]?.content?.['application/json']?.schema;
+    const properties = (schema: unknown): Record<string, unknown> =>
+      (schema as { properties?: Record<string, unknown> } | undefined)?.properties ?? {};
+    const discovery = properties(responseSchema('/v1/dashboard/devices/discover', 'get', '200'));
+    const discoveredDeviceItems = (discovery.devices as { items?: unknown } | undefined)?.items;
+    expect(Object.keys(properties(discoveredDeviceItems))).toEqual(expect.arrayContaining([
+      'discoveryId', 'name', 'transport', 'host', 'port', 'user', 'udid', 'source',
+    ]));
+
+    const setup = properties(responseSchema('/v1/dashboard/devices/setup', 'post', '201'));
+    const setupDetails = properties(setup.setup);
+    expect(Object.keys(setupDetails)).toEqual(expect.arrayContaining(['info', 'steps', 'ready']));
+    const setupStepItems = (setupDetails.steps as { items?: unknown } | undefined)?.items;
+    expect(Object.keys(properties(setupStepItems))).toEqual(expect.arrayContaining(['id', 'label', 'status', 'detail']));
   } finally {
     await server.close();
   }

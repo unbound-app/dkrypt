@@ -19,11 +19,9 @@ import { requirePermission, requireSession } from '#session.js';
 import { recordDashboardSessionActivity } from '#dashboardActivity.js';
 import { canAccessProject, canViewAllProjects, dashboardHistoryEntry } from '#dashboardJobPresentation.js';
 import { buildDashboardOverview } from '#dashboardOverview.js';
-import { getDeviceHealth, getDeviceInstallBlocker, getDeviceReadiness, isBridgeHeartbeatFresh } from '#deviceHealth.js';
+import { getDeviceHealth, getDeviceInstallBlocker, getDeviceReadiness } from '#deviceHealth.js';
 import { decodeCursor, nextCursor, paginateCursor } from '#util/cursor.js';
-import { serializeDashboardDevice as serializeDevice } from '#dashboardDevicePresentation.js';
 import { logBelongsToProject } from '#dashboardLogPresentation.js';
-import { discoverDevices, execCommand, isDirectUsbDeviceAgentConnection, listInstalledAppStoreBundles, sendSpringBoardBridgeRequest, setupDeviceConnection, withAutoinstallDeviceAgent, withSSH, type DeviceConnection, type DeviceTransport } from '#idevice.js';
 import { getTestFlightBridgeDiagnostics, listBuilds, listTrains, type TFBuild } from '#testflight.js';
 import { nextCronRuns } from '#util/cron.js';
 import { getDiskUsage } from '#util/diskUsage.js';
@@ -73,7 +71,6 @@ import {
   bulkSetApiKeyDailyLimit,
   createApiKey,
   createBackupSnapshot,
-  createDevice,
   createDiscordRolePerk,
   createProject,
   createRole,
@@ -81,12 +78,10 @@ import {
   DEFAULT_ROLE_ID,
   DEFAULT_PROJECT_ID,
   deleteBackupSnapshot,
-  deleteDevice,
   deleteDiscordRolePerk,
   deleteRole,
   deleteWatch,
   denyApiKey,
-  type DeviceRecord,
   effectiveBitsForRoleIds,
   exportBackup,
   getAllJobHistory,
@@ -139,7 +134,6 @@ import {
   previewBackup,
   drillBackupRestore,
   recordAudit,
-  recordDeviceActivity,
   regenerateApiKey,
   removeAllowedUser,
   reorderRoles,
@@ -155,7 +149,6 @@ import {
   setUserPriority,
   upsertAppCatalogEntries,
   updateAllowedUserRoles,
-  updateDevice,
   updateProject,
   updateRole,
   updateSettings,
@@ -182,9 +175,7 @@ const canManageApiKeyConcurrency = requirePermission(PermissionFlag.manageApiKey
 const canManageApiKeyTestFlight = requirePermission(PermissionFlag.manageApiKeys);
 const canManageApiKeyPriority = requirePermission(PermissionFlag.manageApiKeys);
 const canViewScheduler = requirePermission(PermissionFlag.viewAutomation, PermissionFlag.manageAutomation);
-const canViewDevices = requirePermission(PermissionFlag.viewDevices, PermissionFlag.manageDevices);
 const canManageWatches = requirePermission(PermissionFlag.manageAutomation);
-const canManageDevices = requirePermission(PermissionFlag.manageDevices);
 const canManageSchedulerSettings = requirePermission(PermissionFlag.manageAutomation);
 
 const canValidateCron = requirePermission(PermissionFlag.manageAutomation);
@@ -1028,320 +1019,6 @@ dashboardRouter.get('/v1/dashboard/versions/:bundleId', async (req, res) => {
     });
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
-  }
-});
-
-dashboardRouter.get('/v1/dashboard/devices/discover', canManageDevices, async (_req, res) => {
-  try {
-    res.json(await discoverDevices());
-  } catch (err) {
-    res.status(502).json({ error: `device discovery failed: ${err instanceof Error ? err.message : String(err)}` });
-  }
-});
-
-interface DeviceInput {
-  name: string;
-  transport?: DeviceTransport;
-  host?: string;
-  port?: number;
-  user?: string;
-  udid?: string;
-  usbmuxNetwork?: boolean;
-  productType?: string;
-  iosVersion?: string;
-  toolchain?: string;
-  notes?: string;
-  enabled?: boolean;
-  isPrimary?: boolean;
-}
-
-function parseDeviceInput(body: unknown): DeviceInput | undefined {
-  if (typeof body !== 'object' || body === null) return undefined;
-  const b = body as Record<string, unknown>;
-  const name = typeof b.name === 'string' ? b.name.trim() : '';
-  const transport = b.transport === 'usb' || b.transport === 'wifi' ? b.transport : undefined;
-  const host = typeof b.host === 'string' ? b.host.trim() : '';
-  const user = typeof b.user === 'string' ? b.user.trim() : '';
-  const udid = typeof b.udid === 'string' ? b.udid.trim() : '';
-  const port = typeof b.port === 'number' && Number.isInteger(b.port) && b.port >= 1 && b.port <= 65_535 ? b.port : undefined;
-  if (!name || (!host && !udid)) return undefined;
-  if (transport === 'usb' && !udid) return undefined;
-  return {
-    name,
-    transport,
-    host: host || undefined,
-    port,
-    user: user || undefined,
-    udid: udid || undefined,
-    usbmuxNetwork: b.usbmuxNetwork === true,
-    productType: typeof b.productType === 'string' ? b.productType.trim() || undefined : undefined,
-    iosVersion: typeof b.iosVersion === 'string' ? b.iosVersion.trim() || undefined : undefined,
-    toolchain: typeof b.toolchain === 'string' ? b.toolchain.trim() || undefined : undefined,
-    notes: typeof b.notes === 'string' ? b.notes.trim().slice(0, 1000) || undefined : undefined,
-    enabled: typeof b.enabled === 'boolean' ? b.enabled : undefined,
-    isPrimary: typeof b.isPrimary === 'boolean' ? b.isPrimary : undefined,
-  };
-}
-
-function parseDeviceConnection(body: unknown): { connection: DeviceConnection; name?: string; existingId?: string; productType?: string; iosVersion?: string; toolchain?: string; notes?: string } | undefined {
-  if (typeof body !== 'object' || body === null) return undefined;
-  const b = body as Record<string, unknown>;
-  const transport = b.transport === 'usb' || b.transport === 'wifi' ? b.transport : undefined;
-  const host = typeof b.host === 'string' ? b.host.trim() : '';
-  const udid = typeof b.udid === 'string' ? b.udid.trim() : '';
-  const productType = typeof b.productType === 'string' ? b.productType.trim() : '';
-  const user = typeof b.user === 'string' ? b.user.trim() : '';
-  const port = typeof b.port === 'number' && Number.isInteger(b.port) && b.port >= 1 && b.port <= 65_535 ? b.port : undefined;
-  if (!host && !udid) return undefined;
-  if (host && !/^[A-Za-z0-9._-]{1,253}$/.test(host)) return undefined;
-  if (udid && !/^[A-Za-z0-9-]{8,80}$/.test(udid)) return undefined;
-  if (transport === 'usb' && !udid) return undefined;
-  const usbmuxNetwork = b.usbmuxNetwork === true;
-  const resolvedTransport = host ? 'wifi' : udid ? usbmuxNetwork ? 'wifi' : 'usb' : undefined;
-  if (!resolvedTransport || (transport && transport !== resolvedTransport)) return undefined;
-  return {
-    connection: { transport: resolvedTransport, host: host || undefined, port, user: user || undefined, udid: udid || undefined, usbmuxNetwork },
-    name: typeof b.name === 'string' ? b.name.trim() || undefined : undefined,
-    existingId: typeof b.existingId === 'string' ? b.existingId.trim() || undefined : undefined,
-    productType: productType || undefined,
-    iosVersion: typeof b.iosVersion === 'string' ? b.iosVersion.trim() || undefined : undefined,
-    toolchain: typeof b.toolchain === 'string' ? b.toolchain.trim() || undefined : undefined,
-    notes: typeof b.notes === 'string' ? b.notes.trim().slice(0, 1000) || undefined : undefined,
-  };
-}
-
-dashboardRouter.post('/v1/dashboard/devices/setup', canManageDevices, async (req, res) => {
-  const input = parseDeviceConnection(req.body);
-  if (!input) {
-    res.status(400).json({ error: 'a discovered device connection is required' });
-    return;
-  }
-  try {
-    const setup = await setupDeviceConnection(input.connection);
-    let device: DeviceRecord | undefined;
-    const existingId = input.existingId ?? getEffectiveDevices().find((candidate) => {
-      if (input.connection.udid && candidate.udid === input.connection.udid) return true;
-      return Boolean(input.connection.host && candidate.host === input.connection.host && (candidate.port ?? config.deviceSshPort) === (input.connection.port ?? config.deviceSshPort));
-    })?.id;
-    if (existingId) {
-      const existing = getDevice(existingId);
-      if (!existing) {
-        res.status(404).json({ error: 'device not found' });
-        return;
-      }
-      const patch: Partial<DeviceInput> = {
-        transport: input.connection.transport,
-        host: input.connection.host,
-        port: input.connection.port,
-        user: input.connection.user,
-        udid: input.connection.udid,
-        usbmuxNetwork: input.connection.usbmuxNetwork,
-        productType: input.productType ?? setup.info.productType ?? existing.productType,
-        name: input.name ?? existing.name,
-        iosVersion: input.iosVersion ?? setup.info.productVersion ?? existing.iosVersion,
-        enabled: true,
-      };
-      if (input.toolchain !== undefined) patch.toolchain = input.toolchain;
-      if (input.notes !== undefined) patch.notes = input.notes;
-      const result = updateDevice(existing.id, patch, res.locals.session.sub);
-      if (!result.ok || !result.device) {
-        res.status(404).json({ error: result.error ?? 'device not found' });
-        return;
-      }
-      device = result.device;
-    } else {
-      device = createDevice({
-        name: input.name ?? setup.info.name,
-        transport: input.connection.transport,
-        host: input.connection.host,
-        port: input.connection.port,
-        user: input.connection.user,
-        udid: input.connection.udid,
-        usbmuxNetwork: input.connection.usbmuxNetwork,
-        productType: input.productType ?? setup.info.productType,
-        iosVersion: input.iosVersion ?? setup.info.productVersion,
-        toolchain: input.toolchain,
-        notes: input.notes,
-      }, res.locals.session.sub);
-    }
-    emitJobsChanged();
-    res.status(201).json({ device: serializeDevice(device), setup });
-  } catch (err) {
-    res.status(502).json({ error: `could not connect to the device: ${err instanceof Error ? err.message : String(err)}` });
-  }
-});
-
-dashboardRouter.post('/v1/dashboard/devices', canManageDevices, (req, res) => {
-  const body = (req.body ?? {}) as Record<string, unknown>;
-  if (typeof body.rootDir === 'string' && body.rootDir.trim()) {
-    res.status(400).json({ error: 'device setup requires a discovered USB or Wi-Fi connection' });
-    return;
-  }
-  const input = parseDeviceInput(req.body);
-  if (!input) {
-    res.status(400).json({ error: 'name and a device connection are required' });
-    return;
-  }
-  const device = createDevice(input, res.locals.session.sub);
-  emitJobsChanged();
-  res.status(201).json(serializeDevice(device));
-});
-
-dashboardRouter.patch('/v1/dashboard/devices/:id', canManageDevices, async (req, res) => {
-  const body = (req.body ?? {}) as Record<string, unknown>;
-  const patch: Partial<DeviceInput> = {};
-  if (typeof body.rootDir === 'string' && body.rootDir.trim()) {
-    res.status(400).json({ error: 'device setup requires a discovered USB or Wi-Fi connection' });
-    return;
-  }
-  if (typeof body.name === 'string' && body.name.trim()) patch.name = body.name.trim();
-  if (body.transport === 'usb' || body.transport === 'wifi') patch.transport = body.transport;
-  if (typeof body.host === 'string') patch.host = body.host.trim() || undefined;
-  if (typeof body.port === 'number' && Number.isInteger(body.port) && body.port >= 1 && body.port <= 65_535) patch.port = body.port;
-  if (typeof body.user === 'string') patch.user = body.user.trim() || undefined;
-  if (typeof body.udid === 'string') patch.udid = body.udid.trim() || undefined;
-  if (typeof body.usbmuxNetwork === 'boolean') patch.usbmuxNetwork = body.usbmuxNetwork;
-  if (typeof body.productType === 'string') patch.productType = body.productType.trim() || undefined;
-  if (typeof body.iosVersion === 'string') patch.iosVersion = body.iosVersion.trim() || undefined;
-  if (typeof body.toolchain === 'string') patch.toolchain = body.toolchain.trim() || undefined;
-  if (typeof body.notes === 'string') patch.notes = body.notes.trim().slice(0, 1000) || undefined;
-  if (typeof body.enabled === 'boolean') patch.enabled = body.enabled;
-  if (typeof body.isPrimary === 'boolean') patch.isPrimary = body.isPrimary;
-
-  const result = updateDevice(req.params.id, patch, res.locals.session.sub);
-  if (!result.ok) {
-    res.status(404).json({ error: result.error });
-    return;
-  }
-  emitJobsChanged();
-  res.json(serializeDevice(result.device as DeviceRecord));
-});
-
-dashboardRouter.delete('/v1/dashboard/devices/:id', canManageDevices, (req, res) => {
-  const ok = deleteDevice(req.params.id, res.locals.session.sub);
-  if (!ok) {
-    res.status(404).json({ error: 'device not found' });
-    return;
-  }
-  emitJobsChanged();
-  res.json({ ok: true });
-});
-
-function requireDevice(id: string): DeviceRecord | undefined {
-  return getDevice(id) ?? (id === 'primary' ? getPrimaryDevice() : undefined);
-}
-
-dashboardRouter.get('/v1/dashboard/devices/:id/health', canViewDevices, async (req, res) => {
-  const device = requireDevice(req.params.id);
-  if (!device) {
-    res.status(404).json({ error: 'device not found' });
-    return;
-  }
-  const health = await getDeviceHealth(device.id, req.query.force === 'true');
-  res.json(health);
-});
-
-dashboardRouter.get('/v1/dashboard/devices/:id/preflight', canViewDevices, async (req, res) => {
-  const device = requireDevice(req.params.id);
-  if (!device) {
-    res.status(404).json({ error: 'device not found' });
-    return;
-  }
-  const health = await getDeviceHealth(device.id, true);
-  let bridge: Awaited<ReturnType<typeof getTestFlightBridgeDiagnostics>> | undefined;
-  if (health.reachable) {
-    bridge = await getTestFlightBridgeDiagnostics(device).catch(() => undefined);
-  }
-  const checks = [
-    { label: 'Device connection', ok: health.reachable, detail: health.error },
-    { label: 'Internet access', ok: health.internetAccess !== false, detail: health.internetAccess === false ? 'Device cannot reach Apple services' : undefined },
-    { label: 'autoinstall bridge', ok: health.testFlightBridgeReachable === true, detail: health.testFlightBridgeReachable === true ? undefined : 'Bridge did not respond' },
-    { label: 'Device readiness', ok: health.readiness?.state !== 'blocked', detail: health.readiness?.reasons.join(' · ') || undefined },
-    { label: 'Bridge compatibility', ok: Boolean(bridge?.bridge.bridgeVersion), detail: bridge?.bridge.bridgeVersion ? `autoinstall ${bridge.bridge.bridgeVersion}` : 'No autoinstall version reported' },
-    { label: 'SpringBoard heartbeat', ok: isBridgeHeartbeatFresh(health.bridgeHeartbeats?.springboard), detail: health.bridgeHeartbeats?.springboard?.at ? `reported ${new Date(health.bridgeHeartbeats.springboard.at * 1000).toISOString()}` : 'No authenticated autoinstall heartbeat reported' },
-  ];
-  res.json({ device: serializeDevice(device), health, bridge, checks, ready: checks.every((check) => check.ok) });
-});
-
-dashboardRouter.get('/v1/dashboard/devices/:id/inventory', canViewDevices, async (req, res) => {
-  const device = requireDevice(req.params.id);
-  if (!device) {
-    res.status(404).json({ error: 'device not found' });
-    return;
-  }
-  try {
-    const bundles = await withSSH(device, listInstalledAppStoreBundles);
-    res.json({ deviceId: device.id, bundles });
-  } catch (err) {
-    res.status(502).json({ error: `could not inspect installed App Store apps: ${err instanceof Error ? err.message : String(err)}` });
-  }
-});
-
-dashboardRouter.put('/v1/dashboard/devices/:id/dark-mode', canManageDevices, async (req, res) => {
-  const enabled = (req.body as { enabled?: unknown } | undefined)?.enabled;
-  if (typeof enabled !== 'boolean') {
-    res.status(400).json({ error: 'enabled must be a boolean' });
-    return;
-  }
-  const device = requireDevice(req.params.id);
-  if (!device) {
-    res.status(404).json({ error: 'device not found' });
-    return;
-  }
-  try {
-    await withSSH(device, (conn) => sendSpringBoardBridgeRequest(conn, { action: enabled ? 'dark_on' : 'dark_off' }));
-    recordDeviceActivity({ deviceId: device.id, kind: 'bridge', message: enabled ? 'Display blacked out through autoinstall' : 'Display blackout disabled through autoinstall' });
-    res.json(await getDeviceHealth(device.id, true));
-  } catch (err) {
-    res.status(502).json({ error: `autoinstall could not change the display state: ${err instanceof Error ? err.message : String(err)}` });
-  }
-});
-
-dashboardRouter.post('/v1/dashboard/devices/:id/bridge-action', canManageDevices, async (req, res) => {
-  const action = (req.body as { action?: unknown } | undefined)?.action;
-  const request = action === 'open-testflight'
-    ? { action: 'launch_app', bundleId: 'com.apple.TestFlight' }
-    : action === 'open-appstore'
-      ? { action: 'launch_app', bundleId: 'com.apple.AppStore' }
-      : action === 'screen-status'
-        ? { action: 'screen_status' }
-        : undefined;
-  if (!request) {
-    res.status(400).json({ error: 'unsupported bridge action' });
-    return;
-  }
-  const device = requireDevice(req.params.id);
-  if (!device) {
-    res.status(404).json({ error: 'device not found' });
-    return;
-  }
-  try {
-    const result = await withSSH(device, (conn) => sendSpringBoardBridgeRequest(conn, request));
-    recordDeviceActivity({ deviceId: device.id, kind: 'bridge', message: `Bridge action: ${action}` });
-    res.json({ result });
-  } catch (err) {
-    res.status(502).json({ error: `autoinstall bridge action failed: ${err instanceof Error ? err.message : String(err)}` });
-  }
-});
-
-dashboardRouter.post('/v1/dashboard/devices/:id/recover', canManageDevices, async (req, res) => {
-  const device = requireDevice(req.params.id);
-  if (!device) {
-    res.status(404).json({ error: 'device not found' });
-    return;
-  }
-  try {
-    const result = isDirectUsbDeviceAgentConnection(device)
-      ? await withAutoinstallDeviceAgent(device, (conn) => execCommand(conn, 'sudo -n /var/jb/usr/bin/sbreload', 30_000))
-      : await withSSH(device, (conn) => execCommand(conn, 'sudo -n /var/jb/usr/bin/sbreload', 30_000));
-    if (result.code !== 0) {
-      res.status(502).json({ error: `could not reload SpringBoard: ${result.stderr.trim() || result.stdout.trim() || `exit code ${result.code ?? 'unknown'}`}` });
-      return;
-    }
-    recordDeviceActivity({ deviceId: device.id, kind: 'bridge', message: 'SpringBoard reloaded through the device recovery channel' });
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(502).json({ error: `device recovery failed: ${err instanceof Error ? err.message : String(err)}` });
   }
 });
 

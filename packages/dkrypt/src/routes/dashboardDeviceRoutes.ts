@@ -7,12 +7,36 @@ import type {
   DashboardDeviceStorageHistoryRoute,
   DashboardDeviceTemperatureHistoryRoute,
 } from '#dashboardDeviceContracts.js';
+import type {
+  DashboardDeviceCreateRoute,
+  DashboardDeviceDeleteRoute,
+  DashboardDeviceDiscoveryRoute,
+  DashboardDeviceSetupRoute,
+  DashboardDeviceUpdateRoute,
+  DeviceConnectionInput,
+  DevicePatchInput,
+  DeviceRecordInput,
+} from '#dashboardDeviceManagementContracts.js';
+import type {
+  DashboardDeviceBridgeActionRoute,
+  DashboardDeviceDarkModeRoute,
+  DashboardDeviceHealthRoute,
+  DashboardDeviceInventoryRoute,
+  DashboardDevicePreflightRoute,
+  DashboardDeviceRecoverRoute,
+} from '#dashboardDeviceOperationContracts.js';
 import { recordFastifyDashboardActivity } from '#dashboardActivity.js';
 import { serializeDashboardDevice } from '#dashboardDevicePresentation.js';
 import { getRouteContract } from '#contracts.js';
-import { fastifyRequirePermission, fastifyRequireSession } from '#session.js';
+import { fastifyRequirePermission, fastifyRequireSession, getFastifySession } from '#session.js';
 import { PermissionFlag } from '#permissions.js';
+import { emitJobsChanged } from '#events.js';
+import { getDeviceHealth, isBridgeHeartbeatFresh } from '#deviceHealth.js';
+import { discoverDevices, execCommand, isDirectUsbDeviceAgentConnection, listInstalledAppStoreBundles, sendSpringBoardBridgeRequest, setupDeviceConnection, withAutoinstallDeviceAgent, withSSH, type DeviceConnection } from '#idevice.js';
+import { getTestFlightBridgeDiagnostics } from '#testflight.js';
 import {
+  createDevice,
+  deleteDevice,
   getDevice,
   getDeviceActivityPage,
   getDeviceBatteryHourlyBuckets,
@@ -22,23 +46,358 @@ import {
   getDeviceUptimePercent,
   getEffectiveDevices,
   getPrimaryDevice,
+  recordDeviceActivity,
+  type DeviceRecord,
+  updateDevice,
 } from '#store/state.js';
 import { createHttpErrorEnvelope } from '#util/httpResponse.js';
+import type { DeviceTransport } from '#apiCommonContracts.js';
+import { config } from '#config.js';
+import { isSupportedDeviceHost } from '#deviceHost.js';
 
 const canViewDevices = fastifyRequirePermission(PermissionFlag.viewDevices, PermissionFlag.manageDevices);
+const canManageDevices = fastifyRequirePermission(PermissionFlag.manageDevices);
+
+type DeviceInput = DeviceRecordInput;
+
+function normalizeConnectionFields(input: Record<string, unknown>) {
+  return {
+    transport: input.transport === 'usb' || input.transport === 'wifi' ? input.transport as DeviceTransport : undefined,
+    host: typeof input.host === 'string' ? input.host.trim() : '',
+    port: typeof input.port === 'number' && Number.isInteger(input.port) && input.port >= 1 && input.port <= 65_535 ? input.port : undefined,
+    user: typeof input.user === 'string' ? input.user.trim() : '',
+    udid: typeof input.udid === 'string' ? input.udid.trim() : '',
+    usbmuxNetwork: input.usbmuxNetwork === true,
+  };
+}
+
+function isValidDeviceConnectionFields(connection: ReturnType<typeof normalizeConnectionFields>): boolean {
+  return (!connection.host || isSupportedDeviceHost(connection.host)) && (connection.transport !== 'usb' || Boolean(connection.udid));
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function normalizeDeviceMetadata(input: Record<string, unknown>): Partial<Pick<DeviceInput, 'productType' | 'iosVersion' | 'toolchain' | 'notes'>> {
+  return {
+    ...(typeof input.productType === 'string' ? { productType: input.productType.trim() || undefined } : {}),
+    ...(typeof input.iosVersion === 'string' ? { iosVersion: input.iosVersion.trim() || undefined } : {}),
+    ...(typeof input.toolchain === 'string' ? { toolchain: input.toolchain.trim() || undefined } : {}),
+    ...(typeof input.notes === 'string' ? { notes: input.notes.trim().slice(0, 1000) || undefined } : {}),
+  };
+}
+
+function hasObsoleteDeviceRootDirectory(input: Record<string, unknown>): boolean {
+  return typeof input.rootDir === 'string' && input.rootDir.trim().length > 0;
+}
+
+function parseDeviceInput(body: unknown): DeviceInput | undefined {
+  if (typeof body !== 'object' || body === null) return undefined;
+  const input = body as Record<string, unknown>;
+  const name = typeof input.name === 'string' ? input.name.trim() : '';
+  const connection = normalizeConnectionFields(input);
+  if (!name || (!connection.host && !connection.udid)) return undefined;
+  if (!isValidDeviceConnectionFields(connection)) return undefined;
+  return {
+    name,
+    transport: connection.transport,
+    host: connection.host || undefined,
+    port: connection.port,
+    user: connection.user || undefined,
+    udid: connection.udid || undefined,
+    usbmuxNetwork: connection.usbmuxNetwork,
+    ...normalizeDeviceMetadata(input),
+    enabled: typeof input.enabled === 'boolean' ? input.enabled : undefined,
+    isPrimary: typeof input.isPrimary === 'boolean' ? input.isPrimary : undefined,
+  };
+}
+
+export function parseDeviceConnection(body: unknown): { connection: DeviceConnection; name?: string; existingId?: string; productType?: string; iosVersion?: string; toolchain?: string; notes?: string } | undefined {
+  if (typeof body !== 'object' || body === null) return undefined;
+  const input = body as DeviceConnectionInput & Record<string, unknown>;
+  const connectionFields = normalizeConnectionFields(input);
+  const { host, udid, transport, usbmuxNetwork } = connectionFields;
+  if (!host && !udid) return undefined;
+  if (!isValidDeviceConnectionFields(connectionFields)) return undefined;
+  if (udid && !/^[A-Za-z0-9-]{8,80}$/.test(udid)) return undefined;
+  const resolvedTransport = host ? 'wifi' : udid ? usbmuxNetwork ? 'wifi' : 'usb' : undefined;
+  if (!resolvedTransport || (transport && transport !== resolvedTransport)) return undefined;
+  return {
+    connection: { transport: resolvedTransport, host: host || undefined, port: connectionFields.port, user: connectionFields.user || undefined, udid: udid || undefined, usbmuxNetwork },
+    name: typeof input.name === 'string' ? input.name.trim() || undefined : undefined,
+    existingId: typeof input.existingId === 'string' ? input.existingId.trim() || undefined : undefined,
+    ...normalizeDeviceMetadata(input),
+  };
+}
 
 function resolveDevice(id: string) {
   return getDevice(id) ?? (id === 'primary' ? getPrimaryDevice() : undefined);
 }
 
+const springBoardActions = {
+  'open-testflight': { action: 'launch_app', bundleId: 'com.apple.TestFlight' },
+  'open-appstore': { action: 'launch_app', bundleId: 'com.apple.AppStore' },
+  'screen-status': { action: 'screen_status' },
+} as const;
+
 export const dashboardDeviceRoutes: FastifyPluginAsyncTypebox = async (server) => {
   server.addHook('preHandler', fastifyRequireSession);
   server.addHook('preHandler', recordFastifyDashboardActivity);
 
+  server.get<DashboardDeviceDiscoveryRoute>('/v1/dashboard/devices/discover', {
+    schema: getRouteContract('GET', '/v1/dashboard/devices/discover'),
+    preHandler: canManageDevices,
+  }, async (request, reply) => {
+    try {
+      return await discoverDevices();
+    } catch (error) {
+      return reply.code(502).send(createHttpErrorEnvelope(request.id, 502, `device discovery failed: ${getErrorMessage(error)}`));
+    }
+  });
+
+  server.post<DashboardDeviceSetupRoute>('/v1/dashboard/devices/setup', {
+    schema: getRouteContract('POST', '/v1/dashboard/devices/setup'),
+    preHandler: canManageDevices,
+    attachValidation: true,
+  }, async (request, reply) => {
+    const input = parseDeviceConnection(request.body);
+    if (!input) return reply.code(400).send(createHttpErrorEnvelope(request.id, 400, 'a discovered device connection is required'));
+    if (request.validationError) return reply.code(400).send(createHttpErrorEnvelope(request.id, 400, 'device connection contains invalid fields'));
+    const userId = getFastifySession(request)!.sub;
+    try {
+      const setup = await setupDeviceConnection(input.connection);
+      const existingId = input.existingId ?? getEffectiveDevices().find((candidate) => {
+        if (input.connection.udid && candidate.udid === input.connection.udid) return true;
+        return Boolean(input.connection.host && candidate.host === input.connection.host && (candidate.port ?? config.deviceSshPort) === (input.connection.port ?? config.deviceSshPort));
+      })?.id;
+      const connectionFields: Pick<DeviceInput, 'transport' | 'host' | 'port' | 'user' | 'udid' | 'usbmuxNetwork' | 'productType' | 'iosVersion'> = {
+        transport: input.connection.transport as DeviceTransport,
+        host: input.connection.host,
+        port: input.connection.port,
+        user: input.connection.user,
+        udid: input.connection.udid,
+        usbmuxNetwork: input.connection.usbmuxNetwork,
+        productType: input.productType ?? setup.info.productType,
+        iosVersion: input.iosVersion ?? setup.info.productVersion,
+      };
+      let device: DeviceRecord;
+      if (existingId) {
+        const existing = getDevice(existingId);
+        if (!existing) return reply.code(404).send(createHttpErrorEnvelope(request.id, 404, 'device not found'));
+        const patch: Partial<DeviceInput> = {
+          ...connectionFields,
+          productType: connectionFields.productType ?? existing.productType,
+          name: input.name ?? existing.name,
+          iosVersion: connectionFields.iosVersion ?? existing.iosVersion,
+          enabled: true,
+        };
+        if (input.toolchain !== undefined) patch.toolchain = input.toolchain;
+        if (input.notes !== undefined) patch.notes = input.notes;
+        const result = updateDevice(existing.id, patch, userId);
+        if (!result.ok || !result.device) return reply.code(404).send(createHttpErrorEnvelope(request.id, 404, result.error ?? 'device not found'));
+        device = result.device;
+      } else {
+        device = createDevice({
+          ...connectionFields,
+          name: input.name ?? setup.info.name,
+          toolchain: input.toolchain,
+          notes: input.notes,
+        }, userId);
+      }
+      emitJobsChanged();
+      return reply.code(201).send({ device: serializeDashboardDevice(device), setup });
+    } catch (error) {
+      return reply.code(502).send(createHttpErrorEnvelope(request.id, 502, `could not connect to the device: ${getErrorMessage(error)}`));
+    }
+  });
+
+  server.post<DashboardDeviceCreateRoute>('/v1/dashboard/devices', {
+    schema: getRouteContract('POST', '/v1/dashboard/devices'),
+    preHandler: canManageDevices,
+    attachValidation: true,
+  }, (request, reply) => {
+    const body = (typeof request.body === 'object' && request.body !== null ? request.body : {}) as DeviceRecordInput & Record<string, unknown>;
+    if (hasObsoleteDeviceRootDirectory(body)) {
+      reply.code(400).send(createHttpErrorEnvelope(request.id, 400, 'device setup requires a discovered USB or Wi-Fi connection'));
+      return;
+    }
+    const input = parseDeviceInput(body);
+    if (!input) {
+      reply.code(400).send(createHttpErrorEnvelope(request.id, 400, 'name and a device connection are required'));
+      return;
+    }
+    if (request.validationError) {
+      reply.code(400).send(createHttpErrorEnvelope(request.id, 400, 'device record contains invalid fields'));
+      return;
+    }
+    const device = createDevice(input, getFastifySession(request)!.sub);
+    emitJobsChanged();
+    reply.code(201).send(serializeDashboardDevice(device));
+  });
+
+  server.patch<DashboardDeviceUpdateRoute>('/v1/dashboard/devices/:id', {
+    schema: getRouteContract('PATCH', '/v1/dashboard/devices/:id'),
+    preHandler: canManageDevices,
+    attachValidation: true,
+  }, (request, reply) => {
+    const body = (typeof request.body === 'object' && request.body !== null ? request.body : {}) as DevicePatchInput & Record<string, unknown>;
+    if (hasObsoleteDeviceRootDirectory(body)) {
+      reply.code(400).send(createHttpErrorEnvelope(request.id, 400, 'device setup requires a discovered USB or Wi-Fi connection'));
+      return;
+    }
+    if (request.validationError) {
+      reply.code(400).send(createHttpErrorEnvelope(request.id, 400, 'device update contains invalid fields'));
+      return;
+    }
+    const patch: Partial<DeviceInput> = {};
+    const connection = normalizeConnectionFields(body);
+    if (connection.host && !isSupportedDeviceHost(connection.host)) {
+      reply.code(400).send(createHttpErrorEnvelope(request.id, 400, 'device host is invalid'));
+      return;
+    }
+    if (typeof body.name === 'string' && body.name.trim()) patch.name = body.name.trim();
+    if (connection.transport) patch.transport = connection.transport;
+    if (typeof body.host === 'string') patch.host = connection.host || undefined;
+    if (typeof body.port === 'number') patch.port = connection.port;
+    if (typeof body.user === 'string') patch.user = connection.user || undefined;
+    if (typeof body.udid === 'string') patch.udid = connection.udid || undefined;
+    if (typeof body.usbmuxNetwork === 'boolean') patch.usbmuxNetwork = connection.usbmuxNetwork;
+    Object.assign(patch, normalizeDeviceMetadata(body));
+    if (typeof body.enabled === 'boolean') patch.enabled = body.enabled;
+    if (typeof body.isPrimary === 'boolean') patch.isPrimary = body.isPrimary;
+    const result = updateDevice(request.params.id, patch, getFastifySession(request)!.sub);
+    if (!result.ok) {
+      reply.code(404).send(createHttpErrorEnvelope(request.id, 404, result.error ?? 'device not found'));
+      return;
+    }
+    emitJobsChanged();
+    return serializeDashboardDevice(result.device as DeviceRecord);
+  });
+
+  server.delete<DashboardDeviceDeleteRoute>('/v1/dashboard/devices/:id', {
+    schema: getRouteContract('DELETE', '/v1/dashboard/devices/:id'),
+    preHandler: canManageDevices,
+  }, (request, reply) => {
+    if (!deleteDevice(request.params.id, getFastifySession(request)!.sub)) {
+      reply.code(404).send(createHttpErrorEnvelope(request.id, 404, 'device not found'));
+      return;
+    }
+    emitJobsChanged();
+    return { ok: true };
+  });
+
+  server.get<DashboardDeviceHealthRoute>('/v1/dashboard/devices/:id/health', {
+    schema: getRouteContract('GET', '/v1/dashboard/devices/:id/health'),
+    preHandler: canViewDevices,
+    attachValidation: true,
+  }, async (request, reply) => {
+    if (request.validationError) return reply.code(400).send(createHttpErrorEnvelope(request.id, 400, 'device health query is invalid'));
+    const device = resolveDevice(request.params.id);
+    if (!device) return reply.code(404).send(createHttpErrorEnvelope(request.id, 404, 'device not found'));
+    try {
+      return await getDeviceHealth(device.id, request.query.force === 'true');
+    } catch (error) {
+      return reply.code(502).send(createHttpErrorEnvelope(request.id, 502, `device health check failed: ${getErrorMessage(error)}`));
+    }
+  });
+
+  server.get<DashboardDevicePreflightRoute>('/v1/dashboard/devices/:id/preflight', {
+    schema: getRouteContract('GET', '/v1/dashboard/devices/:id/preflight'),
+    preHandler: canViewDevices,
+  }, async (request, reply) => {
+    const device = resolveDevice(request.params.id);
+    if (!device) return reply.code(404).send(createHttpErrorEnvelope(request.id, 404, 'device not found'));
+    try {
+      const health = await getDeviceHealth(device.id, true);
+      const bridge = health.reachable ? await getTestFlightBridgeDiagnostics(device).catch(() => undefined) : undefined;
+      const checks = [
+        { label: 'Device connection', ok: health.reachable, detail: health.error },
+        { label: 'Internet access', ok: health.internetAccess !== false, detail: health.internetAccess === false ? 'Device cannot reach Apple services' : undefined },
+        { label: 'autoinstall bridge', ok: health.testFlightBridgeReachable === true, detail: health.testFlightBridgeReachable === true ? undefined : 'Bridge did not respond' },
+        { label: 'Device readiness', ok: health.readiness?.state !== 'blocked', detail: health.readiness?.reasons.join(' · ') || undefined },
+        { label: 'Bridge compatibility', ok: Boolean(bridge?.bridge.bridgeVersion), detail: bridge?.bridge.bridgeVersion ? `autoinstall ${bridge.bridge.bridgeVersion}` : 'No autoinstall version reported' },
+        { label: 'SpringBoard heartbeat', ok: isBridgeHeartbeatFresh(health.bridgeHeartbeats?.springboard), detail: health.bridgeHeartbeats?.springboard?.at ? `reported ${new Date(health.bridgeHeartbeats.springboard.at * 1000).toISOString()}` : 'No authenticated autoinstall heartbeat reported' },
+      ];
+      return { device: serializeDashboardDevice(device, health), health, bridge, checks, ready: checks.every((check) => check.ok) };
+    } catch (error) {
+      return reply.code(502).send(createHttpErrorEnvelope(request.id, 502, `device preflight failed: ${getErrorMessage(error)}`));
+    }
+  });
+
+  server.get<DashboardDeviceInventoryRoute>('/v1/dashboard/devices/:id/inventory', {
+    schema: getRouteContract('GET', '/v1/dashboard/devices/:id/inventory'),
+    preHandler: canViewDevices,
+  }, async (request, reply) => {
+    const device = resolveDevice(request.params.id);
+    if (!device) return reply.code(404).send(createHttpErrorEnvelope(request.id, 404, 'device not found'));
+    try {
+      const bundles = await withSSH(device, listInstalledAppStoreBundles);
+      return { deviceId: device.id, bundles };
+    } catch (error) {
+      return reply.code(502).send(createHttpErrorEnvelope(request.id, 502, `could not inspect installed App Store apps: ${getErrorMessage(error)}`));
+    }
+  });
+
+  server.put<DashboardDeviceDarkModeRoute>('/v1/dashboard/devices/:id/dark-mode', {
+    schema: getRouteContract('PUT', '/v1/dashboard/devices/:id/dark-mode'),
+    preHandler: canManageDevices,
+    attachValidation: true,
+  }, async (request, reply) => {
+    if (request.validationError) return reply.code(400).send(createHttpErrorEnvelope(request.id, 400, 'enabled must be a boolean'));
+    const device = resolveDevice(request.params.id);
+    if (!device) return reply.code(404).send(createHttpErrorEnvelope(request.id, 404, 'device not found'));
+    try {
+      await withSSH(device, (connection) => sendSpringBoardBridgeRequest(connection, { action: request.body.enabled ? 'dark_on' : 'dark_off' }));
+      recordDeviceActivity({ deviceId: device.id, kind: 'bridge', message: request.body.enabled ? 'Display blacked out through autoinstall' : 'Display blackout disabled through autoinstall' });
+      return await getDeviceHealth(device.id, true);
+    } catch (error) {
+      return reply.code(502).send(createHttpErrorEnvelope(request.id, 502, `autoinstall could not change the display state: ${getErrorMessage(error)}`));
+    }
+  });
+
+  server.post<DashboardDeviceBridgeActionRoute>('/v1/dashboard/devices/:id/bridge-action', {
+    schema: getRouteContract('POST', '/v1/dashboard/devices/:id/bridge-action'),
+    preHandler: canManageDevices,
+    attachValidation: true,
+  }, async (request, reply) => {
+    if (request.validationError) return reply.code(400).send(createHttpErrorEnvelope(request.id, 400, 'unsupported bridge action'));
+    const device = resolveDevice(request.params.id);
+    if (!device) return reply.code(404).send(createHttpErrorEnvelope(request.id, 404, 'device not found'));
+    try {
+      const result = await withSSH(device, (connection) => sendSpringBoardBridgeRequest(connection, springBoardActions[request.body.action]));
+      recordDeviceActivity({ deviceId: device.id, kind: 'bridge', message: `Bridge action: ${request.body.action}` });
+      return { result };
+    } catch (error) {
+      return reply.code(502).send(createHttpErrorEnvelope(request.id, 502, `autoinstall bridge action failed: ${getErrorMessage(error)}`));
+    }
+  });
+
+  server.post<DashboardDeviceRecoverRoute>('/v1/dashboard/devices/:id/recover', {
+    schema: getRouteContract('POST', '/v1/dashboard/devices/:id/recover'),
+    preHandler: canManageDevices,
+  }, async (request, reply) => {
+    const device = resolveDevice(request.params.id);
+    if (!device) return reply.code(404).send(createHttpErrorEnvelope(request.id, 404, 'device not found'));
+    try {
+      const runRecoveryCommand = (connection: Parameters<typeof execCommand>[0]) => execCommand(connection, 'sudo -n /var/jb/usr/bin/sbreload', 30_000);
+      const result = isDirectUsbDeviceAgentConnection(device)
+        ? await withAutoinstallDeviceAgent(device, runRecoveryCommand)
+        : await withSSH(device, runRecoveryCommand);
+      if (result.code !== 0) {
+        return reply.code(502).send(createHttpErrorEnvelope(request.id, 502, `could not reload SpringBoard: ${result.stderr.trim() || result.stdout.trim() || `exit code ${result.code ?? 'unknown'}`}`));
+      }
+      recordDeviceActivity({ deviceId: device.id, kind: 'bridge', message: 'SpringBoard reloaded through the device recovery channel' });
+      return { ok: true };
+    } catch (error) {
+      return reply.code(502).send(createHttpErrorEnvelope(request.id, 502, `device recovery failed: ${getErrorMessage(error)}`));
+    }
+  });
+
   server.get<DashboardDeviceListRoute>('/v1/dashboard/devices', {
     schema: getRouteContract('GET', '/v1/dashboard/devices'),
     preHandler: canViewDevices,
-  }, () => ({ devices: getEffectiveDevices().map(serializeDashboardDevice) }));
+  }, () => ({ devices: getEffectiveDevices().map((device) => serializeDashboardDevice(device)) }));
 
   server.get<DashboardDeviceActivityRoute>('/v1/dashboard/devices/:id/activity', {
     schema: getRouteContract('GET', '/v1/dashboard/devices/:id/activity'),

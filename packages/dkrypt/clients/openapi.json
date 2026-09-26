@@ -1327,7 +1327,119 @@
                         "bridgeHeartbeats": {
                           "additionalProperties": true,
                           "type": "object",
-                          "properties": {}
+                          "properties": {
+                            "springboard": {
+                              "additionalProperties": true,
+                              "type": "object",
+                              "properties": {
+                                "bridgeVersion": {
+                                  "type": "string"
+                                },
+                                "channel": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "springboard"
+                                      ]
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "testflight"
+                                      ]
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "appstore"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "process": {
+                                  "type": "string"
+                                },
+                                "at": {
+                                  "type": "number"
+                                }
+                              }
+                            },
+                            "testflight": {
+                              "additionalProperties": true,
+                              "type": "object",
+                              "properties": {
+                                "bridgeVersion": {
+                                  "type": "string"
+                                },
+                                "channel": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "springboard"
+                                      ]
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "testflight"
+                                      ]
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "appstore"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "process": {
+                                  "type": "string"
+                                },
+                                "at": {
+                                  "type": "number"
+                                }
+                              }
+                            },
+                            "appstore": {
+                              "additionalProperties": true,
+                              "type": "object",
+                              "properties": {
+                                "bridgeVersion": {
+                                  "type": "string"
+                                },
+                                "channel": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "springboard"
+                                      ]
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "testflight"
+                                      ]
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "appstore"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "process": {
+                                  "type": "string"
+                                },
+                                "at": {
+                                  "type": "number"
+                                }
+                              }
+                            }
+                          }
                         }
                       }
                     }
@@ -23389,13 +23501,96 @@
       }
     },
     "/v1/dashboard/devices": {
-      "get": {
-        "summary": "GET /v1/dashboard/devices",
+      "post": {
+        "summary": "POST /v1/dashboard/devices",
         "tags": [
           "dashboard"
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "minLength": 1,
+                    "maxLength": 120,
+                    "type": "string"
+                  },
+                  "transport": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "wifi"
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "enum": [
+                          "usb"
+                        ]
+                      }
+                    ]
+                  },
+                  "host": {
+                    "minLength": 1,
+                    "maxLength": 253,
+                    "type": "string"
+                  },
+                  "port": {
+                    "minimum": 1,
+                    "maximum": 65535,
+                    "type": "integer"
+                  },
+                  "user": {
+                    "minLength": 1,
+                    "maxLength": 120,
+                    "type": "string"
+                  },
+                  "udid": {
+                    "minLength": 8,
+                    "maxLength": 80,
+                    "pattern": "^[A-Za-z0-9-]+$",
+                    "type": "string"
+                  },
+                  "usbmuxNetwork": {
+                    "type": "boolean"
+                  },
+                  "productType": {
+                    "maxLength": 120,
+                    "type": "string"
+                  },
+                  "iosVersion": {
+                    "maxLength": 64,
+                    "type": "string"
+                  },
+                  "toolchain": {
+                    "maxLength": 120,
+                    "type": "string"
+                  },
+                  "notes": {
+                    "maxLength": 1000,
+                    "type": "string"
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "isPrimary": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
         "responses": {
-          "200": {
+          "201": {
             "description": "Default Response",
             "content": {
               "application/json": {
@@ -23403,186 +23598,291 @@
                   "additionalProperties": true,
                   "type": "object",
                   "required": [
-                    "devices"
+                    "id",
+                    "name",
+                    "enabled",
+                    "transport",
+                    "createdAt",
+                    "updatedAt",
+                    "setupRequired",
+                    "transportState",
+                    "transportCapabilities",
+                    "recoveryState"
                   ],
                   "properties": {
-                    "devices": {
+                    "id": {
+                      "minLength": 1,
+                      "maxLength": 200,
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "isPrimary": {
+                      "type": "boolean"
+                    },
+                    "transport": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": [
+                            "wifi"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "usb"
+                          ]
+                        }
+                      ]
+                    },
+                    "host": {
+                      "type": "string"
+                    },
+                    "port": {
+                      "minimum": 1,
+                      "maximum": 65535,
+                      "type": "integer"
+                    },
+                    "user": {
+                      "type": "string"
+                    },
+                    "udid": {
+                      "type": "string"
+                    },
+                    "usbmuxNetwork": {
+                      "type": "boolean"
+                    },
+                    "productType": {
+                      "type": "string"
+                    },
+                    "iosVersion": {
+                      "type": "string"
+                    },
+                    "toolchain": {
+                      "type": "string"
+                    },
+                    "notes": {
+                      "type": "string"
+                    },
+                    "createdAt": {
+                      "type": "number"
+                    },
+                    "updatedAt": {
+                      "type": "number"
+                    },
+                    "setupRequired": {
+                      "type": "boolean"
+                    },
+                    "transportState": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": [
+                            "discovered"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "pairing"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "connecting"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "ready"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "degraded"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "recovering"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "offline"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "unsupported"
+                          ]
+                        }
+                      ]
+                    },
+                    "transportCapabilities": {
                       "type": "array",
                       "items": {
-                        "additionalProperties": true,
-                        "type": "object",
-                        "required": [
-                          "id",
-                          "name",
-                          "enabled",
-                          "transport",
-                          "createdAt",
-                          "updatedAt",
-                          "setupRequired",
-                          "transportState",
-                          "transportCapabilities",
-                          "recoveryState"
-                        ],
-                        "properties": {
-                          "id": {
-                            "minLength": 1,
-                            "maxLength": 200,
-                            "type": "string"
-                          },
-                          "name": {
-                            "type": "string"
-                          },
-                          "enabled": {
-                            "type": "boolean"
-                          },
-                          "isPrimary": {
-                            "type": "boolean"
-                          },
-                          "transport": {
-                            "anyOf": [
-                              {
-                                "type": "string",
-                                "enum": [
-                                  "wifi"
-                                ]
-                              },
-                              {
-                                "type": "string",
-                                "enum": [
-                                  "usb"
-                                ]
-                              }
-                            ]
-                          },
-                          "host": {
-                            "type": "string"
-                          },
-                          "port": {
-                            "minimum": 1,
-                            "maximum": 65535,
-                            "type": "integer"
-                          },
-                          "user": {
-                            "type": "string"
-                          },
-                          "udid": {
-                            "type": "string"
-                          },
-                          "usbmuxNetwork": {
-                            "type": "boolean"
-                          },
-                          "productType": {
-                            "type": "string"
-                          },
-                          "iosVersion": {
-                            "type": "string"
-                          },
-                          "toolchain": {
-                            "type": "string"
-                          },
-                          "notes": {
-                            "type": "string"
-                          },
-                          "createdAt": {
-                            "type": "number"
-                          },
-                          "updatedAt": {
-                            "type": "number"
-                          },
-                          "setupRequired": {
-                            "type": "boolean"
-                          },
-                          "transportState": {
-                            "anyOf": [
-                              {
-                                "type": "string",
-                                "enum": [
-                                  "discovered"
-                                ]
-                              },
-                              {
-                                "type": "string",
-                                "enum": [
-                                  "pairing"
-                                ]
-                              },
-                              {
-                                "type": "string",
-                                "enum": [
-                                  "connecting"
-                                ]
-                              },
-                              {
-                                "type": "string",
-                                "enum": [
-                                  "ready"
-                                ]
-                              },
-                              {
-                                "type": "string",
-                                "enum": [
-                                  "degraded"
-                                ]
-                              },
-                              {
-                                "type": "string",
-                                "enum": [
-                                  "recovering"
-                                ]
-                              },
-                              {
-                                "type": "string",
-                                "enum": [
-                                  "offline"
-                                ]
-                              },
-                              {
-                                "type": "string",
-                                "enum": [
-                                  "unsupported"
-                                ]
-                              }
-                            ]
-                          },
-                          "transportCapabilities": {
-                            "type": "array",
-                            "items": {
+                        "type": "string"
+                      }
+                    },
+                    "lastSeenAt": {
+                      "type": "number"
+                    },
+                    "bridgeHeartbeats": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {
+                        "springboard": {
+                          "additionalProperties": true,
+                          "type": "object",
+                          "properties": {
+                            "bridgeVersion": {
                               "type": "string"
+                            },
+                            "channel": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "springboard"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "testflight"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "appstore"
+                                  ]
+                                }
+                              ]
+                            },
+                            "process": {
+                              "type": "string"
+                            },
+                            "at": {
+                              "type": "number"
                             }
-                          },
-                          "lastSeenAt": {
-                            "type": "number"
-                          },
-                          "recoveryState": {
-                            "anyOf": [
-                              {
-                                "type": "string",
-                                "enum": [
-                                  "stable"
-                                ]
-                              },
-                              {
-                                "type": "string",
-                                "enum": [
-                                  "recovering"
-                                ]
-                              },
-                              {
-                                "type": "string",
-                                "enum": [
-                                  "degraded"
-                                ]
-                              },
-                              {
-                                "type": "string",
-                                "enum": [
-                                  "offline"
-                                ]
-                              }
-                            ]
+                          }
+                        },
+                        "testflight": {
+                          "additionalProperties": true,
+                          "type": "object",
+                          "properties": {
+                            "bridgeVersion": {
+                              "type": "string"
+                            },
+                            "channel": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "springboard"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "testflight"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "appstore"
+                                  ]
+                                }
+                              ]
+                            },
+                            "process": {
+                              "type": "string"
+                            },
+                            "at": {
+                              "type": "number"
+                            }
+                          }
+                        },
+                        "appstore": {
+                          "additionalProperties": true,
+                          "type": "object",
+                          "properties": {
+                            "bridgeVersion": {
+                              "type": "string"
+                            },
+                            "channel": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "springboard"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "testflight"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "appstore"
+                                  ]
+                                }
+                              ]
+                            },
+                            "process": {
+                              "type": "string"
+                            },
+                            "at": {
+                              "type": "number"
+                            }
                           }
                         }
                       }
+                    },
+                    "recoveryState": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": [
+                            "stable"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "recovering"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "degraded"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "offline"
+                          ]
+                        }
+                      ]
                     }
                   }
                 }
@@ -23911,97 +24211,13 @@
           }
         }
       },
-      "post": {
-        "summary": "POST /v1/dashboard/devices",
+      "get": {
+        "summary": "GET /v1/dashboard/devices",
         "tags": [
           "dashboard"
         ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "additionalProperties": true,
-                "type": "object",
-                "required": [
-                  "name"
-                ],
-                "properties": {
-                  "name": {
-                    "minLength": 1,
-                    "maxLength": 120,
-                    "type": "string"
-                  },
-                  "transport": {
-                    "anyOf": [
-                      {
-                        "type": "string",
-                        "enum": [
-                          "wifi"
-                        ]
-                      },
-                      {
-                        "type": "string",
-                        "enum": [
-                          "usb"
-                        ]
-                      }
-                    ]
-                  },
-                  "host": {
-                    "minLength": 1,
-                    "maxLength": 253,
-                    "pattern": "^[A-Za-z0-9._-]+$",
-                    "type": "string"
-                  },
-                  "port": {
-                    "minimum": 1,
-                    "maximum": 65535,
-                    "type": "integer"
-                  },
-                  "user": {
-                    "minLength": 1,
-                    "maxLength": 120,
-                    "type": "string"
-                  },
-                  "udid": {
-                    "minLength": 8,
-                    "maxLength": 80,
-                    "pattern": "^[A-Za-z0-9-]+$",
-                    "type": "string"
-                  },
-                  "usbmuxNetwork": {
-                    "type": "boolean"
-                  },
-                  "productType": {
-                    "maxLength": 120,
-                    "type": "string"
-                  },
-                  "iosVersion": {
-                    "maxLength": 64,
-                    "type": "string"
-                  },
-                  "toolchain": {
-                    "maxLength": 120,
-                    "type": "string"
-                  },
-                  "notes": {
-                    "maxLength": 1000,
-                    "type": "string"
-                  },
-                  "enabled": {
-                    "type": "boolean"
-                  },
-                  "isPrimary": {
-                    "type": "boolean"
-                  }
-                }
-              }
-            }
-          }
-        },
         "responses": {
-          "201": {
+          "200": {
             "description": "Default Response",
             "content": {
               "application/json": {
@@ -24009,174 +24225,303 @@
                   "additionalProperties": true,
                   "type": "object",
                   "required": [
-                    "id",
-                    "name",
-                    "enabled",
-                    "transport",
-                    "createdAt",
-                    "updatedAt",
-                    "setupRequired",
-                    "transportState",
-                    "transportCapabilities",
-                    "recoveryState"
+                    "devices"
                   ],
                   "properties": {
-                    "id": {
-                      "minLength": 1,
-                      "maxLength": 200,
-                      "type": "string"
-                    },
-                    "name": {
-                      "type": "string"
-                    },
-                    "enabled": {
-                      "type": "boolean"
-                    },
-                    "isPrimary": {
-                      "type": "boolean"
-                    },
-                    "transport": {
-                      "anyOf": [
-                        {
-                          "type": "string",
-                          "enum": [
-                            "wifi"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "usb"
-                          ]
-                        }
-                      ]
-                    },
-                    "host": {
-                      "type": "string"
-                    },
-                    "port": {
-                      "minimum": 1,
-                      "maximum": 65535,
-                      "type": "integer"
-                    },
-                    "user": {
-                      "type": "string"
-                    },
-                    "udid": {
-                      "type": "string"
-                    },
-                    "usbmuxNetwork": {
-                      "type": "boolean"
-                    },
-                    "productType": {
-                      "type": "string"
-                    },
-                    "iosVersion": {
-                      "type": "string"
-                    },
-                    "toolchain": {
-                      "type": "string"
-                    },
-                    "notes": {
-                      "type": "string"
-                    },
-                    "createdAt": {
-                      "type": "number"
-                    },
-                    "updatedAt": {
-                      "type": "number"
-                    },
-                    "setupRequired": {
-                      "type": "boolean"
-                    },
-                    "transportState": {
-                      "anyOf": [
-                        {
-                          "type": "string",
-                          "enum": [
-                            "discovered"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "pairing"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "connecting"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "ready"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "degraded"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "recovering"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "offline"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "unsupported"
-                          ]
-                        }
-                      ]
-                    },
-                    "transportCapabilities": {
+                    "devices": {
                       "type": "array",
                       "items": {
-                        "type": "string"
-                      }
-                    },
-                    "lastSeenAt": {
-                      "type": "number"
-                    },
-                    "recoveryState": {
-                      "anyOf": [
-                        {
-                          "type": "string",
-                          "enum": [
-                            "stable"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "recovering"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "degraded"
-                          ]
-                        },
-                        {
-                          "type": "string",
-                          "enum": [
-                            "offline"
-                          ]
+                        "additionalProperties": true,
+                        "type": "object",
+                        "required": [
+                          "id",
+                          "name",
+                          "enabled",
+                          "transport",
+                          "createdAt",
+                          "updatedAt",
+                          "setupRequired",
+                          "transportState",
+                          "transportCapabilities",
+                          "recoveryState"
+                        ],
+                        "properties": {
+                          "id": {
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "isPrimary": {
+                            "type": "boolean"
+                          },
+                          "transport": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "wifi"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "usb"
+                                ]
+                              }
+                            ]
+                          },
+                          "host": {
+                            "type": "string"
+                          },
+                          "port": {
+                            "minimum": 1,
+                            "maximum": 65535,
+                            "type": "integer"
+                          },
+                          "user": {
+                            "type": "string"
+                          },
+                          "udid": {
+                            "type": "string"
+                          },
+                          "usbmuxNetwork": {
+                            "type": "boolean"
+                          },
+                          "productType": {
+                            "type": "string"
+                          },
+                          "iosVersion": {
+                            "type": "string"
+                          },
+                          "toolchain": {
+                            "type": "string"
+                          },
+                          "notes": {
+                            "type": "string"
+                          },
+                          "createdAt": {
+                            "type": "number"
+                          },
+                          "updatedAt": {
+                            "type": "number"
+                          },
+                          "setupRequired": {
+                            "type": "boolean"
+                          },
+                          "transportState": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "discovered"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "pairing"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "connecting"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "ready"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "degraded"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "recovering"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "offline"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "unsupported"
+                                ]
+                              }
+                            ]
+                          },
+                          "transportCapabilities": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "lastSeenAt": {
+                            "type": "number"
+                          },
+                          "bridgeHeartbeats": {
+                            "additionalProperties": true,
+                            "type": "object",
+                            "properties": {
+                              "springboard": {
+                                "additionalProperties": true,
+                                "type": "object",
+                                "properties": {
+                                  "bridgeVersion": {
+                                    "type": "string"
+                                  },
+                                  "channel": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "springboard"
+                                        ]
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "testflight"
+                                        ]
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "appstore"
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  "process": {
+                                    "type": "string"
+                                  },
+                                  "at": {
+                                    "type": "number"
+                                  }
+                                }
+                              },
+                              "testflight": {
+                                "additionalProperties": true,
+                                "type": "object",
+                                "properties": {
+                                  "bridgeVersion": {
+                                    "type": "string"
+                                  },
+                                  "channel": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "springboard"
+                                        ]
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "testflight"
+                                        ]
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "appstore"
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  "process": {
+                                    "type": "string"
+                                  },
+                                  "at": {
+                                    "type": "number"
+                                  }
+                                }
+                              },
+                              "appstore": {
+                                "additionalProperties": true,
+                                "type": "object",
+                                "properties": {
+                                  "bridgeVersion": {
+                                    "type": "string"
+                                  },
+                                  "channel": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "springboard"
+                                        ]
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "testflight"
+                                        ]
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "appstore"
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  "process": {
+                                    "type": "string"
+                                  },
+                                  "at": {
+                                    "type": "number"
+                                  }
+                                }
+                              }
+                            }
+                          },
+                          "recoveryState": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "stable"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "recovering"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "degraded"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "offline"
+                                ]
+                              }
+                            ]
+                          }
                         }
-                      ]
+                      }
                     }
                   }
                 }
@@ -27878,6 +28223,123 @@
                           },
                           "lastSeenAt": {
                             "type": "number"
+                          },
+                          "bridgeHeartbeats": {
+                            "additionalProperties": true,
+                            "type": "object",
+                            "properties": {
+                              "springboard": {
+                                "additionalProperties": true,
+                                "type": "object",
+                                "properties": {
+                                  "bridgeVersion": {
+                                    "type": "string"
+                                  },
+                                  "channel": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "springboard"
+                                        ]
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "testflight"
+                                        ]
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "appstore"
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  "process": {
+                                    "type": "string"
+                                  },
+                                  "at": {
+                                    "type": "number"
+                                  }
+                                }
+                              },
+                              "testflight": {
+                                "additionalProperties": true,
+                                "type": "object",
+                                "properties": {
+                                  "bridgeVersion": {
+                                    "type": "string"
+                                  },
+                                  "channel": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "springboard"
+                                        ]
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "testflight"
+                                        ]
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "appstore"
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  "process": {
+                                    "type": "string"
+                                  },
+                                  "at": {
+                                    "type": "number"
+                                  }
+                                }
+                              },
+                              "appstore": {
+                                "additionalProperties": true,
+                                "type": "object",
+                                "properties": {
+                                  "bridgeVersion": {
+                                    "type": "string"
+                                  },
+                                  "channel": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "springboard"
+                                        ]
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "testflight"
+                                        ]
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "appstore"
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  "process": {
+                                    "type": "string"
+                                  },
+                                  "at": {
+                                    "type": "number"
+                                  }
+                                }
+                              }
+                            }
                           },
                           "recoveryState": {
                             "anyOf": [
@@ -51149,7 +51611,79 @@
                       "items": {
                         "additionalProperties": true,
                         "type": "object",
-                        "properties": {}
+                        "required": [
+                          "discoveryId",
+                          "name",
+                          "transport",
+                          "port",
+                          "user",
+                          "source"
+                        ],
+                        "properties": {
+                          "discoveryId": {
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "transport": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "wifi"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "usb"
+                                ]
+                              }
+                            ]
+                          },
+                          "host": {
+                            "type": "string"
+                          },
+                          "port": {
+                            "minimum": 1,
+                            "maximum": 65535,
+                            "type": "integer"
+                          },
+                          "user": {
+                            "type": "string"
+                          },
+                          "udid": {
+                            "type": "string"
+                          },
+                          "usbmuxNetwork": {
+                            "type": "boolean"
+                          },
+                          "productType": {
+                            "type": "string"
+                          },
+                          "productVersion": {
+                            "type": "string"
+                          },
+                          "source": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "usb"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "wifi"
+                                ]
+                              }
+                            ]
+                          }
+                        }
                       }
                     },
                     "scannedNetworks": {
@@ -51449,6 +51983,46 @@
               }
             }
           },
+          "502": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
           "503": {
             "description": "Default Response",
             "content": {
@@ -51535,7 +52109,6 @@
                   "host": {
                     "minLength": 1,
                     "maxLength": 253,
-                    "pattern": "^[A-Za-z0-9._-]+$",
                     "type": "string"
                   },
                   "port": {
@@ -51736,6 +52309,123 @@
                         "lastSeenAt": {
                           "type": "number"
                         },
+                        "bridgeHeartbeats": {
+                          "additionalProperties": true,
+                          "type": "object",
+                          "properties": {
+                            "springboard": {
+                              "additionalProperties": true,
+                              "type": "object",
+                              "properties": {
+                                "bridgeVersion": {
+                                  "type": "string"
+                                },
+                                "channel": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "springboard"
+                                      ]
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "testflight"
+                                      ]
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "appstore"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "process": {
+                                  "type": "string"
+                                },
+                                "at": {
+                                  "type": "number"
+                                }
+                              }
+                            },
+                            "testflight": {
+                              "additionalProperties": true,
+                              "type": "object",
+                              "properties": {
+                                "bridgeVersion": {
+                                  "type": "string"
+                                },
+                                "channel": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "springboard"
+                                      ]
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "testflight"
+                                      ]
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "appstore"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "process": {
+                                  "type": "string"
+                                },
+                                "at": {
+                                  "type": "number"
+                                }
+                              }
+                            },
+                            "appstore": {
+                              "additionalProperties": true,
+                              "type": "object",
+                              "properties": {
+                                "bridgeVersion": {
+                                  "type": "string"
+                                },
+                                "channel": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "springboard"
+                                      ]
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "testflight"
+                                      ]
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "appstore"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "process": {
+                                  "type": "string"
+                                },
+                                "at": {
+                                  "type": "number"
+                                }
+                              }
+                            }
+                          }
+                        },
                         "recoveryState": {
                           "anyOf": [
                             {
@@ -51769,7 +52459,88 @@
                     "setup": {
                       "additionalProperties": true,
                       "type": "object",
-                      "properties": {}
+                      "required": [
+                        "info",
+                        "steps",
+                        "ready"
+                      ],
+                      "properties": {
+                        "info": {
+                          "additionalProperties": true,
+                          "type": "object",
+                          "required": [
+                            "name"
+                          ],
+                          "properties": {
+                            "name": {
+                              "type": "string"
+                            },
+                            "model": {
+                              "type": "string"
+                            },
+                            "productType": {
+                              "type": "string"
+                            },
+                            "productVersion": {
+                              "type": "string"
+                            },
+                            "architecture": {
+                              "type": "string"
+                            },
+                            "serialNumber": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "steps": {
+                          "type": "array",
+                          "items": {
+                            "additionalProperties": true,
+                            "type": "object",
+                            "required": [
+                              "id",
+                              "label",
+                              "status"
+                            ],
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "label": {
+                                "type": "string"
+                              },
+                              "status": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "ready"
+                                    ]
+                                  },
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "attention"
+                                    ]
+                                  },
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "unavailable"
+                                    ]
+                                  }
+                                ]
+                              },
+                              "detail": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        },
+                        "ready": {
+                          "type": "boolean"
+                        }
+                      }
                     }
                   }
                 }
@@ -52056,6 +52827,46 @@
               }
             }
           },
+          "502": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
           "503": {
             "description": "Default Response",
             "content": {
@@ -52137,7 +52948,6 @@
                   "host": {
                     "minLength": 1,
                     "maxLength": 253,
-                    "pattern": "^[A-Za-z0-9._-]+$",
                     "type": "string"
                   },
                   "port": {
@@ -52347,6 +53157,123 @@
                     },
                     "lastSeenAt": {
                       "type": "number"
+                    },
+                    "bridgeHeartbeats": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {
+                        "springboard": {
+                          "additionalProperties": true,
+                          "type": "object",
+                          "properties": {
+                            "bridgeVersion": {
+                              "type": "string"
+                            },
+                            "channel": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "springboard"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "testflight"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "appstore"
+                                  ]
+                                }
+                              ]
+                            },
+                            "process": {
+                              "type": "string"
+                            },
+                            "at": {
+                              "type": "number"
+                            }
+                          }
+                        },
+                        "testflight": {
+                          "additionalProperties": true,
+                          "type": "object",
+                          "properties": {
+                            "bridgeVersion": {
+                              "type": "string"
+                            },
+                            "channel": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "springboard"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "testflight"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "appstore"
+                                  ]
+                                }
+                              ]
+                            },
+                            "process": {
+                              "type": "string"
+                            },
+                            "at": {
+                              "type": "number"
+                            }
+                          }
+                        },
+                        "appstore": {
+                          "additionalProperties": true,
+                          "type": "object",
+                          "properties": {
+                            "bridgeVersion": {
+                              "type": "string"
+                            },
+                            "channel": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "springboard"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "testflight"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "appstore"
+                                  ]
+                                }
+                              ]
+                            },
+                            "process": {
+                              "type": "string"
+                            },
+                            "at": {
+                              "type": "number"
+                            }
+                          }
+                        }
+                      }
                     },
                     "recoveryState": {
                       "anyOf": [
@@ -53071,6 +53998,27 @@
         "parameters": [
           {
             "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                },
+                {
+                  "type": "string",
+                  "enum": [
+                    "false"
+                  ]
+                }
+              ]
+            },
+            "in": "query",
+            "name": "force",
+            "required": false
+          },
+          {
+            "schema": {
               "minLength": 1,
               "maxLength": 200,
               "type": "string"
@@ -53267,10 +54215,121 @@
                     "bridgeHeartbeats": {
                       "additionalProperties": true,
                       "type": "object",
-                      "properties": {}
+                      "properties": {
+                        "springboard": {
+                          "additionalProperties": true,
+                          "type": "object",
+                          "properties": {
+                            "bridgeVersion": {
+                              "type": "string"
+                            },
+                            "channel": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "springboard"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "testflight"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "appstore"
+                                  ]
+                                }
+                              ]
+                            },
+                            "process": {
+                              "type": "string"
+                            },
+                            "at": {
+                              "type": "number"
+                            }
+                          }
+                        },
+                        "testflight": {
+                          "additionalProperties": true,
+                          "type": "object",
+                          "properties": {
+                            "bridgeVersion": {
+                              "type": "string"
+                            },
+                            "channel": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "springboard"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "testflight"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "appstore"
+                                  ]
+                                }
+                              ]
+                            },
+                            "process": {
+                              "type": "string"
+                            },
+                            "at": {
+                              "type": "number"
+                            }
+                          }
+                        },
+                        "appstore": {
+                          "additionalProperties": true,
+                          "type": "object",
+                          "properties": {
+                            "bridgeVersion": {
+                              "type": "string"
+                            },
+                            "channel": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "springboard"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "testflight"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "appstore"
+                                  ]
+                                }
+                              ]
+                            },
+                            "process": {
+                              "type": "string"
+                            },
+                            "at": {
+                              "type": "number"
+                            }
+                          }
+                        }
+                      }
                     },
                     "subsystems": {
-                      "additionalProperties": true,
                       "type": "object",
                       "required": [
                         "usb",
@@ -53593,7 +54652,6 @@
                       }
                     },
                     "readiness": {
-                      "additionalProperties": true,
                       "type": "object",
                       "required": [
                         "score",
@@ -53635,7 +54693,7 @@
                       }
                     },
                     "checkedAt": {
-                      "type": "string"
+                      "type": "number"
                     }
                   }
                 }
@@ -53922,6 +54980,46 @@
               }
             }
           },
+          "502": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
           "503": {
             "description": "Default Response",
             "content": {
@@ -53994,7 +55092,6 @@
                   "required": [
                     "device",
                     "health",
-                    "bridge",
                     "checks",
                     "ready"
                   ],
@@ -54002,24 +55099,1024 @@
                     "device": {
                       "additionalProperties": true,
                       "type": "object",
-                      "properties": {}
+                      "required": [
+                        "id",
+                        "name",
+                        "enabled",
+                        "transport",
+                        "createdAt",
+                        "updatedAt",
+                        "setupRequired",
+                        "transportState",
+                        "transportCapabilities",
+                        "recoveryState"
+                      ],
+                      "properties": {
+                        "id": {
+                          "minLength": 1,
+                          "maxLength": 200,
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "isPrimary": {
+                          "type": "boolean"
+                        },
+                        "transport": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "wifi"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "usb"
+                              ]
+                            }
+                          ]
+                        },
+                        "host": {
+                          "type": "string"
+                        },
+                        "port": {
+                          "minimum": 1,
+                          "maximum": 65535,
+                          "type": "integer"
+                        },
+                        "user": {
+                          "type": "string"
+                        },
+                        "udid": {
+                          "type": "string"
+                        },
+                        "usbmuxNetwork": {
+                          "type": "boolean"
+                        },
+                        "productType": {
+                          "type": "string"
+                        },
+                        "iosVersion": {
+                          "type": "string"
+                        },
+                        "toolchain": {
+                          "type": "string"
+                        },
+                        "notes": {
+                          "type": "string"
+                        },
+                        "createdAt": {
+                          "type": "number"
+                        },
+                        "updatedAt": {
+                          "type": "number"
+                        },
+                        "setupRequired": {
+                          "type": "boolean"
+                        },
+                        "transportState": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "discovered"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "pairing"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "connecting"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "ready"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "degraded"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "recovering"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "offline"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "unsupported"
+                              ]
+                            }
+                          ]
+                        },
+                        "transportCapabilities": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "lastSeenAt": {
+                          "type": "number"
+                        },
+                        "bridgeHeartbeats": {
+                          "additionalProperties": true,
+                          "type": "object",
+                          "properties": {
+                            "springboard": {
+                              "additionalProperties": true,
+                              "type": "object",
+                              "properties": {
+                                "bridgeVersion": {
+                                  "type": "string"
+                                },
+                                "channel": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "springboard"
+                                      ]
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "testflight"
+                                      ]
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "appstore"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "process": {
+                                  "type": "string"
+                                },
+                                "at": {
+                                  "type": "number"
+                                }
+                              }
+                            },
+                            "testflight": {
+                              "additionalProperties": true,
+                              "type": "object",
+                              "properties": {
+                                "bridgeVersion": {
+                                  "type": "string"
+                                },
+                                "channel": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "springboard"
+                                      ]
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "testflight"
+                                      ]
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "appstore"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "process": {
+                                  "type": "string"
+                                },
+                                "at": {
+                                  "type": "number"
+                                }
+                              }
+                            },
+                            "appstore": {
+                              "additionalProperties": true,
+                              "type": "object",
+                              "properties": {
+                                "bridgeVersion": {
+                                  "type": "string"
+                                },
+                                "channel": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "springboard"
+                                      ]
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "testflight"
+                                      ]
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "appstore"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "process": {
+                                  "type": "string"
+                                },
+                                "at": {
+                                  "type": "number"
+                                }
+                              }
+                            }
+                          }
+                        },
+                        "recoveryState": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "stable"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "recovering"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "degraded"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "offline"
+                              ]
+                            }
+                          ]
+                        }
+                      }
                     },
                     "health": {
                       "additionalProperties": true,
                       "type": "object",
-                      "properties": {}
+                      "required": [
+                        "reachable",
+                        "checkedAt"
+                      ],
+                      "properties": {
+                        "reachable": {
+                          "type": "boolean"
+                        },
+                        "transport": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "wifi"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "usb"
+                              ]
+                            }
+                          ]
+                        },
+                        "transportState": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "discovered"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "pairing"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "connecting"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "ready"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "degraded"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "recovering"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "offline"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "unsupported"
+                              ]
+                            }
+                          ]
+                        },
+                        "capabilities": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "lastSeenAt": {
+                          "type": "number"
+                        },
+                        "recoveryState": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "stable"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "recovering"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "degraded"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "offline"
+                              ]
+                            }
+                          ]
+                        },
+                        "error": {
+                          "type": "string"
+                        },
+                        "testFlightRunning": {
+                          "type": "boolean"
+                        },
+                        "testFlightBridgeReachable": {
+                          "type": "boolean"
+                        },
+                        "darkEnabled": {
+                          "type": "boolean"
+                        },
+                        "screenIsOn": {
+                          "type": "boolean"
+                        },
+                        "backlightState": {
+                          "type": "number"
+                        },
+                        "batteryPercent": {
+                          "type": "number"
+                        },
+                        "batteryCharging": {
+                          "type": "boolean"
+                        },
+                        "batteryTemperatureC": {
+                          "type": "number"
+                        },
+                        "batteryCycleCount": {
+                          "type": "number"
+                        },
+                        "batteryHealthPercent": {
+                          "type": "number"
+                        },
+                        "batteryDesignCapacityMah": {
+                          "type": "number"
+                        },
+                        "batteryMaxCapacityMah": {
+                          "type": "number"
+                        },
+                        "storageTotalBytes": {
+                          "type": "number"
+                        },
+                        "storageUsedBytes": {
+                          "type": "number"
+                        },
+                        "storageFreeBytes": {
+                          "type": "number"
+                        },
+                        "storageUsedPercent": {
+                          "type": "number"
+                        },
+                        "networkConnected": {
+                          "type": "boolean"
+                        },
+                        "internetAccess": {
+                          "type": "boolean"
+                        },
+                        "networkIpAddress": {
+                          "type": "string"
+                        },
+                        "networkInterface": {
+                          "type": "string"
+                        },
+                        "bridgeHeartbeats": {
+                          "additionalProperties": true,
+                          "type": "object",
+                          "properties": {
+                            "springboard": {
+                              "additionalProperties": true,
+                              "type": "object",
+                              "properties": {
+                                "bridgeVersion": {
+                                  "type": "string"
+                                },
+                                "channel": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "springboard"
+                                      ]
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "testflight"
+                                      ]
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "appstore"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "process": {
+                                  "type": "string"
+                                },
+                                "at": {
+                                  "type": "number"
+                                }
+                              }
+                            },
+                            "testflight": {
+                              "additionalProperties": true,
+                              "type": "object",
+                              "properties": {
+                                "bridgeVersion": {
+                                  "type": "string"
+                                },
+                                "channel": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "springboard"
+                                      ]
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "testflight"
+                                      ]
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "appstore"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "process": {
+                                  "type": "string"
+                                },
+                                "at": {
+                                  "type": "number"
+                                }
+                              }
+                            },
+                            "appstore": {
+                              "additionalProperties": true,
+                              "type": "object",
+                              "properties": {
+                                "bridgeVersion": {
+                                  "type": "string"
+                                },
+                                "channel": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "springboard"
+                                      ]
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "testflight"
+                                      ]
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "appstore"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "process": {
+                                  "type": "string"
+                                },
+                                "at": {
+                                  "type": "number"
+                                }
+                              }
+                            }
+                          }
+                        },
+                        "subsystems": {
+                          "type": "object",
+                          "required": [
+                            "usb",
+                            "mux",
+                            "agent",
+                            "appStore",
+                            "testFlight",
+                            "sshTunnel",
+                            "storage",
+                            "battery",
+                            "thermal"
+                          ],
+                          "properties": {
+                            "usb": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "ready"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "degraded"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "offline"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "unsupported"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "unknown"
+                                  ]
+                                }
+                              ]
+                            },
+                            "mux": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "ready"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "degraded"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "offline"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "unsupported"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "unknown"
+                                  ]
+                                }
+                              ]
+                            },
+                            "agent": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "ready"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "degraded"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "offline"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "unsupported"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "unknown"
+                                  ]
+                                }
+                              ]
+                            },
+                            "appStore": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "ready"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "degraded"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "offline"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "unsupported"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "unknown"
+                                  ]
+                                }
+                              ]
+                            },
+                            "testFlight": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "ready"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "degraded"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "offline"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "unsupported"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "unknown"
+                                  ]
+                                }
+                              ]
+                            },
+                            "sshTunnel": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "ready"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "degraded"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "offline"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "unsupported"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "unknown"
+                                  ]
+                                }
+                              ]
+                            },
+                            "storage": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "ready"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "degraded"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "offline"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "unsupported"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "unknown"
+                                  ]
+                                }
+                              ]
+                            },
+                            "battery": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "ready"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "degraded"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "offline"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "unsupported"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "unknown"
+                                  ]
+                                }
+                              ]
+                            },
+                            "thermal": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "ready"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "degraded"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "offline"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "unsupported"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "unknown"
+                                  ]
+                                }
+                              ]
+                            }
+                          }
+                        },
+                        "readiness": {
+                          "type": "object",
+                          "required": [
+                            "score",
+                            "state",
+                            "reasons"
+                          ],
+                          "properties": {
+                            "score": {
+                              "type": "number"
+                            },
+                            "state": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "ready"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "caution"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "blocked"
+                                  ]
+                                }
+                              ]
+                            },
+                            "reasons": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        },
+                        "checkedAt": {
+                          "type": "number"
+                        }
+                      }
                     },
                     "bridge": {
                       "additionalProperties": true,
                       "type": "object",
-                      "properties": {}
+                      "required": [
+                        "bridge"
+                      ],
+                      "properties": {
+                        "bridge": {
+                          "additionalProperties": true,
+                          "type": "object",
+                          "properties": {
+                            "bridgeVersion": {
+                              "type": "string"
+                            },
+                            "capabilities": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "hasInstaller": {
+                              "type": "boolean"
+                            },
+                            "hasCatalogManager": {
+                              "type": "boolean"
+                            },
+                            "backgroundTaskActive": {
+                              "type": "boolean"
+                            },
+                            "backgroundTimeRemaining": {
+                              "type": "number"
+                            }
+                          }
+                        },
+                        "install": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        },
+                        "recentLog": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      }
                     },
                     "checks": {
                       "type": "array",
                       "items": {
-                        "additionalProperties": true,
                         "type": "object",
-                        "properties": {}
+                        "required": [
+                          "label",
+                          "ok"
+                        ],
+                        "properties": {
+                          "label": {
+                            "type": "string"
+                          },
+                          "ok": {
+                            "type": "boolean"
+                          },
+                          "detail": {
+                            "type": "string"
+                          }
+                        }
                       }
                     },
                     "ready": {
@@ -54310,6 +56407,46 @@
               }
             }
           },
+          "502": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
           "503": {
             "description": "Default Response",
             "content": {
@@ -54392,9 +56529,7 @@
                     "bundles": {
                       "type": "array",
                       "items": {
-                        "additionalProperties": true,
-                        "type": "object",
-                        "properties": {}
+                        "type": "string"
                       }
                     }
                   }
@@ -54643,6 +56778,46 @@
             }
           },
           "500": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "502": {
             "description": "Default Response",
             "content": {
               "application/json": {
@@ -54949,10 +57124,121 @@
                     "bridgeHeartbeats": {
                       "additionalProperties": true,
                       "type": "object",
-                      "properties": {}
+                      "properties": {
+                        "springboard": {
+                          "additionalProperties": true,
+                          "type": "object",
+                          "properties": {
+                            "bridgeVersion": {
+                              "type": "string"
+                            },
+                            "channel": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "springboard"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "testflight"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "appstore"
+                                  ]
+                                }
+                              ]
+                            },
+                            "process": {
+                              "type": "string"
+                            },
+                            "at": {
+                              "type": "number"
+                            }
+                          }
+                        },
+                        "testflight": {
+                          "additionalProperties": true,
+                          "type": "object",
+                          "properties": {
+                            "bridgeVersion": {
+                              "type": "string"
+                            },
+                            "channel": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "springboard"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "testflight"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "appstore"
+                                  ]
+                                }
+                              ]
+                            },
+                            "process": {
+                              "type": "string"
+                            },
+                            "at": {
+                              "type": "number"
+                            }
+                          }
+                        },
+                        "appstore": {
+                          "additionalProperties": true,
+                          "type": "object",
+                          "properties": {
+                            "bridgeVersion": {
+                              "type": "string"
+                            },
+                            "channel": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "springboard"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "testflight"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "appstore"
+                                  ]
+                                }
+                              ]
+                            },
+                            "process": {
+                              "type": "string"
+                            },
+                            "at": {
+                              "type": "number"
+                            }
+                          }
+                        }
+                      }
                     },
                     "subsystems": {
-                      "additionalProperties": true,
                       "type": "object",
                       "required": [
                         "usb",
@@ -55275,7 +57561,6 @@
                       }
                     },
                     "readiness": {
-                      "additionalProperties": true,
                       "type": "object",
                       "required": [
                         "score",
@@ -55317,7 +57602,7 @@
                       }
                     },
                     "checkedAt": {
-                      "type": "string"
+                      "type": "number"
                     }
                   }
                 }
@@ -55604,6 +57889,46 @@
               }
             }
           },
+          "502": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
           "503": {
             "description": "Default Response",
             "content": {
@@ -55658,7 +57983,6 @@
           "content": {
             "application/json": {
               "schema": {
-                "additionalProperties": true,
                 "type": "object",
                 "required": [
                   "action"
@@ -56005,6 +58329,46 @@
               }
             }
           },
+          "502": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
           "503": {
             "description": "Default Response",
             "content": {
@@ -56078,7 +58442,10 @@
                   ],
                   "properties": {
                     "ok": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "enum": [
+                        true
+                      ]
                     }
                   }
                 }
@@ -56326,6 +58693,46 @@
             }
           },
           "500": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "502": {
             "description": "Default Response",
             "content": {
               "application/json": {

@@ -1,5 +1,6 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { preserveOpenApiPathOrder } from './openapiPathOrder.js';
 
 const stateDir = mkdtempSync(path.join('/tmp', 'dkrypt-client-generation-'));
 process.env.API_KEY ??= 'client-generation-api-key';
@@ -13,11 +14,16 @@ const { buildServer } = await import('../src/server.ts');
 const server = await buildServer({ includePublicRoutes: false });
 await server.ready();
 const document = server.swagger() as { paths?: Record<string, Record<string, unknown>> };
+const openApiPath = path.resolve(process.cwd(), 'clients', 'openapi.json');
+if (existsSync(openApiPath)) {
+  const previousDocument = JSON.parse(readFileSync(openApiPath, 'utf8')) as { paths?: Record<string, Record<string, unknown>> };
+  document.paths = preserveOpenApiPathOrder(previousDocument.paths ?? {}, document.paths ?? {});
+}
 const routes = Object.entries(document.paths ?? {}).flatMap(([route, methods]) => Object.keys(methods).map((method) => `${method.toUpperCase()} ${route}`)).sort();
 const outputDirectory = path.resolve(process.cwd(), 'clients');
 mkdirSync(path.join(outputDirectory, 'typescript'), { recursive: true });
 mkdirSync(path.join(outputDirectory, 'python'), { recursive: true });
-writeFileSync(path.join(outputDirectory, 'openapi.json'), `${JSON.stringify(document, null, 2)}\n`);
+writeFileSync(openApiPath, `${JSON.stringify(document, null, 2)}\n`);
 writeFileSync(path.join(outputDirectory, 'typescript', 'dkrypt.ts'), renderTypeScript(routes));
 writeFileSync(path.join(outputDirectory, 'python', 'dkrypt_client.py'), renderPython(routes));
 await server.close();

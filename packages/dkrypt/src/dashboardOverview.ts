@@ -32,7 +32,7 @@ export function buildDashboardOverview(permissions: bigint, userId: string, proj
   const schedulerRunHistory = canViewAutomation
     ? getSchedulerRunHistory(200).filter((run) => watches.some((watch) => watch.id === run.watchId)).slice(0, 10)
     : [];
-  const devices = canViewDeviceData ? getEffectiveDevices().map(serializeDashboardDevice) : [];
+  const devices = canViewDeviceData ? getEffectiveDevices().map((device) => serializeDashboardDevice(device)) : [];
   const settings = getEffectiveSettings();
   const activeJobs = getActiveJobs().filter((job): job is Job & { status: 'queued' | 'running' } =>
     (job.status === 'queued' || job.status === 'running') && (job.projectId ?? DEFAULT_PROJECT_ID) === projectId,
