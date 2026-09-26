@@ -200,7 +200,7 @@ test('dashboard overview publishes typed nested dashboard records', async () => 
   const server = await buildServer({ includePublicRoutes: false });
   try {
     await server.ready();
-    type Schema = { properties?: Record<string, Schema>; items?: Schema };
+    type Schema = { properties?: Record<string, Schema>; items?: Schema; pattern?: string; minLength?: number; maxLength?: number };
     const document = server.swagger() as {
       paths?: Record<string, Record<string, { responses?: Record<string, { content?: Record<string, { schema?: Schema }> }> }>>;
     };
@@ -210,6 +210,7 @@ test('dashboard overview publishes typed nested dashboard records', async () => 
 
     const watch = properties.watches?.items?.properties ?? {};
     expect(Object.keys(watch)).toEqual(expect.arrayContaining(['id', 'bundleId', 'dispatchTargets', 'nextRunAt', 'schedulable', 'configIssues']));
+    expect(watch.bundleId).toMatchObject({ pattern: '^[A-Za-z0-9.-]+$', minLength: 3, maxLength: 200 });
     expect(Object.keys(watch.dispatchTargets?.items?.properties ?? {})).toEqual(expect.arrayContaining(['repo', 'ghWorkflowFile', 'mode', 'inputs']));
 
     const device = properties.devices?.items?.properties ?? {};

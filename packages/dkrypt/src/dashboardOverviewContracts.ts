@@ -1,6 +1,6 @@
 import { Type, type Static } from '@sinclair/typebox';
 import type { ApiErrorEnvelope } from '#contracts.js';
-import { identifierSchema, projectIdentifierSchema } from '#apiCommonContracts.js';
+import { bundleIdSchema as BundleId, identifierSchema, projectIdentifierSchema } from '#apiCommonContracts.js';
 import {
   dashboardDeviceResponseSchema,
   dashboardDiskUsageSchema,
@@ -11,7 +11,6 @@ import {
 } from '#dashboardModelsContracts.js';
 
 const Identifier = identifierSchema;
-const BundleId = Type.String({ minLength: 3, maxLength: 200, pattern: '^[A-Za-z0-9.-]+$' });
 const JobFailureClass = Type.Union([
   Type.Literal('device_transport'),
   Type.Literal('app_store'),

@@ -1,8 +1,7 @@
 import { Type, type Static } from '@sinclair/typebox';
 import type { ApiErrorEnvelope, DashboardJobHistoryPage, DashboardJobSummary, DashboardJobTimeline } from '#contracts.js';
-import { deviceTransportSchema, identifierSchema, paginationQueryProperties } from '#apiCommonContracts.js';
+import { bundleIdSchema as BundleId, deviceTransportSchema, identifierSchema, paginationQueryProperties } from '#apiCommonContracts.js';
 
-const BundleId = Type.String({ minLength: 3, maxLength: 200, pattern: '^[A-Za-z0-9.-]+$' });
 const JobStatus = Type.Union([Type.Literal('queued'), Type.Literal('running'), Type.Literal('done'), Type.Literal('failed')]);
 const JsonObject = Type.Object({}, { additionalProperties: true });
 export const dashboardJobTimelineEventSchema = Type.Object({ at: Type.Number(), label: Type.String(), status: JobStatus }, { additionalProperties: true });

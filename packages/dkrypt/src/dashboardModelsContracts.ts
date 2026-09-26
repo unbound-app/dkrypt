@@ -1,5 +1,5 @@
 import { Type } from '@sinclair/typebox';
-import { deviceTransportSchema, identifierSchema, projectIdentifierSchema } from '#apiCommonContracts.js';
+import { bundleIdSchema, deviceTransportSchema, identifierSchema, projectIdentifierSchema } from '#apiCommonContracts.js';
 
 export const deviceTransportStateSchema = Type.Union([
   Type.Literal('discovered'),
@@ -72,8 +72,6 @@ export const dashboardDispatchTargetSchema = Type.Object({
   ref: Type.Optional(Type.String({ maxLength: 200 })),
   inputs: Type.Optional(Type.Record(Type.String({ minLength: 1, maxLength: 100 }), Type.String({ maxLength: 500 }))),
 }, { additionalProperties: true });
-
-const bundleIdSchema = Type.String({ minLength: 3, maxLength: 200, pattern: '^[A-Za-z0-9.-]+$' });
 
 export const dashboardWatchResponseSchema = Type.Object({
   id: identifierSchema,

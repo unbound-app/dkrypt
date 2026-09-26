@@ -1,6 +1,6 @@
 import { Type, type Static, type TSchema } from '@sinclair/typebox';
 import type { FastifySchema } from 'fastify';
-import { deviceTransportSchema, identifierSchema, paginationQuerySchema } from '#apiCommonContracts.js';
+import { bundleIdSchema as BundleId, deviceTransportSchema, identifierSchema, paginationQuerySchema } from '#apiCommonContracts.js';
 import {
   authConnectionParamsSchema,
   authIdentifierParamsSchema,
@@ -48,7 +48,6 @@ import {
 import { dashboardAuditLogQuerySchema, dashboardAuditLogResponseSchema, dashboardLogsQuerySchema, dashboardLogsResponseSchema } from '#dashboardObservabilityContracts.js';
 import { dashboardJobHistoryPageSchema, dashboardJobListQuerySchema, dashboardJobParamsSchema, dashboardJobTimelineEventSchema } from '#dashboardJobContracts.js';
 
-const BundleId = Type.String({ minLength: 3, maxLength: 200, pattern: '^[A-Za-z0-9.-]+$' });
 const VersionSelector = Type.String({ minLength: 1, maxLength: 64, pattern: '^v?\\d+(?:\\.\\d+)*(?:_\\d+)?$' });
 const Identifier = identifierSchema;
 const JsonObject = Type.Object({}, { additionalProperties: true });
