@@ -1,7 +1,6 @@
 import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
-import type { FastifyRequest, HookHandlerDoneFunction } from 'fastify';
 import type { DashboardEmailTestRoute, DashboardPrefsGetRoute, DashboardPrefsUpdateRoute, DashboardPushPublicKeyRoute, DashboardPushSubscribeRoute, DashboardPushTestRoute, DashboardPushUnsubscribeRoute } from '#dashboardAccountContracts.js';
-import { recordDashboardSessionActivity } from '#dashboardActivity.js';
+import { recordFastifyDashboardActivity } from '#dashboardActivity.js';
 import { getRouteContract } from '#contracts.js';
 import { getAuthProfile } from '#identity.js';
 import { createHttpErrorEnvelope } from '#util/httpResponse.js';
@@ -10,15 +9,9 @@ import { getVapidPublicKey, sendPushToUser } from '#push.js';
 import { fastifyRequireSession, getFastifySession } from '#session.js';
 import { addPushSubscription, getUserPrefs, removePushSubscription, updateUserPrefs, type UserPrefs } from '#store/state.js';
 
-function recordDashboardActivity(request: FastifyRequest, _reply: unknown, done: HookHandlerDoneFunction): void {
-  const session = getFastifySession(request);
-  if (session) recordDashboardSessionActivity(session);
-  done();
-}
-
 export const dashboardAccountRoutes: FastifyPluginAsyncTypebox = async (server) => {
   server.addHook('preHandler', fastifyRequireSession);
-  server.addHook('preHandler', recordDashboardActivity);
+  server.addHook('preHandler', recordFastifyDashboardActivity);
 
   server.get<DashboardPrefsGetRoute>('/v1/dashboard/me/prefs', { schema: getRouteContract('GET', '/v1/dashboard/me/prefs') }, async (request) => {
     const userId = getFastifySession(request)!.sub;

@@ -28,6 +28,12 @@ import {
   userPrefsPatchBodySchema,
   userPrefsResponseSchema,
 } from '#dashboardAccountContracts.js';
+import {
+  notificationListQuerySchema,
+  notificationPageResponseSchema,
+  notificationReadBodySchema,
+  notificationReadResponseSchema,
+} from '#dashboardNotificationContracts.js';
 
 const BundleId = Type.String({ minLength: 3, maxLength: 200, pattern: '^[A-Za-z0-9.-]+$' });
 const VersionSelector = Type.String({ minLength: 1, maxLength: 64, pattern: '^v?\\d+(?:\\.\\d+)*(?:_\\d+)?$' });
@@ -420,7 +426,6 @@ const SyntheticResponse = object({
   checkedAt: Type.String(),
   probes: Type.Array(object({ id: Identifier, status: Type.Union([Type.Literal('ok'), Type.Literal('warn'), Type.Literal('error'), Type.Literal('skipped')]), durationMs: Type.Number(), detail: Type.String() })),
 });
-const NotificationPage = object({ notifications: Type.Array(JsonObject), unread: Type.Integer({ minimum: 0 }), total: Type.Integer({ minimum: 0 }), nextCursor: PageCursor });
 const WebhookInboxPage = object({ inbox: Type.Array(JsonObject), total: Type.Integer({ minimum: 0 }), nextCursor: PageCursor });
 const DeviceDiscoveryResponse = object({ devices: Type.Array(JsonObject), scannedNetworks: Type.Array(Type.String()), warnings: Type.Array(Type.String()) });
 const DeviceHealthHistoryResponse = object({ buckets: Type.Array(JsonObject), uptimePercent: Type.Union([Type.Number(), Type.Null()]) });
@@ -1072,7 +1077,7 @@ register('GET', '/v1/dashboard/jobs/:id/diagnostic', { params: object({ id: Iden
 register('POST', '/v1/dashboard/jobs/:id/cancel', { params: object({ id: Identifier }) });
 register('POST', '/v1/dashboard/jobs/:id/prioritize', { params: object({ id: Identifier }) });
 register('POST', '/v1/dashboard/jobs/:id/retry', { params: object({ id: Identifier }) });
-register('GET', '/v1/dashboard/notifications', { querystring: PaginationQuery });
+register('GET', '/v1/dashboard/notifications', { querystring: notificationListQuerySchema });
 register('GET', '/v1/dashboard/jobs', { querystring: object({ ...PaginationQuery.properties, projectId: Type.Optional(Identifier), q: Type.Optional(Type.String({ maxLength: 200 })), source: Type.Optional(Type.Union([Type.Literal('manual'), Type.Literal('scheduler')])), status: Type.Optional(Type.Union([Type.Literal('done'), Type.Literal('failed')])), queuedBy: Type.Optional(Type.String({ maxLength: 120 })), deviceId: Type.Optional(Identifier), errorQ: Type.Optional(Type.String({ maxLength: 200 })), failureCategory: Type.Optional(Type.String({ maxLength: 64 })), fromTs: Type.Optional(Type.Integer()), toTs: Type.Optional(Type.Integer()) }) });
 register('GET', '/v1/dashboard/artifacts', { querystring: object({ ...PaginationQuery.properties, projectId: Type.Optional(Identifier), q: Type.Optional(Type.String({ maxLength: 200 })), channel: Type.Optional(Type.Union([Type.Literal('appstore'), Type.Literal('testflight')])) }) });
 register('PUT', '/v1/dashboard/artifacts/:id/pin', { params: object({ id: Identifier }), body: object({ pinned: Type.Boolean() }) });
@@ -1254,7 +1259,7 @@ register('PATCH', '/v1/auth/profile', { body: authProfileBodySchema });
 register('DELETE', '/v1/auth/connections/:provider', { params: authConnectionParamsSchema });
 register('GET', '/v1/auth/github/callback', { querystring: authOAuthCallbackQuerySchema });
 register('GET', '/v1/auth/discord/callback', { querystring: authOAuthCallbackQuerySchema });
-register('POST', '/v1/dashboard/notifications/read', { body: object({ ids: Type.Optional(Type.Array(Identifier, { maxItems: 100 })) }) });
+register('POST', '/v1/dashboard/notifications/read', { body: notificationReadBodySchema });
 register('POST', '/v1/dashboard/jobs/bulk-preview', { body: object({ ids: Type.Array(Identifier, { maxItems: 100 }), projectId: Type.Optional(Identifier) }) });
 register('POST', '/v1/dashboard/jobs/reorder', { body: object({ ids: Type.Array(Identifier, { maxItems: 100 }), projectId: Type.Optional(Identifier) }) });
 register('POST', '/v1/stripe/webhook', { headers: object({ 'stripe-signature': Type.String({ minLength: 1, maxLength: 200 }) }), body: Type.Any() });
@@ -1287,7 +1292,7 @@ register('GET', '/v1/billing/provider-status', { response: { 200: BillingProvide
 register('GET', '/v1/billing/webhooks/inbox', { response: { 200: WebhookInboxPage } });
 register('GET', '/v1/dashboard/doctor', { response: { 200: DoctorResponse } });
 register('GET', '/v1/dashboard/synthetic', { response: { 200: SyntheticResponse } });
-register('GET', '/v1/dashboard/notifications', { response: { 200: NotificationPage } });
+register('GET', '/v1/dashboard/notifications', { response: { 200: notificationPageResponseSchema } });
 register('GET', '/v1/dashboard/devices/discover', { response: { 200: DeviceDiscoveryResponse } });
 register('GET', '/v1/dashboard/devices/:id/health-history', { params: object({ id: Identifier }), response: { 200: DeviceHealthHistoryResponse } });
 register('GET', '/v1/dashboard/devices/:id/activity', { params: object({ id: Identifier }), querystring: PaginationQuery, response: { 200: DeviceActivityResponse } });
@@ -1582,8 +1587,8 @@ register('POST', '/v1/dashboard/settings/test-webhook', {
   response: { 200: TestWebhookResponse, 400: TestWebhookResponse },
 });
 register('POST', '/v1/dashboard/notifications/read', {
-  body: object({ ids: Type.Optional(Type.Array(Identifier, { maxItems: 100 })) }),
-  response: { 200: object({ ok: Type.Boolean(), marked: Type.Integer({ minimum: 0 }) }) },
+  body: notificationReadBodySchema,
+  response: { 200: notificationReadResponseSchema },
 });
 register('POST', '/v1/dashboard/jobs/:id/cancel', { params: object({ id: Identifier }), response: { 200: OkResponse } });
 register('POST', '/v1/dashboard/jobs/:id/prioritize', { params: object({ id: Identifier }), response: { 200: OkResponse } });

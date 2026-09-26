@@ -9,6 +9,7 @@ import { scopedLogger } from '#logger.js';
 import { emitJobsChanged } from '#events.js';
 import { PermissionFlag, serializeBits } from '#permissions.js';
 import { buildServer } from '#server.js';
+import { dashboardRouter } from '#routes/dashboard.js';
 import type { Response } from '#http.js';
 import { addAllowedUser, createApiKey, createProject, createRole, createTestFlightSubscription, createWatch, deleteRole, deleteUserPersonalData, deleteWatch, recordAudit, recordDeviceActivity, recordGitHubBudgetTelemetry, recordJobHistory, recordNotification, revokeApiKey, updateRole, withdrawTestFlightSubscription } from '#store/state.js';
 import { setSessionCookie } from '#session.js';
@@ -100,6 +101,12 @@ test('native auth routes require recent authentication for passkey registration'
   } finally {
     await server.close();
   }
+});
+
+test('dashboard notification endpoints are not registered through the legacy adapter', () => {
+  const routes = dashboardRouter.routes.map((route) => `${route.method} ${route.path}`);
+  expect(routes).not.toContain('GET /v1/dashboard/notifications');
+  expect(routes).not.toContain('POST /v1/dashboard/notifications/read');
 });
 
 test('dashboard account and notification routes validate requests and preserve session behavior', async () => {
@@ -939,6 +946,11 @@ test('Fastify previews bulk decrypts and serves durable notifications', async ()
   recordNotification({ userId: 'root', title: 'Test notification', message: 'Durable', severity: 'info' });
 
   try {
+    const unauthorizedList = await server.inject({ method: 'GET', url: '/v1/dashboard/notifications' });
+    const unauthorizedRead = await server.inject({ method: 'POST', url: '/v1/dashboard/notifications/read', payload: {} });
+    expect(unauthorizedList.statusCode).toBe(401);
+    expect(unauthorizedRead.statusCode).toBe(401);
+
     const preview = await server.inject({
       method: 'POST',
       url: '/v1/dashboard/jobs/bulk-preview',

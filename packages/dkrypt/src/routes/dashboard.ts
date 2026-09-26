@@ -122,8 +122,6 @@ import {
   getUserActivityStats,
   getJobHistoryEntryById,
   getJobHistoryPage,
-  listNotificationsPage,
-  markNotificationsRead,
   getPrimaryDevice,
   getSchedulerRunHistory,
   getStateDatabaseStatus,
@@ -317,19 +315,6 @@ dashboardRouter.get('/v1/dashboard/doctor', canManageDevices, async (_req, res) 
 
 dashboardRouter.get('/v1/dashboard/synthetic', canManageDevices, async (_req, res) => {
   res.json(await runSyntheticProbes());
-});
-
-dashboardRouter.get('/v1/dashboard/notifications', (req, res) => {
-  const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit ?? '50'), 10) || 50, 1), 100);
-  const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
-  const offset = cursor ? 0 : Math.max(Number.parseInt(String(req.query.offset ?? '0'), 10) || 0, 0);
-  const page = listNotificationsPage(res.locals.session.sub, offset, limit, cursor);
-  res.json(page);
-});
-
-dashboardRouter.post('/v1/dashboard/notifications/read', (req, res) => {
-  const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter((id: unknown): id is string => typeof id === 'string').slice(0, 100) : undefined;
-  res.json({ ok: true, marked: markNotificationsRead(res.locals.session.sub, ids) });
 });
 
 dashboardRouter.get('/v1/dashboard/events', (req, res) => {
