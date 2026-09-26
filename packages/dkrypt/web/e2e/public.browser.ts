@@ -160,7 +160,7 @@ test('pricing page fits a phone viewport without horizontal overflow', async ({ 
 });
 
 test('pricing plan checkout actions share a bottom baseline', async ({ page }) => {
-  for (const width of [1264, 1280, 1365]) {
+  for (const width of [1264, 1280, 1365, 1440, 1600]) {
     await page.setViewportSize({ width, height: 1000 });
     await page.goto('/pricing');
 
