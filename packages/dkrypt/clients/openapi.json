@@ -84320,16 +84320,14 @@
             "schema": {
               "anyOf": [
                 {
-                  "type": "string",
-                  "enum": [
-                    "json"
-                  ]
+                  "description": "Only csv selects CSV output; other values return JSON.",
+                  "type": "string"
                 },
                 {
-                  "type": "string",
-                  "enum": [
-                    "csv"
-                  ]
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
                 }
               ]
             },
@@ -84344,19 +84342,304 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "anyOf": [
-                    {
-                      "type": "array",
-                      "items": {
-                        "additionalProperties": true,
-                        "type": "object",
-                        "properties": {}
+                  "type": "array",
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object",
+                    "required": [
+                      "id",
+                      "ts",
+                      "actor",
+                      "action",
+                      "target"
+                    ],
+                    "properties": {
+                      "id": {
+                        "minLength": 1,
+                        "maxLength": 200,
+                        "type": "string"
+                      },
+                      "ts": {
+                        "type": "number"
+                      },
+                      "actor": {
+                        "type": "string"
+                      },
+                      "action": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "user.add"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "user.update"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "user.remove"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "state.import"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "settings.update"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "watch.add"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "watch.update"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "watch.remove"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "watch.import"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "device.add"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "device.update"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "device.remove"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "role.add"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "role.update"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "role.remove"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "backup.schedule-update"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "backup.create"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "backup.drill"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "backup.delete"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "testflight-subscription.add"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "testflight-subscription.approve"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "testflight-subscription.deny"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "testflight-subscription.sync"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "testflight-subscription.remove"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "billing.checkout"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "billing.activated"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "billing.charge"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "billing.charge-failed"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "billing.cancel"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "billing.webhook"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "billing.webhook.replay"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "privacy.export"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "privacy.delete"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "auth.passkey.add"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "auth.passkey.remove"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "auth.passkey.login"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "auth.passkey.reauthenticate"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "project.add"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "project.update"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "project.archive"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "project.restore"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "artifact.pin"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "artifact.unpin"
+                            ]
+                          }
+                        ]
+                      },
+                      "target": {
+                        "type": "string"
+                      },
+                      "detail": {
+                        "type": "string"
                       }
-                    },
-                    {
-                      "type": "string"
                     }
-                  ]
+                  }
+                }
+              },
+              "text/csv": {
+                "schema": {
+                  "type": "string"
                 }
               }
             }

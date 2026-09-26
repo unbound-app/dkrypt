@@ -15,7 +15,6 @@ import { canAccessProject, dashboardHistoryEntry } from '#dashboardJobPresentati
 import { buildDashboardOverview } from '#dashboardOverview.js';
 import { getDeviceHealth, getDeviceInstallBlocker, getDeviceReadiness } from '#deviceHealth.js';
 import { logBelongsToProject } from '#dashboardLogPresentation.js';
-import { csvCell } from '#util/csv.js';
 import { getVerifiedTestFlightCatalog, TestFlightCatalogUnavailableError } from '#testflightSubscriptions.js';
 import { listAppVersions } from '#versions.js';
 import {
@@ -33,7 +32,6 @@ import {
   DEFAULT_PROJECT_ID,
   deleteDiscordRolePerk,
   effectiveBitsForRoleIds,
-  getAuditLog,
   getAverageJobDurationMs,
   getDevice,
   getDiscordGuilds,
@@ -51,7 +49,6 @@ import {
 
 const canDecrypt = requirePermission(PermissionFlag.requestDecrypt);
 const canManageStorage = requirePermission(PermissionFlag.manageAutomation);
-const canViewUsers = requirePermission(PermissionFlag.viewUsers, PermissionFlag.manageUsers);
 const canViewDiscordPerks = requirePermission(PermissionFlag.viewRoles, PermissionFlag.manageRoles);
 const canManageDiscordPerks = requirePermission(PermissionFlag.manageRoles);
 export const dashboardRouter = Router();
@@ -353,27 +350,6 @@ dashboardRouter.get('/v1/dashboard/versions/:bundleId', async (req, res) => {
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
   }
-});
-
-const AUDIT_LOG_CSV_COLUMNS = ['id', 'ts', 'actor', 'action', 'target', 'detail'] as const;
-
-dashboardRouter.get('/v1/dashboard/audit-log/export', canViewUsers, (req, res) => {
-  const format = req.query.format === 'csv' ? 'csv' : 'json';
-  const entries = getAuditLog(200);
-
-  if (format === 'json') {
-    res.setHeader('Content-Disposition', 'attachment; filename="dkrypt-audit-log.json"');
-    res.json(entries);
-    return;
-  }
-
-  const rows = [AUDIT_LOG_CSV_COLUMNS.join(',')];
-  for (const e of entries) {
-    rows.push(AUDIT_LOG_CSV_COLUMNS.map((c) => csvCell(e[c])).join(','));
-  }
-  res.setHeader('Content-Type', 'text/csv');
-  res.setHeader('Content-Disposition', 'attachment; filename="dkrypt-audit-log.csv"');
-  res.send(rows.join('\n'));
 });
 
 function resolveRequestProjectId(req: Request, res: Response, source: 'body' | 'query', options: { requireActive?: boolean } = {}): string | undefined {

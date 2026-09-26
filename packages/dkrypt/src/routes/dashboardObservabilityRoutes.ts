@@ -1,5 +1,5 @@
 import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
-import type { DashboardAuditLogRoute, DashboardLogsRoute } from '#dashboardObservabilityContracts.js';
+import type { DashboardAuditLogExportRoute, DashboardAuditLogRoute, DashboardLogsRoute } from '#dashboardObservabilityContracts.js';
 import { recordFastifyDashboardActivity } from '#dashboardActivity.js';
 import { canAccessProject } from '#dashboardJobPresentation.js';
 import { logBelongsToProject } from '#dashboardLogPresentation.js';
@@ -7,7 +7,8 @@ import { getRouteContract } from '#contracts.js';
 import { getRecentLogs } from '#logger.js';
 import { PermissionFlag } from '#permissions.js';
 import { fastifyRequirePermission, fastifyRequireSession, getFastifySession } from '#session.js';
-import { DEFAULT_PROJECT_ID, getAuditLogPage } from '#store/state.js';
+import { DEFAULT_PROJECT_ID, getAuditLog, getAuditLogPage } from '#store/state.js';
+import { csvCell } from '#util/csv.js';
 import { createHttpErrorEnvelope } from '#util/httpResponse.js';
 
 const canViewLogs = fastifyRequirePermission(PermissionFlag.viewLogs);
@@ -56,5 +57,22 @@ export const dashboardObservabilityRoutes: FastifyPluginAsyncTypebox = async (se
   }, (request) => {
     const { cursor, limit, offset } = request.query;
     return getAuditLogPage(cursor ? 0 : offset ?? 0, Math.min(limit ?? 100, 200), cursor);
+  });
+
+  server.get<DashboardAuditLogExportRoute>('/v1/dashboard/audit-log/export', {
+    schema: getRouteContract('GET', '/v1/dashboard/audit-log/export'),
+    preHandler: canViewAuditLog,
+  }, (request, reply) => {
+    const entries = getAuditLog(200);
+    if (request.query.format !== 'csv') {
+      reply.header('Content-Disposition', 'attachment; filename="dkrypt-audit-log.json"');
+      return entries;
+    }
+    const columns = ['id', 'ts', 'actor', 'action', 'target', 'detail'] as const;
+    const rows = [columns.join(',')];
+    for (const entry of entries) rows.push(columns.map((column) => csvCell(entry[column])).join(','));
+    reply.type('text/csv; charset=utf-8');
+    reply.header('Content-Disposition', 'attachment; filename="dkrypt-audit-log.csv"');
+    return rows.join('\n');
   });
 };

@@ -1009,8 +1009,17 @@ test('native dashboard logs and audit routes preserve permissions, paging, and p
   const legacyRoutes = dashboardRouter.routes.map((route) => `${route.method} ${route.path}`);
 
   try {
+    await server.ready();
     expect(legacyRoutes).not.toContain('GET /v1/dashboard/logs');
     expect(legacyRoutes).not.toContain('GET /v1/dashboard/audit-log');
+    expect(legacyRoutes).not.toContain('GET /v1/dashboard/audit-log/export');
+
+    const openApi = server.swagger() as {
+      paths?: Record<string, Record<string, { responses?: Record<string, { content?: Record<string, { schema?: unknown }> }> }>>;
+    };
+    const exportContent = openApi.paths?.['/v1/dashboard/audit-log/export']?.get?.responses?.['200']?.content ?? {};
+    expect(Object.keys(exportContent).sort()).toEqual(['application/json', 'text/csv']);
+    expect(exportContent['text/csv']?.schema).toMatchObject({ type: 'string' });
 
     const logPage = await server.inject({
       method: 'GET',
@@ -1035,8 +1044,31 @@ test('native dashboard logs and audit routes preserve permissions, paging, and p
     expect(auditPage.statusCode).toBe(200);
     expect(auditPage.json()).toMatchObject({ entries: [expect.objectContaining({ action: 'project.add' })], nextCursor: expect.any(String) });
 
+    const jsonExport = await server.inject({ method: 'GET', url: '/v1/dashboard/audit-log/export', headers: { cookie: auditCookie } });
+    expect(jsonExport.statusCode).toBe(200);
+    expect(jsonExport.headers['content-disposition']).toBe('attachment; filename="dkrypt-audit-log.json"');
+    expect(jsonExport.json()).toContainEqual(expect.objectContaining({ target: expect.stringContaining('native-audit-'), detail: 'native route coverage' }));
+
+    const unknownFormatExport = await server.inject({ method: 'GET', url: '/v1/dashboard/audit-log/export?format=xml', headers: { cookie: auditCookie } });
+    expect(unknownFormatExport.statusCode).toBe(200);
+    expect(unknownFormatExport.headers['content-disposition']).toBe('attachment; filename="dkrypt-audit-log.json"');
+    expect(unknownFormatExport.json()).toContainEqual(expect.objectContaining({ detail: 'native route coverage' }));
+
+    const csvExport = await server.inject({ method: 'GET', url: '/v1/dashboard/audit-log/export?format=csv', headers: { cookie: auditCookie } });
+    expect(csvExport.statusCode).toBe(200);
+    expect(csvExport.headers['content-type']).toContain('text/csv');
+    expect(csvExport.headers['content-disposition']).toBe('attachment; filename="dkrypt-audit-log.csv"');
+    expect(csvExport.body).toContain('id,ts,actor,action,target,detail');
+    expect(csvExport.body).toContain('native route coverage');
+
     const deniedAudit = await server.inject({ method: 'GET', url: '/v1/dashboard/audit-log', headers: { cookie: logsCookie } });
     expect(deniedAudit.statusCode).toBe(403);
+
+    const deniedAuditExport = await server.inject({ method: 'GET', url: '/v1/dashboard/audit-log/export', headers: { cookie: logsCookie } });
+    expect(deniedAuditExport.statusCode).toBe(403);
+
+    const unauthenticatedAuditExport = await server.inject({ method: 'GET', url: '/v1/dashboard/audit-log/export' });
+    expect(unauthenticatedAuditExport.statusCode).toBe(401);
 
     const invalidProject = await server.inject({ method: 'GET', url: '/v1/dashboard/logs?projectId=unknown-project', headers: { cookie: logsCookie } });
     expect(invalidProject.statusCode).toBe(404);

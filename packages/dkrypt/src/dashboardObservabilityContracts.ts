@@ -59,6 +59,22 @@ export const dashboardLogsQuerySchema = Type.Object({
 
 export const dashboardAuditLogQuerySchema = Type.Object(paginationQueryProperties, { additionalProperties: true });
 
+export const dashboardAuditLogExportQuerySchema = Type.Object({
+  format: Type.Optional(Type.Union([
+    Type.String({ description: 'Only csv selects CSV output; other values return JSON.' }),
+    Type.Array(Type.String()),
+  ])),
+}, { additionalProperties: true });
+
+export const dashboardAuditLogEntrySchema = Type.Object({
+  id: identifierSchema,
+  ts: Type.Number(),
+  actor: Type.String(),
+  action: auditActionSchema,
+  target: Type.String(),
+  detail: Type.Optional(Type.String()),
+}, { additionalProperties: true });
+
 export const dashboardLogsResponseSchema = Type.Object({
   logs: Type.Array(Type.Object({
     id: identifierSchema,
@@ -73,17 +89,19 @@ export const dashboardLogsResponseSchema = Type.Object({
 }, { additionalProperties: true });
 
 export const dashboardAuditLogResponseSchema = Type.Object({
-  entries: Type.Array(Type.Object({
-    id: identifierSchema,
-    ts: Type.Number(),
-    actor: Type.String(),
-    action: auditActionSchema,
-    target: Type.String(),
-    detail: Type.Optional(Type.String()),
-  }, { additionalProperties: true })),
+  entries: Type.Array(dashboardAuditLogEntrySchema),
   total: Type.Integer({ minimum: 0 }),
   nextCursor: Type.Optional(Type.String()),
 }, { additionalProperties: true });
+
+export const dashboardAuditLogExportEntriesSchema = Type.Array(dashboardAuditLogEntrySchema);
+
+export const dashboardAuditLogExportResponseSchema = {
+  content: {
+    'application/json': { schema: dashboardAuditLogExportEntriesSchema },
+    'text/csv': { schema: Type.String() },
+  },
+};
 
 export type DashboardLogsRoute = {
   Querystring: Static<typeof dashboardLogsQuerySchema>;
@@ -93,4 +111,9 @@ export type DashboardLogsRoute = {
 export type DashboardAuditLogRoute = {
   Querystring: Static<typeof dashboardAuditLogQuerySchema>;
   Reply: { 200: Static<typeof dashboardAuditLogResponseSchema>; 400: ApiErrorEnvelope; 401: ApiErrorEnvelope; 403: ApiErrorEnvelope };
+};
+
+export type DashboardAuditLogExportRoute = {
+  Querystring: Static<typeof dashboardAuditLogExportQuerySchema>;
+  Reply: { 200: Static<typeof dashboardAuditLogExportEntriesSchema> | string; 401: ApiErrorEnvelope; 403: ApiErrorEnvelope };
 };

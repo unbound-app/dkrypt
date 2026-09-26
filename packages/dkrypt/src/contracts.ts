@@ -76,7 +76,14 @@ import {
   deviceTransportStateSchema as DeviceTransportState,
   schedulerSettingsResponseSchema as SchedulerSettingsResponse,
 } from '#dashboardModelsContracts.js';
-import { dashboardAuditLogQuerySchema, dashboardAuditLogResponseSchema, dashboardLogsQuerySchema, dashboardLogsResponseSchema } from '#dashboardObservabilityContracts.js';
+import {
+  dashboardAuditLogExportQuerySchema,
+  dashboardAuditLogExportResponseSchema,
+  dashboardAuditLogQuerySchema,
+  dashboardAuditLogResponseSchema,
+  dashboardLogsQuerySchema,
+  dashboardLogsResponseSchema,
+} from '#dashboardObservabilityContracts.js';
 import {
   dashboardJobActionResponseSchema,
   dashboardJobBundleParamsSchema,
@@ -785,7 +792,6 @@ export type DashboardSupportBundleRoute = {
     404: ApiErrorEnvelope;
   };
 };
-const AuditExportResponse = Type.Union([Type.Array(JsonObject), Type.String()]);
 const DiscordGuildResponse = object({ id: Identifier, name: Type.String(), icon: Type.Union([Type.String(), Type.Null()]) });
 const DiscordStatusResponse = object({ botEnabled: Type.Boolean(), guilds: Type.Array(DiscordGuildResponse) });
 const DiscordGuildsResponse = object({ guilds: Type.Array(DiscordGuildResponse) });
@@ -1514,8 +1520,8 @@ register('GET', '/v1/dashboard/github/rate-limit', {
   response: { 200: dashboardGitHubRateLimitResponseSchema, 502: ErrorEnvelope },
 });
 register('GET', '/v1/dashboard/audit-log/export', {
-  querystring: object({ format: Type.Optional(Type.Union([Type.Literal('json'), Type.Literal('csv')])) }),
-  response: { 200: AuditExportResponse },
+  querystring: dashboardAuditLogExportQuerySchema,
+  response: { 200: dashboardAuditLogExportResponseSchema, 401: ErrorEnvelope, 403: ErrorEnvelope },
 });
 register('GET', '/v1/dashboard/watches/export', {
   response: { 200: dashboardWatchExportResponseSchema },
