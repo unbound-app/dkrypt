@@ -187,7 +187,7 @@ export type DashboardJobTimelineRoute = {
 export type DashboardJobEtaRoute = {
   Params: Static<typeof dashboardJobBundleParamsSchema>;
   Querystring: Static<typeof dashboardJobProjectQuerySchema>;
-  Reply: { 200: Static<typeof dashboardJobEtaResponseSchema>; 400: ApiErrorEnvelope; 404: ApiErrorEnvelope; 429: ApiErrorEnvelope; 500: ApiErrorEnvelope };
+  Reply: { 200: Static<typeof dashboardJobEtaResponseSchema>; 400: ApiErrorEnvelope; 401: ApiErrorEnvelope; 404: ApiErrorEnvelope; 429: ApiErrorEnvelope; 500: ApiErrorEnvelope };
 };
 
 export type DashboardJobStatsRoute = {
