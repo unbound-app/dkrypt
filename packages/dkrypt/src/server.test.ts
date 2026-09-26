@@ -4,7 +4,7 @@ import path from 'node:path';
 import { expect, test } from 'bun:test';
 import { buildArtifactFileUrl, promoteArtifact, touchArtifact } from '#artifacts.js';
 import { exportBillingSnapshot, replaceBillingSnapshot, upsertBillingSubscription } from '#billing.js';
-import { upsertAuthProfile } from '#identity.js';
+import { deleteAuthProfile, upsertAuthProfile } from '#identity.js';
 import { scopedLogger } from '#logger.js';
 import { emitJobsChanged } from '#events.js';
 import { cancelQueuedJob, enqueueDecryptJob } from '#jobs/store.js';
@@ -203,6 +203,162 @@ test('native role routes preserve management gates and default-role protections'
     roleId = undefined;
   } finally {
     if (roleId) deleteRole(roleId, 'test cleanup');
+    await server.close();
+  }
+});
+
+test('dashboard user endpoints are not registered through the legacy adapter', () => {
+  const routes = dashboardRouter.routes.map((route) => `${route.method} ${route.path}`);
+  expect(routes).not.toContain('GET /v1/dashboard/users');
+  expect(routes).not.toContain('POST /v1/dashboard/users');
+  expect(routes).not.toContain('PATCH /v1/dashboard/users/:username');
+  expect(routes).not.toContain('DELETE /v1/dashboard/users/:username');
+});
+
+test('native user routes enforce permissions and return normalized management changes', async () => {
+  const server = await buildServer({ includePublicRoutes: false });
+  const administratorCookie = createSessionCookie('root', PermissionFlag.administrator);
+  const decryptOnlyCookie = createSessionCookie('root', PermissionFlag.requestDecrypt);
+  const userManagerCookie = createSessionCookie('user-manager', PermissionFlag.manageUsers);
+  const privilegedRole = createRole({ name: 'Elevated Test', color: '#123456', permissions: serializeBits(PermissionFlag.manageRoles) }, 'test setup');
+  const lastManagerRole = createRole({ name: 'Last User Manager Test', color: '#654321', permissions: serializeBits(PermissionFlag.manageUsers) }, 'test setup');
+  const username = `user-${crypto.randomUUID()}`;
+  const lastManagerUsername = `manager-${crypto.randomUUID()}`;
+  const profileUserId = `github:user-directory-${crypto.randomUUID()}`;
+
+  try {
+    addAllowedUser(lastManagerUsername, [lastManagerRole.id], 'test setup');
+    upsertAuthProfile({
+      userId: profileUserId,
+      provider: 'github',
+      providerId: crypto.randomUUID(),
+      username: `user-directory-${crypto.randomUUID()}`,
+      displayName: 'Directory Profile User',
+      avatarUrl: 'https://example.com/directory-profile.png',
+      updatedAt: new Date().toISOString(),
+    });
+    addAllowedUser(profileUserId, [privilegedRole.id], 'test setup');
+    const activityAt = Date.now();
+    recordJobHistory({
+      id: `user-directory-activity-${crypto.randomUUID()}`,
+      bundleId: 'com.example.user-directory',
+      queuedBy: profileUserId,
+      status: 'done',
+      source: 'manual',
+      createdAt: activityAt - 1_000,
+      finishedAt: activityAt,
+    });
+
+    const denied = await server.inject({
+      method: 'GET',
+      url: '/v1/dashboard/users',
+      headers: { cookie: decryptOnlyCookie },
+    });
+    expect(denied.statusCode).toBe(403);
+
+    const deniedGrant = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/users',
+      headers: { cookie: userManagerCookie },
+      payload: { username, roleIds: [privilegedRole.id] },
+    });
+    expect(deniedGrant.statusCode).toBe(403);
+
+    const invalid = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/users',
+      headers: { cookie: administratorCookie },
+      payload: { username, roleIds: 'not-an-array' },
+    });
+    expect(invalid.statusCode).toBe(400);
+
+    const invalidRoleId = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/users',
+      headers: { cookie: administratorCookie },
+      payload: { username, roleIds: [123] },
+    });
+    expect(invalidRoleId.statusCode).toBe(400);
+
+    const created = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/users',
+      headers: { cookie: administratorCookie },
+      payload: { username, roleIds: [privilegedRole.id] },
+    });
+    expect(created.statusCode).toBe(201);
+    expect(created.json()).toMatchObject({ username, roleIds: [privilegedRole.id] });
+
+    const invalidRoleIdUpdate = await server.inject({
+      method: 'PATCH',
+      url: `/v1/dashboard/users/${username}`,
+      headers: { cookie: administratorCookie },
+      payload: { roleIds: [123] },
+    });
+    expect(invalidRoleIdUpdate.statusCode).toBe(400);
+
+    const listed = await server.inject({
+      method: 'GET',
+      url: '/v1/dashboard/users',
+      headers: { cookie: administratorCookie },
+    });
+    expect(listed.statusCode).toBe(200);
+    expect(listed.json().users).toEqual(expect.arrayContaining([
+      expect.objectContaining({ username, displayName: username, avatarUrl: '', roleIds: [privilegedRole.id] }),
+      expect.objectContaining({
+        username: profileUserId,
+        displayName: 'Directory Profile User',
+        avatarUrl: 'https://example.com/directory-profile.png',
+        roleIds: [privilegedRole.id],
+        activity: expect.objectContaining({ manualJobs: 1, completedJobs: 1, failedJobs: 0 }),
+      }),
+    ]));
+
+    const orphaningUpdate = await server.inject({
+      method: 'PATCH',
+      url: `/v1/dashboard/users/${lastManagerUsername}`,
+      headers: { cookie: administratorCookie },
+      payload: { roleIds: [] },
+    });
+    expect(orphaningUpdate.statusCode).toBe(400);
+
+    const orphaningDelete = await server.inject({
+      method: 'DELETE',
+      url: `/v1/dashboard/users/${lastManagerUsername}`,
+      headers: { cookie: administratorCookie },
+    });
+    expect(orphaningDelete.statusCode).toBe(400);
+
+    const updated = await server.inject({
+      method: 'PATCH',
+      url: `/v1/dashboard/users/${username}`,
+      headers: { cookie: administratorCookie },
+      payload: { roleIds: [], priority: 99 },
+    });
+    expect(updated.statusCode).toBe(200);
+    expect(updated.json()).toMatchObject({ username, priority: 5 });
+
+    const selfDemotion = await server.inject({
+      method: 'PATCH',
+      url: '/v1/dashboard/users/root',
+      headers: { cookie: administratorCookie },
+      payload: { roleIds: [] },
+    });
+    expect(selfDemotion.statusCode).toBe(400);
+
+    const removed = await server.inject({
+      method: 'DELETE',
+      url: `/v1/dashboard/users/${username}`,
+      headers: { cookie: administratorCookie },
+    });
+    expect(removed.statusCode).toBe(200);
+  } finally {
+    deleteUserPersonalData(username);
+    deleteUserPersonalData(lastManagerUsername);
+    deleteUserPersonalData(profileUserId);
+    deleteAuthProfile(profileUserId);
+    deleteRole(privilegedRole.id, 'test cleanup');
+    deleteRole(lastManagerRole.id, 'test cleanup');
     await server.close();
   }
 });

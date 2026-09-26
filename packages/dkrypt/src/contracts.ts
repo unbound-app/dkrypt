@@ -114,6 +114,14 @@ import {
   dashboardRolesResponseSchema as RolesResponse,
   dashboardRoleUpdateBodySchema,
 } from '#dashboardRoleContracts.js';
+import {
+  dashboardAllowedUserResponseSchema as AllowedUserResponse,
+  dashboardUserCreateBodySchema,
+  dashboardUserDirectoryResponseSchema as UserDirectoryResponse,
+  dashboardUserOkResponseSchema,
+  dashboardUserParamsSchema,
+  dashboardUserUpdateBodySchema,
+} from '#dashboardUserContracts.js';
 
 const VersionSelector = Type.String({ minLength: 1, maxLength: 64, pattern: '^v?\\d+(?:\\.\\d+)*(?:_\\d+)?$' });
 const Identifier = identifierSchema;
@@ -458,18 +466,6 @@ const DecryptJobResponse = object({
   resolvedVersion: Type.Optional(Type.String()),
   artifact: Type.Optional(ArtifactSummaryResponse),
 });
-const UserDirectoryResponse = object({
-  users: Type.Array(object({
-    username: Identifier,
-    displayName: Type.String(),
-    avatarUrl: Type.String(),
-    roleIds: Type.Array(Identifier),
-    addedAt: Type.Number(),
-    lastActiveAt: Type.Optional(Type.Number()),
-    priority: Type.Optional(Type.Number()),
-    activity: Type.Optional(JsonObject),
-  })),
-});
 const ApiKeyResponse = object({
   id: Identifier,
   name: Type.String(),
@@ -511,14 +507,6 @@ const BillingSubscriptionUpdateResponse = object({ success: Type.Boolean(), stat
 const OkResponse = dashboardOkResponseSchema;
 const ApiKeySecretResponse = object({ id: Identifier, name: Type.String(), key: Type.String(), createdAt: Type.Number(), expiresAt: Type.Optional(Type.Number()) });
 const ApiKeyRegenerateResponse = object({ ok: Type.Boolean(), key: Type.Optional(ApiKeyResponse) });
-const AllowedUserResponse = object({
-  username: Identifier,
-  roleIds: Type.Array(Identifier),
-  addedAt: Type.Number(),
-  sessionVersion: Type.Optional(Type.Number()),
-  lastActiveAt: Type.Optional(Type.Number()),
-  priority: Type.Optional(Type.Number()),
-});
 const AuthTokenResponse = object({ ok: Type.Boolean(), expiresAt: Type.Optional(Type.Integer()) });
 const AuthLoginResponse = object({ ok: Type.Boolean() });
 const AuthRevokeOthersResponse = object({ ok: Type.Boolean(), revoked: Type.Integer({ minimum: 0 }) });
@@ -1073,7 +1061,7 @@ register('PUT', '/v1/dashboard/settings', {
   body: dashboardSettingsPatchBodySchema,
   response: { 200: SchedulerSettingsResponse, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope },
 });
-register('GET', '/v1/dashboard/users', { response: { 200: UserDirectoryResponse } });
+register('GET', '/v1/dashboard/users', { response: { 200: UserDirectoryResponse, 401: ErrorEnvelope, 403: ErrorEnvelope } });
 register('GET', '/v1/dashboard/audit-log', { querystring: dashboardAuditLogQuerySchema, response: { 200: dashboardAuditLogResponseSchema, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope } });
 register('GET', '/v1/dashboard/roles', { response: { 200: RolesResponse, 401: ErrorEnvelope, 403: ErrorEnvelope } });
 register('GET', '/v1/dashboard/projects', { response: { 200: ProjectListResponse } });
@@ -1093,9 +1081,19 @@ register('POST', '/v1/dashboard/roles/reorder', {
   body: dashboardRoleReorderBodySchema,
   response: { 200: RolesResponse, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope },
 });
-register('POST', '/v1/dashboard/users', { response: { 201: AllowedUserResponse } });
-register('PATCH', '/v1/dashboard/users/:username', { params: object({ username: Identifier }), response: { 200: AllowedUserResponse } });
-register('DELETE', '/v1/dashboard/users/:username', { params: object({ username: Identifier }), response: { 200: OkResponse } });
+register('POST', '/v1/dashboard/users', {
+  body: dashboardUserCreateBodySchema,
+  response: { 201: AllowedUserResponse, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope },
+});
+register('PATCH', '/v1/dashboard/users/:username', {
+  params: dashboardUserParamsSchema,
+  body: dashboardUserUpdateBodySchema,
+  response: { 200: AllowedUserResponse, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope },
+});
+register('DELETE', '/v1/dashboard/users/:username', {
+  params: dashboardUserParamsSchema,
+  response: { 200: dashboardUserOkResponseSchema, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope },
+});
 register('GET', '/v1/dashboard/keys/mine', { response: { 200: ApiKeyCollectionResponse } });
 register('POST', '/v1/dashboard/keys/request', { response: { 201: ApiKeyResponse } });
 register('POST', '/v1/dashboard/keys/create', { response: { 201: ApiKeySecretResponse } });

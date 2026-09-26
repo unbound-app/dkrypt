@@ -11,8 +11,7 @@ import type { LogEntry } from '#logger.js';
 import { getRecentLogs } from '#logger.js';
 import { EMBED_COLOR, notify } from '#notify.js';
 import { hasPermission, isSubsetPermission, PermissionFlag } from '#permissions.js';
-import { canGrantBits, parseRoleIds } from '#dashboardAdminRules.js';
-import { listAuthProfiles } from '#identity.js';
+import { canGrantBits } from '#dashboardAdminRules.js';
 import { applyWatchSchedules, checkForTestFlightUpdate, checkForUpdate, triggerTickNow } from '#scheduler/index.js';
 import { getGitHubRateLimitBudget, listDispatchRepos, listRepoWorkflows, validateDispatchTarget } from '#scheduler/github.js';
 import { lookupAppMetadata, searchApps } from '#scheduler/itunes.js';
@@ -44,7 +43,6 @@ import {
   touchArtifact,
 } from '#artifacts.js';
 import {
-  addAllowedUser,
   approveApiKey,
   type AppWatch,
   bulkApproveApiKeys,
@@ -76,7 +74,6 @@ import {
   getProject,
   getUserEffectivePermissions,
   getInsightsSummary,
-  getUserActivityStats,
   getJobHistoryEntryById,
   getPrimaryDevice,
   getSchedulerRunHistory,
@@ -93,13 +90,11 @@ import {
   isWatchSchedulable,
   type JobHistoryEntry,
   listAllApiKeysPage,
-  listAllowedUsers,
   listApiKeysForOwner,
   listPendingApiKeys,
   listRoles,
   recordAudit,
   regenerateApiKey,
-  removeAllowedUser,
   requestApiKey,
   revealApiKeySecret,
   revokeApiKey,
@@ -107,12 +102,9 @@ import {
   setDiscordGuilds,
   setApiKeyMaxConcurrent,
   setApiKeyPriority,
-  setUserPriority,
   upsertAppCatalogEntries,
-  updateAllowedUserRoles,
   updateWatch,
   verifyLatestDatabaseBackup,
-  wouldOrphanPermission,
 } from '#store/state.js';
 
 const canDecrypt = requirePermission(PermissionFlag.requestDecrypt);
@@ -139,7 +131,6 @@ const canManageSchedulerSettings = requirePermission(PermissionFlag.manageAutoma
 const canTriggerDispatch = requirePermission(PermissionFlag.manageAutomation);
 const canViewLogs = requirePermission(PermissionFlag.viewLogs);
 const canViewUsers = requirePermission(PermissionFlag.viewUsers, PermissionFlag.manageUsers);
-const canManageUsers = requirePermission(PermissionFlag.manageUsers);
 const canViewDiscordPerks = requirePermission(PermissionFlag.viewRoles, PermissionFlag.manageRoles);
 const canManageDiscordPerks = requirePermission(PermissionFlag.manageRoles);
 export const dashboardRouter = Router();
@@ -1640,39 +1631,6 @@ dashboardRouter.post('/v1/dashboard/keys/:id/deny', canApproveApiKeys, (req, res
   res.json({ ok: true });
 });
 
-dashboardRouter.get('/v1/dashboard/users', canViewUsers, (_req, res) => {
-  const assignments = new Map(listAllowedUsers().map((user) => [user.username, user]));
-  const activity = getUserActivityStats();
-  const users = listAuthProfiles().map((profile) => {
-    const assignment = assignments.get(profile.userId);
-    return {
-      username: profile.userId,
-      displayName: profile.displayName,
-      avatarUrl: profile.avatarUrl,
-      roleIds: assignment?.roleIds ?? [],
-      addedAt: assignment?.addedAt ?? Date.parse(profile.updatedAt),
-      lastActiveAt: assignment?.lastActiveAt,
-      priority: assignment?.priority,
-      activity: activity.get(profile.userId.toLowerCase()),
-    };
-  });
-  for (const assignment of assignments.values()) {
-    if (!users.some((user) => user.username === assignment.username)) {
-      users.push({
-        username: assignment.username,
-        displayName: assignment.username,
-        avatarUrl: '',
-        roleIds: assignment.roleIds,
-        addedAt: assignment.addedAt,
-        lastActiveAt: assignment.lastActiveAt,
-        priority: assignment.priority,
-        activity: activity.get(assignment.username.toLowerCase()),
-      });
-    }
-  }
-  res.json({ users });
-});
-
 const AUDIT_LOG_CSV_COLUMNS = ['id', 'ts', 'actor', 'action', 'target', 'detail'] as const;
 
 dashboardRouter.get('/v1/dashboard/audit-log/export', canViewUsers, (req, res) => {
@@ -1798,67 +1756,6 @@ dashboardRouter.delete('/v1/dashboard/discord/perks/:id', canManageDiscordPerks,
   const ok = deleteDiscordRolePerk(req.params.id, res.locals.session.sub);
   if (!ok) {
     res.status(404).json({ error: 'perk not found' });
-    return;
-  }
-  res.json({ ok: true });
-});
-
-dashboardRouter.post('/v1/dashboard/users', canManageUsers, (req, res) => {
-  const username = typeof req.body?.username === 'string' ? req.body.username.trim() : '';
-  const roleIds = parseRoleIds(req.body?.roleIds);
-  if (!username || !roleIds) {
-    res.status(400).json({ error: 'username and roleIds (an array of role ids) are required' });
-    return;
-  }
-  const targetBits = effectiveBitsForRoleIds(roleIds, listRoles());
-  if (!canGrantBits(res.locals.session.permissions, targetBits)) {
-    res.status(403).json({ error: "you can't grant permissions you don't have yourself" });
-    return;
-  }
-  res.status(201).json(addAllowedUser(username, roleIds, res.locals.session.sub));
-});
-
-dashboardRouter.patch('/v1/dashboard/users/:username', canManageUsers, (req, res) => {
-  const roleIds = parseRoleIds(req.body?.roleIds);
-  if (!roleIds) {
-    res.status(400).json({ error: 'roleIds (an array of role ids) is required' });
-    return;
-  }
-  const targetBits = effectiveBitsForRoleIds(roleIds, listRoles());
-  if (!canGrantBits(res.locals.session.permissions, targetBits)) {
-    res.status(403).json({ error: "you can't grant permissions you don't have yourself" });
-    return;
-  }
-  if (
-    req.params.username.toLowerCase() === res.locals.session.sub.toLowerCase() &&
-    !hasPermission(targetBits, PermissionFlag.manageUsers)
-  ) {
-    res.status(400).json({ error: "you can't remove your own ability to manage users" });
-    return;
-  }
-  if (wouldOrphanPermission(req.params.username, PermissionFlag.manageUsers, roleIds)) {
-    res.status(400).json({ error: 'this would leave nobody on the allowlist able to manage users - grant it to someone else first' });
-    return;
-  }
-  const updated = updateAllowedUserRoles(req.params.username, roleIds, res.locals.session.sub);
-  if (!updated) {
-    res.status(404).json({ error: 'not on the allowlist' });
-    return;
-  }
-  if (typeof req.body?.priority === 'number' && Number.isFinite(req.body.priority)) {
-    setUserPriority(req.params.username, req.body.priority, res.locals.session.sub);
-  }
-  res.json(updated);
-});
-
-dashboardRouter.delete('/v1/dashboard/users/:username', canManageUsers, (req, res) => {
-  if (wouldOrphanPermission(req.params.username, PermissionFlag.manageUsers, null)) {
-    res.status(400).json({ error: 'this would leave nobody on the allowlist able to manage users - grant it to someone else first' });
-    return;
-  }
-  const ok = removeAllowedUser(req.params.username, res.locals.session.sub);
-  if (!ok) {
-    res.status(404).json({ error: 'not on the allowlist' });
     return;
   }
   res.json({ ok: true });

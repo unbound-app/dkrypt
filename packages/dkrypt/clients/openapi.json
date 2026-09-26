@@ -81395,7 +81395,6 @@
                         "required": [
                           "username",
                           "displayName",
-                          "avatarUrl",
                           "roleIds",
                           "addedAt"
                         ],
@@ -81431,7 +81430,38 @@
                           "activity": {
                             "additionalProperties": true,
                             "type": "object",
-                            "properties": {}
+                            "required": [
+                              "manualJobs",
+                              "completedJobs",
+                              "failedJobs",
+                              "apiKeys",
+                              "apiRequests30d"
+                            ],
+                            "properties": {
+                              "manualJobs": {
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              "completedJobs": {
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              "failedJobs": {
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              "lastJobAt": {
+                                "type": "number"
+                              },
+                              "apiKeys": {
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              "apiRequests30d": {
+                                "minimum": 0,
+                                "type": "integer"
+                              }
+                            }
                           }
                         }
                       }
@@ -81775,7 +81805,26 @@
               "schema": {
                 "additionalProperties": true,
                 "type": "object",
-                "properties": {}
+                "required": [
+                  "username",
+                  "roleIds"
+                ],
+                "properties": {
+                  "username": {
+                    "minLength": 1,
+                    "maxLength": 200,
+                    "type": "string"
+                  },
+                  "roleIds": {
+                    "maxItems": 500,
+                    "type": "array",
+                    "items": {
+                      "minLength": 1,
+                      "maxLength": 200,
+                      "type": "string"
+                    }
+                  }
+                }
               }
             }
           }
@@ -88974,7 +89023,23 @@
               "schema": {
                 "additionalProperties": true,
                 "type": "object",
-                "properties": {}
+                "required": [
+                  "roleIds"
+                ],
+                "properties": {
+                  "roleIds": {
+                    "maxItems": 500,
+                    "type": "array",
+                    "items": {
+                      "minLength": 1,
+                      "maxLength": 200,
+                      "type": "string"
+                    }
+                  },
+                  "priority": {
+                    "type": "number"
+                  }
+                }
               }
             }
           }
@@ -89380,6 +89445,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "required": [
                     "ok"
