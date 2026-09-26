@@ -15,7 +15,7 @@ import { getCachedDeviceHealth } from '#deviceHealthCache.js';
 import { runDecrypt } from '#jobs/runner.js';
 import { appendJobTimelineEvent, type Job, type JobSource, type TestFlightJobSource } from '#jobs/types.js';
 import { artifactKeyForJob, buildDashboardArtifactFileUrl, getArtifactById, getArtifactByKey, getArtifactForJob, linkArtifactToProject, migrateLegacyPath, type ArtifactRecord } from '#artifacts.js';
-import { closePersistedJobs, loadPersistedJobs, replacePersistedJobs } from '#jobs/repository.js';
+import { closePersistedJobs, findPersistedActiveJobId, findPersistedReusableCompletedJobIds, loadPersistedJobs, replacePersistedJobs } from '#jobs/repository.js';
 import { terminateChildProcess } from '#jobs/process.js';
 import { classifyJobFailure } from '#util/failureCategory.js';
 import { incrementMetric, observeMetric } from '#metrics.js';
@@ -164,18 +164,21 @@ function findActiveJobForBundle(
   testflightBuildId: number | undefined,
   projectId: string,
 ): Job | undefined {
+  const lookup = { bundleId, externalVersionId, testFlightBuildId: testflightBuildId, projectId };
+  const persistedId = findPersistedActiveJobId(lookup);
+  const persistedJob = persistedId ? jobs.get(persistedId) : undefined;
+  if (persistedJob && isMatchingBuild(persistedJob, lookup) && (persistedJob.status === 'queued' || persistedJob.status === 'running')) return persistedJob;
   for (const job of jobs.values()) {
-    if (
-      job.bundleId === bundleId &&
-      job.externalVersionId === externalVersionId &&
-      job.testflight?.build.id === testflightBuildId &&
-      (job.projectId ?? DEFAULT_PROJECT_ID) === projectId &&
-      (job.status === 'queued' || job.status === 'running')
-    ) {
-      return job;
-    }
+    if (isMatchingBuild(job, lookup) && (job.status === 'queued' || job.status === 'running')) return job;
   }
   return undefined;
+}
+
+function isMatchingBuild(job: Job, lookup: { bundleId: string; externalVersionId?: string; testFlightBuildId?: number; projectId: string }): boolean {
+  return job.bundleId === lookup.bundleId &&
+    job.externalVersionId === lookup.externalVersionId &&
+    job.testflight?.build.id === lookup.testFlightBuildId &&
+    (job.projectId ?? DEFAULT_PROJECT_ID) === lookup.projectId;
 }
 
 function findReusableCompletedJob(
@@ -185,18 +188,13 @@ function findReusableCompletedJob(
   projectId: string,
 ): Job | undefined {
   if (externalVersionId === undefined && testflightBuildId === undefined) return undefined;
+  const lookup = { bundleId, externalVersionId, testFlightBuildId: testflightBuildId, projectId };
+  for (const id of findPersistedReusableCompletedJobIds(lookup)) {
+    const persistedJob = jobs.get(id);
+    if (persistedJob && isMatchingBuild(persistedJob, lookup) && persistedJob.status === 'done' && persistedJob.filePath && existsSync(persistedJob.filePath)) return persistedJob;
+  }
   for (const job of jobs.values()) {
-    if (
-      job.bundleId === bundleId &&
-      job.externalVersionId === externalVersionId &&
-      job.testflight?.build.id === testflightBuildId &&
-      (job.projectId ?? DEFAULT_PROJECT_ID) === projectId &&
-      job.status === 'done' &&
-      job.filePath &&
-      existsSync(job.filePath)
-    ) {
-      return job;
-    }
+    if (isMatchingBuild(job, lookup) && job.status === 'done' && job.filePath && existsSync(job.filePath)) return job;
   }
   return undefined;
 }

@@ -109,6 +109,47 @@ const migrations = [
       WHERE json_valid(payload) = 1 AND json_type(payload, '$.projectIds') IS NULL;
     `,
   },
+  {
+    version: 7,
+    sql: `
+      ALTER TABLE jobs ADD COLUMN status TEXT;
+      ALTER TABLE jobs ADD COLUMN bundle_id TEXT;
+      ALTER TABLE jobs ADD COLUMN external_version_id TEXT;
+      ALTER TABLE jobs ADD COLUMN testflight_build_id INTEGER;
+      ALTER TABLE jobs ADD COLUMN project_id TEXT;
+      ALTER TABLE jobs ADD COLUMN source TEXT;
+      ALTER TABLE jobs ADD COLUMN priority INTEGER;
+      ALTER TABLE jobs ADD COLUMN created_at INTEGER;
+      ALTER TABLE jobs ADD COLUMN started_at INTEGER;
+      ALTER TABLE jobs ADD COLUMN finished_at INTEGER;
+      ALTER TABLE jobs ADD COLUMN attempt INTEGER;
+      ALTER TABLE jobs ADD COLUMN deadline_at INTEGER;
+      ALTER TABLE jobs ADD COLUMN failure_class TEXT;
+      ALTER TABLE jobs ADD COLUMN correlation_id TEXT;
+      ALTER TABLE jobs ADD COLUMN device_id TEXT;
+      ALTER TABLE jobs ADD COLUMN file_path TEXT;
+      UPDATE jobs
+      SET status = json_extract(payload, '$.status'),
+          bundle_id = json_extract(payload, '$.bundleId'),
+          external_version_id = json_extract(payload, '$.externalVersionId'),
+          testflight_build_id = json_extract(payload, '$.testflight.build.id'),
+          project_id = COALESCE(json_extract(payload, '$.projectId'), 'default'),
+          source = json_extract(payload, '$.source'),
+          priority = COALESCE(json_extract(payload, '$.priority'), 0),
+          created_at = COALESCE(json_extract(payload, '$.createdAt'), updated_at),
+          started_at = json_extract(payload, '$.startedAt'),
+          finished_at = json_extract(payload, '$.finishedAt'),
+          attempt = json_extract(payload, '$.attempt'),
+          deadline_at = json_extract(payload, '$.deadlineAt'),
+          failure_class = json_extract(payload, '$.failureClass'),
+          correlation_id = json_extract(payload, '$.correlationId'),
+          device_id = json_extract(payload, '$.deviceId'),
+          file_path = json_extract(payload, '$.filePath')
+      WHERE json_valid(payload) = 1;
+      CREATE INDEX IF NOT EXISTS jobs_active_exact_build ON jobs(project_id, bundle_id, external_version_id, testflight_build_id, status);
+      CREATE INDEX IF NOT EXISTS jobs_completed_exact_build ON jobs(project_id, bundle_id, external_version_id, testflight_build_id, status, file_path);
+    `,
+  },
 ] as const;
 
 const domainTables = [
@@ -154,6 +195,62 @@ function assertCollectionTable(table: string): void {
 
 function json(value: unknown): string {
   return JSON.stringify(value);
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null ? value as Record<string, unknown> : {};
+}
+
+function stringField(record: Record<string, unknown>, key: string): string | null {
+  return typeof record[key] === 'string' ? record[key] as string : null;
+}
+
+function numberField(record: Record<string, unknown>, key: string): number | null {
+  return typeof record[key] === 'number' && Number.isFinite(record[key]) ? record[key] as number : null;
+}
+
+function jobIndexValues(payload: unknown, updatedAt: number): Array<string | number | null> {
+  const job = asRecord(payload);
+  const testflight = asRecord(job.testflight);
+  const build = asRecord(testflight.build);
+  return [
+    stringField(job, 'status'),
+    stringField(job, 'bundleId'),
+    stringField(job, 'externalVersionId'),
+    numberField(build, 'id'),
+    stringField(job, 'projectId') ?? 'default',
+    stringField(job, 'source'),
+    numberField(job, 'priority') ?? 0,
+    numberField(job, 'createdAt') ?? updatedAt,
+    numberField(job, 'startedAt'),
+    numberField(job, 'finishedAt'),
+    numberField(job, 'attempt'),
+    numberField(job, 'deadlineAt'),
+    stringField(job, 'failureClass'),
+    stringField(job, 'correlationId'),
+    stringField(job, 'deviceId'),
+    stringField(job, 'filePath'),
+  ];
+}
+
+function replaceCollectionRows(database: Database, replacement: StateCollectionReplacement): void {
+  database.exec(`DELETE FROM ${replacement.table};`);
+  if (replacement.table === 'jobs') {
+    const statement = database.query(`
+      INSERT INTO jobs (
+        id, payload, updated_at, status, bundle_id, external_version_id, testflight_build_id,
+        project_id, source, priority, created_at, started_at, finished_at, attempt, deadline_at,
+        failure_class, correlation_id, device_id, file_path
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    `);
+    for (const row of replacement.rows) {
+      const updatedAt = row.updatedAt ?? Date.now();
+      statement.run(row.id, json(row.payload), updatedAt, ...jobIndexValues(row.payload, updatedAt));
+    }
+    return;
+  }
+  const statement = database.query(`INSERT INTO ${replacement.table} (id, payload, updated_at) VALUES (?, ?, ?);`);
+  for (const row of replacement.rows) statement.run(row.id, json(row.payload), row.updatedAt ?? Date.now());
 }
 
 function sha256(value: string): string {
@@ -355,14 +452,10 @@ export class StateDatabase {
         ON CONFLICT(id) DO UPDATE SET state_version = excluded.state_version, payload = excluded.payload, sha256 = excluded.sha256, updated_at = excluded.updated_at
       `).run(stateVersion, payload, checksum, Date.now());
       for (const table of stateOwnedDomainTables) {
-        this.db.exec(`DELETE FROM ${table};`);
-        const statement = this.db.query(`INSERT INTO ${table} (id, payload, updated_at) VALUES (?, ?, ?);`);
-        for (const row of rows[table]) statement.run(row.id, json(row.payload), row.updatedAt ?? Date.now());
+        replaceCollectionRows(this.db, { table, rows: rows[table] });
       }
       for (const replacement of additionalCollections) {
-        this.db.exec(`DELETE FROM ${replacement.table};`);
-        const statement = this.db.query(`INSERT INTO ${replacement.table} (id, payload, updated_at) VALUES (?, ?, ?);`);
-        for (const row of replacement.rows) statement.run(row.id, json(row.payload), row.updatedAt ?? Date.now());
+        replaceCollectionRows(this.db, replacement);
       }
       this.db.exec('COMMIT;');
     } catch (error) {
@@ -446,9 +539,7 @@ export function replaceStateCollections(database: Database, replacements: readon
   database.exec('BEGIN IMMEDIATE;');
   try {
     for (const replacement of replacements) {
-      database.exec(`DELETE FROM ${replacement.table};`);
-      const statement = database.query(`INSERT INTO ${replacement.table} (id, payload, updated_at) VALUES (?, ?, ?);`);
-      for (const row of replacement.rows) statement.run(row.id, json(row.payload), row.updatedAt ?? Date.now());
+      replaceCollectionRows(database, replacement);
     }
     database.exec('COMMIT;');
   } catch (error) {
