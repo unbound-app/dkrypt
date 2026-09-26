@@ -206,6 +206,40 @@ export const dashboardManualDecryptBodySchema = Type.Object({
   preferPrimary: Type.Optional(Type.Boolean()),
   projectId: Type.Optional(projectIdentifierSchema),
 }, { additionalProperties: true });
+export const dashboardManualDecryptPreflightBodySchema = Type.Object({
+  bundleId: BundleId,
+  testflight: Type.Optional(Type.Boolean()),
+  versionLabel: Type.Optional(Type.String({ maxLength: 64 })),
+  installSizeBytes: Type.Optional(Type.Number({ exclusiveMinimum: 0 })),
+  deviceId: Type.Optional(identifierSchema),
+  projectId: Type.Optional(projectIdentifierSchema),
+}, { additionalProperties: true });
+const dashboardManualDecryptPreflightReadinessSchema = Type.Object({
+  score: Type.Number({ minimum: 0, maximum: 100 }),
+  state: Type.Union([Type.Literal('ready'), Type.Literal('caution'), Type.Literal('blocked')]),
+  reasons: Type.Array(Type.String()),
+}, { additionalProperties: true });
+const dashboardManualDecryptPreflightDeviceSchema = Type.Object({
+  id: identifierSchema,
+  name: Type.String(),
+  isPrimary: Type.Boolean(),
+  ready: Type.Boolean(),
+  blockers: Type.Array(Type.String()),
+  readiness: Type.Optional(dashboardManualDecryptPreflightReadinessSchema),
+  reachable: Type.Optional(Type.Boolean()),
+  storageFreeBytes: Type.Optional(Type.Number({ minimum: 0 })),
+  batteryPercent: Type.Optional(Type.Number({ minimum: 0, maximum: 100 })),
+}, { additionalProperties: true });
+export const dashboardManualDecryptPreflightResponseSchema = Type.Object({
+  bundleId: BundleId,
+  versionLabel: Type.Optional(Type.String()),
+  testflight: Type.Boolean(),
+  installSizeBytes: Type.Optional(Type.Number({ exclusiveMinimum: 0 })),
+  estimatedDurationMs: Type.Optional(Type.Number({ minimum: 0 })),
+  queueLength: Type.Integer({ minimum: 0 }),
+  canQueue: Type.Boolean(),
+  devices: Type.Array(dashboardManualDecryptPreflightDeviceSchema),
+}, { additionalProperties: true });
 export const dashboardJobReorderBodySchema = Type.Object({
   ids: Type.Array(identifierSchema, { maxItems: 100 }),
   projectId: Type.Optional(projectIdentifierSchema),
@@ -324,6 +358,21 @@ export type DashboardJobCancelRoute = {
 export type DashboardManualDecryptRoute = {
   Body: Static<typeof dashboardManualDecryptBodySchema>;
   Reply: { 202: DashboardJobSummary; 409: ApiErrorEnvelope; 503: ApiErrorEnvelope } & Pick<ActionErrors, 400 | 401 | 403 | 404 | 429 | 500>;
+};
+
+export type DashboardManualDecryptPreflightRoute = {
+  Body: Static<typeof dashboardManualDecryptPreflightBodySchema>;
+  Reply: {
+    200: Static<typeof dashboardManualDecryptPreflightResponseSchema>;
+    400: ApiErrorEnvelope;
+    401: ApiErrorEnvelope;
+    403: ApiErrorEnvelope;
+    404: ApiErrorEnvelope;
+    409: ApiErrorEnvelope;
+    429: ApiErrorEnvelope;
+    500: ApiErrorEnvelope;
+    503: ApiErrorEnvelope;
+  };
 };
 
 export type DashboardJobPrioritizeRoute = DashboardJobCancelRoute;

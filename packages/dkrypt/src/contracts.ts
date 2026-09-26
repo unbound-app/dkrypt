@@ -110,6 +110,8 @@ import {
   dashboardJobHistoryPageSchema,
   dashboardJobListQuerySchema,
   dashboardManualDecryptBodySchema,
+  dashboardManualDecryptPreflightBodySchema,
+  dashboardManualDecryptPreflightResponseSchema,
   dashboardJobParamsSchema,
   dashboardJobProjectQuerySchema,
   dashboardJobReorderBodySchema,
@@ -400,26 +402,6 @@ export type DashboardDeviceStorageHistoryResponse = Static<typeof DeviceStorageH
 export type DashboardJobSummary = Static<typeof JobSummaryResponse>;
 export type DashboardJobTimeline = Static<typeof JobTimelineResponse>;
 export type DashboardJobHistoryPage = Static<typeof dashboardJobHistoryPageSchema>;
-const DashboardDecryptPreflightResponse = object({
-  bundleId: BundleId,
-  versionLabel: Type.Optional(Type.String()),
-  testflight: Type.Boolean(),
-  installSizeBytes: Type.Optional(Type.Number({ exclusiveMinimum: 0 })),
-  estimatedDurationMs: Type.Optional(Type.Number({ minimum: 0 })),
-  queueLength: Type.Integer({ minimum: 0 }),
-  canQueue: Type.Boolean(),
-  devices: Type.Array(object({
-    id: Identifier,
-    name: Type.String(),
-    isPrimary: Type.Boolean(),
-    ready: Type.Boolean(),
-    blockers: Type.Array(Type.String()),
-    readiness: Type.Optional(JsonObject),
-    reachable: Type.Optional(Type.Boolean()),
-    storageFreeBytes: Type.Optional(Type.Number({ minimum: 0 })),
-    batteryPercent: Type.Optional(Type.Number({ minimum: 0, maximum: 100 })),
-  })),
-});
 const AuthMfaResponse = object({ enabled: Type.Boolean(), recoveryCodesRemaining: Type.Integer({ minimum: 0 }) });
 const AuthSessionResponse = object({
   loggedIn: Type.Boolean(),
@@ -917,7 +899,7 @@ register('POST', '/v1/dashboard/decrypt', {
 });
 
 register('POST', '/v1/dashboard/decrypt/preflight', {
-  body: object({ bundleId: BundleId, testflight: Type.Optional(Type.Boolean()), versionLabel: Type.Optional(Type.String({ maxLength: 64 })), installSizeBytes: Type.Optional(Type.Number({ exclusiveMinimum: 0 })), deviceId: Type.Optional(Identifier), projectId: Type.Optional(Identifier) }),
+  body: dashboardManualDecryptPreflightBodySchema,
 });
 
 register('POST', '/v1/dashboard/testflight/decrypt', {
@@ -1335,8 +1317,8 @@ register('POST', '/v1/dashboard/testflight/catalog/:bundleId/unsubscribe', {
   response: { 200: testFlightDeviceUnsubscribeResponseSchema },
 });
 register('POST', '/v1/dashboard/decrypt/preflight', {
-  body: object({ bundleId: BundleId, testflight: Type.Optional(Type.Boolean()), versionLabel: Type.Optional(Type.String({ maxLength: 64 })), installSizeBytes: Type.Optional(Type.Number({ exclusiveMinimum: 0 })), deviceId: Type.Optional(Identifier), projectId: Type.Optional(Identifier) }),
-  response: { 200: DashboardDecryptPreflightResponse },
+  body: dashboardManualDecryptPreflightBodySchema,
+  response: { 200: dashboardManualDecryptPreflightResponseSchema, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope, 409: ErrorEnvelope, 429: ErrorEnvelope, 500: ErrorEnvelope, 503: ErrorEnvelope },
 });
 register('GET', '/v1/dashboard/versions/:bundleId', {
   params: dashboardAppVersionsParamsSchema,

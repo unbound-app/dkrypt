@@ -52412,7 +52412,8 @@
                   },
                   "projectId": {
                     "minLength": 1,
-                    "maxLength": 200,
+                    "maxLength": 80,
+                    "pattern": "^[A-Za-z0-9_-]{1,80}$",
                     "type": "string"
                   }
                 }
@@ -52499,7 +52500,46 @@
                           "readiness": {
                             "additionalProperties": true,
                             "type": "object",
-                            "properties": {}
+                            "required": [
+                              "score",
+                              "state",
+                              "reasons"
+                            ],
+                            "properties": {
+                              "score": {
+                                "minimum": 0,
+                                "maximum": 100,
+                                "type": "number"
+                              },
+                              "state": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "ready"
+                                    ]
+                                  },
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "caution"
+                                    ]
+                                  },
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "blocked"
+                                    ]
+                                  }
+                                ]
+                              },
+                              "reasons": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              }
+                            }
                           },
                           "reachable": {
                             "type": "boolean"

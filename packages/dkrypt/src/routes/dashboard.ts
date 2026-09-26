@@ -3,7 +3,6 @@ import { projectIdentifierPattern } from '#apiCommonContracts.js';
 import { discordBotEnabled } from '#config.js';
 import { fetchBotGuilds, fetchGuildRoles } from '#discord.js';
 import { dashboardEvents, getOnlineUsernames, nextDashboardSequence, registerDashboardConnection, registerPresence, unregisterPresence } from '#events.js';
-import { getActiveJobs } from '#jobs/store.js';
 import type { LogEntry } from '#logger.js';
 import { hasPermission, isSubsetPermission, PermissionFlag } from '#permissions.js';
 import { canGrantBits } from '#dashboardAdminRules.js';
@@ -11,19 +10,14 @@ import { requirePermission, requireSession } from '#session.js';
 import { recordDashboardSessionActivity } from '#dashboardActivity.js';
 import { canAccessProject, dashboardHistoryEntry } from '#dashboardJobPresentation.js';
 import { buildDashboardOverview } from '#dashboardOverview.js';
-import { getDeviceHealth, getDeviceInstallBlocker, getDeviceReadiness } from '#deviceHealth.js';
 import { logBelongsToProject } from '#dashboardLogPresentation.js';
-import { getVerifiedTestFlightCatalog, TestFlightCatalogUnavailableError } from '#testflightSubscriptions.js';
 import {
   createDiscordRolePerk,
   DEFAULT_PROJECT_ID,
   deleteDiscordRolePerk,
   effectiveBitsForRoleIds,
-  getAverageJobDurationMs,
-  getDevice,
   getDiscordGuilds,
   getDiscordRolePerks,
-  getEffectiveDevices,
   getProject,
   getUserEffectivePermissions,
   type JobHistoryEntry,
@@ -31,7 +25,6 @@ import {
   setDiscordGuilds,
 } from '#store/state.js';
 
-const canDecrypt = requirePermission(PermissionFlag.requestDecrypt);
 const canViewDiscordPerks = requirePermission(PermissionFlag.viewRoles, PermissionFlag.manageRoles);
 const canManageDiscordPerks = requirePermission(PermissionFlag.manageRoles);
 export const dashboardRouter = Router();
@@ -115,97 +108,6 @@ dashboardRouter.get('/v1/dashboard/events', (req, res) => {
     dashboardEvents.off('presenceChanged', onPresenceChanged);
     dashboardEvents.off('projectChanged', onProjectChanged);
     dashboardEvents.off('projectsChanged', onProjectChanged);
-  });
-});
-
-const BUNDLE_ID_RE = /^[A-Za-z0-9.-]{3,200}$/;
-
-dashboardRouter.post('/v1/dashboard/decrypt/preflight', canDecrypt, async (req, res) => {
-  const projectId = resolveRequestProjectId(req, res, 'body', { requireActive: true });
-  if (!projectId) return;
-  const bundleId = typeof req.body?.bundleId === 'string' ? req.body.bundleId.trim() : '';
-  if (!BUNDLE_ID_RE.test(bundleId)) {
-    res.status(400).json({ error: 'bundleId is required and must look like a bundle identifier' });
-    return;
-  }
-  const testflight = req.body?.testflight === true;
-  const versionLabel = typeof req.body?.versionLabel === 'string' ? req.body.versionLabel.trim().slice(0, 64) || undefined : undefined;
-  const installSizeBytes = typeof req.body?.installSizeBytes === 'number' && Number.isFinite(req.body.installSizeBytes) && req.body.installSizeBytes > 0 ? req.body.installSizeBytes : undefined;
-  const requestedDeviceId = typeof req.body?.deviceId === 'string' ? req.body.deviceId.trim() : '';
-  const requestedDevice = requestedDeviceId ? getDevice(requestedDeviceId) : undefined;
-  if (requestedDeviceId && (!requestedDevice || !requestedDevice.enabled)) {
-    res.status(400).json({ error: 'deviceId must refer to an enabled device' });
-    return;
-  }
-  let verifiedCatalog = [] as Awaited<ReturnType<typeof getVerifiedTestFlightCatalog>>;
-  if (testflight) {
-    try {
-      verifiedCatalog = await getVerifiedTestFlightCatalog({ requireAllDevices: true });
-    } catch (error) {
-      if (error instanceof TestFlightCatalogUnavailableError) {
-        res.status(503).json({ error: error.message, code: 'testflight_catalog_unavailable' });
-        return;
-      }
-      throw error;
-    }
-  }
-  const verifiedTestFlightApp = testflight
-    ? verifiedCatalog.find((entry) => entry.bundleId === bundleId)
-    : undefined;
-  if (testflight && !verifiedTestFlightApp) {
-    res.status(409).json({ error: 'TestFlight access must be verified on an enabled device before queueing' });
-    return;
-  }
-  if (requestedDevice && verifiedTestFlightApp && !verifiedTestFlightApp.devices.some((device) => device.id === requestedDevice.id)) {
-    res.status(409).json({ error: 'TestFlight access is not verified on the selected device' });
-    return;
-  }
-  const verifiedDeviceIds = verifiedTestFlightApp ? new Set(verifiedTestFlightApp.devices.map((device) => device.id)) : undefined;
-  const devices = requestedDevice
-    ? [requestedDevice]
-    : getEffectiveDevices().filter((device) => device.enabled && (!verifiedDeviceIds || verifiedDeviceIds.has(device.id)));
-  const primary = devices.find((device) => device.isPrimary) ?? devices[0];
-  const checks = await Promise.all(devices.map(async (device) => {
-    try {
-      const health = await getDeviceHealth(device.id, true);
-      const blockers: string[] = [];
-      if (!health.reachable) blockers.push(health.error ?? 'device is unreachable');
-      if (health.internetAccess === false) blockers.push('device cannot reach Apple services');
-      const installBlocker = getDeviceInstallBlocker(health, installSizeBytes);
-      if (installBlocker) blockers.push(installBlocker);
-      if (health.readiness?.state === 'blocked') blockers.push(...(health.readiness.reasons.length > 0 ? health.readiness.reasons : ['device readiness is blocked']));
-      if (testflight && health.testFlightBridgeReachable === false) blockers.push('TestFlight bridge is unresponsive');
-      return {
-        id: device.id,
-        name: device.name,
-        isPrimary: device.id === primary?.id,
-        ready: blockers.length === 0,
-        blockers: [...new Set(blockers)],
-        readiness: health.readiness ?? getDeviceReadiness(health),
-        reachable: health.reachable,
-        storageFreeBytes: health.storageFreeBytes,
-        batteryPercent: health.batteryPercent,
-      };
-    } catch (error) {
-      return {
-        id: device.id,
-        name: device.name,
-        isPrimary: device.id === primary?.id,
-        ready: false,
-        blockers: [error instanceof Error ? error.message : 'device health check failed'],
-        reachable: false,
-      };
-    }
-  }));
-  res.json({
-    bundleId,
-    versionLabel,
-    testflight,
-    installSizeBytes,
-    estimatedDurationMs: getAverageJobDurationMs(bundleId, projectId),
-    queueLength: getActiveJobs().filter((job) => (job.projectId ?? DEFAULT_PROJECT_ID) === projectId).length,
-    canQueue: checks.some((check) => check.ready),
-    devices: checks,
   });
 });
 
