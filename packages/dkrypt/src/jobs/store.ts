@@ -15,7 +15,7 @@ import { getCachedDeviceHealth } from '#deviceHealthCache.js';
 import { runDecrypt } from '#jobs/runner.js';
 import { appendJobTimelineEvent, type Job, type JobSource, type TestFlightJobSource } from '#jobs/types.js';
 import { artifactKeyForJob, buildDashboardArtifactFileUrl, getArtifactById, getArtifactByKey, getArtifactForJob, linkArtifactToProject, migrateLegacyPath, type ArtifactRecord } from '#artifacts.js';
-import { closePersistedJobs, findPersistedActiveJobId, findPersistedReusableCompletedJobIds, loadPersistedJobs, replacePersistedJobs } from '#jobs/repository.js';
+import { closePersistedJobs, findPersistedActiveJobId, findPersistedReusableCompletedJobIds, loadPersistedJobs, replacePersistedJobs, type JobBuildLookup } from '#jobs/repository.js';
 import { terminateChildProcess } from '#jobs/process.js';
 import { classifyJobFailure } from '#util/failureCategory.js';
 import { incrementMetric, observeMetric } from '#metrics.js';
@@ -158,13 +158,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function findActiveJobForBundle(
-  bundleId: string,
-  externalVersionId: string | undefined,
-  testflightBuildId: number | undefined,
-  projectId: string,
-): Job | undefined {
-  const lookup = { bundleId, externalVersionId, testFlightBuildId: testflightBuildId, projectId };
+function findActiveJobForBundle(lookup: JobBuildLookup): Job | undefined {
   const persistedId = findPersistedActiveJobId(lookup);
   const persistedJob = persistedId ? jobs.get(persistedId) : undefined;
   if (persistedJob && isMatchingBuild(persistedJob, lookup) && (persistedJob.status === 'queued' || persistedJob.status === 'running')) return persistedJob;
@@ -174,21 +168,15 @@ function findActiveJobForBundle(
   return undefined;
 }
 
-function isMatchingBuild(job: Job, lookup: { bundleId: string; externalVersionId?: string; testFlightBuildId?: number; projectId: string }): boolean {
+function isMatchingBuild(job: Job, lookup: JobBuildLookup): boolean {
   return job.bundleId === lookup.bundleId &&
     job.externalVersionId === lookup.externalVersionId &&
     job.testflight?.build.id === lookup.testFlightBuildId &&
     (job.projectId ?? DEFAULT_PROJECT_ID) === lookup.projectId;
 }
 
-function findReusableCompletedJob(
-  bundleId: string,
-  externalVersionId: string | undefined,
-  testflightBuildId: number | undefined,
-  projectId: string,
-): Job | undefined {
-  if (externalVersionId === undefined && testflightBuildId === undefined) return undefined;
-  const lookup = { bundleId, externalVersionId, testFlightBuildId: testflightBuildId, projectId };
+function findReusableCompletedJob(lookup: JobBuildLookup): Job | undefined {
+  if (lookup.externalVersionId === undefined && lookup.testFlightBuildId === undefined) return undefined;
   for (const id of findPersistedReusableCompletedJobIds(lookup)) {
     const persistedJob = jobs.get(id);
     if (persistedJob && isMatchingBuild(persistedJob, lookup) && persistedJob.status === 'done' && persistedJob.filePath && existsSync(persistedJob.filePath)) return persistedJob;
@@ -327,7 +315,8 @@ export function enqueueDecryptJob(
   projectId = DEFAULT_PROJECT_ID,
 ): Job {
   if (!acceptingJobs) throw new Error('dkrypt is shutting down and is not accepting new jobs');
-  const existing = findActiveJobForBundle(bundleId, externalVersionId, testflight?.build.id, projectId);
+  const lookup = { bundleId, externalVersionId, testFlightBuildId: testflight?.build.id, projectId };
+  const existing = findActiveJobForBundle(lookup);
   if (existing) return existing;
   enforceProjectQuotas(projectId);
   const artifactKey = artifactKeyForJob({ id: 'lookup', bundleId, externalVersionId, testflight, versionLabel });
@@ -336,7 +325,7 @@ export function enqueueDecryptJob(
     linkArtifactToProject(artifact.id, projectId);
     return createCachedJob(bundleId, source, externalVersionId, testflight, versionLabel, queuedBy, priority, apiKeyId, projectId, artifact);
   }
-  const reusable = findReusableCompletedJob(bundleId, externalVersionId, testflight?.build.id, projectId);
+  const reusable = findReusableCompletedJob(lookup);
   if (reusable) return reusable;
 
   const resolvedLabel = versionLabel ?? (testflight ? `${testflight.build.cfBundleShortVersion}_${testflight.build.cfBundleVersion}` : 'Current App Store release');
