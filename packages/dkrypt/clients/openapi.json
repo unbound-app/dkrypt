@@ -43901,7 +43901,84 @@
                       "items": {
                         "additionalProperties": true,
                         "type": "object",
-                        "properties": {}
+                        "required": [
+                          "bundleId",
+                          "trackId",
+                          "trackName",
+                          "version",
+                          "sellerName",
+                          "artworkUrl",
+                          "price"
+                        ],
+                        "properties": {
+                          "bundleId": {
+                            "minLength": 3,
+                            "maxLength": 200,
+                            "pattern": "^[A-Za-z0-9.-]+$",
+                            "type": "string"
+                          },
+                          "trackId": {
+                            "minimum": 1,
+                            "type": "integer"
+                          },
+                          "trackName": {
+                            "type": "string"
+                          },
+                          "version": {
+                            "type": "string"
+                          },
+                          "sellerName": {
+                            "type": "string"
+                          },
+                          "artworkUrl": {
+                            "type": "string"
+                          },
+                          "price": {
+                            "type": "number"
+                          },
+                          "category": {
+                            "type": "string"
+                          },
+                          "testflight": {
+                            "additionalProperties": true,
+                            "type": "object",
+                            "required": [
+                              "appId",
+                              "devices",
+                              "lastVerifiedAt"
+                            ],
+                            "properties": {
+                              "appId": {
+                                "minimum": 1,
+                                "type": "integer"
+                              },
+                              "devices": {
+                                "type": "array",
+                                "items": {
+                                  "additionalProperties": true,
+                                  "type": "object",
+                                  "required": [
+                                    "id",
+                                    "name"
+                                  ],
+                                  "properties": {
+                                    "id": {
+                                      "minLength": 1,
+                                      "maxLength": 200,
+                                      "type": "string"
+                                    },
+                                    "name": {
+                                      "type": "string"
+                                    }
+                                  }
+                                }
+                              },
+                              "lastVerifiedAt": {
+                                "type": "number"
+                              }
+                            }
+                          }
+                        }
                       }
                     }
                   }
@@ -44150,6 +44227,46 @@
             }
           },
           "500": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "502": {
             "description": "Default Response",
             "content": {
               "application/json": {
@@ -49240,7 +49357,53 @@
                       "items": {
                         "additionalProperties": true,
                         "type": "object",
-                        "properties": {}
+                        "required": [
+                          "bundleId",
+                          "displayName",
+                          "updatedAt"
+                        ],
+                        "properties": {
+                          "bundleId": {
+                            "minLength": 3,
+                            "maxLength": 200,
+                            "pattern": "^[A-Za-z0-9.-]+$",
+                            "type": "string"
+                          },
+                          "displayName": {
+                            "type": "string"
+                          },
+                          "iconUrl": {
+                            "type": "string"
+                          },
+                          "trackId": {
+                            "minimum": 1,
+                            "type": "integer"
+                          },
+                          "sellerName": {
+                            "type": "string"
+                          },
+                          "category": {
+                            "type": "string"
+                          },
+                          "description": {
+                            "type": "string"
+                          },
+                          "screenshots": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "releaseNotes": {
+                            "type": "string"
+                          },
+                          "price": {
+                            "type": "number"
+                          },
+                          "updatedAt": {
+                            "type": "number"
+                          }
+                        }
                       }
                     }
                   }
@@ -49951,14 +50114,8 @@
                 "properties": {
                   "bundleIds": {
                     "minItems": 1,
-                    "maxItems": 40,
                     "type": "array",
-                    "items": {
-                      "minLength": 3,
-                      "maxLength": 200,
-                      "pattern": "^[A-Za-z0-9.-]+$",
-                      "type": "string"
-                    }
+                    "items": {}
                   }
                 }
               }
@@ -49982,7 +50139,53 @@
                       "items": {
                         "additionalProperties": true,
                         "type": "object",
-                        "properties": {}
+                        "required": [
+                          "bundleId",
+                          "displayName",
+                          "updatedAt"
+                        ],
+                        "properties": {
+                          "bundleId": {
+                            "minLength": 3,
+                            "maxLength": 200,
+                            "pattern": "^[A-Za-z0-9.-]+$",
+                            "type": "string"
+                          },
+                          "displayName": {
+                            "type": "string"
+                          },
+                          "iconUrl": {
+                            "type": "string"
+                          },
+                          "trackId": {
+                            "minimum": 1,
+                            "type": "integer"
+                          },
+                          "sellerName": {
+                            "type": "string"
+                          },
+                          "category": {
+                            "type": "string"
+                          },
+                          "description": {
+                            "type": "string"
+                          },
+                          "screenshots": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "releaseNotes": {
+                            "type": "string"
+                          },
+                          "price": {
+                            "type": "number"
+                          },
+                          "updatedAt": {
+                            "type": "number"
+                          }
+                        }
                       }
                     }
                   }

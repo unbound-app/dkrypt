@@ -62,6 +62,14 @@ import {
 import { dashboardDoctorResponseSchema, dashboardSyntheticResponseSchema } from '#dashboardDiagnosticsContracts.js';
 import { dashboardOverviewQuerySchema, dashboardOverviewResponseSchema } from '#dashboardOverviewContracts.js';
 import {
+  dashboardAppCatalogStatsResponseSchema as AppCatalogStatsResponse,
+  dashboardAppMetadataQuerySchema,
+  dashboardAppMetadataRefreshBodySchema,
+  dashboardAppMetadataResponseSchema as AppMetadataResponse,
+  dashboardAppSearchQuerySchema,
+  dashboardAppSearchResponseSchema as SearchResponse,
+} from '#dashboardAppCatalogContracts.js';
+import {
   dashboardDeviceResponseSchema as DeviceResponse,
   dashboardWatchResponseSchema as WatchResponse,
   bridgeHeartbeatsSchema,
@@ -352,7 +360,6 @@ export type DashboardDeviceStorageHistoryResponse = Static<typeof DeviceStorageH
 export type DashboardJobSummary = Static<typeof JobSummaryResponse>;
 export type DashboardJobTimeline = Static<typeof JobTimelineResponse>;
 export type DashboardJobHistoryPage = Static<typeof dashboardJobHistoryPageSchema>;
-const SearchResponse = object({ results: Type.Array(JsonObject) });
 const DashboardDecryptPreflightResponse = object({
   bundleId: BundleId,
   versionLabel: Type.Optional(Type.String()),
@@ -545,8 +552,6 @@ const PasskeyOptionsResponse = object({
 const PasskeyMutationResponse = object({ passkey: Type.Optional(PasskeySummaryResponse) });
 const AuthProfileResponse = object({ displayName: Type.String(), linkedProviders: Type.Array(Type.String()) });
 const AuthConnectionResponse = object({ identities: Type.Array(JsonObject), linkedProviders: Type.Array(Type.String()) });
-const AppMetadataResponse = object({ entries: Type.Array(JsonObject) });
-const AppCatalogStatsResponse = object({ entries: Type.Integer({ minimum: 0 }), icons: Type.Integer({ minimum: 0 }), oldestUpdatedAt: Type.Optional(Type.Number()), newestUpdatedAt: Type.Optional(Type.Number()) });
 const BundleStatsResponse = object({
   bundleId: BundleId,
   totalRuns: Type.Integer({ minimum: 0 }),
@@ -1129,8 +1134,8 @@ register('POST', '/v1/dashboard/testflight/decrypt', {
   response: { 202: JobSummaryResponse, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope, 409: ErrorEnvelope, 429: ErrorEnvelope, 500: ErrorEnvelope, 503: ErrorEnvelope },
 });
 register('GET', '/v1/dashboard/search', {
-  querystring: object({ q: Type.String({ minLength: 1, maxLength: 200 }) }),
-  response: { 200: SearchResponse },
+  querystring: dashboardAppSearchQuerySchema,
+  response: { 200: SearchResponse, 400: ErrorEnvelope, 401: ErrorEnvelope, 500: ErrorEnvelope, 502: ErrorEnvelope },
 });
 register('GET', '/v1/dashboard/testflight/subscriptions', {
   querystring: PaginationQuery,
@@ -1261,13 +1266,15 @@ register('GET', '/v1/dashboard/watches/:id/preview-dispatch/:source', {
 });
 register('POST', '/v1/dashboard/watches/:id/trigger-dispatch', { params: dashboardWatchParamsSchema, response: { 202: JsonObject, 409: JsonObject } });
 register('GET', '/v1/dashboard/apps/metadata', {
-  querystring: object({ bundleIds: Type.Optional(Type.String({ maxLength: 20_000 })) }),
-  response: { 200: AppMetadataResponse },
+  querystring: dashboardAppMetadataQuerySchema,
+  response: { 200: AppMetadataResponse, 400: ErrorEnvelope, 401: ErrorEnvelope, 500: ErrorEnvelope },
 });
-register('GET', '/v1/dashboard/apps/cache', { response: { 200: AppCatalogStatsResponse } });
+register('GET', '/v1/dashboard/apps/cache', {
+  response: { 200: AppCatalogStatsResponse, 401: ErrorEnvelope, 403: ErrorEnvelope, 500: ErrorEnvelope },
+});
 register('POST', '/v1/dashboard/apps/metadata/refresh', {
-  body: object({ bundleIds: Type.Array(BundleId, { minItems: 1, maxItems: 40 }) }),
-  response: { 200: AppMetadataResponse },
+  body: dashboardAppMetadataRefreshBodySchema,
+  response: { 200: AppMetadataResponse, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope, 500: ErrorEnvelope },
 });
 register('GET', '/v1/dashboard/settings/job-history-retention/preview', {
   querystring: dashboardSettingsRetentionQuerySchema,

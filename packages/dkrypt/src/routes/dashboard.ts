@@ -10,7 +10,6 @@ import type { LogEntry } from '#logger.js';
 import { getRecentLogs } from '#logger.js';
 import { hasPermission, isSubsetPermission, PermissionFlag } from '#permissions.js';
 import { canGrantBits } from '#dashboardAdminRules.js';
-import { lookupAppMetadata, searchApps } from '#scheduler/itunes.js';
 import { requirePermission, requireSession } from '#session.js';
 import { recordDashboardSessionActivity } from '#dashboardActivity.js';
 import { canAccessProject, dashboardHistoryEntry } from '#dashboardJobPresentation.js';
@@ -19,11 +18,7 @@ import { getDeviceHealth, getDeviceInstallBlocker, getDeviceReadiness } from '#d
 import { logBelongsToProject } from '#dashboardLogPresentation.js';
 import { getDiskUsage } from '#util/diskUsage.js';
 import { rateLimitPerUser } from '#util/rateLimit.js';
-import {
-  decorateSearchResults,
-  getVerifiedTestFlightCatalog,
-  TestFlightCatalogUnavailableError,
-} from '#testflightSubscriptions.js';
+import { getVerifiedTestFlightCatalog, TestFlightCatalogUnavailableError } from '#testflightSubscriptions.js';
 import { listAppVersions } from '#versions.js';
 import {
   artifactDownloadName,
@@ -61,13 +56,11 @@ import {
   getUserPriority,
   getWatchDispatchTargets,
   getWebhookDeliveryLog,
-  getAppCatalogEntries,
   getAppCatalogStats,
   type JobHistoryEntry,
   listRoles,
   recordAudit,
   setDiscordGuilds,
-  upsertAppCatalogEntries,
   verifyLatestDatabaseBackup,
 } from '#store/state.js';
 
@@ -477,114 +470,6 @@ dashboardRouter.get('/v1/dashboard/support-bundle', canManageWatches, (req, res)
 });
 
 const BUNDLE_ID_RE = /^[A-Za-z0-9.-]{3,200}$/;
-
-dashboardRouter.get('/v1/dashboard/search', async (req, res) => {
-  const term = typeof req.query.q === 'string' ? req.query.q.trim() : '';
-  if (!term || term.length > 200) {
-    res.status(400).json({ error: 'query param q is required' });
-    return;
-  }
-
-  try {
-    const results = await decorateSearchResults(await searchApps(term));
-    upsertAppCatalogEntries(
-      results.map((result) => ({
-        bundleId: result.bundleId,
-        displayName: result.trackName,
-        iconUrl: result.artworkUrl,
-        trackId: result.trackId,
-        sellerName: result.sellerName,
-        category: result.category,
-      })),
-    );
-    res.json({ results });
-  } catch (err) {
-    res.status(502).json({ error: String(err) });
-  }
-});
-
-dashboardRouter.get('/v1/dashboard/apps/metadata', async (req, res) => {
-  const rawBundleIds: string = typeof req.query.bundleIds === 'string' ? req.query.bundleIds : '';
-  const parsedBundleIds: string[] = rawBundleIds
-    .split(',')
-    .map((value: string) => value.trim())
-    .filter((value: string) => BUNDLE_ID_RE.test(value));
-  const bundleIds: string[] = Array.from(new Set<string>(parsedBundleIds)).slice(0, 200);
-  if (bundleIds.length === 0) {
-    res.json({ entries: [] });
-    return;
-  }
-
-  const existing = new Map(getAppCatalogEntries(bundleIds).map((entry) => [entry.bundleId, entry]));
-  const missing = bundleIds.filter((bundleId) => !existing.has(bundleId)).slice(0, 40);
-
-  if (missing.length > 0) {
-    const fetched = await Promise.all(
-      missing.map(async (bundleId) => {
-        try {
-          const metadata = await lookupAppMetadata(bundleId);
-          return {
-            bundleId: metadata.bundleId,
-            displayName: metadata.trackName,
-            iconUrl: metadata.artworkUrl,
-            trackId: metadata.trackId,
-            sellerName: metadata.sellerName,
-            category: metadata.category,
-            description: metadata.description,
-            screenshots: metadata.screenshots,
-            releaseNotes: metadata.releaseNotes,
-            price: metadata.price,
-          };
-        } catch {
-          return null;
-        }
-      }),
-    );
-    upsertAppCatalogEntries(fetched.filter((entry): entry is NonNullable<typeof entry> => !!entry));
-  }
-
-  res.json({ entries: getAppCatalogEntries(bundleIds) });
-});
-
-dashboardRouter.get('/v1/dashboard/apps/cache', canViewScheduler, (_req, res) => {
-  res.json(getAppCatalogStats());
-});
-
-dashboardRouter.post('/v1/dashboard/apps/metadata/refresh', canManageWatches, async (req, res) => {
-  const rawBundleIds: unknown[] = Array.isArray(req.body?.bundleIds) ? req.body.bundleIds : [];
-  const validBundleIds = rawBundleIds.filter(
-    (bundleId): bundleId is string => typeof bundleId === 'string' && BUNDLE_ID_RE.test(bundleId),
-  );
-  const bundleIds = Array.from(new Set<string>(validBundleIds)).slice(0, 40);
-  if (bundleIds.length === 0) {
-    res.status(400).json({ error: 'at least one valid bundle ID is required' });
-    return;
-  }
-
-  const fetched = await Promise.all(
-    bundleIds.map(async (bundleId) => {
-      try {
-        const metadata = await lookupAppMetadata(bundleId);
-        return {
-          bundleId: metadata.bundleId,
-          displayName: metadata.trackName,
-          iconUrl: metadata.artworkUrl,
-          trackId: metadata.trackId,
-          sellerName: metadata.sellerName,
-          category: metadata.category,
-          description: metadata.description,
-          screenshots: metadata.screenshots,
-          releaseNotes: metadata.releaseNotes,
-          price: metadata.price,
-        };
-      } catch {
-        return null;
-      }
-    }),
-  );
-  const entries = upsertAppCatalogEntries(fetched.filter((entry): entry is NonNullable<typeof entry> => !!entry));
-  res.json({ entries });
-});
 
 const EXTERNAL_VERSION_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 

@@ -1,0 +1,77 @@
+import { Type, type Static } from '@sinclair/typebox';
+import type { ApiErrorEnvelope } from '#contracts.js';
+import { bundleIdSchema, identifierSchema } from '#apiCommonContracts.js';
+
+const additionalProperties = { additionalProperties: true } as const;
+
+export const dashboardAppSearchQuerySchema = Type.Object({ q: Type.String({ minLength: 1, maxLength: 200 }) }, additionalProperties);
+export const dashboardAppSearchResultSchema = Type.Object({
+  bundleId: bundleIdSchema,
+  trackId: Type.Integer({ minimum: 1 }),
+  trackName: Type.String(),
+  version: Type.String(),
+  sellerName: Type.String(),
+  artworkUrl: Type.String(),
+  price: Type.Number(),
+  category: Type.Optional(Type.String()),
+  testflight: Type.Optional(Type.Object({
+    appId: Type.Integer({ minimum: 1 }),
+    devices: Type.Array(Type.Object({ id: identifierSchema, name: Type.String() }, additionalProperties)),
+    lastVerifiedAt: Type.Number(),
+  }, additionalProperties)),
+}, additionalProperties);
+export const dashboardAppSearchResponseSchema = Type.Object({ results: Type.Array(dashboardAppSearchResultSchema) }, additionalProperties);
+export const dashboardAppMetadataQuerySchema = Type.Object({
+  bundleIds: Type.Optional(Type.String({ maxLength: 20_000 })),
+}, additionalProperties);
+export const dashboardAppCatalogEntrySchema = Type.Object({
+  bundleId: bundleIdSchema,
+  displayName: Type.String(),
+  iconUrl: Type.Optional(Type.String()),
+  trackId: Type.Optional(Type.Integer({ minimum: 1 })),
+  sellerName: Type.Optional(Type.String()),
+  category: Type.Optional(Type.String()),
+  description: Type.Optional(Type.String()),
+  screenshots: Type.Optional(Type.Array(Type.String())),
+  releaseNotes: Type.Optional(Type.String()),
+  price: Type.Optional(Type.Number()),
+  updatedAt: Type.Number(),
+}, additionalProperties);
+export const dashboardAppMetadataResponseSchema = Type.Object({ entries: Type.Array(dashboardAppCatalogEntrySchema) }, additionalProperties);
+export const dashboardAppCatalogStatsResponseSchema = Type.Object({
+  entries: Type.Integer({ minimum: 0 }),
+  icons: Type.Integer({ minimum: 0 }),
+  oldestUpdatedAt: Type.Optional(Type.Number()),
+  newestUpdatedAt: Type.Optional(Type.Number()),
+}, additionalProperties);
+export const dashboardAppMetadataRefreshBodySchema = Type.Object({
+  bundleIds: Type.Array(Type.Unknown(), { minItems: 1 }),
+}, additionalProperties);
+
+export type DashboardAppSearchQuery = Static<typeof dashboardAppSearchQuerySchema>;
+export type DashboardAppSearchResponse = Static<typeof dashboardAppSearchResponseSchema>;
+export type DashboardAppMetadataQuery = Static<typeof dashboardAppMetadataQuerySchema>;
+export type DashboardAppMetadataResponse = Static<typeof dashboardAppMetadataResponseSchema>;
+export type DashboardAppCatalogStatsResponse = Static<typeof dashboardAppCatalogStatsResponseSchema>;
+export type DashboardAppMetadataRefreshBody = Static<typeof dashboardAppMetadataRefreshBodySchema>;
+
+type CommonRouteErrors = { 400: ApiErrorEnvelope; 401: ApiErrorEnvelope; 403: ApiErrorEnvelope; 500: ApiErrorEnvelope };
+
+export type DashboardAppSearchRoute = {
+  Querystring: DashboardAppSearchQuery;
+  Reply: { 200: DashboardAppSearchResponse; 502: ApiErrorEnvelope } & CommonRouteErrors;
+};
+
+export type DashboardAppMetadataRoute = {
+  Querystring: DashboardAppMetadataQuery;
+  Reply: { 200: DashboardAppMetadataResponse } & CommonRouteErrors;
+};
+
+export type DashboardAppCatalogStatsRoute = {
+  Reply: { 200: DashboardAppCatalogStatsResponse; 401: ApiErrorEnvelope } & Pick<CommonRouteErrors, 403 | 500>;
+};
+
+export type DashboardAppMetadataRefreshRoute = {
+  Body: DashboardAppMetadataRefreshBody;
+  Reply: { 200: DashboardAppMetadataResponse } & CommonRouteErrors;
+};

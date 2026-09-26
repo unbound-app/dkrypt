@@ -1,0 +1,225 @@
+import { expect, test } from 'bun:test';
+import Fastify from 'fastify';
+import { TypeBoxTypeProvider } from '@fastify/type-provider-typebox';
+import type { Response } from '#http.js';
+import { PermissionFlag } from '#permissions.js';
+import { dashboardRouter } from '#routes/dashboard.js';
+import { createDashboardAppRoutes } from '#routes/dashboardAppRoutes.js';
+import { setSessionCookie } from '#session.js';
+import type { AppCatalogEntry } from '#store/state.js';
+
+function sessionCookie(permissions: bigint): string {
+  let value = '';
+  const response = { setHeader: (_name: string, cookie: string) => { value = cookie; } } as unknown as Response;
+  setSessionCookie(response, { sub: 'root', permissions });
+  return value.split(';', 1)[0];
+}
+
+test('app search and metadata endpoints are not registered through the legacy router', () => {
+  const routes = dashboardRouter.routes.map((route) => `${route.method} ${route.path}`);
+  expect(routes).not.toContain('GET /v1/dashboard/search');
+  expect(routes).not.toContain('GET /v1/dashboard/apps/metadata');
+  expect(routes).not.toContain('GET /v1/dashboard/apps/cache');
+  expect(routes).not.toContain('POST /v1/dashboard/apps/metadata/refresh');
+});
+
+test('app search decorates TestFlight shortcuts and refreshes only missing catalog entries', async () => {
+  const catalog = new Map<string, AppCatalogEntry>();
+  const lookups: string[] = [];
+  const server = Fastify().withTypeProvider<TypeBoxTypeProvider>();
+  await server.register(createDashboardAppRoutes({
+    searchApps: async (term) => {
+      expect(term).toBe('Example app');
+      return [{
+        bundleId: 'com.example.app',
+        trackId: 12345,
+        trackName: 'Example app',
+        version: '1.0',
+        sellerName: 'Example seller',
+        artworkUrl: 'https://example.com/icon.png',
+        price: 0,
+        category: 'Utilities',
+      }];
+    },
+    decorateSearchResults: async (results) => results.map((result) => ({
+      ...result,
+      testflight: { appId: result.trackId, devices: [{ id: 'ipad', name: 'iPad' }], lastVerifiedAt: 123 },
+    })),
+    lookupAppMetadata: async (bundleId) => {
+      lookups.push(bundleId);
+      return {
+        bundleId,
+        trackId: 56789,
+        trackName: 'Cached metadata',
+        sellerName: 'Example seller',
+        artworkUrl: 'https://example.com/metadata.png',
+        version: '2.0',
+        category: 'Utilities',
+        description: 'App description',
+        screenshots: ['https://example.com/screenshot.png'],
+        releaseNotes: 'What is new',
+        price: 0,
+      };
+    },
+    getAppCatalogEntries: (bundleIds) => bundleIds.flatMap((bundleId) => catalog.get(bundleId) ?? []),
+    getAppCatalogStats: () => ({ entries: catalog.size, icons: catalog.size, oldestUpdatedAt: 123, newestUpdatedAt: 456 }),
+    upsertAppCatalogEntries: (entries) => entries.map((entry) => {
+      const stored = { ...entry, updatedAt: 123 };
+      catalog.set(entry.bundleId, stored);
+      return stored;
+    }),
+  }));
+
+  try {
+    const cookie = sessionCookie(0n);
+    const search = await server.inject({ method: 'GET', url: '/v1/dashboard/search?q=%20Example%20app%20', headers: { cookie } });
+    const metadata = await server.inject({
+      method: 'GET',
+      url: '/v1/dashboard/apps/metadata?bundleIds=com.example.app,com.example.missing,com.example.missing,bad!',
+      headers: { cookie },
+    });
+    const refresh = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/apps/metadata/refresh',
+      headers: { cookie: sessionCookie(PermissionFlag.manageAutomation) },
+      payload: { bundleIds: ['com.example.refresh', 'com.example.refresh'] },
+    });
+
+    expect(search.statusCode).toBe(200);
+    expect(JSON.parse(search.body)).toMatchObject({ results: [{ testflight: { appId: 12345, devices: [{ id: 'ipad' }] } }] });
+    expect(metadata.statusCode).toBe(200);
+    expect(JSON.parse(metadata.body)).toMatchObject({ entries: [
+      { bundleId: 'com.example.app', displayName: 'Example app' },
+      { bundleId: 'com.example.missing', displayName: 'Cached metadata' },
+    ] });
+    expect(refresh.statusCode).toBe(200);
+    expect(JSON.parse(refresh.body)).toMatchObject({ entries: [{ bundleId: 'com.example.refresh' }] });
+    expect(lookups).toEqual(['com.example.missing', 'com.example.refresh']);
+  } finally {
+    await server.close();
+  }
+});
+
+test('app catalog cache and refresh routes retain their manager permissions', async () => {
+  const server = Fastify().withTypeProvider<TypeBoxTypeProvider>();
+  await server.register(createDashboardAppRoutes({ getAppCatalogStats: () => ({ entries: 9, icons: 8 }) }));
+
+  try {
+    const deniedCache = await server.inject({
+      method: 'GET',
+      url: '/v1/dashboard/apps/cache',
+      headers: { cookie: sessionCookie(0n) },
+    });
+    const allowedCache = await server.inject({
+      method: 'GET',
+      url: '/v1/dashboard/apps/cache',
+      headers: { cookie: sessionCookie(PermissionFlag.viewAutomation) },
+    });
+    const deniedRefresh = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/apps/metadata/refresh',
+      headers: { cookie: sessionCookie(0n) },
+      payload: { bundleIds: ['com.example.app'] },
+    });
+
+    expect(deniedCache.statusCode).toBe(403);
+    expect(allowedCache.statusCode).toBe(200);
+    expect(allowedCache.json()).toMatchObject({ entries: 9, icons: 8 });
+    expect(deniedRefresh.statusCode).toBe(403);
+  } finally {
+    await server.close();
+  }
+});
+
+test('metadata refresh filters malformed IDs and caps work at forty unique apps', async () => {
+  const catalog = new Map<string, AppCatalogEntry>();
+  const lookups: string[] = [];
+  const server = Fastify().withTypeProvider<TypeBoxTypeProvider>();
+  await server.register(createDashboardAppRoutes({
+    lookupAppMetadata: async (bundleId) => {
+      lookups.push(bundleId);
+      return {
+        bundleId,
+        trackId: 12345,
+        trackName: bundleId,
+        sellerName: 'Example seller',
+        artworkUrl: 'https://example.com/icon.png',
+        version: '1.0',
+      };
+    },
+    getAppCatalogEntries: (bundleIds) => bundleIds.flatMap((bundleId) => catalog.get(bundleId) ?? []),
+    upsertAppCatalogEntries: (entries) => entries.map((entry) => {
+      const stored = { ...entry, updatedAt: 123 };
+      catalog.set(entry.bundleId, stored);
+      return stored;
+    }),
+  }));
+
+  try {
+    const bundleIds = [
+      ...Array.from({ length: 42 }, (_, index) => `com.example.app${index}`),
+      'not a bundle id',
+      null,
+    ];
+    const response = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/apps/metadata/refresh',
+      headers: { cookie: sessionCookie(PermissionFlag.manageAutomation) },
+      payload: { bundleIds },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(lookups).toHaveLength(40);
+    expect(lookups[0]).toBe('com.example.app0');
+    expect(lookups.at(-1)).toBe('com.example.app39');
+    expect(JSON.parse(response.body).entries).toHaveLength(40);
+  } finally {
+    await server.close();
+  }
+});
+
+test('metadata refresh does not return stale cached entries after a lookup fails', async () => {
+  const server = Fastify().withTypeProvider<TypeBoxTypeProvider>();
+  await server.register(createDashboardAppRoutes({
+    lookupAppMetadata: async () => { throw new Error('lookup unavailable'); },
+    getAppCatalogEntries: () => [{
+      bundleId: 'com.example.stale',
+      displayName: 'Old name',
+      updatedAt: 123,
+    }],
+    upsertAppCatalogEntries: () => [],
+  }));
+
+  try {
+    const response = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/apps/metadata/refresh',
+      headers: { cookie: sessionCookie(PermissionFlag.manageAutomation) },
+      payload: { bundleIds: ['com.example.stale'] },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body)).toEqual({ entries: [] });
+  } finally {
+    await server.close();
+  }
+});
+
+test('metadata refresh rejects batches with no valid bundle IDs', async () => {
+  const server = Fastify().withTypeProvider<TypeBoxTypeProvider>();
+  await server.register(createDashboardAppRoutes());
+
+  try {
+    const response = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/apps/metadata/refresh',
+      headers: { cookie: sessionCookie(PermissionFlag.manageAutomation) },
+      payload: { bundleIds: ['invalid bundle id', null] },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: 'at least one valid bundle ID is required' });
+  } finally {
+    await server.close();
+  }
+});
