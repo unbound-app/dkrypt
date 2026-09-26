@@ -59350,6 +59350,46 @@
               }
             }
           },
+          "502": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
           "503": {
             "description": "Default Response",
             "content": {
@@ -59901,7 +59941,8 @@
                 "properties": {
                   "projectId": {
                     "minLength": 1,
-                    "maxLength": 200,
+                    "maxLength": 80,
+                    "pattern": "^[A-Za-z0-9_-]{1,80}$",
                     "type": "string"
                   },
                   "bundleId": {
@@ -61230,7 +61271,8 @@
           {
             "schema": {
               "minLength": 1,
-              "maxLength": 200,
+              "maxLength": 80,
+              "pattern": "^[A-Za-z0-9_-]{1,80}$",
               "type": "string"
             },
             "in": "query",
@@ -61638,7 +61680,8 @@
           {
             "schema": {
               "minLength": 1,
-              "maxLength": 200,
+              "maxLength": 80,
+              "pattern": "^[A-Za-z0-9_-]{1,80}$",
               "type": "string"
             },
             "in": "query",
@@ -62305,6 +62348,46 @@
               }
             }
           },
+          "502": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
           "503": {
             "description": "Default Response",
             "content": {
@@ -62672,6 +62755,46 @@
               }
             }
           },
+          "502": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
           "503": {
             "description": "Default Response",
             "content": {
@@ -62731,7 +62854,8 @@
                 "properties": {
                   "projectId": {
                     "minLength": 1,
-                    "maxLength": 200,
+                    "maxLength": 80,
+                    "pattern": "^[A-Za-z0-9_-]{1,80}$",
                     "type": "string"
                   },
                   "bundleId": {
@@ -63719,7 +63843,8 @@
                       "properties": {
                         "projectId": {
                           "minLength": 1,
-                          "maxLength": 200,
+                          "maxLength": 80,
+                          "pattern": "^[A-Za-z0-9_-]{1,80}$",
                           "type": "string"
                         },
                         "bundleId": {
@@ -64373,14 +64498,29 @@
                   "additionalProperties": true,
                   "type": "object",
                   "required": [
-                    "appStore",
+                    "ok",
+                    "wouldDispatch",
+                    "reason",
                     "testflight"
                   ],
                   "properties": {
-                    "appStore": {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "itunesVersion": {
+                      "type": "string"
+                    },
+                    "normalizedVersion": {
+                      "type": "string"
+                    },
+                    "alreadyReleased": {
+                      "type": "boolean"
+                    },
+                    "wouldDispatch": {
+                      "type": "boolean"
+                    },
+                    "reason": {
+                      "type": "string"
                     },
                     "testflight": {
                       "additionalProperties": true,
@@ -65169,14 +65309,29 @@
                   "additionalProperties": true,
                   "type": "object",
                   "required": [
-                    "appStore",
+                    "ok",
+                    "wouldDispatch",
+                    "reason",
                     "testflight"
                   ],
                   "properties": {
-                    "appStore": {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "itunesVersion": {
+                      "type": "string"
+                    },
+                    "normalizedVersion": {
+                      "type": "string"
+                    },
+                    "alreadyReleased": {
+                      "type": "boolean"
+                    },
+                    "wouldDispatch": {
+                      "type": "boolean"
+                    },
+                    "reason": {
+                      "type": "string"
                     },
                     "testflight": {
                       "additionalProperties": true,
@@ -65918,18 +66073,6 @@
         "tags": [
           "dashboard"
         ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "additionalProperties": true,
-                "type": "object",
-                "properties": {}
-              }
-            }
-          }
-        },
         "parameters": [
           {
             "schema": {

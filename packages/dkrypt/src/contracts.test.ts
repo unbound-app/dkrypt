@@ -43,6 +43,28 @@ test('every versioned route is represented in generated OpenAPI', async () => {
   }
 });
 
+test('GitHub automation routes document their upstream failure envelopes', async () => {
+  const server = await buildServer({ includePublicRoutes: false });
+  try {
+    await server.ready();
+    const document = server.swagger() as {
+      paths?: Record<string, Record<string, { responses?: Record<string, { content?: Record<string, { schema?: { properties?: Record<string, unknown> } }> }> }>>;
+    };
+    const routes = [
+      ['/v1/dashboard/github/rate-limit', 'get'],
+      ['/v1/dashboard/github/repos', 'get'],
+      ['/v1/dashboard/github/workflows', 'get'],
+    ] as const;
+    for (const [path, method] of routes) {
+      const schema = document.paths?.[path]?.[method]?.responses?.['502']?.content?.['application/json']?.schema;
+      expect(schema).toBeDefined();
+      expect(Object.keys(schema?.properties ?? {})).toEqual(expect.arrayContaining(['error', 'code', 'message', 'requestId', 'retryable']));
+    }
+  } finally {
+    await server.close();
+  }
+});
+
 test('idempotency header contracts match their endpoint validators', async () => {
   const server = await buildServer({ includePublicRoutes: false });
   try {

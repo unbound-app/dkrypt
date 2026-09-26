@@ -1,9 +1,8 @@
 import { Router, type Request, type Response } from '#http.js';
 import { projectIdentifierPattern } from '#apiCommonContracts.js';
-import { validate as validateCronExpr } from 'node-cron';
 import { config, discordBotEnabled } from '#config.js';
 import { fetchBotGuilds, fetchGuildRoles } from '#discord.js';
-import { dashboardEvents, emitJobsChanged, getOnlineUsernames, nextDashboardSequence, registerDashboardConnection, registerPresence, unregisterPresence } from '#events.js';
+import { dashboardEvents, getOnlineUsernames, nextDashboardSequence, registerDashboardConnection, registerPresence, unregisterPresence } from '#events.js';
 import { blockDuringMaintenance } from '#maintenance.js';
 import { jobSummary, streamFilePath } from '#jobs/http.js';
 import { cancelJob, enqueueDecryptJob, getActiveJobs, getJob, getQueueInfo, prioritizeQueuedJob, reorderQueue } from '#jobs/store.js';
@@ -11,8 +10,6 @@ import type { LogEntry } from '#logger.js';
 import { getRecentLogs } from '#logger.js';
 import { hasPermission, isSubsetPermission, PermissionFlag } from '#permissions.js';
 import { canGrantBits } from '#dashboardAdminRules.js';
-import { applyWatchSchedules, checkForTestFlightUpdate, checkForUpdate, triggerTickNow } from '#scheduler/index.js';
-import { getGitHubRateLimitBudget, listDispatchRepos, listRepoWorkflows, validateDispatchTarget } from '#scheduler/github.js';
 import { lookupAppMetadata, searchApps } from '#scheduler/itunes.js';
 import { requirePermission, requireSession } from '#session.js';
 import { recordDashboardSessionActivity } from '#dashboardActivity.js';
@@ -21,9 +18,8 @@ import { buildDashboardOverview } from '#dashboardOverview.js';
 import { getDeviceHealth, getDeviceInstallBlocker, getDeviceReadiness } from '#deviceHealth.js';
 import { logBelongsToProject } from '#dashboardLogPresentation.js';
 import { getTestFlightBridgeDiagnostics, listBuilds, listTrains, type TFBuild } from '#testflight.js';
-import { nextCronRuns } from '#util/cron.js';
 import { getDiskUsage } from '#util/diskUsage.js';
-import { rateLimitPerUser } from '#util/rateLimit.js';
+import { externalRequestRateLimiter, rateLimitPerUser } from '#util/rateLimit.js';
 import {
   decorateSearchResults,
   getVerifiedTestFlightCatalog,
@@ -41,12 +37,9 @@ import {
   touchArtifact,
 } from '#artifacts.js';
 import {
-  type AppWatch,
   createDiscordRolePerk,
-  createWatch,
   DEFAULT_PROJECT_ID,
   deleteDiscordRolePerk,
-  deleteWatch,
   effectiveBitsForRoleIds,
   getAllJobHistory,
   getAuditLog,
@@ -65,22 +58,17 @@ import {
   getPrimaryDevice,
   getSchedulerRunHistory,
   getStateDatabaseStatus,
-  getGitHubBudgetTelemetry,
   getWatchHealthRollup,
   getUserPriority,
-  getWatch,
-  getWatchConfigIssues,
   getWatchDispatchTargets,
   getWebhookDeliveryLog,
   getAppCatalogEntries,
   getAppCatalogStats,
-  isWatchSchedulable,
   type JobHistoryEntry,
   listRoles,
   recordAudit,
   setDiscordGuilds,
   upsertAppCatalogEntries,
-  updateWatch,
   verifyLatestDatabaseBackup,
 } from '#store/state.js';
 
@@ -90,7 +78,6 @@ const canViewScheduler = requirePermission(PermissionFlag.viewAutomation, Permis
 const canManageWatches = requirePermission(PermissionFlag.manageAutomation);
 const canManageSchedulerSettings = requirePermission(PermissionFlag.manageAutomation);
 
-const canTriggerDispatch = requirePermission(PermissionFlag.manageAutomation);
 const canViewLogs = requirePermission(PermissionFlag.viewLogs);
 const canViewUsers = requirePermission(PermissionFlag.viewUsers, PermissionFlag.manageUsers);
 const canViewDiscordPerks = requirePermission(PermissionFlag.viewRoles, PermissionFlag.manageRoles);
@@ -103,7 +90,7 @@ dashboardRouter.use((_req, res, next) => {
   next();
 });
 
-const deviceOrExternalRateLimit = rateLimitPerUser(10, 60_000);
+const deviceOrExternalRateLimit = rateLimitPerUser(10, 60_000, externalRequestRateLimiter);
 const jobDiffRateLimit = rateLimitPerUser(30, 60_000);
 
 dashboardRouter.get('/v1/dashboard/events', (req, res) => {
@@ -745,386 +732,6 @@ dashboardRouter.get('/v1/dashboard/versions/:bundleId', async (req, res) => {
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
   }
-});
-
-dashboardRouter.get('/v1/dashboard/github/rate-limit', canManageWatches, async (_req, res) => {
-  if (!config.ghToken) {
-    res.status(409).json({ error: 'GH_TOKEN is not configured' });
-    return;
-  }
-  try {
-    const budget = await getGitHubRateLimitBudget(true);
-    res.json(budget ? { limit: budget.limit, remaining: budget.remaining, reset: Math.floor(budget.resetAt / 1000) } : {});
-  } catch (err) {
-    res.status(502).json({ error: `GitHub rate-limit lookup failed: ${String(err)}` });
-  }
-});
-
-function serializeWatch(w: AppWatch) {
-  return { ...w, schedulable: isWatchSchedulable(w), configIssues: getWatchConfigIssues(w) };
-}
-
-dashboardRouter.get('/v1/dashboard/watches', canViewScheduler, (_req, res) => {
-  res.json({ watches: getEffectiveWatches()
-    .filter((watch) => canAccessProject(res.locals.session.sub, res.locals.session.permissions, watch.projectId ?? DEFAULT_PROJECT_ID))
-    .map(serializeWatch) });
-});
-
-dashboardRouter.get('/v1/dashboard/watches/export', canManageWatches, (_req, res) => {
-  res.setHeader('Content-Disposition', 'attachment; filename="dkrypt-watches.json"');
-  res.json({ version: 1, watches: getEffectiveWatches().filter((watch) => canAccessProject(res.locals.session.sub, res.locals.session.permissions, watch.projectId ?? DEFAULT_PROJECT_ID)) });
-});
-
-dashboardRouter.get('/v1/dashboard/watches/health', canViewScheduler, (_req, res) => {
-  const accessibleWatchIds = new Set(getEffectiveWatches()
-    .filter((watch) => canAccessProject(res.locals.session.sub, res.locals.session.permissions, watch.projectId ?? DEFAULT_PROJECT_ID))
-    .map((watch) => watch.id));
-  res.json({ watches: getWatchHealthRollup().filter((watch) => accessibleWatchIds.has(watch.watchId)) });
-});
-
-dashboardRouter.get('/v1/dashboard/watches/calendar', canViewScheduler, (req, res) => {
-  const projectId = resolveRequestProjectId(req, res, 'query');
-  if (!projectId) return;
-  const hours = Math.min(Math.max(Number.parseInt(String(req.query.hours ?? '24'), 10) || 24, 1), 168);
-  const requestedFromAt = Number.parseInt(String(req.query.fromAt ?? ''), 10);
-  const now = Date.now();
-  const fromAt = Number.isFinite(requestedFromAt) && Math.abs(requestedFromAt - now) <= 90 * 24 * 60 * 60 * 1000 ? requestedFromAt : now;
-  const untilAt = fromAt + hours * 60 * 60 * 1000;
-  const maxRuns = 200;
-  const runs: { watchId: string; bundleId: string; at: number }[] = [];
-  const pending = getEffectiveWatches()
-    .filter((watch) => (watch.projectId ?? DEFAULT_PROJECT_ID) === projectId && isWatchSchedulable(watch))
-    .flatMap((watch) => {
-      const at = nextCronRuns(watch.pollCron, untilAt, fromAt, 1)[0];
-      return at === undefined ? [] : [{ watch, at }];
-    });
-  while (pending.length > 0 && runs.length < maxRuns) {
-    pending.sort((a, b) => a.at - b.at);
-    const next = pending.shift() as { watch: AppWatch; at: number };
-    runs.push({ watchId: next.watch.id, bundleId: next.watch.bundleId, at: next.at });
-    const followingAt = nextCronRuns(next.watch.pollCron, untilAt, next.at, 1)[0];
-    if (followingAt !== undefined) pending.push({ watch: next.watch, at: followingAt });
-  }
-  res.json({ fromAt, untilAt, runs, truncated: pending.length > 0 });
-});
-
-dashboardRouter.get('/v1/dashboard/github/budget-history', canManageWatches, (req, res) => {
-  const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit ?? '30'), 10) || 30, 1), 200);
-  const projectId = resolveRequestProjectId(req, res, 'query');
-  if (!projectId) return;
-  const watchIds = new Set(getEffectiveWatches()
-    .filter((watch) => (watch.projectId ?? DEFAULT_PROJECT_ID) === projectId)
-    .map((watch) => watch.id));
-  res.json({ entries: getGitHubBudgetTelemetry(200).filter((entry) => watchIds.has(entry.watchId)).slice(0, limit) });
-});
-
-dashboardRouter.get('/v1/dashboard/github/repos', canManageWatches, async (_req, res) => {
-  if (!config.ghToken) {
-    res.status(409).json({ error: 'GH_TOKEN is not configured' });
-    return;
-  }
-
-  try {
-    const repos = await listDispatchRepos();
-    res.json({ repos });
-  } catch (err) {
-    res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
-  }
-});
-
-dashboardRouter.get('/v1/dashboard/github/workflows', canManageWatches, async (req, res) => {
-  if (!config.ghToken) {
-    res.status(409).json({ error: 'GH_TOKEN is not configured' });
-    return;
-  }
-
-  const repo = typeof req.query.repo === 'string' ? req.query.repo.trim() : '';
-  if (!repo || !/^[\w.-]+\/[\w.-]+$/.test(repo)) {
-    res.status(400).json({ error: 'repo query must be owner/repo' });
-    return;
-  }
-
-  try {
-    const workflows = await listRepoWorkflows(repo);
-    res.json({ workflows });
-  } catch (err) {
-    res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
-  }
-});
-
-interface WatchInput {
-  projectId?: string;
-  bundleId: string;
-  repo: string;
-  ghWorkflowFile: string;
-  dispatchTargets?: { repo: string; ghWorkflowFile: string; mode?: 'repository_dispatch' | 'workflow_dispatch'; ref?: string; inputs?: Record<string, string> }[];
-  pollCron: string;
-  enabled?: boolean;
-  webhookUrl?: string;
-  testFlightPolicy?: 'latest' | 'latestNonExpired' | 'train';
-  testFlightTrain?: string;
-}
-
-function parseWatchInput(body: unknown): WatchInput | undefined {
-  if (typeof body !== 'object' || body === null) return undefined;
-  const b = body as Record<string, unknown>;
-  const bundleId = typeof b.bundleId === 'string' ? b.bundleId.trim() : '';
-  if (!bundleId) return undefined;
-  const dispatchTargets = Array.isArray(b.dispatchTargets)
-    ? b.dispatchTargets
-        .filter((target): target is Record<string, unknown> => typeof target === 'object' && target !== null)
-        .map((target) => ({
-          repo: typeof target.repo === 'string' ? target.repo.trim() : '',
-          ghWorkflowFile: typeof target.ghWorkflowFile === 'string' ? target.ghWorkflowFile.trim() : '',
-          mode: target.mode === 'workflow_dispatch' ? 'workflow_dispatch' as const : 'repository_dispatch' as const,
-          ref: typeof target.ref === 'string' ? target.ref.trim() || undefined : undefined,
-          inputs: parseDispatchInputs(target.inputs),
-        }))
-        .filter((target) => /^[\w.-]+\/[\w.-]+$/.test(target.repo) && target.ghWorkflowFile.length > 0)
-    : undefined;
-  const primary = dispatchTargets?.[0];
-  return {
-    projectId: typeof b.projectId === 'string' ? b.projectId : undefined,
-    bundleId,
-    repo: primary?.repo ?? (typeof b.repo === 'string' ? b.repo.trim() : ''),
-    ghWorkflowFile: primary?.ghWorkflowFile ?? (typeof b.ghWorkflowFile === 'string' ? b.ghWorkflowFile.trim() : 'remote-ipa-update.yml'),
-    dispatchTargets,
-    pollCron: typeof b.pollCron === 'string' ? b.pollCron.trim() : '0 * * * *',
-    enabled: typeof b.enabled === 'boolean' ? b.enabled : undefined,
-    webhookUrl: typeof b.webhookUrl === 'string' ? b.webhookUrl.trim() || undefined : undefined,
-    testFlightPolicy:
-      b.testFlightPolicy === 'latestNonExpired' || b.testFlightPolicy === 'train' ? b.testFlightPolicy : 'latest',
-    testFlightTrain: typeof b.testFlightTrain === 'string' ? b.testFlightTrain.trim() || undefined : undefined,
-  };
-}
-
-function parseDispatchInputs(value: unknown): Record<string, string> | undefined {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
-  const inputs = Object.entries(value as Record<string, unknown>)
-    .filter((entry): entry is [string, string] => entry[0].trim().length > 0 && typeof entry[1] === 'string')
-    .slice(0, 20);
-  if (inputs.length === 0) return undefined;
-  return Object.fromEntries(inputs.map(([key, item]) => [key.trim().slice(0, 100), item.trim().slice(0, 500)]));
-}
-
-dashboardRouter.post('/v1/dashboard/watches', canManageWatches, (req, res) => {
-  const input = parseWatchInput(req.body);
-  if (!input) {
-    res.status(400).json({ error: 'bundleId is required' });
-    return;
-  }
-  const projectId = resolveRequestProjectId(req, res, 'body', { requireActive: true });
-  if (!projectId) return;
-  input.projectId = projectId;
-  if (input.pollCron && !validateCronExpr(input.pollCron)) {
-    res.status(400).json({ error: 'pollCron is not a valid cron expression' });
-    return;
-  }
-  if (input.testFlightPolicy === 'train' && !input.testFlightTrain) {
-    res.status(400).json({ error: 'testFlightTrain is required when testFlightPolicy is train' });
-    return;
-  }
-  const result = createWatch(input, res.locals.session.sub);
-  if (!result.ok) {
-    res.status(409).json({ error: result.error });
-    return;
-  }
-  applyWatchSchedules();
-  emitJobsChanged();
-  res.status(201).json(serializeWatch(result.watch as AppWatch));
-});
-
-dashboardRouter.patch('/v1/dashboard/watches/:id', canManageWatches, (req, res) => {
-  const body = (req.body ?? {}) as Record<string, unknown>;
-  const patch: Partial<WatchInput> = {};
-  if (typeof body.bundleId === 'string' && body.bundleId.trim()) patch.bundleId = body.bundleId.trim();
-  if (typeof body.repo === 'string') patch.repo = body.repo.trim();
-  if (typeof body.ghWorkflowFile === 'string') patch.ghWorkflowFile = body.ghWorkflowFile.trim();
-  if (Array.isArray(body.dispatchTargets)) {
-    patch.dispatchTargets = body.dispatchTargets
-      .filter((target): target is Record<string, unknown> => typeof target === 'object' && target !== null)
-        .map((target) => ({
-          repo: typeof target.repo === 'string' ? target.repo.trim() : '',
-          ghWorkflowFile: typeof target.ghWorkflowFile === 'string' ? target.ghWorkflowFile.trim() : '',
-          mode: target.mode === 'workflow_dispatch' ? 'workflow_dispatch' as const : 'repository_dispatch' as const,
-          ref: typeof target.ref === 'string' ? target.ref.trim() || undefined : undefined,
-          inputs: parseDispatchInputs(target.inputs),
-      }))
-      .filter((target) => /^[\w.-]+\/[\w.-]+$/.test(target.repo) && target.ghWorkflowFile.length > 0);
-    if (patch.dispatchTargets[0]) {
-      patch.repo = patch.dispatchTargets[0].repo;
-      patch.ghWorkflowFile = patch.dispatchTargets[0].ghWorkflowFile;
-    }
-  }
-  if (typeof body.pollCron === 'string') patch.pollCron = body.pollCron.trim();
-  if (typeof body.enabled === 'boolean') patch.enabled = body.enabled;
-  if (typeof body.webhookUrl === 'string') patch.webhookUrl = body.webhookUrl.trim() || undefined;
-  if (body.testFlightPolicy === 'latest' || body.testFlightPolicy === 'latestNonExpired' || body.testFlightPolicy === 'train') {
-    patch.testFlightPolicy = body.testFlightPolicy;
-  }
-  if (typeof body.testFlightTrain === 'string') patch.testFlightTrain = body.testFlightTrain.trim() || undefined;
-  if (Object.hasOwn(body, 'projectId')) {
-    const projectId = resolveRequestProjectId(req, res, 'body', { requireActive: true });
-    if (!projectId) return;
-    patch.projectId = projectId;
-  }
-
-  if (patch.pollCron && !validateCronExpr(patch.pollCron)) {
-    res.status(400).json({ error: 'pollCron is not a valid cron expression' });
-    return;
-  }
-  const existingWatch = getWatch(req.params.id);
-  if (!existingWatch || !canAccessProject(res.locals.session.sub, res.locals.session.permissions, existingWatch.projectId ?? DEFAULT_PROJECT_ID)) {
-    res.status(404).json({ error: 'watch not found' });
-    return;
-  }
-  if ((patch.testFlightPolicy ?? existingWatch.testFlightPolicy) === 'train' && !(patch.testFlightTrain ?? existingWatch.testFlightTrain)) {
-    res.status(400).json({ error: 'testFlightTrain is required when testFlightPolicy is train' });
-    return;
-  }
-
-  const result = updateWatch(req.params.id, patch, res.locals.session.sub);
-  if (!result.ok) {
-    res.status(result.error === 'watch not found' ? 404 : 409).json({ error: result.error });
-    return;
-  }
-  applyWatchSchedules();
-  emitJobsChanged();
-  res.json(serializeWatch(result.watch as AppWatch));
-});
-
-dashboardRouter.delete('/v1/dashboard/watches/:id', canManageWatches, (req, res) => {
-  const watch = getWatch(req.params.id);
-  if (!watch || !canAccessProject(res.locals.session.sub, res.locals.session.permissions, watch.projectId ?? DEFAULT_PROJECT_ID)) {
-    res.status(404).json({ error: 'watch not found' });
-    return;
-  }
-  const ok = deleteWatch(req.params.id, res.locals.session.sub);
-  if (!ok) {
-    res.status(404).json({ error: 'watch not found' });
-    return;
-  }
-  applyWatchSchedules();
-  emitJobsChanged();
-  res.json({ ok: true });
-});
-
-dashboardRouter.post('/v1/dashboard/watches/import', canManageWatches, (req, res) => {
-  const body = req.body as { watches?: unknown } | undefined;
-  const rawWatches = Array.isArray(body?.watches) ? body.watches : [];
-  if (rawWatches.length === 0 || rawWatches.length > 100) {
-    res.status(400).json({ error: 'watches must contain between 1 and 100 entries' });
-    return;
-  }
-  const imported: AppWatch[] = [];
-  const skipped: string[] = [];
-  for (const rawWatch of rawWatches) {
-    const input = parseWatchInput(rawWatch);
-    if (!input || !validateCronExpr(input.pollCron) || (input.testFlightPolicy === 'train' && !input.testFlightTrain)) {
-      skipped.push('invalid watch');
-      continue;
-    }
-    const projectId = input.projectId ?? DEFAULT_PROJECT_ID;
-    if (!canAccessProject(res.locals.session.sub, res.locals.session.permissions, projectId) || getProject(projectId)?.archivedAt !== undefined) {
-      skipped.push(`${input.bundleId}: project is unavailable`);
-      continue;
-    }
-    input.projectId = projectId;
-    const result = createWatch({ ...input, enabled: false }, res.locals.session.sub);
-    if (result.watch) imported.push(serializeWatch(result.watch));
-    else skipped.push(result.error ?? 'could not import watch');
-  }
-  if (imported.length === 0) {
-    res.status(400).json({ error: skipped[0] ?? 'no watches were imported' });
-    return;
-  }
-  recordAudit(res.locals.session.sub, 'watch.import', 'watches', `${imported.length} imported disabled`);
-  applyWatchSchedules();
-  emitJobsChanged();
-  res.status(201).json({ watches: imported, skipped });
-});
-
-dashboardRouter.post('/v1/dashboard/watches/preview-dispatch-draft', canManageWatches, deviceOrExternalRateLimit, async (req, res) => {
-  const bundleId = typeof req.body?.bundleId === 'string' ? req.body.bundleId.trim() : '';
-  const repo = typeof req.body?.repo === 'string' ? req.body.repo.trim() : '';
-  if (!BUNDLE_ID_RE.test(bundleId) || !repo) {
-    res.status(400).json({ error: 'bundleId and repo are required' });
-    return;
-  }
-  const draft: AppWatch = {
-    id: 'draft',
-    bundleId,
-    repo,
-    ghWorkflowFile: '',
-    pollCron: '',
-    enabled: true,
-    createdAt: 0,
-    updatedAt: 0,
-  };
-  const [appStore, testflight] = await Promise.all([checkForUpdate(draft), checkForTestFlightUpdate(draft)]);
-  res.json({ ...appStore, testflight });
-});
-
-dashboardRouter.post('/v1/dashboard/watches/validate-dispatch-draft', canManageWatches, deviceOrExternalRateLimit, async (req, res) => {
-  const rawTargets: unknown[] = Array.isArray(req.body?.targets) ? req.body.targets : [];
-  if (rawTargets.length === 0 || rawTargets.length > 10) {
-    res.status(400).json({ error: 'provide between 1 and 10 dispatch targets' });
-    return;
-  }
-  const parsed = rawTargets.map((target) => {
-    if (typeof target !== 'object' || target === null) return undefined;
-    const value = target as Record<string, unknown>;
-    const repo = typeof value.repo === 'string' ? value.repo.trim() : '';
-    const ghWorkflowFile = typeof value.ghWorkflowFile === 'string' ? value.ghWorkflowFile.trim() : '';
-    if (!/^[\w.-]+\/[\w.-]+$/.test(repo) || !ghWorkflowFile) return undefined;
-    const rawInputs = typeof value.inputs === 'object' && value.inputs !== null ? value.inputs as Record<string, unknown> : {};
-    const inputs = Object.fromEntries(Object.entries(rawInputs).filter(([, input]) => typeof input === 'string')) as Record<string, string>;
-    return { repo, ghWorkflowFile, mode: value.mode === 'workflow_dispatch' ? 'workflow_dispatch' as const : 'repository_dispatch' as const, ref: typeof value.ref === 'string' && value.ref.trim() ? value.ref.trim() : undefined, inputs };
-  });
-  if (parsed.some((target) => !target)) {
-    res.status(400).json({ error: 'each dispatch target needs a valid repository and workflow' });
-    return;
-  }
-  const results = await Promise.all(parsed.map((target) => validateDispatchTarget(target!)));
-  res.json({ results, ok: results.every((result) => result.ok) });
-});
-
-dashboardRouter.get('/v1/dashboard/watches/:id/preview-dispatch', canTriggerDispatch, deviceOrExternalRateLimit, async (req, res) => {
-  const watch = getWatch(req.params.id);
-  if (!watch || !canAccessProject(res.locals.session.sub, res.locals.session.permissions, watch.projectId ?? DEFAULT_PROJECT_ID)) {
-    res.status(404).json({ error: 'watch not found' });
-    return;
-  }
-  const [appStore, testflight] = await Promise.all([checkForUpdate(watch), checkForTestFlightUpdate(watch)]);
-  res.json({ ...appStore, testflight });
-});
-
-dashboardRouter.get('/v1/dashboard/watches/:id/preview-dispatch/:source', canTriggerDispatch, deviceOrExternalRateLimit, async (req, res) => {
-  const watch = getWatch(req.params.id);
-  if (!watch || !canAccessProject(res.locals.session.sub, res.locals.session.permissions, watch.projectId ?? DEFAULT_PROJECT_ID)) {
-    res.status(404).json({ error: 'watch not found' });
-    return;
-  }
-
-  if (req.params.source === 'app-store') {
-    res.json({ source: 'appStore', result: await checkForUpdate(watch) });
-    return;
-  }
-  if (req.params.source === 'testflight') {
-    res.json({ source: 'testflight', result: await checkForTestFlightUpdate(watch) });
-    return;
-  }
-  res.status(400).json({ error: 'source must be app-store or testflight' });
-});
-
-dashboardRouter.post('/v1/dashboard/watches/:id/trigger-dispatch', canTriggerDispatch, async (req, res) => {
-  const watch = getWatch(req.params.id);
-  if (!watch || !canAccessProject(res.locals.session.sub, res.locals.session.permissions, watch.projectId ?? DEFAULT_PROJECT_ID)) {
-    res.status(404).json({ error: 'watch not found' });
-    return;
-  }
-  const result = await triggerTickNow(req.params.id);
-  res.status(result.ok ? 202 : 409).json(result);
 });
 
 dashboardRouter.get('/v1/dashboard/testflight/:appId/trains', deviceOrExternalRateLimit, async (req, res) => {

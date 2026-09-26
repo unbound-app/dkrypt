@@ -3,7 +3,12 @@ type HttpErrorReply = {
   send(payload: unknown): unknown;
 };
 
-export function createHttpErrorEnvelope(requestId: string, statusCode: number, message: string) {
+export function createHttpErrorEnvelope(
+  requestId: string,
+  statusCode: number,
+  message: string,
+  remediation?: Record<string, unknown>,
+) {
   const publicMessage = statusCode >= 500 ? 'internal server error' : message;
   return {
     error: publicMessage,
@@ -11,6 +16,7 @@ export function createHttpErrorEnvelope(requestId: string, statusCode: number, m
     message: publicMessage,
     requestId,
     retryable: statusCode >= 500,
+    ...(remediation ? { remediation } : {}),
   };
 }
 
@@ -19,6 +25,7 @@ export function sendHttpErrorEnvelope(
   requestId: string,
   statusCode: number,
   message: string,
+  remediation?: Record<string, unknown>,
 ): void {
-  reply.code(statusCode).send(createHttpErrorEnvelope(requestId, statusCode, message));
+  reply.code(statusCode).send(createHttpErrorEnvelope(requestId, statusCode, message, remediation));
 }

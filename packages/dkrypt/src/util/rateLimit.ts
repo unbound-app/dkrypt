@@ -51,9 +51,13 @@ export class FixedWindowRateLimiter {
   }
 }
 
-export function rateLimitPerUser(maxRequests: number, windowMs: number) {
-  const limiter = new FixedWindowRateLimiter(maxRequests, windowMs);
+export const externalRequestRateLimiter = new FixedWindowRateLimiter(10, 60_000);
 
+export function rateLimitPerUser(
+  maxRequests: number,
+  windowMs: number,
+  limiter = new FixedWindowRateLimiter(maxRequests, windowMs),
+) {
   function setHeaders(res: Response, remaining: number, windowStartedAt: number): void {
     res.setHeader('X-RateLimit-Limit', String(maxRequests));
     res.setHeader('X-RateLimit-Remaining', String(Math.max(0, remaining)));

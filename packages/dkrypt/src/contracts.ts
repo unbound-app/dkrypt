@@ -63,7 +63,6 @@ import { dashboardDoctorResponseSchema, dashboardSyntheticResponseSchema } from 
 import { dashboardOverviewQuerySchema, dashboardOverviewResponseSchema } from '#dashboardOverviewContracts.js';
 import {
   dashboardDeviceResponseSchema as DeviceResponse,
-  dashboardDispatchTargetSchema as DispatchTargetInput,
   dashboardWatchResponseSchema as WatchResponse,
   bridgeHeartbeatsSchema,
   deviceTransportStateSchema as DeviceTransportState,
@@ -114,6 +113,30 @@ import {
   dashboardRolesResponseSchema as RolesResponse,
   dashboardRoleUpdateBodySchema,
 } from '#dashboardRoleContracts.js';
+import {
+  dashboardGitHubBudgetHistoryQuerySchema,
+  dashboardGitHubBudgetHistoryResponseSchema,
+  dashboardGitHubRateLimitResponseSchema,
+  dashboardGitHubReposResponseSchema,
+  dashboardGitHubWorkflowsQuerySchema,
+  dashboardGitHubWorkflowsResponseSchema,
+  dashboardWatchCalendarQuerySchema,
+  dashboardWatchCalendarResponseSchema,
+  dashboardWatchDispatchPreviewResponseSchema,
+  dashboardWatchDispatchValidationResponseSchema,
+  dashboardWatchExportResponseSchema,
+  dashboardWatchHealthResponseSchema,
+  dashboardWatchImportBodySchema,
+  dashboardWatchImportResponseSchema,
+  dashboardWatchInputSchema,
+  dashboardWatchListResponseSchema,
+  dashboardWatchParamsSchema,
+  dashboardWatchPatchSchema,
+  dashboardWatchPreviewDraftBodySchema,
+  dashboardWatchSourceParamsSchema,
+  dashboardWatchSourcePreviewResponseSchema,
+  dashboardWatchDispatchValidationBodySchema,
+} from '#dashboardWatchContracts.js';
 import {
   dashboardApiKeyBulkDailyLimitBodySchema,
   dashboardApiKeyBulkExpiryBodySchema,
@@ -543,22 +566,6 @@ const PasskeyOptionsResponse = object({
 const PasskeyMutationResponse = object({ passkey: Type.Optional(PasskeySummaryResponse) });
 const AuthProfileResponse = object({ displayName: Type.String(), linkedProviders: Type.Array(Type.String()) });
 const AuthConnectionResponse = object({ identities: Type.Array(JsonObject), linkedProviders: Type.Array(Type.String()) });
-const WatchListResponse = object({ watches: Type.Array(WatchResponse) });
-const WatchExportResponse = object({ version: Type.Integer({ minimum: 1 }), watches: Type.Array(JsonObject) });
-const WatchHealthResponse = object({ watches: Type.Array(JsonObject) });
-const WatchCalendarResponse = object({
-  fromAt: Type.Number(),
-  untilAt: Type.Number(),
-  runs: Type.Array(object({ watchId: Identifier, bundleId: BundleId, at: Type.Number() })),
-  truncated: Type.Boolean(),
-});
-const GitHubBudgetHistoryResponse = object({ entries: Type.Array(JsonObject) });
-const GitHubReposResponse = object({ repos: Type.Array(JsonObject) });
-const GitHubWorkflowsResponse = object({ workflows: Type.Array(JsonObject) });
-const WatchImportResponse = object({ watches: Type.Array(WatchResponse), skipped: Type.Array(Type.String()) });
-const DispatchPreviewResponse = object({ appStore: JsonObject, testflight: JsonObject });
-const DispatchValidationResponse = object({ results: Type.Array(JsonObject), ok: Type.Boolean() });
-const DispatchSourcePreviewResponse = object({ source: Type.Union([Type.Literal('appStore'), Type.Literal('testflight')]), result: JsonObject });
 const AppMetadataResponse = object({ entries: Type.Array(JsonObject) });
 const AppCatalogStatsResponse = object({ entries: Type.Integer({ minimum: 0 }), icons: Type.Integer({ minimum: 0 }), oldestUpdatedAt: Type.Optional(Type.Number()), newestUpdatedAt: Type.Optional(Type.Number()) });
 const BundleStatsResponse = object({
@@ -599,11 +606,6 @@ const StorageForecastResponse = object({ freeBytes: Type.Number({ minimum: 0 }),
 const JobExportResponse = Type.Union([Type.Array(JsonObject), Type.String()]);
 const WebhookDeliveryPageResponse = object({ deliveries: Type.Array(JsonObject) });
 const DiagnosticResponse = object({ generatedAt: Type.String(), correlationId: Identifier, job: JsonObject, timeline: Type.Array(JsonObject) });
-const GitHubRateLimitResponse = object({
-  limit: Type.Optional(Type.Integer({ minimum: 0 })),
-  remaining: Type.Optional(Type.Integer({ minimum: 0 })),
-  reset: Type.Optional(Type.Integer({ minimum: 0 })),
-});
 const SupportBundleResponse = object({
   generatedAt: Type.String(),
   deployment: object({ ref: Type.String(), node: Type.String() }),
@@ -655,19 +657,6 @@ const EventStreamResponse = { content: { 'text/event-stream': { schema: Type.Str
 const PrometheusResponse = { content: { 'text/plain': { schema: Type.String() } } };
 const WebhookReplayResponse = object({ replayed: Type.Boolean(), duplicate: Type.Optional(Type.Boolean()), status: Type.String() });
 const WebhookQuarantineResponse = object({ record: Type.Optional(JsonObject) });
-const WatchInput = object({
-  projectId: Type.Optional(Identifier),
-  bundleId: BundleId,
-  repo: Type.Optional(Type.String({ minLength: 3, maxLength: 200, pattern: '^[\\w.-]+/[\\w.-]+$' })),
-  ghWorkflowFile: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
-  dispatchTargets: Type.Optional(Type.Array(DispatchTargetInput, { maxItems: 10 })),
-  pollCron: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
-  enabled: Type.Optional(Type.Boolean()),
-  webhookUrl: Type.Optional(Type.String({ maxLength: 500 })),
-  testFlightPolicy: Type.Optional(Type.Union([Type.Literal('latest'), Type.Literal('latestNonExpired'), Type.Literal('train')])),
-  testFlightTrain: Type.Optional(Type.String({ maxLength: 100 })),
-});
-
 function object(properties: Record<string, TSchema>): TSchema {
   return Type.Object(properties, { additionalProperties: true });
 }
@@ -720,6 +709,7 @@ const bodylessPostContracts = new Set([
   '/v1/dashboard/keys/:id/reveal',
   '/v1/dashboard/keys/:id/approve',
   '/v1/dashboard/keys/:id/deny',
+  '/v1/dashboard/watches/:id/trigger-dispatch',
 ]);
 
 function registerGenericContract(method: ContractMethod, path: string): void {
@@ -1266,43 +1256,43 @@ register('GET', '/v1/dashboard/insights', {
 });
 register('GET', '/v1/dashboard/failure-patterns', { querystring: object({ projectId: Type.Optional(Identifier) }), response: { 200: FailurePatternsResponse } });
 register('GET', '/v1/dashboard/storage-forecast', { querystring: object({ projectId: Type.Optional(Identifier) }), response: { 200: StorageForecastResponse } });
-register('GET', '/v1/dashboard/watches', { response: { 200: WatchListResponse } });
-register('GET', '/v1/dashboard/watches/export', { response: { 200: WatchExportResponse } });
-register('GET', '/v1/dashboard/watches/health', { response: { 200: WatchHealthResponse } });
+register('GET', '/v1/dashboard/watches', { response: { 200: dashboardWatchListResponseSchema } });
+register('GET', '/v1/dashboard/watches/export', { response: { 200: dashboardWatchExportResponseSchema } });
+register('GET', '/v1/dashboard/watches/health', { response: { 200: dashboardWatchHealthResponseSchema } });
 register('GET', '/v1/dashboard/watches/calendar', {
-  querystring: object({ hours: Type.Optional(Type.Integer({ minimum: 1, maximum: 168 })), fromAt: Type.Optional(Type.Integer()), projectId: Type.Optional(Identifier) }),
-  response: { 200: WatchCalendarResponse },
+  querystring: dashboardWatchCalendarQuerySchema,
+  response: { 200: dashboardWatchCalendarResponseSchema },
 });
 register('GET', '/v1/dashboard/github/budget-history', {
-  querystring: object({ limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })), projectId: Type.Optional(Identifier) }),
-  response: { 200: GitHubBudgetHistoryResponse },
+  querystring: dashboardGitHubBudgetHistoryQuerySchema,
+  response: { 200: dashboardGitHubBudgetHistoryResponseSchema },
 });
-register('GET', '/v1/dashboard/github/repos', { response: { 200: GitHubReposResponse } });
+register('GET', '/v1/dashboard/github/repos', { response: { 200: dashboardGitHubReposResponseSchema, 502: ErrorEnvelope } });
 register('GET', '/v1/dashboard/github/workflows', {
-  querystring: object({ repo: Type.String({ minLength: 3, maxLength: 200, pattern: '^[\\w.-]+/[\\w.-]+$' }) }),
-  response: { 200: GitHubWorkflowsResponse },
+  querystring: dashboardGitHubWorkflowsQuerySchema,
+  response: { 200: dashboardGitHubWorkflowsResponseSchema, 502: ErrorEnvelope },
 });
-register('POST', '/v1/dashboard/watches', { body: WatchInput, response: { 201: WatchResponse } });
-register('PATCH', '/v1/dashboard/watches/:id', { params: object({ id: Identifier }), body: Type.Partial(WatchInput), response: { 200: WatchResponse } });
-register('DELETE', '/v1/dashboard/watches/:id', { params: object({ id: Identifier }), response: { 200: OkResponse } });
+register('POST', '/v1/dashboard/watches', { body: dashboardWatchInputSchema, response: { 201: WatchResponse } });
+register('PATCH', '/v1/dashboard/watches/:id', { params: dashboardWatchParamsSchema, body: dashboardWatchPatchSchema, response: { 200: WatchResponse } });
+register('DELETE', '/v1/dashboard/watches/:id', { params: dashboardWatchParamsSchema, response: { 200: OkResponse } });
 register('POST', '/v1/dashboard/watches/import', {
-  body: object({ watches: Type.Array(WatchInput, { minItems: 1, maxItems: 100 }) }),
-  response: { 201: WatchImportResponse },
+  body: dashboardWatchImportBodySchema,
+  response: { 201: dashboardWatchImportResponseSchema },
 });
 register('POST', '/v1/dashboard/watches/preview-dispatch-draft', {
-  body: object({ bundleId: BundleId, repo: Type.String({ minLength: 3, maxLength: 200, pattern: '^[\\w.-]+/[\\w.-]+$' }) }),
-  response: { 200: DispatchPreviewResponse },
+  body: dashboardWatchPreviewDraftBodySchema,
+  response: { 200: dashboardWatchDispatchPreviewResponseSchema },
 });
 register('POST', '/v1/dashboard/watches/validate-dispatch-draft', {
-  body: object({ targets: Type.Array(DispatchTargetInput, { minItems: 1, maxItems: 10 }) }),
-  response: { 200: DispatchValidationResponse },
+  body: dashboardWatchDispatchValidationBodySchema,
+  response: { 200: dashboardWatchDispatchValidationResponseSchema },
 });
-register('GET', '/v1/dashboard/watches/:id/preview-dispatch', { params: object({ id: Identifier }), response: { 200: DispatchPreviewResponse } });
+register('GET', '/v1/dashboard/watches/:id/preview-dispatch', { params: dashboardWatchParamsSchema, response: { 200: dashboardWatchDispatchPreviewResponseSchema } });
 register('GET', '/v1/dashboard/watches/:id/preview-dispatch/:source', {
-  params: object({ id: Identifier, source: Type.Union([Type.Literal('app-store'), Type.Literal('testflight')]) }),
-  response: { 200: DispatchSourcePreviewResponse },
+  params: dashboardWatchSourceParamsSchema,
+  response: { 200: dashboardWatchSourcePreviewResponseSchema },
 });
-register('POST', '/v1/dashboard/watches/:id/trigger-dispatch', { params: object({ id: Identifier }), response: { 202: JsonObject, 409: JsonObject } });
+register('POST', '/v1/dashboard/watches/:id/trigger-dispatch', { params: dashboardWatchParamsSchema, response: { 202: JsonObject, 409: JsonObject } });
 register('GET', '/v1/dashboard/apps/metadata', {
   querystring: object({ bundleIds: Type.Optional(Type.String({ maxLength: 20_000 })) }),
   response: { 200: AppMetadataResponse },
@@ -1356,7 +1346,7 @@ register('GET', '/v1/dashboard/support-bundle', {
   response: { 200: SupportBundleResponse },
 });
 register('GET', '/v1/dashboard/github/rate-limit', {
-  response: { 200: GitHubRateLimitResponse },
+  response: { 200: dashboardGitHubRateLimitResponseSchema, 502: ErrorEnvelope },
 });
 register('GET', '/v1/dashboard/audit-log/export', {
   querystring: object({ format: Type.Optional(Type.Union([Type.Literal('json'), Type.Literal('csv')])) }),
@@ -1367,7 +1357,7 @@ register('GET', '/v1/dashboard/jobs/export', {
   response: { 200: JobExportResponse },
 });
 register('GET', '/v1/dashboard/watches/export', {
-  response: { 200: WatchExportResponse },
+  response: { 200: dashboardWatchExportResponseSchema },
 });
 register('GET', '/v1/dashboard/backup/export', {
   response: { 200: backupExportResponseSchema },

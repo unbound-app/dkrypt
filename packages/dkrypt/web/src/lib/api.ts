@@ -1,4 +1,5 @@
 import { markLoggedOut, type Role } from '#lib/session.svelte';
+import { apiErrorMessage } from '#lib/apiErrors.js';
 import { rateLimitState } from '#lib/rateLimit.svelte';
 import { showToast } from '#lib/ui.svelte';
 import { projectSelectionState } from '#lib/projectSelection.svelte';
@@ -37,13 +38,13 @@ async function request(path: string, opts: RequestInit = {}, bucket?: string): P
 
 export async function apiJson<T>(path: string, opts?: RequestInit, bucket?: string): Promise<T> {
   const res = await request(path, opts, bucket);
-  let data: T | { error?: string };
+  let data: unknown;
   try {
-    data = (await res.json()) as T;
+    data = await res.json();
   } catch {
     throw new Error('invalid response from server');
   }
-  if (!res.ok) throw new Error((data as { error?: string }).error ?? `Request failed (${res.status})`);
+  if (!res.ok) throw new Error(apiErrorMessage(data, res.status));
   return data as T;
 }
 
