@@ -3,10 +3,9 @@ import { validate as validateCronExpr } from 'node-cron';
 import { config, discordBotEnabled } from '#config.js';
 import { fetchBotGuilds, fetchGuildRoles } from '#discord.js';
 import { dashboardEvents, emitJobsChanged, getOnlineUsernames, nextDashboardSequence, registerDashboardConnection, registerPresence, unregisterPresence } from '#events.js';
-import { getBillingEntitlements } from '#billing.js';
-import { blockDuringMaintenance, getMaintenanceStatus } from '#maintenance.js';
+import { blockDuringMaintenance } from '#maintenance.js';
 import { jobSummary, streamFilePath } from '#jobs/http.js';
-import { cancelJob, enqueueDecryptJob, getActiveJobs, getJob, getQueueInfo, getQueueReason, prioritizeQueuedJob, reorderQueue } from '#jobs/store.js';
+import { cancelJob, enqueueDecryptJob, getActiveJobs, getJob, getQueueInfo, prioritizeQueuedJob, reorderQueue } from '#jobs/store.js';
 import type { LogEntry } from '#logger.js';
 import { getRecentLogs } from '#logger.js';
 import { EMBED_COLOR, notify, sendTestNotification } from '#notify.js';
@@ -18,13 +17,14 @@ import { lookupAppMetadata, searchApps } from '#scheduler/itunes.js';
 import { requirePermission, requireSession } from '#session.js';
 import { recordDashboardSessionActivity } from '#dashboardActivity.js';
 import { canAccessProject, canViewAllProjects, dashboardHistoryEntry } from '#dashboardJobPresentation.js';
+import { buildDashboardOverview } from '#dashboardOverview.js';
 import { getDeviceHealth, getDeviceInstallBlocker, getDeviceReadiness, isBridgeHeartbeatFresh } from '#deviceHealth.js';
 import { decodeCursor, nextCursor, paginateCursor } from '#util/cursor.js';
 import { serializeDashboardDevice as serializeDevice } from '#dashboardDevicePresentation.js';
 import { logBelongsToProject } from '#dashboardLogPresentation.js';
 import { discoverDevices, execCommand, isDirectUsbDeviceAgentConnection, listInstalledAppStoreBundles, sendSpringBoardBridgeRequest, setupDeviceConnection, withAutoinstallDeviceAgent, withSSH, type DeviceConnection, type DeviceTransport } from '#idevice.js';
 import { getTestFlightBridgeDiagnostics, listBuilds, listTrains, type TFBuild } from '#testflight.js';
-import { nextCronRunAt, nextCronRuns } from '#util/cron.js';
+import { nextCronRuns } from '#util/cron.js';
 import { getDiskUsage } from '#util/diskUsage.js';
 import { rateLimitPerUser } from '#util/rateLimit.js';
 import {
@@ -213,66 +213,6 @@ dashboardRouter.use((_req, res, next) => {
 const deviceOrExternalRateLimit = rateLimitPerUser(10, 60_000);
 const jobDiffRateLimit = rateLimitPerUser(30, 60_000);
 
-function buildOverview(permissions: bigint, userId: string, projectId = DEFAULT_PROJECT_ID) {
-  const canViewAutomation = hasPermission(permissions, PermissionFlag.viewAutomation) || hasPermission(permissions, PermissionFlag.manageAutomation);
-  const canViewDeviceData = hasPermission(permissions, PermissionFlag.viewDevices) || hasPermission(permissions, PermissionFlag.manageDevices);
-  const watches = canViewAutomation ? getEffectiveWatches().filter((watch) =>
-    (watch.projectId ?? DEFAULT_PROJECT_ID) === projectId && canAccessProject(userId, permissions, watch.projectId ?? DEFAULT_PROJECT_ID),
-  ).map((w) => ({
-    ...w,
-    nextRunAt: isWatchSchedulable(w) ? nextCronRunAt(w.pollCron) : undefined,
-    schedulable: isWatchSchedulable(w),
-    configIssues: getWatchConfigIssues(w),
-  })) : [];
-  const schedulerRunHistory = canViewAutomation
-    ? getSchedulerRunHistory(200).filter((run) => watches.some((watch) => watch.id === run.watchId)).slice(0, 10)
-    : [];
-  const devices = canViewDeviceData ? getEffectiveDevices().map((d) => ({ ...d })) : [];
-  const settings = getEffectiveSettings();
-  return {
-    schedulerEnabled: watches.some((w) => w.schedulable),
-    settings: canViewAutomation ? settings : { ...settings, notifyWebhookUrl: '' },
-    watches,
-    devices,
-    lastSchedulerRunAt: schedulerRunHistory[0]?.ts,
-    schedulerRunHistory,
-    disk: getDiskUsage(config.artifactDir),
-    isPaidPlan: getBillingEntitlements(userId).planId !== 'viewer',
-    maintenance: getMaintenanceStatus(),
-    projectId,
-    activeJobs: getActiveJobs().filter((job) => (job.projectId ?? DEFAULT_PROJECT_ID) === projectId).map((j) => ({
-      id: j.id,
-      correlationId: j.correlationId ?? j.id,
-      bundleId: j.bundleId,
-      source: j.source,
-      status: j.status,
-      progress: j.progress,
-      versionLabel: j.versionLabel,
-      deviceId: j.deviceId,
-      transport: j.transport,
-      warnings: j.warnings,
-      testflight: j.testflight
-        ? { appId: j.testflight.appId, buildId: j.testflight.build.id, version: j.testflight.build.cfBundleShortVersion, buildNumber: j.testflight.build.cfBundleVersion }
-        : undefined,
-      queuedBy: j.queuedBy,
-      priority: j.priority,
-      createdAt: j.createdAt,
-      attempt: j.attempt,
-      retryCount: j.retryCount,
-      deadlineAt: j.deadlineAt,
-      deadlineExceeded: j.deadlineExceeded,
-      failureClass: j.failureClass,
-      queueReason: getQueueReason(j),
-    })),
-  };
-}
-
-dashboardRouter.get('/v1/dashboard/overview', (req, res) => {
-  const projectId = resolveRequestProjectId(req, res, 'query');
-  if (!projectId) return;
-  res.json(buildOverview(res.locals.session.permissions, res.locals.session.sub, projectId));
-});
-
 dashboardRouter.get('/v1/dashboard/events', (req, res) => {
   const projectId = resolveRequestProjectId(req, res, 'query');
   if (!projectId) return;
@@ -303,7 +243,7 @@ dashboardRouter.get('/v1/dashboard/events', (req, res) => {
     res.write(`id: ${sequence}\nevent: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
   };
 
-  sendEvent('overview', buildOverview(res.locals.session.permissions, res.locals.session.sub, projectId));
+  sendEvent('overview', buildDashboardOverview(res.locals.session.permissions, res.locals.session.sub, projectId));
 
   registerPresence(sub);
   const unregisterDashboardConnection = registerDashboardConnection(() => {
@@ -311,7 +251,7 @@ dashboardRouter.get('/v1/dashboard/events', (req, res) => {
   });
   sendEvent('presence', getOnlineUsernames());
 
-  const onJobsChanged = () => sendEvent('overview', buildOverview(res.locals.session.permissions, res.locals.session.sub, projectId));
+  const onJobsChanged = () => sendEvent('overview', buildDashboardOverview(res.locals.session.permissions, res.locals.session.sub, projectId));
   const onLogAdded = (entry: LogEntry) => {
     if (logBelongsToProject(entry, projectId)) sendEvent('log', entry);
   };
@@ -321,7 +261,7 @@ dashboardRouter.get('/v1/dashboard/events', (req, res) => {
   const onPresenceChanged = (usernames: string[]) => sendEvent('presence', usernames);
   const onProjectChanged = (changedProjectId?: string) => {
     if (changedProjectId === undefined || changedProjectId === projectId) {
-      if (closeForRevokedProject()) sendEvent('overview', buildOverview(res.locals.session.permissions, sub, projectId));
+      if (closeForRevokedProject()) sendEvent('overview', buildDashboardOverview(res.locals.session.permissions, sub, projectId));
     }
   };
 

@@ -37,6 +37,7 @@ import {
 } from '#dashboardNotificationContracts.js';
 import { dashboardDeviceActivityQuerySchema, dashboardDeviceHistoryQuerySchema, dashboardDeviceParamsSchema } from '#dashboardDeviceContracts.js';
 import { dashboardDoctorResponseSchema, dashboardSyntheticResponseSchema } from '#dashboardDiagnosticsContracts.js';
+import { dashboardOverviewQuerySchema, dashboardOverviewResponseSchema } from '#dashboardOverviewContracts.js';
 import { dashboardAuditLogQuerySchema, dashboardAuditLogResponseSchema, dashboardLogsQuerySchema, dashboardLogsResponseSchema } from '#dashboardObservabilityContracts.js';
 import { dashboardJobHistoryPageSchema, dashboardJobListQuerySchema, dashboardJobParamsSchema, dashboardJobTimelineEventSchema } from '#dashboardJobContracts.js';
 
@@ -248,40 +249,6 @@ const BillingResponse = object({
   entitlement: JsonObject,
 });
 const BillingSubscriptionPage = object({ subscriptions: Type.Array(JsonObject), total: Type.Integer({ minimum: 0 }), nextCursor: PageCursor });
-const DashboardOverviewResponse = object({
-  projectId: Identifier,
-  schedulerEnabled: Type.Boolean(),
-  settings: JsonObject,
-  watches: Type.Array(JsonObject),
-  devices: Type.Array(JsonObject),
-  lastSchedulerRunAt: Type.Optional(Type.Number()),
-  schedulerRunHistory: Type.Array(JsonObject),
-  disk: Type.Optional(JsonObject),
-  isPaidPlan: Type.Boolean(),
-  maintenance: JsonObject,
-  activeJobs: Type.Array(object({
-    id: Identifier,
-    correlationId: Identifier,
-    bundleId: BundleId,
-    source: Type.Union([Type.Literal('manual'), Type.Literal('scheduler')]),
-    status: Type.Union([Type.Literal('queued'), Type.Literal('running')]),
-    progress: Type.String(),
-    versionLabel: Type.Optional(Type.String()),
-    deviceId: Type.Optional(Identifier),
-    transport: Type.Optional(deviceTransportSchema),
-    testflight: Type.Optional(object({ appId: Type.Number(), buildId: Type.Number(), version: Type.Optional(Type.String()), buildNumber: Type.Optional(Type.String()) })),
-    queuedBy: Type.Optional(Type.String()),
-    priority: Type.Number(),
-    createdAt: Type.Number(),
-    attempt: Type.Optional(Type.Number()),
-    retryCount: Type.Optional(Type.Number()),
-    deadlineAt: Type.Optional(Type.Number()),
-    deadlineExceeded: Type.Optional(Type.Boolean()),
-    failureClass: Type.Optional(JobFailureClass),
-    warnings: Type.Optional(Type.Array(Type.String())),
-    queueReason: Type.Optional(Type.String()),
-  })),
-});
 const ArtifactPage = object({ artifacts: Type.Array(JsonObject), total: Type.Integer({ minimum: 0 }), totalBytes: Type.Number(), maxBytes: Type.Number(), nextCursor: PageCursor });
 const DeviceResponse = object({
   id: Identifier,
@@ -1305,7 +1272,7 @@ register('POST', '/v1/nowpayments/webhook', { headers: object({ 'x-nowpayments-s
 register('GET', '/v1/health', { response: { 200: HealthResponse } });
 register('GET', '/v1/billing', { response: { 200: BillingResponse } });
 register('GET', '/v1/billing/subscriptions', { response: { 200: BillingSubscriptionPage } });
-register('GET', '/v1/dashboard/overview', { querystring: object({ projectId: Type.Optional(Identifier) }), response: { 200: DashboardOverviewResponse } });
+register('GET', '/v1/dashboard/overview', { querystring: dashboardOverviewQuerySchema, response: { 200: dashboardOverviewResponseSchema } });
 register('GET', '/v1/dashboard/jobs', { response: { 200: dashboardJobHistoryPageSchema, 404: ErrorEnvelope } });
 register('GET', '/v1/dashboard/artifacts', { response: { 200: ArtifactPage } });
 register('GET', '/v1/dashboard/devices', { response: { 200: DeviceListResponse, 401: ErrorEnvelope, 403: ErrorEnvelope } });

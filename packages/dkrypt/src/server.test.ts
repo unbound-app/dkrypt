@@ -148,6 +148,38 @@ test('dashboard diagnostics use native Fastify routes with session and device-ma
   }
 });
 
+test('dashboard overview uses native Fastify routing and preserves project checks', async () => {
+  const server = await buildServer({ includePublicRoutes: false });
+  const administratorCookie = createSessionCookie('root', PermissionFlag.administrator);
+  const decryptOnlyCookie = createSessionCookie('root', PermissionFlag.requestDecrypt);
+  const legacyRoutes = dashboardRouter.routes.map((route) => `${route.method} ${route.path}`);
+
+  try {
+    expect(legacyRoutes).not.toContain('GET /v1/dashboard/overview');
+
+    const unauthenticated = await server.inject({ method: 'GET', url: '/v1/dashboard/overview' });
+    expect(unauthenticated.statusCode).toBe(401);
+
+    const malformedProjectId = await server.inject({ method: 'GET', url: '/v1/dashboard/overview?projectId=bad%20id', headers: { cookie: administratorCookie } });
+    expect(malformedProjectId.statusCode).toBe(400);
+    expect(malformedProjectId.json()).toMatchObject({ error: 'projectId must be a valid project identifier' });
+
+    const unknownProject = await server.inject({ method: 'GET', url: '/v1/dashboard/overview?projectId=unknown-project', headers: { cookie: administratorCookie } });
+    expect(unknownProject.statusCode).toBe(404);
+    expect(unknownProject.json()).toMatchObject({ error: 'project not found' });
+
+    const viewerOverview = await server.inject({ method: 'GET', url: '/v1/dashboard/overview', headers: { cookie: decryptOnlyCookie } });
+    expect(viewerOverview.statusCode).toBe(200);
+    expect(viewerOverview.json()).toMatchObject({ projectId: 'default', schedulerEnabled: expect.any(Boolean), activeJobs: expect.any(Array) });
+
+    const administratorOverview = await server.inject({ method: 'GET', url: '/v1/dashboard/overview', headers: { cookie: administratorCookie } });
+    expect(administratorOverview.statusCode).toBe(200);
+    expect(administratorOverview.json()).toMatchObject({ projectId: 'default', devices: expect.any(Array), watches: expect.any(Array) });
+  } finally {
+    await server.close();
+  }
+});
+
 test('native dashboard logs and audit routes preserve permissions, paging, and project checks', async () => {
   const logsUserId = `github:logs-reader-${crypto.randomUUID()}`;
   const auditUserId = `github:audit-reader-${crypto.randomUUID()}`;
@@ -484,6 +516,12 @@ test('project administration is permission-gated and project membership controls
     const secondMemberProjects = await server.inject({ method: 'GET', url: '/v1/dashboard/projects', headers: { cookie: secondMemberCookie } });
     const secondProjectIds = (secondMemberProjects.json() as { projects: { id: string }[] }).projects.map((entry) => entry.id);
     expect(secondProjectIds).not.toContain(project.id);
+
+    const memberOverview = await server.inject({ method: 'GET', url: `/v1/dashboard/overview?projectId=${project.id}`, headers: { cookie: memberCookie } });
+    const otherMemberOverview = await server.inject({ method: 'GET', url: `/v1/dashboard/overview?projectId=${project.id}`, headers: { cookie: secondMemberCookie } });
+    expect(memberOverview.statusCode).toBe(200);
+    expect(memberOverview.json()).toMatchObject({ projectId: project.id });
+    expect(otherMemberOverview.statusCode).toBe(404);
 
     const bundleId = `com.example.project-scope.${crypto.randomUUID()}`;
     const historyId = `project-history-${crypto.randomUUID()}`;
