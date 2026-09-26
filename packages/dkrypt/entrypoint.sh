@@ -63,14 +63,18 @@ if [ -e "$secret_file" ]; then
 fi
 
 umask 007
-setpriv --regid=10001 --clear-groups /usr/local/bin/dkrypt-device-bridge &
-bridge_pid=$!
+start_device_bridge() {
+  setpriv --regid=10001 --clear-groups /usr/local/bin/dkrypt-device-bridge &
+  bridge_pid=$!
+  bridge_started_at=$(date +%s)
+}
+
+start_device_bridge
 setpriv --reuid=10001 --regid=10001 --clear-groups bun src/server.ts &
 api_pid=$!
 bridge_socket=${DEVICE_BRIDGE_SOCKET:-/run/dkrypt/device-bridge.sock}
 bridge_restart_delay=1
 bridge_restart_max_delay=30
-bridge_started_at=$(date +%s)
 
 stop_process() {
   process_pid=$1
@@ -99,9 +103,7 @@ while kill -0 "$api_pid" 2>/dev/null; do
     wait "$bridge_pid" 2>/dev/null || true
     printf '%s\n' 'device bridge exited; restarting with bounded backoff' >&2
     sleep "$bridge_restart_delay"
-    /usr/local/bin/dkrypt-device-bridge &
-    bridge_pid=$!
-    bridge_started_at=$(date +%s)
+    start_device_bridge
     if [ "$bridge_restart_delay" -lt "$bridge_restart_max_delay" ]; then
       bridge_restart_delay=$((bridge_restart_delay * 2))
       if [ "$bridge_restart_delay" -gt "$bridge_restart_max_delay" ]; then
@@ -116,9 +118,7 @@ while kill -0 "$api_pid" 2>/dev/null; do
       kill "$bridge_pid" 2>/dev/null || true
       wait "$bridge_pid" 2>/dev/null || true
       bridge_restart_delay=1
-      bridge_started_at=$(date +%s)
-      /usr/local/bin/dkrypt-device-bridge &
-      bridge_pid=$!
+      start_device_bridge
     fi
   else
     bridge_uptime=$(($(date +%s) - bridge_started_at))
