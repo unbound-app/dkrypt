@@ -88845,10 +88845,10 @@
                           "icon": {
                             "anyOf": [
                               {
-                                "type": "string"
+                                "type": "null"
                               },
                               {
-                                "type": "null"
+                                "type": "string"
                               }
                             ]
                           }
@@ -89223,10 +89223,10 @@
                           "icon": {
                             "anyOf": [
                               {
-                                "type": "string"
+                                "type": "null"
                               },
                               {
-                                "type": "null"
+                                "type": "string"
                               }
                             ]
                           }
@@ -89598,10 +89598,10 @@
                         "icon": {
                           "anyOf": [
                             {
-                              "type": "string"
+                              "type": "null"
                             },
                             {
-                              "type": "null"
+                              "type": "string"
                             }
                           ]
                         }
@@ -89651,10 +89651,10 @@
                           "icon": {
                             "anyOf": [
                               {
-                                "type": "string"
+                                "type": "null"
                               },
                               {
-                                "type": "null"
+                                "type": "string"
                               }
                             ]
                           }
@@ -90024,7 +90024,28 @@
                       "items": {
                         "additionalProperties": true,
                         "type": "object",
-                        "properties": {}
+                        "required": [
+                          "id",
+                          "name",
+                          "color",
+                          "position"
+                        ],
+                        "properties": {
+                          "id": {
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "color": {
+                            "type": "integer"
+                          },
+                          "position": {
+                            "type": "integer"
+                          }
+                        }
                       }
                     }
                   }
@@ -90378,7 +90399,59 @@
                       "items": {
                         "additionalProperties": true,
                         "type": "object",
-                        "properties": {}
+                        "required": [
+                          "id",
+                          "guildId",
+                          "guildIcon",
+                          "discordRoleId",
+                          "discordRoleColor",
+                          "appRoleId",
+                          "createdAt"
+                        ],
+                        "properties": {
+                          "id": {
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "type": "string"
+                          },
+                          "guildId": {
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "type": "string"
+                          },
+                          "guildName": {
+                            "type": "string"
+                          },
+                          "guildIcon": {
+                            "anyOf": [
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "type": "string"
+                              }
+                            ]
+                          },
+                          "discordRoleId": {
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "type": "string"
+                          },
+                          "discordRoleName": {
+                            "type": "string"
+                          },
+                          "discordRoleColor": {
+                            "type": "integer"
+                          },
+                          "appRoleId": {
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "type": "string"
+                          },
+                          "createdAt": {
+                            "type": "number"
+                          }
+                        }
                       }
                     }
                   }
@@ -90807,10 +90880,10 @@
                     "guildIcon": {
                       "anyOf": [
                         {
-                          "type": "string"
+                          "type": "null"
                         },
                         {
-                          "type": "null"
+                          "type": "string"
                         }
                       ]
                     },
@@ -91185,6 +91258,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "required": [
                     "ok"

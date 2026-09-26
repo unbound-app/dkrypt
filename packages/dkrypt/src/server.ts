@@ -34,6 +34,7 @@ import { dashboardDecryptPreflightRoutes } from '#routes/dashboardDecryptPreflig
 import { dashboardJobAnalyticsRoutes } from '#routes/dashboardJobAnalyticsRoutes.js';
 import { dashboardJobHistoryRoutes } from '#routes/dashboardJobHistoryRoutes.js';
 import { dashboardReportingRoutes } from '#routes/dashboardReportingRoutes.js';
+import { dashboardDiscordRoutes } from '#routes/dashboardDiscordRoutes.js';
 import { dashboardTestFlightRoutes } from '#routes/dashboardTestFlightRoutes.js';
 import { dashboardTestFlightBrowseRoutes } from '#routes/dashboardTestFlightBrowseRoutes.js';
 import { dashboardAppRoutes } from '#routes/dashboardAppRoutes.js';
@@ -268,6 +269,7 @@ export async function buildServer(options: { includePublicRoutes?: boolean } = {
   await server.register(dashboardTestFlightRoutes);
   await server.register(dashboardTestFlightBrowseRoutes);
   await server.register(dashboardAppRoutes);
+  await server.register(dashboardDiscordRoutes);
   await server.register(dashboardWatchRoutes);
   await server.register(billingRoutes);
   registerRouter(server, dashboardRouter);

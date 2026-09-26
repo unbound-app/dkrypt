@@ -173,6 +173,19 @@ import {
   dashboardRoleUpdateBodySchema,
 } from '#dashboardRoleContracts.js';
 import {
+  dashboardDiscordGuildsResponseSchema,
+  dashboardDiscordGuildsUpdateBodySchema,
+  dashboardDiscordGuildsUpdateResponseSchema,
+  dashboardDiscordOkResponseSchema,
+  dashboardDiscordPerkCreateBodySchema,
+  dashboardDiscordPerkParamsSchema,
+  dashboardDiscordPerkSchema,
+  dashboardDiscordPerksResponseSchema,
+  dashboardDiscordRolesQuerySchema,
+  dashboardDiscordRolesResponseSchema,
+  dashboardDiscordStatusResponseSchema,
+} from '#dashboardDiscordContracts.js';
+import {
   dashboardGitHubBudgetHistoryQuerySchema,
   dashboardGitHubBudgetHistoryResponseSchema,
   dashboardGitHubRateLimitResponseSchema,
@@ -751,23 +764,6 @@ export type DashboardSupportBundleRoute = {
     404: ApiErrorEnvelope;
   };
 };
-const DiscordGuildResponse = object({ id: Identifier, name: Type.String(), icon: Type.Union([Type.String(), Type.Null()]) });
-const DiscordStatusResponse = object({ botEnabled: Type.Boolean(), guilds: Type.Array(DiscordGuildResponse) });
-const DiscordGuildsResponse = object({ guilds: Type.Array(DiscordGuildResponse) });
-const DiscordRolesResponse = object({ roles: Type.Array(JsonObject) });
-const DiscordPerksResponse = object({ perks: Type.Array(JsonObject) });
-const DiscordGuildUpdateResponse = object({ ok: Type.Boolean(), guilds: Type.Array(DiscordGuildResponse) });
-const DiscordRolePerkResponse = object({
-  id: Identifier,
-  guildId: Identifier,
-  guildName: Type.Optional(Type.String()),
-  guildIcon: Type.Union([Type.String(), Type.Null()]),
-  discordRoleId: Identifier,
-  discordRoleName: Type.Optional(Type.String()),
-  discordRoleColor: Type.Integer(),
-  appRoleId: Identifier,
-  createdAt: Type.Number(),
-});
 const WebhookReceiptResponse = object({ received: Type.Boolean(), duplicate: Type.Optional(Type.Boolean()), quarantined: Type.Optional(Type.Boolean()), inProgress: Type.Optional(Type.Boolean()) });
 const DispatchTriggerResponse = object({ ok: Type.Boolean(), error: Type.Optional(Type.String()) });
 const BinaryFileResponse = { content: { 'application/octet-stream': { schema: Type.String({ format: 'binary' }) } } };
@@ -1513,37 +1509,29 @@ register('DELETE', '/v1/dashboard/backup/history/:id', {
   response: { 200: backupOkResponseSchema },
 });
 register('GET', '/v1/dashboard/discord/status', {
-  response: { 200: DiscordStatusResponse },
+  response: { 200: dashboardDiscordStatusResponseSchema, 401: ErrorEnvelope, 403: ErrorEnvelope, 429: ErrorEnvelope, 500: ErrorEnvelope },
 });
 register('GET', '/v1/dashboard/discord/guilds', {
-  response: { 200: DiscordGuildsResponse },
+  response: { 200: dashboardDiscordGuildsResponseSchema, 401: ErrorEnvelope, 403: ErrorEnvelope, 429: ErrorEnvelope, 500: ErrorEnvelope },
 });
 register('POST', '/v1/dashboard/discord/guilds', {
-  body: object({ guilds: Type.Array(DiscordGuildResponse) }),
-  response: { 200: DiscordGuildUpdateResponse },
+  body: dashboardDiscordGuildsUpdateBodySchema,
+  response: { 200: dashboardDiscordGuildsUpdateResponseSchema, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope, 429: ErrorEnvelope, 500: ErrorEnvelope },
 });
 register('GET', '/v1/dashboard/discord/roles', {
-  querystring: object({ guildId: Identifier }),
-  response: { 200: DiscordRolesResponse },
+  querystring: dashboardDiscordRolesQuerySchema,
+  response: { 200: dashboardDiscordRolesResponseSchema, 401: ErrorEnvelope, 403: ErrorEnvelope, 429: ErrorEnvelope, 500: ErrorEnvelope },
 });
 register('GET', '/v1/dashboard/discord/perks', {
-  response: { 200: DiscordPerksResponse },
+  response: { 200: dashboardDiscordPerksResponseSchema, 401: ErrorEnvelope, 403: ErrorEnvelope, 429: ErrorEnvelope, 500: ErrorEnvelope },
 });
 register('POST', '/v1/dashboard/discord/perks', {
-  body: object({
-    guildId: Identifier,
-    guildName: Type.String({ minLength: 1, maxLength: 200 }),
-    guildIcon: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-    discordRoleId: Identifier,
-    discordRoleName: Type.String({ minLength: 1, maxLength: 200 }),
-    discordRoleColor: Type.Integer({ minimum: 0 }),
-    appRoleId: Identifier,
-  }),
-  response: { 201: DiscordRolePerkResponse },
+  body: dashboardDiscordPerkCreateBodySchema,
+  response: { 201: dashboardDiscordPerkSchema, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope, 429: ErrorEnvelope, 500: ErrorEnvelope },
 });
 register('DELETE', '/v1/dashboard/discord/perks/:id', {
-  params: object({ id: Identifier }),
-  response: { 200: OkResponse },
+  params: dashboardDiscordPerkParamsSchema,
+  response: { 200: dashboardDiscordOkResponseSchema, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope, 429: ErrorEnvelope, 500: ErrorEnvelope },
 });
 register('POST', '/v1/dashboard/keys/bulk-revoke', {
   body: dashboardApiKeyBulkIdsBodySchema,
