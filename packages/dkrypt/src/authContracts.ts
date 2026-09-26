@@ -1,0 +1,43 @@
+import { Type, type Static } from '@sinclair/typebox';
+
+export const authLoginBodySchema = Type.Object(
+  {
+    password: Type.String({ minLength: 1, maxLength: 500 }),
+    mfaToken: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
+  },
+  { additionalProperties: true },
+);
+
+export const authTokenBodySchema = Type.Object({ token: Type.String({ minLength: 1, maxLength: 100 }) }, { additionalProperties: true });
+export const authReauthenticateBodySchema = Type.Object(
+  {
+    password: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
+    mfaToken: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
+  },
+  { additionalProperties: true },
+);
+export const authPrivacyDeleteBodySchema = Type.Object({ confirmation: Type.Literal('DELETE MY ACCOUNT') }, { additionalProperties: true });
+export const authProfileBodySchema = Type.Object({ displayName: Type.String({ minLength: 1, maxLength: 64 }) }, { additionalProperties: true });
+export const authConnectionParamsSchema = Type.Object(
+  { provider: Type.Union([Type.Literal('github'), Type.Literal('discord')]) },
+  { additionalProperties: true },
+);
+export const authIdentifierParamsSchema = Type.Object({ id: Type.String({ minLength: 1, maxLength: 200 }) }, { additionalProperties: true });
+export const authPasskeyPayloadSchema = Type.Record(Type.String({ minLength: 1, maxLength: 120 }), Type.Unknown());
+export const authOAuthCallbackQuerySchema = Type.Object(
+  {
+    code: Type.Optional(Type.String({ maxLength: 2000 })),
+    state: Type.Optional(Type.String({ maxLength: 200 })),
+  },
+  { additionalProperties: true },
+);
+
+export type AuthLoginRoute = { Body: Static<typeof authLoginBodySchema> };
+export type AuthTokenRoute = { Body: Static<typeof authTokenBodySchema> };
+export type AuthReauthenticateRoute = { Body: Static<typeof authReauthenticateBodySchema> };
+export type AuthPrivacyDeleteRoute = { Body: Static<typeof authPrivacyDeleteBodySchema> };
+export type AuthProfileRoute = { Body: Static<typeof authProfileBodySchema> };
+export type AuthConnectionRoute = { Params: Static<typeof authConnectionParamsSchema> };
+export type AuthIdentifierRoute = { Params: Static<typeof authIdentifierParamsSchema> };
+export type AuthPasskeyPayloadRoute = { Body: Static<typeof authPasskeyPayloadSchema> };
+export type AuthOAuthCallbackRoute = { Querystring: Static<typeof authOAuthCallbackQuerySchema> };

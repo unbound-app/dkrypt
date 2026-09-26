@@ -95,6 +95,11 @@ export function sessionOptsFromReq(req: Request): { userAgent?: string; ip?: str
   return { userAgent: req.header('user-agent'), ip: req.ip };
 }
 
+export function fastifySessionOptsFromRequest(request: FastifyRequest): { userAgent?: string; ip?: string } {
+  const userAgent = request.headers['user-agent'];
+  return { userAgent: typeof userAgent === 'string' ? userAgent : undefined, ip: request.ip };
+}
+
 export function checkRootPassword(candidate: string): boolean {
   return [config.adminPassword, config.adminPasswordPrevious].filter(Boolean).some((password) => safeEqualStr(candidate, password));
 }
@@ -107,15 +112,26 @@ interface SessionCookieOpts {
 }
 
 export function setSessionCookie(res: Response, session: Omit<Session, 'exp' | 'ver' | 'sid'>, opts: SessionCookieOpts = {}): number {
+  const cookie = createSessionCookie(session, opts);
+  res.setHeader('Set-Cookie', cookie.value);
+  return cookie.expiresAtMs;
+}
+
+export function setFastifySessionCookie(reply: FastifyReply, session: Omit<Session, 'exp' | 'ver' | 'sid'>, opts: SessionCookieOpts = {}): number {
+  const cookie = createSessionCookie(session, opts);
+  reply.header('Set-Cookie', cookie.value);
+  return cookie.expiresAtMs;
+}
+
+function createSessionCookie(session: Omit<Session, 'exp' | 'ver' | 'sid'>, opts: SessionCookieOpts): { expiresAtMs: number; value: string } {
   const expiresAtMs = Date.now() + SESSION_TTL_MS;
   const sid = opts.sid ?? createSessionRecord(session.sub, opts.userAgent, opts.ip).id;
   const withVer: Omit<Session, 'exp'> = { ...session, mfaVerified: session.mfaVerified !== false, ver: getSessionVersion(session.sub), sid };
   const secure = config.publicBaseUrl.startsWith('https://') ? '; Secure' : '';
-  res.setHeader(
-    'Set-Cookie',
-    `${COOKIE_NAME}=${serialize(withVer, expiresAtMs)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${SESSION_TTL_MS / 1000}${secure}`,
-  );
-  return expiresAtMs;
+  return {
+    expiresAtMs,
+    value: `${COOKIE_NAME}=${serialize(withVer, expiresAtMs)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${SESSION_TTL_MS / 1000}${secure}`,
+  };
 }
 
 export function requireRecentAuthentication(maxAgeMs = 10 * 60_000) {
@@ -134,9 +150,30 @@ export function requireRecentAuthentication(maxAgeMs = 10 * 60_000) {
   };
 }
 
+export function fastifyRequireRecentAuthentication(maxAgeMs = 10 * 60_000) {
+  return (request: FastifyRequest, reply: FastifyReply, done: HookHandlerDoneFunction): void => {
+    const session = getFastifySession(request);
+    if (!session) {
+      fastifySessionError(request, reply, 401, 'unauthorized', 'unauthorized');
+      return;
+    }
+    if (!session.reauthenticatedAt || Date.now() - session.reauthenticatedAt > maxAgeMs) {
+      fastifySessionError(request, reply, 401, 'reauthentication_required', 'reauthentication is required for this action');
+      return;
+    }
+    fastifySessionContext.set(request, session);
+    done();
+  };
+}
+
 export function clearSessionCookie(res: Response): void {
   const secure = config.publicBaseUrl.startsWith('https://') ? '; Secure' : '';
   res.setHeader('Set-Cookie', `${COOKIE_NAME}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secure}`);
+}
+
+export function clearFastifySessionCookie(reply: FastifyReply): void {
+  const secure = config.publicBaseUrl.startsWith('https://') ? '; Secure' : '';
+  reply.header('Set-Cookie', `${COOKIE_NAME}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secure}`);
 }
 
 export function getSession(req: Request): Session | undefined {

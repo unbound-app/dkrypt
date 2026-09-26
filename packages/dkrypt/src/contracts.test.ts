@@ -1,42 +1,23 @@
 import { expect, test } from 'bun:test';
-import { authRouter } from '#routes/auth.js';
-import { dashboardRouter } from '#routes/dashboard.js';
 import { buildServer } from '#server.js';
 import { getRouteContracts } from '#contracts.js';
 
-test('every registered versioned route has an explicit TypeBox contract', () => {
-  const routers = [authRouter, dashboardRouter];
-  const routes = routers.flatMap((router) => router.routes.map((route) => `${route.method} ${route.path}`));
-  const directRoutes = [
-    'GET /v1/health',
-    'GET /v1/status',
-    'GET /v1/metrics',
-    'GET /v1/artifacts',
-    'GET /v1/artifacts/:id',
-    'GET /v1/artifacts/:id/file',
-    'GET /v1/jobs/:id',
-    'GET /v1/decrypt',
-    'GET /v1/testflight/:appId/trains',
-    'GET /v1/testflight/:appId/builds',
-    'POST /v1/decrypts',
-    'POST /v1/testflight/decrypt',
-    'POST /v1/stripe/webhook',
-    'POST /v1/nowpayments/webhook',
-    'GET /v1/billing',
-    'POST /v1/billing/checkout',
-    'POST /v1/billing/portal',
-    'POST /v1/billing/cancel',
-    'GET /v1/billing/provider-status',
-    'GET /v1/billing/subscriptions',
-    'GET /v1/billing/webhooks/inbox',
-    'POST /v1/billing/webhooks/inbox/:id/quarantine',
-    'POST /v1/billing/webhooks/inbox/:id/replay',
-    'POST /v1/billing/subscription',
-  ];
-  const allRoutes = [...routes, ...directRoutes];
-  const contracts = getRouteContracts();
-  expect(allRoutes.length).toBe(contracts.size);
-  for (const route of allRoutes) expect(contracts.has(route)).toBe(true);
+test('every registered versioned route has an explicit TypeBox contract', async () => {
+  const server = await buildServer({ includePublicRoutes: false });
+  try {
+    await server.ready();
+    const document = server.swagger() as { paths?: Record<string, Record<string, unknown>> };
+    const routes = Object.entries(document.paths ?? {}).flatMap(([path, methods]) =>
+      Object.keys(methods)
+        .filter((method) => ['get', 'post', 'put', 'patch', 'delete'].includes(method))
+        .map((method) => `${method.toUpperCase()} ${path.replace(/\{([^}]+)\}/g, ':$1')}`),
+    ).filter((route) => route.includes('/v1/'));
+    const contracts = getRouteContracts();
+    expect(routes.length).toBe(contracts.size);
+    for (const route of routes) expect(contracts.has(route)).toBe(true);
+  } finally {
+    await server.close();
+  }
 });
 
 test('every versioned route is represented in generated OpenAPI', async () => {
@@ -293,6 +274,21 @@ test('response declarations preserve earlier request schemas', () => {
   const decryptQuery = decrypt?.querystring as { properties?: Record<string, unknown> } | undefined;
   expect(decryptQuery?.properties).toHaveProperty('bundleId');
   expect(decrypt?.response).toHaveProperty('200');
+});
+
+test('bodyless auth actions do not require JSON request bodies', () => {
+  for (const path of [
+    '/v1/auth/mfa/setup',
+    '/v1/auth/passkeys/options',
+    '/v1/auth/passkeys/register/options',
+    '/v1/auth/passkeys/reauth/options',
+    '/v1/auth/refresh',
+    '/v1/auth/logout',
+    '/v1/auth/logout-everywhere',
+    '/v1/auth/sessions/revoke-others',
+  ]) {
+    expect(getRouteContracts().get(`POST ${path}`)).not.toHaveProperty('body');
+  }
 });
 
 test('TestFlight catalog contracts include the normalized bridge failure envelope', () => {

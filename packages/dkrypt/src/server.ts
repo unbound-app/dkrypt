@@ -13,7 +13,7 @@ import { getArtifactBackedJobs, shutdownJobs, startJobSweeper, stopAcceptingJobs
 import { startJobWebhookDispatcher, stopJobWebhookDispatcher } from '#jobWebhook.js';
 import { startKeyExpiryPoller, stopKeyExpiryPoller } from '#keyExpiryPoller.js';
 import { log, startLogFlusher, stopLogFlusher } from '#logger.js';
-import { authRouter } from '#routes/auth.js';
+import { authRoutes } from '#routes/authRoutes.js';
 import { billingRoutes, billingWebhookRoutes } from '#routes/billing.js';
 import { dashboardRouter } from '#routes/dashboard.js';
 import { artifactCatalogRoutes, decryptRoutes, testFlightCatalogRoutes } from '#routes/decrypt.js';
@@ -212,7 +212,7 @@ export async function buildServer(options: { includePublicRoutes?: boolean } = {
   await server.register(decryptRoutes);
   await server.register(artifactCatalogRoutes);
   await server.register(testFlightCatalogRoutes);
-  registerRouter(server, authRouter);
+  await server.register(authRoutes);
   await server.register(billingRoutes);
   registerRouter(server, dashboardRouter);
 

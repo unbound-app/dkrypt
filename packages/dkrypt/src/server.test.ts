@@ -33,6 +33,71 @@ async function signIn() {
   return { server, cookie: value.split(';', 1)[0] };
 }
 
+test('native auth routes preserve cookie sessions, refresh, logout, and session inventory', async () => {
+  const { server, cookie } = await signIn();
+  try {
+    const session = await server.inject({ method: 'GET', url: '/v1/auth/session', headers: { cookie } });
+    expect(session.statusCode).toBe(200);
+    expect(session.json()).toMatchObject({ loggedIn: true, sub: 'root' });
+
+    const mfa = await server.inject({ method: 'GET', url: '/v1/auth/mfa', headers: { cookie } });
+    expect(mfa.statusCode).toBe(200);
+
+    const sessions = await server.inject({ method: 'GET', url: '/v1/auth/sessions', headers: { cookie } });
+    expect(sessions.statusCode).toBe(200);
+    expect((sessions.json() as { current: boolean }[]).some((entry) => entry.current)).toBe(true);
+
+    const revokeOthers = await server.inject({ method: 'POST', url: '/v1/auth/sessions/revoke-others', headers: { cookie } });
+    expect(revokeOthers.statusCode).toBe(200);
+
+    const refresh = await server.inject({ method: 'POST', url: '/v1/auth/refresh', headers: { cookie } });
+    expect(refresh.statusCode).toBe(200);
+    const refreshCookie = refresh.headers['set-cookie'];
+    expect(Array.isArray(refreshCookie) ? refreshCookie[0] : refreshCookie).toContain('session=');
+
+    const logout = await server.inject({ method: 'POST', url: '/v1/auth/logout', headers: { cookie } });
+    expect(logout.statusCode).toBe(200);
+    const logoutCookie = logout.headers['set-cookie'];
+    expect(Array.isArray(logoutCookie) ? logoutCookie[0] : logoutCookie).toContain('Max-Age=0');
+
+    const afterLogout = await server.inject({ method: 'GET', url: '/v1/auth/session', headers: { cookie } });
+    expect(afterLogout.json()).toMatchObject({ loggedIn: false });
+  } finally {
+    await server.close();
+  }
+});
+
+test('native auth logout-everywhere expires all existing session versions', async () => {
+  const { server, cookie } = await signIn();
+  try {
+    const logout = await server.inject({ method: 'POST', url: '/v1/auth/logout-everywhere', headers: { cookie } });
+    expect(logout.statusCode).toBe(200);
+    expect(logout.headers['set-cookie']?.toString()).toContain('Max-Age=0');
+
+    const session = await server.inject({ method: 'GET', url: '/v1/auth/session', headers: { cookie } });
+    expect(session.json()).toMatchObject({ loggedIn: false });
+  } finally {
+    await server.close();
+  }
+});
+
+test('native auth routes require recent authentication for passkey registration', async () => {
+  const server = await buildServer({ includePublicRoutes: false });
+  const cookie = createSessionCookie('root', PermissionFlag.administrator);
+  try {
+    const response = await server.inject({
+      method: 'POST',
+      url: '/v1/auth/passkeys/register/options',
+      headers: { cookie },
+      payload: {},
+    });
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toMatchObject({ code: 'reauthentication_required' });
+  } finally {
+    await server.close();
+  }
+});
+
 test('Fastify persists dashboard device mutations and returns the updated overview', async () => {
   const { server, cookie } = await signIn();
 

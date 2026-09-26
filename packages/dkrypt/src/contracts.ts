@@ -1,6 +1,17 @@
 import { Type, type TSchema } from '@sinclair/typebox';
 import type { FastifySchema } from 'fastify';
 import {
+  authConnectionParamsSchema,
+  authIdentifierParamsSchema,
+  authLoginBodySchema,
+  authOAuthCallbackQuerySchema,
+  authPasskeyPayloadSchema,
+  authPrivacyDeleteBodySchema,
+  authProfileBodySchema,
+  authReauthenticateBodySchema,
+  authTokenBodySchema,
+} from '#authContracts.js';
+import {
   billingCheckoutBodySchema,
   billingIdempotencyKeyHeadersSchema,
   billingSubscriptionBodySchema,
@@ -976,6 +987,14 @@ function register(method: string, path: string, schema: FastifySchema): void {
 
 type ContractMethod = 'DELETE' | 'GET' | 'PATCH' | 'POST' | 'PUT';
 
+const bodylessPostContracts = new Set([
+  '/v1/auth/mfa/setup',
+  '/v1/auth/refresh',
+  '/v1/auth/logout',
+  '/v1/auth/logout-everywhere',
+  '/v1/auth/sessions/revoke-others',
+]);
+
 function registerGenericContract(method: ContractMethod, path: string): void {
   const parameterNames = [...path.matchAll(/:([A-Za-z0-9_]+)/g)].map((match) => match[1]);
   const schema: FastifySchema = {};
@@ -984,7 +1003,7 @@ function registerGenericContract(method: ContractMethod, path: string): void {
   }
   if (method === 'GET') {
     schema.querystring = JsonObject;
-  } else if (method !== 'DELETE') {
+  } else if (method !== 'DELETE' && !(method === 'POST' && bodylessPostContracts.has(path))) {
     schema.body = path.endsWith('/webhook') ? Type.Any() : JsonObject;
   }
   if (path.endsWith('/webhook')) {
@@ -1023,21 +1042,21 @@ register('GET', '/v1/billing/subscriptions', {
   querystring: billingSubscriptionsQuerySchema,
 });
 
-register('POST', '/v1/auth/login', { body: object({ password: Type.String({ minLength: 1, maxLength: 500 }), mfaToken: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })) }) });
-register('POST', '/v1/auth/mfa/confirm', { body: object({ token: Type.String({ minLength: 1, maxLength: 100 }) }) });
-register('POST', '/v1/auth/mfa/verify', { body: object({ token: Type.String({ minLength: 1, maxLength: 100 }) }) });
-register('POST', '/v1/auth/mfa/disable', { body: object({ token: Type.String({ minLength: 1, maxLength: 100 }) }) });
-register('POST', '/v1/auth/mfa/recovery-codes', { body: object({ token: Type.String({ minLength: 1, maxLength: 100 }) }) });
-register('POST', '/v1/auth/reauthenticate', { body: object({ password: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })), mfaToken: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })) }) });
-register('POST', '/v1/auth/privacy/delete', { body: object({ confirmation: Type.Literal('DELETE MY ACCOUNT') }) });
+register('POST', '/v1/auth/login', { body: authLoginBodySchema });
+register('POST', '/v1/auth/mfa/confirm', { body: authTokenBodySchema });
+register('POST', '/v1/auth/mfa/verify', { body: authTokenBodySchema });
+register('POST', '/v1/auth/mfa/disable', { body: authTokenBodySchema });
+register('POST', '/v1/auth/mfa/recovery-codes', { body: authTokenBodySchema });
+register('POST', '/v1/auth/reauthenticate', { body: authReauthenticateBodySchema });
+register('POST', '/v1/auth/privacy/delete', { body: authPrivacyDeleteBodySchema });
 register('GET', '/v1/auth/passkeys', {});
-register('POST', '/v1/auth/passkeys/options', { body: JsonObject });
-register('POST', '/v1/auth/passkeys/verify', { body: Type.Record(Type.String({ minLength: 1, maxLength: 120 }), Type.Unknown()) });
+register('POST', '/v1/auth/passkeys/options', {});
+register('POST', '/v1/auth/passkeys/verify', { body: authPasskeyPayloadSchema });
 register('POST', '/v1/auth/passkeys/reauth/options', {});
-register('POST', '/v1/auth/passkeys/reauth/verify', { body: Type.Record(Type.String({ minLength: 1, maxLength: 120 }), Type.Unknown()) });
-register('POST', '/v1/auth/passkeys/register/options', { body: JsonObject });
-register('POST', '/v1/auth/passkeys/register', { body: Type.Record(Type.String({ minLength: 1, maxLength: 120 }), Type.Unknown()) });
-register('DELETE', '/v1/auth/passkeys/:id', { params: object({ id: Identifier }) });
+register('POST', '/v1/auth/passkeys/reauth/verify', { body: authPasskeyPayloadSchema });
+register('POST', '/v1/auth/passkeys/register/options', {});
+register('POST', '/v1/auth/passkeys/register', { body: authPasskeyPayloadSchema });
+register('DELETE', '/v1/auth/passkeys/:id', { params: authIdentifierParamsSchema });
 register('GET', '/v1/artifacts', { querystring: object({ ...PaginationQuery.properties, q: Type.Optional(Type.String({ maxLength: 200 })), channel: Type.Optional(Type.Union([Type.Literal('appstore'), Type.Literal('testflight')])) }) });
 
 register('POST', '/v1/dashboard/decrypt', {
@@ -1239,8 +1258,10 @@ const remainingContracts: Array<[ContractMethod, string]> = [
 
 for (const [method, path] of remainingContracts) registerGenericContract(method, path);
 
-register('PATCH', '/v1/auth/profile', { body: object({ displayName: Type.String({ minLength: 1, maxLength: 64 }) }) });
-register('DELETE', '/v1/auth/connections/:provider', { params: object({ provider: Type.Union([Type.Literal('github'), Type.Literal('discord')]) }) });
+register('PATCH', '/v1/auth/profile', { body: authProfileBodySchema });
+register('DELETE', '/v1/auth/connections/:provider', { params: authConnectionParamsSchema });
+register('GET', '/v1/auth/github/callback', { querystring: authOAuthCallbackQuerySchema });
+register('GET', '/v1/auth/discord/callback', { querystring: authOAuthCallbackQuerySchema });
 register('POST', '/v1/dashboard/notifications/read', { body: object({ ids: Type.Optional(Type.Array(Identifier, { maxItems: 100 })) }) });
 register('POST', '/v1/dashboard/jobs/bulk-preview', { body: object({ ids: Type.Array(Identifier, { maxItems: 100 }), projectId: Type.Optional(Identifier) }) });
 register('POST', '/v1/dashboard/jobs/reorder', { body: object({ ids: Type.Array(Identifier, { maxItems: 100 }), projectId: Type.Optional(Identifier) }) });

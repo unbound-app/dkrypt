@@ -1,0 +1,680 @@
+import { createHash, randomBytes } from 'node:crypto';
+import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
+import type { FastifyReply, FastifyRequest, HookHandlerDoneFunction } from 'fastify';
+import {
+  type AuthConnectionRoute,
+  type AuthIdentifierRoute,
+  type AuthLoginRoute,
+  type AuthOAuthCallbackRoute,
+  type AuthPasskeyPayloadRoute,
+  type AuthPrivacyDeleteRoute,
+  type AuthProfileRoute,
+  type AuthReauthenticateRoute,
+  type AuthTokenRoute,
+} from '#authContracts.js';
+import { linkOauthAccount, resolveOauthAccount } from '#account.js';
+import { getRouteContract } from '#contracts.js';
+import { config, discordBotEnabled, discordOauthEnabled, githubOauthEnabled } from '#config.js';
+import { fetchMemberRoleIds } from '#discord.js';
+import {
+  type AuthIdentity,
+  getAuthProfile,
+  getLinkedAuthIdentities,
+  getLinkedAuthProviders,
+  removeAuthIdentity,
+  setAuthDisplayName,
+} from '#identity.js';
+import { log } from '#logger.js';
+import { beginMfaEnrollment, confirmMfaEnrollment, disableMfa, mfaStatus, regenerateRecoveryCodes, verifyMfa } from '#mfa.js';
+import { PermissionFlag, serializeBits } from '#permissions.js';
+import { accountDeletionBlocker, buildAccountExport, deleteAccount } from '#privacy.js';
+import { beginPasskeyAuthentication, beginPasskeyReauthentication, beginPasskeyRegistration, finishPasskeyAuthentication, finishPasskeyReauthentication, finishPasskeyRegistration, listUserPasskeys, removeUserPasskey } from '#passkeys.js';
+import {
+  bumpSessionVersion,
+  getDiscordGuildIds,
+  getUserEffectivePermissions,
+  listAllowedUsers,
+  listSessionsForUser,
+  revokeOtherSessionRecords,
+  revokeSessionRecord,
+  syncDiscordPerkRoles,
+  recordAudit,
+} from '#store/state.js';
+import {
+  checkRootPassword,
+  clearFastifySessionCookie,
+  fastifyRequireRecentAuthentication,
+  fastifyRequireSession,
+  fastifySessionOptsFromRequest,
+  getFastifySession,
+  setFastifySessionCookie,
+} from '#session.js';
+import { FixedWindowRateLimiter } from '#util/rateLimit.js';
+
+const LOCKOUT_AFTER = 5;
+const MAX_LOCKOUT_MS = 5 * 60_000;
+const FAILURE_WINDOW_MS = 15 * 60_000;
+const SESSION_ROUTE = '/v1/auth/session';
+const MFA_ROUTE = '/v1/auth/mfa';
+const PASSKEY_ROUTE = '/v1/auth/passkeys';
+
+interface LoginAttempts {
+  failures: number;
+  lockedUntil: number;
+  lastAttemptAt: number;
+}
+
+const loginAttempts = new Map<string, LoginAttempts>();
+const publicAuthRateLimiter = new FixedWindowRateLimiter(30, 60_000);
+
+function loginLockoutMs(key: string): number {
+  const entry = loginAttempts.get(key);
+  if (!entry) return 0;
+  if (Date.now() - entry.lastAttemptAt > FAILURE_WINDOW_MS) {
+    loginAttempts.delete(key);
+    return 0;
+  }
+  return Math.max(0, entry.lockedUntil - Date.now());
+}
+
+function recordLoginFailure(key: string): void {
+  const entry = loginAttempts.get(key) ?? { failures: 0, lockedUntil: 0, lastAttemptAt: 0 };
+  entry.failures += 1;
+  entry.lastAttemptAt = Date.now();
+  if (entry.failures >= LOCKOUT_AFTER) {
+    entry.lockedUntil = Date.now() + Math.min(2 ** (entry.failures - LOCKOUT_AFTER) * 1000, MAX_LOCKOUT_MS);
+  }
+  loginAttempts.set(key, entry);
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of loginAttempts) {
+    if (now - entry.lastAttemptAt > FAILURE_WINDOW_MS) loginAttempts.delete(key);
+  }
+}, 60_000).unref();
+
+const publicAuthRateLimit = (request: FastifyRequest, reply: FastifyReply, done: HookHandlerDoneFunction): void => {
+  const key = request.ip ?? 'unknown';
+  const decision = publicAuthRateLimiter.consume(key);
+  reply.header('X-RateLimit-Limit', String(decision.limit));
+  reply.header('X-RateLimit-Remaining', String(decision.remaining));
+  reply.header('X-RateLimit-Reset', String(Math.ceil(decision.resetAt / 1000)));
+  if (!decision.allowed) {
+    reply.header('Retry-After', String(decision.retryAfterSeconds));
+    sendAuthError(request, reply, 'rate_limited', `too many requests - try again in ${decision.retryAfterSeconds}s`, 429, true);
+    return;
+  }
+  done();
+};
+
+function sendAuthError(request: FastifyRequest, reply: FastifyReply, code: string, message: string, status: number, retryable: boolean): FastifyReply {
+  return reply.code(status).send({ error: message, code, message, requestId: request.id, retryable });
+}
+
+function parseCookieHeader(header: string | undefined): Record<string, string> {
+  if (!header) return {};
+  const out: Record<string, string> = {};
+  for (const part of header.split(';')) {
+    const idx = part.indexOf('=');
+    if (idx === -1) continue;
+    out[part.slice(0, idx).trim()] = decodeURIComponent(part.slice(idx + 1).trim());
+  }
+  return out;
+}
+
+function sendValidationError(reply: FastifyReply, status: number, message: string): FastifyReply {
+  return reply.code(status).send({ error: message });
+}
+
+export const authRoutes: FastifyPluginAsyncTypebox = async (server) => {
+  server.get(SESSION_ROUTE, { schema: getRouteContract('GET', SESSION_ROUTE) }, async (request, reply) => {
+    const session = getFastifySession(request);
+    const profile = session ? getAuthProfile(session.sub) : undefined;
+    return reply.send({
+      loggedIn: !!session,
+      sub: session?.sub,
+      displayName: profile?.displayName,
+      avatarUrl: profile?.avatarUrl,
+      identities: session ? getLinkedAuthIdentities(session.sub) : [],
+      linkedProviders: session ? getLinkedAuthProviders(session.sub) : [],
+      permissions: session ? serializeBits(session.permissions) : undefined,
+      expiresAt: session?.exp,
+      githubOauthEnabled,
+      discordOauthEnabled,
+      publicBaseUrl: config.publicBaseUrl,
+      mfa: session ? { ...mfaStatus(session.sub), required: !session.mfaVerified } : undefined,
+    });
+  });
+
+  server.get(MFA_ROUTE, { schema: getRouteContract('GET', MFA_ROUTE), preHandler: fastifyRequireSession }, async (request, reply) => {
+    return reply.send(mfaStatus(getFastifySession(request)!.sub));
+  });
+
+  server.post(`${MFA_ROUTE}/setup`, { schema: getRouteContract('POST', `${MFA_ROUTE}/setup`), preHandler: fastifyRequireSession }, async (request, reply) => {
+    const userId = getFastifySession(request)!.sub;
+    if (mfaStatus(userId).enabled) return sendValidationError(reply, 409, 'multi-factor authentication is already enabled');
+    return reply.send(beginMfaEnrollment(userId));
+  });
+
+  server.post<AuthTokenRoute>(`${MFA_ROUTE}/confirm`, { schema: getRouteContract('POST', `${MFA_ROUTE}/confirm`), preHandler: fastifyRequireSession }, async (request, reply) => {
+    const result = confirmMfaEnrollment(getFastifySession(request)!.sub, request.body.token);
+    if (!result) return sendValidationError(reply, 400, 'the authenticator code is invalid or the enrollment has expired');
+    return reply.send({ enabled: true, recoveryCodes: result.recoveryCodes });
+  });
+
+  server.post<AuthTokenRoute>(`${MFA_ROUTE}/verify`, { schema: getRouteContract('POST', `${MFA_ROUTE}/verify`) }, async (request, reply) => {
+    const session = getFastifySession(request);
+    if (!session) return sendValidationError(reply, 401, 'not signed in');
+    if (!verifyMfa(session.sub, request.body.token).ok) return sendValidationError(reply, 401, 'the authenticator or recovery code is invalid');
+    const expiresAt = setFastifySessionCookie(reply, { sub: session.sub, permissions: session.permissions, mfaVerified: true, reauthenticatedAt: Date.now() }, { sid: session.sid });
+    return reply.send({ ok: true, expiresAt });
+  });
+
+  server.post<AuthReauthenticateRoute>('/v1/auth/reauthenticate', { schema: getRouteContract('POST', '/v1/auth/reauthenticate'), preHandler: fastifyRequireSession }, async (request, reply) => {
+    const session = getFastifySession(request)!;
+    const password = request.body.password ?? '';
+    const token = request.body.mfaToken ?? '';
+    const valid = session.sub === 'root' ? checkRootPassword(password) : mfaStatus(session.sub).enabled && verifyMfa(session.sub, token).ok;
+    if (!valid) return sendAuthError(request, reply, 'reauthentication_failed', 'the supplied reauthentication proof is invalid', 401, false);
+    const expiresAt = setFastifySessionCookie(reply, { sub: session.sub, permissions: session.permissions, mfaVerified: session.mfaVerified, reauthenticatedAt: Date.now() }, { sid: session.sid });
+    return reply.send({ ok: true, expiresAt });
+  });
+
+  server.get(PASSKEY_ROUTE, { schema: getRouteContract('GET', PASSKEY_ROUTE), preHandler: fastifyRequireSession }, async (request, reply) => {
+    return reply.send({ passkeys: listUserPasskeys(getFastifySession(request)!.sub) });
+  });
+
+  server.post(`${PASSKEY_ROUTE}/register/options`, {
+    schema: getRouteContract('POST', `${PASSKEY_ROUTE}/register/options`),
+    preHandler: [fastifyRequireSession, fastifyRequireRecentAuthentication()],
+  }, async (request, reply) => {
+    try {
+      return reply.send(await beginPasskeyRegistration(getFastifySession(request)!.sub));
+    } catch (error) {
+      return sendAuthError(request, reply, 'passkey_unavailable', error instanceof Error ? error.message : String(error), 503, true);
+    }
+  });
+
+  server.post<AuthPasskeyPayloadRoute>(`${PASSKEY_ROUTE}/register`, {
+    schema: getRouteContract('POST', `${PASSKEY_ROUTE}/register`),
+    preHandler: [fastifyRequireSession, fastifyRequireRecentAuthentication()],
+  }, async (request, reply) => {
+    const response = request.body as Record<string, unknown>;
+    if (typeof response.id !== 'string' || typeof response.rawId !== 'string' || typeof response.response !== 'object' || response.response === null) {
+      return sendAuthError(request, reply, 'invalid_passkey_response', 'the passkey registration response is malformed', 400, false);
+    }
+    try {
+      const session = getFastifySession(request)!;
+      const credential = await finishPasskeyRegistration(session.sub, response as never, typeof response.name === 'string' ? response.name : undefined);
+      recordAudit(session.sub, 'auth.passkey.add', credential.id, credential.name ?? 'passkey registered');
+      return reply.code(201).send({ passkey: listUserPasskeys(session.sub).find((candidate) => candidate.id === credential.id) });
+    } catch (error) {
+      return sendAuthError(request, reply, 'passkey_registration_failed', error instanceof Error ? error.message : String(error), 400, false);
+    }
+  });
+
+  server.delete<AuthIdentifierRoute>(`${PASSKEY_ROUTE}/:id`, {
+    schema: getRouteContract('DELETE', `${PASSKEY_ROUTE}/:id`),
+    preHandler: [fastifyRequireSession, fastifyRequireRecentAuthentication()],
+  }, async (request, reply) => {
+    const session = getFastifySession(request)!;
+    if (!removeUserPasskey(session.sub, request.params.id)) return sendAuthError(request, reply, 'passkey_not_found', 'passkey not found', 404, false);
+    recordAudit(session.sub, 'auth.passkey.remove', request.params.id, 'passkey removed');
+    return reply.send({ ok: true });
+  });
+
+  server.post(`${PASSKEY_ROUTE}/options`, { schema: getRouteContract('POST', `${PASSKEY_ROUTE}/options`), preHandler: publicAuthRateLimit }, async (request, reply) => {
+    try {
+      return reply.send(await beginPasskeyAuthentication());
+    } catch (error) {
+      return sendAuthError(request, reply, 'passkey_unavailable', error instanceof Error ? error.message : String(error), 503, true);
+    }
+  });
+
+  server.post<AuthPasskeyPayloadRoute>(`${PASSKEY_ROUTE}/verify`, { schema: getRouteContract('POST', `${PASSKEY_ROUTE}/verify`), preHandler: publicAuthRateLimit }, async (request, reply) => {
+    const response = request.body as Record<string, unknown>;
+    if (typeof response.id !== 'string' || typeof response.rawId !== 'string' || typeof response.response !== 'object' || response.response === null) {
+      return sendAuthError(request, reply, 'invalid_passkey_response', 'the passkey authentication response is malformed', 400, false);
+    }
+    try {
+      const result = await finishPasskeyAuthentication(response as never);
+      const permissions = result.userId === 'root' ? PermissionFlag.administrator : getUserEffectivePermissions(result.userId);
+      const expiresAt = setFastifySessionCookie(reply, { sub: result.userId, permissions, mfaVerified: true, reauthenticatedAt: Date.now() }, fastifySessionOptsFromRequest(request));
+      recordAudit(result.userId, 'auth.passkey.login', result.credential.id, 'passkey login succeeded');
+      return reply.send({ ok: true, expiresAt });
+    } catch (error) {
+      return sendAuthError(request, reply, 'passkey_authentication_failed', error instanceof Error ? error.message : String(error), 401, false);
+    }
+  });
+
+  server.post(`${PASSKEY_ROUTE}/reauth/options`, {
+    schema: getRouteContract('POST', `${PASSKEY_ROUTE}/reauth/options`),
+    preHandler: fastifyRequireSession,
+  }, async (request, reply) => {
+    try {
+      return reply.send(await beginPasskeyReauthentication(getFastifySession(request)!.sub));
+    } catch (error) {
+      return sendAuthError(request, reply, 'passkey_unavailable', error instanceof Error ? error.message : String(error), 503, true);
+    }
+  });
+
+  server.post<AuthPasskeyPayloadRoute>(`${PASSKEY_ROUTE}/reauth/verify`, {
+    schema: getRouteContract('POST', `${PASSKEY_ROUTE}/reauth/verify`),
+    preHandler: fastifyRequireSession,
+  }, async (request, reply) => {
+    const response = request.body as Record<string, unknown>;
+    if (typeof response.id !== 'string' || typeof response.rawId !== 'string' || typeof response.response !== 'object' || response.response === null) {
+      return sendAuthError(request, reply, 'invalid_passkey_response', 'the passkey authentication response is malformed', 400, false);
+    }
+    try {
+      const session = getFastifySession(request)!;
+      const credential = await finishPasskeyReauthentication(session.sub, response as never);
+      const expiresAt = setFastifySessionCookie(
+        reply,
+        { sub: session.sub, permissions: session.permissions, mfaVerified: session.mfaVerified, reauthenticatedAt: Date.now() },
+        { sid: session.sid },
+      );
+      recordAudit(session.sub, 'auth.passkey.reauthenticate', credential.id, 'passkey reauthentication succeeded');
+      return reply.send({ ok: true, expiresAt });
+    } catch (error) {
+      return sendAuthError(request, reply, 'passkey_reauthentication_failed', error instanceof Error ? error.message : String(error), 401, false);
+    }
+  });
+
+  server.post<AuthTokenRoute>(`${MFA_ROUTE}/disable`, { schema: getRouteContract('POST', `${MFA_ROUTE}/disable`), preHandler: fastifyRequireSession }, async (request, reply) => {
+    if (!disableMfa(getFastifySession(request)!.sub, request.body.token)) return sendValidationError(reply, 400, 'the authenticator or recovery code is invalid');
+    return reply.send({ enabled: false, recoveryCodesRemaining: 0 });
+  });
+
+  server.post<AuthTokenRoute>(`${MFA_ROUTE}/recovery-codes`, { schema: getRouteContract('POST', `${MFA_ROUTE}/recovery-codes`), preHandler: fastifyRequireSession }, async (request, reply) => {
+    const recoveryCodes = regenerateRecoveryCodes(getFastifySession(request)!.sub, request.body.token);
+    if (!recoveryCodes) return sendValidationError(reply, 400, 'the authenticator or recovery code is invalid');
+    return reply.send({ recoveryCodes });
+  });
+
+  server.get('/v1/auth/privacy/export', { schema: getRouteContract('GET', '/v1/auth/privacy/export'), preHandler: fastifyRequireSession }, async (request, reply) => {
+    const userId = getFastifySession(request)!.sub;
+    const payload = buildAccountExport(userId);
+    recordAudit(userId, 'privacy.export', userId, 'account export generated');
+    const filename = `dkrypt-account-export-${userId.replace(/[^A-Za-z0-9._-]/g, '_')}.json`;
+    return reply.header('Content-Disposition', `attachment; filename="${filename}"`).type('application/json').send(`${JSON.stringify(payload, null, 2)}\n`);
+  });
+
+  server.post<AuthPrivacyDeleteRoute>('/v1/auth/privacy/delete', {
+    schema: getRouteContract('POST', '/v1/auth/privacy/delete'),
+    preHandler: [fastifyRequireSession, fastifyRequireRecentAuthentication()],
+  }, async (request, reply) => {
+    const userId = getFastifySession(request)!.sub;
+    const confirmation = request.body.confirmation.trim();
+    if (confirmation !== 'DELETE MY ACCOUNT') return sendAuthError(request, reply, 'confirmation_required', 'type DELETE MY ACCOUNT to confirm account deletion', 400, false);
+    const blocker = accountDeletionBlocker(userId);
+    if (blocker) return sendAuthError(request, reply, 'account_deletion_blocked', blocker, 409, false);
+    const result = deleteAccount(userId);
+    if (!result.ok) return sendAuthError(request, reply, 'account_deletion_failed', result.error ?? 'account deletion failed', 400, false);
+    clearFastifySessionCookie(reply);
+    return reply.send({ ok: true });
+  });
+
+  server.patch<AuthProfileRoute>('/v1/auth/profile', { schema: getRouteContract('PATCH', '/v1/auth/profile'), preHandler: fastifyRequireSession }, async (request, reply) => {
+    const userId = getFastifySession(request)!.sub;
+    if (userId === 'root') return sendValidationError(reply, 400, 'the root account does not have an OAuth profile');
+    const displayName = request.body.displayName.trim();
+    if (!displayName || displayName.length > 64 || /[\u0000-\u001f\u007f]/.test(displayName)) {
+      return sendValidationError(reply, 400, 'displayName must be between 1 and 64 characters');
+    }
+    const profile = setAuthDisplayName(userId, displayName);
+    if (!profile) return sendValidationError(reply, 404, 'profile not found');
+    return reply.send({ displayName: profile.displayName, linkedProviders: getLinkedAuthProviders(userId) });
+  });
+
+  server.delete<AuthConnectionRoute>('/v1/auth/connections/:provider', {
+    schema: getRouteContract('DELETE', '/v1/auth/connections/:provider'),
+    preHandler: fastifyRequireSession,
+  }, async (request, reply) => {
+    const session = getFastifySession(request)!;
+    const userId = session.sub;
+    const provider = request.params.provider;
+    if (userId === 'root') return sendValidationError(reply, 400, 'the root account does not have OAuth connections');
+    if (getLinkedAuthIdentities(userId).length < 2) return sendValidationError(reply, 400, 'connect another provider before removing this sign-in method');
+    const profile = removeAuthIdentity(userId, provider);
+    if (!profile) return sendValidationError(reply, 404, 'connection not found');
+    bumpSessionVersion(userId);
+    setFastifySessionCookie(reply, { sub: userId, permissions: getUserEffectivePermissions(userId) ?? 0n, reauthenticatedAt: session.reauthenticatedAt }, fastifySessionOptsFromRequest(request));
+    return reply.send({ identities: getLinkedAuthIdentities(userId), linkedProviders: getLinkedAuthProviders(userId) });
+  });
+
+  server.post('/v1/auth/refresh', { schema: getRouteContract('POST', '/v1/auth/refresh'), preHandler: fastifyRequireSession }, async (request, reply) => {
+    const session = getFastifySession(request);
+    if (!session) return sendValidationError(reply, 401, 'not signed in');
+    const permissions = session.sub === 'root' ? PermissionFlag.administrator : getUserEffectivePermissions(session.sub);
+    const expiresAt = setFastifySessionCookie(reply, { sub: session.sub, permissions, mfaVerified: session.mfaVerified, reauthenticatedAt: session.reauthenticatedAt }, { sid: session.sid });
+    return reply.send({ ok: true, expiresAt });
+  });
+
+  server.post<AuthLoginRoute>('/v1/auth/login', { schema: getRouteContract('POST', '/v1/auth/login'), preHandler: publicAuthRateLimit }, async (request, reply) => {
+    const key = request.ip ?? 'unknown';
+    const lockedForMs = loginLockoutMs(key);
+    if (lockedForMs > 0) return sendValidationError(reply, 429, `too many failed attempts - try again in ${Math.ceil(lockedForMs / 1000)}s`);
+    const password = request.body.password;
+    if (!password || !checkRootPassword(password)) {
+      recordLoginFailure(key);
+      const failures = loginAttempts.get(key)?.failures ?? 0;
+      return reply.code(401).send({ error: 'invalid password', attemptsRemaining: Math.max(0, LOCKOUT_AFTER - failures) });
+    }
+    const mfa = mfaStatus('root');
+    const mfaToken = request.body.mfaToken ?? '';
+    if (mfa.enabled && (!mfaToken || !verifyMfa('root', mfaToken).ok)) {
+      return reply.code(401).send({ error: 'multi-factor authentication is required', code: 'mfa_required' });
+    }
+    loginAttempts.delete(key);
+    setFastifySessionCookie(reply, { sub: 'root', permissions: PermissionFlag.administrator, mfaVerified: true, reauthenticatedAt: Date.now() }, fastifySessionOptsFromRequest(request));
+    return reply.send({ ok: true });
+  });
+
+  server.post('/v1/auth/logout', { schema: getRouteContract('POST', '/v1/auth/logout') }, async (request, reply) => {
+    const session = getFastifySession(request);
+    if (session) revokeSessionRecord(session.sid, session.sub);
+    clearFastifySessionCookie(reply);
+    return reply.send({ ok: true });
+  });
+
+  server.post('/v1/auth/logout-everywhere', { schema: getRouteContract('POST', '/v1/auth/logout-everywhere'), preHandler: fastifyRequireSession }, async (request, reply) => {
+    const session = getFastifySession(request);
+    if (!session) return sendValidationError(reply, 401, 'not signed in');
+    bumpSessionVersion(session.sub);
+    clearFastifySessionCookie(reply);
+    return reply.send({ ok: true });
+  });
+
+  server.get('/v1/auth/sessions', { schema: getRouteContract('GET', '/v1/auth/sessions'), preHandler: fastifyRequireSession }, async (request, reply) => {
+    const session = getFastifySession(request);
+    if (!session) return sendValidationError(reply, 401, 'not signed in');
+    return reply.send(listSessionsForUser(session.sub).map((item) => ({ ...item, current: item.id === session.sid })));
+  });
+
+  server.delete<AuthIdentifierRoute>('/v1/auth/sessions/:id', {
+    schema: getRouteContract('DELETE', '/v1/auth/sessions/:id'),
+    preHandler: fastifyRequireSession,
+  }, async (request, reply) => {
+    const session = getFastifySession(request);
+    if (!session) return sendValidationError(reply, 401, 'not signed in');
+    const ok = revokeSessionRecord(request.params.id, session.sub);
+    if (!ok) return sendValidationError(reply, 404, 'session not found');
+    if (request.params.id === session.sid) clearFastifySessionCookie(reply);
+    return reply.send({ ok: true });
+  });
+
+  server.post('/v1/auth/sessions/revoke-others', {
+    schema: getRouteContract('POST', '/v1/auth/sessions/revoke-others'),
+    preHandler: fastifyRequireSession,
+  }, async (request, reply) => {
+    const session = getFastifySession(request);
+    if (!session) return sendValidationError(reply, 401, 'not signed in');
+    return reply.send({ ok: true, revoked: revokeOtherSessionRecords(session.sub, session.sid) });
+  });
+
+  registerOAuthRoutes(server);
+};
+
+const GITHUB_OAUTH_STATE_COOKIE = 'github_oauth_state';
+const DISCORD_OAUTH_STATE_COOKIE = 'discord_oauth_state';
+const oauthConnections = new Map<string, { provider: 'github' | 'discord'; userId?: string; codeVerifier: string; expiresAt: number }>();
+
+function oauthCookie(name: string, value: string, maxAge: number): string {
+  const secure = config.publicBaseUrl.startsWith('https://') ? '; Secure' : '';
+  return `${name}=${value}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAge}${secure}`;
+}
+
+function oauthUserId(provider: 'github' | 'discord', providerId: string, username: string): string {
+  const stableId = `${provider}:${providerId}`;
+  const legacy = listAllowedUsers().find((user) => user.username === username.toLowerCase());
+  return legacy?.username ?? stableId;
+}
+
+function createOauthState(provider: 'github' | 'discord', userId?: string): { state: string; codeVerifier: string } {
+  const state = randomBytes(16).toString('hex');
+  const codeVerifier = randomBytes(32).toString('base64url');
+  oauthConnections.set(state, { provider, userId, codeVerifier, expiresAt: Date.now() + 600_000 });
+  return { state, codeVerifier };
+}
+
+function consumeOauthConnection(provider: 'github' | 'discord', state: string): { userId?: string; codeVerifier: string } | undefined {
+  const connection = oauthConnections.get(state);
+  oauthConnections.delete(state);
+  if (!connection || connection.provider !== provider || connection.expiresAt < Date.now()) return undefined;
+  return { userId: connection.userId, codeVerifier: connection.codeVerifier };
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [state, connection] of oauthConnections) {
+    if (connection.expiresAt < now) oauthConnections.delete(state);
+  }
+}, 60_000).unref();
+
+function startGithubLogin(reply: FastifyReply, userId?: string): void {
+  if (!githubOauthEnabled) {
+    reply.code(404).send({ error: 'GitHub OAuth is not configured' });
+    return;
+  }
+  const { state, codeVerifier } = createOauthState('github', userId);
+  reply.header('Set-Cookie', oauthCookie(GITHUB_OAUTH_STATE_COOKIE, state, 600));
+  const redirectUri = `${config.publicBaseUrl}/v1/auth/github/callback`;
+  const url = new URL('https://github.com/login/oauth/authorize');
+  url.searchParams.set('client_id', config.githubOauthClientId);
+  url.searchParams.set('redirect_uri', redirectUri);
+  url.searchParams.set('scope', 'read:user user:email');
+  url.searchParams.set('state', state);
+  url.searchParams.set('code_challenge', createHash('sha256').update(codeVerifier).digest('base64url'));
+  url.searchParams.set('code_challenge_method', 'S256');
+  reply.redirect(url.toString());
+}
+
+function startDiscordLogin(reply: FastifyReply, userId?: string): void {
+  if (!discordOauthEnabled) {
+    reply.code(404).send({ error: 'Discord OAuth is not configured' });
+    return;
+  }
+  const { state, codeVerifier } = createOauthState('discord', userId);
+  reply.header('Set-Cookie', oauthCookie(DISCORD_OAUTH_STATE_COOKIE, state, 600));
+  const redirectUri = `${config.publicBaseUrl}/v1/auth/discord/callback`;
+  const url = new URL('https://discord.com/oauth2/authorize');
+  url.searchParams.set('client_id', config.discordOauthClientId);
+  url.searchParams.set('redirect_uri', redirectUri);
+  url.searchParams.set('response_type', 'code');
+  url.searchParams.set('scope', 'identify email connections');
+  url.searchParams.set('state', state);
+  url.searchParams.set('code_challenge', createHash('sha256').update(codeVerifier).digest('base64url'));
+  url.searchParams.set('code_challenge_method', 'S256');
+  reply.redirect(url.toString());
+}
+
+function registerOAuthRoutes(server: Parameters<FastifyPluginAsyncTypebox>[0]): void {
+  server.get('/v1/auth/github/login', { schema: getRouteContract('GET', '/v1/auth/github/login') }, async (_request, reply) => {
+    startGithubLogin(reply);
+  });
+
+  server.get('/v1/auth/github/connect', {
+    schema: getRouteContract('GET', '/v1/auth/github/connect'),
+    preHandler: fastifyRequireSession,
+  }, async (request, reply) => {
+    const session = getFastifySession(request)!;
+    if (session.sub === 'root') return sendValidationError(reply, 400, 'the root account cannot connect OAuth identities');
+    startGithubLogin(reply, session.sub);
+  });
+
+  server.get<AuthOAuthCallbackRoute>('/v1/auth/github/callback', {
+    schema: getRouteContract('GET', '/v1/auth/github/callback'),
+  }, async (request, reply) => {
+    if (!githubOauthEnabled) return reply.redirect('/?auth_error=disabled');
+    const code = request.query.code ?? '';
+    const state = request.query.state ?? '';
+    const cookieState = parseCookieHeader(request.headers.cookie)[GITHUB_OAUTH_STATE_COOKIE];
+    reply.header('Set-Cookie', oauthCookie(GITHUB_OAUTH_STATE_COOKIE, '', 0));
+    if (!code || !state || !cookieState || state !== cookieState) {
+      log.warn('github oauth state mismatch', { hasCode: !!code, hasState: !!state, hasCookieState: !!cookieState });
+      return reply.redirect('/?auth_error=state_mismatch');
+    }
+    const oauthConnection = consumeOauthConnection('github', state);
+    const linkUserId = oauthConnection?.userId;
+    try {
+      const tokenRes = await fetch('https://github.com/login/oauth/access_token', {
+        method: 'POST',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          client_id: config.githubOauthClientId,
+          client_secret: config.githubOauthClientSecret,
+          code,
+          redirect_uri: `${config.publicBaseUrl}/v1/auth/github/callback`,
+          code_verifier: oauthConnection?.codeVerifier,
+        }),
+      });
+      const tokenBody = (await tokenRes.json()) as { access_token?: string; error?: string };
+      if (!tokenBody.access_token) throw new Error(tokenBody.error ?? 'no access_token in response');
+      const userRes = await fetch('https://api.github.com/user', {
+        headers: { Authorization: `Bearer ${tokenBody.access_token}`, Accept: 'application/vnd.github+json' },
+      });
+      if (!userRes.ok) throw new Error(`GET /user failed: HTTP ${userRes.status}`);
+      const user = (await userRes.json()) as {
+        id: number;
+        login: string;
+        name?: string | null;
+        email?: string | null;
+        avatar_url?: string;
+      };
+      let email = user.email ?? undefined;
+      if (!email) {
+        const emailsRes = await fetch('https://api.github.com/user/emails', {
+          headers: { Authorization: `Bearer ${tokenBody.access_token}`, Accept: 'application/vnd.github+json' },
+        });
+        if (emailsRes.ok) {
+          const emails = (await emailsRes.json()) as { email: string; primary: boolean; verified: boolean }[];
+          email = emails.find((candidate) => candidate.primary && candidate.verified)?.email;
+        }
+      }
+      const identity: AuthIdentity = {
+        provider: 'github',
+        providerId: String(user.id),
+        username: user.login,
+        displayName: user.name || user.login,
+        email,
+        avatarUrl: user.avatar_url,
+        source: 'oauth',
+        updatedAt: new Date().toISOString(),
+      };
+      const profile = linkUserId
+        ? linkOauthAccount(linkUserId, identity)
+        : resolveOauthAccount({ fallbackUserId: oauthUserId('github', String(user.id), user.login), identity });
+      const userId = profile.userId;
+      const permissions = getUserEffectivePermissions(userId) ?? 0n;
+      setFastifySessionCookie(reply, { sub: userId, permissions, mfaVerified: !mfaStatus(userId).enabled, reauthenticatedAt: Date.now() }, fastifySessionOptsFromRequest(request));
+      log.info('github oauth login succeeded', { login: user.login, permissions: serializeBits(permissions) });
+      return reply.redirect('/');
+    } catch (error) {
+      log.error('github oauth callback failed', { error: String(error) });
+      return reply.redirect('/?auth_error=failed');
+    }
+  });
+
+  server.get('/v1/auth/discord/login', { schema: getRouteContract('GET', '/v1/auth/discord/login') }, async (_request, reply) => {
+    startDiscordLogin(reply);
+  });
+
+  server.get('/v1/auth/discord/connect', {
+    schema: getRouteContract('GET', '/v1/auth/discord/connect'),
+    preHandler: fastifyRequireSession,
+  }, async (request, reply) => {
+    const session = getFastifySession(request)!;
+    if (session.sub === 'root') return sendValidationError(reply, 400, 'the root account cannot connect OAuth identities');
+    startDiscordLogin(reply, session.sub);
+  });
+
+  server.get<AuthOAuthCallbackRoute>('/v1/auth/discord/callback', {
+    schema: getRouteContract('GET', '/v1/auth/discord/callback'),
+  }, async (request, reply) => {
+    if (!discordOauthEnabled) return reply.redirect('/?auth_error=discord_disabled');
+    const code = request.query.code ?? '';
+    const state = request.query.state ?? '';
+    const cookieState = parseCookieHeader(request.headers.cookie)[DISCORD_OAUTH_STATE_COOKIE];
+    reply.header('Set-Cookie', oauthCookie(DISCORD_OAUTH_STATE_COOKIE, '', 0));
+    if (!code || !state || !cookieState || state !== cookieState) {
+      log.warn('discord oauth state mismatch', { hasCode: !!code, hasState: !!state, hasCookieState: !!cookieState });
+      return reply.redirect('/?auth_error=state_mismatch');
+    }
+    const oauthConnection = consumeOauthConnection('discord', state);
+    const linkUserId = oauthConnection?.userId;
+    try {
+      const redirectUri = `${config.publicBaseUrl}/v1/auth/discord/callback`;
+      const tokenBody = new URLSearchParams({
+        client_id: config.discordOauthClientId,
+        client_secret: config.discordOauthClientSecret,
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: redirectUri,
+        code_verifier: oauthConnection?.codeVerifier ?? '',
+      });
+      const tokenRes = await fetch('https://discord.com/api/v10/oauth2/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: tokenBody,
+      });
+      const token = (await tokenRes.json()) as { access_token?: string; error?: string };
+      if (!token.access_token) throw new Error(token.error ?? 'no access_token in response');
+      const userRes = await fetch('https://discord.com/api/v10/users/@me', {
+        headers: { Authorization: `Bearer ${token.access_token}` },
+      });
+      if (!userRes.ok) throw new Error(`GET /users/@me failed: HTTP ${userRes.status}`);
+      const user = (await userRes.json()) as {
+        id: string;
+        username: string;
+        global_name?: string | null;
+        email?: string;
+        avatar?: string | null;
+      };
+      const connectionsRes = await fetch('https://discord.com/api/v10/users/@me/connections', {
+        headers: { Authorization: `Bearer ${token.access_token}` },
+      });
+      const connections = connectionsRes.ok
+        ? ((await connectionsRes.json()) as { id: string; name: string; type: string; verified?: boolean }[])
+        : [];
+      if (!connectionsRes.ok) log.warn('discord connections lookup failed', { status: connectionsRes.status });
+      const updatedAt = new Date().toISOString();
+      const discoveredIdentities: AuthIdentity[] = connections
+        .filter((connection) => connection.type === 'github' && connection.verified === true && connection.id.length > 0 && connection.name.length > 0)
+        .map((connection) => ({
+          provider: 'github',
+          providerId: connection.id,
+          username: connection.name,
+          displayName: connection.name,
+          source: 'discord_connection',
+          updatedAt,
+        }));
+      const identity: AuthIdentity = {
+        provider: 'discord',
+        providerId: user.id,
+        username: user.username,
+        displayName: user.global_name || user.username,
+        email: user.email,
+        avatarUrl: user.avatar ? `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png` : undefined,
+        source: 'oauth',
+        updatedAt,
+      };
+      const profile = linkUserId
+        ? linkOauthAccount(linkUserId, identity)
+        : resolveOauthAccount({ fallbackUserId: oauthUserId('discord', user.id, `discord:${user.username}`), identity, discoveredIdentities });
+      const userId = profile.userId;
+      const guildIds = getDiscordGuildIds();
+      if (discordBotEnabled && guildIds.length > 0) {
+        syncDiscordPerkRoles(userId, await Promise.all(guildIds.map(async (guildId) => ({ guildId, roleIds: await fetchMemberRoleIds(guildId, user.id) }))));
+      }
+      const permissions = getUserEffectivePermissions(userId) ?? 0n;
+      setFastifySessionCookie(reply, { sub: userId, permissions, mfaVerified: !mfaStatus(userId).enabled, reauthenticatedAt: Date.now() }, fastifySessionOptsFromRequest(request));
+      log.info('discord oauth login succeeded', { username: user.username, permissions: serializeBits(permissions) });
+      return reply.redirect('/');
+    } catch (error) {
+      log.error('discord oauth callback failed', { error: String(error) });
+      return reply.redirect('/?auth_error=discord_failed');
+    }
+  });
+}
