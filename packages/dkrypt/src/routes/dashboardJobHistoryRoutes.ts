@@ -1,0 +1,194 @@
+import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
+import type {
+  DashboardJobBulkPreviewRoute,
+  DashboardJobDiffRoute,
+  DashboardJobHistoryExportRoute,
+} from '#dashboardJobContracts.js';
+import { recordFastifyDashboardActivity } from '#dashboardActivity.js';
+import { canAccessProject } from '#dashboardJobPresentation.js';
+import { getRouteContract } from '#contracts.js';
+import { getActiveJobs } from '#jobs/store.js';
+import type { Job } from '#jobs/types.js';
+import { PermissionFlag } from '#permissions.js';
+import { fastifyRequirePermission, fastifyRequireSession, getFastifySession } from '#session.js';
+import {
+  DEFAULT_PROJECT_ID,
+  getAllJobHistory,
+  getAverageJobDurationMs,
+  getJobHistoryEntryById,
+  getProject,
+  type JobHistoryEntry,
+} from '#store/state.js';
+import { FixedWindowRateLimiter, fastifyRateLimitPerUser } from '#util/rateLimit.js';
+import { createHttpErrorEnvelope } from '#util/httpResponse.js';
+import { csvCell } from '#util/csv.js';
+
+export interface DashboardJobHistoryServices {
+  canAccessProject: typeof canAccessProject;
+  getActiveJobs: typeof getActiveJobs;
+  getAllJobHistory: typeof getAllJobHistory;
+  getAverageJobDurationMs: typeof getAverageJobDurationMs;
+  getJobHistoryEntryById: typeof getJobHistoryEntryById;
+  getProject: typeof getProject;
+}
+
+const defaultServices: DashboardJobHistoryServices = {
+  canAccessProject,
+  getActiveJobs,
+  getAllJobHistory,
+  getAverageJobDurationMs,
+  getJobHistoryEntryById,
+  getProject,
+};
+
+const canRequestDecrypt = fastifyRequirePermission(PermissionFlag.requestDecrypt);
+const jobDiffRateLimiter = new FixedWindowRateLimiter(30, 60_000);
+const limitJobDiff = fastifyRateLimitPerUser(
+  jobDiffRateLimiter,
+  (request) => getFastifySession(request)?.sub ?? request.ip,
+  { code: 'rate_limited', retryable: true },
+);
+const historyCsvColumns = [
+  'id',
+  'bundleId',
+  'externalVersionId',
+  'versionLabel',
+  'queuedBy',
+  'status',
+  'error',
+  'sizeBytes',
+  'source',
+  'deviceId',
+  'createdAt',
+  'startedAt',
+  'finishedAt',
+] as const satisfies ReadonlyArray<keyof JobHistoryEntry>;
+
+function resolveProjectId(
+  services: DashboardJobHistoryServices,
+  userId: string,
+  permissions: bigint,
+  projectId: string,
+  reply: { code(statusCode: number): unknown },
+): string | undefined {
+  if (!services.getProject(projectId) || !services.canAccessProject(userId, permissions, projectId)) {
+    reply.code(404);
+    return undefined;
+  }
+  return projectId;
+}
+
+function hasMatchingActiveJob(activeJobs: Job[], entry: JobHistoryEntry, projectId: string): Job | undefined {
+  return activeJobs.find((job) =>
+    (job.projectId ?? DEFAULT_PROJECT_ID) === projectId &&
+    job.bundleId === entry.bundleId &&
+    job.externalVersionId === entry.externalVersionId &&
+    job.testflight?.build.id === entry.testflight?.build.id,
+  );
+}
+
+export function createDashboardJobHistoryRoutes(overrides: Partial<DashboardJobHistoryServices> = {}): FastifyPluginAsyncTypebox {
+  const services = { ...defaultServices, ...overrides };
+
+  return async (server) => {
+    server.addHook('preHandler', fastifyRequireSession);
+    server.addHook('preHandler', recordFastifyDashboardActivity);
+
+    server.get<DashboardJobHistoryExportRoute>('/v1/dashboard/jobs/export', {
+      schema: getRouteContract('GET', '/v1/dashboard/jobs/export'),
+    }, (request, reply) => {
+      const session = getFastifySession(request)!;
+      const projectId = request.query.projectId ?? DEFAULT_PROJECT_ID;
+      if (!resolveProjectId(services, session.sub, session.permissions, projectId, reply)) {
+        return createHttpErrorEnvelope(request.id, 404, 'project not found');
+      }
+      const entries = services.getAllJobHistory().filter((entry) => (entry.projectId ?? DEFAULT_PROJECT_ID) === projectId);
+      if (request.query.format !== 'csv') {
+        reply.header('Content-Disposition', 'attachment; filename="dkrypt-job-history.json"');
+        return entries;
+      }
+      const rows = [historyCsvColumns.join(',')];
+      for (const entry of entries) rows.push(historyCsvColumns.map((column) => csvCell(entry[column])).join(','));
+      reply.header('Content-Disposition', 'attachment; filename="dkrypt-job-history.csv"');
+      reply.type('text/csv');
+      return rows.join('\n');
+    });
+
+    server.post<DashboardJobBulkPreviewRoute>('/v1/dashboard/jobs/bulk-preview', {
+      schema: getRouteContract('POST', '/v1/dashboard/jobs/bulk-preview'),
+      preHandler: canRequestDecrypt,
+    }, (request, reply) => {
+      const session = getFastifySession(request)!;
+      const projectId = request.body.projectId ?? DEFAULT_PROJECT_ID;
+      if (!resolveProjectId(services, session.sub, session.permissions, projectId, reply)) {
+        return createHttpErrorEnvelope(request.id, 404, 'project not found');
+      }
+      const ids = [...new Set(request.body.ids)].slice(0, 100);
+      const activeJobs = services.getActiveJobs();
+      const entries = ids.flatMap((id) => {
+        const entry = services.getJobHistoryEntryById(id);
+        if (!entry || (entry.projectId ?? DEFAULT_PROJECT_ID) !== projectId) return [];
+        const active = hasMatchingActiveJob(activeJobs, entry, projectId);
+        return [{
+          entry,
+          item: {
+            id: entry.id,
+            bundleId: entry.bundleId,
+            versionLabel: entry.versionLabel,
+            status: entry.status,
+            action: active ? 'join-existing' as const : 'queue' as const,
+            reason: active ? `Already active as ${active.id.slice(0, 8)}` : undefined,
+            estimatedDurationMs: services.getAverageJobDurationMs(entry.bundleId, projectId),
+          },
+        }];
+      });
+      const items = entries.map(({ item }) => item);
+      return {
+        requested: ids.length,
+        eligible: items.length,
+        projectedQueueAdds: items.filter((item) => item.action === 'queue').length,
+        estimatedDurationMs: items.filter((item) => item.action === 'queue').reduce((sum, item) => sum + (item.estimatedDurationMs ?? 0), 0),
+        previousSizeBytes: entries.reduce((sum, { entry }) => sum + (entry.sizeBytes ?? 0), 0),
+        items,
+      };
+    });
+
+    server.get<DashboardJobDiffRoute>('/v1/dashboard/jobs/diff', {
+      schema: getRouteContract('GET', '/v1/dashboard/jobs/diff'),
+      preHandler: limitJobDiff,
+    }, (request, reply) => {
+      const session = getFastifySession(request)!;
+      const projectId = request.query.projectId ?? DEFAULT_PROJECT_ID;
+      if (!resolveProjectId(services, session.sub, session.permissions, projectId, reply)) {
+        return createHttpErrorEnvelope(request.id, 404, 'project not found');
+      }
+      const first = services.getJobHistoryEntryById(request.query.a);
+      const second = services.getJobHistoryEntryById(request.query.b);
+      if (!first || !second || (first.projectId ?? DEFAULT_PROJECT_ID) !== projectId || (second.projectId ?? DEFAULT_PROJECT_ID) !== projectId) {
+        reply.code(404);
+        return createHttpErrorEnvelope(request.id, 404, 'one or both job history entries not found');
+      }
+      if (first.bundleId !== request.query.bundleId || second.bundleId !== request.query.bundleId) {
+        reply.code(400);
+        return createHttpErrorEnvelope(request.id, 400, 'both entries must belong to bundleId');
+      }
+
+      const firstPlist = first.ipaInfoPlist ?? {};
+      const secondPlist = second.ipaInfoPlist ?? {};
+      const keys = new Set([...Object.keys(firstPlist), ...Object.keys(secondPlist)]);
+      const plistDiff = [...keys]
+        .filter((key) => JSON.stringify(firstPlist[key]) !== JSON.stringify(secondPlist[key]))
+        .map((key) => ({ key, before: firstPlist[key], after: secondPlist[key] }))
+        .sort((left, right) => left.key.localeCompare(right.key));
+
+      return {
+        a: { id: first.id, versionLabel: first.versionLabel, sizeBytes: first.sizeBytes, finishedAt: first.finishedAt, metadata: first.ipaMetadata },
+        b: { id: second.id, versionLabel: second.versionLabel, sizeBytes: second.sizeBytes, finishedAt: second.finishedAt, metadata: second.ipaMetadata },
+        sizeDeltaBytes: (second.sizeBytes ?? 0) - (first.sizeBytes ?? 0),
+        plistDiff,
+      };
+    });
+  };
+}
+
+export const dashboardJobHistoryRoutes = createDashboardJobHistoryRoutes();

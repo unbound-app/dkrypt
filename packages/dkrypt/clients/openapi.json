@@ -39405,7 +39405,8 @@
           {
             "schema": {
               "minLength": 1,
-              "maxLength": 200,
+              "maxLength": 80,
+              "pattern": "^[A-Za-z0-9_-]{1,80}$",
               "type": "string"
             },
             "in": "query",
@@ -39425,7 +39426,286 @@
                       "items": {
                         "additionalProperties": true,
                         "type": "object",
-                        "properties": {}
+                        "required": [
+                          "id",
+                          "bundleId",
+                          "status",
+                          "source",
+                          "createdAt",
+                          "finishedAt"
+                        ],
+                        "properties": {
+                          "id": {
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "type": "string"
+                          },
+                          "correlationId": {
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "type": "string"
+                          },
+                          "projectId": {
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "type": "string"
+                          },
+                          "bundleId": {
+                            "minLength": 3,
+                            "maxLength": 200,
+                            "pattern": "^[A-Za-z0-9.-]+$",
+                            "type": "string"
+                          },
+                          "externalVersionId": {
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "type": "string"
+                          },
+                          "testflight": {
+                            "additionalProperties": true,
+                            "type": "object",
+                            "required": [
+                              "appId",
+                              "build"
+                            ],
+                            "properties": {
+                              "appId": {
+                                "type": "number"
+                              },
+                              "build": {
+                                "additionalProperties": true,
+                                "type": "object",
+                                "required": [
+                                  "id",
+                                  "cfBundleShortVersion",
+                                  "cfBundleVersion",
+                                  "bundleId"
+                                ],
+                                "properties": {
+                                  "id": {
+                                    "type": "number"
+                                  },
+                                  "cfBundleShortVersion": {
+                                    "type": "string"
+                                  },
+                                  "cfBundleVersion": {
+                                    "type": "string"
+                                  },
+                                  "bundleId": {
+                                    "minLength": 3,
+                                    "maxLength": 200,
+                                    "pattern": "^[A-Za-z0-9.-]+$",
+                                    "type": "string"
+                                  }
+                                }
+                              }
+                            }
+                          },
+                          "versionLabel": {
+                            "type": "string"
+                          },
+                          "queuedBy": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "done"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "failed"
+                                ]
+                              }
+                            ]
+                          },
+                          "warnings": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "error": {
+                            "type": "string"
+                          },
+                          "artifactId": {
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "type": "string"
+                          },
+                          "sizeBytes": {
+                            "type": "number"
+                          },
+                          "sha256": {
+                            "type": "string"
+                          },
+                          "source": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "manual"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "scheduler"
+                                ]
+                              }
+                            ]
+                          },
+                          "createdAt": {
+                            "type": "number"
+                          },
+                          "startedAt": {
+                            "type": "number"
+                          },
+                          "finishedAt": {
+                            "type": "number"
+                          },
+                          "deviceId": {
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "type": "string"
+                          },
+                          "transport": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "wifi"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "usb"
+                                ]
+                              }
+                            ]
+                          },
+                          "ipaMetadata": {
+                            "additionalProperties": true,
+                            "type": "object",
+                            "properties": {
+                              "bundleVersion": {
+                                "type": "string"
+                              },
+                              "shortVersion": {
+                                "type": "string"
+                              },
+                              "minOsVersion": {
+                                "type": "string"
+                              },
+                              "executable": {
+                                "type": "string"
+                              },
+                              "architectures": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "entitlementKeys": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "embeddedFrameworks": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "fileCount": {
+                                "type": "number"
+                              },
+                              "compressedSizeBytes": {
+                                "type": "number"
+                              },
+                              "uncompressedSizeBytes": {
+                                "type": "number"
+                              },
+                              "codeSignaturePresent": {
+                                "type": "boolean"
+                              }
+                            }
+                          },
+                          "ipaInfoPlist": {
+                            "additionalProperties": true,
+                            "type": "object",
+                            "properties": {}
+                          },
+                          "timeline": {
+                            "type": "array",
+                            "items": {
+                              "additionalProperties": true,
+                              "type": "object",
+                              "required": [
+                                "at",
+                                "label",
+                                "status"
+                              ],
+                              "properties": {
+                                "at": {
+                                  "type": "number"
+                                },
+                                "label": {
+                                  "type": "string"
+                                },
+                                "status": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "queued"
+                                      ]
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "running"
+                                      ]
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "done"
+                                      ]
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "failed"
+                                      ]
+                                    }
+                                  ]
+                                }
+                              }
+                            }
+                          },
+                          "attempt": {
+                            "type": "number"
+                          },
+                          "retryCount": {
+                            "type": "number"
+                          },
+                          "deadlineAt": {
+                            "type": "number"
+                          },
+                          "deadlineExceeded": {
+                            "type": "boolean"
+                          },
+                          "failureClass": {
+                            "type": "string"
+                          }
+                        }
                       }
                     },
                     {
@@ -40167,7 +40447,8 @@
                   },
                   "projectId": {
                     "minLength": 1,
-                    "maxLength": 200,
+                    "maxLength": 80,
+                    "pattern": "^[A-Za-z0-9_-]{1,80}$",
                     "type": "string"
                   }
                 }
@@ -40217,7 +40498,67 @@
                       "items": {
                         "additionalProperties": true,
                         "type": "object",
-                        "properties": {}
+                        "required": [
+                          "id",
+                          "bundleId",
+                          "status",
+                          "action"
+                        ],
+                        "properties": {
+                          "id": {
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "type": "string"
+                          },
+                          "bundleId": {
+                            "minLength": 3,
+                            "maxLength": 200,
+                            "pattern": "^[A-Za-z0-9.-]+$",
+                            "type": "string"
+                          },
+                          "versionLabel": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "done"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "failed"
+                                ]
+                              }
+                            ]
+                          },
+                          "action": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "join-existing"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "queue"
+                                ]
+                              }
+                            ]
+                          },
+                          "reason": {
+                            "type": "string"
+                          },
+                          "estimatedDurationMs": {
+                            "minimum": 0,
+                            "type": "number"
+                          }
+                        }
                       }
                     }
                   }
@@ -41871,7 +42212,8 @@
           {
             "schema": {
               "minLength": 1,
-              "maxLength": 200,
+              "maxLength": 80,
+              "pattern": "^[A-Za-z0-9_-]{1,80}$",
               "type": "string"
             },
             "in": "query",
@@ -41897,12 +42239,146 @@
                     "a": {
                       "additionalProperties": true,
                       "type": "object",
-                      "properties": {}
+                      "required": [
+                        "id",
+                        "finishedAt"
+                      ],
+                      "properties": {
+                        "id": {
+                          "minLength": 1,
+                          "maxLength": 200,
+                          "type": "string"
+                        },
+                        "versionLabel": {
+                          "type": "string"
+                        },
+                        "sizeBytes": {
+                          "type": "number"
+                        },
+                        "finishedAt": {
+                          "type": "number"
+                        },
+                        "metadata": {
+                          "additionalProperties": true,
+                          "type": "object",
+                          "properties": {
+                            "bundleVersion": {
+                              "type": "string"
+                            },
+                            "shortVersion": {
+                              "type": "string"
+                            },
+                            "minOsVersion": {
+                              "type": "string"
+                            },
+                            "executable": {
+                              "type": "string"
+                            },
+                            "architectures": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "entitlementKeys": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "embeddedFrameworks": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "fileCount": {
+                              "type": "number"
+                            },
+                            "compressedSizeBytes": {
+                              "type": "number"
+                            },
+                            "uncompressedSizeBytes": {
+                              "type": "number"
+                            },
+                            "codeSignaturePresent": {
+                              "type": "boolean"
+                            }
+                          }
+                        }
+                      }
                     },
                     "b": {
                       "additionalProperties": true,
                       "type": "object",
-                      "properties": {}
+                      "required": [
+                        "id",
+                        "finishedAt"
+                      ],
+                      "properties": {
+                        "id": {
+                          "minLength": 1,
+                          "maxLength": 200,
+                          "type": "string"
+                        },
+                        "versionLabel": {
+                          "type": "string"
+                        },
+                        "sizeBytes": {
+                          "type": "number"
+                        },
+                        "finishedAt": {
+                          "type": "number"
+                        },
+                        "metadata": {
+                          "additionalProperties": true,
+                          "type": "object",
+                          "properties": {
+                            "bundleVersion": {
+                              "type": "string"
+                            },
+                            "shortVersion": {
+                              "type": "string"
+                            },
+                            "minOsVersion": {
+                              "type": "string"
+                            },
+                            "executable": {
+                              "type": "string"
+                            },
+                            "architectures": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "entitlementKeys": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "embeddedFrameworks": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "fileCount": {
+                              "type": "number"
+                            },
+                            "compressedSizeBytes": {
+                              "type": "number"
+                            },
+                            "uncompressedSizeBytes": {
+                              "type": "number"
+                            },
+                            "codeSignaturePresent": {
+                              "type": "boolean"
+                            }
+                          }
+                        }
+                      }
                     },
                     "sizeDeltaBytes": {
                       "type": "number"
@@ -41912,7 +42388,16 @@
                       "items": {
                         "additionalProperties": true,
                         "type": "object",
-                        "properties": {}
+                        "required": [
+                          "key"
+                        ],
+                        "properties": {
+                          "key": {
+                            "type": "string"
+                          },
+                          "before": {},
+                          "after": {}
+                        }
                       }
                     }
                   }

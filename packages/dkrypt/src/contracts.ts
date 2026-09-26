@@ -81,9 +81,15 @@ import {
   dashboardJobActionResponseSchema,
   dashboardJobBundleParamsSchema,
   dashboardJobBundleStatsResponseSchema,
+  dashboardJobBulkPreviewBodySchema,
+  dashboardJobBulkPreviewResponseSchema,
   dashboardJobDailyVolumeResponseSchema,
   dashboardJobDiagnosticResponseSchema,
+  dashboardJobDiffQuerySchema,
+  dashboardJobDiffResponseSchema,
   dashboardJobEtaResponseSchema,
+  dashboardJobExportQuerySchema,
+  dashboardJobExportResponseSchema,
   dashboardJobHistoryPageSchema,
   dashboardJobListQuerySchema,
   dashboardJobParamsSchema,
@@ -568,15 +574,6 @@ const PasskeyOptionsResponse = object({
 const PasskeyMutationResponse = object({ passkey: Type.Optional(PasskeySummaryResponse) });
 const AuthProfileResponse = object({ displayName: Type.String(), linkedProviders: Type.Array(Type.String()) });
 const AuthConnectionResponse = object({ identities: Type.Array(JsonObject), linkedProviders: Type.Array(Type.String()) });
-const BulkPreviewResponse = object({
-  requested: Type.Integer({ minimum: 0 }),
-  eligible: Type.Integer({ minimum: 0 }),
-  projectedQueueAdds: Type.Integer({ minimum: 0 }),
-  estimatedDurationMs: Type.Number({ minimum: 0 }),
-  previousSizeBytes: Type.Number({ minimum: 0 }),
-  items: Type.Array(JsonObject),
-});
-const JobDiffResponse = object({ a: JsonObject, b: JsonObject, sizeDeltaBytes: Type.Number(), plistDiff: Type.Array(JsonObject) });
 const InsightsResponse = object({
   totalRuns: Type.Integer({ minimum: 0 }),
   doneCount: Type.Integer({ minimum: 0 }),
@@ -593,7 +590,6 @@ const InsightsResponse = object({
 });
 const FailurePatternsResponse = object({ patterns: Type.Array(object({ message: Type.String(), count: Type.Integer({ minimum: 0 }), firstSeen: Type.Number(), lastSeen: Type.Number(), bundleIds: Type.Array(BundleId) })) });
 const StorageForecastResponse = object({ freeBytes: Type.Number({ minimum: 0 }), bytesPerDay: Type.Number({ minimum: 0 }), daysRemaining: Type.Union([Type.Number({ minimum: 0 }), Type.Null()]), sampleCount: Type.Integer({ minimum: 0 }) });
-const JobExportResponse = Type.Union([Type.Array(JsonObject), Type.String()]);
 const WebhookDeliveryPageResponse = object({ deliveries: Type.Array(JsonObject) });
 const SupportBundleResponse = object({
   generatedAt: Type.String(),
@@ -952,7 +948,7 @@ register('DELETE', '/v1/auth/connections/:provider', { params: authConnectionPar
 register('GET', '/v1/auth/github/callback', { querystring: authOAuthCallbackQuerySchema });
 register('GET', '/v1/auth/discord/callback', { querystring: authOAuthCallbackQuerySchema });
 register('POST', '/v1/dashboard/notifications/read', { body: notificationReadBodySchema });
-register('POST', '/v1/dashboard/jobs/bulk-preview', { body: object({ ids: Type.Array(Identifier, { maxItems: 100 }), projectId: Type.Optional(Identifier) }) });
+register('POST', '/v1/dashboard/jobs/bulk-preview', { body: dashboardJobBulkPreviewBodySchema });
 register('POST', '/v1/dashboard/jobs/reorder', { body: object({ ids: Type.Array(Identifier, { maxItems: 100 }), projectId: Type.Optional(Identifier) }) });
 register('POST', '/v1/stripe/webhook', { headers: object({ 'stripe-signature': Type.String({ minLength: 1, maxLength: 200 }) }), body: Type.Any() });
 register('POST', '/v1/nowpayments/webhook', { headers: object({ 'x-nowpayments-sig': Type.String({ minLength: 1, maxLength: 500 }) }), body: Type.Any() });
@@ -1198,12 +1194,12 @@ register('PATCH', '/v1/dashboard/devices/:id', {
   response: { 200: DeviceResponse, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope },
 });
 register('GET', '/v1/dashboard/jobs/export', {
-  querystring: object({ format: Type.Optional(Type.Union([Type.Literal('json'), Type.Literal('csv')])), projectId: Type.Optional(Identifier) }),
-  response: { 200: JobExportResponse },
+  querystring: dashboardJobExportQuerySchema,
+  response: { 200: dashboardJobExportResponseSchema },
 });
 register('POST', '/v1/dashboard/jobs/bulk-preview', {
-  body: object({ ids: Type.Array(Identifier, { maxItems: 100 }), projectId: Type.Optional(Identifier) }),
-  response: { 200: BulkPreviewResponse },
+  body: dashboardJobBulkPreviewBodySchema,
+  response: { 200: dashboardJobBulkPreviewResponseSchema },
 });
 register('GET', '/v1/dashboard/jobs/eta/:bundleId', {
   params: dashboardJobBundleParamsSchema,
@@ -1224,8 +1220,8 @@ register('GET', '/v1/dashboard/jobs/slo', {
   response: { 200: dashboardJobSloResponseSchema, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope, 429: ErrorEnvelope, 500: ErrorEnvelope },
 });
 register('GET', '/v1/dashboard/jobs/diff', {
-  querystring: object({ bundleId: BundleId, a: Identifier, b: Identifier, projectId: Type.Optional(Identifier) }),
-  response: { 200: JobDiffResponse },
+  querystring: dashboardJobDiffQuerySchema,
+  response: { 200: dashboardJobDiffResponseSchema },
 });
 register('GET', '/v1/dashboard/insights', {
   querystring: object({ topApps: Type.Optional(Type.Integer({ minimum: 1, maximum: 25 })), trendDays: Type.Optional(Type.Integer({ minimum: 1, maximum: 90 })), projectId: Type.Optional(Identifier) }),
@@ -1340,10 +1336,6 @@ register('GET', '/v1/dashboard/github/rate-limit', {
 register('GET', '/v1/dashboard/audit-log/export', {
   querystring: object({ format: Type.Optional(Type.Union([Type.Literal('json'), Type.Literal('csv')])) }),
   response: { 200: AuditExportResponse },
-});
-register('GET', '/v1/dashboard/jobs/export', {
-  querystring: object({ format: Type.Optional(Type.Union([Type.Literal('json'), Type.Literal('csv')])), projectId: Type.Optional(Identifier) }),
-  response: { 200: JobExportResponse },
 });
 register('GET', '/v1/dashboard/watches/export', {
   response: { 200: dashboardWatchExportResponseSchema },

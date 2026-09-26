@@ -12,7 +12,7 @@ const TestFlightBuild = Type.Object({
   cfBundleVersion: Type.String(),
   bundleId: BundleId,
 }, { additionalProperties: true });
-const IpaMetadata = Type.Object({
+export const dashboardJobIpaMetadataSchema = Type.Object({
   bundleVersion: Type.Optional(Type.String()),
   shortVersion: Type.Optional(Type.String()),
   minOsVersion: Type.Optional(Type.String()),
@@ -24,6 +24,89 @@ const IpaMetadata = Type.Object({
   compressedSizeBytes: Type.Optional(Type.Number()),
   uncompressedSizeBytes: Type.Optional(Type.Number()),
   codeSignaturePresent: Type.Optional(Type.Boolean()),
+}, { additionalProperties: true });
+export const dashboardJobExportEntrySchema = Type.Object({
+  id: identifierSchema,
+  correlationId: Type.Optional(identifierSchema),
+  projectId: Type.Optional(identifierSchema),
+  bundleId: BundleId,
+  externalVersionId: Type.Optional(identifierSchema),
+  testflight: Type.Optional(Type.Object({ appId: Type.Number(), build: TestFlightBuild }, { additionalProperties: true })),
+  versionLabel: Type.Optional(Type.String()),
+  queuedBy: Type.Optional(Type.String()),
+  status: Type.Union([Type.Literal('done'), Type.Literal('failed')]),
+  warnings: Type.Optional(Type.Array(Type.String())),
+  error: Type.Optional(Type.String()),
+  artifactId: Type.Optional(identifierSchema),
+  sizeBytes: Type.Optional(Type.Number()),
+  sha256: Type.Optional(Type.String()),
+  source: Type.Union([Type.Literal('manual'), Type.Literal('scheduler')]),
+  createdAt: Type.Number(),
+  startedAt: Type.Optional(Type.Number()),
+  finishedAt: Type.Number(),
+  deviceId: Type.Optional(identifierSchema),
+  transport: Type.Optional(deviceTransportSchema),
+  ipaMetadata: Type.Optional(dashboardJobIpaMetadataSchema),
+  ipaInfoPlist: Type.Optional(JsonObject),
+  timeline: Type.Optional(Type.Array(dashboardJobTimelineEventSchema)),
+  attempt: Type.Optional(Type.Number()),
+  retryCount: Type.Optional(Type.Number()),
+  deadlineAt: Type.Optional(Type.Number()),
+  deadlineExceeded: Type.Optional(Type.Boolean()),
+  failureClass: Type.Optional(Type.String()),
+}, { additionalProperties: true });
+export const dashboardJobExportQuerySchema = Type.Object({
+  format: Type.Optional(Type.Union([Type.Literal('json'), Type.Literal('csv')])),
+  projectId: Type.Optional(projectIdentifierSchema),
+}, { additionalProperties: true });
+export const dashboardJobExportResponseSchema = Type.Union([Type.Array(dashboardJobExportEntrySchema), Type.String()]);
+export const dashboardJobBulkPreviewBodySchema = Type.Object({
+  ids: Type.Array(identifierSchema, { maxItems: 100 }),
+  projectId: Type.Optional(projectIdentifierSchema),
+}, { additionalProperties: true });
+export const dashboardJobBulkPreviewResponseSchema = Type.Object({
+  requested: Type.Integer({ minimum: 0 }),
+  eligible: Type.Integer({ minimum: 0 }),
+  projectedQueueAdds: Type.Integer({ minimum: 0 }),
+  estimatedDurationMs: Type.Number({ minimum: 0 }),
+  previousSizeBytes: Type.Number({ minimum: 0 }),
+  items: Type.Array(Type.Object({
+    id: identifierSchema,
+    bundleId: BundleId,
+    versionLabel: Type.Optional(Type.String()),
+    status: Type.Union([Type.Literal('done'), Type.Literal('failed')]),
+    action: Type.Union([Type.Literal('join-existing'), Type.Literal('queue')]),
+    reason: Type.Optional(Type.String()),
+    estimatedDurationMs: Type.Optional(Type.Number({ minimum: 0 })),
+  }, { additionalProperties: true })),
+}, { additionalProperties: true });
+export const dashboardJobDiffQuerySchema = Type.Object({
+  bundleId: BundleId,
+  a: identifierSchema,
+  b: identifierSchema,
+  projectId: Type.Optional(projectIdentifierSchema),
+}, { additionalProperties: true });
+export const dashboardJobDiffResponseSchema = Type.Object({
+  a: Type.Object({
+    id: identifierSchema,
+    versionLabel: Type.Optional(Type.String()),
+    sizeBytes: Type.Optional(Type.Number()),
+    finishedAt: Type.Number(),
+    metadata: Type.Optional(dashboardJobIpaMetadataSchema),
+  }, { additionalProperties: true }),
+  b: Type.Object({
+    id: identifierSchema,
+    versionLabel: Type.Optional(Type.String()),
+    sizeBytes: Type.Optional(Type.Number()),
+    finishedAt: Type.Number(),
+    metadata: Type.Optional(dashboardJobIpaMetadataSchema),
+  }, { additionalProperties: true }),
+  sizeDeltaBytes: Type.Number(),
+  plistDiff: Type.Array(Type.Object({
+    key: Type.String(),
+    before: Type.Optional(Type.Unknown()),
+    after: Type.Optional(Type.Unknown()),
+  }, { additionalProperties: true })),
 }, { additionalProperties: true });
 const Requester = Type.Object({
   username: Type.Optional(Type.String()),
@@ -52,7 +135,7 @@ const DashboardJobHistoryEntry = Type.Object({
   finishedAt: Type.Number(),
   deviceId: Type.Optional(identifierSchema),
   transport: Type.Optional(deviceTransportSchema),
-  ipaMetadata: Type.Optional(IpaMetadata),
+  ipaMetadata: Type.Optional(dashboardJobIpaMetadataSchema),
   ipaInfoPlist: Type.Optional(JsonObject),
   timeline: Type.Optional(Type.Array(dashboardJobTimelineEventSchema)),
   attempt: Type.Optional(Type.Number()),
@@ -149,7 +232,7 @@ export const dashboardJobDiagnosticJobSchema = Type.Object({
   sha256: Type.Optional(Type.String()),
   deviceId: Type.Optional(identifierSchema),
   transport: Type.Optional(deviceTransportSchema),
-  ipaMetadata: Type.Optional(IpaMetadata),
+  ipaMetadata: Type.Optional(dashboardJobIpaMetadataSchema),
   ipaInfoPlist: Type.Optional(JsonObject),
   createdAt: Type.Number(),
   startedAt: Type.Optional(Type.Number()),
@@ -204,6 +287,21 @@ export type DashboardJobVolumeRoute = {
 export type DashboardJobSloRoute = {
   Querystring: Static<typeof dashboardJobProjectQuerySchema>;
   Reply: { 200: Static<typeof dashboardJobSloResponseSchema>; 400: ApiErrorEnvelope; 401: ApiErrorEnvelope; 403: ApiErrorEnvelope; 404: ApiErrorEnvelope; 429: ApiErrorEnvelope; 500: ApiErrorEnvelope };
+};
+
+export type DashboardJobHistoryExportRoute = {
+  Querystring: Static<typeof dashboardJobExportQuerySchema>;
+  Reply: { 200: Array<Static<typeof dashboardJobExportEntrySchema>> | string; 400: ApiErrorEnvelope; 401: ApiErrorEnvelope; 404: ApiErrorEnvelope; 429: ApiErrorEnvelope; 500: ApiErrorEnvelope };
+};
+
+export type DashboardJobBulkPreviewRoute = {
+  Body: Static<typeof dashboardJobBulkPreviewBodySchema>;
+  Reply: { 200: Static<typeof dashboardJobBulkPreviewResponseSchema>; 400: ApiErrorEnvelope; 401: ApiErrorEnvelope; 403: ApiErrorEnvelope; 404: ApiErrorEnvelope; 429: ApiErrorEnvelope; 500: ApiErrorEnvelope };
+};
+
+export type DashboardJobDiffRoute = {
+  Querystring: Static<typeof dashboardJobDiffQuerySchema>;
+  Reply: { 200: Static<typeof dashboardJobDiffResponseSchema>; 400: ApiErrorEnvelope; 401: ApiErrorEnvelope; 404: ApiErrorEnvelope; 429: ApiErrorEnvelope; 500: ApiErrorEnvelope };
 };
 
 type ActionErrors = { 400: ApiErrorEnvelope; 401: ApiErrorEnvelope; 403: ApiErrorEnvelope; 404: ApiErrorEnvelope; 429: ApiErrorEnvelope; 500: ApiErrorEnvelope };

@@ -17,7 +17,7 @@ import { buildDashboardOverview } from '#dashboardOverview.js';
 import { getDeviceHealth, getDeviceInstallBlocker, getDeviceReadiness } from '#deviceHealth.js';
 import { logBelongsToProject } from '#dashboardLogPresentation.js';
 import { getDiskUsage } from '#util/diskUsage.js';
-import { rateLimitPerUser } from '#util/rateLimit.js';
+import { csvCell } from '#util/csv.js';
 import { getVerifiedTestFlightCatalog, TestFlightCatalogUnavailableError } from '#testflightSubscriptions.js';
 import { listAppVersions } from '#versions.js';
 import {
@@ -46,7 +46,6 @@ import {
   getProject,
   getUserEffectivePermissions,
   getInsightsSummary,
-  getJobHistoryEntryById,
   getPrimaryDevice,
   getSchedulerRunHistory,
   getStateDatabaseStatus,
@@ -78,8 +77,6 @@ dashboardRouter.use((_req, res, next) => {
   recordDashboardSessionActivity(res.locals.session);
   next();
 });
-
-const jobDiffRateLimit = rateLimitPerUser(30, 60_000);
 
 dashboardRouter.get('/v1/dashboard/events', (req, res) => {
   const projectId = resolveRequestProjectId(req, res, 'query');
@@ -230,114 +227,6 @@ dashboardRouter.get('/v1/dashboard/artifacts/:id/file', canDecrypt, async (req, 
 dashboardRouter.get('/v1/dashboard/webhooks', canViewLogs, (req, res) => {
   const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit ?? '100'), 10) || 100, 1), 200);
   res.json({ deliveries: getWebhookDeliveryLog(limit) });
-});
-
-const HISTORY_CSV_COLUMNS = [
-  'id',
-  'bundleId',
-  'externalVersionId',
-  'versionLabel',
-  'queuedBy',
-  'status',
-  'error',
-  'sizeBytes',
-  'source',
-  'deviceId',
-  'createdAt',
-  'startedAt',
-  'finishedAt',
-] as const;
-
-function csvCell(value: unknown): string {
-  const str = value === undefined || value === null ? '' : String(value);
-  return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
-}
-
-dashboardRouter.get('/v1/dashboard/jobs/export', (req, res) => {
-  const projectId = resolveRequestProjectId(req, res, 'query');
-  if (!projectId) return;
-  const format = req.query.format === 'csv' ? 'csv' : 'json';
-  const entries = getAllJobHistory().filter((entry) => (entry.projectId ?? DEFAULT_PROJECT_ID) === projectId);
-
-  if (format === 'json') {
-    res.setHeader('Content-Disposition', 'attachment; filename="dkrypt-job-history.json"');
-    res.json(entries);
-    return;
-  }
-
-  const rows = [HISTORY_CSV_COLUMNS.join(',')];
-  for (const e of entries) {
-    rows.push(HISTORY_CSV_COLUMNS.map((c) => csvCell(e[c])).join(','));
-  }
-  res.setHeader('Content-Type', 'text/csv');
-  res.setHeader('Content-Disposition', 'attachment; filename="dkrypt-job-history.csv"');
-  res.send(rows.join('\n'));
-});
-
-dashboardRouter.post('/v1/dashboard/jobs/bulk-preview', canDecrypt, (req, res) => {
-  const projectId = resolveRequestProjectId(req, res, 'body');
-  if (!projectId) return;
-  const rawIds: string[] = Array.isArray(req.body?.ids) ? req.body.ids.filter((id: unknown): id is string => typeof id === 'string') : [];
-  const ids = [...new Set<string>(rawIds)].slice(0, 100);
-  const activeJobs = getActiveJobs();
-  const items = ids.flatMap((id) => {
-    const entry = getJobHistoryEntryById(id);
-    if (!entry || (entry.projectId ?? DEFAULT_PROJECT_ID) !== projectId) return [];
-    const active = activeJobs.find((job) => (job.projectId ?? DEFAULT_PROJECT_ID) === projectId && job.bundleId === entry.bundleId && job.externalVersionId === entry.externalVersionId && job.testflight?.build.id === entry.testflight?.build.id);
-    return [{
-      id: entry.id,
-      bundleId: entry.bundleId,
-      versionLabel: entry.versionLabel,
-      status: entry.status,
-      action: active ? 'join-existing' as const : 'queue' as const,
-      reason: active ? `Already active as ${active.id.slice(0, 8)}` : undefined,
-      estimatedDurationMs: getAverageJobDurationMs(entry.bundleId, projectId),
-    }];
-  });
-  res.json({
-    requested: ids.length,
-    eligible: items.length,
-    projectedQueueAdds: items.filter((item) => item.action === 'queue').length,
-    estimatedDurationMs: items.filter((item) => item.action === 'queue').reduce((sum, item) => sum + (item.estimatedDurationMs ?? 0), 0),
-    previousSizeBytes: items.reduce((sum, item) => sum + (getJobHistoryEntryById(item.id)?.sizeBytes ?? 0), 0),
-    items,
-  });
-});
-
-dashboardRouter.get('/v1/dashboard/jobs/diff', jobDiffRateLimit, (req, res) => {
-  const projectId = resolveRequestProjectId(req, res, 'query');
-  if (!projectId) return;
-  const bundleId = typeof req.query.bundleId === 'string' ? req.query.bundleId : '';
-  const aId = typeof req.query.a === 'string' ? req.query.a : '';
-  const bId = typeof req.query.b === 'string' ? req.query.b : '';
-  const a = getJobHistoryEntryById(aId);
-  const b = getJobHistoryEntryById(bId);
-  if (!a || !b || (a.projectId ?? DEFAULT_PROJECT_ID) !== projectId || (b.projectId ?? DEFAULT_PROJECT_ID) !== projectId) {
-    res.status(404).json({ error: 'one or both job history entries not found' });
-    return;
-  }
-  if (a.bundleId !== bundleId || b.bundleId !== bundleId) {
-    res.status(400).json({ error: 'both entries must belong to bundleId' });
-    return;
-  }
-
-  const plistA = a.ipaInfoPlist ?? {};
-  const plistB = b.ipaInfoPlist ?? {};
-  const keys = new Set([...Object.keys(plistA), ...Object.keys(plistB)]);
-  const plistDiff: { key: string; before: unknown; after: unknown }[] = [];
-  for (const key of keys) {
-    if (JSON.stringify(plistA[key]) !== JSON.stringify(plistB[key])) {
-      plistDiff.push({ key, before: plistA[key], after: plistB[key] });
-    }
-  }
-  plistDiff.sort((x, y) => x.key.localeCompare(y.key));
-
-  res.json({
-    a: { id: a.id, versionLabel: a.versionLabel, sizeBytes: a.sizeBytes, finishedAt: a.finishedAt, metadata: a.ipaMetadata },
-    b: { id: b.id, versionLabel: b.versionLabel, sizeBytes: b.sizeBytes, finishedAt: b.finishedAt, metadata: b.ipaMetadata },
-    sizeDeltaBytes: (b.sizeBytes ?? 0) - (a.sizeBytes ?? 0),
-    plistDiff,
-  });
 });
 
 dashboardRouter.get('/v1/dashboard/insights', (req, res) => {
