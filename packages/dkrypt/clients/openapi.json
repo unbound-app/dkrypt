@@ -45738,6 +45738,223 @@
                       "additionalProperties": true,
                       "type": "object",
                       "properties": {}
+                    },
+                    "alreadySubscribed": {
+                      "type": "boolean"
+                    },
+                    "subscription": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "url",
+                        "inviteCode",
+                        "requestedBy",
+                        "status",
+                        "createdAt",
+                        "updatedAt",
+                        "devices",
+                        "devicePolicy"
+                      ],
+                      "properties": {
+                        "id": {
+                          "minLength": 1,
+                          "maxLength": 200,
+                          "type": "string"
+                        },
+                        "url": {
+                          "type": "string"
+                        },
+                        "inviteCode": {
+                          "type": "string"
+                        },
+                        "requestedBy": {
+                          "minLength": 1,
+                          "maxLength": 200,
+                          "type": "string"
+                        },
+                        "status": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "pending"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "approved"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "denied"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "withdrawn"
+                              ]
+                            }
+                          ]
+                        },
+                        "appId": {
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        "bundleId": {
+                          "minLength": 3,
+                          "maxLength": 200,
+                          "pattern": "^[A-Za-z0-9.-]+$",
+                          "type": "string"
+                        },
+                        "displayName": {
+                          "type": "string"
+                        },
+                        "iconUrl": {
+                          "type": "string"
+                        },
+                        "sellerName": {
+                          "type": "string"
+                        },
+                        "category": {
+                          "type": "string"
+                        },
+                        "createdAt": {
+                          "type": "number"
+                        },
+                        "updatedAt": {
+                          "type": "number"
+                        },
+                        "approvedAt": {
+                          "type": "number"
+                        },
+                        "approvedBy": {
+                          "minLength": 1,
+                          "maxLength": 200,
+                          "type": "string"
+                        },
+                        "deniedAt": {
+                          "type": "number"
+                        },
+                        "deniedBy": {
+                          "minLength": 1,
+                          "maxLength": 200,
+                          "type": "string"
+                        },
+                        "withdrawnAt": {
+                          "type": "number"
+                        },
+                        "withdrawnBy": {
+                          "minLength": 1,
+                          "maxLength": 200,
+                          "type": "string"
+                        },
+                        "devices": {
+                          "type": "array",
+                          "items": {
+                            "additionalProperties": true,
+                            "type": "object",
+                            "required": [
+                              "deviceId",
+                              "status"
+                            ],
+                            "properties": {
+                              "deviceId": {
+                                "minLength": 1,
+                                "maxLength": 200,
+                                "type": "string"
+                              },
+                              "status": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "pending"
+                                    ]
+                                  },
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "syncing"
+                                    ]
+                                  },
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "active"
+                                    ]
+                                  },
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "unavailable"
+                                    ]
+                                  },
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "unsupported"
+                                    ]
+                                  },
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "error"
+                                    ]
+                                  },
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "unsubscribed"
+                                    ]
+                                  }
+                                ]
+                              },
+                              "appleMembership": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "accepted"
+                                    ]
+                                  },
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "pending"
+                                    ]
+                                  },
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "unknown"
+                                    ]
+                                  }
+                                ]
+                              },
+                              "lastVerifiedAt": {
+                                "type": "number"
+                              },
+                              "lastSyncedAt": {
+                                "type": "number"
+                              },
+                              "lastError": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        },
+                        "devicePolicy": {
+                          "type": "string",
+                          "enum": [
+                            "all-enabled"
+                          ]
+                        }
+                      }
                     }
                   }
                 }

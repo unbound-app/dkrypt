@@ -20,7 +20,7 @@ import { recordDashboardSessionActivity } from '#dashboardActivity.js';
 import { canAccessProject, canViewAllProjects, dashboardHistoryEntry } from '#dashboardJobPresentation.js';
 import { buildDashboardOverview } from '#dashboardOverview.js';
 import { getDeviceHealth, getDeviceInstallBlocker, getDeviceReadiness } from '#deviceHealth.js';
-import { decodeCursor, nextCursor, paginateCursor } from '#util/cursor.js';
+import { decodeCursor, nextCursor } from '#util/cursor.js';
 import { logBelongsToProject } from '#dashboardLogPresentation.js';
 import { getTestFlightBridgeDiagnostics, listBuilds, listTrains, type TFBuild } from '#testflight.js';
 import { nextCronRuns } from '#util/cron.js';
@@ -28,25 +28,9 @@ import { getDiskUsage } from '#util/diskUsage.js';
 import { rateLimitPerUser } from '#util/rateLimit.js';
 import {
   decorateSearchResults,
-  getTestFlightCatalogCacheState,
   getVerifiedTestFlightCatalog,
-  isImmutableTestFlightBundle,
-  normalizeTestFlightInvite,
-  resolveTestFlightInvite,
-  refreshTestFlightCatalogInBackground,
-  subscriptionsForUser,
-  syncTestFlightSubscription,
   TestFlightCatalogUnavailableError,
-  unsubscribeDeviceTestFlightApp,
-  unsubscribeTestFlightSubscription,
 } from '#testflightSubscriptions.js';
-import {
-  approveTestFlightSubscription,
-  createTestFlightSubscription,
-  denyTestFlightSubscription,
-  findTestFlightSubscriptionByInviteCode,
-  getTestFlightSubscription,
-} from '#store/state.js';
 import { listAppVersions } from '#versions.js';
 import {
   artifactDownloadName,
@@ -190,10 +174,6 @@ const canViewDiscordPerks = requirePermission(PermissionFlag.viewRoles, Permissi
 const canManageDiscordPerks = requirePermission(PermissionFlag.manageRoles);
 const canViewBackup = requirePermission(PermissionFlag.viewBackup, PermissionFlag.manageBackup);
 const canManageBackup = requirePermission(PermissionFlag.manageBackup);
-const canViewTestFlightSubscriptions = requirePermission(PermissionFlag.requestTestFlightSubscriptions, PermissionFlag.manageTestFlightSubscriptions);
-const canManageTestFlightSubscriptions = requirePermission(PermissionFlag.manageTestFlightSubscriptions);
-const canViewTestFlightCatalog = requirePermission(PermissionFlag.requestDecrypt, PermissionFlag.requestTestFlightSubscriptions, PermissionFlag.manageTestFlightSubscriptions);
-
 export const dashboardRouter = Router();
 
 dashboardRouter.use(requireSession);
@@ -615,182 +595,6 @@ dashboardRouter.get('/v1/dashboard/search', async (req, res) => {
     res.json({ results });
   } catch (err) {
     res.status(502).json({ error: String(err) });
-  }
-});
-
-dashboardRouter.get('/v1/dashboard/testflight/subscriptions', canViewTestFlightSubscriptions, (req, res) => {
-  const manager = hasPermission(res.locals.session.permissions, PermissionFlag.manageTestFlightSubscriptions);
-  const allSubscriptions = subscriptionsForUser(res.locals.session.sub, manager);
-  const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit ?? '50'), 10) || 50, 1), 100);
-  const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
-  const offset = cursor ? 0 : Math.max(Number.parseInt(String(req.query.offset ?? '0'), 10) || 0, 0);
-  const page = paginateCursor(allSubscriptions, {
-    cursor,
-    offset,
-    limit,
-    keyOf: (subscription) => [subscription.createdAt, subscription.id],
-    order: 'desc',
-  });
-  res.json({ subscriptions: page.items, total: allSubscriptions.length, nextCursor: page.nextCursor });
-});
-
-dashboardRouter.post('/v1/dashboard/testflight/subscriptions', canViewTestFlightSubscriptions, async (req, res) => {
-  let normalized;
-  try {
-    normalized = normalizeTestFlightInvite(req.body?.url);
-  } catch (error) {
-    res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
-    return;
-  }
-  const manager = hasPermission(res.locals.session.permissions, PermissionFlag.manageTestFlightSubscriptions);
-  const existing = findTestFlightSubscriptionByInviteCode(normalized.inviteCode);
-  if (existing) {
-    if (existing.status === 'approved') {
-      res.status(409).json({ error: `${existing.displayName ?? existing.url} is already subscribed`, alreadySubscribed: true, subscription: existing });
-      return;
-    }
-    if (!manager && existing.requestedBy !== res.locals.session.sub.toLowerCase()) {
-      res.status(409).json({ error: 'a subscription already exists for this invite link' });
-      return;
-    }
-    if (manager && existing.status === 'pending') {
-      const approved = approveTestFlightSubscription(existing.id, res.locals.session.sub);
-      if (approved) void syncTestFlightSubscription(approved.id, res.locals.session.sub);
-      res.status(202).json({ subscription: approved ?? existing });
-      return;
-    }
-    res.json({ subscription: existing });
-    return;
-  }
-  try {
-    const metadata = await resolveTestFlightInvite(normalized.url);
-    if (isImmutableTestFlightBundle(metadata.bundleId)) {
-      res.status(409).json({ error: 'Discord TestFlight access is protected and cannot be changed' });
-      return;
-    }
-    const deviceCatalog = await getVerifiedTestFlightCatalog({ requireAllDevices: true });
-    const existingDeviceAccess = deviceCatalog.find((entry) => entry.appId === metadata.appId && entry.bundleId === metadata.bundleId);
-    if (existingDeviceAccess) {
-      res.status(409).json({ error: `${metadata.displayName} is already subscribed on an enabled device`, alreadySubscribed: true });
-      return;
-    }
-    const subscription = createTestFlightSubscription({
-      ...normalized,
-      ...metadata,
-      requestedBy: res.locals.session.sub,
-      status: manager ? 'approved' : 'pending',
-    }, res.locals.session.sub);
-    if (!manager && subscription.requestedBy !== res.locals.session.sub.toLowerCase()) {
-      res.status(409).json({ error: 'a subscription already exists for this invite link' });
-      return;
-    }
-    if (manager) void syncTestFlightSubscription(subscription.id, res.locals.session.sub);
-    res.status(manager ? 202 : 201).json({ subscription });
-  } catch (error) {
-    res.status(error instanceof TestFlightCatalogUnavailableError ? 503 : 422).json({ error: error instanceof Error ? error.message : String(error) });
-  }
-});
-
-dashboardRouter.post('/v1/dashboard/testflight/subscriptions/:id/approve', canManageTestFlightSubscriptions, (req, res) => {
-  const current = getTestFlightSubscription(req.params.id);
-  if (!current) {
-    res.status(404).json({ error: 'subscription not found' });
-    return;
-  }
-  if (current.status !== 'pending') {
-    res.status(409).json({ error: `cannot approve a ${current.status} subscription` });
-    return;
-  }
-  if (isImmutableTestFlightBundle(current.bundleId)) {
-    res.status(409).json({ error: 'Discord TestFlight access is protected and cannot be changed' });
-    return;
-  }
-  const subscription = approveTestFlightSubscription(req.params.id, res.locals.session.sub);
-  if (!subscription) {
-    res.status(404).json({ error: 'subscription not found' });
-    return;
-  }
-  void syncTestFlightSubscription(subscription.id, res.locals.session.sub);
-  res.status(202).json({ subscription });
-});
-
-dashboardRouter.post('/v1/dashboard/testflight/subscriptions/:id/deny', canManageTestFlightSubscriptions, (req, res) => {
-  const current = getTestFlightSubscription(req.params.id);
-  if (!current) {
-    res.status(404).json({ error: 'subscription not found' });
-    return;
-  }
-  if (current.status !== 'pending') {
-    res.status(409).json({ error: `cannot deny a ${current.status} subscription` });
-    return;
-  }
-  if (isImmutableTestFlightBundle(current.bundleId)) {
-    res.status(409).json({ error: 'Discord TestFlight access is protected and cannot be changed' });
-    return;
-  }
-  const subscription = denyTestFlightSubscription(req.params.id, res.locals.session.sub);
-  if (!subscription) {
-    res.status(404).json({ error: 'subscription not found' });
-    return;
-  }
-  res.json({ subscription });
-});
-
-dashboardRouter.post('/v1/dashboard/testflight/subscriptions/:id/sync', canManageTestFlightSubscriptions, (req, res) => {
-  const subscription = getTestFlightSubscription(req.params.id);
-  if (!subscription) {
-    res.status(404).json({ error: 'subscription not found' });
-    return;
-  }
-  if (subscription.status !== 'approved') {
-    res.status(409).json({ error: `cannot synchronize a ${subscription.status} subscription` });
-    return;
-  }
-  if (isImmutableTestFlightBundle(subscription.bundleId)) {
-    res.status(409).json({ error: 'Discord TestFlight access is protected and cannot be changed' });
-    return;
-  }
-  void syncTestFlightSubscription(subscription.id, res.locals.session.sub);
-  res.status(202).json({ subscription });
-});
-
-dashboardRouter.post('/v1/dashboard/testflight/subscriptions/:id/unsubscribe', canViewTestFlightSubscriptions, (req, res) => {
-  const subscription = getTestFlightSubscription(req.params.id);
-  if (!subscription) {
-    res.status(404).json({ error: 'subscription not found' });
-    return;
-  }
-  const manager = hasPermission(res.locals.session.permissions, PermissionFlag.manageTestFlightSubscriptions);
-  if (!manager && subscription.requestedBy !== res.locals.session.sub.toLowerCase()) {
-    res.status(403).json({ error: 'you can only unsubscribe your own TestFlight subscriptions' });
-    return;
-  }
-  if (isImmutableTestFlightBundle(subscription.bundleId)) {
-    res.status(409).json({ error: 'Discord TestFlight access cannot be unsubscribed' });
-    return;
-  }
-  void unsubscribeTestFlightSubscription(subscription.id, res.locals.session.sub);
-  res.status(202).json({ subscription });
-});
-
-dashboardRouter.get('/v1/dashboard/testflight/catalog', canViewTestFlightCatalog, (req, res) => {
-  const cache = getTestFlightCatalogCacheState();
-  const forceRefresh = req.query.refresh === 'true';
-  if (forceRefresh || cache.stale) refreshTestFlightCatalogInBackground(forceRefresh);
-  const current = getTestFlightCatalogCacheState();
-  res.json({ apps: cache.apps, fetchedAt: cache.fetchedAt, refreshing: forceRefresh || current.refreshing });
-});
-
-dashboardRouter.post('/v1/dashboard/testflight/catalog/:bundleId/unsubscribe', canManageTestFlightSubscriptions, async (req, res) => {
-  const bundleId = typeof req.params.bundleId === 'string' ? req.params.bundleId : '';
-  if (!BUNDLE_ID_RE.test(bundleId)) {
-    res.status(400).json({ error: 'bundleId is invalid' });
-    return;
-  }
-  try {
-    res.json(await unsubscribeDeviceTestFlightApp(bundleId, res.locals.session.sub));
-  } catch (error) {
-    res.status(error instanceof TestFlightCatalogUnavailableError ? 503 : isImmutableTestFlightBundle(bundleId) ? 409 : 422).json({ error: error instanceof Error ? error.message : String(error) });
   }
 });
 

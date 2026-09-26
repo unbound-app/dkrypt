@@ -21,6 +21,7 @@ import { dashboardOverviewRoutes } from '#routes/dashboardOverviewRoutes.js';
 import { dashboardObservabilityRoutes } from '#routes/dashboardObservabilityRoutes.js';
 import { dashboardNotificationRoutes } from '#routes/dashboardNotificationRoutes.js';
 import { dashboardJobRoutes } from '#routes/dashboardJobRoutes.js';
+import { dashboardTestFlightRoutes } from '#routes/dashboardTestFlightRoutes.js';
 import { billingRoutes, billingWebhookRoutes } from '#routes/billing.js';
 import { dashboardRouter } from '#routes/dashboard.js';
 import { artifactCatalogRoutes, decryptRoutes, testFlightCatalogRoutes } from '#routes/decrypt.js';
@@ -237,6 +238,7 @@ export async function buildServer(options: { includePublicRoutes?: boolean } = {
   await server.register(dashboardObservabilityRoutes);
   await server.register(dashboardNotificationRoutes);
   await server.register(dashboardJobRoutes);
+  await server.register(dashboardTestFlightRoutes);
   await server.register(billingRoutes);
   registerRouter(server, dashboardRouter);
 

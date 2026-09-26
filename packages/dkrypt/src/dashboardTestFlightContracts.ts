@@ -1,0 +1,171 @@
+import { Type, type Static } from '@sinclair/typebox';
+import type { ApiErrorEnvelope } from '#contracts.js';
+import { bundleIdSchema, identifierSchema, paginationQuerySchema } from '#apiCommonContracts.js';
+
+const testFlightSubscriptionDeviceSchema = Type.Object({
+  deviceId: identifierSchema,
+  status: Type.Union([
+    Type.Literal('pending'),
+    Type.Literal('syncing'),
+    Type.Literal('active'),
+    Type.Literal('unavailable'),
+    Type.Literal('unsupported'),
+    Type.Literal('error'),
+    Type.Literal('unsubscribed'),
+  ]),
+  appleMembership: Type.Optional(Type.Union([Type.Literal('accepted'), Type.Literal('pending'), Type.Literal('unknown')])),
+  lastVerifiedAt: Type.Optional(Type.Number()),
+  lastSyncedAt: Type.Optional(Type.Number()),
+  lastError: Type.Optional(Type.String()),
+}, { additionalProperties: true });
+
+export const testFlightSubscriptionResponseSchema = Type.Object({
+  id: identifierSchema,
+  url: Type.String(),
+  inviteCode: Type.String(),
+  requestedBy: identifierSchema,
+  status: Type.Union([Type.Literal('pending'), Type.Literal('approved'), Type.Literal('denied'), Type.Literal('withdrawn')]),
+  appId: Type.Optional(Type.Integer({ minimum: 1 })),
+  bundleId: Type.Optional(bundleIdSchema),
+  displayName: Type.Optional(Type.String()),
+  iconUrl: Type.Optional(Type.String()),
+  sellerName: Type.Optional(Type.String()),
+  category: Type.Optional(Type.String()),
+  createdAt: Type.Number(),
+  updatedAt: Type.Number(),
+  approvedAt: Type.Optional(Type.Number()),
+  approvedBy: Type.Optional(identifierSchema),
+  deniedAt: Type.Optional(Type.Number()),
+  deniedBy: Type.Optional(identifierSchema),
+  withdrawnAt: Type.Optional(Type.Number()),
+  withdrawnBy: Type.Optional(identifierSchema),
+  devices: Type.Array(testFlightSubscriptionDeviceSchema),
+  devicePolicy: Type.Literal('all-enabled'),
+}, { additionalProperties: true });
+
+export const testFlightSubscriptionPageSchema = Type.Object({
+  subscriptions: Type.Array(testFlightSubscriptionResponseSchema),
+  total: Type.Integer({ minimum: 0 }),
+  nextCursor: Type.Optional(Type.String()),
+}, { additionalProperties: true });
+
+export const testFlightSubscriptionMutationResponseSchema = Type.Object({ subscription: testFlightSubscriptionResponseSchema }, { additionalProperties: true });
+
+export const testFlightSubscriptionConflictResponseSchema = Type.Object({
+  error: Type.String(),
+  code: Type.String(),
+  message: Type.String(),
+  requestId: Type.String(),
+  retryable: Type.Boolean(),
+  remediation: Type.Optional(Type.Object({}, { additionalProperties: true })),
+  alreadySubscribed: Type.Optional(Type.Boolean()),
+  subscription: Type.Optional(testFlightSubscriptionResponseSchema),
+}, { additionalProperties: true });
+
+export const testFlightCatalogAppResponseSchema = Type.Object({
+  appId: Type.Integer({ minimum: 1 }),
+  bundleId: bundleIdSchema,
+  displayName: Type.String(),
+  iconUrl: Type.Optional(Type.String()),
+  sellerName: Type.Optional(Type.String()),
+  category: Type.Optional(Type.String()),
+  devices: Type.Array(Type.Object({ id: identifierSchema, name: Type.String() }, { additionalProperties: true })),
+  lastVerifiedAt: Type.Number(),
+  deviceSource: Type.Literal(true),
+}, { additionalProperties: true });
+
+export const testFlightCatalogResponseSchema = Type.Object({
+  apps: Type.Array(testFlightCatalogAppResponseSchema),
+  fetchedAt: Type.Optional(Type.Number()),
+  refreshing: Type.Boolean(),
+}, { additionalProperties: true });
+
+export const testFlightDeviceUnsubscribeResponseSchema = Type.Object({
+  bundleId: bundleIdSchema,
+  removedDeviceIds: Type.Array(identifierSchema),
+  failures: Type.Array(Type.String()),
+}, { additionalProperties: true });
+
+export const testFlightCatalogQuerySchema = Type.Object({ refresh: Type.Optional(Type.Literal('true')) }, { additionalProperties: true });
+export const testFlightInviteBodySchema = Type.Object({ url: Type.String({ minLength: 1, maxLength: 500 }) }, { additionalProperties: true });
+export const testFlightSubscriptionParamsSchema = Type.Object({ id: identifierSchema }, { additionalProperties: true });
+export const testFlightCatalogBundleParamsSchema = Type.Object({ bundleId: bundleIdSchema }, { additionalProperties: true });
+
+export type TestFlightSubscriptionResponse = Static<typeof testFlightSubscriptionResponseSchema>;
+export type TestFlightSubscriptionPageResponse = Static<typeof testFlightSubscriptionPageSchema>;
+export type TestFlightSubscriptionMutationResponse = Static<typeof testFlightSubscriptionMutationResponseSchema>;
+export type TestFlightSubscriptionConflictResponse = Static<typeof testFlightSubscriptionConflictResponseSchema>;
+export type TestFlightRouteErrorResponse = ApiErrorEnvelope & {
+  alreadySubscribed?: boolean;
+  subscription?: TestFlightSubscriptionResponse;
+};
+export type TestFlightCatalogResponse = Static<typeof testFlightCatalogResponseSchema>;
+export type TestFlightDeviceUnsubscribeResponse = Static<typeof testFlightDeviceUnsubscribeResponseSchema>;
+export type TestFlightInviteBody = Static<typeof testFlightInviteBodySchema>;
+
+type CommonRouteErrors = {
+  400: ApiErrorEnvelope;
+  401: ApiErrorEnvelope;
+  403: ApiErrorEnvelope;
+  404: ApiErrorEnvelope;
+  409: ApiErrorEnvelope;
+  429: ApiErrorEnvelope;
+  500: ApiErrorEnvelope;
+  503: ApiErrorEnvelope;
+};
+
+export type DashboardTestFlightSubscriptionListRoute = {
+  Querystring: Static<typeof paginationQuerySchema>;
+  Reply: { 200: TestFlightSubscriptionPageResponse } & CommonRouteErrors;
+};
+
+export type DashboardTestFlightSubscriptionCreateRoute = {
+  Body: TestFlightInviteBody;
+  Reply: {
+    200: TestFlightSubscriptionMutationResponse;
+    201: TestFlightSubscriptionMutationResponse;
+    202: TestFlightSubscriptionMutationResponse;
+    400: ApiErrorEnvelope;
+    401: ApiErrorEnvelope;
+    403: ApiErrorEnvelope;
+    409: TestFlightSubscriptionConflictResponse;
+    422: ApiErrorEnvelope;
+    429: ApiErrorEnvelope;
+    500: ApiErrorEnvelope;
+    503: ApiErrorEnvelope;
+  };
+};
+
+export type DashboardTestFlightSubscriptionActionRoute = {
+  Params: Static<typeof testFlightSubscriptionParamsSchema>;
+  Reply: {
+    200: TestFlightSubscriptionMutationResponse;
+    202: TestFlightSubscriptionMutationResponse;
+    401: ApiErrorEnvelope;
+    403: ApiErrorEnvelope;
+    404: ApiErrorEnvelope;
+    409: ApiErrorEnvelope;
+    429: ApiErrorEnvelope;
+    500: ApiErrorEnvelope;
+  };
+};
+
+export type DashboardTestFlightCatalogRoute = {
+  Querystring: Static<typeof testFlightCatalogQuerySchema>;
+  Reply: { 200: TestFlightCatalogResponse; 401: ApiErrorEnvelope; 403: ApiErrorEnvelope; 429: ApiErrorEnvelope; 500: ApiErrorEnvelope };
+};
+
+export type DashboardTestFlightCatalogUnsubscribeRoute = {
+  Params: Static<typeof testFlightCatalogBundleParamsSchema>;
+  Reply: {
+    200: TestFlightDeviceUnsubscribeResponse;
+    400: ApiErrorEnvelope;
+    401: ApiErrorEnvelope;
+    403: ApiErrorEnvelope;
+    409: ApiErrorEnvelope;
+    422: ApiErrorEnvelope;
+    429: ApiErrorEnvelope;
+    500: ApiErrorEnvelope;
+    503: ApiErrorEnvelope;
+  };
+};

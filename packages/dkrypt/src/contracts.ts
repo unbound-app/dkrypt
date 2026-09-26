@@ -64,6 +64,17 @@ import {
 } from '#dashboardModelsContracts.js';
 import { dashboardAuditLogQuerySchema, dashboardAuditLogResponseSchema, dashboardLogsQuerySchema, dashboardLogsResponseSchema } from '#dashboardObservabilityContracts.js';
 import { dashboardJobHistoryPageSchema, dashboardJobListQuerySchema, dashboardJobParamsSchema, dashboardJobTimelineEventSchema } from '#dashboardJobContracts.js';
+import {
+  testFlightCatalogBundleParamsSchema,
+  testFlightCatalogQuerySchema,
+  testFlightCatalogResponseSchema,
+  testFlightDeviceUnsubscribeResponseSchema,
+  testFlightInviteBodySchema,
+  testFlightSubscriptionConflictResponseSchema,
+  testFlightSubscriptionMutationResponseSchema,
+  testFlightSubscriptionPageSchema,
+  testFlightSubscriptionParamsSchema,
+} from '#dashboardTestFlightContracts.js';
 
 const VersionSelector = Type.String({ minLength: 1, maxLength: 64, pattern: '^v?\\d+(?:\\.\\d+)*(?:_\\d+)?$' });
 const Identifier = identifierSchema;
@@ -247,60 +258,6 @@ export type DashboardDeviceStorageHistoryResponse = Static<typeof DeviceStorageH
 export type DashboardJobSummary = Static<typeof JobSummaryResponse>;
 export type DashboardJobTimeline = Static<typeof JobTimelineResponse>;
 export type DashboardJobHistoryPage = Static<typeof dashboardJobHistoryPageSchema>;
-const TestFlightCatalogAppResponse = object({
-  appId: Type.Integer({ minimum: 1 }),
-  bundleId: BundleId,
-  displayName: Type.String(),
-  iconUrl: Type.Optional(Type.String()),
-  sellerName: Type.Optional(Type.String()),
-  category: Type.Optional(Type.String()),
-  devices: Type.Array(object({ id: Identifier, name: Type.String() })),
-  lastVerifiedAt: Type.Number(),
-  deviceSource: Type.Literal(true),
-});
-const TestFlightCatalogResponse = object({ apps: Type.Array(TestFlightCatalogAppResponse), fetchedAt: Type.Optional(Type.Number()), refreshing: Type.Boolean() });
-const TestFlightSubscriptionDeviceResponse = object({
-  deviceId: Identifier,
-  status: Type.Union([
-    Type.Literal('pending'),
-    Type.Literal('syncing'),
-    Type.Literal('active'),
-    Type.Literal('unavailable'),
-    Type.Literal('unsupported'),
-    Type.Literal('error'),
-    Type.Literal('unsubscribed'),
-  ]),
-  appleMembership: Type.Optional(Type.Union([Type.Literal('accepted'), Type.Literal('pending'), Type.Literal('unknown')])),
-  lastVerifiedAt: Type.Optional(Type.Number()),
-  lastSyncedAt: Type.Optional(Type.Number()),
-  lastError: Type.Optional(Type.String()),
-});
-const TestFlightSubscriptionResponse = object({
-  id: Identifier,
-  url: Type.String(),
-  inviteCode: Type.String(),
-  requestedBy: Identifier,
-  status: Type.Union([Type.Literal('pending'), Type.Literal('approved'), Type.Literal('denied'), Type.Literal('withdrawn')]),
-  appId: Type.Optional(Type.Integer({ minimum: 1 })),
-  bundleId: Type.Optional(BundleId),
-  displayName: Type.Optional(Type.String()),
-  iconUrl: Type.Optional(Type.String()),
-  sellerName: Type.Optional(Type.String()),
-  category: Type.Optional(Type.String()),
-  createdAt: Type.Number(),
-  updatedAt: Type.Number(),
-  approvedAt: Type.Optional(Type.Number()),
-  approvedBy: Type.Optional(Identifier),
-  deniedAt: Type.Optional(Type.Number()),
-  deniedBy: Type.Optional(Identifier),
-  withdrawnAt: Type.Optional(Type.Number()),
-  withdrawnBy: Type.Optional(Identifier),
-  devices: Type.Array(TestFlightSubscriptionDeviceResponse),
-  devicePolicy: Type.Literal('all-enabled'),
-});
-const TestFlightSubscriptionPage = object({ subscriptions: Type.Array(TestFlightSubscriptionResponse), total: Type.Integer({ minimum: 0 }), nextCursor: PageCursor });
-const TestFlightSubscriptionMutationResponse = object({ subscription: TestFlightSubscriptionResponse });
-const TestFlightDeviceUnsubscribeResponse = object({ bundleId: BundleId, removedDeviceIds: Type.Array(Identifier), failures: Type.Array(Type.String()) });
 const SearchResponse = object({ results: Type.Array(JsonObject) });
 const DashboardDecryptPreflightResponse = object({
   bundleId: BundleId,
@@ -1144,7 +1101,7 @@ register('POST', '/v1/dashboard/devices/:id/bridge-action', { params: object({ i
 register('POST', '/v1/dashboard/devices/:id/recover', { params: object({ id: Identifier }), response: { 200: DeviceRecoveryResponse, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope, 502: ErrorEnvelope } });
 register('GET', '/v1/dashboard/jobs/:id/status', { params: dashboardJobParamsSchema, response: { 200: JobSummaryResponse, 404: ErrorEnvelope } });
 register('GET', '/v1/dashboard/jobs/:id/timeline', { params: dashboardJobParamsSchema, response: { 200: JobTimelineResponse, 404: ErrorEnvelope } });
-register('GET', '/v1/dashboard/testflight/catalog', { querystring: object({ refresh: Type.Optional(Type.Literal('true')) }), response: { 200: TestFlightCatalogResponse } });
+register('GET', '/v1/dashboard/testflight/catalog', { querystring: testFlightCatalogQuerySchema, response: { 200: testFlightCatalogResponseSchema } });
 register('GET', '/v1/auth/session', { response: { 200: AuthSessionResponse } });
 register('GET', '/v1/auth/mfa', { response: { 200: AuthMfaResponse } });
 register('POST', '/v1/auth/mfa/setup', { response: { 200: object({ secret: Type.String(), otpauthUrl: Type.String() }) } });
@@ -1294,31 +1251,36 @@ register('GET', '/v1/dashboard/search', {
 });
 register('GET', '/v1/dashboard/testflight/subscriptions', {
   querystring: PaginationQuery,
-  response: { 200: TestFlightSubscriptionPage },
+  response: { 200: testFlightSubscriptionPageSchema },
 });
 register('POST', '/v1/dashboard/testflight/subscriptions', {
-  body: object({ url: Type.String({ minLength: 1, maxLength: 500 }) }),
-  response: { 200: TestFlightSubscriptionMutationResponse, 201: TestFlightSubscriptionMutationResponse, 202: TestFlightSubscriptionMutationResponse },
+  body: testFlightInviteBodySchema,
+  response: {
+    200: testFlightSubscriptionMutationResponseSchema,
+    201: testFlightSubscriptionMutationResponseSchema,
+    202: testFlightSubscriptionMutationResponseSchema,
+    409: testFlightSubscriptionConflictResponseSchema,
+  },
 });
 register('POST', '/v1/dashboard/testflight/subscriptions/:id/approve', {
-  params: object({ id: Identifier }),
-  response: { 202: TestFlightSubscriptionMutationResponse },
+  params: testFlightSubscriptionParamsSchema,
+  response: { 202: testFlightSubscriptionMutationResponseSchema },
 });
 register('POST', '/v1/dashboard/testflight/subscriptions/:id/deny', {
-  params: object({ id: Identifier }),
-  response: { 200: TestFlightSubscriptionMutationResponse },
+  params: testFlightSubscriptionParamsSchema,
+  response: { 200: testFlightSubscriptionMutationResponseSchema },
 });
 register('POST', '/v1/dashboard/testflight/subscriptions/:id/sync', {
-  params: object({ id: Identifier }),
-  response: { 202: TestFlightSubscriptionMutationResponse },
+  params: testFlightSubscriptionParamsSchema,
+  response: { 202: testFlightSubscriptionMutationResponseSchema },
 });
 register('POST', '/v1/dashboard/testflight/subscriptions/:id/unsubscribe', {
-  params: object({ id: Identifier }),
-  response: { 202: TestFlightSubscriptionMutationResponse },
+  params: testFlightSubscriptionParamsSchema,
+  response: { 202: testFlightSubscriptionMutationResponseSchema },
 });
 register('POST', '/v1/dashboard/testflight/catalog/:bundleId/unsubscribe', {
-  params: object({ bundleId: BundleId }),
-  response: { 200: TestFlightDeviceUnsubscribeResponse },
+  params: testFlightCatalogBundleParamsSchema,
+  response: { 200: testFlightDeviceUnsubscribeResponseSchema },
 });
 register('POST', '/v1/dashboard/decrypt/preflight', {
   body: object({ bundleId: BundleId, testflight: Type.Optional(Type.Boolean()), versionLabel: Type.Optional(Type.String({ maxLength: 64 })), installSizeBytes: Type.Optional(Type.Number({ exclusiveMinimum: 0 })), deviceId: Type.Optional(Identifier), projectId: Type.Optional(Identifier) }),

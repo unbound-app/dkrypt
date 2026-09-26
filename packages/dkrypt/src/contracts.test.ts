@@ -343,6 +343,8 @@ test('device and TestFlight mutation contracts publish their success status', as
       expect(schema).toBeDefined();
       for (const field of fields) expect(Object.keys(schema?.properties ?? {})).toContain(field);
     }
+    const duplicateSubscriptionConflict = document.paths?.['/v1/dashboard/testflight/subscriptions']?.post?.responses?.['409']?.content?.['application/json']?.schema;
+    expect(Object.keys(duplicateSubscriptionConflict?.properties ?? {})).toEqual(expect.arrayContaining(['alreadySubscribed', 'subscription']));
   } finally {
     await server.close();
   }
