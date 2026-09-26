@@ -27438,14 +27438,298 @@
                     "settings": {
                       "additionalProperties": true,
                       "type": "object",
-                      "properties": {}
+                      "required": [
+                        "notifyWebhookUrl",
+                        "notifyFormat",
+                        "notifySuccessMode",
+                        "notifyQuietHoursStart",
+                        "notifyQuietHoursEnd",
+                        "notifyOnKeyRequest",
+                        "notifyOnAutomationSuccess",
+                        "notifyOnAutomationFailure",
+                        "notifyOnKeyExpiringSoon",
+                        "notifyOnDeviceOffline",
+                        "notifyOnDeviceBatteryHot",
+                        "notifyOnDeviceBatteryLow",
+                        "notifyOnDiskFull",
+                        "notifyOnDeviceStorageLow",
+                        "notifyOnTestFlightBridgeDown",
+                        "notifyOnJobCompleted",
+                        "notifyOnQueueSloBreach",
+                        "schedulerRetryCount",
+                        "deviceOfflineAlertMinutes",
+                        "batteryHotAlertC",
+                        "batteryLowAlertPercent",
+                        "diskFullAlertPercent",
+                        "deviceStorageAlertPercent",
+                        "testFlightBridgeAlertMinutes",
+                        "jobHistoryRetentionDays",
+                        "maintenanceMode"
+                      ],
+                      "properties": {
+                        "notifyWebhookUrl": {
+                          "type": "string"
+                        },
+                        "notifyFormat": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "embed"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "plain"
+                              ]
+                            }
+                          ]
+                        },
+                        "notifySuccessMode": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "instant"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "daily"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "weekly"
+                              ]
+                            }
+                          ]
+                        },
+                        "notifyQuietHoursStart": {
+                          "type": "string"
+                        },
+                        "notifyQuietHoursEnd": {
+                          "type": "string"
+                        },
+                        "notifyOnKeyRequest": {
+                          "type": "boolean"
+                        },
+                        "notifyOnAutomationSuccess": {
+                          "type": "boolean"
+                        },
+                        "notifyOnAutomationFailure": {
+                          "type": "boolean"
+                        },
+                        "notifyOnKeyExpiringSoon": {
+                          "type": "boolean"
+                        },
+                        "notifyOnDeviceOffline": {
+                          "type": "boolean"
+                        },
+                        "notifyOnDeviceBatteryHot": {
+                          "type": "boolean"
+                        },
+                        "notifyOnDeviceBatteryLow": {
+                          "type": "boolean"
+                        },
+                        "notifyOnDiskFull": {
+                          "type": "boolean"
+                        },
+                        "notifyOnDeviceStorageLow": {
+                          "type": "boolean"
+                        },
+                        "notifyOnTestFlightBridgeDown": {
+                          "type": "boolean"
+                        },
+                        "notifyOnJobCompleted": {
+                          "type": "boolean"
+                        },
+                        "notifyOnQueueSloBreach": {
+                          "type": "boolean"
+                        },
+                        "schedulerRetryCount": {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "deviceOfflineAlertMinutes": {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "batteryHotAlertC": {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "batteryLowAlertPercent": {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "diskFullAlertPercent": {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "deviceStorageAlertPercent": {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "testFlightBridgeAlertMinutes": {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "jobHistoryRetentionDays": {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "maintenanceMode": {
+                          "type": "boolean"
+                        }
+                      }
                     },
                     "watches": {
                       "type": "array",
                       "items": {
                         "additionalProperties": true,
                         "type": "object",
-                        "properties": {}
+                        "required": [
+                          "id",
+                          "bundleId",
+                          "repo",
+                          "ghWorkflowFile",
+                          "pollCron",
+                          "enabled",
+                          "createdAt",
+                          "updatedAt"
+                        ],
+                        "properties": {
+                          "id": {
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "type": "string"
+                          },
+                          "projectId": {
+                            "minLength": 1,
+                            "maxLength": 80,
+                            "pattern": "^[A-Za-z0-9_-]{1,80}$",
+                            "type": "string"
+                          },
+                          "bundleId": {
+                            "minLength": 3,
+                            "maxLength": 200,
+                            "pattern": "^[A-Za-z0-9.-]+$",
+                            "type": "string"
+                          },
+                          "repo": {
+                            "type": "string"
+                          },
+                          "ghWorkflowFile": {
+                            "type": "string"
+                          },
+                          "dispatchTargets": {
+                            "type": "array",
+                            "items": {
+                              "additionalProperties": true,
+                              "type": "object",
+                              "required": [
+                                "repo",
+                                "ghWorkflowFile"
+                              ],
+                              "properties": {
+                                "repo": {
+                                  "minLength": 3,
+                                  "maxLength": 200,
+                                  "pattern": "^[\\w.-]+/[\\w.-]+$",
+                                  "type": "string"
+                                },
+                                "ghWorkflowFile": {
+                                  "minLength": 1,
+                                  "maxLength": 200,
+                                  "type": "string"
+                                },
+                                "mode": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "repository_dispatch"
+                                      ]
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "workflow_dispatch"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "ref": {
+                                  "maxLength": 200,
+                                  "type": "string"
+                                },
+                                "inputs": {
+                                  "type": "object",
+                                  "additionalProperties": {
+                                    "maxLength": 500,
+                                    "type": "string"
+                                  }
+                                }
+                              }
+                            }
+                          },
+                          "pollCron": {
+                            "type": "string"
+                          },
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "webhookUrl": {
+                            "type": "string"
+                          },
+                          "testFlightPolicy": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "latest"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "latestNonExpired"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "train"
+                                ]
+                              }
+                            ]
+                          },
+                          "testFlightTrain": {
+                            "type": "string"
+                          },
+                          "createdAt": {
+                            "type": "number"
+                          },
+                          "updatedAt": {
+                            "type": "number"
+                          },
+                          "nextRunAt": {
+                            "type": "number"
+                          },
+                          "schedulable": {
+                            "type": "boolean"
+                          },
+                          "configIssues": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        }
                       }
                     },
                     "devices": {
@@ -27453,7 +27737,177 @@
                       "items": {
                         "additionalProperties": true,
                         "type": "object",
-                        "properties": {}
+                        "required": [
+                          "id",
+                          "name",
+                          "enabled",
+                          "transport",
+                          "createdAt",
+                          "updatedAt",
+                          "setupRequired",
+                          "transportState",
+                          "transportCapabilities",
+                          "recoveryState"
+                        ],
+                        "properties": {
+                          "id": {
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "isPrimary": {
+                            "type": "boolean"
+                          },
+                          "transport": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "wifi"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "usb"
+                                ]
+                              }
+                            ]
+                          },
+                          "host": {
+                            "type": "string"
+                          },
+                          "port": {
+                            "minimum": 1,
+                            "maximum": 65535,
+                            "type": "integer"
+                          },
+                          "user": {
+                            "type": "string"
+                          },
+                          "udid": {
+                            "type": "string"
+                          },
+                          "usbmuxNetwork": {
+                            "type": "boolean"
+                          },
+                          "productType": {
+                            "type": "string"
+                          },
+                          "iosVersion": {
+                            "type": "string"
+                          },
+                          "toolchain": {
+                            "type": "string"
+                          },
+                          "notes": {
+                            "type": "string"
+                          },
+                          "createdAt": {
+                            "type": "number"
+                          },
+                          "updatedAt": {
+                            "type": "number"
+                          },
+                          "setupRequired": {
+                            "type": "boolean"
+                          },
+                          "transportState": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "discovered"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "pairing"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "connecting"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "ready"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "degraded"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "recovering"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "offline"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "unsupported"
+                                ]
+                              }
+                            ]
+                          },
+                          "transportCapabilities": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "lastSeenAt": {
+                            "type": "number"
+                          },
+                          "recoveryState": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "stable"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "recovering"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "degraded"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "offline"
+                                ]
+                              }
+                            ]
+                          }
+                        }
                       }
                     },
                     "lastSchedulerRunAt": {
@@ -27464,13 +27918,216 @@
                       "items": {
                         "additionalProperties": true,
                         "type": "object",
-                        "properties": {}
+                        "required": [
+                          "id",
+                          "ts",
+                          "appStore",
+                          "testflight"
+                        ],
+                        "properties": {
+                          "id": {
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "type": "string"
+                          },
+                          "ts": {
+                            "type": "number"
+                          },
+                          "watchId": {
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "type": "string"
+                          },
+                          "bundleId": {
+                            "minLength": 3,
+                            "maxLength": 200,
+                            "pattern": "^[A-Za-z0-9.-]+$",
+                            "type": "string"
+                          },
+                          "appStore": {
+                            "additionalProperties": true,
+                            "type": "object",
+                            "required": [
+                              "ok",
+                              "triggered",
+                              "reason"
+                            ],
+                            "properties": {
+                              "ok": {
+                                "type": "boolean"
+                              },
+                              "triggered": {
+                                "type": "boolean"
+                              },
+                              "reason": {
+                                "type": "string"
+                              },
+                              "runUrl": {
+                                "type": "string"
+                              },
+                              "runStatus": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "dispatched"
+                                    ]
+                                  },
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "succeeded"
+                                    ]
+                                  },
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "failed"
+                                    ]
+                                  },
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "timed_out"
+                                    ]
+                                  }
+                                ]
+                              },
+                              "observedVersion": {
+                                "type": "string"
+                              },
+                              "installMode": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "pinned"
+                                    ]
+                                  },
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "current"
+                                    ]
+                                  }
+                                ]
+                              },
+                              "versionLabel": {
+                                "type": "string"
+                              },
+                              "dispatchTargetKeys": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              }
+                            }
+                          },
+                          "testflight": {
+                            "additionalProperties": true,
+                            "type": "object",
+                            "required": [
+                              "ok",
+                              "triggered",
+                              "reason"
+                            ],
+                            "properties": {
+                              "ok": {
+                                "type": "boolean"
+                              },
+                              "triggered": {
+                                "type": "boolean"
+                              },
+                              "reason": {
+                                "type": "string"
+                              },
+                              "runUrl": {
+                                "type": "string"
+                              },
+                              "runStatus": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "dispatched"
+                                    ]
+                                  },
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "succeeded"
+                                    ]
+                                  },
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "failed"
+                                    ]
+                                  },
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "timed_out"
+                                    ]
+                                  }
+                                ]
+                              },
+                              "observedVersion": {
+                                "type": "string"
+                              },
+                              "installMode": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "pinned"
+                                    ]
+                                  },
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "current"
+                                    ]
+                                  }
+                                ]
+                              },
+                              "versionLabel": {
+                                "type": "string"
+                              },
+                              "dispatchTargetKeys": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              }
+                            }
+                          }
+                        }
                       }
                     },
                     "disk": {
                       "additionalProperties": true,
                       "type": "object",
-                      "properties": {}
+                      "required": [
+                        "totalBytes",
+                        "freeBytes",
+                        "usedBytes",
+                        "usedPercent"
+                      ],
+                      "properties": {
+                        "totalBytes": {
+                          "type": "number"
+                        },
+                        "freeBytes": {
+                          "type": "number"
+                        },
+                        "usedBytes": {
+                          "type": "number"
+                        },
+                        "usedPercent": {
+                          "type": "number"
+                        }
+                      }
                     },
                     "isPaidPlan": {
                       "type": "boolean"
@@ -27478,7 +28135,25 @@
                     "maintenance": {
                       "additionalProperties": true,
                       "type": "object",
-                      "properties": {}
+                      "required": [
+                        "active",
+                        "manual",
+                        "auto"
+                      ],
+                      "properties": {
+                        "active": {
+                          "type": "boolean"
+                        },
+                        "manual": {
+                          "type": "boolean"
+                        },
+                        "auto": {
+                          "type": "boolean"
+                        },
+                        "reason": {
+                          "type": "string"
+                        }
+                      }
                     },
                     "activeJobs": {
                       "type": "array",
@@ -56129,7 +56804,8 @@
                           },
                           "projectId": {
                             "minLength": 1,
-                            "maxLength": 200,
+                            "maxLength": 80,
+                            "pattern": "^[A-Za-z0-9_-]{1,80}$",
                             "type": "string"
                           },
                           "bundleId": {
@@ -56149,7 +56825,50 @@
                             "items": {
                               "additionalProperties": true,
                               "type": "object",
-                              "properties": {}
+                              "required": [
+                                "repo",
+                                "ghWorkflowFile"
+                              ],
+                              "properties": {
+                                "repo": {
+                                  "minLength": 3,
+                                  "maxLength": 200,
+                                  "pattern": "^[\\w.-]+/[\\w.-]+$",
+                                  "type": "string"
+                                },
+                                "ghWorkflowFile": {
+                                  "minLength": 1,
+                                  "maxLength": 200,
+                                  "type": "string"
+                                },
+                                "mode": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "repository_dispatch"
+                                      ]
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "workflow_dispatch"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "ref": {
+                                  "maxLength": 200,
+                                  "type": "string"
+                                },
+                                "inputs": {
+                                  "type": "object",
+                                  "additionalProperties": {
+                                    "maxLength": 500,
+                                    "type": "string"
+                                  }
+                                }
+                              }
                             }
                           },
                           "pollCron": {
@@ -56190,6 +56909,9 @@
                             "type": "number"
                           },
                           "updatedAt": {
+                            "type": "number"
+                          },
+                          "nextRunAt": {
                             "type": "number"
                           },
                           "schedulable": {
@@ -56690,7 +57412,8 @@
                     },
                     "projectId": {
                       "minLength": 1,
-                      "maxLength": 200,
+                      "maxLength": 80,
+                      "pattern": "^[A-Za-z0-9_-]{1,80}$",
                       "type": "string"
                     },
                     "bundleId": {
@@ -56710,7 +57433,50 @@
                       "items": {
                         "additionalProperties": true,
                         "type": "object",
-                        "properties": {}
+                        "required": [
+                          "repo",
+                          "ghWorkflowFile"
+                        ],
+                        "properties": {
+                          "repo": {
+                            "minLength": 3,
+                            "maxLength": 200,
+                            "pattern": "^[\\w.-]+/[\\w.-]+$",
+                            "type": "string"
+                          },
+                          "ghWorkflowFile": {
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "type": "string"
+                          },
+                          "mode": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "repository_dispatch"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "workflow_dispatch"
+                                ]
+                              }
+                            ]
+                          },
+                          "ref": {
+                            "maxLength": 200,
+                            "type": "string"
+                          },
+                          "inputs": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "maxLength": 500,
+                              "type": "string"
+                            }
+                          }
+                        }
                       }
                     },
                     "pollCron": {
@@ -56751,6 +57517,9 @@
                       "type": "number"
                     },
                     "updatedAt": {
+                      "type": "number"
+                    },
+                    "nextRunAt": {
                       "type": "number"
                     },
                     "schedulable": {
@@ -59485,7 +60254,8 @@
                     },
                     "projectId": {
                       "minLength": 1,
-                      "maxLength": 200,
+                      "maxLength": 80,
+                      "pattern": "^[A-Za-z0-9_-]{1,80}$",
                       "type": "string"
                     },
                     "bundleId": {
@@ -59505,7 +60275,50 @@
                       "items": {
                         "additionalProperties": true,
                         "type": "object",
-                        "properties": {}
+                        "required": [
+                          "repo",
+                          "ghWorkflowFile"
+                        ],
+                        "properties": {
+                          "repo": {
+                            "minLength": 3,
+                            "maxLength": 200,
+                            "pattern": "^[\\w.-]+/[\\w.-]+$",
+                            "type": "string"
+                          },
+                          "ghWorkflowFile": {
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "type": "string"
+                          },
+                          "mode": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "repository_dispatch"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "workflow_dispatch"
+                                ]
+                              }
+                            ]
+                          },
+                          "ref": {
+                            "maxLength": 200,
+                            "type": "string"
+                          },
+                          "inputs": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "maxLength": 500,
+                              "type": "string"
+                            }
+                          }
+                        }
                       }
                     },
                     "pollCron": {
@@ -59546,6 +60359,9 @@
                       "type": "number"
                     },
                     "updatedAt": {
+                      "type": "number"
+                    },
+                    "nextRunAt": {
                       "type": "number"
                     },
                     "schedulable": {
@@ -60427,7 +61243,8 @@
                           },
                           "projectId": {
                             "minLength": 1,
-                            "maxLength": 200,
+                            "maxLength": 80,
+                            "pattern": "^[A-Za-z0-9_-]{1,80}$",
                             "type": "string"
                           },
                           "bundleId": {
@@ -60447,7 +61264,50 @@
                             "items": {
                               "additionalProperties": true,
                               "type": "object",
-                              "properties": {}
+                              "required": [
+                                "repo",
+                                "ghWorkflowFile"
+                              ],
+                              "properties": {
+                                "repo": {
+                                  "minLength": 3,
+                                  "maxLength": 200,
+                                  "pattern": "^[\\w.-]+/[\\w.-]+$",
+                                  "type": "string"
+                                },
+                                "ghWorkflowFile": {
+                                  "minLength": 1,
+                                  "maxLength": 200,
+                                  "type": "string"
+                                },
+                                "mode": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "repository_dispatch"
+                                      ]
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "workflow_dispatch"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "ref": {
+                                  "maxLength": 200,
+                                  "type": "string"
+                                },
+                                "inputs": {
+                                  "type": "object",
+                                  "additionalProperties": {
+                                    "maxLength": 500,
+                                    "type": "string"
+                                  }
+                                }
+                              }
                             }
                           },
                           "pollCron": {
@@ -60488,6 +61348,9 @@
                             "type": "number"
                           },
                           "updatedAt": {
+                            "type": "number"
+                          },
+                          "nextRunAt": {
                             "type": "number"
                           },
                           "schedulable": {

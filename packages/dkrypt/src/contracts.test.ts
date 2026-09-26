@@ -196,6 +196,34 @@ test('dashboard job contracts describe history and transport fields', async () =
   }
 });
 
+test('dashboard overview publishes typed nested dashboard records', async () => {
+  const server = await buildServer({ includePublicRoutes: false });
+  try {
+    await server.ready();
+    type Schema = { properties?: Record<string, Schema>; items?: Schema };
+    const document = server.swagger() as {
+      paths?: Record<string, Record<string, { responses?: Record<string, { content?: Record<string, { schema?: Schema }> }> }>>;
+    };
+    const properties = document.paths?.['/v1/dashboard/overview']?.get?.responses?.['200']?.content?.['application/json']?.schema?.properties ?? {};
+    const settings = Object.keys(properties.settings?.properties ?? {});
+    expect(settings).toEqual(expect.arrayContaining(['notifyFormat', 'notifyWebhookUrl', 'maintenanceMode', 'jobHistoryRetentionDays']));
+
+    const watch = properties.watches?.items?.properties ?? {};
+    expect(Object.keys(watch)).toEqual(expect.arrayContaining(['id', 'bundleId', 'dispatchTargets', 'nextRunAt', 'schedulable', 'configIssues']));
+    expect(Object.keys(watch.dispatchTargets?.items?.properties ?? {})).toEqual(expect.arrayContaining(['repo', 'ghWorkflowFile', 'mode', 'inputs']));
+
+    const device = properties.devices?.items?.properties ?? {};
+    expect(Object.keys(device)).toEqual(expect.arrayContaining(['id', 'transportState', 'transportCapabilities', 'setupRequired', 'recoveryState']));
+    expect(device).not.toHaveProperty('keyPath');
+
+    expect(Object.keys(properties.maintenance?.properties ?? {})).toEqual(expect.arrayContaining(['active', 'manual', 'auto', 'reason']));
+    expect(Object.keys(properties.disk?.properties ?? {})).toEqual(expect.arrayContaining(['totalBytes', 'freeBytes', 'usedBytes', 'usedPercent']));
+    expect(Object.keys(properties.schedulerRunHistory?.items?.properties ?? {})).toEqual(expect.arrayContaining(['id', 'ts', 'appStore', 'testflight']));
+  } finally {
+    await server.close();
+  }
+});
+
 test('device route contracts describe subsystem history and query bounds', async () => {
   const server = await buildServer({ includePublicRoutes: false });
   try {

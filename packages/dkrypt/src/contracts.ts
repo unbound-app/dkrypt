@@ -38,6 +38,13 @@ import {
 import { dashboardDeviceActivityQuerySchema, dashboardDeviceHistoryQuerySchema, dashboardDeviceParamsSchema } from '#dashboardDeviceContracts.js';
 import { dashboardDoctorResponseSchema, dashboardSyntheticResponseSchema } from '#dashboardDiagnosticsContracts.js';
 import { dashboardOverviewQuerySchema, dashboardOverviewResponseSchema } from '#dashboardOverviewContracts.js';
+import {
+  dashboardDeviceResponseSchema as DeviceResponse,
+  dashboardDispatchTargetSchema as DispatchTargetInput,
+  dashboardWatchResponseSchema as WatchResponse,
+  deviceTransportStateSchema as DeviceTransportState,
+  schedulerSettingsResponseSchema as SchedulerSettingsResponse,
+} from '#dashboardModelsContracts.js';
 import { dashboardAuditLogQuerySchema, dashboardAuditLogResponseSchema, dashboardLogsQuerySchema, dashboardLogsResponseSchema } from '#dashboardObservabilityContracts.js';
 import { dashboardJobHistoryPageSchema, dashboardJobListQuerySchema, dashboardJobParamsSchema, dashboardJobTimelineEventSchema } from '#dashboardJobContracts.js';
 
@@ -103,16 +110,6 @@ const JobFailureClass = Type.Union([
   Type.Literal('decrypt'),
   Type.Literal('cancelled'),
   Type.Literal('unknown'),
-]);
-const DeviceTransportState = Type.Union([
-  Type.Literal('discovered'),
-  Type.Literal('pairing'),
-  Type.Literal('connecting'),
-  Type.Literal('ready'),
-  Type.Literal('degraded'),
-  Type.Literal('recovering'),
-  Type.Literal('offline'),
-  Type.Literal('unsupported'),
 ]);
 const DeviceSubsystemState = Type.Union([Type.Literal('ready'), Type.Literal('degraded'), Type.Literal('offline'), Type.Literal('unsupported'), Type.Literal('unknown')]);
 const DeviceHealthResponse = object({
@@ -250,29 +247,6 @@ const BillingResponse = object({
 });
 const BillingSubscriptionPage = object({ subscriptions: Type.Array(JsonObject), total: Type.Integer({ minimum: 0 }), nextCursor: PageCursor });
 const ArtifactPage = object({ artifacts: Type.Array(JsonObject), total: Type.Integer({ minimum: 0 }), totalBytes: Type.Number(), maxBytes: Type.Number(), nextCursor: PageCursor });
-const DeviceResponse = object({
-  id: Identifier,
-  name: Type.String(),
-  enabled: Type.Boolean(),
-  isPrimary: Type.Optional(Type.Boolean()),
-  transport: deviceTransportSchema,
-  host: Type.Optional(Type.String()),
-  port: Type.Optional(Type.Integer({ minimum: 1, maximum: 65535 })),
-  user: Type.Optional(Type.String()),
-  udid: Type.Optional(Type.String()),
-  usbmuxNetwork: Type.Optional(Type.Boolean()),
-  productType: Type.Optional(Type.String()),
-  iosVersion: Type.Optional(Type.String()),
-  toolchain: Type.Optional(Type.String()),
-  notes: Type.Optional(Type.String()),
-  createdAt: Type.Number(),
-  updatedAt: Type.Number(),
-  setupRequired: Type.Boolean(),
-  transportState: DeviceTransportState,
-  transportCapabilities: Type.Array(Type.String()),
-  lastSeenAt: Type.Optional(Type.Number()),
-  recoveryState: Type.Union([Type.Literal('stable'), Type.Literal('recovering'), Type.Literal('degraded'), Type.Literal('offline')]),
-});
 const DeviceListResponse = object({ devices: Type.Array(DeviceResponse) });
 const DevicePreflightResponse = object({ device: JsonObject, health: JsonObject, bridge: JsonObject, checks: Type.Array(JsonObject), ready: Type.Boolean() });
 export const JobTimelineResponse = object({
@@ -520,34 +494,6 @@ const DecryptJobResponse = object({
   resolvedVersion: Type.Optional(Type.String()),
   artifact: Type.Optional(ArtifactSummaryResponse),
 });
-const SchedulerSettingsResponse = object({
-  notifyWebhookUrl: Type.String(),
-  notifyFormat: Type.Union([Type.Literal('embed'), Type.Literal('plain')]),
-  notifySuccessMode: Type.Union([Type.Literal('instant'), Type.Literal('daily'), Type.Literal('weekly')]),
-  notifyQuietHoursStart: Type.String(),
-  notifyQuietHoursEnd: Type.String(),
-  notifyOnKeyRequest: Type.Boolean(),
-  notifyOnAutomationSuccess: Type.Boolean(),
-  notifyOnAutomationFailure: Type.Boolean(),
-  notifyOnKeyExpiringSoon: Type.Boolean(),
-  notifyOnDeviceOffline: Type.Boolean(),
-  notifyOnDeviceBatteryHot: Type.Boolean(),
-  notifyOnDeviceBatteryLow: Type.Boolean(),
-  notifyOnDiskFull: Type.Boolean(),
-  notifyOnDeviceStorageLow: Type.Boolean(),
-  notifyOnTestFlightBridgeDown: Type.Boolean(),
-  notifyOnJobCompleted: Type.Boolean(),
-  notifyOnQueueSloBreach: Type.Boolean(),
-  schedulerRetryCount: Type.Integer({ minimum: 0 }),
-  deviceOfflineAlertMinutes: Type.Integer({ minimum: 0 }),
-  batteryHotAlertC: Type.Integer({ minimum: 0 }),
-  batteryLowAlertPercent: Type.Integer({ minimum: 0 }),
-  diskFullAlertPercent: Type.Integer({ minimum: 0 }),
-  deviceStorageAlertPercent: Type.Integer({ minimum: 0 }),
-  testFlightBridgeAlertMinutes: Type.Integer({ minimum: 0 }),
-  jobHistoryRetentionDays: Type.Integer({ minimum: 0 }),
-  maintenanceMode: Type.Boolean(),
-});
 const RoleResponse = object({
   id: Identifier,
   name: Type.String(),
@@ -706,23 +652,6 @@ const PasskeyOptionsResponse = object({
 const PasskeyMutationResponse = object({ passkey: Type.Optional(PasskeySummaryResponse) });
 const AuthProfileResponse = object({ displayName: Type.String(), linkedProviders: Type.Array(Type.String()) });
 const AuthConnectionResponse = object({ identities: Type.Array(JsonObject), linkedProviders: Type.Array(Type.String()) });
-const WatchResponse = object({
-  id: Identifier,
-  projectId: Type.Optional(Identifier),
-  bundleId: BundleId,
-  repo: Type.String(),
-  ghWorkflowFile: Type.String(),
-  dispatchTargets: Type.Optional(Type.Array(JsonObject)),
-  pollCron: Type.String(),
-  enabled: Type.Boolean(),
-  webhookUrl: Type.Optional(Type.String()),
-  testFlightPolicy: Type.Optional(Type.Union([Type.Literal('latest'), Type.Literal('latestNonExpired'), Type.Literal('train')])),
-  testFlightTrain: Type.Optional(Type.String()),
-  createdAt: Type.Number(),
-  updatedAt: Type.Number(),
-  schedulable: Type.Optional(Type.Boolean()),
-  configIssues: Type.Optional(Type.Array(Type.String())),
-});
 const WatchListResponse = object({ watches: Type.Array(WatchResponse) });
 const WatchExportResponse = object({ version: Type.Integer({ minimum: 1 }), watches: Type.Array(JsonObject) });
 const WatchHealthResponse = object({ watches: Type.Array(JsonObject) });
@@ -933,13 +862,6 @@ const DeviceRecordInput = object({
   isPrimary: Type.Optional(Type.Boolean()),
 });
 const DevicePatchInput = Type.Partial(DeviceRecordInput);
-const DispatchTargetInput = object({
-  repo: Type.String({ minLength: 3, maxLength: 200, pattern: '^[\\w.-]+/[\\w.-]+$' }),
-  ghWorkflowFile: Type.String({ minLength: 1, maxLength: 200 }),
-  mode: Type.Optional(Type.Union([Type.Literal('repository_dispatch'), Type.Literal('workflow_dispatch')])),
-  ref: Type.Optional(Type.String({ maxLength: 200 })),
-  inputs: Type.Optional(Type.Record(Type.String({ minLength: 1, maxLength: 100 }), Type.String({ maxLength: 500 }))),
-});
 const WatchInput = object({
   projectId: Type.Optional(Identifier),
   bundleId: BundleId,

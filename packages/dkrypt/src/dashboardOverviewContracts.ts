@@ -1,10 +1,17 @@
 import { Type, type Static } from '@sinclair/typebox';
 import type { ApiErrorEnvelope } from '#contracts.js';
 import { identifierSchema, projectIdentifierSchema } from '#apiCommonContracts.js';
+import {
+  dashboardDeviceResponseSchema,
+  dashboardDiskUsageSchema,
+  dashboardMaintenanceStatusSchema,
+  dashboardSchedulerRunEntrySchema,
+  dashboardWatchResponseSchema,
+  schedulerSettingsResponseSchema,
+} from '#dashboardModelsContracts.js';
 
 const Identifier = identifierSchema;
 const BundleId = Type.String({ minLength: 3, maxLength: 200, pattern: '^[A-Za-z0-9.-]+$' });
-const JsonObject = Type.Object({}, { additionalProperties: true });
 const JobFailureClass = Type.Union([
   Type.Literal('device_transport'),
   Type.Literal('app_store'),
@@ -21,14 +28,14 @@ export const dashboardOverviewQuerySchema = Type.Object({ projectId: Type.Option
 export const dashboardOverviewResponseSchema = Type.Object({
   projectId: Identifier,
   schedulerEnabled: Type.Boolean(),
-  settings: JsonObject,
-  watches: Type.Array(JsonObject),
-  devices: Type.Array(JsonObject),
+  settings: schedulerSettingsResponseSchema,
+  watches: Type.Array(dashboardWatchResponseSchema),
+  devices: Type.Array(dashboardDeviceResponseSchema),
   lastSchedulerRunAt: Type.Optional(Type.Number()),
-  schedulerRunHistory: Type.Array(JsonObject),
-  disk: Type.Optional(JsonObject),
+  schedulerRunHistory: Type.Array(dashboardSchedulerRunEntrySchema),
+  disk: Type.Optional(dashboardDiskUsageSchema),
   isPaidPlan: Type.Boolean(),
-  maintenance: JsonObject,
+  maintenance: dashboardMaintenanceStatusSchema,
   activeJobs: Type.Array(Type.Object({
     id: Identifier,
     correlationId: Identifier,

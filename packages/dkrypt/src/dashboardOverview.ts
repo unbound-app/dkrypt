@@ -4,6 +4,7 @@ import { getMaintenanceStatus } from '#maintenance.js';
 import { getActiveJobs, getQueueReason } from '#jobs/store.js';
 import type { Job } from '#jobs/types.js';
 import { hasPermission, PermissionFlag } from '#permissions.js';
+import { serializeDashboardDevice } from '#dashboardDevicePresentation.js';
 import { canAccessProject } from '#dashboardJobPresentation.js';
 import { nextCronRunAt } from '#util/cron.js';
 import { getDiskUsage } from '#util/diskUsage.js';
@@ -31,7 +32,7 @@ export function buildDashboardOverview(permissions: bigint, userId: string, proj
   const schedulerRunHistory = canViewAutomation
     ? getSchedulerRunHistory(200).filter((run) => watches.some((watch) => watch.id === run.watchId)).slice(0, 10)
     : [];
-  const devices = canViewDeviceData ? getEffectiveDevices().map((device) => ({ ...device })) : [];
+  const devices = canViewDeviceData ? getEffectiveDevices().map(serializeDashboardDevice) : [];
   const settings = getEffectiveSettings();
   const activeJobs = getActiveJobs().filter((job): job is Job & { status: 'queued' | 'running' } =>
     (job.status === 'queued' || job.status === 'running') && (job.projectId ?? DEFAULT_PROJECT_ID) === projectId,

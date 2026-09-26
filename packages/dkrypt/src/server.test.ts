@@ -449,6 +449,8 @@ test('dashboard account and notification routes validate requests and preserve s
 
 test('Fastify persists dashboard device mutations and returns the updated overview', async () => {
   const { server, cookie } = await signIn();
+  const legacyDevice = createDevice({ name: 'legacy key device', transport: 'wifi', host: '192.168.1.11', port: 22, user: 'mobile' }, 'test');
+  Object.assign(legacyDevice, { keyPath: '/private/device-ssh-key' });
 
   try {
     const created = await server.inject({
@@ -465,12 +467,17 @@ test('Fastify persists dashboard device mutations and returns the updated overvi
 
     const overview = await server.inject({ method: 'GET', url: '/v1/dashboard/overview', headers: { cookie } });
     expect(overview.statusCode).toBe(200);
-    expect((overview.json() as { devices: { id: string }[] }).devices.some((candidate) => candidate.id === device.id)).toBe(true);
+    const overviewDevices = (overview.json() as { devices: Array<Record<string, unknown> & { id: string }> }).devices;
+    expect(overviewDevices.some((candidate) => candidate.id === device.id)).toBe(true);
+    const serializedLegacyDevice = overviewDevices.find((candidate) => candidate.id === legacyDevice.id);
+    expect(serializedLegacyDevice).toMatchObject({ setupRequired: false, transportState: 'discovered', transportCapabilities: [] });
+    expect(serializedLegacyDevice).not.toHaveProperty('keyPath');
 
     const deleted = await server.inject({ method: 'DELETE', url: `/v1/dashboard/devices/${device.id}`, headers: { cookie } });
     expect(deleted.statusCode).toBe(200);
   } finally {
     await server.close();
+    deleteDevice(legacyDevice.id, 'test');
   }
 });
 
