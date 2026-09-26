@@ -372,6 +372,31 @@ test('device and TestFlight mutation contracts publish their success status', as
   }
 });
 
+test('dashboard job action contracts describe diagnostic payloads and error statuses', async () => {
+  const server = await buildServer({ includePublicRoutes: false });
+  try {
+    await server.ready();
+    const document = server.swagger() as {
+      paths?: Record<string, Record<string, {
+        responses?: Record<string, { content?: Record<string, { schema?: { properties?: Record<string, unknown> } }> }>;
+      }>>;
+    };
+    const diagnostic = document.paths?.['/v1/dashboard/jobs/{id}/diagnostic']?.get?.responses?.['200']?.content?.['application/json']?.schema;
+    const diagnosticJob = diagnostic?.properties?.job as { properties?: Record<string, unknown> } | undefined;
+    const diagnosticTimeline = diagnostic?.properties?.timeline as { items?: { properties?: Record<string, unknown> } } | undefined;
+
+    expect(Object.keys(diagnosticJob?.properties ?? {})).toEqual(expect.arrayContaining(['id', 'bundleId', 'source', 'status', 'createdAt', 'transport', 'ipaMetadata']));
+    expect(Object.keys(diagnosticTimeline?.items?.properties ?? {})).toEqual(expect.arrayContaining(['at', 'label', 'status']));
+    for (const path of ['/v1/dashboard/jobs/{id}/cancel', '/v1/dashboard/jobs/{id}/prioritize', '/v1/dashboard/jobs/reorder', '/v1/dashboard/jobs/{id}/retry', '/v1/dashboard/jobs/{id}/diagnostic']) {
+      const method = path.endsWith('/diagnostic') ? 'get' : 'post';
+      expect(document.paths?.[path]?.[method]?.responses?.['400']).toBeDefined();
+      expect(document.paths?.[path]?.[method]?.responses?.['429']).toBeDefined();
+    }
+  } finally {
+    await server.close();
+  }
+});
+
 test('device discovery and setup contracts describe bridge results in detail', async () => {
   const server = await buildServer({ includePublicRoutes: false });
   try {

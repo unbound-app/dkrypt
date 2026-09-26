@@ -213,3 +213,28 @@ test('job actions require decrypt permission before accessing jobs', async () =>
     await server.close();
   }
 });
+
+test('job actions hide jobs outside the caller project scope', async () => {
+  let cancellations = 0;
+  const server = build({
+    canAccessProject: () => false,
+    getJob: () => createJob(),
+    cancelJob: () => {
+      cancellations += 1;
+      return true;
+    },
+  });
+
+  try {
+    const response = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/jobs/job-1/cancel',
+      headers: { cookie: sessionCookie(PermissionFlag.requestDecrypt) },
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(cancellations).toBe(0);
+  } finally {
+    await server.close();
+  }
+});

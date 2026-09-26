@@ -79,13 +79,20 @@ import {
 import { dashboardAuditLogQuerySchema, dashboardAuditLogResponseSchema, dashboardLogsQuerySchema, dashboardLogsResponseSchema } from '#dashboardObservabilityContracts.js';
 import {
   dashboardJobActionResponseSchema,
+  dashboardJobBundleParamsSchema,
+  dashboardJobBundleStatsResponseSchema,
+  dashboardJobDailyVolumeResponseSchema,
   dashboardJobDiagnosticResponseSchema,
+  dashboardJobEtaResponseSchema,
   dashboardJobHistoryPageSchema,
   dashboardJobListQuerySchema,
   dashboardJobParamsSchema,
+  dashboardJobProjectQuerySchema,
   dashboardJobReorderBodySchema,
   dashboardJobRetryBodySchema,
+  dashboardJobSloResponseSchema,
   dashboardJobTimelineEventSchema,
+  dashboardJobVolumeQuerySchema,
 } from '#dashboardJobContracts.js';
 import {
   dashboardTestFlightAppParamsSchema,
@@ -561,16 +568,6 @@ const PasskeyOptionsResponse = object({
 const PasskeyMutationResponse = object({ passkey: Type.Optional(PasskeySummaryResponse) });
 const AuthProfileResponse = object({ displayName: Type.String(), linkedProviders: Type.Array(Type.String()) });
 const AuthConnectionResponse = object({ identities: Type.Array(JsonObject), linkedProviders: Type.Array(Type.String()) });
-const BundleStatsResponse = object({
-  bundleId: BundleId,
-  totalRuns: Type.Integer({ minimum: 0 }),
-  doneCount: Type.Integer({ minimum: 0 }),
-  failedCount: Type.Integer({ minimum: 0 }),
-  successRate: Type.Number({ minimum: 0, maximum: 1 }),
-  avgDurationMs: Type.Optional(Type.Number({ minimum: 0 })),
-  lastRunAt: Type.Optional(Type.Number()),
-  failureBreakdown: Type.Array(object({ category: Type.String(), count: Type.Integer({ minimum: 0 }) })),
-});
 const BulkPreviewResponse = object({
   requested: Type.Integer({ minimum: 0 }),
   eligible: Type.Integer({ minimum: 0 }),
@@ -1209,22 +1206,22 @@ register('POST', '/v1/dashboard/jobs/bulk-preview', {
   response: { 200: BulkPreviewResponse },
 });
 register('GET', '/v1/dashboard/jobs/eta/:bundleId', {
-  params: object({ bundleId: BundleId }),
-  querystring: object({ projectId: Type.Optional(Identifier) }),
-  response: { 200: JobEtaResponse },
+  params: dashboardJobBundleParamsSchema,
+  querystring: dashboardJobProjectQuerySchema,
+  response: { 200: dashboardJobEtaResponseSchema, 400: ErrorEnvelope, 401: ErrorEnvelope, 404: ErrorEnvelope, 500: ErrorEnvelope },
 });
 register('GET', '/v1/dashboard/jobs/stats/:bundleId', {
   params: object({ bundleId: BundleId }),
-  querystring: object({ projectId: Type.Optional(Identifier) }),
-  response: { 200: BundleStatsResponse },
+  querystring: dashboardJobProjectQuerySchema,
+  response: { 200: dashboardJobBundleStatsResponseSchema, 400: ErrorEnvelope, 401: ErrorEnvelope, 404: ErrorEnvelope, 429: ErrorEnvelope, 500: ErrorEnvelope },
 });
 register('GET', '/v1/dashboard/jobs/volume', {
-  querystring: object({ days: Type.Optional(Type.Integer({ minimum: 1, maximum: 90 })), projectId: Type.Optional(Identifier) }),
-  response: { 200: DailyVolumeResponse },
+  querystring: dashboardJobVolumeQuerySchema,
+  response: { 200: dashboardJobDailyVolumeResponseSchema, 400: ErrorEnvelope, 401: ErrorEnvelope, 404: ErrorEnvelope, 429: ErrorEnvelope, 500: ErrorEnvelope },
 });
 register('GET', '/v1/dashboard/jobs/slo', {
-  querystring: object({ projectId: Type.Optional(Identifier) }),
-  response: { 200: JobSloResponse },
+  querystring: dashboardJobProjectQuerySchema,
+  response: { 200: dashboardJobSloResponseSchema, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope, 429: ErrorEnvelope, 500: ErrorEnvelope },
 });
 register('GET', '/v1/dashboard/jobs/diff', {
   querystring: object({ bundleId: BundleId, a: Identifier, b: Identifier, projectId: Type.Optional(Identifier) }),

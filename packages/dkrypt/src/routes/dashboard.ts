@@ -5,7 +5,7 @@ import { fetchBotGuilds, fetchGuildRoles } from '#discord.js';
 import { dashboardEvents, getOnlineUsernames, nextDashboardSequence, registerDashboardConnection, registerPresence, unregisterPresence } from '#events.js';
 import { blockDuringMaintenance } from '#maintenance.js';
 import { jobSummary, streamFilePath } from '#jobs/http.js';
-import { enqueueDecryptJob, getActiveJobs, getQueueInfo } from '#jobs/store.js';
+import { enqueueDecryptJob, getActiveJobs } from '#jobs/store.js';
 import type { LogEntry } from '#logger.js';
 import { getRecentLogs } from '#logger.js';
 import { hasPermission, isSubsetPermission, PermissionFlag } from '#permissions.js';
@@ -38,8 +38,6 @@ import {
   getAllJobHistory,
   getAuditLog,
   getAverageJobDurationMs,
-  getBundleStats,
-  getDailyVolume,
   getDevice,
   getDiscordGuilds,
   getDiscordRolePerks,
@@ -276,12 +274,6 @@ dashboardRouter.get('/v1/dashboard/jobs/export', (req, res) => {
   res.send(rows.join('\n'));
 });
 
-dashboardRouter.get('/v1/dashboard/jobs/eta/:bundleId', (req, res) => {
-  const projectId = resolveRequestProjectId(req, res, 'query');
-  if (!projectId) return;
-  res.json({ avgMs: getAverageJobDurationMs(req.params.bundleId, projectId) ?? null });
-});
-
 dashboardRouter.post('/v1/dashboard/jobs/bulk-preview', canDecrypt, (req, res) => {
   const projectId = resolveRequestProjectId(req, res, 'body');
   if (!projectId) return;
@@ -310,45 +302,6 @@ dashboardRouter.post('/v1/dashboard/jobs/bulk-preview', canDecrypt, (req, res) =
     previousSizeBytes: items.reduce((sum, item) => sum + (getJobHistoryEntryById(item.id)?.sizeBytes ?? 0), 0),
     items,
   });
-});
-
-dashboardRouter.get('/v1/dashboard/jobs/slo', canViewScheduler, (req, res) => {
-  const projectId = resolveRequestProjectId(req, res, 'query');
-  if (!projectId) return;
-  const now = Date.now();
-  const completed = getAllJobHistory().filter((job) => (job.projectId ?? DEFAULT_PROJECT_ID) === projectId && job.status === 'done' && job.startedAt && job.finishedAt > job.startedAt);
-  const durations = completed.map((job) => job.finishedAt - (job.startedAt as number)).sort((a, b) => a - b);
-  const historicalP95Ms = durations.length === 0 ? null : durations[Math.ceil(durations.length * 0.95) - 1];
-  const targetMs = historicalP95Ms ?? config.queueSloMinutes * 60_000;
-  const jobs = getActiveJobs().filter((job) => (job.projectId ?? DEFAULT_PROJECT_ID) === projectId).map((job) => {
-    const queue = job.status === 'queued' ? getQueueInfo(job.id) : undefined;
-    const waitedMs = now - job.createdAt;
-    const predictedStartMs = queue && historicalP95Ms !== null ? Math.max(0, queue.position - 1) * historicalP95Ms : null;
-    const predictedCompletionMs = predictedStartMs === null || historicalP95Ms === null ? null : predictedStartMs + historicalP95Ms;
-    return {
-      id: job.id,
-      bundleId: job.bundleId,
-      status: job.status,
-      waitedMs,
-      predictedStartMs,
-      predictedCompletionMs,
-      objective: waitedMs > targetMs || (predictedCompletionMs !== null && waitedMs + predictedCompletionMs > targetMs) ? 'breached' : 'within',
-    };
-  });
-  res.json({ targetMs, historicalP95Ms, jobs });
-});
-
-dashboardRouter.get('/v1/dashboard/jobs/stats/:bundleId', (req, res) => {
-  const projectId = resolveRequestProjectId(req, res, 'query');
-  if (!projectId) return;
-  res.json(getBundleStats(req.params.bundleId, projectId));
-});
-
-dashboardRouter.get('/v1/dashboard/jobs/volume', (req, res) => {
-  const projectId = resolveRequestProjectId(req, res, 'query');
-  if (!projectId) return;
-  const days = Math.min(Math.max(Number.parseInt(String(req.query.days ?? '14'), 10) || 14, 1), 90);
-  res.json({ days: getDailyVolume(days, projectId) });
 });
 
 dashboardRouter.get('/v1/dashboard/jobs/diff', jobDiffRateLimit, (req, res) => {
