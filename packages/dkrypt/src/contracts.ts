@@ -36,6 +36,7 @@ import {
   notificationReadResponseSchema,
 } from '#dashboardNotificationContracts.js';
 import { dashboardDeviceActivityQuerySchema, dashboardDeviceHistoryQuerySchema, dashboardDeviceParamsSchema } from '#dashboardDeviceContracts.js';
+import { dashboardAuditLogQuerySchema, dashboardAuditLogResponseSchema, dashboardLogsQuerySchema, dashboardLogsResponseSchema } from '#dashboardObservabilityContracts.js';
 import { dashboardJobHistoryPageSchema, dashboardJobListQuerySchema, dashboardJobParamsSchema, dashboardJobTimelineEventSchema } from '#dashboardJobContracts.js';
 
 const BundleId = Type.String({ minLength: 3, maxLength: 200, pattern: '^[A-Za-z0-9.-]+$' });
@@ -645,7 +646,6 @@ const UserDirectoryResponse = object({
     activity: Type.Optional(JsonObject),
   })),
 });
-const AuditLogPage = object({ entries: Type.Array(JsonObject), total: Type.Integer({ minimum: 0 }), nextCursor: PageCursor });
 const ApiKeyResponse = object({
   id: Identifier,
   name: Type.String(),
@@ -854,7 +854,6 @@ const ArtifactQuotaRetentionPreviewResponse = object({
   additionalEvictions: Type.Integer({ minimum: 0 }),
 });
 const TestWebhookResponse = object({ ok: Type.Boolean(), error: Type.Optional(Type.String()) });
-const LogsPageResponse = object({ logs: Type.Array(JsonObject), total: Type.Integer({ minimum: 0 }), nextCursor: PageCursor });
 const WebhookDeliveryPageResponse = object({ deliveries: Type.Array(JsonObject) });
 const DiagnosticResponse = object({ generatedAt: Type.String(), correlationId: Identifier, job: JsonObject, timeline: Type.Array(JsonObject) });
 const GitHubRateLimitResponse = object({
@@ -1135,8 +1134,8 @@ register('GET', '/v1/dashboard/jobs', { querystring: dashboardJobListQuerySchema
 register('GET', '/v1/dashboard/artifacts', { querystring: object({ ...PaginationQuery.properties, projectId: Type.Optional(Identifier), q: Type.Optional(Type.String({ maxLength: 200 })), channel: Type.Optional(Type.Union([Type.Literal('appstore'), Type.Literal('testflight')])) }) });
 register('PUT', '/v1/dashboard/artifacts/:id/pin', { params: object({ id: Identifier }), body: object({ pinned: Type.Boolean() }) });
 register('GET', '/v1/dashboard/artifacts/retention-preview', { querystring: object({ maxBytes: Type.Integer({ minimum: 1 }) }) });
-register('GET', '/v1/dashboard/logs', { querystring: object({ ...PaginationQuery.properties, projectId: Type.Optional(Identifier), scope: Type.Optional(Type.String({ maxLength: 100 })), level: Type.Optional(Type.Union([Type.Literal('info'), Type.Literal('warn'), Type.Literal('error')])), q: Type.Optional(Type.String({ maxLength: 100 })), regex: Type.Optional(Type.Literal('1')) }) });
-register('GET', '/v1/dashboard/audit-log', { querystring: PaginationQuery });
+register('GET', '/v1/dashboard/logs', { querystring: dashboardLogsQuerySchema });
+register('GET', '/v1/dashboard/audit-log', { querystring: dashboardAuditLogQuerySchema });
 register('GET', '/v1/dashboard/keys/all', { querystring: object({ ...PaginationQuery.properties, search: Type.Optional(Type.String({ maxLength: 200 })) }) });
 register('GET', '/v1/dashboard/webhooks', { querystring: object({ limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })) }) });
 register('GET', '/v1/dashboard/testflight/subscriptions', { querystring: PaginationQuery });
@@ -1381,7 +1380,7 @@ register('GET', '/v1/dashboard/settings', { response: { 200: SchedulerSettingsRe
 register('PUT', '/v1/dashboard/settings', { response: { 200: SchedulerSettingsResponse } });
 register('GET', '/v1/dashboard/settings/validate-cron', { response: { 200: object({ valid: Type.Boolean() }) } });
 register('GET', '/v1/dashboard/users', { response: { 200: UserDirectoryResponse } });
-register('GET', '/v1/dashboard/audit-log', { querystring: PaginationQuery, response: { 200: AuditLogPage } });
+register('GET', '/v1/dashboard/audit-log', { querystring: dashboardAuditLogQuerySchema, response: { 200: dashboardAuditLogResponseSchema, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope } });
 register('GET', '/v1/dashboard/roles', { response: { 200: RolesResponse } });
 register('GET', '/v1/dashboard/projects', { response: { 200: ProjectListResponse } });
 register('GET', '/v1/dashboard/projects/members', { response: { 200: ProjectMembersResponse } });
@@ -1645,8 +1644,8 @@ register('POST', '/v1/dashboard/jobs/reorder', {
   response: { 200: OkResponse },
 });
 register('GET', '/v1/dashboard/logs', {
-  querystring: object({ ...PaginationQuery.properties, projectId: Type.Optional(Identifier), scope: Type.Optional(Type.String({ maxLength: 100 })), level: Type.Optional(Type.Union([Type.Literal('info'), Type.Literal('warn'), Type.Literal('error')])), q: Type.Optional(Type.String({ maxLength: 100 })), regex: Type.Optional(Type.Literal('1')) }),
-  response: { 200: LogsPageResponse },
+  querystring: dashboardLogsQuerySchema,
+  response: { 200: dashboardLogsResponseSchema, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope },
 });
 register('GET', '/v1/dashboard/webhooks', {
   querystring: object({ limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })) }),

@@ -207,6 +207,25 @@ test('device route contracts describe subsystem history and query bounds', async
   }
 });
 
+test('observability contracts publish typed log and audit entry fields', async () => {
+  const server = await buildServer({ includePublicRoutes: false });
+  try {
+    await server.ready();
+    const document = server.swagger() as {
+      paths?: Record<string, Record<string, { responses?: Record<string, { content?: Record<string, { schema?: { properties?: Record<string, { items?: { properties?: Record<string, unknown> } }> } }> }> }>>;
+    };
+    const logSchema = document.paths?.['/v1/dashboard/logs']?.get?.responses?.['200']?.content?.['application/json']?.schema;
+    const logFields = logSchema?.properties?.logs?.items?.properties ?? {};
+    expect(Object.keys(logFields)).toEqual(expect.arrayContaining(['id', 'ts', 'level', 'scope', 'message', 'meta']));
+
+    const auditSchema = document.paths?.['/v1/dashboard/audit-log']?.get?.responses?.['200']?.content?.['application/json']?.schema;
+    const auditFields = auditSchema?.properties?.entries?.items?.properties ?? {};
+    expect(Object.keys(auditFields)).toEqual(expect.arrayContaining(['id', 'ts', 'actor', 'action', 'target', 'detail']));
+  } finally {
+    await server.close();
+  }
+});
+
 test('device and TestFlight mutation contracts publish their success status', async () => {
   const server = await buildServer({ includePublicRoutes: false });
   try {

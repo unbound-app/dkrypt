@@ -117,6 +117,70 @@ test('dashboard job history and inspection endpoints are not registered through 
   expect(routes).not.toContain('GET /v1/dashboard/jobs/:id/timeline');
 });
 
+test('native dashboard logs and audit routes preserve permissions, paging, and project checks', async () => {
+  const logsUserId = `github:logs-reader-${crypto.randomUUID()}`;
+  const auditUserId = `github:audit-reader-${crypto.randomUUID()}`;
+  const logsPermissions = PermissionFlag.viewLogs;
+  const auditPermissions = PermissionFlag.viewUsers;
+  const logsRole = createRole({ name: `Logs reader ${crypto.randomUUID()}`, color: '#3498db', permissions: serializeBits(logsPermissions) }, 'test');
+  const auditRole = createRole({ name: `Audit reader ${crypto.randomUUID()}`, color: '#5865f2', permissions: serializeBits(auditPermissions) }, 'test');
+  addAllowedUser(logsUserId, [logsRole.id], 'test');
+  addAllowedUser(auditUserId, [auditRole.id], 'test');
+  const logsCookie = createSessionCookie(logsUserId, logsPermissions);
+  const auditCookie = createSessionCookie(auditUserId, auditPermissions);
+  const scope = `native-logs-${crypto.randomUUID()}`;
+  const logger = scopedLogger(scope);
+  logger.info('older native log');
+  await Bun.sleep(2);
+  logger.info('newer native log');
+  recordAudit('test', 'project.add', `native-audit-${crypto.randomUUID()}`, 'native route coverage');
+  const server = await buildServer({ includePublicRoutes: false });
+  const legacyRoutes = dashboardRouter.routes.map((route) => `${route.method} ${route.path}`);
+
+  try {
+    expect(legacyRoutes).not.toContain('GET /v1/dashboard/logs');
+    expect(legacyRoutes).not.toContain('GET /v1/dashboard/audit-log');
+
+    const logPage = await server.inject({
+      method: 'GET',
+      url: `/v1/dashboard/logs?scope=${encodeURIComponent(scope)}&limit=1`,
+      headers: { cookie: logsCookie },
+    });
+    expect(logPage.statusCode).toBe(200);
+    expect(logPage.json()).toMatchObject({ logs: [{ message: 'newer native log' }], total: 2, nextCursor: expect.any(String) });
+
+    const invalidRegex = await server.inject({
+      method: 'GET',
+      url: `/v1/dashboard/logs?scope=${encodeURIComponent(scope)}&q=%5B&regex=1`,
+      headers: { cookie: logsCookie },
+    });
+    expect(invalidRegex.statusCode).toBe(400);
+    expect(invalidRegex.json()).toMatchObject({ message: 'log search pattern is invalid or unsafe' });
+
+    const unauthenticatedLogs = await server.inject({ method: 'GET', url: '/v1/dashboard/logs' });
+    expect(unauthenticatedLogs.statusCode).toBe(401);
+
+    const auditPage = await server.inject({ method: 'GET', url: '/v1/dashboard/audit-log?limit=1', headers: { cookie: auditCookie } });
+    expect(auditPage.statusCode).toBe(200);
+    expect(auditPage.json()).toMatchObject({ entries: [expect.objectContaining({ action: 'project.add' })], nextCursor: expect.any(String) });
+
+    const deniedAudit = await server.inject({ method: 'GET', url: '/v1/dashboard/audit-log', headers: { cookie: logsCookie } });
+    expect(deniedAudit.statusCode).toBe(403);
+
+    const invalidProject = await server.inject({ method: 'GET', url: '/v1/dashboard/logs?projectId=unknown-project', headers: { cookie: logsCookie } });
+    expect(invalidProject.statusCode).toBe(404);
+
+    const invalidLimit = await server.inject({ method: 'GET', url: '/v1/dashboard/audit-log?limit=0', headers: { cookie: auditCookie } });
+    expect(invalidLimit.statusCode).toBe(400);
+  } finally {
+    await server.close();
+    deleteUserPersonalData(logsUserId);
+    deleteUserPersonalData(auditUserId);
+    deleteRole(logsRole.id, 'test cleanup');
+    deleteRole(auditRole.id, 'test cleanup');
+  }
+});
+
 test('native dashboard device history routes preserve permissions and validate queries', async () => {
   const device = createDevice({ name: `Device history ${crypto.randomUUID()}`, transport: 'usb', udid: crypto.randomUUID() }, 'test');
   const readerId = `github:device-reader-${crypto.randomUUID()}`;

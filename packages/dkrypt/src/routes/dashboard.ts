@@ -7,7 +7,7 @@ import { getBillingEntitlements } from '#billing.js';
 import { blockDuringMaintenance, getMaintenanceStatus } from '#maintenance.js';
 import { jobSummary, streamFilePath } from '#jobs/http.js';
 import { cancelJob, enqueueDecryptJob, getActiveJobs, getJob, getQueueInfo, getQueueReason, prioritizeQueuedJob, reorderQueue } from '#jobs/store.js';
-import type { LogEntry, LogLevel } from '#logger.js';
+import type { LogEntry } from '#logger.js';
 import { getRecentLogs } from '#logger.js';
 import { EMBED_COLOR, notify, sendTestNotification } from '#notify.js';
 import { hasPermission, isSubsetPermission, parseBits, PermissionFlag } from '#permissions.js';
@@ -21,6 +21,7 @@ import { canAccessProject, canViewAllProjects, dashboardHistoryEntry } from '#da
 import { getDeviceHealth, getDeviceInstallBlocker, getDeviceReadiness, isBridgeHeartbeatFresh } from '#deviceHealth.js';
 import { decodeCursor, nextCursor, paginateCursor } from '#util/cursor.js';
 import { serializeDashboardDevice as serializeDevice } from '#dashboardDevicePresentation.js';
+import { logBelongsToProject } from '#dashboardLogPresentation.js';
 import { discoverDevices, execCommand, isDirectUsbDeviceAgentConnection, listInstalledAppStoreBundles, sendSpringBoardBridgeRequest, setupDeviceConnection, withAutoinstallDeviceAgent, withSSH, type DeviceConnection, type DeviceTransport } from '#idevice.js';
 import { getTestFlightBridgeDiagnostics, listBuilds, listTrains, type TFBuild } from '#testflight.js';
 import { nextCronRunAt, nextCronRuns } from '#util/cron.js';
@@ -95,7 +96,6 @@ import {
   getApiKeyOutcomeUsage,
   getApiKeyUsage,
   getAuditLog,
-  getAuditLogPage,
   getAverageJobDurationMs,
   getBackupHistory,
   getBackupSchedule,
@@ -427,24 +427,6 @@ dashboardRouter.get('/v1/dashboard/artifacts/:id/file', canDecrypt, async (req, 
   }
   await touchArtifact(artifact);
   await streamFilePath(artifact.filePath, req, res, artifactDownloadName(artifact), artifact.fileSizeBytes, artifact.id);
-});
-
-dashboardRouter.get('/v1/dashboard/logs', canViewLogs, (req, res) => {
-  const projectId = resolveRequestProjectId(req, res, 'query');
-  if (!projectId) return;
-  const scope = typeof req.query.scope === 'string' && req.query.scope !== 'all' ? req.query.scope.slice(0, 100) : undefined;
-  const level = typeof req.query.level === 'string' && ['info', 'warn', 'error'].includes(req.query.level) ? req.query.level as LogLevel : undefined;
-  const query = typeof req.query.q === 'string' && req.query.q.trim() ? req.query.q.trim().slice(0, 100) : undefined;
-  const regex = req.query.regex === '1';
-  const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
-  const offset = cursor ? 0 : Math.max(0, Number.parseInt(String(req.query.offset ?? '0'), 10) || 0);
-  const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit ?? '100'), 10) || 100, 1), 200);
-  try {
-    const result = getRecentLogs({ scope, level, query, regex, cursor, offset, limit, filter: (entry) => logBelongsToProject(entry, projectId) });
-    res.json(result);
-  } catch {
-    res.status(400).json({ error: 'log search pattern is invalid or unsafe' });
-  }
 });
 
 dashboardRouter.get('/v1/dashboard/webhooks', canViewLogs, (req, res) => {
@@ -2464,14 +2446,6 @@ dashboardRouter.get('/v1/dashboard/users', canViewUsers, (_req, res) => {
   res.json({ users });
 });
 
-dashboardRouter.get('/v1/dashboard/audit-log', canViewUsers, (req, res) => {
-  const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit ?? '100'), 10) || 100, 1), 200);
-  const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
-  const offset = cursor ? 0 : Math.max(Number.parseInt(String(req.query.offset ?? '0'), 10) || 0, 0);
-  const page = getAuditLogPage(offset, limit, cursor);
-  res.json(page);
-});
-
 const AUDIT_LOG_CSV_COLUMNS = ['id', 'ts', 'actor', 'action', 'target', 'detail'] as const;
 
 dashboardRouter.get('/v1/dashboard/audit-log/export', canViewUsers, (req, res) => {
@@ -2492,26 +2466,6 @@ dashboardRouter.get('/v1/dashboard/audit-log/export', canViewUsers, (req, res) =
   res.setHeader('Content-Disposition', 'attachment; filename="dkrypt-audit-log.csv"');
   res.send(rows.join('\n'));
 });
-
-function logBelongsToProject(entry: LogEntry, projectId: string): boolean {
-  const explicitProjectId = typeof entry.meta?.projectId === 'string' ? entry.meta.projectId : undefined;
-  if (explicitProjectId) return explicitProjectId === projectId;
-  const jobId = typeof entry.meta?.jobId === 'string' ? entry.meta.jobId : undefined;
-  const correlationId = typeof entry.meta?.correlationId === 'string' ? entry.meta.correlationId : undefined;
-  const activeJob = jobId
-    ? getJob(jobId)
-    : correlationId
-      ? getActiveJobs().find((job) => job.correlationId === correlationId)
-      : undefined;
-  const historyEntry = jobId
-    ? getJobHistoryEntryById(jobId)
-    : correlationId
-      ? getAllJobHistory().find((job) => job.correlationId === correlationId)
-      : undefined;
-  const relatedProjectId = activeJob?.projectId ?? historyEntry?.projectId;
-  if (relatedProjectId) return relatedProjectId === projectId;
-  return projectId === DEFAULT_PROJECT_ID && !jobId && !correlationId;
-}
 
 function resolveRequestProjectId(req: Request, res: Response, source: 'body' | 'query', options: { requireActive?: boolean } = {}): string | undefined {
   const value = source === 'body' ? req.body?.projectId : req.query.projectId;
