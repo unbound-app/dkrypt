@@ -87,6 +87,16 @@ function hasMatchingActiveJob(activeJobs: Job[], entry: JobHistoryEntry, project
   );
 }
 
+function summarizeComparedJob(entry: JobHistoryEntry) {
+  return {
+    id: entry.id,
+    versionLabel: entry.versionLabel,
+    sizeBytes: entry.sizeBytes,
+    finishedAt: entry.finishedAt,
+    metadata: entry.ipaMetadata,
+  };
+}
+
 export function createDashboardJobHistoryRoutes(overrides: Partial<DashboardJobHistoryServices> = {}): FastifyPluginAsyncTypebox {
   const services = { ...defaultServices, ...overrides };
 
@@ -116,6 +126,10 @@ export function createDashboardJobHistoryRoutes(overrides: Partial<DashboardJobH
 
     server.post<DashboardJobBulkPreviewRoute>('/v1/dashboard/jobs/bulk-preview', {
       schema: getRouteContract('POST', '/v1/dashboard/jobs/bulk-preview'),
+      preValidation: (request, _reply, done) => {
+        if (request.body === undefined) request.body = {};
+        done();
+      },
       preHandler: canRequestDecrypt,
     }, (request, reply) => {
       const session = getFastifySession(request)!;
@@ -123,7 +137,10 @@ export function createDashboardJobHistoryRoutes(overrides: Partial<DashboardJobH
       if (!resolveProjectId(services, session.sub, session.permissions, projectId, reply)) {
         return createHttpErrorEnvelope(request.id, 404, 'project not found');
       }
-      const ids = [...new Set(request.body.ids)].slice(0, 100);
+      const rawIds: string[] = Array.isArray(request.body.ids)
+        ? request.body.ids.filter((id): id is string => typeof id === 'string')
+        : [];
+      const ids = [...new Set(rawIds)].slice(0, 100);
       const activeJobs = services.getActiveJobs();
       const entries = ids.flatMap((id) => {
         const entry = services.getJobHistoryEntryById(id);
@@ -182,8 +199,8 @@ export function createDashboardJobHistoryRoutes(overrides: Partial<DashboardJobH
         .sort((left, right) => left.key.localeCompare(right.key));
 
       return {
-        a: { id: first.id, versionLabel: first.versionLabel, sizeBytes: first.sizeBytes, finishedAt: first.finishedAt, metadata: first.ipaMetadata },
-        b: { id: second.id, versionLabel: second.versionLabel, sizeBytes: second.sizeBytes, finishedAt: second.finishedAt, metadata: second.ipaMetadata },
+        a: summarizeComparedJob(first),
+        b: summarizeComparedJob(second),
         sizeDeltaBytes: (second.sizeBytes ?? 0) - (first.sizeBytes ?? 0),
         plistDiff,
       };

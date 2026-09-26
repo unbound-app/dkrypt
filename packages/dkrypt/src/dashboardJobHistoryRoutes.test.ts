@@ -55,13 +55,22 @@ test('job history export, bulk preview, and diff are not registered through the 
 });
 
 test('job history route contracts are explicit and routes are mounted by the API server', async () => {
-  expect(getRouteContract('GET', '/v1/dashboard/jobs/export')).toHaveProperty('response.200.anyOf');
-  expect(getRouteContract('POST', '/v1/dashboard/jobs/bulk-preview')).toHaveProperty('body.properties.ids.maxItems', 100);
+  expect(getRouteContract('GET', '/v1/dashboard/jobs/export')).toHaveProperty('response.200.content.application/json.schema.items');
+  expect(getRouteContract('GET', '/v1/dashboard/jobs/export')).toHaveProperty('response.200.content.text/csv.schema.type', 'string');
+  expect(getRouteContract('POST', '/v1/dashboard/jobs/bulk-preview')).toHaveProperty('body.properties.ids.description');
   expect(getRouteContract('POST', '/v1/dashboard/jobs/bulk-preview')).toHaveProperty('response.200.properties.items.items.properties.action');
   expect(getRouteContract('GET', '/v1/dashboard/jobs/diff')).toHaveProperty('response.200.properties.plistDiff.items.properties.key');
 
   const server = await buildServer({ includePublicRoutes: false });
   try {
+    await server.ready();
+    const document = server.swagger() as {
+      paths?: Record<string, Record<string, { responses?: Record<string, { content?: Record<string, { schema?: unknown }> }> }>>;
+    };
+    const exportContent = document.paths?.['/v1/dashboard/jobs/export']?.get?.responses?.['200']?.content ?? {};
+    expect(Object.keys(exportContent).sort()).toEqual(['application/json', 'text/csv']);
+    expect(exportContent['text/csv']?.schema).toMatchObject({ type: 'string' });
+
     const response = await server.inject({
       method: 'GET',
       url: '/v1/dashboard/jobs/export?projectId=default',
@@ -85,6 +94,7 @@ test('job history export preserves project scoping, formats, and attachment name
     const headers = { cookie: sessionCookie() };
     const json = await server.inject({ method: 'GET', url: '/v1/dashboard/jobs/export?projectId=default', headers });
     const csv = await server.inject({ method: 'GET', url: '/v1/dashboard/jobs/export?format=csv&projectId=default', headers });
+    const unsupportedFormat = await server.inject({ method: 'GET', url: '/v1/dashboard/jobs/export?format=other&projectId=default', headers });
     const deniedProject = await server.inject({ method: 'GET', url: '/v1/dashboard/jobs/export?projectId=other-project', headers });
     const unauthenticated = await server.inject({ method: 'GET', url: '/v1/dashboard/jobs/export' });
 
@@ -95,6 +105,8 @@ test('job history export preserves project scoping, formats, and attachment name
     expect(csv.headers['content-type']).toContain('text/csv');
     expect(csv.headers['content-disposition']).toBe('attachment; filename="dkrypt-job-history.csv"');
     expect(csv.body).toContain('"Doe, ""A"""');
+    expect(unsupportedFormat.statusCode).toBe(200);
+    expect(unsupportedFormat.headers['content-disposition']).toBe('attachment; filename="dkrypt-job-history.json"');
     expect(deniedProject.statusCode).toBe(404);
     expect(unauthenticated.statusCode).toBe(401);
   } finally {
@@ -128,13 +140,28 @@ test('bulk preview deduplicates ids and hides history outside the accessible pro
       method: 'POST',
       url: '/v1/dashboard/jobs/bulk-preview',
       headers: { cookie: sessionCookie(PermissionFlag.requestDecrypt) },
-      payload: { ids: [entry.id, entry.id, 'foreign-job', 'missing-job'], projectId: 'default' },
+      payload: { ids: [entry.id, 17, entry.id, ...Array.from({ length: 100 }, (_, index) => `missing-${index}`)], projectId: 'default' },
+    });
+    const nonArrayIds = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/jobs/bulk-preview',
+      headers: { cookie: sessionCookie(PermissionFlag.requestDecrypt) },
+      payload: { ids: 'ignored', projectId: 'default' },
+    });
+    const bodyless = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/jobs/bulk-preview',
+      headers: { cookie: sessionCookie(PermissionFlag.requestDecrypt) },
     });
 
     expect(denied.statusCode).toBe(403);
     expect(response.statusCode).toBe(200);
+    expect(nonArrayIds.statusCode).toBe(200);
+    expect(JSON.parse(nonArrayIds.body)).toMatchObject({ requested: 0, eligible: 0 });
+    expect(bodyless.statusCode).toBe(200);
+    expect(JSON.parse(bodyless.body)).toMatchObject({ requested: 0, eligible: 0 });
     expect(JSON.parse(response.body)).toEqual({
-      requested: 3,
+      requested: 100,
       eligible: 1,
       projectedQueueAdds: 0,
       estimatedDurationMs: 0,

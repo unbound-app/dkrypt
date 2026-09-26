@@ -56,12 +56,20 @@ export const dashboardJobExportEntrySchema = Type.Object({
   failureClass: Type.Optional(Type.String()),
 }, { additionalProperties: true });
 export const dashboardJobExportQuerySchema = Type.Object({
-  format: Type.Optional(Type.Union([Type.Literal('json'), Type.Literal('csv')])),
+  format: Type.Optional(Type.Union([
+    Type.String({ description: 'Only csv selects CSV output; other values return JSON.' }),
+    Type.Array(Type.String()),
+  ])),
   projectId: Type.Optional(projectIdentifierSchema),
 }, { additionalProperties: true });
-export const dashboardJobExportResponseSchema = Type.Union([Type.Array(dashboardJobExportEntrySchema), Type.String()]);
+export const dashboardJobExportResponseSchema = {
+  content: {
+    'application/json': { schema: Type.Array(dashboardJobExportEntrySchema) },
+    'text/csv': { schema: Type.String() },
+  },
+};
 export const dashboardJobBulkPreviewBodySchema = Type.Object({
-  ids: Type.Array(identifierSchema, { maxItems: 100 }),
+  ids: Type.Optional(Type.Unknown({ description: 'Non-array input is treated as empty; array entries are filtered to strings, deduplicated, and capped at 100.' })),
   projectId: Type.Optional(projectIdentifierSchema),
 }, { additionalProperties: true });
 export const dashboardJobBulkPreviewResponseSchema = Type.Object({
@@ -86,21 +94,16 @@ export const dashboardJobDiffQuerySchema = Type.Object({
   b: identifierSchema,
   projectId: Type.Optional(projectIdentifierSchema),
 }, { additionalProperties: true });
+const dashboardJobDiffVersionSchema = Type.Object({
+  id: identifierSchema,
+  versionLabel: Type.Optional(Type.String()),
+  sizeBytes: Type.Optional(Type.Number()),
+  finishedAt: Type.Number(),
+  metadata: Type.Optional(dashboardJobIpaMetadataSchema),
+}, { additionalProperties: true });
 export const dashboardJobDiffResponseSchema = Type.Object({
-  a: Type.Object({
-    id: identifierSchema,
-    versionLabel: Type.Optional(Type.String()),
-    sizeBytes: Type.Optional(Type.Number()),
-    finishedAt: Type.Number(),
-    metadata: Type.Optional(dashboardJobIpaMetadataSchema),
-  }, { additionalProperties: true }),
-  b: Type.Object({
-    id: identifierSchema,
-    versionLabel: Type.Optional(Type.String()),
-    sizeBytes: Type.Optional(Type.Number()),
-    finishedAt: Type.Number(),
-    metadata: Type.Optional(dashboardJobIpaMetadataSchema),
-  }, { additionalProperties: true }),
+  a: dashboardJobDiffVersionSchema,
+  b: dashboardJobDiffVersionSchema,
   sizeDeltaBytes: Type.Number(),
   plistDiff: Type.Array(Type.Object({
     key: Type.String(),

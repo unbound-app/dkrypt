@@ -39385,16 +39385,14 @@
             "schema": {
               "anyOf": [
                 {
-                  "type": "string",
-                  "enum": [
-                    "json"
-                  ]
+                  "description": "Only csv selects CSV output; other values return JSON.",
+                  "type": "string"
                 },
                 {
-                  "type": "string",
-                  "enum": [
-                    "csv"
-                  ]
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
                 }
               ]
             },
@@ -39420,298 +39418,296 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "anyOf": [
-                    {
-                      "type": "array",
-                      "items": {
+                  "type": "array",
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object",
+                    "required": [
+                      "id",
+                      "bundleId",
+                      "status",
+                      "source",
+                      "createdAt",
+                      "finishedAt"
+                    ],
+                    "properties": {
+                      "id": {
+                        "minLength": 1,
+                        "maxLength": 200,
+                        "type": "string"
+                      },
+                      "correlationId": {
+                        "minLength": 1,
+                        "maxLength": 200,
+                        "type": "string"
+                      },
+                      "projectId": {
+                        "minLength": 1,
+                        "maxLength": 200,
+                        "type": "string"
+                      },
+                      "bundleId": {
+                        "minLength": 3,
+                        "maxLength": 200,
+                        "pattern": "^[A-Za-z0-9.-]+$",
+                        "type": "string"
+                      },
+                      "externalVersionId": {
+                        "minLength": 1,
+                        "maxLength": 200,
+                        "type": "string"
+                      },
+                      "testflight": {
                         "additionalProperties": true,
                         "type": "object",
                         "required": [
-                          "id",
-                          "bundleId",
-                          "status",
-                          "source",
-                          "createdAt",
-                          "finishedAt"
+                          "appId",
+                          "build"
                         ],
                         "properties": {
-                          "id": {
-                            "minLength": 1,
-                            "maxLength": 200,
-                            "type": "string"
+                          "appId": {
+                            "type": "number"
                           },
-                          "correlationId": {
-                            "minLength": 1,
-                            "maxLength": 200,
-                            "type": "string"
-                          },
-                          "projectId": {
-                            "minLength": 1,
-                            "maxLength": 200,
-                            "type": "string"
-                          },
-                          "bundleId": {
-                            "minLength": 3,
-                            "maxLength": 200,
-                            "pattern": "^[A-Za-z0-9.-]+$",
-                            "type": "string"
-                          },
-                          "externalVersionId": {
-                            "minLength": 1,
-                            "maxLength": 200,
-                            "type": "string"
-                          },
-                          "testflight": {
+                          "build": {
                             "additionalProperties": true,
                             "type": "object",
                             "required": [
-                              "appId",
-                              "build"
+                              "id",
+                              "cfBundleShortVersion",
+                              "cfBundleVersion",
+                              "bundleId"
                             ],
                             "properties": {
-                              "appId": {
+                              "id": {
                                 "type": "number"
                               },
-                              "build": {
-                                "additionalProperties": true,
-                                "type": "object",
-                                "required": [
-                                  "id",
-                                  "cfBundleShortVersion",
-                                  "cfBundleVersion",
-                                  "bundleId"
-                                ],
-                                "properties": {
-                                  "id": {
-                                    "type": "number"
-                                  },
-                                  "cfBundleShortVersion": {
-                                    "type": "string"
-                                  },
-                                  "cfBundleVersion": {
-                                    "type": "string"
-                                  },
-                                  "bundleId": {
-                                    "minLength": 3,
-                                    "maxLength": 200,
-                                    "pattern": "^[A-Za-z0-9.-]+$",
-                                    "type": "string"
-                                  }
-                                }
+                              "cfBundleShortVersion": {
+                                "type": "string"
+                              },
+                              "cfBundleVersion": {
+                                "type": "string"
+                              },
+                              "bundleId": {
+                                "minLength": 3,
+                                "maxLength": 200,
+                                "pattern": "^[A-Za-z0-9.-]+$",
+                                "type": "string"
                               }
                             }
-                          },
-                          "versionLabel": {
-                            "type": "string"
-                          },
-                          "queuedBy": {
-                            "type": "string"
-                          },
-                          "status": {
-                            "anyOf": [
-                              {
-                                "type": "string",
-                                "enum": [
-                                  "done"
-                                ]
-                              },
-                              {
-                                "type": "string",
-                                "enum": [
-                                  "failed"
-                                ]
-                              }
+                          }
+                        }
+                      },
+                      "versionLabel": {
+                        "type": "string"
+                      },
+                      "queuedBy": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "done"
                             ]
                           },
-                          "warnings": {
+                          {
+                            "type": "string",
+                            "enum": [
+                              "failed"
+                            ]
+                          }
+                        ]
+                      },
+                      "warnings": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "error": {
+                        "type": "string"
+                      },
+                      "artifactId": {
+                        "minLength": 1,
+                        "maxLength": 200,
+                        "type": "string"
+                      },
+                      "sizeBytes": {
+                        "type": "number"
+                      },
+                      "sha256": {
+                        "type": "string"
+                      },
+                      "source": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "manual"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "scheduler"
+                            ]
+                          }
+                        ]
+                      },
+                      "createdAt": {
+                        "type": "number"
+                      },
+                      "startedAt": {
+                        "type": "number"
+                      },
+                      "finishedAt": {
+                        "type": "number"
+                      },
+                      "deviceId": {
+                        "minLength": 1,
+                        "maxLength": 200,
+                        "type": "string"
+                      },
+                      "transport": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "wifi"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "usb"
+                            ]
+                          }
+                        ]
+                      },
+                      "ipaMetadata": {
+                        "additionalProperties": true,
+                        "type": "object",
+                        "properties": {
+                          "bundleVersion": {
+                            "type": "string"
+                          },
+                          "shortVersion": {
+                            "type": "string"
+                          },
+                          "minOsVersion": {
+                            "type": "string"
+                          },
+                          "executable": {
+                            "type": "string"
+                          },
+                          "architectures": {
                             "type": "array",
                             "items": {
                               "type": "string"
                             }
                           },
-                          "error": {
-                            "type": "string"
-                          },
-                          "artifactId": {
-                            "minLength": 1,
-                            "maxLength": 200,
-                            "type": "string"
-                          },
-                          "sizeBytes": {
-                            "type": "number"
-                          },
-                          "sha256": {
-                            "type": "string"
-                          },
-                          "source": {
-                            "anyOf": [
-                              {
-                                "type": "string",
-                                "enum": [
-                                  "manual"
-                                ]
-                              },
-                              {
-                                "type": "string",
-                                "enum": [
-                                  "scheduler"
-                                ]
-                              }
-                            ]
-                          },
-                          "createdAt": {
-                            "type": "number"
-                          },
-                          "startedAt": {
-                            "type": "number"
-                          },
-                          "finishedAt": {
-                            "type": "number"
-                          },
-                          "deviceId": {
-                            "minLength": 1,
-                            "maxLength": 200,
-                            "type": "string"
-                          },
-                          "transport": {
-                            "anyOf": [
-                              {
-                                "type": "string",
-                                "enum": [
-                                  "wifi"
-                                ]
-                              },
-                              {
-                                "type": "string",
-                                "enum": [
-                                  "usb"
-                                ]
-                              }
-                            ]
-                          },
-                          "ipaMetadata": {
-                            "additionalProperties": true,
-                            "type": "object",
-                            "properties": {
-                              "bundleVersion": {
-                                "type": "string"
-                              },
-                              "shortVersion": {
-                                "type": "string"
-                              },
-                              "minOsVersion": {
-                                "type": "string"
-                              },
-                              "executable": {
-                                "type": "string"
-                              },
-                              "architectures": {
-                                "type": "array",
-                                "items": {
-                                  "type": "string"
-                                }
-                              },
-                              "entitlementKeys": {
-                                "type": "array",
-                                "items": {
-                                  "type": "string"
-                                }
-                              },
-                              "embeddedFrameworks": {
-                                "type": "array",
-                                "items": {
-                                  "type": "string"
-                                }
-                              },
-                              "fileCount": {
-                                "type": "number"
-                              },
-                              "compressedSizeBytes": {
-                                "type": "number"
-                              },
-                              "uncompressedSizeBytes": {
-                                "type": "number"
-                              },
-                              "codeSignaturePresent": {
-                                "type": "boolean"
-                              }
-                            }
-                          },
-                          "ipaInfoPlist": {
-                            "additionalProperties": true,
-                            "type": "object",
-                            "properties": {}
-                          },
-                          "timeline": {
+                          "entitlementKeys": {
                             "type": "array",
                             "items": {
-                              "additionalProperties": true,
-                              "type": "object",
-                              "required": [
-                                "at",
-                                "label",
-                                "status"
-                              ],
-                              "properties": {
-                                "at": {
-                                  "type": "number"
-                                },
-                                "label": {
-                                  "type": "string"
-                                },
-                                "status": {
-                                  "anyOf": [
-                                    {
-                                      "type": "string",
-                                      "enum": [
-                                        "queued"
-                                      ]
-                                    },
-                                    {
-                                      "type": "string",
-                                      "enum": [
-                                        "running"
-                                      ]
-                                    },
-                                    {
-                                      "type": "string",
-                                      "enum": [
-                                        "done"
-                                      ]
-                                    },
-                                    {
-                                      "type": "string",
-                                      "enum": [
-                                        "failed"
-                                      ]
-                                    }
-                                  ]
-                                }
-                              }
+                              "type": "string"
                             }
                           },
-                          "attempt": {
+                          "embeddedFrameworks": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "fileCount": {
                             "type": "number"
                           },
-                          "retryCount": {
+                          "compressedSizeBytes": {
                             "type": "number"
                           },
-                          "deadlineAt": {
+                          "uncompressedSizeBytes": {
                             "type": "number"
                           },
-                          "deadlineExceeded": {
+                          "codeSignaturePresent": {
                             "type": "boolean"
-                          },
-                          "failureClass": {
-                            "type": "string"
                           }
                         }
+                      },
+                      "ipaInfoPlist": {
+                        "additionalProperties": true,
+                        "type": "object",
+                        "properties": {}
+                      },
+                      "timeline": {
+                        "type": "array",
+                        "items": {
+                          "additionalProperties": true,
+                          "type": "object",
+                          "required": [
+                            "at",
+                            "label",
+                            "status"
+                          ],
+                          "properties": {
+                            "at": {
+                              "type": "number"
+                            },
+                            "label": {
+                              "type": "string"
+                            },
+                            "status": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "queued"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "running"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "done"
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "failed"
+                                  ]
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      },
+                      "attempt": {
+                        "type": "number"
+                      },
+                      "retryCount": {
+                        "type": "number"
+                      },
+                      "deadlineAt": {
+                        "type": "number"
+                      },
+                      "deadlineExceeded": {
+                        "type": "boolean"
+                      },
+                      "failureClass": {
+                        "type": "string"
                       }
-                    },
-                    {
-                      "type": "string"
                     }
-                  ]
+                  }
+                }
+              },
+              "text/csv": {
+                "schema": {
+                  "type": "string"
                 }
               }
             }
@@ -40432,18 +40428,9 @@
               "schema": {
                 "additionalProperties": true,
                 "type": "object",
-                "required": [
-                  "ids"
-                ],
                 "properties": {
                   "ids": {
-                    "maxItems": 100,
-                    "type": "array",
-                    "items": {
-                      "minLength": 1,
-                      "maxLength": 200,
-                      "type": "string"
-                    }
+                    "description": "Non-array input is treated as empty; array entries are filtered to strings, deduplicated, and capped at 100."
                   },
                   "projectId": {
                     "minLength": 1,
