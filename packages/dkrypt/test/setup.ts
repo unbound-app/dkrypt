@@ -4,6 +4,7 @@ import path from 'node:path';
 
 process.env.API_KEY ??= 'test-api-key';
 process.env.SESSION_SIGNING_SECRET ??= 'test-session-signing-secret';
+process.env.BACKUP_MANIFEST_SECRET = 'test-backup-manifest-secret';
 process.env.ADMIN_PASSWORD ??= 'test-admin-password';
 process.env.STRIPE_SECRET_KEY ??= 'sk_test_dkrypt';
 process.env.STRIPE_WEBHOOK_SECRET ??= 'whsec_dkrypt_test';

@@ -1812,11 +1812,26 @@ export function previewBackup(payload: unknown): Promise<{ ok: boolean; data: Ba
 
 export interface BackupRestoreDrill {
   ok: boolean;
-  checks: { label: string; ok: boolean; detail: string }[];
+  restoreDrillStatus: 'passed' | 'failed';
+  checkedAt: number;
+  checks: BackupRestoreDrillCheck[];
+  database?: { ok: boolean; detail: string };
+}
+
+export interface BackupRestoreDrillCheck {
+  label: string;
+  ok: boolean;
+  detail: string;
 }
 
 export function drillBackupRestore(payload: unknown): Promise<{ ok: boolean; data: BackupRestoreDrill | { error?: string } }> {
   return apiAction('/v1/dashboard/backup/drill', { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export interface BackupSnapshotDrill {
+  status: 'passed' | 'failed';
+  checkedAt: number;
+  checks: BackupRestoreDrillCheck[];
 }
 
 export interface BackupScheduleSettings {
@@ -1831,6 +1846,14 @@ export interface BackupHistoryEntry {
   sizeBytes: number;
   filename: string;
   trigger: 'scheduled' | 'manual';
+  databaseFilename?: string;
+  manifestFilename?: string;
+  schemaVersion?: number;
+  integrity?: 'verified' | 'failed' | 'unavailable';
+  encryptedManifest?: boolean;
+  restoreDrillStatus: 'not_run' | 'passed' | 'failed';
+  restoreDrillAt?: number;
+  restoreDrillChecks?: BackupRestoreDrillCheck[];
 }
 
 export function fetchBackupSchedule(): Promise<BackupScheduleSettings> {
@@ -1847,6 +1870,10 @@ export function fetchBackupHistory(): Promise<BackupHistoryEntry[]> {
 
 export function createBackupSnapshot(): Promise<{ ok: boolean; data: BackupHistoryEntry }> {
   return apiAction('/v1/dashboard/backup/history', { method: 'POST' }, 'Backup snapshot created');
+}
+
+export function drillBackupSnapshot(id: string): Promise<{ ok: boolean; data: BackupSnapshotDrill | { error?: string } }> {
+  return apiAction(`/v1/dashboard/backup/history/${encodeURIComponent(id)}/drill`, { method: 'POST' });
 }
 
 export function deleteBackupSnapshot(id: string): Promise<{ ok: boolean }> {

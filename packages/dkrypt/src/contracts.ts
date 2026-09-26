@@ -75,6 +75,19 @@ import {
   testFlightSubscriptionPageSchema,
   testFlightSubscriptionParamsSchema,
 } from '#dashboardTestFlightContracts.js';
+import {
+  backupDrillResponseSchema,
+  backupExportResponseSchema,
+  backupHistoryEntrySchema,
+  backupHistoryParamsSchema,
+  backupHistoryResponseSchema,
+  backupImportBodySchema,
+  backupOkResponseSchema,
+  backupPreviewResponseSchema,
+  backupSchedulePatchSchema,
+  backupScheduleResponseSchema,
+  backupSnapshotDrillResponseSchema,
+} from '#dashboardBackupContracts.js';
 
 const VersionSelector = Type.String({ minLength: 1, maxLength: 64, pattern: '^v?\\d+(?:\\.\\d+)*(?:_\\d+)?$' });
 const Identifier = identifierSchema;
@@ -498,30 +511,6 @@ const ApiKeyPageResponse = object({ keys: Type.Array(ApiKeyResponse), total: Typ
 const ApiKeyUsageResponse = object({ usage: Type.Array(object({ date: Type.String(), count: Type.Integer({ minimum: 0 }) })) });
 const ApiKeyBundleUsageResponse = object({ bundles: Type.Array(object({ bundleId: BundleId, count: Type.Integer({ minimum: 0 }) })) });
 const ApiKeyOutcomeResponse = object({ outcomes: Type.Array(JsonObject) });
-const BackupScheduleResponse = object({ enabled: Type.Boolean(), cron: Type.String(), retentionCount: Type.Integer({ minimum: 1 }) });
-const BackupHistoryEntryResponse = object({
-  id: Identifier,
-  createdAt: Type.Number(),
-  sizeBytes: Type.Number({ minimum: 0 }),
-  filename: Type.String(),
-  trigger: Type.Union([Type.Literal('scheduled'), Type.Literal('manual')]),
-  databaseFilename: Type.Optional(Type.String()),
-  manifestFilename: Type.Optional(Type.String()),
-  schemaVersion: Type.Optional(Type.Integer({ minimum: 1 })),
-  integrity: Type.Optional(Type.Union([Type.Literal('verified'), Type.Literal('failed')])),
-  encryptedManifest: Type.Optional(Type.Boolean()),
-});
-const BackupHistoryResponse = Type.Array(BackupHistoryEntryResponse);
-const BackupPreviewResponse = object({
-  exportedAt: Type.Optional(Type.Number()),
-  incoming: object({ users: Type.Integer({ minimum: 0 }), roles: Type.Integer({ minimum: 0 }), apiKeys: Type.Integer({ minimum: 0 }), watches: Type.Integer({ minimum: 0 }), devices: Type.Integer({ minimum: 0 }), jobHistory: Type.Integer({ minimum: 0 }), auditLog: Type.Integer({ minimum: 0 }) }),
-  current: object({ users: Type.Integer({ minimum: 0 }), roles: Type.Integer({ minimum: 0 }), apiKeys: Type.Integer({ minimum: 0 }), watches: Type.Integer({ minimum: 0 }), devices: Type.Integer({ minimum: 0 }), jobHistory: Type.Integer({ minimum: 0 }), auditLog: Type.Integer({ minimum: 0 }) }),
-});
-const BackupDrillResponse = object({
-  ok: Type.Boolean(),
-  checks: Type.Array(object({ label: Type.String(), ok: Type.Boolean(), detail: Type.String() })),
-  database: Type.Optional(JsonObject),
-});
 const UrlResponse = object({ url: Type.String() });
 const BillingCheckoutResponse = object({
   url: Type.String(),
@@ -712,32 +701,6 @@ const ApiKeyApprovedResponse = object({ approved: Type.Array(Identifier) });
 const ApiKeyPriorityResponse = object({ ok: Type.Boolean(), priority: Type.Number() });
 const ApiKeyConcurrencyResponse = object({ ok: Type.Boolean(), maxConcurrent: Type.Optional(Type.Union([Type.Number(), Type.Null()])) });
 const ApiKeyTestFlightResponse = object({ ok: Type.Boolean(), allowTestFlight: Type.Boolean() });
-const BackupExportResponse = object({
-  backupVersion: Type.Integer({ minimum: 1 }),
-  exportedAt: Type.Number(),
-  allowedUsers: Type.Array(JsonObject),
-  roles: Type.Array(JsonObject),
-  projects: Type.Array(JsonObject),
-  artifactProjectLinks: Type.Array(JsonObject),
-  apiKeys: Type.Array(JsonObject),
-  settings: JsonObject,
-  watches: Type.Array(JsonObject),
-  devices: Type.Array(JsonObject),
-  jobHistory: Type.Array(JsonObject),
-  lastSchedulerRunAt: Type.Optional(Type.Number()),
-  userPrefs: JsonObject,
-  auditLog: Type.Array(JsonObject),
-  schedulerRunHistory: Type.Array(JsonObject),
-  rootSessionVersion: Type.Number(),
-  apiKeyUsage: JsonObject,
-  apiKeyBundleUsage: Type.Optional(JsonObject),
-  deviceActivity: Type.Array(JsonObject),
-  testFlightSubscriptions: Type.Array(JsonObject),
-  rootMfa: Type.Optional(JsonObject),
-  passkeys: Type.Array(JsonObject),
-  billing: JsonObject,
-  identities: JsonObject,
-});
 const WebhookReceiptResponse = object({ received: Type.Boolean(), duplicate: Type.Optional(Type.Boolean()), quarantined: Type.Optional(Type.Boolean()), inProgress: Type.Optional(Type.Boolean()) });
 const TestFlightDiagnosticsResponse = object({
   bridge: object({
@@ -817,6 +780,8 @@ const bodylessPostContracts = new Set([
   '/v1/auth/sessions/revoke-others',
   '/v1/dashboard/push/test',
   '/v1/dashboard/email/test',
+  '/v1/dashboard/backup/history',
+  '/v1/dashboard/backup/history/:id/drill',
 ]);
 
 function registerGenericContract(method: ContractMethod, path: string): void {
@@ -1062,6 +1027,7 @@ const remainingContracts: Array<[ContractMethod, string]> = [
   ['GET', '/v1/dashboard/backup/history'],
   ['POST', '/v1/dashboard/backup/history'],
   ['GET', '/v1/dashboard/backup/history/:id/download'],
+  ['POST', '/v1/dashboard/backup/history/:id/drill'],
   ['DELETE', '/v1/dashboard/backup/history/:id'],
   ['GET', '/v1/dashboard/me/prefs'],
   ['GET', '/v1/dashboard/push/public-key'],
@@ -1184,14 +1150,14 @@ register('GET', '/v1/dashboard/keys/:id/bundle-usage', { params: object({ id: Id
 register('GET', '/v1/dashboard/keys/:id/outcomes', { params: object({ id: Identifier }), response: { 200: ApiKeyOutcomeResponse } });
 register('POST', '/v1/dashboard/keys/:id/approve', { params: object({ id: Identifier }), response: { 200: OkResponse } });
 register('POST', '/v1/dashboard/keys/:id/deny', { params: object({ id: Identifier }), response: { 200: OkResponse } });
-register('GET', '/v1/dashboard/backup/schedule', { response: { 200: BackupScheduleResponse } });
-register('POST', '/v1/dashboard/backup/schedule', { response: { 200: BackupScheduleResponse } });
-register('GET', '/v1/dashboard/backup/history', { response: { 200: BackupHistoryResponse } });
-register('POST', '/v1/dashboard/backup/history', { response: { 200: BackupHistoryEntryResponse } });
+register('GET', '/v1/dashboard/backup/schedule', { response: { 200: backupScheduleResponseSchema } });
+register('POST', '/v1/dashboard/backup/schedule', { body: backupSchedulePatchSchema, response: { 200: backupScheduleResponseSchema } });
+register('GET', '/v1/dashboard/backup/history', { response: { 200: backupHistoryResponseSchema } });
+register('POST', '/v1/dashboard/backup/history', { response: { 200: backupHistoryEntrySchema } });
 register('POST', '/v1/dashboard/backup/import', { response: { 200: OkResponse } });
-register('POST', '/v1/dashboard/backup/preview', { response: { 200: BackupPreviewResponse } });
-register('POST', '/v1/dashboard/backup/drill', { response: { 200: BackupDrillResponse } });
-register('DELETE', '/v1/dashboard/backup/history/:id', { params: object({ id: Identifier }), response: { 200: OkResponse } });
+register('POST', '/v1/dashboard/backup/preview', { response: { 200: backupPreviewResponseSchema } });
+register('POST', '/v1/dashboard/backup/drill', { response: { 200: backupDrillResponseSchema } });
+register('DELETE', '/v1/dashboard/backup/history/:id', { params: backupHistoryParamsSchema, response: { 200: backupOkResponseSchema } });
 register('POST', '/v1/decrypts', {
   headers: IdempotencyKeyHeaders,
   body: object({ bundleId: BundleId, version: Type.Optional(VersionSelector), projectId: Type.Optional(Identifier) }),
@@ -1444,27 +1410,31 @@ register('GET', '/v1/dashboard/watches/export', {
   response: { 200: WatchExportResponse },
 });
 register('GET', '/v1/dashboard/backup/export', {
-  response: { 200: BackupExportResponse },
+  response: { 200: backupExportResponseSchema },
 });
 register('GET', '/v1/dashboard/backup/history/:id/download', {
   params: object({ id: Identifier }),
   response: { 200: BinaryFileResponse },
 });
+register('POST', '/v1/dashboard/backup/history/:id/drill', {
+  params: backupHistoryParamsSchema,
+  response: { 200: backupSnapshotDrillResponseSchema },
+});
 register('POST', '/v1/dashboard/backup/import', {
-  body: JsonObject,
-  response: { 200: OkResponse },
+  body: backupImportBodySchema,
+  response: { 200: backupOkResponseSchema },
 });
 register('POST', '/v1/dashboard/backup/preview', {
-  body: JsonObject,
-  response: { 200: BackupPreviewResponse },
+  body: backupImportBodySchema,
+  response: { 200: backupPreviewResponseSchema },
 });
 register('POST', '/v1/dashboard/backup/drill', {
-  body: JsonObject,
-  response: { 200: BackupDrillResponse },
+  body: backupImportBodySchema,
+  response: { 200: backupDrillResponseSchema },
 });
 register('DELETE', '/v1/dashboard/backup/history/:id', {
-  params: object({ id: Identifier }),
-  response: { 200: OkResponse },
+  params: backupHistoryParamsSchema,
+  response: { 200: backupOkResponseSchema },
 });
 register('GET', '/v1/dashboard/discord/status', {
   response: { 200: DiscordStatusResponse },

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { openStateCollectionDatabase, readStateCollection, replaceStateCollections } from '#store/sqlite.js';
+import { openStateCollectionDatabase, readStateCollection, replaceStateCollections, writeStateMirror, type StateCollectionReplacement } from '#store/sqlite.js';
 import { config } from '#config.js';
 import { hasPermission, PermissionFlag } from '#permissions.js';
 
@@ -228,21 +228,20 @@ function load(): BillingSnapshot {
 const state = load();
 if (loadedFromLegacyFile) persist();
 
+export function billingSnapshotCollections(snapshot: BillingSnapshot): StateCollectionReplacement[] {
+  return [
+    { table: 'billing_records', rows: [{ id: 'billing-snapshot', payload: { kind: 'snapshot', value: snapshot }, updatedAt: Date.now() }] },
+    { table: 'billing_events', rows: snapshot.processedEvents.map((event) => ({ id: `${event.provider}:${event.eventId}`, payload: event, updatedAt: Date.parse(event.processedAt) || Date.now() })) },
+  ];
+}
+
 function persist(): void {
-  replaceStateCollections(billingDatabase, [
-    { table: 'billing_records', rows: [{ id: 'billing-snapshot', payload: { kind: 'snapshot', value: state }, updatedAt: Date.now() }] },
-    { table: 'billing_events', rows: state.processedEvents.map((event) => ({ id: `${event.provider}:${event.eventId}`, payload: event, updatedAt: Date.parse(event.processedAt) || Date.now() })) },
-  ]);
-  const temporaryPath = `${billingPath}.${process.pid}.tmp`;
-  mkdirSync(path.dirname(billingPath), { recursive: true });
-  writeFileSync(temporaryPath, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
-  const descriptor = openSync(temporaryPath, 'r');
-  try {
-    fsyncSync(descriptor);
-  } finally {
-    closeSync(descriptor);
-  }
-  renameSync(temporaryPath, billingPath);
+  replaceStateCollections(billingDatabase, billingSnapshotCollections(state));
+  writeBillingSnapshotMirror();
+}
+
+export function writeBillingSnapshotMirror(): void {
+  writeStateMirror(billingPath, state);
 }
 
 export function closeBillingDatabase(): void {
@@ -535,9 +534,9 @@ export function isBillingSnapshot(value: unknown): value is BillingSnapshot {
   return normalizeBillingSnapshot(value) !== undefined;
 }
 
-export function replaceBillingSnapshot(snapshot: BillingSnapshot): void;
-export function replaceBillingSnapshot(snapshot: { customers: BillingCustomer[]; subscriptions: BillingSubscription[] }): void;
-export function replaceBillingSnapshot(snapshot: BillingSnapshot | { customers: BillingCustomer[]; subscriptions: BillingSubscription[] }): void {
+export function replaceBillingSnapshot(snapshot: BillingSnapshot, options?: { persist?: boolean }): void;
+export function replaceBillingSnapshot(snapshot: { customers: BillingCustomer[]; subscriptions: BillingSubscription[] }, options?: { persist?: boolean }): void;
+export function replaceBillingSnapshot(snapshot: BillingSnapshot | { customers: BillingCustomer[]; subscriptions: BillingSubscription[] }, options: { persist?: boolean } = {}): void {
   const normalized = normalizeBillingSnapshot(snapshot);
   if (!normalized) throw new Error('billing snapshot is malformed');
   state.customers = normalized.customers;
@@ -546,7 +545,7 @@ export function replaceBillingSnapshot(snapshot: BillingSnapshot | { customers: 
   state.cryptoCharges = normalized.cryptoCharges;
   state.processedEvents = normalized.processedEvents;
   state.entitlementHistory = normalized.entitlementHistory ?? [];
-  persist();
+  if (options.persist !== false) persist();
 }
 
 function entitlementEventKind(previous: BillingSubscription | undefined, next: BillingSubscription): BillingEntitlementEvent['kind'] | undefined {

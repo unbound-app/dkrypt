@@ -1,5 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, copyFileSync, existsSync, fsyncSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { generateVAPIDKeys, type VapidKeys } from 'web-push';
 import { config } from '#config.js';
@@ -9,6 +10,8 @@ import {
   getBillingEntitlements,
   isBillingSnapshot,
   replaceBillingSnapshot,
+  billingSnapshotCollections,
+  writeBillingSnapshotMirror,
   type BillingSnapshot,
 } from '#billing.js';
 import { emitHistoryAdded } from '#events.js';
@@ -16,12 +19,15 @@ import {
   exportIdentitySnapshot,
   isIdentitySnapshot,
   replaceIdentitySnapshot,
+  identitySnapshotCollections,
+  writeIdentitySnapshotMirror,
   type IdentitySnapshot,
 } from '#identity.js';
+import { log } from '#logger.js';
 import type { JobTimelineEvent, TestFlightJobSource } from '#jobs/types.js';
 import { categorizeFailure } from '#util/failureCategory.js';
 import { combineBits, hasPermission, parseBits, PermissionFlag, serializeBits } from '#permissions.js';
-import { openStateDatabase, verifyDatabaseBackup, type StateCollectionReplacement, type StateDatabase } from '#store/sqlite.js';
+import { openStateDatabase, readStateCollection, verifyDatabaseBackup, writeStateMirror, type StateCollectionReplacement, type StateDatabase } from '#store/sqlite.js';
 import { paginateCursor } from '#util/cursor.js';
 
 export type ApiKeyStatus = 'pending' | 'approved' | 'denied';
@@ -196,8 +202,17 @@ export interface BackupHistoryEntry {
   databaseFilename?: string;
   manifestFilename?: string;
   schemaVersion?: number;
-  integrity?: 'verified' | 'failed';
+  integrity?: 'verified' | 'failed' | 'unavailable';
   encryptedManifest?: boolean;
+  restoreDrillStatus: 'not_run' | 'passed' | 'failed';
+  restoreDrillAt?: number;
+  restoreDrillChecks?: BackupRestoreDrillCheck[];
+}
+
+export interface BackupRestoreDrillCheck {
+  label: string;
+  ok: boolean;
+  detail: string;
 }
 
 export interface ActiveSessionRecord {
@@ -480,6 +495,7 @@ export type AuditAction =
   | 'role.remove'
   | 'backup.schedule-update'
   | 'backup.create'
+  | 'backup.drill'
   | 'backup.delete'
   | 'testflight-subscription.add'
   | 'testflight-subscription.approve'
@@ -580,7 +596,7 @@ export interface NotificationRecord {
 }
 
 interface PersistedState {
-  version: 17;
+  version: number;
   apiKeys: ApiKeyRecord[];
   allowedUsers: AllowedUser[];
   roles: Role[];
@@ -643,7 +659,7 @@ export function closeStateDatabase(): void {
 
 function defaultState(): PersistedState {
   return {
-    version: 17,
+    version: 18,
     apiKeys: [],
     allowedUsers: [],
     roles: [seedDefaultRole(Date.now())],
@@ -979,7 +995,7 @@ function migrateV16ToV17(v16: PersistedState): PersistedState {
   return migrated;
 }
 
-function migrate(raw: Record<string, unknown>): PersistedState {
+function migrateToV17(raw: Record<string, unknown>): PersistedState {
   if (raw.version === 17) return raw as unknown as PersistedState;
   if (raw.version === 16) return migrateV16ToV17(migrateV13ToV14(raw));
   if (raw.version === 15) return migrateV16ToV17(migrateV13ToV14(raw));
@@ -1058,6 +1074,18 @@ function migrate(raw: Record<string, unknown>): PersistedState {
   )))))));
 }
 
+function migrateV17ToV18(v17: PersistedState): PersistedState {
+  const migrated = { ...v17, version: 18 };
+  const history = Array.isArray(v17.backupHistory) ? v17.backupHistory : [];
+  migrated.backupHistory = history.map((entry) => normalizeBackupHistoryEntry(entry));
+  return migrated;
+}
+
+function migrate(raw: Record<string, unknown>): PersistedState {
+  if (raw.version === 18) return raw as unknown as PersistedState;
+  return migrateV17ToV18(migrateToV17(raw));
+}
+
 function normalizeLegacySchedulerRunOutcome(raw: unknown): SchedulerRunOutcome {
   const o = (raw ?? {}) as Partial<SchedulerRunOutcome>;
   return {
@@ -1081,6 +1109,30 @@ function normalizeLegacySchedulerRunHistory(entries: unknown): SchedulerRunEntry
     appStore: normalizeLegacySchedulerRunOutcome(e.appStore),
     testflight: normalizeLegacySchedulerRunOutcome(e.testflight),
   }));
+}
+
+function normalizeBackupHistoryEntry(raw: unknown): BackupHistoryEntry {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) throw new Error('persistent backup history entry is malformed');
+  const entry = raw as Record<string, unknown>;
+  const restoreDrillStatus = entry.restoreDrillStatus === 'passed' || entry.restoreDrillStatus === 'failed' || entry.restoreDrillStatus === 'not_run'
+    ? entry.restoreDrillStatus
+    : 'not_run';
+  const restoreDrillChecks = Array.isArray(entry.restoreDrillChecks)
+    ? entry.restoreDrillChecks.filter((check): check is BackupRestoreDrillCheck =>
+      typeof check === 'object'
+      && check !== null
+      && typeof (check as Record<string, unknown>).label === 'string'
+      && typeof (check as Record<string, unknown>).ok === 'boolean'
+      && typeof (check as Record<string, unknown>).detail === 'string')
+    : undefined;
+  return {
+    ...(entry as unknown as BackupHistoryEntry),
+    integrity: entry.integrity === 'verified' || entry.integrity === 'failed' || entry.integrity === 'unavailable' ? entry.integrity : undefined,
+    encryptedManifest: typeof entry.encryptedManifest === 'boolean' ? entry.encryptedManifest : undefined,
+    restoreDrillStatus,
+    restoreDrillAt: typeof entry.restoreDrillAt === 'number' ? entry.restoreDrillAt : undefined,
+    restoreDrillChecks,
+  };
 }
 
 function load(): PersistedState {
@@ -1109,6 +1161,7 @@ function asStateRecord(value: unknown): Record<string, unknown> {
 
 function normalizeLoadedState(migrated: PersistedState): PersistedState {
   migrated.devices = migrated.devices.map(normalizeLoadedDevice);
+  migrated.backupHistory = Array.isArray(migrated.backupHistory) ? migrated.backupHistory.map(normalizeBackupHistoryEntry) : [];
   migrated.schedulerRunHistory = normalizeLegacySchedulerRunHistory(migrated.schedulerRunHistory);
   migrated.appCatalog = migrated.appCatalog ?? {};
   migrated.testFlightCatalog = isTestFlightCatalogCacheShape(migrated.testFlightCatalog) ? migrated.testFlightCatalog : undefined;
@@ -1213,15 +1266,38 @@ export function upsertAppCatalogEntries(entries: Array<Omit<AppCatalogEntry, 'up
 }
 
 const state: PersistedState = load();
+cleanupBackupSnapshotDirectories(state.backupHistory);
 let dirty = false;
+const unavailableLegacyMirrors = new Set<string>();
+
+function fsyncPath(filePath: string): void {
+  const descriptor = openSync(filePath, 'r');
+  try {
+    fsyncSync(descriptor);
+  } finally {
+    closeSync(descriptor);
+  }
+}
 
 function persistNow(additionalCollections: readonly StateCollectionReplacement[] = []): void {
-  stateDatabase.writeState(state, statePath, additionalCollections);
+  stateDatabase.writeState(state, undefined, additionalCollections);
   dirty = false;
+  syncLegacyStateMirror('state', () => writeStateMirror(statePath, state));
+}
+
+function syncLegacyStateMirror(name: string, sync: () => void): void {
+  try {
+    sync();
+    if (unavailableLegacyMirrors.delete(name)) log.info('legacy state mirror sync recovered', { name });
+  } catch (error) {
+    if (unavailableLegacyMirrors.has(name)) return;
+    unavailableLegacyMirrors.add(name);
+    log.warn('failed to sync a legacy state mirror', { name, error: String(error) });
+  }
 }
 
 function encryptedBackupManifest(value: Record<string, unknown>): string {
-  const key = createHash('sha256').update(config.sessionSigningSecret).digest();
+  const key = createHash('sha256').update(config.backupManifestSecret || config.sessionSigningSecret).digest();
   const iv = randomBytes(12);
   const cipher = createCipheriv('aes-256-gcm', key, iv);
   const ciphertext = Buffer.concat([cipher.update(JSON.stringify(value), 'utf8'), cipher.final()]);
@@ -1233,7 +1309,13 @@ function verifyEncryptedBackupManifest(manifestPath: string, jsonPath: string, d
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { version?: number; algorithm?: string; iv?: string; tag?: string; ciphertext?: string };
   if (manifest.version !== 1 || manifest.algorithm !== 'aes-256-gcm' || !manifest.iv || !manifest.tag || !manifest.ciphertext) throw new Error('backup manifest is malformed');
   let payload: { jsonSha256?: string; databaseSha256?: string } | undefined;
-  for (const secret of [config.sessionSigningSecret, config.sessionSigningSecretPrevious].filter(Boolean)) {
+  const secrets = [
+    config.backupManifestSecret,
+    ...config.backupManifestSecretPrevious,
+    config.sessionSigningSecret,
+    config.sessionSigningSecretPrevious,
+  ].filter((secret, index, candidates): secret is string => Boolean(secret) && candidates.indexOf(secret) === index);
+  for (const secret of secrets) {
     try {
       const key = createHash('sha256').update(secret).digest();
       const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(manifest.iv, 'base64url'));
@@ -1244,7 +1326,7 @@ function verifyEncryptedBackupManifest(manifestPath: string, jsonPath: string, d
       continue;
     }
   }
-  if (!payload) throw new Error('backup manifest encryption key did not match the current or previous session secret');
+  if (!payload) throw new Error('backup manifest encryption key did not match a configured current or previous key');
   const jsonSha256 = createHash('sha256').update(readFileSync(jsonPath)).digest('hex');
   const databaseSha256 = createHash('sha256').update(readFileSync(databasePath)).digest('hex');
   if (payload.jsonSha256 !== jsonSha256 || payload.databaseSha256 !== databaseSha256) throw new Error('backup manifest checksum verification failed');
@@ -3547,6 +3629,10 @@ export function markNotificationsRead(userId: string, ids?: string[]): number {
 
 const BACKUP_VERSION = 9;
 
+type BackupDeviceRecord = Omit<DeviceRecord, 'transport' | 'host' | 'udid'>
+  & { transport: DeviceTransport }
+  & ({ host: string; udid?: string } | { host?: string; udid: string });
+
 export interface ArtifactProjectLink {
   artifactId: string;
   projectIds: string[];
@@ -3562,7 +3648,7 @@ export interface BackupPayload {
   apiKeys: ApiKeyRecord[];
   settings: Partial<SchedulerSettings>;
   watches: AppWatch[];
-  devices: DeviceRecord[];
+  devices: BackupDeviceRecord[];
   jobHistory: JobHistoryEntry[];
   lastSchedulerRunAt?: number;
   userPrefs: Record<string, UserPrefs>;
@@ -3590,6 +3676,13 @@ function exportArtifactProjectLinks(): ArtifactProjectLink[] {
       : [DEFAULT_PROJECT_ID];
     return [{ artifactId: artifact.id, projectIds: projectIds.length > 0 ? projectIds : [DEFAULT_PROJECT_ID] }];
   });
+}
+
+function normalizeBackupDevice(device: DeviceRecord): BackupDeviceRecord {
+  const transport = device.transport ?? (device.udid ? device.usbmuxNetwork ? 'wifi' : 'usb' : 'wifi');
+  if (transport !== 'wifi' && transport !== 'usb') throw new Error(`device ${device.id} has no supported transport`);
+  if (!device.host && !device.udid) throw new Error(`device ${device.id} has no host or UDID`);
+  return { ...device, transport } as BackupDeviceRecord;
 }
 
 function artifactProjectLinksReplacement(links: ArtifactProjectLink[], existingLinks: ArtifactProjectLink[] = []): StateCollectionReplacement[] {
@@ -3645,7 +3738,7 @@ export function exportBackup(): BackupPayload {
     apiKeys: state.apiKeys.map((k) => ({ ...k, pendingReveal: undefined })),
     settings: state.settings,
     watches: getEffectiveWatches(),
-    devices: getEffectiveDevices(),
+    devices: getEffectiveDevices().map(normalizeBackupDevice),
     jobHistory: state.jobHistory,
     lastSchedulerRunAt: state.lastSchedulerRunAt,
     userPrefs: state.userPrefs,
@@ -3678,29 +3771,28 @@ export function getBackupHistory(): BackupHistoryEntry[] {
   return [...state.backupHistory].sort((a, b) => b.createdAt - a.createdAt);
 }
 
-export function createBackupSnapshot(trigger: 'scheduled' | 'manual'): BackupHistoryEntry {
+export function createBackupSnapshot(trigger: 'scheduled' | 'manual', actor = 'system'): BackupHistoryEntry {
   mkdirSync(backupsDir, { recursive: true });
+  persistNow();
   const payload = exportBackup();
   const json = JSON.stringify(payload, null, 2);
   const id = randomUUID();
+  const snapshotDirectory = `snapshot-${id}`;
+  const temporaryDirectory = mkdtempSync(path.join(backupsDir, '.staging-'));
+  const publishedDirectory = path.join(backupsDir, snapshotDirectory);
   const filename = `backup-${payload.exportedAt}-${id.slice(0, 8)}.json`;
   const databaseFilename = `${filename}.sqlite`;
   const manifestFilename = `${filename}.manifest`;
-  const jsonPath = path.join(backupsDir, filename);
-  const databasePath = path.join(backupsDir, databaseFilename);
-  const manifestPath = path.join(backupsDir, manifestFilename);
-  const temporaryJsonPath = `${jsonPath}.${process.pid}.tmp`;
+  const jsonPath = path.join(temporaryDirectory, filename);
+  const databasePath = path.join(temporaryDirectory, databaseFilename);
+  const manifestPath = path.join(temporaryDirectory, manifestFilename);
+  let published = false;
   try {
-    writeFileSync(temporaryJsonPath, `${json}\n`, { mode: 0o600 });
-    const descriptor = openSync(temporaryJsonPath, 'r');
-    try {
-      fsyncSync(descriptor);
-    } finally {
-      closeSync(descriptor);
-    }
-    renameSync(temporaryJsonPath, jsonPath);
+    writeFileSync(jsonPath, `${json}\n`, { mode: 0o600 });
+    fsyncPath(jsonPath);
     stateDatabase.backupTo(databasePath);
     verifyDatabaseBackup(databasePath);
+    fsyncPath(databasePath);
     const manifest = encryptedBackupManifest({
       backupVersion: payload.backupVersion,
       exportedAt: payload.exportedAt,
@@ -3709,79 +3801,226 @@ export function createBackupSnapshot(trigger: 'scheduled' | 'manual'): BackupHis
       databaseSha256: createHash('sha256').update(readFileSync(databasePath)).digest('hex'),
     });
     writeFileSync(manifestPath, `${manifest}\n`, { mode: 0o600 });
+    fsyncPath(manifestPath);
     verifyEncryptedBackupManifest(manifestPath, jsonPath, databasePath);
+    fsyncPath(temporaryDirectory);
+    renameSync(temporaryDirectory, publishedDirectory);
+    published = true;
+    fsyncPath(backupsDir);
   } catch (error) {
-    for (const filePath of [temporaryJsonPath, jsonPath, databasePath, manifestPath]) rmSync(filePath, { force: true });
+    rmSync(temporaryDirectory, { recursive: true, force: true });
+    if (published) rmSync(publishedDirectory, { recursive: true, force: true });
     throw error;
   }
 
   const entry: BackupHistoryEntry = {
     id,
     createdAt: payload.exportedAt,
-    sizeBytes: Buffer.byteLength(json) + readFileSync(databasePath).byteLength,
-    filename,
-    databaseFilename,
-    manifestFilename,
+    sizeBytes: Buffer.byteLength(json) + readFileSync(path.join(publishedDirectory, databaseFilename)).byteLength,
+    filename: `${snapshotDirectory}/${filename}`,
+    databaseFilename: `${snapshotDirectory}/${databaseFilename}`,
+    manifestFilename: `${snapshotDirectory}/${manifestFilename}`,
     schemaVersion: stateDatabase.schemaVersion,
     integrity: 'verified',
     encryptedManifest: true,
+    restoreDrillStatus: 'not_run',
     trigger,
   };
-  state.backupHistory = [entry, ...state.backupHistory];
+  const previousHistory = state.backupHistory;
   const retention = Math.max(1, state.backupSchedule.retentionCount);
-  while (state.backupHistory.length > retention) {
-    const removed = state.backupHistory.pop();
-    if (!removed) break;
-    const filePath = path.join(backupsDir, removed.filename);
-    if (existsSync(filePath)) rmSync(filePath);
-    if (removed.databaseFilename) {
-      const databasePath = path.join(backupsDir, removed.databaseFilename);
-      if (existsSync(databasePath)) rmSync(databasePath);
-    }
-    if (removed.manifestFilename) {
-      const manifestPath = path.join(backupsDir, removed.manifestFilename);
-      if (existsSync(manifestPath)) rmSync(manifestPath);
-    }
+  const nextHistory = [entry, ...previousHistory].slice(0, retention);
+  const removedEntries = previousHistory.slice(Math.max(0, retention - 1));
+  state.backupHistory = nextHistory;
+  try {
+    persistNow();
+  } catch (error) {
+    state.backupHistory = previousHistory;
+    rmSync(publishedDirectory, { recursive: true, force: true });
+    throw error;
   }
-  persistNow();
-  return entry;
+  for (const removed of removedEntries) removeBackupSnapshotFiles(removed);
+  recordAudit(actor, 'backup.create', entry.filename, trigger);
+  drillBackupSnapshot(entry.id, actor);
+  return state.backupHistory.find((candidate) => candidate.id === entry.id) ?? entry;
 }
 
 export function getBackupSnapshotPath(id: string): string | undefined {
   const entry = state.backupHistory.find((e) => e.id === id);
   if (!entry) return undefined;
-  const filePath = path.join(backupsDir, entry.filename);
+  const filePath = backupSnapshotFilePath(entry.filename);
+  if (!filePath) return undefined;
   return existsSync(filePath) ? filePath : undefined;
+}
+
+function backupSnapshotFilePath(filename: string | undefined): string | undefined {
+  if (!filename || filename.includes('\\')) return undefined;
+  const directory = backupSnapshotDirectory(filename);
+  if (directory) return path.join(backupsDir, directory, path.basename(filename));
+  if (filename.includes('/') || path.basename(filename) !== filename) return undefined;
+  return path.join(backupsDir, filename);
+}
+
+function backupSnapshotDirectory(filename: string | undefined): string | undefined {
+  if (!filename || filename.includes('\\')) return undefined;
+  const [directory, file, ...extra] = filename.split('/');
+  if (extra.length > 0 || !directory || !file || path.basename(file) !== file || !/^snapshot-[0-9a-f-]{36}$/.test(directory)) return undefined;
+  return directory;
+}
+
+function removeBackupSnapshotFiles(entry: BackupHistoryEntry): void {
+  for (const filename of [entry.filename, entry.databaseFilename, entry.manifestFilename]) {
+    const filePath = backupSnapshotFilePath(filename);
+    if (filePath && existsSync(filePath)) rmSync(filePath, { force: true });
+  }
+  const directory = backupSnapshotDirectory(entry.filename);
+  if (directory) rmSync(path.join(backupsDir, directory), { recursive: true, force: true });
+}
+
+function cleanupBackupSnapshotDirectories(history: BackupHistoryEntry[]): void {
+  if (!existsSync(backupsDir)) return;
+  const referencedDirectories = new Set(history.map((entry) => backupSnapshotDirectory(entry.filename)).filter((value): value is string => Boolean(value)));
+  for (const entry of readdirSync(backupsDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    if (entry.name.startsWith('.staging-') || (/^snapshot-[0-9a-f-]{36}$/.test(entry.name) && !referencedDirectories.has(entry.name))) {
+      rmSync(path.join(backupsDir, entry.name), { recursive: true, force: true });
+    }
+  }
 }
 
 export function verifyLatestDatabaseBackup(): { ok: boolean; detail: string } {
   const entry = getBackupHistory().find((candidate) => candidate.databaseFilename);
   if (!entry?.databaseFilename || !entry.manifestFilename) return { ok: false, detail: 'No verified SQLite backup has been created yet' };
-  const databasePath = path.join(backupsDir, entry.databaseFilename);
+  const databasePath = backupSnapshotFilePath(entry.databaseFilename);
+  const jsonPath = backupSnapshotFilePath(entry.filename);
+  const manifestPath = backupSnapshotFilePath(entry.manifestFilename);
+  if (!databasePath || !jsonPath || !manifestPath) return { ok: false, detail: 'Backup snapshot paths are invalid' };
   try {
     const result = verifyDatabaseBackup(databasePath);
-    verifyEncryptedBackupManifest(path.join(backupsDir, entry.manifestFilename), path.join(backupsDir, entry.filename), databasePath);
+    verifyEncryptedBackupManifest(manifestPath, jsonPath, databasePath);
     return { ok: result.hasStateSnapshot, detail: result.hasStateSnapshot ? `SQLite schema ${result.schemaVersion} restored and verified` : 'SQLite backup has no state snapshot' };
   } catch (error) {
     return { ok: false, detail: error instanceof Error ? error.message : String(error) };
   }
 }
 
-export function deleteBackupSnapshot(id: string, actor: string): boolean {
-  const idx = state.backupHistory.findIndex((e) => e.id === id);
-  if (idx === -1) return false;
-  const [removed] = state.backupHistory.splice(idx, 1);
-  const filePath = path.join(backupsDir, removed.filename);
-  if (existsSync(filePath)) rmSync(filePath);
-  if (removed.databaseFilename) {
-    const databasePath = path.join(backupsDir, removed.databaseFilename);
-    if (existsSync(databasePath)) rmSync(databasePath);
+export interface BackupSnapshotRestoreDrill {
+  status: 'passed' | 'failed';
+  checkedAt: number;
+  checks: BackupRestoreDrillCheck[];
+}
+
+export function drillBackupSnapshot(id: string, actor: string): BackupSnapshotRestoreDrill | undefined {
+  const entry = state.backupHistory.find((candidate) => candidate.id === id);
+  if (!entry) return undefined;
+
+  const checks: BackupRestoreDrillCheck[] = [];
+  let temporaryStateDir: string | undefined;
+  const jsonPath = backupSnapshotFilePath(entry.filename);
+  if (!jsonPath || !existsSync(jsonPath)) {
+    checks.push({ label: 'Backup JSON', ok: false, detail: 'Backup JSON snapshot is missing' });
+  } else {
+    try {
+      const backupPayload = JSON.parse(readFileSync(jsonPath, 'utf8')) as unknown;
+      checks.push({ label: 'Backup JSON', ok: true, detail: 'Backup JSON parsed successfully' });
+      const jsonDrill = drillBackupRestore(backupPayload);
+      if (!jsonDrill.ok) checks.push({ label: 'JSON restore transformation', ok: false, detail: jsonDrill.error });
+      else checks.push(...jsonDrill.drill.checks);
+    } catch (error) {
+      checks.push({ label: 'Backup JSON', ok: false, detail: error instanceof Error ? error.message : String(error) });
+    }
   }
-  if (removed.manifestFilename) {
-    const manifestPath = path.join(backupsDir, removed.manifestFilename);
-    if (existsSync(manifestPath)) rmSync(manifestPath);
+
+  const databasePath = backupSnapshotFilePath(entry.databaseFilename);
+  const manifestPath = backupSnapshotFilePath(entry.manifestFilename);
+  if (!databasePath || !manifestPath) {
+    checks.push({ label: 'Encrypted manifest and checksums', ok: false, detail: 'This snapshot has no encrypted integrity manifest' });
+    checks.push({ label: 'Temporary SQLite restore', ok: false, detail: 'This snapshot has no SQLite database backup' });
+  } else if (!existsSync(databasePath) || !existsSync(manifestPath) || !jsonPath) {
+    checks.push({ label: 'Encrypted manifest and checksums', ok: false, detail: 'A required integrity file is missing' });
+    checks.push({ label: 'Temporary SQLite restore', ok: false, detail: 'A required SQLite backup file is missing' });
+  } else {
+    try {
+      verifyEncryptedBackupManifest(manifestPath, jsonPath, databasePath);
+      checks.push({ label: 'Encrypted manifest and checksums', ok: true, detail: 'JSON and SQLite snapshot checksums verified' });
+    } catch (error) {
+      checks.push({ label: 'Encrypted manifest and checksums', ok: false, detail: error instanceof Error ? error.message : String(error) });
+    }
+
+    try {
+      temporaryStateDir = mkdtempSync(path.join(config.stateDir, '.restore-drill-'));
+      const restoredDatabasePath = path.join(temporaryStateDir, 'restore-drill.sqlite');
+      copyFileSync(databasePath, restoredDatabasePath);
+      const restoredDatabase = openStateDatabase({
+        stateDir: temporaryStateDir,
+        filename: path.basename(restoredDatabasePath),
+        busyTimeoutMs: config.stateDbBusyTimeoutMs,
+      });
+      let restoredState: unknown;
+      let restoredSchemaVersion = 0;
+      try {
+        restoredDatabase.integrityStatus();
+        restoredSchemaVersion = restoredDatabase.schemaVersion;
+        restoredState = restoredDatabase.readState();
+      } finally {
+        restoredDatabase.close();
+      }
+      const currentSchemaVersion = stateDatabase.schemaVersion;
+      const schemaRestored = restoredSchemaVersion >= currentSchemaVersion;
+      checks.push({ label: 'Temporary SQLite restore', ok: schemaRestored, detail: `Restored schema ${restoredSchemaVersion} of ${currentSchemaVersion}` });
+      let stateSnapshotReadable = false;
+      let stateSnapshotDetail = 'State snapshot is missing or malformed';
+      try {
+        const migratedState = normalizeLoadedState(migrate(asStateRecord(restoredState)));
+        stateSnapshotReadable = migratedState.version === state.version;
+        stateSnapshotDetail = stateSnapshotReadable
+          ? `State snapshot verified and migrated to version ${migratedState.version}`
+          : `State snapshot migrated to unsupported version ${migratedState.version}`;
+      } catch (error) {
+        stateSnapshotDetail = error instanceof Error ? error.message : String(error);
+      }
+      checks.push({
+        label: 'State snapshot checksum',
+        ok: stateSnapshotReadable,
+        detail: stateSnapshotDetail,
+      });
+    } catch (error) {
+      checks.push({ label: 'Temporary SQLite restore', ok: false, detail: error instanceof Error ? error.message : String(error) });
+    } finally {
+      if (temporaryStateDir) rmSync(temporaryStateDir, { recursive: true, force: true });
+    }
   }
+
+  const checkedAt = Date.now();
+  const status = checks.length > 0 && checks.every((check) => check.ok) ? 'passed' : 'failed';
+  const updatedEntry: BackupHistoryEntry = {
+    ...entry,
+    integrity: !entry.manifestFilename
+      ? 'unavailable'
+      : checks.some((check) => check.label === 'Encrypted manifest and checksums' && check.ok)
+        ? 'verified'
+        : 'failed',
+    restoreDrillStatus: status,
+    restoreDrillAt: checkedAt,
+    restoreDrillChecks: checks,
+  };
+  state.backupHistory = state.backupHistory.map((candidate) => candidate.id === id ? updatedEntry : candidate);
   persistNow();
+  recordAudit(actor, 'backup.drill', entry.filename, status);
+  return { status, checkedAt, checks };
+}
+
+export function deleteBackupSnapshot(id: string, actor: string): boolean {
+  const removed = state.backupHistory.find((entry) => entry.id === id);
+  if (!removed) return false;
+  const previousHistory = state.backupHistory;
+  state.backupHistory = previousHistory.filter((entry) => entry.id !== id);
+  try {
+    persistNow();
+  } catch (error) {
+    state.backupHistory = previousHistory;
+    throw error;
+  }
+  removeBackupSnapshotFiles(removed);
   recordAudit(actor, 'backup.delete', removed.filename, '');
   return true;
 }
@@ -3858,7 +4097,7 @@ function isAppWatchShape(value: unknown): value is AppWatch {
   return typeof w.id === 'string' && typeof w.bundleId === 'string' && typeof w.enabled === 'boolean' && (w.projectId === undefined || (typeof w.projectId === 'string' && /^[A-Za-z0-9_-]{1,80}$/.test(w.projectId)));
 }
 
-function isDeviceRecordShape(value: unknown): value is DeviceRecord {
+function isDeviceRecordShape(value: unknown): value is BackupDeviceRecord {
   if (typeof value !== 'object' || value === null) return false;
   const d = value as Record<string, unknown>;
   const hasDirectConnection = (d.transport === 'wifi' || d.transport === 'usb') && (typeof d.host === 'string' || typeof d.udid === 'string');
@@ -3954,7 +4193,7 @@ interface ValidatedBackupPayload {
   apiKeys: ApiKeyRecord[];
   settings: Partial<SchedulerSettings>;
   watches: AppWatch[];
-  devices: DeviceRecord[];
+  devices: BackupDeviceRecord[];
   jobHistory: JobHistoryEntry[];
   lastSchedulerRunAt?: number;
   userPrefs: Record<string, UserPrefs>;
@@ -4078,7 +4317,7 @@ function validateBackupPayload(raw: unknown): { ok: true; payload: ValidatedBack
       apiKeys: b.apiKeys as ApiKeyRecord[],
       settings: b.settings as Partial<SchedulerSettings>,
       watches: b.watches as AppWatch[],
-      devices: b.devices as DeviceRecord[],
+      devices: b.devices as BackupDeviceRecord[],
       jobHistory: (b.jobHistory as JobHistoryEntry[]).map((entry) => ({ ...entry, projectId: entry.projectId ?? DEFAULT_PROJECT_ID })),
       lastSchedulerRunAt: typeof b.lastSchedulerRunAt === 'number' ? b.lastSchedulerRunAt : undefined,
       userPrefs: b.userPrefs as Record<string, UserPrefs>,
@@ -4182,11 +4421,79 @@ function prepareBackupRestore(payload: ValidatedBackupPayload): Pick<PersistedSt
   };
 }
 
-export function drillBackupRestore(raw: unknown): { ok: true; drill: BackupRestoreDrill } | { ok: false; error: string } {
-  const validated = validateBackupPayload(raw);
-  if (!validated.ok) return validated;
-  const { payload } = validated;
-  const restored = prepareBackupRestore(payload);
+function backupDatabaseCollections(payload: ValidatedBackupPayload): StateCollectionReplacement[] {
+  return [...billingSnapshotCollections(payload.billing), ...identitySnapshotCollections(payload.identities)];
+}
+
+type BackupRestoredFields = ReturnType<typeof prepareBackupRestore>;
+
+function restoredStateForPayload(payload: ValidatedBackupPayload, restored: BackupRestoredFields, baseState: PersistedState): PersistedState {
+  const restoredState: PersistedState = { ...structuredClone(baseState), ...restored };
+  if (payload.lastSchedulerRunAt) restoredState.lastSchedulerRunAt = payload.lastSchedulerRunAt;
+  restoredState.apiKeyBundleUsage = payload.apiKeyBundleUsage ?? {};
+  restoredState.apiKeyOutcomeUsage = {};
+  restoredState.githubBudgetTelemetry = [];
+  restoredState.deviceActivity = payload.deviceActivity?.slice(0, MAX_DEVICE_ACTIVITY) ?? [];
+  return restoredState;
+}
+
+function temporaryDatabaseRestoreCheck(payload: ValidatedBackupPayload, restored: BackupRestoredFields, additionalCollections: readonly StateCollectionReplacement[] = []): BackupRestoreDrillCheck {
+  const temporaryStateDir = mkdtempSync(path.join(tmpdir(), 'dkrypt-backup-restore-'));
+  const restoredState = restoredStateForPayload(payload, restored, defaultState());
+  const options = {
+    stateDir: temporaryStateDir,
+    filename: 'restore-drill.sqlite',
+    busyTimeoutMs: config.stateDbBusyTimeoutMs,
+  };
+  try {
+    let database = openStateDatabase(options);
+    try {
+      database.writeState(restoredState, undefined, [...backupDatabaseCollections(payload), ...additionalCollections]);
+      database.integrityStatus();
+    } finally {
+      database.close();
+    }
+
+    database = openStateDatabase(options);
+    try {
+      database.integrityStatus();
+      const persistedState = database.readState();
+      if (!persistedState || JSON.stringify(persistedState) !== JSON.stringify(restoredState)) {
+        return { label: 'Temporary SQLite restore', ok: false, detail: 'Restored state did not survive a database reopen' };
+      }
+      const normalized = normalizeLoadedState(migrate(asStateRecord(persistedState)));
+      if (normalized.version !== state.version) {
+        return { label: 'Temporary SQLite restore', ok: false, detail: `Restored state migrated to unsupported version ${normalized.version}` };
+      }
+
+      const billingRecords = readStateCollection(database.db, 'billing_records');
+      const billingSnapshot = billingRecords.find((record) => typeof record === 'object' && record !== null && (record as { kind?: string }).kind === 'snapshot') as { value?: unknown } | undefined;
+      if (JSON.stringify(billingSnapshot?.value) !== JSON.stringify(payload.billing)) {
+        return { label: 'Temporary SQLite restore', ok: false, detail: 'Billing records did not survive a database reopen' };
+      }
+
+      const identities = new Map<string, unknown>();
+      for (const record of readStateCollection(database.db, 'auth_profiles')) {
+        if (typeof record !== 'object' || record === null) continue;
+        const profile = (record as { value?: { userId?: unknown } }).value;
+        if (typeof profile?.userId === 'string') identities.set(profile.userId, profile);
+      }
+      if (identities.size !== payload.identities.profiles.length || payload.identities.profiles.some((profile) => JSON.stringify(identities.get(profile.userId)) !== JSON.stringify(profile))) {
+        return { label: 'Temporary SQLite restore', ok: false, detail: 'Identity records did not survive a database reopen' };
+      }
+
+      return { label: 'Temporary SQLite restore', ok: true, detail: `SQLite schema ${database.schemaVersion} reopened with state, billing, and identity records intact` };
+    } finally {
+      database.close();
+    }
+  } catch (error) {
+    return { label: 'Temporary SQLite restore', ok: false, detail: error instanceof Error ? error.message : String(error) };
+  } finally {
+    rmSync(temporaryStateDir, { recursive: true, force: true });
+  }
+}
+
+function backupRestoreChecks(payload: ValidatedBackupPayload, restored: BackupRestoredFields, additionalCollections: readonly StateCollectionReplacement[] = []): BackupRestoreDrillCheck[] {
   const roleIds = new Set(payload.roles.map((role) => role.id));
   const userIds = new Set(payload.allowedUsers.map((user) => user.username.toLowerCase()));
   const watchIds = new Set(payload.watches.map((watch) => watch.id));
@@ -4204,7 +4511,17 @@ export function drillBackupRestore(raw: unknown): { ok: true; drill: BackupResto
     { label: 'Project member references', ok: payload.projects.every((project) => project.memberIds.every((memberId) => projectMemberIds.has(memberId.toLowerCase()))), detail: `${payload.projects.length} projects checked` },
     { label: 'Restore transformation', ok: restored.roles.length === payload.roles.length && restored.apiKeys.every((key) => key.pendingReveal === undefined), detail: `${restored.apiKeys.length} keys normalized` },
     { label: 'Serializable restored state', ok: (() => { try { JSON.stringify(restored); return true; } catch { return false; } })(), detail: 'normalized state checked' },
+    temporaryDatabaseRestoreCheck(payload, restored, additionalCollections),
   ];
+  return checks;
+}
+
+export function drillBackupRestore(raw: unknown): { ok: true; drill: BackupRestoreDrill } | { ok: false; error: string } {
+  const validated = validateBackupPayload(raw);
+  if (!validated.ok) return validated;
+  const { payload } = validated;
+  const restored = prepareBackupRestore(payload);
+  const checks = backupRestoreChecks(payload, restored);
   return { ok: true, drill: { ok: checks.every((check) => check.ok), checks } };
 }
 
@@ -4224,22 +4541,37 @@ export function importBackup(raw: unknown, actor: string): ImportBackupResult {
     return { ok: false, error: `backup restore cannot preserve existing data for missing project records: ${preservedProjects.missing.join(', ')}` };
   }
   restored.projects = preservedProjects.projects;
+  const artifactCollections = artifactProjectLinksReplacement(b.artifactProjectLinks, currentArtifactLinks);
+  const checks = backupRestoreChecks(b, restored, artifactCollections);
+  if (checks.some((check) => !check.ok)) {
+    return { ok: false, error: `backup restore test failed: ${checks.filter((check) => !check.ok).map((check) => check.label).join(', ')}` };
+  }
 
-  Object.assign(state, restored);
-  if (b.lastSchedulerRunAt) state.lastSchedulerRunAt = b.lastSchedulerRunAt;
-  state.apiKeyBundleUsage = b.apiKeyBundleUsage ?? {};
-  state.apiKeyOutcomeUsage = {};
-  state.githubBudgetTelemetry = [];
-  state.deviceActivity = b.deviceActivity?.slice(0, MAX_DEVICE_ACTIVITY) ?? [];
-  replaceBillingSnapshot(b.billing);
-  replaceIdentitySnapshot(b.identities);
-
-  persistNow(artifactProjectLinksReplacement(b.artifactProjectLinks, currentArtifactLinks));
-  recordAudit(
+  const restoredState = restoredStateForPayload(b, restored, state);
+  const importedAt = Date.now();
+  restoredState.auditLog = [{
+    id: randomUUID(),
+    ts: importedAt,
     actor,
-    'state.import',
-    'server state',
-    `restored from backup exported ${b.exportedAt ? new Date(b.exportedAt).toISOString() : 'unknown time'}`,
-  );
+    action: 'state.import' as const,
+    target: 'server state',
+    detail: `restored from backup exported ${b.exportedAt ? new Date(b.exportedAt).toISOString() : 'unknown time'}`,
+  }, ...restoredState.auditLog].slice(0, MAX_AUDIT_LOG);
+  const previousBilling = exportBillingSnapshot();
+  const previousIdentities = exportIdentitySnapshot();
+  try {
+    replaceBillingSnapshot(b.billing, { persist: false });
+    replaceIdentitySnapshot(b.identities, { persist: false });
+    stateDatabase.writeState(restoredState, undefined, [...backupDatabaseCollections(b), ...artifactCollections]);
+  } catch (error) {
+    replaceBillingSnapshot(previousBilling, { persist: false });
+    replaceIdentitySnapshot(previousIdentities, { persist: false });
+    return { ok: false, error: `backup restore could not be committed: ${error instanceof Error ? error.message : String(error)}` };
+  }
+
+  Object.assign(state, restoredState);
+  syncLegacyStateMirror('state', () => writeStateMirror(statePath, state));
+  syncLegacyStateMirror('billing', writeBillingSnapshotMirror);
+  syncLegacyStateMirror('identity', writeIdentitySnapshotMirror);
   return { ok: true };
 }

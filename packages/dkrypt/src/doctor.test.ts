@@ -6,6 +6,8 @@ test('configuration doctor reports runtime security and persistence checks', asy
   const ids = new Set(result.checks.map((check) => check.id));
   expect(ids.has('database')).toBe(true);
   expect(ids.has('session-secret')).toBe(true);
+  expect(ids.has('backup-manifest-secret')).toBe(true);
+  expect(ids.has('backup-manifest-rotation')).toBe(true);
   expect(ids.has('public-url')).toBe(true);
   expect(ids.has('runtime-limits')).toBe(true);
   expect(ids.has('device-bridge')).toBe(true);

@@ -1,18 +1,22 @@
 import { randomUUID } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync } from 'node:fs';
+import path from 'node:path';
 import { describe, expect, test } from 'bun:test';
 import { config } from '#config.js';
 import {
+  exportBillingSnapshot,
   getBillingCustomerId,
   replaceBillingSnapshot,
   upsertBillingCustomer,
   upsertBillingSubscription,
 } from '#billing.js';
-import { getAuthProfile, replaceIdentitySnapshot, upsertAuthProfile } from '#identity.js';
+import { exportIdentitySnapshot, getAuthProfile, replaceIdentitySnapshot, upsertAuthProfile } from '#identity.js';
 import { PermissionFlag, serializeBits } from '#permissions.js';
 import {
   addAllowedUser,
   addPasskey,
   createApiKey,
+  createBackupSnapshot,
   createDevice,
   createDiscordRolePerk,
   createProject,
@@ -21,8 +25,10 @@ import {
   createWatch,
   deleteDevice,
   deletePasskey,
+  deleteBackupSnapshot,
   deleteWatch,
   exportBackup,
+  drillBackupSnapshot,
   getAuditLog,
   getAllJobHistory,
   getJobHistoryPage,
@@ -45,6 +51,7 @@ import {
   listNotifications,
   listPasskeysForUser,
   recordDeviceHealthCheck,
+  recordApiKeyBundleUsage,
   recordJobHistory,
   recordNotification,
   recordWebhookDelivery,
@@ -64,7 +71,7 @@ import {
   simulateJobHistoryRetention,
   updateTestFlightSubscriptionDevice,
 } from '#store/state.js';
-import { openStateCollectionDatabase, readStateCollection, replaceStateCollection } from '#store/sqlite.js';
+import { openStateCollectionDatabase, openStateDatabase, readStateCollection, replaceStateCollection } from '#store/sqlite.js';
 
 describe('dashboard notifications', () => {
   test('stores notifications per user and marks selected entries read', () => {
@@ -409,6 +416,109 @@ describe('exportBackup / importBackup', () => {
 
     expect(getAuthProfile(userId)?.email).toBe('billing@example.com');
     expect(getBillingCustomerId(userId)).toBe('ctm_backup');
+    const stateMirror = JSON.parse(readFileSync(path.join(config.stateDir, 'state.json'), 'utf8')) as { auditLog: Array<{ action: string }> };
+    const billingMirror = JSON.parse(readFileSync(path.join(config.stateDir, 'billing.json'), 'utf8')) as { subscriptions: Array<{ subscriptionId: string }> };
+    const identityMirror = JSON.parse(readFileSync(path.join(config.stateDir, 'identities.json'), 'utf8')) as { profiles: Array<{ userId: string }> };
+    expect(stateMirror.auditLog[0]?.action).toBe('state.import');
+    expect(billingMirror.subscriptions).toContainEqual(expect.objectContaining({ subscriptionId: 'sub_backup' }));
+    expect(identityMirror.profiles).toContainEqual(expect.objectContaining({ userId }));
+  });
+
+  test('keeps the live state, billing, and identities unchanged when the restore transaction fails', () => {
+    const database = openStateCollectionDatabase({
+      stateDir: config.stateDir,
+      filename: config.stateDatabaseFile,
+      busyTimeoutMs: config.stateDbBusyTimeoutMs,
+    }, ['billing_records']);
+    const trigger = `fail_backup_import_${randomUUID().replaceAll('-', '')}`;
+    const before = exportBackup();
+    const incoming = structuredClone(before);
+    const rejectedUser = `atomic-restore-${randomUUID()}`;
+    incoming.allowedUsers.push({ username: rejectedUser, addedAt: Date.now(), roleIds: [] });
+
+    try {
+      database.exec(`CREATE TRIGGER ${trigger} BEFORE INSERT ON billing_records BEGIN SELECT RAISE(ABORT, 'forced restore failure'); END;`);
+      const result = importBackup(incoming, 'tester');
+
+      expect(result).toMatchObject({ ok: false, error: expect.stringContaining('forced restore failure') });
+      expect(exportBackup().allowedUsers).toEqual(before.allowedUsers);
+      expect(exportBillingSnapshot()).toEqual(before.billing);
+      expect(exportIdentitySnapshot()).toEqual(before.identities);
+      const storedState = database.query('SELECT payload FROM state_snapshots WHERE id = 1').get() as { payload: string };
+      expect((JSON.parse(storedState.payload) as { allowedUsers: Array<{ username: string }> }).allowedUsers).not.toContainEqual(expect.objectContaining({ username: rejectedUser }));
+    } finally {
+      database.exec(`DROP TRIGGER IF EXISTS ${trigger};`);
+      database.close();
+    }
+  });
+
+  test('backup integrity survives dashboard session-secret rotation', () => {
+    const entry = createBackupSnapshot('manual', 'backup-rotation-test');
+    const originalSecret = config.sessionSigningSecret;
+
+    try {
+      config.sessionSigningSecret = `${originalSecret}-rotated`;
+      expect(drillBackupSnapshot(entry.id, 'backup-rotation-test')?.status).toBe('passed');
+    } finally {
+      config.sessionSigningSecret = originalSecret;
+      deleteBackupSnapshot(entry.id, 'backup-rotation-test');
+    }
+  });
+
+  test('backup integrity survives manifest-key rotation while the previous key is retained', () => {
+    const entry = createBackupSnapshot('manual', 'backup-key-rotation-test');
+    const originalCurrent = config.backupManifestSecret;
+    const originalPrevious = config.backupManifestSecretPrevious;
+
+    try {
+      config.backupManifestSecret = `${originalCurrent}-rotated`;
+      config.backupManifestSecretPrevious = [originalCurrent, ...originalPrevious];
+      expect(drillBackupSnapshot(entry.id, 'backup-key-rotation-test')?.status).toBe('passed');
+    } finally {
+      config.backupManifestSecret = originalCurrent;
+      config.backupManifestSecretPrevious = originalPrevious;
+      deleteBackupSnapshot(entry.id, 'backup-key-rotation-test');
+    }
+  });
+
+  test('snapshot JSON and SQLite include state mutations pending the periodic flush', () => {
+    const usageKey = `backup-consistency-${randomUUID()}`;
+    recordApiKeyBundleUsage(usageKey, 'com.example.pending');
+    const entry = createBackupSnapshot('manual', 'backup-consistency-test');
+    const jsonPath = path.join(config.stateDir, 'backups', entry.filename);
+    const databasePath = path.join(config.stateDir, 'backups', entry.databaseFilename!);
+    const payload = JSON.parse(readFileSync(jsonPath, 'utf8')) as { apiKeyBundleUsage: Record<string, Record<string, number>> };
+    const database = openStateDatabase({ stateDir: path.dirname(databasePath), filename: path.basename(databasePath) });
+
+    try {
+      const stored = database.readState() as { apiKeyBundleUsage: Record<string, Record<string, number>> };
+      expect(payload.apiKeyBundleUsage[usageKey]).toEqual({ 'com.example.pending': 1 });
+      expect(stored.apiKeyBundleUsage[usageKey]).toEqual(payload.apiKeyBundleUsage[usageKey]);
+      expect(entry.restoreDrillStatus).toBe('passed');
+    } finally {
+      database.close();
+      deleteBackupSnapshot(entry.id, 'backup-consistency-test');
+    }
+  });
+
+  test('snapshot creation keeps its committed history when a legacy state mirror cannot be written', () => {
+    const mirrorPath = path.join(config.stateDir, 'state.json');
+    const preservedMirrorPath = `${mirrorPath}.${randomUUID()}.saved`;
+    const hadMirror = existsSync(mirrorPath);
+    if (hadMirror) renameSync(mirrorPath, preservedMirrorPath);
+    mkdirSync(mirrorPath);
+    let entry: ReturnType<typeof createBackupSnapshot> | undefined;
+
+    try {
+      entry = createBackupSnapshot('manual', 'backup-mirror-failure-test');
+      expect(entry.restoreDrillStatus).toBe('passed');
+      expect(readFileSync(path.join(config.stateDir, 'backups', entry.filename), 'utf8')).toContain('backupVersion');
+      expect(readdirSync(config.stateDir).some((filename) => filename.startsWith('state.json.') && filename.endsWith('.tmp'))).toBe(false);
+    } finally {
+      rmSync(mirrorPath, { recursive: true, force: true });
+      if (hadMirror) renameSync(preservedMirrorPath, mirrorPath);
+      if (entry) deleteBackupSnapshot(entry.id, 'backup-mirror-failure-test');
+    }
   });
 });
 

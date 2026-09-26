@@ -11,6 +11,7 @@ describe('state migrations', () => {
       path.join(stateDir, 'state.json'),
       JSON.stringify({
         version: 13,
+        backupHistory: [{ id: 'legacy-backup', createdAt: 5, sizeBytes: 10, filename: 'backup.json', trigger: 'manual' }],
         roles: [{ id: 'legacy', name: 'Legacy', color: '#000000', permissions: obsoletePermissions, position: 0, isDefault: false, createdAt: 0, updatedAt: 0 }],
         shareLinks: [{ id: 'old-link', jobId: 'old-job' }],
         jobHistory: [{ id: 'legacy-job', bundleId: 'com.example.legacy', status: 'done', source: 'manual', createdAt: 1, finishedAt: 2 }],
@@ -39,12 +40,14 @@ describe('state migrations', () => {
       roles: Array<{ permissions: string }>;
       projects: Array<{ id: string; isDefault: boolean }>;
       jobHistory: Array<{ id: string; projectId?: string }>;
+      backupHistory: Array<{ id: string; restoreDrillStatus: string }>;
       shareLinks?: unknown;
     };
-    expect(migrated.version).toBe(17);
+    expect(migrated.version).toBe(18);
     expect(migrated.roles[0]?.permissions).toBe('0');
     expect(migrated.projects).toContainEqual(expect.objectContaining({ id: 'default', isDefault: true }));
     expect(migrated.jobHistory).toContainEqual(expect.objectContaining({ id: 'legacy-job', projectId: 'default' }));
+    expect(migrated.backupHistory).toContainEqual(expect.objectContaining({ id: 'legacy-backup', restoreDrillStatus: 'not_run' }));
     expect(migrated.shareLinks).toBeUndefined();
   });
 });

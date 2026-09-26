@@ -1,7 +1,7 @@
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { config } from '#config.js';
-import { openStateCollectionDatabase, readStateCollection, replaceStateCollection } from '#store/sqlite.js';
+import { openStateCollectionDatabase, readStateCollection, replaceStateCollections, writeStateMirror, type StateCollectionReplacement } from '#store/sqlite.js';
 
 export type AuthProvider = 'github' | 'discord';
 
@@ -93,7 +93,7 @@ function load(): IdentitySnapshot {
     const parsed = JSON.parse(readFileSync(identityPath, 'utf8')) as Partial<IdentitySnapshot>;
     if (!Array.isArray(parsed.profiles) || !parsed.profiles.every(isAuthProfile)) throw new Error('identity JSON snapshot is malformed');
     const snapshot = { profiles: parsed.profiles.map(normalizeProfile) };
-    replaceStateCollection(identityDatabase, 'auth_profiles', snapshot.profiles.map((profile) => ({ id: profile.userId, payload: { kind: 'profile', value: profile }, updatedAt: Date.parse(profile.updatedAt) || Date.now() })));
+    replaceStateCollections(identityDatabase, identitySnapshotCollections(snapshot));
     return snapshot;
   } catch (error) {
     throw new Error(`could not initialize identity state: ${error instanceof Error ? error.message : String(error)}`);
@@ -102,17 +102,24 @@ function load(): IdentitySnapshot {
 
 const state = load();
 
+export function identitySnapshotCollections(snapshot: IdentitySnapshot): StateCollectionReplacement[] {
+  return [{
+    table: 'auth_profiles',
+    rows: snapshot.profiles.map((profile) => ({
+      id: profile.userId,
+      payload: { kind: 'profile', value: profile },
+      updatedAt: Date.parse(profile.updatedAt) || Date.now(),
+    })),
+  }];
+}
+
 function persist(): void {
-  replaceStateCollection(identityDatabase, 'auth_profiles', state.profiles.map((profile) => ({ id: profile.userId, payload: { kind: 'profile', value: profile }, updatedAt: Date.parse(profile.updatedAt) || Date.now() })));
-  const temporaryPath = `${identityPath}.${process.pid}.tmp`;
-  writeFileSync(temporaryPath, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
-  const descriptor = openSync(temporaryPath, 'r');
-  try {
-    fsyncSync(descriptor);
-  } finally {
-    closeSync(descriptor);
-  }
-  renameSync(temporaryPath, identityPath);
+  replaceStateCollections(identityDatabase, identitySnapshotCollections(state));
+  writeIdentitySnapshotMirror();
+}
+
+export function writeIdentitySnapshotMirror(): void {
+  writeStateMirror(identityPath, state);
 }
 
 export function closeIdentityDatabase(): void {
@@ -315,7 +322,7 @@ export function isIdentitySnapshot(value: unknown): value is IdentitySnapshot {
   );
 }
 
-export function replaceIdentitySnapshot(snapshot: IdentitySnapshot): void {
+export function replaceIdentitySnapshot(snapshot: IdentitySnapshot, options: { persist?: boolean } = {}): void {
   state.profiles = structuredClone(snapshot.profiles).map(normalizeProfile);
-  persist();
+  if (options.persist !== false) persist();
 }

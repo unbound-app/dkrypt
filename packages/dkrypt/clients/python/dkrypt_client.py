@@ -156,6 +156,7 @@ ROUTES = (
     "POST /v1/dashboard/apps/metadata/refresh",
     "POST /v1/dashboard/backup/drill",
     "POST /v1/dashboard/backup/history",
+    "POST /v1/dashboard/backup/history/{id}/drill",
     "POST /v1/dashboard/backup/import",
     "POST /v1/dashboard/backup/preview",
     "POST /v1/dashboard/backup/schedule",

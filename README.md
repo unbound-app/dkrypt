@@ -61,7 +61,9 @@ Copy `.env.example` to `.env` and configure the required values. The important r
 | Setting | Purpose |
 | --- | --- |
 | `API_KEY` | API authentication and health checks |
-| `SESSION_SIGNING_SECRET` | Dashboard sessions and backup manifest encryption |
+| `SESSION_SIGNING_SECRET` | Dashboard session signing |
+| `BACKUP_MANIFEST_SECRET` | Stable key for encrypted backup manifests; keep it independent from session rotation |
+| `BACKUP_MANIFEST_SECRET_PREVIOUS` | Comma-separated previous manifest keys retained while older snapshots still exist |
 | `ADMIN_PASSWORD` | Local administrator sign-in |
 | `PUBLIC_BASE_URL` | Public origin for OAuth, webhooks, and secure cookies |
 | `DEVICE_SSH_KEY_PATH` | Runtime path to the key used only by the `ipadecrypt` compatibility channel |
@@ -94,7 +96,7 @@ dkrypt sends OTLP over HTTP using JSON encoding. Exported metrics include job qu
 <details>
 <summary>Backups and restore checks</summary>
 
-Backups include the legacy export, a verified SQLite copy, and an encrypted checksum manifest. The backup scheduler can be configured in the dashboard. A restore drill opens the SQLite copy in a temporary database and verifies its integrity, schema migration checksums, state snapshot, and manifest hashes before it is reported healthy.
+Backups include the legacy export, a verified SQLite copy, and an encrypted checksum manifest. Set a stable `BACKUP_MANIFEST_SECRET` so session-secret rotation does not invalidate snapshots. When rotating the manifest secret, keep the old value in `BACKUP_MANIFEST_SECRET_PREVIOUS` until every snapshot encrypted with it has expired or been removed. The backup scheduler can be configured in the dashboard. A restore drill opens the SQLite copy in a temporary database and verifies its integrity, schema migration checksums, state snapshot, and manifest hashes before it is reported healthy.
 
 Do not copy database files while the service is running. Use the dashboard backup action or stop the service before making an external volume snapshot.
 

@@ -25,6 +25,10 @@ export async function runConfigurationDoctor(): Promise<{ ok: boolean; checkedAt
   const secretStatus = config.sessionSigningSecret.length >= 32 ? 'ok' : 'error';
   checks.push({ id: 'session-secret', status: secretStatus, detail: secretStatus === 'ok' ? 'Session signing secret has sufficient entropy' : 'Session signing secret must be at least 32 characters' });
   checks.push(rotationCheck('session-secret-rotation', config.sessionSigningSecret, config.sessionSigningSecretPrevious, 32));
+  const backupManifestKey = config.backupManifestSecret || config.sessionSigningSecret;
+  const invalidBackupManifestPrevious = config.backupManifestSecretPrevious.some((secret) => secret.length < 32 || secret === backupManifestKey);
+  checks.push({ id: 'backup-manifest-secret', status: config.backupManifestSecret.length >= 32 ? 'ok' : 'warn', detail: config.backupManifestSecret.length >= 32 ? 'Backup manifest encryption uses a stable dedicated key' : 'Backup manifest encryption falls back to the session key; configure BACKUP_MANIFEST_SECRET to keep it valid through session rotation' });
+  checks.push({ id: 'backup-manifest-rotation', status: invalidBackupManifestPrevious ? 'error' : 'ok', detail: invalidBackupManifestPrevious ? 'Previous backup manifest keys must be unique and at least 32 characters' : 'Previous backup manifest keys are valid' });
   checks.push(rotationCheck('admin-password-rotation', config.adminPassword, config.adminPasswordPrevious, 12));
   checks.push({ id: 'admin-password', status: config.adminPassword.length >= 12 ? 'ok' : 'warn', detail: config.adminPassword.length >= 12 ? 'Administrator password meets the minimum length' : 'Administrator password should be at least 12 characters' });
   try {

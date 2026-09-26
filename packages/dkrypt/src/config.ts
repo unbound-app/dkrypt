@@ -47,6 +47,8 @@ export const config = {
   apiKey: required('API_KEY'),
   sessionSigningSecret: required('SESSION_SIGNING_SECRET'),
   sessionSigningSecretPrevious: optional('SESSION_SIGNING_SECRET_PREVIOUS', ''),
+  backupManifestSecret: optional('BACKUP_MANIFEST_SECRET', ''),
+  backupManifestSecretPrevious: optionalList('BACKUP_MANIFEST_SECRET_PREVIOUS', ''),
   publicBaseUrl: optional('PUBLIC_BASE_URL', 'http://localhost:8080'),
 
   adminPassword: required('ADMIN_PASSWORD'),

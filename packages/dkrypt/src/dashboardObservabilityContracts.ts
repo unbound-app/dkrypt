@@ -20,6 +20,7 @@ const auditActionSchema = Type.Union([
   Type.Literal('role.remove'),
   Type.Literal('backup.schedule-update'),
   Type.Literal('backup.create'),
+  Type.Literal('backup.drill'),
   Type.Literal('backup.delete'),
   Type.Literal('testflight-subscription.add'),
   Type.Literal('testflight-subscription.approve'),

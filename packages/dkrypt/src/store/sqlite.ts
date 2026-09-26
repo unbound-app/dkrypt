@@ -165,14 +165,23 @@ function atomicWriteJson(filePath: string, value: unknown): void {
   mkdirSync(directory, { recursive: true });
   const temporaryPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
   const content = `${JSON.stringify(value, null, 2)}\n`;
-  writeFileSync(temporaryPath, content, { mode: 0o600 });
-  const descriptor = openSync(temporaryPath, 'r');
   try {
-    fsyncSync(descriptor);
-  } finally {
-    closeSync(descriptor);
+    writeFileSync(temporaryPath, content, { mode: 0o600 });
+    const descriptor = openSync(temporaryPath, 'r');
+    try {
+      fsyncSync(descriptor);
+    } finally {
+      closeSync(descriptor);
+    }
+    renameSync(temporaryPath, filePath);
+  } catch (error) {
+    rmSync(temporaryPath, { force: true });
+    throw error;
   }
-  renameSync(temporaryPath, filePath);
+}
+
+export function writeStateMirror(filePath: string, value: unknown): void {
+  atomicWriteJson(filePath, value);
 }
 
 function recordId(value: unknown, fallback: string): string {

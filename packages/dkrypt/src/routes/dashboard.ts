@@ -12,7 +12,7 @@ import { getRecentLogs } from '#logger.js';
 import { EMBED_COLOR, notify, sendTestNotification } from '#notify.js';
 import { hasPermission, isSubsetPermission, parseBits, PermissionFlag } from '#permissions.js';
 import { getAuthProfile, listAuthProfiles } from '#identity.js';
-import { applyBackupSchedule, applyWatchSchedules, checkForTestFlightUpdate, checkForUpdate, triggerTickNow } from '#scheduler/index.js';
+import { applyWatchSchedules, checkForTestFlightUpdate, checkForUpdate, triggerTickNow } from '#scheduler/index.js';
 import { getGitHubRateLimitBudget, listDispatchRepos, listRepoWorkflows, validateDispatchTarget } from '#scheduler/github.js';
 import { lookupAppMetadata, searchApps } from '#scheduler/itunes.js';
 import { requirePermission, requireSession } from '#session.js';
@@ -41,7 +41,6 @@ import {
   getArtifactStorageStats,
   listArtifacts,
   previewArtifactQuotaRetention,
-  reloadArtifactIndex,
   setArtifactPinned,
   touchArtifact,
 } from '#artifacts.js';
@@ -54,20 +53,17 @@ import {
   bulkSetApiKeyAllowedBundleIds,
   bulkSetApiKeyDailyLimit,
   createApiKey,
-  createBackupSnapshot,
   createDiscordRolePerk,
   createProject,
   createRole,
   createWatch,
   DEFAULT_ROLE_ID,
   DEFAULT_PROJECT_ID,
-  deleteBackupSnapshot,
   deleteDiscordRolePerk,
   deleteRole,
   deleteWatch,
   denyApiKey,
   effectiveBitsForRoleIds,
-  exportBackup,
   getAllJobHistory,
   getApiKeyById,
   getApiKeyBundleUsage,
@@ -75,9 +71,6 @@ import {
   getApiKeyUsage,
   getAuditLog,
   getAverageJobDurationMs,
-  getBackupHistory,
-  getBackupSchedule,
-  getBackupSnapshotPath,
   getBundleStats,
   getDailyVolume,
   getDevice,
@@ -103,7 +96,6 @@ import {
   getWebhookDeliveryLog,
   getAppCatalogEntries,
   getAppCatalogStats,
-  importBackup,
   isWatchSchedulable,
   type CreateProjectInput,
   type JobHistoryEntry,
@@ -115,8 +107,6 @@ import {
   listProjectsForUser,
   listRoles,
   previewJobHistoryRetention,
-  previewBackup,
-  drillBackupRestore,
   recordAudit,
   regenerateApiKey,
   removeAllowedUser,
@@ -126,7 +116,6 @@ import {
   revokeApiKey,
   type SchedulerSettings,
   setApiKeyAllowTestFlight,
-  setBackupSchedule,
   setDiscordGuilds,
   setApiKeyMaxConcurrent,
   setApiKeyPriority,
@@ -172,8 +161,6 @@ const canManageRoles = requirePermission(PermissionFlag.manageRoles);
 const canManageProjects = requirePermission(PermissionFlag.manageProjects);
 const canViewDiscordPerks = requirePermission(PermissionFlag.viewRoles, PermissionFlag.manageRoles);
 const canManageDiscordPerks = requirePermission(PermissionFlag.manageRoles);
-const canViewBackup = requirePermission(PermissionFlag.viewBackup, PermissionFlag.manageBackup);
-const canManageBackup = requirePermission(PermissionFlag.manageBackup);
 export const dashboardRouter = Router();
 
 dashboardRouter.use(requireSession);
@@ -2231,94 +2218,6 @@ dashboardRouter.delete('/v1/dashboard/users/:username', canManageUsers, (req, re
   const ok = removeAllowedUser(req.params.username, res.locals.session.sub);
   if (!ok) {
     res.status(404).json({ error: 'not on the allowlist' });
-    return;
-  }
-  res.json({ ok: true });
-});
-
-dashboardRouter.get('/v1/dashboard/backup/export', canManageBackup, (_req, res) => {
-  res.setHeader('Content-Disposition', 'attachment; filename="dkrypt-backup.json"');
-  res.json(exportBackup());
-});
-
-dashboardRouter.post('/v1/dashboard/backup/import', canManageBackup, (req, res) => {
-  const result = importBackup(req.body, res.locals.session.sub);
-  if (!result.ok) {
-    res.status(400).json({ error: result.error });
-    return;
-  }
-  reloadArtifactIndex();
-  applyWatchSchedules();
-  dashboardEvents.emit('projectsChanged');
-  emitJobsChanged();
-  res.json({ ok: true });
-});
-
-dashboardRouter.post('/v1/dashboard/backup/preview', canManageBackup, (req, res) => {
-  const result = previewBackup(req.body);
-  if (!result.ok) {
-    res.status(400).json({ error: result.error });
-    return;
-  }
-  res.json(result.summary);
-});
-
-dashboardRouter.post('/v1/dashboard/backup/drill', canManageBackup, (req, res) => {
-  const result = drillBackupRestore(req.body);
-  if (!result.ok) {
-    res.status(400).json({ error: result.error });
-    return;
-  }
-  const database = verifyLatestDatabaseBackup();
-  res.json({ ...result.drill, database });
-});
-
-dashboardRouter.get('/v1/dashboard/backup/schedule', canViewBackup, (_req, res) => {
-  res.json(getBackupSchedule());
-});
-
-dashboardRouter.post('/v1/dashboard/backup/schedule', canManageBackup, (req, res) => {
-  const { enabled, cron: cronExpr, retentionCount } = req.body as { enabled?: boolean; cron?: string; retentionCount?: number };
-  if (cronExpr !== undefined && !validateCronExpr(cronExpr)) {
-    res.status(400).json({ error: 'invalid cron expression' });
-    return;
-  }
-  if (retentionCount !== undefined && (!Number.isInteger(retentionCount) || retentionCount < 1 || retentionCount > 90)) {
-    res.status(400).json({ error: 'retentionCount must be an integer between 1 and 90' });
-    return;
-  }
-  const patch: Partial<{ enabled: boolean; cron: string; retentionCount: number }> = {};
-  if (enabled !== undefined) patch.enabled = enabled;
-  if (cronExpr !== undefined) patch.cron = cronExpr;
-  if (retentionCount !== undefined) patch.retentionCount = retentionCount;
-  const schedule = setBackupSchedule(patch, res.locals.session.sub);
-  applyBackupSchedule();
-  res.json(schedule);
-});
-
-dashboardRouter.get('/v1/dashboard/backup/history', canViewBackup, (_req, res) => {
-  res.json(getBackupHistory());
-});
-
-dashboardRouter.post('/v1/dashboard/backup/history', canManageBackup, (_req, res) => {
-  const entry = createBackupSnapshot('manual');
-  recordAudit(res.locals.session.sub, 'backup.create', entry.filename, '');
-  res.json(entry);
-});
-
-dashboardRouter.get('/v1/dashboard/backup/history/:id/download', canViewBackup, (req, res) => {
-  const filePath = getBackupSnapshotPath(req.params.id);
-  if (!filePath) {
-    res.status(404).json({ error: 'backup snapshot not found' });
-    return;
-  }
-  res.download(filePath, 'dkrypt-backup.json');
-});
-
-dashboardRouter.delete('/v1/dashboard/backup/history/:id', canManageBackup, (req, res) => {
-  const ok = deleteBackupSnapshot(req.params.id, res.locals.session.sub);
-  if (!ok) {
-    res.status(404).json({ error: 'backup snapshot not found' });
     return;
   }
   res.json({ ok: true });

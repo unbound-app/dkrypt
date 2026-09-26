@@ -8,6 +8,7 @@
     createBackupSnapshot,
     deleteBackupSnapshot,
     drillBackupRestore,
+    drillBackupSnapshot,
     fetchBackupHistory,
     fetchBackupSchedule,
     importBackup,
@@ -29,6 +30,12 @@
   import { sessionHasPermission } from '#lib/session.svelte';
   import { confirmDialog } from '#lib/ui.svelte';
 
+  const restoreDrillPresentation: Record<BackupHistoryEntry['restoreDrillStatus'], { label: string; className: string }> = {
+    not_run: { label: 'not run', className: '' },
+    passed: { label: 'passed', className: 'text-success' },
+    failed: { label: 'failed', className: 'text-err' },
+  };
+
   const canManageBackup = $derived(sessionHasPermission(PermissionFlag.manageBackup));
 
   let fileInput: HTMLInputElement | undefined = $state();
@@ -47,6 +54,8 @@
   let loadingHistory = $state(true);
   let creatingSnapshot = $state(false);
   let deletingId = $state<string | null>(null);
+  let drillingSnapshotId = $state<string | null>(null);
+  let snapshotDrillError: { id: string; message: string } | null = $state(null);
 
   onMount(() => {
     void fetchBackupSchedule().then((s) => (schedule = s));
@@ -114,6 +123,18 @@
     }
   }
 
+  async function testSnapshotRestore(entry: BackupHistoryEntry): Promise<void> {
+    drillingSnapshotId = entry.id;
+    snapshotDrillError = null;
+    try {
+      const { ok, data } = await drillBackupSnapshot(entry.id);
+      if (ok) await loadHistory();
+      else snapshotDrillError = { id: entry.id, message: ('error' in data && data.error) || 'The restore test could not complete' };
+    } finally {
+      drillingSnapshotId = null;
+    }
+  }
+
   async function onFileChange(): Promise<void> {
     selectedFile = fileInput?.files?.[0] ?? null;
     parsedPayload = null;
@@ -138,7 +159,7 @@
   }
 
   async function restore(): Promise<void> {
-    if (!selectedFile || !preview) return;
+    if (!selectedFile || !preview || !drill?.ok) return;
     const confirmed = await confirmDialog(`Restore "${selectedFile.name}"? This overwrites all current data - anything added since export is lost.`, {
       confirmLabel: 'Restore',
       variant: 'destructive',
@@ -269,8 +290,11 @@
     {/if}
     <div class="mt-3 flex flex-wrap gap-2">
       <Button variant="secondary" disabled={!selectedFile || !preview} loading={drilling} onclick={runRestoreDrill}>Run restore drill</Button>
-      <Button variant="destructive" disabled={!selectedFile || !preview} loading={restoring} onclick={restore}>Restore from backup</Button>
+      <Button variant="destructive" disabled={!selectedFile || !preview || !drill?.ok} loading={restoring} onclick={restore}>Restore from backup</Button>
     </div>
+    {#if selectedFile && preview && !drill?.ok}
+      <div class="mt-2 text-xs text-muted">A successful restore test is required before the backup can be applied.</div>
+    {/if}
   </Card>
   {/if}
 
@@ -292,6 +316,28 @@
             <div class="min-w-0">
               <div class="text-text">{fmtTime(entry.createdAt)} <span class="text-muted">({fmtRelative(entry.createdAt)})</span></div>
               <div class="text-xs text-muted">{fmtSize(entry.sizeBytes)} · {entry.trigger === 'scheduled' ? 'Scheduled' : 'Manual'}</div>
+              <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted">
+                {#if entry.schemaVersion}<span>Schema {entry.schemaVersion}</span>{/if}
+                <span>{entry.integrity === 'verified' ? 'Integrity verified' : entry.integrity === 'failed' ? 'Integrity failed' : 'Integrity unavailable'}</span>
+                <span>{entry.encryptedManifest ? 'Encrypted manifest' : 'Manifest unavailable'}</span>
+                <span class={restoreDrillPresentation[entry.restoreDrillStatus].className}>
+                  Restore test {restoreDrillPresentation[entry.restoreDrillStatus].label}
+                  {#if entry.restoreDrillAt} · {fmtRelative(entry.restoreDrillAt)}{/if}
+                </span>
+              </div>
+              {#if entry.restoreDrillChecks?.length}
+                <details class="mt-1 text-xs text-muted">
+                  <summary class="cursor-pointer">Restore test details</summary>
+                  <div class="mt-1 flex flex-col gap-1">
+                    {#each entry.restoreDrillChecks as check (check.label)}
+                      <span class={check.ok ? '' : 'text-err'}>{check.ok ? '✓' : '×'} {check.label}: {check.detail}</span>
+                    {/each}
+                  </div>
+                </details>
+              {/if}
+              {#if snapshotDrillError?.id === entry.id}
+                <div class="mt-1 text-xs text-err">{snapshotDrillError.message}</div>
+              {/if}
             </div>
             <div class="flex shrink-0 items-center gap-2">
               <a href={backupSnapshotDownloadUrl(entry.id)} download class={buttonVariants('secondary', 'sm')}>
@@ -299,6 +345,9 @@
                 Download
               </a>
               {#if canManageBackup}
+                <Button size="sm" variant="secondary" loading={drillingSnapshotId === entry.id} disabled={drillingSnapshotId !== null} onclick={() => void testSnapshotRestore(entry)}>
+                  Test restore
+                </Button>
                 <Button size="sm" variant="destructive" loading={deletingId === entry.id} onclick={() => removeSnapshot(entry)}>
                   <Trash2 class="h-3.5 w-3.5" />
                 </Button>

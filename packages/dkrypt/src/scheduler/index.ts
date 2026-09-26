@@ -721,8 +721,12 @@ export function applyBackupSchedule(): void {
   backupTask?.stop();
   backupTask = cron.schedule(schedule.cron, () => {
     try {
-      createBackupSnapshot('scheduled');
-      log.info('scheduled backup snapshot created');
+      const backup = createBackupSnapshot('scheduled');
+      if (backup.restoreDrillStatus === 'passed') {
+        log.info('scheduled backup snapshot created and restore-tested', { filename: backup.filename });
+      } else {
+        log.error('scheduled backup snapshot restore verification failed', { filename: backup.filename, checks: backup.restoreDrillChecks });
+      }
     } catch (err) {
       log.error('scheduled backup snapshot failed', { error: String(err) });
     }
