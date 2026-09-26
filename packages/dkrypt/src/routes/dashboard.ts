@@ -3,9 +3,7 @@ import { projectIdentifierPattern } from '#apiCommonContracts.js';
 import { discordBotEnabled } from '#config.js';
 import { fetchBotGuilds, fetchGuildRoles } from '#discord.js';
 import { dashboardEvents, getOnlineUsernames, nextDashboardSequence, registerDashboardConnection, registerPresence, unregisterPresence } from '#events.js';
-import { blockDuringMaintenance } from '#maintenance.js';
-import { jobSummary } from '#jobs/http.js';
-import { enqueueDecryptJob, getActiveJobs } from '#jobs/store.js';
+import { getActiveJobs } from '#jobs/store.js';
 import type { LogEntry } from '#logger.js';
 import { hasPermission, isSubsetPermission, PermissionFlag } from '#permissions.js';
 import { canGrantBits } from '#dashboardAdminRules.js';
@@ -28,8 +26,6 @@ import {
   getEffectiveDevices,
   getProject,
   getUserEffectivePermissions,
-  getPrimaryDevice,
-  getUserPriority,
   type JobHistoryEntry,
   listRoles,
   setDiscordGuilds,
@@ -123,42 +119,6 @@ dashboardRouter.get('/v1/dashboard/events', (req, res) => {
 });
 
 const BUNDLE_ID_RE = /^[A-Za-z0-9.-]{3,200}$/;
-
-const EXTERNAL_VERSION_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
-
-dashboardRouter.post('/v1/dashboard/decrypt', canDecrypt, blockDuringMaintenance, (req, res) => {
-  const projectId = resolveRequestProjectId(req, res, 'body', { requireActive: true });
-  if (!projectId) return;
-  const bundleId = typeof req.body?.bundleId === 'string' ? req.body.bundleId.trim() : '';
-  if (!BUNDLE_ID_RE.test(bundleId)) {
-    res.status(400).json({ error: 'bundleId is required and must look like a bundle identifier' });
-    return;
-  }
-
-  const externalVersionId =
-    typeof req.body?.externalVersionId === 'string' && EXTERNAL_VERSION_ID_RE.test(req.body.externalVersionId)
-      ? req.body.externalVersionId
-      : undefined;
-
-  const versionLabel = typeof req.body?.versionLabel === 'string' ? req.body.versionLabel.trim().slice(0, 64) || undefined : undefined;
-
-  const preferPrimary = req.body?.preferPrimary === true;
-  const preferredDeviceId = preferPrimary ? getPrimaryDevice()?.id : undefined;
-
-  const job = enqueueDecryptJob(
-    bundleId,
-    'manual',
-    externalVersionId,
-    undefined,
-    versionLabel,
-    res.locals.session.sub,
-    getUserPriority(res.locals.session.sub),
-    preferredDeviceId,
-    undefined,
-    projectId,
-  );
-  res.status(202).json(jobSummary(job));
-});
 
 dashboardRouter.post('/v1/dashboard/decrypt/preflight', canDecrypt, async (req, res) => {
   const projectId = resolveRequestProjectId(req, res, 'body', { requireActive: true });

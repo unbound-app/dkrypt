@@ -51762,7 +51762,8 @@
                   },
                   "projectId": {
                     "minLength": 1,
-                    "maxLength": 200,
+                    "maxLength": 80,
+                    "pattern": "^[A-Za-z0-9_-]{1,80}$",
                     "type": "string"
                   }
                 }

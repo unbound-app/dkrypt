@@ -109,6 +109,7 @@ import {
   dashboardJobExportResponseSchema,
   dashboardJobHistoryPageSchema,
   dashboardJobListQuerySchema,
+  dashboardManualDecryptBodySchema,
   dashboardJobParamsSchema,
   dashboardJobProjectQuerySchema,
   dashboardJobReorderBodySchema,
@@ -912,7 +913,7 @@ register('DELETE', '/v1/auth/passkeys/:id', { params: authIdentifierParamsSchema
 register('GET', '/v1/artifacts', { querystring: object({ ...PaginationQuery.properties, q: Type.Optional(Type.String({ maxLength: 200 })), channel: Type.Optional(Type.Union([Type.Literal('appstore'), Type.Literal('testflight')])) }) });
 
 register('POST', '/v1/dashboard/decrypt', {
-  body: object({ bundleId: BundleId, externalVersionId: Type.Optional(Identifier), versionLabel: Type.Optional(Type.String({ maxLength: 64 })), preferPrimary: Type.Optional(Type.Boolean()), projectId: Type.Optional(Identifier) }),
+  body: dashboardManualDecryptBodySchema,
 });
 
 register('POST', '/v1/dashboard/decrypt/preflight', {
@@ -1653,8 +1654,8 @@ register('GET', '/v1/decrypt', {
   },
 });
 register('POST', '/v1/dashboard/decrypt', {
-  body: object({ bundleId: BundleId, externalVersionId: Type.Optional(Identifier), versionLabel: Type.Optional(Type.String({ maxLength: 64 })), preferPrimary: Type.Optional(Type.Boolean()), projectId: Type.Optional(Identifier) }),
-  response: { 202: JobSummaryResponse },
+  body: dashboardManualDecryptBodySchema,
+  response: { 202: JobSummaryResponse, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope, 409: ErrorEnvelope, 429: ErrorEnvelope, 500: ErrorEnvelope, 503: ErrorEnvelope },
 });
 register('GET', '/v1/artifacts/:id/file', {
   params: object({ id: Identifier }),

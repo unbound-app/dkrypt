@@ -199,6 +199,13 @@ export const dashboardJobSloResponseSchema = Type.Object({
   }, { additionalProperties: true })),
 }, { additionalProperties: true });
 export const dashboardJobActionResponseSchema = Type.Object({ ok: Type.Boolean() }, { additionalProperties: true });
+export const dashboardManualDecryptBodySchema = Type.Object({
+  bundleId: BundleId,
+  externalVersionId: Type.Optional(identifierSchema),
+  versionLabel: Type.Optional(Type.String({ maxLength: 64 })),
+  preferPrimary: Type.Optional(Type.Boolean()),
+  projectId: Type.Optional(projectIdentifierSchema),
+}, { additionalProperties: true });
 export const dashboardJobReorderBodySchema = Type.Object({
   ids: Type.Array(identifierSchema, { maxItems: 100 }),
   projectId: Type.Optional(projectIdentifierSchema),
@@ -312,6 +319,11 @@ type ActionErrors = { 400: ApiErrorEnvelope; 401: ApiErrorEnvelope; 403: ApiErro
 export type DashboardJobCancelRoute = {
   Params: Static<typeof dashboardJobParamsSchema>;
   Reply: { 200: Static<typeof dashboardJobActionResponseSchema>; 409: ApiErrorEnvelope } & ActionErrors;
+};
+
+export type DashboardManualDecryptRoute = {
+  Body: Static<typeof dashboardManualDecryptBodySchema>;
+  Reply: { 202: DashboardJobSummary; 409: ApiErrorEnvelope; 503: ApiErrorEnvelope } & Pick<ActionErrors, 400 | 401 | 403 | 404 | 429 | 500>;
 };
 
 export type DashboardJobPrioritizeRoute = DashboardJobCancelRoute;

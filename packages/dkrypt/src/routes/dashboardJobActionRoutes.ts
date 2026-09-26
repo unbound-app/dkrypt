@@ -5,7 +5,9 @@ import type {
   DashboardJobPrioritizeRoute,
   DashboardJobReorderRoute,
   DashboardJobRetryRoute,
+  DashboardManualDecryptRoute,
 } from '#dashboardJobContracts.js';
+import { projectIdentifierPattern } from '#apiCommonContracts.js';
 import { recordFastifyDashboardActivity } from '#dashboardActivity.js';
 import { canAccessProject } from '#dashboardJobPresentation.js';
 import { getRouteContract } from '#contracts.js';
@@ -58,6 +60,7 @@ const defaultServices: DashboardJobActionServices = {
 };
 
 const canRequestDecrypt = fastifyRequirePermission(PermissionFlag.requestDecrypt);
+const externalVersionIdPattern = /^[A-Za-z0-9_-]{1,64}$/;
 
 function sendJobError(requestId: string, statusCode: number, message: string) {
   return createHttpErrorEnvelope(requestId, statusCode, message);
@@ -73,6 +76,47 @@ export function createDashboardJobActionRoutes(overrides: Partial<DashboardJobAc
   return async (server) => {
     server.addHook('preHandler', fastifyRequireSession);
     server.addHook('preHandler', recordFastifyDashboardActivity);
+
+    server.post<DashboardManualDecryptRoute>('/v1/dashboard/decrypt', {
+      schema: getRouteContract('POST', '/v1/dashboard/decrypt'),
+      preHandler: [canRequestDecrypt, fastifyBlockDuringMaintenance],
+    }, (request, reply) => {
+      const session = getFastifySession(request)!;
+      const projectId = request.body.projectId ?? DEFAULT_PROJECT_ID;
+      if (!projectIdentifierPattern.test(projectId)) {
+        reply.code(400);
+        return sendJobError(request.id, 400, 'projectId must be a valid project identifier');
+      }
+      const project = services.getProject(projectId);
+      if (!project || !hasProjectAccess(services, session.sub, session.permissions, projectId)) {
+        reply.code(404);
+        return sendJobError(request.id, 404, 'project not found');
+      }
+      if (project.archivedAt !== undefined) {
+        reply.code(409);
+        return sendJobError(request.id, 409, 'project is archived');
+      }
+      const bundleId = request.body.bundleId.trim();
+      const externalVersionId = request.body.externalVersionId && externalVersionIdPattern.test(request.body.externalVersionId)
+        ? request.body.externalVersionId
+        : undefined;
+      const versionLabel = request.body.versionLabel?.trim().slice(0, 64) || undefined;
+      const preferredDeviceId = request.body.preferPrimary ? services.getPrimaryDevice()?.id : undefined;
+      const job = services.enqueueDecryptJob(
+        bundleId,
+        'manual',
+        externalVersionId,
+        undefined,
+        versionLabel,
+        session.sub,
+        services.getUserPriority(session.sub),
+        preferredDeviceId,
+        undefined,
+        projectId,
+      );
+      reply.code(202);
+      return jobSummary(job);
+    });
 
     server.post<DashboardJobCancelRoute>('/v1/dashboard/jobs/:id/cancel', {
       schema: getRouteContract('POST', '/v1/dashboard/jobs/:id/cancel'),

@@ -64,6 +64,53 @@ test('dashboard job actions are not registered through the legacy router', () =>
   expect(routes).not.toContain('POST /v1/dashboard/jobs/reorder');
   expect(routes).not.toContain('POST /v1/dashboard/jobs/:id/retry');
   expect(routes).not.toContain('GET /v1/dashboard/jobs/:id/diagnostic');
+  expect(routes).not.toContain('POST /v1/dashboard/decrypt');
+});
+
+test('manual decrypt submission preserves project, device, and version selection', async () => {
+  let enqueueArgs: unknown[] = [];
+  const queuedJob = createJob('manual-decrypt-job');
+  const server = build({
+    getProject: () => ({ id: 'default', name: 'Default', memberIds: [], isDefault: true, createdBy: 'root', createdAt: 1, updatedAt: 1 }),
+    getPrimaryDevice: () => ({ id: 'device-primary' }) as ReturnType<DashboardJobActionServices['getPrimaryDevice']>,
+    getUserPriority: () => 4,
+    enqueueDecryptJob: (...args) => {
+      enqueueArgs = args;
+      return queuedJob;
+    },
+  });
+
+  try {
+    const response = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/decrypt',
+      headers: { cookie: sessionCookie(PermissionFlag.requestDecrypt) },
+      payload: {
+        bundleId: 'com.example.app',
+        externalVersionId: 'invalid/version',
+        versionLabel: '  v2  ',
+        preferPrimary: true,
+        projectId: 'default',
+      },
+    });
+
+    expect(response.statusCode).toBe(202);
+    expect(JSON.parse(response.body)).toMatchObject({ id: 'manual-decrypt-job', bundleId: 'com.example.app', status: 'queued' });
+    expect(enqueueArgs).toEqual([
+      'com.example.app',
+      'manual',
+      undefined,
+      undefined,
+      'v2',
+      'root',
+      4,
+      'device-primary',
+      undefined,
+      'default',
+    ]);
+  } finally {
+    await server.close();
+  }
 });
 
 test('job cancellation and prioritization preserve project access and conflict behavior', async () => {
