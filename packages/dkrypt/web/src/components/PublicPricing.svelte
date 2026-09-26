@@ -52,7 +52,7 @@
     <div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
       {#each plans as plan (plan.name)}
         <Card class={plan.name === 'Priority API' ? 'flex h-full flex-col border-accent shadow-lg shadow-accent/10' : 'flex h-full flex-col'} contentClass="flex h-full flex-1 flex-col">
-          <div class="flex h-full min-h-72 flex-1 flex-col">
+          <div class="grid h-full min-h-72 flex-1 grid-rows-[auto_auto_auto_1fr_auto]">
             <div class="mb-4 flex items-start justify-between gap-3">
               <div>
                 <div class="flex flex-wrap items-center gap-2">
@@ -89,7 +89,7 @@
               {/if}
             </div>
 
-            <div class="mt-auto">
+            <div>
               <div class="mb-3 flex items-center gap-2 text-xs text-muted"><ShieldCheck class="h-4 w-4 shrink-0 text-accent" /> Stripe or crypto checkout</div>
               <a
                 href="/#sign-in"

@@ -160,22 +160,24 @@ test('pricing page fits a phone viewport without horizontal overflow', async ({ 
 });
 
 test('pricing plan checkout actions share a bottom baseline', async ({ page }) => {
-  await page.setViewportSize({ width: 1280, height: 1000 });
-  await page.goto('/pricing');
+  for (const width of [1280, 1365]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.goto('/pricing');
 
-  const buttons = page.getByRole('link', { name: 'Sign in to subscribe' });
-  const paymentDetails = page.getByText('Stripe or crypto checkout', { exact: true });
-  await expect(buttons).toHaveCount(4);
-  await expect(paymentDetails).toHaveCount(4);
-  const priceTops = await page.locator('[data-slot="card"] .text-3xl').evaluateAll((prices) => prices.map((price) => price.getBoundingClientRect().top));
-  expect(Math.max(...priceTops) - Math.min(...priceTops)).toBeLessThanOrEqual(2);
-  const bottoms = await buttons.evaluateAll((links) => links.map((link) => link.getBoundingClientRect().bottom));
-  expect(Math.max(...bottoms) - Math.min(...bottoms)).toBeLessThanOrEqual(2);
-  const widths = await buttons.evaluateAll((links) => links.map((link) => link.getBoundingClientRect().width));
-  const paymentDetailWidths = await paymentDetails.evaluateAll((details) => details.map((detail) => detail.getBoundingClientRect().width));
-  expect(widths.every((width, index) => Math.abs(width - (paymentDetailWidths[index] ?? 0)) <= 2)).toBe(true);
-  const paymentDetailTops = await paymentDetails.evaluateAll((details) => details.map((detail) => detail.getBoundingClientRect().top));
-  expect(Math.max(...paymentDetailTops) - Math.min(...paymentDetailTops)).toBeLessThanOrEqual(2);
+    const buttons = page.getByRole('link', { name: 'Sign in to subscribe' });
+    const paymentDetails = page.getByText('Stripe or crypto checkout', { exact: true });
+    await expect(buttons).toHaveCount(4);
+    await expect(paymentDetails).toHaveCount(4);
+    const priceTops = await page.locator('[data-slot="card"] .text-3xl').evaluateAll((prices) => prices.map((price) => price.getBoundingClientRect().top));
+    expect(Math.max(...priceTops) - Math.min(...priceTops)).toBeLessThanOrEqual(2);
+    const bottoms = await buttons.evaluateAll((links) => links.map((link) => link.getBoundingClientRect().bottom));
+    expect(Math.max(...bottoms) - Math.min(...bottoms)).toBeLessThanOrEqual(2);
+    const widths = await buttons.evaluateAll((links) => links.map((link) => link.getBoundingClientRect().width));
+    const paymentDetailWidths = await paymentDetails.evaluateAll((details) => details.map((detail) => detail.getBoundingClientRect().width));
+    expect(widths.every((buttonWidth, index) => Math.abs(buttonWidth - (paymentDetailWidths[index] ?? 0)) <= 2)).toBe(true);
+    const paymentDetailTops = await paymentDetails.evaluateAll((details) => details.map((detail) => detail.getBoundingClientRect().top));
+    expect(Math.max(...paymentDetailTops) - Math.min(...paymentDetailTops)).toBeLessThanOrEqual(2);
+  }
 });
 
 test('authenticated top bar exposes community links without mobile overflow', async ({ page }) => {
