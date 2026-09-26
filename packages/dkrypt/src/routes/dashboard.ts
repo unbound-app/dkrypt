@@ -1,4 +1,5 @@
 import { Router, type Request, type Response } from '#http.js';
+import { projectIdentifierPattern } from '#apiCommonContracts.js';
 import { validate as validateCronExpr } from 'node-cron';
 import { config, discordBotEnabled } from '#config.js';
 import { fetchBotGuilds, fetchGuildRoles } from '#discord.js';
@@ -2399,7 +2400,7 @@ dashboardRouter.get('/v1/dashboard/audit-log/export', canViewUsers, (req, res) =
 
 function resolveRequestProjectId(req: Request, res: Response, source: 'body' | 'query', options: { requireActive?: boolean } = {}): string | undefined {
   const value = source === 'body' ? req.body?.projectId : req.query.projectId;
-  if (value !== undefined && (typeof value !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(value))) {
+  if (value !== undefined && (typeof value !== 'string' || !projectIdentifierPattern.test(value))) {
     res.status(400).json({ error: 'projectId must be a valid project identifier' });
     return undefined;
   }

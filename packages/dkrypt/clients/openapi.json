@@ -27397,6 +27397,9 @@
         "parameters": [
           {
             "schema": {
+              "minLength": 1,
+              "maxLength": 80,
+              "pattern": "^[A-Za-z0-9_-]{1,80}$",
               "type": "string"
             },
             "in": "query",

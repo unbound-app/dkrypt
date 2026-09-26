@@ -68,6 +68,20 @@ test('idempotency header contracts match their endpoint validators', async () =>
   }
 });
 
+test('dashboard overview project identifiers publish validation constraints', async () => {
+  const server = await buildServer({ includePublicRoutes: false });
+  try {
+    await server.ready();
+    const document = server.swagger() as {
+      paths?: Record<string, Record<string, { parameters?: Array<{ name?: string; in?: string; schema?: { pattern?: string; minLength?: number; maxLength?: number } }> }>>;
+    };
+    const projectId = document.paths?.['/v1/dashboard/overview']?.get?.parameters?.find((parameter) => parameter.name === 'projectId' && parameter.in === 'query');
+    expect(projectId?.schema).toMatchObject({ pattern: '^[A-Za-z0-9_-]{1,80}$', minLength: 1, maxLength: 80 });
+  } finally {
+    await server.close();
+  }
+});
+
 test('core operational responses publish their required fields', async () => {
   const server = await buildServer({ includePublicRoutes: false });
   try {

@@ -8,18 +8,17 @@ import { fastifyRequireSession, getFastifySession } from '#session.js';
 import { DEFAULT_PROJECT_ID } from '#store/state.js';
 import { createHttpErrorEnvelope } from '#util/httpResponse.js';
 
-const validProjectId = /^[A-Za-z0-9_-]{1,80}$/;
-
 export const dashboardOverviewRoutes: FastifyPluginAsyncTypebox = async (server) => {
   server.addHook('preHandler', fastifyRequireSession);
   server.addHook('preHandler', recordFastifyDashboardActivity);
 
   server.get<DashboardOverviewRoute>('/v1/dashboard/overview', {
     schema: getRouteContract('GET', '/v1/dashboard/overview'),
+    attachValidation: true,
   }, (request, reply) => {
     const session = getFastifySession(request)!;
     const requestedProjectId = request.query.projectId;
-    if (requestedProjectId !== undefined && !validProjectId.test(requestedProjectId)) {
+    if (request.validationError) {
       reply.code(400);
       return createHttpErrorEnvelope(request.id, 400, 'projectId must be a valid project identifier');
     }

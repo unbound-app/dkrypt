@@ -1,6 +1,6 @@
 import { Type, type Static } from '@sinclair/typebox';
 import type { ApiErrorEnvelope } from '#contracts.js';
-import { identifierSchema } from '#apiCommonContracts.js';
+import { identifierSchema, projectIdentifierSchema } from '#apiCommonContracts.js';
 
 const Identifier = identifierSchema;
 const BundleId = Type.String({ minLength: 3, maxLength: 200, pattern: '^[A-Za-z0-9.-]+$' });
@@ -16,7 +16,7 @@ const JobFailureClass = Type.Union([
   Type.Literal('unknown'),
 ]);
 
-export const dashboardOverviewQuerySchema = Type.Object({ projectId: Type.Optional(Type.String()) }, { additionalProperties: true });
+export const dashboardOverviewQuerySchema = Type.Object({ projectId: Type.Optional(projectIdentifierSchema) }, { additionalProperties: true });
 
 export const dashboardOverviewResponseSchema = Type.Object({
   projectId: Identifier,

@@ -1,6 +1,8 @@
 import { Type, type Static } from '@sinclair/typebox';
 
 export const identifierSchema = Type.String({ minLength: 1, maxLength: 200 });
+export const projectIdentifierPattern = /^[A-Za-z0-9_-]{1,80}$/;
+export const projectIdentifierSchema = Type.String({ minLength: 1, maxLength: 80, pattern: projectIdentifierPattern.source });
 export const deviceTransportSchema = Type.Union([Type.Literal('wifi'), Type.Literal('usb')]);
 
 export type DeviceTransport = Static<typeof deviceTransportSchema>;
