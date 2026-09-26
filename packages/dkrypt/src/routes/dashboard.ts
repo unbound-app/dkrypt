@@ -9,7 +9,6 @@ import { jobSummary, streamFilePath } from '#jobs/http.js';
 import { cancelJob, enqueueDecryptJob, getActiveJobs, getJob, getQueueInfo, prioritizeQueuedJob, reorderQueue } from '#jobs/store.js';
 import type { LogEntry } from '#logger.js';
 import { getRecentLogs } from '#logger.js';
-import { EMBED_COLOR, notify } from '#notify.js';
 import { hasPermission, isSubsetPermission, PermissionFlag } from '#permissions.js';
 import { canGrantBits } from '#dashboardAdminRules.js';
 import { applyWatchSchedules, checkForTestFlightUpdate, checkForUpdate, triggerTickNow } from '#scheduler/index.js';
@@ -20,7 +19,6 @@ import { recordDashboardSessionActivity } from '#dashboardActivity.js';
 import { canAccessProject, dashboardHistoryEntry } from '#dashboardJobPresentation.js';
 import { buildDashboardOverview } from '#dashboardOverview.js';
 import { getDeviceHealth, getDeviceInstallBlocker, getDeviceReadiness } from '#deviceHealth.js';
-import { decodeCursor, nextCursor } from '#util/cursor.js';
 import { logBelongsToProject } from '#dashboardLogPresentation.js';
 import { getTestFlightBridgeDiagnostics, listBuilds, listTrains, type TFBuild } from '#testflight.js';
 import { nextCronRuns } from '#util/cron.js';
@@ -43,25 +41,14 @@ import {
   touchArtifact,
 } from '#artifacts.js';
 import {
-  approveApiKey,
   type AppWatch,
-  bulkApproveApiKeys,
-  bulkExtendApiKeyExpiry,
-  bulkSetApiKeyAllowedBundleIds,
-  bulkSetApiKeyDailyLimit,
-  createApiKey,
   createDiscordRolePerk,
   createWatch,
   DEFAULT_PROJECT_ID,
   deleteDiscordRolePerk,
   deleteWatch,
-  denyApiKey,
   effectiveBitsForRoleIds,
   getAllJobHistory,
-  getApiKeyById,
-  getApiKeyBundleUsage,
-  getApiKeyOutcomeUsage,
-  getApiKeyUsage,
   getAuditLog,
   getAverageJobDurationMs,
   getBundleStats,
@@ -89,19 +76,9 @@ import {
   getAppCatalogStats,
   isWatchSchedulable,
   type JobHistoryEntry,
-  listAllApiKeysPage,
-  listApiKeysForOwner,
-  listPendingApiKeys,
   listRoles,
   recordAudit,
-  regenerateApiKey,
-  requestApiKey,
-  revealApiKeySecret,
-  revokeApiKey,
-  setApiKeyAllowTestFlight,
   setDiscordGuilds,
-  setApiKeyMaxConcurrent,
-  setApiKeyPriority,
   upsertAppCatalogEntries,
   updateWatch,
   verifyLatestDatabaseBackup,
@@ -109,21 +86,6 @@ import {
 
 const canDecrypt = requirePermission(PermissionFlag.requestDecrypt);
 const canManageStorage = requirePermission(PermissionFlag.manageAutomation);
-const canRequestApiKeys = requirePermission(PermissionFlag.requestApiKeys);
-const canAccessApi = requirePermission(PermissionFlag.createApiKeys);
-const canViewOwnApiKeys = requirePermission(PermissionFlag.requestApiKeys, PermissionFlag.createApiKeys);
-const canManageOrUseApiKeys = requirePermission(PermissionFlag.requestApiKeys, PermissionFlag.createApiKeys, PermissionFlag.manageApiKeys);
-const canRevokeOwnedOrAnyApiKeys = requirePermission(PermissionFlag.createApiKeys, PermissionFlag.manageApiKeys);
-const canViewApiKeys = requirePermission(
-  PermissionFlag.viewApiKeys,
-  PermissionFlag.manageApiKeys,
-);
-const canApproveApiKeys = requirePermission(PermissionFlag.manageApiKeys);
-const canManageApiKeyExpiry = requirePermission(PermissionFlag.manageApiKeys);
-const canManageApiKeyDailyLimits = requirePermission(PermissionFlag.manageApiKeys);
-const canManageApiKeyConcurrency = requirePermission(PermissionFlag.manageApiKeys);
-const canManageApiKeyTestFlight = requirePermission(PermissionFlag.manageApiKeys);
-const canManageApiKeyPriority = requirePermission(PermissionFlag.manageApiKeys);
 const canViewScheduler = requirePermission(PermissionFlag.viewAutomation, PermissionFlag.manageAutomation);
 const canManageWatches = requirePermission(PermissionFlag.manageAutomation);
 const canManageSchedulerSettings = requirePermission(PermissionFlag.manageAutomation);
@@ -1362,273 +1324,6 @@ dashboardRouter.get('/v1/dashboard/jobs/:id/diagnostic', canDecrypt, (req, res) 
   if (!job) return;
   res.setHeader('Content-Disposition', `attachment; filename="dkrypt-job-${job.id}-diagnostic.json"`);
   res.json({ generatedAt: new Date().toISOString(), correlationId: job.correlationId ?? job.id, job, timeline: active?.timeline ?? entry?.timeline ?? [] });
-});
-
-dashboardRouter.get('/v1/dashboard/keys/mine', canViewOwnApiKeys, (_req, res) => {
-  const { sub } = res.locals.session;
-  res.json({ keys: listApiKeysForOwner(sub) });
-});
-
-const EXPIRY_OPTIONS = new Set([1, 7, 30, 90]);
-const MAX_SCOPED_BUNDLE_IDS = 25;
-const MIN_DAILY_LIMIT = 1;
-const MAX_DAILY_LIMIT = 10_000;
-
-function parseDailyLimit(value: unknown): number | undefined {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
-  return Math.min(Math.max(Math.round(value), MIN_DAILY_LIMIT), MAX_DAILY_LIMIT);
-}
-
-function parseAllowedBundleIds(body: unknown): string[] | undefined {
-  if (!Array.isArray(body)) return undefined;
-  const ids = body
-    .filter((v): v is string => typeof v === 'string')
-    .map((v) => v.trim())
-    .filter((v) => BUNDLE_ID_RE.test(v))
-    .slice(0, MAX_SCOPED_BUNDLE_IDS);
-  return ids.length > 0 ? [...new Set(ids)] : undefined;
-}
-
-dashboardRouter.post('/v1/dashboard/keys/request', canRequestApiKeys, (req, res) => {
-  const { sub } = res.locals.session;
-  const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
-  if (!name) {
-    res.status(400).json({ error: 'name is required' });
-    return;
-  }
-
-  const expiresInDays = typeof req.body?.expiresInDays === 'number' && EXPIRY_OPTIONS.has(req.body.expiresInDays)
-    ? req.body.expiresInDays
-    : undefined;
-  const allowedBundleIds = parseAllowedBundleIds(req.body?.allowedBundleIds);
-  const dailyLimit = parseDailyLimit(req.body?.dailyLimit);
-  const allowTestFlight = typeof req.body?.allowTestFlight === 'boolean' ? req.body.allowTestFlight : undefined;
-
-  const record = requestApiKey(name, sub, expiresInDays, allowedBundleIds, dailyLimit, allowTestFlight);
-  void notify('keyRequest', {
-    title: 'New API key request',
-    description: `**${sub}** requested a new key ("${name}") - approve it on the API Keys tab.`,
-    color: EMBED_COLOR.info,
-  });
-  res.status(201).json(record);
-});
-
-dashboardRouter.post('/v1/dashboard/keys/create', canAccessApi, (req, res) => {
-  const { sub } = res.locals.session;
-  const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
-  if (!name) {
-    res.status(400).json({ error: 'name is required' });
-    return;
-  }
-  const expiresInDays = typeof req.body?.expiresInDays === 'number' && EXPIRY_OPTIONS.has(req.body.expiresInDays)
-    ? req.body.expiresInDays
-    : undefined;
-  const allowedBundleIds = parseAllowedBundleIds(req.body?.allowedBundleIds);
-  const dailyLimit = parseDailyLimit(req.body?.dailyLimit);
-  const allowTestFlight = typeof req.body?.allowTestFlight === 'boolean' ? req.body.allowTestFlight : undefined;
-  res.status(201).json(createApiKey(name, sub, expiresInDays, allowedBundleIds, dailyLimit, allowTestFlight));
-});
-
-dashboardRouter.post('/v1/dashboard/keys/:id/reveal', canManageOrUseApiKeys, (req, res) => {
-  const { sub } = res.locals.session;
-  const secret = revealApiKeySecret(req.params.id, sub);
-  if (!secret) {
-    res.status(404).json({ error: 'no unrevealed secret for that key' });
-    return;
-  }
-  res.json({ key: secret });
-});
-
-dashboardRouter.post('/v1/dashboard/keys/:id/regenerate', canManageOrUseApiKeys, (req, res) => {
-  const { sub } = res.locals.session;
-  const graceMinutesRaw = req.body?.graceMinutes;
-  const graceMinutes = typeof graceMinutesRaw === 'number' && Number.isFinite(graceMinutesRaw) && graceMinutesRaw > 0 ? graceMinutesRaw : 0;
-  const ok = regenerateApiKey(req.params.id, sub, graceMinutes);
-  if (!ok) {
-    res.status(404).json({ error: 'key not found, not yours, or not yet approved' });
-    return;
-  }
-  res.json({ ok: true, key: getApiKeyById(req.params.id) });
-});
-
-dashboardRouter.delete('/v1/dashboard/keys/:id', canManageOrUseApiKeys, (req, res) => {
-  const { sub, permissions } = res.locals.session;
-  const ok = revokeApiKey(req.params.id, sub, hasPermission(permissions, PermissionFlag.manageApiKeys));
-  if (!ok) {
-    res.status(404).json({ error: 'key not found or not yours' });
-    return;
-  }
-  res.json({ ok: true });
-});
-
-dashboardRouter.post('/v1/dashboard/keys/bulk-revoke', canRevokeOwnedOrAnyApiKeys, (req, res) => {
-  const { sub, permissions } = res.locals.session;
-  const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter((id: unknown) => typeof id === 'string') : [];
-  const canRevokeAny = hasPermission(permissions, PermissionFlag.manageApiKeys);
-  const revoked = ids.filter((id: string) => revokeApiKey(id, sub, canRevokeAny));
-  res.json({ revoked });
-});
-
-const MIN_EXPIRY_EXTEND_DAYS = 1;
-const MAX_EXPIRY_EXTEND_DAYS = 3650;
-
-dashboardRouter.post('/v1/dashboard/keys/bulk-extend-expiry', canManageApiKeyExpiry, (req, res) => {
-  const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter((id: unknown) => typeof id === 'string') : [];
-  const days = typeof req.body?.days === 'number' ? Math.round(req.body.days) : undefined;
-  if (!days || days < MIN_EXPIRY_EXTEND_DAYS || days > MAX_EXPIRY_EXTEND_DAYS) {
-    res.status(400).json({ error: `days must be between ${MIN_EXPIRY_EXTEND_DAYS} and ${MAX_EXPIRY_EXTEND_DAYS}` });
-    return;
-  }
-  const extended = bulkExtendApiKeyExpiry(ids, days);
-  res.json({ extended });
-});
-
-dashboardRouter.post('/v1/dashboard/keys/bulk-set-daily-limit', canManageApiKeyDailyLimits, (req, res) => {
-  const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter((id: unknown) => typeof id === 'string') : [];
-  const raw = req.body?.dailyLimit;
-  const dailyLimit = raw === null ? undefined : parseDailyLimit(raw);
-  if (raw !== null && dailyLimit === undefined) {
-    res.status(400).json({ error: 'dailyLimit must be a number, or null to clear it' });
-    return;
-  }
-  const updated = bulkSetApiKeyDailyLimit(ids, dailyLimit);
-  res.json({ updated });
-});
-
-dashboardRouter.post('/v1/dashboard/keys/bulk-set-scope', canManageApiKeyDailyLimits, (req, res) => {
-  const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter((id: unknown) => typeof id === 'string') : [];
-  const raw = req.body?.allowedBundleIds;
-  if (raw !== null && raw !== undefined && !Array.isArray(raw)) {
-    res.status(400).json({ error: 'allowedBundleIds must be an array of bundle ids, or null to clear it' });
-    return;
-  }
-  const allowedBundleIds = raw === null || raw === undefined ? undefined : parseAllowedBundleIds(raw);
-  const updated = bulkSetApiKeyAllowedBundleIds(ids, allowedBundleIds);
-  res.json({ updated });
-});
-
-dashboardRouter.get('/v1/dashboard/keys/:id/usage', requirePermission(PermissionFlag.createApiKeys, PermissionFlag.viewApiKeys, PermissionFlag.manageApiKeys), (req, res) => {
-  const key = getApiKeyById(req.params.id);
-  if (!key) {
-    res.status(404).json({ error: 'key not found' });
-    return;
-  }
-  const { sub, permissions } = res.locals.session;
-  if (key.ownerId !== sub && !hasPermission(permissions, PermissionFlag.viewApiKeys) && !hasPermission(permissions, PermissionFlag.manageApiKeys)) {
-    res.status(403).json({ error: "not your key" });
-    return;
-  }
-  const days = Math.min(Math.max(Number.parseInt(String(req.query.days ?? '14'), 10) || 14, 1), 90);
-  res.json({ usage: getApiKeyUsage(req.params.id, days) });
-});
-
-dashboardRouter.get('/v1/dashboard/keys/:id/bundle-usage', requirePermission(PermissionFlag.createApiKeys, PermissionFlag.viewApiKeys, PermissionFlag.manageApiKeys), (req, res) => {
-  const key = getApiKeyById(req.params.id);
-  if (!key) {
-    res.status(404).json({ error: 'key not found' });
-    return;
-  }
-  const { sub, permissions } = res.locals.session;
-  if (key.ownerId !== sub && !hasPermission(permissions, PermissionFlag.viewApiKeys) && !hasPermission(permissions, PermissionFlag.manageApiKeys)) {
-    res.status(403).json({ error: "not your key" });
-    return;
-  }
-  const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit ?? '10'), 10) || 10, 1), 50);
-  res.json({ bundles: getApiKeyBundleUsage(req.params.id, limit) });
-});
-
-dashboardRouter.get('/v1/dashboard/keys/:id/outcomes', requirePermission(PermissionFlag.createApiKeys, PermissionFlag.viewApiKeys, PermissionFlag.manageApiKeys), (req, res) => {
-  const key = getApiKeyById(req.params.id);
-  if (!key) {
-    res.status(404).json({ error: 'key not found' });
-    return;
-  }
-  const { sub, permissions } = res.locals.session;
-  if (key.ownerId !== sub && !hasPermission(permissions, PermissionFlag.viewApiKeys) && !hasPermission(permissions, PermissionFlag.manageApiKeys)) {
-    res.status(403).json({ error: "not your key" });
-    return;
-  }
-  const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit ?? '10'), 10) || 10, 1), 30);
-  res.json({ outcomes: getApiKeyOutcomeUsage(req.params.id, limit) });
-});
-
-dashboardRouter.get('/v1/dashboard/keys/pending', canApproveApiKeys, (_req, res) => {
-  res.json({ keys: listPendingApiKeys() });
-});
-
-dashboardRouter.get('/v1/dashboard/keys/all', canViewApiKeys, (req, res) => {
-  const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit ?? '25'), 10) || 25, 1), 100);
-  const offset = typeof req.query.cursor === 'string' ? decodeCursor(req.query.cursor) : Math.max(Number.parseInt(String(req.query.offset ?? '0'), 10) || 0, 0);
-  const search = typeof req.query.search === 'string' ? req.query.search : undefined;
-  const page = listAllApiKeysPage(offset, limit, search);
-  res.json({ ...page, nextCursor: nextCursor(offset, page.keys.length, page.total) });
-});
-
-dashboardRouter.post('/v1/dashboard/keys/:id/approve', canApproveApiKeys, (req, res) => {
-  const ok = approveApiKey(req.params.id);
-  if (!ok) {
-    res.status(404).json({ error: 'no pending request with that id' });
-    return;
-  }
-  res.json({ ok: true });
-});
-
-dashboardRouter.post('/v1/dashboard/keys/bulk-approve', canApproveApiKeys, (req, res) => {
-  const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter((id: unknown) => typeof id === 'string') : [];
-  const approved = bulkApproveApiKeys(ids);
-  res.json({ approved });
-});
-
-dashboardRouter.patch('/v1/dashboard/keys/:id/priority', canManageApiKeyPriority, (req, res) => {
-  const priority = typeof req.body?.priority === 'number' ? req.body.priority : undefined;
-  if (priority === undefined || !Number.isFinite(priority)) {
-    res.status(400).json({ error: 'priority (a number) is required' });
-    return;
-  }
-  const updated = setApiKeyPriority(req.params.id, priority);
-  if (!updated) {
-    res.status(404).json({ error: 'key not found' });
-    return;
-  }
-  res.json({ ok: true, priority: updated.priority });
-});
-
-dashboardRouter.patch('/v1/dashboard/keys/:id/max-concurrent', canManageApiKeyConcurrency, (req, res) => {
-  const raw = req.body?.maxConcurrent;
-  const maxConcurrent = raw === null || raw === undefined ? undefined : Number(raw);
-  if (maxConcurrent !== undefined && (!Number.isFinite(maxConcurrent) || maxConcurrent <= 0)) {
-    res.status(400).json({ error: 'maxConcurrent must be a positive number, or null to clear it' });
-    return;
-  }
-  const updated = setApiKeyMaxConcurrent(req.params.id, maxConcurrent);
-  if (!updated) {
-    res.status(404).json({ error: 'key not found' });
-    return;
-  }
-  res.json({ ok: true, maxConcurrent: updated.maxConcurrent });
-});
-
-dashboardRouter.patch('/v1/dashboard/keys/:id/allow-testflight', canManageApiKeyTestFlight, (req, res) => {
-  const allowTestFlight = req.body?.allowTestFlight;
-  if (typeof allowTestFlight !== 'boolean') {
-    res.status(400).json({ error: 'allowTestFlight (boolean) is required' });
-    return;
-  }
-  const updated = setApiKeyAllowTestFlight(req.params.id, allowTestFlight);
-  if (!updated) {
-    res.status(404).json({ error: 'key not found' });
-    return;
-  }
-  res.json({ ok: true, allowTestFlight: updated.allowTestFlight ?? true });
-});
-
-dashboardRouter.post('/v1/dashboard/keys/:id/deny', canApproveApiKeys, (req, res) => {
-  const ok = denyApiKey(req.params.id);
-  if (!ok) {
-    res.status(404).json({ error: 'no pending request with that id' });
-    return;
-  }
-  res.json({ ok: true });
 });
 
 const AUDIT_LOG_CSV_COLUMNS = ['id', 'ts', 'actor', 'action', 'target', 'detail'] as const;

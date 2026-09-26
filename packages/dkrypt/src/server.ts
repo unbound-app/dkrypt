@@ -14,6 +14,7 @@ import { startJobWebhookDispatcher, stopJobWebhookDispatcher } from '#jobWebhook
 import { startKeyExpiryPoller, stopKeyExpiryPoller } from '#keyExpiryPoller.js';
 import { log, startLogFlusher, stopLogFlusher } from '#logger.js';
 import { authRoutes } from '#routes/authRoutes.js';
+import { dashboardApiKeyRoutes } from '#routes/dashboardApiKeyRoutes.js';
 import { dashboardAccountRoutes } from '#routes/dashboardAccountRoutes.js';
 import { dashboardBackupRoutes } from '#routes/dashboardBackupRoutes.js';
 import { dashboardDeviceRoutes } from '#routes/dashboardDeviceRoutes.js';
@@ -236,6 +237,7 @@ export async function buildServer(options: { includePublicRoutes?: boolean } = {
   await server.register(artifactCatalogRoutes);
   await server.register(testFlightCatalogRoutes);
   await server.register(authRoutes);
+  await server.register(dashboardApiKeyRoutes);
   await server.register(dashboardAccountRoutes);
   await server.register(dashboardBackupRoutes);
   await server.register(dashboardDeviceRoutes);

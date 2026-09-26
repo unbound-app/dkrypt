@@ -70721,7 +70721,28 @@
               "schema": {
                 "additionalProperties": true,
                 "type": "object",
-                "properties": {}
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "minLength": 1,
+                    "pattern": "\\S",
+                    "type": "string"
+                  },
+                  "expiresInDays": {
+                    "description": "Only 1, 7, 30, or 90 are applied; other values are ignored."
+                  },
+                  "allowedBundleIds": {
+                    "description": "Valid bundle IDs are retained, up to 25; invalid values are ignored."
+                  },
+                  "dailyLimit": {
+                    "description": "Finite numbers are rounded and clamped to 1–10000; other values are ignored."
+                  },
+                  "allowTestFlight": {
+                    "description": "Boolean values are applied; other values are ignored."
+                  }
+                }
               }
             }
           }
@@ -71160,7 +71181,28 @@
               "schema": {
                 "additionalProperties": true,
                 "type": "object",
-                "properties": {}
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "minLength": 1,
+                    "pattern": "\\S",
+                    "type": "string"
+                  },
+                  "expiresInDays": {
+                    "description": "Only 1, 7, 30, or 90 are applied; other values are ignored."
+                  },
+                  "allowedBundleIds": {
+                    "description": "Valid bundle IDs are retained, up to 25; invalid values are ignored."
+                  },
+                  "dailyLimit": {
+                    "description": "Finite numbers are rounded and clamped to 1–10000; other values are ignored."
+                  },
+                  "allowTestFlight": {
+                    "description": "Boolean values are applied; other values are ignored."
+                  }
+                }
               }
             }
           }
@@ -71531,18 +71573,6 @@
         "tags": [
           "dashboard"
         ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "additionalProperties": true,
-                "type": "object",
-                "properties": {}
-              }
-            }
-          }
-        },
         "parameters": [
           {
             "schema": {
@@ -71911,7 +71941,11 @@
               "schema": {
                 "additionalProperties": true,
                 "type": "object",
-                "properties": {}
+                "properties": {
+                  "graceMinutes": {
+                    "description": "Positive finite numbers are used; other values default to immediate rotation."
+                  }
+                }
               }
             }
           }
@@ -72385,6 +72419,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "required": [
                     "ok"
@@ -74281,6 +74316,14 @@
         "parameters": [
           {
             "schema": {
+              "type": "string"
+            },
+            "in": "query",
+            "name": "days",
+            "required": false
+          },
+          {
+            "schema": {
               "minLength": 1,
               "maxLength": 200,
               "type": "string"
@@ -74305,7 +74348,6 @@
                     "usage": {
                       "type": "array",
                       "items": {
-                        "additionalProperties": true,
                         "type": "object",
                         "required": [
                           "date",
@@ -74659,6 +74701,14 @@
         "parameters": [
           {
             "schema": {
+              "type": "string"
+            },
+            "in": "query",
+            "name": "limit",
+            "required": false
+          },
+          {
+            "schema": {
               "minLength": 1,
               "maxLength": 200,
               "type": "string"
@@ -74683,7 +74733,6 @@
                     "bundles": {
                       "type": "array",
                       "items": {
-                        "additionalProperties": true,
                         "type": "object",
                         "required": [
                           "bundleId",
@@ -75040,6 +75089,14 @@
         "parameters": [
           {
             "schema": {
+              "type": "string"
+            },
+            "in": "query",
+            "name": "limit",
+            "required": false
+          },
+          {
+            "schema": {
               "minLength": 1,
               "maxLength": 200,
               "type": "string"
@@ -75064,9 +75121,34 @@
                     "outcomes": {
                       "type": "array",
                       "items": {
-                        "additionalProperties": true,
                         "type": "object",
-                        "properties": {}
+                        "required": [
+                          "route",
+                          "success",
+                          "clientError",
+                          "serverError",
+                          "lastAt"
+                        ],
+                        "properties": {
+                          "route": {
+                            "type": "string"
+                          },
+                          "success": {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "clientError": {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "serverError": {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "lastAt": {
+                            "type": "number"
+                          }
+                        }
                       }
                     }
                   }
@@ -76329,18 +76411,6 @@
         "tags": [
           "dashboard"
         ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "additionalProperties": true,
-                "type": "object",
-                "properties": {}
-              }
-            }
-          }
-        },
         "parameters": [
           {
             "schema": {
@@ -76359,6 +76429,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "required": [
                     "ok"
@@ -78242,18 +78313,6 @@
         "tags": [
           "dashboard"
         ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "additionalProperties": true,
-                "type": "object",
-                "properties": {}
-              }
-            }
-          }
-        },
         "parameters": [
           {
             "schema": {
@@ -78272,6 +78331,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "required": [
                     "ok"

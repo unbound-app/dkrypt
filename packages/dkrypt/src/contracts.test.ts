@@ -501,6 +501,16 @@ test('bodyless dashboard notification actions do not require JSON request bodies
   }
 });
 
+test('bodyless API key actions do not require JSON request bodies', () => {
+  for (const path of [
+    '/v1/dashboard/keys/:id/reveal',
+    '/v1/dashboard/keys/:id/approve',
+    '/v1/dashboard/keys/:id/deny',
+  ]) {
+    expect(getRouteContracts().get(`POST ${path}`)).not.toHaveProperty('body');
+  }
+});
+
 test('TestFlight catalog contracts include the normalized bridge failure envelope', () => {
   for (const route of ['GET /v1/testflight/:appId/trains', 'GET /v1/testflight/:appId/builds']) {
     const responses = getRouteContracts().get(route)?.response as Record<string, { properties?: Record<string, unknown> }> | undefined;

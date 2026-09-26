@@ -363,6 +363,380 @@ test('native user routes enforce permissions and return normalized management ch
   }
 });
 
+test('API key endpoints are not registered through the legacy adapter', () => {
+  const routes = dashboardRouter.routes.map((route) => `${route.method} ${route.path}`);
+  expect(routes.filter((route) => route.includes('/v1/dashboard/keys'))).toEqual([]);
+});
+
+test('native API key routes preserve requester, owner, and manager permissions', async () => {
+  const server = await buildServer({ includePublicRoutes: false });
+  const ownerId = `github:api-key-owner-${crypto.randomUUID()}`;
+  const otherId = `github:api-key-other-${crypto.randomUUID()}`;
+  const ownerRole = createRole({
+    name: `API key owner ${crypto.randomUUID()}`,
+    color: '#2468ac',
+    permissions: serializeBits(PermissionFlag.requestApiKeys),
+  }, 'test setup');
+  const requesterCookie = createSessionCookie(ownerId, PermissionFlag.requestApiKeys);
+  const ownerCookie = createSessionCookie(ownerId, PermissionFlag.requestApiKeys | PermissionFlag.createApiKeys);
+  const otherCookie = createSessionCookie(otherId, PermissionFlag.requestApiKeys | PermissionFlag.createApiKeys);
+  const managerCookie = createSessionCookie('root', PermissionFlag.manageApiKeys);
+  const creatorCookie = createSessionCookie('root', PermissionFlag.createApiKeys);
+  let keyId: string | undefined;
+  let keyOwnerId = ownerId;
+
+  try {
+    addAllowedUser(ownerId, [ownerRole.id], 'test setup');
+    addAllowedUser(otherId, [ownerRole.id], 'test setup');
+    const invalid = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/keys/request',
+      headers: { cookie: requesterCookie },
+      payload: { name: '   ' },
+    });
+    expect(invalid.statusCode).toBe(400);
+
+    const deniedCreate = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/keys/create',
+      headers: { cookie: requesterCookie },
+      payload: { name: 'Immediate test key' },
+    });
+    expect(deniedCreate.statusCode).toBe(403);
+
+    const request = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/keys/request',
+      headers: { cookie: requesterCookie },
+      payload: {
+        name: 'Requested test key',
+        expiresInDays: 7,
+        allowedBundleIds: ['com.example.requested'],
+        dailyLimit: 40,
+        allowTestFlight: false,
+      },
+    });
+    expect(request.statusCode).toBe(201);
+    expect(request.json()).toMatchObject({
+      name: 'Requested test key',
+      ownerId,
+      status: 'pending',
+      allowedBundleIds: ['com.example.requested'],
+      dailyLimit: 40,
+      allowTestFlight: false,
+    });
+    keyId = request.json().id;
+
+    const deniedApproval = await server.inject({
+      method: 'POST',
+      url: `/v1/dashboard/keys/${keyId}/approve`,
+      headers: { cookie: requesterCookie },
+    });
+    expect(deniedApproval.statusCode).toBe(403);
+
+    const approved = await server.inject({
+      method: 'POST',
+      url: `/v1/dashboard/keys/${keyId}/approve`,
+      headers: { cookie: managerCookie },
+    });
+    expect(approved.statusCode).toBe(200);
+
+    const pending = await server.inject({
+      method: 'GET',
+      url: '/v1/dashboard/keys/pending',
+      headers: { cookie: managerCookie },
+    });
+    expect(pending.json().keys).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: keyId })]));
+
+    const revealed = await server.inject({
+      method: 'POST',
+      url: `/v1/dashboard/keys/${keyId}/reveal`,
+      headers: { cookie: ownerCookie },
+    });
+    expect(revealed.statusCode).toBe(200);
+    expect(revealed.json().key).toMatch(/^[0-9a-f]{64}$/);
+
+    const repeatedReveal = await server.inject({
+      method: 'POST',
+      url: `/v1/dashboard/keys/${keyId}/reveal`,
+      headers: { cookie: ownerCookie },
+    });
+    expect(repeatedReveal.statusCode).toBe(404);
+
+    const deniedRevoke = await server.inject({
+      method: 'DELETE',
+      url: `/v1/dashboard/keys/${keyId}`,
+      headers: { cookie: otherCookie },
+    });
+    expect(deniedRevoke.statusCode).toBe(404);
+
+    const revoked = await server.inject({
+      method: 'DELETE',
+      url: `/v1/dashboard/keys/${keyId}`,
+      headers: { cookie: ownerCookie },
+    });
+    expect(revoked.statusCode).toBe(200);
+    keyId = undefined;
+
+    const immediate = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/keys/create',
+      headers: { cookie: creatorCookie },
+      payload: { name: 'Immediate test key', expiresInDays: 30 },
+    });
+    expect(immediate.statusCode).toBe(201);
+    expect(immediate.json()).toMatchObject({ name: 'Immediate test key' });
+    expect(immediate.json().key).toMatch(/^[0-9a-f]{64}$/);
+    keyId = immediate.json().id;
+    keyOwnerId = 'root';
+  } finally {
+    if (keyId) revokeApiKey(keyId, keyOwnerId, true);
+    deleteUserPersonalData(ownerId);
+    deleteUserPersonalData(otherId);
+    deleteRole(ownerRole.id, 'test cleanup');
+    await server.close();
+  }
+});
+
+test('native API key manager controls preserve filtering, normalization, and route coverage', async () => {
+  const server = await buildServer({ includePublicRoutes: false });
+  const administratorCookie = createSessionCookie('root', PermissionFlag.administrator);
+  const headers = { cookie: administratorCookie };
+  const createdIds: string[] = [];
+
+  try {
+    const created = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/keys/create',
+      headers,
+      payload: { name: 'Manager route coverage', expiresInDays: 30 },
+    });
+    expect(created.statusCode).toBe(201);
+    const keyId = created.json().id as string;
+    createdIds.push(keyId);
+
+    const regenerated = await server.inject({
+      method: 'POST',
+      url: `/v1/dashboard/keys/${keyId}/regenerate`,
+      headers,
+      payload: { graceMinutes: 'invalid' },
+    });
+    expect(regenerated.statusCode).toBe(200);
+    expect(regenerated.json()).toMatchObject({ ok: true, key: { id: keyId } });
+
+    const normalized = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/keys/create',
+      headers,
+      payload: {
+        name: 'Legacy input normalization',
+        expiresInDays: '7',
+        allowedBundleIds: ['com.example.valid', 5, 'invalid!'],
+        dailyLimit: '4',
+        allowTestFlight: 'yes',
+      },
+    });
+    expect(normalized.statusCode).toBe(201);
+    expect(normalized.json()).toMatchObject({ name: 'Legacy input normalization' });
+    const normalizedId = normalized.json().id as string;
+    createdIds.push(normalizedId);
+    const normalizedList = await server.inject({ method: 'GET', url: '/v1/dashboard/keys/mine', headers });
+    const normalizedRecord = normalizedList.json().keys.find((key: { id: string }) => key.id === normalizedId);
+    expect(normalizedRecord).toMatchObject({ allowedBundleIds: ['com.example.valid'], allowTestFlight: true });
+    expect(normalizedRecord).not.toHaveProperty('expiresAt');
+    expect(normalizedRecord).not.toHaveProperty('dailyLimit');
+
+    const mine = await server.inject({ method: 'GET', url: '/v1/dashboard/keys/mine', headers });
+    expect(mine.statusCode).toBe(200);
+    expect(mine.json().keys).toEqual(expect.arrayContaining([expect.objectContaining({ id: keyId })]));
+
+    const all = await server.inject({ method: 'GET', url: '/v1/dashboard/keys/all?search=Manager%20route%20coverage', headers });
+    expect(all.statusCode).toBe(200);
+    expect(all.json().keys).toEqual([expect.objectContaining({ id: keyId, name: 'Manager route coverage' })]);
+
+    for (const suffix of ['usage?days=7', 'bundle-usage?limit=5', 'outcomes?limit=5']) {
+      const result = await server.inject({ method: 'GET', url: `/v1/dashboard/keys/${keyId}/${suffix}`, headers });
+      expect(result.statusCode).toBe(200);
+    }
+
+    const dailyLimit = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/keys/bulk-set-daily-limit',
+      headers,
+      payload: { ids: [keyId, 42, null], dailyLimit: 3.6 },
+    });
+    expect(dailyLimit.statusCode).toBe(400);
+
+    const validDailyLimit = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/keys/bulk-set-daily-limit',
+      headers,
+      payload: { ids: [keyId], dailyLimit: 3.6 },
+    });
+    expect(validDailyLimit.statusCode).toBe(200);
+    expect(validDailyLimit.json()).toMatchObject({ updated: [keyId] });
+
+    const expiry = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/keys/bulk-extend-expiry',
+      headers,
+      payload: { ids: [keyId], days: 1.6 },
+    });
+    expect(expiry.statusCode).toBe(400);
+
+    const validExpiry = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/keys/bulk-extend-expiry',
+      headers,
+      payload: { ids: [keyId], days: 2 },
+    });
+    expect(validExpiry.statusCode).toBe(200);
+    expect(validExpiry.json()).toMatchObject({ extended: [keyId] });
+
+    const scope = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/keys/bulk-set-scope',
+      headers,
+      payload: { ids: [keyId, 42], allowedBundleIds: [' com.example.one ', 7, 'not valid!'] },
+    });
+    expect(scope.statusCode).toBe(400);
+
+    const validScope = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/keys/bulk-set-scope',
+      headers,
+      payload: { ids: [keyId], allowedBundleIds: ['com.example.one'] },
+    });
+    expect(validScope.statusCode).toBe(200);
+    expect(validScope.json()).toMatchObject({ updated: [keyId] });
+
+    const priority = await server.inject({
+      method: 'PATCH',
+      url: `/v1/dashboard/keys/${keyId}/priority`,
+      headers,
+      payload: { priority: 4.6 },
+    });
+    expect(priority.statusCode).toBe(200);
+    expect(priority.json()).toMatchObject({ ok: true, priority: 5 });
+
+    const concurrency = await server.inject({
+      method: 'PATCH',
+      url: `/v1/dashboard/keys/${keyId}/max-concurrent`,
+      headers,
+      payload: { maxConcurrent: '3' },
+    });
+    expect(concurrency.statusCode).toBe(200);
+    expect(concurrency.json()).toMatchObject({ ok: true, maxConcurrent: 3 });
+
+    const testFlight = await server.inject({
+      method: 'PATCH',
+      url: `/v1/dashboard/keys/${keyId}/allow-testflight`,
+      headers,
+      payload: { allowTestFlight: false },
+    });
+    expect(testFlight.statusCode).toBe(200);
+    expect(testFlight.json()).toMatchObject({ ok: true, allowTestFlight: false });
+
+    const updatedKey = await server.inject({
+      method: 'GET',
+      url: '/v1/dashboard/keys/all?search=Manager%20route%20coverage',
+      headers,
+    });
+    const updatedRecord = updatedKey.json().keys[0];
+    expect(updatedRecord).toMatchObject({
+      dailyLimit: 4,
+      allowedBundleIds: ['com.example.one'],
+      priority: 5,
+      maxConcurrent: 3,
+      allowTestFlight: false,
+    });
+    expect(updatedRecord.expiresAt).toBeGreaterThan(Date.now() + 1.8 * 86_400_000);
+    expect(updatedRecord.expiresAt).toBeLessThan(Date.now() + 2.2 * 86_400_000);
+
+    const pendingRequest = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/keys/request',
+      headers,
+      payload: { name: 'Bulk approved key' },
+    });
+    expect(pendingRequest.statusCode).toBe(201);
+    const pendingId = pendingRequest.json().id as string;
+    createdIds.push(pendingId);
+
+    const pending = await server.inject({ method: 'GET', url: '/v1/dashboard/keys/pending', headers });
+    expect(pending.statusCode).toBe(200);
+    expect(pending.json().keys).toEqual(expect.arrayContaining([expect.objectContaining({ id: pendingId })]));
+
+    const approved = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/keys/bulk-approve',
+      headers,
+      payload: { ids: [pendingId, null] },
+    });
+    expect(approved.statusCode).toBe(400);
+
+    const validApproval = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/keys/bulk-approve',
+      headers,
+      payload: { ids: [pendingId] },
+    });
+    expect(validApproval.statusCode).toBe(200);
+    expect(validApproval.json()).toMatchObject({ approved: [pendingId] });
+
+    const deniedRequest = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/keys/request',
+      headers,
+      payload: { name: 'Denied key' },
+    });
+    expect(deniedRequest.statusCode).toBe(201);
+    const deniedId = deniedRequest.json().id as string;
+    createdIds.push(deniedId);
+
+    const denied = await server.inject({ method: 'POST', url: `/v1/dashboard/keys/${deniedId}/deny`, headers });
+    expect(denied.statusCode).toBe(200);
+    expect(denied.json()).toMatchObject({ ok: true });
+
+    const revoked = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/keys/bulk-revoke',
+      headers,
+      payload: { ids: [keyId, null] },
+    });
+    expect(revoked.statusCode).toBe(400);
+
+    const oversizedId = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/keys/bulk-revoke',
+      headers,
+      payload: { ids: ['x'.repeat(201)] },
+    });
+    expect(oversizedId.statusCode).toBe(400);
+
+    const tooManyIds = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/keys/bulk-revoke',
+      headers,
+      payload: { ids: Array.from({ length: 101 }, () => keyId) },
+    });
+    expect(tooManyIds.statusCode).toBe(400);
+
+    const validRevocation = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/keys/bulk-revoke',
+      headers,
+      payload: { ids: [keyId] },
+    });
+    expect(validRevocation.statusCode).toBe(200);
+    expect(validRevocation.json()).toMatchObject({ revoked: [keyId] });
+    createdIds.splice(createdIds.indexOf(keyId), 1);
+  } finally {
+    for (const id of createdIds) revokeApiKey(id, 'root', true);
+    await server.close();
+  }
+});
+
 test('native settings routes preserve permission gates and normalize updates', async () => {
   const server = await buildServer({ includePublicRoutes: false });
   const administratorCookie = createSessionCookie('root', PermissionFlag.administrator);

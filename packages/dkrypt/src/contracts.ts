@@ -115,6 +115,38 @@ import {
   dashboardRoleUpdateBodySchema,
 } from '#dashboardRoleContracts.js';
 import {
+  dashboardApiKeyBulkDailyLimitBodySchema,
+  dashboardApiKeyBulkExpiryBodySchema,
+  dashboardApiKeyBulkIdsBodySchema,
+  dashboardApiKeyBulkScopeBodySchema,
+  dashboardApiKeyCollectionResponseSchema,
+  dashboardApiKeyConcurrencyBodySchema,
+  dashboardApiKeyConcurrencyResponseSchema,
+  dashboardApiKeyCreateBodySchema,
+  dashboardApiKeyExtendedResponseSchema,
+  dashboardApiKeyListQuerySchema,
+  dashboardApiKeyOkResponseSchema,
+  dashboardApiKeyOutcomeResponseSchema,
+  dashboardApiKeyPageResponseSchema,
+  dashboardApiKeyParamsSchema,
+  dashboardApiKeyPriorityBodySchema,
+  dashboardApiKeyPriorityResponseSchema,
+  dashboardApiKeyRegenerateResponseSchema,
+  dashboardApiKeyResponseSchema,
+  dashboardApiKeyRevokedResponseSchema,
+  dashboardApiKeySecretResponseSchema,
+  dashboardApiKeyTestFlightBodySchema,
+  dashboardApiKeyTestFlightResponseSchema,
+  dashboardApiKeyUsageQuerySchema,
+  dashboardApiKeyUsageResponseSchema,
+  dashboardApiKeyUsageLimitQuerySchema,
+  dashboardApiKeyBundleUsageResponseSchema,
+  dashboardApiKeyUpdatedResponseSchema,
+  dashboardApiKeyApprovedResponseSchema,
+  dashboardApiKeyRevealResponseSchema,
+  dashboardApiKeyGraceBodySchema,
+} from '#dashboardApiKeyContracts.js';
+import {
   dashboardAllowedUserResponseSchema as AllowedUserResponse,
   dashboardUserCreateBodySchema,
   dashboardUserDirectoryResponseSchema as UserDirectoryResponse,
@@ -466,29 +498,6 @@ const DecryptJobResponse = object({
   resolvedVersion: Type.Optional(Type.String()),
   artifact: Type.Optional(ArtifactSummaryResponse),
 });
-const ApiKeyResponse = object({
-  id: Identifier,
-  name: Type.String(),
-  ownerId: Identifier,
-  status: Type.Union([Type.Literal('pending'), Type.Literal('approved'), Type.Literal('denied')]),
-  createdAt: Type.Number(),
-  approvedAt: Type.Optional(Type.Number()),
-  lastUsedAt: Type.Optional(Type.Number()),
-  expiresAt: Type.Optional(Type.Number()),
-  hasUnrevealedSecret: Type.Optional(Type.Boolean()),
-  lastUsedIp: Type.Optional(Type.String()),
-  allowedBundleIds: Type.Optional(Type.Array(BundleId)),
-  dailyLimit: Type.Optional(Type.Number()),
-  maxConcurrent: Type.Optional(Type.Number()),
-  allowTestFlight: Type.Optional(Type.Boolean()),
-  priority: Type.Optional(Type.Number()),
-  previousKeyValidUntil: Type.Optional(Type.Number()),
-});
-const ApiKeyCollectionResponse = object({ keys: Type.Array(ApiKeyResponse) });
-const ApiKeyPageResponse = object({ keys: Type.Array(ApiKeyResponse), total: Type.Integer({ minimum: 0 }), nextCursor: PageCursor });
-const ApiKeyUsageResponse = object({ usage: Type.Array(object({ date: Type.String(), count: Type.Integer({ minimum: 0 }) })) });
-const ApiKeyBundleUsageResponse = object({ bundles: Type.Array(object({ bundleId: BundleId, count: Type.Integer({ minimum: 0 }) })) });
-const ApiKeyOutcomeResponse = object({ outcomes: Type.Array(JsonObject) });
 const UrlResponse = object({ url: Type.String() });
 const BillingCheckoutResponse = object({
   url: Type.String(),
@@ -505,8 +514,6 @@ const BillingCancelResponse = object({
 });
 const BillingSubscriptionUpdateResponse = object({ success: Type.Boolean(), status: Type.String(), priceId: Type.Union([Type.String(), Type.Null()]) });
 const OkResponse = dashboardOkResponseSchema;
-const ApiKeySecretResponse = object({ id: Identifier, name: Type.String(), key: Type.String(), createdAt: Type.Number(), expiresAt: Type.Optional(Type.Number()) });
-const ApiKeyRegenerateResponse = object({ ok: Type.Boolean(), key: Type.Optional(ApiKeyResponse) });
 const AuthTokenResponse = object({ ok: Type.Boolean(), expiresAt: Type.Optional(Type.Integer()) });
 const AuthLoginResponse = object({ ok: Type.Boolean() });
 const AuthRevokeOthersResponse = object({ ok: Type.Boolean(), revoked: Type.Integer({ minimum: 0 }) });
@@ -629,13 +636,6 @@ const DiscordRolePerkResponse = object({
   appRoleId: Identifier,
   createdAt: Type.Number(),
 });
-const ApiKeyRevokedResponse = object({ revoked: Type.Array(Identifier) });
-const ApiKeyExtendedResponse = object({ extended: Type.Array(Identifier) });
-const ApiKeyUpdatedResponse = object({ updated: Type.Array(Identifier) });
-const ApiKeyApprovedResponse = object({ approved: Type.Array(Identifier) });
-const ApiKeyPriorityResponse = object({ ok: Type.Boolean(), priority: Type.Number() });
-const ApiKeyConcurrencyResponse = object({ ok: Type.Boolean(), maxConcurrent: Type.Optional(Type.Union([Type.Number(), Type.Null()])) });
-const ApiKeyTestFlightResponse = object({ ok: Type.Boolean(), allowTestFlight: Type.Boolean() });
 const WebhookReceiptResponse = object({ received: Type.Boolean(), duplicate: Type.Optional(Type.Boolean()), quarantined: Type.Optional(Type.Boolean()), inProgress: Type.Optional(Type.Boolean()) });
 const TestFlightDiagnosticsResponse = object({
   bridge: object({
@@ -717,6 +717,9 @@ const bodylessPostContracts = new Set([
   '/v1/dashboard/email/test',
   '/v1/dashboard/backup/history',
   '/v1/dashboard/backup/history/:id/drill',
+  '/v1/dashboard/keys/:id/reveal',
+  '/v1/dashboard/keys/:id/approve',
+  '/v1/dashboard/keys/:id/deny',
 ]);
 
 function registerGenericContract(method: ContractMethod, path: string): void {
@@ -1094,19 +1097,19 @@ register('DELETE', '/v1/dashboard/users/:username', {
   params: dashboardUserParamsSchema,
   response: { 200: dashboardUserOkResponseSchema, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope },
 });
-register('GET', '/v1/dashboard/keys/mine', { response: { 200: ApiKeyCollectionResponse } });
-register('POST', '/v1/dashboard/keys/request', { response: { 201: ApiKeyResponse } });
-register('POST', '/v1/dashboard/keys/create', { response: { 201: ApiKeySecretResponse } });
-register('POST', '/v1/dashboard/keys/:id/reveal', { params: object({ id: Identifier }), response: { 200: object({ key: Type.String() }) } });
-register('POST', '/v1/dashboard/keys/:id/regenerate', { params: object({ id: Identifier }), response: { 200: ApiKeyRegenerateResponse } });
-register('DELETE', '/v1/dashboard/keys/:id', { params: object({ id: Identifier }), response: { 200: OkResponse } });
-register('GET', '/v1/dashboard/keys/pending', { response: { 200: ApiKeyCollectionResponse } });
-register('GET', '/v1/dashboard/keys/all', { querystring: object({ ...PaginationQuery.properties, search: Type.Optional(Type.String({ maxLength: 200 })) }), response: { 200: ApiKeyPageResponse } });
-register('GET', '/v1/dashboard/keys/:id/usage', { params: object({ id: Identifier }), response: { 200: ApiKeyUsageResponse } });
-register('GET', '/v1/dashboard/keys/:id/bundle-usage', { params: object({ id: Identifier }), response: { 200: ApiKeyBundleUsageResponse } });
-register('GET', '/v1/dashboard/keys/:id/outcomes', { params: object({ id: Identifier }), response: { 200: ApiKeyOutcomeResponse } });
-register('POST', '/v1/dashboard/keys/:id/approve', { params: object({ id: Identifier }), response: { 200: OkResponse } });
-register('POST', '/v1/dashboard/keys/:id/deny', { params: object({ id: Identifier }), response: { 200: OkResponse } });
+register('GET', '/v1/dashboard/keys/mine', { response: { 200: dashboardApiKeyCollectionResponseSchema } });
+register('POST', '/v1/dashboard/keys/request', { body: dashboardApiKeyCreateBodySchema, response: { 201: dashboardApiKeyResponseSchema } });
+register('POST', '/v1/dashboard/keys/create', { body: dashboardApiKeyCreateBodySchema, response: { 201: dashboardApiKeySecretResponseSchema } });
+register('POST', '/v1/dashboard/keys/:id/reveal', { params: dashboardApiKeyParamsSchema, response: { 200: dashboardApiKeyRevealResponseSchema } });
+register('POST', '/v1/dashboard/keys/:id/regenerate', { params: dashboardApiKeyParamsSchema, body: dashboardApiKeyGraceBodySchema, response: { 200: dashboardApiKeyRegenerateResponseSchema } });
+register('DELETE', '/v1/dashboard/keys/:id', { params: dashboardApiKeyParamsSchema, response: { 200: dashboardApiKeyOkResponseSchema } });
+register('GET', '/v1/dashboard/keys/pending', { response: { 200: dashboardApiKeyCollectionResponseSchema } });
+register('GET', '/v1/dashboard/keys/all', { querystring: dashboardApiKeyListQuerySchema, response: { 200: dashboardApiKeyPageResponseSchema } });
+register('GET', '/v1/dashboard/keys/:id/usage', { params: dashboardApiKeyParamsSchema, querystring: dashboardApiKeyUsageQuerySchema, response: { 200: dashboardApiKeyUsageResponseSchema } });
+register('GET', '/v1/dashboard/keys/:id/bundle-usage', { params: dashboardApiKeyParamsSchema, querystring: dashboardApiKeyUsageLimitQuerySchema, response: { 200: dashboardApiKeyBundleUsageResponseSchema } });
+register('GET', '/v1/dashboard/keys/:id/outcomes', { params: dashboardApiKeyParamsSchema, querystring: dashboardApiKeyUsageLimitQuerySchema, response: { 200: dashboardApiKeyOutcomeResponseSchema } });
+register('POST', '/v1/dashboard/keys/:id/approve', { params: dashboardApiKeyParamsSchema, response: { 200: dashboardApiKeyOkResponseSchema } });
+register('POST', '/v1/dashboard/keys/:id/deny', { params: dashboardApiKeyParamsSchema, response: { 200: dashboardApiKeyOkResponseSchema } });
 register('GET', '/v1/dashboard/backup/schedule', { response: { 200: backupScheduleResponseSchema } });
 register('POST', '/v1/dashboard/backup/schedule', { body: backupSchedulePatchSchema, response: { 200: backupScheduleResponseSchema } });
 register('GET', '/v1/dashboard/backup/history', { response: { 200: backupHistoryResponseSchema } });
@@ -1427,39 +1430,39 @@ register('DELETE', '/v1/dashboard/discord/perks/:id', {
   response: { 200: OkResponse },
 });
 register('POST', '/v1/dashboard/keys/bulk-revoke', {
-  body: object({ ids: Type.Array(Identifier, { maxItems: 100 }) }),
-  response: { 200: ApiKeyRevokedResponse },
+  body: dashboardApiKeyBulkIdsBodySchema,
+  response: { 200: dashboardApiKeyRevokedResponseSchema },
 });
 register('POST', '/v1/dashboard/keys/bulk-extend-expiry', {
-  body: object({ ids: Type.Array(Identifier, { maxItems: 100 }), days: Type.Integer({ minimum: 1, maximum: 3650 }) }),
-  response: { 200: ApiKeyExtendedResponse },
+  body: dashboardApiKeyBulkExpiryBodySchema,
+  response: { 200: dashboardApiKeyExtendedResponseSchema },
 });
 register('POST', '/v1/dashboard/keys/bulk-set-daily-limit', {
-  body: object({ ids: Type.Array(Identifier, { maxItems: 100 }), dailyLimit: Type.Union([Type.Number(), Type.Null()]) }),
-  response: { 200: ApiKeyUpdatedResponse },
+  body: dashboardApiKeyBulkDailyLimitBodySchema,
+  response: { 200: dashboardApiKeyUpdatedResponseSchema },
 });
 register('POST', '/v1/dashboard/keys/bulk-set-scope', {
-  body: object({ ids: Type.Array(Identifier, { maxItems: 100 }), allowedBundleIds: Type.Union([Type.Array(BundleId, { maxItems: 25 }), Type.Null()]) }),
-  response: { 200: ApiKeyUpdatedResponse },
+  body: dashboardApiKeyBulkScopeBodySchema,
+  response: { 200: dashboardApiKeyUpdatedResponseSchema },
 });
 register('POST', '/v1/dashboard/keys/bulk-approve', {
-  body: object({ ids: Type.Array(Identifier, { maxItems: 100 }) }),
-  response: { 200: ApiKeyApprovedResponse },
+  body: dashboardApiKeyBulkIdsBodySchema,
+  response: { 200: dashboardApiKeyApprovedResponseSchema },
 });
 register('PATCH', '/v1/dashboard/keys/:id/priority', {
-  params: object({ id: Identifier }),
-  body: object({ priority: Type.Number() }),
-  response: { 200: ApiKeyPriorityResponse },
+  params: dashboardApiKeyParamsSchema,
+  body: dashboardApiKeyPriorityBodySchema,
+  response: { 200: dashboardApiKeyPriorityResponseSchema },
 });
 register('PATCH', '/v1/dashboard/keys/:id/max-concurrent', {
-  params: object({ id: Identifier }),
-  body: object({ maxConcurrent: Type.Optional(Type.Union([Type.Number(), Type.Null()])) }),
-  response: { 200: ApiKeyConcurrencyResponse },
+  params: dashboardApiKeyParamsSchema,
+  body: dashboardApiKeyConcurrencyBodySchema,
+  response: { 200: dashboardApiKeyConcurrencyResponseSchema },
 });
 register('PATCH', '/v1/dashboard/keys/:id/allow-testflight', {
-  params: object({ id: Identifier }),
-  body: object({ allowTestFlight: Type.Boolean() }),
-  response: { 200: ApiKeyTestFlightResponse },
+  params: dashboardApiKeyParamsSchema,
+  body: dashboardApiKeyTestFlightBodySchema,
+  response: { 200: dashboardApiKeyTestFlightResponseSchema },
 });
 register('GET', '/v1/dashboard/me/prefs', {
   response: { 200: userPrefsResponseSchema },
