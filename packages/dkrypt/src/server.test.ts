@@ -43,6 +43,10 @@ test('native auth routes preserve cookie sessions, refresh, logout, and session 
     const mfa = await server.inject({ method: 'GET', url: '/v1/auth/mfa', headers: { cookie } });
     expect(mfa.statusCode).toBe(200);
 
+    const rootProfile = await server.inject({ method: 'PATCH', url: '/v1/auth/profile', headers: { cookie }, payload: { displayName: 'Root' } });
+    expect(rootProfile.statusCode).toBe(400);
+    expect(rootProfile.json()).toMatchObject({ code: 'request_error', message: 'the root account does not have an OAuth profile' });
+
     const sessions = await server.inject({ method: 'GET', url: '/v1/auth/sessions', headers: { cookie } });
     expect(sessions.statusCode).toBe(200);
     expect((sessions.json() as { current: boolean }[]).some((entry) => entry.current)).toBe(true);

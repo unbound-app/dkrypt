@@ -79,7 +79,7 @@ function deserialize(cookieValue: string): Session | undefined {
   }
 }
 
-function parseCookies(header: string | undefined): Record<string, string> {
+export function parseCookieHeader(header: string | undefined): Record<string, string> {
   if (!header) return {};
 
   const out: Record<string, string> = {};
@@ -167,13 +167,16 @@ export function fastifyRequireRecentAuthentication(maxAgeMs = 10 * 60_000) {
 }
 
 export function clearSessionCookie(res: Response): void {
-  const secure = config.publicBaseUrl.startsWith('https://') ? '; Secure' : '';
-  res.setHeader('Set-Cookie', `${COOKIE_NAME}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secure}`);
+  res.setHeader('Set-Cookie', emptySessionCookie());
 }
 
 export function clearFastifySessionCookie(reply: FastifyReply): void {
+  reply.header('Set-Cookie', emptySessionCookie());
+}
+
+function emptySessionCookie(): string {
   const secure = config.publicBaseUrl.startsWith('https://') ? '; Secure' : '';
-  reply.header('Set-Cookie', `${COOKIE_NAME}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secure}`);
+  return `${COOKIE_NAME}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secure}`;
 }
 
 export function getSession(req: Request): Session | undefined {
@@ -185,7 +188,7 @@ export function getFastifySession(request: FastifyRequest): Session | undefined 
 }
 
 function sessionFromCookieHeader(cookieHeader: string | undefined): Session | undefined {
-  const value = parseCookies(cookieHeader)[COOKIE_NAME];
+  const value = parseCookieHeader(cookieHeader)[COOKIE_NAME];
   const session = value ? deserialize(value) : undefined;
   if (!session || session.sub === 'root') return session;
   const sub = resolveAuthUserId(session.sub);

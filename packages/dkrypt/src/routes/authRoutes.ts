@@ -47,6 +47,7 @@ import {
   fastifyRequireSession,
   fastifySessionOptsFromRequest,
   getFastifySession,
+  parseCookieHeader,
   setFastifySessionCookie,
 } from '#session.js';
 import { FixedWindowRateLimiter } from '#util/rateLimit.js';
@@ -108,23 +109,20 @@ const publicAuthRateLimit = (request: FastifyRequest, reply: FastifyReply, done:
   done();
 };
 
-function sendAuthError(request: FastifyRequest, reply: FastifyReply, code: string, message: string, status: number, retryable: boolean): FastifyReply {
-  return reply.code(status).send({ error: message, code, message, requestId: request.id, retryable });
+function sendAuthError(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  code: string,
+  message: string,
+  status: number,
+  retryable: boolean,
+  extra: Record<string, unknown> = {},
+): FastifyReply {
+  return reply.code(status).send({ ...extra, error: message, code, message, requestId: request.id, retryable });
 }
 
-function parseCookieHeader(header: string | undefined): Record<string, string> {
-  if (!header) return {};
-  const out: Record<string, string> = {};
-  for (const part of header.split(';')) {
-    const idx = part.indexOf('=');
-    if (idx === -1) continue;
-    out[part.slice(0, idx).trim()] = decodeURIComponent(part.slice(idx + 1).trim());
-  }
-  return out;
-}
-
-function sendValidationError(reply: FastifyReply, status: number, message: string): FastifyReply {
-  return reply.code(status).send({ error: message });
+function sendValidationError(request: FastifyRequest, reply: FastifyReply, status: number, message: string): FastifyReply {
+  return sendAuthError(request, reply, status >= 500 ? 'internal_error' : 'request_error', message, status, status >= 500 || status === 429 || status === 503);
 }
 
 export const authRoutes: FastifyPluginAsyncTypebox = async (server) => {
@@ -153,20 +151,20 @@ export const authRoutes: FastifyPluginAsyncTypebox = async (server) => {
 
   server.post(`${MFA_ROUTE}/setup`, { schema: getRouteContract('POST', `${MFA_ROUTE}/setup`), preHandler: fastifyRequireSession }, async (request, reply) => {
     const userId = getFastifySession(request)!.sub;
-    if (mfaStatus(userId).enabled) return sendValidationError(reply, 409, 'multi-factor authentication is already enabled');
+    if (mfaStatus(userId).enabled) return sendValidationError(request, reply, 409, 'multi-factor authentication is already enabled');
     return reply.send(beginMfaEnrollment(userId));
   });
 
   server.post<AuthTokenRoute>(`${MFA_ROUTE}/confirm`, { schema: getRouteContract('POST', `${MFA_ROUTE}/confirm`), preHandler: fastifyRequireSession }, async (request, reply) => {
     const result = confirmMfaEnrollment(getFastifySession(request)!.sub, request.body.token);
-    if (!result) return sendValidationError(reply, 400, 'the authenticator code is invalid or the enrollment has expired');
+    if (!result) return sendValidationError(request, reply, 400, 'the authenticator code is invalid or the enrollment has expired');
     return reply.send({ enabled: true, recoveryCodes: result.recoveryCodes });
   });
 
   server.post<AuthTokenRoute>(`${MFA_ROUTE}/verify`, { schema: getRouteContract('POST', `${MFA_ROUTE}/verify`) }, async (request, reply) => {
     const session = getFastifySession(request);
-    if (!session) return sendValidationError(reply, 401, 'not signed in');
-    if (!verifyMfa(session.sub, request.body.token).ok) return sendValidationError(reply, 401, 'the authenticator or recovery code is invalid');
+    if (!session) return sendValidationError(request, reply, 401, 'not signed in');
+    if (!verifyMfa(session.sub, request.body.token).ok) return sendValidationError(request, reply, 401, 'the authenticator or recovery code is invalid');
     const expiresAt = setFastifySessionCookie(reply, { sub: session.sub, permissions: session.permissions, mfaVerified: true, reauthenticatedAt: Date.now() }, { sid: session.sid });
     return reply.send({ ok: true, expiresAt });
   });
@@ -224,7 +222,7 @@ export const authRoutes: FastifyPluginAsyncTypebox = async (server) => {
     return reply.send({ ok: true });
   });
 
-  server.post(`${PASSKEY_ROUTE}/options`, { schema: getRouteContract('POST', `${PASSKEY_ROUTE}/options`), preHandler: publicAuthRateLimit }, async (request, reply) => {
+  server.post(`${PASSKEY_ROUTE}/options`, { schema: getRouteContract('POST', `${PASSKEY_ROUTE}/options`), onRequest: publicAuthRateLimit }, async (request, reply) => {
     try {
       return reply.send(await beginPasskeyAuthentication());
     } catch (error) {
@@ -232,7 +230,7 @@ export const authRoutes: FastifyPluginAsyncTypebox = async (server) => {
     }
   });
 
-  server.post<AuthPasskeyPayloadRoute>(`${PASSKEY_ROUTE}/verify`, { schema: getRouteContract('POST', `${PASSKEY_ROUTE}/verify`), preHandler: publicAuthRateLimit }, async (request, reply) => {
+  server.post<AuthPasskeyPayloadRoute>(`${PASSKEY_ROUTE}/verify`, { schema: getRouteContract('POST', `${PASSKEY_ROUTE}/verify`), onRequest: publicAuthRateLimit }, async (request, reply) => {
     const response = request.body as Record<string, unknown>;
     if (typeof response.id !== 'string' || typeof response.rawId !== 'string' || typeof response.response !== 'object' || response.response === null) {
       return sendAuthError(request, reply, 'invalid_passkey_response', 'the passkey authentication response is malformed', 400, false);
@@ -283,13 +281,13 @@ export const authRoutes: FastifyPluginAsyncTypebox = async (server) => {
   });
 
   server.post<AuthTokenRoute>(`${MFA_ROUTE}/disable`, { schema: getRouteContract('POST', `${MFA_ROUTE}/disable`), preHandler: fastifyRequireSession }, async (request, reply) => {
-    if (!disableMfa(getFastifySession(request)!.sub, request.body.token)) return sendValidationError(reply, 400, 'the authenticator or recovery code is invalid');
+    if (!disableMfa(getFastifySession(request)!.sub, request.body.token)) return sendValidationError(request, reply, 400, 'the authenticator or recovery code is invalid');
     return reply.send({ enabled: false, recoveryCodesRemaining: 0 });
   });
 
   server.post<AuthTokenRoute>(`${MFA_ROUTE}/recovery-codes`, { schema: getRouteContract('POST', `${MFA_ROUTE}/recovery-codes`), preHandler: fastifyRequireSession }, async (request, reply) => {
     const recoveryCodes = regenerateRecoveryCodes(getFastifySession(request)!.sub, request.body.token);
-    if (!recoveryCodes) return sendValidationError(reply, 400, 'the authenticator or recovery code is invalid');
+    if (!recoveryCodes) return sendValidationError(request, reply, 400, 'the authenticator or recovery code is invalid');
     return reply.send({ recoveryCodes });
   });
 
@@ -318,13 +316,13 @@ export const authRoutes: FastifyPluginAsyncTypebox = async (server) => {
 
   server.patch<AuthProfileRoute>('/v1/auth/profile', { schema: getRouteContract('PATCH', '/v1/auth/profile'), preHandler: fastifyRequireSession }, async (request, reply) => {
     const userId = getFastifySession(request)!.sub;
-    if (userId === 'root') return sendValidationError(reply, 400, 'the root account does not have an OAuth profile');
+    if (userId === 'root') return sendValidationError(request, reply, 400, 'the root account does not have an OAuth profile');
     const displayName = request.body.displayName.trim();
     if (!displayName || displayName.length > 64 || /[\u0000-\u001f\u007f]/.test(displayName)) {
-      return sendValidationError(reply, 400, 'displayName must be between 1 and 64 characters');
+      return sendValidationError(request, reply, 400, 'displayName must be between 1 and 64 characters');
     }
     const profile = setAuthDisplayName(userId, displayName);
-    if (!profile) return sendValidationError(reply, 404, 'profile not found');
+    if (!profile) return sendValidationError(request, reply, 404, 'profile not found');
     return reply.send({ displayName: profile.displayName, linkedProviders: getLinkedAuthProviders(userId) });
   });
 
@@ -335,10 +333,10 @@ export const authRoutes: FastifyPluginAsyncTypebox = async (server) => {
     const session = getFastifySession(request)!;
     const userId = session.sub;
     const provider = request.params.provider;
-    if (userId === 'root') return sendValidationError(reply, 400, 'the root account does not have OAuth connections');
-    if (getLinkedAuthIdentities(userId).length < 2) return sendValidationError(reply, 400, 'connect another provider before removing this sign-in method');
+    if (userId === 'root') return sendValidationError(request, reply, 400, 'the root account does not have OAuth connections');
+    if (getLinkedAuthIdentities(userId).length < 2) return sendValidationError(request, reply, 400, 'connect another provider before removing this sign-in method');
     const profile = removeAuthIdentity(userId, provider);
-    if (!profile) return sendValidationError(reply, 404, 'connection not found');
+    if (!profile) return sendValidationError(request, reply, 404, 'connection not found');
     bumpSessionVersion(userId);
     setFastifySessionCookie(reply, { sub: userId, permissions: getUserEffectivePermissions(userId) ?? 0n, reauthenticatedAt: session.reauthenticatedAt }, fastifySessionOptsFromRequest(request));
     return reply.send({ identities: getLinkedAuthIdentities(userId), linkedProviders: getLinkedAuthProviders(userId) });
@@ -346,26 +344,26 @@ export const authRoutes: FastifyPluginAsyncTypebox = async (server) => {
 
   server.post('/v1/auth/refresh', { schema: getRouteContract('POST', '/v1/auth/refresh'), preHandler: fastifyRequireSession }, async (request, reply) => {
     const session = getFastifySession(request);
-    if (!session) return sendValidationError(reply, 401, 'not signed in');
+    if (!session) return sendValidationError(request, reply, 401, 'not signed in');
     const permissions = session.sub === 'root' ? PermissionFlag.administrator : getUserEffectivePermissions(session.sub);
     const expiresAt = setFastifySessionCookie(reply, { sub: session.sub, permissions, mfaVerified: session.mfaVerified, reauthenticatedAt: session.reauthenticatedAt }, { sid: session.sid });
     return reply.send({ ok: true, expiresAt });
   });
 
-  server.post<AuthLoginRoute>('/v1/auth/login', { schema: getRouteContract('POST', '/v1/auth/login'), preHandler: publicAuthRateLimit }, async (request, reply) => {
+  server.post<AuthLoginRoute>('/v1/auth/login', { schema: getRouteContract('POST', '/v1/auth/login'), onRequest: publicAuthRateLimit }, async (request, reply) => {
     const key = request.ip ?? 'unknown';
     const lockedForMs = loginLockoutMs(key);
-    if (lockedForMs > 0) return sendValidationError(reply, 429, `too many failed attempts - try again in ${Math.ceil(lockedForMs / 1000)}s`);
+    if (lockedForMs > 0) return sendValidationError(request, reply, 429, `too many failed attempts - try again in ${Math.ceil(lockedForMs / 1000)}s`);
     const password = request.body.password;
     if (!password || !checkRootPassword(password)) {
       recordLoginFailure(key);
       const failures = loginAttempts.get(key)?.failures ?? 0;
-      return reply.code(401).send({ error: 'invalid password', attemptsRemaining: Math.max(0, LOCKOUT_AFTER - failures) });
+      return sendAuthError(request, reply, 'request_error', 'invalid password', 401, false, { attemptsRemaining: Math.max(0, LOCKOUT_AFTER - failures) });
     }
     const mfa = mfaStatus('root');
     const mfaToken = request.body.mfaToken ?? '';
     if (mfa.enabled && (!mfaToken || !verifyMfa('root', mfaToken).ok)) {
-      return reply.code(401).send({ error: 'multi-factor authentication is required', code: 'mfa_required' });
+      return sendAuthError(request, reply, 'mfa_required', 'multi-factor authentication is required', 401, false);
     }
     loginAttempts.delete(key);
     setFastifySessionCookie(reply, { sub: 'root', permissions: PermissionFlag.administrator, mfaVerified: true, reauthenticatedAt: Date.now() }, fastifySessionOptsFromRequest(request));
@@ -381,7 +379,7 @@ export const authRoutes: FastifyPluginAsyncTypebox = async (server) => {
 
   server.post('/v1/auth/logout-everywhere', { schema: getRouteContract('POST', '/v1/auth/logout-everywhere'), preHandler: fastifyRequireSession }, async (request, reply) => {
     const session = getFastifySession(request);
-    if (!session) return sendValidationError(reply, 401, 'not signed in');
+    if (!session) return sendValidationError(request, reply, 401, 'not signed in');
     bumpSessionVersion(session.sub);
     clearFastifySessionCookie(reply);
     return reply.send({ ok: true });
@@ -389,7 +387,7 @@ export const authRoutes: FastifyPluginAsyncTypebox = async (server) => {
 
   server.get('/v1/auth/sessions', { schema: getRouteContract('GET', '/v1/auth/sessions'), preHandler: fastifyRequireSession }, async (request, reply) => {
     const session = getFastifySession(request);
-    if (!session) return sendValidationError(reply, 401, 'not signed in');
+    if (!session) return sendValidationError(request, reply, 401, 'not signed in');
     return reply.send(listSessionsForUser(session.sub).map((item) => ({ ...item, current: item.id === session.sid })));
   });
 
@@ -398,9 +396,9 @@ export const authRoutes: FastifyPluginAsyncTypebox = async (server) => {
     preHandler: fastifyRequireSession,
   }, async (request, reply) => {
     const session = getFastifySession(request);
-    if (!session) return sendValidationError(reply, 401, 'not signed in');
+    if (!session) return sendValidationError(request, reply, 401, 'not signed in');
     const ok = revokeSessionRecord(request.params.id, session.sub);
-    if (!ok) return sendValidationError(reply, 404, 'session not found');
+    if (!ok) return sendValidationError(request, reply, 404, 'session not found');
     if (request.params.id === session.sid) clearFastifySessionCookie(reply);
     return reply.send({ ok: true });
   });
@@ -410,36 +408,66 @@ export const authRoutes: FastifyPluginAsyncTypebox = async (server) => {
     preHandler: fastifyRequireSession,
   }, async (request, reply) => {
     const session = getFastifySession(request);
-    if (!session) return sendValidationError(reply, 401, 'not signed in');
+    if (!session) return sendValidationError(request, reply, 401, 'not signed in');
     return reply.send({ ok: true, revoked: revokeOtherSessionRecords(session.sub, session.sid) });
   });
 
   registerOAuthRoutes(server);
 };
 
-const GITHUB_OAUTH_STATE_COOKIE = 'github_oauth_state';
-const DISCORD_OAUTH_STATE_COOKIE = 'discord_oauth_state';
-const oauthConnections = new Map<string, { provider: 'github' | 'discord'; userId?: string; codeVerifier: string; expiresAt: number }>();
+type OAuthProvider = 'github' | 'discord';
+
+interface OAuthProviderConfig {
+  enabled: boolean;
+  clientId: string;
+  callbackPath: string;
+  authorizationUrl: string;
+  scope: string;
+  stateCookieName: string;
+  responseType?: string;
+}
+
+const oauthProviders: Record<OAuthProvider, OAuthProviderConfig> = {
+  github: {
+    enabled: githubOauthEnabled,
+    clientId: config.githubOauthClientId,
+    callbackPath: '/v1/auth/github/callback',
+    authorizationUrl: 'https://github.com/login/oauth/authorize',
+    scope: 'read:user user:email',
+    stateCookieName: 'github_oauth_state',
+  },
+  discord: {
+    enabled: discordOauthEnabled,
+    clientId: config.discordOauthClientId,
+    callbackPath: '/v1/auth/discord/callback',
+    authorizationUrl: 'https://discord.com/oauth2/authorize',
+    scope: 'identify email connections',
+    stateCookieName: 'discord_oauth_state',
+    responseType: 'code',
+  },
+};
+
+const oauthConnections = new Map<string, { provider: OAuthProvider; userId?: string; codeVerifier: string; expiresAt: number }>();
 
 function oauthCookie(name: string, value: string, maxAge: number): string {
   const secure = config.publicBaseUrl.startsWith('https://') ? '; Secure' : '';
   return `${name}=${value}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAge}${secure}`;
 }
 
-function oauthUserId(provider: 'github' | 'discord', providerId: string, username: string): string {
+function oauthUserId(provider: OAuthProvider, providerId: string, username: string): string {
   const stableId = `${provider}:${providerId}`;
   const legacy = listAllowedUsers().find((user) => user.username === username.toLowerCase());
   return legacy?.username ?? stableId;
 }
 
-function createOauthState(provider: 'github' | 'discord', userId?: string): { state: string; codeVerifier: string } {
+function createOauthState(provider: OAuthProvider, userId?: string): { state: string; codeVerifier: string } {
   const state = randomBytes(16).toString('hex');
   const codeVerifier = randomBytes(32).toString('base64url');
   oauthConnections.set(state, { provider, userId, codeVerifier, expiresAt: Date.now() + 600_000 });
   return { state, codeVerifier };
 }
 
-function consumeOauthConnection(provider: 'github' | 'discord', state: string): { userId?: string; codeVerifier: string } | undefined {
+function consumeOauthConnection(provider: OAuthProvider, state: string): { userId?: string; codeVerifier: string } | undefined {
   const connection = oauthConnections.get(state);
   oauthConnections.delete(state);
   if (!connection || connection.provider !== provider || connection.expiresAt < Date.now()) return undefined;
@@ -453,37 +481,19 @@ setInterval(() => {
   }
 }, 60_000).unref();
 
-function startGithubLogin(reply: FastifyReply, userId?: string): void {
-  if (!githubOauthEnabled) {
-    reply.code(404).send({ error: 'GitHub OAuth is not configured' });
+function startOAuthLogin(request: FastifyRequest, reply: FastifyReply, provider: OAuthProvider, userId?: string): void {
+  const providerConfig = oauthProviders[provider];
+  if (!providerConfig.enabled) {
+    sendValidationError(request, reply, 404, `${provider === 'github' ? 'GitHub' : 'Discord'} OAuth is not configured`);
     return;
   }
-  const { state, codeVerifier } = createOauthState('github', userId);
-  reply.header('Set-Cookie', oauthCookie(GITHUB_OAUTH_STATE_COOKIE, state, 600));
-  const redirectUri = `${config.publicBaseUrl}/v1/auth/github/callback`;
-  const url = new URL('https://github.com/login/oauth/authorize');
-  url.searchParams.set('client_id', config.githubOauthClientId);
-  url.searchParams.set('redirect_uri', redirectUri);
-  url.searchParams.set('scope', 'read:user user:email');
-  url.searchParams.set('state', state);
-  url.searchParams.set('code_challenge', createHash('sha256').update(codeVerifier).digest('base64url'));
-  url.searchParams.set('code_challenge_method', 'S256');
-  reply.redirect(url.toString());
-}
-
-function startDiscordLogin(reply: FastifyReply, userId?: string): void {
-  if (!discordOauthEnabled) {
-    reply.code(404).send({ error: 'Discord OAuth is not configured' });
-    return;
-  }
-  const { state, codeVerifier } = createOauthState('discord', userId);
-  reply.header('Set-Cookie', oauthCookie(DISCORD_OAUTH_STATE_COOKIE, state, 600));
-  const redirectUri = `${config.publicBaseUrl}/v1/auth/discord/callback`;
-  const url = new URL('https://discord.com/oauth2/authorize');
-  url.searchParams.set('client_id', config.discordOauthClientId);
-  url.searchParams.set('redirect_uri', redirectUri);
-  url.searchParams.set('response_type', 'code');
-  url.searchParams.set('scope', 'identify email connections');
+  const { state, codeVerifier } = createOauthState(provider, userId);
+  reply.header('Set-Cookie', oauthCookie(providerConfig.stateCookieName, state, 600));
+  const url = new URL(providerConfig.authorizationUrl);
+  url.searchParams.set('client_id', providerConfig.clientId);
+  url.searchParams.set('redirect_uri', `${config.publicBaseUrl}${providerConfig.callbackPath}`);
+  if (providerConfig.responseType) url.searchParams.set('response_type', providerConfig.responseType);
+  url.searchParams.set('scope', providerConfig.scope);
   url.searchParams.set('state', state);
   url.searchParams.set('code_challenge', createHash('sha256').update(codeVerifier).digest('base64url'));
   url.searchParams.set('code_challenge_method', 'S256');
@@ -492,7 +502,7 @@ function startDiscordLogin(reply: FastifyReply, userId?: string): void {
 
 function registerOAuthRoutes(server: Parameters<FastifyPluginAsyncTypebox>[0]): void {
   server.get('/v1/auth/github/login', { schema: getRouteContract('GET', '/v1/auth/github/login') }, async (_request, reply) => {
-    startGithubLogin(reply);
+    startOAuthLogin(_request, reply, 'github');
   });
 
   server.get('/v1/auth/github/connect', {
@@ -500,8 +510,8 @@ function registerOAuthRoutes(server: Parameters<FastifyPluginAsyncTypebox>[0]): 
     preHandler: fastifyRequireSession,
   }, async (request, reply) => {
     const session = getFastifySession(request)!;
-    if (session.sub === 'root') return sendValidationError(reply, 400, 'the root account cannot connect OAuth identities');
-    startGithubLogin(reply, session.sub);
+    if (session.sub === 'root') return sendValidationError(request, reply, 400, 'the root account cannot connect OAuth identities');
+    startOAuthLogin(request, reply, 'github', session.sub);
   });
 
   server.get<AuthOAuthCallbackRoute>('/v1/auth/github/callback', {
@@ -510,8 +520,8 @@ function registerOAuthRoutes(server: Parameters<FastifyPluginAsyncTypebox>[0]): 
     if (!githubOauthEnabled) return reply.redirect('/?auth_error=disabled');
     const code = request.query.code ?? '';
     const state = request.query.state ?? '';
-    const cookieState = parseCookieHeader(request.headers.cookie)[GITHUB_OAUTH_STATE_COOKIE];
-    reply.header('Set-Cookie', oauthCookie(GITHUB_OAUTH_STATE_COOKIE, '', 0));
+    const cookieState = parseCookieHeader(request.headers.cookie)[oauthProviders.github.stateCookieName];
+    reply.header('Set-Cookie', oauthCookie(oauthProviders.github.stateCookieName, '', 0));
     if (!code || !state || !cookieState || state !== cookieState) {
       log.warn('github oauth state mismatch', { hasCode: !!code, hasState: !!state, hasCookieState: !!cookieState });
       return reply.redirect('/?auth_error=state_mismatch');
@@ -578,7 +588,7 @@ function registerOAuthRoutes(server: Parameters<FastifyPluginAsyncTypebox>[0]): 
   });
 
   server.get('/v1/auth/discord/login', { schema: getRouteContract('GET', '/v1/auth/discord/login') }, async (_request, reply) => {
-    startDiscordLogin(reply);
+    startOAuthLogin(_request, reply, 'discord');
   });
 
   server.get('/v1/auth/discord/connect', {
@@ -586,8 +596,8 @@ function registerOAuthRoutes(server: Parameters<FastifyPluginAsyncTypebox>[0]): 
     preHandler: fastifyRequireSession,
   }, async (request, reply) => {
     const session = getFastifySession(request)!;
-    if (session.sub === 'root') return sendValidationError(reply, 400, 'the root account cannot connect OAuth identities');
-    startDiscordLogin(reply, session.sub);
+    if (session.sub === 'root') return sendValidationError(request, reply, 400, 'the root account cannot connect OAuth identities');
+    startOAuthLogin(request, reply, 'discord', session.sub);
   });
 
   server.get<AuthOAuthCallbackRoute>('/v1/auth/discord/callback', {
@@ -596,8 +606,8 @@ function registerOAuthRoutes(server: Parameters<FastifyPluginAsyncTypebox>[0]): 
     if (!discordOauthEnabled) return reply.redirect('/?auth_error=discord_disabled');
     const code = request.query.code ?? '';
     const state = request.query.state ?? '';
-    const cookieState = parseCookieHeader(request.headers.cookie)[DISCORD_OAUTH_STATE_COOKIE];
-    reply.header('Set-Cookie', oauthCookie(DISCORD_OAUTH_STATE_COOKIE, '', 0));
+    const cookieState = parseCookieHeader(request.headers.cookie)[oauthProviders.discord.stateCookieName];
+    reply.header('Set-Cookie', oauthCookie(oauthProviders.discord.stateCookieName, '', 0));
     if (!code || !state || !cookieState || state !== cookieState) {
       log.warn('discord oauth state mismatch', { hasCode: !!code, hasState: !!state, hasCookieState: !!cookieState });
       return reply.redirect('/?auth_error=state_mismatch');
