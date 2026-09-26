@@ -5,7 +5,7 @@ import { fetchBotGuilds, fetchGuildRoles } from '#discord.js';
 import { dashboardEvents, emitJobsChanged, getOnlineUsernames, nextDashboardSequence, registerDashboardConnection, registerPresence, unregisterPresence } from '#events.js';
 import { getBillingEntitlements } from '#billing.js';
 import { blockDuringMaintenance, getMaintenanceStatus } from '#maintenance.js';
-import { jobFileAvailable, jobSummary, streamFilePath } from '#jobs/http.js';
+import { jobSummary, streamFilePath } from '#jobs/http.js';
 import { cancelJob, enqueueDecryptJob, getActiveJobs, getJob, getQueueInfo, getQueueReason, prioritizeQueuedJob, reorderQueue } from '#jobs/store.js';
 import type { LogEntry, LogLevel } from '#logger.js';
 import { getRecentLogs } from '#logger.js';
@@ -17,16 +17,16 @@ import { getGitHubRateLimitBudget, listDispatchRepos, listRepoWorkflows, validat
 import { lookupAppMetadata, searchApps } from '#scheduler/itunes.js';
 import { requirePermission, requireSession } from '#session.js';
 import { recordDashboardSessionActivity } from '#dashboardActivity.js';
+import { canAccessProject, canViewAllProjects, dashboardHistoryEntry } from '#dashboardJobPresentation.js';
 import { getDeviceHealth, getDeviceInstallBlocker, getDeviceReadiness, isBridgeHeartbeatFresh } from '#deviceHealth.js';
 import { decodeCursor, nextCursor, paginateCursor } from '#util/cursor.js';
-import { getCachedDeviceHealth } from '#deviceHealthCache.js';
-import { discoverDevices, execCommand, isDirectUsbDeviceAgentConnection, listInstalledAppStoreBundles, sendSpringBoardBridgeRequest, setupDeviceConnection, withAutoinstallDeviceAgent, withSSH, type DeviceConnection } from '#idevice.js';
+import { serializeDashboardDevice as serializeDevice } from '#dashboardDevicePresentation.js';
+import { discoverDevices, execCommand, isDirectUsbDeviceAgentConnection, listInstalledAppStoreBundles, sendSpringBoardBridgeRequest, setupDeviceConnection, withAutoinstallDeviceAgent, withSSH, type DeviceConnection, type DeviceTransport } from '#idevice.js';
 import { getTestFlightBridgeDiagnostics, listBuilds, listTrains, type TFBuild } from '#testflight.js';
 import { nextCronRunAt, nextCronRuns } from '#util/cron.js';
 import { getDiskUsage } from '#util/diskUsage.js';
 import { runConfigurationDoctor } from '#doctor.js';
 import { rateLimitPerUser } from '#util/rateLimit.js';
-import { getFailureGuidance } from '#util/failureGuidance.js';
 import { runSyntheticProbes } from '#synthetic.js';
 import {
   decorateSearchResults,
@@ -56,8 +56,6 @@ import {
   artifactKeyForAppStoreVersion,
   getArtifactById,
   getArtifactByKey,
-  getArtifactBySourceJobId,
-  getArtifactForJob,
   getArtifactStorageStats,
   listArtifacts,
   previewArtifactQuotaRetention,
@@ -105,14 +103,8 @@ import {
   getBundleStats,
   getDailyVolume,
   getDevice,
-  getDeviceActivityPage,
   getDiscordGuilds,
   getDiscordRolePerks,
-  getDeviceBatteryHourlyBuckets,
-  getDeviceHealthHourlyBuckets,
-  getDeviceStorageHourlyBuckets,
-  getDeviceTemperatureHourlyBuckets,
-  getDeviceUptimePercent,
   getEffectiveDevices,
   getEffectiveSettings,
   getEffectiveWatches,
@@ -121,7 +113,6 @@ import {
   getInsightsSummary,
   getUserActivityStats,
   getJobHistoryEntryById,
-  getJobHistoryPage,
   getPrimaryDevice,
   getSchedulerRunHistory,
   getStateDatabaseStatus,
@@ -170,7 +161,6 @@ import {
   updateRole,
   updateSettings,
   updateWatch,
-  userCanAccessProject,
   verifyLatestDatabaseBackup,
   wouldOrphanPermission,
 } from '#store/state.js';
@@ -261,6 +251,8 @@ function buildOverview(permissions: bigint, userId: string, projectId = DEFAULT_
       progress: j.progress,
       versionLabel: j.versionLabel,
       deviceId: j.deviceId,
+      transport: j.transport,
+      warnings: j.warnings,
       testflight: j.testflight
         ? { appId: j.testflight.appId, buildId: j.testflight.build.id, version: j.testflight.build.cfBundleShortVersion, buildNumber: j.testflight.build.cfBundleVersion }
         : undefined,
@@ -274,32 +266,6 @@ function buildOverview(permissions: bigint, userId: string, projectId = DEFAULT_
       failureClass: j.failureClass,
       queueReason: getQueueReason(j),
     })),
-  };
-}
-
-function dashboardHistoryEntry(entry: JobHistoryEntry) {
-  const job = getJob(entry.id);
-  const artifact =
-    (entry.artifactId ? getArtifactById(entry.artifactId) : undefined) ??
-    (job ? getArtifactForJob(job) : undefined) ??
-    getArtifactBySourceJobId(entry.id);
-  const fileAvailable = artifact ? artifactFileAvailable(artifact) : jobFileAvailable(job);
-  return {
-    ...entry,
-    requester: dashboardJobRequester(entry),
-    downloadUrl: artifact && fileAvailable ? `/v1/dashboard/artifacts/${encodeURIComponent(artifact.id)}/file` : undefined,
-    fileAvailable,
-  };
-}
-
-function dashboardJobRequester(entry: JobHistoryEntry) {
-  if (entry.source === 'scheduler') return { displayName: 'System', avatarUrl: '/favicon.svg' };
-  if (!entry.queuedBy) return { displayName: 'Unknown' };
-  const profile = getAuthProfile(entry.queuedBy);
-  return {
-    username: profile?.username ?? entry.queuedBy,
-    displayName: profile?.displayName ?? entry.queuedBy,
-    avatarUrl: profile?.avatarUrl,
   };
 }
 
@@ -390,40 +356,6 @@ dashboardRouter.get('/v1/dashboard/events', (req, res) => {
     dashboardEvents.off('presenceChanged', onPresenceChanged);
     dashboardEvents.off('projectChanged', onProjectChanged);
     dashboardEvents.off('projectsChanged', onProjectChanged);
-  });
-});
-
-dashboardRouter.get('/v1/dashboard/jobs', (req, res) => {
-  const projectId = resolveRequestProjectId(req, res, 'query');
-  if (!projectId) return;
-  const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit ?? '15'), 10) || 15, 1), 100);
-  const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
-  const offset = cursor ? 0 : Math.max(Number.parseInt(String(req.query.offset ?? '0'), 10) || 0, 0);
-  const q = typeof req.query.q === 'string' && req.query.q.trim() ? req.query.q.trim().slice(0, 200) : undefined;
-  const source = req.query.source === 'manual' || req.query.source === 'scheduler' ? req.query.source : undefined;
-  const status = req.query.status === 'done' || req.query.status === 'failed' ? req.query.status : undefined;
-  const queuedBy = typeof req.query.queuedBy === 'string' && req.query.queuedBy.trim() ? req.query.queuedBy.trim().slice(0, 120) : undefined;
-  const deviceId = typeof req.query.deviceId === 'string' && req.query.deviceId.trim() ? req.query.deviceId.trim().slice(0, 64) : undefined;
-  const errorQ = typeof req.query.errorQ === 'string' && req.query.errorQ.trim() ? req.query.errorQ.trim().slice(0, 200) : undefined;
-  const failureCategory = typeof req.query.failureCategory === 'string' && req.query.failureCategory.trim() ? req.query.failureCategory.trim().slice(0, 64) : undefined;
-  const fromTs = Number.parseInt(String(req.query.fromTs ?? ''), 10);
-  const toTs = Number.parseInt(String(req.query.toTs ?? ''), 10);
-  const { entries, total, nextCursor } = getJobHistoryPage(offset, limit, {
-    projectId,
-    bundleIdSearch: q,
-    source,
-    status,
-    queuedBy,
-    deviceId,
-    errorSearch: errorQ,
-    failureCategory,
-    fromTs: Number.isFinite(fromTs) ? fromTs : undefined,
-    toTs: Number.isFinite(toTs) ? toTs : undefined,
-  }, cursor);
-  res.json({
-    history: entries.map((entry) => dashboardHistoryEntry(entry)),
-    total,
-    nextCursor,
   });
 });
 
@@ -1186,22 +1118,6 @@ dashboardRouter.get('/v1/dashboard/versions/:bundleId', async (req, res) => {
   }
 });
 
-function serializeDevice(d: DeviceRecord) {
-  const { keyPath: _keyPath, ...device } = d;
-  const health = getCachedDeviceHealth(d.id)?.value;
-  return {
-    ...device,
-    transport: d.transport ?? 'wifi',
-    port: d.port ?? config.deviceSshPort,
-    user: d.user ?? config.deviceSshUser,
-    setupRequired: !d.host && !d.udid,
-    transportState: health?.transportState ?? 'discovered',
-    transportCapabilities: health?.capabilities ?? [],
-    lastSeenAt: health?.lastSeenAt,
-    recoveryState: health?.recoveryState ?? 'recovering',
-  };
-}
-
 dashboardRouter.get('/v1/dashboard/devices/discover', canManageDevices, async (_req, res) => {
   try {
     res.json(await discoverDevices());
@@ -1210,13 +1126,9 @@ dashboardRouter.get('/v1/dashboard/devices/discover', canManageDevices, async (_
   }
 });
 
-dashboardRouter.get('/v1/dashboard/devices', canViewDevices, (_req, res) => {
-  res.json({ devices: getEffectiveDevices().map(serializeDevice) });
-});
-
 interface DeviceInput {
   name: string;
-  transport?: 'wifi' | 'usb';
+  transport?: DeviceTransport;
   host?: string;
   port?: number;
   user?: string;
@@ -1531,39 +1443,6 @@ dashboardRouter.get('/v1/dashboard/github/rate-limit', canManageWatches, async (
   } catch (err) {
     res.status(502).json({ error: `GitHub rate-limit lookup failed: ${String(err)}` });
   }
-});
-
-dashboardRouter.get('/v1/dashboard/devices/:id/health-history', canViewDevices, (req, res) => {
-  const hours = Math.min(Math.max(Number.parseInt(String(req.query.hours ?? '24'), 10) || 24, 1), 168);
-  res.json({ buckets: getDeviceHealthHourlyBuckets(req.params.id, hours), uptimePercent: getDeviceUptimePercent(req.params.id, hours) ?? null });
-});
-
-dashboardRouter.get('/v1/dashboard/devices/:id/activity', canViewDevices, (req, res) => {
-  const device = requireDevice(req.params.id);
-  if (!device) {
-    res.status(404).json({ error: 'device not found' });
-    return;
-  }
-  const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit ?? '12'), 10) || 12, 1), 50);
-  const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
-  const offset = cursor ? 0 : Math.max(Number.parseInt(String(req.query.offset ?? '0'), 10) || 0, 0);
-  const page = getDeviceActivityPage(device.id, offset, limit, cursor);
-  res.json({ activity: page.entries, total: page.total, nextCursor: page.nextCursor });
-});
-
-dashboardRouter.get('/v1/dashboard/devices/:id/battery-history', canViewDevices, (req, res) => {
-  const hours = Math.min(Math.max(Number.parseInt(String(req.query.hours ?? '24'), 10) || 24, 1), 168);
-  res.json({ buckets: getDeviceBatteryHourlyBuckets(req.params.id, hours) });
-});
-
-dashboardRouter.get('/v1/dashboard/devices/:id/temperature-history', canViewDevices, (req, res) => {
-  const hours = Math.min(Math.max(Number.parseInt(String(req.query.hours ?? '24'), 10) || 24, 1), 168);
-  res.json({ buckets: getDeviceTemperatureHourlyBuckets(req.params.id, hours) });
-});
-
-dashboardRouter.get('/v1/dashboard/devices/:id/storage-history', canViewDevices, (req, res) => {
-  const hours = Math.min(Math.max(Number.parseInt(String(req.query.hours ?? '24'), 10) || 24, 1), 168);
-  res.json({ buckets: getDeviceStorageHourlyBuckets(req.params.id, hours) });
 });
 
 function serializeWatch(w: AppWatch) {
@@ -2050,15 +1929,6 @@ dashboardRouter.post('/v1/dashboard/testflight/decrypt', canDecrypt, blockDuring
   res.status(202).json(jobSummary(job));
 });
 
-dashboardRouter.get('/v1/dashboard/jobs/:id/status', (req, res) => {
-  const job = getJob(req.params.id);
-  if (!job || !canAccessProject(res.locals.session.sub, res.locals.session.permissions, job.projectId ?? DEFAULT_PROJECT_ID)) {
-    res.status(404).json({ error: 'job not found (finished jobs are pruned after retention window)' });
-    return;
-  }
-  res.json(jobSummary(job));
-});
-
 dashboardRouter.post('/v1/dashboard/jobs/:id/cancel', canDecrypt, (req, res) => {
   const job = getJob(req.params.id);
   if (!job || !canAccessProject(res.locals.session.sub, res.locals.session.permissions, job.projectId ?? DEFAULT_PROJECT_ID)) {
@@ -2125,52 +1995,6 @@ dashboardRouter.post('/v1/dashboard/jobs/:id/retry', canDecrypt, blockDuringMain
     entry.projectId ?? DEFAULT_PROJECT_ID,
   );
   res.status(202).json(jobSummary(job));
-});
-
-dashboardRouter.get('/v1/dashboard/jobs/:id/timeline', (req, res) => {
-  const active = getJob(req.params.id);
-  if (active && canAccessProject(res.locals.session.sub, res.locals.session.permissions, active.projectId ?? DEFAULT_PROJECT_ID)) {
-    res.json({
-      id: active.id,
-      correlationId: active.correlationId ?? active.id,
-      bundleId: active.bundleId,
-      status: active.status,
-      versionLabel: active.versionLabel,
-      deviceId: active.deviceId,
-      sizeBytes: active.fileSizeBytes,
-      warnings: active.warnings,
-      ipaMetadata: active.ipaMetadata,
-      ipaInfoPlist: active.ipaInfoPlist,
-      events: active.timeline ?? [],
-      guidance: active.status === 'failed' ? getFailureGuidance(active.error) : undefined,
-    });
-    return;
-  }
-
-  const entry = getJobHistoryEntryById(req.params.id);
-  if (!entry || !canAccessProject(res.locals.session.sub, res.locals.session.permissions, entry.projectId ?? DEFAULT_PROJECT_ID)) {
-    res.status(404).json({ error: 'job not found' });
-    return;
-  }
-  const events = entry.timeline ?? [
-    { at: entry.createdAt, label: 'Queued', status: 'queued' as const },
-    ...(entry.startedAt ? [{ at: entry.startedAt, label: `Started on ${entry.deviceId ?? 'unknown device'}`, status: 'running' as const }] : []),
-    { at: entry.finishedAt, label: entry.status === 'done' ? 'Finished' : `Failed: ${entry.error ?? 'unknown error'}`, status: entry.status },
-  ];
-  res.json({
-    id: entry.id,
-    correlationId: entry.correlationId ?? entry.id,
-    bundleId: entry.bundleId,
-    status: entry.status,
-    versionLabel: entry.versionLabel,
-    deviceId: entry.deviceId,
-    sizeBytes: entry.sizeBytes,
-    warnings: entry.warnings,
-    ipaMetadata: entry.ipaMetadata,
-    ipaInfoPlist: entry.ipaInfoPlist,
-    events,
-    guidance: entry.status === 'failed' ? getFailureGuidance(entry.error) : undefined,
-  });
 });
 
 dashboardRouter.get('/v1/dashboard/jobs/:id/diagnostic', canDecrypt, (req, res) => {
@@ -2668,16 +2492,6 @@ dashboardRouter.get('/v1/dashboard/audit-log/export', canViewUsers, (req, res) =
   res.setHeader('Content-Disposition', 'attachment; filename="dkrypt-audit-log.csv"');
   res.send(rows.join('\n'));
 });
-
-function canViewAllProjects(permissions: bigint): boolean {
-  return hasPermission(permissions, PermissionFlag.viewProjects) || hasPermission(permissions, PermissionFlag.manageProjects);
-}
-
-function canAccessProject(userId: string, permissions: bigint, projectId: string): boolean {
-  const project = getProject(projectId);
-  if (!project) return false;
-  return canViewAllProjects(permissions) || userCanAccessProject(userId, projectId);
-}
 
 function logBelongsToProject(entry: LogEntry, projectId: string): boolean {
   const explicitProjectId = typeof entry.meta?.projectId === 'string' ? entry.meta.projectId : undefined;

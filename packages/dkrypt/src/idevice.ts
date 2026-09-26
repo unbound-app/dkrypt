@@ -4,6 +4,7 @@ import { connect as connectSocket, type Socket } from 'node:net';
 import path from 'node:path';
 import { Client, type Channel } from 'ssh2';
 import { config } from '#config.js';
+import type { DeviceTransport } from '#apiCommonContracts.js';
 import { scopedLogger } from '#logger.js';
 import { BRIDGE_PROTOCOL_VERSION } from '#bridgeProtocol.js';
 import type { BridgeChannel } from '#bridgeProtocol.js';
@@ -37,6 +38,7 @@ const SSH_SFTP_PROBE_TIMEOUT_MS = 5_000;
 const DEVICE_BRIDGE_EVENT_INITIAL_SNAPSHOT_TIMEOUT_MS = 10_000;
 
 export type { BridgeChannel } from '#bridgeProtocol.js';
+export type { DeviceTransport } from '#apiCommonContracts.js';
 
 export interface BridgeEnvelope {
   version: number;
@@ -509,8 +511,6 @@ interface DeviceAgentSession {
 }
 
 const deviceAgentSessions = new Map<string, DeviceAgentSession>();
-
-export type DeviceTransport = 'wifi' | 'usb';
 
 export interface DeviceConnection {
   id?: string;

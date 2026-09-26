@@ -1,5 +1,6 @@
-import { Type, type TSchema } from '@sinclair/typebox';
+import { Type, type Static, type TSchema } from '@sinclair/typebox';
 import type { FastifySchema } from 'fastify';
+import { deviceTransportSchema, identifierSchema, paginationQuerySchema } from '#apiCommonContracts.js';
 import {
   authConnectionParamsSchema,
   authIdentifierParamsSchema,
@@ -34,10 +35,12 @@ import {
   notificationReadBodySchema,
   notificationReadResponseSchema,
 } from '#dashboardNotificationContracts.js';
+import { dashboardDeviceActivityQuerySchema, dashboardDeviceHistoryQuerySchema, dashboardDeviceParamsSchema } from '#dashboardDeviceContracts.js';
+import { dashboardJobHistoryPageSchema, dashboardJobListQuerySchema, dashboardJobParamsSchema, dashboardJobTimelineEventSchema } from '#dashboardJobContracts.js';
 
 const BundleId = Type.String({ minLength: 3, maxLength: 200, pattern: '^[A-Za-z0-9.-]+$' });
 const VersionSelector = Type.String({ minLength: 1, maxLength: 64, pattern: '^v?\\d+(?:\\.\\d+)*(?:_\\d+)?$' });
-const Identifier = Type.String({ minLength: 1, maxLength: 200 });
+const Identifier = identifierSchema;
 const JsonObject = Type.Object({}, { additionalProperties: true });
 const JsonResponse = Type.Union([JsonObject, Type.Array(Type.Unknown()), Type.String(), Type.Number(), Type.Boolean(), Type.Null()]);
 const TestFlightAppId = Type.Union([
@@ -57,7 +60,7 @@ const TestFlightBuildInput = Type.Object(
   },
   { additionalProperties: true },
 );
-const ErrorEnvelope = Type.Object(
+export const ErrorEnvelope = Type.Object(
   {
     error: Type.String(),
     code: Type.String(),
@@ -85,7 +88,7 @@ const PublicStatusResponse = Type.Object({
     scheduler: Type.Object({ state: PublicStatusState }),
   }),
 });
-const PaginationQuery = object({ cursor: Type.Optional(Type.String({ minLength: 1, maxLength: 512 })), offset: Type.Optional(Type.Integer({ minimum: 0 })), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })) });
+const PaginationQuery = paginationQuerySchema;
 const ProviderEnvironment = Type.Union([Type.Literal('test'), Type.Literal('live')]);
 const JobStatus = Type.Union([Type.Literal('queued'), Type.Literal('running'), Type.Literal('done'), Type.Literal('failed')]);
 const JobFailureClass = Type.Union([
@@ -111,7 +114,7 @@ const DeviceTransportState = Type.Union([
 const DeviceSubsystemState = Type.Union([Type.Literal('ready'), Type.Literal('degraded'), Type.Literal('offline'), Type.Literal('unsupported'), Type.Literal('unknown')]);
 const DeviceHealthResponse = object({
   reachable: Type.Boolean(),
-  transport: Type.Optional(Type.Union([Type.Literal('wifi'), Type.Literal('usb')])),
+  transport: Type.Optional(deviceTransportSchema),
   transportState: Type.Optional(DeviceTransportState),
   capabilities: Type.Optional(Type.Array(Type.String())),
   lastSeenAt: Type.Optional(Type.Number()),
@@ -152,7 +155,7 @@ const DeviceHealthResponse = object({
   readiness: Type.Optional(object({ score: Type.Number(), state: Type.Union([Type.Literal('ready'), Type.Literal('caution'), Type.Literal('blocked')]), reasons: Type.Array(Type.String()) })),
   checkedAt: Type.String(),
 });
-const JobSummaryResponse = object({
+export const JobSummaryResponse = object({
   id: Identifier,
   correlationId: Identifier,
   projectId: Type.Optional(Identifier),
@@ -164,6 +167,8 @@ const JobSummaryResponse = object({
   channel: Type.Union([Type.Literal('appstore'), Type.Literal('testflight')]),
   queuedBy: Type.Optional(Type.String()),
   priority: Type.Number(),
+  deviceId: Type.Optional(Identifier),
+  transport: Type.Optional(deviceTransportSchema),
   attempt: Type.Optional(Type.Number()),
   retryCount: Type.Optional(Type.Number()),
   deadlineAt: Type.Optional(Type.String()),
@@ -195,7 +200,7 @@ const HealthResponse = object({
   device: object({
     reachable: Type.Boolean(),
     bridgeReachable: Type.Boolean(),
-    transport: Type.Optional(Type.Union([Type.Literal('wifi'), Type.Literal('usb')])),
+    transport: Type.Optional(deviceTransportSchema),
     transportState: DeviceTransportState,
     capabilities: Type.Array(Type.String()),
     lastSeenAt: Type.Optional(Type.Number()),
@@ -252,16 +257,36 @@ const DashboardOverviewResponse = object({
   disk: Type.Optional(JsonObject),
   isPaidPlan: Type.Boolean(),
   maintenance: JsonObject,
-  activeJobs: Type.Array(JsonObject),
+  activeJobs: Type.Array(object({
+    id: Identifier,
+    correlationId: Identifier,
+    bundleId: BundleId,
+    source: Type.Union([Type.Literal('manual'), Type.Literal('scheduler')]),
+    status: Type.Union([Type.Literal('queued'), Type.Literal('running')]),
+    progress: Type.String(),
+    versionLabel: Type.Optional(Type.String()),
+    deviceId: Type.Optional(Identifier),
+    transport: Type.Optional(deviceTransportSchema),
+    testflight: Type.Optional(object({ appId: Type.Number(), buildId: Type.Number(), version: Type.Optional(Type.String()), buildNumber: Type.Optional(Type.String()) })),
+    queuedBy: Type.Optional(Type.String()),
+    priority: Type.Number(),
+    createdAt: Type.Number(),
+    attempt: Type.Optional(Type.Number()),
+    retryCount: Type.Optional(Type.Number()),
+    deadlineAt: Type.Optional(Type.Number()),
+    deadlineExceeded: Type.Optional(Type.Boolean()),
+    failureClass: Type.Optional(JobFailureClass),
+    warnings: Type.Optional(Type.Array(Type.String())),
+    queueReason: Type.Optional(Type.String()),
+  })),
 });
-const JobHistoryPage = object({ history: Type.Array(JsonObject), total: Type.Integer({ minimum: 0 }), nextCursor: PageCursor });
 const ArtifactPage = object({ artifacts: Type.Array(JsonObject), total: Type.Integer({ minimum: 0 }), totalBytes: Type.Number(), maxBytes: Type.Number(), nextCursor: PageCursor });
 const DeviceResponse = object({
   id: Identifier,
   name: Type.String(),
   enabled: Type.Boolean(),
   isPrimary: Type.Optional(Type.Boolean()),
-  transport: Type.Union([Type.Literal('wifi'), Type.Literal('usb')]),
+  transport: deviceTransportSchema,
   host: Type.Optional(Type.String()),
   port: Type.Optional(Type.Integer({ minimum: 1, maximum: 65535 })),
   user: Type.Optional(Type.String()),
@@ -281,20 +306,32 @@ const DeviceResponse = object({
 });
 const DeviceListResponse = object({ devices: Type.Array(DeviceResponse) });
 const DevicePreflightResponse = object({ device: JsonObject, health: JsonObject, bridge: JsonObject, checks: Type.Array(JsonObject), ready: Type.Boolean() });
-const JobTimelineResponse = object({
+export const JobTimelineResponse = object({
   id: Identifier,
   correlationId: Identifier,
   bundleId: BundleId,
   status: JobStatus,
   versionLabel: Type.Optional(Type.String()),
   deviceId: Type.Optional(Identifier),
+  transport: Type.Optional(deviceTransportSchema),
   sizeBytes: Type.Optional(Type.Number()),
   warnings: Type.Optional(Type.Array(Type.String())),
   ipaMetadata: Type.Optional(JsonObject),
   ipaInfoPlist: Type.Optional(JsonObject),
-  events: Type.Array(JsonObject),
+  events: Type.Array(dashboardJobTimelineEventSchema),
   guidance: Type.Optional(JsonObject),
 });
+export type ApiErrorEnvelope = Static<typeof ErrorEnvelope>;
+export type DashboardDeviceResponse = Static<typeof DeviceResponse>;
+export type DashboardDeviceListResponse = Static<typeof DeviceListResponse>;
+export type DashboardDeviceHealthHistoryResponse = Static<typeof DeviceHealthHistoryResponse>;
+export type DashboardDeviceActivityResponse = Static<typeof DeviceActivityResponse>;
+export type DashboardDeviceBatteryHistoryResponse = Static<typeof DeviceBatteryHistoryResponse>;
+export type DashboardDeviceTemperatureHistoryResponse = Static<typeof DeviceTemperatureHistoryResponse>;
+export type DashboardDeviceStorageHistoryResponse = Static<typeof DeviceStorageHistoryResponse>;
+export type DashboardJobSummary = Static<typeof JobSummaryResponse>;
+export type DashboardJobTimeline = Static<typeof JobTimelineResponse>;
+export type DashboardJobHistoryPage = Static<typeof dashboardJobHistoryPageSchema>;
 const TestFlightCatalogAppResponse = object({
   appId: Type.Integer({ minimum: 1 }),
   bundleId: BundleId,
@@ -428,9 +465,25 @@ const SyntheticResponse = object({
 });
 const WebhookInboxPage = object({ inbox: Type.Array(JsonObject), total: Type.Integer({ minimum: 0 }), nextCursor: PageCursor });
 const DeviceDiscoveryResponse = object({ devices: Type.Array(JsonObject), scannedNetworks: Type.Array(Type.String()), warnings: Type.Array(Type.String()) });
-const DeviceHealthHistoryResponse = object({ buckets: Type.Array(JsonObject), uptimePercent: Type.Union([Type.Number(), Type.Null()]) });
-const DeviceActivityResponse = object({ activity: Type.Array(JsonObject), total: Type.Integer({ minimum: 0 }), nextCursor: PageCursor });
-const DeviceHistoryResponse = object({ buckets: Type.Array(JsonObject) });
+const DeviceHealthHistoryResponse = object({
+  buckets: Type.Array(object({ hourStart: Type.Number(), reachablePercent: Type.Union([Type.Number(), Type.Null()]) })),
+  uptimePercent: Type.Union([Type.Number(), Type.Null()]),
+});
+const DeviceActivityResponse = object({
+  activity: Type.Array(object({
+    id: Identifier,
+    ts: Type.Number(),
+    deviceId: Identifier,
+    kind: Type.Union([Type.Literal('health'), Type.Literal('bridge'), Type.Literal('job')]),
+    message: Type.String(),
+    bundleId: Type.Optional(BundleId),
+  })),
+  total: Type.Integer({ minimum: 0 }),
+  nextCursor: PageCursor,
+});
+const DeviceBatteryHistoryResponse = object({ buckets: Type.Array(object({ hourStart: Type.Number(), batteryPercent: Type.Union([Type.Number(), Type.Null()]) })) });
+const DeviceTemperatureHistoryResponse = object({ buckets: Type.Array(object({ hourStart: Type.Number(), batteryTemperatureC: Type.Union([Type.Number(), Type.Null()]) })) });
+const DeviceStorageHistoryResponse = object({ buckets: Type.Array(object({ hourStart: Type.Number(), storageUsedPercent: Type.Union([Type.Number(), Type.Null()]) })) });
 const JobEtaResponse = object({ avgMs: Type.Union([Type.Number(), Type.Null()]) });
 const JobSloResponse = object({ targetMs: Type.Number(), historicalP95Ms: Type.Union([Type.Number(), Type.Null()]), jobs: Type.Array(JsonObject) });
 const DailyVolumeResponse = object({ days: Type.Array(object({ date: Type.String(), count: Type.Integer({ minimum: 0 }) })) });
@@ -896,7 +949,7 @@ const WebhookQuarantineResponse = object({ record: Type.Optional(JsonObject) });
 const DeviceConnectionInput = object({
   name: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
   existingId: Type.Optional(Identifier),
-  transport: Type.Optional(Type.Union([Type.Literal('wifi'), Type.Literal('usb')])),
+  transport: Type.Optional(deviceTransportSchema),
   host: Type.Optional(Type.String({ minLength: 1, maxLength: 253, pattern: '^[A-Za-z0-9._-]+$' })),
   port: Type.Optional(Type.Integer({ minimum: 1, maximum: 65535 })),
   user: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
@@ -909,7 +962,7 @@ const DeviceConnectionInput = object({
 });
 const DeviceRecordInput = object({
   name: Type.String({ minLength: 1, maxLength: 120 }),
-  transport: Type.Optional(Type.Union([Type.Literal('wifi'), Type.Literal('usb')])),
+  transport: Type.Optional(deviceTransportSchema),
   host: Type.Optional(Type.String({ minLength: 1, maxLength: 253, pattern: '^[A-Za-z0-9._-]+$' })),
   port: Type.Optional(Type.Integer({ minimum: 1, maximum: 65535 })),
   user: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
@@ -1071,19 +1124,18 @@ register('POST', '/v1/dashboard/testflight/decrypt', {
 register('GET', '/v1/jobs/:id', { params: object({ id: Identifier }) });
 register('GET', '/v1/artifacts/:id', { params: object({ id: Identifier }) });
 register('GET', '/v1/artifacts/:id/file', { params: object({ id: Identifier }) });
-register('GET', '/v1/dashboard/jobs/:id/status', { params: object({ id: Identifier }) });
-register('GET', '/v1/dashboard/jobs/:id/timeline', { params: object({ id: Identifier }) });
-register('GET', '/v1/dashboard/jobs/:id/diagnostic', { params: object({ id: Identifier }) });
+register('GET', '/v1/dashboard/jobs/:id/status', { params: dashboardJobParamsSchema });
+register('GET', '/v1/dashboard/jobs/:id/timeline', { params: dashboardJobParamsSchema });
+register('GET', '/v1/dashboard/jobs/:id/diagnostic', { params: dashboardJobParamsSchema });
 register('POST', '/v1/dashboard/jobs/:id/cancel', { params: object({ id: Identifier }) });
 register('POST', '/v1/dashboard/jobs/:id/prioritize', { params: object({ id: Identifier }) });
 register('POST', '/v1/dashboard/jobs/:id/retry', { params: object({ id: Identifier }) });
 register('GET', '/v1/dashboard/notifications', { querystring: notificationListQuerySchema });
-register('GET', '/v1/dashboard/jobs', { querystring: object({ ...PaginationQuery.properties, projectId: Type.Optional(Identifier), q: Type.Optional(Type.String({ maxLength: 200 })), source: Type.Optional(Type.Union([Type.Literal('manual'), Type.Literal('scheduler')])), status: Type.Optional(Type.Union([Type.Literal('done'), Type.Literal('failed')])), queuedBy: Type.Optional(Type.String({ maxLength: 120 })), deviceId: Type.Optional(Identifier), errorQ: Type.Optional(Type.String({ maxLength: 200 })), failureCategory: Type.Optional(Type.String({ maxLength: 64 })), fromTs: Type.Optional(Type.Integer()), toTs: Type.Optional(Type.Integer()) }) });
+register('GET', '/v1/dashboard/jobs', { querystring: dashboardJobListQuerySchema });
 register('GET', '/v1/dashboard/artifacts', { querystring: object({ ...PaginationQuery.properties, projectId: Type.Optional(Identifier), q: Type.Optional(Type.String({ maxLength: 200 })), channel: Type.Optional(Type.Union([Type.Literal('appstore'), Type.Literal('testflight')])) }) });
 register('PUT', '/v1/dashboard/artifacts/:id/pin', { params: object({ id: Identifier }), body: object({ pinned: Type.Boolean() }) });
 register('GET', '/v1/dashboard/artifacts/retention-preview', { querystring: object({ maxBytes: Type.Integer({ minimum: 1 }) }) });
 register('GET', '/v1/dashboard/logs', { querystring: object({ ...PaginationQuery.properties, projectId: Type.Optional(Identifier), scope: Type.Optional(Type.String({ maxLength: 100 })), level: Type.Optional(Type.Union([Type.Literal('info'), Type.Literal('warn'), Type.Literal('error')])), q: Type.Optional(Type.String({ maxLength: 100 })), regex: Type.Optional(Type.Literal('1')) }) });
-register('GET', '/v1/dashboard/devices/:id/activity', { params: object({ id: Identifier }), querystring: PaginationQuery });
 register('GET', '/v1/dashboard/audit-log', { querystring: PaginationQuery });
 register('GET', '/v1/dashboard/keys/all', { querystring: object({ ...PaginationQuery.properties, search: Type.Optional(Type.String({ maxLength: 200 })) }) });
 register('GET', '/v1/dashboard/webhooks', { querystring: object({ limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })) }) });
@@ -1160,12 +1212,7 @@ const remainingContracts: Array<[ContractMethod, string]> = [
   ['POST', '/v1/dashboard/apps/metadata/refresh'],
   ['GET', '/v1/dashboard/versions/:bundleId'],
   ['GET', '/v1/dashboard/devices/discover'],
-  ['GET', '/v1/dashboard/devices'],
   ['GET', '/v1/dashboard/github/rate-limit'],
-  ['GET', '/v1/dashboard/devices/:id/health-history'],
-  ['GET', '/v1/dashboard/devices/:id/battery-history'],
-  ['GET', '/v1/dashboard/devices/:id/temperature-history'],
-  ['GET', '/v1/dashboard/devices/:id/storage-history'],
   ['GET', '/v1/dashboard/watches'],
   ['GET', '/v1/dashboard/watches/export'],
   ['GET', '/v1/dashboard/watches/health'],
@@ -1269,13 +1316,13 @@ register('GET', '/v1/health', { response: { 200: HealthResponse } });
 register('GET', '/v1/billing', { response: { 200: BillingResponse } });
 register('GET', '/v1/billing/subscriptions', { response: { 200: BillingSubscriptionPage } });
 register('GET', '/v1/dashboard/overview', { querystring: object({ projectId: Type.Optional(Identifier) }), response: { 200: DashboardOverviewResponse } });
-register('GET', '/v1/dashboard/jobs', { response: { 200: JobHistoryPage } });
+register('GET', '/v1/dashboard/jobs', { response: { 200: dashboardJobHistoryPageSchema, 404: ErrorEnvelope } });
 register('GET', '/v1/dashboard/artifacts', { response: { 200: ArtifactPage } });
-register('GET', '/v1/dashboard/devices', { response: { 200: DeviceListResponse } });
+register('GET', '/v1/dashboard/devices', { response: { 200: DeviceListResponse, 401: ErrorEnvelope, 403: ErrorEnvelope } });
 register('GET', '/v1/dashboard/devices/:id/health', { params: object({ id: Identifier }), response: { 200: DeviceHealthResponse } });
 register('GET', '/v1/dashboard/devices/:id/preflight', { params: object({ id: Identifier }), response: { 200: DevicePreflightResponse } });
-register('GET', '/v1/dashboard/jobs/:id/status', { params: object({ id: Identifier }), response: { 200: JobSummaryResponse } });
-register('GET', '/v1/dashboard/jobs/:id/timeline', { params: object({ id: Identifier }), response: { 200: JobTimelineResponse } });
+register('GET', '/v1/dashboard/jobs/:id/status', { params: dashboardJobParamsSchema, response: { 200: JobSummaryResponse, 404: ErrorEnvelope } });
+register('GET', '/v1/dashboard/jobs/:id/timeline', { params: dashboardJobParamsSchema, response: { 200: JobTimelineResponse, 404: ErrorEnvelope } });
 register('GET', '/v1/dashboard/testflight/catalog', { querystring: object({ refresh: Type.Optional(Type.Literal('true')) }), response: { 200: TestFlightCatalogResponse } });
 register('GET', '/v1/auth/session', { response: { 200: AuthSessionResponse } });
 register('GET', '/v1/auth/mfa', { response: { 200: AuthMfaResponse } });
@@ -1294,11 +1341,11 @@ register('GET', '/v1/dashboard/doctor', { response: { 200: DoctorResponse } });
 register('GET', '/v1/dashboard/synthetic', { response: { 200: SyntheticResponse } });
 register('GET', '/v1/dashboard/notifications', { response: { 200: notificationPageResponseSchema } });
 register('GET', '/v1/dashboard/devices/discover', { response: { 200: DeviceDiscoveryResponse } });
-register('GET', '/v1/dashboard/devices/:id/health-history', { params: object({ id: Identifier }), response: { 200: DeviceHealthHistoryResponse } });
-register('GET', '/v1/dashboard/devices/:id/activity', { params: object({ id: Identifier }), querystring: PaginationQuery, response: { 200: DeviceActivityResponse } });
-register('GET', '/v1/dashboard/devices/:id/battery-history', { params: object({ id: Identifier }), response: { 200: DeviceHistoryResponse } });
-register('GET', '/v1/dashboard/devices/:id/temperature-history', { params: object({ id: Identifier }), response: { 200: DeviceHistoryResponse } });
-register('GET', '/v1/dashboard/devices/:id/storage-history', { params: object({ id: Identifier }), response: { 200: DeviceHistoryResponse } });
+register('GET', '/v1/dashboard/devices/:id/health-history', { params: dashboardDeviceParamsSchema, querystring: dashboardDeviceHistoryQuerySchema, response: { 200: DeviceHealthHistoryResponse, 401: ErrorEnvelope, 403: ErrorEnvelope } });
+register('GET', '/v1/dashboard/devices/:id/activity', { params: dashboardDeviceParamsSchema, querystring: dashboardDeviceActivityQuerySchema, response: { 200: DeviceActivityResponse, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope } });
+register('GET', '/v1/dashboard/devices/:id/battery-history', { params: dashboardDeviceParamsSchema, querystring: dashboardDeviceHistoryQuerySchema, response: { 200: DeviceBatteryHistoryResponse, 401: ErrorEnvelope, 403: ErrorEnvelope } });
+register('GET', '/v1/dashboard/devices/:id/temperature-history', { params: dashboardDeviceParamsSchema, querystring: dashboardDeviceHistoryQuerySchema, response: { 200: DeviceTemperatureHistoryResponse, 401: ErrorEnvelope, 403: ErrorEnvelope } });
+register('GET', '/v1/dashboard/devices/:id/storage-history', { params: dashboardDeviceParamsSchema, querystring: dashboardDeviceHistoryQuerySchema, response: { 200: DeviceStorageHistoryResponse, 401: ErrorEnvelope, 403: ErrorEnvelope } });
 register('GET', '/v1/dashboard/jobs/eta/:bundleId', { params: object({ bundleId: BundleId }), response: { 200: JobEtaResponse } });
 register('GET', '/v1/dashboard/jobs/slo', { response: { 200: JobSloResponse } });
 register('GET', '/v1/dashboard/jobs/volume', { response: { 200: DailyVolumeResponse } });

@@ -126,6 +126,13 @@ export interface JobSummary {
   channel?: 'appstore' | 'testflight';
   queuedBy?: string;
   priority?: number;
+  deviceId?: string;
+  transport?: 'usb' | 'wifi';
+  attempt?: number;
+  retryCount?: number;
+  deadlineAt?: string;
+  deadlineExceeded?: boolean;
+  failureClass?: string;
   status: 'queued' | 'running' | 'done' | 'failed';
   progress: string;
   warnings?: string[];
@@ -155,6 +162,13 @@ export interface ActiveJob {
   priority?: number;
   createdAt: number;
   deviceId?: string;
+  transport?: 'usb' | 'wifi';
+  warnings?: string[];
+  attempt?: number;
+  retryCount?: number;
+  deadlineAt?: number;
+  deadlineExceeded?: boolean;
+  failureClass?: string;
   queueReason?: string;
 }
 
@@ -366,6 +380,7 @@ export interface JobHistoryEntry {
   startedAt?: number;
   finishedAt: number;
   deviceId?: string;
+  transport?: 'usb' | 'wifi';
   ipaMetadata?: IpaMetadata;
   ipaInfoPlist?: Record<string, unknown>;
   downloadUrl?: string;
@@ -418,6 +433,7 @@ export interface JobTimeline {
   guidance?: { category: string; title: string; action: string; retryRecommended: boolean };
   versionLabel?: string;
   deviceId?: string;
+  transport?: 'usb' | 'wifi';
   sizeBytes?: number;
   ipaMetadata?: IpaMetadata;
   ipaInfoPlist?: Record<string, unknown>;

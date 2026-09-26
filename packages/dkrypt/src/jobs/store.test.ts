@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { config } from '#config.js';
 import { artifactKeyForJob, promoteArtifact } from '#artifacts.js';
-import { createDevice, createProject, deleteDevice } from '#store/state.js';
+import { createDevice, createProject, deleteDevice, getJobHistoryEntryById } from '#store/state.js';
 import type { Job } from '#jobs/types.js';
 
 let retryDeadlineAttempts = 0;
@@ -78,6 +78,18 @@ describe('enqueueDecryptJob', () => {
     const job = { preferredDeviceId: undefined } as Pick<Job, 'preferredDeviceId'>;
 
     expect(isJobDispatchable(job, { id: 'secondary-device' })).toBeTrue();
+  });
+
+  test('records the assigned device transport in job history', async () => {
+    const job = enqueueDecryptJob(`com.test.transport.${crypto.randomUUID()}`, 'manual');
+    try {
+      expect(job).toMatchObject({ status: 'running', deviceId: testDeviceId, transport: 'wifi' });
+    } finally {
+      if (job.status === 'running') cancelJob(job.id, 'transport test cleanup');
+      await waitForJob(job, 1_000);
+    }
+
+    expect(getJobHistoryEntryById(job.id)).toMatchObject({ deviceId: testDeviceId, transport: 'wifi' });
   });
 
   test('scheduler jumps queued dashboard jobs, dedupes same bundle, never overtakes a running job', () => {

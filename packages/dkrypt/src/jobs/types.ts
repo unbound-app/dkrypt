@@ -1,4 +1,5 @@
 import type { ChildProcess } from 'node:child_process';
+import type { DeviceTransport } from '#apiCommonContracts.js';
 import type { TFBuild } from '#testflight.js';
 import type { IpaMetadata } from '#store/state.js';
 
@@ -50,6 +51,7 @@ export interface Job {
   fileSizeBytes?: number;
   sha256?: string;
   deviceId?: string;
+  transport?: DeviceTransport;
   ipaMetadata?: IpaMetadata;
   ipaInfoPlist?: Record<string, unknown>;
   createdAt: number;

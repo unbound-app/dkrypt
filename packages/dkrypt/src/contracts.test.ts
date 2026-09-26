@@ -150,6 +150,63 @@ test('core operational responses publish their required fields', async () => {
   }
 });
 
+test('dashboard job contracts describe history and transport fields', async () => {
+  const server = await buildServer({ includePublicRoutes: false });
+  try {
+    await server.ready();
+    const document = server.swagger() as {
+      paths?: Record<string, Record<string, { responses?: Record<string, { content?: Record<string, { schema?: { properties?: Record<string, { items?: { properties?: Record<string, unknown> }; properties?: Record<string, unknown> }> } }> }> }>>;
+    };
+    const historySchema = document.paths?.['/v1/dashboard/jobs']?.get?.responses?.['200']?.content?.['application/json']?.schema;
+    const historyFields = historySchema?.properties?.history?.items?.properties ?? {};
+    for (const field of ['id', 'bundleId', 'status', 'createdAt', 'deviceId', 'transport', 'requester', 'fileAvailable']) {
+      expect(Object.keys(historyFields)).toContain(field);
+    }
+    const overviewSchema = document.paths?.['/v1/dashboard/overview']?.get?.responses?.['200']?.content?.['application/json']?.schema;
+    const activeJobFields = overviewSchema?.properties?.activeJobs?.items?.properties ?? {};
+    for (const field of ['id', 'bundleId', 'status', 'deviceId', 'transport', 'attempt', 'deadlineAt', 'warnings']) {
+      expect(Object.keys(activeJobFields)).toContain(field);
+    }
+    for (const [path, fields] of [
+      ['/v1/dashboard/jobs/{id}/status', ['attempt', 'deadlineAt', 'deviceId', 'transport', 'warnings']],
+      ['/v1/dashboard/jobs/{id}/timeline', ['deviceId', 'transport']],
+    ] as const) {
+      const schema = document.paths?.[path]?.get?.responses?.['200']?.content?.['application/json']?.schema;
+      for (const field of fields) expect(Object.keys(schema?.properties ?? {})).toContain(field);
+    }
+    const timelineSchema = document.paths?.['/v1/dashboard/jobs/{id}/timeline']?.get?.responses?.['200']?.content?.['application/json']?.schema;
+    const eventSchema = timelineSchema?.properties?.events as { items?: { properties?: Record<string, unknown> } } | undefined;
+    for (const field of ['at', 'label', 'status']) expect(Object.keys(eventSchema?.items?.properties ?? {})).toContain(field);
+  } finally {
+    await server.close();
+  }
+});
+
+test('device route contracts describe subsystem history and query bounds', async () => {
+  const server = await buildServer({ includePublicRoutes: false });
+  try {
+    await server.ready();
+    const document = server.swagger() as {
+      paths?: Record<string, Record<string, {
+        parameters?: Array<{ name?: string; in?: string; schema?: { minimum?: number; maximum?: number } }>;
+        responses?: Record<string, { content?: Record<string, { schema?: { properties?: Record<string, { items?: { properties?: Record<string, unknown> } }> } }> }>;
+      }>>;
+    };
+    const history = document.paths?.['/v1/dashboard/devices/{id}/battery-history']?.get;
+    const hours = history?.parameters?.find((parameter) => parameter.name === 'hours' && parameter.in === 'query');
+    expect(hours?.schema?.minimum).toBe(1);
+    expect(hours?.schema?.maximum).toBe(168);
+    const bucketFields = history?.responses?.['200']?.content?.['application/json']?.schema?.properties?.buckets?.items?.properties ?? {};
+    expect(Object.keys(bucketFields)).toEqual(expect.arrayContaining(['hourStart', 'batteryPercent']));
+
+    const activity = document.paths?.['/v1/dashboard/devices/{id}/activity']?.get?.responses?.['200']?.content?.['application/json']?.schema;
+    const activityFields = activity?.properties?.activity?.items?.properties ?? {};
+    expect(Object.keys(activityFields)).toEqual(expect.arrayContaining(['id', 'ts', 'deviceId', 'kind', 'message']));
+  } finally {
+    await server.close();
+  }
+});
+
 test('device and TestFlight mutation contracts publish their success status', async () => {
   const server = await buildServer({ includePublicRoutes: false });
   try {

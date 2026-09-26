@@ -507,6 +507,7 @@ function toHistoryEntry(job: Job) {
     startedAt: job.startedAt,
     finishedAt: job.finishedAt ?? Date.now(),
     deviceId: job.deviceId,
+    transport: job.transport,
     ipaMetadata: job.ipaMetadata,
     ipaInfoPlist: job.ipaInfoPlist,
     artifactId: job.artifactId,
@@ -707,6 +708,7 @@ async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
   runningJobControllers.set(job.id, controller);
   job.startedAt = Date.now();
   job.deviceId = device.id;
+  job.transport = device.transport;
   job.attempt = (job.retryCount ?? 0) + 1;
   recordJobStarted(job, job.startedAt);
   appendJobTimelineEvent(job, `Started on ${device.name}`, 'running', job.startedAt);

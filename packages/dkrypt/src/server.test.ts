@@ -7,11 +7,12 @@ import { exportBillingSnapshot, replaceBillingSnapshot, upsertBillingSubscriptio
 import { upsertAuthProfile } from '#identity.js';
 import { scopedLogger } from '#logger.js';
 import { emitJobsChanged } from '#events.js';
+import { cancelQueuedJob, enqueueDecryptJob } from '#jobs/store.js';
 import { PermissionFlag, serializeBits } from '#permissions.js';
 import { buildServer } from '#server.js';
 import { dashboardRouter } from '#routes/dashboard.js';
 import type { Response } from '#http.js';
-import { addAllowedUser, createApiKey, createProject, createRole, createTestFlightSubscription, createWatch, deleteRole, deleteUserPersonalData, deleteWatch, recordAudit, recordDeviceActivity, recordGitHubBudgetTelemetry, recordJobHistory, recordNotification, revokeApiKey, updateRole, withdrawTestFlightSubscription } from '#store/state.js';
+import { addAllowedUser, createApiKey, createDevice, createProject, createRole, createTestFlightSubscription, createWatch, deleteDevice, deleteRole, deleteUserPersonalData, deleteWatch, recordAudit, recordDeviceActivity, recordGitHubBudgetTelemetry, recordJobHistory, recordNotification, revokeApiKey, updateRole, withdrawTestFlightSubscription } from '#store/state.js';
 import { setSessionCookie } from '#session.js';
 
 function createSessionCookie(userId: string, permissions: bigint): string {
@@ -107,6 +108,136 @@ test('dashboard notification endpoints are not registered through the legacy ada
   const routes = dashboardRouter.routes.map((route) => `${route.method} ${route.path}`);
   expect(routes).not.toContain('GET /v1/dashboard/notifications');
   expect(routes).not.toContain('POST /v1/dashboard/notifications/read');
+});
+
+test('dashboard job history and inspection endpoints are not registered through the legacy adapter', () => {
+  const routes = dashboardRouter.routes.map((route) => `${route.method} ${route.path}`);
+  expect(routes).not.toContain('GET /v1/dashboard/jobs');
+  expect(routes).not.toContain('GET /v1/dashboard/jobs/:id/status');
+  expect(routes).not.toContain('GET /v1/dashboard/jobs/:id/timeline');
+});
+
+test('native dashboard device history routes preserve permissions and validate queries', async () => {
+  const device = createDevice({ name: `Device history ${crypto.randomUUID()}`, transport: 'usb', udid: crypto.randomUUID() }, 'test');
+  const readerId = `github:device-reader-${crypto.randomUUID()}`;
+  const deniedId = `github:device-denied-${crypto.randomUUID()}`;
+  const readerPermissions = PermissionFlag.viewDevices;
+  const readerRole = createRole({ name: `Device reader ${crypto.randomUUID()}`, color: '#3498db', permissions: serializeBits(readerPermissions) }, 'test');
+  const deniedRole = createRole({ name: `No device access ${crypto.randomUUID()}`, color: '#99aab5', permissions: serializeBits(0n) }, 'test');
+  addAllowedUser(readerId, [readerRole.id], 'test');
+  addAllowedUser(deniedId, [deniedRole.id], 'test');
+  const readerCookie = createSessionCookie(readerId, readerPermissions);
+  const deniedCookie = createSessionCookie(deniedId, 0n);
+  const server = await buildServer({ includePublicRoutes: false });
+  const legacyRoutes = dashboardRouter.routes.map((route) => `${route.method} ${route.path}`);
+
+  try {
+    for (const route of [
+      'GET /v1/dashboard/devices',
+      'GET /v1/dashboard/devices/:id/activity',
+      'GET /v1/dashboard/devices/:id/health-history',
+      'GET /v1/dashboard/devices/:id/battery-history',
+      'GET /v1/dashboard/devices/:id/temperature-history',
+      'GET /v1/dashboard/devices/:id/storage-history',
+    ]) {
+      expect(legacyRoutes).not.toContain(route);
+    }
+
+    const devices = await server.inject({ method: 'GET', url: '/v1/dashboard/devices', headers: { cookie: readerCookie } });
+    expect(devices.statusCode).toBe(200);
+    expect(devices.json().devices).toEqual(expect.arrayContaining([expect.objectContaining({ id: device.id, transport: 'usb' })]));
+
+    const denied = await server.inject({ method: 'GET', url: '/v1/dashboard/devices', headers: { cookie: deniedCookie } });
+    expect(denied.statusCode).toBe(403);
+    expect(denied.json()).toMatchObject({ code: 'forbidden' });
+
+    const activity = await server.inject({ method: 'GET', url: `/v1/dashboard/devices/${device.id}/activity?limit=1`, headers: { cookie: readerCookie } });
+    expect(activity.statusCode).toBe(200);
+    expect(activity.json()).toMatchObject({ activity: [], total: 0 });
+
+    const healthHistory = await server.inject({ method: 'GET', url: `/v1/dashboard/devices/${device.id}/health-history?hours=1`, headers: { cookie: readerCookie } });
+    expect(healthHistory.statusCode).toBe(200);
+    expect(healthHistory.json().buckets).toHaveLength(1);
+    expect(healthHistory.json()).toMatchObject({ uptimePercent: null });
+
+    for (const type of ['battery', 'temperature', 'storage']) {
+      const history = await server.inject({ method: 'GET', url: `/v1/dashboard/devices/${device.id}/${type}-history?hours=1`, headers: { cookie: readerCookie } });
+      expect(history.statusCode).toBe(200);
+      expect(history.json().buckets).toHaveLength(1);
+    }
+
+    const invalidLimit = await server.inject({ method: 'GET', url: `/v1/dashboard/devices/${device.id}/activity?limit=0`, headers: { cookie: readerCookie } });
+    expect(invalidLimit.statusCode).toBe(400);
+    expect(invalidLimit.json()).toMatchObject({ code: 'request_error' });
+
+    const invalidHours = await server.inject({ method: 'GET', url: `/v1/dashboard/devices/${device.id}/battery-history?hours=169`, headers: { cookie: readerCookie } });
+    expect(invalidHours.statusCode).toBe(400);
+    expect(invalidHours.json()).toMatchObject({ code: 'request_error' });
+  } finally {
+    await server.close();
+    deleteDevice(device.id, 'test cleanup');
+    deleteUserPersonalData(readerId);
+    deleteUserPersonalData(deniedId);
+    deleteRole(readerRole.id, 'test cleanup');
+    deleteRole(deniedRole.id, 'test cleanup');
+  }
+});
+
+test('native dashboard job inspection serves timelines and validates history queries', async () => {
+  const { server, cookie } = await signIn();
+  const bundleId = `com.example.native-job-${crypto.randomUUID()}`;
+  const historyId = `native-job-history-${crypto.randomUUID()}`;
+  const missingDeviceId = `missing-device-${crypto.randomUUID()}`;
+  const activeJob = enqueueDecryptJob(bundleId, 'manual', undefined, undefined, undefined, 'root', 0, missingDeviceId);
+  Object.assign(activeJob, { deviceId: 'test-device', transport: 'usb', attempt: 4 });
+  const finishedAt = Date.now();
+  recordJobHistory({
+    id: historyId,
+    bundleId,
+    status: 'done',
+    source: 'manual',
+    createdAt: finishedAt - 1_000,
+    finishedAt,
+    deviceId: 'test-device',
+    transport: 'wifi',
+    timeline: [{ at: finishedAt, label: 'Finished with warning', status: 'done' }],
+    warnings: ['An embedded extension remains encrypted'],
+  });
+
+  try {
+    const unauthorized = await server.inject({ method: 'GET', url: '/v1/dashboard/jobs' });
+    expect(unauthorized.statusCode).toBe(401);
+
+    const timeline = await server.inject({ method: 'GET', url: `/v1/dashboard/jobs/${historyId}/timeline`, headers: { cookie } });
+    expect(timeline.statusCode).toBe(200);
+    expect(timeline.json()).toMatchObject({
+      id: historyId,
+      status: 'done',
+      deviceId: 'test-device',
+      transport: 'wifi',
+      warnings: ['An embedded extension remains encrypted'],
+      events: [{ label: 'Finished with warning', status: 'done' }],
+    });
+
+    const history = await server.inject({ method: 'GET', url: `/v1/dashboard/jobs?q=${encodeURIComponent(bundleId)}`, headers: { cookie } });
+    expect(history.statusCode).toBe(200);
+    expect(history.json().history).toEqual(expect.arrayContaining([expect.objectContaining({ id: historyId, deviceId: 'test-device', transport: 'wifi', fileAvailable: false })]));
+
+    const activeStatus = await server.inject({ method: 'GET', url: `/v1/dashboard/jobs/${activeJob.id}/status`, headers: { cookie } });
+    expect(activeStatus.statusCode).toBe(200);
+    expect(activeStatus.json()).toMatchObject({ id: activeJob.id, status: 'queued', attempt: 4, deviceId: 'test-device', transport: 'usb' });
+
+    const missingStatus = await server.inject({ method: 'GET', url: `/v1/dashboard/jobs/${historyId}/status`, headers: { cookie } });
+    expect(missingStatus.statusCode).toBe(404);
+    expect(missingStatus.json()).toMatchObject({ code: 'request_error', message: 'job not found (finished jobs are pruned after retention window)' });
+
+    const invalidPage = await server.inject({ method: 'GET', url: '/v1/dashboard/jobs?limit=0', headers: { cookie } });
+    expect(invalidPage.statusCode).toBe(400);
+    expect(invalidPage.json()).toMatchObject({ code: 'request_error' });
+  } finally {
+    cancelQueuedJob(activeJob.id, 'test cleanup');
+    await server.close();
+  }
 });
 
 test('dashboard account and notification routes validate requests and preserve session behavior', async () => {
@@ -269,6 +400,7 @@ test('project administration is permission-gated and project membership controls
     scopedLogger('project-scope-test').info('project scope marker', { jobId: defaultHistoryId });
     const memberHistory = await server.inject({ method: 'GET', url: `/v1/dashboard/jobs?projectId=${project.id}&q=${bundleId}`, headers: { cookie: memberCookie } });
     const otherMemberHistory = await server.inject({ method: 'GET', url: `/v1/dashboard/jobs?projectId=${project.id}&q=${bundleId}`, headers: { cookie: secondMemberCookie } });
+    const otherMemberTimeline = await server.inject({ method: 'GET', url: `/v1/dashboard/jobs/${historyId}/timeline`, headers: { cookie: secondMemberCookie } });
     const crossProjectDiff = await server.inject({ method: 'GET', url: `/v1/dashboard/jobs/diff?projectId=${project.id}&bundleId=${bundleId}&a=${historyId}&b=${defaultHistoryId}`, headers: { cookie: memberCookie } });
     const scopedBulkPreview = await server.inject({ method: 'POST', url: '/v1/dashboard/jobs/bulk-preview', headers: { cookie: memberCookie }, payload: { projectId: project.id, ids: [historyId, defaultHistoryId] } });
     const scopedStats = await server.inject({ method: 'GET', url: `/v1/dashboard/jobs/stats/${bundleId}?projectId=${project.id}`, headers: { cookie: memberCookie } });
@@ -277,6 +409,7 @@ test('project administration is permission-gated and project membership controls
     expect(memberHistory.statusCode).toBe(200);
     expect((memberHistory.json() as { history: { id: string }[] }).history.map((entry) => entry.id)).toContain(historyId);
     expect(otherMemberHistory.statusCode).toBe(404);
+    expect(otherMemberTimeline.statusCode).toBe(404);
     expect(crossProjectDiff.statusCode).toBe(404);
     expect(scopedBulkPreview.statusCode).toBe(200);
     expect(scopedBulkPreview.json()).toMatchObject({ requested: 2, eligible: 1, previousSizeBytes: 5, items: [{ id: historyId }] });

@@ -1,5 +1,5 @@
 import { config } from '#config.js';
-import { execCommand, getRustDeviceBridgeHealth, isRustDeviceConnection, isTestFlightRunning, probeDeviceSshTunnel, readBridgeHeartbeats, sendSpringBoardBridgeRequest, tryIoregCandidates, withSSH, type BridgeHeartbeat, type DeviceClient, type DeviceConnection } from '#idevice.js';
+import { execCommand, getRustDeviceBridgeHealth, isRustDeviceConnection, isTestFlightRunning, probeDeviceSshTunnel, readBridgeHeartbeats, sendSpringBoardBridgeRequest, tryIoregCandidates, withSSH, type BridgeHeartbeat, type DeviceClient, type DeviceConnection, type DeviceTransport } from '#idevice.js';
 import { scopedLogger } from '#logger.js';
 import { EMBED_COLOR, notify } from '#notify.js';
 import { releasePinnedJobsForDevice } from '#jobs/store.js';
@@ -13,7 +13,7 @@ const log = scopedLogger('idevice');
 
 export interface DeviceHealth {
   reachable: boolean;
-  transport?: 'wifi' | 'usb';
+  transport?: DeviceTransport;
   transportState?: 'discovered' | 'pairing' | 'connecting' | 'ready' | 'degraded' | 'recovering' | 'offline' | 'unsupported';
   capabilities?: string[];
   lastSeenAt?: number;

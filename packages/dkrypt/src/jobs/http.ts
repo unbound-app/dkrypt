@@ -33,6 +33,8 @@ export function jobSummary(job: Job) {
     channel: job.testflight ? 'testflight' : 'appstore',
     queuedBy: job.queuedBy,
     priority: job.priority,
+    deviceId: job.deviceId,
+    transport: job.transport,
     attempt: job.attempt,
     retryCount: job.retryCount,
     deadlineAt: job.deadlineAt ? new Date(job.deadlineAt).toISOString() : undefined,

@@ -3,6 +3,7 @@ import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, re
 import path from 'node:path';
 import { generateVAPIDKeys, type VapidKeys } from 'web-push';
 import { config } from '#config.js';
+import type { DeviceTransport } from '#apiCommonContracts.js';
 import {
   exportBillingSnapshot,
   getBillingEntitlements,
@@ -298,7 +299,7 @@ export interface DispatchTarget {
 export interface DeviceRecord {
   id: string;
   name: string;
-  transport?: 'wifi' | 'usb';
+  transport?: DeviceTransport;
   host?: string;
   port?: number;
   user?: string;
@@ -363,6 +364,7 @@ export interface JobHistoryEntry {
   startedAt?: number;
   finishedAt: number;
   deviceId?: string;
+  transport?: DeviceTransport;
   ipaMetadata?: IpaMetadata;
   ipaInfoPlist?: Record<string, unknown>;
   timeline?: JobTimelineEvent[];
@@ -2744,7 +2746,7 @@ export function recordTestFlightSubscriptionSync(id: string, actor: string, deta
 
 export interface CreateDeviceInput {
   name: string;
-  transport?: 'wifi' | 'usb';
+  transport?: DeviceTransport;
   host?: string;
   port?: number;
   user?: string;

@@ -1,4 +1,5 @@
 import { Type, type Static } from '@sinclair/typebox';
+import { identifierSchema } from '#apiCommonContracts.js';
 
 export const authLoginBodySchema = Type.Object(
   {
@@ -22,7 +23,7 @@ export const authConnectionParamsSchema = Type.Object(
   { provider: Type.Union([Type.Literal('github'), Type.Literal('discord')]) },
   { additionalProperties: true },
 );
-export const authIdentifierParamsSchema = Type.Object({ id: Type.String({ minLength: 1, maxLength: 200 }) }, { additionalProperties: true });
+export const authIdentifierParamsSchema = Type.Object({ id: identifierSchema }, { additionalProperties: true });
 export const authPasskeyPayloadSchema = Type.Record(Type.String({ minLength: 1, maxLength: 120 }), Type.Unknown());
 export const authOAuthCallbackQuerySchema = Type.Object(
   {

@@ -15,7 +15,9 @@ import { startKeyExpiryPoller, stopKeyExpiryPoller } from '#keyExpiryPoller.js';
 import { log, startLogFlusher, stopLogFlusher } from '#logger.js';
 import { authRoutes } from '#routes/authRoutes.js';
 import { dashboardAccountRoutes } from '#routes/dashboardAccountRoutes.js';
+import { dashboardDeviceRoutes } from '#routes/dashboardDeviceRoutes.js';
 import { dashboardNotificationRoutes } from '#routes/dashboardNotificationRoutes.js';
+import { dashboardJobRoutes } from '#routes/dashboardJobRoutes.js';
 import { billingRoutes, billingWebhookRoutes } from '#routes/billing.js';
 import { dashboardRouter } from '#routes/dashboard.js';
 import { artifactCatalogRoutes, decryptRoutes, testFlightCatalogRoutes } from '#routes/decrypt.js';
@@ -226,7 +228,9 @@ export async function buildServer(options: { includePublicRoutes?: boolean } = {
   await server.register(testFlightCatalogRoutes);
   await server.register(authRoutes);
   await server.register(dashboardAccountRoutes);
+  await server.register(dashboardDeviceRoutes);
   await server.register(dashboardNotificationRoutes);
+  await server.register(dashboardJobRoutes);
   await server.register(billingRoutes);
   registerRouter(server, dashboardRouter);
 
