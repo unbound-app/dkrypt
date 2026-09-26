@@ -4,6 +4,12 @@ import { openStateCollectionDatabase, readStateCollection, replaceStateCollectio
 import type { Database } from 'bun:sqlite';
 
 type StoredJob = Omit<Job, 'childProcess' | 'waiters'>;
+const exactBuildFilter = `
+  project_id = ?
+  AND bundle_id = ?
+  AND external_version_id IS ?
+  AND testflight_build_id IS ?
+`;
 
 export interface JobBuildLookup {
   projectId: string;
@@ -59,10 +65,7 @@ export function createJobRepository(database: Database): JobRepository {
       const row = database.query(`
         SELECT id
         FROM jobs
-        WHERE project_id = ?
-          AND bundle_id = ?
-          AND external_version_id IS ?
-          AND testflight_build_id IS ?
+        WHERE ${exactBuildFilter}
           AND status IN ('queued', 'running')
         ORDER BY updated_at DESC
         LIMIT 1;
@@ -73,10 +76,7 @@ export function createJobRepository(database: Database): JobRepository {
       const rows = database.query(`
         SELECT id
         FROM jobs
-        WHERE project_id = ?
-          AND bundle_id = ?
-          AND external_version_id IS ?
-          AND testflight_build_id IS ?
+        WHERE ${exactBuildFilter}
           AND status = 'done'
           AND file_path IS NOT NULL
           AND file_path != ''
