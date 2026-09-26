@@ -13,7 +13,7 @@ import { buildServer } from '#server.js';
 import { dashboardRouter } from '#routes/dashboard.js';
 import { parseDeviceConnection } from '#routes/dashboardDeviceRoutes.js';
 import type { Response } from '#http.js';
-import { addAllowedUser, createApiKey, createDevice, createProject, createRole, createTestFlightSubscription, createWatch, deleteDevice, deleteRole, deleteUserPersonalData, deleteWatch, recordAudit, recordDeviceActivity, recordGitHubBudgetTelemetry, recordJobHistory, recordNotification, revokeApiKey, updateRole, withdrawTestFlightSubscription } from '#store/state.js';
+import { addAllowedUser, createApiKey, createDevice, createProject, createRole, createTestFlightSubscription, createWatch, deleteDevice, deleteRole, deleteUserPersonalData, deleteWatch, getEffectiveSettings, recordAudit, recordDeviceActivity, recordGitHubBudgetTelemetry, recordJobHistory, recordNotification, revokeApiKey, updateRole, updateSettings, withdrawTestFlightSubscription } from '#store/state.js';
 import { setSessionCookie } from '#session.js';
 
 function createSessionCookie(userId: string, permissions: bigint): string {
@@ -109,6 +109,85 @@ test('dashboard notification endpoints are not registered through the legacy ada
   const routes = dashboardRouter.routes.map((route) => `${route.method} ${route.path}`);
   expect(routes).not.toContain('GET /v1/dashboard/notifications');
   expect(routes).not.toContain('POST /v1/dashboard/notifications/read');
+});
+
+test('dashboard settings endpoints are not registered through the legacy adapter', () => {
+  const routes = dashboardRouter.routes.map((route) => `${route.method} ${route.path}`);
+  expect(routes).not.toContain('GET /v1/dashboard/settings');
+  expect(routes).not.toContain('PUT /v1/dashboard/settings');
+  expect(routes).not.toContain('GET /v1/dashboard/settings/job-history-retention/preview');
+  expect(routes).not.toContain('GET /v1/dashboard/settings/validate-cron');
+  expect(routes).not.toContain('POST /v1/dashboard/settings/test-webhook');
+  expect(routes).not.toContain('GET /v1/dashboard/artifacts/retention-preview');
+});
+
+test('native settings routes preserve permission gates and normalize updates', async () => {
+  const server = await buildServer({ includePublicRoutes: false });
+  const administratorCookie = createSessionCookie('root', PermissionFlag.administrator);
+  const decryptOnlyCookie = createSessionCookie('root', PermissionFlag.requestDecrypt);
+  const initialSettings = getEffectiveSettings();
+
+  try {
+    const unauthenticated = await server.inject({ method: 'GET', url: '/v1/dashboard/settings' });
+    expect(unauthenticated.statusCode).toBe(401);
+
+    const denied = await server.inject({
+      method: 'GET',
+      url: '/v1/dashboard/settings',
+      headers: { cookie: decryptOnlyCookie },
+    });
+    expect(denied.statusCode).toBe(403);
+
+    const settings = await server.inject({
+      method: 'GET',
+      url: '/v1/dashboard/settings',
+      headers: { cookie: administratorCookie },
+    });
+    expect(settings.statusCode).toBe(200);
+    expect(settings.json()).toMatchObject({ notifyFormat: initialSettings.notifyFormat });
+
+    const emptyUpdate = await server.inject({
+      method: 'PUT',
+      url: '/v1/dashboard/settings',
+      headers: { cookie: administratorCookie },
+    });
+    expect(emptyUpdate.statusCode).toBe(200);
+
+    const updated = await server.inject({
+      method: 'PUT',
+      url: '/v1/dashboard/settings',
+      headers: { cookie: administratorCookie },
+      payload: { notifyFormat: 'plain', schedulerRetryCount: 12, notifyOnDispatchSuccess: false, notifyOnQueueSloBreach: false },
+    });
+    expect(updated.statusCode).toBe(200);
+    expect(updated.json()).toMatchObject({ notifyFormat: 'plain', schedulerRetryCount: 5, notifyOnAutomationSuccess: false, notifyOnQueueSloBreach: false });
+
+    const invalid = await server.inject({
+      method: 'PUT',
+      url: '/v1/dashboard/settings',
+      headers: { cookie: administratorCookie },
+      payload: { notifyFormat: 'unsupported' },
+    });
+    expect(invalid.statusCode).toBe(400);
+
+    const invalidRetention = await server.inject({
+      method: 'GET',
+      url: '/v1/dashboard/settings/job-history-retention/preview?retentionDays=-1',
+      headers: { cookie: administratorCookie },
+    });
+    expect(invalidRetention.statusCode).toBe(400);
+
+    const invalidWebhookTest = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/settings/test-webhook',
+      headers: { cookie: administratorCookie },
+      payload: { url: 42 },
+    });
+    expect(invalidWebhookTest.statusCode).toBe(400);
+  } finally {
+    updateSettings(initialSettings, 'test cleanup');
+    await server.close();
+  }
 });
 
 test('device dashboard routes are not registered through the legacy adapter', () => {

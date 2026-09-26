@@ -9,7 +9,7 @@ import { jobSummary, streamFilePath } from '#jobs/http.js';
 import { cancelJob, enqueueDecryptJob, getActiveJobs, getJob, getQueueInfo, prioritizeQueuedJob, reorderQueue } from '#jobs/store.js';
 import type { LogEntry } from '#logger.js';
 import { getRecentLogs } from '#logger.js';
-import { EMBED_COLOR, notify, sendTestNotification } from '#notify.js';
+import { EMBED_COLOR, notify } from '#notify.js';
 import { hasPermission, isSubsetPermission, parseBits, PermissionFlag } from '#permissions.js';
 import { listAuthProfiles } from '#identity.js';
 import { applyWatchSchedules, checkForTestFlightUpdate, checkForUpdate, triggerTickNow } from '#scheduler/index.js';
@@ -38,9 +38,7 @@ import {
   artifactKeyForAppStoreVersion,
   getArtifactById,
   getArtifactByKey,
-  getArtifactStorageStats,
   listArtifacts,
-  previewArtifactQuotaRetention,
   setArtifactPinned,
   touchArtifact,
 } from '#artifacts.js';
@@ -76,7 +74,6 @@ import {
   getDiscordGuilds,
   getDiscordRolePerks,
   getEffectiveDevices,
-  getEffectiveSettings,
   getEffectiveWatches,
   getProject,
   getUserEffectivePermissions,
@@ -102,7 +99,6 @@ import {
   listApiKeysForOwner,
   listPendingApiKeys,
   listRoles,
-  previewJobHistoryRetention,
   recordAudit,
   regenerateApiKey,
   removeAllowedUser,
@@ -110,7 +106,6 @@ import {
   requestApiKey,
   revealApiKeySecret,
   revokeApiKey,
-  type SchedulerSettings,
   setApiKeyAllowTestFlight,
   setDiscordGuilds,
   setApiKeyMaxConcurrent,
@@ -119,7 +114,6 @@ import {
   upsertAppCatalogEntries,
   updateAllowedUserRoles,
   updateRole,
-  updateSettings,
   updateWatch,
   verifyLatestDatabaseBackup,
   wouldOrphanPermission,
@@ -146,7 +140,6 @@ const canViewScheduler = requirePermission(PermissionFlag.viewAutomation, Permis
 const canManageWatches = requirePermission(PermissionFlag.manageAutomation);
 const canManageSchedulerSettings = requirePermission(PermissionFlag.manageAutomation);
 
-const canValidateCron = requirePermission(PermissionFlag.manageAutomation);
 const canTriggerDispatch = requirePermission(PermissionFlag.manageAutomation);
 const canViewLogs = requirePermission(PermissionFlag.viewLogs);
 const canViewUsers = requirePermission(PermissionFlag.viewUsers, PermissionFlag.manageUsers);
@@ -1651,150 +1644,6 @@ dashboardRouter.post('/v1/dashboard/keys/:id/deny', canApproveApiKeys, (req, res
     return;
   }
   res.json({ ok: true });
-});
-
-dashboardRouter.get('/v1/dashboard/settings', canViewScheduler, (_req, res) => {
-  res.json(getEffectiveSettings());
-});
-
-const SETTINGS_STRING_FIELDS = ['notifyWebhookUrl'] as const;
-const SETTINGS_BOOL_FIELDS = [
-  'notifyOnKeyRequest',
-  'notifyOnAutomationSuccess',
-  'notifyOnAutomationFailure',
-  'notifyOnKeyExpiringSoon',
-  'notifyOnDeviceOffline',
-  'notifyOnDeviceBatteryHot',
-  'notifyOnDeviceBatteryLow',
-  'notifyOnDiskFull',
-  'notifyOnDeviceStorageLow',
-  'notifyOnTestFlightBridgeDown',
-  'notifyOnJobCompleted',
-  'maintenanceMode',
-] as const;
-const MAX_SCHEDULER_RETRY_COUNT = 5;
-const MIN_DEVICE_OFFLINE_ALERT_MINUTES = 5;
-const MAX_DEVICE_OFFLINE_ALERT_MINUTES = 180;
-const MIN_BATTERY_HOT_ALERT_C = 30;
-const MAX_BATTERY_HOT_ALERT_C = 60;
-const MIN_BATTERY_LOW_ALERT_PERCENT = 5;
-const MAX_BATTERY_LOW_ALERT_PERCENT = 50;
-const MIN_DISK_FULL_ALERT_PERCENT = 50;
-const MAX_DISK_FULL_ALERT_PERCENT = 99;
-const MIN_DEVICE_STORAGE_ALERT_PERCENT = 50;
-const MAX_DEVICE_STORAGE_ALERT_PERCENT = 99;
-const MIN_TESTFLIGHT_BRIDGE_ALERT_MINUTES = 5;
-const MAX_TESTFLIGHT_BRIDGE_ALERT_MINUTES = 180;
-const MAX_JOB_HISTORY_RETENTION_DAYS = 365;
-
-dashboardRouter.put('/v1/dashboard/settings', canManageSchedulerSettings, (req, res) => {
-  const body = req.body ?? {};
-  const patch: Partial<SchedulerSettings> = {};
-
-  for (const field of SETTINGS_STRING_FIELDS) {
-    if (typeof body[field] === 'string') patch[field] = body[field].trim();
-  }
-  for (const field of SETTINGS_BOOL_FIELDS) {
-    if (typeof body[field] === 'boolean') patch[field] = body[field];
-  }
-
-  if (typeof body.notifyOnDispatchSuccess === 'boolean') {
-    if (patch.notifyOnAutomationSuccess === undefined) patch.notifyOnAutomationSuccess = body.notifyOnDispatchSuccess;
-  }
-  if (typeof body.notifyOnDispatchFailure === 'boolean') {
-    if (patch.notifyOnAutomationFailure === undefined) patch.notifyOnAutomationFailure = body.notifyOnDispatchFailure;
-  }
-  if (body.notifyFormat === 'embed' || body.notifyFormat === 'plain') {
-    patch.notifyFormat = body.notifyFormat;
-  }
-  if (body.notifySuccessMode === 'instant' || body.notifySuccessMode === 'daily' || body.notifySuccessMode === 'weekly') {
-    patch.notifySuccessMode = body.notifySuccessMode;
-  }
-  if (typeof body.notifyQuietHoursStart === 'string' && (body.notifyQuietHoursStart === '' || /^\d{2}:\d{2}$/.test(body.notifyQuietHoursStart))) {
-    patch.notifyQuietHoursStart = body.notifyQuietHoursStart;
-  }
-  if (typeof body.notifyQuietHoursEnd === 'string' && (body.notifyQuietHoursEnd === '' || /^\d{2}:\d{2}$/.test(body.notifyQuietHoursEnd))) {
-    patch.notifyQuietHoursEnd = body.notifyQuietHoursEnd;
-  }
-  if (typeof body.schedulerRetryCount === 'number') {
-    patch.schedulerRetryCount = Math.min(Math.max(Math.round(body.schedulerRetryCount), 0), MAX_SCHEDULER_RETRY_COUNT);
-  }
-  if (typeof body.deviceOfflineAlertMinutes === 'number') {
-    patch.deviceOfflineAlertMinutes = Math.min(
-      Math.max(Math.round(body.deviceOfflineAlertMinutes), MIN_DEVICE_OFFLINE_ALERT_MINUTES),
-      MAX_DEVICE_OFFLINE_ALERT_MINUTES,
-    );
-  }
-  if (typeof body.batteryHotAlertC === 'number') {
-    patch.batteryHotAlertC = Math.min(Math.max(Math.round(body.batteryHotAlertC), MIN_BATTERY_HOT_ALERT_C), MAX_BATTERY_HOT_ALERT_C);
-  }
-  if (typeof body.batteryLowAlertPercent === 'number') {
-    patch.batteryLowAlertPercent = Math.min(
-      Math.max(Math.round(body.batteryLowAlertPercent), MIN_BATTERY_LOW_ALERT_PERCENT),
-      MAX_BATTERY_LOW_ALERT_PERCENT,
-    );
-  }
-  if (typeof body.diskFullAlertPercent === 'number') {
-    patch.diskFullAlertPercent = Math.min(Math.max(Math.round(body.diskFullAlertPercent), MIN_DISK_FULL_ALERT_PERCENT), MAX_DISK_FULL_ALERT_PERCENT);
-  }
-  if (typeof body.deviceStorageAlertPercent === 'number') {
-    patch.deviceStorageAlertPercent = Math.min(
-      Math.max(Math.round(body.deviceStorageAlertPercent), MIN_DEVICE_STORAGE_ALERT_PERCENT),
-      MAX_DEVICE_STORAGE_ALERT_PERCENT,
-    );
-  }
-  if (typeof body.testFlightBridgeAlertMinutes === 'number') {
-    patch.testFlightBridgeAlertMinutes = Math.min(
-      Math.max(Math.round(body.testFlightBridgeAlertMinutes), MIN_TESTFLIGHT_BRIDGE_ALERT_MINUTES),
-      MAX_TESTFLIGHT_BRIDGE_ALERT_MINUTES,
-    );
-  }
-  if (typeof body.jobHistoryRetentionDays === 'number') {
-    patch.jobHistoryRetentionDays = Math.min(Math.max(Math.round(body.jobHistoryRetentionDays), 0), MAX_JOB_HISTORY_RETENTION_DAYS);
-  }
-
-  const updated = updateSettings(patch, res.locals.session.sub);
-  res.json(updated);
-});
-
-dashboardRouter.get('/v1/dashboard/settings/job-history-retention/preview', canManageSchedulerSettings, (req, res) => {
-  const retentionDays = Number.parseInt(String(req.query.retentionDays ?? ''), 10);
-  if (!Number.isFinite(retentionDays) || retentionDays < 0) {
-    res.status(400).json({ error: 'retentionDays must be a non-negative integer' });
-    return;
-  }
-  const now = Date.now();
-  const storage = getArtifactStorageStats();
-  res.json({
-    ...previewJobHistoryRetention(retentionDays, now),
-    artifacts: {
-      retained: storage.count,
-      retainedBytes: storage.usedBytes,
-      maxBytes: storage.maxBytes,
-      reclaimable: 0,
-      reclaimableBytes: 0,
-    },
-  });
-});
-
-dashboardRouter.get('/v1/dashboard/artifacts/retention-preview', canManageSchedulerSettings, canDecrypt, (req, res) => {
-  const maxBytes = Number(req.query.maxBytes);
-  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) {
-    res.status(400).json({ error: 'maxBytes must be a positive safe integer' });
-    return;
-  }
-  res.json(previewArtifactQuotaRetention(maxBytes));
-});
-
-dashboardRouter.get('/v1/dashboard/settings/validate-cron', canValidateCron, (req, res) => {
-  const expr = typeof req.query.expr === 'string' ? req.query.expr : '';
-  res.json({ valid: expr !== '' && validateCronExpr(expr) });
-});
-
-dashboardRouter.post('/v1/dashboard/settings/test-webhook', canTriggerDispatch, async (req, res) => {
-  const url = typeof req.body?.url === 'string' && req.body.url.trim() ? req.body.url.trim() : undefined;
-  const result = await sendTestNotification(url);
-  res.status(result.ok ? 200 : 400).json(result);
 });
 
 function parseRoleIds(body: unknown): string[] | undefined {

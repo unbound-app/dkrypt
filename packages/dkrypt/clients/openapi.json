@@ -79108,7 +79108,129 @@
               "schema": {
                 "additionalProperties": true,
                 "type": "object",
-                "properties": {}
+                "properties": {
+                  "notifyWebhookUrl": {
+                    "maxLength": 2048,
+                    "type": "string"
+                  },
+                  "notifyOnKeyRequest": {
+                    "type": "boolean"
+                  },
+                  "notifyOnAutomationSuccess": {
+                    "type": "boolean"
+                  },
+                  "notifyOnAutomationFailure": {
+                    "type": "boolean"
+                  },
+                  "notifyOnKeyExpiringSoon": {
+                    "type": "boolean"
+                  },
+                  "notifyOnDeviceOffline": {
+                    "type": "boolean"
+                  },
+                  "notifyOnDeviceBatteryHot": {
+                    "type": "boolean"
+                  },
+                  "notifyOnDeviceBatteryLow": {
+                    "type": "boolean"
+                  },
+                  "notifyOnDiskFull": {
+                    "type": "boolean"
+                  },
+                  "notifyOnDeviceStorageLow": {
+                    "type": "boolean"
+                  },
+                  "notifyOnTestFlightBridgeDown": {
+                    "type": "boolean"
+                  },
+                  "notifyOnJobCompleted": {
+                    "type": "boolean"
+                  },
+                  "notifyOnQueueSloBreach": {
+                    "type": "boolean"
+                  },
+                  "maintenanceMode": {
+                    "type": "boolean"
+                  },
+                  "notifyOnDispatchSuccess": {
+                    "type": "boolean"
+                  },
+                  "notifyOnDispatchFailure": {
+                    "type": "boolean"
+                  },
+                  "notifyFormat": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "embed"
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "enum": [
+                          "plain"
+                        ]
+                      }
+                    ]
+                  },
+                  "notifySuccessMode": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "instant"
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "enum": [
+                          "daily"
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "enum": [
+                          "weekly"
+                        ]
+                      }
+                    ]
+                  },
+                  "notifyQuietHoursStart": {
+                    "maxLength": 5,
+                    "pattern": "^(?:|\\d{2}:\\d{2})$",
+                    "type": "string"
+                  },
+                  "notifyQuietHoursEnd": {
+                    "maxLength": 5,
+                    "pattern": "^(?:|\\d{2}:\\d{2})$",
+                    "type": "string"
+                  },
+                  "schedulerRetryCount": {
+                    "type": "number"
+                  },
+                  "deviceOfflineAlertMinutes": {
+                    "type": "number"
+                  },
+                  "batteryHotAlertC": {
+                    "type": "number"
+                  },
+                  "batteryLowAlertPercent": {
+                    "type": "number"
+                  },
+                  "diskFullAlertPercent": {
+                    "type": "number"
+                  },
+                  "deviceStorageAlertPercent": {
+                    "type": "number"
+                  },
+                  "testFlightBridgeAlertMinutes": {
+                    "type": "number"
+                  },
+                  "jobHistoryRetentionDays": {
+                    "type": "number"
+                  }
+                }
               }
             }
           }
@@ -80513,7 +80635,7 @@
             },
             "in": "query",
             "name": "expr",
-            "required": true
+            "required": false
           }
         ],
         "responses": {
@@ -80910,19 +81032,56 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "required": [
-                    "ok"
-                  ],
-                  "properties": {
-                    "ok": {
-                      "type": "boolean"
+                  "anyOf": [
+                    {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "required": [
+                        "ok"
+                      ],
+                      "properties": {
+                        "ok": {
+                          "type": "boolean"
+                        },
+                        "error": {
+                          "type": "string"
+                        }
+                      }
                     },
-                    "error": {
-                      "type": "string"
+                    {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "required": [
+                        "error",
+                        "code",
+                        "message",
+                        "requestId",
+                        "retryable"
+                      ],
+                      "properties": {
+                        "error": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "requestId": {
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "type": "boolean"
+                        },
+                        "remediation": {
+                          "additionalProperties": true,
+                          "type": "object",
+                          "properties": {}
+                        }
+                      }
                     }
-                  }
+                  ]
                 }
               }
             }

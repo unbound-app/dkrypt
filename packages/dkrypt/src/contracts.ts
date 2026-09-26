@@ -95,6 +95,16 @@ import {
   backupScheduleResponseSchema,
   backupSnapshotDrillResponseSchema,
 } from '#dashboardBackupContracts.js';
+import {
+  dashboardArtifactRetentionPreviewResponseSchema as ArtifactQuotaRetentionPreviewResponse,
+  dashboardArtifactRetentionQuerySchema,
+  dashboardSettingsCronQuerySchema,
+  dashboardSettingsPatchBodySchema,
+  dashboardSettingsRetentionPreviewResponseSchema as RetentionPreviewResponse,
+  dashboardSettingsRetentionQuerySchema,
+  dashboardSettingsWebhookTestBodySchema,
+  dashboardWebhookTestResponseSchema as TestWebhookResponse,
+} from '#dashboardSettingsContracts.js';
 
 const VersionSelector = Type.String({ minLength: 1, maxLength: 64, pattern: '^v?\\d+(?:\\.\\d+)*(?:_\\d+)?$' });
 const Identifier = identifierSchema;
@@ -594,41 +604,6 @@ const InsightsResponse = object({
 const FailurePatternsResponse = object({ patterns: Type.Array(object({ message: Type.String(), count: Type.Integer({ minimum: 0 }), firstSeen: Type.Number(), lastSeen: Type.Number(), bundleIds: Type.Array(BundleId) })) });
 const StorageForecastResponse = object({ freeBytes: Type.Number({ minimum: 0 }), bytesPerDay: Type.Number({ minimum: 0 }), daysRemaining: Type.Union([Type.Number({ minimum: 0 }), Type.Null()]), sampleCount: Type.Integer({ minimum: 0 }) });
 const JobExportResponse = Type.Union([Type.Array(JsonObject), Type.String()]);
-const RetentionPreviewResponse = object({
-  retentionDays: Type.Integer({ minimum: 0 }),
-  cutoff: Type.Optional(Type.Number()),
-  currentEntries: Type.Integer({ minimum: 0 }),
-  retained: Type.Integer({ minimum: 0 }),
-  removed: Type.Integer({ minimum: 0 }),
-  agePruned: Type.Integer({ minimum: 0 }),
-  capacityPruned: Type.Integer({ minimum: 0 }),
-  afterNextWrite: Type.Integer({ minimum: 0 }),
-  maxEntries: Type.Integer({ minimum: 1 }),
-  artifacts: object({ retained: Type.Integer({ minimum: 0 }), retainedBytes: Type.Number({ minimum: 0 }), maxBytes: Type.Number({ minimum: 0 }), reclaimable: Type.Integer({ minimum: 0 }), reclaimableBytes: Type.Number({ minimum: 0 }) }),
-});
-const ArtifactQuotaRetentionPreviewResponse = object({
-  targetMaxBytes: Type.Integer({ minimum: 1 }),
-  currentMaxBytes: Type.Number({ minimum: 0 }),
-  currentCount: Type.Integer({ minimum: 0 }),
-  currentBytes: Type.Number({ minimum: 0 }),
-  retainedCount: Type.Integer({ minimum: 0 }),
-  retainedBytes: Type.Number({ minimum: 0 }),
-  evictedCount: Type.Integer({ minimum: 0 }),
-  reclaimedBytes: Type.Number({ minimum: 0 }),
-  pinnedCount: Type.Integer({ minimum: 0 }),
-  pinnedBytes: Type.Number({ minimum: 0 }),
-  remainingOverQuotaBytes: Type.Number({ minimum: 0 }),
-  evictionExamples: Type.Array(object({
-    id: Identifier,
-    bundleId: BundleId,
-    channel: Type.Union([Type.Literal('appstore'), Type.Literal('testflight')]),
-    versionLabel: Type.Optional(Type.String()),
-    fileSizeBytes: Type.Number({ minimum: 0 }),
-    lastAccessedAt: Type.Number(),
-  })),
-  additionalEvictions: Type.Integer({ minimum: 0 }),
-});
-const TestWebhookResponse = object({ ok: Type.Boolean(), error: Type.Optional(Type.String()) });
 const WebhookDeliveryPageResponse = object({ deliveries: Type.Array(JsonObject) });
 const DiagnosticResponse = object({ generatedAt: Type.String(), correlationId: Identifier, job: JsonObject, timeline: Type.Array(JsonObject) });
 const GitHubRateLimitResponse = object({
@@ -1095,9 +1070,11 @@ register('POST', '/v1/billing/checkout', {
 register('POST', '/v1/billing/portal', { response: { 200: UrlResponse } });
 register('POST', '/v1/billing/cancel', { headers: billingIdempotencyKeyHeadersSchema, response: { 200: BillingCancelResponse } });
 register('POST', '/v1/billing/subscription', { body: billingSubscriptionBodySchema, response: { 200: BillingSubscriptionUpdateResponse } });
-register('GET', '/v1/dashboard/settings', { response: { 200: SchedulerSettingsResponse } });
-register('PUT', '/v1/dashboard/settings', { response: { 200: SchedulerSettingsResponse } });
-register('GET', '/v1/dashboard/settings/validate-cron', { response: { 200: object({ valid: Type.Boolean() }) } });
+register('GET', '/v1/dashboard/settings', { response: { 200: SchedulerSettingsResponse, 401: ErrorEnvelope, 403: ErrorEnvelope } });
+register('PUT', '/v1/dashboard/settings', {
+  body: dashboardSettingsPatchBodySchema,
+  response: { 200: SchedulerSettingsResponse, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope },
+});
 register('GET', '/v1/dashboard/users', { response: { 200: UserDirectoryResponse } });
 register('GET', '/v1/dashboard/audit-log', { querystring: dashboardAuditLogQuerySchema, response: { 200: dashboardAuditLogResponseSchema, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope } });
 register('GET', '/v1/dashboard/roles', { response: { 200: RolesResponse } });
@@ -1168,8 +1145,8 @@ register('PUT', '/v1/dashboard/artifacts/:id/pin', {
   response: { 200: ArtifactPinResponse },
 });
 register('GET', '/v1/dashboard/artifacts/retention-preview', {
-  querystring: object({ maxBytes: Type.Integer({ minimum: 1 }) }),
-  response: { 200: ArtifactQuotaRetentionPreviewResponse },
+  querystring: dashboardArtifactRetentionQuerySchema,
+  response: { 200: ArtifactQuotaRetentionPreviewResponse, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope },
 });
 register('GET', '/v1/dashboard/testflight/:appId/trains', {
   params: object({ appId: Type.String({ minLength: 1, maxLength: 32, pattern: '^\\d+$' }) }),
@@ -1327,16 +1304,16 @@ register('POST', '/v1/dashboard/apps/metadata/refresh', {
   response: { 200: AppMetadataResponse },
 });
 register('GET', '/v1/dashboard/settings/job-history-retention/preview', {
-  querystring: object({ retentionDays: Type.Integer({ minimum: 0 }) }),
-  response: { 200: RetentionPreviewResponse },
+  querystring: dashboardSettingsRetentionQuerySchema,
+  response: { 200: RetentionPreviewResponse, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope },
 });
 register('GET', '/v1/dashboard/settings/validate-cron', {
-  querystring: object({ expr: Type.String({ maxLength: 100 }) }),
-  response: { 200: object({ valid: Type.Boolean() }) },
+  querystring: dashboardSettingsCronQuerySchema,
+  response: { 200: object({ valid: Type.Boolean() }), 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope },
 });
 register('POST', '/v1/dashboard/settings/test-webhook', {
-  body: object({ url: Type.Optional(Type.String({ maxLength: 500 })) }),
-  response: { 200: TestWebhookResponse, 400: TestWebhookResponse },
+  body: dashboardSettingsWebhookTestBodySchema,
+  response: { 200: TestWebhookResponse, 400: Type.Union([TestWebhookResponse, ErrorEnvelope]), 401: ErrorEnvelope, 403: ErrorEnvelope },
 });
 register('POST', '/v1/dashboard/notifications/read', {
   body: notificationReadBodySchema,
