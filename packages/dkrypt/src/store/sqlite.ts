@@ -150,6 +150,46 @@ const migrations = [
       CREATE INDEX IF NOT EXISTS jobs_completed_exact_build ON jobs(project_id, bundle_id, external_version_id, testflight_build_id, status, file_path);
     `,
   },
+  {
+    version: 8,
+    sql: `
+      ALTER TABLE artifacts ADD COLUMN artifact_key TEXT;
+      ALTER TABLE artifacts ADD COLUMN bundle_id TEXT;
+      ALTER TABLE artifacts ADD COLUMN channel TEXT;
+      ALTER TABLE artifacts ADD COLUMN external_version_id TEXT;
+      ALTER TABLE artifacts ADD COLUMN testflight_build_id INTEGER;
+      ALTER TABLE artifacts ADD COLUMN version_label TEXT;
+      ALTER TABLE artifacts ADD COLUMN build_number TEXT;
+      ALTER TABLE artifacts ADD COLUMN file_path TEXT;
+      ALTER TABLE artifacts ADD COLUMN file_size_bytes INTEGER;
+      ALTER TABLE artifacts ADD COLUMN sha256 TEXT;
+      ALTER TABLE artifacts ADD COLUMN created_at INTEGER;
+      ALTER TABLE artifacts ADD COLUMN last_accessed_at INTEGER;
+      ALTER TABLE artifacts ADD COLUMN access_count INTEGER;
+      ALTER TABLE artifacts ADD COLUMN pinned_at INTEGER;
+      ALTER TABLE artifacts ADD COLUMN source_job_id TEXT;
+      UPDATE artifacts
+      SET artifact_key = json_extract(payload, '$.key'),
+          bundle_id = json_extract(payload, '$.bundleId'),
+          channel = json_extract(payload, '$.channel'),
+          external_version_id = json_extract(payload, '$.externalVersionId'),
+          testflight_build_id = json_extract(payload, '$.testflightBuildId'),
+          version_label = json_extract(payload, '$.versionLabel'),
+          build_number = json_extract(payload, '$.buildNumber'),
+          file_path = json_extract(payload, '$.filePath'),
+          file_size_bytes = json_extract(payload, '$.fileSizeBytes'),
+          sha256 = json_extract(payload, '$.sha256'),
+          created_at = json_extract(payload, '$.createdAt'),
+          last_accessed_at = COALESCE(json_extract(payload, '$.lastAccessedAt'), updated_at),
+          access_count = COALESCE(json_extract(payload, '$.accessCount'), 0),
+          pinned_at = json_extract(payload, '$.pinnedAt'),
+          source_job_id = json_extract(payload, '$.sourceJobId')
+      WHERE json_valid(payload) = 1;
+      CREATE INDEX IF NOT EXISTS artifacts_key_index ON artifacts(artifact_key);
+      CREATE INDEX IF NOT EXISTS artifacts_source_job_index ON artifacts(source_job_id);
+      CREATE INDEX IF NOT EXISTS artifacts_bundle_channel_recent ON artifacts(bundle_id, channel, created_at DESC);
+    `,
+  },
 ] as const;
 
 const domainTables = [
@@ -233,6 +273,27 @@ function jobIndexValues(payload: unknown, updatedAt: number): Array<string | num
   ];
 }
 
+function artifactIndexValues(payload: unknown, updatedAt: number): Array<string | number | null> {
+  const artifact = asRecord(payload);
+  return [
+    stringField(artifact, 'key'),
+    stringField(artifact, 'bundleId'),
+    stringField(artifact, 'channel'),
+    stringField(artifact, 'externalVersionId'),
+    numberField(artifact, 'testflightBuildId'),
+    stringField(artifact, 'versionLabel'),
+    stringField(artifact, 'buildNumber'),
+    stringField(artifact, 'filePath'),
+    numberField(artifact, 'fileSizeBytes'),
+    stringField(artifact, 'sha256'),
+    numberField(artifact, 'createdAt') ?? updatedAt,
+    numberField(artifact, 'lastAccessedAt') ?? updatedAt,
+    numberField(artifact, 'accessCount') ?? 0,
+    numberField(artifact, 'pinnedAt'),
+    stringField(artifact, 'sourceJobId'),
+  ];
+}
+
 function replaceCollectionRows(database: Database, replacement: StateCollectionReplacement): void {
   database.exec(`DELETE FROM ${replacement.table};`);
   if (replacement.table === 'jobs') {
@@ -246,6 +307,20 @@ function replaceCollectionRows(database: Database, replacement: StateCollectionR
     for (const row of replacement.rows) {
       const updatedAt = row.updatedAt ?? Date.now();
       statement.run(row.id, json(row.payload), updatedAt, ...jobIndexValues(row.payload, updatedAt));
+    }
+    return;
+  }
+  if (replacement.table === 'artifacts') {
+    const statement = database.query(`
+      INSERT INTO artifacts (
+        id, payload, updated_at, artifact_key, bundle_id, channel, external_version_id, testflight_build_id,
+        version_label, build_number, file_path, file_size_bytes, sha256, created_at, last_accessed_at,
+        access_count, pinned_at, source_job_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    `);
+    for (const row of replacement.rows) {
+      const updatedAt = row.updatedAt ?? Date.now();
+      statement.run(row.id, json(row.payload), updatedAt, ...artifactIndexValues(row.payload, updatedAt));
     }
     return;
   }

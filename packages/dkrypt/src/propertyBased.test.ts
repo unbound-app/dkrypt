@@ -94,6 +94,26 @@ function restoreSchemaAtVersion(database: ReturnType<typeof openStateDatabase>, 
       'status',
     ]) database.db.exec(`ALTER TABLE jobs DROP COLUMN ${column};`);
   }
+  if (version < 8) {
+    database.db.exec('DROP INDEX IF EXISTS artifacts_key_index; DROP INDEX IF EXISTS artifacts_source_job_index; DROP INDEX IF EXISTS artifacts_bundle_channel_recent;');
+    for (const column of [
+      'source_job_id',
+      'pinned_at',
+      'access_count',
+      'last_accessed_at',
+      'created_at',
+      'sha256',
+      'file_size_bytes',
+      'file_path',
+      'build_number',
+      'version_label',
+      'testflight_build_id',
+      'external_version_id',
+      'channel',
+      'bundle_id',
+      'artifact_key',
+    ]) database.db.exec(`ALTER TABLE artifacts DROP COLUMN ${column};`);
+  }
   if (version < 5) database.db.exec('DROP TABLE IF EXISTS projects;');
   if (version < 4) database.db.exec('DROP TABLE IF EXISTS scheduler_runs;');
   if (version < 3) database.db.exec('DROP INDEX IF EXISTS artifacts_updated_at;');
@@ -164,7 +184,7 @@ test('SQLite upgrades generated records from every prior schema and restores the
     { selector: (run) => run.id, maxLength: 8 },
   );
 
-  for (const baselineVersion of [1, 2, 3, 4, 5, 6]) {
+  for (const baselineVersion of [1, 2, 3, 4, 5, 6, 7]) {
     await fc.assert(fc.asyncProperty(stateArbitrary, legacyJobsArbitrary, legacyArtifactsArbitrary, jobTimelinesArbitrary, schedulerRunsArbitrary, async (generatedState, legacyJobs, legacyArtifacts, jobTimelines, schedulerRuns) => {
       const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-property-sqlite-'));
       const backupPath = path.join(stateDir, 'restore.sqlite');
@@ -191,7 +211,7 @@ test('SQLite upgrades generated records from every prior schema and restores the
         database.close();
         database = undefined;
         database = openStateDatabase({ stateDir, filename: 'state.sqlite' });
-        expect(database.schemaVersion).toBe(7);
+        expect(database.schemaVersion).toBe(8);
         expect(database.integrityStatus()).toBe('ok');
         expect(database.readState()).toEqual(expectedState);
         expect(sortById(database.readCollection('jobs') as typeof expectedJobs)).toEqual(expectedJobs);
@@ -200,7 +220,7 @@ test('SQLite upgrades generated records from every prior schema and restores the
         expect(sortById(migratedTimelines.map((timeline) => ({ id: timeline.jobId, events: timeline.events })))).toEqual(sortById(expectedTimelines.map((timeline) => ({ id: timeline.jobId, events: timeline.events }))));
         expect(sortById(database.readCollection('scheduler_runs') as typeof expectedSchedulerRuns)).toEqual(sortById(expectedSchedulerRuns));
         database.backupTo(backupPath);
-        expect(verifyDatabaseBackup(backupPath)).toEqual({ schemaVersion: 7, integrity: 'ok', hasStateSnapshot: true });
+        expect(verifyDatabaseBackup(backupPath)).toEqual({ schemaVersion: 8, integrity: 'ok', hasStateSnapshot: true });
         database.close();
         database = undefined;
         database = openStateDatabase({ stateDir, filename: 'restore.sqlite' });

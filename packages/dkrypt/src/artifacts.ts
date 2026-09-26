@@ -2,37 +2,18 @@ import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdir, readdir, rename, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { isArtifactRecord, type ArtifactChannel, type ArtifactRecord } from '#artifactTypes.js';
+import { createArtifactRepository } from '#artifacts/repository.js';
 import { config } from '#config.js';
 import { scopedLogger } from '#logger.js';
-import { openStateCollectionDatabase, readStateCollection, replaceStateCollection } from '#store/sqlite.js';
+import { openStateCollectionDatabase } from '#store/sqlite.js';
 import { throwIfAborted } from '#util/abort.js';
 import { paginateCursor } from '#util/cursor.js';
 import { getProject } from '#store/state.js';
 
 const log = scopedLogger('artifacts');
 
-export type ArtifactChannel = 'appstore' | 'testflight';
-
-export interface ArtifactRecord {
-  id: string;
-  key: string;
-  projectIds: string[];
-  bundleId: string;
-  channel: ArtifactChannel;
-  externalVersionId?: string;
-  testflightBuildId?: number;
-  versionLabel?: string;
-  buildNumber?: string;
-  filePath: string;
-  fileSizeBytes: number;
-  sha256: string;
-  createdAt: number;
-  lastAccessedAt: number;
-  accessCount: number;
-  pinnedAt?: number;
-  sourceJobId?: string;
-  warnings?: string[];
-}
+export type { ArtifactChannel, ArtifactRecord } from '#artifactTypes.js';
 
 export interface ArtifactListOptions {
   offset?: number;
@@ -84,6 +65,7 @@ const artifactDatabase = openStateCollectionDatabase(
   },
   ['artifacts'],
 );
+const artifactRepository = createArtifactRepository(artifactDatabase);
 let index: ArtifactIndex = loadIndex();
 let mutationChain = Promise.resolve();
 
@@ -103,46 +85,29 @@ function normalizeArtifactRecord(record: ArtifactRecord): ArtifactRecord {
   return versionLabel === record.versionLabel && projectIds === record.projectIds ? record : { ...record, versionLabel, projectIds };
 }
 
+function inMemoryArtifact(artifact: ArtifactRecord | undefined): ArtifactRecord | undefined {
+  return artifact ? index.artifacts.find((candidate) => candidate.id === artifact.id) ?? artifact : undefined;
+}
+
 function loadIndex(): ArtifactIndex {
   mkdirSync(config.stateDir, { recursive: true });
-  const stored = readStateCollection(artifactDatabase, 'artifacts');
-  const storedArtifacts = stored.filter(isArtifactRecord).map(normalizeArtifactRecord);
+  const storedArtifacts = artifactRepository.load().map(normalizeArtifactRecord);
   if (storedArtifacts.length > 0) return { version: 1, artifacts: storedArtifacts };
   if (!existsSync(indexPath)) return { version: 1, artifacts: [] };
   try {
     const parsed = JSON.parse(readFileSync(indexPath, 'utf8')) as Partial<ArtifactIndex>;
     if (parsed.version !== 1 || !Array.isArray(parsed.artifacts)) throw new Error('unsupported artifact index');
     const artifacts = parsed.artifacts.filter(isArtifactRecord).map(normalizeArtifactRecord);
-    replaceStateCollection(artifactDatabase, 'artifacts', artifacts.map((artifact) => ({ id: artifact.id, payload: artifact, updatedAt: artifact.lastAccessedAt })));
+    artifactRepository.replace(artifacts);
     return { version: 1, artifacts };
   } catch (err) {
     throw new Error(`could not initialize artifact metadata: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
-function isArtifactRecord(value: unknown): value is ArtifactRecord {
-  if (!value || typeof value !== 'object') return false;
-  const record = value as Partial<ArtifactRecord>;
-  return (
-    typeof record.id === 'string' &&
-    typeof record.key === 'string' &&
-    typeof record.bundleId === 'string' &&
-    (record.channel === 'appstore' || record.channel === 'testflight') &&
-    typeof record.filePath === 'string' &&
-    typeof record.fileSizeBytes === 'number' &&
-    typeof record.sha256 === 'string' &&
-    typeof record.createdAt === 'number' &&
-    typeof record.lastAccessedAt === 'number' &&
-    typeof record.accessCount === 'number' &&
-    (record.pinnedAt === undefined || Number.isFinite(record.pinnedAt)) &&
-    (record.sourceJobId === undefined || typeof record.sourceJobId === 'string') &&
-    (record.warnings === undefined || (Array.isArray(record.warnings) && record.warnings.every((warning) => typeof warning === 'string')))
-  );
-}
-
 function persistIndex(): void {
   mkdirSync(config.stateDir, { recursive: true });
-  replaceStateCollection(artifactDatabase, 'artifacts', index.artifacts.map((artifact) => ({ id: artifact.id, payload: artifact, updatedAt: artifact.lastAccessedAt })));
+  artifactRepository.replace(index.artifacts);
   const temporary = `${indexPath}.${process.pid}.${randomUUID()}.tmp`;
   try {
     writeFileSync(temporary, JSON.stringify(index));
@@ -158,11 +123,11 @@ function persistIndex(): void {
 }
 
 export function reloadArtifactIndex(): void {
-  index = { version: 1, artifacts: readStateCollection(artifactDatabase, 'artifacts').filter(isArtifactRecord).map(normalizeArtifactRecord) };
+  index = { version: 1, artifacts: artifactRepository.load().map(normalizeArtifactRecord) };
 }
 
 export function closeArtifactDatabase(): void {
-  artifactDatabase.close();
+  artifactRepository.close();
 }
 
 function withMutation<T>(fn: () => Promise<T>): Promise<T> {
@@ -234,15 +199,15 @@ export function migrateLegacyPath(filePath: string | undefined): string | undefi
 }
 
 export function getArtifactById(id: string): ArtifactRecord | undefined {
-  return index.artifacts.find((artifact) => artifact.id === id);
+  return inMemoryArtifact(artifactRepository.findById(id));
 }
 
 export function getArtifactBySourceJobId(jobId: string): ArtifactRecord | undefined {
-  return index.artifacts.find((artifact) => artifact.sourceJobId === jobId);
+  return inMemoryArtifact(artifactRepository.findBySourceJobId(jobId));
 }
 
 export function getArtifactByKey(key: string): ArtifactRecord | undefined {
-  const artifact = index.artifacts.find((candidate) => candidate.key === key);
+  const artifact = inMemoryArtifact(artifactRepository.findByKey(key));
   if (!artifact || !existsSync(artifact.filePath)) return undefined;
   return artifact;
 }

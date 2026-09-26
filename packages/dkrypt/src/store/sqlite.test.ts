@@ -18,7 +18,7 @@ test('SQLite state snapshots survive restart and retain independently owned coll
 
     const reopened = openStateDatabase({ stateDir, filename: 'state.sqlite' });
     expect(reopened.integrityStatus()).toBe('ok');
-    expect(reopened.schemaVersion).toBe(7);
+    expect(reopened.schemaVersion).toBe(8);
     expect(reopened.readCollection('jobs')).toEqual([{ id: 'job-1', status: 'queued' }]);
     expect(reopened.readCollection('scheduler_runs')).toEqual([]);
     expect(reopened.readCollection('projects')).toEqual(state.projects);
