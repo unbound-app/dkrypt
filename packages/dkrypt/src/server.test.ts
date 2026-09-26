@@ -10,7 +10,7 @@ import { emitJobsChanged } from '#events.js';
 import { PermissionFlag, serializeBits } from '#permissions.js';
 import { buildServer } from '#server.js';
 import type { Response } from '#http.js';
-import { addAllowedUser, createApiKey, createProject, createRole, createTestFlightSubscription, createWatch, deleteWatch, recordAudit, recordDeviceActivity, recordGitHubBudgetTelemetry, recordJobHistory, recordNotification, revokeApiKey, updateRole, withdrawTestFlightSubscription } from '#store/state.js';
+import { addAllowedUser, createApiKey, createProject, createRole, createTestFlightSubscription, createWatch, deleteRole, deleteUserPersonalData, deleteWatch, recordAudit, recordDeviceActivity, recordGitHubBudgetTelemetry, recordJobHistory, recordNotification, revokeApiKey, updateRole, withdrawTestFlightSubscription } from '#store/state.js';
 import { setSessionCookie } from '#session.js';
 
 function createSessionCookie(userId: string, permissions: bigint): string {
@@ -99,6 +99,86 @@ test('native auth routes require recent authentication for passkey registration'
     expect(response.json()).toMatchObject({ code: 'reauthentication_required' });
   } finally {
     await server.close();
+  }
+});
+
+test('dashboard account and notification routes validate requests and preserve session behavior', async () => {
+  const userId = `github:preferences-${crypto.randomUUID()}`;
+  const role = createRole({ name: `Preferences ${crypto.randomUUID()}`, color: '#3498db', permissions: serializeBits(0n) }, 'test');
+  addAllowedUser(userId, [role.id], 'test');
+  const cookie = createSessionCookie(userId, 0n);
+  const server = await buildServer({ includePublicRoutes: false });
+  const endpoint = `https://push.example/${crypto.randomUUID()}`;
+
+  try {
+    const protectedRoutes = [
+      { method: 'GET' as const, url: '/v1/dashboard/me/prefs' },
+      { method: 'GET' as const, url: '/v1/dashboard/push/public-key' },
+      { method: 'POST' as const, url: '/v1/dashboard/push/subscribe', payload: { endpoint, keys: { p256dh: 'public-key', auth: 'secret' } } },
+      { method: 'POST' as const, url: '/v1/dashboard/push/unsubscribe', payload: { endpoint } },
+      { method: 'POST' as const, url: '/v1/dashboard/push/test' },
+      { method: 'POST' as const, url: '/v1/dashboard/email/test' },
+      { method: 'PUT' as const, url: '/v1/dashboard/me/prefs', payload: {} },
+    ];
+    for (const route of protectedRoutes) {
+      const unauthorized = await server.inject(route);
+      expect(unauthorized.statusCode).toBe(401);
+      expect(unauthorized.json()).toMatchObject({ code: 'unauthorized' });
+    }
+
+    const publicKey = await server.inject({ method: 'GET', url: '/v1/dashboard/push/public-key', headers: { cookie } });
+    expect(publicKey.statusCode).toBe(200);
+    expect((publicKey.json() as { publicKey: string }).publicKey.length).toBeGreaterThan(0);
+
+    const emailTest = await server.inject({ method: 'POST', url: '/v1/dashboard/email/test', headers: { cookie } });
+    expect(emailTest.statusCode).toBe(400);
+    expect(emailTest.json()).toMatchObject({ code: 'request_error', message: 'set a notification email first' });
+
+    const invalidPrefs = await server.inject({ method: 'PUT', url: '/v1/dashboard/me/prefs', headers: { cookie }, payload: { theme: 'sepia' } });
+    expect(invalidPrefs.statusCode).toBe(400);
+    expect(invalidPrefs.json()).toMatchObject({ code: 'request_error' });
+
+    const updatedPrefs = await server.inject({
+      method: 'PUT',
+      url: '/v1/dashboard/me/prefs',
+      headers: { cookie },
+      payload: { theme: 'dark', density: 'compact', accent: 'slate', pushOnSuccess: false, notifyEmail: 'test@example.com' },
+    });
+    expect(updatedPrefs.statusCode).toBe(200);
+    expect(updatedPrefs.json()).toMatchObject({ theme: 'dark', density: 'compact', accent: 'slate', pushOnSuccess: false });
+
+    const prefs = await server.inject({ method: 'GET', url: '/v1/dashboard/me/prefs', headers: { cookie } });
+    expect(prefs.json()).toMatchObject({ theme: 'dark', density: 'compact', accent: 'slate', pushOnSuccess: false });
+
+    const invalidSubscription = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/push/subscribe',
+      headers: { cookie },
+      payload: { endpoint: '', keys: { p256dh: 'public-key', auth: 'secret' } },
+    });
+    expect(invalidSubscription.statusCode).toBe(400);
+    expect(invalidSubscription.json()).toMatchObject({ code: 'request_error', requestId: invalidSubscription.headers['x-request-id'] });
+
+    const subscription = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/push/subscribe',
+      headers: { cookie },
+      payload: { endpoint, keys: { p256dh: 'public-key', auth: 'secret' } },
+    });
+    expect(subscription.statusCode).toBe(200);
+    expect(subscription.json() as unknown).toEqual({ ok: true });
+
+    const unsubscribe = await server.inject({ method: 'POST', url: '/v1/dashboard/push/unsubscribe', headers: { cookie }, payload: { endpoint } });
+    expect(unsubscribe.statusCode).toBe(200);
+    expect(unsubscribe.json() as unknown).toEqual({ ok: true });
+
+    const pushTest = await server.inject({ method: 'POST', url: '/v1/dashboard/push/test', headers: { cookie } });
+    expect(pushTest.statusCode).toBe(200);
+    expect(pushTest.json() as unknown).toEqual({ ok: true });
+  } finally {
+    await server.close();
+    deleteUserPersonalData(userId);
+    deleteRole(role.id, 'test');
   }
 });
 

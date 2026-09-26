@@ -291,6 +291,12 @@ test('bodyless auth actions do not require JSON request bodies', () => {
   }
 });
 
+test('bodyless dashboard notification actions do not require JSON request bodies', () => {
+  for (const path of ['/v1/dashboard/push/test', '/v1/dashboard/email/test']) {
+    expect(getRouteContracts().get(`POST ${path}`)).not.toHaveProperty('body');
+  }
+});
+
 test('TestFlight catalog contracts include the normalized bridge failure envelope', () => {
   for (const route of ['GET /v1/testflight/:appId/trains', 'GET /v1/testflight/:appId/builds']) {
     const responses = getRouteContracts().get(route)?.response as Record<string, { properties?: Record<string, unknown> }> | undefined;

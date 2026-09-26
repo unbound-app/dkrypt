@@ -20,6 +20,14 @@ import {
   billingWebhookInboxQuerySchema,
   billingWebhookQuarantineBodySchema,
 } from '#billingContracts.js';
+import {
+  dashboardOkResponseSchema,
+  pushKeyResponseSchema,
+  pushSubscriptionBodySchema,
+  pushUnsubscribeBodySchema,
+  userPrefsPatchBodySchema,
+  userPrefsResponseSchema,
+} from '#dashboardAccountContracts.js';
 
 const BundleId = Type.String({ minLength: 3, maxLength: 200, pattern: '^[A-Za-z0-9.-]+$' });
 const VersionSelector = Type.String({ minLength: 1, maxLength: 64, pattern: '^v?\\d+(?:\\.\\d+)*(?:_\\d+)?$' });
@@ -642,7 +650,7 @@ const BillingCancelResponse = object({
   cancelAtPeriodEnd: Type.Optional(Type.Boolean()),
 });
 const BillingSubscriptionUpdateResponse = object({ success: Type.Boolean(), status: Type.String(), priceId: Type.Union([Type.String(), Type.Null()]) });
-const OkResponse = object({ ok: Type.Boolean() });
+const OkResponse = dashboardOkResponseSchema;
 const ApiKeySecretResponse = object({ id: Identifier, name: Type.String(), key: Type.String(), createdAt: Type.Number(), expiresAt: Type.Optional(Type.Number()) });
 const ApiKeyRegenerateResponse = object({ ok: Type.Boolean(), key: Type.Optional(ApiKeyResponse) });
 const AllowedUserResponse = object({
@@ -835,24 +843,6 @@ const ApiKeyApprovedResponse = object({ approved: Type.Array(Identifier) });
 const ApiKeyPriorityResponse = object({ ok: Type.Boolean(), priority: Type.Number() });
 const ApiKeyConcurrencyResponse = object({ ok: Type.Boolean(), maxConcurrent: Type.Optional(Type.Union([Type.Number(), Type.Null()])) });
 const ApiKeyTestFlightResponse = object({ ok: Type.Boolean(), allowTestFlight: Type.Boolean() });
-const UserPrefsResponse = object({
-  theme: Type.Optional(Type.Union([Type.Literal('dark'), Type.Literal('light'), Type.Literal('auto')])),
-  density: Type.Optional(Type.Union([Type.Literal('comfortable'), Type.Literal('compact')])),
-  accent: Type.Optional(Type.String()),
-  sound: Type.Optional(Type.Boolean()),
-  pushOnSuccess: Type.Optional(Type.Boolean()),
-  pushOnFailure: Type.Optional(Type.Boolean()),
-  pushOnAlerts: Type.Optional(Type.Boolean()),
-  pushOnKeyExpiry: Type.Optional(Type.Boolean()),
-  emailOnSuccess: Type.Optional(Type.Boolean()),
-  emailOnFailure: Type.Optional(Type.Boolean()),
-  emailOnAlerts: Type.Optional(Type.Boolean()),
-  emailOnKeyExpiry: Type.Optional(Type.Boolean()),
-  notifyEmail: Type.Optional(Type.String()),
-  preferPrimaryDevice: Type.Optional(Type.Boolean()),
-  accountEmail: Type.Optional(Type.String()),
-});
-const PushKeyResponse = object({ publicKey: Type.String() });
 const BackupExportResponse = object({
   backupVersion: Type.Integer({ minimum: 1 }),
   exportedAt: Type.Number(),
@@ -993,6 +983,8 @@ const bodylessPostContracts = new Set([
   '/v1/auth/logout',
   '/v1/auth/logout-everywhere',
   '/v1/auth/sessions/revoke-others',
+  '/v1/dashboard/push/test',
+  '/v1/dashboard/email/test',
 ]);
 
 function registerGenericContract(method: ContractMethod, path: string): void {
@@ -1726,21 +1718,21 @@ register('PATCH', '/v1/dashboard/keys/:id/allow-testflight', {
   response: { 200: ApiKeyTestFlightResponse },
 });
 register('GET', '/v1/dashboard/me/prefs', {
-  response: { 200: UserPrefsResponse },
+  response: { 200: userPrefsResponseSchema },
 });
 register('PUT', '/v1/dashboard/me/prefs', {
-  body: Type.Partial(UserPrefsResponse),
-  response: { 200: UserPrefsResponse },
+  body: userPrefsPatchBodySchema,
+  response: { 200: userPrefsResponseSchema },
 });
 register('GET', '/v1/dashboard/push/public-key', {
-  response: { 200: PushKeyResponse },
+  response: { 200: pushKeyResponseSchema },
 });
 register('POST', '/v1/dashboard/push/subscribe', {
-  body: object({ endpoint: Type.String({ minLength: 1, maxLength: 2000 }), keys: object({ p256dh: Type.String({ minLength: 1 }), auth: Type.String({ minLength: 1 }) }) }),
+  body: pushSubscriptionBodySchema,
   response: { 200: OkResponse },
 });
 register('POST', '/v1/dashboard/push/unsubscribe', {
-  body: object({ endpoint: Type.String({ minLength: 1, maxLength: 2000 }) }),
+  body: pushUnsubscribeBodySchema,
   response: { 200: OkResponse },
 });
 register('POST', '/v1/dashboard/push/test', {

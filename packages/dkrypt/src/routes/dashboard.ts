@@ -10,14 +10,13 @@ import { cancelJob, enqueueDecryptJob, getActiveJobs, getJob, getQueueInfo, getQ
 import type { LogEntry, LogLevel } from '#logger.js';
 import { getRecentLogs } from '#logger.js';
 import { EMBED_COLOR, notify, sendTestNotification } from '#notify.js';
-import { resolveNotifyEmail, sendMailToUser } from '#mail.js';
-import { getVapidPublicKey, sendPushToUser } from '#push.js';
 import { hasPermission, isSubsetPermission, parseBits, PermissionFlag } from '#permissions.js';
 import { getAuthProfile, listAuthProfiles } from '#identity.js';
 import { applyBackupSchedule, applyWatchSchedules, checkForTestFlightUpdate, checkForUpdate, triggerTickNow } from '#scheduler/index.js';
 import { getGitHubRateLimitBudget, listDispatchRepos, listRepoWorkflows, validateDispatchTarget } from '#scheduler/github.js';
 import { lookupAppMetadata, searchApps } from '#scheduler/itunes.js';
 import { requirePermission, requireSession } from '#session.js';
+import { recordDashboardSessionActivity } from '#dashboardActivity.js';
 import { getDeviceHealth, getDeviceInstallBlocker, getDeviceReadiness, isBridgeHeartbeatFresh } from '#deviceHealth.js';
 import { decodeCursor, nextCursor, paginateCursor } from '#util/cursor.js';
 import { getCachedDeviceHealth } from '#deviceHealthCache.js';
@@ -68,7 +67,6 @@ import {
 } from '#artifacts.js';
 import {
   addAllowedUser,
-  addPushSubscription,
   approveApiKey,
   type AppWatch,
   bulkApproveApiKeys,
@@ -131,7 +129,6 @@ import {
   getStateDatabaseStatus,
   getGitHubBudgetTelemetry,
   getWatchHealthRollup,
-  getUserPrefs,
   getUserPriority,
   getWatch,
   getWatchConfigIssues,
@@ -155,11 +152,8 @@ import {
   drillBackupRestore,
   recordAudit,
   recordDeviceActivity,
-  recordUserActivity,
-  touchSessionRecord,
   regenerateApiKey,
   removeAllowedUser,
-  removePushSubscription,
   reorderRoles,
   requestApiKey,
   revealApiKeySecret,
@@ -177,7 +171,6 @@ import {
   updateProject,
   updateRole,
   updateSettings,
-  updateUserPrefs,
   updateWatch,
   userCanAccessProject,
   verifyLatestDatabaseBackup,
@@ -227,8 +220,7 @@ export const dashboardRouter = Router();
 
 dashboardRouter.use(requireSession);
 dashboardRouter.use((_req, res, next) => {
-  recordUserActivity(res.locals.session.sub);
-  touchSessionRecord(res.locals.session.sid);
+  recordDashboardSessionActivity(res.locals.session);
   next();
 });
 
@@ -3165,97 +3157,4 @@ dashboardRouter.delete('/v1/dashboard/backup/history/:id', canManageBackup, (req
     return;
   }
   res.json({ ok: true });
-});
-
-dashboardRouter.get('/v1/dashboard/me/prefs', (_req, res) => {
-  res.json({ ...getUserPrefs(res.locals.session.sub), accountEmail: getAuthProfile(res.locals.session.sub)?.email });
-});
-
-dashboardRouter.get('/v1/dashboard/push/public-key', (_req, res) => {
-  res.json({ publicKey: getVapidPublicKey() });
-});
-
-function isPushSubscriptionShape(value: unknown): value is { endpoint: string; keys: { p256dh: string; auth: string } } {
-  if (typeof value !== 'object' || value === null) return false;
-  const s = value as Record<string, unknown>;
-  if (typeof s.endpoint !== 'string') return false;
-  const keys = s.keys as Record<string, unknown> | undefined;
-  return typeof keys === 'object' && keys !== null && typeof keys.p256dh === 'string' && typeof keys.auth === 'string';
-}
-
-dashboardRouter.post('/v1/dashboard/push/subscribe', (req, res) => {
-  if (!isPushSubscriptionShape(req.body)) {
-    res.status(400).json({ error: 'a valid push subscription (endpoint, keys.p256dh, keys.auth) is required' });
-    return;
-  }
-  addPushSubscription(res.locals.session.sub, { endpoint: req.body.endpoint, keys: req.body.keys });
-  res.json({ ok: true });
-});
-
-dashboardRouter.post('/v1/dashboard/push/unsubscribe', (req, res) => {
-  const endpoint = typeof req.body?.endpoint === 'string' ? req.body.endpoint : '';
-  if (!endpoint) {
-    res.status(400).json({ error: 'endpoint is required' });
-    return;
-  }
-  removePushSubscription(res.locals.session.sub, endpoint);
-  res.json({ ok: true });
-});
-
-dashboardRouter.post('/v1/dashboard/push/test', async (_req, res) => {
-  await sendPushToUser(res.locals.session.sub, {
-    title: 'dkrypt',
-    body: 'Push notifications are set up - you\'ll get one of these when your queued decrypts finish.',
-  });
-  res.json({ ok: true });
-});
-
-dashboardRouter.post('/v1/dashboard/email/test', async (_req, res) => {
-  if (!resolveNotifyEmail(res.locals.session.sub)) {
-    res.status(400).json({ error: 'set a notification email first' });
-    return;
-  }
-  await sendMailToUser(res.locals.session.sub, {
-    subject: 'dkrypt',
-    text: 'Email notifications are set up - you\'ll get one of these when your queued decrypts finish.',
-  });
-  res.json({ ok: true });
-});
-
-dashboardRouter.put('/v1/dashboard/me/prefs', (req, res) => {
-  const body = req.body ?? {};
-  const patch: {
-    theme?: 'dark' | 'light' | 'auto';
-    density?: 'comfortable' | 'compact';
-    accent?: string;
-    sound?: boolean;
-    pushOnSuccess?: boolean;
-    pushOnFailure?: boolean;
-    pushOnAlerts?: boolean;
-    pushOnKeyExpiry?: boolean;
-    emailOnSuccess?: boolean;
-    emailOnFailure?: boolean;
-    emailOnAlerts?: boolean;
-    emailOnKeyExpiry?: boolean;
-    notifyEmail?: string;
-    preferPrimaryDevice?: boolean;
-  } = {};
-  if (body.theme === 'dark' || body.theme === 'light' || body.theme === 'auto') patch.theme = body.theme;
-  if (body.density === 'comfortable' || body.density === 'compact') patch.density = body.density;
-  if (typeof body.accent === 'string' && /^[a-z-]{1,32}$/.test(body.accent)) patch.accent = body.accent;
-  if (typeof body.sound === 'boolean') patch.sound = body.sound;
-  if (typeof body.pushOnSuccess === 'boolean') patch.pushOnSuccess = body.pushOnSuccess;
-  if (typeof body.pushOnFailure === 'boolean') patch.pushOnFailure = body.pushOnFailure;
-  if (typeof body.pushOnAlerts === 'boolean') patch.pushOnAlerts = body.pushOnAlerts;
-  if (typeof body.pushOnKeyExpiry === 'boolean') patch.pushOnKeyExpiry = body.pushOnKeyExpiry;
-  if (typeof body.emailOnSuccess === 'boolean') patch.emailOnSuccess = body.emailOnSuccess;
-  if (typeof body.emailOnFailure === 'boolean') patch.emailOnFailure = body.emailOnFailure;
-  if (typeof body.emailOnAlerts === 'boolean') patch.emailOnAlerts = body.emailOnAlerts;
-  if (typeof body.emailOnKeyExpiry === 'boolean') patch.emailOnKeyExpiry = body.emailOnKeyExpiry;
-  if (typeof body.notifyEmail === 'string') {
-    const trimmed = body.notifyEmail.trim();
-    if (trimmed === '' || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) patch.notifyEmail = trimmed;
-  }
-  if (typeof body.preferPrimaryDevice === 'boolean') patch.preferPrimaryDevice = body.preferPrimaryDevice;
-  res.json(updateUserPrefs(res.locals.session.sub, patch));
 });

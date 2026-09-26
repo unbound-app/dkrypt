@@ -14,6 +14,7 @@ import { startJobWebhookDispatcher, stopJobWebhookDispatcher } from '#jobWebhook
 import { startKeyExpiryPoller, stopKeyExpiryPoller } from '#keyExpiryPoller.js';
 import { log, startLogFlusher, stopLogFlusher } from '#logger.js';
 import { authRoutes } from '#routes/authRoutes.js';
+import { dashboardAccountRoutes } from '#routes/dashboardAccountRoutes.js';
 import { billingRoutes, billingWebhookRoutes } from '#routes/billing.js';
 import { dashboardRouter } from '#routes/dashboard.js';
 import { artifactCatalogRoutes, decryptRoutes, testFlightCatalogRoutes } from '#routes/decrypt.js';
@@ -35,6 +36,7 @@ import { stopNotificationDigestScheduler } from '#notify.js';
 import { closeDashboardConnections } from '#events.js';
 import { startSpan, startTelemetry, stopTelemetry, traceContextFromHeader, type SpanHandle } from '#telemetry.js';
 import { FixedWindowRateLimiter } from '#util/rateLimit.js';
+import { createHttpErrorEnvelope } from '#util/httpResponse.js';
 import { startRustDeviceEventMonitoring } from '#deviceBridgeEvents.js';
 
 const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
@@ -84,6 +86,15 @@ function normalizeApiErrorPayload(
 
 export async function buildServer(options: { includePublicRoutes?: boolean } = {}): Promise<FastifyInstance> {
   const server = Fastify({ bodyLimit: 5 * 1024 * 1024, trustProxy: 'loopback' }).withTypeProvider<TypeBoxTypeProvider>();
+
+  server.setNotFoundHandler((request, reply) => reply.code(404).send({ error: 'not found', code: 'not_found', message: 'not found', requestId: request.id, retryable: false }));
+  server.setErrorHandler((error, request, reply) => {
+    const normalized = error instanceof Error ? error : new Error(String(error));
+    const statusCode = typeof (error as { statusCode?: unknown })?.statusCode === 'number' ? (error as { statusCode: number }).statusCode : 500;
+    const status = statusCode >= 400 && statusCode < 600 ? statusCode : 500;
+    log.error('unhandled request error', { requestId: request.id, method: request.method, path: request.url, error: normalized.message });
+    reply.code(status).send(createHttpErrorEnvelope(request.id, status, normalized.message));
+  });
 
   await server.register(fastifySwagger, {
     mode: 'dynamic',
@@ -213,17 +224,9 @@ export async function buildServer(options: { includePublicRoutes?: boolean } = {
   await server.register(artifactCatalogRoutes);
   await server.register(testFlightCatalogRoutes);
   await server.register(authRoutes);
+  await server.register(dashboardAccountRoutes);
   await server.register(billingRoutes);
   registerRouter(server, dashboardRouter);
-
-  server.setNotFoundHandler((request, reply) => reply.code(404).send({ error: 'not found', code: 'not_found', message: 'not found', requestId: request.id, retryable: false }));
-  server.setErrorHandler((error, request, reply) => {
-    const normalized = error instanceof Error ? error : new Error(String(error));
-    const statusCode = typeof (error as { statusCode?: unknown })?.statusCode === 'number' ? (error as { statusCode: number }).statusCode : 500;
-    const status = statusCode >= 400 && statusCode < 600 ? statusCode : 500;
-    log.error('unhandled request error', { requestId: request.id, method: request.method, path: request.url, error: normalized.message });
-    reply.code(status).send({ error: status >= 500 ? 'internal server error' : normalized.message, code: status >= 500 ? 'internal_error' : 'request_error', message: status >= 500 ? 'internal server error' : normalized.message, requestId: request.id, retryable: status >= 500 });
-  });
 
   return server;
 }
