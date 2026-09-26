@@ -1,13 +1,12 @@
 import { Router, type Request, type Response } from '#http.js';
 import { projectIdentifierPattern } from '#apiCommonContracts.js';
-import { config, discordBotEnabled } from '#config.js';
+import { discordBotEnabled } from '#config.js';
 import { fetchBotGuilds, fetchGuildRoles } from '#discord.js';
 import { dashboardEvents, getOnlineUsernames, nextDashboardSequence, registerDashboardConnection, registerPresence, unregisterPresence } from '#events.js';
 import { blockDuringMaintenance } from '#maintenance.js';
 import { jobSummary, streamFilePath } from '#jobs/http.js';
 import { enqueueDecryptJob, getActiveJobs } from '#jobs/store.js';
 import type { LogEntry } from '#logger.js';
-import { getRecentLogs } from '#logger.js';
 import { hasPermission, isSubsetPermission, PermissionFlag } from '#permissions.js';
 import { canGrantBits } from '#dashboardAdminRules.js';
 import { requirePermission, requireSession } from '#session.js';
@@ -16,7 +15,6 @@ import { canAccessProject, dashboardHistoryEntry } from '#dashboardJobPresentati
 import { buildDashboardOverview } from '#dashboardOverview.js';
 import { getDeviceHealth, getDeviceInstallBlocker, getDeviceReadiness } from '#deviceHealth.js';
 import { logBelongsToProject } from '#dashboardLogPresentation.js';
-import { getDiskUsage } from '#util/diskUsage.js';
 import { csvCell } from '#util/csv.js';
 import { getVerifiedTestFlightCatalog, TestFlightCatalogUnavailableError } from '#testflightSubscriptions.js';
 import { listAppVersions } from '#versions.js';
@@ -35,38 +33,24 @@ import {
   DEFAULT_PROJECT_ID,
   deleteDiscordRolePerk,
   effectiveBitsForRoleIds,
-  getAllJobHistory,
   getAuditLog,
   getAverageJobDurationMs,
   getDevice,
   getDiscordGuilds,
   getDiscordRolePerks,
   getEffectiveDevices,
-  getEffectiveWatches,
   getProject,
   getUserEffectivePermissions,
-  getInsightsSummary,
   getPrimaryDevice,
-  getSchedulerRunHistory,
-  getStateDatabaseStatus,
-  getWatchHealthRollup,
   getUserPriority,
-  getWatchDispatchTargets,
-  getWebhookDeliveryLog,
-  getAppCatalogStats,
   type JobHistoryEntry,
   listRoles,
   recordAudit,
   setDiscordGuilds,
-  verifyLatestDatabaseBackup,
 } from '#store/state.js';
 
 const canDecrypt = requirePermission(PermissionFlag.requestDecrypt);
 const canManageStorage = requirePermission(PermissionFlag.manageAutomation);
-const canViewScheduler = requirePermission(PermissionFlag.viewAutomation, PermissionFlag.manageAutomation);
-const canManageWatches = requirePermission(PermissionFlag.manageAutomation);
-
-const canViewLogs = requirePermission(PermissionFlag.viewLogs);
 const canViewUsers = requirePermission(PermissionFlag.viewUsers, PermissionFlag.manageUsers);
 const canViewDiscordPerks = requirePermission(PermissionFlag.viewRoles, PermissionFlag.manageRoles);
 const canManageDiscordPerks = requirePermission(PermissionFlag.manageRoles);
@@ -222,93 +206,6 @@ dashboardRouter.get('/v1/dashboard/artifacts/:id/file', canDecrypt, async (req, 
   }
   await touchArtifact(artifact);
   await streamFilePath(artifact.filePath, req, res, artifactDownloadName(artifact), artifact.fileSizeBytes, artifact.id);
-});
-
-dashboardRouter.get('/v1/dashboard/webhooks', canViewLogs, (req, res) => {
-  const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit ?? '100'), 10) || 100, 1), 200);
-  res.json({ deliveries: getWebhookDeliveryLog(limit) });
-});
-
-dashboardRouter.get('/v1/dashboard/insights', (req, res) => {
-  const projectId = resolveRequestProjectId(req, res, 'query');
-  if (!projectId) return;
-  const topAppsLimit = Math.min(Math.max(Number.parseInt(String(req.query.topApps ?? '5'), 10) || 5, 1), 25);
-  const trendDays = Math.min(Math.max(Number.parseInt(String(req.query.trendDays ?? '14'), 10) || 14, 1), 90);
-  res.json(getInsightsSummary(topAppsLimit, trendDays, projectId));
-});
-
-dashboardRouter.get('/v1/dashboard/failure-patterns', canViewScheduler, (req, res) => {
-  const projectId = resolveRequestProjectId(req, res, 'query');
-  if (!projectId) return;
-  const normalize = (message: string) => message
-    .replace(/https?:\/\/\S+/g, '[url]')
-    .replace(/(?:authorization:\s*bearer\s+|(?:token|secret|key|cookie)\s*[:=]\s*)[^\s,;"']+/gi, '[redacted]')
-    .replace(/[0-9a-f]{8}-[0-9a-f-]{27,}/gi, '[id]')
-    .replace(/\b\d{4,}\b/g, '[number]')
-    .slice(0, 180);
-  const patterns = new Map<string, { count: number; firstSeen: number; lastSeen: number; bundleIds: Set<string> }>();
-  for (const job of getAllJobHistory().filter((entry) => (entry.projectId ?? DEFAULT_PROJECT_ID) === projectId && entry.status === 'failed' && entry.error)) {
-    const key = normalize(job.error as string);
-    const current = patterns.get(key) ?? { count: 0, firstSeen: job.finishedAt, lastSeen: job.finishedAt, bundleIds: new Set<string>() };
-    current.count += 1;
-    current.firstSeen = Math.min(current.firstSeen, job.finishedAt);
-    current.lastSeen = Math.max(current.lastSeen, job.finishedAt);
-    current.bundleIds.add(job.bundleId);
-    patterns.set(key, current);
-  }
-  res.json({ patterns: [...patterns.entries()].map(([message, pattern]) => ({ message, count: pattern.count, firstSeen: pattern.firstSeen, lastSeen: pattern.lastSeen, bundleIds: [...pattern.bundleIds] })).sort((a, b) => b.count - a.count || b.lastSeen - a.lastSeen).slice(0, 20) });
-});
-
-dashboardRouter.get('/v1/dashboard/storage-forecast', canViewScheduler, (req, res) => {
-  const projectId = resolveRequestProjectId(req, res, 'query');
-  if (!projectId) return;
-  const cutoff = Date.now() - 30 * 86_400_000;
-  const completed = getAllJobHistory().filter((entry) => (entry.projectId ?? DEFAULT_PROJECT_ID) === projectId && entry.status === 'done' && entry.finishedAt >= cutoff && entry.sizeBytes && entry.sizeBytes > 0);
-  const bytesPerDay = completed.reduce((total, entry) => total + (entry.sizeBytes ?? 0), 0) / 30;
-  const disk = getDiskUsage(config.artifactDir);
-  if (!disk) {
-    res.status(503).json({ error: 'output storage is unavailable' });
-    return;
-  }
-  res.json({
-    freeBytes: disk.freeBytes,
-    bytesPerDay,
-    daysRemaining: bytesPerDay > 0 ? Math.floor(disk.freeBytes / bytesPerDay) : null,
-    sampleCount: completed.length,
-  });
-});
-
-dashboardRouter.get('/v1/dashboard/support-bundle', canManageWatches, (req, res) => {
-  const projectId = resolveRequestProjectId(req, res, 'query');
-  if (!projectId) return;
-  const clean = (value: string | undefined): string | undefined => value?.replace(/https?:\/\/\S+/g, '[redacted-url]').replace(/(?:token|secret|key)=\S+/gi, '$1=[redacted]');
-  const cleanStructured = (value: unknown): unknown => {
-    if (typeof value === 'string') return clean(value) ?? value;
-    if (Array.isArray(value)) return value.map(cleanStructured);
-    if (!value || typeof value !== 'object') return value;
-    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, /token|secret|password|private.?key/i.test(key) ? '[redacted]' : cleanStructured(entry)]));
-  };
-  const jobs = getAllJobHistory()
-    .filter((entry) => (entry.projectId ?? DEFAULT_PROJECT_ID) === projectId)
-    .slice(0, 100)
-    .map(({ id, bundleId, status, source, versionLabel, createdAt, startedAt, finishedAt, sizeBytes, error }) => ({
-      id, bundleId, status, source, versionLabel, createdAt, startedAt, finishedAt, sizeBytes, error: clean(error),
-    }));
-  res.setHeader('Content-Disposition', 'attachment; filename="dkrypt-support-bundle.json"');
-  res.json({
-    generatedAt: new Date().toISOString(),
-    deployment: { ref: process.env.BUILD_REF ?? 'development', node: process.version },
-    database: getStateDatabaseStatus(),
-    latestBackup: verifyLatestDatabaseBackup(),
-    disk: getDiskUsage(config.artifactDir),
-    catalog: getAppCatalogStats(),
-    devices: getEffectiveDevices().map(({ id, name, enabled, isPrimary }) => ({ id, name, enabled, isPrimary })),
-    watches: getEffectiveWatches().map((watch) => ({ bundleId: watch.bundleId, enabled: watch.enabled, pollCron: watch.pollCron, destinations: getWatchDispatchTargets(watch).length })),
-    watchHealth: getWatchHealthRollup(),
-    schedulerRuns: getSchedulerRunHistory(50).map((run) => ({ ...run, appStore: { ...run.appStore, reason: clean(run.appStore.reason) ?? '' }, testflight: { ...run.testflight, reason: clean(run.testflight.reason) ?? '' } })),
-    logs: getRecentLogs({ limit: 200, filter: (entry) => logBelongsToProject(entry, projectId) }).logs.map((entry) => ({ ...entry, message: clean(entry.message) ?? entry.message, meta: cleanStructured(entry.meta) })),
-    jobs,
-  });
 });
 
 const BUNDLE_ID_RE = /^[A-Za-z0-9.-]{3,200}$/;

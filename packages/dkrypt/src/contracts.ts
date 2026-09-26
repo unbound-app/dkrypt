@@ -1,6 +1,6 @@
 import { Type, type Static, type TSchema } from '@sinclair/typebox';
 import type { FastifySchema } from 'fastify';
-import { bundleIdSchema as BundleId, deviceTransportSchema, identifierSchema, paginationQuerySchema } from '#apiCommonContracts.js';
+import { bundleIdSchema as BundleId, deviceTransportSchema, identifierSchema, paginationQuerySchema, projectIdentifierSchema } from '#apiCommonContracts.js';
 import {
   authConnectionParamsSchema,
   authIdentifierParamsSchema,
@@ -574,7 +574,40 @@ const PasskeyOptionsResponse = object({
 const PasskeyMutationResponse = object({ passkey: Type.Optional(PasskeySummaryResponse) });
 const AuthProfileResponse = object({ displayName: Type.String(), linkedProviders: Type.Array(Type.String()) });
 const AuthConnectionResponse = object({ identities: Type.Array(JsonObject), linkedProviders: Type.Array(Type.String()) });
-const InsightsResponse = object({
+const InsightsAppResponse = Type.Object({
+  bundleId: BundleId,
+  totalRuns: Type.Integer({ minimum: 0 }),
+  doneCount: Type.Integer({ minimum: 0 }),
+  failedCount: Type.Integer({ minimum: 0 }),
+  successRate: Type.Number({ minimum: 0, maximum: 1 }),
+  totalSizeBytes: Type.Number({ minimum: 0 }),
+  avgDurationMs: Type.Optional(Type.Number({ minimum: 0 })),
+}, { additionalProperties: true });
+const InsightsDeviceResponse = Type.Object({
+  deviceId: Identifier,
+  deviceName: Type.String(),
+  removed: Type.Boolean(),
+  totalRuns: Type.Integer({ minimum: 0 }),
+  doneCount: Type.Integer({ minimum: 0 }),
+  failedCount: Type.Integer({ minimum: 0 }),
+  successRate: Type.Number({ minimum: 0, maximum: 1 }),
+  totalSizeBytes: Type.Number({ minimum: 0 }),
+  avgDurationMs: Type.Optional(Type.Number({ minimum: 0 })),
+}, { additionalProperties: true });
+const InsightsAnomalyResponse = Type.Object({
+  jobId: Identifier,
+  bundleId: BundleId,
+  versionLabel: Type.Optional(Type.String()),
+  finishedAt: Type.Number(),
+  kind: Type.Union([Type.Literal('duration'), Type.Literal('size'), Type.Literal('duration-and-size')]),
+  durationMs: Type.Optional(Type.Number({ minimum: 0 })),
+  baselineDurationMs: Type.Optional(Type.Number({ minimum: 0 })),
+  durationRatio: Type.Optional(Type.Number({ minimum: 0 })),
+  sizeBytes: Type.Optional(Type.Number({ minimum: 0 })),
+  baselineSizeBytes: Type.Optional(Type.Number({ minimum: 0 })),
+  sizeRatio: Type.Optional(Type.Number({ minimum: 0 })),
+}, { additionalProperties: true });
+const InsightsResponse = Type.Object({
   totalRuns: Type.Integer({ minimum: 0 }),
   doneCount: Type.Integer({ minimum: 0 }),
   failedCount: Type.Integer({ minimum: 0 }),
@@ -582,29 +615,176 @@ const InsightsResponse = object({
   totalSizeBytes: Type.Number({ minimum: 0 }),
   manualCount: Type.Integer({ minimum: 0 }),
   schedulerCount: Type.Integer({ minimum: 0 }),
-  topApps: Type.Array(JsonObject),
-  trend: Type.Array(object({ date: Type.String(), count: Type.Integer({ minimum: 0 }) })),
-  failureBreakdown: Type.Array(JsonObject),
-  byDevice: Type.Array(JsonObject),
-  anomalies: Type.Array(JsonObject),
-});
-const FailurePatternsResponse = object({ patterns: Type.Array(object({ message: Type.String(), count: Type.Integer({ minimum: 0 }), firstSeen: Type.Number(), lastSeen: Type.Number(), bundleIds: Type.Array(BundleId) })) });
-const StorageForecastResponse = object({ freeBytes: Type.Number({ minimum: 0 }), bytesPerDay: Type.Number({ minimum: 0 }), daysRemaining: Type.Union([Type.Number({ minimum: 0 }), Type.Null()]), sampleCount: Type.Integer({ minimum: 0 }) });
-const WebhookDeliveryPageResponse = object({ deliveries: Type.Array(JsonObject) });
-const SupportBundleResponse = object({
-  generatedAt: Type.String(),
-  deployment: object({ ref: Type.String(), node: Type.String() }),
-  database: JsonObject,
-  latestBackup: object({ ok: Type.Boolean(), detail: Type.String() }),
-  disk: Type.Optional(JsonObject),
-  catalog: JsonObject,
-  devices: Type.Array(JsonObject),
-  watches: Type.Array(JsonObject),
-  watchHealth: JsonObject,
-  schedulerRuns: Type.Array(JsonObject),
-  logs: Type.Array(JsonObject),
-  jobs: Type.Array(JsonObject),
-});
+  topApps: Type.Array(InsightsAppResponse),
+  trend: Type.Array(Type.Object({ date: Type.String(), count: Type.Integer({ minimum: 0 }) }, { additionalProperties: true })),
+  failureBreakdown: Type.Array(Type.Object({ category: Type.String(), count: Type.Integer({ minimum: 0 }) }, { additionalProperties: true })),
+  byDevice: Type.Array(InsightsDeviceResponse),
+  anomalies: Type.Array(InsightsAnomalyResponse),
+}, { additionalProperties: true });
+export const dashboardInsightsQuerySchema = Type.Object({
+  topApps: Type.Optional(Type.String()),
+  trendDays: Type.Optional(Type.String()),
+  projectId: Type.Optional(projectIdentifierSchema),
+}, { additionalProperties: true });
+export type DashboardInsightsResponse = Static<typeof InsightsResponse>;
+export type DashboardInsightsRoute = {
+  Querystring: Static<typeof dashboardInsightsQuerySchema>;
+  Reply: {
+    200: Static<typeof InsightsResponse>;
+    400: ApiErrorEnvelope;
+    401: ApiErrorEnvelope;
+    404: ApiErrorEnvelope;
+  };
+};
+const FailurePatternsResponse = Type.Object({
+  patterns: Type.Array(Type.Object({
+    message: Type.String({ maxLength: 180 }),
+    count: Type.Integer({ minimum: 0 }),
+    firstSeen: Type.Number(),
+    lastSeen: Type.Number(),
+    bundleIds: Type.Array(BundleId),
+  }, { additionalProperties: true })),
+}, { additionalProperties: true });
+const StorageForecastResponse = Type.Object({
+  freeBytes: Type.Number({ minimum: 0 }),
+  bytesPerDay: Type.Number({ minimum: 0 }),
+  daysRemaining: Type.Union([Type.Number({ minimum: 0 }), Type.Null()]),
+  sampleCount: Type.Integer({ minimum: 0 }),
+}, { additionalProperties: true });
+export const dashboardFailurePatternsQuerySchema = Type.Object({
+  projectId: Type.Optional(projectIdentifierSchema),
+}, { additionalProperties: true });
+export const dashboardStorageForecastQuerySchema = Type.Object({
+  projectId: Type.Optional(projectIdentifierSchema),
+}, { additionalProperties: true });
+export type DashboardFailurePatternsRoute = {
+  Querystring: Static<typeof dashboardFailurePatternsQuerySchema>;
+  Reply: {
+    200: Static<typeof FailurePatternsResponse>;
+    400: ApiErrorEnvelope;
+    401: ApiErrorEnvelope;
+    403: ApiErrorEnvelope;
+    404: ApiErrorEnvelope;
+  };
+};
+export type DashboardStorageForecastRoute = {
+  Querystring: Static<typeof dashboardStorageForecastQuerySchema>;
+  Reply: {
+    200: Static<typeof StorageForecastResponse>;
+    400: ApiErrorEnvelope;
+    401: ApiErrorEnvelope;
+    403: ApiErrorEnvelope;
+    404: ApiErrorEnvelope;
+    503: ApiErrorEnvelope;
+  };
+};
+const WebhookDeliveryPageResponse = Type.Object({
+  deliveries: Type.Array(Type.Object({
+    id: Identifier,
+    ts: Type.Number(),
+    kind: Type.Union([Type.Literal('scheduler'), Type.Literal('job')]),
+    event: Type.String(),
+    targetHost: Type.String(),
+    ok: Type.Boolean(),
+    status: Type.Optional(Type.Number()),
+    error: Type.Optional(Type.String()),
+    durationMs: Type.Number({ minimum: 0 }),
+  }, { additionalProperties: true })),
+}, { additionalProperties: true });
+export const dashboardWebhookDeliveriesQuerySchema = Type.Object({
+  limit: Type.Optional(Type.String()),
+}, { additionalProperties: true });
+export type DashboardWebhookDeliveriesRoute = {
+  Querystring: Static<typeof dashboardWebhookDeliveriesQuerySchema>;
+  Reply: { 200: Static<typeof WebhookDeliveryPageResponse>; 401: ApiErrorEnvelope; 403: ApiErrorEnvelope };
+};
+const SupportBundleResponse = Type.Object({
+  generatedAt: Type.String({ format: 'date-time' }),
+  deployment: Type.Object({ ref: Type.String(), node: Type.String() }, { additionalProperties: true }),
+  database: Type.Object({ path: Type.String(), schemaVersion: Type.Integer({ minimum: 0 }), integrity: Type.Literal('ok') }, { additionalProperties: true }),
+  latestBackup: Type.Object({ ok: Type.Boolean(), detail: Type.String() }, { additionalProperties: true }),
+  disk: Type.Optional(Type.Object({
+    totalBytes: Type.Number({ minimum: 0 }),
+    freeBytes: Type.Number({ minimum: 0 }),
+    usedBytes: Type.Number({ minimum: 0 }),
+    usedPercent: Type.Number({ minimum: 0, maximum: 1 }),
+  }, { additionalProperties: true })),
+  catalog: Type.Object({
+    entries: Type.Integer({ minimum: 0 }),
+    icons: Type.Integer({ minimum: 0 }),
+    oldestUpdatedAt: Type.Optional(Type.Number()),
+    newestUpdatedAt: Type.Optional(Type.Number()),
+  }, { additionalProperties: true }),
+  devices: Type.Array(Type.Object({ id: Identifier, name: Type.String(), enabled: Type.Boolean(), isPrimary: Type.Optional(Type.Boolean()) }, { additionalProperties: true })),
+  watches: Type.Array(Type.Object({ bundleId: BundleId, enabled: Type.Boolean(), pollCron: Type.String(), destinations: Type.Integer({ minimum: 0 }) }, { additionalProperties: true })),
+  watchHealth: Type.Array(Type.Object({
+    watchId: Identifier,
+    bundleId: BundleId,
+    schedulable: Type.Boolean(),
+    dispatchTargetCount: Type.Integer({ minimum: 0 }),
+    lastCheckAt: Type.Optional(Type.Number()),
+    lastCheckOk: Type.Optional(Type.Boolean()),
+    consecutiveFailures: Type.Integer({ minimum: 0 }),
+    everTriggeredInHistory: Type.Boolean(),
+    historyCount: Type.Integer({ minimum: 0 }),
+    schedulerJobCount: Type.Integer({ minimum: 0 }),
+    schedulerJobSuccessRate: Type.Optional(Type.Number({ minimum: 0, maximum: 1 })),
+    medianSchedulerJobDurationMs: Type.Optional(Type.Number({ minimum: 0 })),
+  }, { additionalProperties: true })),
+  schedulerRuns: Type.Array(Type.Object({
+    id: Identifier,
+    ts: Type.Number(),
+    watchId: Type.Optional(Identifier),
+    bundleId: Type.Optional(BundleId),
+    appStore: Type.Object({ ok: Type.Boolean(), triggered: Type.Boolean(), reason: Type.String() }, { additionalProperties: true }),
+    testflight: Type.Object({ ok: Type.Boolean(), triggered: Type.Boolean(), reason: Type.String() }, { additionalProperties: true }),
+  }, { additionalProperties: true })),
+  logs: Type.Array(Type.Object({
+    id: Identifier,
+    ts: Type.Number(),
+    level: Type.Union([Type.Literal('info'), Type.Literal('warn'), Type.Literal('error')]),
+    scope: Type.String(),
+    message: Type.String(),
+    meta: Type.Optional(JsonObject),
+  }, { additionalProperties: true })),
+  jobs: Type.Array(Type.Object({
+    id: Identifier,
+    correlationId: Type.Optional(Type.String()),
+    bundleId: BundleId,
+    status: Type.Union([Type.Literal('done'), Type.Literal('failed')]),
+    source: Type.Union([Type.Literal('manual'), Type.Literal('scheduler')]),
+    versionLabel: Type.Optional(Type.String()),
+    createdAt: Type.Number(),
+    startedAt: Type.Optional(Type.Number()),
+    finishedAt: Type.Number(),
+    sizeBytes: Type.Optional(Type.Number({ minimum: 0 })),
+    error: Type.Optional(Type.String()),
+  }, { additionalProperties: true })),
+  transportTimeline: Type.Array(Type.Object({
+    id: Identifier,
+    at: Type.Number(),
+    level: Type.Union([Type.Literal('info'), Type.Literal('warn'), Type.Literal('error')]),
+    message: Type.String(),
+    deviceId: Type.Optional(Type.String()),
+    transport: Type.Optional(Type.String()),
+    operation: Type.Optional(Type.String()),
+    correlationId: Type.Optional(Type.String()),
+  }, { additionalProperties: true })),
+  correlationIds: Type.Array(Type.String({ minLength: 1 })),
+}, { additionalProperties: true });
+export const dashboardSupportBundleQuerySchema = Type.Object({
+  projectId: Type.Optional(projectIdentifierSchema),
+}, { additionalProperties: true });
+export type DashboardSupportBundleRoute = {
+  Querystring: Static<typeof dashboardSupportBundleQuerySchema>;
+  Reply: {
+    200: Static<typeof SupportBundleResponse>;
+    400: ApiErrorEnvelope;
+    401: ApiErrorEnvelope;
+    403: ApiErrorEnvelope;
+    404: ApiErrorEnvelope;
+  };
+};
 const AuditExportResponse = Type.Union([Type.Array(JsonObject), Type.String()]);
 const DiscordGuildResponse = object({ id: Identifier, name: Type.String(), icon: Type.Union([Type.String(), Type.Null()]) });
 const DiscordStatusResponse = object({ botEnabled: Type.Boolean(), guilds: Type.Array(DiscordGuildResponse) });
@@ -778,7 +958,7 @@ register('GET', '/v1/dashboard/artifacts/retention-preview', { querystring: obje
 register('GET', '/v1/dashboard/logs', { querystring: dashboardLogsQuerySchema });
 register('GET', '/v1/dashboard/audit-log', { querystring: dashboardAuditLogQuerySchema });
 register('GET', '/v1/dashboard/keys/all', { querystring: object({ ...PaginationQuery.properties, search: Type.Optional(Type.String({ maxLength: 200 })) }) });
-register('GET', '/v1/dashboard/webhooks', { querystring: object({ limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })) }) });
+register('GET', '/v1/dashboard/webhooks', { querystring: dashboardWebhookDeliveriesQuerySchema });
 register('GET', '/v1/dashboard/testflight/subscriptions', { querystring: PaginationQuery });
 register('POST', '/v1/dashboard/testflight/subscriptions', { body: object({ url: Type.String({ minLength: 1, maxLength: 500 }) }) });
 register('POST', '/v1/dashboard/testflight/subscriptions/:id/approve', { params: object({ id: Identifier }) });
@@ -994,7 +1174,7 @@ register('GET', '/v1/dashboard/devices/:id/storage-history', { params: dashboard
 register('GET', '/v1/dashboard/jobs/eta/:bundleId', { params: object({ bundleId: BundleId }), response: { 200: JobEtaResponse } });
 register('GET', '/v1/dashboard/jobs/slo', { response: { 200: JobSloResponse } });
 register('GET', '/v1/dashboard/jobs/volume', { response: { 200: DailyVolumeResponse } });
-register('GET', '/v1/dashboard/webhooks', { response: { 200: object({ deliveries: Type.Array(JsonObject) }) } });
+register('GET', '/v1/dashboard/webhooks', { response: { 200: WebhookDeliveryPageResponse, 401: ErrorEnvelope, 403: ErrorEnvelope } });
 register('GET', '/v1/auth/privacy/export', { response: { 200: Type.String() } });
 register('POST', '/v1/auth/privacy/delete', { response: { 200: OkResponse } });
 register('PATCH', '/v1/auth/profile', { response: { 200: AuthProfileResponse } });
@@ -1224,11 +1404,11 @@ register('GET', '/v1/dashboard/jobs/diff', {
   response: { 200: dashboardJobDiffResponseSchema },
 });
 register('GET', '/v1/dashboard/insights', {
-  querystring: object({ topApps: Type.Optional(Type.Integer({ minimum: 1, maximum: 25 })), trendDays: Type.Optional(Type.Integer({ minimum: 1, maximum: 90 })), projectId: Type.Optional(Identifier) }),
-  response: { 200: InsightsResponse },
+  querystring: dashboardInsightsQuerySchema,
+  response: { 200: InsightsResponse, 400: ErrorEnvelope, 401: ErrorEnvelope, 404: ErrorEnvelope },
 });
-register('GET', '/v1/dashboard/failure-patterns', { querystring: object({ projectId: Type.Optional(Identifier) }), response: { 200: FailurePatternsResponse } });
-register('GET', '/v1/dashboard/storage-forecast', { querystring: object({ projectId: Type.Optional(Identifier) }), response: { 200: StorageForecastResponse } });
+register('GET', '/v1/dashboard/failure-patterns', { querystring: dashboardFailurePatternsQuerySchema, response: { 200: FailurePatternsResponse, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope } });
+register('GET', '/v1/dashboard/storage-forecast', { querystring: dashboardStorageForecastQuerySchema, response: { 200: StorageForecastResponse, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope, 503: ErrorEnvelope } });
 register('GET', '/v1/dashboard/watches', { response: { 200: dashboardWatchListResponseSchema } });
 register('GET', '/v1/dashboard/watches/export', { response: { 200: dashboardWatchExportResponseSchema } });
 register('GET', '/v1/dashboard/watches/health', { response: { 200: dashboardWatchHealthResponseSchema } });
@@ -1315,8 +1495,8 @@ register('GET', '/v1/dashboard/logs', {
   response: { 200: dashboardLogsResponseSchema, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope },
 });
 register('GET', '/v1/dashboard/webhooks', {
-  querystring: object({ limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })) }),
-  response: { 200: WebhookDeliveryPageResponse },
+  querystring: dashboardWebhookDeliveriesQuerySchema,
+  response: { 200: WebhookDeliveryPageResponse, 401: ErrorEnvelope, 403: ErrorEnvelope },
 });
 register('GET', '/v1/dashboard/events', {
   querystring: object({ projectId: Type.Optional(Identifier) }),
@@ -1327,8 +1507,8 @@ register('GET', '/v1/dashboard/jobs/:id/diagnostic', {
   response: { 200: dashboardJobDiagnosticResponseSchema, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope, 500: ErrorEnvelope },
 });
 register('GET', '/v1/dashboard/support-bundle', {
-  querystring: object({ projectId: Type.Optional(Identifier) }),
-  response: { 200: SupportBundleResponse },
+  querystring: dashboardSupportBundleQuerySchema,
+  response: { 200: SupportBundleResponse, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope },
 });
 register('GET', '/v1/dashboard/github/rate-limit', {
   response: { 200: dashboardGitHubRateLimitResponseSchema, 502: ErrorEnvelope },

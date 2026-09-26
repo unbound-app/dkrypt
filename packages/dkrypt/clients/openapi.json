@@ -39017,9 +39017,7 @@
         "parameters": [
           {
             "schema": {
-              "minimum": 1,
-              "maximum": 200,
-              "type": "integer"
+              "type": "string"
             },
             "in": "query",
             "name": "limit",
@@ -39043,7 +39041,60 @@
                       "items": {
                         "additionalProperties": true,
                         "type": "object",
-                        "properties": {}
+                        "required": [
+                          "id",
+                          "ts",
+                          "kind",
+                          "event",
+                          "targetHost",
+                          "ok",
+                          "durationMs"
+                        ],
+                        "properties": {
+                          "id": {
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "type": "string"
+                          },
+                          "ts": {
+                            "type": "number"
+                          },
+                          "kind": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "scheduler"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "job"
+                                ]
+                              }
+                            ]
+                          },
+                          "event": {
+                            "type": "string"
+                          },
+                          "targetHost": {
+                            "type": "string"
+                          },
+                          "ok": {
+                            "type": "boolean"
+                          },
+                          "status": {
+                            "type": "number"
+                          },
+                          "error": {
+                            "type": "string"
+                          },
+                          "durationMs": {
+                            "minimum": 0,
+                            "type": "number"
+                          }
+                        }
                       }
                     }
                   }
@@ -42724,9 +42775,7 @@
         "parameters": [
           {
             "schema": {
-              "minimum": 1,
-              "maximum": 25,
-              "type": "integer"
+              "type": "string"
             },
             "in": "query",
             "name": "topApps",
@@ -42734,9 +42783,7 @@
           },
           {
             "schema": {
-              "minimum": 1,
-              "maximum": 90,
-              "type": "integer"
+              "type": "string"
             },
             "in": "query",
             "name": "trendDays",
@@ -42745,7 +42792,8 @@
           {
             "schema": {
               "minLength": 1,
-              "maxLength": 200,
+              "maxLength": 80,
+              "pattern": "^[A-Za-z0-9_-]{1,80}$",
               "type": "string"
             },
             "in": "query",
@@ -42810,7 +42858,47 @@
                       "items": {
                         "additionalProperties": true,
                         "type": "object",
-                        "properties": {}
+                        "required": [
+                          "bundleId",
+                          "totalRuns",
+                          "doneCount",
+                          "failedCount",
+                          "successRate",
+                          "totalSizeBytes"
+                        ],
+                        "properties": {
+                          "bundleId": {
+                            "minLength": 3,
+                            "maxLength": 200,
+                            "pattern": "^[A-Za-z0-9.-]+$",
+                            "type": "string"
+                          },
+                          "totalRuns": {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "doneCount": {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "failedCount": {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "successRate": {
+                            "minimum": 0,
+                            "maximum": 1,
+                            "type": "number"
+                          },
+                          "totalSizeBytes": {
+                            "minimum": 0,
+                            "type": "number"
+                          },
+                          "avgDurationMs": {
+                            "minimum": 0,
+                            "type": "number"
+                          }
+                        }
                       }
                     },
                     "trend": {
@@ -42838,7 +42926,19 @@
                       "items": {
                         "additionalProperties": true,
                         "type": "object",
-                        "properties": {}
+                        "required": [
+                          "category",
+                          "count"
+                        ],
+                        "properties": {
+                          "category": {
+                            "type": "string"
+                          },
+                          "count": {
+                            "minimum": 0,
+                            "type": "integer"
+                          }
+                        }
                       }
                     },
                     "byDevice": {
@@ -42846,7 +42946,54 @@
                       "items": {
                         "additionalProperties": true,
                         "type": "object",
-                        "properties": {}
+                        "required": [
+                          "deviceId",
+                          "deviceName",
+                          "removed",
+                          "totalRuns",
+                          "doneCount",
+                          "failedCount",
+                          "successRate",
+                          "totalSizeBytes"
+                        ],
+                        "properties": {
+                          "deviceId": {
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "type": "string"
+                          },
+                          "deviceName": {
+                            "type": "string"
+                          },
+                          "removed": {
+                            "type": "boolean"
+                          },
+                          "totalRuns": {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "doneCount": {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "failedCount": {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "successRate": {
+                            "minimum": 0,
+                            "maximum": 1,
+                            "type": "number"
+                          },
+                          "totalSizeBytes": {
+                            "minimum": 0,
+                            "type": "number"
+                          },
+                          "avgDurationMs": {
+                            "minimum": 0,
+                            "type": "number"
+                          }
+                        }
                       }
                     },
                     "anomalies": {
@@ -42854,7 +43001,77 @@
                       "items": {
                         "additionalProperties": true,
                         "type": "object",
-                        "properties": {}
+                        "required": [
+                          "jobId",
+                          "bundleId",
+                          "finishedAt",
+                          "kind"
+                        ],
+                        "properties": {
+                          "jobId": {
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "type": "string"
+                          },
+                          "bundleId": {
+                            "minLength": 3,
+                            "maxLength": 200,
+                            "pattern": "^[A-Za-z0-9.-]+$",
+                            "type": "string"
+                          },
+                          "versionLabel": {
+                            "type": "string"
+                          },
+                          "finishedAt": {
+                            "type": "number"
+                          },
+                          "kind": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "duration"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "size"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "duration-and-size"
+                                ]
+                              }
+                            ]
+                          },
+                          "durationMs": {
+                            "minimum": 0,
+                            "type": "number"
+                          },
+                          "baselineDurationMs": {
+                            "minimum": 0,
+                            "type": "number"
+                          },
+                          "durationRatio": {
+                            "minimum": 0,
+                            "type": "number"
+                          },
+                          "sizeBytes": {
+                            "minimum": 0,
+                            "type": "number"
+                          },
+                          "baselineSizeBytes": {
+                            "minimum": 0,
+                            "type": "number"
+                          },
+                          "sizeRatio": {
+                            "minimum": 0,
+                            "type": "number"
+                          }
+                        }
                       }
                     }
                   }
@@ -43195,7 +43412,8 @@
           {
             "schema": {
               "minLength": 1,
-              "maxLength": 200,
+              "maxLength": 80,
+              "pattern": "^[A-Za-z0-9_-]{1,80}$",
               "type": "string"
             },
             "in": "query",
@@ -43229,6 +43447,7 @@
                         ],
                         "properties": {
                           "message": {
+                            "maxLength": 180,
                             "type": "string"
                           },
                           "count": {
@@ -43591,7 +43810,8 @@
           {
             "schema": {
               "minLength": 1,
-              "maxLength": 200,
+              "maxLength": 80,
+              "pattern": "^[A-Za-z0-9_-]{1,80}$",
               "type": "string"
             },
             "in": "query",
@@ -43975,7 +44195,8 @@
           {
             "schema": {
               "minLength": 1,
-              "maxLength": 200,
+              "maxLength": 80,
+              "pattern": "^[A-Za-z0-9_-]{1,80}$",
               "type": "string"
             },
             "in": "query",
@@ -44002,10 +44223,13 @@
                     "watchHealth",
                     "schedulerRuns",
                     "logs",
-                    "jobs"
+                    "jobs",
+                    "transportTimeline",
+                    "correlationIds"
                   ],
                   "properties": {
                     "generatedAt": {
+                      "format": "date-time",
                       "type": "string"
                     },
                     "deployment": {
@@ -44027,7 +44251,26 @@
                     "database": {
                       "additionalProperties": true,
                       "type": "object",
-                      "properties": {}
+                      "required": [
+                        "path",
+                        "schemaVersion",
+                        "integrity"
+                      ],
+                      "properties": {
+                        "path": {
+                          "type": "string"
+                        },
+                        "schemaVersion": {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "integrity": {
+                          "type": "string",
+                          "enum": [
+                            "ok"
+                          ]
+                        }
+                      }
                     },
                     "latestBackup": {
                       "additionalProperties": true,
@@ -44048,19 +44291,82 @@
                     "disk": {
                       "additionalProperties": true,
                       "type": "object",
-                      "properties": {}
+                      "required": [
+                        "totalBytes",
+                        "freeBytes",
+                        "usedBytes",
+                        "usedPercent"
+                      ],
+                      "properties": {
+                        "totalBytes": {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        "freeBytes": {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        "usedBytes": {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        "usedPercent": {
+                          "minimum": 0,
+                          "maximum": 1,
+                          "type": "number"
+                        }
+                      }
                     },
                     "catalog": {
                       "additionalProperties": true,
                       "type": "object",
-                      "properties": {}
+                      "required": [
+                        "entries",
+                        "icons"
+                      ],
+                      "properties": {
+                        "entries": {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "icons": {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "oldestUpdatedAt": {
+                          "type": "number"
+                        },
+                        "newestUpdatedAt": {
+                          "type": "number"
+                        }
+                      }
                     },
                     "devices": {
                       "type": "array",
                       "items": {
                         "additionalProperties": true,
                         "type": "object",
-                        "properties": {}
+                        "required": [
+                          "id",
+                          "name",
+                          "enabled"
+                        ],
+                        "properties": {
+                          "id": {
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "isPrimary": {
+                            "type": "boolean"
+                          }
+                        }
                       }
                     },
                     "watches": {
@@ -44068,20 +44374,171 @@
                       "items": {
                         "additionalProperties": true,
                         "type": "object",
-                        "properties": {}
+                        "required": [
+                          "bundleId",
+                          "enabled",
+                          "pollCron",
+                          "destinations"
+                        ],
+                        "properties": {
+                          "bundleId": {
+                            "minLength": 3,
+                            "maxLength": 200,
+                            "pattern": "^[A-Za-z0-9.-]+$",
+                            "type": "string"
+                          },
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "pollCron": {
+                            "type": "string"
+                          },
+                          "destinations": {
+                            "minimum": 0,
+                            "type": "integer"
+                          }
+                        }
                       }
                     },
                     "watchHealth": {
-                      "additionalProperties": true,
-                      "type": "object",
-                      "properties": {}
+                      "type": "array",
+                      "items": {
+                        "additionalProperties": true,
+                        "type": "object",
+                        "required": [
+                          "watchId",
+                          "bundleId",
+                          "schedulable",
+                          "dispatchTargetCount",
+                          "consecutiveFailures",
+                          "everTriggeredInHistory",
+                          "historyCount",
+                          "schedulerJobCount"
+                        ],
+                        "properties": {
+                          "watchId": {
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "type": "string"
+                          },
+                          "bundleId": {
+                            "minLength": 3,
+                            "maxLength": 200,
+                            "pattern": "^[A-Za-z0-9.-]+$",
+                            "type": "string"
+                          },
+                          "schedulable": {
+                            "type": "boolean"
+                          },
+                          "dispatchTargetCount": {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "lastCheckAt": {
+                            "type": "number"
+                          },
+                          "lastCheckOk": {
+                            "type": "boolean"
+                          },
+                          "consecutiveFailures": {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "everTriggeredInHistory": {
+                            "type": "boolean"
+                          },
+                          "historyCount": {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "schedulerJobCount": {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "schedulerJobSuccessRate": {
+                            "minimum": 0,
+                            "maximum": 1,
+                            "type": "number"
+                          },
+                          "medianSchedulerJobDurationMs": {
+                            "minimum": 0,
+                            "type": "number"
+                          }
+                        }
+                      }
                     },
                     "schedulerRuns": {
                       "type": "array",
                       "items": {
                         "additionalProperties": true,
                         "type": "object",
-                        "properties": {}
+                        "required": [
+                          "id",
+                          "ts",
+                          "appStore",
+                          "testflight"
+                        ],
+                        "properties": {
+                          "id": {
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "type": "string"
+                          },
+                          "ts": {
+                            "type": "number"
+                          },
+                          "watchId": {
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "type": "string"
+                          },
+                          "bundleId": {
+                            "minLength": 3,
+                            "maxLength": 200,
+                            "pattern": "^[A-Za-z0-9.-]+$",
+                            "type": "string"
+                          },
+                          "appStore": {
+                            "additionalProperties": true,
+                            "type": "object",
+                            "required": [
+                              "ok",
+                              "triggered",
+                              "reason"
+                            ],
+                            "properties": {
+                              "ok": {
+                                "type": "boolean"
+                              },
+                              "triggered": {
+                                "type": "boolean"
+                              },
+                              "reason": {
+                                "type": "string"
+                              }
+                            }
+                          },
+                          "testflight": {
+                            "additionalProperties": true,
+                            "type": "object",
+                            "required": [
+                              "ok",
+                              "triggered",
+                              "reason"
+                            ],
+                            "properties": {
+                              "ok": {
+                                "type": "boolean"
+                              },
+                              "triggered": {
+                                "type": "boolean"
+                              },
+                              "reason": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        }
                       }
                     },
                     "logs": {
@@ -44089,7 +44546,56 @@
                       "items": {
                         "additionalProperties": true,
                         "type": "object",
-                        "properties": {}
+                        "required": [
+                          "id",
+                          "ts",
+                          "level",
+                          "scope",
+                          "message"
+                        ],
+                        "properties": {
+                          "id": {
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "type": "string"
+                          },
+                          "ts": {
+                            "type": "number"
+                          },
+                          "level": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "info"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "warn"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "error"
+                                ]
+                              }
+                            ]
+                          },
+                          "scope": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "meta": {
+                            "additionalProperties": true,
+                            "type": "object",
+                            "properties": {}
+                          }
+                        }
                       }
                     },
                     "jobs": {
@@ -44097,7 +44603,148 @@
                       "items": {
                         "additionalProperties": true,
                         "type": "object",
-                        "properties": {}
+                        "required": [
+                          "id",
+                          "bundleId",
+                          "status",
+                          "source",
+                          "createdAt",
+                          "finishedAt"
+                        ],
+                        "properties": {
+                          "id": {
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "type": "string"
+                          },
+                          "correlationId": {
+                            "type": "string"
+                          },
+                          "bundleId": {
+                            "minLength": 3,
+                            "maxLength": 200,
+                            "pattern": "^[A-Za-z0-9.-]+$",
+                            "type": "string"
+                          },
+                          "status": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "done"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "failed"
+                                ]
+                              }
+                            ]
+                          },
+                          "source": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "manual"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "scheduler"
+                                ]
+                              }
+                            ]
+                          },
+                          "versionLabel": {
+                            "type": "string"
+                          },
+                          "createdAt": {
+                            "type": "number"
+                          },
+                          "startedAt": {
+                            "type": "number"
+                          },
+                          "finishedAt": {
+                            "type": "number"
+                          },
+                          "sizeBytes": {
+                            "minimum": 0,
+                            "type": "number"
+                          },
+                          "error": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "transportTimeline": {
+                      "type": "array",
+                      "items": {
+                        "additionalProperties": true,
+                        "type": "object",
+                        "required": [
+                          "id",
+                          "at",
+                          "level",
+                          "message"
+                        ],
+                        "properties": {
+                          "id": {
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "type": "string"
+                          },
+                          "at": {
+                            "type": "number"
+                          },
+                          "level": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "info"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "warn"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "error"
+                                ]
+                              }
+                            ]
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "deviceId": {
+                            "type": "string"
+                          },
+                          "transport": {
+                            "type": "string"
+                          },
+                          "operation": {
+                            "type": "string"
+                          },
+                          "correlationId": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "correlationIds": {
+                      "type": "array",
+                      "items": {
+                        "minLength": 1,
+                        "type": "string"
                       }
                     }
                   }
