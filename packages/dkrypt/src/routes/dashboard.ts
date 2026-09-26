@@ -10,7 +10,8 @@ import { cancelJob, enqueueDecryptJob, getActiveJobs, getJob, getQueueInfo, prio
 import type { LogEntry } from '#logger.js';
 import { getRecentLogs } from '#logger.js';
 import { EMBED_COLOR, notify } from '#notify.js';
-import { hasPermission, isSubsetPermission, parseBits, PermissionFlag } from '#permissions.js';
+import { hasPermission, isSubsetPermission, PermissionFlag } from '#permissions.js';
+import { canGrantBits, parseRoleIds } from '#dashboardAdminRules.js';
 import { listAuthProfiles } from '#identity.js';
 import { applyWatchSchedules, checkForTestFlightUpdate, checkForUpdate, triggerTickNow } from '#scheduler/index.js';
 import { getGitHubRateLimitBudget, listDispatchRepos, listRepoWorkflows, validateDispatchTarget } from '#scheduler/github.js';
@@ -52,12 +53,9 @@ import {
   bulkSetApiKeyDailyLimit,
   createApiKey,
   createDiscordRolePerk,
-  createRole,
   createWatch,
-  DEFAULT_ROLE_ID,
   DEFAULT_PROJECT_ID,
   deleteDiscordRolePerk,
-  deleteRole,
   deleteWatch,
   denyApiKey,
   effectiveBitsForRoleIds,
@@ -102,7 +100,6 @@ import {
   recordAudit,
   regenerateApiKey,
   removeAllowedUser,
-  reorderRoles,
   requestApiKey,
   revealApiKeySecret,
   revokeApiKey,
@@ -113,7 +110,6 @@ import {
   setUserPriority,
   upsertAppCatalogEntries,
   updateAllowedUserRoles,
-  updateRole,
   updateWatch,
   verifyLatestDatabaseBackup,
   wouldOrphanPermission,
@@ -143,9 +139,7 @@ const canManageSchedulerSettings = requirePermission(PermissionFlag.manageAutoma
 const canTriggerDispatch = requirePermission(PermissionFlag.manageAutomation);
 const canViewLogs = requirePermission(PermissionFlag.viewLogs);
 const canViewUsers = requirePermission(PermissionFlag.viewUsers, PermissionFlag.manageUsers);
-const canViewRoles = requirePermission(PermissionFlag.viewRoles, PermissionFlag.manageRoles);
 const canManageUsers = requirePermission(PermissionFlag.manageUsers);
-const canManageRoles = requirePermission(PermissionFlag.manageRoles);
 const canViewDiscordPerks = requirePermission(PermissionFlag.viewRoles, PermissionFlag.manageRoles);
 const canManageDiscordPerks = requirePermission(PermissionFlag.manageRoles);
 export const dashboardRouter = Router();
@@ -1646,15 +1640,6 @@ dashboardRouter.post('/v1/dashboard/keys/:id/deny', canApproveApiKeys, (req, res
   res.json({ ok: true });
 });
 
-function parseRoleIds(body: unknown): string[] | undefined {
-  if (!Array.isArray(body) || !body.every((id) => typeof id === 'string')) return undefined;
-  return body as string[];
-}
-
-function canGrantBits(actorBits: bigint, targetBits: bigint): boolean {
-  return hasPermission(actorBits, PermissionFlag.manageRoles) || isSubsetPermission(targetBits, actorBits);
-}
-
 dashboardRouter.get('/v1/dashboard/users', canViewUsers, (_req, res) => {
   const assignments = new Map(listAllowedUsers().map((user) => [user.username, user]));
   const activity = getUserActivityStats();
@@ -1727,87 +1712,6 @@ function resolveRequestProjectId(req: Request, res: Response, source: 'body' | '
   }
   return projectId;
 }
-
-dashboardRouter.get('/v1/dashboard/roles', canViewRoles, (_req, res) => {
-  res.json({ roles: listRoles() });
-});
-
-interface RoleInput {
-  name: string;
-  color: string;
-  permissions: string;
-}
-
-function parseRoleInput(body: unknown): RoleInput | undefined {
-  if (typeof body !== 'object' || body === null) return undefined;
-  const b = body as Record<string, unknown>;
-  const name = typeof b.name === 'string' ? b.name.trim() : '';
-  const color = typeof b.color === 'string' && /^#[0-9a-f]{6}$/i.test(b.color) ? b.color : undefined;
-  if (!name || !color || (b.permissions !== undefined && typeof b.permissions !== 'string')) return undefined;
-  return { name, color, permissions: typeof b.permissions === 'string' ? b.permissions : '0' };
-}
-
-dashboardRouter.post('/v1/dashboard/roles', canManageRoles, (req, res) => {
-  const input = parseRoleInput(req.body);
-  if (!input) {
-    res.status(400).json({ error: 'name (non-empty) and color (#rrggbb) are required' });
-    return;
-  }
-  const bits = parseBits(input.permissions);
-  if (!canGrantBits(res.locals.session.permissions, bits)) {
-    res.status(403).json({ error: "you can't grant permissions you don't have yourself" });
-    return;
-  }
-  res.status(201).json(createRole(input, res.locals.session.sub));
-});
-
-dashboardRouter.patch('/v1/dashboard/roles/:id', canManageRoles, (req, res) => {
-  if (req.params.id === DEFAULT_ROLE_ID) {
-    res.status(400).json({ error: "the @everyone role can't be renamed" });
-    return;
-  }
-  const body = (req.body ?? {}) as Record<string, unknown>;
-  const patch: { name?: string; color?: string; permissions?: string } = {};
-  if (typeof body.name === 'string' && body.name.trim()) patch.name = body.name.trim();
-  if (typeof body.color === 'string' && /^#[0-9a-f]{6}$/i.test(body.color)) patch.color = body.color;
-  if (typeof body.permissions === 'string') {
-    const bits = parseBits(body.permissions);
-    if (!canGrantBits(res.locals.session.permissions, bits)) {
-      res.status(403).json({ error: "you can't grant permissions you don't have yourself" });
-      return;
-    }
-    patch.permissions = body.permissions;
-  }
-  const result = updateRole(req.params.id, patch, res.locals.session.sub);
-  if (!result.ok) {
-    res.status(result.error === 'role not found' ? 404 : 400).json({ error: result.error });
-    return;
-  }
-  res.json(result.role);
-});
-
-dashboardRouter.delete('/v1/dashboard/roles/:id', canManageRoles, (req, res) => {
-  const result = deleteRole(req.params.id, res.locals.session.sub);
-  if (!result.ok) {
-    res.status(result.error === 'role not found' ? 404 : 400).json({ error: result.error });
-    return;
-  }
-  res.json({ ok: true });
-});
-
-dashboardRouter.post('/v1/dashboard/roles/reorder', canManageRoles, (req, res) => {
-  const ids = parseRoleIds(req.body?.roleIds);
-  if (!ids) {
-    res.status(400).json({ error: 'roleIds (an array of role ids) is required' });
-    return;
-  }
-  const ok = reorderRoles(ids, res.locals.session.sub);
-  if (!ok) {
-    res.status(400).json({ error: 'roleIds must contain every non-default role exactly once' });
-    return;
-  }
-  res.json({ roles: listRoles() });
-});
 
 dashboardRouter.get('/v1/dashboard/discord/status', canViewDiscordPerks, (_req, res) => {
   res.json({ botEnabled: discordBotEnabled, guilds: getDiscordGuilds() });

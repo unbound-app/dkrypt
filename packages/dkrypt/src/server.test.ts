@@ -121,6 +121,92 @@ test('dashboard settings endpoints are not registered through the legacy adapter
   expect(routes).not.toContain('GET /v1/dashboard/artifacts/retention-preview');
 });
 
+test('dashboard role endpoints are not registered through the legacy adapter', () => {
+  const routes = dashboardRouter.routes.map((route) => `${route.method} ${route.path}`);
+  expect(routes).not.toContain('GET /v1/dashboard/roles');
+  expect(routes).not.toContain('POST /v1/dashboard/roles');
+  expect(routes).not.toContain('PATCH /v1/dashboard/roles/:id');
+  expect(routes).not.toContain('DELETE /v1/dashboard/roles/:id');
+  expect(routes).not.toContain('POST /v1/dashboard/roles/reorder');
+});
+
+test('native role routes preserve management gates and default-role protections', async () => {
+  const server = await buildServer({ includePublicRoutes: false });
+  const administratorCookie = createSessionCookie('root', PermissionFlag.administrator);
+  const decryptOnlyCookie = createSessionCookie('root', PermissionFlag.requestDecrypt);
+  let roleId: string | undefined;
+
+  try {
+    const denied = await server.inject({
+      method: 'GET',
+      url: '/v1/dashboard/roles',
+      headers: { cookie: decryptOnlyCookie },
+    });
+    expect(denied.statusCode).toBe(403);
+
+    const listed = await server.inject({
+      method: 'GET',
+      url: '/v1/dashboard/roles',
+      headers: { cookie: administratorCookie },
+    });
+    expect(listed.statusCode).toBe(200);
+    expect(listed.json().roles).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'everyone', isDefault: true })]));
+
+    const invalid = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/roles',
+      headers: { cookie: administratorCookie },
+      payload: { name: 'Temporary Role', color: 'pink' },
+    });
+    expect(invalid.statusCode).toBe(400);
+
+    const created = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/roles',
+      headers: { cookie: administratorCookie },
+      payload: { name: 'Temporary Role', color: '#123abc', permissions: '0' },
+    });
+    expect(created.statusCode).toBe(201);
+    roleId = created.json().id;
+
+    const updated = await server.inject({
+      method: 'PATCH',
+      url: `/v1/dashboard/roles/${roleId}`,
+      headers: { cookie: administratorCookie },
+      payload: { name: 'Updated Role', color: '#abcdef' },
+    });
+    expect(updated.statusCode).toBe(200);
+    expect(updated.json()).toMatchObject({ id: roleId, name: 'Updated Role', color: '#abcdef' });
+
+    const defaultRoleUpdate = await server.inject({
+      method: 'PATCH',
+      url: '/v1/dashboard/roles/everyone',
+      headers: { cookie: administratorCookie },
+      payload: { name: 'Renamed' },
+    });
+    expect(defaultRoleUpdate.statusCode).toBe(400);
+
+    const invalidOrder = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/roles/reorder',
+      headers: { cookie: administratorCookie },
+      payload: { roleIds: [] },
+    });
+    expect(invalidOrder.statusCode).toBe(400);
+
+    const removed = await server.inject({
+      method: 'DELETE',
+      url: `/v1/dashboard/roles/${roleId}`,
+      headers: { cookie: administratorCookie },
+    });
+    expect(removed.statusCode).toBe(200);
+    roleId = undefined;
+  } finally {
+    if (roleId) deleteRole(roleId, 'test cleanup');
+    await server.close();
+  }
+});
+
 test('native settings routes preserve permission gates and normalize updates', async () => {
   const server = await buildServer({ includePublicRoutes: false });
   const administratorCookie = createSessionCookie('root', PermissionFlag.administrator);

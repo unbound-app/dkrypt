@@ -105,6 +105,15 @@ import {
   dashboardSettingsWebhookTestBodySchema,
   dashboardWebhookTestResponseSchema as TestWebhookResponse,
 } from '#dashboardSettingsContracts.js';
+import {
+  dashboardRoleCreateBodySchema,
+  dashboardRoleOkResponseSchema,
+  dashboardRoleParamsSchema,
+  dashboardRoleReorderBodySchema,
+  dashboardRoleResponseSchema as RoleResponse,
+  dashboardRolesResponseSchema as RolesResponse,
+  dashboardRoleUpdateBodySchema,
+} from '#dashboardRoleContracts.js';
 
 const VersionSelector = Type.String({ minLength: 1, maxLength: 64, pattern: '^v?\\d+(?:\\.\\d+)*(?:_\\d+)?$' });
 const Identifier = identifierSchema;
@@ -449,17 +458,6 @@ const DecryptJobResponse = object({
   resolvedVersion: Type.Optional(Type.String()),
   artifact: Type.Optional(ArtifactSummaryResponse),
 });
-const RoleResponse = object({
-  id: Identifier,
-  name: Type.String(),
-  color: Type.String(),
-  permissions: Type.String(),
-  position: Type.Integer({ minimum: 0 }),
-  isDefault: Type.Boolean(),
-  createdAt: Type.Number(),
-  updatedAt: Type.Number(),
-});
-const RolesResponse = object({ roles: Type.Array(RoleResponse) });
 const UserDirectoryResponse = object({
   users: Type.Array(object({
     username: Identifier,
@@ -1077,14 +1075,24 @@ register('PUT', '/v1/dashboard/settings', {
 });
 register('GET', '/v1/dashboard/users', { response: { 200: UserDirectoryResponse } });
 register('GET', '/v1/dashboard/audit-log', { querystring: dashboardAuditLogQuerySchema, response: { 200: dashboardAuditLogResponseSchema, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope } });
-register('GET', '/v1/dashboard/roles', { response: { 200: RolesResponse } });
+register('GET', '/v1/dashboard/roles', { response: { 200: RolesResponse, 401: ErrorEnvelope, 403: ErrorEnvelope } });
 register('GET', '/v1/dashboard/projects', { response: { 200: ProjectListResponse } });
 register('GET', '/v1/dashboard/projects/members', { response: { 200: ProjectMembersResponse } });
 register('POST', '/v1/dashboard/projects', { body: ProjectInput, response: { 201: ProjectResponse } });
 register('PATCH', '/v1/dashboard/projects/:id', { params: object({ id: Identifier }), body: ProjectPatchInput, response: { 200: ProjectResponse } });
-register('POST', '/v1/dashboard/roles', { response: { 201: RoleResponse } });
-register('PATCH', '/v1/dashboard/roles/:id', { params: object({ id: Identifier }), response: { 200: RoleResponse } });
-register('POST', '/v1/dashboard/roles/reorder', { response: { 200: RolesResponse } });
+register('POST', '/v1/dashboard/roles', {
+  body: dashboardRoleCreateBodySchema,
+  response: { 201: RoleResponse, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope },
+});
+register('PATCH', '/v1/dashboard/roles/:id', {
+  params: dashboardRoleParamsSchema,
+  body: dashboardRoleUpdateBodySchema,
+  response: { 200: RoleResponse, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope },
+});
+register('POST', '/v1/dashboard/roles/reorder', {
+  body: dashboardRoleReorderBodySchema,
+  response: { 200: RolesResponse, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope },
+});
 register('POST', '/v1/dashboard/users', { response: { 201: AllowedUserResponse } });
 register('PATCH', '/v1/dashboard/users/:username', { params: object({ username: Identifier }), response: { 200: AllowedUserResponse } });
 register('DELETE', '/v1/dashboard/users/:username', { params: object({ username: Identifier }), response: { 200: OkResponse } });
@@ -1528,8 +1536,8 @@ register('DELETE', '/v1/dashboard/devices/:id', {
   response: { 200: OkResponse, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope },
 });
 register('DELETE', '/v1/dashboard/roles/:id', {
-  params: object({ id: Identifier }),
-  response: { 200: OkResponse },
+  params: dashboardRoleParamsSchema,
+  response: { 200: dashboardRoleOkResponseSchema, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope },
 });
 register('POST', '/v1/billing/webhooks/inbox/:id/replay', {
   params: billingWebhookInboxParamsSchema,

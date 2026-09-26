@@ -84649,7 +84649,26 @@
               "schema": {
                 "additionalProperties": true,
                 "type": "object",
-                "properties": {}
+                "required": [
+                  "name",
+                  "color"
+                ],
+                "properties": {
+                  "name": {
+                    "minLength": 1,
+                    "maxLength": 120,
+                    "type": "string"
+                  },
+                  "color": {
+                    "pattern": "^#[0-9a-fA-F]{6}$",
+                    "maxLength": 7,
+                    "type": "string"
+                  },
+                  "permissions": {
+                    "maxLength": 128,
+                    "type": "string"
+                  }
+                }
               }
             }
           }
@@ -85041,7 +85060,21 @@
               "schema": {
                 "additionalProperties": true,
                 "type": "object",
-                "properties": {}
+                "properties": {
+                  "name": {
+                    "maxLength": 120,
+                    "type": "string"
+                  },
+                  "color": {
+                    "pattern": "^#[0-9a-fA-F]{6}$",
+                    "maxLength": 7,
+                    "type": "string"
+                  },
+                  "permissions": {
+                    "maxLength": 128,
+                    "type": "string"
+                  }
+                }
               }
             }
           }
@@ -85454,6 +85487,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "required": [
                     "ok"
@@ -85803,7 +85837,20 @@
               "schema": {
                 "additionalProperties": true,
                 "type": "object",
-                "properties": {}
+                "required": [
+                  "roleIds"
+                ],
+                "properties": {
+                  "roleIds": {
+                    "maxItems": 500,
+                    "type": "array",
+                    "items": {
+                      "minLength": 1,
+                      "maxLength": 200,
+                      "type": "string"
+                    }
+                  }
+                }
               }
             }
           }
