@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from '#http.js';
+import type { FastifyReply, FastifyRequest, HookHandlerDoneFunction } from 'fastify';
 
 interface Bucket {
   count: number;
@@ -52,6 +53,26 @@ export class FixedWindowRateLimiter {
 }
 
 export const externalRequestRateLimiter = new FixedWindowRateLimiter(10, 60_000);
+
+export function fastifyRateLimitPerUser(
+  limiter: FixedWindowRateLimiter,
+  getKey: (request: FastifyRequest) => string,
+  errorResponse: { code: string; retryable: boolean } = { code: 'request_error', retryable: false },
+) {
+  return (request: FastifyRequest, reply: FastifyReply, done: HookHandlerDoneFunction): void => {
+    const decision = limiter.consume(getKey(request));
+    reply.header('X-RateLimit-Limit', String(decision.limit));
+    reply.header('X-RateLimit-Remaining', String(decision.remaining));
+    reply.header('X-RateLimit-Reset', String(Math.ceil(decision.resetAt / 1000)));
+    if (!decision.allowed) {
+      reply.header('Retry-After', String(decision.retryAfterSeconds));
+      const message = `too many requests - try again in ${decision.retryAfterSeconds}s`;
+      reply.code(429).send({ error: message, ...errorResponse, message, requestId: request.id });
+      return;
+    }
+    done();
+  };
+}
 
 export function rateLimitPerUser(
   maxRequests: number,

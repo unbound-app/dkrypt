@@ -1767,7 +1767,7 @@ test('native GitHub lookup failures retain safe upstream diagnostics', async () 
   }
 });
 
-test('native dispatch previews share the external request budget with legacy dashboard lookups', async () => {
+test('native dispatch previews share the external request budget with native TestFlight lookups', async () => {
   const username = `rate-limit-${crypto.randomUUID()}`;
   const role = createRole({ name: `Rate limit ${username}`, color: '#52637a', permissions: serializeBits(PermissionFlag.manageAutomation) }, 'root');
   addAllowedUser(username, [role.id], 'test setup');
@@ -1791,6 +1791,7 @@ test('native dispatch previews share the external request budget with legacy das
     });
     expect(legacyLookup.statusCode).toBe(429);
     expect(legacyLookup.headers['x-ratelimit-remaining']).toBe('0');
+    expect(legacyLookup.json()).toMatchObject({ code: 'rate_limited', retryable: true });
   } finally {
     deleteUserPersonalData(username);
     deleteRole(role.id, 'test cleanup');

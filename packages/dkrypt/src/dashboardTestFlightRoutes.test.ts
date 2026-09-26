@@ -40,6 +40,14 @@ test('TestFlight management endpoints are not registered through the legacy rout
   expect(routes).not.toContain('POST /v1/dashboard/testflight/catalog/:bundleId/unsubscribe');
 });
 
+test('TestFlight browse and decrypt endpoints are not registered through the legacy router', () => {
+  const routes = dashboardRouter.routes.map((route) => `${route.method} ${route.path}`);
+  expect(routes).not.toContain('GET /v1/dashboard/testflight/:appId/trains');
+  expect(routes).not.toContain('GET /v1/dashboard/testflight/diagnostics');
+  expect(routes).not.toContain('GET /v1/dashboard/testflight/:appId/builds');
+  expect(routes).not.toContain('POST /v1/dashboard/testflight/decrypt');
+});
+
 test('TestFlight subscription listing keeps personal requests private', async () => {
   const own = createSubscription(crypto.randomUUID().replaceAll('-', '').slice(0, 12));
   const other = createSubscription(crypto.randomUUID().replaceAll('-', '').slice(0, 12), 'other@example.com');

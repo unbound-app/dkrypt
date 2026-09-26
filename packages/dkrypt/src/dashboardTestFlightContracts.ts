@@ -1,6 +1,77 @@
 import { Type, type Static } from '@sinclair/typebox';
-import type { ApiErrorEnvelope } from '#contracts.js';
+import type { ApiErrorEnvelope, DashboardJobSummary } from '#contracts.js';
 import { bundleIdSchema, identifierSchema, paginationQuerySchema } from '#apiCommonContracts.js';
+
+const additionalProperties = { additionalProperties: true } as const;
+const JsonObject = Type.Object({}, additionalProperties);
+
+export const testFlightAppIdSchema = Type.Union([
+  Type.String({ minLength: 1, maxLength: 32, pattern: '^\\d+$' }),
+  Type.Integer({ minimum: 1 }),
+]);
+export const testFlightBuildInputSchema = Type.Object({
+  id: Type.Integer({ minimum: 1 }),
+  cfBundleShortVersion: Type.String({ minLength: 1, maxLength: 64 }),
+  cfBundleVersion: Type.String({ minLength: 1, maxLength: 64 }),
+  bundleId: bundleIdSchema,
+  whatsNew: Type.Optional(Type.String({ maxLength: 5000 })),
+  releaseDate: Type.Optional(Type.String({ maxLength: 64 })),
+  expiration: Type.Optional(Type.String({ maxLength: 64 })),
+  fileSize: Type.Optional(Type.Number({ minimum: 0 })),
+}, additionalProperties);
+export const dashboardTestFlightAppParamsSchema = Type.Object({
+  appId: Type.String({ minLength: 1, maxLength: 32, pattern: '^\\d+$' }),
+}, additionalProperties);
+export const dashboardTestFlightTrainsQuerySchema = Type.Object({ deviceId: Type.Optional(identifierSchema) }, additionalProperties);
+export const dashboardTestFlightBuildsQuerySchema = Type.Object({
+  trainVersion: Type.String({ minLength: 1, maxLength: 64 }),
+  deviceId: Type.Optional(identifierSchema),
+}, additionalProperties);
+export const dashboardTestFlightTrainResponseSchema = Type.Object({
+  trainVersion: Type.String(),
+  buildCount: Type.Integer({ minimum: 0 }),
+}, additionalProperties);
+export const dashboardTestFlightBuildResponseSchema = Type.Object({
+  id: Type.Integer({ minimum: 1 }),
+  cfBundleShortVersion: Type.String(),
+  cfBundleVersion: Type.String(),
+  bundleId: bundleIdSchema,
+  whatsNew: Type.Optional(Type.String()),
+  releaseDate: Type.Optional(Type.String()),
+  expiration: Type.Optional(Type.String()),
+  fileSize: Type.Optional(Type.Number({ minimum: 0 })),
+}, additionalProperties);
+export const dashboardTestFlightTrainsResponseSchema = Type.Object({
+  trains: Type.Array(dashboardTestFlightTrainResponseSchema),
+}, additionalProperties);
+export const dashboardTestFlightBuildsResponseSchema = Type.Object({
+  builds: Type.Array(dashboardTestFlightBuildResponseSchema),
+}, additionalProperties);
+export const dashboardTestFlightDiagnosticsResponseSchema = Type.Object({
+  bridge: Type.Object({
+    bridgeVersion: Type.Optional(Type.String()),
+    capabilities: Type.Optional(Type.Array(Type.String())),
+    hasInstaller: Type.Optional(Type.Boolean()),
+    hasCatalogManager: Type.Optional(Type.Boolean()),
+    backgroundTaskActive: Type.Optional(Type.Boolean()),
+    backgroundTimeRemaining: Type.Optional(Type.Number()),
+  }, additionalProperties),
+  install: Type.Optional(JsonObject),
+  recentLog: Type.Optional(Type.Array(Type.String())),
+}, additionalProperties);
+export const dashboardTestFlightDecryptBodySchema = Type.Object({
+  bundleId: bundleIdSchema,
+  appId: testFlightAppIdSchema,
+  build: testFlightBuildInputSchema,
+  deviceId: Type.Optional(identifierSchema),
+  preferPrimary: Type.Optional(Type.Boolean()),
+  projectId: Type.Optional(identifierSchema),
+}, additionalProperties);
+
+export type DashboardTestFlightTrain = Static<typeof dashboardTestFlightTrainResponseSchema>;
+export type DashboardTestFlightBuild = Static<typeof dashboardTestFlightBuildResponseSchema>;
+export type DashboardTestFlightDiagnostics = Static<typeof dashboardTestFlightDiagnosticsResponseSchema>;
+export type DashboardTestFlightDecryptBody = Static<typeof dashboardTestFlightDecryptBodySchema>;
 
 const testFlightSubscriptionDeviceSchema = Type.Object({
   deviceId: identifierSchema,
@@ -112,6 +183,29 @@ type CommonRouteErrors = {
   429: ApiErrorEnvelope;
   500: ApiErrorEnvelope;
   503: ApiErrorEnvelope;
+};
+
+type UpstreamRouteErrors = CommonRouteErrors & { 502: ApiErrorEnvelope };
+
+export type DashboardTestFlightTrainsRoute = {
+  Params: Static<typeof dashboardTestFlightAppParamsSchema>;
+  Querystring: Static<typeof dashboardTestFlightTrainsQuerySchema>;
+  Reply: { 200: Static<typeof dashboardTestFlightTrainsResponseSchema> } & UpstreamRouteErrors;
+};
+
+export type DashboardTestFlightBuildsRoute = {
+  Params: Static<typeof dashboardTestFlightAppParamsSchema>;
+  Querystring: Static<typeof dashboardTestFlightBuildsQuerySchema>;
+  Reply: { 200: Static<typeof dashboardTestFlightBuildsResponseSchema> } & UpstreamRouteErrors;
+};
+
+export type DashboardTestFlightDiagnosticsRoute = {
+  Reply: { 200: DashboardTestFlightDiagnostics } & UpstreamRouteErrors;
+};
+
+export type DashboardTestFlightDecryptRoute = {
+  Body: DashboardTestFlightDecryptBody;
+  Reply: { 202: DashboardJobSummary } & CommonRouteErrors;
 };
 
 export type DashboardTestFlightSubscriptionListRoute = {

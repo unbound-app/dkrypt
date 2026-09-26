@@ -48,7 +48,7 @@ import {
   type CreateWatchInput as WatchCreateInput,
   type DispatchTarget as WatchDispatchTarget,
 } from '#store/state.js';
-import { externalRequestRateLimiter } from '#util/rateLimit.js';
+import { externalRequestRateLimiter, fastifyRateLimitPerUser } from '#util/rateLimit.js';
 import { nextCronRuns } from '#util/cron.js';
 import { sendHttpErrorEnvelope } from '#util/httpResponse.js';
 import { validate as validateCronExpr } from 'node-cron';
@@ -56,6 +56,7 @@ import { validate as validateCronExpr } from 'node-cron';
 const canViewScheduler = fastifyRequirePermission(PermissionFlag.viewAutomation, PermissionFlag.manageAutomation);
 const canManageWatches = fastifyRequirePermission(PermissionFlag.manageAutomation);
 const bundleIdPattern = /^[A-Za-z0-9.-]{3,200}$/;
+const limitDispatchPreview = fastifyRateLimitPerUser(externalRequestRateLimiter, (request) => getFastifySession(request)?.sub ?? request.ip);
 
 function sendError(
   request: FastifyRequest,
@@ -206,19 +207,6 @@ function parseWatchPatch(body: WatchPatchInput): Partial<WatchCreateInput> {
   if (typeof body.testFlightTrain === 'string') patch.testFlightTrain = body.testFlightTrain.trim() || undefined;
   if (typeof body.projectId === 'string') patch.projectId = body.projectId;
   return patch;
-}
-
-async function limitDispatchPreview(request: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const session = getFastifySession(request);
-  const now = Date.now();
-  const decision = externalRequestRateLimiter.consume(session?.sub ?? request.ip, now);
-  reply.header('X-RateLimit-Limit', String(decision.limit));
-  reply.header('X-RateLimit-Remaining', String(decision.remaining));
-  reply.header('X-RateLimit-Reset', String(Math.ceil(decision.resetAt / 1000)));
-  if (!decision.allowed) {
-    reply.header('Retry-After', String(decision.retryAfterSeconds));
-    sendError(request, reply, 429, `too many requests - try again in ${decision.retryAfterSeconds}s`);
-  }
 }
 
 function visibleWatch(request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply): AppWatch | undefined {

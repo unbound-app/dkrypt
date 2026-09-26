@@ -17,9 +17,8 @@ import { canAccessProject, dashboardHistoryEntry } from '#dashboardJobPresentati
 import { buildDashboardOverview } from '#dashboardOverview.js';
 import { getDeviceHealth, getDeviceInstallBlocker, getDeviceReadiness } from '#deviceHealth.js';
 import { logBelongsToProject } from '#dashboardLogPresentation.js';
-import { getTestFlightBridgeDiagnostics, listBuilds, listTrains, type TFBuild } from '#testflight.js';
 import { getDiskUsage } from '#util/diskUsage.js';
-import { externalRequestRateLimiter, rateLimitPerUser } from '#util/rateLimit.js';
+import { rateLimitPerUser } from '#util/rateLimit.js';
 import {
   decorateSearchResults,
   getVerifiedTestFlightCatalog,
@@ -76,7 +75,6 @@ const canDecrypt = requirePermission(PermissionFlag.requestDecrypt);
 const canManageStorage = requirePermission(PermissionFlag.manageAutomation);
 const canViewScheduler = requirePermission(PermissionFlag.viewAutomation, PermissionFlag.manageAutomation);
 const canManageWatches = requirePermission(PermissionFlag.manageAutomation);
-const canManageSchedulerSettings = requirePermission(PermissionFlag.manageAutomation);
 
 const canViewLogs = requirePermission(PermissionFlag.viewLogs);
 const canViewUsers = requirePermission(PermissionFlag.viewUsers, PermissionFlag.manageUsers);
@@ -90,7 +88,6 @@ dashboardRouter.use((_req, res, next) => {
   next();
 });
 
-const deviceOrExternalRateLimit = rateLimitPerUser(10, 60_000, externalRequestRateLimiter);
 const jobDiffRateLimit = rateLimitPerUser(30, 60_000);
 
 dashboardRouter.get('/v1/dashboard/events', (req, res) => {
@@ -732,123 +729,6 @@ dashboardRouter.get('/v1/dashboard/versions/:bundleId', async (req, res) => {
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
   }
-});
-
-dashboardRouter.get('/v1/dashboard/testflight/:appId/trains', deviceOrExternalRateLimit, async (req, res) => {
-  const appId = Number.parseInt(req.params.appId, 10);
-  if (!Number.isInteger(appId) || appId <= 0) {
-    res.status(400).json({ error: 'appId must be a positive integer' });
-    return;
-  }
-
-  const deviceId = typeof req.query.deviceId === 'string' ? req.query.deviceId : '';
-  const device = deviceId ? getDevice(deviceId) : undefined;
-  if (deviceId && (!device || !device.enabled)) {
-    res.status(400).json({ error: 'deviceId must refer to an enabled device' });
-    return;
-  }
-
-  try {
-    const trains = await listTrains(appId, device);
-    res.json({ trains });
-  } catch (err) {
-    res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
-  }
-});
-
-dashboardRouter.get('/v1/dashboard/testflight/diagnostics', canManageSchedulerSettings, deviceOrExternalRateLimit, async (_req, res) => {
-  try {
-    res.json(await getTestFlightBridgeDiagnostics());
-  } catch (err) {
-    res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
-  }
-});
-
-dashboardRouter.get('/v1/dashboard/testflight/:appId/builds', deviceOrExternalRateLimit, async (req, res) => {
-  const appId = Number.parseInt(req.params.appId, 10);
-  const trainVersion = typeof req.query.trainVersion === 'string' ? req.query.trainVersion : '';
-  if (!Number.isInteger(appId) || appId <= 0 || !trainVersion) {
-    res.status(400).json({ error: 'appId (positive integer) and trainVersion are required' });
-    return;
-  }
-
-  const deviceId = typeof req.query.deviceId === 'string' ? req.query.deviceId : '';
-  const device = deviceId ? getDevice(deviceId) : undefined;
-  if (deviceId && (!device || !device.enabled)) {
-    res.status(400).json({ error: 'deviceId must refer to an enabled device' });
-    return;
-  }
-
-  try {
-    const builds = await listBuilds(appId, trainVersion, device);
-    res.json({ builds });
-  } catch (err) {
-    res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
-  }
-});
-
-dashboardRouter.post('/v1/dashboard/testflight/decrypt', canDecrypt, blockDuringMaintenance, async (req, res) => {
-  const projectId = resolveRequestProjectId(req, res, 'body', { requireActive: true });
-  if (!projectId) return;
-  const bundleId = typeof req.body?.bundleId === 'string' ? req.body.bundleId.trim() : '';
-  const rawAppId = req.body?.appId;
-  const appId = Number.parseInt(typeof rawAppId === 'string' || typeof rawAppId === 'number' ? String(rawAppId) : '', 10);
-  const rawBuild = req.body?.build;
-  const build = rawBuild && typeof rawBuild === 'object' ? rawBuild as Record<string, unknown> : undefined;
-  if (!BUNDLE_ID_RE.test(bundleId) || !Number.isInteger(appId) || appId <= 0 || !build || typeof build.bundleId !== 'string') {
-    res.status(400).json({ error: 'bundleId, appId, and build are required' });
-    return;
-  }
-  if (build.bundleId !== bundleId) {
-    res.status(400).json({ error: 'build.bundleId does not match bundleId' });
-    return;
-  }
-
-  const requestedDeviceId = typeof req.body?.deviceId === 'string' ? req.body.deviceId.trim() : '';
-  const requestedDevice = requestedDeviceId ? getDevice(requestedDeviceId) : undefined;
-  if (requestedDeviceId && (!requestedDevice || !requestedDevice.enabled)) {
-    res.status(400).json({ error: 'deviceId must refer to an enabled device' });
-    return;
-  }
-  let verifiedTestFlightApp;
-  try {
-    verifiedTestFlightApp = (await getVerifiedTestFlightCatalog({ requireAllDevices: true })).find((entry) => entry.appId === appId && entry.bundleId === bundleId);
-  } catch (error) {
-    if (error instanceof TestFlightCatalogUnavailableError) {
-      res.status(503).json({ error: error.message, code: 'testflight_catalog_unavailable' });
-      return;
-    }
-    throw error;
-  }
-  if (!verifiedTestFlightApp) {
-    res.status(409).json({ error: 'TestFlight access must be verified on an enabled device before queueing' });
-    return;
-  }
-  if (requestedDevice && verifiedTestFlightApp && !verifiedTestFlightApp.devices.some((device) => device.id === requestedDevice.id)) {
-    res.status(409).json({ error: 'TestFlight access is not verified on the selected device' });
-    return;
-  }
-  const preferPrimary = req.body?.preferPrimary === true;
-  const preferredDeviceId = requestedDevice?.id
-    ?? (verifiedTestFlightApp
-      ? (preferPrimary && verifiedTestFlightApp.devices.some((device) => device.id === getPrimaryDevice()?.id)
-        ? getPrimaryDevice()?.id
-        : verifiedTestFlightApp.devices[0]?.id)
-      : (preferPrimary ? getPrimaryDevice()?.id : undefined));
-
-  const job = enqueueDecryptJob(
-    bundleId,
-    'manual',
-    undefined,
-    { appId, build: build as unknown as TFBuild },
-    undefined,
-    res.locals.session.sub,
-    getUserPriority(res.locals.session.sub),
-    preferredDeviceId,
-    undefined,
-    projectId,
-  );
-  res.status(202).json(jobSummary(job));
 });
 
 dashboardRouter.post('/v1/dashboard/jobs/:id/cancel', canDecrypt, (req, res) => {

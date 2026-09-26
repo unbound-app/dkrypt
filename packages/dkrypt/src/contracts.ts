@@ -71,6 +71,13 @@ import {
 import { dashboardAuditLogQuerySchema, dashboardAuditLogResponseSchema, dashboardLogsQuerySchema, dashboardLogsResponseSchema } from '#dashboardObservabilityContracts.js';
 import { dashboardJobHistoryPageSchema, dashboardJobListQuerySchema, dashboardJobParamsSchema, dashboardJobTimelineEventSchema } from '#dashboardJobContracts.js';
 import {
+  dashboardTestFlightAppParamsSchema,
+  dashboardTestFlightBuildsQuerySchema,
+  dashboardTestFlightBuildsResponseSchema as TestFlightBuildsResponse,
+  dashboardTestFlightDecryptBodySchema,
+  dashboardTestFlightDiagnosticsResponseSchema as TestFlightDiagnosticsResponse,
+  dashboardTestFlightTrainsQuerySchema,
+  dashboardTestFlightTrainsResponseSchema as TestFlightTrainsResponse,
   testFlightCatalogBundleParamsSchema,
   testFlightCatalogQuerySchema,
   testFlightCatalogResponseSchema,
@@ -80,6 +87,8 @@ import {
   testFlightSubscriptionMutationResponseSchema,
   testFlightSubscriptionPageSchema,
   testFlightSubscriptionParamsSchema,
+  testFlightAppIdSchema as TestFlightAppId,
+  testFlightBuildInputSchema as TestFlightBuildInput,
 } from '#dashboardTestFlightContracts.js';
 import {
   backupDrillResponseSchema,
@@ -182,23 +191,6 @@ const VersionSelector = Type.String({ minLength: 1, maxLength: 64, pattern: '^v?
 const Identifier = identifierSchema;
 const JsonObject = Type.Object({}, { additionalProperties: true });
 const JsonResponse = Type.Union([JsonObject, Type.Array(Type.Unknown()), Type.String(), Type.Number(), Type.Boolean(), Type.Null()]);
-const TestFlightAppId = Type.Union([
-  Type.String({ minLength: 1, maxLength: 32, pattern: '^\\d+$' }),
-  Type.Integer({ minimum: 1 }),
-]);
-const TestFlightBuildInput = Type.Object(
-  {
-    id: Type.Integer({ minimum: 1 }),
-    cfBundleShortVersion: Type.String({ minLength: 1, maxLength: 64 }),
-    cfBundleVersion: Type.String({ minLength: 1, maxLength: 64 }),
-    bundleId: BundleId,
-    whatsNew: Type.Optional(Type.String({ maxLength: 5000 })),
-    releaseDate: Type.Optional(Type.String({ maxLength: 64 })),
-    expiration: Type.Optional(Type.String({ maxLength: 64 })),
-    fileSize: Type.Optional(Type.Number({ minimum: 0 })),
-  },
-  { additionalProperties: true },
-);
 export const ErrorEnvelope = Type.Object(
   {
     error: Type.String(),
@@ -502,19 +494,6 @@ const DashboardArtifactPage = object({
   maxBytes: Type.Number({ minimum: 0 }),
   nextCursor: PageCursor,
 });
-const TestFlightTrainResponse = object({ trainVersion: Type.String(), buildCount: Type.Integer({ minimum: 0 }) });
-const TestFlightBuildResponse = object({
-  id: Type.Integer({ minimum: 1 }),
-  cfBundleShortVersion: Type.String(),
-  cfBundleVersion: Type.String(),
-  bundleId: BundleId,
-  whatsNew: Type.Optional(Type.String()),
-  releaseDate: Type.Optional(Type.String()),
-  expiration: Type.Optional(Type.String()),
-  fileSize: Type.Optional(Type.Number({ minimum: 0 })),
-});
-const TestFlightTrainsResponse = object({ trains: Type.Array(TestFlightTrainResponse) });
-const TestFlightBuildsResponse = object({ builds: Type.Array(TestFlightBuildResponse) });
 const DecryptJobResponse = object({
   ...JobSummaryResponse.properties,
   selector: Type.Optional(Type.String()),
@@ -639,18 +618,6 @@ const DiscordRolePerkResponse = object({
   createdAt: Type.Number(),
 });
 const WebhookReceiptResponse = object({ received: Type.Boolean(), duplicate: Type.Optional(Type.Boolean()), quarantined: Type.Optional(Type.Boolean()), inProgress: Type.Optional(Type.Boolean()) });
-const TestFlightDiagnosticsResponse = object({
-  bridge: object({
-    bridgeVersion: Type.Optional(Type.String()),
-    capabilities: Type.Optional(Type.Array(Type.String())),
-    hasInstaller: Type.Optional(Type.Boolean()),
-    hasCatalogManager: Type.Optional(Type.Boolean()),
-    backgroundTaskActive: Type.Optional(Type.Boolean()),
-    backgroundTimeRemaining: Type.Optional(Type.Number()),
-  }),
-  install: Type.Optional(JsonObject),
-  recentLog: Type.Optional(Type.Array(Type.String())),
-});
 const DispatchTriggerResponse = object({ ok: Type.Boolean(), error: Type.Optional(Type.String()) });
 const BinaryFileResponse = { content: { 'application/octet-stream': { schema: Type.String({ format: 'binary' }) } } };
 const EventStreamResponse = { content: { 'text/event-stream': { schema: Type.String() } } };
@@ -1148,18 +1115,18 @@ register('GET', '/v1/dashboard/artifacts/retention-preview', {
   response: { 200: ArtifactQuotaRetentionPreviewResponse, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope },
 });
 register('GET', '/v1/dashboard/testflight/:appId/trains', {
-  params: object({ appId: Type.String({ minLength: 1, maxLength: 32, pattern: '^\\d+$' }) }),
-  querystring: object({ deviceId: Type.Optional(Identifier) }),
-  response: { 200: TestFlightTrainsResponse },
+  params: dashboardTestFlightAppParamsSchema,
+  querystring: dashboardTestFlightTrainsQuerySchema,
+  response: { 200: TestFlightTrainsResponse, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope, 429: ErrorEnvelope, 500: ErrorEnvelope, 502: ErrorEnvelope, 503: ErrorEnvelope },
 });
 register('GET', '/v1/dashboard/testflight/:appId/builds', {
-  params: object({ appId: Type.String({ minLength: 1, maxLength: 32, pattern: '^\\d+$' }) }),
-  querystring: object({ trainVersion: Type.String({ minLength: 1, maxLength: 64 }), deviceId: Type.Optional(Identifier) }),
-  response: { 200: TestFlightBuildsResponse },
+  params: dashboardTestFlightAppParamsSchema,
+  querystring: dashboardTestFlightBuildsQuerySchema,
+  response: { 200: TestFlightBuildsResponse, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope, 429: ErrorEnvelope, 500: ErrorEnvelope, 502: ErrorEnvelope, 503: ErrorEnvelope },
 });
 register('POST', '/v1/dashboard/testflight/decrypt', {
-  body: object({ bundleId: BundleId, appId: TestFlightAppId, build: TestFlightBuildInput, deviceId: Type.Optional(Identifier), preferPrimary: Type.Optional(Type.Boolean()), projectId: Type.Optional(Identifier) }),
-  response: { 202: JobSummaryResponse },
+  body: dashboardTestFlightDecryptBodySchema,
+  response: { 202: JobSummaryResponse, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope, 409: ErrorEnvelope, 429: ErrorEnvelope, 500: ErrorEnvelope, 503: ErrorEnvelope },
 });
 register('GET', '/v1/dashboard/search', {
   querystring: object({ q: Type.String({ minLength: 1, maxLength: 200 }) }),
@@ -1479,7 +1446,7 @@ register('POST', '/v1/dashboard/email/test', {
   response: { 200: OkResponse },
 });
 register('GET', '/v1/dashboard/testflight/diagnostics', {
-  response: { 200: TestFlightDiagnosticsResponse },
+  response: { 200: TestFlightDiagnosticsResponse, 401: ErrorEnvelope, 403: ErrorEnvelope, 429: ErrorEnvelope, 500: ErrorEnvelope, 502: ErrorEnvelope },
 });
 register('POST', '/v1/dashboard/watches/:id/trigger-dispatch', {
   params: object({ id: Identifier }),
