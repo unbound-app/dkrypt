@@ -5,7 +5,7 @@ import { fetchBotGuilds, fetchGuildRoles } from '#discord.js';
 import { dashboardEvents, getOnlineUsernames, nextDashboardSequence, registerDashboardConnection, registerPresence, unregisterPresence } from '#events.js';
 import { blockDuringMaintenance } from '#maintenance.js';
 import { jobSummary, streamFilePath } from '#jobs/http.js';
-import { cancelJob, enqueueDecryptJob, getActiveJobs, getJob, getQueueInfo, prioritizeQueuedJob, reorderQueue } from '#jobs/store.js';
+import { enqueueDecryptJob, getActiveJobs, getQueueInfo } from '#jobs/store.js';
 import type { LogEntry } from '#logger.js';
 import { getRecentLogs } from '#logger.js';
 import { hasPermission, isSubsetPermission, PermissionFlag } from '#permissions.js';
@@ -614,88 +614,6 @@ dashboardRouter.get('/v1/dashboard/versions/:bundleId', async (req, res) => {
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
   }
-});
-
-dashboardRouter.post('/v1/dashboard/jobs/:id/cancel', canDecrypt, (req, res) => {
-  const job = getJob(req.params.id);
-  if (!job || !canAccessProject(res.locals.session.sub, res.locals.session.permissions, job.projectId ?? DEFAULT_PROJECT_ID)) {
-    res.status(404).json({ error: 'job not found' });
-    return;
-  }
-  const ok = cancelJob(req.params.id, res.locals.session.sub);
-  if (!ok) {
-    res.status(409).json({ error: 'job is not queued or running (already finished, or not found)' });
-    return;
-  }
-  res.json({ ok: true });
-});
-
-dashboardRouter.post('/v1/dashboard/jobs/:id/prioritize', canDecrypt, (req, res) => {
-  const job = getJob(req.params.id);
-  if (!job || !canAccessProject(res.locals.session.sub, res.locals.session.permissions, job.projectId ?? DEFAULT_PROJECT_ID)) {
-    res.status(404).json({ error: 'job not found' });
-    return;
-  }
-  const ok = prioritizeQueuedJob(req.params.id, job.projectId ?? DEFAULT_PROJECT_ID);
-  if (!ok) {
-    res.status(409).json({ error: 'job is not queued (already running, finished, or not found)' });
-    return;
-  }
-  res.json({ ok: true });
-});
-
-dashboardRouter.post('/v1/dashboard/jobs/reorder', canDecrypt, (req, res) => {
-  const projectId = resolveRequestProjectId(req, res, 'body');
-  if (!projectId) return;
-  const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter((id: unknown) => typeof id === 'string') : [];
-  const scopedJobs = ids.every((id) => {
-    const job = getJob(id);
-    return job && (job.projectId ?? DEFAULT_PROJECT_ID) === projectId;
-  });
-  const ok = scopedJobs && reorderQueue(ids, projectId);
-  res.json({ ok });
-});
-
-dashboardRouter.post('/v1/dashboard/jobs/:id/retry', canDecrypt, blockDuringMaintenance, (req, res) => {
-  const entry = getJobHistoryEntryById(req.params.id);
-  if (!entry || !canAccessProject(res.locals.session.sub, res.locals.session.permissions, entry.projectId ?? DEFAULT_PROJECT_ID)) {
-    res.status(404).json({ error: 'job history entry not found' });
-    return;
-  }
-  if (getProject(entry.projectId ?? DEFAULT_PROJECT_ID)?.archivedAt !== undefined) {
-    res.status(409).json({ error: 'project is archived' });
-    return;
-  }
-
-  const preferPrimary = req.body?.preferPrimary === true;
-  const preferredDeviceId = preferPrimary ? getPrimaryDevice()?.id : undefined;
-  const job = enqueueDecryptJob(
-    entry.bundleId,
-    'manual',
-    entry.externalVersionId,
-    entry.testflight,
-    entry.versionLabel,
-    res.locals.session.sub,
-    getUserPriority(res.locals.session.sub),
-    preferredDeviceId,
-    undefined,
-    entry.projectId ?? DEFAULT_PROJECT_ID,
-  );
-  res.status(202).json(jobSummary(job));
-});
-
-dashboardRouter.get('/v1/dashboard/jobs/:id/diagnostic', canDecrypt, (req, res) => {
-  const active = getJob(req.params.id);
-  const entry = active ? undefined : getJobHistoryEntryById(req.params.id);
-  const projectId = active?.projectId ?? entry?.projectId ?? DEFAULT_PROJECT_ID;
-  if ((!active && !entry) || !canAccessProject(res.locals.session.sub, res.locals.session.permissions, projectId)) {
-    res.status(404).json({ error: 'job not found' });
-    return;
-  }
-  const job = active ?? entry;
-  if (!job) return;
-  res.setHeader('Content-Disposition', `attachment; filename="dkrypt-job-${job.id}-diagnostic.json"`);
-  res.json({ generatedAt: new Date().toISOString(), correlationId: job.correlationId ?? job.id, job, timeline: active?.timeline ?? entry?.timeline ?? [] });
 });
 
 const AUDIT_LOG_CSV_COLUMNS = ['id', 'ts', 'actor', 'action', 'target', 'detail'] as const;

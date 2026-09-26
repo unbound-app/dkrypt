@@ -1,0 +1,215 @@
+import { expect, test } from 'bun:test';
+import Fastify from 'fastify';
+import { TypeBoxTypeProvider } from '@fastify/type-provider-typebox';
+import type { Response } from '#http.js';
+import type { Job } from '#jobs/types.js';
+import { PermissionFlag } from '#permissions.js';
+import { dashboardRouter } from '#routes/dashboard.js';
+import { createDashboardJobActionRoutes, type DashboardJobActionServices } from '#routes/dashboardJobActionRoutes.js';
+import { setSessionCookie } from '#session.js';
+import type { JobHistoryEntry } from '#store/state.js';
+
+function sessionCookie(permissions: bigint): string {
+  let value = '';
+  const response = { setHeader: (_name: string, cookie: string) => { value = cookie; } } as unknown as Response;
+  setSessionCookie(response, { sub: 'root', permissions });
+  return value.split(';', 1)[0]!;
+}
+
+function createJob(id = 'job-1'): Job {
+  return {
+    id,
+    correlationId: `correlation-${id}`,
+    projectId: 'default',
+    bundleId: 'com.example.app',
+    source: 'manual',
+    priority: 0,
+    status: 'queued',
+    progress: 'queued',
+    createdAt: 100,
+    waiters: [],
+  };
+}
+
+function createHistoryEntry(id = 'history-1'): JobHistoryEntry {
+  return {
+    id,
+    correlationId: `correlation-${id}`,
+    projectId: 'default',
+    bundleId: 'com.example.app',
+    externalVersionId: 'version-1',
+    versionLabel: '2.0',
+    queuedBy: 'requester',
+    status: 'failed',
+    source: 'manual',
+    createdAt: 100,
+    finishedAt: 200,
+    timeline: [{ at: 100, label: 'Queued', status: 'queued' }],
+  };
+}
+
+function build(overrides: Partial<DashboardJobActionServices> = {}) {
+  const server = Fastify().withTypeProvider<TypeBoxTypeProvider>();
+  void server.register(createDashboardJobActionRoutes({
+    canAccessProject: (_userId, _permissions, projectId) => projectId === 'default',
+    ...overrides,
+  }));
+  return server;
+}
+
+test('dashboard job actions are not registered through the legacy router', () => {
+  const routes = dashboardRouter.routes.map((route) => `${route.method} ${route.path}`);
+  expect(routes).not.toContain('POST /v1/dashboard/jobs/:id/cancel');
+  expect(routes).not.toContain('POST /v1/dashboard/jobs/:id/prioritize');
+  expect(routes).not.toContain('POST /v1/dashboard/jobs/reorder');
+  expect(routes).not.toContain('POST /v1/dashboard/jobs/:id/retry');
+  expect(routes).not.toContain('GET /v1/dashboard/jobs/:id/diagnostic');
+});
+
+test('job cancellation and prioritization preserve project access and conflict behavior', async () => {
+  const calls: string[] = [];
+  const server = build({
+    getJob: () => createJob(),
+    cancelJob: (id, userId) => {
+      calls.push(`cancel:${id}:${userId}`);
+      return true;
+    },
+    prioritizeQueuedJob: (id, projectId) => {
+      calls.push(`prioritize:${id}:${projectId}`);
+      return false;
+    },
+  });
+
+  try {
+    const headers = { cookie: sessionCookie(PermissionFlag.requestDecrypt) };
+    const cancelled = await server.inject({ method: 'POST', url: '/v1/dashboard/jobs/job-1/cancel', headers });
+    const prioritized = await server.inject({ method: 'POST', url: '/v1/dashboard/jobs/job-1/prioritize', headers });
+
+    expect(cancelled.statusCode).toBe(200);
+    expect(JSON.parse(cancelled.body)).toEqual({ ok: true });
+    expect(prioritized.statusCode).toBe(409);
+    expect((JSON.parse(prioritized.body) as Record<string, unknown>).message).toContain('job is not queued');
+    expect(calls).toEqual(['cancel:job-1:root', 'prioritize:job-1:default']);
+  } finally {
+    await server.close();
+  }
+});
+
+test('queue reorder validates that every requested job belongs to the selected project', async () => {
+  const reordered: string[][] = [];
+  const server = build({
+    getJob: (id) => id === 'job-1' ? createJob(id) : undefined,
+    reorderQueue: (ids) => {
+      reordered.push(ids);
+      return true;
+    },
+  });
+
+  try {
+    const headers = { cookie: sessionCookie(PermissionFlag.requestDecrypt) };
+    const response = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/jobs/reorder',
+      headers,
+      payload: { ids: ['job-1'], projectId: 'default' },
+    });
+    const invalidScope = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/jobs/reorder',
+      headers,
+      payload: { ids: ['job-unknown'], projectId: 'default' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body)).toEqual({ ok: true });
+    expect(invalidScope.statusCode).toBe(200);
+    expect(JSON.parse(invalidScope.body)).toEqual({ ok: false });
+    expect(reordered).toEqual([['job-1']]);
+  } finally {
+    await server.close();
+  }
+});
+
+test('retry uses the requested primary device and retains source job metadata', async () => {
+  let enqueueArgs: unknown[] = [];
+  const retriedJob = createJob('retry-job');
+  const server = build({
+    getJobHistoryEntryById: () => createHistoryEntry(),
+    getProject: () => ({ id: 'default', name: 'Default', memberIds: [], isDefault: true, createdBy: 'root', createdAt: 1, updatedAt: 1 }),
+    getPrimaryDevice: () => ({ id: 'device-primary' }) as ReturnType<DashboardJobActionServices['getPrimaryDevice']>,
+    getUserPriority: () => 4,
+    enqueueDecryptJob: (...args) => {
+      enqueueArgs = args;
+      return retriedJob;
+    },
+  });
+
+  try {
+    const response = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/jobs/history-1/retry',
+      headers: { cookie: sessionCookie(PermissionFlag.requestDecrypt) },
+      payload: { preferPrimary: true },
+    });
+
+    expect(response.statusCode).toBe(202);
+    expect(JSON.parse(response.body)).toMatchObject({ id: 'retry-job', bundleId: 'com.example.app', status: 'queued' });
+    expect(enqueueArgs).toEqual([
+      'com.example.app',
+      'manual',
+      'version-1',
+      undefined,
+      '2.0',
+      'root',
+      4,
+      'device-primary',
+      undefined,
+      'default',
+    ]);
+  } finally {
+    await server.close();
+  }
+});
+
+test('diagnostics include the authorized job timeline and attachment filename', async () => {
+  const job = createJob();
+  job.timeline = [{ at: 100, label: 'Queued', status: 'queued' }];
+  const server = build({ getJob: () => job });
+
+  try {
+    const response = await server.inject({
+      method: 'GET',
+      url: '/v1/dashboard/jobs/job-1/diagnostic',
+      headers: { cookie: sessionCookie(PermissionFlag.requestDecrypt) },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['content-disposition']).toBe('attachment; filename="dkrypt-job-job-1-diagnostic.json"');
+    expect(JSON.parse(response.body)).toMatchObject({ correlationId: 'correlation-job-1', job: { id: 'job-1' }, timeline: job.timeline });
+  } finally {
+    await server.close();
+  }
+});
+
+test('job actions require decrypt permission before accessing jobs', async () => {
+  let lookups = 0;
+  const server = build({
+    getJob: () => {
+      lookups += 1;
+      return createJob();
+    },
+  });
+
+  try {
+    const response = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/jobs/job-1/cancel',
+      headers: { cookie: sessionCookie(0n) },
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(lookups).toBe(0);
+  } finally {
+    await server.close();
+  }
+});

@@ -1,0 +1,189 @@
+import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
+import type {
+  DashboardJobCancelRoute,
+  DashboardJobDiagnosticRoute,
+  DashboardJobPrioritizeRoute,
+  DashboardJobReorderRoute,
+  DashboardJobRetryRoute,
+} from '#dashboardJobContracts.js';
+import { recordFastifyDashboardActivity } from '#dashboardActivity.js';
+import { canAccessProject } from '#dashboardJobPresentation.js';
+import { getRouteContract } from '#contracts.js';
+import { fastifyBlockDuringMaintenance } from '#maintenance.js';
+import { jobSummary } from '#jobs/http.js';
+import {
+  cancelJob,
+  enqueueDecryptJob,
+  getJob,
+  prioritizeQueuedJob,
+  reorderQueue,
+} from '#jobs/store.js';
+import type { Job } from '#jobs/types.js';
+import { PermissionFlag } from '#permissions.js';
+import { fastifyRequirePermission, fastifyRequireSession, getFastifySession } from '#session.js';
+import {
+  DEFAULT_PROJECT_ID,
+  getJobHistoryEntryById,
+  getPrimaryDevice,
+  getProject,
+  getUserPriority,
+  type JobHistoryEntry,
+} from '#store/state.js';
+import { createHttpErrorEnvelope } from '#util/httpResponse.js';
+
+export interface DashboardJobActionServices {
+  getJob: typeof getJob;
+  cancelJob: typeof cancelJob;
+  prioritizeQueuedJob: typeof prioritizeQueuedJob;
+  reorderQueue: typeof reorderQueue;
+  getJobHistoryEntryById: typeof getJobHistoryEntryById;
+  getProject: typeof getProject;
+  enqueueDecryptJob: typeof enqueueDecryptJob;
+  getPrimaryDevice: typeof getPrimaryDevice;
+  getUserPriority: typeof getUserPriority;
+  canAccessProject: typeof canAccessProject;
+}
+
+const defaultServices: DashboardJobActionServices = {
+  getJob,
+  cancelJob,
+  prioritizeQueuedJob,
+  reorderQueue,
+  getJobHistoryEntryById,
+  getProject,
+  enqueueDecryptJob,
+  getPrimaryDevice,
+  getUserPriority,
+  canAccessProject,
+};
+
+const canRequestDecrypt = fastifyRequirePermission(PermissionFlag.requestDecrypt);
+
+function sendJobError(requestId: string, statusCode: number, message: string) {
+  return createHttpErrorEnvelope(requestId, statusCode, message);
+}
+
+function hasProjectAccess(services: DashboardJobActionServices, userId: string, permissions: bigint, projectId: string): boolean {
+  return services.canAccessProject(userId, permissions, projectId);
+}
+
+export function createDashboardJobActionRoutes(overrides: Partial<DashboardJobActionServices> = {}): FastifyPluginAsyncTypebox {
+  const services = { ...defaultServices, ...overrides };
+
+  return async (server) => {
+    server.addHook('preHandler', fastifyRequireSession);
+    server.addHook('preHandler', recordFastifyDashboardActivity);
+
+    server.post<DashboardJobCancelRoute>('/v1/dashboard/jobs/:id/cancel', {
+      schema: getRouteContract('POST', '/v1/dashboard/jobs/:id/cancel'),
+      preHandler: canRequestDecrypt,
+    }, (request, reply) => {
+      const session = getFastifySession(request)!;
+      const job = services.getJob(request.params.id);
+      if (!job || !hasProjectAccess(services, session.sub, session.permissions, job.projectId ?? DEFAULT_PROJECT_ID)) {
+        reply.code(404);
+        return sendJobError(request.id, 404, 'job not found');
+      }
+      if (!services.cancelJob(request.params.id, session.sub)) {
+        reply.code(409);
+        return sendJobError(request.id, 409, 'job is not queued or running (already finished, or not found)');
+      }
+      return { ok: true };
+    });
+
+    server.post<DashboardJobPrioritizeRoute>('/v1/dashboard/jobs/:id/prioritize', {
+      schema: getRouteContract('POST', '/v1/dashboard/jobs/:id/prioritize'),
+      preHandler: canRequestDecrypt,
+    }, (request, reply) => {
+      const session = getFastifySession(request)!;
+      const job = services.getJob(request.params.id);
+      if (!job || !hasProjectAccess(services, session.sub, session.permissions, job.projectId ?? DEFAULT_PROJECT_ID)) {
+        reply.code(404);
+        return sendJobError(request.id, 404, 'job not found');
+      }
+      if (!services.prioritizeQueuedJob(request.params.id, job.projectId ?? DEFAULT_PROJECT_ID)) {
+        reply.code(409);
+        return sendJobError(request.id, 409, 'job is not queued (already running, finished, or not found)');
+      }
+      return { ok: true };
+    });
+
+    server.post<DashboardJobReorderRoute>('/v1/dashboard/jobs/reorder', {
+      schema: getRouteContract('POST', '/v1/dashboard/jobs/reorder'),
+      preHandler: canRequestDecrypt,
+    }, (request, reply) => {
+      const session = getFastifySession(request)!;
+      const projectId = request.body.projectId ?? DEFAULT_PROJECT_ID;
+      if (!hasProjectAccess(services, session.sub, session.permissions, projectId)) {
+        reply.code(404);
+        return sendJobError(request.id, 404, 'project not found');
+      }
+      const scopedJobs = request.body.ids.every((id) => {
+        const job = services.getJob(id);
+        return job && (job.projectId ?? DEFAULT_PROJECT_ID) === projectId;
+      });
+      return { ok: scopedJobs && services.reorderQueue(request.body.ids, projectId) };
+    });
+
+    server.post<DashboardJobRetryRoute>('/v1/dashboard/jobs/:id/retry', {
+      schema: getRouteContract('POST', '/v1/dashboard/jobs/:id/retry'),
+      preValidation: (request, _reply, done) => {
+        if (request.body === undefined) request.body = {};
+        done();
+      },
+      preHandler: [canRequestDecrypt, fastifyBlockDuringMaintenance],
+    }, (request, reply) => {
+      const session = getFastifySession(request)!;
+      const entry = services.getJobHistoryEntryById(request.params.id);
+      const projectId = entry?.projectId ?? DEFAULT_PROJECT_ID;
+      if (!entry || !hasProjectAccess(services, session.sub, session.permissions, projectId)) {
+        reply.code(404);
+        return sendJobError(request.id, 404, 'job history entry not found');
+      }
+      if (services.getProject(projectId)?.archivedAt !== undefined) {
+        reply.code(409);
+        return sendJobError(request.id, 409, 'project is archived');
+      }
+
+      const preferredDeviceId = request.body.preferPrimary ? services.getPrimaryDevice()?.id : undefined;
+      const job = services.enqueueDecryptJob(
+        entry.bundleId,
+        'manual',
+        entry.externalVersionId,
+        entry.testflight,
+        entry.versionLabel,
+        session.sub,
+        services.getUserPriority(session.sub),
+        preferredDeviceId,
+        undefined,
+        projectId,
+      );
+      reply.code(202);
+      return jobSummary(job);
+    });
+
+    server.get<DashboardJobDiagnosticRoute>('/v1/dashboard/jobs/:id/diagnostic', {
+      schema: getRouteContract('GET', '/v1/dashboard/jobs/:id/diagnostic'),
+      preHandler: canRequestDecrypt,
+    }, (request, reply) => {
+      const active = services.getJob(request.params.id);
+      const entry = active ? undefined : services.getJobHistoryEntryById(request.params.id);
+      const projectId = active?.projectId ?? entry?.projectId ?? DEFAULT_PROJECT_ID;
+      const session = getFastifySession(request)!;
+      if ((!active && !entry) || !hasProjectAccess(services, session.sub, session.permissions, projectId)) {
+        reply.code(404);
+        return sendJobError(request.id, 404, 'job not found');
+      }
+      const job: Job | JobHistoryEntry = active ?? entry!;
+      reply.header('Content-Disposition', `attachment; filename="dkrypt-job-${job.id}-diagnostic.json"`);
+      return {
+        generatedAt: new Date().toISOString(),
+        correlationId: job.correlationId ?? job.id,
+        job,
+        timeline: active?.timeline ?? entry?.timeline ?? [],
+      };
+    });
+  };
+}
+
+export const dashboardJobActionRoutes = createDashboardJobActionRoutes();

@@ -77,7 +77,16 @@ import {
   schedulerSettingsResponseSchema as SchedulerSettingsResponse,
 } from '#dashboardModelsContracts.js';
 import { dashboardAuditLogQuerySchema, dashboardAuditLogResponseSchema, dashboardLogsQuerySchema, dashboardLogsResponseSchema } from '#dashboardObservabilityContracts.js';
-import { dashboardJobHistoryPageSchema, dashboardJobListQuerySchema, dashboardJobParamsSchema, dashboardJobTimelineEventSchema } from '#dashboardJobContracts.js';
+import {
+  dashboardJobActionResponseSchema,
+  dashboardJobDiagnosticResponseSchema,
+  dashboardJobHistoryPageSchema,
+  dashboardJobListQuerySchema,
+  dashboardJobParamsSchema,
+  dashboardJobReorderBodySchema,
+  dashboardJobRetryBodySchema,
+  dashboardJobTimelineEventSchema,
+} from '#dashboardJobContracts.js';
 import {
   dashboardTestFlightAppParamsSchema,
   dashboardTestFlightBuildsQuerySchema,
@@ -589,7 +598,6 @@ const FailurePatternsResponse = object({ patterns: Type.Array(object({ message: 
 const StorageForecastResponse = object({ freeBytes: Type.Number({ minimum: 0 }), bytesPerDay: Type.Number({ minimum: 0 }), daysRemaining: Type.Union([Type.Number({ minimum: 0 }), Type.Null()]), sampleCount: Type.Integer({ minimum: 0 }) });
 const JobExportResponse = Type.Union([Type.Array(JsonObject), Type.String()]);
 const WebhookDeliveryPageResponse = object({ deliveries: Type.Array(JsonObject) });
-const DiagnosticResponse = object({ generatedAt: Type.String(), correlationId: Identifier, job: JsonObject, timeline: Type.Array(JsonObject) });
 const SupportBundleResponse = object({
   generatedAt: Type.String(),
   deployment: object({ ref: Type.String(), node: Type.String() }),
@@ -1292,12 +1300,22 @@ register('POST', '/v1/dashboard/notifications/read', {
   body: notificationReadBodySchema,
   response: { 200: notificationReadResponseSchema },
 });
-register('POST', '/v1/dashboard/jobs/:id/cancel', { params: object({ id: Identifier }), response: { 200: OkResponse } });
-register('POST', '/v1/dashboard/jobs/:id/prioritize', { params: object({ id: Identifier }), response: { 200: OkResponse } });
-register('POST', '/v1/dashboard/jobs/:id/retry', { params: object({ id: Identifier }), response: { 202: JobSummaryResponse } });
+register('POST', '/v1/dashboard/jobs/:id/cancel', {
+  params: dashboardJobParamsSchema,
+  response: { 200: dashboardJobActionResponseSchema, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope, 409: ErrorEnvelope, 500: ErrorEnvelope },
+});
+register('POST', '/v1/dashboard/jobs/:id/prioritize', {
+  params: dashboardJobParamsSchema,
+  response: { 200: dashboardJobActionResponseSchema, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope, 409: ErrorEnvelope, 500: ErrorEnvelope },
+});
+register('POST', '/v1/dashboard/jobs/:id/retry', {
+  params: dashboardJobParamsSchema,
+  body: dashboardJobRetryBodySchema,
+  response: { 202: JobSummaryResponse, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope, 409: ErrorEnvelope, 500: ErrorEnvelope, 503: ErrorEnvelope },
+});
 register('POST', '/v1/dashboard/jobs/reorder', {
-  body: object({ ids: Type.Array(Identifier, { maxItems: 100 }), projectId: Type.Optional(Identifier) }),
-  response: { 200: OkResponse },
+  body: dashboardJobReorderBodySchema,
+  response: { 200: dashboardJobActionResponseSchema, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope, 500: ErrorEnvelope },
 });
 register('GET', '/v1/dashboard/logs', {
   querystring: dashboardLogsQuerySchema,
@@ -1312,8 +1330,8 @@ register('GET', '/v1/dashboard/events', {
   response: { 200: EventStreamResponse },
 });
 register('GET', '/v1/dashboard/jobs/:id/diagnostic', {
-  params: object({ id: Identifier }),
-  response: { 200: DiagnosticResponse },
+  params: dashboardJobParamsSchema,
+  response: { 200: dashboardJobDiagnosticResponseSchema, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope, 500: ErrorEnvelope },
 });
 register('GET', '/v1/dashboard/support-bundle', {
   querystring: object({ projectId: Type.Optional(Identifier) }),

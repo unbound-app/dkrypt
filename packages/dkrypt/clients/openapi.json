@@ -68661,6 +68661,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "required": [
                     "ok"
@@ -69021,6 +69022,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "required": [
                     "ok"
@@ -69385,7 +69387,8 @@
                   },
                   "projectId": {
                     "minLength": 1,
-                    "maxLength": 200,
+                    "maxLength": 80,
+                    "pattern": "^[A-Za-z0-9_-]{1,80}$",
                     "type": "string"
                   }
                 }
@@ -69399,6 +69402,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "required": [
                     "ok"
@@ -69741,6 +69745,22 @@
         "tags": [
           "dashboard"
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "properties": {
+                  "preferPrimary": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
         "parameters": [
           {
             "schema": {

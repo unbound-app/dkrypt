@@ -1,6 +1,6 @@
 import { Type, type Static } from '@sinclair/typebox';
 import type { ApiErrorEnvelope, DashboardJobHistoryPage, DashboardJobSummary, DashboardJobTimeline } from '#contracts.js';
-import { bundleIdSchema as BundleId, deviceTransportSchema, identifierSchema, paginationQueryProperties } from '#apiCommonContracts.js';
+import { bundleIdSchema as BundleId, deviceTransportSchema, identifierSchema, paginationQueryProperties, projectIdentifierSchema } from '#apiCommonContracts.js';
 
 const JobStatus = Type.Union([Type.Literal('queued'), Type.Literal('running'), Type.Literal('done'), Type.Literal('failed')]);
 const JsonObject = Type.Object({}, { additionalProperties: true });
@@ -78,6 +78,18 @@ export const dashboardJobListQuerySchema = Type.Object({
 }, { additionalProperties: true });
 
 export const dashboardJobParamsSchema = Type.Object({ id: identifierSchema }, { additionalProperties: true });
+export const dashboardJobActionResponseSchema = Type.Object({ ok: Type.Boolean() }, { additionalProperties: true });
+export const dashboardJobReorderBodySchema = Type.Object({
+  ids: Type.Array(identifierSchema, { maxItems: 100 }),
+  projectId: Type.Optional(projectIdentifierSchema),
+}, { additionalProperties: true });
+export const dashboardJobRetryBodySchema = Type.Object({ preferPrimary: Type.Optional(Type.Boolean()) }, { additionalProperties: true });
+export const dashboardJobDiagnosticResponseSchema = Type.Object({
+  generatedAt: Type.String(),
+  correlationId: identifierSchema,
+  job: JsonObject,
+  timeline: Type.Array(JsonObject),
+}, { additionalProperties: true });
 
 export const dashboardJobHistoryPageSchema = Type.Object({
   history: Type.Array(DashboardJobHistoryEntry),
@@ -98,4 +110,29 @@ export type DashboardJobStatusRoute = {
 export type DashboardJobTimelineRoute = {
   Params: Static<typeof dashboardJobParamsSchema>;
   Reply: { 200: DashboardJobTimeline; 404: ApiErrorEnvelope };
+};
+
+type ActionErrors = { 401: ApiErrorEnvelope; 403: ApiErrorEnvelope; 404: ApiErrorEnvelope; 500: ApiErrorEnvelope };
+
+export type DashboardJobCancelRoute = {
+  Params: Static<typeof dashboardJobParamsSchema>;
+  Reply: { 200: Static<typeof dashboardJobActionResponseSchema>; 409: ApiErrorEnvelope } & ActionErrors;
+};
+
+export type DashboardJobPrioritizeRoute = DashboardJobCancelRoute;
+
+export type DashboardJobReorderRoute = {
+  Body: Static<typeof dashboardJobReorderBodySchema>;
+  Reply: { 200: Static<typeof dashboardJobActionResponseSchema>; 400: ApiErrorEnvelope; 404: ApiErrorEnvelope } & Pick<ActionErrors, 401 | 403 | 500>;
+};
+
+export type DashboardJobRetryRoute = {
+  Params: Static<typeof dashboardJobParamsSchema>;
+  Body: Static<typeof dashboardJobRetryBodySchema>;
+  Reply: { 202: DashboardJobSummary; 409: ApiErrorEnvelope; 503: ApiErrorEnvelope } & Pick<ActionErrors, 401 | 403 | 404 | 500>;
+};
+
+export type DashboardJobDiagnosticRoute = {
+  Params: Static<typeof dashboardJobParamsSchema>;
+  Reply: { 200: Static<typeof dashboardJobDiagnosticResponseSchema>; 404: ApiErrorEnvelope } & Pick<ActionErrors, 401 | 403 | 500>;
 };
