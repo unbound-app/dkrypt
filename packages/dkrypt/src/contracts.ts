@@ -68,6 +68,9 @@ import {
   dashboardAppMetadataResponseSchema as AppMetadataResponse,
   dashboardAppSearchQuerySchema,
   dashboardAppSearchResponseSchema as SearchResponse,
+  dashboardAppVersionsParamsSchema,
+  dashboardAppVersionsQuerySchema,
+  dashboardAppVersionsResponseSchema,
 } from '#dashboardAppCatalogContracts.js';
 import {
   dashboardDeviceResponseSchema as DeviceResponse,
@@ -409,7 +412,6 @@ const DashboardDecryptPreflightResponse = object({
     batteryPercent: Type.Optional(Type.Number({ minimum: 0, maximum: 100 })),
   })),
 });
-const VersionsResponse = object({ versions: Type.Array(JsonObject) });
 const AuthMfaResponse = object({ enabled: Type.Boolean(), recoveryCodesRemaining: Type.Integer({ minimum: 0 }) });
 const AuthSessionResponse = object({
   loggedIn: Type.Boolean(),
@@ -1362,9 +1364,9 @@ register('POST', '/v1/dashboard/decrypt/preflight', {
   response: { 200: DashboardDecryptPreflightResponse },
 });
 register('GET', '/v1/dashboard/versions/:bundleId', {
-  params: object({ bundleId: BundleId }),
-  querystring: object({ force: Type.Optional(Type.Literal('true')) }),
-  response: { 200: VersionsResponse },
+  params: dashboardAppVersionsParamsSchema,
+  querystring: dashboardAppVersionsQuerySchema,
+  response: { 200: dashboardAppVersionsResponseSchema, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope, 502: ErrorEnvelope },
 });
 register('POST', '/v1/dashboard/devices/setup', {
   body: DeviceConnectionInput,

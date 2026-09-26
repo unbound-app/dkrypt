@@ -52852,9 +52852,17 @@
         "parameters": [
           {
             "schema": {
-              "type": "string",
-              "enum": [
-                "true"
+              "anyOf": [
+                {
+                  "description": "Only true forces a refresh; other values use the cached lookup.",
+                  "type": "string"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
               ]
             },
             "in": "query",
@@ -52890,7 +52898,33 @@
                       "items": {
                         "additionalProperties": true,
                         "type": "object",
-                        "properties": {}
+                        "required": [
+                          "isLatest"
+                        ],
+                        "properties": {
+                          "externalVersionId": {
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "type": "string"
+                          },
+                          "isLatest": {
+                            "type": "boolean"
+                          },
+                          "displayVersion": {
+                            "type": "string"
+                          },
+                          "bundleVersion": {
+                            "type": "string"
+                          },
+                          "releaseDate": {
+                            "type": "string"
+                          },
+                          "artifactId": {
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "type": "string"
+                          }
+                        }
                       }
                     }
                   }
@@ -53139,6 +53173,46 @@
             }
           },
           "500": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "remediation": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "502": {
             "description": "Default Response",
             "content": {
               "application/json": {

@@ -16,13 +16,10 @@ import { buildDashboardOverview } from '#dashboardOverview.js';
 import { getDeviceHealth, getDeviceInstallBlocker, getDeviceReadiness } from '#deviceHealth.js';
 import { logBelongsToProject } from '#dashboardLogPresentation.js';
 import { getVerifiedTestFlightCatalog, TestFlightCatalogUnavailableError } from '#testflightSubscriptions.js';
-import { listAppVersions } from '#versions.js';
 import {
   artifactDownloadName,
   artifactFileAvailable,
-  artifactKeyForAppStoreVersion,
   getArtifactById,
-  getArtifactByKey,
   listArtifacts,
   setArtifactPinned,
   touchArtifact,
@@ -330,26 +327,6 @@ dashboardRouter.post('/v1/dashboard/decrypt/preflight', canDecrypt, async (req, 
     canQueue: checks.some((check) => check.ready),
     devices: checks,
   });
-});
-
-dashboardRouter.get('/v1/dashboard/versions/:bundleId', async (req, res) => {
-  const bundleId = req.params.bundleId;
-  if (!BUNDLE_ID_RE.test(bundleId)) {
-    res.status(400).json({ error: 'bundleId must look like a bundle identifier' });
-    return;
-  }
-
-  try {
-    const versions = await listAppVersions(bundleId, req.query.force === 'true');
-    res.json({
-      versions: versions.map((version) => ({
-        ...version,
-        artifactId: getArtifactByKey(artifactKeyForAppStoreVersion(bundleId, version.displayVersion ?? version.externalVersionId ?? 'latest', version.externalVersionId))?.id,
-      })),
-    });
-  } catch (err) {
-    res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
-  }
 });
 
 function resolveRequestProjectId(req: Request, res: Response, source: 'body' | 'query', options: { requireActive?: boolean } = {}): string | undefined {

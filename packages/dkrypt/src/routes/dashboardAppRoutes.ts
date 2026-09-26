@@ -1,11 +1,13 @@
 import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
 import type {
+  DashboardAppVersionsRoute,
   DashboardAppCatalogStatsRoute,
   DashboardAppMetadataRefreshRoute,
   DashboardAppMetadataRoute,
   DashboardAppSearchRoute,
 } from '#dashboardAppCatalogContracts.js';
 import { recordFastifyDashboardActivity } from '#dashboardActivity.js';
+import { artifactKeyForAppStoreVersion, getArtifactByKey, type ArtifactRecord } from '#artifacts.js';
 import { getRouteContract } from '#contracts.js';
 import { scopedLogger } from '#logger.js';
 import { PermissionFlag } from '#permissions.js';
@@ -19,6 +21,7 @@ import {
 } from '#store/state.js';
 import { decorateSearchResults, type TestFlightCatalogApp } from '#testflightSubscriptions.js';
 import { createHttpErrorEnvelope } from '#util/httpResponse.js';
+import { listAppVersions } from '#versions.js';
 
 type SearchResult = ItunesSearchResult & {
   testflight?: Pick<TestFlightCatalogApp, 'appId' | 'devices' | 'lastVerifiedAt'>;
@@ -31,6 +34,9 @@ interface DashboardAppServices {
   getAppCatalogEntries: typeof getAppCatalogEntries;
   getAppCatalogStats: typeof getAppCatalogStats;
   upsertAppCatalogEntries: typeof upsertAppCatalogEntries;
+  listAppVersions: typeof listAppVersions;
+  artifactKeyForAppStoreVersion: typeof artifactKeyForAppStoreVersion;
+  getArtifactByKey: (key: string) => ArtifactRecord | undefined;
 }
 
 const defaultServices: DashboardAppServices = {
@@ -40,6 +46,9 @@ const defaultServices: DashboardAppServices = {
   getAppCatalogEntries,
   getAppCatalogStats,
   upsertAppCatalogEntries,
+  listAppVersions,
+  artifactKeyForAppStoreVersion,
+  getArtifactByKey,
 };
 
 const canViewScheduler = fastifyRequirePermission(PermissionFlag.viewAutomation, PermissionFlag.manageAutomation);
@@ -113,6 +122,33 @@ export function createDashboardAppRoutes(overrides: Partial<DashboardAppServices
           requestId: request.id,
           retryable: true,
         };
+      }
+    });
+
+    server.get<DashboardAppVersionsRoute>('/v1/dashboard/versions/:bundleId', {
+      schema: getRouteContract('GET', '/v1/dashboard/versions/:bundleId'),
+    }, async (request, reply) => {
+      const bundleId = request.params.bundleId;
+      try {
+        const versions = await services.listAppVersions(bundleId, request.query.force === 'true');
+        return {
+          versions: versions.map((version) => ({
+            ...version,
+            artifactId: services.getArtifactByKey(services.artifactKeyForAppStoreVersion(
+              bundleId,
+              version.displayVersion ?? version.externalVersionId ?? 'latest',
+              version.externalVersionId,
+            ))?.id,
+          })),
+        };
+      } catch (error) {
+        log.warn('dashboard App Store versions lookup failed', {
+          requestId: request.id,
+          bundleId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        reply.code(502);
+        return createHttpErrorEnvelope(request.id, 502, 'App Store version history is temporarily unavailable');
       }
     });
 

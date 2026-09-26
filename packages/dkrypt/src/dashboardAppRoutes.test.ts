@@ -2,11 +2,13 @@ import { expect, test } from 'bun:test';
 import Fastify from 'fastify';
 import { TypeBoxTypeProvider } from '@fastify/type-provider-typebox';
 import type { Response } from '#http.js';
+import type { AppVersionEntry } from '#versions.js';
 import { PermissionFlag } from '#permissions.js';
 import { dashboardRouter } from '#routes/dashboard.js';
 import { createDashboardAppRoutes } from '#routes/dashboardAppRoutes.js';
 import { setSessionCookie } from '#session.js';
 import type { AppCatalogEntry } from '#store/state.js';
+import type { ArtifactRecord } from '#artifacts.js';
 
 function sessionCookie(permissions: bigint): string {
   let value = '';
@@ -21,6 +23,94 @@ test('app search and metadata endpoints are not registered through the legacy ro
   expect(routes).not.toContain('GET /v1/dashboard/apps/metadata');
   expect(routes).not.toContain('GET /v1/dashboard/apps/cache');
   expect(routes).not.toContain('POST /v1/dashboard/apps/metadata/refresh');
+  expect(routes).not.toContain('GET /v1/dashboard/versions/:bundleId');
+});
+
+test('App Store versions include matching artifact IDs and preserve force semantics', async () => {
+  const versions: AppVersionEntry[] = [
+    { externalVersionId: 'version-3', isLatest: true, displayVersion: '3.0' },
+    { externalVersionId: 'version-2', isLatest: false, displayVersion: '2.0', releaseDate: '2026-01-01' },
+    { isLatest: false, bundleVersion: '1.9' },
+  ];
+  const artifact: ArtifactRecord = {
+    id: 'artifact-version-2',
+    key: 'cached-version-2',
+    projectIds: ['default'],
+    bundleId: 'com.example.versions',
+    channel: 'appstore',
+    externalVersionId: 'version-2',
+    filePath: '/tmp/version-2.ipa',
+    fileSizeBytes: 1,
+    sha256: 'a'.repeat(64),
+    createdAt: 1,
+    lastAccessedAt: 1,
+    accessCount: 1,
+  };
+  const versionCalls: Array<[string, boolean]> = [];
+  const artifactKeys: string[] = [];
+  const server = Fastify().withTypeProvider<TypeBoxTypeProvider>();
+  await server.register(createDashboardAppRoutes({
+    listAppVersions: async (bundleId, force) => {
+      versionCalls.push([bundleId, force === true]);
+      return versions;
+    },
+    artifactKeyForAppStoreVersion: (bundleId, label, externalVersionId) => `${bundleId}:${label}:${externalVersionId ?? ''}`,
+    getArtifactByKey: (key) => {
+      artifactKeys.push(key);
+      return key === 'com.example.versions:2.0:version-2' ? artifact : undefined;
+    },
+  }));
+
+  try {
+    const headers = { cookie: sessionCookie(0n) };
+    const response = await server.inject({ method: 'GET', url: '/v1/dashboard/versions/com.example.versions?force=true', headers });
+    const nonForced = await server.inject({ method: 'GET', url: '/v1/dashboard/versions/com.example.versions?force=invalid', headers });
+    const repeatedForce = await server.inject({ method: 'GET', url: '/v1/dashboard/versions/com.example.versions?force=true&force=true', headers });
+
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body)).toEqual({ versions: [
+      { externalVersionId: 'version-3', isLatest: true, displayVersion: '3.0' },
+      { externalVersionId: 'version-2', isLatest: false, displayVersion: '2.0', releaseDate: '2026-01-01', artifactId: 'artifact-version-2' },
+      { isLatest: false, bundleVersion: '1.9' },
+    ] });
+    expect(versionCalls).toEqual([
+      ['com.example.versions', true],
+      ['com.example.versions', false],
+      ['com.example.versions', false],
+    ]);
+    expect(artifactKeys.slice(0, 3)).toEqual([
+      'com.example.versions:3.0:version-3',
+      'com.example.versions:2.0:version-2',
+      'com.example.versions:latest:',
+    ]);
+    expect(nonForced.statusCode).toBe(200);
+    expect(repeatedForce.statusCode).toBe(200);
+  } finally {
+    await server.close();
+  }
+});
+
+test('App Store version lookup failures use the standard retryable API envelope', async () => {
+  const server = Fastify().withTypeProvider<TypeBoxTypeProvider>();
+  await server.register(createDashboardAppRoutes({ listAppVersions: async () => { throw new Error('private upstream detail'); } }));
+
+  try {
+    const response = await server.inject({
+      method: 'GET',
+      url: '/v1/dashboard/versions/com.example.versions',
+      headers: { cookie: sessionCookie(0n) },
+    });
+    expect(response.statusCode).toBe(502);
+    expect(response.json()).toMatchObject({
+      error: 'internal server error',
+      code: 'internal_error',
+      message: 'internal server error',
+      retryable: true,
+    });
+    expect(response.body).not.toContain('private upstream detail');
+  } finally {
+    await server.close();
+  }
 });
 
 test('app search decorates TestFlight shortcuts and refreshes only missing catalog entries', async () => {

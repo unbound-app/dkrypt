@@ -47,6 +47,23 @@ export const dashboardAppCatalogStatsResponseSchema = Type.Object({
 export const dashboardAppMetadataRefreshBodySchema = Type.Object({
   bundleIds: Type.Array(Type.Unknown(), { minItems: 1 }),
 }, additionalProperties);
+export const dashboardAppVersionsParamsSchema = Type.Object({ bundleId: bundleIdSchema }, additionalProperties);
+export const dashboardAppVersionsQuerySchema = Type.Object({
+  force: Type.Optional(Type.Union([
+    Type.String({ description: 'Only true forces a refresh; other values use the cached lookup.' }),
+    Type.Array(Type.String()),
+  ])),
+}, additionalProperties);
+export const dashboardAppVersionsResponseSchema = Type.Object({
+  versions: Type.Array(Type.Object({
+    externalVersionId: Type.Optional(identifierSchema),
+    isLatest: Type.Boolean(),
+    displayVersion: Type.Optional(Type.String()),
+    bundleVersion: Type.Optional(Type.String()),
+    releaseDate: Type.Optional(Type.String()),
+    artifactId: Type.Optional(identifierSchema),
+  }, additionalProperties)),
+}, additionalProperties);
 
 export type DashboardAppSearchQuery = Static<typeof dashboardAppSearchQuerySchema>;
 export type DashboardAppSearchResponse = Static<typeof dashboardAppSearchResponseSchema>;
@@ -54,6 +71,7 @@ export type DashboardAppMetadataQuery = Static<typeof dashboardAppMetadataQueryS
 export type DashboardAppMetadataResponse = Static<typeof dashboardAppMetadataResponseSchema>;
 export type DashboardAppCatalogStatsResponse = Static<typeof dashboardAppCatalogStatsResponseSchema>;
 export type DashboardAppMetadataRefreshBody = Static<typeof dashboardAppMetadataRefreshBodySchema>;
+export type DashboardAppVersionsResponse = Static<typeof dashboardAppVersionsResponseSchema>;
 
 type CommonRouteErrors = { 400: ApiErrorEnvelope; 401: ApiErrorEnvelope; 403: ApiErrorEnvelope; 500: ApiErrorEnvelope };
 
@@ -74,4 +92,10 @@ export type DashboardAppCatalogStatsRoute = {
 export type DashboardAppMetadataRefreshRoute = {
   Body: DashboardAppMetadataRefreshBody;
   Reply: { 200: DashboardAppMetadataResponse } & CommonRouteErrors;
+};
+
+export type DashboardAppVersionsRoute = {
+  Params: Static<typeof dashboardAppVersionsParamsSchema>;
+  Querystring: Static<typeof dashboardAppVersionsQuerySchema>;
+  Reply: { 200: DashboardAppVersionsResponse; 502: ApiErrorEnvelope } & CommonRouteErrors;
 };
