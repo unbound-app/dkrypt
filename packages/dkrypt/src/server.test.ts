@@ -1866,6 +1866,7 @@ test('Fastify rejects obsolete device root submissions', async () => {
 });
 
 test('Fastify sends the initial dashboard overview over SSE', async () => {
+  expect(dashboardRouter.routes.map((route) => `${route.method} ${route.path}`)).not.toContain('GET /v1/dashboard/events');
   const { server, cookie } = await signIn();
   const baseUrl = await server.listen({ port: 0, host: '127.0.0.1' });
   const controller = new AbortController();
@@ -1874,6 +1875,9 @@ test('Fastify sends the initial dashboard overview over SSE', async () => {
   try {
     const response = await fetch(`${baseUrl}/v1/dashboard/events`, { headers: { cookie }, signal: controller.signal });
     expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toBe('text/event-stream; charset=utf-8');
+    expect(response.headers.get('cache-control')).toBe('no-cache, no-transform');
+    expect(response.headers.get('connection')).toBe('keep-alive');
     expect(response.headers.get('x-accel-buffering')).toBe('no');
     const chunk = await response.body?.getReader().read();
     expect(new TextDecoder().decode(chunk?.value)).toContain('event: overview');

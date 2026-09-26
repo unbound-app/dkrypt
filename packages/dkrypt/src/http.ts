@@ -1,7 +1,5 @@
 import { createReadStream } from 'node:fs';
-import type { FastifyInstance, FastifyReply, FastifyRequest, FastifySchema } from 'fastify';
-import { getRouteContract } from '#contracts.js';
-import { withCorrelation } from '#correlation.js';
+import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { Session } from '#session.js';
 
 export interface RequestLocals {
@@ -91,88 +89,6 @@ export class Response {
     return this;
   }
 
-  flushHeaders(): void {
-    this.reply.hijack();
-    this.raw.flushHeaders();
-  }
-
-  write(chunk: string): void {
-    this.reply.hijack();
-    this.raw.write(chunk);
-  }
 }
 
 export type NextFunction = () => void;
-export type Handler = (req: Request, res: Response, next: NextFunction) => unknown;
-
-interface Route {
-  method: 'DELETE' | 'GET' | 'PATCH' | 'POST' | 'PUT';
-  path: string;
-  handlers: Handler[];
-}
-
-export class HttpRouter {
-  readonly middleware: Handler[] = [];
-  readonly routes: Route[] = [];
-
-  use(handler: Handler): void {
-    this.middleware.push(handler);
-  }
-
-  get(path: string, ...handlers: Handler[]): void {
-    this.routes.push({ method: 'GET', path, handlers });
-  }
-
-  post(path: string, ...handlers: Handler[]): void {
-    this.routes.push({ method: 'POST', path, handlers });
-  }
-
-  put(path: string, ...handlers: Handler[]): void {
-    this.routes.push({ method: 'PUT', path, handlers });
-  }
-
-  patch(path: string, ...handlers: Handler[]): void {
-    this.routes.push({ method: 'PATCH', path, handlers });
-  }
-
-  delete(path: string, ...handlers: Handler[]): void {
-    this.routes.push({ method: 'DELETE', path, handlers });
-  }
-}
-
-export function Router(): HttpRouter {
-  return new HttpRouter();
-}
-
-function adaptRequest(request: FastifyRequest): Request {
-  const req = request as Request;
-  req.header = (name) => request.headers[name.toLowerCase()] as string | undefined;
-  req.path = new URL(request.raw.url ?? '/', 'http://localhost').pathname;
-  req.on = request.raw.on.bind(request.raw);
-  return req;
-}
-
-async function runHandlers(handlers: Handler[], req: Request, res: Response, index = 0): Promise<void> {
-  const handler = handlers[index];
-  if (!handler || res.headersSent) return;
-  let nextPromise: Promise<void> | undefined;
-  const next = () => {
-    nextPromise ??= runHandlers(handlers, req, res, index + 1);
-  };
-  await handler(req, res, next);
-  await nextPromise;
-}
-
-export function registerRouter(server: FastifyInstance, router: HttpRouter): void {
-  for (const route of router.routes) {
-    server.route({
-      method: route.method,
-      url: route.path,
-      schema: getRouteContract(route.method, route.path) as FastifySchema | undefined,
-      handler: async (request, reply) => {
-        const traceContext = (request as unknown as { traceSpan?: { context?: import('#telemetry.js').TraceContext } }).traceSpan?.context;
-        await withCorrelation({ correlationId: request.id, traceId: traceContext?.traceId, traceContext }, () => runHandlers([...router.middleware, ...route.handlers], adaptRequest(request), new Response(reply)));
-      },
-    });
-  }
-}

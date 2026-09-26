@@ -185,6 +185,7 @@ import {
   dashboardDiscordRolesResponseSchema,
   dashboardDiscordStatusResponseSchema,
 } from '#dashboardDiscordContracts.js';
+import { dashboardEventsQuerySchema } from '#dashboardEventsContracts.js';
 import {
   dashboardGitHubBudgetHistoryQuerySchema,
   dashboardGitHubBudgetHistoryResponseSchema,
@@ -1460,8 +1461,8 @@ register('GET', '/v1/dashboard/webhooks', {
   response: { 200: WebhookDeliveryPageResponse, 401: ErrorEnvelope, 403: ErrorEnvelope },
 });
 register('GET', '/v1/dashboard/events', {
-  querystring: object({ projectId: Type.Optional(Identifier) }),
-  response: { 200: EventStreamResponse },
+  querystring: dashboardEventsQuerySchema,
+  response: { 200: EventStreamResponse, 400: ErrorEnvelope, 401: ErrorEnvelope, 404: ErrorEnvelope, 429: ErrorEnvelope, 500: ErrorEnvelope },
 });
 register('GET', '/v1/dashboard/jobs/:id/diagnostic', {
   params: dashboardJobParamsSchema,

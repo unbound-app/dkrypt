@@ -8,7 +8,6 @@ import scalarApiReference from '@scalar/fastify-api-reference';
 import { TypeBoxTypeProvider } from '@fastify/type-provider-typebox';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { config } from '#config.js';
-import { registerRouter } from '#http.js';
 import { getArtifactBackedJobs, shutdownJobs, startJobSweeper, stopAcceptingJobs, stopJobSweeper } from '#jobs/store.js';
 import { startJobWebhookDispatcher, stopJobWebhookDispatcher } from '#jobWebhook.js';
 import { startKeyExpiryPoller, stopKeyExpiryPoller } from '#keyExpiryPoller.js';
@@ -35,11 +34,11 @@ import { dashboardJobAnalyticsRoutes } from '#routes/dashboardJobAnalyticsRoutes
 import { dashboardJobHistoryRoutes } from '#routes/dashboardJobHistoryRoutes.js';
 import { dashboardReportingRoutes } from '#routes/dashboardReportingRoutes.js';
 import { dashboardDiscordRoutes } from '#routes/dashboardDiscordRoutes.js';
+import { dashboardEventsRoutes } from '#routes/dashboardEventsRoutes.js';
 import { dashboardTestFlightRoutes } from '#routes/dashboardTestFlightRoutes.js';
 import { dashboardTestFlightBrowseRoutes } from '#routes/dashboardTestFlightBrowseRoutes.js';
 import { dashboardAppRoutes } from '#routes/dashboardAppRoutes.js';
 import { billingRoutes, billingWebhookRoutes } from '#routes/billing.js';
-import { dashboardRouter } from '#routes/dashboard.js';
 import { artifactCatalogRoutes, decryptRoutes, testFlightCatalogRoutes } from '#routes/decrypt.js';
 import { healthRoutes } from '#routes/health.js';
 import { startScheduler, stopScheduler } from '#scheduler/index.js';
@@ -270,10 +269,9 @@ export async function buildServer(options: { includePublicRoutes?: boolean } = {
   await server.register(dashboardTestFlightBrowseRoutes);
   await server.register(dashboardAppRoutes);
   await server.register(dashboardDiscordRoutes);
+  await server.register(dashboardEventsRoutes);
   await server.register(dashboardWatchRoutes);
   await server.register(billingRoutes);
-  registerRouter(server, dashboardRouter);
-
   return server;
 }
 
