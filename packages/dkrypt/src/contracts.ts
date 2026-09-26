@@ -37,6 +37,13 @@ import {
 } from '#dashboardNotificationContracts.js';
 import { dashboardDeviceActivityQuerySchema, dashboardDeviceHistoryQuerySchema, dashboardDeviceParamsSchema } from '#dashboardDeviceContracts.js';
 import {
+  dashboardProjectCreateBodySchema as ProjectInput,
+  dashboardProjectListResponseSchema as ProjectListResponse,
+  dashboardProjectMembersResponseSchema as ProjectMembersResponse,
+  dashboardProjectPatchBodySchema as ProjectPatchInput,
+  dashboardProjectResponseSchema as ProjectResponse,
+} from '#dashboardProjectContracts.js';
+import {
   deviceConnectionInputSchema as DeviceConnectionInput,
   deviceDiscoveryResponseSchema as DeviceDiscoveryResponse,
   devicePatchInputSchema as DevicePatchInput,
@@ -443,39 +450,6 @@ const RoleResponse = object({
   updatedAt: Type.Number(),
 });
 const RolesResponse = object({ roles: Type.Array(RoleResponse) });
-const ProjectResponse = object({
-  id: Identifier,
-  name: Type.String({ minLength: 1, maxLength: 80 }),
-  description: Type.Optional(Type.String({ maxLength: 240 })),
-  memberIds: Type.Optional(Type.Array(Identifier)),
-  isDefault: Type.Boolean(),
-  archivedAt: Type.Optional(Type.Number()),
-  storageQuotaBytes: Type.Optional(Type.Integer({ minimum: 1 })),
-  dailyJobQuota: Type.Optional(Type.Integer({ minimum: 1 })),
-  maxConcurrentJobs: Type.Optional(Type.Integer({ minimum: 1 })),
-  createdBy: Identifier,
-  createdAt: Type.Number(),
-  updatedAt: Type.Number(),
-});
-const ProjectListResponse = object({ projects: Type.Array(ProjectResponse) });
-const ProjectMembersResponse = object({ members: Type.Array(object({ id: Identifier, username: Identifier, displayName: Type.String(), avatarUrl: Type.Optional(Type.String()) })) });
-const ProjectInput = object({
-  name: Type.String({ minLength: 1, maxLength: 80 }),
-  description: Type.Optional(Type.String({ maxLength: 240 })),
-  memberIds: Type.Optional(Type.Array(Identifier, { maxItems: 500 })),
-  storageQuotaBytes: Type.Optional(Type.Integer({ minimum: 1 })),
-  dailyJobQuota: Type.Optional(Type.Integer({ minimum: 1 })),
-  maxConcurrentJobs: Type.Optional(Type.Integer({ minimum: 1 })),
-});
-const ProjectPatchInput = Type.Partial(object({
-  name: Type.String({ minLength: 1, maxLength: 80 }),
-  description: Type.Union([Type.String({ maxLength: 240 }), Type.Null()]),
-  memberIds: Type.Array(Identifier, { maxItems: 500 }),
-  storageQuotaBytes: Type.Union([Type.Integer({ minimum: 1 }), Type.Null()]),
-  dailyJobQuota: Type.Union([Type.Integer({ minimum: 1 }), Type.Null()]),
-  maxConcurrentJobs: Type.Union([Type.Integer({ minimum: 1 }), Type.Null()]),
-  archived: Type.Boolean(),
-}));
 const UserDirectoryResponse = object({
   users: Type.Array(object({
     username: Identifier,

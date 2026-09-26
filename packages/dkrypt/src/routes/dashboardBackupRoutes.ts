@@ -36,18 +36,14 @@ import {
   setBackupSchedule,
   verifyLatestDatabaseBackup,
 } from '#store/state.js';
-import { createHttpErrorEnvelope } from '#util/httpResponse.js';
+import { createHttpErrorEnvelope, sendHttpErrorEnvelope } from '#util/httpResponse.js';
 
 const canViewBackup = fastifyRequirePermission(PermissionFlag.viewBackup, PermissionFlag.manageBackup);
 const canManageBackup = fastifyRequirePermission(PermissionFlag.manageBackup);
 
-function sendBackupBadRequest(reply: FastifyReply, requestId: string, message: string): void {
-  reply.code(400).send(createHttpErrorEnvelope(requestId, 400, message));
-}
-
 function rejectInvalidBackupRequest(request: FastifyRequest, reply: FastifyReply, message: string): boolean {
   if (!request.validationError) return false;
-  sendBackupBadRequest(reply, request.id, message);
+  sendHttpErrorEnvelope(reply, request.id, 400, message);
   return true;
 }
 
@@ -72,7 +68,7 @@ export const dashboardBackupRoutes: FastifyPluginAsyncTypebox = async (server) =
     const session = getFastifySession(request)!;
     const result = importBackup(request.body, session.sub);
     if (!result.ok) {
-      sendBackupBadRequest(reply, request.id, result.error ?? 'backup restore was rejected');
+      sendHttpErrorEnvelope(reply, request.id, 400, result.error ?? 'backup restore was rejected');
       return;
     }
     reloadArtifactIndex();
@@ -90,7 +86,7 @@ export const dashboardBackupRoutes: FastifyPluginAsyncTypebox = async (server) =
     if (rejectInvalidBackupRequest(request, reply, 'backup payload is malformed')) return;
     const result = previewBackup(request.body);
     if (!result.ok) {
-      sendBackupBadRequest(reply, request.id, result.error);
+      sendHttpErrorEnvelope(reply, request.id, 400, result.error);
       return;
     }
     return result.summary;
@@ -104,7 +100,7 @@ export const dashboardBackupRoutes: FastifyPluginAsyncTypebox = async (server) =
     if (rejectInvalidBackupRequest(request, reply, 'backup payload is malformed')) return;
     const result = drillBackupRestore(request.body);
     if (!result.ok) {
-      sendBackupBadRequest(reply, request.id, result.error);
+      sendHttpErrorEnvelope(reply, request.id, 400, result.error);
       return;
     }
     return {
@@ -128,7 +124,7 @@ export const dashboardBackupRoutes: FastifyPluginAsyncTypebox = async (server) =
     if (rejectInvalidBackupRequest(request, reply, 'backup schedule contains invalid fields')) return;
     const { enabled, cron, retentionCount } = request.body;
     if (cron !== undefined && !validateCronExpr(cron)) {
-      sendBackupBadRequest(reply, request.id, 'invalid cron expression');
+      sendHttpErrorEnvelope(reply, request.id, 400, 'invalid cron expression');
       return;
     }
     const session = getFastifySession(request)!;

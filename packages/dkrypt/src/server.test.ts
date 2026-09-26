@@ -626,6 +626,14 @@ test('project administration is permission-gated and project membership controls
     const deniedCreate = await server.inject({ method: 'POST', url: '/v1/dashboard/projects', headers: { cookie: memberCookie }, payload: { name: `Denied ${crypto.randomUUID()}` } });
     expect(deniedCreate.statusCode).toBe(403);
 
+    const invalidCreate = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/projects',
+      headers: { cookie: managerCookie },
+      payload: { name: 'p'.repeat(81) },
+    });
+    expect(invalidCreate.statusCode).toBe(400);
+
     const created = await server.inject({
       method: 'POST',
       url: '/v1/dashboard/projects',
@@ -638,10 +646,19 @@ test('project administration is permission-gated and project membership controls
     expect(project.memberIds).toContain(firstMemberId);
     expect(project.dailyJobQuota).toBe(40);
 
+    const emptyPatch = await server.inject({ method: 'PATCH', url: `/v1/dashboard/projects/${project.id}`, headers: { cookie: managerCookie }, payload: {} });
+    expect(emptyPatch.statusCode).toBe(400);
+    expect(emptyPatch.json()).toMatchObject({ message: 'no supported project fields were provided' });
+
+    const unsupportedPatch = await server.inject({ method: 'PATCH', url: `/v1/dashboard/projects/${project.id}`, headers: { cookie: managerCookie }, payload: { unsupported: true } });
+    expect(unsupportedPatch.statusCode).toBe(400);
+    expect(unsupportedPatch.json()).toMatchObject({ message: 'no supported project fields were provided' });
+
     const firstMemberProjects = await server.inject({ method: 'GET', url: '/v1/dashboard/projects', headers: { cookie: memberCookie } });
     const firstProjectIds = (firstMemberProjects.json() as { projects: { id: string }[] }).projects.map((entry) => entry.id);
     expect(firstProjectIds).toContain('default');
     expect(firstProjectIds).toContain(project.id);
+    expect((firstMemberProjects.json() as { projects: { id: string; memberIds?: string[] }[] }).projects.find((entry) => entry.id === project.id)?.memberIds).toBeUndefined();
 
     const secondMemberProjects = await server.inject({ method: 'GET', url: '/v1/dashboard/projects', headers: { cookie: secondMemberCookie } });
     const secondProjectIds = (secondMemberProjects.json() as { projects: { id: string }[] }).projects.map((entry) => entry.id);

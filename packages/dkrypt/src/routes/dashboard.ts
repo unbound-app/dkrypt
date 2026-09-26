@@ -11,13 +11,13 @@ import type { LogEntry } from '#logger.js';
 import { getRecentLogs } from '#logger.js';
 import { EMBED_COLOR, notify, sendTestNotification } from '#notify.js';
 import { hasPermission, isSubsetPermission, parseBits, PermissionFlag } from '#permissions.js';
-import { getAuthProfile, listAuthProfiles } from '#identity.js';
+import { listAuthProfiles } from '#identity.js';
 import { applyWatchSchedules, checkForTestFlightUpdate, checkForUpdate, triggerTickNow } from '#scheduler/index.js';
 import { getGitHubRateLimitBudget, listDispatchRepos, listRepoWorkflows, validateDispatchTarget } from '#scheduler/github.js';
 import { lookupAppMetadata, searchApps } from '#scheduler/itunes.js';
 import { requirePermission, requireSession } from '#session.js';
 import { recordDashboardSessionActivity } from '#dashboardActivity.js';
-import { canAccessProject, canViewAllProjects, dashboardHistoryEntry } from '#dashboardJobPresentation.js';
+import { canAccessProject, dashboardHistoryEntry } from '#dashboardJobPresentation.js';
 import { buildDashboardOverview } from '#dashboardOverview.js';
 import { getDeviceHealth, getDeviceInstallBlocker, getDeviceReadiness } from '#deviceHealth.js';
 import { decodeCursor, nextCursor } from '#util/cursor.js';
@@ -54,7 +54,6 @@ import {
   bulkSetApiKeyDailyLimit,
   createApiKey,
   createDiscordRolePerk,
-  createProject,
   createRole,
   createWatch,
   DEFAULT_ROLE_ID,
@@ -97,14 +96,11 @@ import {
   getAppCatalogEntries,
   getAppCatalogStats,
   isWatchSchedulable,
-  type CreateProjectInput,
   type JobHistoryEntry,
-  type UpdateProjectInput,
   listAllApiKeysPage,
   listAllowedUsers,
   listApiKeysForOwner,
   listPendingApiKeys,
-  listProjectsForUser,
   listRoles,
   previewJobHistoryRetention,
   recordAudit,
@@ -122,7 +118,6 @@ import {
   setUserPriority,
   upsertAppCatalogEntries,
   updateAllowedUserRoles,
-  updateProject,
   updateRole,
   updateSettings,
   updateWatch,
@@ -158,7 +153,6 @@ const canViewUsers = requirePermission(PermissionFlag.viewUsers, PermissionFlag.
 const canViewRoles = requirePermission(PermissionFlag.viewRoles, PermissionFlag.manageRoles);
 const canManageUsers = requirePermission(PermissionFlag.manageUsers);
 const canManageRoles = requirePermission(PermissionFlag.manageRoles);
-const canManageProjects = requirePermission(PermissionFlag.manageProjects);
 const canViewDiscordPerks = requirePermission(PermissionFlag.viewRoles, PermissionFlag.manageRoles);
 const canManageDiscordPerks = requirePermission(PermissionFlag.manageRoles);
 export const dashboardRouter = Router();
@@ -1884,112 +1878,6 @@ function resolveRequestProjectId(req: Request, res: Response, source: 'body' | '
   }
   return projectId;
 }
-
-function projectMemberResponse(userId: string) {
-  const profile = getAuthProfile(userId);
-  return {
-    id: userId,
-    username: profile?.username ?? userId,
-    displayName: profile?.displayName ?? userId,
-    avatarUrl: profile?.avatarUrl,
-  };
-}
-
-dashboardRouter.get('/v1/dashboard/projects', (_req, res) => {
-  const canViewAll = canViewAllProjects(res.locals.session.permissions);
-  const projects = listProjectsForUser(res.locals.session.sub, canViewAll).map((project) => ({
-    ...project,
-    memberIds: canViewAll ? project.memberIds : undefined,
-  }));
-  res.json({ projects });
-});
-
-dashboardRouter.get('/v1/dashboard/projects/members', canManageProjects, (_req, res) => {
-  res.json({ members: listAllowedUsers().map((user) => projectMemberResponse(user.username)) });
-});
-
-function projectQuotaValue(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
-}
-
-dashboardRouter.post('/v1/dashboard/projects', canManageProjects, (req, res) => {
-  const body = req.body as Record<string, unknown> | null;
-  if (!body || typeof body.name !== 'string' || (body.description !== undefined && typeof body.description !== 'string') || (body.memberIds !== undefined && (!Array.isArray(body.memberIds) || body.memberIds.length > 500 || !body.memberIds.every((memberId) => typeof memberId === 'string'))) || ['storageQuotaBytes', 'dailyJobQuota', 'maxConcurrentJobs'].some((key) => body[key] !== undefined && !projectQuotaValue(body[key]))) {
-    res.status(400).json({ error: 'project name, description, members, or quotas are malformed' });
-    return;
-  }
-  const input: CreateProjectInput = {
-    name: body.name,
-    description: body.description as string | undefined,
-    memberIds: body.memberIds as string[] | undefined,
-    storageQuotaBytes: body.storageQuotaBytes as number | undefined,
-    dailyJobQuota: body.dailyJobQuota as number | undefined,
-    maxConcurrentJobs: body.maxConcurrentJobs as number | undefined,
-  };
-  const result = createProject(input, res.locals.session.sub);
-  if (!result.ok) {
-    res.status(400).json({ error: result.error });
-    return;
-  }
-  res.status(201).json(result.project);
-});
-
-dashboardRouter.patch('/v1/dashboard/projects/:id', canManageProjects, (req, res) => {
-  const body = req.body as Record<string, unknown> | null;
-  if (!body) {
-    res.status(400).json({ error: 'project updates must be an object' });
-    return;
-  }
-  const patch: UpdateProjectInput = {};
-  if (Object.hasOwn(body, 'name')) {
-    if (typeof body.name !== 'string') {
-      res.status(400).json({ error: 'project name must be text' });
-      return;
-    }
-    patch.name = body.name;
-  }
-  if (Object.hasOwn(body, 'description')) {
-    if (body.description !== null && typeof body.description !== 'string') {
-      res.status(400).json({ error: 'project description must be text or null' });
-      return;
-    }
-    patch.description = body.description as string | null;
-  }
-  if (Object.hasOwn(body, 'memberIds')) {
-    if (!Array.isArray(body.memberIds) || body.memberIds.length > 500 || !body.memberIds.every((memberId) => typeof memberId === 'string')) {
-      res.status(400).json({ error: 'project members must be an array of user IDs' });
-      return;
-    }
-    patch.memberIds = body.memberIds as string[];
-  }
-  for (const key of ['storageQuotaBytes', 'dailyJobQuota', 'maxConcurrentJobs'] as const) {
-    if (!Object.hasOwn(body, key)) continue;
-    if (body[key] !== null && !projectQuotaValue(body[key])) {
-      res.status(400).json({ error: 'project quotas must be positive whole numbers or null' });
-      return;
-    }
-    patch[key] = body[key] as number | null;
-  }
-  if (Object.hasOwn(body, 'archived')) {
-    if (typeof body.archived !== 'boolean') {
-      res.status(400).json({ error: 'archived must be a boolean' });
-      return;
-    }
-    patch.archived = body.archived;
-  }
-  if (Object.keys(patch).length === 0) {
-    res.status(400).json({ error: 'no supported project fields were provided' });
-    return;
-  }
-  const result = updateProject(req.params.id, patch, res.locals.session.sub);
-  if (!result.ok) {
-    res.status(result.error === 'project not found' ? 404 : 400).json({ error: result.error });
-    return;
-  }
-  dashboardEvents.emit('projectChanged', req.params.id);
-  applyWatchSchedules();
-  res.json(result.project);
-});
 
 dashboardRouter.get('/v1/dashboard/roles', canViewRoles, (_req, res) => {
   res.json({ roles: listRoles() });
