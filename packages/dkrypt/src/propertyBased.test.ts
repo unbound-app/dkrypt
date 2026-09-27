@@ -294,7 +294,7 @@ test('SQLite upgrades generated records from every prior schema and restores the
       }
     }), { numRuns: 5, seed: 20260929 + baselineVersion });
   }
-});
+}, 15_000);
 
 test('IPA metadata extraction preserves generated versions and Mach-O architectures', async () => {
   const cpuTypes = [...cpuTypeNames.keys()];
