@@ -56,7 +56,7 @@ test('audit repository backfills event fields when migrating an existing databas
 
     const migrated = openStateDatabase(options);
     try {
-      expect(migrated.schemaVersion).toBe(14);
+      expect(migrated.schemaVersion).toBe(15);
       expect(createAuditRepository(migrated.db).listRecent()).toEqual([event]);
     } finally {
       migrated.close();

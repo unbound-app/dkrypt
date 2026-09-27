@@ -367,6 +367,47 @@ const migrations = [
       CREATE INDEX IF NOT EXISTS testflight_subscription_devices_by_device ON testflight_subscription_devices(device_id, status, subscription_id);
     `,
   },
+  {
+    version: 15,
+    sql: `
+      CREATE TABLE IF NOT EXISTS job_history (
+        id TEXT PRIMARY KEY NOT NULL,
+        payload TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        project_id TEXT,
+        bundle_id TEXT,
+        source TEXT,
+        status TEXT,
+        queued_by TEXT,
+        device_id TEXT,
+        finished_at INTEGER,
+        error_text TEXT,
+        failure_class TEXT
+      );
+      INSERT OR IGNORE INTO job_history (
+        id, payload, updated_at, project_id, bundle_id, source, status, queued_by,
+        device_id, finished_at, error_text, failure_class
+      )
+      SELECT json_extract(history.value, '$.id'),
+             history.value,
+             COALESCE(json_extract(history.value, '$.finishedAt'), state_snapshots.updated_at),
+             COALESCE(json_extract(history.value, '$.projectId'), 'default'),
+             json_extract(history.value, '$.bundleId'),
+             json_extract(history.value, '$.source'),
+             json_extract(history.value, '$.status'),
+             lower(json_extract(history.value, '$.queuedBy')),
+             json_extract(history.value, '$.deviceId'),
+             json_extract(history.value, '$.finishedAt'),
+             json_extract(history.value, '$.error'),
+             json_extract(history.value, '$.failureClass')
+      FROM state_snapshots,
+           json_each(CASE WHEN json_valid(state_snapshots.payload) = 1 THEN state_snapshots.payload ELSE '{}' END, '$.jobHistory') AS history
+      WHERE json_type(history.value, '$.id') = 'text';
+      CREATE INDEX IF NOT EXISTS job_history_by_project_time ON job_history(project_id, finished_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS job_history_by_user_time ON job_history(queued_by, finished_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS job_history_by_device_time ON job_history(device_id, finished_at DESC, id DESC);
+    `,
+  },
 ] as const;
 
 const domainTables = [
@@ -379,6 +420,7 @@ const domainTables = [
   'device_health',
   'device_history',
   'jobs',
+  'job_history',
   'job_timelines',
   'artifacts',
   'watches',
@@ -528,6 +570,22 @@ function testFlightSubscriptionIndexValues(payload: unknown, updatedAt: number):
   ];
 }
 
+function jobHistoryIndexValues(payload: unknown, updatedAt: number): Array<string | number | null> {
+  const entry = asRecord(payload);
+  const queuedBy = stringField(entry, 'queuedBy');
+  return [
+    stringField(entry, 'projectId') ?? 'default',
+    stringField(entry, 'bundleId'),
+    stringField(entry, 'source'),
+    stringField(entry, 'status'),
+    queuedBy?.toLowerCase() ?? null,
+    stringField(entry, 'deviceId'),
+    numberField(entry, 'finishedAt') ?? updatedAt,
+    stringField(entry, 'error'),
+    stringField(entry, 'failureClass'),
+  ];
+}
+
 function testFlightSubscriptionDevices(payload: unknown): Array<{ deviceId: string; payload: Record<string, unknown> }> {
   const subscription = asRecord(payload);
   if (!Array.isArray(subscription.devices)) return [];
@@ -670,6 +728,19 @@ function replaceCollectionRows(database: Database, replacement: StateCollectionR
     }
     return;
   }
+  if (replacement.table === 'job_history') {
+    const statement = database.query(`
+      INSERT INTO job_history (
+        id, payload, updated_at, project_id, bundle_id, source, status, queued_by,
+        device_id, finished_at, error_text, failure_class
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    `);
+    for (const row of replacement.rows) {
+      const updatedAt = row.updatedAt ?? Date.now();
+      statement.run(row.id, json(row.payload), updatedAt, ...jobHistoryIndexValues(row.payload, updatedAt));
+    }
+    return;
+  }
   const statement = database.query(`INSERT INTO ${replacement.table} (id, payload, updated_at) VALUES (?, ?, ?);`);
   for (const row of replacement.rows) statement.run(row.id, json(row.payload), row.updatedAt ?? Date.now());
 }
@@ -737,6 +808,7 @@ function rowsForState(state: unknown): Record<(typeof domainTables)[number], Dom
     device_health: healthRows,
     device_history: arrayRows(value.deviceActivity, 'device-activity'),
     jobs: [],
+    job_history: arrayRows(value.jobHistory, 'job-history'),
     job_timelines: [],
     scheduler_runs: arrayRows(value.schedulerRunHistory, 'scheduler-run'),
     artifacts: [],

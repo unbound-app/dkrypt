@@ -32,6 +32,7 @@ import { createDeviceHealthRepository } from '#store/deviceHealthRepository.js';
 import { createNotificationRepository } from '#store/notificationRepository.js';
 import { createAuditRepository } from '#store/auditRepository.js';
 import { createTestFlightSubscriptionRepository } from '#store/testFlightSubscriptionRepository.js';
+import { createJobHistoryRepository } from '#store/jobHistoryRepository.js';
 import { openStateDatabase, readStateCollection, verifyDatabaseBackup, writeStateMirror, type StateCollectionReplacement, type StateDatabase } from '#store/sqlite.js';
 import { paginateCursor } from '#util/cursor.js';
 
@@ -658,6 +659,7 @@ const deviceHealthRepository = createDeviceHealthRepository(stateDatabase.db);
 const notificationRepository = createNotificationRepository(stateDatabase.db);
 const auditRepository = createAuditRepository(stateDatabase.db);
 const testFlightSubscriptionRepository = createTestFlightSubscriptionRepository(stateDatabase.db);
+const jobHistoryRepository = createJobHistoryRepository(stateDatabase.db);
 
 export function getStateDatabaseStatus(): { path: string; schemaVersion: number; integrity: 'ok' } {
   return { path: stateDatabase.path, schemaVersion: stateDatabase.schemaVersion, integrity: stateDatabase.integrityStatus() };
@@ -2954,30 +2956,20 @@ export function getJobHistoryPage(
   },
   cursor?: string,
 ): { entries: JobHistoryEntry[]; total: number; nextCursor?: string } {
-  const bundleIdSearch = filters?.bundleIdSearch?.toLowerCase();
-  const source = filters?.source;
-  const status = filters?.status;
-  const queuedBy = filters?.queuedBy?.toLowerCase();
-  const deviceId = filters?.deviceId;
-  const errorSearch = filters?.errorSearch?.toLowerCase();
-  const failureCategory = filters?.failureCategory;
-  const fromTs = filters?.fromTs;
-  const toTs = filters?.toTs;
-  const projectId = filters?.projectId;
-
-  const filtered = state.jobHistory.filter(
-    (e) =>
-      (!projectId || (e.projectId ?? DEFAULT_PROJECT_ID) === projectId) &&
-      (!bundleIdSearch || e.bundleId.toLowerCase().includes(bundleIdSearch)) &&
-      (!source || e.source === source) &&
-      (!status || e.status === status) &&
-      (!queuedBy || (e.queuedBy ?? '').toLowerCase().includes(queuedBy)) &&
-      (!deviceId || (e.deviceId ?? '') === deviceId) &&
-      (!errorSearch || (e.error ?? '').toLowerCase().includes(errorSearch)) &&
-      (!failureCategory || (e.status === 'failed' && categorizeFailure(e.error) === failureCategory)) &&
-      (!fromTs || e.finishedAt >= fromTs) &&
-      (!toTs || e.finishedAt <= toTs),
-  );
+  const entries = jobHistoryRepository.list({
+    bundleIdSearch: filters?.bundleIdSearch,
+    source: filters?.source,
+    status: filters?.status,
+    queuedBy: filters?.queuedBy,
+    deviceId: filters?.deviceId,
+    errorSearch: filters?.errorSearch,
+    fromTs: filters?.fromTs,
+    toTs: filters?.toTs,
+    projectId: filters?.projectId,
+  });
+  const filtered = filters?.failureCategory
+    ? entries.filter((entry) => entry.status === 'failed' && categorizeFailure(entry.error) === filters.failureCategory)
+    : entries;
   const page = paginateCursor(filtered, {
     cursor,
     offset,
@@ -2989,12 +2981,11 @@ export function getJobHistoryPage(
 }
 
 export function getAllJobHistory(): JobHistoryEntry[] {
-  return state.jobHistory;
+  return jobHistoryRepository.list();
 }
 
 export function getUserJobHistory(username: string): JobHistoryEntry[] {
-  const lower = username.toLowerCase();
-  return state.jobHistory.filter((entry) => entry.queuedBy?.toLowerCase() === lower).map((entry) => structuredClone(entry));
+  return jobHistoryRepository.listForUser(username);
 }
 
 export function simulateJobHistoryRetention(
@@ -3035,7 +3026,7 @@ export function simulateJobHistoryRetention(
 }
 
 export function previewJobHistoryRetention(retentionDays: number, now = Date.now()): ReturnType<typeof simulateJobHistoryRetention> {
-  return simulateJobHistoryRetention(state.jobHistory, retentionDays, now);
+  return simulateJobHistoryRetention(jobHistoryRepository.list(), retentionDays, now);
 }
 
 export interface UserActivityStats {
