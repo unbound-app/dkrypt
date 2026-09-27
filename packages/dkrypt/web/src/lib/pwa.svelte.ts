@@ -1,35 +1,35 @@
-export const pwaState = $state<{ updateAvailable: boolean; canInstall: boolean }>({ updateAvailable: false, canInstall: false });
+import { activatePwaUpdate, watchPwaUpdate } from './pwaUpdate';
+
+export const pwaState = $state<{
+  updateAvailable: boolean;
+  canInstall: boolean;
+  updateStatus: 'idle' | 'applying' | 'failed' | 'ready';
+}>({ updateAvailable: false, canInstall: false, updateStatus: 'idle' });
 
 let waitingWorker: ServiceWorker | null = null;
+let watchedRegistration: ServiceWorkerRegistration | null = null;
 let deferredInstallPrompt: { prompt: () => void; userChoice: Promise<unknown> } | null = null;
 
 export function initPwaUpdateWatcher(registration: ServiceWorkerRegistration): void {
-  if (registration.waiting && navigator.serviceWorker.controller) {
-    waitingWorker = registration.waiting;
+  watchedRegistration = registration;
+  watchPwaUpdate(registration, navigator.serviceWorker, (worker) => {
+    waitingWorker = worker;
     pwaState.updateAvailable = true;
-  }
-
-  registration.addEventListener('updatefound', () => {
-    const installing = registration.installing;
-    if (!installing) return;
-    installing.addEventListener('statechange', () => {
-      if (installing.state === 'installed' && navigator.serviceWorker.controller) {
-        waitingWorker = installing;
-        pwaState.updateAvailable = true;
-      }
-    });
+    pwaState.updateStatus = 'idle';
   });
-
-  let reloaded = false;
   navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (reloaded) return;
-    reloaded = true;
-    location.reload();
+    if (pwaState.updateAvailable && !registration.waiting) pwaState.updateStatus = 'ready';
   });
 }
 
 export function applyPwaUpdate(): void {
-  waitingWorker?.postMessage('skipWaiting');
+  pwaState.updateStatus = 'applying';
+  activatePwaUpdate(
+    watchedRegistration?.waiting ?? waitingWorker,
+    navigator.serviceWorker,
+    () => location.reload(),
+    () => { pwaState.updateStatus = 'failed'; },
+  );
 }
 
 export function initInstallPromptWatcher(): void {
