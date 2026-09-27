@@ -1,6 +1,16 @@
 export const GENERATED_CHANGELOG = [
   {
     "date": "2026-09-27",
+    "title": "fix(telemetry): correlate rejected requests",
+    "description": "Released in 6849d81."
+  },
+  {
+    "date": "2026-09-27",
+    "title": "chore(web): refresh generated changelog",
+    "description": "Released in 45a7589."
+  },
+  {
+    "date": "2026-09-27",
     "title": "fix(telemetry): retain parent correlation for jobs",
     "description": "Released in 2933414."
   },
@@ -28,15 +38,5 @@ export const GENERATED_CHANGELOG = [
     "date": "2026-09-27",
     "title": "chore(web): refresh generated changelog",
     "description": "Released in e1f7c6e."
-  },
-  {
-    "date": "2026-09-27",
-    "title": "fix(scheduler): preserve deferred missed-run checkpoints",
-    "description": "Released in 6fb599e."
-  },
-  {
-    "date": "2026-09-27",
-    "title": "fix(device-bridge): supervise netmuxd restarts",
-    "description": "Released in 529b8cb."
   }
 ] as const;
