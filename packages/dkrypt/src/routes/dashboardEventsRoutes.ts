@@ -1,7 +1,7 @@
 import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
 import type { DashboardEventsRoute } from '#dashboardEventsContracts.js';
 import { recordFastifyDashboardActivity } from '#dashboardActivity.js';
-import { dashboardEvents, getOnlineUsernames, nextDashboardSequence, registerDashboardConnection, registerPresence, unregisterPresence } from '#events.js';
+import { dashboardEvents, getOnlineUsernames, registerDashboardConnection, registerPresence, unregisterPresence } from '#events.js';
 import type { LogEntry } from '#logger.js';
 import { hasPermission, isSubsetPermission, PermissionFlag } from '#permissions.js';
 import { getRouteContract } from '#contracts.js';
@@ -41,20 +41,22 @@ export const dashboardEventsRoutes: FastifyPluginAsyncTypebox = async (server) =
 
     const { sub } = session;
     let projectAccessRevoked = false;
+    let sequenceNumber = 0;
+    const nextSequence = () => ++sequenceNumber;
     const closeForRevokedProject = (): boolean => {
       if (projectAccessRevoked) return false;
       const currentPermissions = sub === 'root' ? session.permissions : getUserEffectivePermissions(sub);
       const permissionsRemainValid = isSubsetPermission(session.permissions, currentPermissions);
       if (permissionsRemainValid && canAccessProject(sub, currentPermissions, projectId)) return true;
       projectAccessRevoked = true;
-      const sequence = nextDashboardSequence();
+      const sequence = nextSequence();
       reply.raw.write(`id: ${sequence}\nevent: project-access-revoked\ndata: ${JSON.stringify({ sequence, data: { projectId } })}\n\n`);
       reply.raw.end();
       return false;
     };
     const sendEvent = (event: string, data: unknown) => {
       if (!closeForRevokedProject()) return;
-      const sequence = nextDashboardSequence();
+      const sequence = nextSequence();
       const payload = Array.isArray(data) ? { sequence, data } : data && typeof data === 'object' ? { ...(data as Record<string, unknown>), sequence } : { sequence, data };
       reply.raw.write(`id: ${sequence}\nevent: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
     };

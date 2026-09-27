@@ -11,7 +11,7 @@ describe('dashboard event sequence tracking', () => {
 		expect(tracker.receive(44)).toBe(false);
 	});
 
-	it('detects a server restart and tracks its new sequence epoch', () => {
+	it('detects a new sequence epoch and tracks it independently', () => {
 		const tracker = new DashboardEventSequenceTracker();
 
 		expect(tracker.receive(40)).toBe(false);

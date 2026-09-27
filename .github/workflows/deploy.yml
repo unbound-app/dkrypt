@@ -298,11 +298,12 @@ jobs:
             fetch(`${base}/v1/dashboard/artifacts?limit=1`),
           ]);
           if (events.status !== 401 || artifacts.status !== 401) throw new Error('dashboard event and artifact routes did not enforce session authentication');
-          const stat = await import('node:fs/promises');
+          const fs = await import('node:fs/promises');
           const childProcess = await import('node:child_process');
           const path = await import('node:path');
           const crypto = await import('node:crypto');
           const artifactProbePath = path.join(process.env.ARTIFACT_DIR || '/data/artifacts', `.dkrypt-deploy-smoke-${crypto.randomUUID()}`);
+          const artifactProbeContent = 'artifact-storage-probe';
           try {
             const storageWrite = childProcess.spawnSync('setpriv', [
               '--reuid=10001',
@@ -310,17 +311,17 @@ jobs:
               '--clear-groups',
               'bun',
               '-e',
-              `await Bun.write(${JSON.stringify(artifactProbePath)}, 'artifact-storage-probe')`,
+              `await Bun.write(${JSON.stringify(artifactProbePath)}, ${JSON.stringify(artifactProbeContent)}); if (await Bun.file(${JSON.stringify(artifactProbePath)}).text() !== ${JSON.stringify(artifactProbeContent)}) process.exit(1)`,
             ], { encoding: 'utf8' });
-            if (storageWrite.status !== 0) throw new Error('artifact storage is not writable by the API user');
-            if (await stat.readFile(artifactProbePath, 'utf8') !== 'artifact-storage-probe') throw new Error('artifact storage failed its read-after-write check');
+            if (storageWrite.status !== 0) throw new Error('artifact storage failed the API-user read/write check');
+            if (await fs.readFile(artifactProbePath, 'utf8') !== artifactProbeContent) throw new Error('artifact storage failed its read-after-write check');
           } finally {
-            await stat.unlink(artifactProbePath).catch(() => {});
+            await fs.unlink(artifactProbePath).catch(() => {});
           }
           const { config } = await import('/app/src/config.ts');
           if (config.deviceBridgeSecret.length < 32) {
             const secretFile = process.env.DEVICE_BRIDGE_SECRET_FILE || path.join(process.env.STATE_DIR || '/data/state', 'device-bridge.secret');
-            config.deviceBridgeSecret = (await stat.readFile(secretFile, 'utf8')).trim();
+            config.deviceBridgeSecret = (await fs.readFile(secretFile, 'utf8')).trim();
           }
           const { setFastifySessionCookie } = await import('/app/src/session.ts');
           const { ALL_PERMISSION_BITS } = await import('/app/src/permissions.ts');
@@ -336,7 +337,7 @@ jobs:
           try {
             const authenticatedArtifacts = await fetch(`${base}/v1/dashboard/artifacts?limit=1`, { headers: { cookie: cookieHeader } });
             const artifactPage = await authenticatedArtifacts.json();
-            if (authenticatedArtifacts.status !== 200 || !Array.isArray(artifactPage.artifacts) || typeof artifactPage.totalBytes !== 'number') {
+            if (authenticatedArtifacts.status !== 200 || !Array.isArray(artifactPage.artifacts) || typeof artifactPage.total !== 'number' || typeof artifactPage.totalBytes !== 'number' || typeof artifactPage.maxBytes !== 'number') {
               throw new Error('authenticated artifact listing did not return a valid page');
             }
             const eventStream = await fetch(`${base}/v1/dashboard/events?projectId=default`, { headers: { cookie: cookieHeader }, signal: eventController.signal });
@@ -358,13 +359,13 @@ jobs:
             eventController.abort();
             revokeSessionRecord(sessionId, 'root');
           }
-          await stat.stat(process.env.DEVICE_BRIDGE_SOCKET || '/run/dkrypt/device-bridge.sock');
-          const processIds = (await stat.readdir('/proc')).filter((entry) => /^\d+$/.test(entry));
+          await fs.stat(process.env.DEVICE_BRIDGE_SOCKET || '/run/dkrypt/device-bridge.sock');
+          const processIds = (await fs.readdir('/proc')).filter((entry) => /^\d+$/.test(entry));
           const processes = await Promise.all(processIds.map(async (pid) => {
             try {
               const [commandLine, status] = await Promise.all([
-                stat.readFile(`/proc/${pid}/cmdline`, 'utf8'),
-                stat.readFile(`/proc/${pid}/status`, 'utf8'),
+                fs.readFile(`/proc/${pid}/cmdline`, 'utf8'),
+                fs.readFile(`/proc/${pid}/status`, 'utf8'),
               ]);
               return { commandLine, status };
             } catch {
@@ -379,10 +380,10 @@ jobs:
           if (apiIdentity?.[2] !== '10001' || bridgeIdentity?.[2] !== '0' || bridgeGroup?.[2] !== '10001') {
             throw new Error('API and USB bridge do not have the expected separated runtime identities');
           }
-          const key = await stat.stat('/run/dkrypt/device_ssh_key');
+          const key = await fs.stat('/run/dkrypt/device_ssh_key');
           if (key.uid !== 0 || key.gid !== 10001 || (key.mode & 0o777) !== 0o440) throw new Error('device SSH key permissions are not restricted to the API group');
           try {
-            await stat.stat('/root/.ipadecrypt');
+            await fs.stat('/root/.ipadecrypt');
             throw new Error('legacy .ipadecrypt bootstrap path is present');
           } catch (error) {
             if (error instanceof Error && !String(error.message).includes('ENOENT')) throw error;

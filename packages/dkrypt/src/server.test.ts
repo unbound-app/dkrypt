@@ -1888,6 +1888,51 @@ test('Fastify sends the initial dashboard overview over SSE', async () => {
   }
 });
 
+test('each dashboard event stream tracks its own sequence while other clients are connected', async () => {
+  const { server, cookie } = await signIn();
+  const baseUrl = await server.listen({ port: 0, host: '127.0.0.1' });
+  const controllers = [new AbortController(), new AbortController()];
+  const makeReader = (response: globalThis.Response) => {
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('dashboard event stream has no reader');
+    const decoder = new TextDecoder();
+    let pending = '';
+    return {
+      async readSequence(): Promise<number> {
+        while (!pending.includes('\n\n')) {
+          const chunk = await reader.read();
+          if (chunk.done) throw new Error('dashboard event stream ended unexpectedly');
+          pending += decoder.decode(chunk.value, { stream: true });
+        }
+        const boundary = pending.indexOf('\n\n');
+        const event = pending.slice(0, boundary);
+        pending = pending.slice(boundary + 2);
+        const sequence = event.match(/^id: (\d+)$/m)?.[1];
+        if (!sequence) throw new Error('dashboard event did not include a sequence id');
+        return Number(sequence);
+      },
+    };
+  };
+
+  try {
+    const responses = await Promise.all(controllers.map((controller) => fetch(`${baseUrl}/v1/dashboard/events`, { headers: { cookie }, signal: controller.signal })));
+    expect(responses.map((response) => response.status)).toEqual([200, 200]);
+    const readers = responses.map(makeReader);
+    const initialSequences = await Promise.all(readers.map(async (reader) => [await reader.readSequence(), await reader.readSequence()]));
+    expect(initialSequences[0][1] - initialSequences[0][0]).toBe(1);
+    expect(initialSequences[1][1] - initialSequences[1][0]).toBe(1);
+
+    emitJobsChanged();
+    emitJobsChanged();
+    const updates = await Promise.all(readers.map(async (reader) => [await reader.readSequence(), await reader.readSequence()]));
+    expect(updates[0][1] - updates[0][0]).toBe(1);
+    expect(updates[1][1] - updates[1][0]).toBe(1);
+  } finally {
+    controllers.forEach((controller) => controller.abort());
+    await server.close();
+  }
+});
+
 test('Fastify serves browser identity assets from the public root', async () => {
   const server = await buildServer();
 
