@@ -214,6 +214,8 @@ export interface MaintenanceWindow {
   end: string;
 }
 
+export type MissedRunPolicy = 'skip' | 'runOnce';
+
 export interface AppWatch {
   id: string;
   projectId?: string;
@@ -224,6 +226,7 @@ export interface AppWatch {
   pollCron: string;
   timezone?: string;
   maintenanceWindow?: MaintenanceWindow;
+  missedRunPolicy?: MissedRunPolicy;
   enabled: boolean;
   webhookUrl?: string;
   testFlightPolicy?: 'latest' | 'latestNonExpired' | 'train';
@@ -845,6 +848,7 @@ export interface WatchInput {
   pollCron: string;
   timezone?: string;
   maintenanceWindow?: MaintenanceWindow | null;
+  missedRunPolicy?: MissedRunPolicy;
   enabled?: boolean;
   webhookUrl?: string;
   testFlightPolicy?: 'latest' | 'latestNonExpired' | 'train';

@@ -9,6 +9,11 @@ export function nextCronRunAt(expr: string, timezone?: string, fromAt = Date.now
   }
 }
 
+export function nextMissedCronRunAt(expr: string, timezone: string, lastRunAt: number, nowAt: number): number | undefined {
+  const next = nextCronRunAt(expr, timezone, lastRunAt);
+  return next !== undefined && next <= nowAt ? next : undefined;
+}
+
 export function nextCronRuns(expr: string, untilAt: number, fromAt = Date.now(), maxRuns = 100, timezone?: string): number[] {
   if (!expr.trim()) return [];
   try {

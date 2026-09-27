@@ -1789,6 +1789,14 @@ test('native scheduler watch routes enforce permissions and preserve CRUD and im
     });
     expect(invalidMaintenanceWindow.statusCode).toBe(400);
 
+    const invalidMissedRunPolicy = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/watches',
+      headers: { cookie: administratorCookie },
+      payload: { bundleId: `com.example.watch.invalid-missed-policy.${suffix}`, repo: 'owner/repo', pollCron: '0 * * * *', missedRunPolicy: 'replayAll' },
+    });
+    expect(invalidMissedRunPolicy.statusCode).toBe(400);
+
     const created = await server.inject({
       method: 'POST',
       url: '/v1/dashboard/watches',
@@ -1803,17 +1811,17 @@ test('native scheduler watch routes enforce permissions and preserve CRUD and im
       },
     });
     expect(created.statusCode).toBe(201);
-    expect(created.json()).toMatchObject({ bundleId: `com.example.watch.created.${suffix}`, timezone: 'Europe/Berlin', enabled: false, schedulable: false });
+    expect(created.json()).toMatchObject({ bundleId: `com.example.watch.created.${suffix}`, timezone: 'Europe/Berlin', missedRunPolicy: 'skip', enabled: false, schedulable: false });
     createdId = (created.json() as { id: string }).id;
 
     const updated = await server.inject({
       method: 'PATCH',
       url: `/v1/dashboard/watches/${createdId}`,
       headers: { cookie: administratorCookie },
-      payload: { pollCron: '15 * * * *', timezone: 'America/New_York', testFlightPolicy: 'train', testFlightTrain: 'beta' },
+      payload: { pollCron: '15 * * * *', timezone: 'America/New_York', missedRunPolicy: 'runOnce', testFlightPolicy: 'train', testFlightTrain: 'beta' },
     });
     expect(updated.statusCode).toBe(200);
-    expect(updated.json()).toMatchObject({ pollCron: '15 * * * *', timezone: 'America/New_York', testFlightPolicy: 'train', testFlightTrain: 'beta' });
+    expect(updated.json()).toMatchObject({ pollCron: '15 * * * *', timezone: 'America/New_York', missedRunPolicy: 'runOnce', testFlightPolicy: 'train', testFlightTrain: 'beta' });
 
     const maintenanceWindowCleared = await server.inject({
       method: 'PATCH',
@@ -1856,12 +1864,13 @@ test('native scheduler watch routes enforce permissions and preserve CRUD and im
             pollCron: '0 */2 * * *',
             timezone: 'Europe/Berlin',
             maintenanceWindow: { start: '22:00', end: '06:00' },
+            missedRunPolicy: 'runOnce',
           },
         ],
       },
     });
     expect(imported.statusCode).toBe(201);
-    expect(imported.json()).toMatchObject({ watches: [expect.objectContaining({ timezone: 'Europe/Berlin', maintenanceWindow: { start: '22:00', end: '06:00' }, enabled: false })], skipped: ['invalid watch'] });
+    expect(imported.json()).toMatchObject({ watches: [expect.objectContaining({ timezone: 'Europe/Berlin', maintenanceWindow: { start: '22:00', end: '06:00' }, missedRunPolicy: 'runOnce', enabled: false })], skipped: ['invalid watch'] });
     importedId = (imported.json() as { watches: { id: string }[] }).watches[0]?.id;
 
     const removed = await server.inject({ method: 'DELETE', url: `/v1/dashboard/watches/${createdId}`, headers: { cookie: administratorCookie } });

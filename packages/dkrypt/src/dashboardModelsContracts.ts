@@ -102,6 +102,7 @@ export const dashboardWatchResponseSchema = Type.Object({
   pollCron: Type.String(),
   timezone: Type.Optional(Type.String()),
   maintenanceWindow: Type.Optional(dashboardMaintenanceWindowSchema),
+  missedRunPolicy: Type.Optional(Type.Union([Type.Literal('skip'), Type.Literal('runOnce')])),
   enabled: Type.Boolean(),
   webhookUrl: Type.Optional(Type.String()),
   testFlightPolicy: Type.Optional(Type.Union([Type.Literal('latest'), Type.Literal('latestNonExpired'), Type.Literal('train')])),

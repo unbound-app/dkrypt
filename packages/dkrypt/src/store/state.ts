@@ -306,6 +306,8 @@ export interface AppWatch {
   pollCron: string;
   timezone?: string;
   maintenanceWindow?: MaintenanceWindow;
+  missedRunPolicy?: 'skip' | 'runOnce';
+  lastScheduledAt?: number;
   enabled: boolean;
   webhookUrl?: string;
   testFlightPolicy?: 'latest' | 'latestNonExpired' | 'train';
@@ -2531,6 +2533,7 @@ export interface CreateWatchInput {
   pollCron: string;
   timezone?: string;
   maintenanceWindow?: MaintenanceWindow;
+  missedRunPolicy?: 'skip' | 'runOnce';
   enabled?: boolean;
   webhookUrl?: string;
   testFlightPolicy?: 'latest' | 'latestNonExpired' | 'train';
@@ -2587,6 +2590,8 @@ export function createWatch(input: CreateWatchInput, actor: string): { ok: boole
     pollCron: input.pollCron,
     timezone: effectiveTimeZone(input.timezone),
     maintenanceWindow: input.maintenanceWindow,
+    missedRunPolicy: input.missedRunPolicy ?? 'skip',
+    lastScheduledAt: now,
     enabled: input.enabled ?? true,
     webhookUrl: input.webhookUrl,
     testFlightPolicy: input.testFlightPolicy,
@@ -2614,7 +2619,13 @@ export function updateWatch(id: string, patch: Partial<CreateWatchInput>, actor:
   }
   const merged = { ...watch, ...patch } as CreateWatchInput;
   const dispatch = normalizedWatchInput(merged);
+  const scheduleChanged = (patch.pollCron !== undefined && patch.pollCron !== watch.pollCron)
+    || (patch.timezone !== undefined && effectiveTimeZone(patch.timezone) !== effectiveTimeZone(watch.timezone))
+    || (patch.missedRunPolicy !== undefined && patch.missedRunPolicy !== watch.missedRunPolicy)
+    || (patch.enabled !== undefined && patch.enabled !== watch.enabled)
+    || ('maintenanceWindow' in patch && (patch.maintenanceWindow?.start !== watch.maintenanceWindow?.start || patch.maintenanceWindow?.end !== watch.maintenanceWindow?.end));
   Object.assign(watch, patch, dispatch, { updatedAt: Date.now() });
+  if (scheduleChanged) watch.lastScheduledAt = Date.now();
   persistNow();
   recordAudit(actor, 'watch.update', watch.id, watch.bundleId);
   return { ok: true, watch };
@@ -2630,6 +2641,15 @@ export function deleteWatch(id: string, actor: string): boolean {
     recordAudit(actor, 'watch.remove', id);
   }
   return changed;
+}
+
+export function markWatchScheduleRun(id: string, timestamp = Date.now()): boolean {
+  materializeWatches();
+  const watch = state.watches.find((candidate) => candidate.id === id);
+  if (!watch) return false;
+  watch.lastScheduledAt = timestamp;
+  persistNow();
+  return true;
 }
 
 export function isWatchSchedulable(watch: AppWatch): boolean {
@@ -4109,7 +4129,9 @@ function isAppWatchShape(value: unknown): value is AppWatch {
     && typeof w.enabled === 'boolean'
     && (w.projectId === undefined || (typeof w.projectId === 'string' && /^[A-Za-z0-9_-]{1,80}$/.test(w.projectId)))
     && (w.timezone === undefined || (typeof w.timezone === 'string' && isValidTimeZone(w.timezone)))
-    && (w.maintenanceWindow === undefined || isValidMaintenanceWindow(w.maintenanceWindow));
+    && (w.maintenanceWindow === undefined || isValidMaintenanceWindow(w.maintenanceWindow))
+    && (w.missedRunPolicy === undefined || w.missedRunPolicy === 'skip' || w.missedRunPolicy === 'runOnce')
+    && (w.lastScheduledAt === undefined || (typeof w.lastScheduledAt === 'number' && Number.isFinite(w.lastScheduledAt)));
 }
 
 function isDeviceRecordShape(value: unknown): value is BackupDeviceRecord {

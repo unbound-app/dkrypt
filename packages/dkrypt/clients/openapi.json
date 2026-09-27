@@ -28055,6 +28055,22 @@
                               }
                             }
                           },
+                          "missedRunPolicy": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "skip"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "runOnce"
+                                ]
+                              }
+                            ]
+                          },
                           "enabled": {
                             "type": "boolean"
                           },
@@ -61159,6 +61175,22 @@
                               }
                             }
                           },
+                          "missedRunPolicy": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "skip"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "runOnce"
+                                ]
+                              }
+                            ]
+                          },
                           "enabled": {
                             "type": "boolean"
                           },
@@ -61664,6 +61696,22 @@
                       }
                     ]
                   },
+                  "missedRunPolicy": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "skip"
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "enum": [
+                          "runOnce"
+                        ]
+                      }
+                    ]
+                  },
                   "enabled": {
                     "type": "boolean"
                   },
@@ -61818,6 +61866,22 @@
                           "type": "string"
                         }
                       }
+                    },
+                    "missedRunPolicy": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": [
+                            "skip"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "runOnce"
+                          ]
+                        }
+                      ]
                     },
                     "enabled": {
                       "type": "boolean"
@@ -64632,6 +64696,22 @@
                       }
                     ]
                   },
+                  "missedRunPolicy": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "skip"
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "enum": [
+                          "runOnce"
+                        ]
+                      }
+                    ]
+                  },
                   "enabled": {
                     "type": "boolean"
                   },
@@ -64798,6 +64878,22 @@
                           "type": "string"
                         }
                       }
+                    },
+                    "missedRunPolicy": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": [
+                            "skip"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "runOnce"
+                          ]
+                        }
+                      ]
                     },
                     "enabled": {
                       "type": "boolean"
@@ -65672,6 +65768,22 @@
                             }
                           ]
                         },
+                        "missedRunPolicy": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "skip"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "runOnce"
+                              ]
+                            }
+                          ]
+                        },
                         "enabled": {
                           "type": "boolean"
                         },
@@ -65839,6 +65951,22 @@
                                 "type": "string"
                               }
                             }
+                          },
+                          "missedRunPolicy": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "skip"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "runOnce"
+                                ]
+                              }
+                            ]
                           },
                           "enabled": {
                             "type": "boolean"

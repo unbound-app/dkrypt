@@ -46,6 +46,7 @@ import {
   getWatchDispatchTargets,
   getWatchConfigIssues,
   isWatchSchedulable,
+  markWatchScheduleRun,
   getWebhookDeliveryLog,
   importBackup,
   listAllowedUsers,
@@ -322,6 +323,56 @@ describe('exportBackup / importBackup', () => {
 
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/watches/);
+  });
+
+  test('rejects backup watches with an unsupported missed-run policy', () => {
+    const watch = createWatch({
+      bundleId: `com.example.backup-policy.${randomUUID()}`,
+      repo: 'owner/repo',
+      ghWorkflowFile: 'release.yml',
+      pollCron: '0 * * * *',
+    }, 'tester').watch!;
+    const backup = exportBackup();
+    backup.watches = backup.watches.map((entry) => entry.id === watch.id
+      ? { ...entry, missedRunPolicy: 'replayAll' as unknown as 'skip' }
+      : entry);
+
+    const result = importBackup(backup, 'tester');
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/watches/);
+  });
+
+  test('persists schedule checkpoints and resets them when enabling run-once recovery', () => {
+    const watch = createWatch({
+      bundleId: `com.example.schedule-checkpoint.${randomUUID()}`,
+      repo: 'owner/repo',
+      ghWorkflowFile: 'release.yml',
+      pollCron: '0 * * * *',
+    }, 'tester').watch!;
+
+    expect(markWatchScheduleRun(watch.id, 100)).toBe(true);
+    const updated = updateWatch(watch.id, { missedRunPolicy: 'runOnce' }, 'tester').watch!;
+    const backup = exportBackup();
+
+    expect(updated.missedRunPolicy).toBe('runOnce');
+    expect(updated.lastScheduledAt).toBeGreaterThan(100);
+    expect(backup.watches).toContainEqual(expect.objectContaining({ id: watch.id, missedRunPolicy: 'runOnce', lastScheduledAt: updated.lastScheduledAt }));
+  });
+
+  test('resets missed-run recovery checkpoint when the schedule changes', () => {
+    const watch = createWatch({
+      bundleId: `com.example.schedule-change.${randomUUID()}`,
+      repo: 'owner/repo',
+      ghWorkflowFile: 'release.yml',
+      pollCron: '0 * * * *',
+      missedRunPolicy: 'runOnce',
+    }, 'tester').watch!;
+
+    expect(markWatchScheduleRun(watch.id, 100)).toBe(true);
+    const updated = updateWatch(watch.id, { pollCron: '15 * * * *' }, 'tester').watch!;
+
+    expect(updated.lastScheduledAt).toBeGreaterThan(100);
   });
 
   test('preserves project records referenced by persisted jobs during backup import', () => {

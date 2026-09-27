@@ -24,15 +24,20 @@ export function buildDashboardOverview(permissions: bigint, userId: string, proj
   const canViewDeviceData = hasPermission(permissions, PermissionFlag.viewDevices) || hasPermission(permissions, PermissionFlag.manageDevices);
   const watches = canViewAutomation ? getEffectiveWatches().filter((watch) =>
     (watch.projectId ?? DEFAULT_PROJECT_ID) === projectId && canAccessProject(userId, permissions, watch.projectId ?? DEFAULT_PROJECT_ID),
-  ).map((watch) => ({
-    ...watch,
-    timezone: effectiveTimeZone(watch.timezone),
-    nextRunAt: isWatchSchedulable(watch)
-      ? nextRunnableCronOccurrence(watch.pollCron, effectiveTimeZone(watch.timezone), watch.maintenanceWindow, Date.now(), Date.now() + 366 * 24 * 60 * 60 * 1000)?.at
-      : undefined,
-    schedulable: isWatchSchedulable(watch),
-    configIssues: getWatchConfigIssues(watch),
-  })) : [];
+  ).map((watch) => {
+    const publicWatch = { ...watch };
+    delete publicWatch.lastScheduledAt;
+    return {
+      ...publicWatch,
+      timezone: effectiveTimeZone(watch.timezone),
+      missedRunPolicy: watch.missedRunPolicy ?? 'skip',
+      nextRunAt: isWatchSchedulable(watch)
+        ? nextRunnableCronOccurrence(watch.pollCron, effectiveTimeZone(watch.timezone), watch.maintenanceWindow, Date.now(), Date.now() + 366 * 24 * 60 * 60 * 1000)?.at
+        : undefined,
+      schedulable: isWatchSchedulable(watch),
+      configIssues: getWatchConfigIssues(watch),
+    };
+  }) : [];
   const schedulerRunHistory = canViewAutomation
     ? getSchedulerRunHistory(200).filter((run) => watches.some((watch) => watch.id === run.watchId)).slice(0, 10)
     : [];

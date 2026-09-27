@@ -1,6 +1,16 @@
 export const GENERATED_CHANGELOG = [
   {
     "date": "2026-09-27",
+    "title": "fix(web): align pricing plan actions",
+    "description": "Released in fc5fed6."
+  },
+  {
+    "date": "2026-09-27",
+    "title": "feat(scheduler): add quiet hours and calendar previews",
+    "description": "Released in 705cd3e."
+  },
+  {
+    "date": "2026-09-27",
     "title": "feat(scheduler): support timezone-aware watch schedules",
     "description": "Released in 371f033."
   },
@@ -28,15 +38,5 @@ export const GENERATED_CHANGELOG = [
     "date": "2026-09-27",
     "title": "fix(deploy): load persisted bridge secret in smoke probe",
     "description": "Released in 0ab549d."
-  },
-  {
-    "date": "2026-09-27",
-    "title": "test(ci): exercise multi-user dashboard queue load",
-    "description": "Released in 63020b8."
-  },
-  {
-    "date": "2026-09-27",
-    "title": "fix(web): show release times in version pickers",
-    "description": "Released in 686193c."
   }
 ] as const;

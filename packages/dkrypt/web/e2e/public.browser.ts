@@ -213,6 +213,11 @@ test('scheduler watch time zone selection is searchable and defaults to the brow
   await page.getByRole('button', { name: 'Hourly · quiet 22–06' }).click();
   await expect(page.locator('#w-maintenance-start')).toHaveValue('22:00');
   await expect(page.locator('#w-maintenance-end')).toHaveValue('06:00');
+  const missedRunPolicy = page.getByRole('button', { name: 'Missed checks' });
+  await expect(missedRunPolicy).toContainText('Skip missed checks');
+  await missedRunPolicy.click();
+  await page.getByRole('option', { name: 'Run one check after restart' }).click();
+  await expect(missedRunPolicy).toContainText('Run one check after restart');
   await expectAccessible(page);
 });
 

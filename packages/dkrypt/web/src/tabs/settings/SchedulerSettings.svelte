@@ -97,6 +97,11 @@
 		{ value: "train", label: "Specific train" },
 	];
 
+	const MISSED_RUN_POLICY_OPTIONS = [
+		{ value: "skip", label: "Skip missed checks" },
+		{ value: "runOnce", label: "Run one check after restart" },
+	];
+
 	const NOTIFY_EVENTS: {
 		key: keyof SchedulerSettings;
 		label: string;
@@ -288,6 +293,7 @@
 		pollCron: "0 * * * *",
 		timezone: LOCAL_TIME_ZONE,
 		maintenanceWindow: null,
+		missedRunPolicy: "skip",
 		enabled: true,
 		webhookUrl: "",
 		testFlightPolicy: "latest",
@@ -497,6 +503,7 @@
 			pollCron: w.pollCron,
 			timezone: w.timezone ?? LOCAL_TIME_ZONE,
 			maintenanceWindow: w.maintenanceWindow ?? null,
+			missedRunPolicy: w.missedRunPolicy ?? "skip",
 			enabled: w.enabled,
 			webhookUrl: w.webhookUrl ?? "",
 			testFlightPolicy: w.testFlightPolicy ?? "latest",
@@ -1575,6 +1582,15 @@
 				</div>
 			</div>
 			<div class="mt-1 text-[11px] text-muted">Scheduled checks in this daily local-time window are coalesced and run once when it ends. Manual triggers run immediately.</div>
+			<label for="w-missed-run-policy" class="mt-3 mb-1 block text-xs text-muted">Missed checks</label>
+			<Select
+				id="w-missed-run-policy"
+				items={MISSED_RUN_POLICY_OPTIONS}
+				value={watchForm.missedRunPolicy ?? "skip"}
+				onValueChange={(missedRunPolicy) => (watchForm = { ...watchForm, missedRunPolicy: missedRunPolicy as "skip" | "runOnce" })}
+				class="w-full"
+			/>
+			<div class="mt-1 text-[11px] text-muted">Skipped schedules are normally left alone; choose one coalesced check on restart to catch up after downtime.</div>
 			<label for="w-pollCron" class="mt-3 mb-1 block text-xs text-muted"
 				>Poll cron</label
 			>

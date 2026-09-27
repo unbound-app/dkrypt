@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { nextCronRunAt, nextCronRuns } from '#util/cron.js';
+import { nextCronRunAt, nextCronRuns, nextMissedCronRunAt } from '#util/cron.js';
 
 describe('nextCronRunAt', () => {
   test('returns a future timestamp for a valid expression', () => {
@@ -38,6 +38,21 @@ describe('nextCronRunAt', () => {
     const start = Date.parse('2026-03-28T08:00:00.000Z');
 
     expect(nextCronRuns('0 9 * * *', start + 24 * 60 * 60 * 1000, start, 10, 'Mars/Olympus_Mons')).toEqual([]);
+  });
+
+  test('returns one missed occurrence only when the next scheduled time has passed', () => {
+    expect(nextMissedCronRunAt(
+      '0 * * * *',
+      'UTC',
+      Date.parse('2026-09-27T09:10:00.000Z'),
+      Date.parse('2026-09-27T12:30:00.000Z'),
+    )).toBe(Date.parse('2026-09-27T10:00:00.000Z'));
+    expect(nextMissedCronRunAt(
+      '0 * * * *',
+      'UTC',
+      Date.parse('2026-09-27T12:10:00.000Z'),
+      Date.parse('2026-09-27T12:30:00.000Z'),
+    )).toBeUndefined();
   });
 
   test('caps calendar runs', () => {

@@ -132,7 +132,15 @@ function projectAccessState(request: FastifyRequest, projectId: string): 'missin
 }
 
 function serializeWatch(watch: AppWatch): WatchResponse {
-  return { ...watch, timezone: effectiveTimeZone(watch.timezone), schedulable: isWatchSchedulable(watch), configIssues: getWatchConfigIssues(watch) };
+  const publicWatch = { ...watch };
+  delete publicWatch.lastScheduledAt;
+  return {
+    ...publicWatch,
+    timezone: effectiveTimeZone(watch.timezone),
+    missedRunPolicy: watch.missedRunPolicy ?? 'skip',
+    schedulable: isWatchSchedulable(watch),
+    configIssues: getWatchConfigIssues(watch),
+  };
 }
 
 function parseDispatchInputs(value: unknown): Record<string, string> | undefined {
@@ -186,6 +194,7 @@ function parseWatchInput(body: unknown): WatchCreateInput | undefined {
     pollCron: typeof value.pollCron === 'string' ? value.pollCron.trim() : '0 * * * *',
     timezone: typeof value.timezone === 'string' ? value.timezone.trim() : undefined,
     maintenanceWindow,
+    missedRunPolicy: value.missedRunPolicy === 'runOnce' ? 'runOnce' : 'skip',
     enabled: typeof value.enabled === 'boolean' ? value.enabled : undefined,
     webhookUrl: typeof value.webhookUrl === 'string' ? value.webhookUrl.trim() || undefined : undefined,
     testFlightPolicy: value.testFlightPolicy === 'latestNonExpired' || value.testFlightPolicy === 'train' ? value.testFlightPolicy : 'latest',
@@ -210,6 +219,7 @@ function parseWatchPatch(body: WatchPatchInput): Partial<WatchCreateInput> {
   if ('maintenanceWindow' in body) {
     patch.maintenanceWindow = body.maintenanceWindow === null ? undefined : body.maintenanceWindow;
   }
+  if (body.missedRunPolicy === 'skip' || body.missedRunPolicy === 'runOnce') patch.missedRunPolicy = body.missedRunPolicy;
   if (typeof body.enabled === 'boolean') patch.enabled = body.enabled;
   if (typeof body.webhookUrl === 'string') patch.webhookUrl = body.webhookUrl.trim() || undefined;
   if (body.testFlightPolicy === 'latest' || body.testFlightPolicy === 'latestNonExpired' || body.testFlightPolicy === 'train') {
@@ -271,7 +281,14 @@ export const dashboardWatchRoutes: FastifyPluginAsyncTypebox = async (server) =>
     reply.header('Content-Disposition', 'attachment; filename="dkrypt-watches.json"');
     return {
       version: 1,
-      watches: getEffectiveWatches().filter((watch) => canAccessProject(session.sub, session.permissions, watch.projectId ?? DEFAULT_PROJECT_ID)),
+      watches: getEffectiveWatches()
+        .filter((watch) => canAccessProject(session.sub, session.permissions, watch.projectId ?? DEFAULT_PROJECT_ID))
+        .map((watch) => {
+          const publicWatch = { ...watch };
+          delete publicWatch.lastScheduledAt;
+          publicWatch.missedRunPolicy = watch.missedRunPolicy ?? 'skip';
+          return publicWatch;
+        }),
     };
   });
 

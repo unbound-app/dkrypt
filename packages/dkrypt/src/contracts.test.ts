@@ -233,7 +233,7 @@ test('dashboard overview publishes typed nested dashboard records', async () => 
     expect(settings).toEqual(expect.arrayContaining(['notifyFormat', 'notifyWebhookUrl', 'maintenanceMode', 'jobHistoryRetentionDays']));
 
     const watch = properties.watches?.items?.properties ?? {};
-    expect(Object.keys(watch)).toEqual(expect.arrayContaining(['id', 'bundleId', 'dispatchTargets', 'timezone', 'maintenanceWindow', 'nextRunAt', 'schedulable', 'configIssues']));
+    expect(Object.keys(watch)).toEqual(expect.arrayContaining(['id', 'bundleId', 'dispatchTargets', 'timezone', 'maintenanceWindow', 'missedRunPolicy', 'nextRunAt', 'schedulable', 'configIssues']));
     expect(watch.bundleId).toMatchObject({ pattern: '^[A-Za-z0-9.-]+$', minLength: 3, maxLength: 200 });
     expect(Object.keys(watch.dispatchTargets?.items?.properties ?? {})).toEqual(expect.arrayContaining(['repo', 'ghWorkflowFile', 'mode', 'inputs']));
 

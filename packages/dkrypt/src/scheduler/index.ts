@@ -16,6 +16,7 @@ import {
   getBackupSchedule,
   getEffectiveSettings,
   getEffectiveWatches,
+  markWatchScheduleRun,
   getWatchDispatchTargets,
   getSchedulerRunHistory,
   isWatchSchedulable,
@@ -38,6 +39,7 @@ import { resolveAppStoreDecryptTarget } from '#scheduler/appStoreVersion.js';
 import { buildArtifactFileUrl, getArtifactById } from '#artifacts.js';
 import { effectiveTimeZone } from '#util/timezone.js';
 import { isWithinMaintenanceWindow, maintenanceWindowEndAt } from '#util/maintenanceWindow.js';
+import { nextMissedCronRunAt } from '#util/cron.js';
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -698,6 +700,7 @@ async function tick(watch: AppWatch, mode: 'scheduled' | 'manual' = 'scheduled',
       });
     }
     tickInProgress.delete(watch.id);
+    if (mode === 'scheduled') markWatchScheduleRun(watch.id);
 
     emitJobsChanged();
   }
@@ -847,6 +850,18 @@ async function reconcileStuckSchedulerRuns(): Promise<void> {
 export function startScheduler(): void {
   schedulerStopping = false;
   applyWatchSchedules();
+  const now = Date.now();
+  for (const watch of getEffectiveWatches().filter(isWatchSchedulable)) {
+    if (watch.lastScheduledAt === undefined) {
+      markWatchScheduleRun(watch.id, now);
+      continue;
+    }
+    if (watch.missedRunPolicy !== 'runOnce') continue;
+    const missedAt = nextMissedCronRunAt(watch.pollCron, effectiveTimeZone(watch.timezone), watch.lastScheduledAt, now);
+    if (missedAt === undefined) continue;
+    log.info('running one coalesced missed scheduler check after restart', { watchId: watch.id, missedAt, policy: watch.missedRunPolicy });
+    startTrackedTick(watch, 'scheduled');
+  }
   applyBackupSchedule();
   void trackBackgroundWork('scheduler-restart-reconciliation', reconcileStuckSchedulerRuns)
     .catch((error: unknown) => log.error('scheduler run reconciliation threw', { error: String(error) }));
