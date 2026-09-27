@@ -1226,7 +1226,7 @@ test('native dashboard job inspection serves timelines and validates history que
   const bundleId = `com.example.native-job-${crypto.randomUUID()}`;
   const historyId = `native-job-history-${crypto.randomUUID()}`;
   const missingDeviceId = `missing-device-${crypto.randomUUID()}`;
-  const activeJob = enqueueDecryptJob(bundleId, 'manual', undefined, undefined, undefined, 'root', 0, missingDeviceId);
+  const activeJob = enqueueDecryptJob(bundleId, 'manual', { queuedBy: 'root', preferredDeviceId: missingDeviceId });
   Object.assign(activeJob, { deviceId: 'test-device', transport: 'usb', attempt: 4 });
   const finishedAt = Date.now();
   recordJobHistory({
@@ -2136,13 +2136,12 @@ test('Fastify serves browser identity assets from the public root', async () => 
   }
 });
 
-test('Scalar API reference renders with a per-response nonce and permits same-origin dashboard framing only', async () => {
+test('Scalar API reference renders with a per-response nonce and blocks framing', async () => {
   const server = await buildServer();
 
   try {
     const first = await server.inject({ method: 'GET', url: '/reference/' });
     const second = await server.inject({ method: 'GET', url: '/reference/' });
-    const dashboard = await server.inject({ method: 'GET', url: '/' });
     const nonce = first.body.match(/<meta property="csp-nonce" content="([^"]+)"\s*\/>/)?.[1];
     const scriptTags = first.body.match(/<script\b[^>]*>/g) ?? [];
     const policy = first.headers['content-security-policy'];
@@ -2151,12 +2150,11 @@ test('Scalar API reference renders with a per-response nonce and permits same-or
     expect(nonce).toBeTruthy();
     expect(scriptTags.length).toBeGreaterThan(1);
     expect(scriptTags.every((tag) => tag.includes(`nonce="${nonce}"`))).toBe(true);
-    expect(policy).toContain("frame-ancestors 'self'");
-    expect(policy).not.toContain("frame-ancestors 'none'");
+    expect(policy).toContain("frame-ancestors 'none'");
+    expect(policy).not.toContain("frame-ancestors 'self'");
     expect(policy).toContain(`script-src 'self' 'nonce-${nonce}'`);
     expect(policy).not.toContain("script-src 'self' 'unsafe-inline'");
     expect(second.body.match(/<meta property="csp-nonce" content="([^"]+)"\s*\/>/)?.[1]).not.toBe(nonce);
-    expect(dashboard.headers['content-security-policy']).toContain("frame-ancestors 'none'");
   } finally {
     await server.close();
   }
