@@ -1610,6 +1610,49 @@ test('scheduler watch lists and budget history stay within the selected project'
   }
 });
 
+test('scheduler calendar preserves local watch time across daylight-saving changes', async () => {
+  const originalToken = config.ghToken;
+  config.ghToken = 'timezone-calendar-test-token';
+  const server = await buildServer({ includePublicRoutes: false });
+  const cookie = createSessionCookie('root', PermissionFlag.administrator);
+  let watchId: string | undefined;
+
+  try {
+    const created = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/watches',
+      headers: { cookie },
+      payload: {
+        bundleId: `com.example.watch.timezone.${crypto.randomUUID()}`,
+        repo: 'owner/repo',
+        ghWorkflowFile: 'release.yml',
+        pollCron: '0 9 * * *',
+        timezone: 'Europe/Berlin',
+      },
+    });
+    expect(created.statusCode).toBe(201);
+    watchId = (created.json() as { id: string }).id;
+
+    const fromAt = Date.parse('2026-10-24T07:30:00.000Z');
+    const calendar = await server.inject({
+      method: 'GET',
+      url: `/v1/dashboard/watches/calendar?fromAt=${fromAt}&hours=72`,
+      headers: { cookie },
+    });
+    expect(calendar.statusCode).toBe(200);
+    expect((calendar.json() as { runs: { watchId: string; at: number }[] }).runs
+      .filter((run) => run.watchId === watchId)
+      .map((run) => run.at)).toEqual([
+      Date.parse('2026-10-25T08:00:00.000Z'),
+      Date.parse('2026-10-26T08:00:00.000Z'),
+    ]);
+  } finally {
+    if (watchId) await server.inject({ method: 'DELETE', url: `/v1/dashboard/watches/${watchId}`, headers: { cookie } });
+    config.ghToken = originalToken;
+    await server.close();
+  }
+});
+
 test('native scheduler watch routes enforce permissions and preserve CRUD and import behavior', async () => {
   const server = await buildServer({ includePublicRoutes: false });
   const administratorCookie = createSessionCookie('root', PermissionFlag.administrator);
@@ -1698,6 +1741,14 @@ test('native scheduler watch routes enforce permissions and preserve CRUD and im
     });
     expect(invalidCron.statusCode).toBe(400);
 
+    const invalidTimezone = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/watches',
+      headers: { cookie: administratorCookie },
+      payload: { bundleId: `com.example.watch.invalid-timezone.${suffix}`, repo: 'owner/repo', pollCron: '0 * * * *', timezone: 'Mars/Olympus_Mons' },
+    });
+    expect(invalidTimezone.statusCode).toBe(400);
+
     const created = await server.inject({
       method: 'POST',
       url: '/v1/dashboard/watches',
@@ -1707,26 +1758,27 @@ test('native scheduler watch routes enforce permissions and preserve CRUD and im
         repo: 'owner/repo',
         ghWorkflowFile: 'release.yml',
         pollCron: '0 * * * *',
+        timezone: 'Europe/Berlin',
         enabled: false,
       },
     });
     expect(created.statusCode).toBe(201);
-    expect(created.json()).toMatchObject({ bundleId: `com.example.watch.created.${suffix}`, enabled: false, schedulable: false });
+    expect(created.json()).toMatchObject({ bundleId: `com.example.watch.created.${suffix}`, timezone: 'Europe/Berlin', enabled: false, schedulable: false });
     createdId = (created.json() as { id: string }).id;
 
     const updated = await server.inject({
       method: 'PATCH',
       url: `/v1/dashboard/watches/${createdId}`,
       headers: { cookie: administratorCookie },
-      payload: { pollCron: '15 * * * *', testFlightPolicy: 'train', testFlightTrain: 'beta' },
+      payload: { pollCron: '15 * * * *', timezone: 'America/New_York', testFlightPolicy: 'train', testFlightTrain: 'beta' },
     });
     expect(updated.statusCode).toBe(200);
-    expect(updated.json()).toMatchObject({ pollCron: '15 * * * *', testFlightPolicy: 'train', testFlightTrain: 'beta' });
+    expect(updated.json()).toMatchObject({ pollCron: '15 * * * *', timezone: 'America/New_York', testFlightPolicy: 'train', testFlightTrain: 'beta' });
 
     const exported = await server.inject({ method: 'GET', url: '/v1/dashboard/watches/export', headers: { cookie: administratorCookie } });
     expect(exported.statusCode).toBe(200);
     expect(exported.headers['content-disposition']).toContain('dkrypt-watches.json');
-    expect((exported.json() as { watches: { id: string }[] }).watches.map((watch) => watch.id)).toContain(createdId);
+    expect((exported.json() as { watches: { id: string; timezone?: string }[] }).watches).toContainEqual(expect.objectContaining({ id: createdId, timezone: 'America/New_York' }));
 
     const oversizedImport = await server.inject({
       method: 'POST',
@@ -1753,12 +1805,13 @@ test('native scheduler watch routes enforce permissions and preserve CRUD and im
             repo: 'owner/repo',
             ghWorkflowFile: 'release.yml',
             pollCron: '0 */2 * * *',
+            timezone: 'Europe/Berlin',
           },
         ],
       },
     });
     expect(imported.statusCode).toBe(201);
-    expect(imported.json()).toMatchObject({ watches: [expect.objectContaining({ enabled: false })], skipped: ['invalid watch'] });
+    expect(imported.json()).toMatchObject({ watches: [expect.objectContaining({ timezone: 'Europe/Berlin', enabled: false })], skipped: ['invalid watch'] });
     importedId = (imported.json() as { watches: { id: string }[] }).watches[0]?.id;
 
     const removed = await server.inject({ method: 'DELETE', url: `/v1/dashboard/watches/${createdId}`, headers: { cookie: administratorCookie } });

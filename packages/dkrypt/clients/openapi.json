@@ -28034,6 +28034,9 @@
                           "pollCron": {
                             "type": "string"
                           },
+                          "timezone": {
+                            "type": "string"
+                          },
                           "enabled": {
                             "type": "boolean"
                           },
@@ -61117,6 +61120,9 @@
                           "pollCron": {
                             "type": "string"
                           },
+                          "timezone": {
+                            "type": "string"
+                          },
                           "enabled": {
                             "type": "boolean"
                           },
@@ -61592,6 +61598,11 @@
                     "maxLength": 100,
                     "type": "string"
                   },
+                  "timezone": {
+                    "minLength": 1,
+                    "maxLength": 100,
+                    "type": "string"
+                  },
                   "enabled": {
                     "type": "boolean"
                   },
@@ -61724,6 +61735,9 @@
                       }
                     },
                     "pollCron": {
+                      "type": "string"
+                    },
+                    "timezone": {
                       "type": "string"
                     },
                     "enabled": {
@@ -64505,6 +64519,11 @@
                     "maxLength": 100,
                     "type": "string"
                   },
+                  "timezone": {
+                    "minLength": 1,
+                    "maxLength": 100,
+                    "type": "string"
+                  },
                   "enabled": {
                     "type": "boolean"
                   },
@@ -64649,6 +64668,9 @@
                       }
                     },
                     "pollCron": {
+                      "type": "string"
+                    },
+                    "timezone": {
                       "type": "string"
                     },
                     "enabled": {
@@ -65494,6 +65516,11 @@
                           "maxLength": 100,
                           "type": "string"
                         },
+                        "timezone": {
+                          "minLength": 1,
+                          "maxLength": 100,
+                          "type": "string"
+                        },
                         "enabled": {
                           "type": "boolean"
                         },
@@ -65639,6 +65666,9 @@
                             }
                           },
                           "pollCron": {
+                            "type": "string"
+                          },
+                          "timezone": {
                             "type": "string"
                           },
                           "enabled": {

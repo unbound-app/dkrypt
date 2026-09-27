@@ -95,6 +95,7 @@ export const dashboardWatchResponseSchema = Type.Object({
   ghWorkflowFile: Type.String(),
   dispatchTargets: Type.Optional(Type.Array(dashboardDispatchTargetSchema)),
   pollCron: Type.String(),
+  timezone: Type.Optional(Type.String()),
   enabled: Type.Boolean(),
   webhookUrl: Type.Optional(Type.String()),
   testFlightPolicy: Type.Optional(Type.Union([Type.Literal('latest'), Type.Literal('latestNonExpired'), Type.Literal('train')])),

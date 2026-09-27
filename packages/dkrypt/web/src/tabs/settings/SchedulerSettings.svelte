@@ -249,6 +249,10 @@
 		{ label: "Every 6 hours", expr: "0 */6 * * *" },
 		{ label: "Daily at 3am", expr: "0 3 * * *" },
 	];
+	const LOCAL_TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+	const TIME_ZONE_OPTIONS = [...new Set([LOCAL_TIME_ZONE, "UTC", ...Intl.supportedValuesOf("timeZone")])].map(
+		(timezone) => ({ value: timezone, label: timezone }),
+	);
 
 	const REPO_RE = /^[\w.-]+\/[\w.-]+$/;
 	const WEBHOOK_URL_RE = /^https?:\/\/.+/;
@@ -279,6 +283,7 @@
 		ghWorkflowFile: "remote-ipa-update.yml",
 		dispatchTargets: [{ repo: "", ghWorkflowFile: "remote-ipa-update.yml" }],
 		pollCron: "0 * * * *",
+		timezone: LOCAL_TIME_ZONE,
 		enabled: true,
 		webhookUrl: "",
 		testFlightPolicy: "latest",
@@ -450,6 +455,7 @@
 			repo: w.repo,
 			ghWorkflowFile: w.ghWorkflowFile,
 			pollCron: w.pollCron,
+			timezone: w.timezone ?? LOCAL_TIME_ZONE,
 			enabled: w.enabled,
 			webhookUrl: w.webhookUrl ?? "",
 			testFlightPolicy: w.testFlightPolicy ?? "latest",
@@ -645,6 +651,10 @@
 	async function saveWatch(): Promise<void> {
 		if (watchCronValid === false) {
 			showToast("Poll cron is not a valid cron expression", "error");
+			return;
+		}
+		if (!watchForm.timezone || !TIME_ZONE_OPTIONS.some((option) => option.value === watchForm.timezone)) {
+			showToast("Choose a valid time zone", "error");
 			return;
 		}
 		if (watchRepoErrors.repo || watchRepoErrors.webhookUrl || dispatchTargets.some((target) => !REPO_RE.test(target.repo) || !target.ghWorkflowFile.trim())) {
@@ -1109,7 +1119,7 @@
 						>
 							<span>{projectName(w.projectId)}</span>
 							<span title={w.repo}>{w.dispatchTargets?.length ? `${w.dispatchTargets.length} destinations` : w.repo || "-"}</span>
-							<span title="poll cron">{w.pollCron}</span>
+							<span title="poll cron in the selected time zone">{w.pollCron} · {w.timezone ?? LOCAL_TIME_ZONE}</span>
 							{#if healthForWatch(w.id)?.schedulerJobSuccessRate !== undefined}
 								<span class="font-sans">{Math.round((healthForWatch(w.id)?.schedulerJobSuccessRate ?? 0) * 100)}% scheduler success</span>
 							{/if}
@@ -1457,6 +1467,19 @@
 				<div class="mt-1 text-xs text-err">{watchRepoErrors.repo}</div>
 			{/if}
 
+			<label for="w-timezone" class="mt-3 mb-1 block text-xs text-muted"
+				>Schedule time zone</label
+			>
+			<SearchSelect
+				id="w-timezone"
+				items={TIME_ZONE_OPTIONS}
+				value={watchForm.timezone ?? LOCAL_TIME_ZONE}
+				placeholder="Search time zones…"
+				label="Schedule time zone"
+				onValueChange={(timezone) => (watchForm = { ...watchForm, timezone })}
+				class="w-full"
+			/>
+			<div class="mt-1 text-[11px] text-muted">Scheduled checks use this local time and adjust for daylight saving.</div>
 			<label for="w-pollCron" class="mt-3 mb-1 block text-xs text-muted"
 				>Poll cron</label
 			>

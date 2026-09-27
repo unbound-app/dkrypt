@@ -36,6 +36,7 @@ import { createTestFlightSubscriptionRepository } from '#store/testFlightSubscri
 import { createJobHistoryRepository } from '#store/jobHistoryRepository.js';
 import { openStateDatabase, readStateCollection, verifyDatabaseBackup, writeStateMirror, type StateCollectionReplacement, type StateDatabase } from '#store/sqlite.js';
 import { paginateCursor } from '#util/cursor.js';
+import { effectiveTimeZone } from '#util/timezone.js';
 
 export type ApiKeyStatus = 'pending' | 'approved' | 'denied';
 
@@ -302,6 +303,7 @@ export interface AppWatch {
   ghWorkflowFile: string;
   dispatchTargets?: DispatchTarget[];
   pollCron: string;
+  timezone?: string;
   enabled: boolean;
   webhookUrl?: string;
   testFlightPolicy?: 'latest' | 'latestNonExpired' | 'train';
@@ -2525,6 +2527,7 @@ export interface CreateWatchInput {
   ghWorkflowFile: string;
   dispatchTargets?: DispatchTarget[];
   pollCron: string;
+  timezone?: string;
   enabled?: boolean;
   webhookUrl?: string;
   testFlightPolicy?: 'latest' | 'latestNonExpired' | 'train';
@@ -2579,6 +2582,7 @@ export function createWatch(input: CreateWatchInput, actor: string): { ok: boole
     bundleId: input.bundleId,
     ...dispatch,
     pollCron: input.pollCron,
+    timezone: effectiveTimeZone(input.timezone),
     enabled: input.enabled ?? true,
     webhookUrl: input.webhookUrl,
     testFlightPolicy: input.testFlightPolicy,

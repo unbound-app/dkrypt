@@ -1,18 +1,18 @@
 import { CronExpressionParser } from 'cron-parser';
 
-export function nextCronRunAt(expr: string): number | undefined {
+export function nextCronRunAt(expr: string, timezone?: string): number | undefined {
   if (!expr.trim()) return undefined;
   try {
-    return CronExpressionParser.parse(expr).next().getTime();
+    return CronExpressionParser.parse(expr, { tz: timezone }).next().getTime();
   } catch {
     return undefined;
   }
 }
 
-export function nextCronRuns(expr: string, untilAt: number, fromAt = Date.now(), maxRuns = 100): number[] {
+export function nextCronRuns(expr: string, untilAt: number, fromAt = Date.now(), maxRuns = 100, timezone?: string): number[] {
   if (!expr.trim()) return [];
   try {
-    const interval = CronExpressionParser.parse(expr, { currentDate: new Date(fromAt) });
+    const interval = CronExpressionParser.parse(expr, { currentDate: new Date(fromAt), tz: timezone });
     const runs: number[] = [];
     while (runs.length < maxRuns) {
       const next = interval.next().getTime();

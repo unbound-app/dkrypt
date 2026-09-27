@@ -50,6 +50,7 @@ import {
 } from '#store/state.js';
 import { externalRequestRateLimiter, fastifyRateLimitPerUser } from '#util/rateLimit.js';
 import { nextCronRuns } from '#util/cron.js';
+import { effectiveTimeZone, isValidTimeZone } from '#util/timezone.js';
 import { sendHttpErrorEnvelope } from '#util/httpResponse.js';
 import { validate as validateCronExpr } from 'node-cron';
 
@@ -131,7 +132,7 @@ function projectAccessState(request: FastifyRequest, projectId: string): 'missin
 }
 
 function serializeWatch(watch: AppWatch): WatchResponse {
-  return { ...watch, schedulable: isWatchSchedulable(watch), configIssues: getWatchConfigIssues(watch) };
+  return { ...watch, timezone: effectiveTimeZone(watch.timezone), schedulable: isWatchSchedulable(watch), configIssues: getWatchConfigIssues(watch) };
 }
 
 function parseDispatchInputs(value: unknown): Record<string, string> | undefined {
@@ -179,6 +180,7 @@ function parseWatchInput(body: unknown): WatchCreateInput | undefined {
     ghWorkflowFile: primary?.ghWorkflowFile ?? (typeof value.ghWorkflowFile === 'string' ? value.ghWorkflowFile.trim() : 'remote-ipa-update.yml'),
     dispatchTargets,
     pollCron: typeof value.pollCron === 'string' ? value.pollCron.trim() : '0 * * * *',
+    timezone: typeof value.timezone === 'string' ? value.timezone.trim() : undefined,
     enabled: typeof value.enabled === 'boolean' ? value.enabled : undefined,
     webhookUrl: typeof value.webhookUrl === 'string' ? value.webhookUrl.trim() || undefined : undefined,
     testFlightPolicy: value.testFlightPolicy === 'latestNonExpired' || value.testFlightPolicy === 'train' ? value.testFlightPolicy : 'latest',
@@ -199,6 +201,7 @@ function parseWatchPatch(body: WatchPatchInput): Partial<WatchCreateInput> {
     }
   }
   if (typeof body.pollCron === 'string') patch.pollCron = body.pollCron.trim();
+  if (typeof body.timezone === 'string') patch.timezone = body.timezone.trim();
   if (typeof body.enabled === 'boolean') patch.enabled = body.enabled;
   if (typeof body.webhookUrl === 'string') patch.webhookUrl = body.webhookUrl.trim() || undefined;
   if (body.testFlightPolicy === 'latest' || body.testFlightPolicy === 'latestNonExpired' || body.testFlightPolicy === 'train') {
@@ -293,14 +296,14 @@ export const dashboardWatchRoutes: FastifyPluginAsyncTypebox = async (server) =>
     const pending = getEffectiveWatches()
       .filter((watch) => (watch.projectId ?? DEFAULT_PROJECT_ID) === projectId && isWatchSchedulable(watch))
       .flatMap((watch) => {
-        const at = nextCronRuns(watch.pollCron, untilAt, fromAt, 1)[0];
+        const at = nextCronRuns(watch.pollCron, untilAt, fromAt, 1, effectiveTimeZone(watch.timezone))[0];
         return at === undefined ? [] : [{ watch, at }];
       });
     while (pending.length > 0 && runs.length < maxRuns) {
       pending.sort((left, right) => left.at - right.at);
       const next = pending.shift()!;
       runs.push({ watchId: next.watch.id, bundleId: next.watch.bundleId, at: next.at });
-      const followingAt = nextCronRuns(next.watch.pollCron, untilAt, next.at, 1)[0];
+      const followingAt = nextCronRuns(next.watch.pollCron, untilAt, next.at, 1, effectiveTimeZone(next.watch.timezone))[0];
       if (followingAt !== undefined) pending.push({ watch: next.watch, at: followingAt });
     }
     return { fromAt, untilAt, runs, truncated: pending.length > 0 };
@@ -373,6 +376,10 @@ export const dashboardWatchRoutes: FastifyPluginAsyncTypebox = async (server) =>
       sendError(request, reply, 400, 'pollCron is not a valid cron expression');
       return;
     }
+    if (input.timezone !== undefined && !isValidTimeZone(input.timezone)) {
+      sendError(request, reply, 400, 'timezone must be a valid IANA timezone');
+      return;
+    }
     if (input.testFlightPolicy === 'train' && !input.testFlightTrain) {
       sendError(request, reply, 400, 'testFlightTrain is required when testFlightPolicy is train');
       return;
@@ -402,6 +409,10 @@ export const dashboardWatchRoutes: FastifyPluginAsyncTypebox = async (server) =>
     }
     if (patch.pollCron && !validateCronExpr(patch.pollCron)) {
       sendError(request, reply, 400, 'pollCron is not a valid cron expression');
+      return;
+    }
+    if (patch.timezone !== undefined && !isValidTimeZone(patch.timezone)) {
+      sendError(request, reply, 400, 'timezone must be a valid IANA timezone');
       return;
     }
     const existingWatch = visibleWatch(request, reply);
@@ -444,7 +455,7 @@ export const dashboardWatchRoutes: FastifyPluginAsyncTypebox = async (server) =>
     const skipped: string[] = [];
     for (const rawWatch of request.body.watches) {
       const input = parseWatchInput(rawWatch);
-      if (!input || !validateCronExpr(input.pollCron) || (input.testFlightPolicy === 'train' && !input.testFlightTrain)) {
+      if (!input || !validateCronExpr(input.pollCron) || (input.timezone !== undefined && !isValidTimeZone(input.timezone)) || (input.testFlightPolicy === 'train' && !input.testFlightTrain)) {
         skipped.push('invalid watch');
         continue;
       }

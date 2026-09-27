@@ -217,6 +217,7 @@ export interface AppWatch {
   ghWorkflowFile: string;
   dispatchTargets?: DispatchTarget[];
   pollCron: string;
+  timezone?: string;
   enabled: boolean;
   webhookUrl?: string;
   testFlightPolicy?: 'latest' | 'latestNonExpired' | 'train';
@@ -836,6 +837,7 @@ export interface WatchInput {
   ghWorkflowFile: string;
   dispatchTargets?: DispatchTarget[];
   pollCron: string;
+  timezone?: string;
   enabled?: boolean;
   webhookUrl?: string;
   testFlightPolicy?: 'latest' | 'latestNonExpired' | 'train';

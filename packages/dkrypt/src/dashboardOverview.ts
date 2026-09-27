@@ -7,6 +7,7 @@ import { hasPermission, PermissionFlag } from '#permissions.js';
 import { serializeDashboardDevice } from '#dashboardDevicePresentation.js';
 import { canAccessProject } from '#dashboardJobPresentation.js';
 import { nextCronRunAt } from '#util/cron.js';
+import { effectiveTimeZone } from '#util/timezone.js';
 import { getDiskUsage } from '#util/diskUsage.js';
 import {
   DEFAULT_PROJECT_ID,
@@ -25,7 +26,8 @@ export function buildDashboardOverview(permissions: bigint, userId: string, proj
     (watch.projectId ?? DEFAULT_PROJECT_ID) === projectId && canAccessProject(userId, permissions, watch.projectId ?? DEFAULT_PROJECT_ID),
   ).map((watch) => ({
     ...watch,
-    nextRunAt: isWatchSchedulable(watch) ? nextCronRunAt(watch.pollCron) : undefined,
+    timezone: effectiveTimeZone(watch.timezone),
+    nextRunAt: isWatchSchedulable(watch) ? nextCronRunAt(watch.pollCron, effectiveTimeZone(watch.timezone)) : undefined,
     schedulable: isWatchSchedulable(watch),
     configIssues: getWatchConfigIssues(watch),
   })) : [];

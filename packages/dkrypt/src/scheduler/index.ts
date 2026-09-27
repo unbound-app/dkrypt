@@ -36,6 +36,7 @@ import { dispatchIpaUpdate, findDispatchedRun, getGitHubRateLimitBudget, getRun,
 import { lookupCurrentVersion } from '#scheduler/itunes.js';
 import { resolveAppStoreDecryptTarget } from '#scheduler/appStoreVersion.js';
 import { buildArtifactFileUrl, getArtifactById } from '#artifacts.js';
+import { effectiveTimeZone } from '#util/timezone.js';
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -685,7 +686,7 @@ export async function triggerTickNow(watchId: string): Promise<{ ok: boolean; er
   return { ok: true };
 }
 
-const scheduledTasks = new Map<string, { task: ScheduledTask; cronExpr: string }>();
+const scheduledTasks = new Map<string, { task: ScheduledTask; scheduleKey: string }>();
 
 export function applyWatchSchedules(): void {
   if (schedulerStopping) return;
@@ -703,7 +704,9 @@ export function applyWatchSchedules(): void {
   for (const watch of watches) {
     if (!isWatchSchedulable(watch)) continue;
     const existing = scheduledTasks.get(watch.id);
-    if (existing && existing.cronExpr === watch.pollCron) continue;
+    const timezone = effectiveTimeZone(watch.timezone);
+    const scheduleKey = `${watch.pollCron}\u0000${timezone}`;
+    if (existing && existing.scheduleKey === scheduleKey) continue;
 
     if (existing) existing.task.stop();
     const task = cron.schedule(watch.pollCron, () => {
@@ -716,9 +719,9 @@ export function applyWatchSchedules(): void {
       }, jitterMs);
       schedulerJitterTimers.add(timer);
       timer.unref();
-    });
-    scheduledTasks.set(watch.id, { task, cronExpr: watch.pollCron });
-    log.info('watch (re)scheduled', { watchId: watch.id, cron: watch.pollCron, bundleId: watch.bundleId, repo: watch.repo });
+    }, { timezone });
+    scheduledTasks.set(watch.id, { task, scheduleKey });
+    log.info('watch (re)scheduled', { watchId: watch.id, cron: watch.pollCron, timezone, bundleId: watch.bundleId, repo: watch.repo });
   }
 
   if (eligibleIds.size === 0) {

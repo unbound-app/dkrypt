@@ -197,6 +197,22 @@ test('pricing plan checkout actions share a bottom baseline', async ({ page }) =
   }
 });
 
+test('scheduler watch time zone selection is searchable and defaults to the browser zone', async ({ page }) => {
+  await mockStableDashboardEvents(page);
+  await mockAuthenticatedDashboard(page, '1');
+
+  await page.goto('/?tab=settings&stab=scheduler');
+  await page.getByRole('button', { name: 'Add watch', exact: true }).click();
+
+  const timezone = page.getByRole('combobox', { name: 'Schedule time zone' });
+  const browserTimezone = await page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone);
+  await expect(timezone).toHaveValue(browserTimezone);
+  await timezone.fill('Europe/Berlin');
+  await page.getByRole('option', { name: 'Europe/Berlin', exact: true }).click();
+  await expect(timezone).toHaveValue('Europe/Berlin');
+  await expectAccessible(page);
+});
+
 test('authenticated top bar exposes community links without mobile overflow', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockAuthenticatedDashboard(page, '1');

@@ -13,6 +13,7 @@
 		value: string;
 		onValueChange?: (value: string) => void;
 		placeholder?: string;
+		label?: string;
 		class?: string;
 		id?: string;
 		disabled?: boolean;
@@ -24,6 +25,7 @@
 		value = $bindable(),
 		onValueChange,
 		placeholder = "Search…",
+		label,
 		class: className,
 		id,
 		disabled = false,
@@ -32,6 +34,8 @@
 
 	let open = $state(false);
 	let query = $state("");
+	const generatedId = $props.id();
+	const contentId = $derived(`${id ?? generatedId}-listbox`);
 
 	const filtered = $derived.by(() => {
 		const q = query.trim().toLowerCase();
@@ -60,6 +64,7 @@
 		<Combobox.Input
 			{id}
 			data-slot="combobox-input"
+			aria-controls={open ? contentId : undefined}
 			{placeholder}
 			onfocus={() => (open = true)}
 			oninput={(e: Event) => {
@@ -77,6 +82,8 @@
 	</div>
 	<Combobox.Portal>
 		<Combobox.Content
+			id={contentId}
+			aria-label={label ?? placeholder}
 			data-slot="combobox-content"
 			class="border-border bg-popover text-popover-foreground z-50 overflow-hidden rounded-md border p-1 shadow-md"
 			style="width: var(--bits-floating-anchor-width); min-width: max(var(--bits-floating-anchor-width), 12rem);"

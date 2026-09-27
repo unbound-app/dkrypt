@@ -13,6 +13,7 @@ export const dashboardWatchInputSchema = Type.Object({
   ghWorkflowFile: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
   dispatchTargets: Type.Optional(Type.Array(dashboardDispatchTargetSchema, { maxItems: 10 })),
   pollCron: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
+  timezone: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
   enabled: Type.Optional(Type.Boolean()),
   webhookUrl: Type.Optional(Type.String({ maxLength: 500 })),
   testFlightPolicy: Type.Optional(Type.Union([Type.Literal('latest'), Type.Literal('latestNonExpired'), Type.Literal('train')])),
