@@ -5,6 +5,7 @@ import path from 'node:path';
 import { type ArtifactChannel, type ArtifactRecord } from '#artifactTypes.js';
 import { createArtifactRepository } from '#artifacts/repository.js';
 import { config } from '#config.js';
+import { withCorrelationSpan } from '#correlation.js';
 import { scopedLogger } from '#logger.js';
 import { openStateCollectionDatabase } from '#store/sqlite.js';
 import { throwIfAborted } from '#util/abort.js';
@@ -387,7 +388,12 @@ export async function promoteArtifact(input: {
   projectId?: string;
   signal?: AbortSignal;
 }): Promise<ArtifactRecord> {
-  return withMutation(async () => {
+  return withCorrelationSpan('artifact.promotion', {
+    'artifact.bundle_id': input.bundleId,
+    'artifact.channel': input.channel,
+    'artifact.source_job_id': input.sourceJobId,
+    'artifact.project_id': input.projectId,
+  }, (span) => withMutation(async () => {
     throwIfAborted(input.signal);
     await mkdir(config.artifactDir, { recursive: true });
     throwIfAborted(input.signal);
@@ -401,6 +407,7 @@ export async function promoteArtifact(input: {
       const warningsChanged = mergeArtifactWarnings(existing, input.warnings);
       if (metadataChanged || warningsChanged) persistIndex();
       touchArtifactUnsafe(existing);
+      span.setAttributes({ 'artifact.id': existing.id, 'artifact.reused': true, 'artifact.size_bytes': existing.fileSizeBytes });
       return existing;
     }
 
@@ -462,8 +469,14 @@ export async function promoteArtifact(input: {
         log.warn('failed to remove a stale artifact file', { artifactId: stale.id, path: stale.filePath, error: String(error) });
       }
     }
+    span.setAttributes({
+      'artifact.id': artifact.id,
+      'artifact.reused': false,
+      'artifact.size_bytes': artifact.fileSizeBytes,
+      'artifact.evicted_count': evictedArtifacts.length,
+    });
     return artifact;
-  });
+  }));
 }
 
 export async function registerLegacyJobArtifact(job: {

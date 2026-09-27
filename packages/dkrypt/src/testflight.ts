@@ -14,8 +14,7 @@ import { getPrimaryDevice, type DeviceRecord } from '#store/state.js';
 import { hasBridgeCapabilities, hasBridgeCapabilitySet, TESTFLIGHT_DEVICE_CATALOG_CAPABILITIES, TESTFLIGHT_LIFECYCLE_CAPABILITIES } from '#bridgeProtocol.js';
 import { incrementMetric, observeMetric } from '#metrics.js';
 import { delayWithSignal, throwIfAborted } from '#util/abort.js';
-import { currentCorrelation, withCorrelation } from '#correlation.js';
-import { startSpan } from '#telemetry.js';
+import { withCorrelationSpan } from '#correlation.js';
 
 function primaryDevice() {
   const device = getPrimaryDevice();
@@ -35,27 +34,11 @@ async function withTestFlightOperation<T>(
   action: () => Promise<T>,
   attributes: Record<string, string | number | boolean | undefined> = {},
 ): Promise<T> {
-  const parent = currentCorrelation();
-  const span = startSpan('testflight.operation', {
+  return withCorrelationSpan('testflight.operation', {
     'testflight.operation': operation,
     'device.id': device.id,
     ...attributes,
-  }, parent?.traceContext);
-  return withCorrelation({
-    correlationId: parent?.correlationId ?? span.context.traceId,
-    ...(parent?.parentCorrelationId ? { parentCorrelationId: parent.parentCorrelationId } : {}),
-    traceId: span.context.traceId,
-    traceContext: span.context,
-  }, async () => {
-    try {
-      const result = await action();
-      span.end();
-      return result;
-    } catch (error) {
-      span.end(error);
-      throw error;
-    }
-  });
+  }, () => action());
 }
 
 export interface TFTrain {

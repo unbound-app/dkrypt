@@ -4,7 +4,9 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { config } from '#config.js';
+import { withCorrelation } from '#correlation.js';
 import { createProject, exportBackup, importBackup } from '#store/state.js';
+import { flushTelemetry, startSpan } from '#telemetry.js';
 import {
   artifactFileAvailable,
   getArtifactById,
@@ -45,6 +47,47 @@ describe('persistent artifact store', () => {
     const before = artifact.accessCount;
     await touchArtifact(artifact);
     expect(getArtifactById(artifact.id)?.accessCount).toBe(before + 1);
+  });
+
+  test('links artifact promotion telemetry to the initiating request trace', async () => {
+    const stagingPath = await stagingFile('trace artifact');
+    const previousSampleRate = config.otelSampleRate;
+    config.otelSampleRate = 1;
+    const requestSpan = startSpan('test.http.request');
+    let exportedSpans: Array<{ name: string; traceId: string; parentSpanId?: string; attributes: Array<{ key: string; value: Record<string, unknown> }> }> = [];
+
+    try {
+      await withCorrelation({
+        correlationId: 'request-artifact-promotion',
+        traceId: requestSpan.context.traceId,
+        traceContext: requestSpan.context,
+      }, () => promoteArtifact({
+        key: `test-trace-${crypto.randomUUID()}`,
+        bundleId: 'com.example.trace',
+        channel: 'appstore',
+        sourceJobId: 'job-artifact-trace',
+        stagingPath,
+      }));
+      requestSpan.end();
+      await flushTelemetry({
+        endpoint: 'https://collector.example/v1/traces',
+        fetcher: async (_input, init) => {
+          const payload = JSON.parse(String(init?.body)) as {
+            resourceSpans: Array<{ scopeSpans: Array<{ spans: Array<{ name: string; traceId: string; parentSpanId?: string; attributes: Array<{ key: string; value: Record<string, unknown> }> }> }> }>;
+          };
+          exportedSpans = payload.resourceSpans.flatMap((resource) => resource.scopeSpans.flatMap((scope) => scope.spans));
+          return Response.json({});
+        },
+      });
+
+      const promotionSpan = exportedSpans.find((span) => span.name === 'artifact.promotion' && span.traceId === requestSpan.context.traceId);
+      expect(promotionSpan).toMatchObject({ traceId: requestSpan.context.traceId, parentSpanId: requestSpan.context.spanId });
+      expect(promotionSpan?.attributes).toContainEqual({ key: 'artifact.bundle_id', value: { stringValue: 'com.example.trace' } });
+      expect(promotionSpan?.attributes).toContainEqual({ key: 'artifact.source_job_id', value: { stringValue: 'job-artifact-trace' } });
+    } finally {
+      requestSpan.end();
+      config.otelSampleRate = previousSampleRate;
+    }
   });
 
   test('persists the source job and decrypt warnings with the artifact', async () => {
