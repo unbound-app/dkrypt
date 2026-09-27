@@ -28,6 +28,7 @@ import type { JobTimelineEvent, TestFlightJobSource } from '#jobs/types.js';
 import { categorizeFailure } from '#util/failureCategory.js';
 import { combineBits, hasPermission, parseBits, PermissionFlag, serializeBits } from '#permissions.js';
 import { createDeviceHistoryRepository } from '#store/deviceHistoryRepository.js';
+import { createDeviceHealthRepository } from '#store/deviceHealthRepository.js';
 import { openStateDatabase, readStateCollection, verifyDatabaseBackup, writeStateMirror, type StateCollectionReplacement, type StateDatabase } from '#store/sqlite.js';
 import { paginateCursor } from '#util/cursor.js';
 
@@ -650,6 +651,7 @@ const stateDatabase: StateDatabase = openStateDatabase({
   migrationDryRun: config.stateDbMigrationDryRun,
 });
 const deviceHistoryRepository = createDeviceHistoryRepository(stateDatabase.db);
+const deviceHealthRepository = createDeviceHealthRepository(stateDatabase.db);
 
 export function getStateDatabaseStatus(): { path: string; schemaVersion: number; integrity: 'ok' } {
   return { path: stateDatabase.path, schemaVersion: stateDatabase.schemaVersion, integrity: stateDatabase.integrityStatus() };
@@ -3439,7 +3441,7 @@ export function recordDeviceHealthCheck(
 }
 
 function historyFor(deviceId: string): DeviceHealthCheck[] {
-  return state.deviceHealthHistory[deviceId] ?? [];
+  return deviceHealthRepository.listByDevice(deviceId);
 }
 
 export interface HourlyHealthBucket {
@@ -3468,7 +3470,7 @@ export function getDeviceUptimePercent(deviceId: string, hours = 24): number | u
 }
 
 export function getConsecutiveDeviceHealthFailures(deviceId: string): number {
-  const history = [...historyFor(deviceId)].reverse();
+  const history = historyFor(deviceId);
   let failures = 0;
   for (const check of history) {
     if (check.reachable) break;

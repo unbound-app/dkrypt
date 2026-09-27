@@ -227,6 +227,62 @@ const migrations = [
       WHERE json_type(activity.value, '$.id') = 'text';
     `,
   },
+  {
+    version: 11,
+    sql: `
+      ALTER TABLE device_health ADD COLUMN device_id TEXT;
+      ALTER TABLE device_health ADD COLUMN checked_at INTEGER;
+      ALTER TABLE device_health ADD COLUMN reachable INTEGER;
+      ALTER TABLE device_health ADD COLUMN battery_percent REAL;
+      ALTER TABLE device_health ADD COLUMN battery_temperature_c REAL;
+      ALTER TABLE device_health ADD COLUMN storage_used_percent REAL;
+      CREATE INDEX IF NOT EXISTS device_health_by_device_time ON device_health(device_id, checked_at DESC, id DESC);
+      INSERT OR IGNORE INTO device_health (
+        id, payload, updated_at, device_id, checked_at, reachable, battery_percent,
+        battery_temperature_c, storage_used_percent
+      )
+      SELECT printf('%s:%04d', per_device_history.key, CAST(health_check.key AS INTEGER)),
+             json_set(health_check.value, '$.deviceId', per_device_history.key),
+             COALESCE(json_extract(health_check.value, '$.ts'), state_snapshots.updated_at),
+             per_device_history.key,
+             json_extract(health_check.value, '$.ts'),
+             CASE json_type(health_check.value, '$.reachable')
+               WHEN 'true' THEN 1
+               WHEN 'false' THEN 0
+               ELSE NULL
+             END,
+             json_extract(health_check.value, '$.batteryPercent'),
+             json_extract(health_check.value, '$.batteryTemperatureC'),
+             json_extract(health_check.value, '$.storageUsedPercent')
+      FROM state_snapshots,
+           json_each(CASE WHEN json_valid(state_snapshots.payload) = 1 THEN state_snapshots.payload ELSE '{}' END, '$.deviceHealthHistory') AS per_device_history,
+           json_each(per_device_history.value) AS health_check
+      WHERE json_type(health_check.value) = 'object';
+      INSERT OR IGNORE INTO device_health (
+        id, payload, updated_at, device_id, checked_at, reachable, battery_percent,
+        battery_temperature_c, storage_used_percent
+      )
+      SELECT printf('%s:%04d', json_extract(previous_history.payload, '$.key'), CAST(health_check.key AS INTEGER)),
+             json_set(health_check.value, '$.deviceId', json_extract(previous_history.payload, '$.key')),
+             COALESCE(json_extract(health_check.value, '$.ts'), previous_history.updated_at),
+             json_extract(previous_history.payload, '$.key'),
+             json_extract(health_check.value, '$.ts'),
+             CASE json_type(health_check.value, '$.reachable')
+               WHEN 'true' THEN 1
+               WHEN 'false' THEN 0
+               ELSE NULL
+             END,
+             json_extract(health_check.value, '$.batteryPercent'),
+             json_extract(health_check.value, '$.batteryTemperatureC'),
+             json_extract(health_check.value, '$.storageUsedPercent')
+      FROM device_health AS previous_history,
+           json_each(CASE WHEN json_valid(previous_history.payload) = 1 THEN previous_history.payload ELSE '{}' END, '$.value') AS health_check
+      WHERE json_type(previous_history.payload, '$.key') = 'text'
+        AND json_type(previous_history.payload, '$.value') = 'array'
+        AND json_type(health_check.value) = 'object';
+      DELETE FROM device_health WHERE device_id IS NULL;
+    `,
+  },
 ] as const;
 
 const domainTables = [
@@ -342,6 +398,34 @@ function deviceHistoryIndexValues(payload: unknown, updatedAt: number): Array<st
   ];
 }
 
+function deviceHealthIndexValues(payload: unknown, updatedAt: number): Array<string | number | null> {
+  const check = asRecord(payload);
+  return [
+    stringField(check, 'deviceId'),
+    numberField(check, 'ts') ?? updatedAt,
+    typeof check.reachable === 'boolean' ? Number(check.reachable) : null,
+    numberField(check, 'batteryPercent'),
+    numberField(check, 'batteryTemperatureC'),
+    numberField(check, 'storageUsedPercent'),
+  ];
+}
+
+function deviceHealthRows(value: unknown): DomainRow[] {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return [];
+  return Object.entries(value as StateRecord).flatMap(([deviceId, rawHistory]) => {
+    if (!Array.isArray(rawHistory)) return [];
+    return rawHistory.map((rawCheck, index) => {
+      const check = asRecord(rawCheck);
+      const updatedAt = numberField(check, 'ts') ?? Date.now();
+      return {
+        id: `${deviceId}:${String(index).padStart(4, '0')}`,
+        payload: { ...check, deviceId },
+        updatedAt,
+      };
+    });
+  });
+}
+
 function replaceCollectionRows(database: Database, replacement: StateCollectionReplacement): void {
   database.exec(`DELETE FROM ${replacement.table};`);
   if (replacement.table === 'jobs') {
@@ -387,6 +471,19 @@ function replaceCollectionRows(database: Database, replacement: StateCollectionR
     for (const row of replacement.rows) {
       const updatedAt = row.updatedAt ?? Date.now();
       statement.run(row.id, json(row.payload), updatedAt, ...deviceHistoryIndexValues(row.payload, updatedAt));
+    }
+    return;
+  }
+  if (replacement.table === 'device_health') {
+    const statement = database.query(`
+      INSERT INTO device_health (
+        id, payload, updated_at, device_id, checked_at, reachable, battery_percent,
+        battery_temperature_c, storage_used_percent
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+    `);
+    for (const row of replacement.rows) {
+      const updatedAt = row.updatedAt ?? Date.now();
+      statement.run(row.id, json(row.payload), updatedAt, ...deviceHealthIndexValues(row.payload, updatedAt));
     }
     return;
   }
@@ -445,7 +542,7 @@ function objectRows(value: unknown, prefix: string): DomainRow[] {
 
 function rowsForState(state: unknown): Record<(typeof domainTables)[number], DomainRow[]> {
   const value = state as StateRecord;
-  const healthRows = objectRows(value.deviceHealthHistory, 'device-health');
+  const healthRows = deviceHealthRows(value.deviceHealthHistory);
   const settings = objectRows(value.settings, 'setting');
   return {
     users: arrayRows(value.allowedUsers, 'user'),
