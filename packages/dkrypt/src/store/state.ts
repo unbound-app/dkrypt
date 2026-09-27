@@ -27,6 +27,7 @@ import { log } from '#logger.js';
 import type { JobTimelineEvent, TestFlightJobSource } from '#jobs/types.js';
 import { categorizeFailure } from '#util/failureCategory.js';
 import { combineBits, hasPermission, parseBits, PermissionFlag, serializeBits } from '#permissions.js';
+import { createDeviceHistoryRepository } from '#store/deviceHistoryRepository.js';
 import { openStateDatabase, readStateCollection, verifyDatabaseBackup, writeStateMirror, type StateCollectionReplacement, type StateDatabase } from '#store/sqlite.js';
 import { paginateCursor } from '#util/cursor.js';
 
@@ -648,6 +649,7 @@ const stateDatabase: StateDatabase = openStateDatabase({
   busyTimeoutMs: config.stateDbBusyTimeoutMs,
   migrationDryRun: config.stateDbMigrationDryRun,
 });
+const deviceHistoryRepository = createDeviceHistoryRepository(stateDatabase.db);
 
 export function getStateDatabaseStatus(): { path: string; schemaVersion: number; integrity: 'ok' } {
   return { path: stateDatabase.path, schemaVersion: stateDatabase.schemaVersion, integrity: stateDatabase.integrityStatus() };
@@ -3407,11 +3409,11 @@ export function recordDeviceActivity(entry: Omit<DeviceActivityEntry, 'id' | 'ts
 }
 
 export function getDeviceActivity(deviceId: string, limit = 20): DeviceActivityEntry[] {
-  return state.deviceActivity.filter((entry) => entry.deviceId === deviceId).slice(0, limit);
+  return deviceHistoryRepository.listByDevice(deviceId).slice(0, limit);
 }
 
 export function getDeviceActivityPage(deviceId: string, offset = 0, limit = 20, cursor?: string): { entries: DeviceActivityEntry[]; total: number; nextCursor?: string } {
-  const owned = state.deviceActivity.filter((entry) => entry.deviceId === deviceId);
+  const owned = deviceHistoryRepository.listByDevice(deviceId);
   const page = paginateCursor(owned, {
     cursor,
     offset,

@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test } from 'bun:test';
+import { createDeviceHistoryRepository } from '#store/deviceHistoryRepository.js';
 import { openStateCollectionDatabase, openStateDatabase, readStateCollection, replaceStateCollections } from '#store/sqlite.js';
 
 test('SQLite state snapshots survive restart and retain independently owned collections', async () => {
@@ -18,7 +19,7 @@ test('SQLite state snapshots survive restart and retain independently owned coll
 
     const reopened = openStateDatabase({ stateDir, filename: 'state.sqlite' });
     expect(reopened.integrityStatus()).toBe('ok');
-    expect(reopened.schemaVersion).toBe(9);
+    expect(reopened.schemaVersion).toBe(10);
     expect(reopened.readCollection('jobs')).toEqual([{ id: 'job-1', status: 'queued' }]);
     expect(reopened.readCollection('scheduler_runs')).toEqual([]);
     expect(reopened.readCollection('projects')).toEqual(state.projects);
@@ -59,6 +60,30 @@ test('SQLite migrates legacy scheduler rows out of job timelines', async () => {
     const migrated = openStateDatabase({ stateDir, filename: 'state.sqlite' });
     expect(migrated.readCollection('job_timelines')).toEqual([]);
     expect(migrated.readCollection('scheduler_runs')).toEqual([{ id: 'run-legacy', ts: 100, appStore: {}, testflight: {} }]);
+    migrated.close();
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test('SQLite backfills indexed device activity from its state snapshot during migration', async () => {
+  const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-sqlite-device-history-migration-'));
+  try {
+    const database = openStateDatabase({ stateDir, filename: 'state.sqlite' });
+    const older = { id: 'activity-older', ts: 100, deviceId: 'device-a', kind: 'bridge' as const, message: 'older' };
+    const newer = { id: 'activity-newer', ts: 200, deviceId: 'device-a', kind: 'job' as const, message: 'newer' };
+    database.writeState({ version: 18, deviceActivity: [newer, older], deviceHealthHistory: {} });
+    database.db.exec('DELETE FROM device_history; DELETE FROM schema_migrations WHERE version = 10; DROP INDEX device_history_by_device_time;');
+    for (const column of ['bundle_id', 'occurred_at', 'history_kind', 'device_id']) {
+      database.db.exec(`ALTER TABLE device_history DROP COLUMN ${column};`);
+    }
+    database.close();
+
+    const migrated = openStateDatabase({ stateDir, filename: 'state.sqlite' });
+    const repository = createDeviceHistoryRepository(migrated.db);
+    expect(migrated.schemaVersion).toBe(10);
+    expect(repository.listByDevice('device-a')).toEqual([newer, older]);
+    expect(repository.listByDevice('device-b')).toEqual([]);
     migrated.close();
   } finally {
     await rm(stateDir, { recursive: true, force: true });

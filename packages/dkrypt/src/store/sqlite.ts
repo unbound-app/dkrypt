@@ -206,6 +206,27 @@ const migrations = [
       CREATE INDEX IF NOT EXISTS artifact_projects_by_project ON artifact_projects(project_id, artifact_id);
     `,
   },
+  {
+    version: 10,
+    sql: `
+      ALTER TABLE device_history ADD COLUMN device_id TEXT;
+      ALTER TABLE device_history ADD COLUMN history_kind TEXT;
+      ALTER TABLE device_history ADD COLUMN occurred_at INTEGER;
+      ALTER TABLE device_history ADD COLUMN bundle_id TEXT;
+      CREATE INDEX IF NOT EXISTS device_history_by_device_time ON device_history(device_id, occurred_at DESC, id DESC);
+      INSERT OR IGNORE INTO device_history (id, payload, updated_at, device_id, history_kind, occurred_at, bundle_id)
+      SELECT json_extract(activity.value, '$.id'),
+             activity.value,
+             COALESCE(json_extract(activity.value, '$.ts'), state_snapshots.updated_at),
+             json_extract(activity.value, '$.deviceId'),
+             json_extract(activity.value, '$.kind'),
+             json_extract(activity.value, '$.ts'),
+             json_extract(activity.value, '$.bundleId')
+      FROM state_snapshots,
+           json_each(CASE WHEN json_valid(state_snapshots.payload) = 1 THEN state_snapshots.payload ELSE '{}' END, '$.deviceActivity') AS activity
+      WHERE json_type(activity.value, '$.id') = 'text';
+    `,
+  },
 ] as const;
 
 const domainTables = [
@@ -216,6 +237,7 @@ const domainTables = [
   'api_keys',
   'devices',
   'device_health',
+  'device_history',
   'jobs',
   'job_timelines',
   'artifacts',
@@ -310,6 +332,16 @@ function artifactIndexValues(payload: unknown, updatedAt: number): Array<string 
   ];
 }
 
+function deviceHistoryIndexValues(payload: unknown, updatedAt: number): Array<string | number | null> {
+  const entry = asRecord(payload);
+  return [
+    stringField(entry, 'deviceId'),
+    stringField(entry, 'kind'),
+    numberField(entry, 'ts') ?? updatedAt,
+    stringField(entry, 'bundleId'),
+  ];
+}
+
 function replaceCollectionRows(database: Database, replacement: StateCollectionReplacement): void {
   database.exec(`DELETE FROM ${replacement.table};`);
   if (replacement.table === 'jobs') {
@@ -344,6 +376,17 @@ function replaceCollectionRows(database: Database, replacement: StateCollectionR
           if (typeof projectId === 'string') projectLinkStatement.run(row.id, projectId);
         }
       }
+    }
+    return;
+  }
+  if (replacement.table === 'device_history') {
+    const statement = database.query(`
+      INSERT INTO device_history (id, payload, updated_at, device_id, history_kind, occurred_at, bundle_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?);
+    `);
+    for (const row of replacement.rows) {
+      const updatedAt = row.updatedAt ?? Date.now();
+      statement.run(row.id, json(row.payload), updatedAt, ...deviceHistoryIndexValues(row.payload, updatedAt));
     }
     return;
   }
@@ -412,6 +455,7 @@ function rowsForState(state: unknown): Record<(typeof domainTables)[number], Dom
     api_keys: arrayRows(value.apiKeys, 'api-key'),
     devices: arrayRows(value.devices, 'device'),
     device_health: healthRows,
+    device_history: arrayRows(value.deviceActivity, 'device-activity'),
     jobs: [],
     job_timelines: [],
     scheduler_runs: arrayRows(value.schedulerRunHistory, 'scheduler-run'),
