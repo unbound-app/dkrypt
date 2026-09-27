@@ -6,7 +6,19 @@ import { createOtlpMetricsPayload, incrementMetric } from '#metrics.js';
 export interface TraceContext {
   traceId: string;
   spanId: string;
+  traceFlags: number;
   traceparent: string;
+}
+
+type OtlpAttributeValue =
+  | { stringValue: string }
+  | { boolValue: boolean }
+  | { intValue: string }
+  | { doubleValue: number };
+
+interface OtlpAttribute {
+  key: string;
+  value: OtlpAttributeValue;
 }
 
 interface SpanRecord {
@@ -16,7 +28,8 @@ interface SpanRecord {
   name: string;
   startTimeUnixNano: string;
   endTimeUnixNano: string;
-  attributes: Array<{ key: string; value: { stringValue: string } }>;
+  attributes: OtlpAttribute[];
+  flags: number;
   status: { code: number; message?: string };
 }
 
@@ -40,24 +53,59 @@ function hexBytes(bytes: number): string {
 }
 
 function validTraceId(value: string | undefined): value is string {
-  return !!value && /^[0-9a-f]{32}$/i.test(value) && !/^0+$/.test(value);
+  return !!value && /^[0-9a-f]{32}$/.test(value) && !/^0+$/.test(value);
 }
 
 function validSpanId(value: string | undefined): value is string {
-  return !!value && /^[0-9a-f]{16}$/i.test(value) && !/^0+$/.test(value);
+  return !!value && /^[0-9a-f]{16}$/.test(value) && !/^0+$/.test(value);
+}
+
+function traceparentFor(traceId: string, spanId: string, traceFlags: number): string {
+  return `00-${traceId}-${spanId}-${traceFlags.toString(16).padStart(2, '0')}`;
+}
+
+function parseTraceparent(header: string | undefined): TraceContext | undefined {
+  if (!header || header.length < 55) return undefined;
+  const version = header.slice(0, 2);
+  if (!/^[0-9a-f]{2}$/.test(version) || version === 'ff') return undefined;
+  if (header[2] !== '-' || header[35] !== '-' || header[52] !== '-') return undefined;
+  const traceId = header.slice(3, 35);
+  const spanId = header.slice(36, 52);
+  const flagsValue = header.slice(53, 55);
+  if (!/^[0-9a-f]{2}$/.test(flagsValue) || !validTraceId(traceId) || !validSpanId(spanId)) return undefined;
+  if (version === '00' && header.length !== 55) return undefined;
+  if (version !== '00' && header.length > 55 && (header[55] !== '-' || header.length === 56)) return undefined;
+  const traceFlags = Number.parseInt(flagsValue, 16) & 3;
+  return { traceId, spanId, traceFlags, traceparent: traceparentFor(traceId, spanId, traceFlags) };
 }
 
 export function traceContextFromHeader(header: string | undefined): TraceContext {
-  const match = header?.match(/^([\da-f]{2})-([\da-f]{32})-([\da-f]{16})-([\da-f]{2})$/i);
-  const traceId = validTraceId(match?.[2]) ? match[2].toLowerCase() : hexBytes(16);
-  const spanId = validSpanId(match?.[3]) ? match[3].toLowerCase() : hexBytes(8);
-  return { traceId, spanId, traceparent: match?.[0] ?? `00-${traceId}-${spanId}-01` };
+  const parsed = parseTraceparent(header);
+  if (parsed) return parsed;
+  const generatedTraceId = hexBytes(16);
+  const generatedSpanId = hexBytes(8);
+  const sampleRate = Math.min(1, Math.max(0, config.otelSampleRate));
+  const traceFlags = 2 | (Math.random() < sampleRate ? 1 : 0);
+  return {
+    traceId: generatedTraceId,
+    spanId: generatedSpanId,
+    traceFlags,
+    traceparent: traceparentFor(generatedTraceId, generatedSpanId, traceFlags),
+  };
 }
 
-function attributeEntries(attributes: Record<string, string | number | boolean | undefined>): Array<{ key: string; value: { stringValue: string } }> {
-  return Object.entries(attributes)
-    .filter(([, value]) => value !== undefined)
-    .map(([key, value]) => ({ key, value: { stringValue: String(value) } }));
+function attributeEntries(attributes: Record<string, string | number | boolean | undefined>): OtlpAttribute[] {
+  const entries: OtlpAttribute[] = [];
+  for (const [key, value] of Object.entries(attributes)) {
+    if (typeof value === 'string') entries.push({ key, value: { stringValue: value } });
+    else if (typeof value === 'boolean') entries.push({ key, value: { boolValue: value } });
+    else if (typeof value === 'number' && Number.isFinite(value)) {
+      entries.push(Number.isSafeInteger(value)
+        ? { key, value: { intValue: String(value) } }
+        : { key, value: { doubleValue: value } });
+    }
+  }
+  return entries;
 }
 
 export function resolveOtlpEndpoint(signal: 'traces' | 'metrics', signalEndpoint: string | undefined, sharedEndpoint: string | undefined): string | undefined {
@@ -132,15 +180,15 @@ async function postOtlpJson(signal: 'traces' | 'metrics', url: string, payload: 
 }
 
 export function startSpan(name: string, attributes: Record<string, string | number | boolean | undefined> = {}, parent?: TraceContext): SpanHandle {
-  const sampleRate = Math.min(1, Math.max(0, config.otelSampleRate));
   const parentContext = parent ?? traceContextFromHeader(undefined);
   const spanId = hexBytes(8);
   const context: TraceContext = {
     traceId: parentContext.traceId,
     spanId,
-    traceparent: `00-${parentContext.traceId}-${spanId}-01`,
+    traceFlags: parentContext.traceFlags,
+    traceparent: traceparentFor(parentContext.traceId, spanId, parentContext.traceFlags),
   };
-  if (sampleRate === 0 || Math.random() > sampleRate) return { context, setAttributes() {}, end() {} };
+  if ((context.traceFlags & 1) === 0) return { context, setAttributes() {}, end() {} };
   const start = process.hrtime.bigint();
   const mutable = new Map(Object.entries(attributes).filter(([, value]) => value !== undefined));
   let ended = false;
@@ -161,6 +209,7 @@ export function startSpan(name: string, attributes: Record<string, string | numb
         startTimeUnixNano: String(BigInt(Date.now()) * 1_000_000n - duration),
         endTimeUnixNano: String(BigInt(Date.now()) * 1_000_000n),
         attributes: attributeEntries(Object.fromEntries(mutable)),
+        flags: context.traceFlags,
         status: error ? { code: 2, message: error instanceof Error ? error.message : String(error) } : { code: 1 },
       };
       pendingSpans.push(record);
