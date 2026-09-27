@@ -2810,6 +2810,9 @@
                     "versionLabel": {
                       "type": "string"
                     },
+                    "minimumOsVersion": {
+                      "type": "string"
+                    },
                     "source": {
                       "anyOf": [
                         {
@@ -3248,6 +3251,9 @@
                         "versionLabel": {
                           "type": "string"
                         },
+                        "minimumOsVersion": {
+                          "type": "string"
+                        },
                         "source": {
                           "anyOf": [
                             {
@@ -3641,6 +3647,9 @@
                         "versionLabel": {
                           "type": "string"
                         },
+                        "minimumOsVersion": {
+                          "type": "string"
+                        },
                         "source": {
                           "anyOf": [
                             {
@@ -4012,6 +4021,9 @@
                       }
                     },
                     "versionLabel": {
+                      "type": "string"
+                    },
+                    "minimumOsVersion": {
                       "type": "string"
                     },
                     "source": {
@@ -4666,6 +4678,9 @@
                     "versionLabel": {
                       "type": "string"
                     },
+                    "minimumOsVersion": {
+                      "type": "string"
+                    },
                     "source": {
                       "anyOf": [
                         {
@@ -5027,6 +5042,9 @@
                       }
                     },
                     "versionLabel": {
+                      "type": "string"
+                    },
+                    "minimumOsVersion": {
                       "type": "string"
                     },
                     "source": {
@@ -5904,6 +5922,9 @@
                       }
                     },
                     "versionLabel": {
+                      "type": "string"
+                    },
+                    "minimumOsVersion": {
                       "type": "string"
                     },
                     "source": {
@@ -32160,6 +32181,9 @@
                     "versionLabel": {
                       "type": "string"
                     },
+                    "minimumOsVersion": {
+                      "type": "string"
+                    },
                     "source": {
                       "anyOf": [
                         {
@@ -39676,6 +39700,9 @@
                       "versionLabel": {
                         "type": "string"
                       },
+                      "minimumOsVersion": {
+                        "type": "string"
+                      },
                       "queuedBy": {
                         "type": "string"
                       },
@@ -45277,6 +45304,9 @@
                           "category": {
                             "type": "string"
                           },
+                          "minimumOsVersion": {
+                            "type": "string"
+                          },
                           "testflight": {
                             "additionalProperties": true,
                             "type": "object",
@@ -45307,6 +45337,9 @@
                                     },
                                     "name": {
                                       "type": "string"
+                                    },
+                                    "verifiedAt": {
+                                      "type": "number"
                                     }
                                   }
                                 }
@@ -49918,6 +49951,9 @@
                                 },
                                 "name": {
                                   "type": "string"
+                                },
+                                "verifiedAt": {
+                                  "type": "number"
                                 }
                               }
                             }
@@ -51886,6 +51922,11 @@
                     "maxLength": 64,
                     "type": "string"
                   },
+                  "minimumOsVersion": {
+                    "maxLength": 32,
+                    "pattern": "^\\d+(?:\\.\\d+){0,3}$",
+                    "type": "string"
+                  },
                   "preferPrimary": {
                     "type": "boolean"
                   },
@@ -51970,6 +52011,9 @@
                       }
                     },
                     "versionLabel": {
+                      "type": "string"
+                    },
+                    "minimumOsVersion": {
                       "type": "string"
                     },
                     "source": {
@@ -53087,6 +53131,9 @@
                             "type": "string"
                           },
                           "releaseDate": {
+                            "type": "string"
+                          },
+                          "minimumOsVersion": {
                             "type": "string"
                           },
                           "artifactId": {
@@ -69852,6 +69899,9 @@
                     "versionLabel": {
                       "type": "string"
                     },
+                    "minimumOsVersion": {
+                      "type": "string"
+                    },
                     "source": {
                       "anyOf": [
                         {
@@ -71586,6 +71636,9 @@
                       }
                     },
                     "versionLabel": {
+                      "type": "string"
+                    },
+                    "minimumOsVersion": {
                       "type": "string"
                     },
                     "source": {
