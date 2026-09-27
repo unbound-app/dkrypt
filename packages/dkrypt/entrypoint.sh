@@ -64,7 +64,7 @@ fi
 
 umask 007
 start_device_bridge() {
-  setpriv --regid=10001 --clear-groups /usr/local/bin/dkrypt-device-bridge &
+  setpriv --regid=10001 --keep-groups /usr/local/bin/dkrypt-device-bridge &
   bridge_pid=$!
   bridge_started_at=$(date +%s)
 }

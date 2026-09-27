@@ -1066,10 +1066,10 @@ async fn main() -> Result<(), String> {
         return Err("DEVICE_BRIDGE_SECRET must contain at least 32 characters".to_string());
     }
     let mut secrets = vec![secret];
-    if let Ok(previous) = env::var("DEVICE_BRIDGE_SECRET_PREVIOUS") {
-        if previous.len() >= 32 {
-            secrets.push(previous);
-        }
+    if let Ok(previous) = env::var("DEVICE_BRIDGE_SECRET_PREVIOUS")
+        && previous.len() >= 32
+    {
+        secrets.push(previous);
     }
     if let Some(parent) = rpc_socket.parent() {
         std::fs::create_dir_all(parent).map_err(|value| value.to_string())?;
