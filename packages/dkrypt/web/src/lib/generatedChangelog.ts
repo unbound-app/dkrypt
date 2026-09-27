@@ -1,6 +1,11 @@
 export const GENERATED_CHANGELOG = [
   {
     "date": "2026-09-27",
+    "title": "feat(scheduler): support coalesced recovery after restart",
+    "description": "Released in 0fad48c."
+  },
+  {
+    "date": "2026-09-27",
     "title": "fix(web): align pricing plan actions",
     "description": "Released in fc5fed6."
   },
@@ -33,10 +38,5 @@ export const GENERATED_CHANGELOG = [
     "date": "2026-09-27",
     "title": "fix(reliability): detect SSE resets and expand deployment smoke checks",
     "description": "Released in e482c45."
-  },
-  {
-    "date": "2026-09-27",
-    "title": "fix(deploy): load persisted bridge secret in smoke probe",
-    "description": "Released in 0ab549d."
   }
 ] as const;
