@@ -26,7 +26,7 @@ use tokio::{
     process::{Child, Command},
     signal::unix::{SignalKind, signal},
     sync::{Mutex, Notify, mpsc, oneshot},
-    time::{sleep, timeout},
+    time::{Instant, sleep, timeout},
 };
 use uuid::Uuid;
 
@@ -1040,6 +1040,90 @@ async fn stop_netmuxd(child: &mut Child) {
     let _ = child.wait().await;
 }
 
+async fn stop_netmuxd_and_clear_socket(child: &mut Child, socket: &Path) {
+    stop_netmuxd(child).await;
+    let _ = remove_socket_if_present(socket);
+}
+
+fn netmuxd_restart_delay(consecutive_failures: u32) -> Duration {
+    let exponent = consecutive_failures.saturating_sub(1).min(7);
+    Duration::from_millis((250_u64 << exponent).min(30_000))
+}
+
+fn remove_socket_if_present(socket: &Path) -> Result<(), String> {
+    match std::fs::remove_file(socket) {
+        Ok(()) => Ok(()),
+        Err(value) if value.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(value) => Err(format!("could not remove stale netmuxd socket: {value}")),
+    }
+}
+
+async fn supervise_netmuxd(
+    binary: String,
+    socket: PathBuf,
+    pairing_store: PathBuf,
+    shutdown: CancellationToken,
+) {
+    let mut consecutive_failures = 0_u32;
+    loop {
+        if shutdown.cancelled.load(Ordering::Acquire) {
+            break;
+        }
+        let mut failure = remove_socket_if_present(&socket).err();
+        if failure.is_none() {
+            match start_netmuxd(&binary, &socket, &pairing_store) {
+                Ok(mut child) => {
+                    let started_at = Instant::now();
+                    let startup = tokio::select! {
+                        _ = shutdown.cancelled() => {
+                            stop_netmuxd_and_clear_socket(&mut child, &socket).await;
+                            return;
+                        }
+                        status = child.wait() => Err(format!("netmuxd exited before creating its socket: {}", status.map(|value| value.to_string()).unwrap_or_else(|value| value.to_string()))),
+                        result = wait_for_path(&socket) => result,
+                    };
+                    match startup {
+                        Ok(()) => {
+                            let status = tokio::select! {
+                                _ = shutdown.cancelled() => {
+                                    stop_netmuxd_and_clear_socket(&mut child, &socket).await;
+                                    return;
+                                }
+                                status = child.wait() => status.map(|value| value.to_string()).map_err(|value| value.to_string()),
+                            };
+                            failure = Some(match status {
+                                Ok(status) => format!("netmuxd exited with {status}"),
+                                Err(value) => format!("could not wait for netmuxd: {value}"),
+                            });
+                            if started_at.elapsed() >= Duration::from_secs(30) {
+                                consecutive_failures = 0;
+                            }
+                        }
+                        Err(value) => {
+                            stop_netmuxd_and_clear_socket(&mut child, &socket).await;
+                            failure = Some(value);
+                        }
+                    }
+                }
+                Err(value) => failure = Some(value),
+            }
+        }
+        let _ = remove_socket_if_present(&socket);
+        consecutive_failures = consecutive_failures.saturating_add(1).min(30);
+        let delay = netmuxd_restart_delay(consecutive_failures);
+        eprintln!(
+            "netmuxd unavailable; restarting in {}ms: {}",
+            delay.as_millis(),
+            failure.unwrap_or_else(|| "unknown netmuxd failure".to_string())
+        );
+        tokio::select! {
+            _ = shutdown.cancelled() => break,
+            _ = sleep(delay) => {}
+        }
+    }
+    let _ = remove_socket_if_present(&socket);
+}
+
 fn start_netmuxd(binary: &str, socket: &Path, pairing_store: &Path) -> Result<Child, String> {
     Command::new(binary)
         .arg("--socket-path")
@@ -1086,15 +1170,6 @@ async fn main() -> Result<(), String> {
     if rpc_socket.exists() {
         std::fs::remove_file(&rpc_socket).map_err(|value| value.to_string())?;
     }
-    if mux_socket.exists() {
-        std::fs::remove_file(&mux_socket).map_err(|value| value.to_string())?;
-    }
-    let binary = env::var("NETMUXD_BIN").unwrap_or_else(|_| "netmuxd".to_string());
-    let mut netmuxd = start_netmuxd(&binary, &mux_socket, &pairing_store)?;
-    if let Err(error) = wait_for_path(&mux_socket).await {
-        stop_netmuxd(&mut netmuxd).await;
-        return Err(error);
-    }
     let host_id = env::var("DEVICE_BRIDGE_HOST_ID").unwrap_or_else(|_| Uuid::new_v4().to_string());
     let state = Arc::new(BridgeState {
         secrets,
@@ -1112,35 +1187,40 @@ async fn main() -> Result<(), String> {
     std::fs::set_permissions(&rpc_socket, permissions).map_err(|value| value.to_string())?;
     let mut terminate = signal(SignalKind::terminate()).map_err(|value| value.to_string())?;
     let mut interrupt = signal(SignalKind::interrupt()).map_err(|value| value.to_string())?;
-    loop {
+    let binary = env::var("NETMUXD_BIN").unwrap_or_else(|_| "netmuxd".to_string());
+    let shutdown = CancellationToken::new();
+    let supervisor_shutdown = shutdown.clone();
+    let supervisor = tokio::spawn(supervise_netmuxd(
+        binary,
+        state.mux_socket.clone(),
+        pairing_store,
+        supervisor_shutdown,
+    ));
+    let outcome = loop {
         tokio::select! {
             accepted = listener.accept() => {
-                let (stream, _) = accepted.map_err(|value| value.to_string())?;
-                let client_state = state.clone();
-                tokio::spawn(async move {
-                    handle_client(stream, client_state).await;
-                });
+                match accepted {
+                    Ok((stream, _)) => {
+                        let client_state = state.clone();
+                        tokio::spawn(async move {
+                            handle_client(stream, client_state).await;
+                        });
+                    }
+                    Err(value) => break Err(value.to_string()),
+                }
             }
-            _ = terminate.recv() => {
-                stop_netmuxd(&mut netmuxd).await;
-                let _ = std::fs::remove_file(&rpc_socket);
-                let _ = std::fs::remove_file(&state.mux_socket);
-                return Ok(());
-            }
-            _ = interrupt.recv() => {
-                stop_netmuxd(&mut netmuxd).await;
-                let _ = std::fs::remove_file(&rpc_socket);
-                let _ = std::fs::remove_file(&state.mux_socket);
-                return Ok(());
-            }
-            exited = netmuxd.wait() => {
-                let status = exited.map_err(|value| value.to_string())?;
-                let _ = std::fs::remove_file(&rpc_socket);
-                let _ = std::fs::remove_file(&state.mux_socket);
-                return Err(format!("netmuxd exited with {status}"));
-            }
+            _ = terminate.recv() => break Ok(()),
+            _ = interrupt.recv() => break Ok(()),
         }
+    };
+    shutdown.cancel();
+    let supervisor_result = supervisor.await;
+    let _ = std::fs::remove_file(&rpc_socket);
+    let _ = remove_socket_if_present(&state.mux_socket);
+    if let Err(value) = supervisor_result {
+        return Err(format!("netmuxd supervisor failed: {value}"));
     }
+    outcome
 }
 
 #[cfg(test)]
@@ -1148,8 +1228,9 @@ mod tests {
     use super::{
         AgentConnectFuture, AgentConnector, AgentStream, BridgeState, CancellationToken,
         MAX_FRAME_BYTES, RPC_VERSION, UsbmuxdAgentConnector, authorized_secret,
-        bridge_capabilities, error, failure, handle_client, read_agent_frame, read_frame,
-        request_agent_exchange, response, valid_frame_length, write_agent_frame,
+        bridge_capabilities, error, failure, handle_client, netmuxd_restart_delay,
+        read_agent_frame, read_frame, request_agent_exchange, response, supervise_netmuxd,
+        valid_frame_length, write_agent_frame,
     };
     use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
     use hmac::{Hmac, Mac};
@@ -1157,6 +1238,8 @@ mod tests {
     use sha2::Sha256;
     use std::{
         collections::HashMap,
+        fs,
+        os::unix::fs::PermissionsExt,
         path::PathBuf,
         sync::{Arc, atomic::AtomicU64},
         time::{Duration, SystemTime, UNIX_EPOCH},
@@ -1266,6 +1349,68 @@ mod tests {
     #[test]
     fn cancellation_is_advertised_as_a_bridge_capability() {
         assert!(bridge_capabilities().contains(&"cancel"));
+    }
+
+    #[test]
+    fn netmuxd_restart_delay_grows_exponentially_and_caps_at_thirty_seconds() {
+        assert_eq!(netmuxd_restart_delay(1), Duration::from_millis(250));
+        assert_eq!(netmuxd_restart_delay(2), Duration::from_millis(500));
+        assert_eq!(netmuxd_restart_delay(8), Duration::from_secs(30));
+        assert_eq!(netmuxd_restart_delay(30), Duration::from_secs(30));
+    }
+
+    #[tokio::test]
+    async fn netmuxd_supervisor_restarts_an_exited_child_and_stops_cleanly() {
+        let directory = PathBuf::from(format!("/tmp/dkrypt-netmuxd-{}", uuid::Uuid::new_v4()));
+        let socket_path = directory.join("netmuxd.sock");
+        let pairing_store = directory.join("pairing");
+        let restart_counter = pairing_store.join("restarts");
+        let executable = directory.join("netmuxd-fixture");
+        fs::create_dir_all(&pairing_store).expect("pairing directory should be created");
+        fs::write(
+            &executable,
+            "#!/bin/sh\nset -eu\nsocket=\nstore=\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"--socket-path\" ]; then socket=$2; shift 2; elif [ \"$1\" = \"--plist-storage\" ]; then store=$2; shift 2; else shift; fi\ndone\nprintf x >> \"$store/restarts\"\n: > \"$socket\"\nsleep 0.4\n",
+        )
+        .expect("fixture executable should be written");
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))
+            .expect("fixture executable should be made executable");
+
+        let shutdown = CancellationToken::new();
+        let supervisor = tokio::spawn(supervise_netmuxd(
+            executable.to_string_lossy().into_owned(),
+            socket_path.clone(),
+            pairing_store,
+            shutdown.clone(),
+        ));
+
+        timeout(Duration::from_secs(2), async {
+            loop {
+                if socket_path.exists() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .expect("supervisor did not expose its socket");
+        timeout(Duration::from_secs(3), async {
+            loop {
+                if fs::read_to_string(&restart_counter).is_ok_and(|value| value.len() >= 2) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .expect("supervisor did not restart netmuxd after it exited");
+
+        shutdown.cancel();
+        timeout(Duration::from_secs(2), supervisor)
+            .await
+            .expect("supervisor did not stop")
+            .expect("supervisor task panicked");
+        assert!(!socket_path.exists());
+        fs::remove_dir_all(directory).expect("fixture directory should be removed");
     }
 
     #[tokio::test]
