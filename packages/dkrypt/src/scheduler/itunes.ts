@@ -13,6 +13,7 @@ export interface ItunesLookupResult {
   bundleId: string;
   trackId: number;
   fileSizeBytes?: number;
+  minimumOsVersion?: string;
 }
 
 export interface ItunesAppMetadata {
@@ -37,6 +38,7 @@ interface ItunesLookupResponse {
     bundleId: string;
     trackId: number;
     fileSizeBytes?: number;
+    minimumOsVersion?: string;
     trackName?: string;
     sellerName?: string;
     artworkUrl60?: string;
@@ -71,6 +73,7 @@ export async function lookupCurrentVersion(bundleId: string, signal?: AbortSigna
     bundleId: result.bundleId,
     trackId: result.trackId,
     fileSizeBytes: parseFileSizeBytes(result.fileSizeBytes),
+    minimumOsVersion: result.minimumOsVersion,
   };
 }
 
@@ -110,6 +113,7 @@ export interface ItunesSearchResult {
   artworkUrl: string;
   price: number;
   category?: string;
+  minimumOsVersion?: string;
 }
 
 interface ItunesSearchResponse {
@@ -123,6 +127,7 @@ interface ItunesSearchResponse {
     artworkUrl100?: string;
     price: number;
     primaryGenreName?: string;
+    minimumOsVersion?: string;
   }>;
 }
 
@@ -141,5 +146,6 @@ export async function searchApps(term: string, limit = 10): Promise<ItunesSearch
     artworkUrl: r.artworkUrl100 || r.artworkUrl60 || '',
     price: r.price,
     category: r.primaryGenreName,
+    minimumOsVersion: r.minimumOsVersion,
   }));
 }

@@ -11,6 +11,7 @@ export interface AppVersionEntry {
   displayVersion?: string;
   bundleVersion?: string;
   releaseDate?: string;
+  minimumOsVersion?: string;
 }
 
 export interface CommunityVersionInfo {
@@ -61,10 +62,10 @@ async function fetchAppVersions(bundleId: string): Promise<AppVersionEntry[]> {
   const current = await lookupCurrentVersion(bundleId);
   const community = await fetchCommunityVersionLabels(current.trackId);
 
-  return buildAppVersionEntries(current.version, community);
+  return buildAppVersionEntries(current.version, community, current.minimumOsVersion);
 }
 
-export function buildAppVersionEntries(currentVersion: string, community: Map<string, CommunityVersionInfo>): AppVersionEntry[] {
+export function buildAppVersionEntries(currentVersion: string, community: Map<string, CommunityVersionInfo>, minimumOsVersion?: string): AppVersionEntry[] {
   // The community history is useful for pinned historical releases, but the
   // current version is always taken from the current App Store lookup. When
   // the history service has not observed the current release yet, the
@@ -79,6 +80,7 @@ export function buildAppVersionEntries(currentVersion: string, community: Map<st
       externalVersionId: currentHistoryEntry?.[0],
       isLatest: true,
       displayVersion: currentVersion,
+      minimumOsVersion,
     },
   ];
 

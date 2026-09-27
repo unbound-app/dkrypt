@@ -430,9 +430,12 @@ async function tickAppStore(watch: AppWatch): Promise<DispatchResult> {
   const normalized = check.normalizedVersion as string;
 
   let externalVersionId: string | undefined;
+  let minimumOsVersion: string | undefined;
   try {
     const versions = await listAppVersions(watch.bundleId);
-    externalVersionId = resolveAppStoreDecryptTarget(versions, normalized).externalVersionId;
+    const target = resolveAppStoreDecryptTarget(versions, normalized);
+    externalVersionId = target.externalVersionId;
+    minimumOsVersion = target.minimumOsVersion;
     if (!externalVersionId) {
       log.info('no App Store external version id matched the current version, dispatching an unpinned install that will verify the installed version', {
         bundleId: watch.bundleId,
@@ -448,7 +451,12 @@ async function tickAppStore(watch: AppWatch): Promise<DispatchResult> {
 
   log.info('no matching release found, decrypting', { bundleId: watch.bundleId, version: normalized, externalVersionId });
 
-  const job = enqueueDecryptJob(watch.bundleId, 'scheduler', externalVersionId, undefined, normalized, undefined, 0, undefined, undefined, watch.projectId ?? DEFAULT_PROJECT_ID);
+  const job = enqueueDecryptJob(watch.bundleId, 'scheduler', {
+    externalVersionId,
+    versionLabel: normalized,
+    projectId: watch.projectId ?? DEFAULT_PROJECT_ID,
+    minimumOsVersion,
+  });
   const result = await decryptAndDispatch(job, watch, false, `v${normalized}`, dispatchTargets);
   result.outcome = { ...result.outcome, observedVersion: normalized, installMode: externalVersionId ? 'pinned' : 'current' };
   return result;
@@ -497,7 +505,10 @@ async function tickTestFlight(watch: AppWatch): Promise<DispatchResult> {
     tag: check.latestTag,
   });
 
-  const job = enqueueDecryptJob(watch.bundleId, 'scheduler', undefined, { appId: check.appId as number, build: check.build }, undefined, undefined, 0, undefined, undefined, watch.projectId ?? DEFAULT_PROJECT_ID);
+  const job = enqueueDecryptJob(watch.bundleId, 'scheduler', {
+    testflight: { appId: check.appId as number, build: check.build },
+    projectId: watch.projectId ?? DEFAULT_PROJECT_ID,
+  });
   return decryptAndDispatch(job, watch, true, check.latestTag as string, dispatchTargets);
 }
 

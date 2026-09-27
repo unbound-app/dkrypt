@@ -502,7 +502,7 @@
 	}
 
 	async function decryptAgain(entry: JobHistoryEntry, notifySuccess = true): Promise<BulkRetryResult> {
-		const { bundleId, testflight, externalVersionId, versionLabel } = entry;
+		const { bundleId, testflight, externalVersionId, versionLabel, minimumOsVersion } = entry;
 		requeueing = new Set(requeueing).add(entry.id);
 		try {
 			const { ok, data } = testflight
@@ -511,7 +511,7 @@
 						testflight.appId,
 						testflight.build,
 					)
-				: await queueDecrypt(bundleId, externalVersionId, versionLabel);
+				: await queueDecrypt(bundleId, externalVersionId, versionLabel, false, minimumOsVersion);
 			if (!ok) {
 				const responseError = (data as unknown as { error?: unknown }).error;
 				return {

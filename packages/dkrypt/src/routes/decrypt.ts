@@ -13,6 +13,7 @@ import { apiIdempotencyRegistry } from '#idempotency.js';
 import { artifactDownloadName, artifactFileAvailable, getArtifactById, listArtifacts, touchArtifact } from '#artifacts.js';
 import { normalizeVersionSelector, resolveDecryptTarget, VERSION_SELECTOR_RE } from '#decryptTarget.js';
 import { getRouteContract } from '#contracts.js';
+import { scopedLogger } from '#logger.js';
 
 interface TestFlightCatalogServices {
   listTrains: typeof listTrains;
@@ -40,6 +41,7 @@ const EXTERNAL_VERSION_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const IDEMPOTENCY_KEY_RE = /^[A-Za-z0-9._:-]{1,200}$/;
 const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
 const idempotencyLocks = new Map<string, Promise<void>>();
+const log = scopedLogger('decrypt');
 
 class IdempotencyRequestError extends Error {
   constructor(readonly statusCode: 403 | 409 | 410, message: string) {
@@ -239,17 +241,25 @@ export function createDecryptRoutes(
             createJob: async () => {
               if (apiKey.keyId) services.recordApiKeyBundleUsage(apiKey.keyId, bundleId);
               if (!selector) {
+                let minimumOsVersion: string | undefined;
+                if (!versionId) {
+                  try {
+                    minimumOsVersion = (await services.resolveDecryptTarget(bundleId)).minimumOsVersion;
+                  } catch (error) {
+                    log.warn('App Store minimum iOS lookup failed before API decrypt dispatch', { bundleId, error: String(error) });
+                  }
+                }
                 return services.enqueueDecryptJob(
                   bundleId,
                   'manual',
-                  versionId,
-                  undefined,
-                  undefined,
-                  apiKey.ownerId,
-                  apiKey.priority ?? 0,
-                  undefined,
-                  apiKey.keyId,
-                  projectId,
+                  {
+                    externalVersionId: versionId,
+                    queuedBy: apiKey.ownerId,
+                    priority: apiKey.priority ?? 0,
+                    apiKeyId: apiKey.keyId,
+                    projectId,
+                    minimumOsVersion,
+                  },
                 );
               }
 
@@ -265,14 +275,16 @@ export function createDecryptRoutes(
               return services.enqueueDecryptJob(
                 bundleId,
                 'manual',
-                target.externalVersionId,
-                target.testflight,
-                target.versionLabel,
-                apiKey.ownerId,
-                apiKey.priority ?? 0,
-                undefined,
-                apiKey.keyId,
-                projectId,
+                {
+                  externalVersionId: target.externalVersionId,
+                  testflight: target.testflight,
+                  versionLabel: target.versionLabel,
+                  queuedBy: apiKey.ownerId,
+                  priority: apiKey.priority ?? 0,
+                  apiKeyId: apiKey.keyId,
+                  projectId,
+                  minimumOsVersion: target.minimumOsVersion,
+                },
               );
             },
           });
@@ -373,14 +385,16 @@ export function createDecryptRoutes(
               return services.enqueueDecryptJob(
                 bundleId,
                 'manual',
-                target.externalVersionId,
-                target.testflight,
-                target.versionLabel,
-                apiKey.ownerId,
-                apiKey.priority ?? 0,
-                undefined,
-                apiKey.keyId,
-                projectId,
+                {
+                  externalVersionId: target.externalVersionId,
+                  testflight: target.testflight,
+                  versionLabel: target.versionLabel,
+                  queuedBy: apiKey.ownerId,
+                  priority: apiKey.priority ?? 0,
+                  apiKeyId: apiKey.keyId,
+                  projectId,
+                  minimumOsVersion: target.minimumOsVersion,
+                },
               );
             },
           });
@@ -455,14 +469,13 @@ export function createDecryptRoutes(
               return services.enqueueDecryptJob(
                 bundleId,
                 'manual',
-                undefined,
-                { appId, build },
-                undefined,
-                apiKey.ownerId,
-                apiKey.priority ?? 0,
-                undefined,
-                apiKey.keyId,
-                projectId,
+                {
+                  testflight: { appId, build },
+                  queuedBy: apiKey.ownerId,
+                  priority: apiKey.priority ?? 0,
+                  apiKeyId: apiKey.keyId,
+                  projectId,
+                },
               );
             },
           });

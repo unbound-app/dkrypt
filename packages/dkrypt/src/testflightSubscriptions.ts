@@ -25,10 +25,12 @@ import {
   type TestFlightSubscriptionDevice,
 } from '#store/state.js';
 import { listTestFlightApps, statusTestFlightInvite, subscribeToTestFlightInvite, unsubscribeFromTestFlightInvite, type TFDeviceApp } from '#testflight.js';
+import { TESTFLIGHT_VERIFICATION_TTL_MS } from '#testflightPolicy.js';
+import { notifyDeviceDispatchStateChanged } from '#jobs/store.js';
 
 const log = scopedLogger('testflight');
 
-export const TESTFLIGHT_VERIFICATION_TTL_MS = 30 * 60_000;
+export { TESTFLIGHT_VERIFICATION_TTL_MS } from '#testflightPolicy.js';
 const TESTFLIGHT_INVITE_PATH = /^\/join\/([A-Za-z0-9]{4,32})\/?$/;
 const TESTFLIGHT_HTML_LIMIT = 2_000_000;
 const TESTFLIGHT_SYNC_CONCURRENCY = 3;
@@ -61,7 +63,7 @@ export interface TestFlightCatalogApp {
   iconUrl?: string;
   sellerName?: string;
   category?: string;
-  devices: Array<{ id: string; name: string }>;
+  devices: Array<{ id: string; name: string; verifiedAt?: number }>;
   lastVerifiedAt: number;
   deviceSource: true;
 }
@@ -233,7 +235,7 @@ export function readTestFlightCatalogCache(cache: TestFlightCatalogCache | undef
   const sameDevices = enabledDeviceIds.length === cachedDeviceIds.length && enabledDeviceIds.every((id, index) => id === cachedDeviceIds[index]);
   const enabledDeviceSet = new Set(enabledDeviceIds);
   const apps = cache.apps
-    .map((app) => ({ ...app, devices: app.devices.filter((device) => enabledDeviceSet.has(device.id)) }))
+    .map(({ devices, ...app }) => ({ ...app, devices: devices.filter((device) => enabledDeviceSet.has(device.id)).map(({ id, name, verifiedAt }) => ({ id, name, verifiedAt })) }))
     .filter((app) => app.devices.length > 0);
   return {
     apps,
@@ -249,7 +251,7 @@ export function mergeDeviceTestFlightApps(entries: Array<{ device: DeviceRecord;
       const key = appKey(app);
       const storeMetadata = metadata.get(app.bundleId);
       const current = byApp.get(key);
-      const device = { id: entry.device.id, name: entry.device.name };
+      const device = { id: entry.device.id, name: entry.device.name, verifiedAt: entry.fetchedAt };
       if (current) {
         if (!current.devices.some((candidate) => candidate.id === device.id)) current.devices.push(device);
         current.lastVerifiedAt = Math.max(current.lastVerifiedAt, entry.fetchedAt);
@@ -337,6 +339,7 @@ export function refreshTestFlightCatalogInBackground(force = false): void {
   void trackBackgroundWork('testflight-catalog-refresh', () => refreshTestFlightCatalog(false, force))
     .then(() => {
       catalogRefreshFailureAt = undefined;
+      notifyDeviceDispatchStateChanged();
     })
     .catch(() => {
       catalogRefreshFailureAt = Date.now();
@@ -583,6 +586,7 @@ export async function syncApprovedTestFlightSubscriptions(): Promise<void> {
 let syncTimer: NodeJS.Timeout | undefined;
 
 export function startTestFlightSubscriptionPoller(): void {
+  refreshTestFlightCatalogInBackground();
   if (!syncTimer) syncTimer = setInterval(() => {
     void trackBackgroundWork('testflight-subscription-sync', syncApprovedTestFlightSubscriptions)
       .catch((error: unknown) => log.warn('TestFlight subscription poll failed', { error: String(error) }));

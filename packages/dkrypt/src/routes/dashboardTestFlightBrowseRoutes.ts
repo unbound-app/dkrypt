@@ -242,14 +242,13 @@ export function createDashboardTestFlightBrowseRoutes(overrides: Partial<TestFli
       const job = services.enqueueDecryptJob(
         bundleId,
         'manual',
-        undefined,
-        { appId, build },
-        undefined,
-        session.sub,
-        getUserPriority(session.sub),
-        preferredDeviceId,
-        undefined,
-        projectId,
+        {
+          testflight: { appId, build },
+          queuedBy: session.sub,
+          priority: getUserPriority(session.sub),
+          preferredDeviceId,
+          projectId,
+        },
       );
       reply.code(202);
       return jobSummary(job);

@@ -129,11 +129,12 @@ test('app search decorates TestFlight shortcuts and refreshes only missing catal
         artworkUrl: 'https://example.com/icon.png',
         price: 0,
         category: 'Utilities',
+        minimumOsVersion: '17.0',
       }];
     },
     decorateSearchResults: async (results) => results.map((result) => ({
       ...result,
-      testflight: { appId: result.trackId, devices: [{ id: 'ipad', name: 'iPad' }], lastVerifiedAt: 123 },
+      testflight: { appId: result.trackId, devices: [{ id: 'ipad', name: 'iPad', verifiedAt: 123 }], lastVerifiedAt: 123 },
     })),
     lookupAppMetadata: async (bundleId) => {
       lookups.push(bundleId);
@@ -176,7 +177,7 @@ test('app search decorates TestFlight shortcuts and refreshes only missing catal
     });
 
     expect(search.statusCode).toBe(200);
-    expect(JSON.parse(search.body)).toMatchObject({ results: [{ testflight: { appId: 12345, devices: [{ id: 'ipad' }] } }] });
+    expect(JSON.parse(search.body)).toMatchObject({ results: [{ minimumOsVersion: '17.0', testflight: { appId: 12345, devices: [{ id: 'ipad', verifiedAt: 123 }] } }] });
     expect(metadata.statusCode).toBe(200);
     expect(JSON.parse(metadata.body)).toMatchObject({ entries: [
       { bundleId: 'com.example.app', displayName: 'Example app' },

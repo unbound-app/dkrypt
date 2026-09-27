@@ -31,6 +31,7 @@ export interface Job {
   externalVersionId?: string;
   testflight?: TestFlightJobSource;
   versionLabel?: string;
+  minimumOsVersion?: string;
   source: JobSource;
   queuedBy?: string;
   apiKeyId?: string;

@@ -3,12 +3,14 @@ import { trackBackgroundWork } from '#backgroundWork.js';
 import { execCommand, getRustDeviceBridgeHealth, isRustDeviceConnection, isTestFlightRunning, probeDeviceSshTunnel, readBridgeHeartbeats, sendSpringBoardBridgeRequest, tryIoregCandidates, withSSH, type BridgeHeartbeat, type DeviceClient, type DeviceConnection, type DeviceTransport } from '#idevice.js';
 import { scopedLogger } from '#logger.js';
 import { EMBED_COLOR, notify } from '#notify.js';
-import { releasePinnedJobsForDevice } from '#jobs/store.js';
+import { notifyDeviceDispatchStateChanged, releasePinnedJobsForDevice } from '#jobs/store.js';
 import { getConsecutiveDeviceHealthFailures, getEffectiveDevices, getEffectiveSettings, recordDeviceActivity, recordDeviceHealthCheck, type DeviceRecord } from '#store/state.js';
 import { getDiskUsage } from '#util/diskUsage.js';
 import { getCachedDeviceHealth, setCachedDeviceHealth } from '#deviceHealthCache.js';
 import { incrementMetric, observeMetric, setGaugeMetric } from '#metrics.js';
 import { throwIfAborted } from '#util/abort.js';
+import { isBridgeHeartbeatFresh } from '#deviceInstallEligibility.js';
+export { getDeviceInstallBlocker, isBridgeHeartbeatFresh } from '#deviceInstallEligibility.js';
 
 const log = scopedLogger('idevice');
 
@@ -92,45 +94,13 @@ export interface DeviceReadiness {
   reasons: string[];
 }
 
-const BRIDGE_HEARTBEAT_MAX_AGE_MS = 90_000;
-const INSTALL_STORAGE_SAFETY_MULTIPLIER = 2;
-
 export function formatTestFlightBridgeDownDescription(deviceName: string, alertMinutes: number): string {
   return `The autoinstall SpringBoard bridge on ${deviceName} has stopped responding for at least ${alertMinutes} minutes - TestFlight installs and the scheduler's TestFlight watch can't run until it recovers.`;
-}
-
-function formatGigabytes(bytes: number): string {
-  return `${(bytes / 1_000_000_000).toFixed(1)} GB`;
-}
-
-export function isBridgeHeartbeatFresh(heartbeat: BridgeHeartbeat | undefined, now = Date.now()): boolean {
-  return typeof heartbeat?.at === 'number' && now - heartbeat.at * 1000 <= BRIDGE_HEARTBEAT_MAX_AGE_MS;
 }
 
 export function testFlightBridgeReachability(health: Pick<DeviceHealth, 'reachable' | 'testFlightBridgeReachable'>): boolean | undefined {
   if (!health.reachable) return undefined;
   return health.testFlightBridgeReachable;
-}
-
-export function getDeviceInstallBlocker(health: DeviceHealth, installSizeBytes?: number): string | undefined {
-  if (!health.reachable) return health.error ?? 'device is unreachable';
-  if (health.subsystems?.agent === 'offline') return 'device agent is unavailable while the USB transport is still connected';
-  if (health.subsystems?.sshTunnel === 'degraded' || health.subsystems?.sshTunnel === 'offline') return 'device SSH/SFTP tunnel is unavailable for decrypt';
-  if (health.internetAccess === false) return 'device cannot reach Apple services';
-  if (health.testFlightBridgeReachable === false) return 'autoinstall bridge is unresponsive';
-  if (health.bridgeHeartbeats?.springboard && !isBridgeHeartbeatFresh(health.bridgeHeartbeats.springboard)) return 'autoinstall SpringBoard heartbeat is stale';
-  if (health.batteryPercent !== undefined && !health.batteryCharging && health.batteryPercent < 15) return `device battery is ${health.batteryPercent}% and not charging`;
-  if (health.batteryTemperatureC !== undefined && health.batteryTemperatureC >= 45) return `device temperature is ${health.batteryTemperatureC.toFixed(1)}°C`;
-  const normalizedInstallSizeBytes = typeof installSizeBytes === 'number' && Number.isFinite(installSizeBytes) && installSizeBytes > 0 ? installSizeBytes : undefined;
-  if (
-    health.storageFreeBytes !== undefined &&
-    normalizedInstallSizeBytes !== undefined &&
-    health.storageFreeBytes < normalizedInstallSizeBytes * INSTALL_STORAGE_SAFETY_MULTIPLIER
-  ) {
-    const requiredBytes = normalizedInstallSizeBytes * INSTALL_STORAGE_SAFETY_MULTIPLIER;
-    return `device has ${formatGigabytes(health.storageFreeBytes)} free storage; install needs ${formatGigabytes(requiredBytes)} (2× build size)`;
-  }
-  return undefined;
 }
 
 export function getDeviceReadiness(health: DeviceHealth): DeviceReadiness {
@@ -809,6 +779,7 @@ function warnOnMissingTelemetry(device: DeviceRecord, health: DeviceHealth): voi
 
 async function pollOneDevice(device: DeviceRecord): Promise<void> {
   const health = await getDeviceHealth(device.id, true);
+  notifyDeviceDispatchStateChanged();
   warnOnMissingTelemetry(device, health);
   recordDeviceHealthCheck(
     device.id,

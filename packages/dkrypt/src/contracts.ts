@@ -307,6 +307,7 @@ export const JobSummaryResponse = object({
   externalVersionId: Type.Optional(Identifier),
   testflight: Type.Optional(object({ appId: Type.Number(), buildId: Type.Number(), version: Type.Optional(Type.String()), buildNumber: Type.Optional(Type.String()) })),
   versionLabel: Type.Optional(Type.String()),
+  minimumOsVersion: Type.Optional(Type.String()),
   source: Type.Union([Type.Literal('manual'), Type.Literal('scheduler')]),
   channel: Type.Union([Type.Literal('appstore'), Type.Literal('testflight')]),
   queuedBy: Type.Optional(Type.String()),

@@ -248,8 +248,8 @@ test('API artifact access follows project membership and keeps project selectors
     await server.register(createDecryptRoutes({
       resolveDecryptTarget: async (bundleId) => ({ bundleId, selector: undefined, channel: 'appstore', externalVersionId: 'project-build', versionLabel: '1.0', artifactKey: 'project-build' }),
       enqueueDecryptJob: (...args) => {
-        enqueuedProjectIds.push(args[9]);
-        return { ...projectJob, projectId: args[9] };
+        enqueuedProjectIds.push(args[2]?.projectId);
+        return { ...projectJob, projectId: args[2]?.projectId };
       },
       getJob: (id) => id === projectJob.id ? projectJob : undefined,
       waitForJob: async (job) => job,
@@ -358,7 +358,7 @@ test('typed decrypt submission routes preserve API-key scopes and resolved job r
             artifactKey: 'testflight-artifact',
           };
         }
-        return { bundleId, selector: selector?.replace(/^v/i, ''), channel: 'appstore', externalVersionId: '12345', versionLabel: '2.0', artifactKey: 'appstore-artifact' };
+        return { bundleId, selector: selector?.replace(/^v/i, ''), channel: 'appstore', externalVersionId: '12345', versionLabel: '2.0', minimumOsVersion: '17.0', artifactKey: 'appstore-artifact' };
       },
       enqueueDecryptJob: (...args) => {
         enqueued.push(args);
@@ -415,7 +415,14 @@ test('typed decrypt submission routes preserve API-key scopes and resolved job r
       cacheHit: false,
     });
     expect(enqueued).toHaveLength(1);
-    expect(enqueued[0]).toMatchObject(['com.example.allowed', 'manual', '12345', undefined, '2.0', 'root', 0, undefined, allowedKey.id, 'default']);
+    expect(enqueued[0]).toMatchObject(['com.example.allowed', 'manual', {
+      externalVersionId: '12345',
+      versionLabel: '2.0',
+      queuedBy: 'root',
+      priority: 0,
+      apiKeyId: allowedKey.id,
+      projectId: 'default',
+    }]);
     expect(usage).toEqual([[allowedKey.id, 'com.example.allowed']]);
     const resolvedBeforeRetry = resolved.length;
 
@@ -497,14 +504,13 @@ test('typed decrypt submission routes preserve API-key scopes and resolved job r
     expect(enqueued[2]).toMatchObject([
       'com.example.allowed',
       'manual',
-      undefined,
-      { appId: 123, build: testFlightPayload.build },
-      undefined,
-      'root',
-      0,
-      undefined,
-      testFlightKey.id,
-      'default',
+      {
+        testflight: { appId: 123, build: testFlightPayload.build },
+        queuedBy: 'root',
+        priority: 0,
+        apiKeyId: testFlightKey.id,
+        projectId: 'default',
+      },
     ]);
 
     const duplicateTestFlight = await server.inject({ method: 'POST', url: '/v1/testflight/decrypt', headers: testFlightHeaders, payload: testFlightPayload });
@@ -568,6 +574,14 @@ test('typed decrypt submission routes preserve API-key scopes and resolved job r
     });
     expect(conflictingLegacyGet.statusCode).toBe(409);
     expect(enqueued).toHaveLength(enqueuedBeforeLegacyGet + 1);
+
+    const noSelector = await server.inject({
+      method: 'GET',
+      url: '/v1/decrypt?bundleId=com.example.allowed',
+      headers: { authorization: `Bearer ${allowedKey.key}`, 'idempotency-key': `current-${crypto.randomUUID()}` },
+    });
+    expect(noSelector.statusCode).toBe(202);
+    expect(enqueued.at(-1)).toMatchObject(['com.example.allowed', 'manual', { minimumOsVersion: '17.0' }]);
 
     const previousMaintenance = getEffectiveSettings().maintenanceMode;
     updateSettings({ maintenanceMode: true }, 'test');

@@ -6,10 +6,11 @@ import path from 'node:path';
 import { config } from '#config.js';
 import { artifactKeyForJob, promoteArtifact } from '#artifacts.js';
 import { currentCorrelation, withCorrelation } from '#correlation.js';
-import { createDevice, createProject, deleteDevice, getJobHistoryEntryById } from '#store/state.js';
+import { createDevice, createProject, deleteDevice, getJobHistoryEntryById, type DeviceRecord } from '#store/state.js';
 import { traceContextFromHeader } from '#telemetry.js';
 import { getRecentLogs } from '#logger.js';
 import { loadPersistedJobs } from '#jobs/repository.js';
+import { setCachedDeviceHealth } from '#deviceHealthCache.js';
 import type { Job } from '#jobs/types.js';
 
 let retryDeadlineAttempts = 0;
@@ -31,7 +32,7 @@ mock.module('./runner.js', () => ({
   },
 }));
 
-const { cancelJob, cancelQueuedJob, enqueueDecryptJob, getActiveJobs, getJob, getQueueInfo, getQueueReason, isJobDispatchable, prioritizeQueuedJob, reclaimJobFile, recoverPersistedActiveJobs, reorderQueue, waitForJob } = await import('./store.js');
+const { cancelJob, cancelQueuedJob, enqueueDecryptJob, getActiveJobs, getJob, getQueueInfo, getQueueReason, isJobDispatchable, notifyDeviceDispatchStateChanged, prioritizeQueuedJob, reclaimJobFile, recoverPersistedActiveJobs, reorderQueue, waitForJob } = await import('./store.js');
 
 let testDeviceId = '';
 
@@ -83,10 +84,10 @@ describe('recoverPersistedActiveJobs', () => {
 });
 
 describe('enqueueDecryptJob', () => {
-  test('allows TestFlight jobs on any enabled device', () => {
-    const job = { preferredDeviceId: undefined } as Pick<Job, 'preferredDeviceId'>;
+  test('allows unpinned jobs on any enabled device when no blocker is known', () => {
+    const job = { preferredDeviceId: undefined } as Job;
 
-    expect(isJobDispatchable(job, { id: 'secondary-device' })).toBeTrue();
+    expect(isJobDispatchable(job, { id: 'secondary-device' } as DeviceRecord)).toBeTrue();
   });
 
   test('propagates request trace context into queued job execution', async () => {
@@ -169,7 +170,7 @@ describe('enqueueDecryptJob', () => {
     config.jobMaxWaitSeconds = 0;
 
     try {
-      const job = enqueueDecryptJob(`com.test.expired-${crypto.randomUUID()}`, 'manual', undefined, undefined, undefined, undefined, 0, 'missing-device');
+      const job = enqueueDecryptJob(`com.test.expired-${crypto.randomUUID()}`, 'manual', { preferredDeviceId: 'missing-device' });
       await expect(waitForJob(job, 100)).resolves.toMatchObject({
         status: 'failed',
         deadlineExceeded: true,
@@ -192,9 +193,9 @@ describe('enqueueDecryptJob', () => {
       externalVersionId: '123',
       stagingPath: outputPath,
     });
-    const completed = enqueueDecryptJob(bundleId, 'manual', '123');
+    const completed = enqueueDecryptJob(bundleId, 'manual', { externalVersionId: '123' });
 
-    const retry = enqueueDecryptJob(bundleId, 'manual', '123');
+    const retry = enqueueDecryptJob(bundleId, 'manual', { externalVersionId: '123' });
     expect(completed.status).toBe('done');
     expect(completed.artifactId).toBe(artifact.id);
     expect(retry.status).toBe('done');
@@ -205,9 +206,9 @@ describe('enqueueDecryptJob', () => {
     const bundleId = `com.test.project-cache.${crypto.randomUUID()}`;
     const projectA = createProject({ name: `Cache project A ${crypto.randomUUID()}` }, 'root').project!.id;
     const projectB = createProject({ name: `Cache project B ${crypto.randomUUID()}` }, 'root').project!.id;
-    const firstProjectJob = enqueueDecryptJob(bundleId, 'manual', undefined, undefined, undefined, undefined, 0, undefined, undefined, projectA);
-    const duplicateFirstProjectJob = enqueueDecryptJob(bundleId, 'manual', undefined, undefined, undefined, undefined, 0, undefined, undefined, projectA);
-    const secondProjectJob = enqueueDecryptJob(bundleId, 'manual', undefined, undefined, undefined, undefined, 0, undefined, undefined, projectB);
+    const firstProjectJob = enqueueDecryptJob(bundleId, 'manual', { projectId: projectA });
+    const duplicateFirstProjectJob = enqueueDecryptJob(bundleId, 'manual', { projectId: projectA });
+    const secondProjectJob = enqueueDecryptJob(bundleId, 'manual', { projectId: projectB });
 
     expect(firstProjectJob.id).toBe(duplicateFirstProjectJob.id);
     expect(secondProjectJob.id).not.toBe(firstProjectJob.id);
@@ -228,7 +229,7 @@ describe('enqueueDecryptJob', () => {
       projectId: projectA,
       stagingPath: outputPath,
     });
-    const shared = enqueueDecryptJob(bundleId, 'manual', 'project-cache-build', undefined, undefined, undefined, 0, undefined, undefined, projectB);
+    const shared = enqueueDecryptJob(bundleId, 'manual', { externalVersionId: 'project-cache-build', projectId: projectB });
 
     expect(shared).toMatchObject({ status: 'done', projectId: projectB, artifactId: artifact.id, cacheHit: true });
     expect(artifact.projectIds).toContain(projectB);
@@ -236,11 +237,11 @@ describe('enqueueDecryptJob', () => {
 
   test('enforces a project concurrent-job quota without affecting another project', async () => {
     const project = createProject({ name: `Concurrency quota ${crypto.randomUUID()}`, maxConcurrentJobs: 1 }, 'root').project!;
-    const first = enqueueDecryptJob(`com.test.project-quota.${crypto.randomUUID()}`, 'manual', undefined, undefined, undefined, undefined, 0, undefined, undefined, project.id);
+    const first = enqueueDecryptJob(`com.test.project-quota.${crypto.randomUUID()}`, 'manual', { projectId: project.id });
 
-    expect(() => enqueueDecryptJob(`com.test.project-quota.${crypto.randomUUID()}`, 'manual', undefined, undefined, undefined, undefined, 0, undefined, undefined, project.id)).toThrow('project concurrency limit reached');
+    expect(() => enqueueDecryptJob(`com.test.project-quota.${crypto.randomUUID()}`, 'manual', { projectId: project.id })).toThrow('project concurrency limit reached');
     const otherProject = createProject({ name: `Independent quota ${crypto.randomUUID()}` }, 'root').project!;
-    const independent = enqueueDecryptJob(`com.test.project-quota.${crypto.randomUUID()}`, 'manual', undefined, undefined, undefined, undefined, 0, undefined, undefined, otherProject.id);
+    const independent = enqueueDecryptJob(`com.test.project-quota.${crypto.randomUUID()}`, 'manual', { projectId: otherProject.id });
     expect(independent.projectId).toBe(otherProject.id);
 
     cancelQueuedJob(first.id, 'project quota test cleanup');
@@ -364,10 +365,10 @@ test('reordering and prioritizing a project queue leaves other project positions
   await new Promise((resolve) => setTimeout(resolve, 0));
   const projectA = createProject({ name: `Queue project A ${crypto.randomUUID()}` }, 'root').project!.id;
   const projectB = createProject({ name: `Queue project B ${crypto.randomUUID()}` }, 'root').project!.id;
-  const firstA = enqueueDecryptJob(`com.test.queue-a1.${crypto.randomUUID()}`, 'manual', undefined, undefined, undefined, undefined, 0, undefined, undefined, projectA);
-  const firstB = enqueueDecryptJob(`com.test.queue-b1.${crypto.randomUUID()}`, 'manual', undefined, undefined, undefined, undefined, 0, undefined, undefined, projectB);
-  const secondA = enqueueDecryptJob(`com.test.queue-a2.${crypto.randomUUID()}`, 'manual', undefined, undefined, undefined, undefined, 0, undefined, undefined, projectA);
-  const secondB = enqueueDecryptJob(`com.test.queue-b2.${crypto.randomUUID()}`, 'manual', undefined, undefined, undefined, undefined, 0, undefined, undefined, projectB);
+  const firstA = enqueueDecryptJob(`com.test.queue-a1.${crypto.randomUUID()}`, 'manual', { projectId: projectA });
+  const firstB = enqueueDecryptJob(`com.test.queue-b1.${crypto.randomUUID()}`, 'manual', { projectId: projectB });
+  const secondA = enqueueDecryptJob(`com.test.queue-a2.${crypto.randomUUID()}`, 'manual', { projectId: projectA });
+  const secondB = enqueueDecryptJob(`com.test.queue-b2.${crypto.randomUUID()}`, 'manual', { projectId: projectB });
 
   try {
     expect(blocker.status).toBe('running');
@@ -389,4 +390,32 @@ test('reordering and prioritizing a project queue leaves other project positions
   } finally {
     await clearActiveTestJobs();
   }
+});
+
+test('keeps a job queued for a known device blocker and dispatches it after recovery', async () => {
+  await clearActiveTestJobs();
+  setCachedDeviceHealth(testDeviceId, { reachable: false, error: 'USB device is offline', checkedAt: Date.now() });
+  const job = enqueueDecryptJob(`com.test.recoverable.${crypto.randomUUID()}`, 'manual');
+
+  try {
+    expect(job.status).toBe('queued');
+    expect(getQueueReason(job)).toContain('USB device is offline');
+    setCachedDeviceHealth(testDeviceId, { reachable: true, checkedAt: Date.now() });
+    notifyDeviceDispatchStateChanged();
+    for (let attempt = 0; attempt < 100 && job.status !== 'running'; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    expect(job.status).toBe('running');
+    expect(job.deviceId).toBe(testDeviceId);
+  } finally {
+    if (job.status === 'running') cancelJob(job.id, 'dispatch recovery test cleanup');
+    await waitForJob(job, 1_000);
+    setCachedDeviceHealth(testDeviceId, { reachable: true, checkedAt: Date.now() });
+  }
+});
+
+test('retains the resolved minimum iOS version in the queued job', () => {
+  const job = enqueueDecryptJob(`com.test.minimum-os.${crypto.randomUUID()}`, 'manual', { versionLabel: '2.0', minimumOsVersion: '17.0' });
+  expect(job.minimumOsVersion).toBe('17.0');
+  cancelQueuedJob(job.id, 'minimum OS test cleanup');
 });

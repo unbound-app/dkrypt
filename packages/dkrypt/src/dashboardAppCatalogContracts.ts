@@ -14,9 +14,10 @@ export const dashboardAppSearchResultSchema = Type.Object({
   artworkUrl: Type.String(),
   price: Type.Number(),
   category: Type.Optional(Type.String()),
+  minimumOsVersion: Type.Optional(Type.String()),
   testflight: Type.Optional(Type.Object({
     appId: Type.Integer({ minimum: 1 }),
-    devices: Type.Array(Type.Object({ id: identifierSchema, name: Type.String() }, additionalProperties)),
+    devices: Type.Array(Type.Object({ id: identifierSchema, name: Type.String(), verifiedAt: Type.Optional(Type.Number()) }, additionalProperties)),
     lastVerifiedAt: Type.Number(),
   }, additionalProperties)),
 }, additionalProperties);
@@ -61,6 +62,7 @@ export const dashboardAppVersionsResponseSchema = Type.Object({
     displayVersion: Type.Optional(Type.String()),
     bundleVersion: Type.Optional(Type.String()),
     releaseDate: Type.Optional(Type.String()),
+    minimumOsVersion: Type.Optional(Type.String()),
     artifactId: Type.Optional(identifierSchema),
   }, additionalProperties)),
 }, additionalProperties);

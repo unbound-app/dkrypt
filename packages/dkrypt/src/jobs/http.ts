@@ -29,6 +29,7 @@ export function jobSummary(job: Job) {
       ? { appId: job.testflight.appId, buildId: job.testflight.build.id, version: job.testflight.build.cfBundleShortVersion, buildNumber: job.testflight.build.cfBundleVersion }
       : undefined,
     versionLabel: job.versionLabel,
+    minimumOsVersion: job.minimumOsVersion,
     source: job.source,
     channel: job.testflight ? 'testflight' : 'appstore',
     queuedBy: job.queuedBy,

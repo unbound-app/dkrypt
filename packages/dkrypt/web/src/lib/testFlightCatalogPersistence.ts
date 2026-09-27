@@ -35,10 +35,13 @@ function isTestFlightCatalogApp(value: unknown): value is TestFlightCatalogApp {
     && typeof app.lastVerifiedAt === 'number'
     && app.deviceSource === true
     && Array.isArray(app.devices)
-    && app.devices.every((device) => Boolean(device)
-      && typeof device === 'object'
-      && typeof (device as Record<string, unknown>).id === 'string'
-      && typeof (device as Record<string, unknown>).name === 'string');
+    && app.devices.every((device) => {
+      if (!device || typeof device !== 'object') return false;
+      const entry = device as Record<string, unknown>;
+      return typeof entry.id === 'string'
+        && typeof entry.name === 'string'
+        && (entry.verifiedAt === undefined || (typeof entry.verifiedAt === 'number' && Number.isFinite(entry.verifiedAt)));
+    });
 }
 
 export function readPersistedTestFlightCatalog(

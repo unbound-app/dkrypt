@@ -68,6 +68,7 @@
 		trackName: string;
 		externalVersionId?: string;
 		versionLabel?: string;
+		minimumOsVersion?: string;
 		testflight?: { appId: number; build: TFBuild };
 		deviceId?: string;
 	} | null>(null);
@@ -169,7 +170,7 @@
 		try {
 		const { ok, data } = request.testflight
 				? await queueTestFlightDecrypt(request.bundleId, request.testflight.appId, request.testflight.build, false, request.deviceId)
-				: await queueDecrypt(request.bundleId, request.externalVersionId, request.versionLabel, false);
+				: await queueDecrypt(request.bundleId, request.externalVersionId, request.versionLabel, false, request.minimumOsVersion);
 			if (!ok) return;
 			addDecrypt({
 				id: data.id,
@@ -206,10 +207,11 @@
 		trackName: string,
 		externalVersionId?: string,
 		versionLabel?: string,
+		minimumOsVersion?: string,
 	): Promise<void> {
 		if (!canDecrypt) return;
 		try {
-			pendingQueue = { bundleId, trackName, externalVersionId, versionLabel };
+			pendingQueue = { bundleId, trackName, externalVersionId, versionLabel, minimumOsVersion };
 			preflight = await fetchDecryptPreflight({ bundleId, versionLabel });
 			preflightOpen = true;
 		} catch {
@@ -223,9 +225,10 @@
 		bundleId: string,
 		externalVersionId: string,
 		label: string,
+		minimumOsVersion?: string,
 	): void {
 		versionsOpen = false;
-		void queue(bundleId, versionsTrackName, externalVersionId, label);
+		void queue(bundleId, versionsTrackName, externalVersionId, label, minimumOsVersion);
 	}
 
 	let testflightOpen = $state(false);
@@ -689,7 +692,7 @@
 									size="sm"
 									loading={queueing.has(r.bundleId)}
 									onclick={() =>
-										queue(r.bundleId, r.trackName)}
+										queue(r.bundleId, r.trackName, undefined, undefined, r.minimumOsVersion)}
 									title={decryptButtonTitle(r.bundleId)}
 								>
 									Decrypt

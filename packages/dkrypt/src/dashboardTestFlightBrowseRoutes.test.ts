@@ -137,11 +137,11 @@ test('TestFlight decrypt queues only for a device with verified access', async (
         deviceSource: true,
       }];
     },
-    enqueueDecryptJob: (bundleId, _source, _externalVersionId, testflight, _versionLabel, _queuedBy, _priority, preferredDeviceId) => {
+    enqueueDecryptJob: (bundleId, _source, options) => {
       enqueueCalls += 1;
-      queuedDeviceId = preferredDeviceId;
+      queuedDeviceId = options?.preferredDeviceId;
       expect(bundleId).toBe(build.bundleId);
-      expect(testflight?.appId).toBe(12345);
+      expect(options?.testflight?.appId).toBe(12345);
       return queuedJob;
     },
   }));

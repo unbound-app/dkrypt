@@ -36,13 +36,13 @@ describe('device TestFlight catalog', () => {
         appId: 42,
         bundleId: 'com.example.app',
         displayName: 'Example',
-        devices: [{ id: 'ipad-a', name: 'iPad A' }],
+        devices: [{ id: 'ipad-a', name: 'iPad A', verifiedAt: 50 }],
         lastVerifiedAt: 100,
         deviceSource: true as const,
       }],
     };
     expect(readTestFlightCatalogCache(cache, [{ id: 'ipad-a', name: 'iPad A', enabled: true } as never], 1_000)).toMatchObject({
-      apps: [{ bundleId: 'com.example.app', devices: [{ id: 'ipad-a' }] }],
+      apps: [{ bundleId: 'com.example.app', devices: [{ id: 'ipad-a', verifiedAt: 50 }] }],
       stale: false,
     });
     expect(readTestFlightCatalogCache(cache, [{ id: 'ipad-b', name: 'iPad B', enabled: true } as never], 1_000)).toEqual({
@@ -58,7 +58,7 @@ describe('device TestFlight catalog', () => {
       { device: { id: 'ipad-a', name: 'iPad A', enabled: true } as never, fetchedAt: 100, apps: [{ appId: 42, bundleId: 'com.example.app', name: 'Example' }] },
       { device: { id: 'ipad-b', name: 'iPad B', enabled: true } as never, fetchedAt: 200, apps: [{ appId: 42, bundleId: 'com.example.app', name: 'Example' }] },
     ]);
-    expect(apps).toEqual([{ appId: 42, bundleId: 'com.example.app', displayName: 'Example', devices: [{ id: 'ipad-a', name: 'iPad A' }, { id: 'ipad-b', name: 'iPad B' }], lastVerifiedAt: 200, deviceSource: true }]);
+    expect(apps).toEqual([{ appId: 42, bundleId: 'com.example.app', displayName: 'Example', devices: [{ id: 'ipad-a', name: 'iPad A', verifiedAt: 100 }, { id: 'ipad-b', name: 'iPad B', verifiedAt: 200 }], lastVerifiedAt: 200, deviceSource: true }]);
   });
 
   test('protects the immutable Discord subscription', () => {

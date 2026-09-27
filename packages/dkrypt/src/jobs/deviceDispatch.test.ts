@@ -1,0 +1,91 @@
+import { describe, expect, test } from 'bun:test';
+import { getJobDeviceBlocker } from './deviceDispatch.js';
+import type { DeviceHealth } from '#deviceHealth.js';
+import type { Job } from '#jobs/types.js';
+import type { TestFlightCatalogCache } from '#store/state.js';
+
+function makeJob(overrides: Partial<Job> = {}): Job {
+  return {
+    id: 'job-1',
+    bundleId: 'com.example.app',
+    source: 'manual',
+    priority: 0,
+    status: 'queued',
+    progress: 'queued',
+    createdAt: 1,
+    waiters: [],
+    ...overrides,
+  };
+}
+
+function makeHealth(overrides: Partial<DeviceHealth> = {}): DeviceHealth {
+  return { reachable: true, checkedAt: 1, ...overrides };
+}
+
+function makeCatalog(overrides: Partial<TestFlightCatalogCache> = {}): TestFlightCatalogCache {
+  return {
+    fetchedAt: 1_000,
+    deviceIds: ['ipad-a'],
+    apps: [{
+      appId: 42,
+      bundleId: 'com.example.app',
+      displayName: 'Example',
+      devices: [{ id: 'ipad-a', name: 'iPad A', verifiedAt: 1_000 }],
+      lastVerifiedAt: 1_000,
+      deviceSource: true,
+    }],
+    complete: true,
+    ...overrides,
+  };
+}
+
+describe('job device eligibility', () => {
+  test('allows dispatch when health is unknown', () => {
+    expect(getJobDeviceBlocker(makeJob(), { id: 'ipad-a' }, {}, 1_000)).toBeUndefined();
+  });
+
+  test('waits instead of assigning a job to a device with a known install blocker', () => {
+    expect(getJobDeviceBlocker(makeJob(), { id: 'ipad-a' }, { health: makeHealth({ reachable: false, error: 'device is unreachable' }) }, 1_000))
+      .toBe('device is unreachable');
+  });
+
+  test('checks storage requirements before assigning a known TestFlight build', () => {
+    const job = makeJob({ testflight: { appId: 42, build: { id: 7, bundleId: 'com.example.app', cfBundleShortVersion: '2.0', cfBundleVersion: '7', fileSize: 100 } } });
+    expect(getJobDeviceBlocker(job, { id: 'ipad-a' }, { health: makeHealth({ storageFreeBytes: 150 }), testFlightCatalog: makeCatalog() }, 1_000))
+      .toContain('storage');
+  });
+
+  test('requires fresh TestFlight verification for the exact app and device', () => {
+    const job = makeJob({ testflight: { appId: 42, build: { id: 7, bundleId: 'com.example.app', cfBundleShortVersion: '2.0', cfBundleVersion: '7' } } });
+    expect(getJobDeviceBlocker(job, { id: 'ipad-b' }, { testFlightCatalog: makeCatalog() }, 1_000)).toContain('not verified');
+    expect(getJobDeviceBlocker(job, { id: 'ipad-a' }, { testFlightCatalog: makeCatalog() }, 1_000 + 30 * 60_000 + 1)).toContain('verification is stale');
+    expect(getJobDeviceBlocker(job, { id: 'ipad-a' }, { testFlightCatalog: makeCatalog() }, 1_001)).toBeUndefined();
+  });
+
+  test('does not infer per-device verification from a legacy app-wide timestamp', () => {
+    const job = makeJob({ testflight: { appId: 42, build: { id: 7, bundleId: 'com.example.app', cfBundleShortVersion: '2.0', cfBundleVersion: '7' } } });
+    const catalog = makeCatalog({ apps: [{
+      appId: 42,
+      bundleId: 'com.example.app',
+      displayName: 'Example',
+      devices: [{ id: 'ipad-a', name: 'iPad A' }],
+      lastVerifiedAt: 1_000,
+      deviceSource: true,
+    }] });
+    expect(getJobDeviceBlocker(job, { id: 'ipad-a' }, { testFlightCatalog: catalog }, 1_001)).toContain('individually verified');
+  });
+
+  test('rejects a device whose known iOS version is below the build minimum', () => {
+    const job = makeJob({ testflight: { appId: 42, build: { id: 7, bundleId: 'com.example.app', cfBundleShortVersion: '2.0', cfBundleVersion: '7', minimumOsVersion: '17.0' } } });
+    expect(getJobDeviceBlocker(job, { id: 'ipad-a', iosVersion: '16.7.10' }, { testFlightCatalog: makeCatalog() }, 1_001))
+      .toContain('requires iOS 17.0');
+    expect(getJobDeviceBlocker(job, { id: 'ipad-a', iosVersion: '17.0' }, { testFlightCatalog: makeCatalog() }, 1_001)).toBeUndefined();
+    expect(getJobDeviceBlocker(job, { id: 'ipad-a' }, { testFlightCatalog: makeCatalog() }, 1_001)).toBeUndefined();
+  });
+
+  test('rejects App Store devices below a known minimum iOS version', () => {
+    const job = makeJob({ minimumOsVersion: '17.0' });
+    expect(getJobDeviceBlocker(job, { id: 'ipad-a', iosVersion: '16.7.10' }, {}, 1_001)).toContain('requires iOS 17.0');
+    expect(getJobDeviceBlocker(job, { id: 'ipad-a', iosVersion: '17.0' }, {}, 1_001)).toBeUndefined();
+  });
+});

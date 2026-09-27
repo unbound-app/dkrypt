@@ -10,7 +10,7 @@ import { scopedLogger } from '#logger.js';
 const log = scopedLogger('jobs');
 import { sendMailToUser } from '#mail.js';
 import { sendPushToUser } from '#push.js';
-import { DEFAULT_PROJECT_ID, getAllJobHistory, getApiKeyById, getDevice, getEffectiveDevices, getProject, getUserPrefs, isBundleWatched, recordDeviceActivity, recordJobHistory, type DeviceRecord } from '#store/state.js';
+import { DEFAULT_PROJECT_ID, getAllJobHistory, getApiKeyById, getDevice, getEffectiveDevices, getProject, getTestFlightCatalogCache, getUserPrefs, isBundleWatched, recordDeviceActivity, recordJobHistory, type DeviceRecord } from '#store/state.js';
 import { uninstallFromDevice } from '#appStoreInstall.js';
 import { getCachedDeviceHealth } from '#deviceHealthCache.js';
 import { runDecrypt } from '#jobs/runner.js';
@@ -25,6 +25,7 @@ import { currentCorrelation, withCorrelation } from '#correlation.js';
 import { EMBED_COLOR, notify } from '#notify.js';
 import { runWithJobDeadline } from '#jobs/deadline.js';
 import { delayWithSignal } from '#util/abort.js';
+import { getJobDeviceBlocker, minimumOsVersionForBuild } from '#jobs/deviceDispatch.js';
 
 const jobs = new Map<string, Job>();
 
@@ -204,6 +205,7 @@ function createCachedJob(
   apiKeyId: string | undefined,
   projectId: string,
   artifact: ArtifactRecord,
+  minimumOsVersion?: string,
 ): Job {
   const now = Date.now();
   const resolvedLabel = versionLabel ?? artifact.versionLabel;
@@ -216,6 +218,7 @@ function createCachedJob(
     externalVersionId,
     testflight,
     versionLabel: resolvedLabel,
+    minimumOsVersion: minimumOsVersion ?? minimumOsVersionForBuild(testflight?.build),
     source,
     queuedBy,
     apiKeyId,
@@ -309,18 +312,30 @@ function expireOverdueQueuedJobs(now = Date.now()): void {
   }
 }
 
-export function enqueueDecryptJob(
-  bundleId: string,
-  source: JobSource,
-  externalVersionId?: string,
-  testflight?: TestFlightJobSource,
-  versionLabel?: string,
-  queuedBy?: string,
-  priority = 0,
-  preferredDeviceId?: string,
-  apiKeyId?: string,
-  projectId = DEFAULT_PROJECT_ID,
-): Job {
+export interface EnqueueDecryptJobOptions {
+  externalVersionId?: string;
+  testflight?: TestFlightJobSource;
+  versionLabel?: string;
+  queuedBy?: string;
+  priority?: number;
+  preferredDeviceId?: string;
+  apiKeyId?: string;
+  projectId?: string;
+  minimumOsVersion?: string;
+}
+
+export function enqueueDecryptJob(bundleId: string, source: JobSource, options: EnqueueDecryptJobOptions = {}): Job {
+  const {
+    externalVersionId,
+    testflight,
+    versionLabel,
+    queuedBy,
+    priority = 0,
+    preferredDeviceId,
+    apiKeyId,
+    projectId = DEFAULT_PROJECT_ID,
+    minimumOsVersion,
+  } = options;
   if (!acceptingJobs) throw new Error('dkrypt is shutting down and is not accepting new jobs');
   const lookup = { bundleId, externalVersionId, testFlightBuildId: testflight?.build.id, projectId };
   const existing = findActiveJobForBundle(lookup);
@@ -330,7 +345,7 @@ export function enqueueDecryptJob(
   const artifact = getArtifactByKey(artifactKey);
   if (artifact) {
     linkArtifactToProject(artifact.id, projectId);
-    return createCachedJob(bundleId, source, externalVersionId, testflight, versionLabel, queuedBy, priority, apiKeyId, projectId, artifact);
+    return createCachedJob(bundleId, source, externalVersionId, testflight, versionLabel, queuedBy, priority, apiKeyId, projectId, artifact, minimumOsVersion);
   }
   const reusable = findReusableCompletedJob(lookup);
   if (reusable) return reusable;
@@ -347,6 +362,7 @@ export function enqueueDecryptJob(
     externalVersionId,
     testflight,
     versionLabel: resolvedLabel,
+    minimumOsVersion: minimumOsVersion ?? minimumOsVersionForBuild(testflight?.build),
     source,
     queuedBy,
     apiKeyId,
@@ -443,8 +459,12 @@ export function getQueueReason(job: Job): string | undefined {
   const devices = getEffectiveDevices().filter((device) => device.enabled);
   if (devices.length === 0) return 'Waiting for an enabled device';
 
-  const eligible = devices.filter((device) => isJobDispatchable(job, device));
-  if (eligible.length === 0) return 'Waiting for a compatible device';
+  const blockers = devices.map((device) => jobDeviceBlocker(job, device));
+  const eligible = devices.filter((_, index) => !blockers[index]);
+  if (eligible.length === 0) {
+    const reasons = [...new Set(blockers.filter((reason): reason is string => Boolean(reason)))];
+    return reasons.length === 1 ? `Waiting for a compatible device · ${reasons[0]}` : 'Waiting for a compatible device';
+  }
 
   if (config.userConcurrencyCap > 0 && job.queuedBy && queuedByActiveCount(job.queuedBy) >= config.userConcurrencyCap) {
     return `Waiting for your concurrency limit (${config.userConcurrencyCap}) to free up`;
@@ -492,6 +512,7 @@ function toHistoryEntry(job: Job) {
     externalVersionId: job.externalVersionId,
     testflight: job.testflight,
     versionLabel: job.versionLabel,
+    minimumOsVersion: job.minimumOsVersion,
     queuedBy: job.queuedBy,
     status: job.status as 'done' | 'failed',
     warnings: job.warnings,
@@ -617,9 +638,19 @@ export function reorderQueue(orderedIds: string[], projectId?: string): boolean 
   return true;
 }
 
-export function isJobDispatchable(job: Pick<Job, 'preferredDeviceId'>, device: Pick<DeviceRecord, 'id'>): boolean {
-  if (job.preferredDeviceId && job.preferredDeviceId !== device.id) return false;
-  return true;
+function jobDeviceBlocker(job: Job, device: DeviceRecord): string | undefined {
+  return getJobDeviceBlocker(job, device, {
+    health: getCachedDeviceHealth(device.id)?.value,
+    testFlightCatalog: getTestFlightCatalogCache(),
+  });
+}
+
+export function isJobDispatchable(job: Job, device: DeviceRecord): boolean {
+  return !jobDeviceBlocker(job, device);
+}
+
+export function notifyDeviceDispatchStateChanged(): void {
+  pumpWorkers();
 }
 
 function deviceScore(device: DeviceRecord, primary: DeviceRecord): number {

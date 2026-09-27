@@ -16,3 +16,9 @@ test('selects the version matching the App Store lookup instead of stale latest 
 test('keeps the current App Store release schedulable while its external version id is unavailable', () => {
   expect(resolveAppStoreDecryptTarget([], '339.0')).toEqual({ expectedVersion: '339.0' });
 });
+
+test('preserves the selected App Store minimum OS requirement', () => {
+  expect(resolveAppStoreDecryptTarget([
+    { externalVersionId: '889', isLatest: true, displayVersion: '342.0', minimumOsVersion: '16.0' },
+  ], '342.0')).toEqual({ expectedVersion: '342.0', externalVersionId: '889', minimumOsVersion: '16.0' });
+});

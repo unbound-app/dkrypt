@@ -23,6 +23,8 @@ import {
 import type { Job } from '#jobs/types.js';
 import { PermissionFlag } from '#permissions.js';
 import { fastifyRequirePermission, fastifyRequireSession, getFastifySession } from '#session.js';
+import { scopedLogger } from '#logger.js';
+import { resolveDecryptTarget } from '#decryptTarget.js';
 import {
   DEFAULT_PROJECT_ID,
   getJobHistoryEntryById,
@@ -44,6 +46,7 @@ export interface DashboardJobActionServices {
   getPrimaryDevice: typeof getPrimaryDevice;
   getUserPriority: typeof getUserPriority;
   canAccessProject: typeof canAccessProject;
+  resolveDecryptTarget: typeof resolveDecryptTarget;
 }
 
 const defaultServices: DashboardJobActionServices = {
@@ -57,10 +60,12 @@ const defaultServices: DashboardJobActionServices = {
   getPrimaryDevice,
   getUserPriority,
   canAccessProject,
+  resolveDecryptTarget,
 };
 
 const canRequestDecrypt = fastifyRequirePermission(PermissionFlag.requestDecrypt);
 const externalVersionIdPattern = /^[A-Za-z0-9_-]{1,64}$/;
+const log = scopedLogger('jobs');
 
 function sendJobError(requestId: string, statusCode: number, message: string) {
   return createHttpErrorEnvelope(requestId, statusCode, message);
@@ -80,7 +85,7 @@ export function createDashboardJobActionRoutes(overrides: Partial<DashboardJobAc
     server.post<DashboardManualDecryptRoute>('/v1/dashboard/decrypt', {
       schema: getRouteContract('POST', '/v1/dashboard/decrypt'),
       preHandler: [canRequestDecrypt, fastifyBlockDuringMaintenance],
-    }, (request, reply) => {
+    }, async (request, reply) => {
       const session = getFastifySession(request)!;
       const projectId = request.body.projectId ?? DEFAULT_PROJECT_ID;
       if (!projectIdentifierPattern.test(projectId)) {
@@ -102,17 +107,26 @@ export function createDashboardJobActionRoutes(overrides: Partial<DashboardJobAc
         : undefined;
       const versionLabel = request.body.versionLabel?.trim().slice(0, 64) || undefined;
       const preferredDeviceId = request.body.preferPrimary ? services.getPrimaryDevice()?.id : undefined;
+      let minimumOsVersion = request.body.minimumOsVersion;
+      if (!minimumOsVersion && (!externalVersionId || versionLabel)) {
+        try {
+          minimumOsVersion = (await services.resolveDecryptTarget(bundleId, versionLabel)).minimumOsVersion;
+        } catch (error) {
+          log.warn('App Store minimum iOS lookup failed before dispatch', { bundleId, versionLabel, error: String(error) });
+        }
+      }
       const job = services.enqueueDecryptJob(
         bundleId,
         'manual',
-        externalVersionId,
-        undefined,
-        versionLabel,
-        session.sub,
-        services.getUserPriority(session.sub),
-        preferredDeviceId,
-        undefined,
-        projectId,
+        {
+          externalVersionId,
+          versionLabel,
+          queuedBy: session.sub,
+          priority: services.getUserPriority(session.sub),
+          preferredDeviceId,
+          projectId,
+          minimumOsVersion,
+        },
       );
       reply.code(202);
       return jobSummary(job);
@@ -176,7 +190,7 @@ export function createDashboardJobActionRoutes(overrides: Partial<DashboardJobAc
         done();
       },
       preHandler: [canRequestDecrypt, fastifyBlockDuringMaintenance],
-    }, (request, reply) => {
+    }, async (request, reply) => {
       const session = getFastifySession(request)!;
       const entry = services.getJobHistoryEntryById(request.params.id);
       const projectId = entry?.projectId ?? DEFAULT_PROJECT_ID;
@@ -190,17 +204,27 @@ export function createDashboardJobActionRoutes(overrides: Partial<DashboardJobAc
       }
 
       const preferredDeviceId = request.body.preferPrimary ? services.getPrimaryDevice()?.id : undefined;
+      let minimumOsVersion = entry.minimumOsVersion;
+      if (!minimumOsVersion && (!entry.externalVersionId || entry.versionLabel)) {
+        try {
+          minimumOsVersion = (await services.resolveDecryptTarget(entry.bundleId, entry.versionLabel)).minimumOsVersion;
+        } catch (error) {
+          log.warn('App Store minimum iOS lookup failed before retry', { bundleId: entry.bundleId, versionLabel: entry.versionLabel, error: String(error) });
+        }
+      }
       const job = services.enqueueDecryptJob(
         entry.bundleId,
         'manual',
-        entry.externalVersionId,
-        entry.testflight,
-        entry.versionLabel,
-        session.sub,
-        services.getUserPriority(session.sub),
-        preferredDeviceId,
-        undefined,
-        projectId,
+        {
+          externalVersionId: entry.externalVersionId,
+          testflight: entry.testflight,
+          versionLabel: entry.versionLabel,
+          queuedBy: session.sub,
+          priority: services.getUserPriority(session.sub),
+          preferredDeviceId,
+          projectId,
+          minimumOsVersion,
+        },
       );
       reply.code(202);
       return jobSummary(job);

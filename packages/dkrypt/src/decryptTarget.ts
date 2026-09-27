@@ -14,6 +14,7 @@ export interface ResolvedDecryptTarget {
   testflight?: { appId: number; build: TFBuild };
   versionLabel: string;
   artifactKey: string;
+  minimumOsVersion?: string;
 }
 
 export function normalizeVersionSelector(selector: string | undefined): string | undefined {
@@ -71,5 +72,6 @@ export async function resolveDecryptTarget(bundleId: string, selector?: string):
     externalVersionId: selected.externalVersionId,
     versionLabel,
     artifactKey: artifactKeyForAppStoreVersion(bundleId, versionLabel, selected.externalVersionId),
+    minimumOsVersion: selected.minimumOsVersion,
   };
 }

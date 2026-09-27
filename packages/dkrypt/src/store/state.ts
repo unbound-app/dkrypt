@@ -380,6 +380,7 @@ export interface JobHistoryEntry {
   externalVersionId?: string;
   testflight?: TestFlightJobSource;
   versionLabel?: string;
+  minimumOsVersion?: string;
   queuedBy?: string;
   status: 'done' | 'failed';
   warnings?: string[];
@@ -424,7 +425,7 @@ export interface TestFlightCatalogCacheApp {
   iconUrl?: string;
   sellerName?: string;
   category?: string;
-  devices: Array<{ id: string; name: string }>;
+  devices: Array<{ id: string; name: string; verifiedAt?: number }>;
   lastVerifiedAt: number;
   deviceSource: true;
 }
@@ -4203,7 +4204,11 @@ function isTestFlightCatalogCacheAppShape(value: unknown): value is TestFlightCa
     typeof app.lastVerifiedAt === 'number' &&
     app.deviceSource === true &&
     Array.isArray(app.devices) &&
-    app.devices.every((device) => typeof device === 'object' && device !== null && typeof (device as Record<string, unknown>).id === 'string' && typeof (device as Record<string, unknown>).name === 'string')
+    app.devices.every((device) => {
+      if (typeof device !== 'object' || device === null) return false;
+      const entry = device as Record<string, unknown>;
+      return typeof entry.id === 'string' && typeof entry.name === 'string' && (entry.verifiedAt === undefined || typeof entry.verifiedAt === 'number');
+    })
   );
 }
 

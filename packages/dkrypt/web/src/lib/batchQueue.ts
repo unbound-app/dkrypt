@@ -48,16 +48,18 @@ export function isValidBatchQueueSelector(selector: string, source: BatchQueueSo
 }
 
 export function getRecentlyVerifiedTestFlightDevices(
-  app: { devices: Array<{ id: string; name: string }>; lastVerifiedAt: number },
+  app: { devices: Array<{ id: string; name: string; verifiedAt?: number }> },
   now = Date.now(),
 ): Array<{ id: string; name: string }> {
-  const verificationAge = now - app.lastVerifiedAt;
-  if (!Number.isFinite(verificationAge)
-    || verificationAge < -TESTFLIGHT_ACCESS_CLOCK_SKEW_TOLERANCE_MS
-    || verificationAge > TESTFLIGHT_ACCESS_MAX_AGE_MS) return [];
-  return app.devices.filter((device, index, devices) =>
+  const verifiedDevices = app.devices.filter((device) => {
+    if (typeof device.verifiedAt !== 'number' || !Number.isFinite(device.verifiedAt)) return false;
+    const verificationAge = now - device.verifiedAt;
+    return verificationAge >= -TESTFLIGHT_ACCESS_CLOCK_SKEW_TOLERANCE_MS
+      && verificationAge <= TESTFLIGHT_ACCESS_MAX_AGE_MS;
+  });
+  return verifiedDevices.filter((device, index, devices) =>
     devices.findIndex((candidate) => candidate.id === device.id) === index,
-  );
+  ).map(({ id, name }) => ({ id, name }));
 }
 
 export function parseBatchQueueEntries(raw: string, source: BatchQueueSource): BatchQueueParseResult {

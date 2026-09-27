@@ -23,7 +23,7 @@ function catalogApp(bundleId: string, lastVerifiedAt: number): TestFlightCatalog
     appId: 123,
     bundleId,
     displayName: 'Example app',
-    devices: [{ id: 'ipad-1', name: 'Lab iPad' }],
+    devices: [{ id: 'ipad-1', name: 'Lab iPad', verifiedAt: lastVerifiedAt }],
     lastVerifiedAt,
     deviceSource: true,
   };

@@ -123,6 +123,7 @@ export interface JobSummary {
   externalVersionId?: string;
   testflight?: JobTestFlightSummary;
   versionLabel?: string;
+  minimumOsVersion?: string;
   source: 'manual' | 'scheduler';
   channel?: 'appstore' | 'testflight';
   queuedBy?: string;
@@ -378,6 +379,7 @@ export interface JobHistoryEntry {
   externalVersionId?: string;
   testflight?: { appId: number; build: TFBuild };
   versionLabel?: string;
+  minimumOsVersion?: string;
   queuedBy?: string;
   requester?: { username?: string; displayName: string; avatarUrl?: string };
   status: 'done' | 'failed';
@@ -625,9 +627,10 @@ export interface AppStoreSearchResult {
   artworkUrl: string;
   price: number;
   category?: string;
+  minimumOsVersion?: string;
   testflight?: {
     appId: number;
-    devices: Array<{ id: string; name: string }>;
+    devices: Array<{ id: string; name: string; verifiedAt?: number }>;
     lastVerifiedAt: number;
   };
 }
@@ -675,7 +678,7 @@ export interface TestFlightCatalogApp {
   iconUrl?: string;
   sellerName?: string;
   category?: string;
-  devices: Array<{ id: string; name: string }>;
+  devices: Array<{ id: string; name: string; verifiedAt?: number }>;
   lastVerifiedAt: number;
   deviceSource: true;
 }
@@ -1333,10 +1336,11 @@ export function queueDecrypt(
   externalVersionId?: string,
   versionLabel?: string,
   preferPrimary = false,
+  minimumOsVersion?: string,
 ): Promise<{ ok: boolean; data: JobSummary }> {
   return apiAction('/v1/dashboard/decrypt', {
     method: 'POST',
-    body: JSON.stringify({ bundleId, externalVersionId, versionLabel, preferPrimary, projectId: projectSelectionState.id }),
+    body: JSON.stringify({ bundleId, externalVersionId, versionLabel, preferPrimary, minimumOsVersion, projectId: projectSelectionState.id }),
   });
 }
 
@@ -1353,6 +1357,7 @@ export interface AppVersionEntry {
   displayVersion?: string;
   bundleVersion?: string;
   releaseDate?: string;
+  minimumOsVersion?: string;
   artifactId?: string;
 }
 

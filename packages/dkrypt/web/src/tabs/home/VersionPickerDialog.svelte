@@ -14,7 +14,7 @@
     bundleId: string;
     trackName: string;
     onOpenChange: (open: boolean) => void;
-    onDecrypt: (bundleId: string, externalVersionId: string, label: string) => void;
+    onDecrypt: (bundleId: string, externalVersionId: string, label: string, minimumOsVersion?: string) => void;
   }
 
   let { open, bundleId, trackName, onOpenChange, onDecrypt }: Props = $props();
@@ -130,7 +130,7 @@
               <Download class="h-3.5 w-3.5" />Download
             </a>
           {:else}
-            <Button size="sm" onclick={() => onDecrypt(bundleId, v.externalVersionId, label(v))}>Decrypt</Button>
+            <Button size="sm" onclick={() => onDecrypt(bundleId, v.externalVersionId, label(v), v.minimumOsVersion)}>Decrypt</Button>
           {/if}
         </div>
       {/each}

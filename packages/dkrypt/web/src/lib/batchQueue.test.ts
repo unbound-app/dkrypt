@@ -45,17 +45,20 @@ describe('batch queue templates', () => {
 
   test('offers only distinct devices from recently verified TestFlight access', () => {
     expect(getRecentlyVerifiedTestFlightDevices({
-      lastVerifiedAt: 950,
-      devices: [{ id: 'device-1', name: 'One' }, { id: 'device-1', name: 'One' }, { id: 'device-2', name: 'Two' }],
+      devices: [
+        { id: 'device-1', name: 'One', verifiedAt: 950 },
+        { id: 'device-1', name: 'One again', verifiedAt: 1000 },
+        { id: 'device-2', name: 'Two' },
+        { id: 'device-3', name: 'Three', verifiedAt: 1000 - 31 * 60_000 },
+      ],
     }, 1000)).toEqual([
       { id: 'device-1', name: 'One' },
-      { id: 'device-2', name: 'Two' },
     ]);
-    expect(getRecentlyVerifiedTestFlightDevices({ lastVerifiedAt: 1000 - 31 * 60_000, devices: [{ id: 'old', name: 'Old' }] }, 1000)).toEqual([]);
-    expect(getRecentlyVerifiedTestFlightDevices({ lastVerifiedAt: 1001, devices: [{ id: 'future', name: 'Future' }] }, 1000)).toEqual([
+    expect(getRecentlyVerifiedTestFlightDevices({ devices: [{ id: 'future', name: 'Future', verifiedAt: 1001 }] }, 1000)).toEqual([
       { id: 'future', name: 'Future' },
     ]);
-    expect(getRecentlyVerifiedTestFlightDevices({ lastVerifiedAt: 1000 + 5 * 60_000 + 1, devices: [{ id: 'far-future', name: 'Far future' }] }, 1000)).toEqual([]);
-    expect(getRecentlyVerifiedTestFlightDevices({ lastVerifiedAt: 1000, devices: [] }, 1000)).toEqual([]);
+    expect(getRecentlyVerifiedTestFlightDevices({ devices: [{ id: 'far-future', name: 'Far future', verifiedAt: 1000 + 5 * 60_000 + 1 }] }, 1000)).toEqual([]);
+    expect(getRecentlyVerifiedTestFlightDevices({ devices: [{ id: 'legacy', name: 'Legacy' }] }, 1000)).toEqual([]);
+    expect(getRecentlyVerifiedTestFlightDevices({ devices: [] }, 1000)).toEqual([]);
   });
 });

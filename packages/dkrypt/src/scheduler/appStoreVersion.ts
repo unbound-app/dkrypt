@@ -4,6 +4,7 @@ import type { AppVersionEntry } from '#versions.js';
 export interface AppStoreDecryptTarget {
   expectedVersion: string;
   externalVersionId?: string;
+  minimumOsVersion?: string;
 }
 
 export function selectAppStoreVersion(entries: AppVersionEntry[], targetVersion: string): AppVersionEntry | undefined {
@@ -13,6 +14,9 @@ export function selectAppStoreVersion(entries: AppVersionEntry[], targetVersion:
 }
 
 export function resolveAppStoreDecryptTarget(entries: AppVersionEntry[], expectedVersion: string): AppStoreDecryptTarget {
-  const externalVersionId = selectAppStoreVersion(entries, expectedVersion)?.externalVersionId;
-  return externalVersionId ? { expectedVersion, externalVersionId } : { expectedVersion };
+  const selected = selectAppStoreVersion(entries, expectedVersion);
+  const target: AppStoreDecryptTarget = { expectedVersion };
+  if (selected?.externalVersionId) target.externalVersionId = selected.externalVersionId;
+  if (selected?.minimumOsVersion) target.minimumOsVersion = selected.minimumOsVersion;
+  return target;
 }

@@ -16,6 +16,7 @@ function mockFetch(requests: URL[]): void {
       sellerName: 'Discord Inc.',
       artworkUrl100: 'https://example.com/discord.png',
       price: 0,
+      minimumOsVersion: '16.0',
     };
     const body = { resultCount: 1, results: [result] };
     return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } }));
@@ -26,15 +27,15 @@ function restoreFetch(): void {
   globalThis.fetch = originalFetch;
 }
 
-async function runCurrentVersionLookupInIsolatedProcess(): Promise<{ url: string; version: string }> {
+async function runCurrentVersionLookupInIsolatedProcess(): Promise<{ url: string; version: string; minimumOsVersion?: string }> {
   const script = [
     "globalThis.fetch = async (input) => {",
     "  globalThis.requestUrl = String(input);",
-    "  return new Response(JSON.stringify({ resultCount: 1, results: [{ version: '340.0', bundleId: 'com.hammerandchisel.discord', trackId: 985746746 }] }), { status: 200 });",
+    "  return new Response(JSON.stringify({ resultCount: 1, results: [{ version: '340.0', bundleId: 'com.hammerandchisel.discord', trackId: 985746746, minimumOsVersion: '16.0' }] }), { status: 200 });",
     "};",
     "const { lookupCurrentVersion } = await import('./src/scheduler/itunes.ts');",
     "const result = await lookupCurrentVersion('com.hammerandchisel.discord');",
-    "console.log(JSON.stringify({ url: globalThis.requestUrl, version: result.version }));",
+    "console.log(JSON.stringify({ url: globalThis.requestUrl, version: result.version, minimumOsVersion: result.minimumOsVersion }));",
   ].join('\n');
   const child = Bun.spawn([process.execPath, '-e', script], { cwd: process.cwd(), stdout: 'pipe', stderr: 'pipe' });
   const [stdout, stderr, exitCode] = await Promise.all([
@@ -73,6 +74,7 @@ describe('iTunes storefront selection', () => {
     const result = await runCurrentVersionLookupInIsolatedProcess();
     expect(new URL(result.url).searchParams.get('country')).toBe('US');
     expect(result.version).toBe('340.0');
+    expect(result.minimumOsVersion).toBe('16.0');
   });
 
   test('uses the US storefront for metadata and search', async () => {
@@ -81,9 +83,10 @@ describe('iTunes storefront selection', () => {
 
     try {
       await lookupAppMetadata('com.hammerandchisel.discord');
-      await searchApps('Discord');
+      const results = await searchApps('Discord');
       expect(requests).toHaveLength(2);
       expect(requests.every((url) => url.searchParams.get('country') === 'US')).toBe(true);
+      expect(results[0]?.minimumOsVersion).toBe('16.0');
     } finally {
       restoreFetch();
     }

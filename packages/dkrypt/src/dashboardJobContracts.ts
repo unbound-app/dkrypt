@@ -33,6 +33,7 @@ export const dashboardJobExportEntrySchema = Type.Object({
   externalVersionId: Type.Optional(identifierSchema),
   testflight: Type.Optional(Type.Object({ appId: Type.Number(), build: TestFlightBuild }, { additionalProperties: true })),
   versionLabel: Type.Optional(Type.String()),
+  minimumOsVersion: Type.Optional(Type.String()),
   queuedBy: Type.Optional(Type.String()),
   status: Type.Union([Type.Literal('done'), Type.Literal('failed')]),
   warnings: Type.Optional(Type.Array(Type.String())),
@@ -203,6 +204,7 @@ export const dashboardManualDecryptBodySchema = Type.Object({
   bundleId: BundleId,
   externalVersionId: Type.Optional(identifierSchema),
   versionLabel: Type.Optional(Type.String({ maxLength: 64 })),
+  minimumOsVersion: Type.Optional(Type.String({ maxLength: 32, pattern: '^\\d+(?:\\.\\d+){0,3}$' })),
   preferPrimary: Type.Optional(Type.Boolean()),
   projectId: Type.Optional(projectIdentifierSchema),
 }, { additionalProperties: true });

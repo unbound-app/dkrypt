@@ -39,6 +39,7 @@ function createHistoryEntry(id = 'history-1'): JobHistoryEntry {
     bundleId: 'com.example.app',
     externalVersionId: 'version-1',
     versionLabel: '2.0',
+    minimumOsVersion: '17.1',
     queuedBy: 'requester',
     status: 'failed',
     source: 'manual',
@@ -74,6 +75,7 @@ test('manual decrypt submission preserves project, device, and version selection
     getProject: () => ({ id: 'default', name: 'Default', memberIds: [], isDefault: true, createdBy: 'root', createdAt: 1, updatedAt: 1 }),
     getPrimaryDevice: () => ({ id: 'device-primary' }) as ReturnType<DashboardJobActionServices['getPrimaryDevice']>,
     getUserPriority: () => 4,
+    resolveDecryptTarget: async (bundleId, selector) => ({ bundleId, selector, channel: 'appstore', versionLabel: selector ?? 'latest', minimumOsVersion: '17.0', artifactKey: 'appstore-artifact' }),
     enqueueDecryptJob: (...args) => {
       enqueueArgs = args;
       return queuedJob;
@@ -99,14 +101,14 @@ test('manual decrypt submission preserves project, device, and version selection
     expect(enqueueArgs).toEqual([
       'com.example.app',
       'manual',
-      undefined,
-      undefined,
-      'v2',
-      'root',
-      4,
-      'device-primary',
-      undefined,
-      'default',
+      {
+        versionLabel: 'v2',
+        queuedBy: 'root',
+        priority: 4,
+        preferredDeviceId: 'device-primary',
+        projectId: 'default',
+        minimumOsVersion: '17.0',
+      },
     ]);
   } finally {
     await server.close();
@@ -204,14 +206,15 @@ test('retry uses the requested primary device and retains source job metadata', 
     expect(enqueueArgs).toEqual([
       'com.example.app',
       'manual',
-      'version-1',
-      undefined,
-      '2.0',
-      'root',
-      4,
-      'device-primary',
-      undefined,
-      'default',
+      {
+        externalVersionId: 'version-1',
+        versionLabel: '2.0',
+        queuedBy: 'root',
+        priority: 4,
+        preferredDeviceId: 'device-primary',
+        projectId: 'default',
+        minimumOsVersion: '17.1',
+      },
     ]);
   } finally {
     await server.close();
