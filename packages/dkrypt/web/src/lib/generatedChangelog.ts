@@ -1,6 +1,16 @@
 export const GENERATED_CHANGELOG = [
   {
     "date": "2026-09-27",
+    "title": "fix(telemetry): preserve trace sampling and attribute types",
+    "description": "Released in 4088da1."
+  },
+  {
+    "date": "2026-09-27",
+    "title": "chore(web): refresh generated changelog",
+    "description": "Released in e1f7c6e."
+  },
+  {
+    "date": "2026-09-27",
     "title": "fix(scheduler): preserve deferred missed-run checkpoints",
     "description": "Released in 6fb599e."
   },
@@ -28,15 +38,5 @@ export const GENERATED_CHANGELOG = [
     "date": "2026-09-27",
     "title": "feat(scheduler): add quiet hours and calendar previews",
     "description": "Released in 705cd3e."
-  },
-  {
-    "date": "2026-09-27",
-    "title": "feat(scheduler): support timezone-aware watch schedules",
-    "description": "Released in 371f033."
-  },
-  {
-    "date": "2026-09-27",
-    "title": "fix(deploy): harden authenticated smoke checks",
-    "description": "Released in 781fe88."
   }
 ] as const;
