@@ -303,6 +303,10 @@ async function start(): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     log.info('graceful shutdown started', { signal });
+    const shutdownDeadline = setTimeout(() => {
+      log.error('graceful shutdown exceeded its 25-second deadline', { signal });
+      process.exit(1);
+    }, 25_000);
     stopAcceptingJobs();
     stopScheduler();
     stopDeviceHealthPoller();
@@ -317,16 +321,29 @@ async function start(): Promise<void> {
     await server.close();
     stopStateBackgroundServices();
     await stopNotificationDigestScheduler();
-    await shutdownJobs();
-    closeBillingDatabase();
-    closeIdentityDatabase();
-    closeIdempotencyDatabase();
-    closeWebhookInboxDatabase();
-    closeArtifactDatabase();
-    closeStateDatabase();
-    await stopTelemetry();
-    log.info('graceful shutdown completed', { signal });
-    stopLogFlusher();
+    const jobShutdown = await shutdownJobs();
+    const finishShutdown = async () => {
+      closeBillingDatabase();
+      closeIdentityDatabase();
+      closeIdempotencyDatabase();
+      closeWebhookInboxDatabase();
+      closeArtifactDatabase();
+      closeStateDatabase();
+      await stopTelemetry();
+      log.info('graceful shutdown completed', { signal });
+      stopLogFlusher();
+      clearTimeout(shutdownDeadline);
+    };
+    if (jobShutdown.drained) {
+      await finishShutdown();
+      return;
+    }
+    log.warn('job runners are still active; deferring database shutdown until they settle', { signal });
+    void jobShutdown.completion
+      .then(finishShutdown)
+      .catch((error: unknown) => {
+        log.error('deferred shutdown cleanup failed', { signal, error: String(error) });
+      });
   };
   process.once('SIGTERM', () => void shutdown('SIGTERM'));
   process.once('SIGINT', () => void shutdown('SIGINT'));

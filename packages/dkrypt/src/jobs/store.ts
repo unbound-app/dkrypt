@@ -933,7 +933,12 @@ export function stopAcceptingJobs(): void {
   acceptingJobs = false;
 }
 
-export async function shutdownJobs(timeoutMs = 15_000): Promise<void> {
+export interface JobShutdownResult {
+  drained: boolean;
+  completion: Promise<void>;
+}
+
+export async function shutdownJobs(timeoutMs = 15_000): Promise<JobShutdownResult> {
   stopJobSweeper();
   stopAcceptingJobs();
   const now = Date.now();
@@ -957,15 +962,19 @@ export async function shutdownJobs(timeoutMs = 15_000): Promise<void> {
   }
   persistActiveJobs();
   const runs = [...runningJobs.values()];
-  if (runs.length > 0) await Promise.race([Promise.allSettled(runs), sleep(timeoutMs)]);
+  if (runs.length === 0) {
+    closePersistedJobs();
+    return { drained: true, completion: Promise.resolve() };
+  }
+  const runsSettled = Promise.allSettled(runs);
+  await Promise.race([runsSettled, sleep(timeoutMs)]);
   for (const job of jobs.values()) {
     if (job.status === 'running') terminateChildProcess(job.childProcess, 'SIGKILL');
   }
   persistActiveJobs();
-  if (runs.length === 0) {
-    closePersistedJobs();
-    return;
-  }
-  await Promise.race([Promise.allSettled(runs), sleep(1_000)]);
-  if ([...runningJobs.keys()].length === 0) closePersistedJobs();
+  await Promise.race([runsSettled, sleep(1_000)]);
+  const drained = runningJobs.size === 0;
+  const completion = runsSettled.then(() => closePersistedJobs());
+  if (drained) await completion;
+  return { drained, completion };
 }
