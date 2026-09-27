@@ -1,6 +1,16 @@
 export const GENERATED_CHANGELOG = [
   {
     "date": "2026-09-27",
+    "title": "feat(reliability): fix API docs and improve tracing",
+    "description": "Released in 2b21efb."
+  },
+  {
+    "date": "2026-09-27",
+    "title": "chore(web): refresh generated changelog",
+    "description": "Released in d6861b0."
+  },
+  {
+    "date": "2026-09-27",
     "title": "fix(telemetry): correlate rejected requests",
     "description": "Released in 6849d81."
   },
@@ -28,15 +38,5 @@ export const GENERATED_CHANGELOG = [
     "date": "2026-09-27",
     "title": "chore(web): refresh generated changelog",
     "description": "Released in f273c07."
-  },
-  {
-    "date": "2026-09-27",
-    "title": "fix(telemetry): preserve trace sampling and attribute types",
-    "description": "Released in 4088da1."
-  },
-  {
-    "date": "2026-09-27",
-    "title": "chore(web): refresh generated changelog",
-    "description": "Released in e1f7c6e."
   }
 ] as const;
