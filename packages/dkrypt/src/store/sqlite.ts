@@ -190,6 +190,22 @@ const migrations = [
       CREATE INDEX IF NOT EXISTS artifacts_bundle_channel_recent ON artifacts(bundle_id, channel, created_at DESC);
     `,
   },
+  {
+    version: 9,
+    sql: `
+      CREATE TABLE IF NOT EXISTS artifact_projects (
+        artifact_id TEXT NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
+        project_id TEXT NOT NULL,
+        PRIMARY KEY (artifact_id, project_id)
+      );
+      INSERT OR IGNORE INTO artifact_projects (artifact_id, project_id)
+      SELECT artifacts.id, project_link.value
+      FROM artifacts,
+           json_each(CASE WHEN json_valid(artifacts.payload) = 1 THEN artifacts.payload ELSE '{}' END, '$.projectIds') AS project_link
+      WHERE project_link.type = 'text';
+      CREATE INDEX IF NOT EXISTS artifact_projects_by_project ON artifact_projects(project_id, artifact_id);
+    `,
+  },
 ] as const;
 
 const domainTables = [
@@ -318,9 +334,16 @@ function replaceCollectionRows(database: Database, replacement: StateCollectionR
         access_count, pinned_at, source_job_id
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
     `);
+    const projectLinkStatement = database.query('INSERT OR IGNORE INTO artifact_projects (artifact_id, project_id) VALUES (?, ?);');
     for (const row of replacement.rows) {
       const updatedAt = row.updatedAt ?? Date.now();
       statement.run(row.id, json(row.payload), updatedAt, ...artifactIndexValues(row.payload, updatedAt));
+      const projectIds = asRecord(row.payload).projectIds;
+      if (Array.isArray(projectIds)) {
+        for (const projectId of projectIds) {
+          if (typeof projectId === 'string') projectLinkStatement.run(row.id, projectId);
+        }
+      }
     }
     return;
   }
@@ -617,6 +640,25 @@ export function replaceStateCollections(database: Database, replacements: readon
       replaceCollectionRows(database, replacement);
     }
     database.exec('COMMIT;');
+  } catch (error) {
+    database.exec('ROLLBACK;');
+    throw error;
+  }
+}
+
+export function importLegacyArtifactIndexOnce(database: Database, artifacts: Array<{ id: string; payload: unknown; updatedAt?: number }>): boolean {
+  const metadataKey = 'legacy_artifact_index_imported';
+  database.exec('BEGIN IMMEDIATE;');
+  try {
+    const imported = database.query('SELECT 1 AS imported FROM metadata WHERE key = ?;').get(metadataKey) as { imported?: number } | null;
+    if (imported?.imported === 1) {
+      database.exec('COMMIT;');
+      return false;
+    }
+    replaceCollectionRows(database, { table: 'artifacts', rows: artifacts });
+    database.query('INSERT INTO metadata (key, value) VALUES (?, ?);').run(metadataKey, String(Date.now()));
+    database.exec('COMMIT;');
+    return true;
   } catch (error) {
     database.exec('ROLLBACK;');
     throw error;

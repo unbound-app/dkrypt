@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { createReadStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { createReadStream, existsSync, mkdirSync, rmSync } from 'node:fs';
 import { mkdir, readdir, rename, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { isArtifactRecord, type ArtifactChannel, type ArtifactRecord } from '#artifactTypes.js';
+import { type ArtifactChannel, type ArtifactRecord } from '#artifactTypes.js';
 import { createArtifactRepository } from '#artifacts/repository.js';
 import { config } from '#config.js';
 import { scopedLogger } from '#logger.js';
@@ -93,12 +93,8 @@ function loadIndex(): ArtifactIndex {
   mkdirSync(config.stateDir, { recursive: true });
   const storedArtifacts = artifactRepository.load().map(normalizeArtifactRecord);
   if (storedArtifacts.length > 0) return { version: 1, artifacts: storedArtifacts };
-  if (!existsSync(indexPath)) return { version: 1, artifacts: [] };
   try {
-    const parsed = JSON.parse(readFileSync(indexPath, 'utf8')) as Partial<ArtifactIndex>;
-    if (parsed.version !== 1 || !Array.isArray(parsed.artifacts)) throw new Error('unsupported artifact index');
-    const artifacts = parsed.artifacts.filter(isArtifactRecord).map(normalizeArtifactRecord);
-    artifactRepository.replace(artifacts);
+    const artifacts = artifactRepository.importLegacyIndex(indexPath).map(normalizeArtifactRecord);
     return { version: 1, artifacts };
   } catch (err) {
     throw new Error(`could not initialize artifact metadata: ${err instanceof Error ? err.message : String(err)}`);
@@ -106,20 +102,7 @@ function loadIndex(): ArtifactIndex {
 }
 
 function persistIndex(): void {
-  mkdirSync(config.stateDir, { recursive: true });
   artifactRepository.replace(index.artifacts);
-  const temporary = `${indexPath}.${process.pid}.${randomUUID()}.tmp`;
-  try {
-    writeFileSync(temporary, JSON.stringify(index));
-    renameSync(temporary, indexPath);
-  } catch (error) {
-    try {
-      rmSync(temporary, { force: true });
-    } catch (cleanupError) {
-      log.warn('failed to remove a temporary compatibility artifact index', { path: temporary, error: String(cleanupError) });
-    }
-    log.warn('failed to refresh the compatibility artifact index after persisting metadata', { error: String(error) });
-  }
 }
 
 export function reloadArtifactIndex(): void {
@@ -305,19 +288,12 @@ export function previewArtifactQuotaRetention(targetMaxBytes: number): ArtifactQ
 }
 
 export function listArtifacts(options: ArtifactListOptions = {}): ArtifactListResult {
-  const query = options.query?.trim().toLowerCase();
-  const filtered = index.artifacts
-    .filter((artifact) => artifactFileAvailable(artifact))
-    .filter((artifact) => !options.projectIds || artifact.projectIds.some((id) => options.projectIds!.includes(id)))
-    .filter((artifact) => !options.bundleIds || options.bundleIds.includes(artifact.bundleId))
-    .filter((artifact) => !options.channel || artifact.channel === options.channel)
-    .filter((artifact) => {
-      if (!query) return true;
-      return [artifact.bundleId, artifact.versionLabel, artifact.externalVersionId, artifact.buildNumber, artifact.sha256]
-        .filter(Boolean)
-        .some((value) => value!.toLowerCase().includes(query));
-    })
-    .sort((a, b) => b.createdAt - a.createdAt || b.id.localeCompare(a.id));
+  const filtered = artifactRepository.list({
+    query: options.query,
+    channel: options.channel,
+    bundleIds: options.bundleIds,
+    projectIds: options.projectIds,
+  }).filter(artifactFileAvailable);
 
   const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
   const page = paginateCursor(filtered, {
