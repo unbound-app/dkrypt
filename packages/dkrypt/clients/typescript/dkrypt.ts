@@ -87,6 +87,7 @@ export type DkryptRoute =
   | "GET /v1/dashboard/roles"
   | "GET /v1/dashboard/search"
   | "GET /v1/dashboard/settings"
+  | "GET /v1/dashboard/settings/artifact-storage"
   | "GET /v1/dashboard/settings/job-history-retention/preview"
   | "GET /v1/dashboard/settings/validate-cron"
   | "GET /v1/dashboard/storage-forecast"
