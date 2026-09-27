@@ -299,6 +299,65 @@ jobs:
           ]);
           if (events.status !== 401 || artifacts.status !== 401) throw new Error('dashboard event and artifact routes did not enforce session authentication');
           const stat = await import('node:fs/promises');
+          const childProcess = await import('node:child_process');
+          const path = await import('node:path');
+          const crypto = await import('node:crypto');
+          const artifactProbePath = path.join(process.env.ARTIFACT_DIR || '/data/artifacts', `.dkrypt-deploy-smoke-${crypto.randomUUID()}`);
+          try {
+            const storageWrite = childProcess.spawnSync('setpriv', [
+              '--reuid=10001',
+              '--regid=10001',
+              '--clear-groups',
+              'bun',
+              '-e',
+              `await Bun.write(${JSON.stringify(artifactProbePath)}, 'artifact-storage-probe')`,
+            ], { encoding: 'utf8' });
+            if (storageWrite.status !== 0) throw new Error('artifact storage is not writable by the API user');
+            if (await stat.readFile(artifactProbePath, 'utf8') !== 'artifact-storage-probe') throw new Error('artifact storage failed its read-after-write check');
+          } finally {
+            await stat.unlink(artifactProbePath).catch(() => {});
+          }
+          const { config } = await import('/app/src/config.ts');
+          if (config.deviceBridgeSecret.length < 32) {
+            const secretFile = process.env.DEVICE_BRIDGE_SECRET_FILE || path.join(process.env.STATE_DIR || '/data/state', 'device-bridge.secret');
+            config.deviceBridgeSecret = (await stat.readFile(secretFile, 'utf8')).trim();
+          }
+          const { setFastifySessionCookie } = await import('/app/src/session.ts');
+          const { ALL_PERMISSION_BITS } = await import('/app/src/permissions.ts');
+          const { getPrimaryDevice, revokeSessionRecord } = await import('/app/src/store/state.ts');
+          let sessionCookie = '';
+          setFastifySessionCookie({ header: (_name, value) => { sessionCookie = String(value); } }, { sub: 'root', permissions: ALL_PERMISSION_BITS });
+          const cookieHeader = sessionCookie.split(';', 1)[0];
+          const cookieBody = cookieHeader.slice('session='.length).split('.')[0];
+          const sessionId = JSON.parse(Buffer.from(cookieBody, 'base64url').toString('utf8')).sid;
+          let eventReader;
+          const eventController = new AbortController();
+          const eventTimeout = setTimeout(() => eventController.abort(), 5_000);
+          try {
+            const authenticatedArtifacts = await fetch(`${base}/v1/dashboard/artifacts?limit=1`, { headers: { cookie: cookieHeader } });
+            const artifactPage = await authenticatedArtifacts.json();
+            if (authenticatedArtifacts.status !== 200 || !Array.isArray(artifactPage.artifacts) || typeof artifactPage.totalBytes !== 'number') {
+              throw new Error('authenticated artifact listing did not return a valid page');
+            }
+            const eventStream = await fetch(`${base}/v1/dashboard/events?projectId=default`, { headers: { cookie: cookieHeader }, signal: eventController.signal });
+            if (eventStream.status !== 200 || !eventStream.headers.get('content-type')?.includes('text/event-stream') || !eventStream.body) {
+              throw new Error('authenticated dashboard event stream did not open');
+            }
+            eventReader = eventStream.body.getReader();
+            const decoder = new TextDecoder();
+            let initialEvents = '';
+            while (!initialEvents.includes('event: overview') && initialEvents.length < 262_144) {
+              const chunk = await eventReader.read();
+              if (chunk.done) break;
+              initialEvents += decoder.decode(chunk.value, { stream: true });
+            }
+            if (!initialEvents.includes('event: overview')) throw new Error('authenticated dashboard event stream did not send its initial overview');
+          } finally {
+            clearTimeout(eventTimeout);
+            await eventReader?.cancel().catch(() => {});
+            eventController.abort();
+            revokeSessionRecord(sessionId, 'root');
+          }
           await stat.stat(process.env.DEVICE_BRIDGE_SOCKET || '/run/dkrypt/device-bridge.sock');
           const processIds = (await stat.readdir('/proc')).filter((entry) => /^\d+$/.test(entry));
           const processes = await Promise.all(processIds.map(async (pid) => {
@@ -328,12 +387,6 @@ jobs:
           } catch (error) {
             if (error instanceof Error && !String(error.message).includes('ENOENT')) throw error;
           }
-          const { config } = await import('/app/src/config.ts');
-          if (config.deviceBridgeSecret.length < 32) {
-            const secretFile = process.env.DEVICE_BRIDGE_SECRET_FILE || '/data/state/device-bridge.secret';
-            config.deviceBridgeSecret = (await stat.readFile(secretFile, 'utf8')).trim();
-          }
-          const { getPrimaryDevice } = await import('/app/src/store/state.ts');
           const { withAutoinstallDeviceAgent } = await import('/app/src/idevice.ts');
           const primaryDevice = getPrimaryDevice();
           if (!primaryDevice?.udid || primaryDevice.host || primaryDevice.usbmuxNetwork === true) throw new Error('configured primary device is not a direct USB pairing');

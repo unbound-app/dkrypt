@@ -1,4 +1,5 @@
 import type { JobHistoryEntry, LogEntry, OverviewPayload } from '#lib/api';
+import { DashboardEventSequenceTracker } from '#lib/liveSequence';
 import { projectSelectionState, setProjectSelection } from '#lib/projectSelection.svelte';
 import { serverStateCache } from '#lib/serverStateCache.svelte';
 
@@ -19,7 +20,7 @@ export const liveState = $state<{
 let source: EventSource | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 let visibilityListenerInstalled = false;
-let lastSequence = 0;
+const sequenceTracker = new DashboardEventSequenceTracker();
 let overviewRefresh: Promise<void> | undefined;
 let hasConnectedBefore = false;
 
@@ -55,12 +56,11 @@ function scheduleReconnect(): void {
 function readEvent<T>(event: Event): T {
 	const value = JSON.parse((event as MessageEvent).data) as T & { sequence?: number; data?: T };
 	if (typeof value.sequence === 'number') {
-		if (lastSequence > 0 && value.sequence > lastSequence + 1) {
+		if (sequenceTracker.receive(value.sequence)) {
 			liveState.sequenceGap = true;
 			serverStateCache.invalidateAll();
 			void refreshOverview();
 		}
-		lastSequence = Math.max(lastSequence, value.sequence);
 		liveState.lastEventAt = Date.now();
 		liveState.stale = false;
 	}
@@ -136,7 +136,7 @@ export function connectLive(): void {
     liveState.historyAdditions = [];
     serverStateCache.clear();
     liveState.overviewLoaded = false;
-    lastSequence = 0;
+    sequenceTracker.reset();
     connectLive();
   });
 
@@ -171,7 +171,7 @@ export function disconnectLive(): void {
   liveState.sequenceGap = false;
   serverStateCache.markAllStale();
   hasConnectedBefore = false;
-  lastSequence = 0;
+  sequenceTracker.reset();
 }
 
 export function reconnectLive(resetProjectState = false): void {
