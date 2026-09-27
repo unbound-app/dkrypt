@@ -50,6 +50,12 @@ export const dashboardArtifactRetentionQuerySchema = Type.Object({
   maxBytes: Type.Integer({ minimum: 1 }),
 }, { additionalProperties: true });
 
+export const dashboardArtifactStorageResponseSchema = Type.Object({
+  count: Type.Integer({ minimum: 0 }),
+  usedBytes: Type.Number({ minimum: 0 }),
+  maxBytes: Type.Number({ minimum: 0 }),
+}, { additionalProperties: true });
+
 export const dashboardSettingsRetentionPreviewResponseSchema = Type.Object({
   retentionDays: Type.Integer({ minimum: 0 }),
   cutoff: Type.Optional(Type.Number()),
@@ -114,6 +120,10 @@ export type DashboardSettingsRetentionPreviewRoute = {
 export type DashboardArtifactRetentionPreviewRoute = {
   Querystring: Static<typeof dashboardArtifactRetentionQuerySchema>;
   Reply: { 200: Static<typeof dashboardArtifactRetentionPreviewResponseSchema>; 400: ApiErrorEnvelope; 401: ApiErrorEnvelope; 403: ApiErrorEnvelope };
+};
+
+export type DashboardArtifactStorageRoute = {
+  Reply: { 200: Static<typeof dashboardArtifactStorageResponseSchema>; 401: ApiErrorEnvelope; 403: ApiErrorEnvelope };
 };
 
 export type DashboardSettingsCronRoute = {

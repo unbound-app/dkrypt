@@ -7,7 +7,7 @@
   import Button from '#lib/components/ui/Button.svelte';
   import Card from '#lib/components/ui/Card.svelte';
   import Input from '#lib/components/ui/Input.svelte';
-  import { fetchArtifacts, observeArtifacts, previewArtifactQuotaRetention, setDashboardArtifactPinned, type ArtifactQuotaRetentionPreview, type ArtifactRecord } from '#lib/api';
+  import { fetchArtifacts, observeArtifacts, setDashboardArtifactPinned, type ArtifactRecord } from '#lib/api';
   import { appDisplayName, appIconUrl, ensureAppCatalog } from '#lib/appCatalog.svelte';
   import { fmtBytesGB, fmtSize, fmtTime } from '#lib/format';
   import { PermissionFlag } from '#lib/permissions';
@@ -30,12 +30,7 @@
   let expandedArtifactIds = $state<Set<string>>(new Set());
   let nextCursor = $state<string | undefined>(undefined);
   let error = $state('');
-  let cacheStatus = $state('');
-  let showQuotaSimulation = $state(false);
-  let proposedQuotaGb = $state('');
-  let quotaPreview = $state<ArtifactQuotaRetentionPreview | null>(null);
-  let quotaPreviewLoading = $state(false);
-  let quotaPreviewError = $state('');
+  let refreshError = $state('');
   let stopObservingArtifacts: (() => void) | undefined;
   let artifactLoadVersion = 0;
   let activeArtifactQueryKey = '';
@@ -58,17 +53,16 @@
       total = result.total;
       totalBytes = result.totalBytes;
       maxBytes = result.maxBytes;
-      if (!proposedQuotaGb) proposedQuotaGb = formatQuotaInput(result.maxBytes);
       nextCursor = result.nextCursor;
     };
     stopObservingArtifacts = observeArtifacts(artifactQuery, (snapshot) => {
       if (loadVersion !== artifactLoadVersion) return;
       if (snapshot.data) {
         applyPage(snapshot.data);
-        cacheStatus = serverQueryStatus(snapshot);
+        refreshError = snapshot.error ? serverQueryStatus(snapshot) : '';
         if (!snapshot.error) error = '';
       } else {
-        cacheStatus = '';
+        refreshError = '';
         artifacts = [];
         total = 0;
         totalBytes = 0;
@@ -130,35 +124,6 @@
     expandedArtifactIds = next;
   }
 
-  function toggleQuotaSimulation(): void {
-    showQuotaSimulation = !showQuotaSimulation;
-    quotaPreviewError = '';
-    if (!proposedQuotaGb && maxBytes > 0) proposedQuotaGb = formatQuotaInput(maxBytes);
-  }
-
-  function formatQuotaInput(bytes: number): string {
-    return (bytes / 1024 ** 3).toFixed(9).replace(/\.?0+$/, '');
-  }
-
-  async function simulateQuota(): Promise<void> {
-    const targetMaxBytes = Math.round(Number(proposedQuotaGb) * 1024 ** 3);
-    if (!Number.isSafeInteger(targetMaxBytes) || targetMaxBytes < 1) {
-      quotaPreviewError = 'Enter a positive storage quota.';
-      quotaPreview = null;
-      return;
-    }
-    quotaPreviewLoading = true;
-    quotaPreviewError = '';
-    try {
-      quotaPreview = await previewArtifactQuotaRetention(targetMaxBytes);
-    } catch (err) {
-      quotaPreviewError = err instanceof Error ? err.message : 'Could not simulate this quota';
-      quotaPreview = null;
-    } finally {
-      quotaPreviewLoading = false;
-    }
-  }
-
   async function toggleArtifactPin(artifact: ArtifactRecord): Promise<void> {
     if (pinningArtifactIds.includes(artifact.id)) return;
     pinningArtifactIds = [...pinningArtifactIds, artifact.id];
@@ -194,59 +159,8 @@
       </div>
 
       <div class="p-4 sm:p-5">
-        {#if canManageStorage}
-          <div class="mb-4 rounded-lg border border-border/70 p-3">
-            <div class="flex flex-wrap items-center justify-between gap-3">
-              <div class="min-w-0">
-                <div class="text-xs font-semibold">Retention simulation</div>
-                <div class="text-muted mt-0.5 text-xs">Preview which least-recently-accessed IPAs a storage quota would evict.</div>
-              </div>
-              <Button variant="secondary" size="sm" onclick={toggleQuotaSimulation}>{showQuotaSimulation ? 'Close' : 'Simulate quota'}</Button>
-            </div>
-            {#if showQuotaSimulation}
-              <div class="mt-3 border-t border-border/70 pt-3" aria-live="polite">
-                <div class="flex flex-wrap items-end gap-2">
-                  <label class="text-muted text-xs">
-                    Proposed quota (GB)
-                    <Input class="mt-1 w-32" type="number" min="0" step="any" bind:value={proposedQuotaGb} aria-label="Proposed artifact quota in gigabytes" />
-                  </label>
-                  <Button variant="default" size="sm" loading={quotaPreviewLoading} onclick={() => void simulateQuota()}>Preview</Button>
-                </div>
-                {#if quotaPreviewError}
-                  <div class="text-err mt-2 text-xs" role="alert">{quotaPreviewError}</div>
-                {:else if quotaPreview}
-                  <div class="mt-3 rounded-md bg-muted/20 p-2.5 text-xs">
-                    <div class="font-medium">
-                      {#if quotaPreview.remainingOverQuotaBytes > 0}
-                        Pinned files exceed this quota by {fmtBytesGB(quotaPreview.remainingOverQuotaBytes)}. Unpin files or raise the quota before storing more.
-                      {:else if quotaPreview.evictedCount > 0}
-                        Would keep {quotaPreview.retainedCount} of {quotaPreview.currentCount} files, reclaiming {fmtBytesGB(quotaPreview.reclaimedBytes)}.
-                      {:else}
-                        No files would be evicted at this quota.
-                      {/if}
-                    </div>
-                    <div class="text-muted mt-1">Retained storage: {fmtBytesGB(quotaPreview.retainedBytes)} / {fmtBytesGB(quotaPreview.targetMaxBytes)}. {quotaPreview.pinnedCount} pinned files ({fmtBytesGB(quotaPreview.pinnedBytes)}) are protected. The simulation does not change settings or delete files.</div>
-                    {#if quotaPreview.evictionExamples.length > 0}
-                      <ul class="mt-2 divide-y divide-border/70">
-                        {#each quotaPreview.evictionExamples.slice(0, 5) as candidate (candidate.id)}
-                          <li class="flex items-center justify-between gap-3 py-1.5 first:pt-0 last:pb-0">
-                            <span class="min-w-0 truncate" title={candidate.bundleId}>{candidate.bundleId}{candidate.versionLabel ? ` · ${candidate.versionLabel}` : ''}</span>
-                            <span class="shrink-0 text-muted">{fmtSize(candidate.fileSizeBytes)}</span>
-                          </li>
-                        {/each}
-                      </ul>
-                      {#if quotaPreview.evictedCount > Math.min(quotaPreview.evictionExamples.length, 5)}
-                        <div class="text-muted mt-1.5">and {quotaPreview.evictedCount - Math.min(quotaPreview.evictionExamples.length, 5)} more oldest files</div>
-                      {/if}
-                    {/if}
-                  </div>
-                {/if}
-              </div>
-            {/if}
-          </div>
-        {/if}
-        {#if cacheStatus}
-          <div class="mb-3 rounded-md border border-border/70 px-3 py-2 text-xs text-muted" role="status" aria-live="polite">{cacheStatus}</div>
+        {#if refreshError}
+          <div class="mb-3 rounded-md border border-border/70 px-3 py-2 text-xs text-muted" role="status" aria-live="polite">{refreshError}</div>
         {/if}
         {#if error && artifacts.length === 0}
           <div class="text-err text-[13px]" role="alert">{error}</div>

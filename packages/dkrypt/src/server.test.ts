@@ -2133,6 +2133,29 @@ test('Fastify serves browser identity assets from the public root', async () => 
   }
 });
 
+test('Scalar API reference renders with a per-response nonce and blocks framing', async () => {
+  const server = await buildServer();
+
+  try {
+    const first = await server.inject({ method: 'GET', url: '/reference/' });
+    const second = await server.inject({ method: 'GET', url: '/reference/' });
+    const nonce = first.body.match(/<meta property="csp-nonce" content="([^"]+)"\s*\/>/)?.[1];
+    const scriptTags = first.body.match(/<script\b[^>]*>/g) ?? [];
+    const policy = first.headers['content-security-policy'];
+
+    expect(first.statusCode).toBe(200);
+    expect(nonce).toBeTruthy();
+    expect(scriptTags.length).toBeGreaterThan(1);
+    expect(scriptTags.every((tag) => tag.includes(`nonce="${nonce}"`))).toBe(true);
+    expect(policy).toContain("frame-ancestors 'none'");
+    expect(policy).toContain(`script-src 'self' 'nonce-${nonce}'`);
+    expect(policy).not.toContain("script-src 'self' 'unsafe-inline'");
+    expect(second.body.match(/<meta property="csp-nonce" content="([^"]+)"\s*\/>/)?.[1]).not.toBe(nonce);
+  } finally {
+    await server.close();
+  }
+});
+
 test('Fastify emits a narrow content security policy', async () => {
   const server = await buildServer({ includePublicRoutes: false });
 
@@ -2547,6 +2570,18 @@ test('Fastify previews retention and reports queue service objectives', async ()
       evictionExamples: expect.any(Array),
     });
 
+    const artifactStorage = await server.inject({
+      method: 'GET',
+      url: '/v1/dashboard/settings/artifact-storage',
+      headers: { cookie },
+    });
+    expect(artifactStorage.statusCode).toBe(200);
+    expect(artifactStorage.json()).toMatchObject({
+      count: expect.any(Number),
+      usedBytes: expect.any(Number),
+      maxBytes: expect.any(Number),
+    });
+
     const slo = await server.inject({
       method: 'GET',
       url: '/v1/dashboard/jobs/slo',
@@ -2556,6 +2591,43 @@ test('Fastify previews retention and reports queue service objectives', async ()
     expect(slo.json()).toMatchObject({ targetMs: expect.any(Number), jobs: expect.any(Array) });
   } finally {
     await server.close();
+  }
+});
+
+test('artifact storage preview requires decrypt and automation permissions', async () => {
+  const server = await buildServer({ includePublicRoutes: false });
+  const automationId = `github:storage-automation-${crypto.randomUUID()}`;
+  const decryptId = `github:storage-decrypt-${crypto.randomUUID()}`;
+  const permittedId = `github:storage-permitted-${crypto.randomUUID()}`;
+  const automationPermissions = PermissionFlag.manageAutomation;
+  const decryptPermissions = PermissionFlag.requestDecrypt;
+  const permittedPermissions = automationPermissions | decryptPermissions;
+  const automationRole = createRole({ name: `Storage automation ${crypto.randomUUID()}`, color: '#3498db', permissions: serializeBits(automationPermissions) }, 'root');
+  const decryptRole = createRole({ name: `Storage decrypt ${crypto.randomUUID()}`, color: '#5865f2', permissions: serializeBits(decryptPermissions) }, 'root');
+  const permittedRole = createRole({ name: `Storage access ${crypto.randomUUID()}`, color: '#57f287', permissions: serializeBits(permittedPermissions) }, 'root');
+  addAllowedUser(automationId, [automationRole.id], 'root');
+  addAllowedUser(decryptId, [decryptRole.id], 'root');
+  addAllowedUser(permittedId, [permittedRole.id], 'root');
+  const automationCookie = createSessionCookie(automationId, automationPermissions);
+  const decryptCookie = createSessionCookie(decryptId, decryptPermissions);
+  const permittedCookie = createSessionCookie(permittedId, permittedPermissions);
+
+  try {
+    const automationOnly = await server.inject({ method: 'GET', url: '/v1/dashboard/settings/artifact-storage', headers: { cookie: automationCookie } });
+    const decryptOnly = await server.inject({ method: 'GET', url: '/v1/dashboard/settings/artifact-storage', headers: { cookie: decryptCookie } });
+    const permitted = await server.inject({ method: 'GET', url: '/v1/dashboard/settings/artifact-storage', headers: { cookie: permittedCookie } });
+
+    expect(automationOnly.statusCode).toBe(403);
+    expect(decryptOnly.statusCode).toBe(403);
+    expect(permitted.statusCode).toBe(200);
+  } finally {
+    await server.close();
+    deleteUserPersonalData(automationId);
+    deleteUserPersonalData(decryptId);
+    deleteUserPersonalData(permittedId);
+    deleteRole(automationRole.id, 'test cleanup');
+    deleteRole(decryptRole.id, 'test cleanup');
+    deleteRole(permittedRole.id, 'test cleanup');
   }
 });
 

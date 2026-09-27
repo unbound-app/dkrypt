@@ -138,6 +138,7 @@ test('core operational responses publish their required fields', async () => {
       ['/v1/dashboard/github/workflows', 'get', ['workflows']],
       ['/v1/dashboard/apps/metadata', 'get', ['entries']],
       ['/v1/dashboard/apps/cache', 'get', ['entries', 'icons']],
+      ['/v1/dashboard/settings/artifact-storage', 'get', ['count', 'usedBytes', 'maxBytes']],
       ['/v1/dashboard/settings/job-history-retention/preview', 'get', ['retentionDays', 'currentEntries', 'retained', 'removed', 'agePruned', 'capacityPruned', 'afterNextWrite', 'maxEntries', 'artifacts']],
       ['/v1/dashboard/artifacts/retention-preview', 'get', ['targetMaxBytes', 'currentBytes', 'retainedBytes', 'evictedCount', 'evictionExamples']],
       ['/v1/auth/session', 'get', ['loggedIn', 'identities', 'linkedProviders', 'publicBaseUrl', 'mfa']],

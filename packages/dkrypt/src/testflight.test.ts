@@ -1,4 +1,7 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { config } from '#config.js';
+import { currentCorrelation, withCorrelation } from '#correlation.js';
+import { flushTelemetry, startSpan, type TraceContext } from '#telemetry.js';
 
 const installedInfoPlist = '/var/containers/Bundle/Application/B7CC6241-7F24-4683-A9BC-3E0F3DE60ED5/Discord.app/Info.plist';
 const originalSetTimeout = globalThis.setTimeout;
@@ -7,6 +10,7 @@ let installedBuild = '107127';
 let abortOnInstall: AbortController | undefined;
 const lifecycleActions: string[] = [];
 const listAppRefreshes: boolean[] = [];
+const listTrainTraceContexts: TraceContext[] = [];
 
 const idevice = await import('#idevice.js');
 const state = await import('#store/state.js');
@@ -19,6 +23,10 @@ mock.module('#idevice.js', () => ({
   readInstalledBundleVersions: async (_conn: object, appPath: string) => ({ buildVersion: appPath.endsWith('.app') ? installedBuild : undefined }),
   sendSpringBoardBridgeRequest: async () => ({ launchResult: 0 }),
   sendTestFlightBridgeRequest: async (_conn: object, request: Record<string, unknown>) => {
+    if (request.action === 'list_trains') {
+      const traceContext = currentCorrelation()?.traceContext;
+      if (traceContext) listTrainTraceContexts.push(traceContext);
+    }
     if (request.action === 'status') {
       return {
         bridgeVersion: '2.0.0',
@@ -130,5 +138,41 @@ describe('installBuild', () => {
     expect(output).toContain('# TYPE dkrypt_testflight_lookup_duration_ms summary');
     expect(output).toContain('dkrypt_testflight_lookup_duration_ms_count{operation="trains"} 1');
     metrics.resetMetrics();
+  });
+
+  test('traces TestFlight bridge operations as children of the initiating request', async () => {
+    const previousSampleRate = config.otelSampleRate;
+    config.otelSampleRate = 1;
+    listTrainTraceContexts.length = 0;
+    const requestSpan = startSpan('test.http.request');
+    const device = { id: `device-${crypto.randomUUID()}`, rootDir: '/device' } as unknown as NonNullable<Parameters<typeof listTrains>[1]>;
+    let exportedSpans: Array<{ name: string; traceId: string; spanId: string; parentSpanId?: string }> = [];
+
+    try {
+      await withCorrelation({
+        correlationId: 'request-testflight-trace',
+        traceId: requestSpan.context.traceId,
+        traceContext: requestSpan.context,
+      }, () => listTrains(985746746, device));
+      requestSpan.end();
+      await flushTelemetry({
+        endpoint: 'https://collector.example/v1/traces',
+        fetcher: async (_input, init) => {
+          const payload = JSON.parse(String(init?.body)) as {
+            resourceSpans: Array<{ scopeSpans: Array<{ spans: Array<{ name: string; traceId: string; spanId: string; parentSpanId?: string }> }> }>;
+          };
+          exportedSpans = payload.resourceSpans.flatMap((resource) => resource.scopeSpans.flatMap((scope) => scope.spans));
+          return Response.json({});
+        },
+      });
+
+      const operationSpan = exportedSpans.find((span) => span.name === 'testflight.operation' && span.traceId === requestSpan.context.traceId);
+      expect(operationSpan).toMatchObject({ traceId: requestSpan.context.traceId, parentSpanId: requestSpan.context.spanId });
+      expect(listTrainTraceContexts).toHaveLength(1);
+      expect(listTrainTraceContexts[0]).toMatchObject({ traceId: requestSpan.context.traceId, spanId: operationSpan?.spanId });
+    } finally {
+      requestSpan.end();
+      config.otelSampleRate = previousSampleRate;
+    }
   });
 });

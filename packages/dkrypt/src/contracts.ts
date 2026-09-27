@@ -154,6 +154,7 @@ import {
   backupSnapshotDrillResponseSchema,
 } from '#dashboardBackupContracts.js';
 import {
+  dashboardArtifactStorageResponseSchema as ArtifactStorageResponse,
   dashboardArtifactRetentionPreviewResponseSchema as ArtifactQuotaRetentionPreviewResponse,
   dashboardArtifactRetentionQuerySchema,
   dashboardSettingsCronQuerySchema,
@@ -1261,6 +1262,9 @@ register('PUT', '/v1/dashboard/artifacts/:id/pin', {
 register('GET', '/v1/dashboard/artifacts/retention-preview', {
   querystring: dashboardArtifactRetentionQuerySchema,
   response: { 200: ArtifactQuotaRetentionPreviewResponse, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope },
+});
+register('GET', '/v1/dashboard/settings/artifact-storage', {
+  response: { 200: ArtifactStorageResponse, 401: ErrorEnvelope, 403: ErrorEnvelope },
 });
 register('GET', '/v1/dashboard/testflight/:appId/trains', {
   params: dashboardTestFlightAppParamsSchema,

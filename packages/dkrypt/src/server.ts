@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -210,12 +210,28 @@ export async function buildServer(options: { includePublicRoutes?: boolean } = {
   }
 
   server.addHook('onSend', (request, reply, payload, done) => {
-    const normalizedPayload = normalizeApiErrorPayload(request, reply, payload);
+    let normalizedPayload = normalizeApiErrorPayload(request, reply, payload);
     if (!request.url.startsWith('/assets/') && !reply.hasHeader('Cache-Control')) reply.header('Cache-Control', 'no-store');
     reply.header('X-Content-Type-Options', 'nosniff');
     reply.header('Referrer-Policy', 'strict-origin-when-cross-origin');
     reply.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), usb=()');
-    reply.header('Content-Security-Policy', "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; object-src 'none'; img-src 'self' data: https:; style-src 'self'; style-src-elem 'self'; style-src-attr 'unsafe-inline'; script-src 'self'; connect-src 'self'; font-src 'self' data:");
+    const isScalarReferenceDocument = request.url.split('?', 1)[0] === '/reference/';
+    if (isScalarReferenceDocument) {
+      const nonce = randomBytes(18).toString('base64url');
+      const html = typeof normalizedPayload === 'string'
+        ? normalizedPayload
+        : Buffer.isBuffer(normalizedPayload)
+          ? normalizedPayload.toString('utf8')
+          : undefined;
+      if (html) {
+        normalizedPayload = html
+          .replace(/<script\b/gi, `<script nonce="${nonce}"`)
+          .replace('</head>', `<meta property="csp-nonce" content="${nonce}" />\n  </head>`);
+      }
+      reply.header('Content-Security-Policy', `default-src 'self'; base-uri 'self'; frame-ancestors 'none'; object-src 'none'; img-src 'self' data: https:; style-src 'self'; style-src-elem 'self' 'nonce-${nonce}'; style-src-attr 'unsafe-inline'; script-src 'self' 'nonce-${nonce}'; connect-src 'self'; font-src 'self' data:`);
+    } else {
+      reply.header('Content-Security-Policy', "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; object-src 'none'; img-src 'self' data: https:; style-src 'self'; style-src-elem 'self'; style-src-attr 'unsafe-inline'; script-src 'self'; connect-src 'self'; font-src 'self' data:");
+    }
     if (config.publicBaseUrl.startsWith('https://')) reply.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
     done(null, normalizedPayload);
   });

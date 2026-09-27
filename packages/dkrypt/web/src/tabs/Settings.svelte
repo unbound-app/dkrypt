@@ -1,10 +1,11 @@
 <script lang="ts">
   import Tabs from '#lib/components/ui/Tabs.svelte';
   import { PermissionFlag } from '#lib/permissions';
-  import { sessionHasAnyPermission } from '#lib/session.svelte';
+  import { sessionHasAnyPermission, sessionHasPermission } from '#lib/session.svelte';
   import { setSettingsSubtab, tabState } from '#lib/ui.svelte';
   import BackupSettings from '#tabs/settings/BackupSettings.svelte';
   import BillingSettings from '#tabs/settings/BillingSettings.svelte';
+  import ArtifactStorageSettings from '#tabs/settings/ArtifactStorageSettings.svelte';
   import DevicesSettings from '#tabs/settings/DevicesSettings.svelte';
   import ProjectsSettings from '#tabs/settings/ProjectsSettings.svelte';
   import RolesSettings from '#tabs/settings/RolesSettings.svelte';
@@ -12,8 +13,9 @@
   import TestFlightSettings from '#tabs/settings/TestFlightSettings.svelte';
   import UsersSettings from '#tabs/settings/UsersSettings.svelte';
 
-  const ALL_SUBTABS: { id: string; label: string; requires: bigint[] }[] = [
+  const ALL_SUBTABS: { id: string; label: string; requires: bigint[]; requiresAll?: bigint[] }[] = [
     { id: 'scheduler', label: 'Automation', requires: [PermissionFlag.viewAutomation, PermissionFlag.manageAutomation] },
+    { id: 'storage', label: 'Storage', requires: [PermissionFlag.manageAutomation], requiresAll: [PermissionFlag.requestDecrypt] },
     { id: 'devices', label: 'Devices', requires: [PermissionFlag.viewDevices, PermissionFlag.manageDevices] },
     { id: 'users', label: 'Users', requires: [PermissionFlag.viewUsers, PermissionFlag.manageUsers] },
     { id: 'roles', label: 'Roles', requires: [PermissionFlag.viewRoles, PermissionFlag.manageRoles] },
@@ -23,11 +25,11 @@
     { id: 'billing', label: 'Billing', requires: [PermissionFlag.viewBilling, PermissionFlag.manageBilling] },
   ];
 
-  function hasAccess(requires: bigint[]): boolean {
-    return sessionHasAnyPermission(requires);
+  function hasAccess(requires: bigint[], requiresAll: bigint[] = []): boolean {
+    return sessionHasAnyPermission(requires) && requiresAll.every(sessionHasPermission);
   }
 
-  const visibleSubtabs = $derived(ALL_SUBTABS.filter((t) => hasAccess(t.requires)));
+  const visibleSubtabs = $derived(ALL_SUBTABS.filter((subtab) => hasAccess(subtab.requires, subtab.requiresAll)));
 
   $effect(() => {
     if (visibleSubtabs.length > 0 && !visibleSubtabs.some((t) => t.id === tabState.settingsSubtab)) {
@@ -42,6 +44,9 @@
   <div class:hidden={tabState.settingsSubtab !== 'scheduler'}>
     <SchedulerSettings />
   </div>
+{/if}
+{#if hasAccess([PermissionFlag.manageAutomation], [PermissionFlag.requestDecrypt]) && tabState.settingsSubtab === 'storage'}
+  <ArtifactStorageSettings />
 {/if}
 {#if hasAccess([PermissionFlag.viewDevices, PermissionFlag.manageDevices])}
   <div class:hidden={tabState.settingsSubtab !== 'devices'}>

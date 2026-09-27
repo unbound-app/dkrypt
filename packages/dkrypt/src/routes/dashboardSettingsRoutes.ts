@@ -2,6 +2,7 @@ import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
 import { validate as validateCronExpr } from 'node-cron';
 import type {
   DashboardArtifactRetentionPreviewRoute,
+  DashboardArtifactStorageRoute,
   DashboardSettingsCronRoute,
   DashboardSettingsGetRoute,
   DashboardSettingsRetentionPreviewRoute,
@@ -147,6 +148,11 @@ export const dashboardSettingsRoutes: FastifyPluginAsyncTypebox = async (server)
     schema: getRouteContract('GET', '/v1/dashboard/artifacts/retention-preview'),
     preHandler: canManageRetention,
   }, (request) => previewArtifactQuotaRetention(request.query.maxBytes));
+
+  server.get<DashboardArtifactStorageRoute>('/v1/dashboard/settings/artifact-storage', {
+    schema: getRouteContract('GET', '/v1/dashboard/settings/artifact-storage'),
+    preHandler: canManageRetention,
+  }, () => getArtifactStorageStats());
 
   server.get<DashboardSettingsCronRoute>('/v1/dashboard/settings/validate-cron', {
     schema: getRouteContract('GET', '/v1/dashboard/settings/validate-cron'),

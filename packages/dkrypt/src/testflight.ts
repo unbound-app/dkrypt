@@ -14,6 +14,8 @@ import { getPrimaryDevice, type DeviceRecord } from '#store/state.js';
 import { hasBridgeCapabilities, hasBridgeCapabilitySet, TESTFLIGHT_DEVICE_CATALOG_CAPABILITIES, TESTFLIGHT_LIFECYCLE_CAPABILITIES } from '#bridgeProtocol.js';
 import { incrementMetric, observeMetric } from '#metrics.js';
 import { delayWithSignal, throwIfAborted } from '#util/abort.js';
+import { currentCorrelation, withCorrelation } from '#correlation.js';
+import { startSpan } from '#telemetry.js';
 
 function primaryDevice() {
   const device = getPrimaryDevice();
@@ -26,6 +28,35 @@ const TESTFLIGHT_INSTALL_RETRY_AFTER_MS = 2 * 60_000;
 const TESTFLIGHT_BRIDGE_READY_CACHE_MS = 30_000;
 const TESTFLIGHT_BRIDGE_READY_POLL_INTERVAL_MS = 2_000;
 const testFlightBridgeReady = new Map<string, { expiresAt: number; capabilities: Set<string> }>();
+
+async function withTestFlightOperation<T>(
+  operation: string,
+  device: DeviceRecord,
+  action: () => Promise<T>,
+  attributes: Record<string, string | number | boolean | undefined> = {},
+): Promise<T> {
+  const parent = currentCorrelation();
+  const span = startSpan('testflight.operation', {
+    'testflight.operation': operation,
+    'device.id': device.id,
+    ...attributes,
+  }, parent?.traceContext);
+  return withCorrelation({
+    correlationId: parent?.correlationId ?? span.context.traceId,
+    ...(parent?.parentCorrelationId ? { parentCorrelationId: parent.parentCorrelationId } : {}),
+    traceId: span.context.traceId,
+    traceContext: span.context,
+  }, async () => {
+    try {
+      const result = await action();
+      span.end();
+      return result;
+    } catch (error) {
+      span.end(error);
+      throw error;
+    }
+  });
+}
 
 export interface TFTrain {
   trainVersion: string;
@@ -158,56 +189,56 @@ async function ensureTestFlightRunningOnConnection(conn: DeviceClient, device: D
 
 export async function ensureTestFlightRunning(device = primaryDevice(), requiredCapabilities: readonly string[] = []): Promise<void> {
   if (hasCachedTestFlightBridge(device, requiredCapabilities)) return;
-  return withSSH(device, (conn) => ensureTestFlightRunningOnConnection(conn, device, requiredCapabilities));
+  return withTestFlightOperation('ensure_running', device, () => withSSH(device, (conn) => ensureTestFlightRunningOnConnection(conn, device, requiredCapabilities)));
 }
 
 export async function listTrains(appId: number, device = primaryDevice()): Promise<TFTrain[]> {
-  return observeTestFlightLookup('trains', () => withReadyBridgeRequest(async (conn) => {
+  return observeTestFlightLookup('trains', () => withTestFlightOperation('list_trains', device, () => withReadyBridgeRequest(async (conn) => {
     const response = await sendTestFlightBridgeRequest(conn, { action: 'list_trains', appId });
     return response.data as TFTrain[];
-  }, device));
+  }, device), { 'testflight.app_id': appId }));
 }
 
 export async function listBuilds(appId: number, trainVersion: string, device = primaryDevice()): Promise<TFBuild[]> {
-  return observeTestFlightLookup('builds', () => withReadyBridgeRequest(async (conn) => {
+  return observeTestFlightLookup('builds', () => withTestFlightOperation('list_builds', device, () => withReadyBridgeRequest(async (conn) => {
     const response = await sendTestFlightBridgeRequest(conn, { action: 'list_builds', appId, trainVersion });
     return response.data as TFBuild[];
-  }, device));
+  }, device), { 'testflight.app_id': appId, 'testflight.train_version': trainVersion }));
 }
 
 const TESTFLIGHT_INVITE_URL_RE = /^https:\/\/testflight\.apple\.com\/join\/([A-Za-z0-9]{4,32})$/;
 
 export async function subscribeToTestFlightInvite(url: string, operationId: string, device = primaryDevice(), appId?: number): Promise<Record<string, unknown>> {
   if (!TESTFLIGHT_INVITE_URL_RE.test(url)) throw new Error('invalid TestFlight public link');
-  return withReadyBridgeRequest((conn) => sendTestFlightBridgeRequest(conn, {
+  return withTestFlightOperation('subscribe_invite', device, () => withReadyBridgeRequest((conn) => sendTestFlightBridgeRequest(conn, {
     action: 'subscribe_invite',
     url,
     operationId,
     ...(appId && Number.isInteger(appId) && appId > 0 ? { appId } : {}),
-  }), device, TESTFLIGHT_LIFECYCLE_CAPABILITIES);
+  }), device, TESTFLIGHT_LIFECYCLE_CAPABILITIES), { 'testflight.app_id': appId });
 }
 
 export async function statusTestFlightInvite(url: string, appId: number, operationId: string, device = primaryDevice()): Promise<Record<string, unknown>> {
   if (!TESTFLIGHT_INVITE_URL_RE.test(url) || !Number.isInteger(appId) || appId <= 0) throw new Error('invalid TestFlight invite status request');
-  return withReadyBridgeRequest((conn) => sendTestFlightBridgeRequest(conn, {
+  return withTestFlightOperation('status_invite', device, () => withReadyBridgeRequest((conn) => sendTestFlightBridgeRequest(conn, {
     action: 'status_invite',
     url,
     appId,
     operationId,
-  }), device, TESTFLIGHT_LIFECYCLE_CAPABILITIES);
+  }), device, TESTFLIGHT_LIFECYCLE_CAPABILITIES), { 'testflight.app_id': appId });
 }
 
 export async function unsubscribeFromTestFlightInvite(bundleId: string, device = primaryDevice(), operationId?: string): Promise<Record<string, unknown>> {
   if (!SAFE_BUNDLE_ID_RE.test(bundleId)) throw new Error('invalid bundle identifier');
-  return withReadyBridgeRequest((conn) => sendTestFlightBridgeRequest(conn, {
+  return withTestFlightOperation('unsubscribe_invite', device, () => withReadyBridgeRequest((conn) => sendTestFlightBridgeRequest(conn, {
     action: 'unsubscribe_invite',
     bundleId,
     operationId,
-  }), device, TESTFLIGHT_LIFECYCLE_CAPABILITIES);
+  }), device, TESTFLIGHT_LIFECYCLE_CAPABILITIES));
 }
 
 export async function listTestFlightApps(device = primaryDevice(), refreshCatalog = false): Promise<TFDeviceApp[]> {
-  return withReadyBridgeRequest(async (conn) => {
+  return withTestFlightOperation('list_apps', device, () => withReadyBridgeRequest(async (conn) => {
     const response = await sendTestFlightBridgeRequest(conn, { action: 'list_apps', refresh: refreshCatalog });
     if (!Array.isArray(response.apps)) return [];
     return response.apps.filter((entry: unknown): entry is TFDeviceApp => {
@@ -215,7 +246,7 @@ export async function listTestFlightApps(device = primaryDevice(), refreshCatalo
       const value = entry as Record<string, unknown>;
       return Number.isInteger(value.appId) && Number(value.appId) > 0 && typeof value.bundleId === 'string' && value.bundleId.length > 0;
     });
-  }, device, TESTFLIGHT_DEVICE_CATALOG_CAPABILITIES);
+  }, device, TESTFLIGHT_DEVICE_CATALOG_CAPABILITIES), { 'testflight.refresh_catalog': refreshCatalog });
 }
 
 async function withReadyBridgeRequest<T>(request: (conn: DeviceClient) => Promise<T>, device: DeviceRecord, requiredCapabilities: readonly string[] = []): Promise<T> {
@@ -240,10 +271,10 @@ async function withBridgeRecovery<T>(request: () => Promise<T>, device: DeviceRe
 }
 
 export async function getTestFlightBridgeDiagnostics(device = primaryDevice()): Promise<TestFlightBridgeDiagnostics> {
-  return withReadyBridgeRequest(async (conn) => {
+  return withTestFlightOperation('diagnostics', device, () => withReadyBridgeRequest(async (conn) => {
     const response = await sendTestFlightBridgeRequest(conn, { action: 'diagnostics' });
     return response.data as TestFlightBridgeDiagnostics;
-  }, device);
+  }, device));
 }
 
 async function findInstalledBundlePath(conn: DeviceClient, bundleId: string): Promise<string | undefined> {
@@ -278,7 +309,7 @@ export async function installBuild(
   };
 
   report('ensuring TestFlight is running');
-  return withSSH(device, async (conn) => {
+  return withTestFlightOperation('install_build', device, () => withSSH(device, async (conn) => {
     throwIfAborted(signal);
     await ensureTestFlightRunningOnConnection(conn, device, [], signal);
     throwIfAborted(signal);
@@ -323,5 +354,5 @@ export async function installBuild(
       await delayWithSignal(5_000, signal);
     }
     throw new Error(`timed out waiting for ${build.bundleId} to reach build ${build.cfBundleVersion} after ${Math.round(waitTimeoutMs / 1000)}s`);
-  }, signal);
+  }, signal), { 'testflight.app_id': appId, 'testflight.build_version': build.cfBundleVersion });
 }

@@ -1639,6 +1639,16 @@ export interface ArtifactQuotaRetentionPreview {
   additionalEvictions: number;
 }
 
+export interface ArtifactStorageStats {
+  count: number;
+  usedBytes: number;
+  maxBytes: number;
+}
+
+export function fetchArtifactStorageStats(): Promise<ArtifactStorageStats> {
+  return apiJson('/v1/dashboard/settings/artifact-storage');
+}
+
 export function previewArtifactQuotaRetention(maxBytes: number): Promise<ArtifactQuotaRetentionPreview> {
   return apiJson(`/v1/dashboard/artifacts/retention-preview?maxBytes=${encodeURIComponent(maxBytes)}`);
 }
