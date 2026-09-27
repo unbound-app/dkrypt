@@ -35865,8 +35865,32 @@
           },
           {
             "schema": {
-              "maxLength": 32,
-              "type": "string"
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "received"
+                  ]
+                },
+                {
+                  "type": "string",
+                  "enum": [
+                    "processed"
+                  ]
+                },
+                {
+                  "type": "string",
+                  "enum": [
+                    "failed"
+                  ]
+                },
+                {
+                  "type": "string",
+                  "enum": [
+                    "quarantined"
+                  ]
+                }
+              ]
             },
             "in": "query",
             "name": "status",
@@ -35874,8 +35898,20 @@
           },
           {
             "schema": {
-              "maxLength": 32,
-              "type": "string"
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "stripe"
+                  ]
+                },
+                {
+                  "type": "string",
+                  "enum": [
+                    "nowpayments"
+                  ]
+                }
+              ]
             },
             "in": "query",
             "name": "provider",

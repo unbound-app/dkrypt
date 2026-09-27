@@ -8,3 +8,5 @@ packages/device-bridge/target/
 data/
 .DS_Store
 .moon/cache/
+__pycache__/
+*.py[cod]
