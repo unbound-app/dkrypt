@@ -28037,6 +28037,24 @@
                           "timezone": {
                             "type": "string"
                           },
+                          "maintenanceWindow": {
+                            "additionalProperties": false,
+                            "type": "object",
+                            "required": [
+                              "start",
+                              "end"
+                            ],
+                            "properties": {
+                              "start": {
+                                "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$",
+                                "type": "string"
+                              },
+                              "end": {
+                                "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$",
+                                "type": "string"
+                              }
+                            }
+                          },
                           "enabled": {
                             "type": "boolean"
                           },
@@ -61123,6 +61141,24 @@
                           "timezone": {
                             "type": "string"
                           },
+                          "maintenanceWindow": {
+                            "additionalProperties": false,
+                            "type": "object",
+                            "required": [
+                              "start",
+                              "end"
+                            ],
+                            "properties": {
+                              "start": {
+                                "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$",
+                                "type": "string"
+                              },
+                              "end": {
+                                "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$",
+                                "type": "string"
+                              }
+                            }
+                          },
                           "enabled": {
                             "type": "boolean"
                           },
@@ -61603,6 +61639,31 @@
                     "maxLength": 100,
                     "type": "string"
                   },
+                  "maintenanceWindow": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "start",
+                          "end"
+                        ],
+                        "properties": {
+                          "start": {
+                            "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$",
+                            "type": "string"
+                          },
+                          "end": {
+                            "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$",
+                            "type": "string"
+                          }
+                        }
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "enabled": {
                     "type": "boolean"
                   },
@@ -61739,6 +61800,24 @@
                     },
                     "timezone": {
                       "type": "string"
+                    },
+                    "maintenanceWindow": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "start",
+                        "end"
+                      ],
+                      "properties": {
+                        "start": {
+                          "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$",
+                          "type": "string"
+                        },
+                        "end": {
+                          "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$",
+                          "type": "string"
+                        }
+                      }
                     },
                     "enabled": {
                       "type": "boolean"
@@ -62896,7 +62975,8 @@
                         "required": [
                           "watchId",
                           "bundleId",
-                          "at"
+                          "at",
+                          "deferred"
                         ],
                         "properties": {
                           "watchId": {
@@ -62912,6 +62992,9 @@
                           },
                           "at": {
                             "type": "number"
+                          },
+                          "deferred": {
+                            "type": "boolean"
                           }
                         }
                       }
@@ -64524,6 +64607,31 @@
                     "maxLength": 100,
                     "type": "string"
                   },
+                  "maintenanceWindow": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "start",
+                          "end"
+                        ],
+                        "properties": {
+                          "start": {
+                            "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$",
+                            "type": "string"
+                          },
+                          "end": {
+                            "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$",
+                            "type": "string"
+                          }
+                        }
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "enabled": {
                     "type": "boolean"
                   },
@@ -64672,6 +64780,24 @@
                     },
                     "timezone": {
                       "type": "string"
+                    },
+                    "maintenanceWindow": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "start",
+                        "end"
+                      ],
+                      "properties": {
+                        "start": {
+                          "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$",
+                          "type": "string"
+                        },
+                        "end": {
+                          "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$",
+                          "type": "string"
+                        }
+                      }
                     },
                     "enabled": {
                       "type": "boolean"
@@ -65521,6 +65647,31 @@
                           "maxLength": 100,
                           "type": "string"
                         },
+                        "maintenanceWindow": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": [
+                                "start",
+                                "end"
+                              ],
+                              "properties": {
+                                "start": {
+                                  "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$",
+                                  "type": "string"
+                                },
+                                "end": {
+                                  "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$",
+                                  "type": "string"
+                                }
+                              }
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
                         "enabled": {
                           "type": "boolean"
                         },
@@ -65670,6 +65821,24 @@
                           },
                           "timezone": {
                             "type": "string"
+                          },
+                          "maintenanceWindow": {
+                            "additionalProperties": false,
+                            "type": "object",
+                            "required": [
+                              "start",
+                              "end"
+                            ],
+                            "properties": {
+                              "start": {
+                                "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$",
+                                "type": "string"
+                              },
+                              "end": {
+                                "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$",
+                                "type": "string"
+                              }
+                            }
                           },
                           "enabled": {
                             "type": "boolean"

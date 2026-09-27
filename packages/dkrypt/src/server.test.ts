@@ -1610,12 +1610,13 @@ test('scheduler watch lists and budget history stay within the selected project'
   }
 });
 
-test('scheduler calendar preserves local watch time across daylight-saving changes', async () => {
+test('scheduler calendar defers quiet-window runs while preserving local time across daylight-saving changes', async () => {
   const originalToken = config.ghToken;
   config.ghToken = 'timezone-calendar-test-token';
   const server = await buildServer({ includePublicRoutes: false });
   const cookie = createSessionCookie('root', PermissionFlag.administrator);
   let watchId: string | undefined;
+  let overnightWatchId: string | undefined;
 
   try {
     const created = await server.inject({
@@ -1628,9 +1629,11 @@ test('scheduler calendar preserves local watch time across daylight-saving chang
         ghWorkflowFile: 'release.yml',
         pollCron: '0 9 * * *',
         timezone: 'Europe/Berlin',
+        maintenanceWindow: { start: '08:00', end: '10:00' },
       },
     });
     expect(created.statusCode).toBe(201);
+    expect(created.json()).toMatchObject({ maintenanceWindow: { start: '08:00', end: '10:00' } });
     watchId = (created.json() as { id: string }).id;
 
     const fromAt = Date.parse('2026-10-24T07:30:00.000Z');
@@ -1640,14 +1643,43 @@ test('scheduler calendar preserves local watch time across daylight-saving chang
       headers: { cookie },
     });
     expect(calendar.statusCode).toBe(200);
-    expect((calendar.json() as { runs: { watchId: string; at: number }[] }).runs
+    expect((calendar.json() as { runs: { watchId: string; at: number; deferred: boolean }[] }).runs
       .filter((run) => run.watchId === watchId)
-      .map((run) => run.at)).toEqual([
-      Date.parse('2026-10-25T08:00:00.000Z'),
-      Date.parse('2026-10-26T08:00:00.000Z'),
+      .map(({ at, deferred }) => ({ at, deferred }))).toEqual([
+      { at: Date.parse('2026-10-25T09:00:00.000Z'), deferred: true },
+      { at: Date.parse('2026-10-26T09:00:00.000Z'), deferred: true },
+    ]);
+
+    const overnightCreated = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/watches',
+      headers: { cookie },
+      payload: {
+        bundleId: `com.example.watch.overnight.${crypto.randomUUID()}`,
+        repo: 'owner/repo',
+        ghWorkflowFile: 'release.yml',
+        pollCron: '0 23 * * *',
+        timezone: 'Europe/Berlin',
+        maintenanceWindow: { start: '22:00', end: '06:00' },
+      },
+    });
+    expect(overnightCreated.statusCode).toBe(201);
+    overnightWatchId = (overnightCreated.json() as { id: string }).id;
+
+    const overnightCalendar = await server.inject({
+      method: 'GET',
+      url: `/v1/dashboard/watches/calendar?fromAt=${Date.parse('2026-10-24T20:30:00.000Z')}&hours=24`,
+      headers: { cookie },
+    });
+    expect(overnightCalendar.statusCode).toBe(200);
+    expect((overnightCalendar.json() as { runs: { watchId: string; at: number; deferred: boolean }[] }).runs
+      .filter((run) => run.watchId === overnightWatchId)
+      .map(({ at, deferred }) => ({ at, deferred }))).toEqual([
+      { at: Date.parse('2026-10-25T05:00:00.000Z'), deferred: true },
     ]);
   } finally {
     if (watchId) await server.inject({ method: 'DELETE', url: `/v1/dashboard/watches/${watchId}`, headers: { cookie } });
+    if (overnightWatchId) await server.inject({ method: 'DELETE', url: `/v1/dashboard/watches/${overnightWatchId}`, headers: { cookie } });
     config.ghToken = originalToken;
     await server.close();
   }
@@ -1749,6 +1781,14 @@ test('native scheduler watch routes enforce permissions and preserve CRUD and im
     });
     expect(invalidTimezone.statusCode).toBe(400);
 
+    const invalidMaintenanceWindow = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/watches',
+      headers: { cookie: administratorCookie },
+      payload: { bundleId: `com.example.watch.invalid-window.${suffix}`, repo: 'owner/repo', pollCron: '0 * * * *', maintenanceWindow: { start: '02:00', end: '02:00' } },
+    });
+    expect(invalidMaintenanceWindow.statusCode).toBe(400);
+
     const created = await server.inject({
       method: 'POST',
       url: '/v1/dashboard/watches',
@@ -1774,6 +1814,15 @@ test('native scheduler watch routes enforce permissions and preserve CRUD and im
     });
     expect(updated.statusCode).toBe(200);
     expect(updated.json()).toMatchObject({ pollCron: '15 * * * *', timezone: 'America/New_York', testFlightPolicy: 'train', testFlightTrain: 'beta' });
+
+    const maintenanceWindowCleared = await server.inject({
+      method: 'PATCH',
+      url: `/v1/dashboard/watches/${createdId}`,
+      headers: { cookie: administratorCookie },
+      payload: { maintenanceWindow: null },
+    });
+    expect(maintenanceWindowCleared.statusCode).toBe(200);
+    expect(maintenanceWindowCleared.json()).not.toHaveProperty('maintenanceWindow');
 
     const exported = await server.inject({ method: 'GET', url: '/v1/dashboard/watches/export', headers: { cookie: administratorCookie } });
     expect(exported.statusCode).toBe(200);
@@ -1806,12 +1855,13 @@ test('native scheduler watch routes enforce permissions and preserve CRUD and im
             ghWorkflowFile: 'release.yml',
             pollCron: '0 */2 * * *',
             timezone: 'Europe/Berlin',
+            maintenanceWindow: { start: '22:00', end: '06:00' },
           },
         ],
       },
     });
     expect(imported.statusCode).toBe(201);
-    expect(imported.json()).toMatchObject({ watches: [expect.objectContaining({ timezone: 'Europe/Berlin', enabled: false })], skipped: ['invalid watch'] });
+    expect(imported.json()).toMatchObject({ watches: [expect.objectContaining({ timezone: 'Europe/Berlin', maintenanceWindow: { start: '22:00', end: '06:00' }, enabled: false })], skipped: ['invalid watch'] });
     importedId = (imported.json() as { watches: { id: string }[] }).watches[0]?.id;
 
     const removed = await server.inject({ method: 'DELETE', url: `/v1/dashboard/watches/${createdId}`, headers: { cookie: administratorCookie } });

@@ -24,6 +24,7 @@
 		importWatches,
 		fetchTestFlightBridgeDiagnostics,
 		fetchWatchHealth,
+		fetchWatchCalendar,
 		previewWatchDispatchSource,
 		previewWatchDispatchDraft,
 		validateWatchDispatchDraft,
@@ -49,6 +50,7 @@
 		type UpdateCheck,
 		type WatchInput,
 		type WatchHealthSummary,
+		type SchedulerCalendarRun,
 		type WebhookDeliveryEntry,
 		type ProjectRecord,
 	} from "#lib/api";
@@ -242,12 +244,13 @@
 		{ value: "365", label: "365 days" },
 	];
 
-	const CRON_PRESETS: { label: string; expr: string }[] = [
-		{ label: "Every 15 min", expr: "*/15 * * * *" },
-		{ label: "Every 30 min", expr: "*/30 * * * *" },
-		{ label: "Hourly", expr: "0 * * * *" },
-		{ label: "Every 6 hours", expr: "0 */6 * * *" },
-		{ label: "Daily at 3am", expr: "0 3 * * *" },
+	const SCHEDULE_TEMPLATES: { label: string; expr: string; maintenanceWindow: { start: string; end: string } | null }[] = [
+		{ label: "Every 15 min", expr: "*/15 * * * *", maintenanceWindow: null },
+		{ label: "Every 30 min", expr: "*/30 * * * *", maintenanceWindow: null },
+		{ label: "Hourly", expr: "0 * * * *", maintenanceWindow: null },
+		{ label: "Every 6 hours", expr: "0 */6 * * *", maintenanceWindow: null },
+		{ label: "Daily at 3am", expr: "0 3 * * *", maintenanceWindow: null },
+		{ label: "Hourly · quiet 22–06", expr: "0 * * * *", maintenanceWindow: { start: "22:00", end: "06:00" } },
 	];
 	const LOCAL_TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 	const TIME_ZONE_OPTIONS = [...new Set([LOCAL_TIME_ZONE, "UTC", ...Intl.supportedValuesOf("timeZone")])].map(
@@ -284,6 +287,7 @@
 		dispatchTargets: [{ repo: "", ghWorkflowFile: "remote-ipa-update.yml" }],
 		pollCron: "0 * * * *",
 		timezone: LOCAL_TIME_ZONE,
+		maintenanceWindow: null,
 		enabled: true,
 		webhookUrl: "",
 		testFlightPolicy: "latest",
@@ -291,6 +295,8 @@
 	};
 
 	let watchDialogOpen = $state(false);
+	let maintenanceWindowStart = $state("");
+	let maintenanceWindowEnd = $state("");
 	let availableProjects = $state<ProjectRecord[]>([]);
 	const projectItems = $derived(availableProjects.length > 0 ? availableProjects.map((project) => ({ value: project.id, label: project.name })) : [{ value: "default", label: "Default" }]);
 	let editingWatchId = $state<string | null>(null);
@@ -320,6 +326,11 @@
 	let loadingWorkflowRepos = $state<Set<string>>(new Set());
 	let importingWatches = $state(false);
 	let watchImportInput = $state<HTMLInputElement | null>(null);
+	let schedulePreviewOpen = $state(false);
+	let schedulePreviewLoading = $state(false);
+	let schedulePreviewRuns = $state<SchedulerCalendarRun[]>([]);
+	let schedulePreviewTruncated = $state(false);
+	let schedulePreviewError = $state("");
 	let appCatalogStats = $state<AppCatalogStats | null>(null);
 	let refreshingCatalog = $state(false);
 
@@ -340,6 +351,33 @@
 
 	function healthForWatch(watchId: string): WatchHealthSummary | undefined {
 		return watchHealth.find((entry) => entry.watchId === watchId);
+	}
+
+	async function loadSchedulePreview(): Promise<void> {
+		schedulePreviewOpen = true;
+		schedulePreviewLoading = true;
+		schedulePreviewError = "";
+		try {
+			const preview = await fetchWatchCalendar(24, undefined, projectSelectionState.id);
+			schedulePreviewRuns = preview.runs;
+			schedulePreviewTruncated = preview.truncated;
+		} catch (error) {
+			schedulePreviewError = error instanceof Error ? error.message : "Schedule preview could not be loaded";
+		} finally {
+			schedulePreviewLoading = false;
+		}
+	}
+
+	function scheduleRunTime(run: SchedulerCalendarRun): string {
+		const timezone = watches.find((watch) => watch.id === run.watchId)?.timezone ?? LOCAL_TIME_ZONE;
+		return new Intl.DateTimeFormat(undefined, {
+			weekday: "short",
+			month: "short",
+			day: "numeric",
+			hour: "numeric",
+			minute: "2-digit",
+			timeZone: timezone,
+		}).format(new Date(run.at));
 	}
 
 	$effect(() => {
@@ -437,6 +475,8 @@
 		editingWatchId = null;
 		const selectedProjectId = availableProjects.some((project) => project.id === projectSelectionState.id) ? projectSelectionState.id : "default";
 		watchForm = { ...DEFAULT_WATCH_FORM, projectId: selectedProjectId };
+		maintenanceWindowStart = "";
+		maintenanceWindowEnd = "";
 		watchSearchTerm = "";
 		watchSearchResults = [];
 		watchSearchSearched = false;
@@ -456,11 +496,14 @@
 			ghWorkflowFile: w.ghWorkflowFile,
 			pollCron: w.pollCron,
 			timezone: w.timezone ?? LOCAL_TIME_ZONE,
+			maintenanceWindow: w.maintenanceWindow ?? null,
 			enabled: w.enabled,
 			webhookUrl: w.webhookUrl ?? "",
 			testFlightPolicy: w.testFlightPolicy ?? "latest",
 			testFlightTrain: w.testFlightTrain ?? "",
 		};
+		maintenanceWindowStart = w.maintenanceWindow?.start ?? "";
+		maintenanceWindowEnd = w.maintenanceWindow?.end ?? "";
 		dispatchTargets = w.dispatchTargets?.length
 			? w.dispatchTargets.map((target) => ({ ...target }))
 			: [{ repo: w.repo, ghWorkflowFile: w.ghWorkflowFile }];
@@ -602,8 +645,10 @@
 		debouncedWatchSearch(watchSearchTerm);
 	}
 
-	function applyCronPreset(expr: string): void {
-		watchForm = { ...watchForm, pollCron: expr };
+	function applyScheduleTemplate(template: typeof SCHEDULE_TEMPLATES[number]): void {
+		watchForm = { ...watchForm, pollCron: template.expr, maintenanceWindow: template.maintenanceWindow };
+		maintenanceWindowStart = template.maintenanceWindow?.start ?? "";
+		maintenanceWindowEnd = template.maintenanceWindow?.end ?? "";
 	}
 
 	let draftPreview = $state<UpdateCheck | null>(null);
@@ -657,15 +702,22 @@
 			showToast("Choose a valid time zone", "error");
 			return;
 		}
+		if (Boolean(maintenanceWindowStart) !== Boolean(maintenanceWindowEnd) || (maintenanceWindowStart && maintenanceWindowStart === maintenanceWindowEnd)) {
+			showToast("Choose different start and end times for quiet hours", "error");
+			return;
+		}
 		if (watchRepoErrors.repo || watchRepoErrors.webhookUrl || dispatchTargets.some((target) => !REPO_RE.test(target.repo) || !target.ghWorkflowFile.trim())) {
 			showToast("Fix the invalid fields before saving", "error");
 			return;
 		}
 		savingWatch = true;
 		try {
+			const maintenanceWindow = maintenanceWindowStart && maintenanceWindowEnd
+				? { start: maintenanceWindowStart, end: maintenanceWindowEnd }
+				: null;
 			const { ok } = editingWatchId
-				? await updateWatch(editingWatchId, { ...watchForm, dispatchTargets })
-				: await createWatch({ ...watchForm, dispatchTargets });
+				? await updateWatch(editingWatchId, { ...watchForm, maintenanceWindow, dispatchTargets })
+				: await createWatch({ ...watchForm, maintenanceWindow, dispatchTargets });
 			if (ok) watchDialogOpen = false;
 		} finally {
 			savingWatch = false;
@@ -1036,6 +1088,7 @@
 		{#snippet headerExtra()}
 			{#if canManageWatches}
 				<div class="flex items-center gap-1.5">
+					<Button size="sm" variant="secondary" onclick={() => void loadSchedulePreview()} loading={schedulePreviewLoading}>{schedulePreviewOpen ? "Refresh preview" : "Preview next 24 hours"}</Button>
 					<input class="hidden" bind:this={watchImportInput} type="file" accept="application/json" onchange={importWatchFile} />
 					<Button size="sm" variant="secondary" onclick={() => watchImportInput?.click()} loading={importingWatches}>Import</Button>
 					<a class={buttonVariants("secondary", "sm")} href={watchesExportUrl()}>Export</a>
@@ -1046,6 +1099,34 @@
 				</div>
 			{/if}
 		{/snippet}
+		{#if schedulePreviewOpen}
+			<div class="border-border mb-3 rounded-lg border p-3" aria-live="polite">
+				<div class="mb-2 flex items-center justify-between gap-2">
+					<h3 class="text-sm font-medium">Next 24 hours</h3>
+					<span class="text-xs text-muted">Times shown in each watch’s time zone</span>
+				</div>
+				{#if schedulePreviewLoading}
+					<p class="py-3 text-center text-sm text-muted">Loading schedule…</p>
+				{:else if schedulePreviewError}
+					<p class="py-3 text-sm text-err">{schedulePreviewError}</p>
+				{:else if schedulePreviewRuns.length === 0}
+					<p class="py-3 text-center text-sm text-muted">No scheduled checks in this project during the next 24 hours.</p>
+				{:else}
+					<div class="max-h-64 divide-border divide-y overflow-y-auto">
+						{#each schedulePreviewRuns as run (`${run.watchId}:${run.at}`)}
+							{@const watch = watches.find((candidate) => candidate.id === run.watchId)}
+							<div class="flex flex-wrap items-center gap-2 py-2 first:pt-0 last:pb-0">
+								<AppIcon bundleId={run.bundleId} src={appIconUrl(run.bundleId)} label={appDisplayName(run.bundleId)} class="h-4 w-4" />
+								<span class="min-w-28 flex-1 text-sm font-medium">{watch ? appDisplayName(run.bundleId) : run.bundleId}</span>
+								<time class="text-xs text-muted" datetime={new Date(run.at).toISOString()}>{scheduleRunTime(run)}{watch?.timezone ? ` · ${watch.timezone}` : ""}</time>
+								{#if run.deferred}<Badge variant="secondary">After quiet hours</Badge>{/if}
+							</div>
+						{/each}
+					</div>
+					{#if schedulePreviewTruncated}<p class="mt-2 text-xs text-muted">Additional checks are omitted from this preview.</p>{/if}
+				{/if}
+			</div>
+		{/if}
 		{#if watches.length === 0}
 			<EmptyState
 				message="No watches configured yet - add one to have dkrypt track an app for new releases."
@@ -1119,7 +1200,10 @@
 						>
 							<span>{projectName(w.projectId)}</span>
 							<span title={w.repo}>{w.dispatchTargets?.length ? `${w.dispatchTargets.length} destinations` : w.repo || "-"}</span>
-							<span title="poll cron in the selected time zone">{w.pollCron} · {w.timezone ?? LOCAL_TIME_ZONE}</span>
+			<span title="poll cron in the selected time zone">{w.pollCron} · {w.timezone ?? LOCAL_TIME_ZONE}</span>
+			{#if w.maintenanceWindow}
+				<span title="Automatic checks pause during this local-time window">Quiet {w.maintenanceWindow.start}–{w.maintenanceWindow.end}</span>
+			{/if}
 							{#if healthForWatch(w.id)?.schedulerJobSuccessRate !== undefined}
 								<span class="font-sans">{Math.round((healthForWatch(w.id)?.schedulerJobSuccessRate ?? 0) * 100)}% scheduler success</span>
 							{/if}
@@ -1480,6 +1564,17 @@
 				class="w-full"
 			/>
 			<div class="mt-1 text-[11px] text-muted">Scheduled checks use this local time and adjust for daylight saving.</div>
+			<div class="mt-3 grid grid-cols-2 gap-3">
+				<div>
+					<label for="w-maintenance-start" class="mb-1 block text-xs text-muted">Quiet hours start</label>
+					<Input id="w-maintenance-start" type="time" bind:value={maintenanceWindowStart} />
+				</div>
+				<div>
+					<label for="w-maintenance-end" class="mb-1 block text-xs text-muted">Quiet hours end</label>
+					<Input id="w-maintenance-end" type="time" bind:value={maintenanceWindowEnd} />
+				</div>
+			</div>
+			<div class="mt-1 text-[11px] text-muted">Scheduled checks in this daily local-time window are coalesced and run once when it ends. Manual triggers run immediately.</div>
 			<label for="w-pollCron" class="mt-3 mb-1 block text-xs text-muted"
 				>Poll cron</label
 			>
@@ -1489,16 +1584,18 @@
 					Not a valid cron expression
 				</div>
 			{/if}
-			<div class="mt-1.5 flex flex-wrap gap-1.5">
-				{#each CRON_PRESETS as p (p.expr)}
+			<div class="mt-1.5 mb-1 text-xs text-muted">Schedule templates</div>
+			<div class="flex flex-wrap gap-1.5">
+				{#each SCHEDULE_TEMPLATES as p (p.label)}
 					<Button
 						variant="outline"
 						size="sm"
-										class="border-border rounded-full px-2.5 py-1 text-[12px] text-muted hover:border-primary hover:text-foreground"
-										onclick={() => applyCronPreset(p.expr)}
-									>
-										{p.label}
-									</Button>
+						class="border-border rounded-full px-2.5 py-1 text-[12px] text-muted hover:border-primary hover:text-foreground"
+						title={p.maintenanceWindow ? "Sets hourly checks and quiet hours from 22:00 to 06:00" : `Sets ${p.expr}`}
+						onclick={() => applyScheduleTemplate(p)}
+					>
+						{p.label}
+					</Button>
 				{/each}
 			</div>
 

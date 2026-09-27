@@ -37,6 +37,7 @@ import { lookupCurrentVersion } from '#scheduler/itunes.js';
 import { resolveAppStoreDecryptTarget } from '#scheduler/appStoreVersion.js';
 import { buildArtifactFileUrl, getArtifactById } from '#artifacts.js';
 import { effectiveTimeZone } from '#util/timezone.js';
+import { isWithinMaintenanceWindow, maintenanceWindowEndAt } from '#util/maintenanceWindow.js';
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -549,6 +550,7 @@ async function trackAndUpdate(
 const tickInProgress = new Set<string>();
 const budgetRetryTimers = new Map<string, NodeJS.Timeout>();
 const schedulerJitterTimers = new Set<NodeJS.Timeout>();
+const maintenanceWindowTimers = new Map<string, NodeJS.Timeout>();
 let schedulerStopping = false;
 let githubBudgetReservation = { resetAt: 0, requests: 0 };
 
@@ -581,11 +583,48 @@ function scheduleGitHubBudgetRetry(watchId: string, resetAt: number): void {
   budgetRetryTimers.set(watchId, timer);
 }
 
+function scheduleMaintenanceWindowResume(watchId: string, resumeAt: number): void {
+  const existing = maintenanceWindowTimers.get(watchId);
+  if (existing) clearTimeout(existing);
+  const timer = setTimeout(() => {
+    maintenanceWindowTimers.delete(watchId);
+    if (schedulerStopping) return;
+    const watch = getEffectiveWatches().find((candidate) => candidate.id === watchId);
+    if (!watch || !isWatchSchedulable(watch)) return;
+    const timezone = effectiveTimeZone(watch.timezone);
+    if (isWithinMaintenanceWindow(watch.maintenanceWindow, timezone)) {
+      const nextResumeAt = maintenanceWindowEndAt(watch.maintenanceWindow, timezone);
+      if (nextResumeAt !== undefined) {
+        scheduleMaintenanceWindowResume(watch.id, nextResumeAt);
+      } else {
+        log.error('could not determine when the maintenance window ends; scheduled tick remains deferred', { watchId, timezone });
+      }
+      return;
+    }
+    startTrackedTick(watch, 'scheduled');
+  }, Math.max(1, resumeAt - Date.now()));
+  timer.unref();
+  maintenanceWindowTimers.set(watchId, timer);
+}
+
 async function tick(watch: AppWatch, mode: 'scheduled' | 'manual' = 'scheduled', forceGitHubBudgetRefresh = false): Promise<void> {
   const maintenance = getMaintenanceStatus();
   if (maintenance.active) {
     log.info('skipping scheduler tick, maintenance mode active', { watchId: watch.id, reason: maintenance.reason });
     return;
+  }
+  if (mode === 'scheduled') {
+    const timezone = effectiveTimeZone(watch.timezone);
+    if (isWithinMaintenanceWindow(watch.maintenanceWindow, timezone)) {
+      const resumeAt = maintenanceWindowEndAt(watch.maintenanceWindow, timezone);
+      if (resumeAt === undefined) {
+        log.error('could not determine when the maintenance window ends; scheduled tick skipped', { watchId: watch.id, timezone });
+        return;
+      }
+      log.info('deferring scheduler tick until the maintenance window ends', { watchId: watch.id, timezone, resumeAt });
+      scheduleMaintenanceWindowResume(watch.id, resumeAt);
+      return;
+    }
   }
   if (tickInProgress.has(watch.id)) {
     log.info('scheduler tick already in progress for this watch, skipping', { watchId: watch.id });
@@ -697,6 +736,9 @@ export function applyWatchSchedules(): void {
     if (!eligibleIds.has(watchId)) {
       scheduled.task.stop();
       scheduledTasks.delete(watchId);
+      const timer = maintenanceWindowTimers.get(watchId);
+      if (timer) clearTimeout(timer);
+      maintenanceWindowTimers.delete(watchId);
       log.info('watch no longer schedulable, stopped', { watchId });
     }
   }
@@ -705,17 +747,23 @@ export function applyWatchSchedules(): void {
     if (!isWatchSchedulable(watch)) continue;
     const existing = scheduledTasks.get(watch.id);
     const timezone = effectiveTimeZone(watch.timezone);
-    const scheduleKey = `${watch.pollCron}\u0000${timezone}`;
+    const scheduleKey = JSON.stringify([watch.pollCron, timezone, watch.maintenanceWindow?.start, watch.maintenanceWindow?.end]);
     if (existing && existing.scheduleKey === scheduleKey) continue;
 
-    if (existing) existing.task.stop();
+    if (existing) {
+      existing.task.stop();
+      const timer = maintenanceWindowTimers.get(watch.id);
+      if (timer) clearTimeout(timer);
+      maintenanceWindowTimers.delete(watch.id);
+    }
     const task = cron.schedule(watch.pollCron, () => {
 
       const jitterMs = Math.random() * CRON_JITTER_MAX_MS;
       const timer = setTimeout(() => {
         schedulerJitterTimers.delete(timer);
         if (schedulerStopping) return;
-        startTrackedTick(watch);
+        const currentWatch = getEffectiveWatches().find((candidate) => candidate.id === watch.id);
+        if (currentWatch && isWatchSchedulable(currentWatch)) startTrackedTick(currentWatch);
       }, jitterMs);
       schedulerJitterTimers.add(timer);
       timer.unref();
@@ -813,6 +861,8 @@ export function stopScheduler(): void {
   backupTaskCron = undefined;
   for (const timer of schedulerJitterTimers) clearTimeout(timer);
   schedulerJitterTimers.clear();
+  for (const timer of maintenanceWindowTimers.values()) clearTimeout(timer);
+  maintenanceWindowTimers.clear();
   for (const timer of budgetRetryTimers.values()) clearTimeout(timer);
   budgetRetryTimers.clear();
 }

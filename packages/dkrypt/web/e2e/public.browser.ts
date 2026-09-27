@@ -210,6 +210,32 @@ test('scheduler watch time zone selection is searchable and defaults to the brow
   await timezone.fill('Europe/Berlin');
   await page.getByRole('option', { name: 'Europe/Berlin', exact: true }).click();
   await expect(timezone).toHaveValue('Europe/Berlin');
+  await page.getByRole('button', { name: 'Hourly · quiet 22–06' }).click();
+  await expect(page.locator('#w-maintenance-start')).toHaveValue('22:00');
+  await expect(page.locator('#w-maintenance-end')).toHaveValue('06:00');
+  await expectAccessible(page);
+});
+
+test('scheduler calendar preview labels checks deferred by quiet hours', async ({ page }) => {
+  await mockStableDashboardEvents(page);
+  await mockAuthenticatedDashboard(page, '1');
+  await page.route('**/v1/dashboard/watches/calendar*', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        fromAt: Date.parse('2026-10-25T08:00:00.000Z'),
+        untilAt: Date.parse('2026-10-26T08:00:00.000Z'),
+        runs: [{ watchId: 'watch-quiet', bundleId: 'com.example.quiet', at: Date.parse('2026-10-25T09:00:00.000Z'), deferred: true }],
+        truncated: false,
+      }),
+    });
+  });
+
+  await page.goto('/?tab=settings&stab=scheduler');
+  await page.getByRole('button', { name: 'Preview next 24 hours' }).click();
+  await expect(page.getByRole('heading', { name: 'Next 24 hours' })).toBeVisible();
+  await expect(page.getByText('After quiet hours')).toBeVisible();
+  await expect(page.getByText('com.example.quiet')).toBeVisible();
   await expectAccessible(page);
 });
 

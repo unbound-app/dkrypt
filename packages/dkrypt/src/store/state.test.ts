@@ -305,6 +305,25 @@ describe('exportBackup / importBackup', () => {
     expect(getProject(project.id)?.memberIds).toContain('roundtrip-user');
   });
 
+  test('rejects backup watches with invalid recurring quiet hours', () => {
+    const watch = createWatch({
+      bundleId: `com.example.backup-window.${randomUUID()}`,
+      repo: 'owner/repo',
+      ghWorkflowFile: 'release.yml',
+      pollCron: '0 * * * *',
+      maintenanceWindow: { start: '22:00', end: '06:00' },
+    }, 'tester').watch!;
+    const backup = exportBackup();
+    backup.watches = backup.watches.map((entry) => entry.id === watch.id
+      ? { ...entry, maintenanceWindow: { start: '22:00', end: '22:00' } }
+      : entry);
+
+    const result = importBackup(backup, 'tester');
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/watches/);
+  });
+
   test('preserves project records referenced by persisted jobs during backup import', () => {
     const project = createProject({ name: `Persisted job project ${randomUUID()}` }, 'root').project!;
     const database = openStateCollectionDatabase({

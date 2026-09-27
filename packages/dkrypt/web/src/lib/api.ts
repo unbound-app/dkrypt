@@ -209,6 +209,11 @@ export interface MaintenanceStatus {
   reason?: string;
 }
 
+export interface MaintenanceWindow {
+  start: string;
+  end: string;
+}
+
 export interface AppWatch {
   id: string;
   projectId?: string;
@@ -218,6 +223,7 @@ export interface AppWatch {
   dispatchTargets?: DispatchTarget[];
   pollCron: string;
   timezone?: string;
+  maintenanceWindow?: MaintenanceWindow;
   enabled: boolean;
   webhookUrl?: string;
   testFlightPolicy?: 'latest' | 'latestNonExpired' | 'train';
@@ -838,6 +844,7 @@ export interface WatchInput {
   dispatchTargets?: DispatchTarget[];
   pollCron: string;
   timezone?: string;
+  maintenanceWindow?: MaintenanceWindow | null;
   enabled?: boolean;
   webhookUrl?: string;
   testFlightPolicy?: 'latest' | 'latestNonExpired' | 'train';
@@ -1247,6 +1254,7 @@ export interface SchedulerCalendarRun {
   watchId: string;
   bundleId: string;
   at: number;
+  deferred: boolean;
 }
 
 export function fetchWatchCalendar(hours = 24, fromAt?: number, projectId?: string): Promise<{ fromAt: number; untilAt: number; runs: SchedulerCalendarRun[]; truncated: boolean }> {

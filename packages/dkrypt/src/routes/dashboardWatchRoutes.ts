@@ -49,8 +49,8 @@ import {
   type DispatchTarget as WatchDispatchTarget,
 } from '#store/state.js';
 import { externalRequestRateLimiter, fastifyRateLimitPerUser } from '#util/rateLimit.js';
-import { nextCronRuns } from '#util/cron.js';
 import { effectiveTimeZone, isValidTimeZone } from '#util/timezone.js';
+import { isValidMaintenanceWindow, nextRunnableCronOccurrence } from '#util/maintenanceWindow.js';
 import { sendHttpErrorEnvelope } from '#util/httpResponse.js';
 import { validate as validateCronExpr } from 'node-cron';
 
@@ -173,6 +173,10 @@ function parseWatchInput(body: unknown): WatchCreateInput | undefined {
   if (!bundleId || !bundleIdPattern.test(bundleId)) return undefined;
   const dispatchTargets = Array.isArray(value.dispatchTargets) ? normalizedDispatchTargets(value.dispatchTargets) : undefined;
   const primary = dispatchTargets?.[0];
+  const maintenanceWindow = value.maintenanceWindow === undefined || value.maintenanceWindow === null
+    ? undefined
+    : isValidMaintenanceWindow(value.maintenanceWindow) ? value.maintenanceWindow : null;
+  if (maintenanceWindow === null) return undefined;
   return {
     projectId: typeof value.projectId === 'string' ? value.projectId : undefined,
     bundleId,
@@ -181,6 +185,7 @@ function parseWatchInput(body: unknown): WatchCreateInput | undefined {
     dispatchTargets,
     pollCron: typeof value.pollCron === 'string' ? value.pollCron.trim() : '0 * * * *',
     timezone: typeof value.timezone === 'string' ? value.timezone.trim() : undefined,
+    maintenanceWindow,
     enabled: typeof value.enabled === 'boolean' ? value.enabled : undefined,
     webhookUrl: typeof value.webhookUrl === 'string' ? value.webhookUrl.trim() || undefined : undefined,
     testFlightPolicy: value.testFlightPolicy === 'latestNonExpired' || value.testFlightPolicy === 'train' ? value.testFlightPolicy : 'latest',
@@ -202,6 +207,9 @@ function parseWatchPatch(body: WatchPatchInput): Partial<WatchCreateInput> {
   }
   if (typeof body.pollCron === 'string') patch.pollCron = body.pollCron.trim();
   if (typeof body.timezone === 'string') patch.timezone = body.timezone.trim();
+  if ('maintenanceWindow' in body) {
+    patch.maintenanceWindow = body.maintenanceWindow === null ? undefined : body.maintenanceWindow;
+  }
   if (typeof body.enabled === 'boolean') patch.enabled = body.enabled;
   if (typeof body.webhookUrl === 'string') patch.webhookUrl = body.webhookUrl.trim() || undefined;
   if (body.testFlightPolicy === 'latest' || body.testFlightPolicy === 'latestNonExpired' || body.testFlightPolicy === 'train') {
@@ -292,19 +300,19 @@ export const dashboardWatchRoutes: FastifyPluginAsyncTypebox = async (server) =>
     const fromAt = Number.isFinite(requestedFromAt) && Math.abs(requestedFromAt - now) <= 90 * 24 * 60 * 60 * 1000 ? requestedFromAt : now;
     const untilAt = fromAt + hours * 60 * 60 * 1000;
     const maxRuns = 200;
-    const runs: { watchId: string; bundleId: string; at: number }[] = [];
+    const runs: { watchId: string; bundleId: string; at: number; deferred: boolean }[] = [];
     const pending = getEffectiveWatches()
       .filter((watch) => (watch.projectId ?? DEFAULT_PROJECT_ID) === projectId && isWatchSchedulable(watch))
       .flatMap((watch) => {
-        const at = nextCronRuns(watch.pollCron, untilAt, fromAt, 1, effectiveTimeZone(watch.timezone))[0];
-        return at === undefined ? [] : [{ watch, at }];
+        const occurrence = nextRunnableCronOccurrence(watch.pollCron, effectiveTimeZone(watch.timezone), watch.maintenanceWindow, fromAt, untilAt);
+        return occurrence === undefined ? [] : [{ watch, ...occurrence }];
       });
     while (pending.length > 0 && runs.length < maxRuns) {
       pending.sort((left, right) => left.at - right.at);
       const next = pending.shift()!;
-      runs.push({ watchId: next.watch.id, bundleId: next.watch.bundleId, at: next.at });
-      const followingAt = nextCronRuns(next.watch.pollCron, untilAt, next.at, 1, effectiveTimeZone(next.watch.timezone))[0];
-      if (followingAt !== undefined) pending.push({ watch: next.watch, at: followingAt });
+      runs.push({ watchId: next.watch.id, bundleId: next.watch.bundleId, at: next.at, deferred: next.deferred });
+      const following = nextRunnableCronOccurrence(next.watch.pollCron, effectiveTimeZone(next.watch.timezone), next.watch.maintenanceWindow, next.at, untilAt);
+      if (following !== undefined) pending.push({ watch: next.watch, ...following });
     }
     return { fromAt, untilAt, runs, truncated: pending.length > 0 };
   });
@@ -380,6 +388,10 @@ export const dashboardWatchRoutes: FastifyPluginAsyncTypebox = async (server) =>
       sendError(request, reply, 400, 'timezone must be a valid IANA timezone');
       return;
     }
+    if (input.maintenanceWindow !== undefined && !isValidMaintenanceWindow(input.maintenanceWindow)) {
+      sendError(request, reply, 400, 'maintenanceWindow must have different valid local start and end times');
+      return;
+    }
     if (input.testFlightPolicy === 'train' && !input.testFlightTrain) {
       sendError(request, reply, 400, 'testFlightTrain is required when testFlightPolicy is train');
       return;
@@ -413,6 +425,10 @@ export const dashboardWatchRoutes: FastifyPluginAsyncTypebox = async (server) =>
     }
     if (patch.timezone !== undefined && !isValidTimeZone(patch.timezone)) {
       sendError(request, reply, 400, 'timezone must be a valid IANA timezone');
+      return;
+    }
+    if (patch.maintenanceWindow !== undefined && !isValidMaintenanceWindow(patch.maintenanceWindow)) {
+      sendError(request, reply, 400, 'maintenanceWindow must have different valid local start and end times');
       return;
     }
     const existingWatch = visibleWatch(request, reply);

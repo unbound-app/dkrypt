@@ -1,9 +1,9 @@
 import { CronExpressionParser } from 'cron-parser';
 
-export function nextCronRunAt(expr: string, timezone?: string): number | undefined {
+export function nextCronRunAt(expr: string, timezone?: string, fromAt = Date.now()): number | undefined {
   if (!expr.trim()) return undefined;
   try {
-    return CronExpressionParser.parse(expr, { tz: timezone }).next().getTime();
+    return CronExpressionParser.parse(expr, { tz: timezone, currentDate: new Date(fromAt) }).next().getTime();
   } catch {
     return undefined;
   }

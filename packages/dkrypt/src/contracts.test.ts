@@ -233,9 +233,12 @@ test('dashboard overview publishes typed nested dashboard records', async () => 
     expect(settings).toEqual(expect.arrayContaining(['notifyFormat', 'notifyWebhookUrl', 'maintenanceMode', 'jobHistoryRetentionDays']));
 
     const watch = properties.watches?.items?.properties ?? {};
-    expect(Object.keys(watch)).toEqual(expect.arrayContaining(['id', 'bundleId', 'dispatchTargets', 'timezone', 'nextRunAt', 'schedulable', 'configIssues']));
+    expect(Object.keys(watch)).toEqual(expect.arrayContaining(['id', 'bundleId', 'dispatchTargets', 'timezone', 'maintenanceWindow', 'nextRunAt', 'schedulable', 'configIssues']));
     expect(watch.bundleId).toMatchObject({ pattern: '^[A-Za-z0-9.-]+$', minLength: 3, maxLength: 200 });
     expect(Object.keys(watch.dispatchTargets?.items?.properties ?? {})).toEqual(expect.arrayContaining(['repo', 'ghWorkflowFile', 'mode', 'inputs']));
+
+    const calendarRuns = document.paths?.['/v1/dashboard/watches/calendar']?.get?.responses?.['200']?.content?.['application/json']?.schema?.properties?.runs?.items?.properties ?? {};
+    expect(Object.keys(calendarRuns)).toEqual(expect.arrayContaining(['watchId', 'bundleId', 'at', 'deferred']));
 
     const device = properties.devices?.items?.properties ?? {};
     expect(Object.keys(device)).toEqual(expect.arrayContaining(['id', 'transportState', 'transportCapabilities', 'setupRequired', 'recoveryState']));

@@ -36,7 +36,8 @@ import { createTestFlightSubscriptionRepository } from '#store/testFlightSubscri
 import { createJobHistoryRepository } from '#store/jobHistoryRepository.js';
 import { openStateDatabase, readStateCollection, verifyDatabaseBackup, writeStateMirror, type StateCollectionReplacement, type StateDatabase } from '#store/sqlite.js';
 import { paginateCursor } from '#util/cursor.js';
-import { effectiveTimeZone } from '#util/timezone.js';
+import { effectiveTimeZone, isValidTimeZone } from '#util/timezone.js';
+import { isValidMaintenanceWindow, type MaintenanceWindow } from '#util/maintenanceWindow.js';
 
 export type ApiKeyStatus = 'pending' | 'approved' | 'denied';
 
@@ -304,6 +305,7 @@ export interface AppWatch {
   dispatchTargets?: DispatchTarget[];
   pollCron: string;
   timezone?: string;
+  maintenanceWindow?: MaintenanceWindow;
   enabled: boolean;
   webhookUrl?: string;
   testFlightPolicy?: 'latest' | 'latestNonExpired' | 'train';
@@ -2528,6 +2530,7 @@ export interface CreateWatchInput {
   dispatchTargets?: DispatchTarget[];
   pollCron: string;
   timezone?: string;
+  maintenanceWindow?: MaintenanceWindow;
   enabled?: boolean;
   webhookUrl?: string;
   testFlightPolicy?: 'latest' | 'latestNonExpired' | 'train';
@@ -2583,6 +2586,7 @@ export function createWatch(input: CreateWatchInput, actor: string): { ok: boole
     ...dispatch,
     pollCron: input.pollCron,
     timezone: effectiveTimeZone(input.timezone),
+    maintenanceWindow: input.maintenanceWindow,
     enabled: input.enabled ?? true,
     webhookUrl: input.webhookUrl,
     testFlightPolicy: input.testFlightPolicy,
@@ -4100,7 +4104,12 @@ function isApiKeyRecordShape(value: unknown): value is ApiKeyRecord {
 function isAppWatchShape(value: unknown): value is AppWatch {
   if (typeof value !== 'object' || value === null) return false;
   const w = value as Record<string, unknown>;
-  return typeof w.id === 'string' && typeof w.bundleId === 'string' && typeof w.enabled === 'boolean' && (w.projectId === undefined || (typeof w.projectId === 'string' && /^[A-Za-z0-9_-]{1,80}$/.test(w.projectId)));
+  return typeof w.id === 'string'
+    && typeof w.bundleId === 'string'
+    && typeof w.enabled === 'boolean'
+    && (w.projectId === undefined || (typeof w.projectId === 'string' && /^[A-Za-z0-9_-]{1,80}$/.test(w.projectId)))
+    && (w.timezone === undefined || (typeof w.timezone === 'string' && isValidTimeZone(w.timezone)))
+    && (w.maintenanceWindow === undefined || isValidMaintenanceWindow(w.maintenanceWindow));
 }
 
 function isDeviceRecordShape(value: unknown): value is BackupDeviceRecord {

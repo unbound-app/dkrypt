@@ -87,6 +87,11 @@ export const dashboardDispatchTargetSchema = Type.Object({
   inputs: Type.Optional(Type.Record(Type.String({ minLength: 1, maxLength: 100 }), Type.String({ maxLength: 500 }))),
 }, { additionalProperties: true });
 
+export const dashboardMaintenanceWindowSchema = Type.Object({
+  start: Type.String({ pattern: '^(?:[01]\\d|2[0-3]):[0-5]\\d$' }),
+  end: Type.String({ pattern: '^(?:[01]\\d|2[0-3]):[0-5]\\d$' }),
+}, { additionalProperties: false });
+
 export const dashboardWatchResponseSchema = Type.Object({
   id: identifierSchema,
   projectId: Type.Optional(projectIdentifierSchema),
@@ -96,6 +101,7 @@ export const dashboardWatchResponseSchema = Type.Object({
   dispatchTargets: Type.Optional(Type.Array(dashboardDispatchTargetSchema)),
   pollCron: Type.String(),
   timezone: Type.Optional(Type.String()),
+  maintenanceWindow: Type.Optional(dashboardMaintenanceWindowSchema),
   enabled: Type.Boolean(),
   webhookUrl: Type.Optional(Type.String()),
   testFlightPolicy: Type.Optional(Type.Union([Type.Literal('latest'), Type.Literal('latestNonExpired'), Type.Literal('train')])),

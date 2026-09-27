@@ -6,8 +6,8 @@ import type { Job } from '#jobs/types.js';
 import { hasPermission, PermissionFlag } from '#permissions.js';
 import { serializeDashboardDevice } from '#dashboardDevicePresentation.js';
 import { canAccessProject } from '#dashboardJobPresentation.js';
-import { nextCronRunAt } from '#util/cron.js';
 import { effectiveTimeZone } from '#util/timezone.js';
+import { nextRunnableCronOccurrence } from '#util/maintenanceWindow.js';
 import { getDiskUsage } from '#util/diskUsage.js';
 import {
   DEFAULT_PROJECT_ID,
@@ -27,7 +27,9 @@ export function buildDashboardOverview(permissions: bigint, userId: string, proj
   ).map((watch) => ({
     ...watch,
     timezone: effectiveTimeZone(watch.timezone),
-    nextRunAt: isWatchSchedulable(watch) ? nextCronRunAt(watch.pollCron, effectiveTimeZone(watch.timezone)) : undefined,
+    nextRunAt: isWatchSchedulable(watch)
+      ? nextRunnableCronOccurrence(watch.pollCron, effectiveTimeZone(watch.timezone), watch.maintenanceWindow, Date.now(), Date.now() + 366 * 24 * 60 * 60 * 1000)?.at
+      : undefined,
     schedulable: isWatchSchedulable(watch),
     configIssues: getWatchConfigIssues(watch),
   })) : [];

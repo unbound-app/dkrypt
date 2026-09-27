@@ -1,6 +1,11 @@
 export const GENERATED_CHANGELOG = [
   {
     "date": "2026-09-27",
+    "title": "feat(scheduler): support timezone-aware watch schedules",
+    "description": "Released in 371f033."
+  },
+  {
+    "date": "2026-09-27",
     "title": "fix(deploy): harden authenticated smoke checks",
     "description": "Released in 781fe88."
   },
@@ -33,10 +38,5 @@ export const GENERATED_CHANGELOG = [
     "date": "2026-09-27",
     "title": "fix(web): show release times in version pickers",
     "description": "Released in 686193c."
-  },
-  {
-    "date": "2026-09-27",
-    "title": "test(deploy): verify the live USB device agent",
-    "description": "Released in 0f921e2."
   }
 ] as const;

@@ -1,7 +1,7 @@
 import { Type, type Static } from '@sinclair/typebox';
 import type { ApiErrorEnvelope } from '#contracts.js';
 import { bundleIdSchema, identifierSchema, projectIdentifierSchema } from '#apiCommonContracts.js';
-import { dashboardDispatchTargetSchema, dashboardWatchResponseSchema } from '#dashboardModelsContracts.js';
+import { dashboardDispatchTargetSchema, dashboardMaintenanceWindowSchema, dashboardWatchResponseSchema } from '#dashboardModelsContracts.js';
 
 const additionalProperties = { additionalProperties: true } as const;
 const JsonObject = Type.Object({}, additionalProperties);
@@ -14,6 +14,7 @@ export const dashboardWatchInputSchema = Type.Object({
   dispatchTargets: Type.Optional(Type.Array(dashboardDispatchTargetSchema, { maxItems: 10 })),
   pollCron: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
   timezone: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
+  maintenanceWindow: Type.Optional(Type.Union([dashboardMaintenanceWindowSchema, Type.Null()])),
   enabled: Type.Optional(Type.Boolean()),
   webhookUrl: Type.Optional(Type.String({ maxLength: 500 })),
   testFlightPolicy: Type.Optional(Type.Union([Type.Literal('latest'), Type.Literal('latestNonExpired'), Type.Literal('train')])),
@@ -49,7 +50,7 @@ export const dashboardWatchHealthResponseSchema = Type.Object({ watches: Type.Ar
 export const dashboardWatchCalendarResponseSchema = Type.Object({
   fromAt: Type.Number(),
   untilAt: Type.Number(),
-  runs: Type.Array(Type.Object({ watchId: identifierSchema, bundleId: bundleIdSchema, at: Type.Number() }, additionalProperties)),
+  runs: Type.Array(Type.Object({ watchId: identifierSchema, bundleId: bundleIdSchema, at: Type.Number(), deferred: Type.Boolean() }, additionalProperties)),
   truncated: Type.Boolean(),
 }, additionalProperties);
 export const dashboardGitHubBudgetHistoryResponseSchema = Type.Object({ entries: Type.Array(JsonObject) }, additionalProperties);
