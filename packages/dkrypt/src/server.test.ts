@@ -21,8 +21,13 @@ import { setSessionCookie } from '#session.js';
 test('request trace context is available throughout the Fastify request lifecycle', async () => {
   const server = await buildServer({ includePublicRoutes: false });
   let observedCorrelation: ReturnType<typeof currentCorrelation>;
+  let rejectedCorrelation: ReturnType<typeof currentCorrelation>;
   server.addHook('preHandler', (_request, _reply, done) => {
     observedCorrelation = currentCorrelation();
+    done();
+  });
+  server.addHook('onSend', (request, _reply, _payload, done) => {
+    if (request.id === 'csrf-request-456') rejectedCorrelation = currentCorrelation();
     done();
   });
 
@@ -43,6 +48,20 @@ test('request trace context is available throughout the Fastify request lifecycl
       traceContext: { traceId: '0123456789abcdef0123456789abcdef' },
     });
     expect(response.headers.traceparent).toBe(observedCorrelation?.traceContext?.traceparent);
+
+    const rejected = await server.inject({
+      method: 'POST',
+      url: '/v1/auth/logout',
+      headers: {
+        cookie: 'session=invalid',
+        origin: 'https://attacker.example',
+        'sec-fetch-site': 'cross-site',
+        'x-request-id': 'csrf-request-456',
+      },
+    });
+
+    expect(rejected.statusCode).toBe(403);
+    expect(rejectedCorrelation).toMatchObject({ correlationId: 'csrf-request-456' });
   } finally {
     await server.close();
   }

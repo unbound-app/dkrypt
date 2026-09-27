@@ -22,11 +22,11 @@ const log = scopedLogger('jobs');
 import { appendJobTimelineEvent, type Job } from '#jobs/types.js';
 
 export async function runDecrypt(job: Job, device: DeviceRecord, signal?: AbortSignal): Promise<void> {
-  const parent = currentCorrelation();
-  const span = startSpan('job.decrypt', { 'job.id': job.id, 'job.bundle_id': job.bundleId, 'job.device_id': device.id }, parent?.traceContext);
+  const parentContext = currentCorrelation();
+  const span = startSpan('job.decrypt', { 'job.id': job.id, 'job.bundle_id': job.bundleId, 'job.device_id': device.id }, parentContext?.traceContext);
   return withCorrelation({
-    correlationId: parent?.correlationId ?? job.correlationId ?? job.id,
-    parentCorrelationId: parent?.parentCorrelationId ?? job.parentCorrelationId,
+    correlationId: parentContext?.correlationId ?? job.correlationId ?? job.id,
+    parentCorrelationId: parentContext?.parentCorrelationId ?? job.parentCorrelationId,
     traceId: span.context.traceId,
     traceContext: span.context,
   }, async () => {

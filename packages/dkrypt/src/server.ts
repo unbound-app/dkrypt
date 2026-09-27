@@ -141,43 +141,45 @@ export async function buildServer(options: { includePublicRoutes?: boolean } = {
     const trace = startSpan('http.request', { 'http.method': request.method, 'http.request_id': requestId }, traceparent ? traceContextFromHeader(traceparent) : undefined);
     (request as unknown as { traceSpan: SpanHandle }).traceSpan = trace;
     reply.header('traceparent', trace.context.traceparent);
-    const method = request.method.toUpperCase();
-    const isMutation = method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS';
-    const isWebhook = request.url.startsWith('/v1/stripe/webhook') || request.url.startsWith('/v1/nowpayments/webhook');
-    const hasCookie = typeof request.headers.cookie === 'string' && request.headers.cookie.length > 0;
-    if (isMutation && !isWebhook && hasCookie) {
-      const fetchSite = request.headers['sec-fetch-site'];
-      if (fetchSite === 'cross-site') {
-        reply.code(403).send({ error: 'cross-site mutation rejected', code: 'csrf_origin_rejected', message: 'cross-site mutation rejected', requestId, retryable: false });
-        return;
-      }
-      const origin = request.headers.origin;
-      if (typeof origin === 'string') {
-        try {
-          if (new URL(origin).origin !== new URL(config.publicBaseUrl).origin) {
+    withCorrelation({ correlationId: requestId, traceId: trace.context.traceId, traceContext: trace.context }, () => {
+      const method = request.method.toUpperCase();
+      const isMutation = method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS';
+      const isWebhook = request.url.startsWith('/v1/stripe/webhook') || request.url.startsWith('/v1/nowpayments/webhook');
+      const hasCookie = typeof request.headers.cookie === 'string' && request.headers.cookie.length > 0;
+      if (isMutation && !isWebhook && hasCookie) {
+        const fetchSite = request.headers['sec-fetch-site'];
+        if (fetchSite === 'cross-site') {
+          reply.code(403).send({ error: 'cross-site mutation rejected', code: 'csrf_origin_rejected', message: 'cross-site mutation rejected', requestId, retryable: false });
+          return;
+        }
+        const origin = request.headers.origin;
+        if (typeof origin === 'string') {
+          try {
+            if (new URL(origin).origin !== new URL(config.publicBaseUrl).origin) {
+              reply.code(403).send({ error: 'request origin is not allowed', code: 'csrf_origin_rejected', message: 'request origin is not allowed', requestId, retryable: false });
+              return;
+            }
+          } catch {
             reply.code(403).send({ error: 'request origin is not allowed', code: 'csrf_origin_rejected', message: 'request origin is not allowed', requestId, retryable: false });
             return;
           }
-        } catch {
-          reply.code(403).send({ error: 'request origin is not allowed', code: 'csrf_origin_rejected', message: 'request origin is not allowed', requestId, retryable: false });
+        }
+      }
+      if (shouldRateLimitApiRequest(request.url)) {
+        const credential = request.headers.authorization ?? request.headers.cookie ?? request.ip ?? 'unknown';
+        const subject = createHash('sha256').update(credential).digest('hex');
+        const decision = sharedApiRateLimiter.consume(subject);
+        reply.header('X-RateLimit-Limit', String(decision.limit));
+        reply.header('X-RateLimit-Remaining', String(decision.remaining));
+        reply.header('X-RateLimit-Reset', String(Math.ceil(decision.resetAt / 1000)));
+        if (!decision.allowed) {
+          reply.header('Retry-After', String(decision.retryAfterSeconds));
+          reply.code(429).send({ error: 'too many requests', code: 'rate_limited', message: 'too many requests', requestId, retryable: true });
           return;
         }
       }
-    }
-    if (shouldRateLimitApiRequest(request.url)) {
-      const credential = request.headers.authorization ?? request.headers.cookie ?? request.ip ?? 'unknown';
-      const subject = createHash('sha256').update(credential).digest('hex');
-      const decision = sharedApiRateLimiter.consume(subject);
-      reply.header('X-RateLimit-Limit', String(decision.limit));
-      reply.header('X-RateLimit-Remaining', String(decision.remaining));
-      reply.header('X-RateLimit-Reset', String(Math.ceil(decision.resetAt / 1000)));
-      if (!decision.allowed) {
-        reply.header('Retry-After', String(decision.retryAfterSeconds));
-        reply.code(429).send({ error: 'too many requests', code: 'rate_limited', message: 'too many requests', requestId, retryable: true });
-        return;
-      }
-    }
-    withCorrelation({ correlationId: requestId, traceId: trace.context.traceId, traceContext: trace.context }, done);
+      done();
+    });
   });
 
   server.addHook('onResponse', (request, reply, done) => {

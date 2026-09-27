@@ -73,8 +73,17 @@ test('job repository persists exact-build lookups and timelines across restart',
 
   try {
     repository = createJobRepository(openStateCollectionDatabase(options, ['jobs', 'job_timelines']));
+    const traceContext = {
+      traceId: '0123456789abcdef0123456789abcdef',
+      spanId: '0123456789abcdef',
+      traceFlags: 1,
+      traceparent: '00-0123456789abcdef0123456789abcdef-0123456789abcdef-01',
+    };
     const completed = createJob({
       id: 'completed-build',
+      correlationId: 'job-correlation-7',
+      parentCorrelationId: 'http-request-7',
+      traceContext,
       status: 'done',
       externalVersionId: 'build-7',
       filePath: '/artifacts/build-7.ipa',
@@ -106,6 +115,9 @@ test('job repository persists exact-build lookups and timelines across restart',
     expect(repository.load()).toContainEqual(expect.objectContaining({
       id: 'completed-build',
       status: 'done',
+      correlationId: 'job-correlation-7',
+      parentCorrelationId: 'http-request-7',
+      traceContext,
       externalVersionId: 'build-7',
       timeline: completed.timeline,
     }));
