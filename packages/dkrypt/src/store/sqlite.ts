@@ -302,6 +302,22 @@ const migrations = [
       CREATE INDEX IF NOT EXISTS notifications_unread_by_user ON notifications(user_id, read_at) WHERE read_at IS NULL;
     `,
   },
+  {
+    version: 13,
+    sql: `
+      ALTER TABLE audit_events ADD COLUMN actor TEXT;
+      ALTER TABLE audit_events ADD COLUMN action TEXT;
+      ALTER TABLE audit_events ADD COLUMN target TEXT;
+      ALTER TABLE audit_events ADD COLUMN occurred_at INTEGER;
+      UPDATE audit_events
+      SET actor = json_extract(payload, '$.actor'),
+          action = json_extract(payload, '$.action'),
+          target = json_extract(payload, '$.target'),
+          occurred_at = COALESCE(json_extract(payload, '$.ts'), updated_at)
+      WHERE json_valid(payload) = 1;
+      CREATE INDEX IF NOT EXISTS audit_events_by_time ON audit_events(occurred_at DESC, id DESC);
+    `,
+  },
 ] as const;
 
 const domainTables = [
@@ -441,6 +457,16 @@ function notificationIndexValues(payload: unknown, updatedAt: number): Array<str
   ];
 }
 
+function auditIndexValues(payload: unknown, updatedAt: number): Array<string | number | null> {
+  const entry = asRecord(payload);
+  return [
+    stringField(entry, 'actor'),
+    stringField(entry, 'action'),
+    stringField(entry, 'target'),
+    numberField(entry, 'ts') ?? updatedAt,
+  ];
+}
+
 function deviceHealthRows(value: unknown): DomainRow[] {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return [];
   return Object.entries(value as StateRecord).flatMap(([deviceId, rawHistory]) => {
@@ -526,6 +552,17 @@ function replaceCollectionRows(database: Database, replacement: StateCollectionR
     for (const row of replacement.rows) {
       const updatedAt = row.updatedAt ?? Date.now();
       statement.run(row.id, json(row.payload), updatedAt, ...notificationIndexValues(row.payload, updatedAt));
+    }
+    return;
+  }
+  if (replacement.table === 'audit_events') {
+    const statement = database.query(`
+      INSERT INTO audit_events (id, payload, updated_at, actor, action, target, occurred_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?);
+    `);
+    for (const row of replacement.rows) {
+      const updatedAt = row.updatedAt ?? Date.now();
+      statement.run(row.id, json(row.payload), updatedAt, ...auditIndexValues(row.payload, updatedAt));
     }
     return;
   }

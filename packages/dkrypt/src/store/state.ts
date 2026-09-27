@@ -30,6 +30,7 @@ import { combineBits, hasPermission, parseBits, PermissionFlag, serializeBits } 
 import { createDeviceHistoryRepository } from '#store/deviceHistoryRepository.js';
 import { createDeviceHealthRepository } from '#store/deviceHealthRepository.js';
 import { createNotificationRepository } from '#store/notificationRepository.js';
+import { createAuditRepository } from '#store/auditRepository.js';
 import { openStateDatabase, readStateCollection, verifyDatabaseBackup, writeStateMirror, type StateCollectionReplacement, type StateDatabase } from '#store/sqlite.js';
 import { paginateCursor } from '#util/cursor.js';
 
@@ -654,6 +655,7 @@ const stateDatabase: StateDatabase = openStateDatabase({
 const deviceHistoryRepository = createDeviceHistoryRepository(stateDatabase.db);
 const deviceHealthRepository = createDeviceHealthRepository(stateDatabase.db);
 const notificationRepository = createNotificationRepository(stateDatabase.db);
+const auditRepository = createAuditRepository(stateDatabase.db);
 
 export function getStateDatabaseStatus(): { path: string; schemaVersion: number; integrity: 'ok' } {
   return { path: stateDatabase.path, schemaVersion: stateDatabase.schemaVersion, integrity: stateDatabase.integrityStatus() };
@@ -1680,18 +1682,18 @@ export function recordAudit(actor: string, action: AuditAction, target: string, 
 }
 
 export function getAuditLog(limit = 100): AuditLogEntry[] {
-  return state.auditLog.slice(0, limit);
+  return auditRepository.listRecent(MAX_AUDIT_LOG).slice(0, limit);
 }
 
 export function getAuditLogPage(offset = 0, limit = 100, cursor?: string): { entries: AuditLogEntry[]; total: number; nextCursor?: string } {
-  const page = paginateCursor(state.auditLog, {
+  const page = paginateCursor(auditRepository.listRecent(MAX_AUDIT_LOG), {
     cursor,
     offset,
     limit,
     keyOf: (entry) => [entry.ts, entry.id],
     order: 'desc',
   });
-  return { entries: page.items, total: state.auditLog.length, nextCursor: page.nextCursor };
+  return { entries: page.items, total: auditRepository.count(), nextCursor: page.nextCursor };
 }
 
 function sanitizeRoleIds(roleIds: string[]): string[] {
