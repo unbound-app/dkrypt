@@ -90,6 +90,7 @@ export function connectLive(): void {
 	});
 
   eventSource.onopen = () => {
+    sequenceTracker.reset();
     if (hasConnectedBefore && liveState.disconnectedAt !== null) serverStateCache.invalidateAll();
     hasConnectedBefore = true;
     liveState.connected = true;

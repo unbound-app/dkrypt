@@ -20,7 +20,7 @@ describe('dashboard event sequence tracking', () => {
 		expect(tracker.receive(2)).toBe(false);
 	});
 
-	it('starts clean after an explicit project-state reset', () => {
+	it('starts a fresh stream sequence after reset', () => {
 		const tracker = new DashboardEventSequenceTracker();
 
 		expect(tracker.receive(40)).toBe(false);
