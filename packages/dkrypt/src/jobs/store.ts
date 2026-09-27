@@ -43,6 +43,11 @@ function serializableJob(job: Job): Omit<Job, 'childProcess' | 'waiters'> {
   return rest;
 }
 
+function captureJobCorrelation(): Pick<Job, 'parentCorrelationId' | 'traceContext'> {
+  const context = currentCorrelation();
+  return { parentCorrelationId: context?.correlationId, traceContext: context?.traceContext };
+}
+
 function writeLegacyMirror(filePath: string, value: unknown): void {
   const temporaryPath = `${filePath}.${process.pid}.tmp`;
   writeFileSync(temporaryPath, JSON.stringify(value), { mode: 0o600 });
@@ -205,7 +210,7 @@ function createCachedJob(
   const job: Job = {
     id: randomUUID(),
     correlationId: randomUUID(),
-    traceContext: currentCorrelation()?.traceContext,
+    ...captureJobCorrelation(),
     projectId,
     bundleId,
     externalVersionId,
@@ -336,7 +341,7 @@ export function enqueueDecryptJob(
   const job: Job = {
     id: randomUUID(),
     correlationId: randomUUID(),
-    traceContext: currentCorrelation()?.traceContext,
+    ...captureJobCorrelation(),
     projectId,
     bundleId,
     externalVersionId,
@@ -683,6 +688,7 @@ function pumpWorkers(): void {
     busyDeviceIds.add(device.id);
     const run = withCorrelation({
       correlationId: job.correlationId ?? job.id,
+      parentCorrelationId: job.parentCorrelationId,
       traceId: job.traceContext?.traceId,
       traceContext: job.traceContext,
     }, () => runOneJob(device, job));

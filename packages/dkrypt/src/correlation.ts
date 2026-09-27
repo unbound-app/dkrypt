@@ -3,6 +3,7 @@ import type { TraceContext } from '#telemetry.js';
 
 export interface CorrelationContext {
   correlationId: string;
+  parentCorrelationId?: string;
   traceId?: string;
   traceContext?: TraceContext;
 }

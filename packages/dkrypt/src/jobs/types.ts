@@ -24,6 +24,7 @@ export interface JobTimelineEvent {
 export interface Job {
   id: string;
   correlationId?: string;
+  parentCorrelationId?: string;
   traceContext?: TraceContext;
   projectId?: string;
   bundleId: string;

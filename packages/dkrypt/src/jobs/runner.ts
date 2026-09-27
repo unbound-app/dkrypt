@@ -26,6 +26,7 @@ export async function runDecrypt(job: Job, device: DeviceRecord, signal?: AbortS
   const span = startSpan('job.decrypt', { 'job.id': job.id, 'job.bundle_id': job.bundleId, 'job.device_id': device.id }, parent?.traceContext);
   return withCorrelation({
     correlationId: parent?.correlationId ?? job.correlationId ?? job.id,
+    parentCorrelationId: parent?.parentCorrelationId ?? job.parentCorrelationId,
     traceId: span.context.traceId,
     traceContext: span.context,
   }, async () => {

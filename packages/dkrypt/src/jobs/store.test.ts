@@ -8,6 +8,8 @@ import { artifactKeyForJob, promoteArtifact } from '#artifacts.js';
 import { currentCorrelation, withCorrelation } from '#correlation.js';
 import { createDevice, createProject, deleteDevice, getJobHistoryEntryById } from '#store/state.js';
 import { traceContextFromHeader } from '#telemetry.js';
+import { getRecentLogs } from '#logger.js';
+import { loadPersistedJobs } from '#jobs/repository.js';
 import type { Job } from '#jobs/types.js';
 
 let retryDeadlineAttempts = 0;
@@ -63,11 +65,12 @@ describe('recoverPersistedActiveJobs', () => {
       waiters: [],
     };
     const { queued, interrupted } = recoverPersistedActiveJobs([
-      { ...base, id: 'queued', status: 'queued', traceContext },
+      { ...base, id: 'queued', status: 'queued', parentCorrelationId: 'request-recovered-1', traceContext },
       { ...base, id: 'running', status: 'running', startedAt: 2 },
     ], 3);
 
     expect(queued.map((job) => job.id)).toEqual(['queued']);
+    expect(queued[0]?.parentCorrelationId).toBe('request-recovered-1');
     expect(queued[0]?.traceContext).toEqual(traceContext);
     expect(interrupted).toHaveLength(1);
     expect(interrupted[0]).toMatchObject({
@@ -99,11 +102,20 @@ describe('enqueueDecryptJob', () => {
         await new Promise((resolve) => setTimeout(resolve, 1));
       }
       expect(job.traceContext).toEqual(traceContext);
+      expect(job).toMatchObject({ parentCorrelationId: 'request-trace-123' });
+      const persistedJob = loadPersistedJobs().find((entry) => entry.id === job.id);
+      expect(persistedJob).toMatchObject({
+        parentCorrelationId: 'request-trace-123',
+        traceContext,
+      });
       expect(observedWorkerCorrelation).toMatchObject({
         correlationId: job.correlationId,
+        parentCorrelationId: 'request-trace-123',
         traceId: traceContext.traceId,
         traceContext,
       });
+      const jobLog = getRecentLogs({ scope: 'jobs', limit: 500 }).logs.find((entry) => entry.meta?.jobId === job.id && entry.message === 'job started');
+      expect(jobLog?.meta).toMatchObject({ correlationId: job.correlationId, parentCorrelationId: 'request-trace-123' });
     } finally {
       if (job.status === 'running') cancelJob(job.id, 'trace propagation test cleanup');
       await waitForJob(job, 1_000);

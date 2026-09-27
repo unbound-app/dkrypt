@@ -58,7 +58,12 @@ function record(entry: Omit<LogEntry, 'id'>): void {
 function contextualMeta(meta: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
   const context = currentCorrelation();
   if (!context) return meta;
-  return { ...meta, correlationId: meta?.correlationId ?? context.correlationId, ...(context.traceId ? { traceId: meta?.traceId ?? context.traceId } : {}) };
+  return {
+    ...meta,
+    correlationId: meta?.correlationId ?? context.correlationId,
+    ...(context.parentCorrelationId ? { parentCorrelationId: meta?.parentCorrelationId ?? context.parentCorrelationId } : {}),
+    ...(context.traceId ? { traceId: meta?.traceId ?? context.traceId } : {}),
+  };
 }
 
 export function getRecentLogs(query: LogQuery = {}): { logs: LogEntry[]; total: number; nextCursor?: string } {
