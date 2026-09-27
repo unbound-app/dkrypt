@@ -15,10 +15,10 @@
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",
     "@playwright/test": "^1.63.0",
-    "@sveltejs/vite-plugin-svelte": "^7.3.0",
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
     "@tailwindcss/vite": "^4.3.3",
     "@tsconfig/svelte": "^5.0.4",
-    "svelte": "^5.57.0",
+    "svelte": "^5.57.1",
     "svelte-check": "^4.7.6",
     "tailwindcss": "^4.3.3",
     "typescript": "^5.7.2",
@@ -26,7 +26,7 @@
   },
   "dependencies": {
     "@simplewebauthn/browser": "^14.0.0",
-    "bits-ui": "^2.19.2",
+    "bits-ui": "^2.19.3",
     "clsx": "^2.1.1",
     "lucide-svelte": "^1.0.1",
     "svelte-sonner": "^1.2.1",
