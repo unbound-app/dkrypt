@@ -636,6 +636,7 @@ async function tick(watch: AppWatch, mode: 'scheduled' | 'manual' = 'scheduled',
   let githubBudget: { limit: number; remaining: number; resetAt: number } | undefined;
   let estimatedRequests: number | undefined;
   let actualGitHubRequests: number | undefined;
+  let deferredForGitHubBudget = false;
   try {
     recordSchedulerRun();
     const settings: SchedulerSettings = getEffectiveSettings();
@@ -649,6 +650,7 @@ async function tick(watch: AppWatch, mode: 'scheduled' | 'manual' = 'scheduled',
       githubBudget = budget;
       estimatedRequests = budget ? reserveGitHubBudget(watch, settings.schedulerRetryCount, budget) : undefined;
       if (budget && estimatedRequests === undefined) {
+        deferredForGitHubBudget = true;
         const retryAt = new Date(budget.resetAt + GITHUB_RATE_LIMIT_RETRY_PADDING_MS).toISOString();
         const reason = `deferred to preserve GitHub API budget (${budget.remaining}/${budget.limit} remaining; retrying after reset at ${retryAt})`;
         log.warn('deferring scheduler tick for GitHub API budget', { watchId: watch.id, reservedRequests: githubBudgetReservation.requests, ...budget });
@@ -700,7 +702,7 @@ async function tick(watch: AppWatch, mode: 'scheduled' | 'manual' = 'scheduled',
       });
     }
     tickInProgress.delete(watch.id);
-    if (mode === 'scheduled') markWatchScheduleRun(watch.id);
+    if (mode === 'scheduled' && !deferredForGitHubBudget) markWatchScheduleRun(watch.id);
 
     emitJobsChanged();
   }
