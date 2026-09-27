@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { openStateCollectionDatabase, readStateCollection, replaceStateCollections, writeStateMirror, type StateCollectionReplacement } from '#store/sqlite.js';
+import { createBillingRepository, type BillingSubscriptionFilter } from '#store/billingRepository.js';
 import { config } from '#config.js';
 import { hasPermission, PermissionFlag } from '#permissions.js';
 
@@ -196,6 +197,7 @@ const planDefinitions = [
 
 const billingPath = path.join(config.stateDir, 'billing.json');
 const billingDatabase = openStateCollectionDatabase({ stateDir: config.stateDir, filename: config.stateDatabaseFile, busyTimeoutMs: config.stateDbBusyTimeoutMs }, ['billing_records', 'billing_events']);
+const billingRepository = createBillingRepository(billingDatabase);
 const stripeActiveStatuses = new Set(['active', 'trialing', 'past_due']);
 const checkoutLocks = new Set<string>();
 let loadedFromLegacyFile = false;
@@ -229,9 +231,17 @@ const state = load();
 if (loadedFromLegacyFile) persist();
 
 export function billingSnapshotCollections(snapshot: BillingSnapshot): StateCollectionReplacement[] {
+  const normalized = normalizeBillingSnapshot(snapshot);
+  if (!normalized) throw new Error('billing snapshot is malformed');
+  const entitlementHistory = normalized.entitlementHistory ?? [];
   return [
-    { table: 'billing_records', rows: [{ id: 'billing-snapshot', payload: { kind: 'snapshot', value: snapshot }, updatedAt: Date.now() }] },
-    { table: 'billing_events', rows: snapshot.processedEvents.map((event) => ({ id: `${event.provider}:${event.eventId}`, payload: event, updatedAt: Date.parse(event.processedAt) || Date.now() })) },
+    { table: 'billing_records', rows: [{ id: 'billing-snapshot', payload: { kind: 'snapshot', value: normalized }, updatedAt: Date.now() }] },
+    { table: 'billing_events', rows: normalized.processedEvents.map((event) => ({ id: `${event.provider}:${event.eventId}`, payload: event, updatedAt: Date.parse(event.processedAt) || Date.now() })) },
+    { table: 'billing_customers', rows: normalized.customers.map((customer, ordinal) => ({ id: `${customer.provider}:${customer.customerId}`, payload: customer, updatedAt: Date.parse(customer.updatedAt) || Date.now(), ordinal })) },
+    { table: 'billing_subscriptions', rows: normalized.subscriptions.map((subscription, ordinal) => ({ id: `${subscription.provider}:${subscription.subscriptionId}`, payload: subscription, updatedAt: Date.parse(subscription.updatedAt) || Date.now(), ordinal })) },
+    { table: 'billing_checkouts', rows: normalized.cryptoCheckouts.map((checkout, ordinal) => ({ id: `${checkout.provider}:${checkout.checkoutId}`, payload: checkout, updatedAt: Date.parse(checkout.updatedAt) || Date.now(), ordinal })) },
+    { table: 'billing_charges', rows: normalized.cryptoCharges.map((charge, ordinal) => ({ id: `${charge.provider}:${charge.chargeId}`, payload: charge, updatedAt: Date.parse(charge.updatedAt) || Date.now(), ordinal })) },
+    { table: 'billing_entitlement_history', rows: entitlementHistory.map((event) => ({ id: event.id, payload: event, updatedAt: Date.parse(event.at) || Date.now() })) },
   ];
 }
 
@@ -311,29 +321,29 @@ export function upsertBillingSubscription(subscription: BillingSubscription): bo
 }
 
 export function getBillingCustomerId(userId: string): string | undefined {
-  return state.customers.find((customer) => customer.provider === 'stripe' && customer.userId === userId)?.customerId;
+  return billingRepository.findCustomerForUser('stripe', userId)?.customerId;
 }
 
 export function getBillingUserId(customerId: string): string | undefined {
-  return state.customers.find((customer) => customer.provider === 'stripe' && customer.customerId === customerId)?.userId;
+  return billingRepository.findUserForCustomer('stripe', customerId);
 }
 
 export function getBillingSubscription(userId: string, subscriptionId: string): BillingSubscription | undefined {
-  return state.subscriptions.find((subscription) => subscription.userId === userId && subscription.subscriptionId === subscriptionId);
+  return billingRepository.findSubscription(userId, subscriptionId);
 }
 
 export function getBillingSubscriptionById(subscriptionId: string): BillingSubscription | undefined {
-  return state.subscriptions.find((subscription) => subscription.subscriptionId === subscriptionId);
+  return billingRepository.findSubscriptionById(subscriptionId);
 }
 
 export function getBillingSubscriptionIds(userId: string): string[] {
-  return state.subscriptions
-    .filter((subscription) => subscription.userId === userId && isBillingSubscriptionActive(subscription))
+  return billingRepository.listSubscriptions({ userId })
+    .filter((subscription) => isBillingSubscriptionActive(subscription))
     .map((subscription) => subscription.subscriptionId);
 }
 
 export function getBillingSubscriptionsForUser(userId: string): BillingSubscription[] {
-  return state.subscriptions.filter((subscription) => subscription.userId === userId).map((subscription) => structuredClone(subscription));
+  return billingRepository.listSubscriptions({ userId });
 }
 
 export function anonymizeBillingUser(userId: string): void {
@@ -369,22 +379,23 @@ export function anonymizeBillingUser(userId: string): void {
 }
 
 export function listBillingSubscriptions(): BillingSubscription[] {
-  return state.subscriptions.map((subscription) => structuredClone(subscription));
+  return billingRepository.listSubscriptions();
+}
+
+export function filterBillingSubscriptions(filter: BillingSubscriptionFilter): BillingSubscription[] {
+  return billingRepository.listSubscriptions(filter);
 }
 
 export function listBillingEntitlementHistory(subscriptionId?: string): BillingEntitlementEvent[] {
-  return (state.entitlementHistory ?? [])
-    .filter((event) => !subscriptionId || event.subscriptionId === subscriptionId)
-    .sort((a, b) => Date.parse(b.at) - Date.parse(a.at))
-    .map((event) => structuredClone(event));
+  return billingRepository.listEntitlementHistory(subscriptionId);
 }
 
 export function getBillingEntitlements(userId: string): BillingEntitlements {
-  return resolveBillingEntitlements(state.subscriptions.filter((subscription) => subscription.userId === userId));
+  return resolveBillingEntitlements(billingRepository.listSubscriptions({ userId }));
 }
 
 export function hasActiveBillingSubscription(userId: string): boolean {
-  return state.subscriptions.some((subscription) => subscription.userId === userId && isBillingSubscriptionActive(subscription));
+  return billingRepository.listSubscriptions({ userId }).some((subscription) => isBillingSubscriptionActive(subscription));
 }
 
 export function acquireBillingCheckoutLock(userId: string): boolean {
@@ -399,8 +410,8 @@ export function releaseBillingCheckoutLock(userId: string): void {
 
 export function hasLegacyBillingRecord(userId: string): boolean {
   return (
-    state.customers.some((customer) => customer.provider === 'legacy' && customer.userId === userId) ||
-    state.subscriptions.some((subscription) => subscription.provider === 'legacy' && subscription.userId === userId)
+    !!billingRepository.findCustomerForUser('legacy', userId) ||
+    billingRepository.listSubscriptions({ provider: 'legacy', userId }).length > 0
   );
 }
 
@@ -472,15 +483,15 @@ export function resolveBillingEntitlements(subscriptions: BillingSubscription[])
 }
 
 export function findCryptoCheckout(userId: string, idempotencyKey: string): BillingCheckout | undefined {
-  return state.cryptoCheckouts.find((checkout) => checkout.userId === userId && checkout.idempotencyKey === idempotencyKey);
+  return billingRepository.findCheckoutByUserKey(userId, idempotencyKey);
 }
 
 export function getCryptoCheckout(checkoutId: string): BillingCheckout | undefined {
-  return state.cryptoCheckouts.find((checkout) => checkout.checkoutId === checkoutId);
+  return billingRepository.findCheckout(checkoutId);
 }
 
 export function listCryptoCheckouts(): BillingCheckout[] {
-  return state.cryptoCheckouts.map((checkout) => structuredClone(checkout));
+  return billingRepository.listCheckouts();
 }
 
 export function upsertCryptoCheckout(checkout: BillingCheckout): void {
@@ -505,23 +516,27 @@ export function upsertBillingCharge(charge: BillingCharge): void {
 }
 
 export function getBillingCharge(chargeId: string): BillingCharge | undefined {
-  return state.cryptoCharges.find((charge) => charge.chargeId === chargeId);
+  return billingRepository.findCharge(chargeId);
 }
 
 export function getBillingChargeForNonce(subscriptionId: string, chargeNonce: number): BillingCharge | undefined {
-  return state.cryptoCharges.find((charge) => charge.subscriptionId === subscriptionId && charge.chargeNonce === chargeNonce);
+  return billingRepository.findChargeForNonce(subscriptionId, chargeNonce);
 }
 
 export function listBillingCharges(): BillingCharge[] {
-  return state.cryptoCharges.map((charge) => structuredClone(charge));
+  return billingRepository.listCharges();
 }
 
-export function hasProcessedBillingEvent(eventId: string): boolean {
-  return state.processedEvents.some((event) => event.eventId === eventId);
+export function listBillingChargesForSubscription(subscriptionId: string): BillingCharge[] {
+  return billingRepository.listChargesForSubscription(subscriptionId);
+}
+
+export function hasProcessedBillingEvent(eventId: string, provider?: BillingEventRecord['provider']): boolean {
+  return billingRepository.hasProcessedEvent(provider, eventId);
 }
 
 export function recordBillingEvent(event: BillingEventRecord): void {
-  if (!hasProcessedBillingEvent(event.eventId)) state.processedEvents.push(event);
+  if (!hasProcessedBillingEvent(event.eventId, event.provider)) state.processedEvents.push(event);
   if (state.processedEvents.length > 5000) state.processedEvents.splice(0, state.processedEvents.length - 5000);
   persist();
 }
@@ -639,11 +654,17 @@ function normalizeBillingSnapshot(value: unknown): BillingSnapshot | undefined {
   return {
     customers,
     subscriptions,
-    cryptoCheckouts: Array.isArray(snapshot.cryptoCheckouts) ? snapshot.cryptoCheckouts.filter(isBillingCheckout).map((item) => structuredClone(item)) : [],
-    cryptoCharges: Array.isArray(snapshot.cryptoCharges) ? snapshot.cryptoCharges.filter(isBillingCharge).map((item) => structuredClone(item)) : [],
-    processedEvents: Array.isArray(snapshot.processedEvents) ? snapshot.processedEvents.filter(isBillingEvent).map((item) => structuredClone(item)) : [],
-    entitlementHistory: Array.isArray(snapshot.entitlementHistory) ? snapshot.entitlementHistory.filter(isEntitlementEvent).map((item) => structuredClone(item)) : [],
+    cryptoCheckouts: Array.isArray(snapshot.cryptoCheckouts) ? snapshot.cryptoCheckouts.map(normalizeRetiredBillingProvider).filter(isBillingCheckout).map((item) => structuredClone(item)) : [],
+    cryptoCharges: Array.isArray(snapshot.cryptoCharges) ? snapshot.cryptoCharges.map(normalizeRetiredBillingProvider).filter(isBillingCharge).map((item) => structuredClone(item)) : [],
+    processedEvents: Array.isArray(snapshot.processedEvents) ? snapshot.processedEvents.map(normalizeRetiredBillingProvider).filter(isBillingEvent).map((item) => structuredClone(item)) : [],
+    entitlementHistory: Array.isArray(snapshot.entitlementHistory) ? snapshot.entitlementHistory.map(normalizeRetiredBillingProvider).filter(isEntitlementEvent).map((item) => structuredClone(item)) : [],
   };
+}
+
+function normalizeRetiredBillingProvider(value: unknown): unknown {
+  if (typeof value !== 'object' || value === null) return value;
+  const record = value as Record<string, unknown>;
+  return record.provider === 'exodus' ? { ...record, provider: 'legacy' } : value;
 }
 
 function billingProvider(value: unknown): BillingProvider | undefined {

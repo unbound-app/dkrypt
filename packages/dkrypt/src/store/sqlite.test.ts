@@ -20,7 +20,7 @@ test('SQLite state snapshots survive restart and retain independently owned coll
 
     const reopened = openStateDatabase({ stateDir, filename: 'state.sqlite' });
     expect(reopened.integrityStatus()).toBe('ok');
-    expect(reopened.schemaVersion).toBe(16);
+    expect(reopened.schemaVersion).toBe(17);
     expect(reopened.readCollection('jobs')).toEqual([{ id: 'job-1', status: 'queued' }]);
     expect(reopened.readCollection('scheduler_runs')).toEqual([]);
     expect(reopened.readCollection('projects')).toEqual(state.projects);
@@ -82,7 +82,7 @@ test('SQLite backfills indexed device activity from its state snapshot during mi
 
     const migrated = openStateDatabase({ stateDir, filename: 'state.sqlite' });
     const repository = createDeviceHistoryRepository(migrated.db);
-    expect(migrated.schemaVersion).toBe(16);
+    expect(migrated.schemaVersion).toBe(17);
     expect(repository.listByDevice('device-a')).toEqual([newer, older]);
     expect(repository.listByDevice('device-b')).toEqual([]);
     migrated.close();
@@ -116,7 +116,7 @@ test('SQLite backfills normalized device health checks from its state snapshot d
 
     const migrated = openStateDatabase({ stateDir, filename: 'state.sqlite' });
     const repository = createDeviceHealthRepository(migrated.db);
-    expect(migrated.schemaVersion).toBe(16);
+    expect(migrated.schemaVersion).toBe(17);
     expect(repository.listByDevice('device-a')).toEqual([newer, older]);
     expect(repository.listByDevice('device-b')).toEqual([legacyCheck]);
     migrated.close();

@@ -101,7 +101,7 @@ test('webhook inbox migration backfills indexed state from existing payloads', a
 
     const migrated = openStateDatabase(options);
     try {
-      expect(migrated.schemaVersion).toBe(16);
+      expect(migrated.schemaVersion).toBe(17);
       expect(createWebhookInboxRepository(migrated.db).findById(record.id)).toEqual(record);
       expect(migrated.db.query('SELECT provider, event_id, status, received_at, attempts FROM webhook_inbox WHERE id = ?').get(record.id)).toEqual({
         provider: 'stripe',

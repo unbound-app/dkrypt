@@ -6,6 +6,8 @@ import { config } from '#config.js';
 import {
   exportBillingSnapshot,
   getBillingCustomerId,
+  listBillingEntitlementHistory,
+  listBillingSubscriptions,
   replaceBillingSnapshot,
   upsertBillingCustomer,
   upsertBillingSubscription,
@@ -423,6 +425,8 @@ describe('exportBackup / importBackup', () => {
 
     expect(getAuthProfile(userId)?.email).toBe('billing@example.com');
     expect(getBillingCustomerId(userId)).toBe('ctm_backup');
+    expect(listBillingSubscriptions()).toContainEqual(expect.objectContaining({ subscriptionId: 'sub_backup', userId }));
+    expect(listBillingEntitlementHistory('sub_backup')).toContainEqual(expect.objectContaining({ subscriptionId: 'sub_backup', kind: 'grant' }));
     const stateMirror = JSON.parse(readFileSync(path.join(config.stateDir, 'state.json'), 'utf8')) as { auditLog: Array<{ action: string }> };
     const billingMirror = JSON.parse(readFileSync(path.join(config.stateDir, 'billing.json'), 'utf8')) as { subscriptions: Array<{ subscriptionId: string }> };
     const identityMirror = JSON.parse(readFileSync(path.join(config.stateDir, 'identities.json'), 'utf8')) as { profiles: Array<{ userId: string }> };

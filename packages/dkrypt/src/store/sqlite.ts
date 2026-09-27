@@ -18,7 +18,7 @@ interface DomainRow {
 
 export interface StateCollectionReplacement {
   table: string;
-  rows: Array<{ id: string; payload: unknown; updatedAt?: number }>;
+  rows: Array<{ id: string; payload: unknown; updatedAt?: number; ordinal?: number }>;
 }
 
 export interface StateDatabaseOptions {
@@ -434,6 +434,206 @@ const migrations = [
       CREATE INDEX IF NOT EXISTS webhook_inbox_by_status_time ON webhook_inbox(status, received_at DESC, id DESC);
     `,
   },
+  {
+    version: 17,
+    sql: `
+      CREATE TABLE IF NOT EXISTS billing_customers (
+        id TEXT PRIMARY KEY NOT NULL,
+        payload TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        ordinal INTEGER NOT NULL,
+        provider TEXT NOT NULL,
+        customer_id TEXT NOT NULL,
+        user_id TEXT,
+        email TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS billing_subscriptions (
+        id TEXT PRIMARY KEY NOT NULL,
+        payload TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        ordinal INTEGER NOT NULL,
+        provider TEXT NOT NULL,
+        subscription_id TEXT NOT NULL,
+        customer_id TEXT NOT NULL,
+        user_id TEXT,
+        status TEXT NOT NULL,
+        plan_id TEXT NOT NULL,
+        wallet_address TEXT,
+        checkout_id TEXT,
+        provider_payment_id TEXT
+      );
+      CREATE TABLE IF NOT EXISTS billing_checkouts (
+        id TEXT PRIMARY KEY NOT NULL,
+        payload TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        ordinal INTEGER NOT NULL,
+        provider TEXT NOT NULL,
+        checkout_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL,
+        status TEXT NOT NULL,
+        plan_id TEXT NOT NULL,
+        provider_checkout_id TEXT,
+        provider_payment_id TEXT
+      );
+      CREATE TABLE IF NOT EXISTS billing_charges (
+        id TEXT PRIMARY KEY NOT NULL,
+        payload TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        ordinal INTEGER NOT NULL,
+        provider TEXT NOT NULL,
+        charge_id TEXT NOT NULL,
+        subscription_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        charge_nonce INTEGER,
+        tx_hash TEXT
+      );
+      CREATE TABLE IF NOT EXISTS billing_entitlement_history (
+        id TEXT PRIMARY KEY NOT NULL,
+        payload TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        user_id TEXT,
+        subscription_id TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        plan_id TEXT NOT NULL,
+        event_kind TEXT NOT NULL,
+        status TEXT NOT NULL
+      );
+      ALTER TABLE billing_events ADD COLUMN provider TEXT;
+      ALTER TABLE billing_events ADD COLUMN event_id TEXT;
+      ALTER TABLE billing_events ADD COLUMN occurred_at INTEGER;
+      ALTER TABLE billing_events ADD COLUMN processed_at INTEGER;
+      UPDATE billing_events
+      SET payload = json_set(payload, '$.provider', 'legacy')
+      WHERE json_valid(payload) = 1 AND json_extract(payload, '$.provider') = 'exodus';
+      UPDATE billing_events
+      SET provider = CASE json_extract(payload, '$.provider') WHEN 'exodus' THEN 'legacy' ELSE json_extract(payload, '$.provider') END,
+          event_id = json_extract(payload, '$.eventId'),
+          occurred_at = CAST((julianday(json_extract(payload, '$.occurredAt')) - 2440587.5) * 86400000 AS INTEGER),
+          processed_at = COALESCE(CAST((julianday(json_extract(payload, '$.processedAt')) - 2440587.5) * 86400000 AS INTEGER), updated_at)
+      WHERE json_valid(payload) = 1;
+      INSERT OR IGNORE INTO billing_events (id, payload, updated_at, provider, event_id, occurred_at, processed_at)
+      SELECT CASE json_extract(event.value, '$.provider') WHEN 'exodus' THEN 'legacy' ELSE json_extract(event.value, '$.provider') END || ':' || json_extract(event.value, '$.eventId'),
+             CASE WHEN json_extract(event.value, '$.provider') = 'exodus' THEN json_set(event.value, '$.provider', 'legacy') ELSE event.value END,
+             COALESCE(CAST((julianday(json_extract(event.value, '$.processedAt')) - 2440587.5) * 86400000 AS INTEGER), records.updated_at),
+             CASE json_extract(event.value, '$.provider') WHEN 'exodus' THEN 'legacy' ELSE json_extract(event.value, '$.provider') END,
+             json_extract(event.value, '$.eventId'),
+             CAST((julianday(json_extract(event.value, '$.occurredAt')) - 2440587.5) * 86400000 AS INTEGER),
+             COALESCE(CAST((julianday(json_extract(event.value, '$.processedAt')) - 2440587.5) * 86400000 AS INTEGER), records.updated_at)
+      FROM billing_records AS records,
+           json_each(CASE WHEN json_valid(records.payload) = 1 THEN records.payload ELSE '{}' END, '$.value.processedEvents') AS event
+      WHERE json_extract(records.payload, '$.kind') = 'snapshot'
+        AND NOT EXISTS (
+          SELECT 1 FROM billing_events AS existing
+          WHERE existing.provider = CASE json_extract(event.value, '$.provider') WHEN 'exodus' THEN 'legacy' ELSE json_extract(event.value, '$.provider') END
+            AND existing.event_id = json_extract(event.value, '$.eventId')
+        );
+      INSERT OR IGNORE INTO billing_customers (id, payload, updated_at, ordinal, provider, customer_id, user_id, email)
+      SELECT CASE json_extract(customer.value, '$.provider') WHEN 'exodus' THEN 'legacy' ELSE json_extract(customer.value, '$.provider') END || ':' || json_extract(customer.value, '$.customerId'),
+             CASE WHEN json_extract(customer.value, '$.provider') = 'exodus' THEN json_set(customer.value, '$.provider', 'legacy') ELSE customer.value END,
+             COALESCE(CAST((julianday(json_extract(customer.value, '$.updatedAt')) - 2440587.5) * 86400000 AS INTEGER), records.updated_at),
+             CAST(customer.key AS INTEGER),
+             CASE json_extract(customer.value, '$.provider') WHEN 'exodus' THEN 'legacy' ELSE json_extract(customer.value, '$.provider') END,
+             json_extract(customer.value, '$.customerId'),
+             json_extract(customer.value, '$.userId'),
+             json_extract(customer.value, '$.email')
+      FROM billing_records AS records,
+           json_each(CASE WHEN json_valid(records.payload) = 1 THEN records.payload ELSE '{}' END, '$.value.customers') AS customer
+      WHERE json_extract(records.payload, '$.kind') = 'snapshot';
+      INSERT OR IGNORE INTO billing_subscriptions (
+        id, payload, updated_at, ordinal, provider, subscription_id, customer_id, user_id,
+        status, plan_id, wallet_address, checkout_id, provider_payment_id
+      )
+      SELECT CASE json_extract(subscription.value, '$.provider') WHEN 'exodus' THEN 'legacy' ELSE json_extract(subscription.value, '$.provider') END || ':' || json_extract(subscription.value, '$.subscriptionId'),
+             CASE WHEN json_extract(subscription.value, '$.provider') = 'exodus' THEN json_set(subscription.value, '$.provider', 'legacy') ELSE subscription.value END,
+             COALESCE(CAST((julianday(json_extract(subscription.value, '$.updatedAt')) - 2440587.5) * 86400000 AS INTEGER), records.updated_at),
+             CAST(subscription.key AS INTEGER),
+             CASE json_extract(subscription.value, '$.provider') WHEN 'exodus' THEN 'legacy' ELSE json_extract(subscription.value, '$.provider') END,
+             json_extract(subscription.value, '$.subscriptionId'),
+             json_extract(subscription.value, '$.customerId'),
+             json_extract(subscription.value, '$.userId'),
+             json_extract(subscription.value, '$.status'),
+             json_extract(subscription.value, '$.planId'),
+             json_extract(subscription.value, '$.walletAddress'),
+             json_extract(subscription.value, '$.checkoutId'),
+             json_extract(subscription.value, '$.providerPaymentId')
+      FROM billing_records AS records,
+           json_each(CASE WHEN json_valid(records.payload) = 1 THEN records.payload ELSE '{}' END, '$.value.subscriptions') AS subscription
+      WHERE json_extract(records.payload, '$.kind') = 'snapshot';
+      INSERT OR IGNORE INTO billing_checkouts (
+        id, payload, updated_at, ordinal, provider, checkout_id, user_id, idempotency_key, status, plan_id,
+        provider_checkout_id, provider_payment_id
+      )
+      SELECT CASE json_extract(checkout.value, '$.provider') WHEN 'exodus' THEN 'legacy' ELSE json_extract(checkout.value, '$.provider') END || ':' || json_extract(checkout.value, '$.checkoutId'),
+             CASE WHEN json_extract(checkout.value, '$.provider') = 'exodus' THEN json_set(checkout.value, '$.provider', 'legacy') ELSE checkout.value END,
+             COALESCE(CAST((julianday(json_extract(checkout.value, '$.updatedAt')) - 2440587.5) * 86400000 AS INTEGER), records.updated_at),
+             CAST(checkout.key AS INTEGER),
+             CASE json_extract(checkout.value, '$.provider') WHEN 'exodus' THEN 'legacy' ELSE json_extract(checkout.value, '$.provider') END,
+             json_extract(checkout.value, '$.checkoutId'),
+             json_extract(checkout.value, '$.userId'),
+             json_extract(checkout.value, '$.idempotencyKey'),
+             json_extract(checkout.value, '$.status'),
+             json_extract(checkout.value, '$.planId'),
+             json_extract(checkout.value, '$.providerCheckoutId'),
+             json_extract(checkout.value, '$.providerPaymentId')
+      FROM billing_records AS records,
+           json_each(CASE WHEN json_valid(records.payload) = 1 THEN records.payload ELSE '{}' END, '$.value.cryptoCheckouts') AS checkout
+      WHERE json_extract(records.payload, '$.kind') = 'snapshot';
+      INSERT OR IGNORE INTO billing_charges (
+        id, payload, updated_at, ordinal, provider, charge_id, subscription_id, user_id, status, charge_nonce, tx_hash
+      )
+      SELECT CASE json_extract(charge.value, '$.provider') WHEN 'exodus' THEN 'legacy' ELSE json_extract(charge.value, '$.provider') END || ':' || json_extract(charge.value, '$.chargeId'),
+             CASE WHEN json_extract(charge.value, '$.provider') = 'exodus' THEN json_set(charge.value, '$.provider', 'legacy') ELSE charge.value END,
+             COALESCE(CAST((julianday(json_extract(charge.value, '$.updatedAt')) - 2440587.5) * 86400000 AS INTEGER), records.updated_at),
+             CAST(charge.key AS INTEGER),
+             CASE json_extract(charge.value, '$.provider') WHEN 'exodus' THEN 'legacy' ELSE json_extract(charge.value, '$.provider') END,
+             json_extract(charge.value, '$.chargeId'),
+             json_extract(charge.value, '$.subscriptionId'),
+             json_extract(charge.value, '$.userId'),
+             json_extract(charge.value, '$.status'),
+             json_extract(charge.value, '$.chargeNonce'),
+             json_extract(charge.value, '$.txHash')
+      FROM billing_records AS records,
+           json_each(CASE WHEN json_valid(records.payload) = 1 THEN records.payload ELSE '{}' END, '$.value.cryptoCharges') AS charge
+      WHERE json_extract(records.payload, '$.kind') = 'snapshot';
+      INSERT OR IGNORE INTO billing_entitlement_history (
+        id, payload, updated_at, user_id, subscription_id, provider, plan_id, event_kind, status
+      )
+      SELECT json_extract(event.value, '$.id'),
+             CASE WHEN json_extract(event.value, '$.provider') = 'exodus' THEN json_set(event.value, '$.provider', 'legacy') ELSE event.value END,
+             COALESCE(CAST((julianday(json_extract(event.value, '$.at')) - 2440587.5) * 86400000 AS INTEGER), records.updated_at),
+             json_extract(event.value, '$.userId'),
+             json_extract(event.value, '$.subscriptionId'),
+             CASE json_extract(event.value, '$.provider') WHEN 'exodus' THEN 'legacy' ELSE json_extract(event.value, '$.provider') END,
+             json_extract(event.value, '$.planId'),
+             json_extract(event.value, '$.kind'),
+             json_extract(event.value, '$.status')
+      FROM billing_records AS records,
+           json_each(CASE WHEN json_valid(records.payload) = 1 THEN records.payload ELSE '{}' END, '$.value.entitlementHistory') AS event
+      WHERE json_extract(records.payload, '$.kind') = 'snapshot';
+      CREATE INDEX IF NOT EXISTS billing_customers_by_user ON billing_customers(user_id, provider, ordinal);
+      CREATE INDEX IF NOT EXISTS billing_customers_by_provider_customer ON billing_customers(provider, customer_id);
+      CREATE INDEX IF NOT EXISTS billing_subscriptions_by_user ON billing_subscriptions(user_id, updated_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS billing_subscriptions_by_user_subscription ON billing_subscriptions(user_id, subscription_id, ordinal);
+      CREATE INDEX IF NOT EXISTS billing_subscriptions_by_id ON billing_subscriptions(subscription_id, ordinal);
+      CREATE INDEX IF NOT EXISTS billing_subscriptions_by_provider_status ON billing_subscriptions(provider, status, updated_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS billing_subscriptions_by_plan ON billing_subscriptions(plan_id, updated_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS billing_subscriptions_by_wallet ON billing_subscriptions(wallet_address);
+      CREATE INDEX IF NOT EXISTS billing_subscriptions_by_invoice ON billing_subscriptions(checkout_id, provider_payment_id);
+      CREATE INDEX IF NOT EXISTS billing_checkouts_by_user_key ON billing_checkouts(user_id, idempotency_key, provider);
+      CREATE INDEX IF NOT EXISTS billing_checkouts_by_checkout_id ON billing_checkouts(checkout_id, provider);
+      CREATE INDEX IF NOT EXISTS billing_checkouts_by_payment ON billing_checkouts(provider_checkout_id, provider_payment_id);
+      CREATE INDEX IF NOT EXISTS billing_charges_by_subscription_time ON billing_charges(subscription_id, updated_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS billing_charges_by_subscription_order ON billing_charges(subscription_id, ordinal, id);
+      CREATE INDEX IF NOT EXISTS billing_charges_by_charge_id ON billing_charges(charge_id, ordinal);
+      CREATE INDEX IF NOT EXISTS billing_charges_by_nonce ON billing_charges(subscription_id, charge_nonce) WHERE charge_nonce IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS billing_entitlement_history_by_subscription_time ON billing_entitlement_history(subscription_id, updated_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS billing_entitlement_history_by_user_time ON billing_entitlement_history(user_id, updated_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS billing_events_by_provider_event ON billing_events(provider, event_id);
+      CREATE INDEX IF NOT EXISTS billing_events_by_processed_at ON billing_events(processed_at DESC, id DESC);
+    `,
+  },
 ] as const;
 
 const domainTables = [
@@ -471,6 +671,11 @@ const collectionTables = new Set([
   'auth_profiles',
   'device_history',
   'billing_events',
+  'billing_customers',
+  'billing_subscriptions',
+  'billing_checkouts',
+  'billing_charges',
+  'billing_entitlement_history',
   'correlation_events',
   'webhook_attempts',
 ]);
@@ -493,6 +698,13 @@ function stringField(record: Record<string, unknown>, key: string): string | nul
 
 function numberField(record: Record<string, unknown>, key: string): number | null {
   return typeof record[key] === 'number' && Number.isFinite(record[key]) ? record[key] as number : null;
+}
+
+function timestampField(record: Record<string, unknown>, key: string, fallback: number): number {
+  const value = stringField(record, key);
+  if (!value) return fallback;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : fallback;
 }
 
 function jobIndexValues(payload: unknown, updatedAt: number): Array<string | number | null> {
@@ -641,6 +853,92 @@ function deviceHealthRows(value: unknown): DomainRow[] {
 
 function replaceCollectionRows(database: Database, replacement: StateCollectionReplacement): void {
   database.exec(`DELETE FROM ${replacement.table};`);
+  if (replacement.table === 'billing_customers') {
+    const statement = database.query('INSERT INTO billing_customers (id, payload, updated_at, ordinal, provider, customer_id, user_id, email) VALUES (?, ?, ?, ?, ?, ?, ?, ?);');
+    for (const [index, row] of replacement.rows.entries()) {
+      const customer = asRecord(row.payload);
+      const updatedAt = row.updatedAt ?? timestampField(customer, 'updatedAt', Date.now());
+      statement.run(row.id, json(row.payload), updatedAt, row.ordinal ?? index, stringField(customer, 'provider'), stringField(customer, 'customerId'), stringField(customer, 'userId'), stringField(customer, 'email') ?? '');
+    }
+    return;
+  }
+  if (replacement.table === 'billing_subscriptions') {
+    const statement = database.query(`
+      INSERT INTO billing_subscriptions (
+        id, payload, updated_at, ordinal, provider, subscription_id, customer_id, user_id,
+        status, plan_id, wallet_address, checkout_id, provider_payment_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    `);
+    for (const row of replacement.rows) {
+      const subscription = asRecord(row.payload);
+      const updatedAt = row.updatedAt ?? timestampField(subscription, 'updatedAt', Date.now());
+      statement.run(
+        row.id,
+        json(row.payload),
+        updatedAt,
+        row.ordinal ?? 0,
+        stringField(subscription, 'provider'),
+        stringField(subscription, 'subscriptionId'),
+        stringField(subscription, 'customerId'),
+        stringField(subscription, 'userId'),
+        stringField(subscription, 'status'),
+        stringField(subscription, 'planId'),
+        stringField(subscription, 'walletAddress'),
+        stringField(subscription, 'checkoutId'),
+        stringField(subscription, 'providerPaymentId'),
+      );
+    }
+    return;
+  }
+  if (replacement.table === 'billing_checkouts') {
+    const statement = database.query(`
+      INSERT INTO billing_checkouts (
+        id, payload, updated_at, ordinal, provider, checkout_id, user_id, idempotency_key, status, plan_id,
+        provider_checkout_id, provider_payment_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    `);
+    for (const [index, row] of replacement.rows.entries()) {
+      const checkout = asRecord(row.payload);
+      const updatedAt = row.updatedAt ?? timestampField(checkout, 'updatedAt', Date.now());
+      statement.run(row.id, json(row.payload), updatedAt, row.ordinal ?? index, stringField(checkout, 'provider'), stringField(checkout, 'checkoutId'), stringField(checkout, 'userId'), stringField(checkout, 'idempotencyKey'), stringField(checkout, 'status'), stringField(checkout, 'planId'), stringField(checkout, 'providerCheckoutId'), stringField(checkout, 'providerPaymentId'));
+    }
+    return;
+  }
+  if (replacement.table === 'billing_charges') {
+    const statement = database.query(`
+      INSERT INTO billing_charges (
+        id, payload, updated_at, ordinal, provider, charge_id, subscription_id, user_id, status, charge_nonce, tx_hash
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    `);
+    for (const [index, row] of replacement.rows.entries()) {
+      const charge = asRecord(row.payload);
+      const updatedAt = row.updatedAt ?? timestampField(charge, 'updatedAt', Date.now());
+      statement.run(row.id, json(row.payload), updatedAt, row.ordinal ?? index, stringField(charge, 'provider'), stringField(charge, 'chargeId'), stringField(charge, 'subscriptionId'), stringField(charge, 'userId'), stringField(charge, 'status'), numberField(charge, 'chargeNonce'), stringField(charge, 'txHash'));
+    }
+    return;
+  }
+  if (replacement.table === 'billing_entitlement_history') {
+    const statement = database.query(`
+      INSERT INTO billing_entitlement_history (
+        id, payload, updated_at, user_id, subscription_id, provider, plan_id, event_kind, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+    `);
+    for (const row of replacement.rows) {
+      const event = asRecord(row.payload);
+      const updatedAt = row.updatedAt ?? timestampField(event, 'at', Date.now());
+      statement.run(row.id, json(row.payload), updatedAt, stringField(event, 'userId'), stringField(event, 'subscriptionId'), stringField(event, 'provider'), stringField(event, 'planId'), stringField(event, 'kind'), stringField(event, 'status'));
+    }
+    return;
+  }
+  if (replacement.table === 'billing_events') {
+    const statement = database.query('INSERT INTO billing_events (id, payload, updated_at, provider, event_id, occurred_at, processed_at) VALUES (?, ?, ?, ?, ?, ?, ?);');
+    for (const row of replacement.rows) {
+      const event = asRecord(row.payload);
+      const updatedAt = row.updatedAt ?? timestampField(event, 'processedAt', Date.now());
+      statement.run(row.id, json(row.payload), updatedAt, stringField(event, 'provider'), stringField(event, 'eventId'), timestampField(event, 'occurredAt', updatedAt), timestampField(event, 'processedAt', updatedAt));
+    }
+    return;
+  }
   if (replacement.table === 'jobs') {
     const statement = database.query(`
       INSERT INTO jobs (

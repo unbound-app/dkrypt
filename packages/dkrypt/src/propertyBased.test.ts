@@ -156,6 +156,21 @@ function restoreSchemaAtVersion(database: ReturnType<typeof openStateDatabase>, 
       database.db.exec(`ALTER TABLE webhook_inbox DROP COLUMN ${column};`);
     }
   }
+  if (version < 17) {
+    database.db.exec(`
+      DROP TABLE IF EXISTS billing_customers;
+      DROP TABLE IF EXISTS billing_subscriptions;
+      DROP TABLE IF EXISTS billing_checkouts;
+      DROP TABLE IF EXISTS billing_charges;
+      DROP TABLE IF EXISTS billing_entitlement_history;
+      DROP INDEX IF EXISTS billing_events_by_provider_event;
+      DROP INDEX IF EXISTS billing_events_by_processed_at;
+      ALTER TABLE billing_events DROP COLUMN provider;
+      ALTER TABLE billing_events DROP COLUMN event_id;
+      ALTER TABLE billing_events DROP COLUMN occurred_at;
+      ALTER TABLE billing_events DROP COLUMN processed_at;
+    `);
+  }
   if (version < 5) database.db.exec('DROP TABLE IF EXISTS projects;');
   if (version < 4) database.db.exec('DROP TABLE IF EXISTS scheduler_runs;');
   if (version < 3) database.db.exec('DROP INDEX IF EXISTS artifacts_updated_at;');
@@ -253,7 +268,7 @@ test('SQLite upgrades generated records from every prior schema and restores the
         database.close();
         database = undefined;
         database = openStateDatabase({ stateDir, filename: 'state.sqlite' });
-        expect(database.schemaVersion).toBe(16);
+        expect(database.schemaVersion).toBe(17);
         expect(database.integrityStatus()).toBe('ok');
         expect(database.readState()).toEqual(expectedState);
         expect(sortById(database.readCollection('jobs') as typeof expectedJobs)).toEqual(expectedJobs);
@@ -262,7 +277,7 @@ test('SQLite upgrades generated records from every prior schema and restores the
         expect(sortById(migratedTimelines.map((timeline) => ({ id: timeline.jobId, events: timeline.events })))).toEqual(sortById(expectedTimelines.map((timeline) => ({ id: timeline.jobId, events: timeline.events }))));
         expect(sortById(database.readCollection('scheduler_runs') as typeof expectedSchedulerRuns)).toEqual(sortById(expectedSchedulerRuns));
         database.backupTo(backupPath);
-        expect(verifyDatabaseBackup(backupPath)).toEqual({ schemaVersion: 16, integrity: 'ok', hasStateSnapshot: true });
+        expect(verifyDatabaseBackup(backupPath)).toEqual({ schemaVersion: 17, integrity: 'ok', hasStateSnapshot: true });
         database.close();
         database = undefined;
         database = openStateDatabase({ stateDir, filename: 'restore.sqlite' });

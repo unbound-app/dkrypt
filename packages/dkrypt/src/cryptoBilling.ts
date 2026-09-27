@@ -9,7 +9,8 @@ import {
   getCryptoCheckout,
   isBillingSubscriptionActive,
   hasProcessedBillingEvent,
-  listBillingCharges,
+  filterBillingSubscriptions,
+  listBillingChargesForSubscription,
   listBillingEntitlementHistory,
   listBillingSubscriptions,
   recordBillingEvent,
@@ -132,7 +133,7 @@ export async function cancelCryptoSubscription(userId: string, subscription: Bil
 }
 
 export async function processNowPaymentsEvent(event: NowPaymentsEvent): Promise<void> {
-  if (!event.id || hasProcessedBillingEvent(event.id)) return;
+  if (!event.id || hasProcessedBillingEvent(event.id, 'nowpayments')) return;
   const occurredAt = eventDate(event.payment.updated_at ?? event.payment.created_at);
   try {
     const status = event.payment.payment_status?.toLowerCase();
@@ -201,63 +202,49 @@ export function stopCryptoBillingPoller(): void {
 }
 
 export function listManagerBillingSubscriptions(filters: { query?: string; provider?: string; status?: string; planId?: string; from?: string; to?: string; wallet?: string; invoice?: string } = {}): Array<Record<string, unknown>> {
+  const subscriptions = filterBillingSubscriptions(filters);
   const profiles = new Map(
-    [...new Set(listBillingSubscriptions().map((subscription) => subscription.userId).filter((userId): userId is string => !!userId))].map((userId) => [userId, getAuthProfile(userId)]),
+    [...new Set(subscriptions.map((subscription) => subscription.userId).filter((userId): userId is string => !!userId))].map((userId) => [userId, getAuthProfile(userId)]),
   );
-  const charges = listBillingCharges();
-  const query = filters.query?.trim().toLowerCase();
-  return listBillingSubscriptions()
-    .filter((subscription) => !filters.provider || subscription.provider === filters.provider)
-    .filter((subscription) => !filters.status || subscription.status === filters.status)
-    .filter((subscription) => !filters.planId || subscription.planId === filters.planId)
-    .filter((subscription) => !filters.from || Date.parse(subscription.updatedAt) >= Date.parse(filters.from))
-    .filter((subscription) => !filters.to || Date.parse(subscription.updatedAt) <= Date.parse(filters.to))
-    .filter((subscription) => !filters.wallet || subscription.walletAddress?.toLowerCase().includes(filters.wallet.toLowerCase()))
-    .filter((subscription) => !filters.invoice || [subscription.checkoutId, subscription.providerPaymentId, subscription.subscriptionId].some((value) => value?.toLowerCase().includes(filters.invoice?.toLowerCase() ?? '')))
-    .filter((subscription) => {
-      if (!query) return true;
-      const profile = subscription.userId ? profiles.get(subscription.userId) : undefined;
-      return [subscription.userId, profile?.displayName, profile?.username, profile?.email, subscription.subscriptionId, subscription.planId, subscription.provider].some((value) => value?.toLowerCase().includes(query));
-    })
-    .map((subscription) => {
-      const profile = subscription.userId ? profiles.get(subscription.userId) : undefined;
-      return {
-        user: subscription.userId
-          ? {
-              id: subscription.userId,
-              displayName: profile?.displayName ?? subscription.userId,
-              username: profile?.username,
-              email: profile?.email,
-            }
-          : undefined,
-        provider: subscription.provider,
-        subscriptionId: subscription.subscriptionId,
-        checkoutId: subscription.checkoutId,
-        customerId: subscription.customerId,
-        priceId: subscription.priceId,
-        productId: subscription.productId,
-        interval: subscription.interval,
-        plan: { id: subscription.planId, name: getPlan(subscription.planId)?.name, amount: subscription.amount ?? getPlan(subscription.planId)?.amount, currency: subscription.currency ?? getPlan(subscription.planId)?.currency },
-        status: subscription.status,
-        nextBilledAt: subscription.nextBilledAt,
-        occurredAt: subscription.occurredAt,
-        updatedAt: subscription.updatedAt,
-        crypto: subscription.provider === 'nowpayments' ? { walletAddress: subscription.walletAddress, chain: subscription.chain, asset: subscription.asset } : undefined,
-        tax: subscription.taxStatus
-          ? { status: subscription.taxStatus, country: subscription.taxAddress?.country, postalCode: subscription.taxAddress?.postalCode, transactionId: subscription.taxTransactionId }
-          : undefined,
-        lastCharge: {
-          id: subscription.lastChargeId,
-          status: subscription.lastChargeStatus,
-          at: subscription.lastChargeAt,
-          txHash: subscription.lastChargeTxHash,
-          failureReason: subscription.failureReason,
-          graceUntil: subscription.graceUntil,
-          attempts: charges.filter((charge) => charge.subscriptionId === subscription.subscriptionId).slice(-10),
-        },
-        entitlementHistory: listBillingEntitlementHistory(subscription.subscriptionId),
-      };
-    });
+  return subscriptions.map((subscription) => {
+    const profile = subscription.userId ? profiles.get(subscription.userId) : undefined;
+    return {
+      user: subscription.userId
+        ? {
+            id: subscription.userId,
+            displayName: profile?.displayName ?? subscription.userId,
+            username: profile?.username,
+            email: profile?.email,
+          }
+        : undefined,
+      provider: subscription.provider,
+      subscriptionId: subscription.subscriptionId,
+      checkoutId: subscription.checkoutId,
+      customerId: subscription.customerId,
+      priceId: subscription.priceId,
+      productId: subscription.productId,
+      interval: subscription.interval,
+      plan: { id: subscription.planId, name: getPlan(subscription.planId)?.name, amount: subscription.amount ?? getPlan(subscription.planId)?.amount, currency: subscription.currency ?? getPlan(subscription.planId)?.currency },
+      status: subscription.status,
+      nextBilledAt: subscription.nextBilledAt,
+      occurredAt: subscription.occurredAt,
+      updatedAt: subscription.updatedAt,
+      crypto: subscription.provider === 'nowpayments' ? { walletAddress: subscription.walletAddress, chain: subscription.chain, asset: subscription.asset } : undefined,
+      tax: subscription.taxStatus
+        ? { status: subscription.taxStatus, country: subscription.taxAddress?.country, postalCode: subscription.taxAddress?.postalCode, transactionId: subscription.taxTransactionId }
+        : undefined,
+      lastCharge: {
+        id: subscription.lastChargeId,
+        status: subscription.lastChargeStatus,
+        at: subscription.lastChargeAt,
+        txHash: subscription.lastChargeTxHash,
+        failureReason: subscription.failureReason,
+        graceUntil: subscription.graceUntil,
+        attempts: listBillingChargesForSubscription(subscription.subscriptionId).slice(-10),
+      },
+      entitlementHistory: listBillingEntitlementHistory(subscription.subscriptionId),
+    };
+  });
 }
 
 async function processPaymentFinished(payment: NowPaymentsPayment, occurredAt: string): Promise<void> {

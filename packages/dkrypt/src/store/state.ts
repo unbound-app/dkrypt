@@ -25,6 +25,7 @@ import {
 } from '#identity.js';
 import { log } from '#logger.js';
 import type { JobTimelineEvent, TestFlightJobSource } from '#jobs/types.js';
+import { createBillingRepository } from '#store/billingRepository.js';
 import { categorizeFailure } from '#util/failureCategory.js';
 import { combineBits, hasPermission, parseBits, PermissionFlag, serializeBits } from '#permissions.js';
 import { createDeviceHistoryRepository } from '#store/deviceHistoryRepository.js';
@@ -4427,6 +4428,11 @@ function backupDatabaseCollections(payload: ValidatedBackupPayload): StateCollec
 
 type BackupRestoredFields = ReturnType<typeof prepareBackupRestore>;
 
+function sameRecordsByKey<T>(left: T[], right: T[], keyOf: (record: T) => string): boolean {
+  const sorted = (records: T[]) => [...records].sort((a, b) => keyOf(a).localeCompare(keyOf(b)));
+  return JSON.stringify(sorted(left)) === JSON.stringify(sorted(right));
+}
+
 function restoredStateForPayload(payload: ValidatedBackupPayload, restored: BackupRestoredFields, baseState: PersistedState): PersistedState {
   const restoredState: PersistedState = { ...structuredClone(baseState), ...restored };
   if (payload.lastSchedulerRunAt) restoredState.lastSchedulerRunAt = payload.lastSchedulerRunAt;
@@ -4468,8 +4474,22 @@ function temporaryDatabaseRestoreCheck(payload: ValidatedBackupPayload, restored
 
       const billingRecords = readStateCollection(database.db, 'billing_records');
       const billingSnapshot = billingRecords.find((record) => typeof record === 'object' && record !== null && (record as { kind?: string }).kind === 'snapshot') as { value?: unknown } | undefined;
-      if (JSON.stringify(billingSnapshot?.value) !== JSON.stringify(payload.billing)) {
+      const expectedBillingRecord = billingSnapshotCollections(payload.billing).find((replacement) => replacement.table === 'billing_records')?.rows[0]?.payload as { value?: typeof payload.billing } | undefined;
+      const expectedBilling = expectedBillingRecord?.value;
+      if (!expectedBilling || JSON.stringify(billingSnapshot?.value) !== JSON.stringify(expectedBilling)) {
         return { label: 'Temporary SQLite restore', ok: false, detail: 'Billing records did not survive a database reopen' };
+      }
+      const billingRepository = createBillingRepository(database.db);
+      const normalizedEntitlementHistory = expectedBilling.entitlementHistory ?? [];
+      if (
+        !sameRecordsByKey(billingRepository.listCustomers(), expectedBilling.customers, (record) => `${record.provider}:${record.customerId}`) ||
+        !sameRecordsByKey(billingRepository.listSubscriptions(), expectedBilling.subscriptions, (record) => `${record.provider}:${record.subscriptionId}`) ||
+        !sameRecordsByKey(billingRepository.listCheckouts(), expectedBilling.cryptoCheckouts, (record) => `${record.provider}:${record.checkoutId}`) ||
+        !sameRecordsByKey(billingRepository.listCharges(), expectedBilling.cryptoCharges, (record) => `${record.provider}:${record.chargeId}`) ||
+        !sameRecordsByKey(billingRepository.listProcessedEvents(), expectedBilling.processedEvents, (record) => `${record.provider}:${record.eventId}`) ||
+        !sameRecordsByKey(billingRepository.listEntitlementHistory(), normalizedEntitlementHistory, (record) => record.id)
+      ) {
+        return { label: 'Temporary SQLite restore', ok: false, detail: 'Normalized billing records did not survive a database reopen' };
       }
 
       const identities = new Map<string, unknown>();

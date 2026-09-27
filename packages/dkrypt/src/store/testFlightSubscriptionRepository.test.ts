@@ -71,7 +71,7 @@ test('TestFlight subscription migration preserves device-specific enrollment sta
 
     const migrated = openStateDatabase(options);
     try {
-      expect(migrated.schemaVersion).toBe(16);
+      expect(migrated.schemaVersion).toBe(17);
       expect(createTestFlightSubscriptionRepository(migrated.db).findById(saved.id)).toEqual(saved);
     } finally {
       migrated.close();
