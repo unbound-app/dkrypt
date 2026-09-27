@@ -215,6 +215,69 @@ test('authenticated top bar exposes community links without mobile overflow', as
   await expectAccessible(page);
 });
 
+test('high contrast preference updates the interface and persists to the account', async ({ page }) => {
+  await mockAuthenticatedDashboard(page, '1');
+  await page.unroute('**/v1/dashboard/me/prefs');
+
+  const savedPrefs = { theme: 'dark', accent: 'violet', sound: true, highContrast: false };
+  await page.route('**/v1/dashboard/me/prefs', async (route) => {
+    if (route.request().method() === 'PUT') {
+      Object.assign(savedPrefs, route.request().postDataJSON());
+    }
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify(savedPrefs),
+    });
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Account menu' }).click();
+  const highContrastToggle = page.getByRole('button', { name: 'High contrast mode' });
+  await expect(highContrastToggle).toHaveAttribute('aria-pressed', 'false');
+  await highContrastToggle.click();
+
+  await expect(highContrastToggle).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('html')).toHaveAttribute('data-high-contrast', 'true');
+  await expect.poll(() => savedPrefs.highContrast).toBe(true);
+
+  const measureContrastRatios = () => page.evaluate(() => {
+    const style = getComputedStyle(document.documentElement);
+    const luminance = (hex: string) => {
+      const raw = hex.trim().replace('#', '');
+      const normalized = raw.length === 3 ? [...raw].map((channel) => channel + channel).join('') : raw;
+      const channels = [0, 2, 4].map((index) => parseInt(normalized.slice(index, index + 2), 16) / 255);
+      const linear = channels.map((channel) => channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4);
+      return 0.2126 * linear[0]! + 0.7152 * linear[1]! + 0.0722 * linear[2]!;
+    };
+    const contrast = (first: string, second: string) => {
+      const [lighter, darker] = [luminance(first), luminance(second)].sort((a, b) => b - a);
+      return (lighter + 0.05) / (darker + 0.05);
+    };
+    return {
+      text: contrast(style.getPropertyValue('--foreground').trim(), style.getPropertyValue('--background').trim()),
+      accent: contrast(style.getPropertyValue('--color-accent').trim(), style.getPropertyValue('--background').trim()),
+    };
+  });
+  const darkContrast = await measureContrastRatios();
+  expect(darkContrast.text).toBeGreaterThanOrEqual(7);
+  expect(darkContrast.accent).toBeGreaterThanOrEqual(7);
+
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Theme: dark (click to cycle)' }).click();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+  const lightContrast = await measureContrastRatios();
+  expect(lightContrast.text).toBeGreaterThanOrEqual(7);
+  expect(lightContrast.accent).toBeGreaterThanOrEqual(7);
+
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('data-high-contrast', 'true');
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+  await page.getByRole('button', { name: 'Account menu' }).click();
+  await page.getByRole('button', { name: 'High contrast mode' }).click();
+  await expect(page.locator('html')).not.toHaveAttribute('data-high-contrast', 'true');
+  await expect.poll(() => savedPrefs.highContrast).toBe(false);
+});
+
 test('populated device management and preflight dialog meet accessibility checks', async ({ page }) => {
   const device = {
     id: 'test-device',

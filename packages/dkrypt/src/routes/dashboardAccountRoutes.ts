@@ -57,6 +57,7 @@ export const dashboardAccountRoutes: FastifyPluginAsyncTypebox = async (server) 
     if (body.theme) patch.theme = body.theme;
     if (body.density) patch.density = body.density;
     if (typeof body.accent === 'string' && /^[a-z-]{1,32}$/.test(body.accent)) patch.accent = body.accent;
+    if (typeof body.highContrast === 'boolean') patch.highContrast = body.highContrast;
     if (typeof body.sound === 'boolean') patch.sound = body.sound;
     if (typeof body.pushOnSuccess === 'boolean') patch.pushOnSuccess = body.pushOnSuccess;
     if (typeof body.pushOnFailure === 'boolean') patch.pushOnFailure = body.pushOnFailure;

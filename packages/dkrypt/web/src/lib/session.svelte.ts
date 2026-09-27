@@ -4,7 +4,9 @@ import { resetTestFlightCatalogState } from '#lib/testFlightCatalogState.svelte'
 import { clearPersistedTestFlightCatalog } from '#lib/testFlightCatalogPersistence';
 import {
   accentState,
+  highContrastState,
   setAccent,
+  setHighContrast,
   setSoundEnabled,
   setTheme,
   soundEnabledState,
@@ -120,9 +122,10 @@ export async function updateProfileDisplayName(displayName: string): Promise<{ o
 async function syncThemeFromServer(): Promise<void> {
   const res = await fetch('/v1/dashboard/me/prefs');
   if (!res.ok) return;
-  const prefs = (await res.json()) as { theme?: ThemePref; accent?: string; sound?: boolean };
+  const prefs = (await res.json()) as { theme?: ThemePref; accent?: string; sound?: boolean; highContrast?: boolean };
   if (prefs.theme && prefs.theme !== themePrefState.value) setTheme(prefs.theme);
   if (prefs.accent && prefs.accent !== accentState.value) setAccent(prefs.accent);
+  if (prefs.highContrast !== undefined && prefs.highContrast !== highContrastState.value) setHighContrast(prefs.highContrast);
   if (prefs.sound !== undefined && prefs.sound !== soundEnabledState.value) setSoundEnabled(prefs.sound);
 }
 
@@ -169,6 +172,15 @@ export async function pushAccentPref(accent: string): Promise<void> {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ accent }),
+  });
+}
+
+export async function pushHighContrastPref(highContrast: boolean): Promise<void> {
+  if (!sessionState.loggedIn) return;
+  await fetch('/v1/dashboard/me/prefs', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ highContrast }),
   });
 }
 

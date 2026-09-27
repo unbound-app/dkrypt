@@ -20830,6 +20830,9 @@
                     "accent": {
                       "type": "string"
                     },
+                    "highContrast": {
+                      "type": "boolean"
+                    },
                     "sound": {
                       "type": "boolean"
                     },
@@ -21247,6 +21250,9 @@
                   "accent": {
                     "type": "string"
                   },
+                  "highContrast": {
+                    "type": "boolean"
+                  },
                   "sound": {
                     "type": "boolean"
                   },
@@ -21334,6 +21340,9 @@
                     },
                     "accent": {
                       "type": "string"
+                    },
+                    "highContrast": {
+                      "type": "boolean"
                     },
                     "sound": {
                       "type": "boolean"

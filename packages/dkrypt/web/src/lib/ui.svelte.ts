@@ -64,6 +64,12 @@ function readStoredAccent(): string {
 
 export const accentState = $state<{ value: string }>({ value: readStoredAccent() });
 
+function readStoredHighContrast(): boolean {
+  return localStorage.getItem('highContrast') === 'true';
+}
+
+export const highContrastState = $state<{ value: boolean }>({ value: readStoredHighContrast() });
+
 function relativeLuminance(hex: string): number {
   const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
   const linear = (c: number) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
@@ -83,7 +89,9 @@ function bestContrastText(bgHex: string): string {
 
 function applyAccent(id: string): void {
   const preset = ACCENT_PRESETS.find((p) => p.id === id) ?? ACCENT_PRESETS[0];
-  const accent = themeState.value === 'light' ? preset.light : preset.dark;
+  const accent = highContrastState.value
+    ? themeState.value === 'light' ? '#003f8c' : '#a8d7ff'
+    : themeState.value === 'light' ? preset.light : preset.dark;
   document.documentElement.style.setProperty('--color-accent', accent);
   document.documentElement.style.setProperty('--color-accent-contrast', bestContrastText(accent));
 }
@@ -96,6 +104,18 @@ export function setAccent(id: string): void {
 
 export function initAccent(): void {
   applyAccent(accentState.value);
+}
+
+export function setHighContrast(enabled: boolean): void {
+  highContrastState.value = enabled;
+  localStorage.setItem('highContrast', String(enabled));
+  if (enabled) document.documentElement.setAttribute('data-high-contrast', 'true');
+  else document.documentElement.removeAttribute('data-high-contrast');
+  applyAccent(accentState.value);
+}
+
+export function initHighContrast(): void {
+  if (highContrastState.value) document.documentElement.setAttribute('data-high-contrast', 'true');
 }
 
 export const soundEnabledState = $state<{ value: boolean }>({ value: localStorage.getItem('soundEnabled') === 'true' });

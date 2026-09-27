@@ -80,6 +80,64 @@
 	--err: #f2545b;
 }
 
+[data-theme='light'][data-high-contrast='true'] {
+	--background: #ffffff;
+	--foreground: #000000;
+	--card: #ffffff;
+	--card-foreground: #000000;
+	--popover: #ffffff;
+	--popover-foreground: #000000;
+	--secondary: #e3e3e3;
+	--secondary-foreground: #000000;
+	--muted: #f1f1f1;
+	--muted-foreground: #303030;
+	--accent: #dce8f8;
+	--accent-foreground: #000000;
+	--border: #626262;
+	--input: #555555;
+	--sidebar: #f1f1f1;
+	--sidebar-foreground: #000000;
+	--sidebar-accent: #dce8f8;
+	--sidebar-accent-foreground: #000000;
+	--sidebar-border: #626262;
+	--color-accent: #003f8c;
+	--color-accent-contrast: #ffffff;
+	--destructive: #9c0015;
+	--destructive-foreground: #ffffff;
+	--ok: #006b36;
+	--warn: #805000;
+	--err: #9c0015;
+}
+
+[data-theme='dark'][data-high-contrast='true'] {
+	--background: #000000;
+	--foreground: #ffffff;
+	--card: #0a0a0a;
+	--card-foreground: #ffffff;
+	--popover: #0a0a0a;
+	--popover-foreground: #ffffff;
+	--secondary: #292929;
+	--secondary-foreground: #ffffff;
+	--muted: #1b1b1b;
+	--muted-foreground: #e6e6e6;
+	--accent: #333333;
+	--accent-foreground: #ffffff;
+	--border: #a0a0a0;
+	--input: #a0a0a0;
+	--sidebar: #050505;
+	--sidebar-foreground: #ffffff;
+	--sidebar-accent: #292929;
+	--sidebar-accent-foreground: #ffffff;
+	--sidebar-border: #a0a0a0;
+	--color-accent: #a8d7ff;
+	--color-accent-contrast: #000000;
+	--destructive: #ff9090;
+	--destructive-foreground: #000000;
+	--ok: #5cff9b;
+	--warn: #ffd166;
+	--err: #ff8080;
+}
+
 @theme inline {
 	--color-background: var(--background);
 	--color-foreground: var(--foreground);
@@ -219,6 +277,41 @@
 	[tabindex] {
 		@apply focus-visible:outline-accent focus-visible:outline-2 focus-visible:outline-offset-2;
 	}
+}
+
+[data-high-contrast='true'] body {
+	background-image: none;
+}
+
+[data-high-contrast='true'] .glass-topbar {
+	background: var(--background);
+	backdrop-filter: none;
+}
+
+[data-high-contrast='true'] :focus-visible {
+	outline: 3px solid var(--color-accent) !important;
+	outline-offset: 3px !important;
+}
+
+[data-high-contrast='true'] .glass-card,
+[data-high-contrast='true'] .glass-popover {
+	border: 2px solid var(--border);
+	box-shadow: none;
+}
+
+[data-high-contrast='true'] :is(input, select, textarea) {
+	border-width: 2px !important;
+}
+
+[data-high-contrast='true'] [role='checkbox'] {
+	min-width: 24px;
+	min-height: 24px;
+}
+
+[data-high-contrast='true'] a:not([class*='bg-accent']) {
+	text-decoration-line: underline;
+	text-decoration-thickness: 1px;
+	text-underline-offset: 0.15em;
 }
 
 .glass-card {

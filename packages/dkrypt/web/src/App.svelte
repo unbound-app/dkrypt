@@ -66,6 +66,7 @@
 		logoutEverywhere,
 		permissionsSummary,
 		pushAccentPref,
+		pushHighContrastPref,
 		fetchNotificationPrefs,
 		pushNotificationPrefs,
 		pushSoundPref,
@@ -85,16 +86,19 @@
 		accentState,
 		confirmDialog,
 		initAccent,
+		initHighContrast,
 		initTheme,
 		initUrlTabSync,
 		openHelp,
 		openPalette,
 		setAccent,
 		setActiveTab,
+		setHighContrast,
 		setSoundEnabled,
 		setTheme,
 		showToast,
 		soundEnabledState,
+		highContrastState,
 		tabState,
 		themePrefState,
 		themeState,
@@ -111,6 +115,7 @@
 	import Settings from "#tabs/Settings.svelte";
 
 	initTheme();
+	initHighContrast();
 	initAccent();
 	initUrlTabSync();
 
@@ -624,6 +629,12 @@
 		setSoundEnabled(next);
 		void pushSoundPref(next);
 	}
+
+	function toggleHighContrast(): void {
+		const next = !highContrastState.value;
+		setHighContrast(next);
+		void pushHighContrastPref(next);
+	}
 </script>
 
 <svelte:window onkeydown={onKeydown} onpointerdown={onMobilePointerDown} onpointerup={onMobilePointerUp} />
@@ -967,6 +978,21 @@
 										{:else}
 											<VolumeX class="h-4 w-4" />
 										{/if}
+									</Button>
+								</div>
+								<div class="mb-2 flex items-center justify-between gap-3">
+									<div>
+										<div class="text-[13px]">High contrast</div>
+										<div class="text-[11px] text-muted">Stronger text, borders, and focus outlines</div>
+									</div>
+									<Button
+										variant="secondary"
+										size="sm"
+										onclick={toggleHighContrast}
+										aria-label="High contrast mode"
+										aria-pressed={highContrastState.value}
+									>
+										{highContrastState.value ? "On" : "Off"}
 									</Button>
 								</div>
 								<div class="mb-1.5 text-[11px] text-muted">

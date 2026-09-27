@@ -4,6 +4,7 @@ const userPrefsProperties = {
   theme: Type.Optional(Type.Union([Type.Literal('dark'), Type.Literal('light'), Type.Literal('auto')])),
   density: Type.Optional(Type.Union([Type.Literal('comfortable'), Type.Literal('compact')])),
   accent: Type.Optional(Type.String()),
+  highContrast: Type.Optional(Type.Boolean()),
   sound: Type.Optional(Type.Boolean()),
   pushOnSuccess: Type.Optional(Type.Boolean()),
   pushOnFailure: Type.Optional(Type.Boolean()),

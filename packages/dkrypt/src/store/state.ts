@@ -471,6 +471,7 @@ export interface UserPrefs {
   theme?: 'dark' | 'light' | 'auto';
   density?: 'comfortable' | 'compact';
   accent?: string;
+  highContrast?: boolean;
   sound?: boolean;
   pushOnSuccess?: boolean;
   pushOnFailure?: boolean;

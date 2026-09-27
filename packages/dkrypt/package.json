@@ -13,7 +13,7 @@
     "start": "bun src/server.ts",
     "dev": "bun --watch src/server.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "bun test",
+    "test": "bun test --isolate",
     "load-test": "bun scripts/load-test.ts",
     "stripe:seed": "bun scripts/seed-stripe-catalog.ts",
     "stripe:webhook": "bun scripts/configure-stripe-webhook.ts",
