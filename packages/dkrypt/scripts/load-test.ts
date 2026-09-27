@@ -66,17 +66,17 @@ const { artifactKeyForAppStore, closeArtifactDatabase, promoteArtifact } = await
 const { closeBillingDatabase } = await import('#billing.js');
 const { closeIdentityDatabase } = await import('#identity.js');
 const { closeIdempotencyDatabase } = await import('#idempotency.js');
-const { cancelQueuedJob, closeJobStore, enqueueDecryptJob } = await import('#jobs/store.js');
+const { cancelQueuedJob, closeJobStore } = await import('#jobs/store.js');
 const { PermissionFlag } = await import('#permissions.js');
 const { buildServer } = await import('#server.js');
 const { setSessionCookie } = await import('#session.js');
-const { closeStateDatabase } = await import('#store/state.js');
+const { addAllowedUser, closeStateDatabase, createRole } = await import('#store/state.js');
 const { closeWebhookInboxDatabase } = await import('#webhookInbox.js');
 
-function createAdministratorCookie(): string {
+function createAdministratorCookie(userId: string): string {
   let value = '';
   const response = { setHeader: (_name: string, header: string) => { value = header; } } as unknown as Response;
-  setSessionCookie(response, { sub: 'root', permissions: PermissionFlag.administrator });
+  setSessionCookie(response, { sub: userId, permissions: PermissionFlag.administrator });
   return value.split(';', 1)[0];
 }
 
@@ -102,7 +102,16 @@ try {
   server = await buildServer({ includePublicRoutes: false });
   const address = await server.listen({ host: '127.0.0.1', port: 0 });
   const origin = new URL(address).origin;
-  const sessionHeaders = Array.from({ length: 16 }, () => ({ cookie: createAdministratorCookie() }));
+  const loadTestRole = createRole({
+    name: `Load test ${runId}`,
+    color: '#526dff',
+    permissions: PermissionFlag.requestDecrypt.toString(),
+  }, 'root');
+  const sessionHeaders = Array.from({ length: 32 }, (_, index) => {
+    const userId = `load-test-user-${index}`;
+    addAllowedUser(userId, [loadTestRole.id], 'root');
+    return { cookie: createAdministratorCookie(userId) };
+  });
 
   let startedAt = performance.now();
   const sessionStatuses = await Promise.all(Array.from({ length: 32 }, async (_, index) => {
@@ -153,19 +162,21 @@ try {
   recordDuration(results, 'artifactDownloads', startedAt);
 
   startedAt = performance.now();
-  const queueBurst = await Promise.all(Array.from({ length: 32 }, (_, index) => Promise.resolve().then(() => enqueueDecryptJob(
-    `com.dkrypt.load.${runId.replaceAll('-', '')}.${index}`,
-    'manual',
-    undefined,
-    undefined,
-    `Load-${index}`,
-    'load-test',
-    0,
-    'load-test-unavailable-device',
-  ))));
-  queuedIds.push(...queueBurst.map((job) => job.id));
-  assert.ok(queueBurst.every((job) => job.status === 'queued'));
-  assert.equal(new Set(queueBurst.map((job) => job.id)).size, 32);
+  const queueBurst = await Promise.all(Array.from({ length: 32 }, async (_, index) => {
+    const response = await fetch(`${origin}/v1/dashboard/decrypt`, {
+      method: 'POST',
+      headers: { ...sessionHeaders[index], 'content-type': 'application/json' },
+      body: JSON.stringify({
+        bundleId: `com.dkrypt.load.${runId.replaceAll('-', '')}.${index}`,
+        projectId: 'default',
+        versionLabel: `Load-${index}`,
+      }),
+    });
+    return { status: response.status, job: await response.json() as { id?: string; status?: string } };
+  }));
+  queuedIds.push(...queueBurst.flatMap(({ job }) => job.id ? [job.id] : []));
+  assert.ok(queueBurst.every(({ status, job }) => status === 202 && job.status === 'queued' && typeof job.id === 'string'));
+  assert.equal(new Set(queueBurst.map(({ job }) => job.id)).size, 32);
   recordDuration(results, 'queueBurst', startedAt);
 
   const payment = {
