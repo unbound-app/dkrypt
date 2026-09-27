@@ -1,4 +1,5 @@
 import webpush from 'web-push';
+import { trackBackgroundWork } from '#backgroundWork.js';
 import { scopedLogger } from '#logger.js';
 import { getOrCreateVapidKeys, getPushSubscriptions, getUserPrefs, getUsersWithPushSubscriptions, removePushSubscription } from '#store/state.js';
 
@@ -26,7 +27,11 @@ export interface PushPayload {
   actions?: { action: string; title: string }[];
 }
 
-export async function sendPushToUser(username: string, payload: PushPayload): Promise<void> {
+export function sendPushToUser(username: string, payload: PushPayload): Promise<void> {
+  return trackBackgroundWork('push-notification', () => deliverPushToUser(username, payload));
+}
+
+async function deliverPushToUser(username: string, payload: PushPayload): Promise<void> {
   try {
     ensureConfigured();
     const subs = getPushSubscriptions(username);
@@ -58,7 +63,11 @@ const CATEGORY_PREF_KEY: Record<PushCategory, 'pushOnAlerts' | 'pushOnKeyExpiry'
   keyExpiry: 'pushOnKeyExpiry',
 };
 
-export async function sendPushToAllSubscribed(payload: PushPayload, category: PushCategory): Promise<void> {
+export function sendPushToAllSubscribed(payload: PushPayload, category: PushCategory): Promise<void> {
+  return trackBackgroundWork('bulk-push-notification', () => deliverPushToAllSubscribed(payload, category));
+}
+
+async function deliverPushToAllSubscribed(payload: PushPayload, category: PushCategory): Promise<void> {
   const prefKey = CATEGORY_PREF_KEY[category];
   const usernames = getUsersWithPushSubscriptions().filter((u) => getUserPrefs(u)[prefKey] ?? true);
   await Promise.all(usernames.map((u) => sendPushToUser(u, payload)));

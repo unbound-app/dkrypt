@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { trackBackgroundWork } from '#backgroundWork.js';
 import { config, cryptoBillingEnabled, nowpaymentsConfigured } from '#config.js';
 import {
   findCryptoCheckout,
@@ -193,7 +194,10 @@ let cryptoBillingTimer: NodeJS.Timeout | undefined;
 export function startCryptoBillingPoller(): void {
   if (!nowpaymentsConfigured) return;
   const interval = Math.max(60, config.cryptoBillingPollIntervalSeconds) * 1000;
-  cryptoBillingTimer ??= setInterval(() => void reconcileCryptoBilling(), interval).unref();
+  cryptoBillingTimer ??= setInterval(() => {
+    void trackBackgroundWork('crypto-billing-reconciliation', reconcileCryptoBilling)
+      .catch((error: unknown) => log.warn('crypto billing poll failed', { error: String(error) }));
+  }, interval).unref();
 }
 
 export function stopCryptoBillingPoller(): void {

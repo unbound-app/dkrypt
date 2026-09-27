@@ -1,4 +1,5 @@
 import { config } from '#config.js';
+import { trackBackgroundWork } from '#backgroundWork.js';
 import { createHmac } from 'node:crypto';
 import { log } from '#logger.js';
 import { sendMailToAllSubscribed, type MailCategory } from '#mail.js';
@@ -203,18 +204,24 @@ const MAIL_EVENT_CATEGORY: Partial<Record<NotifyEvent, MailCategory>> = {
   testFlightBridgeDown: 'deviceAlert',
 };
 
-export async function notify(event: NotifyEvent, embed: NotifyEmbed, webhookUrlOverride?: string): Promise<void> {
+export function notify(event: NotifyEvent, embed: NotifyEmbed, webhookUrlOverride?: string): Promise<void> {
+  return trackBackgroundWork(`notification:${event}`, () => sendNotification(event, embed, webhookUrlOverride));
+}
+
+async function sendNotification(event: NotifyEvent, embed: NotifyEmbed, webhookUrlOverride?: string): Promise<void> {
   const settings = getEffectiveSettings();
   if (!settings[EVENT_SETTING_KEY[event]]) return;
 
   const pushCategory = PUSH_EVENT_CATEGORY[event];
   if (pushCategory) {
-    void sendPushToAllSubscribed({ title: embed.title, body: embed.description ?? embed.title }, pushCategory);
+    void sendPushToAllSubscribed({ title: embed.title, body: embed.description ?? embed.title }, pushCategory)
+      .catch((error: unknown) => log.warn('push notification dispatch failed', { event, error: String(error) }));
   }
 
   const mailCategory = MAIL_EVENT_CATEGORY[event];
   if (mailCategory) {
-    void sendMailToAllSubscribed({ subject: embed.title, text: embed.description ?? embed.title }, mailCategory);
+    void sendMailToAllSubscribed({ subject: embed.title, text: embed.description ?? embed.title }, mailCategory)
+      .catch((error: unknown) => log.warn('mail notification dispatch failed', { event, error: String(error) }));
   }
 
   const url = webhookUrlOverride || settings.notifyWebhookUrl;
@@ -254,7 +261,10 @@ export async function flushNotificationDigests(now = new Date()): Promise<void> 
 }
 
 export function startNotificationDigestScheduler(): void {
-  notificationDigestTimer ??= setInterval(() => void flushNotificationDigests(), 60_000).unref();
+  notificationDigestTimer ??= setInterval(() => {
+    void trackBackgroundWork('notification-digest-flush', flushNotificationDigests)
+      .catch((error: unknown) => log.warn('notification digest flush failed', { error: String(error) }));
+  }, 60_000).unref();
 }
 
 let notificationDigestTimer: NodeJS.Timeout | undefined;

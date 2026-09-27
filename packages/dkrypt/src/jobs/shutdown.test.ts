@@ -12,7 +12,7 @@ mock.module('./runner.js', () => ({
   },
 }));
 
-const { enqueueDecryptJob, shutdownJobs, waitForJob } = await import('./store.js');
+const { closeJobStore, enqueueDecryptJob, shutdownJobs, waitForJob } = await import('./store.js');
 
 test('shutdown keeps persistence open until an uncancellable job runner settles', async () => {
   const device = createDevice({ name: `shutdown-device-${crypto.randomUUID()}`, transport: 'wifi', host: '127.0.0.1' }, 'tests');
@@ -36,6 +36,7 @@ test('shutdown keeps persistence open until an uncancellable job runner settles'
     expect(getJobHistoryEntryById(job.id)).toMatchObject({ id: job.id, status: 'done' });
   } finally {
     finishOperation?.();
+    closeJobStore();
     deleteDevice(device.id, 'tests');
   }
 });

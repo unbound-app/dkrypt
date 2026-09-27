@@ -1,5 +1,6 @@
 import nodemailer, { type Transporter } from 'nodemailer';
 import { config, emailEnabled } from '#config.js';
+import { trackBackgroundWork } from '#backgroundWork.js';
 import { getAuthProfile, listAuthProfiles } from '#identity.js';
 import { scopedLogger } from '#logger.js';
 import { getUserPrefs } from '#store/state.js';
@@ -31,7 +32,11 @@ export function resolveNotifyEmail(userId: string): string | undefined {
   return custom || getAuthProfile(userId)?.email;
 }
 
-export async function sendMailToUser(userId: string, payload: MailPayload): Promise<void> {
+export function sendMailToUser(userId: string, payload: MailPayload): Promise<void> {
+  return trackBackgroundWork('mail-notification', () => deliverMailToUser(userId, payload));
+}
+
+async function deliverMailToUser(userId: string, payload: MailPayload): Promise<void> {
   const t = getTransporter();
   if (!t) return;
 
@@ -52,7 +57,11 @@ const CATEGORY_PREF_KEY: Record<MailCategory, 'emailOnAlerts' | 'emailOnKeyExpir
   keyExpiry: 'emailOnKeyExpiry',
 };
 
-export async function sendMailToAllSubscribed(payload: MailPayload, category: MailCategory): Promise<void> {
+export function sendMailToAllSubscribed(payload: MailPayload, category: MailCategory): Promise<void> {
+  return trackBackgroundWork('bulk-mail-notification', () => deliverMailToAllSubscribed(payload, category));
+}
+
+async function deliverMailToAllSubscribed(payload: MailPayload, category: MailCategory): Promise<void> {
   if (!emailEnabled) return;
   const prefKey = CATEGORY_PREF_KEY[category];
   const recipients = listAuthProfiles().filter((profile) => resolveNotifyEmail(profile.userId) && (getUserPrefs(profile.userId)[prefKey] ?? false));

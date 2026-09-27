@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { trackBackgroundWork } from '#backgroundWork.js';
 import { config } from '#config.js';
 import { createOtlpMetricsPayload, incrementMetric } from '#metrics.js';
 
@@ -231,7 +232,9 @@ export async function flushOtlpMetrics(options: OtlpMetricsFlushOptions = {}): P
 export function startTelemetry(): void {
   if (flushTimer || (!endpoint('traces') && !endpoint('metrics'))) return;
   flushTimer = setInterval(() => {
-    void Promise.all([flushTelemetry(), flushOtlpMetrics()]);
+    void trackBackgroundWork('telemetry-export', async () => {
+      await Promise.all([flushTelemetry(), flushOtlpMetrics()]);
+    }).catch(() => undefined);
   }, Math.max(1000, config.otelFlushIntervalMs));
   flushTimer.unref();
 }

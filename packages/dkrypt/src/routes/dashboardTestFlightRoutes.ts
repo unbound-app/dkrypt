@@ -1,4 +1,5 @@
 import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
+import { trackBackgroundWork } from '#backgroundWork.js';
 import type {
   DashboardTestFlightCatalogRoute,
   DashboardTestFlightCatalogUnsubscribeRoute,
@@ -107,13 +108,13 @@ function errorMessage(error: unknown): string {
 }
 
 function scheduleSync(services: TestFlightRouteServices, id: string, actor: string): void {
-  void services.syncSubscription(id, actor).catch((error: unknown) => {
+  void trackBackgroundWork('testflight-subscription-sync', () => services.syncSubscription(id, actor)).catch((error: unknown) => {
     log.warn('TestFlight subscription synchronization failed', { subscriptionId: id, error: errorMessage(error) });
   });
 }
 
 function scheduleUnsubscribe(services: TestFlightRouteServices, id: string, actor: string): void {
-  void services.unsubscribeSubscription(id, actor).catch((error: unknown) => {
+  void trackBackgroundWork('testflight-subscription-removal', () => services.unsubscribeSubscription(id, actor)).catch((error: unknown) => {
     log.warn('TestFlight subscription removal failed', { subscriptionId: id, error: errorMessage(error) });
   });
 }

@@ -1,4 +1,5 @@
 import { config } from '#config.js';
+import { trackBackgroundWork } from '#backgroundWork.js';
 import { execCommand, getRustDeviceBridgeHealth, isRustDeviceConnection, isTestFlightRunning, probeDeviceSshTunnel, readBridgeHeartbeats, sendSpringBoardBridgeRequest, tryIoregCandidates, withSSH, type BridgeHeartbeat, type DeviceClient, type DeviceConnection, type DeviceTransport } from '#idevice.js';
 import { scopedLogger } from '#logger.js';
 import { EMBED_COLOR, notify } from '#notify.js';
@@ -846,8 +847,11 @@ export function startDeviceHealthPoller(): void {
     await checkDiskFullAlert().catch((err) => log.warn('disk full check failed', { error: String(err) }));
   };
 
-  void poll();
-  deviceHealthTimer = setInterval(() => void poll(), HEALTH_POLL_INTERVAL_MS).unref();
+  const runPoll = () => {
+    void trackBackgroundWork('device-health-poll', poll).catch((error: unknown) => log.warn('device health poll failed', { error: String(error) }));
+  };
+  runPoll();
+  deviceHealthTimer = setInterval(runPoll, HEALTH_POLL_INTERVAL_MS).unref();
 }
 
 let deviceHealthTimer: NodeJS.Timeout | undefined;

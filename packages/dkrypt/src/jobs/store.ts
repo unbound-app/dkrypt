@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { trackBackgroundWork } from '#backgroundWork.js';
 import { closeSync, existsSync, fsyncSync, openSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
@@ -910,7 +911,8 @@ export function startJobSweeper(): void {
   pumpWorkers();
   const intervalMs = 60_000;
   jobSweepTimer ??= setInterval(() => {
-    void monitorQueueSlo();
+    void trackBackgroundWork('queue-slo-monitor', monitorQueueSlo)
+      .catch((error: unknown) => log.warn('queue SLO monitoring failed', { error: String(error) }));
     const now = Date.now();
     const retentionMs = config.jobRetentionMinutes * 60_000;
 
@@ -918,7 +920,8 @@ export function startJobSweeper(): void {
 
       const finishedAt = job.finishedAt ?? job.createdAt;
       if ((job.status === 'done' || job.status === 'failed') && now - finishedAt > retentionMs) {
-        void reclaimAndMaybeUninstall(job);
+        void trackBackgroundWork('job-retention-reclaim', () => reclaimAndMaybeUninstall(job))
+          .catch((error: unknown) => log.warn('job retention cleanup failed', { jobId: job.id, error: String(error) }));
       }
     }
   }, intervalMs).unref();
@@ -936,6 +939,10 @@ export function stopAcceptingJobs(): void {
 export interface JobShutdownResult {
   drained: boolean;
   completion: Promise<void>;
+}
+
+export function closeJobStore(): void {
+  closePersistedJobs();
 }
 
 export async function shutdownJobs(timeoutMs = 15_000): Promise<JobShutdownResult> {
@@ -962,10 +969,7 @@ export async function shutdownJobs(timeoutMs = 15_000): Promise<JobShutdownResul
   }
   persistActiveJobs();
   const runs = [...runningJobs.values()];
-  if (runs.length === 0) {
-    closePersistedJobs();
-    return { drained: true, completion: Promise.resolve() };
-  }
+  if (runs.length === 0) return { drained: true, completion: Promise.resolve() };
   const runsSettled = Promise.allSettled(runs);
   await Promise.race([runsSettled, sleep(timeoutMs)]);
   for (const job of jobs.values()) {
@@ -974,7 +978,7 @@ export async function shutdownJobs(timeoutMs = 15_000): Promise<JobShutdownResul
   persistActiveJobs();
   await Promise.race([runsSettled, sleep(1_000)]);
   const drained = runningJobs.size === 0;
-  const completion = runsSettled.then(() => closePersistedJobs());
+  const completion = runsSettled.then(() => undefined);
   if (drained) await completion;
   return { drained, completion };
 }

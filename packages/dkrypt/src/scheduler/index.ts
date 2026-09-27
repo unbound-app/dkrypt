@@ -1,4 +1,5 @@
 import cron, { type ScheduledTask } from 'node-cron';
+import { trackBackgroundWork } from '#backgroundWork.js';
 import { config } from '#config.js';
 import { emitJobsChanged } from '#events.js';
 import type { Job } from '#jobs/types.js';
@@ -546,6 +547,8 @@ async function trackAndUpdate(
 
 const tickInProgress = new Set<string>();
 const budgetRetryTimers = new Map<string, NodeJS.Timeout>();
+const schedulerJitterTimers = new Set<NodeJS.Timeout>();
+let schedulerStopping = false;
 let githubBudgetReservation = { resetAt: 0, requests: 0 };
 
 function estimateGitHubRequests(watch: AppWatch, retryCount: number): number {
@@ -567,9 +570,11 @@ function scheduleGitHubBudgetRetry(watchId: string, resetAt: number): void {
   const delayMs = Math.max(GITHUB_RATE_LIMIT_RETRY_PADDING_MS, resetAt - Date.now() + GITHUB_RATE_LIMIT_RETRY_PADDING_MS);
   const timer = setTimeout(() => {
     budgetRetryTimers.delete(watchId);
+    if (schedulerStopping) return;
     const watch = getEffectiveWatches().find((candidate) => candidate.id === watchId);
     if (!watch || !isWatchSchedulable(watch)) return;
-    void tick(watch, 'scheduled', true).catch((err) => log.error('deferred scheduler tick threw', { watchId, error: String(err) }));
+    void trackBackgroundWork('scheduler-tick', () => tick(watch, 'scheduled', true))
+      .catch((err: unknown) => log.error('deferred scheduler tick threw', { watchId, error: String(err) }));
   }, delayMs);
   timer.unref();
   budgetRetryTimers.set(watchId, timer);
@@ -629,8 +634,16 @@ async function tick(watch: AppWatch, mode: 'scheduled' | 'manual' = 'scheduled',
       testflight: testflight.outcome,
     });
 
-    if (appStore.trackCompletion) void trackAndUpdate(entryId, 'appStore', appStore.trackCompletion);
-    if (testflight.trackCompletion) void trackAndUpdate(entryId, 'testflight', testflight.trackCompletion);
+    const trackAppStoreCompletion = appStore.trackCompletion;
+    if (trackAppStoreCompletion) {
+      void trackBackgroundWork('scheduler-run-reconciliation', () => trackAndUpdate(entryId, 'appStore', trackAppStoreCompletion))
+        .catch((error: unknown) => log.error('scheduler completion reconciliation failed', { entryId, source: 'appStore', error: String(error) }));
+    }
+    const trackTestFlightCompletion = testflight.trackCompletion;
+    if (trackTestFlightCompletion) {
+      void trackBackgroundWork('scheduler-run-reconciliation', () => trackAndUpdate(entryId, 'testflight', trackTestFlightCompletion))
+        .catch((error: unknown) => log.error('scheduler completion reconciliation failed', { entryId, source: 'testflight', error: String(error) }));
+    }
   } finally {
     if (githubBudget && estimatedRequests !== undefined) {
       recordGitHubBudgetTelemetry({
@@ -650,6 +663,11 @@ async function tick(watch: AppWatch, mode: 'scheduled' | 'manual' = 'scheduled',
   }
 }
 
+function startTrackedTick(watch: AppWatch, mode: 'scheduled' | 'manual' = 'scheduled', forceGitHubBudgetRefresh = false): void {
+  void trackBackgroundWork('scheduler-tick', () => tick(watch, mode, forceGitHubBudgetRefresh))
+    .catch((error: unknown) => log.error('scheduler tick threw', { watchId: watch.id, error: String(error) }));
+}
+
 export function isTickInProgress(watchId: string): boolean {
   return tickInProgress.has(watchId);
 }
@@ -663,13 +681,14 @@ export async function triggerTickNow(watchId: string): Promise<{ ok: boolean; er
   if (!isWatchSchedulable(watch)) {
     return { ok: false, error: 'watch is not schedulable (missing required fields, or GH_TOKEN unset)' };
   }
-  void tick(watch, 'manual').catch((err) => log.error('manually triggered tick threw', { watchId, error: String(err) }));
+  startTrackedTick(watch, 'manual');
   return { ok: true };
 }
 
 const scheduledTasks = new Map<string, { task: ScheduledTask; cronExpr: string }>();
 
 export function applyWatchSchedules(): void {
+  if (schedulerStopping) return;
   const watches = getEffectiveWatches();
   const eligibleIds = new Set(watches.filter(isWatchSchedulable).map((w) => w.id));
 
@@ -690,9 +709,13 @@ export function applyWatchSchedules(): void {
     const task = cron.schedule(watch.pollCron, () => {
 
       const jitterMs = Math.random() * CRON_JITTER_MAX_MS;
-      setTimeout(() => {
-        void tick(watch).catch((err) => log.error('scheduler tick threw', { watchId: watch.id, error: String(err) }));
+      const timer = setTimeout(() => {
+        schedulerJitterTimers.delete(timer);
+        if (schedulerStopping) return;
+        startTrackedTick(watch);
       }, jitterMs);
+      schedulerJitterTimers.add(timer);
+      timer.unref();
     });
     scheduledTasks.set(watch.id, { task, cronExpr: watch.pollCron });
     log.info('watch (re)scheduled', { watchId: watch.id, cron: watch.pollCron, bundleId: watch.bundleId, repo: watch.repo });
@@ -707,6 +730,7 @@ let backupTask: ScheduledTask | undefined;
 let backupTaskCron: string | undefined;
 
 export function applyBackupSchedule(): void {
+  if (schedulerStopping) return;
   const schedule = getBackupSchedule();
 
   if (!schedule.enabled || !cron.validate(schedule.cron)) {
@@ -770,15 +794,22 @@ async function reconcileStuckSchedulerRuns(): Promise<void> {
 }
 
 export function startScheduler(): void {
+  schedulerStopping = false;
   applyWatchSchedules();
   applyBackupSchedule();
-  void reconcileStuckSchedulerRuns().catch((err) => log.error('scheduler run reconciliation threw', { error: String(err) }));
+  void trackBackgroundWork('scheduler-restart-reconciliation', reconcileStuckSchedulerRuns)
+    .catch((error: unknown) => log.error('scheduler run reconciliation threw', { error: String(error) }));
 }
 
 export function stopScheduler(): void {
+  schedulerStopping = true;
   for (const scheduled of scheduledTasks.values()) scheduled.task.stop();
   scheduledTasks.clear();
   backupTask?.stop();
   backupTask = undefined;
   backupTaskCron = undefined;
+  for (const timer of schedulerJitterTimers) clearTimeout(timer);
+  schedulerJitterTimers.clear();
+  for (const timer of budgetRetryTimers.values()) clearTimeout(timer);
+  budgetRetryTimers.clear();
 }

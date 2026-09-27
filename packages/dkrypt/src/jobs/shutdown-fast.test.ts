@@ -14,9 +14,9 @@ mock.module('./runner.js', () => ({
   },
 }));
 
-const { enqueueDecryptJob, shutdownJobs, waitForJob } = await import('./store.js');
+const { closeJobStore, enqueueDecryptJob, shutdownJobs, waitForJob } = await import('./store.js');
 
-test('shutdown finishes final persistence before closing the jobs database after a fast drain', async () => {
+test('shutdown completes a fast job drain after its final persistence', async () => {
   const device = createDevice({ name: `shutdown-fast-device-${crypto.randomUUID()}`, transport: 'wifi', host: '127.0.0.1' }, 'tests');
   const job = enqueueDecryptJob(`com.test.shutdown-fast-${crypto.randomUUID()}`, 'manual');
 
@@ -28,6 +28,7 @@ test('shutdown finishes final persistence before closing the jobs database after
     await expect(waitForJob(job, 1000)).resolves.toMatchObject({ status: 'failed' });
     expect(getJobHistoryEntryById(job.id)).toMatchObject({ id: job.id, status: 'failed' });
   } finally {
+    closeJobStore();
     deleteDevice(device.id, 'tests');
   }
 });

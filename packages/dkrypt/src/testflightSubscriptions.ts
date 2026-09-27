@@ -1,4 +1,6 @@
 import { BridgeError } from '#idevice.js';
+import { scopedLogger } from '#logger.js';
+import { trackBackgroundWork } from '#backgroundWork.js';
 import { uninstallFromDevice } from '#appStoreInstall.js';
 import { lookupAppMetadata, searchApps, type ItunesSearchResult } from '#scheduler/itunes.js';
 import {
@@ -23,6 +25,8 @@ import {
   type TestFlightSubscriptionDevice,
 } from '#store/state.js';
 import { listTestFlightApps, statusTestFlightInvite, subscribeToTestFlightInvite, unsubscribeFromTestFlightInvite, type TFDeviceApp } from '#testflight.js';
+
+const log = scopedLogger('testflight');
 
 export const TESTFLIGHT_VERIFICATION_TTL_MS = 30 * 60_000;
 const TESTFLIGHT_INVITE_PATH = /^\/join\/([A-Za-z0-9]{4,32})\/?$/;
@@ -330,7 +334,7 @@ async function refreshTestFlightCatalog(requireAllDevices = false, refreshRemote
 
 export function refreshTestFlightCatalogInBackground(force = false): void {
   if (!force && catalogRefreshFailureAt && Date.now() - catalogRefreshFailureAt < TESTFLIGHT_CATALOG_REFRESH_FAILURE_BACKOFF_MS) return;
-  void refreshTestFlightCatalog(false, force)
+  void trackBackgroundWork('testflight-catalog-refresh', () => refreshTestFlightCatalog(false, force))
     .then(() => {
       catalogRefreshFailureAt = undefined;
     })
@@ -579,7 +583,10 @@ export async function syncApprovedTestFlightSubscriptions(): Promise<void> {
 let syncTimer: NodeJS.Timeout | undefined;
 
 export function startTestFlightSubscriptionPoller(): void {
-  if (!syncTimer) syncTimer = setInterval(() => void syncApprovedTestFlightSubscriptions(), TESTFLIGHT_VERIFICATION_TTL_MS).unref();
+  if (!syncTimer) syncTimer = setInterval(() => {
+    void trackBackgroundWork('testflight-subscription-sync', syncApprovedTestFlightSubscriptions)
+      .catch((error: unknown) => log.warn('TestFlight subscription poll failed', { error: String(error) }));
+  }, TESTFLIGHT_VERIFICATION_TTL_MS).unref();
 }
 
 export function stopTestFlightSubscriptionPoller(): void {

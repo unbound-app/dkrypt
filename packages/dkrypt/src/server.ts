@@ -7,8 +7,9 @@ import fastifySwagger from '@fastify/swagger';
 import scalarApiReference from '@scalar/fastify-api-reference';
 import { TypeBoxTypeProvider } from '@fastify/type-provider-typebox';
 import Fastify, { type FastifyInstance } from 'fastify';
+import { drainBackgroundWork, trackBackgroundWork } from '#backgroundWork.js';
 import { config } from '#config.js';
-import { getArtifactBackedJobs, shutdownJobs, startJobSweeper, stopAcceptingJobs, stopJobSweeper } from '#jobs/store.js';
+import { closeJobStore, getArtifactBackedJobs, shutdownJobs, startJobSweeper, stopAcceptingJobs, stopJobSweeper } from '#jobs/store.js';
 import { startJobWebhookDispatcher, stopJobWebhookDispatcher } from '#jobWebhook.js';
 import { startKeyExpiryPoller, stopKeyExpiryPoller } from '#keyExpiryPoller.js';
 import { log, startLogFlusher, stopLogFlusher } from '#logger.js';
@@ -309,6 +310,8 @@ async function start(): Promise<void> {
     }, 25_000);
     stopAcceptingJobs();
     stopScheduler();
+    void trackBackgroundWork('telemetry-shutdown', stopTelemetry)
+      .catch((error: unknown) => log.warn('telemetry shutdown failed', { error: String(error) }));
     stopDeviceHealthPoller();
     await stopRustDeviceEventMonitoring?.();
     stopRustDeviceEventMonitoring = undefined;
@@ -316,30 +319,50 @@ async function start(): Promise<void> {
     stopCryptoBillingPoller();
     stopKeyExpiryPoller();
     stopJobSweeper();
-    stopJobWebhookDispatcher();
     closeDashboardConnections();
     await server.close();
     stopStateBackgroundServices();
-    await stopNotificationDigestScheduler();
-    const jobShutdown = await shutdownJobs();
+    void trackBackgroundWork('notification-digest-shutdown', stopNotificationDigestScheduler)
+      .catch((error: unknown) => log.warn('notification digest shutdown failed', { error: String(error) }));
+    const [jobShutdown, backgroundShutdown] = await Promise.all([
+      shutdownJobs(),
+      drainBackgroundWork(15_000),
+    ]);
+    const finalBackgroundShutdown = await drainBackgroundWork(1_000);
+    const jobWebhookShutdown = jobShutdown.completion.then(async () => {
+      stopJobWebhookDispatcher();
+      const pendingNotificationWork = await drainBackgroundWork(1_000);
+      await pendingNotificationWork.completion;
+    });
+    const allShutdownWork = Promise.all([
+      jobShutdown.completion,
+      backgroundShutdown.completion,
+      finalBackgroundShutdown.completion,
+      jobWebhookShutdown,
+    ]).then(() => undefined);
     const finishShutdown = async () => {
+      closeJobStore();
       closeBillingDatabase();
       closeIdentityDatabase();
       closeIdempotencyDatabase();
       closeWebhookInboxDatabase();
       closeArtifactDatabase();
       closeStateDatabase();
-      await stopTelemetry();
       log.info('graceful shutdown completed', { signal });
       stopLogFlusher();
       clearTimeout(shutdownDeadline);
     };
-    if (jobShutdown.drained) {
+    if (jobShutdown.drained && backgroundShutdown.drained && finalBackgroundShutdown.drained) {
+      await allShutdownWork;
       await finishShutdown();
       return;
     }
-    log.warn('job runners are still active; deferring database shutdown until they settle', { signal });
-    void jobShutdown.completion
+    log.warn('work is still active; deferring database shutdown until it settles', {
+      signal,
+      jobRunnersDrained: jobShutdown.drained,
+      backgroundWork: [...new Set([...backgroundShutdown.pending, ...finalBackgroundShutdown.pending])],
+    });
+    void allShutdownWork
       .then(finishShutdown)
       .catch((error: unknown) => {
         log.error('deferred shutdown cleanup failed', { signal, error: String(error) });
