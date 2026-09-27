@@ -1015,6 +1015,9 @@ test('dashboard diagnostics use native Fastify routes with session and device-ma
     const doctor = await server.inject({ method: 'GET', url: '/v1/dashboard/doctor', headers: { cookie: administratorCookie } });
     expect(doctor.statusCode).toBe(200);
     expect(doctor.json()).toMatchObject({ ok: expect.any(Boolean), checkedAt: expect.any(String), checks: expect.arrayContaining([expect.objectContaining({ id: 'database', status: expect.any(String), detail: expect.any(String) })]) });
+    const doctorPayload = JSON.stringify(doctor.json());
+    const configuredSecrets = [config.apiKey, config.sessionSigningSecret, config.adminPassword, config.githubOauthClientSecret, config.discordOauthClientSecret, config.stripeSecretKey, config.stripeWebhookSecret, config.nowpaymentsApiKey, config.nowpaymentsIpnSecret, config.deviceBridgeSecret, config.smtpPass].filter(Boolean);
+    for (const secret of configuredSecrets) expect(doctorPayload).not.toContain(secret);
 
     const synthetic = await server.inject({ method: 'GET', url: '/v1/dashboard/synthetic', headers: { cookie: administratorCookie } });
     expect(synthetic.statusCode).toBe(200);

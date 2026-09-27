@@ -247,6 +247,116 @@ test('scheduler calendar preview labels checks deferred by quiet hours', async (
   await expectAccessible(page);
 });
 
+test('self-hosters can review configuration doctor checks from Settings', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.route('**/v1/**', async (route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify(pathname === '/v1/billing' ? { providers: { stripe: { enabled: false }, crypto: { enabled: false } } } : {}),
+    });
+  });
+  await mockStableDashboardEvents(page);
+  await mockAuthenticatedDashboard(page, '1');
+  let doctorRequests = 0;
+  await page.route('**/v1/dashboard/doctor', async (route) => {
+    doctorRequests += 1;
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: doctorRequests > 1,
+        checkedAt: '2026-09-27T12:00:00.000Z',
+        checks: doctorRequests > 1 ? [
+          { id: 'database', status: 'ok', detail: 'SQLite schema 12 is intact' },
+        ] : [
+          { id: 'database', status: 'ok', detail: 'SQLite schema 12 is intact' },
+          { id: 'session-secret-rotation', status: 'warn', detail: 'No overlapping previous credential is configured' },
+          { id: 'device-bridge', status: 'error', detail: 'Rust device bridge socket is not available yet' },
+        ],
+      }),
+    });
+  });
+
+  await page.goto('/?tab=settings&stab=doctor');
+
+  await expect(page.getByRole('heading', { name: 'System doctor' })).toBeVisible();
+  await expect(page.getByText('Configuration needs attention')).toBeVisible();
+  await expect(page.getByText('SQLite schema 12 is intact')).toBeVisible();
+  await expect(page.getByText('Rust device bridge socket is not available yet')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Refresh checks' })).toBeVisible();
+  expect(doctorRequests).toBe(1);
+  await page.getByRole('button', { name: 'Refresh checks' }).click();
+  await expect(page.getByText('All checks passed')).toBeVisible();
+  expect(doctorRequests).toBe(2);
+  const dimensions = await page.evaluate(() => ({ bodyWidth: document.body.scrollWidth, viewportWidth: document.documentElement.clientWidth }));
+  expect(dimensions.bodyWidth).toBeLessThanOrEqual(dimensions.viewportWidth + 1);
+  await expectAccessible(page);
+});
+
+test('system doctor is hidden from accounts without device-management permission', async ({ page }) => {
+  await page.route('**/v1/**', async (route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify(pathname === '/v1/billing' ? { providers: { stripe: { enabled: false }, crypto: { enabled: false } } } : {}),
+    });
+  });
+  await mockStableDashboardEvents(page);
+  await mockAuthenticatedDashboard(page, '2097152');
+  let doctorRequests = 0;
+  await page.route('**/v1/dashboard/doctor', async (route) => {
+    doctorRequests += 1;
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, checkedAt: '2026-09-27T12:00:00.000Z', checks: [] }) });
+  });
+
+  await page.goto('/?tab=settings&stab=doctor');
+
+  await expect(page.getByRole('tab', { name: 'Devices' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'System' })).toHaveCount(0);
+  expect(doctorRequests).toBe(0);
+});
+
+test('device managers can run read-only synthetic service probes', async ({ page }) => {
+  await page.route('**/v1/**', async (route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify(pathname === '/v1/billing' ? { providers: { stripe: { enabled: false }, crypto: { enabled: false } } } : {}),
+    });
+  });
+  await mockStableDashboardEvents(page);
+  await mockAuthenticatedDashboard(page, '1');
+  await page.route('**/v1/dashboard/doctor', async (route) => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, checkedAt: '2026-09-27T12:00:00.000Z', checks: [] }) });
+  });
+  let probeRequests = 0;
+  await page.route('**/v1/dashboard/synthetic', async (route) => {
+    probeRequests += 1;
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: false,
+        checkedAt: '2026-09-27T12:01:00.000Z',
+        probes: [
+          { id: 'database', status: 'ok', durationMs: 14, detail: 'SQLite integrity is clean' },
+          { id: 'device-agent', status: 'error', durationMs: 340, detail: 'The device agent did not respond' },
+        ],
+      }),
+    });
+  });
+
+  await page.goto('/?tab=settings&stab=doctor');
+  await expect(page.getByRole('heading', { name: 'System doctor' })).toBeVisible();
+  expect(probeRequests).toBe(0);
+  await page.getByRole('button', { name: 'Run live probes' }).click();
+
+  await expect(page.getByText('Live service probes')).toBeVisible();
+  await expect(page.getByText('SQLite integrity is clean')).toBeVisible();
+  await expect(page.getByText('The device agent did not respond')).toBeVisible();
+  expect(probeRequests).toBe(1);
+  await expectAccessible(page);
+});
+
 test('authenticated top bar exposes community links without mobile overflow', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockAuthenticatedDashboard(page, '1');

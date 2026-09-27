@@ -10,6 +10,7 @@
   import ProjectsSettings from '#tabs/settings/ProjectsSettings.svelte';
   import RolesSettings from '#tabs/settings/RolesSettings.svelte';
   import SchedulerSettings from '#tabs/settings/SchedulerSettings.svelte';
+  import SystemDoctorSettings from '#tabs/settings/SystemDoctorSettings.svelte';
   import TestFlightSettings from '#tabs/settings/TestFlightSettings.svelte';
   import UsersSettings from '#tabs/settings/UsersSettings.svelte';
 
@@ -17,6 +18,7 @@
     { id: 'scheduler', label: 'Automation', requires: [PermissionFlag.viewAutomation, PermissionFlag.manageAutomation] },
     { id: 'storage', label: 'Storage', requires: [PermissionFlag.manageAutomation], requiresAll: [PermissionFlag.requestDecrypt] },
     { id: 'devices', label: 'Devices', requires: [PermissionFlag.viewDevices, PermissionFlag.manageDevices] },
+    { id: 'doctor', label: 'System', requires: [PermissionFlag.manageDevices] },
     { id: 'users', label: 'Users', requires: [PermissionFlag.viewUsers, PermissionFlag.manageUsers] },
     { id: 'roles', label: 'Roles', requires: [PermissionFlag.viewRoles, PermissionFlag.manageRoles] },
     { id: 'projects', label: 'Projects', requires: [PermissionFlag.viewProjects, PermissionFlag.manageProjects] },
@@ -52,6 +54,9 @@
   <div class:hidden={tabState.settingsSubtab !== 'devices'}>
     <DevicesSettings />
   </div>
+{/if}
+{#if hasAccess([PermissionFlag.manageDevices]) && tabState.settingsSubtab === 'doctor'}
+  <SystemDoctorSettings />
 {/if}
 {#if hasAccess([PermissionFlag.viewUsers, PermissionFlag.manageUsers])}
   <div class:hidden={tabState.settingsSubtab !== 'users'}>

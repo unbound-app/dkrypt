@@ -1,0 +1,170 @@
+<script lang="ts">
+  import { onMount } from 'svelte';
+  import { CircleAlert, CircleCheck, CircleX, RefreshCw, ServerCog } from 'lucide-svelte';
+  import Badge from '#lib/components/ui/Badge.svelte';
+  import Button from '#lib/components/ui/Button.svelte';
+  import Card from '#lib/components/ui/Card.svelte';
+  import { fetchDashboardDoctor, runDashboardSyntheticProbes, type DashboardDoctorReport, type DashboardSyntheticReport } from '#lib/api';
+  import { fmtDateTime } from '#lib/format';
+
+  const checkTitles: Record<string, string> = {
+    'session-secret': 'Session signing secret',
+    'session-secret-rotation': 'Session signing secret rotation',
+    'backup-manifest-secret': 'Backup encryption secret',
+    'backup-manifest-rotation': 'Backup encryption secret rotation',
+    'admin-password': 'Administrator password',
+    'admin-password-rotation': 'Administrator password rotation',
+    'public-url': 'Public URL',
+    'runtime-limits': 'Runtime limits',
+    database: 'Database',
+    state: 'State storage',
+    artifacts: 'IPA storage',
+    'backup-restore-drill': 'Backup restore drill',
+    'device-bridge': 'Rust device bridge',
+    'device-agent': 'Device agent',
+    'device-bridge-rotation': 'Device bridge secret rotation',
+    'stripe-webhook-rotation': 'Stripe webhook secret rotation',
+    'crypto-webhook-rotation': 'Crypto webhook secret rotation',
+    'outbound-webhook-rotation': 'Outbound webhook secret rotation',
+    'pairing-store': 'Device pairing store',
+    otel: 'OpenTelemetry',
+    stripe: 'Stripe billing',
+    crypto: 'Crypto billing',
+    testflight: 'TestFlight access',
+    webhooks: 'Webhook delivery',
+  };
+
+  let report = $state<DashboardDoctorReport | null>(null);
+  let probeReport = $state<DashboardSyntheticReport | null>(null);
+  let loading = $state(false);
+  let probing = $state(false);
+  let error = $state('');
+  let probeError = $state('');
+
+  const warningCount = $derived(report?.checks.filter((check) => check.status === 'warn').length ?? 0);
+  const errorCount = $derived(report?.checks.filter((check) => check.status === 'error').length ?? 0);
+
+  function checkTitle(id: string): string {
+    return checkTitles[id] ?? id.split('-').map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(' ');
+  }
+
+  async function loadChecks(): Promise<void> {
+    loading = true;
+    error = '';
+    try {
+      report = await fetchDashboardDoctor();
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : 'Could not run the system doctor.';
+    } finally {
+      loading = false;
+    }
+  }
+
+  async function runProbes(): Promise<void> {
+    probing = true;
+    probeError = '';
+    try {
+      probeReport = await runDashboardSyntheticProbes();
+    } catch (cause) {
+      probeError = cause instanceof Error ? cause.message : 'Could not run live service probes.';
+    } finally {
+      probing = false;
+    }
+  }
+
+  onMount(() => {
+    void loadChecks();
+  });
+</script>
+
+<Card class="overflow-hidden">
+  <div class="flex items-start justify-between gap-3">
+    <div class="flex min-w-0 items-start gap-3">
+      <div class="mt-0.5 rounded-md bg-muted/40 p-2 text-muted"><ServerCog class="h-4 w-4" /></div>
+      <div class="min-w-0">
+        <h2 class="text-sm font-semibold">System doctor</h2>
+        <p class="mt-1 text-xs text-muted">Check service configuration, storage, backups, devices, and credential rotation. Secret values are never shown.</p>
+      </div>
+    </div>
+    <Button size="sm" variant="secondary" loading={loading} onclick={() => void loadChecks()} aria-label="Refresh checks">
+      <RefreshCw class="h-3.5 w-3.5" /> Refresh
+    </Button>
+  </div>
+
+  {#if error}
+    <div class="mt-4 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-err" role="alert">{error}</div>
+  {:else if !report}
+    <div class="mt-4 text-sm text-muted" role="status">Checking service configuration…</div>
+  {:else}
+    <div class="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/70 bg-muted/20 px-3 py-2.5" role="status" aria-live="polite">
+      <div class="flex items-center gap-2">
+        {#if errorCount > 0}
+          <CircleX class="h-4 w-4 text-err" aria-hidden="true" />
+          <span class="text-sm font-medium">Configuration needs attention</span>
+        {:else if warningCount > 0}
+          <CircleAlert class="h-4 w-4 text-warn" aria-hidden="true" />
+          <span class="text-sm font-medium">Configuration ready with warnings</span>
+        {:else}
+          <CircleCheck class="h-4 w-4 text-ok" aria-hidden="true" />
+          <span class="text-sm font-medium">All checks passed</span>
+        {/if}
+      </div>
+      <span class="text-xs text-muted">Checked {fmtDateTime(report.checkedAt)}</span>
+    </div>
+
+    <ul class="mt-3 divide-y divide-border/70" aria-label="Configuration checks">
+      {#each report.checks as check (check.id)}
+        <li class="flex items-start justify-between gap-3 py-3">
+          <div class="flex min-w-0 items-start gap-2.5">
+            <span class="mt-0.5 shrink-0">
+              {#if check.status === 'ok'}
+                <CircleCheck class="h-4 w-4 text-ok" aria-hidden="true" />
+              {:else if check.status === 'warn'}
+                <CircleAlert class="h-4 w-4 text-warn" aria-hidden="true" />
+              {:else}
+                <CircleX class="h-4 w-4 text-err" aria-hidden="true" />
+              {/if}
+            </span>
+            <div class="min-w-0">
+              <h3 class="text-sm font-medium">{checkTitle(check.id)}</h3>
+              <p class="mt-0.5 break-words text-xs text-muted">{check.detail}</p>
+            </div>
+          </div>
+          <Badge variant="outline" class="text-foreground">{check.status === 'ok' ? 'Ready' : check.status === 'warn' ? 'Review' : 'Action needed'}</Badge>
+        </li>
+      {/each}
+    </ul>
+  {/if}
+
+  <section class="mt-5 border-t border-border/70 pt-4" aria-labelledby="system-probes-heading">
+    <div class="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <h3 id="system-probes-heading" class="text-sm font-semibold">Live service probes</h3>
+        <p class="mt-1 text-xs text-muted">Run read-only checks for storage, the device agent, TestFlight, and webhooks.</p>
+      </div>
+      <Button size="sm" variant="secondary" loading={probing} onclick={() => void runProbes()} aria-label="Run live probes">Run live probes</Button>
+    </div>
+
+    {#if probeError}
+      <div class="mt-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-err" role="alert">{probeError}</div>
+    {:else if !probeReport}
+      <p class="mt-3 text-xs text-muted" role="status">Live probes only run when you request them.</p>
+    {:else}
+      <p class="mt-3 text-xs text-muted">Checked {fmtDateTime(probeReport.checkedAt)}</p>
+      <ul class="mt-1 divide-y divide-border/70" aria-label="Live service probe results">
+        {#each probeReport.probes as probe (probe.id)}
+          <li class="flex items-start justify-between gap-3 py-3">
+            <div class="min-w-0">
+              <h4 class="text-sm font-medium">{checkTitle(probe.id)}</h4>
+              <p class="mt-0.5 break-words text-xs text-muted">{probe.detail}</p>
+            </div>
+            <div class="flex shrink-0 items-center gap-2">
+              <span class="text-[11px] text-muted">{Math.round(probe.durationMs)} ms</span>
+              <Badge variant="outline" class="text-foreground">{probe.status === 'ok' ? 'Ready' : probe.status === 'warn' ? 'Review' : probe.status === 'error' ? 'Action needed' : 'Skipped'}</Badge>
+            </div>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+  </section>
+</Card>

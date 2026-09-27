@@ -1393,6 +1393,39 @@ export interface TestFlightBridgeDiagnostics {
   recentLog?: string[];
 }
 
+export interface DashboardDoctorCheck {
+  id: string;
+  status: 'ok' | 'warn' | 'error';
+  detail: string;
+}
+
+export interface DashboardDoctorReport {
+  ok: boolean;
+  checkedAt: string;
+  checks: DashboardDoctorCheck[];
+}
+
+export interface DashboardSyntheticProbe {
+  id: 'database' | 'artifacts' | 'device-bridge' | 'device-agent' | 'testflight' | 'webhooks';
+  status: 'ok' | 'warn' | 'error' | 'skipped';
+  durationMs: number;
+  detail: string;
+}
+
+export interface DashboardSyntheticReport {
+  ok: boolean;
+  checkedAt: string;
+  probes: DashboardSyntheticProbe[];
+}
+
+export function fetchDashboardDoctor(): Promise<DashboardDoctorReport> {
+  return apiJson('/v1/dashboard/doctor');
+}
+
+export function runDashboardSyntheticProbes(): Promise<DashboardSyntheticReport> {
+  return apiJson('/v1/dashboard/synthetic');
+}
+
 export function fetchTestFlightBridgeDiagnostics(): Promise<TestFlightBridgeDiagnostics> {
   return apiJson('/v1/dashboard/testflight/diagnostics', undefined, 'external');
 }
