@@ -5,6 +5,7 @@
   import Card from '#lib/components/ui/Card.svelte';
   import PublicPageFooter from '#components/PublicPageFooter.svelte';
   import PublicPageHeader from '#components/PublicPageHeader.svelte';
+  import { fmtDateTime } from '#lib/format';
 
   type ComponentState = 'operational' | 'degraded' | 'maintenance' | 'not_configured' | 'paused' | 'unknown';
   type PublicStatus = {
@@ -45,7 +46,7 @@
   }
 
   function formatCheckedAt(value: string): string {
-    return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
+    return fmtDateTime(value);
   }
 
   async function refresh(): Promise<void> {

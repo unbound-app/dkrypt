@@ -1,5 +1,33 @@
 export function fmtTime(ms?: number): string {
-  return ms ? new Date(ms).toLocaleString() : '-';
+  if (ms === undefined || !Number.isFinite(ms) || ms === 0) return '-';
+  return fmtDateTime(ms);
+}
+
+export function fmtDateTime(value: number | string, options: Intl.DateTimeFormatOptions = {}): string {
+  const timestamp = typeof value === 'number' ? value : Date.parse(value);
+  if (!Number.isFinite(timestamp)) return '-';
+  return new Intl.DateTimeFormat(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+    ...options,
+  }).format(new Date(timestamp));
+}
+
+export function fmtCalendarDate(value: number | string, options: Intl.DateTimeFormatOptions = { dateStyle: 'medium' }): string {
+  const isDateOnly = typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value);
+  const timestamp = typeof value === 'number'
+    ? value
+    : Date.parse(isDateOnly ? `${value}T00:00:00.000Z` : value);
+  if (!Number.isFinite(timestamp)) return '-';
+  const timeZone = options.timeZone ?? (isDateOnly ? 'UTC' : undefined);
+  return new Intl.DateTimeFormat(undefined, {
+    ...options,
+    ...(timeZone ? { timeZone } : {}),
+  }).format(new Date(timestamp));
 }
 
 export function fmtRelative(ms?: number): string {
@@ -14,7 +42,7 @@ export function fmtRelative(ms?: number): string {
   if (hr < 24) return future ? `in ${hr}h` : `${hr}h ago`;
   const day = Math.round(hr / 24);
   if (day < 30) return future ? `in ${day}d` : `${day}d ago`;
-  return new Date(ms).toLocaleDateString();
+  return fmtCalendarDate(ms);
 }
 
 export function fmtSize(bytes?: number): string {

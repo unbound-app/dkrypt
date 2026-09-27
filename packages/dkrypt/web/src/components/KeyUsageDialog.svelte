@@ -14,6 +14,7 @@
 	} from "#lib/appCatalog.svelte";
 	import Dialog from "#lib/components/ui/Dialog.svelte";
 	import Sparkline from "#components/Sparkline.svelte";
+	import { fmtCalendarDate } from "#lib/format";
 
 	let {
 		open = $bindable(),
@@ -58,10 +59,7 @@
 	);
 
 	function fmtDayLabel(dateStr: string): string {
-		return new Date(dateStr).toLocaleDateString(undefined, {
-			month: "short",
-			day: "numeric",
-		});
+		return fmtCalendarDate(dateStr, { month: "short", day: "numeric" });
 	}
 
 	const total = $derived(usage?.reduce((a, d) => a + d.count, 0) ?? 0);

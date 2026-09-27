@@ -24,6 +24,7 @@
 		downloadBlob,
 		fmtBytesGB,
 		fmtDurationApprox,
+		fmtCalendarDate,
 		trendDelta,
 	} from "#lib/format";
 	import { liveState } from "#lib/live.svelte";
@@ -145,10 +146,7 @@
 	});
 
 	function fmtDayLabel(dateStr: string): string {
-		return new Date(dateStr).toLocaleDateString(undefined, {
-			month: "short",
-			day: "numeric",
-		});
+		return fmtCalendarDate(dateStr, { month: "short", day: "numeric" });
 	}
 
 	const trend = $derived(
@@ -560,7 +558,7 @@
 			<div class="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
 				{#each Object.entries(releaseDays) as [day, runs] (day)}
 					<div class="border-border rounded-lg border p-2.5">
-						<div class="mb-2 text-xs font-medium text-muted">{new Date(`${day}T00:00:00Z`).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</div>
+						<div class="mb-2 text-xs font-medium text-muted">{fmtCalendarDate(day, { month: "short", day: "numeric" })}</div>
 						<div class="flex flex-col gap-1.5">
 							{#each runs as run (run.id)}
 								<div class="flex min-w-0 items-center gap-2 text-xs">

@@ -8,6 +8,7 @@
   import { refreshSession } from '#lib/session.svelte';
   import { showToast } from '#lib/ui.svelte';
   import type { BadgeVariant } from '#lib/components/ui/variants';
+  import { fmtCalendarDate } from '#lib/format';
 
   type PlanId = 'viewer' | 'regular' | 'priority' | 'api' | 'priority_api';
   type CheckoutState = 'success' | 'cancelled' | undefined;
@@ -220,7 +221,7 @@
   }
 
   function formatDate(value: string): string {
-    return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(value));
+    return fmtCalendarDate(value);
   }
 
   function planLabel(planId: PlanId): string {

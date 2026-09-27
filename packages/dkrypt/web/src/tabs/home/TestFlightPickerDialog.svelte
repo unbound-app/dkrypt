@@ -8,7 +8,7 @@
   import Dialog from '#lib/components/ui/Dialog.svelte';
   import Input from '#lib/components/ui/Input.svelte';
   import Select from '#lib/components/ui/Select.svelte';
-  import { fmtTime } from '#lib/format';
+  import { fmtCalendarDate } from '#lib/format';
 
   interface Props {
     open: boolean;
@@ -215,7 +215,7 @@
                         {#if newBuildIds.has(b.id)}<Badge variant="success">New</Badge>{/if}
                       </div>
                       {#if b.releaseDate}
-                        <div class="text-muted text-xs">{fmtTime(new Date(b.releaseDate).getTime())}</div>
+                        <div class="text-muted text-xs">{fmtCalendarDate(b.releaseDate)}</div>
                       {/if}
                     </div>
                     <Button size="sm" onclick={() => onDecrypt(bundleId, appId, b, label(b), selectedDeviceId || undefined)}>Install &amp; decrypt</Button>

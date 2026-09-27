@@ -11,6 +11,7 @@
   import { sessionHasPermission } from '#lib/session.svelte';
   import { showToast } from '#lib/ui.svelte';
   import type { BadgeVariant } from '#lib/components/ui/variants';
+  import { fmtCalendarDate } from '#lib/format';
 
   const canManage = $derived(sessionHasPermission(PermissionFlag.manageBilling));
   let subscriptions = $state<BillingManagerSubscription[]>([]);
@@ -128,8 +129,7 @@
 
   function date(value?: string): string {
     if (!value) return '—';
-    const parsed = new Date(value);
-    return Number.isNaN(parsed.valueOf()) ? '—' : new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(parsed);
+    return fmtCalendarDate(value);
   }
 
   function short(value?: string): string {

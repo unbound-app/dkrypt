@@ -36,7 +36,7 @@
 		starredAppsState,
 		toggleStarredApp,
 	} from "#lib/decrypts.svelte";
-	import { debounce, fmtDurationApprox } from "#lib/format";
+	import { debounce, fmtDateTime, fmtDurationApprox } from "#lib/format";
 	import { liveState } from "#lib/live.svelte";
 	import { requestNotificationPermission } from "#lib/notifications";
 	import { PermissionFlag } from "#lib/permissions";
@@ -150,7 +150,7 @@
 	});
 
 	function testFlightAvailabilityTitle(app: TestFlightCatalogApp): string {
-		return `${app.displayName} · ${app.bundleId} · Access last checked ${new Date(app.lastVerifiedAt).toLocaleString()}`;
+		return `${app.displayName} · ${app.bundleId} · Access last checked ${fmtDateTime(app.lastVerifiedAt)}`;
 	}
 
 	let versionsOpen = $state(false);

@@ -37,7 +37,7 @@
 		appIconUrl,
 		ensureAppCatalog,
 	} from "#lib/appCatalog.svelte";
-	import { fmtBytesGB, fmtUntil, trendDelta } from "#lib/format";
+	import { fmtBytesGB, fmtCalendarDate, fmtDateTime, fmtUntil, trendDelta } from "#lib/format";
 	import { liveState } from "#lib/live.svelte";
 
 	const overview = $derived(liveState.overview);
@@ -124,10 +124,7 @@
 	}
 
 	function fmtDayLabel(dateStr: string): string {
-		return new Date(dateStr).toLocaleDateString(undefined, {
-			month: "short",
-			day: "numeric",
-		});
+		return fmtCalendarDate(dateStr, { month: "short", day: "numeric" });
 	}
 
 	let volume = $state<{ label: string; value: number }[] | null>(null);
@@ -224,11 +221,7 @@
 	}
 
 	function bucketTitle(bucket: HourlyHealthBucket): string {
-		const time = new Date(bucket.hourStart).toLocaleString(undefined, {
-			hour: "numeric",
-			month: "short",
-			day: "numeric",
-		});
+		const time = fmtDateTime(bucket.hourStart, { year: undefined, minute: undefined });
 		if (bucket.reachablePercent === null) return `${time}: no data`;
 		return `${time}: ${Math.round(bucket.reachablePercent * 100)}% reachable`;
 	}
@@ -255,11 +248,7 @@
 	}
 
 	function batteryBucketTitle(bucket: HourlyBatteryBucket): string {
-		const time = new Date(bucket.hourStart).toLocaleString(undefined, {
-			hour: "numeric",
-			month: "short",
-			day: "numeric",
-		});
+		const time = fmtDateTime(bucket.hourStart, { year: undefined, minute: undefined });
 		if (bucket.batteryPercent === null) return `${time}: no data`;
 		return `${time}: ${bucket.batteryPercent}%`;
 	}
@@ -290,11 +279,7 @@
 	}
 
 	function temperatureBucketTitle(bucket: HourlyTemperatureBucket): string {
-		const time = new Date(bucket.hourStart).toLocaleString(undefined, {
-			hour: "numeric",
-			month: "short",
-			day: "numeric",
-		});
+		const time = fmtDateTime(bucket.hourStart, { year: undefined, minute: undefined });
 		if (bucket.batteryTemperatureC === null) return `${time}: no data`;
 		return `${time}: ${bucket.batteryTemperatureC.toFixed(1)}°C`;
 	}

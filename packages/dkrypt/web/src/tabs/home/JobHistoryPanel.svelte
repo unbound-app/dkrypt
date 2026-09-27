@@ -36,7 +36,7 @@
 		statusToBadgeVariant,
 	} from "#lib/components/ui/variants";
 	import { addDecrypt, pushRecentBundleId } from "#lib/decrypts.svelte";
-	import { csvCell, debounce, downloadBlob, fmtSize } from "#lib/format";
+	import { csvCell, debounce, downloadBlob, fmtCalendarDate, fmtSize } from "#lib/format";
 	import { liveState } from "#lib/live.svelte";
 	import { createSavedViews } from "#lib/savedViews.svelte";
 	import { sessionState } from "#lib/session.svelte";
@@ -742,7 +742,7 @@
 		);
 		if (diffDays === 0) return "Today";
 		if (diffDays === 1) return "Yesterday";
-		return d.toLocaleDateString(undefined, {
+		return fmtCalendarDate(ms, {
 			month: "short",
 			day: "numeric",
 			year:
