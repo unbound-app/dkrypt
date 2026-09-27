@@ -36,8 +36,8 @@ export const billingWebhookInboxQuerySchema = Type.Object(
     cursor: Type.Optional(Type.String({ minLength: 1, maxLength: 512 })),
     offset: Type.Optional(Type.Integer({ minimum: 0 })),
     limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })),
-    status: Type.Optional(Type.String({ maxLength: 32 })),
-    provider: Type.Optional(Type.String({ maxLength: 32 })),
+    status: Type.Optional(Type.Union([Type.Literal('received'), Type.Literal('processed'), Type.Literal('failed'), Type.Literal('quarantined')])),
+    provider: Type.Optional(Type.Union([Type.Literal('stripe'), Type.Literal('nowpayments')])),
   },
   { additionalProperties: true },
 );

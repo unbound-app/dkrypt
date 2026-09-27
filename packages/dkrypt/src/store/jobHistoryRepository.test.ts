@@ -62,7 +62,7 @@ test('job history migration backfills existing snapshot records', async () => {
 
     const migrated = openStateDatabase(options);
     try {
-      expect(migrated.schemaVersion).toBe(15);
+      expect(migrated.schemaVersion).toBe(16);
       expect(createJobHistoryRepository(migrated.db).list()).toEqual([entry]);
     } finally {
       migrated.close();

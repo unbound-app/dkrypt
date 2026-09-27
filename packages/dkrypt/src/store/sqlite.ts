@@ -408,6 +408,32 @@ const migrations = [
       CREATE INDEX IF NOT EXISTS job_history_by_device_time ON job_history(device_id, finished_at DESC, id DESC);
     `,
   },
+  {
+    version: 16,
+    sql: `
+      ALTER TABLE webhook_inbox ADD COLUMN provider TEXT;
+      ALTER TABLE webhook_inbox ADD COLUMN event_id TEXT;
+      ALTER TABLE webhook_inbox ADD COLUMN status TEXT;
+      ALTER TABLE webhook_inbox ADD COLUMN raw_body_sha256 TEXT;
+      ALTER TABLE webhook_inbox ADD COLUMN received_at INTEGER;
+      ALTER TABLE webhook_inbox ADD COLUMN processed_at INTEGER;
+      ALTER TABLE webhook_inbox ADD COLUMN attempts INTEGER;
+      ALTER TABLE webhook_inbox ADD COLUMN last_error TEXT;
+      UPDATE webhook_inbox
+      SET provider = json_extract(payload, '$.provider'),
+          event_id = json_extract(payload, '$.eventId'),
+          status = json_extract(payload, '$.status'),
+          raw_body_sha256 = json_extract(payload, '$.rawBodySha256'),
+          received_at = COALESCE(json_extract(payload, '$.receivedAt'), updated_at),
+          processed_at = json_extract(payload, '$.processedAt'),
+          attempts = COALESCE(json_extract(payload, '$.attempts'), 0),
+          last_error = json_extract(payload, '$.lastError')
+      WHERE json_valid(payload) = 1;
+      CREATE INDEX IF NOT EXISTS webhook_inbox_by_event ON webhook_inbox(provider, event_id, received_at, id);
+      CREATE INDEX IF NOT EXISTS webhook_inbox_by_provider_time ON webhook_inbox(provider, received_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS webhook_inbox_by_status_time ON webhook_inbox(status, received_at DESC, id DESC);
+    `,
+  },
 ] as const;
 
 const domainTables = [

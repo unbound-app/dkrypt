@@ -45,7 +45,7 @@ import { fastifyRequirePermission, fastifyRequireSession, getFastifySession } fr
 import { PermissionFlag } from '#permissions.js';
 import { recordAudit } from '#store/state.js';
 import { constructStripeWebhookEvent, getStripe } from '#stripe.js';
-import { claimWebhook, getWebhookInboxRecord, listWebhookInbox, markWebhookFailed, markWebhookProcessed, quarantineWebhook, receiveWebhook, releaseWebhookClaim } from '#webhookInbox.js';
+import { claimWebhook, countWebhookInbox, getWebhookInboxRecord, listWebhookInbox, markWebhookFailed, markWebhookProcessed, quarantineWebhook, receiveWebhook, releaseWebhookClaim } from '#webhookInbox.js';
 import { decodeCursor, nextCursor, paginateCursor } from '#util/cursor.js';
 
 function metadataUserId(metadata: unknown): string | undefined {
@@ -424,13 +424,12 @@ export const billingRoutes: FastifyPluginAsyncTypebox = async (server) => {
 
   server.get<BillingWebhookInboxRoute>('/v1/billing/webhooks/inbox', { schema: getRouteContract('GET', '/v1/billing/webhooks/inbox'), preHandler: requireBillingManager }, (request, reply) => {
     const { status, provider, limit: requestedLimit, cursor, offset: requestedOffset } = request.query;
-    const filtered = listWebhookInbox()
-      .filter((record) => !status || record.status === status)
-      .filter((record) => !provider || record.provider === provider);
+    const filter = { status, provider };
     const limit = Math.min(Math.max(requestedLimit ?? 50, 1), 200);
     const offset = cursor ? decodeCursor(cursor) : Math.max(requestedOffset ?? 0, 0);
-    const page = filtered.slice(offset, offset + limit).map(({ rawBody, ...record }) => ({ ...record, rawBodyBytes: Buffer.byteLength(rawBody) }));
-    return reply.send({ inbox: page, total: filtered.length, nextCursor: nextCursor(offset, page.length, filtered.length) });
+    const total = countWebhookInbox(filter);
+    const page = listWebhookInbox(filter, { limit, offset }).map(({ rawBody, ...record }) => ({ ...record, rawBodyBytes: Buffer.byteLength(rawBody) }));
+    return reply.send({ inbox: page, total, nextCursor: nextCursor(offset, page.length, total) });
   });
 
   server.post<BillingWebhookQuarantineRoute>('/v1/billing/webhooks/inbox/:id/quarantine', { schema: getRouteContract('POST', '/v1/billing/webhooks/inbox/:id/quarantine'), preHandler: requireBillingManager }, (request, reply) => {

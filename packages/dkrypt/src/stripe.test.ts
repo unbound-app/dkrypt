@@ -143,6 +143,31 @@ describe('Stripe billing webhooks', () => {
       expect(response.statusCode).toBe(200);
       expect(response.json()).toMatchObject({ enabled: true, provider: 'stripe', environment: 'test', missingConfiguration: [], plans: expect.any(Array) });
       expect(response.json()).not.toHaveProperty('clientToken');
+
+      const stripeEvent = checkoutEvent(`stripe-inbox-${crypto.randomUUID()}`, `cus_${crypto.randomUUID()}`, `sub_${crypto.randomUUID()}`, 'checkout.session.async_payment_failed');
+      const payload = JSON.stringify(stripeEvent);
+      const timestamp = Math.floor(Date.now() / 1000);
+      const digest = createHmac('sha256', webhookSecret).update(`${timestamp}.${payload}`).digest('hex');
+      const delivery = await server.inject({
+        method: 'POST',
+        url: '/v1/stripe/webhook',
+        headers: { 'content-type': 'application/json', 'stripe-signature': `t=${timestamp},v1=${digest}` },
+        payload,
+      });
+      expect(delivery.statusCode).toBe(200);
+
+      const inboxResponse = await server.inject({
+        method: 'GET',
+        url: '/v1/billing/webhooks/inbox?provider=stripe&status=processed&limit=200',
+        headers: { cookie: cookie.split(';', 1)[0] },
+      });
+      const inboxResult = inboxResponse.json() as { inbox: Array<Record<string, unknown>>; total: number };
+      const record = inboxResult.inbox.find((item) => item.eventId === stripeEvent.id);
+
+      expect(inboxResponse.statusCode).toBe(200);
+      expect(record).toMatchObject({ provider: 'stripe', status: 'processed', rawBodyBytes: Buffer.byteLength(payload) });
+      expect(record).not.toHaveProperty('rawBody');
+      expect(inboxResult.total).toBeGreaterThanOrEqual(1);
     } finally {
       await server.close();
     }

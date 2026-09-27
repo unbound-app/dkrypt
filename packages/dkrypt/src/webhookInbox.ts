@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { openStateCollectionDatabase, readStateCollection, replaceStateCollections } from '#store/sqlite.js';
+import { openStateCollectionDatabase } from '#store/sqlite.js';
+import { createWebhookInboxRepository, type WebhookInboxRepositoryFilter, type WebhookInboxRepositoryPage } from '#store/webhookInboxRepository.js';
 import { config } from '#config.js';
 import { incrementMetric, observeMetric } from '#metrics.js';
 
@@ -19,14 +20,11 @@ export interface WebhookInboxRecord {
 }
 
 const database = openStateCollectionDatabase({ stateDir: config.stateDir, filename: config.stateDatabaseFile, busyTimeoutMs: config.stateDbBusyTimeoutMs }, ['webhook_inbox', 'webhook_attempts']);
-const records = new Map<string, WebhookInboxRecord>();
+const repository = createWebhookInboxRepository(database);
 const claimedRecords = new Set<string>();
 const claimStartedAt = new Map<string, number>();
 
-for (const value of readStateCollection(database, 'webhook_inbox')) {
-  if (!isWebhookInboxRecord(value)) throw new Error('webhook inbox record is malformed');
-  records.set(value.id, value);
-}
+for (const record of repository.list()) if (!isWebhookInboxRecord(record)) throw new Error('webhook inbox record is malformed');
 
 function isWebhookInboxRecord(value: unknown): value is WebhookInboxRecord {
   if (typeof value !== 'object' || value === null) return false;
@@ -34,20 +32,7 @@ function isWebhookInboxRecord(value: unknown): value is WebhookInboxRecord {
   return typeof record.id === 'string' && (record.provider === 'stripe' || record.provider === 'nowpayments') && typeof record.eventId === 'string' && ['received', 'processed', 'failed', 'quarantined'].includes(String(record.status)) && typeof record.rawBody === 'string' && typeof record.rawBodySha256 === 'string' && typeof record.receivedAt === 'number' && typeof record.attempts === 'number';
 }
 
-function persist(): void {
-  const values = [...records.values()].sort((a, b) => b.receivedAt - a.receivedAt).slice(0, 5000);
-  replaceStateCollections(database, [
-    { table: 'webhook_inbox', rows: values.map((record) => ({ id: record.id, payload: record, updatedAt: record.processedAt ?? record.receivedAt })) },
-    { table: 'webhook_attempts', rows: values.map((record) => ({ id: `${record.id}:${record.attempts}`, payload: { inboxId: record.id, attempt: record.attempts, status: record.status, at: record.processedAt ?? record.receivedAt, error: record.lastError }, updatedAt: record.processedAt ?? record.receivedAt })) },
-  ]);
-}
-
 export function receiveWebhook(provider: WebhookInboxRecord['provider'], eventId: string, rawBody: Buffer | string): { record: WebhookInboxRecord; duplicate: boolean } {
-  const existing = [...records.values()].find((record) => record.provider === provider && record.eventId === eventId);
-  if (existing) {
-    incrementMetric('webhook_events_duplicate_total', { provider });
-    return { record: existing, duplicate: true };
-  }
   const body = rawBody.toString('utf8');
   const record: WebhookInboxRecord = {
     id: randomUUID(),
@@ -59,14 +44,17 @@ export function receiveWebhook(provider: WebhookInboxRecord['provider'], eventId
     receivedAt: Date.now(),
     attempts: 0,
   };
-  records.set(record.id, record);
-  persist();
+  const result = repository.insertIfAbsent(record);
+  if (!result.inserted) {
+    incrementMetric('webhook_events_duplicate_total', { provider });
+    return { record: result.record, duplicate: true };
+  }
   incrementMetric('webhook_events_received_total', { provider });
-  return { record, duplicate: false };
+  return { record: result.record, duplicate: false };
 }
 
 export function claimWebhook(id: string): boolean {
-  const record = records.get(id);
+  const record = repository.findById(id);
   if (!record || record.status === 'processed' || record.status === 'quarantined' || claimedRecords.has(id)) {
     if (record) incrementMetric('webhook_claim_conflicts_total', { provider: record.provider });
     return false;
@@ -82,13 +70,13 @@ export function releaseWebhookClaim(id: string): void {
 }
 
 export function markWebhookProcessed(id: string): WebhookInboxRecord | undefined {
-  const record = records.get(id);
+  const record = repository.findById(id);
   if (!record) return undefined;
   record.status = 'processed';
   record.attempts += 1;
   record.processedAt = Date.now();
   record.lastError = undefined;
-  persist();
+  repository.save(record);
   incrementMetric('webhook_events_reconciled_total', { provider: record.provider });
   const startedAt = claimStartedAt.get(id);
   if (startedAt !== undefined) observeMetric('webhook_reconciliation_duration_ms', Math.max(0, record.processedAt - startedAt), { provider: record.provider, outcome: 'success' });
@@ -96,12 +84,12 @@ export function markWebhookProcessed(id: string): WebhookInboxRecord | undefined
 }
 
 export function markWebhookFailed(id: string, error: string): WebhookInboxRecord | undefined {
-  const record = records.get(id);
+  const record = repository.findById(id);
   if (!record) return undefined;
   record.status = 'failed';
   record.attempts += 1;
   record.lastError = error.slice(0, 500);
-  persist();
+  repository.save(record);
   incrementMetric('webhook_reconciliation_failures_total', { provider: record.provider });
   const startedAt = claimStartedAt.get(id);
   if (startedAt !== undefined) observeMetric('webhook_reconciliation_duration_ms', Math.max(0, Date.now() - startedAt), { provider: record.provider, outcome: 'failure' });
@@ -109,22 +97,25 @@ export function markWebhookFailed(id: string, error: string): WebhookInboxRecord
 }
 
 export function quarantineWebhook(id: string, reason: string): WebhookInboxRecord | undefined {
-  const record = records.get(id);
+  const record = repository.findById(id);
   if (!record) return undefined;
   record.status = 'quarantined';
   record.lastError = reason.slice(0, 500);
-  persist();
+  repository.save(record);
   incrementMetric('webhook_events_quarantined_total', { provider: record.provider });
   return record;
 }
 
-export function listWebhookInbox(): WebhookInboxRecord[] {
-  return [...records.values()].sort((a, b) => b.receivedAt - a.receivedAt).map((record) => ({ ...record }));
+export function listWebhookInbox(filter?: WebhookInboxRepositoryFilter, page?: WebhookInboxRepositoryPage): WebhookInboxRecord[] {
+  return repository.list(filter, page);
+}
+
+export function countWebhookInbox(filter?: WebhookInboxRepositoryFilter): number {
+  return repository.count(filter);
 }
 
 export function getWebhookInboxRecord(id: string): WebhookInboxRecord | undefined {
-  const record = records.get(id);
-  return record ? { ...record } : undefined;
+  return repository.findById(id);
 }
 
 export function closeWebhookInboxDatabase(): void {
