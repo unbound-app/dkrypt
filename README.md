@@ -66,6 +66,14 @@ Copy `.env.example` to `.env` and configure the required values. The important r
 | `BACKUP_MANIFEST_SECRET_PREVIOUS` | Comma-separated previous manifest keys retained while older snapshots still exist |
 | `ADMIN_PASSWORD` | Local administrator sign-in |
 | `PUBLIC_BASE_URL` | Public origin for OAuth, webhooks, and secure cookies |
+| `GITHUB_OAUTH_CLIENT_ID` | GitHub sign-in application identifier |
+| `GITHUB_OAUTH_CLIENT_SECRET` | Current GitHub sign-in secret |
+| `GITHUB_OAUTH_CLIENT_SECRET_PREVIOUS` | Previous GitHub OAuth secret retained during a provider-supported rotation window |
+| `DISCORD_OAUTH_CLIENT_ID` | Discord sign-in application identifier |
+| `DISCORD_OAUTH_CLIENT_SECRET` | Current Discord sign-in secret |
+| `DISCORD_OAUTH_CLIENT_SECRET_PREVIOUS` | Previous Discord OAuth secret retained during a provider-supported rotation window |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` | SMTP credentials and server used for optional email notifications |
+| `SMTP_PASS_PREVIOUS` | Previous SMTP password used only after a permanent authentication rejection |
 | `OUTBOUND_WEBHOOK_SECRET` | HMAC key for signing outgoing notification webhooks |
 | `OUTBOUND_WEBHOOK_SECRET_PREVIOUS` | Previous HMAC key used during outbound webhook key rotation |
 | `DEVICE_SSH_KEY_PATH` | Runtime path to the key used only by the `ipadecrypt` compatibility channel |
@@ -76,6 +84,8 @@ Copy `.env.example` to `.env` and configure the required values. The important r
 The Bun API runs as an unprivileged service account; the USB bridge retains root access for direct device transport, with a small root supervisor managing both processes. Startup migrates existing state and artifact volume permissions once, keeps pairing records root-only, and exposes the SSH key to the API through a read-only group-readable copy in tmpfs. Keep `.env`, pairing material, and SSH private keys out of Git. Use an HTTPS reverse proxy when exposing the dashboard beyond localhost.
 
 Outgoing notification webhooks include `X-Dkrypt-Event`, `X-Dkrypt-Timestamp`, and `X-Dkrypt-Signature`. The signature is `sha256=` followed by the HMAC-SHA256 hex digest of `<timestamp>.<raw JSON body>`. During rotation, set `OUTBOUND_WEBHOOK_SECRET` to the new key and `OUTBOUND_WEBHOOK_SECRET_PREVIOUS` to the old key; dkrypt sends the old-key signature in `X-Dkrypt-Signature-Previous` over the same timestamp and body. Configure receivers to accept either signature, reject stale timestamps, and compare signatures in constant time. Remove the previous key after every receiver accepts the current key.
+
+For SMTP rotation, set `SMTP_PASS` to the new password and `SMTP_PASS_PREVIOUS` to the old one. Email delivery tries the previous password only when the server definitively rejects the current password with SMTP 535; network and temporary SMTP failures are not retried with another credential. Successful fallback is logged without including either password. Remove the previous password after confirming current-credential delivery. GitHub and Discord OAuth callbacks similarly try their previous client secret only for the provider's explicit invalid-client-secret response, never for an invalid authorization code or network error. Keep previous OAuth secrets only while the provider still accepts them; some providers invalidate a secret immediately when it is regenerated.
 
 The SQLite database uses WAL mode, foreign keys, migration checksums, integrity checks, and an atomic pre-migration backup. Startup fails closed when the database or migration checksums are invalid. The dashboard doctor is available to managers at `/v1/dashboard/doctor`.
 

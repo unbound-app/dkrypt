@@ -61,8 +61,10 @@ export const config = {
 
   githubOauthClientId: optional('GITHUB_OAUTH_CLIENT_ID', ''),
   githubOauthClientSecret: optional('GITHUB_OAUTH_CLIENT_SECRET', ''),
+  githubOauthClientSecretPrevious: optional('GITHUB_OAUTH_CLIENT_SECRET_PREVIOUS', ''),
   discordOauthClientId: optional('DISCORD_OAUTH_CLIENT_ID', ''),
   discordOauthClientSecret: optional('DISCORD_OAUTH_CLIENT_SECRET', ''),
+  discordOauthClientSecretPrevious: optional('DISCORD_OAUTH_CLIENT_SECRET_PREVIOUS', ''),
   discordBotToken: optional('DISCORD_BOT_TOKEN', ''),
 
   stripeSecretKey: optional('STRIPE_SECRET_KEY', ''),
@@ -136,12 +138,27 @@ export const config = {
   smtpPort: optionalInt('SMTP_PORT', 587),
   smtpUser: optional('SMTP_USER', ''),
   smtpPass: optional('SMTP_PASS', ''),
+  smtpPassPrevious: optional('SMTP_PASS_PREVIOUS', ''),
   smtpFrom: optional('SMTP_FROM', 'dkrypt <dkrypt@dylib.dev>'),
 };
 
 export const githubOauthEnabled = config.githubOauthClientId !== '' && config.githubOauthClientSecret !== '';
+
+export function isGithubOauthEnabled(): boolean {
+  return config.githubOauthClientId !== '' && config.githubOauthClientSecret !== '';
+}
+
 export const discordOauthEnabled = config.discordOauthClientId !== '' && config.discordOauthClientSecret !== '';
+
+export function isDiscordOauthEnabled(): boolean {
+  return config.discordOauthClientId !== '' && config.discordOauthClientSecret !== '';
+}
+
 export const discordBotEnabled = config.discordBotToken !== '';
+
+export function isDiscordBotEnabled(): boolean {
+  return config.discordBotToken !== '';
+}
 export const stripeEnvironment = config.stripeSecretKey.startsWith('sk_live_') || config.stripeSecretKey.startsWith('rk_live_') ? 'live' : 'test';
 const stripeRequirements = [
   ['STRIPE_SECRET_KEY', config.stripeSecretKey],
@@ -167,3 +184,7 @@ export const nowpaymentsMissingConfiguration = nowpaymentsRequirements
 export const nowpaymentsConfigured = nowpaymentsMissingConfiguration.length === 0;
 export const cryptoBillingEnabled = config.cryptoBillingEnabled && nowpaymentsConfigured;
 export const emailEnabled = config.smtpHost !== '' && config.smtpUser !== '' && config.smtpPass !== '';
+
+export function isEmailEnabled(): boolean {
+  return config.smtpHost !== '' && config.smtpUser !== '' && config.smtpPass !== '';
+}

@@ -69,6 +69,9 @@ export async function runConfigurationDoctor(): Promise<{ ok: boolean; checkedAt
   checks.push(rotationCheck('stripe-webhook-rotation', config.stripeWebhookSecret, config.stripeWebhookSecretPrevious, 16));
   checks.push(rotationCheck('crypto-webhook-rotation', config.nowpaymentsIpnSecret, config.nowpaymentsIpnSecretPrevious, 16));
   checks.push(rotationCheck('outbound-webhook-rotation', config.outboundWebhookSecret, config.outboundWebhookSecretPrevious, 16));
+  checks.push(rotationCheck('github-oauth-secret-rotation', config.githubOauthClientSecret, config.githubOauthClientSecretPrevious, 16));
+  checks.push(rotationCheck('discord-oauth-secret-rotation', config.discordOauthClientSecret, config.discordOauthClientSecretPrevious, 16));
+  checks.push(rotationCheck('smtp-secret-rotation', config.smtpPass, config.smtpPassPrevious, 1));
   checks.push({ id: 'pairing-store', status: existsSync(config.devicePairingStore) ? 'ok' : 'warn', detail: existsSync(config.devicePairingStore) ? 'Device pairing store exists' : 'Device pairing store will be created on first bridge start' });
   const otelSignals = [
     config.otelExporterOtlpEndpoint || config.otelExporterOtlpTracesEndpoint ? 'traces' : undefined,

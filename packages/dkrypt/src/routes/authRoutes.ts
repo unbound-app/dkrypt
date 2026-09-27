@@ -14,7 +14,7 @@ import {
 } from '#authContracts.js';
 import { linkOauthAccount, resolveOauthAccount } from '#account.js';
 import { getRouteContract } from '#contracts.js';
-import { config, discordBotEnabled, discordOauthEnabled, githubOauthEnabled } from '#config.js';
+import { config, isDiscordBotEnabled, isDiscordOauthEnabled, isGithubOauthEnabled } from '#config.js';
 import { fetchMemberRoleIds } from '#discord.js';
 import {
   type AuthIdentity,
@@ -139,8 +139,8 @@ export const authRoutes: FastifyPluginAsyncTypebox = async (server) => {
       linkedProviders: session ? getLinkedAuthProviders(session.sub) : [],
       permissions: session ? serializeBits(session.permissions) : undefined,
       expiresAt: session?.exp,
-      githubOauthEnabled,
-      discordOauthEnabled,
+      githubOauthEnabled: isGithubOauthEnabled(),
+      discordOauthEnabled: isDiscordOauthEnabled(),
       deployment: { ref: getDeploymentMetadata().ref },
       publicBaseUrl: config.publicBaseUrl,
       mfa: session ? { ...mfaStatus(session.sub), required: !session.mfaVerified } : undefined,
@@ -420,8 +420,8 @@ export const authRoutes: FastifyPluginAsyncTypebox = async (server) => {
 type OAuthProvider = 'github' | 'discord';
 
 interface OAuthProviderConfig {
-  enabled: boolean;
-  clientId: string;
+  enabled: () => boolean;
+  clientId: () => string;
   callbackPath: string;
   authorizationUrl: string;
   scope: string;
@@ -431,16 +431,16 @@ interface OAuthProviderConfig {
 
 const oauthProviders: Record<OAuthProvider, OAuthProviderConfig> = {
   github: {
-    enabled: githubOauthEnabled,
-    clientId: config.githubOauthClientId,
+    enabled: isGithubOauthEnabled,
+    clientId: () => config.githubOauthClientId,
     callbackPath: '/v1/auth/github/callback',
     authorizationUrl: 'https://github.com/login/oauth/authorize',
     scope: 'read:user user:email',
     stateCookieName: 'github_oauth_state',
   },
   discord: {
-    enabled: discordOauthEnabled,
-    clientId: config.discordOauthClientId,
+    enabled: isDiscordOauthEnabled,
+    clientId: () => config.discordOauthClientId,
     callbackPath: '/v1/auth/discord/callback',
     authorizationUrl: 'https://discord.com/oauth2/authorize',
     scope: 'identify email connections',
@@ -450,6 +450,11 @@ const oauthProviders: Record<OAuthProvider, OAuthProviderConfig> = {
 };
 
 const oauthConnections = new Map<string, { provider: OAuthProvider; userId?: string; codeVerifier: string; expiresAt: number }>();
+
+interface OAuthTokenResponse {
+  access_token?: string;
+  error?: string;
+}
 
 function oauthCookie(name: string, value: string, maxAge: number): string {
   const secure = config.publicBaseUrl.startsWith('https://') ? '; Secure' : '';
@@ -485,14 +490,14 @@ setInterval(() => {
 
 function startOAuthLogin(request: FastifyRequest, reply: FastifyReply, provider: OAuthProvider, userId?: string): void {
   const providerConfig = oauthProviders[provider];
-  if (!providerConfig.enabled) {
+  if (!providerConfig.enabled()) {
     sendValidationError(request, reply, 404, `${provider === 'github' ? 'GitHub' : 'Discord'} OAuth is not configured`);
     return;
   }
   const { state, codeVerifier } = createOauthState(provider, userId);
   reply.header('Set-Cookie', oauthCookie(providerConfig.stateCookieName, state, 600));
   const url = new URL(providerConfig.authorizationUrl);
-  url.searchParams.set('client_id', providerConfig.clientId);
+  url.searchParams.set('client_id', providerConfig.clientId());
   url.searchParams.set('redirect_uri', `${config.publicBaseUrl}${providerConfig.callbackPath}`);
   if (providerConfig.responseType) url.searchParams.set('response_type', providerConfig.responseType);
   url.searchParams.set('scope', providerConfig.scope);
@@ -500,6 +505,56 @@ function startOAuthLogin(request: FastifyRequest, reply: FastifyReply, provider:
   url.searchParams.set('code_challenge', createHash('sha256').update(codeVerifier).digest('base64url'));
   url.searchParams.set('code_challenge_method', 'S256');
   reply.redirect(url.toString());
+}
+
+async function exchangeGithubCode(code: string, codeVerifier?: string): Promise<OAuthTokenResponse> {
+  const currentSecret = config.githubOauthClientSecret;
+  const previousSecret = config.githubOauthClientSecretPrevious;
+  const exchange = async (clientSecret: string) => {
+    const response = await fetch('https://github.com/login/oauth/access_token', {
+      method: 'POST',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_id: config.githubOauthClientId,
+        client_secret: clientSecret,
+        code,
+        redirect_uri: `${config.publicBaseUrl}/v1/auth/github/callback`,
+        code_verifier: codeVerifier,
+      }),
+    });
+    return (await response.json()) as OAuthTokenResponse;
+  };
+  const token = await exchange(currentSecret);
+  if (token.error !== 'incorrect_client_credentials' || currentSecret.length < 16 || previousSecret.length < 16 || previousSecret === currentSecret) return token;
+  const previousToken = await exchange(previousSecret);
+  if (previousToken.access_token) log.warn('github OAuth token exchange used previous client secret');
+  return previousToken;
+}
+
+async function exchangeDiscordCode(code: string, redirectUri: string, codeVerifier: string): Promise<OAuthTokenResponse> {
+  const currentSecret = config.discordOauthClientSecret;
+  const previousSecret = config.discordOauthClientSecretPrevious;
+  const exchange = async (clientSecret: string) => {
+    const body = new URLSearchParams({
+      client_id: config.discordOauthClientId,
+      client_secret: clientSecret,
+      grant_type: 'authorization_code',
+      code,
+      redirect_uri: redirectUri,
+      code_verifier: codeVerifier,
+    });
+    const response = await fetch('https://discord.com/api/v10/oauth2/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+    });
+    return (await response.json()) as OAuthTokenResponse;
+  };
+  const token = await exchange(currentSecret);
+  if (token.error !== 'invalid_client' || currentSecret.length < 16 || previousSecret.length < 16 || previousSecret === currentSecret) return token;
+  const previousToken = await exchange(previousSecret);
+  if (previousToken.access_token) log.warn('discord OAuth token exchange used previous client secret');
+  return previousToken;
 }
 
 function registerOAuthRoutes(server: Parameters<FastifyPluginAsyncTypebox>[0]): void {
@@ -519,7 +574,7 @@ function registerOAuthRoutes(server: Parameters<FastifyPluginAsyncTypebox>[0]): 
   server.get<AuthOAuthCallbackRoute>('/v1/auth/github/callback', {
     schema: getRouteContract('GET', '/v1/auth/github/callback'),
   }, async (request, reply) => {
-    if (!githubOauthEnabled) return reply.redirect('/?auth_error=disabled');
+    if (!isGithubOauthEnabled()) return reply.redirect('/?auth_error=disabled');
     const code = request.query.code ?? '';
     const state = request.query.state ?? '';
     const cookieState = parseCookieHeader(request.headers.cookie)[oauthProviders.github.stateCookieName];
@@ -531,18 +586,7 @@ function registerOAuthRoutes(server: Parameters<FastifyPluginAsyncTypebox>[0]): 
     const oauthConnection = consumeOauthConnection('github', state);
     const linkUserId = oauthConnection?.userId;
     try {
-      const tokenRes = await fetch('https://github.com/login/oauth/access_token', {
-        method: 'POST',
-        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          client_id: config.githubOauthClientId,
-          client_secret: config.githubOauthClientSecret,
-          code,
-          redirect_uri: `${config.publicBaseUrl}/v1/auth/github/callback`,
-          code_verifier: oauthConnection?.codeVerifier,
-        }),
-      });
-      const tokenBody = (await tokenRes.json()) as { access_token?: string; error?: string };
+      const tokenBody = await exchangeGithubCode(code, oauthConnection?.codeVerifier);
       if (!tokenBody.access_token) throw new Error(tokenBody.error ?? 'no access_token in response');
       const userRes = await fetch('https://api.github.com/user', {
         headers: { Authorization: `Bearer ${tokenBody.access_token}`, Accept: 'application/vnd.github+json' },
@@ -605,7 +649,7 @@ function registerOAuthRoutes(server: Parameters<FastifyPluginAsyncTypebox>[0]): 
   server.get<AuthOAuthCallbackRoute>('/v1/auth/discord/callback', {
     schema: getRouteContract('GET', '/v1/auth/discord/callback'),
   }, async (request, reply) => {
-    if (!discordOauthEnabled) return reply.redirect('/?auth_error=discord_disabled');
+    if (!isDiscordOauthEnabled()) return reply.redirect('/?auth_error=discord_disabled');
     const code = request.query.code ?? '';
     const state = request.query.state ?? '';
     const cookieState = parseCookieHeader(request.headers.cookie)[oauthProviders.discord.stateCookieName];
@@ -618,20 +662,7 @@ function registerOAuthRoutes(server: Parameters<FastifyPluginAsyncTypebox>[0]): 
     const linkUserId = oauthConnection?.userId;
     try {
       const redirectUri = `${config.publicBaseUrl}/v1/auth/discord/callback`;
-      const tokenBody = new URLSearchParams({
-        client_id: config.discordOauthClientId,
-        client_secret: config.discordOauthClientSecret,
-        grant_type: 'authorization_code',
-        code,
-        redirect_uri: redirectUri,
-        code_verifier: oauthConnection?.codeVerifier ?? '',
-      });
-      const tokenRes = await fetch('https://discord.com/api/v10/oauth2/token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: tokenBody,
-      });
-      const token = (await tokenRes.json()) as { access_token?: string; error?: string };
+      const token = await exchangeDiscordCode(code, redirectUri, oauthConnection?.codeVerifier ?? '');
       if (!token.access_token) throw new Error(token.error ?? 'no access_token in response');
       const userRes = await fetch('https://discord.com/api/v10/users/@me', {
         headers: { Authorization: `Bearer ${token.access_token}` },
@@ -677,7 +708,7 @@ function registerOAuthRoutes(server: Parameters<FastifyPluginAsyncTypebox>[0]): 
         : resolveOauthAccount({ fallbackUserId: oauthUserId('discord', user.id, `discord:${user.username}`), identity, discoveredIdentities });
       const userId = profile.userId;
       const guildIds = getDiscordGuildIds();
-      if (discordBotEnabled && guildIds.length > 0) {
+      if (isDiscordBotEnabled() && guildIds.length > 0) {
         syncDiscordPerkRoles(userId, await Promise.all(guildIds.map(async (guildId) => ({ guildId, roleIds: await fetchMemberRoleIds(guildId, user.id) }))));
       }
       const permissions = getUserEffectivePermissions(userId) ?? 0n;

@@ -32,3 +32,47 @@ test('configuration doctor rejects an outbound rotation with no active signing k
     config.outboundWebhookSecretPrevious = previousSecret;
   }
 });
+
+test('configuration doctor validates SMTP and OAuth secret rotations', async () => {
+  const previous = {
+    smtpPass: config.smtpPass,
+    smtpPassPrevious: config.smtpPassPrevious,
+    githubSecret: config.githubOauthClientSecret,
+    githubSecretPrevious: config.githubOauthClientSecretPrevious,
+    discordSecret: config.discordOauthClientSecret,
+    discordSecretPrevious: config.discordOauthClientSecretPrevious,
+  };
+  config.smtpPass = '';
+  config.smtpPassPrevious = 'previous-smtp-password';
+  config.githubOauthClientSecret = 'current-github-client-secret-123';
+  config.githubOauthClientSecretPrevious = 'short';
+  config.discordOauthClientSecret = 'current-discord-client-secret-123';
+  config.discordOauthClientSecretPrevious = config.discordOauthClientSecret;
+
+  try {
+    const result = await runConfigurationDoctor();
+    const checks = new Map(result.checks.map((check) => [check.id, check]));
+
+    expect(checks.get('smtp-secret-rotation')).toMatchObject({ status: 'error' });
+    expect(checks.get('github-oauth-secret-rotation')).toMatchObject({ status: 'error' });
+    expect(checks.get('discord-oauth-secret-rotation')).toMatchObject({ status: 'error' });
+
+    config.smtpPass = 'current-smtp-password';
+    config.smtpPassPrevious = 'previous-smtp-password';
+    config.githubOauthClientSecretPrevious = 'previous-github-client-secret-456';
+    config.discordOauthClientSecretPrevious = 'previous-discord-client-secret-456';
+    const validResult = await runConfigurationDoctor();
+    const validChecks = new Map(validResult.checks.map((check) => [check.id, check]));
+
+    expect(validChecks.get('smtp-secret-rotation')).toMatchObject({ status: 'ok' });
+    expect(validChecks.get('github-oauth-secret-rotation')).toMatchObject({ status: 'ok' });
+    expect(validChecks.get('discord-oauth-secret-rotation')).toMatchObject({ status: 'ok' });
+  } finally {
+    config.smtpPass = previous.smtpPass;
+    config.smtpPassPrevious = previous.smtpPassPrevious;
+    config.githubOauthClientSecret = previous.githubSecret;
+    config.githubOauthClientSecretPrevious = previous.githubSecretPrevious;
+    config.discordOauthClientSecret = previous.discordSecret;
+    config.discordOauthClientSecretPrevious = previous.discordSecretPrevious;
+  }
+});

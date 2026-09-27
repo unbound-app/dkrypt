@@ -1,5 +1,5 @@
 import nodemailer, { type Transporter } from 'nodemailer';
-import { config, emailEnabled } from '#config.js';
+import { config, isEmailEnabled } from '#config.js';
 import { trackBackgroundWork } from '#backgroundWork.js';
 import { getAuthProfile, listAuthProfiles } from '#identity.js';
 import { scopedLogger } from '#logger.js';
@@ -7,19 +7,69 @@ import { getUserPrefs } from '#store/state.js';
 
 const log = scopedLogger('mail');
 
-let transporter: Transporter | undefined;
+interface TransporterCache {
+  host: string;
+  port: number;
+  user: string;
+  currentPassword: string;
+  previousPassword: string;
+  current?: Transporter;
+  previous?: Transporter;
+}
 
-function getTransporter(): Transporter | undefined {
-  if (!emailEnabled) return undefined;
-  if (!transporter) {
-    transporter = nodemailer.createTransport({
+let transporterCache: TransporterCache | undefined;
+
+function getTransporter(password: string, slot: 'current' | 'previous'): Transporter | undefined {
+  if (!isEmailEnabled()) return undefined;
+  if (
+    !transporterCache ||
+    transporterCache.host !== config.smtpHost ||
+    transporterCache.port !== config.smtpPort ||
+    transporterCache.user !== config.smtpUser ||
+    transporterCache.currentPassword !== config.smtpPass ||
+    transporterCache.previousPassword !== config.smtpPassPrevious
+  ) {
+    transporterCache = {
+      host: config.smtpHost,
+      port: config.smtpPort,
+      user: config.smtpUser,
+      currentPassword: config.smtpPass,
+      previousPassword: config.smtpPassPrevious,
+    };
+  }
+  if (!transporterCache[slot]) {
+    transporterCache[slot] = nodemailer.createTransport({
       host: config.smtpHost,
       port: config.smtpPort,
       secure: config.smtpPort === 465,
-      auth: { user: config.smtpUser, pass: config.smtpPass },
+      auth: { user: config.smtpUser, pass: password },
     });
   }
-  return transporter;
+  return transporterCache[slot];
+}
+
+function isPermanentSmtpAuthenticationFailure(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const smtpError = error as { code?: unknown; responseCode?: unknown };
+  return smtpError.code === 'EAUTH' && smtpError.responseCode === 535;
+}
+
+async function sendMail(message: { from: string; to: string; subject: string; text: string }, userId: string): Promise<void> {
+  const currentTransporter = getTransporter(config.smtpPass, 'current');
+  if (!currentTransporter) return;
+  try {
+    await currentTransporter.sendMail(message);
+  } catch (error) {
+    if (
+      !config.smtpPassPrevious ||
+      config.smtpPassPrevious === config.smtpPass ||
+      !isPermanentSmtpAuthenticationFailure(error)
+    ) throw error;
+    const previousTransporter = getTransporter(config.smtpPassPrevious, 'previous');
+    if (!previousTransporter) throw error;
+    await previousTransporter.sendMail(message);
+    log.warn('mail delivered with previous SMTP credential', { userId });
+  }
 }
 
 export interface MailPayload {
@@ -37,14 +87,13 @@ export function sendMailToUser(userId: string, payload: MailPayload): Promise<vo
 }
 
 async function deliverMailToUser(userId: string, payload: MailPayload): Promise<void> {
-  const t = getTransporter();
-  if (!t) return;
+  if (!isEmailEnabled()) return;
 
   const email = resolveNotifyEmail(userId);
   if (!email) return;
 
   try {
-    await t.sendMail({ from: config.smtpFrom, to: email, subject: payload.subject, text: payload.text });
+    await sendMail({ from: config.smtpFrom, to: email, subject: payload.subject, text: payload.text }, userId);
   } catch (err) {
     log.warn('mail send failed', { userId, error: String(err) });
   }
@@ -62,7 +111,7 @@ export function sendMailToAllSubscribed(payload: MailPayload, category: MailCate
 }
 
 async function deliverMailToAllSubscribed(payload: MailPayload, category: MailCategory): Promise<void> {
-  if (!emailEnabled) return;
+  if (!isEmailEnabled()) return;
   const prefKey = CATEGORY_PREF_KEY[category];
   const recipients = listAuthProfiles().filter((profile) => resolveNotifyEmail(profile.userId) && (getUserPrefs(profile.userId)[prefKey] ?? false));
   await Promise.all(recipients.map((profile) => sendMailToUser(profile.userId, payload)));
