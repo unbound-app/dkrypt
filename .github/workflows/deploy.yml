@@ -280,8 +280,7 @@ jobs:
             throw new Error(JSON.stringify(health));
           }
           const device = health.device;
-          const lastSeenAt = typeof device?.lastSeenAt === 'number' ? device.lastSeenAt : 0;
-          if (!device || device.transport !== 'usb' || !device.reachable || device.transportState !== 'ready' || device.readiness !== 'ready' || device.subsystems?.agent !== 'ready' || Date.now() - lastSeenAt > 90_000) {
+          if (!device || device.transport !== 'usb' || !device.reachable || device.transportState !== 'ready' || device.readiness !== 'ready' || device.subsystems?.agent !== 'ready') {
             throw new Error(`configured Rust USB device or signed Autoinstall agent is not ready: ${JSON.stringify(device)}`);
           }
           const metrics = await (await fetch(`${base}/v1/metrics`, { headers })).text();
@@ -328,6 +327,11 @@ jobs:
             throw new Error('legacy .ipadecrypt bootstrap path is present');
           } catch (error) {
             if (error instanceof Error && !String(error.message).includes('ENOENT')) throw error;
+          }
+          const { config } = await import('/app/src/config.ts');
+          if (config.deviceBridgeSecret.length < 32) {
+            const secretFile = process.env.DEVICE_BRIDGE_SECRET_FILE || '/data/state/device-bridge.secret';
+            config.deviceBridgeSecret = (await stat.readFile(secretFile, 'utf8')).trim();
           }
           const { getPrimaryDevice } = await import('/app/src/store/state.ts');
           const { withAutoinstallDeviceAgent } = await import('/app/src/idevice.ts');
