@@ -248,7 +248,7 @@
 			</span>
 		{/if}
 	{/snippet}
-	<div class="scroll-fade-x overflow-x-auto" use:scrollFade>
+	<div class="scroll-fade-x overflow-x-auto" use:scrollFade role="region" aria-label="Active jobs table scroll area" tabindex="0">
 		<table class="responsive-table min-w-[860px]">
 			<thead>
 				<tr>

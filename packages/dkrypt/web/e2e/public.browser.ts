@@ -251,10 +251,18 @@ test('populated device management and preflight dialog meet accessibility checks
   await page.route('**/v1/dashboard/devices/test-device/health*', async (route) => {
     await route.fulfill({ contentType: 'application/json', body: JSON.stringify(health) });
   });
+  const activityEntries = Array.from({ length: 100 }, (_, index) => ({
+    id: `activity-${index}`,
+    ts: Date.now() - index * 60_000,
+    deviceId: device.id,
+    kind: 'health',
+    message: `Device activity ${String(index).padStart(3, '0')}`,
+  }));
   await page.route('**/v1/dashboard/devices/test-device/activity*', async (route) => {
+    const cursor = new URL(route.request().url()).searchParams.get('cursor');
     await route.fulfill({
       contentType: 'application/json',
-      body: JSON.stringify({ activity: [{ id: 'activity-1', ts: Date.now(), deviceId: device.id, kind: 'health', message: 'Connected over USB' }], total: 1 }),
+      body: JSON.stringify({ activity: cursor ? activityEntries.slice(50) : activityEntries.slice(0, 50), total: activityEntries.length, nextCursor: cursor ? undefined : 'activity-older' }),
     });
   });
   await page.route('**/v1/dashboard/devices/test-device/preflight', async (route) => {
@@ -271,6 +279,15 @@ test('populated device management and preflight dialog meet accessibility checks
   await page.goto('/?tab=settings&stab=devices');
   await expect(page.getByText('Lab iPad', { exact: true })).toBeVisible();
   await expect(page.getByText('online', { exact: true })).toBeVisible();
+  const activityList = page.getByRole('list', { name: 'Lab iPad activity' });
+  const activityViewport = page.getByRole('region', { name: 'Lab iPad activity scroll area' });
+  await expect(activityList.getByRole('listitem').first()).toContainText('Device activity 000');
+  await expect.poll(() => activityList.getByRole('listitem').count()).toBeLessThan(40);
+  await page.getByRole('button', { name: 'Load older (50)' }).click();
+  await expect(activityList.getByRole('listitem').first()).toHaveAttribute('aria-setsize', '100');
+  await expect.poll(() => activityViewport.evaluate((element) => element.scrollHeight)).toBeGreaterThan(2000);
+  await activityViewport.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  await expect(activityList.getByText('Device activity 099')).toBeVisible();
   await expectAccessible(page);
 
   await page.getByRole('button', { name: 'Preflight' }).click();
@@ -282,31 +299,32 @@ test('populated device management and preflight dialog meet accessibility checks
 test('IPA Library reveals artifact provenance and decrypt warnings on demand', async ({ page }) => {
   const sha256 = 'a'.repeat(64);
   const warning = 'Payload/Example.app/Extensions/Share.appex/Share still encrypted (cryptid != 0)';
+  const artifacts = Array.from({ length: 100 }, (_, index) => ({
+    id: `artifact-${index}`,
+    key: `com.example.provenance${index ? `.${index}` : ''}:appstore:${123 + index}`,
+    projectIds: ['default'],
+    bundleId: `com.example.provenance${index ? `.${index}` : ''}`,
+    channel: 'appstore',
+    versionLabel: '2.4.0',
+    buildNumber: `${240 + index}`,
+    fileSizeBytes: 1024 * 1024,
+    sha256,
+    createdAt: '2026-09-25T12:00:00.000Z',
+    lastAccessedAt: '2026-09-25T13:00:00.000Z',
+    accessCount: 3,
+    sourceJobId: `job-provenance-${index}`,
+    warnings: index === 0 ? [warning] : [],
+    fileUrl: `/v1/dashboard/artifacts/artifact-${index}/file`,
+  }));
 
   await mockAuthenticatedDashboard(page, '1');
   await page.route('**/v1/dashboard/artifacts*', async (route) => {
     await route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify({
-        artifacts: [{
-          id: 'artifact-1',
-          key: 'com.example.provenance:appstore:123',
-          projectIds: ['default'],
-          bundleId: 'com.example.provenance',
-          channel: 'appstore',
-          versionLabel: '2.4.0',
-          buildNumber: '240',
-          fileSizeBytes: 1024 * 1024,
-          sha256,
-          createdAt: '2026-09-25T12:00:00.000Z',
-          lastAccessedAt: '2026-09-25T13:00:00.000Z',
-          accessCount: 3,
-          sourceJobId: 'job-provenance-1',
-          warnings: [warning],
-          fileUrl: '/v1/dashboard/artifacts/artifact-1/file',
-        }],
-        total: 1,
-        totalBytes: 1024 * 1024,
+        artifacts,
+        total: artifacts.length,
+        totalBytes: artifacts.length * 1024 * 1024,
         maxBytes: 1024 * 1024 * 10,
       }),
     });
@@ -317,16 +335,58 @@ test('IPA Library reveals artifact provenance and decrypt warnings on demand', a
   const artifactResponse = page.waitForResponse((response) => response.url().includes('/v1/dashboard/artifacts?') && response.ok());
   await page.goto('/');
   await artifactResponse;
-  const artifact = page.locator('article').filter({ hasText: 'com.example.provenance' });
+  const list = page.getByRole('list', { name: 'IPA library artifacts' });
+  const viewport = page.getByRole('region', { name: 'IPA library artifacts scroll area' });
+  const artifact = list.getByRole('listitem').filter({ hasText: 'com.example.provenance' }).first();
   await expect(artifact).toBeVisible();
+  await expect.poll(() => list.getByRole('listitem').count()).toBeLessThan(60);
   const details = artifact.locator('summary').filter({ hasText: 'Artifact details' });
   await expect(details).toBeVisible();
   await expect(artifact.getByText(sha256, { exact: true })).not.toBeVisible();
 
   await details.click();
   await expect(artifact.getByText(sha256, { exact: true })).toBeVisible();
-  await expect(artifact.getByText('job-provenance-1', { exact: true })).toBeVisible();
+  await expect(artifact.getByText('job-provenance-0', { exact: true })).toBeVisible();
   await expect(artifact.getByText(warning, { exact: true })).toBeVisible();
+  await viewport.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  await expect(list.getByText('com.example.provenance.99', { exact: true }).first()).toBeVisible();
+  await viewport.evaluate((element) => { element.scrollTop = 0; });
+  await expect(artifact.getByText(sha256, { exact: true })).toBeVisible();
+});
+
+test('audit history virtualizes entries without losing older records', async ({ page }) => {
+  await mockStableDashboardEvents(page);
+  await mockAuthenticatedDashboard(page, '135168');
+  const entries = Array.from({ length: 100 }, (_, index) => ({
+    id: `audit-${index}`,
+    ts: Date.now() - index * 60_000,
+    actor: `manager-${index}`,
+    action: 'user.add',
+    target: `member-${index}`,
+    detail: `Granted access ${String(index).padStart(3, '0')}`,
+  }));
+  await page.route('**/v1/dashboard/users', async (route) => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ users: [] }) });
+  });
+  await page.route('**/v1/dashboard/roles', async (route) => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ roles: [] }) });
+  });
+  await page.route('**/v1/dashboard/audit-log*', async (route) => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ entries, total: entries.length }) });
+  });
+
+  await page.goto('/?tab=settings&stab=users');
+
+  const list = page.getByRole('list', { name: 'Audit log entries' });
+  const viewport = page.getByRole('region', { name: 'Audit log entries scroll area' });
+  await expect(list.getByRole('listitem').first()).toContainText('Granted access 000');
+  await expect(list.getByRole('listitem').first()).toHaveAttribute('aria-posinset', '1');
+  await expect(list.getByRole('listitem').first()).toHaveAttribute('aria-setsize', '100');
+  await expect.poll(() => list.getByRole('listitem').count()).toBeLessThan(60);
+
+  await viewport.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  await expect(list.getByText('member-99', { exact: true })).toBeVisible();
+  await expectAccessible(page);
 });
 
 test('bulk retry queues only failures, continues after an error, and exports per-job results', async ({ page }) => {
@@ -545,5 +605,131 @@ test('TestFlight catalog refresh failures offer a retry instead of an empty-stat
   await page.getByRole('button', { name: 'Retry TestFlight availability' }).click();
   await expect(page.getByText('No TestFlight apps yet.')).toBeVisible();
   await expect.poll(() => catalogCalls).toBeGreaterThanOrEqual(2);
+  await expectAccessible(page);
+});
+
+test('operational logs render a small accessible window and older rows remain reachable by scrolling', async ({ page }) => {
+  await mockStableDashboardEvents(page);
+  await mockAuthenticatedDashboard(page, '2048');
+  const logs = Array.from({ length: 100 }, (_, index) => ({
+    id: `virtual-log-${index}`,
+    ts: Date.now() - index * 1_000,
+    level: 'info',
+    scope: 'scheduler',
+    message: `virtual log entry ${String(index).padStart(3, '0')}`,
+    meta: { index },
+  }));
+  await page.route('**/v1/dashboard/logs*', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ logs, total: logs.length }),
+    });
+  });
+
+  await page.goto('/?tab=logs');
+
+  const list = page.getByRole('list', { name: 'Operational log entries' });
+  const viewport = page.getByRole('region', { name: 'Operational log entries scroll area' });
+  await expect(list.getByRole('listitem').first()).toContainText('virtual log entry 000');
+  await expect(list.getByRole('listitem').first()).toHaveAttribute('aria-posinset', '1');
+  await expect(list.getByRole('listitem').first()).toHaveAttribute('aria-setsize', '100');
+  await expect.poll(() => list.getByRole('listitem').count()).toBeLessThan(60);
+
+  await viewport.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  await expect(list.getByText('virtual log entry 099')).toBeVisible();
+  await expect(list.getByRole('listitem').last()).toHaveAttribute('aria-posinset', '100');
+  await expectAccessible(page);
+});
+
+test('dashboard notifications virtualize older entries while keeping them scrollable', async ({ page }) => {
+  await mockStableDashboardEvents(page);
+  await mockAuthenticatedDashboard(page, '2048');
+  const notifications = Array.from({ length: 100 }, (_, index) => ({
+    id: `virtual-notification-${index}`,
+    title: `History notification ${String(index).padStart(3, '0')}`,
+    message: 'This notification remains available in the account history.',
+    severity: 'info',
+    createdAt: Date.now() - index * 1_000,
+    readAt: Date.now(),
+  }));
+  let notificationRequests = 0;
+  await page.route('**/v1/dashboard/notifications*', async (route) => {
+    notificationRequests += 1;
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ notifications, unread: 0, total: notifications.length }),
+    });
+  });
+
+  await page.goto('/?tab=home');
+  await page.getByRole('button', { name: 'Notifications' }).click();
+  await expect.poll(() => notificationRequests).toBeGreaterThan(0);
+
+  const list = page.getByRole('list', { name: 'Dashboard notifications' });
+  const viewport = page.getByRole('region', { name: 'Dashboard notifications scroll area' });
+  await expect(list.getByRole('listitem').first()).toContainText('History notification 000');
+  await expect(list.getByRole('listitem').first()).toHaveAttribute('aria-posinset', '1');
+  await expect(list.getByRole('listitem').first()).toHaveAttribute('aria-setsize', '100');
+  await expect.poll(() => list.getByRole('listitem').count()).toBeLessThan(60);
+
+  await viewport.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  await expect(list.getByText('History notification 099')).toBeVisible();
+  await expect(list.getByRole('listitem').last()).toHaveAttribute('aria-posinset', '100');
+  await expectAccessible(page);
+});
+
+test('job history stays virtualized as older cursor pages are loaded', async ({ page }) => {
+  await mockStableDashboardEvents(page);
+  await mockAuthenticatedDashboard(page, '2');
+  const finishedAt = Date.now() - 60_000;
+  const entries = Array.from({ length: 100 }, (_, index) => ({
+    id: `history-${index}`,
+    bundleId: `com.example.history.${String(index).padStart(3, '0')}`,
+    status: 'done',
+    source: 'manual',
+    createdAt: finishedAt - 5_000,
+    finishedAt,
+    fileAvailable: false,
+  }));
+  await page.route('**/v1/dashboard/jobs?*', async (route) => {
+    const url = new URL(route.request().url());
+    const cursor = url.searchParams.get('cursor');
+    const start = cursor ? Number(cursor.replace('history-', '')) : 0;
+    const history = entries.slice(start, start + 15);
+    const nextStart = start + history.length;
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        history,
+        total: entries.length,
+        nextCursor: nextStart < entries.length ? `history-${nextStart}` : undefined,
+      }),
+    });
+  });
+
+  await page.goto('/?tab=home');
+
+  const list = page.getByRole('list', { name: 'Job history entries' });
+  const viewport = page.getByRole('region', { name: 'Job history entries scroll area' });
+  await expect(list.getByText('com.example.history.000')).toBeVisible();
+  const firstRow = list.getByRole('listitem').first();
+  await expect(firstRow).toHaveAttribute('aria-setsize', '15');
+  await expect.poll(() => list.getByRole('listitem').count()).toBeLessThan(20);
+
+  let expectedSize = 15;
+  while (expectedSize < entries.length) {
+    const nextSize = Math.min(expectedSize + 15, entries.length);
+    await page.getByRole('button', { name: /Load more/ }).click();
+    await expect(firstRow).toHaveAttribute('aria-setsize', String(nextSize));
+    expectedSize = nextSize;
+  }
+
+  await expect(list.getByText('com.example.history.099')).toHaveCount(0);
+  await expect(list.getByRole('listitem').first()).toHaveAttribute('aria-setsize', '100');
+  await expect.poll(() => viewport.evaluate((element) => element.scrollHeight)).toBeGreaterThan(5000);
+  await viewport.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  await expect(list.getByText('com.example.history.099')).toBeVisible();
+  await expect(list.getByRole('listitem').last()).toHaveAttribute('aria-posinset', '100');
+  await expect.poll(() => list.getByRole('listitem').count()).toBeLessThan(35);
   await expectAccessible(page);
 });

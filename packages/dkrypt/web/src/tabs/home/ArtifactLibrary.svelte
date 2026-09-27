@@ -15,6 +15,7 @@
   import { isServerQueryCancelled, mergeServerPage, serverQueryStatus } from '#lib/serverStateCache.svelte';
   import { buttonVariants } from '#lib/components/ui/variants';
   import { projectSelectionState } from '#lib/projectSelection.svelte';
+  import VirtualizedList from '#components/VirtualizedList.svelte';
 
   const canDecrypt = $derived(sessionHasPermission(PermissionFlag.requestDecrypt));
   const canManageStorage = $derived(sessionHasPermission(PermissionFlag.manageAutomation));
@@ -26,6 +27,7 @@
   let loading = $state(false);
   let loadingMore = $state(false);
   let pinningArtifactIds = $state<string[]>([]);
+  let expandedArtifactIds = $state<Set<string>>(new Set());
   let nextCursor = $state<string | undefined>(undefined);
   let error = $state('');
   let cacheStatus = $state('');
@@ -119,6 +121,13 @@
     if (!value) return 'Version unavailable';
     const version = artifact.channel === 'testflight' ? value.split('_', 1)[0] : value;
     return artifact.buildNumber ? `${version} (${artifact.buildNumber})` : version;
+  }
+
+  function setArtifactDetailsOpen(artifactId: string, expanded: boolean): void {
+    const next = new Set(expandedArtifactIds);
+    if (expanded) next.add(artifactId);
+    else next.delete(artifactId);
+    expandedArtifactIds = next;
   }
 
   function toggleQuotaSimulation(): void {
@@ -241,11 +250,26 @@
         {/if}
         {#if error && artifacts.length === 0}
           <div class="text-err text-[13px]" role="alert">{error}</div>
-        {:else if artifacts.length === 0 && !loading}
-          <EmptyState message="No artifacts match this search." />
+        {:else if artifacts.length === 0}
+          {#if loading}
+            <div class="flex flex-col gap-1.5" role="status" aria-label="Loading artifacts">
+              {#each Array(3) as _, index (index)}
+                <div class="skeleton bg-panel-muted h-20 rounded-md" aria-hidden="true"></div>
+              {/each}
+            </div>
+          {:else}
+            <EmptyState message="No artifacts match this search." />
+          {/if}
         {:else}
-          <div class="divide-border max-h-[34rem] divide-y overflow-y-auto rounded-xl border border-border/70">
-            {#each artifacts as artifact (artifact.id)}
+          <VirtualizedList
+            items={artifacts}
+            itemKey={(artifact) => artifact.id}
+            estimateSize={204}
+            overscan={5}
+            label="IPA library artifacts"
+            class="h-[34rem] max-h-[70dvh] overflow-y-auto divide-y divide-border rounded-xl border border-border/70"
+          >
+            {#snippet children(artifact: ArtifactRecord)}
               <article class="grid gap-x-5 gap-y-2.5 px-3.5 py-3 first:pt-3 last:pb-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:px-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1.65fr)_auto] lg:items-center">
                 <div class="flex min-w-0 items-center gap-3">
                   <AppIcon bundleId={artifact.bundleId} src={appIconUrl(artifact.bundleId)} label={appDisplayName(artifact.bundleId)} class="h-9 w-9" />
@@ -287,7 +311,7 @@
                     <Download class="h-3.5 w-3.5" />Download
                   </a>
                 </div>
-                <details class="col-span-full rounded-lg border border-border/70 px-3 py-2">
+                <details class="col-span-full rounded-lg border border-border/70 px-3 py-2" open={expandedArtifactIds.has(artifact.id)} ontoggle={(event) => setArtifactDetailsOpen(artifact.id, event.currentTarget.open)}>
                   <summary class="cursor-pointer text-xs font-medium">Artifact details</summary>
                   <div class="mt-3 space-y-3">
                     <dl class="grid gap-x-5 gap-y-3 text-xs sm:grid-cols-2">
@@ -321,8 +345,8 @@
                   </div>
                 </details>
               </article>
-            {/each}
-          </div>
+            {/snippet}
+          </VirtualizedList>
           {#if nextCursor}
             <div class="mt-3 flex justify-center">
               <Button variant="secondary" size="sm" loading={loadingMore} onclick={() => void loadMore()}>Load more ({Math.max(0, total - artifacts.length)} older)</Button>

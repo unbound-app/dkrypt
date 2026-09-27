@@ -3,6 +3,7 @@
   import DeviceArtwork from '#components/DeviceArtwork.svelte';
   import EmptyState from '#components/EmptyState.svelte';
   import RelativeTime from '#components/RelativeTime.svelte';
+  import VirtualizedList from '#components/VirtualizedList.svelte';
   import {
     discoverDevices,
     fetchDeviceActivity,
@@ -72,11 +73,41 @@
 
   let health = $state<Record<string, DeviceHealth | undefined>>({});
   let activity = $state<Record<string, DeviceActivityEntry[]>>({});
+  let activityNextCursor = $state<Record<string, string | undefined>>({});
+  let activityTotals = $state<Record<string, number>>({});
+  let loadingActivity = $state<Set<string>>(new Set());
 
   function loadHealth(): void {
     for (const device of devices) {
       void fetchDeviceHealth(device.id).then((value) => (health = { ...health, [device.id]: value })).catch(() => {});
-      void fetchDeviceActivity(device.id, 6).then(({ activity: entries }) => (activity = { ...activity, [device.id]: entries })).catch(() => {});
+      void fetchDeviceActivity(device.id, 50).then((result) => {
+        const existing = activity[device.id] ?? [];
+        const pageIds = new Set(result.activity.map((entry) => entry.id));
+        const olderEntries = existing.filter((entry) => !pageIds.has(entry.id));
+        activity = { ...activity, [device.id]: [...result.activity, ...olderEntries] };
+        activityNextCursor = { ...activityNextCursor, [device.id]: olderEntries.length > 0 ? activityNextCursor[device.id] : result.nextCursor };
+        activityTotals = { ...activityTotals, [device.id]: result.total };
+      }).catch(() => {});
+    }
+  }
+
+  async function loadMoreActivity(deviceId: string): Promise<void> {
+    const cursor = activityNextCursor[deviceId];
+    if (!cursor || loadingActivity.has(deviceId)) return;
+    loadingActivity = new Set(loadingActivity).add(deviceId);
+    try {
+      const result = await fetchDeviceActivity(deviceId, cursor, 50);
+      const existing = activity[deviceId] ?? [];
+      const seenIds = new Set(existing.map((entry) => entry.id));
+      activity = { ...activity, [deviceId]: [...existing, ...result.activity.filter((entry) => !seenIds.has(entry.id))] };
+      activityNextCursor = { ...activityNextCursor, [deviceId]: result.nextCursor };
+      activityTotals = { ...activityTotals, [deviceId]: result.total };
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Could not load device activity', 'error');
+    } finally {
+      const nextLoading = new Set(loadingActivity);
+      nextLoading.delete(deviceId);
+      loadingActivity = nextLoading;
     }
   }
 
@@ -356,7 +387,24 @@
           {#if h?.readiness?.reasons.length}<div class="text-warn mt-2 text-xs">{h.readiness.reasons.join(' · ')}</div>{/if}
           <div class="border-border/70 mt-3 flex flex-wrap items-center gap-1.5 border-t pt-3"><Button size="sm" variant="secondary" loading={testingId.has(device.id)} onclick={() => void testConnection(device)}>Test connection</Button><Button size="sm" variant="secondary" loading={inspectingId.has(device.id)} onclick={() => void inspectDevice(device)}>Preflight</Button><Button size="sm" variant="secondary" loading={inspectingId.has(device.id)} onclick={() => void inspectInventory(device)}>Inventory</Button>{#if canManageDevices}<Button size="sm" variant="secondary" loading={recoveringId.has(device.id)} onclick={() => void recover(device)}>Recover</Button>{#if !device.isPrimary}<Button size="sm" variant="ghost" onclick={() => void makePrimary(device)}>Make primary</Button>{/if}<Button size="sm" variant="ghost" onclick={() => void toggleEnabled(device)}>{device.enabled ? 'Disable' : 'Enable'}</Button><Button size="icon" variant="ghost" class="ml-auto h-8 w-8 text-muted hover:text-err" loading={deletingId.has(device.id)} onclick={() => void remove(device)} aria-label={`Remove ${device.name}`} title="Remove device"><Trash2 class="h-3.5 w-3.5" /></Button>{/if}</div>
           {#if device.isPrimary && h?.reachable && h.darkEnabled !== undefined}<div class="border-border/70 mt-3 flex items-center justify-between gap-3 border-t pt-3"><div class="min-w-0"><div class="text-sm">Keep display dark</div><div class="text-xs text-muted">autoinstall keeps the device awake while the display is blacked out.</div></div><Switch checked={h.darkEnabled} disabled={!canManageDevices || updatingDarkModeId.has(device.id)} onCheckedChange={(enabled) => void toggleDarkMode(device, enabled)} aria-label="Keep display dark" /></div>{/if}
-          {#if activity[device.id]?.length}<div class="border-border/70 mt-3 border-t pt-3"><div class="mb-1.5 text-xs text-muted">Recent activity</div><div class="flex flex-col gap-1.5">{#each activity[device.id] as entry (entry.id)}<div class="flex items-start gap-2 text-xs"><span class="shrink-0 text-muted"><RelativeTime ms={entry.ts} /></span><span>{entry.message}{entry.bundleId ? ` · ${entry.bundleId}` : ''}</span></div>{/each}</div></div>{/if}
+          {#if activity[device.id]?.length}
+            <div class="border-border/70 mt-3 border-t pt-3">
+              <div class="mb-1.5 flex items-center justify-between gap-2 text-xs"><span class="text-muted">Recent activity</span>{#if activityNextCursor[device.id]}<Button size="sm" variant="link" class="h-auto p-0 text-xs" loading={loadingActivity.has(device.id)} onclick={() => void loadMoreActivity(device.id)}>Load older ({Math.max(0, activityTotals[device.id] - activity[device.id].length)})</Button>{/if}</div>
+              <VirtualizedList
+                items={activity[device.id]}
+                itemKey={(entry) => entry.id}
+                estimateSize={36}
+                overscan={3}
+                label={`${device.name} activity`}
+                class="overflow-y-auto rounded-md"
+                style={`height:min(8rem, ${Math.max(36, Math.min(activity[device.id].length * 36, 128))}px)`}
+              >
+                {#snippet children(entry: DeviceActivityEntry)}
+                  <div class="flex items-start gap-2 py-1.5 text-xs"><span class="shrink-0 text-muted"><RelativeTime ms={entry.ts} /></span><span>{entry.message}{entry.bundleId ? ` · ${entry.bundleId}` : ''}</span></div>
+                {/snippet}
+              </VirtualizedList>
+            </div>
+          {/if}
         </div>
       {/each}
     </div>

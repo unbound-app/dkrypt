@@ -1,42 +1,42 @@
 export const GENERATED_CHANGELOG = [
   {
-    "date": "2026-09-25",
-    "title": "feat(web): add typed server state cache",
-    "description": "Released in f4db5ac."
+    "date": "2026-09-27",
+    "title": "fix(shutdown): drain background operations before closing stores",
+    "description": "Released in 097a51c."
   },
   {
-    "date": "2026-09-25",
-    "title": "fix(web): improve accessibility contrast and semantics",
-    "description": "Released in 8f2b101."
+    "date": "2026-09-27",
+    "title": "fix(shutdown): defer storage closure until jobs drain",
+    "description": "Released in caec5dd."
   },
   {
-    "date": "2026-09-25",
-    "title": "test(api): cover legacy migrations and response envelopes",
-    "description": "Released in 6f66ca8."
+    "date": "2026-09-27",
+    "title": "test(storage): stabilize migration property test timeout",
+    "description": "Released in 7ff7438."
   },
   {
-    "date": "2026-09-25",
-    "title": "test(api): add property-based reliability checks",
-    "description": "Released in dbf95f8."
+    "date": "2026-09-27",
+    "title": "feat(deploy): preflight SQLite migrations before rollout",
+    "description": "Released in 139beaf."
   },
   {
-    "date": "2026-09-25",
-    "title": "chore(api): regenerate project-scoped clients",
-    "description": "Released in 2190e7c."
+    "date": "2026-09-27",
+    "title": "chore(api): regenerate OpenAPI client schema",
+    "description": "Released in 4d7f757."
   },
   {
-    "date": "2026-09-25",
-    "title": "feat(container): run the dashboard API without root privileges",
-    "description": "Released in 4fcbb3b."
+    "date": "2026-09-27",
+    "title": "fix(deploy): align runtime USB device access config",
+    "description": "Released in e39a0d4."
   },
   {
-    "date": "2026-09-25",
-    "title": "fix(web): replace fabricated device artwork",
-    "description": "Released in e956d70."
+    "date": "2026-09-27",
+    "title": "fix(device-bridge): grant Rust bridge direct USB access",
+    "description": "Released in 650904d."
   },
   {
-    "date": "2026-09-25",
-    "title": "feat(projects): scope dashboard data and scheduled work",
-    "description": "Released in c87b985."
+    "date": "2026-09-27",
+    "title": "feat(storage): normalize billing records in SQLite",
+    "description": "Released in 114511e."
   }
 ] as const;

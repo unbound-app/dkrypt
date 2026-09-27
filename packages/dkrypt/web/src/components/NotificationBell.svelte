@@ -6,6 +6,7 @@
   import Button from '#lib/components/ui/Button.svelte';
   import { clearToastHistory, toastHistoryState } from '#lib/ui.svelte';
   import RelativeTime from '#components/RelativeTime.svelte';
+  import VirtualizedList from '#components/VirtualizedList.svelte';
   import { cn } from '#lib/utils';
 
   const LAST_VIEWED_KEY = 'notificationsLastViewedAt';
@@ -92,8 +93,15 @@
         {/if}
       </div>
       {#if notifications.length > 0}
-        <div class="flex max-h-80 flex-col gap-2 overflow-y-auto">
-          {#each notifications as notification (notification.id)}
+        <VirtualizedList
+          items={notifications}
+          itemKey={(notification) => notification.id}
+          estimateSize={84}
+          overscan={4}
+          label="Dashboard notifications"
+          class="h-80 max-h-[calc(100dvh-8rem)] overflow-y-auto"
+        >
+          {#snippet children(notification: DashboardNotification)}
             {@const Icon = iconFor(notification.severity)}
             <div class="flex items-start gap-2 text-xs">
               <Icon class={cn('mt-0.5 h-3.5 w-3.5 shrink-0', notification.severity === 'error' ? 'text-err' : notification.severity === 'warning' ? 'text-warn' : notification.severity === 'success' ? 'text-ok' : 'text-accent')} />
@@ -108,8 +116,8 @@
                 </div>
               </div>
             </div>
-          {/each}
-        </div>
+          {/snippet}
+        </VirtualizedList>
         {#if nextCursor}
           <Button class="mt-2 w-full" size="sm" variant="secondary" loading={loadingOlder} onclick={() => void loadOlder()}>Load older notifications</Button>
         {/if}

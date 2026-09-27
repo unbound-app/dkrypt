@@ -8,6 +8,7 @@
 	import CopyButton from "#components/CopyButton.svelte";
 	import EmptyState from "#components/EmptyState.svelte";
 	import RelativeTime from "#components/RelativeTime.svelte";
+	import VirtualizedList from "#components/VirtualizedList.svelte";
 	import {
 		fetchJobHistory,
 		observeJobHistory,
@@ -72,6 +73,14 @@
 		queuedJobId?: string;
 		message?: string;
 	}
+
+	type HistoryFeedItem = {
+		key: string;
+		label: string;
+		count: number;
+		entry: JobHistoryEntry;
+		showDateHeader: boolean;
+	};
 
 	const CANCELLED_RE = /^cancelled by/i;
 	const TIMEOUT_RE = /timed? ?out/i;
@@ -753,6 +762,17 @@
 			return groups;
 		},
 	);
+	const historyFeedItems = $derived.by((): HistoryFeedItem[] => {
+		return grouped.flatMap((group) =>
+			group.items.map((entry, index) => ({
+				key: entry.id,
+				label: group.label,
+				count: group.items.length,
+				entry,
+				showDateHeader: index === 0,
+			})),
+		);
+	});
 </script>
 
 <Card title="Job history" id="job-history">
@@ -1012,30 +1032,36 @@
 					{/each}
 				</div>
 			{:else}
-				{#each grouped as g (g.label)}
-					<section class="mb-5">
-						<div
-							class="border-border mb-1 flex items-center gap-2 border-b pb-2"
-						>
+				<VirtualizedList
+					items={historyFeedItems}
+					itemKey={(item) => item.key}
+					estimateSize={(item) => 140 + (item.showDateHeader ? 40 : 0)}
+					overscan={4}
+					label="Job history entries"
+					class="h-[min(74dvh,860px)] overflow-y-auto"
+				>
+					{#snippet children(g: HistoryFeedItem)}
+					{@const j = g.entry}
+					{@const requester = j.requester ?? {
+						displayName: j.source === "scheduler" ? "System" : (j.queuedBy ?? "Unknown"),
+						username: j.queuedBy,
+					}}
+					<section>
+						{#if g.showDateHeader}
+						<div class="border-border mb-1 flex items-center gap-2 border-b pb-2">
 							<span
 								class="text-[11px] font-semibold tracking-[0.12em] text-muted uppercase"
 								>{g.label}</span
 							>
 							<span class="text-[11px] text-muted"
-								>{g.items.length} job{g.items.length === 1
+								>{g.count} job{g.count === 1
 									? ""
 									: "s"}</span
 							>
 						</div>
-						<div role="list">
-							{#each g.items as j (j.id)}
-								{@const requester = j.requester ?? {
-									displayName: j.source === "scheduler" ? "System" : (j.queuedBy ?? "Unknown"),
-									username: j.queuedBy,
-								}}
+						{/if}
 								<article
 									class="history-feed-row"
-									role="listitem"
 								>
 									<div
 										class="history-feed-summary flex min-w-0 flex-1 items-start gap-3"
@@ -1146,10 +1172,9 @@
 										{/if}
 									</div>
 								</article>
-							{/each}
-						</div>
 					</section>
-				{/each}
+					{/snippet}
+				</VirtualizedList>
 			{/if}
 		</div>
 	{/if}

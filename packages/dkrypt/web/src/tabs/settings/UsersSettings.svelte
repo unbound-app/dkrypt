@@ -27,6 +27,7 @@
   import { scrollFade } from '#lib/scrollFade';
   import { sessionHasAnyPermission, sessionHasPermission, sessionState } from '#lib/session.svelte';
   import { confirmDialog, userJumpState } from '#lib/ui.svelte';
+  import VirtualizedList from '#components/VirtualizedList.svelte';
 
   const canManage = $derived(sessionHasPermission(PermissionFlag.manageUsers));
   const canViewRoles = $derived(sessionHasAnyPermission([PermissionFlag.viewRoles, PermissionFlag.manageRoles]));
@@ -404,34 +405,32 @@
         </label>
       </div>
     {/if}
-    <div class="scroll-fade-x max-h-80 overflow-auto" use:scrollFade>
-      <table class="responsive-table min-w-[640px]">
-        <thead>
-          <tr>
-            <th>When</th>
-            <th>Actor</th>
-            <th>Action</th>
-            <th>Target</th>
-            <th>Detail</th>
-          </tr>
-        </thead>
-        <tbody>
-          {#if auditLog === null}
-            <SkeletonRows rows={3} colspan={5} />
-          {:else}
-            {#each filteredAuditLog as entry (entry.id)}
-              <tr>
-                <td data-label="When" class="text-muted"><RelativeTime ms={entry.ts} /></td>
-                <td data-label="Actor">{entry.actor}</td>
-                <td data-label="Action"><Badge variant="secondary">{AUDIT_ACTION_LABEL[entry.action]}</Badge></td>
-                <td data-label="Target">{entry.target}</td>
-                <td data-label="Detail" class="max-w-64 truncate font-mono text-xs text-muted" title={entry.detail ?? ''}>{entry.detail ?? ''}</td>
-              </tr>
-            {/each}
-          {/if}
-        </tbody>
-      </table>
-    </div>
+    {#if auditLog === null}
+      <div class="flex flex-col gap-1.5" role="status" aria-label="Loading audit log">
+        {#each Array(3) as _, index (index)}
+          <div class="skeleton bg-panel-muted h-12 rounded-md" aria-hidden="true"></div>
+        {/each}
+      </div>
+    {:else}
+      <VirtualizedList
+        items={filteredAuditLog}
+        itemKey={(entry) => entry.id}
+        estimateSize={72}
+        overscan={6}
+        label="Audit log entries"
+        class="h-80 overflow-y-auto rounded-xl border border-border/70"
+      >
+        {#snippet children(entry: AuditLogEntry)}
+          <article class="grid gap-x-3 gap-y-2 border-b border-border/70 px-3 py-2.5 text-xs sm:grid-cols-[minmax(8rem,0.8fr)_minmax(7rem,0.8fr)_minmax(9rem,1fr)_minmax(9rem,1fr)_minmax(12rem,1.6fr)] sm:items-center">
+            <div class="min-w-0"><div class="text-[10px] font-semibold tracking-[0.08em] text-muted uppercase sm:hidden">When</div><div class="text-muted"><RelativeTime ms={entry.ts} /></div></div>
+            <div class="min-w-0"><div class="text-[10px] font-semibold tracking-[0.08em] text-muted uppercase sm:hidden">Actor</div><div class="truncate">{entry.actor}</div></div>
+            <div class="min-w-0"><div class="text-[10px] font-semibold tracking-[0.08em] text-muted uppercase sm:hidden">Action</div><Badge variant="secondary">{AUDIT_ACTION_LABEL[entry.action]}</Badge></div>
+            <div class="min-w-0"><div class="text-[10px] font-semibold tracking-[0.08em] text-muted uppercase sm:hidden">Target</div><div class="truncate" title={entry.target}>{entry.target}</div></div>
+            <div class="min-w-0"><div class="text-[10px] font-semibold tracking-[0.08em] text-muted uppercase sm:hidden">Detail</div><div class="truncate font-mono text-muted" title={entry.detail ?? ''}>{entry.detail ?? ''}</div></div>
+          </article>
+        {/snippet}
+      </VirtualizedList>
+    {/if}
     {#if auditLog !== null && auditNextCursor}
       <div class="mt-3 flex justify-center">
         <Button size="sm" variant="secondary" loading={loadingMoreAudit} onclick={() => void loadMoreAudit()}>Load more ({Math.max(0, auditTotal - auditLog.length)} older)</Button>

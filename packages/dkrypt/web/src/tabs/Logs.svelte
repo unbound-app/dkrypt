@@ -3,6 +3,7 @@
   import CopyButton from '#components/CopyButton.svelte';
   import EmptyState from '#components/EmptyState.svelte';
   import RelativeTime from '#components/RelativeTime.svelte';
+  import VirtualizedList from '#components/VirtualizedList.svelte';
   import { fetchLogs, type LogEntry } from '#lib/api';
   import Badge from '#lib/components/ui/Badge.svelte';
   import Button from '#lib/components/ui/Button.svelte';
@@ -356,8 +357,17 @@
           New log lines - jump to latest
         </Button>
       {/if}
-      <div class="log-stream flex max-h-[min(74dvh,860px)] flex-col overflow-y-auto rounded-xl" bind:this={listEl} onscroll={onListScroll}>
-        {#each filtered as l (entryKey(l))}
+      <VirtualizedList
+        items={filtered}
+        itemKey={entryKey}
+        estimateSize={72}
+        overscan={8}
+        label="Operational log entries"
+        class="log-stream h-[min(74dvh,860px)] overflow-y-auto rounded-xl"
+        bind:scrollElement={listEl}
+        onScroll={onListScroll}
+      >
+        {#snippet children(l: LogEntry)}
           {@const key = entryKey(l)}
           <div class={`log-row border-border flex items-start gap-3 border-b border-l-[3px] px-4 py-3 text-[13px] last:border-b-0 ${LEVEL_BORDER[l.level]}`}>
             <span class="log-row-time shrink-0 font-mono text-[12px] whitespace-nowrap text-muted"><RelativeTime ms={l.ts} /></span>
@@ -376,8 +386,8 @@
             </Button>
             <div class="log-row-copy"><CopyButton text={JSON.stringify(l, null, 2)} label="JSON" /></div>
           </div>
-        {/each}
-      </div>
+        {/snippet}
+      </VirtualizedList>
     </div>
     {#if filtered.length === 0}
       <EmptyState icon={ScrollText} message="No log entries yet." />
