@@ -262,6 +262,18 @@ test('authenticated top bar exposes community links without mobile overflow', as
   await expectAccessible(page);
 });
 
+test('API documentation opens in a standalone page instead of an embedded frame', async ({ page }) => {
+  await mockAuthenticatedDashboard(page, '1');
+
+  await page.goto('/?tab=docs');
+  const referenceLink = page.getByRole('link', { name: 'Open API reference' });
+
+  await expect(referenceLink).toBeVisible();
+  await expect(referenceLink).toHaveAttribute('href', '/reference/');
+  await expect(referenceLink).toHaveAttribute('target', '_blank');
+  await expect(page.locator('iframe[title="dkrypt API reference"]')).toHaveCount(0);
+});
+
 test('high contrast preference updates the interface and persists to the account', async ({ page }) => {
   await mockAuthenticatedDashboard(page, '1');
   await page.unroute('**/v1/dashboard/me/prefs');
