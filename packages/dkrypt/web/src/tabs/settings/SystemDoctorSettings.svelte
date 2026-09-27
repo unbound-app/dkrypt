@@ -60,13 +60,13 @@
     }
   }
 
-  async function runProbes(): Promise<void> {
+  async function runHealthChecks(): Promise<void> {
     probing = true;
     probeError = '';
     try {
       probeReport = await runDashboardSyntheticProbes();
     } catch (cause) {
-      probeError = cause instanceof Error ? cause.message : 'Could not run live service probes.';
+      probeError = cause instanceof Error ? cause.message : 'Could not run service health checks.';
     } finally {
       probing = false;
     }
@@ -139,16 +139,16 @@
   <section class="mt-5 border-t border-border/70 pt-4" aria-labelledby="system-probes-heading">
     <div class="flex flex-wrap items-start justify-between gap-3">
       <div>
-        <h3 id="system-probes-heading" class="text-sm font-semibold">Live service probes</h3>
-        <p class="mt-1 text-xs text-muted">Run read-only checks for storage, the device agent, TestFlight, and webhooks.</p>
+        <h3 id="system-probes-heading" class="text-sm font-semibold">Service health checks</h3>
+        <p class="mt-1 text-xs text-muted">Check storage, devices, and webhooks on demand. TestFlight uses its last device verification and is never opened or refreshed.</p>
       </div>
-      <Button size="sm" variant="secondary" loading={probing} onclick={() => void runProbes()} aria-label="Run live probes">Run live probes</Button>
+      <Button size="sm" variant="secondary" loading={probing} onclick={() => void runHealthChecks()} aria-label="Run health checks">Run health checks</Button>
     </div>
 
     {#if probeError}
       <div class="mt-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-err" role="alert">{probeError}</div>
     {:else if !probeReport}
-      <p class="mt-3 text-xs text-muted" role="status">Live probes only run when you request them.</p>
+      <p class="mt-3 text-xs text-muted" role="status">Health checks only run when you request them.</p>
     {:else}
       <p class="mt-3 text-xs text-muted">Checked {fmtDateTime(probeReport.checkedAt)}</p>
       <ul class="mt-1 divide-y divide-border/70" aria-label="Live service probe results">

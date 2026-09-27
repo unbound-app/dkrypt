@@ -4,7 +4,7 @@ import { incrementMetric, observeMetric, setGaugeMetric } from '#metrics.js';
 import { getEffectiveDevices, getStateDatabaseStatus } from '#store/state.js';
 import { getDiskUsage } from '#util/diskUsage.js';
 import { config, cryptoBillingEnabled, stripeEnabled } from '#config.js';
-import { getVerifiedTestFlightCatalog } from '#testflightSubscriptions.js';
+import { getTestFlightCatalogCacheState } from '#testflightSubscriptions.js';
 import { listWebhookInbox } from '#webhookInbox.js';
 
 export interface SyntheticProbeResult {
@@ -12,6 +12,18 @@ export interface SyntheticProbeResult {
   status: 'ok' | 'warn' | 'error' | 'skipped';
   durationMs: number;
   detail: string;
+}
+
+export function classifyTestFlightCatalogProbe(cache: ReturnType<typeof getTestFlightCatalogCacheState>): Pick<SyntheticProbeResult, 'status' | 'detail'> {
+  if (cache.stale) {
+    return {
+      status: 'warn',
+      detail: cache.fetchedAt
+        ? 'The last device verification is stale; this read-only probe did not refresh it'
+        : 'No on-device verification is cached; this read-only probe did not launch TestFlight',
+    };
+  }
+  return { status: 'ok', detail: `${cache.apps.length} app(s) recently verified on device` };
 }
 
 async function probe<T extends SyntheticProbeResult['id']>(id: T, action: () => Promise<Omit<SyntheticProbeResult, 'id' | 'durationMs'>>): Promise<SyntheticProbeResult> {
@@ -69,8 +81,7 @@ export async function runSyntheticProbes(): Promise<{ ok: boolean; checkedAt: st
     probe('testflight', async () => {
       const devices = getEffectiveDevices().filter((device) => device.enabled);
       if (devices.length === 0) return { status: 'skipped' as const, detail: 'No enabled device is configured' };
-      const catalog = await getVerifiedTestFlightCatalog({ requireAllDevices: false });
-      return { status: 'ok' as const, detail: `${catalog.length} TestFlight app(s) verified from the device` };
+      return classifyTestFlightCatalogProbe(getTestFlightCatalogCacheState());
     }),
     probe('webhooks', async () => {
       const inbox = listWebhookInbox();

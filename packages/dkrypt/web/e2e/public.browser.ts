@@ -316,7 +316,7 @@ test('system doctor is hidden from accounts without device-management permission
   expect(doctorRequests).toBe(0);
 });
 
-test('device managers can run read-only synthetic service probes', async ({ page }) => {
+test('device managers can run on-demand service health checks', async ({ page }) => {
   await page.route('**/v1/**', async (route) => {
     const pathname = new URL(route.request().url()).pathname;
     await route.fulfill({
@@ -347,10 +347,11 @@ test('device managers can run read-only synthetic service probes', async ({ page
 
   await page.goto('/?tab=settings&stab=doctor');
   await expect(page.getByRole('heading', { name: 'System doctor' })).toBeVisible();
+  await expect(page.getByText('TestFlight uses its last device verification and is never opened or refreshed.')).toBeVisible();
   expect(probeRequests).toBe(0);
-  await page.getByRole('button', { name: 'Run live probes' }).click();
+  await page.getByRole('button', { name: 'Run health checks' }).click();
 
-  await expect(page.getByText('Live service probes')).toBeVisible();
+  await expect(page.getByText('Service health checks')).toBeVisible();
   await expect(page.getByText('SQLite integrity is clean')).toBeVisible();
   await expect(page.getByText('The device agent did not respond')).toBeVisible();
   expect(probeRequests).toBe(1);
@@ -383,16 +384,21 @@ test('authenticated dashboard shows the running build revision', async ({ page }
   await expect(page.getByText('Build abcdef0', { exact: true })).toBeVisible();
 });
 
-test('API documentation opens in a standalone page instead of an embedded frame', async ({ page }) => {
+test('API documentation links escape browser embeds and offer a new tab', async ({ page }) => {
   await mockAuthenticatedDashboard(page, '1');
 
   await page.goto('/?tab=docs');
   const referenceLink = page.getByRole('link', { name: 'Open API reference' });
+  const newTabLink = page.getByRole('link', { name: 'Open in a new tab' });
 
   await expect(referenceLink).toBeVisible();
   await expect(referenceLink).toHaveAttribute('href', '/reference/');
-  await expect(referenceLink).toHaveAttribute('target', '_blank');
+  await expect(referenceLink).toHaveAttribute('target', '_top');
+  await expect(newTabLink).toHaveAttribute('href', '/reference/');
+  await expect(newTabLink).toHaveAttribute('target', '_blank');
   await expect(page.locator('iframe[title="dkrypt API reference"]')).toHaveCount(0);
+  await referenceLink.click();
+  await expect(page).toHaveURL(/\/reference\/$/);
 });
 
 test('high contrast preference updates the interface and persists to the account', async ({ page }) => {
