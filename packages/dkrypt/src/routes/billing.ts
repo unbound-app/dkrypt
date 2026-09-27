@@ -46,6 +46,7 @@ import { PermissionFlag } from '#permissions.js';
 import { recordAudit } from '#store/state.js';
 import { constructStripeWebhookEvent, getStripe } from '#stripe.js';
 import { claimWebhook, countWebhookInbox, getWebhookInboxRecord, listWebhookInbox, markWebhookFailed, markWebhookProcessed, quarantineWebhook, receiveWebhook, releaseWebhookClaim } from '#webhookInbox.js';
+import { withCorrelationSpan } from '#correlation.js';
 import { decodeCursor, nextCursor, paginateCursor } from '#util/cursor.js';
 
 function metadataUserId(metadata: unknown): string | undefined {
@@ -164,10 +165,9 @@ export async function processStripeEvent(event: Stripe.Event): Promise<void> {
   }
 }
 
-interface WebhookDeliveryResult {
-  statusCode: 200 | 500;
-  payload: Record<string, unknown>;
-}
+type WebhookDeliveryResult =
+  | { statusCode: 200; payload: Record<string, unknown> }
+  | { statusCode: 500 };
 
 function webhookSignatureHeader(value: string | string[] | undefined): string {
   return Array.isArray(value) ? value[0] ?? '' : value ?? '';
@@ -185,21 +185,41 @@ async function processWebhookDelivery(
   processEvent: () => Promise<void>,
   onFailure: (error: unknown) => void,
 ): Promise<WebhookDeliveryResult> {
-  const inbox = receiveWebhook(provider, eventId, rawBody);
-  if (inbox.duplicate && inbox.record.status === 'processed') return { statusCode: 200, payload: { received: true, duplicate: true } };
-  if (inbox.duplicate && inbox.record.status === 'quarantined') return { statusCode: 200, payload: { received: true, duplicate: true, quarantined: true } };
-  if (!claimWebhook(inbox.record.id)) return { statusCode: 200, payload: { received: true, duplicate: true, inProgress: true } };
-  try {
-    await processEvent();
-    markWebhookProcessed(inbox.record.id);
-    return { statusCode: 200, payload: { received: true } };
-  } catch (error) {
-    markWebhookFailed(inbox.record.id, String(error));
-    onFailure(error);
-    return { statusCode: 500, payload: { error: 'webhook processing failed' } };
-  } finally {
-    releaseWebhookClaim(inbox.record.id);
-  }
+  return withCorrelationSpan('billing.webhook.delivery', { 'webhook.provider': provider }, async (span) => {
+    const inbox = receiveWebhook(provider, eventId, rawBody);
+    span.setAttributes({ 'webhook.inbox_id': inbox.record.id, 'webhook.duplicate': inbox.duplicate });
+    if (inbox.duplicate && inbox.record.status === 'processed') {
+      span.setAttributes({ 'webhook.status': 'duplicate_processed' });
+      return { statusCode: 200, payload: { received: true, duplicate: true } };
+    }
+    if (inbox.duplicate && inbox.record.status === 'quarantined') {
+      span.setAttributes({ 'webhook.status': 'duplicate_quarantined' });
+      return { statusCode: 200, payload: { received: true, duplicate: true, quarantined: true } };
+    }
+    if (!claimWebhook(inbox.record.id)) {
+      span.setAttributes({ 'webhook.status': 'in_progress' });
+      return { statusCode: 200, payload: { received: true, duplicate: true, inProgress: true } };
+    }
+    try {
+      await processEvent();
+      markWebhookProcessed(inbox.record.id);
+      span.setAttributes({ 'webhook.status': 'processed' });
+      return { statusCode: 200, payload: { received: true } };
+    } catch (error) {
+      markWebhookFailed(inbox.record.id, String(error));
+      span.setAttributes({ 'webhook.status': 'failed' });
+      span.end(error);
+      onFailure(error);
+      return { statusCode: 500 };
+    } finally {
+      releaseWebhookClaim(inbox.record.id);
+    }
+  });
+}
+
+function sendWebhookDeliveryResult(request: FastifyRequest, reply: FastifyReply, result: WebhookDeliveryResult) {
+  if (result.statusCode === 500) return sendBillingError(request, reply, 500, 'webhook processing failed');
+  return reply.code(result.statusCode).send(result.payload);
 }
 
 export const billingWebhookRoutes: FastifyPluginAsyncTypebox = async (server) => {
@@ -220,7 +240,7 @@ export const billingWebhookRoutes: FastifyPluginAsyncTypebox = async (server) =>
     const result = await processWebhookDelivery('stripe', event.id, rawBody, () => processStripeEvent(event), (error) => {
       log.error('Stripe webhook failed', { eventType: event.type, error: String(error) });
     });
-    return reply.code(result.statusCode).send(result.payload);
+    return sendWebhookDeliveryResult(request, reply, result);
   });
 
   server.post('/v1/nowpayments/webhook', { schema: getRouteContract('POST', '/v1/nowpayments/webhook') }, async (request, reply) => {
@@ -247,7 +267,7 @@ export const billingWebhookRoutes: FastifyPluginAsyncTypebox = async (server) =>
     const result = await processWebhookDelivery('nowpayments', eventId, rawBody, () => processNowPaymentsEvent({ id: eventId, payment }), (error) => {
       log.error('NOWPayments IPN failed', { error: String(error) });
     });
-    return reply.code(result.statusCode).send(result.payload);
+    return sendWebhookDeliveryResult(request, reply, result);
   });
 };
 

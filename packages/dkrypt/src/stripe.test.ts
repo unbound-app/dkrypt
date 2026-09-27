@@ -6,8 +6,10 @@ import {
   getBillingEntitlements,
   replaceBillingSnapshot,
 } from '#billing.js';
+import { config } from '#config.js';
 import { processStripeEvent } from '#routes/billing.js';
 import { buildServer } from '#server.js';
+import { flushTelemetry } from '#telemetry.js';
 
 const webhookSecret = 'whsec_dkrypt_test';
 
@@ -84,19 +86,67 @@ describe('Stripe billing webhooks', () => {
     const digest = createHmac('sha256', webhookSecret).update(`${timestamp}.${payload}`).digest('hex');
     const signature = `t=${timestamp},v1=${digest}`;
     const server = await buildServer({ includePublicRoutes: false });
+    const previousSampleRate = config.otelSampleRate;
+    config.otelSampleRate = 1;
 
     try {
       const response = await server.inject({
         method: 'POST',
         url: '/v1/stripe/webhook',
-        headers: { 'content-type': 'application/json', 'stripe-signature': signature },
+        headers: {
+          'content-type': 'application/json',
+          'stripe-signature': signature,
+          traceparent: '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01',
+        },
         payload,
       });
 
       expect(response.statusCode).toBe(200);
       expect(getBillingCustomerId(userId)).toBe(customerId);
+      const [, traceId, requestSpanId] = String(response.headers.traceparent).split('-');
+      const failedEvent = { ...event('customer.subscription.created', {}), data: null } as unknown as Stripe.Event;
+      const failedPayload = JSON.stringify(failedEvent);
+      const failedDigest = createHmac('sha256', webhookSecret).update(`${timestamp}.${failedPayload}`).digest('hex');
+      const failedResponse = await server.inject({
+        method: 'POST',
+        url: '/v1/stripe/webhook',
+        headers: {
+          'content-type': 'application/json',
+          'stripe-signature': `t=${timestamp},v1=${failedDigest}`,
+          traceparent: '00-4bf92f3577b34da6a3ce929d0e0e4737-00f067aa0ba902b8-01',
+        },
+        payload: failedPayload,
+      });
+      expect(failedResponse.statusCode).toBe(500);
+      expect(failedResponse.json()).toMatchObject({
+        error: 'webhook processing failed',
+        code: 'internal_error',
+        message: 'webhook processing failed',
+        retryable: true,
+      });
+      const [, failedTraceId, failedRequestSpanId] = String(failedResponse.headers.traceparent).split('-');
+      let exportedSpans: Array<{ name: string; traceId: string; parentSpanId?: string; attributes: Array<{ key: string; value: Record<string, unknown> }>; status?: { code: number; message?: string } }> = [];
+      await flushTelemetry({
+        endpoint: 'https://collector.example/v1/traces',
+        fetcher: async (_input, init) => {
+          const payload = JSON.parse(String(init?.body)) as {
+            resourceSpans: Array<{ scopeSpans: Array<{ spans: Array<{ name: string; traceId: string; parentSpanId?: string; attributes: Array<{ key: string; value: Record<string, unknown> }>; status?: { code: number; message?: string } }> }> }>;
+          };
+          exportedSpans = payload.resourceSpans.flatMap((resource) => resource.scopeSpans.flatMap((scope) => scope.spans));
+          return Response.json({});
+        },
+      });
+
+      const deliverySpan = exportedSpans.find((span) => span.name === 'billing.webhook.delivery' && span.traceId === traceId);
+      expect(deliverySpan).toMatchObject({ traceId, parentSpanId: requestSpanId });
+      expect(deliverySpan?.attributes).toContainEqual({ key: 'webhook.provider', value: { stringValue: 'stripe' } });
+      expect(deliverySpan?.attributes).toContainEqual({ key: 'webhook.status', value: { stringValue: 'processed' } });
+      const failedDeliverySpan = exportedSpans.find((span) => span.name === 'billing.webhook.delivery' && span.traceId === failedTraceId);
+      expect(failedDeliverySpan).toMatchObject({ traceId: failedTraceId, parentSpanId: failedRequestSpanId, status: { code: 2 } });
+      expect(failedDeliverySpan?.attributes).toContainEqual({ key: 'webhook.status', value: { stringValue: 'failed' } });
     } finally {
       await server.close();
+      config.otelSampleRate = previousSampleRate;
     }
   });
 
