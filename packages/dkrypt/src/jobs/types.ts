@@ -2,6 +2,7 @@ import type { ChildProcess } from 'node:child_process';
 import type { DeviceTransport } from '#apiCommonContracts.js';
 import type { TFBuild } from '#testflight.js';
 import type { IpaMetadata } from '#store/state.js';
+import type { TraceContext } from '#telemetry.js';
 
 export type JobStatus = 'queued' | 'running' | 'done' | 'failed';
 
@@ -23,6 +24,7 @@ export interface JobTimelineEvent {
 export interface Job {
   id: string;
   correlationId?: string;
+  traceContext?: TraceContext;
   projectId?: string;
   bundleId: string;
   externalVersionId?: string;

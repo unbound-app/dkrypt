@@ -5,13 +5,17 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { config } from '#config.js';
 import { artifactKeyForJob, promoteArtifact } from '#artifacts.js';
+import { currentCorrelation, withCorrelation } from '#correlation.js';
 import { createDevice, createProject, deleteDevice, getJobHistoryEntryById } from '#store/state.js';
+import { traceContextFromHeader } from '#telemetry.js';
 import type { Job } from '#jobs/types.js';
 
 let retryDeadlineAttempts = 0;
+let observedWorkerCorrelation: ReturnType<typeof currentCorrelation>;
 
 mock.module('./runner.js', () => ({
   runDecrypt: (job: Job, _device: unknown, signal?: AbortSignal) => {
+    if (job.bundleId === 'com.test.trace-propagation') observedWorkerCorrelation = currentCorrelation();
     if (job.bundleId === 'com.test.retry-deadline' || job.bundleId === 'com.test.retry-cancel') {
       retryDeadlineAttempts += 1;
       if (job.bundleId === 'com.test.retry-deadline') job.deadlineAt = Date.now() + 75;
@@ -49,6 +53,7 @@ async function clearActiveTestJobs(): Promise<void> {
 
 describe('recoverPersistedActiveJobs', () => {
   test('keeps queued jobs and records a running job as interrupted after a restart', () => {
+    const traceContext = traceContextFromHeader('00-0123456789abcdef0123456789abcdef-0123456789abcdef-01');
     const base = {
       bundleId: 'com.test.restart',
       source: 'scheduler' as const,
@@ -58,11 +63,12 @@ describe('recoverPersistedActiveJobs', () => {
       waiters: [],
     };
     const { queued, interrupted } = recoverPersistedActiveJobs([
-      { ...base, id: 'queued', status: 'queued' },
+      { ...base, id: 'queued', status: 'queued', traceContext },
       { ...base, id: 'running', status: 'running', startedAt: 2 },
     ], 3);
 
     expect(queued.map((job) => job.id)).toEqual(['queued']);
+    expect(queued[0]?.traceContext).toEqual(traceContext);
     expect(interrupted).toHaveLength(1);
     expect(interrupted[0]).toMatchObject({
       id: 'running',
@@ -78,6 +84,30 @@ describe('enqueueDecryptJob', () => {
     const job = { preferredDeviceId: undefined } as Pick<Job, 'preferredDeviceId'>;
 
     expect(isJobDispatchable(job, { id: 'secondary-device' })).toBeTrue();
+  });
+
+  test('propagates request trace context into queued job execution', async () => {
+    await clearActiveTestJobs();
+    observedWorkerCorrelation = undefined;
+    const traceContext = traceContextFromHeader('00-0123456789abcdef0123456789abcdef-0123456789abcdef-01');
+    const job = withCorrelation({ correlationId: 'request-trace-123', traceId: traceContext.traceId, traceContext }, () =>
+      enqueueDecryptJob('com.test.trace-propagation', 'manual'),
+    );
+
+    try {
+      for (let attempt = 0; attempt < 100 && observedWorkerCorrelation === undefined; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
+      expect(job.traceContext).toEqual(traceContext);
+      expect(observedWorkerCorrelation).toMatchObject({
+        correlationId: job.correlationId,
+        traceId: traceContext.traceId,
+        traceContext,
+      });
+    } finally {
+      if (job.status === 'running') cancelJob(job.id, 'trace propagation test cleanup');
+      await waitForJob(job, 1_000);
+    }
   });
 
   test('records the assigned device transport in job history', async () => {

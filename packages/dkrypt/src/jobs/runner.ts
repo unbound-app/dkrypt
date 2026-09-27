@@ -14,7 +14,7 @@ import { classifyIpaDecryptOutput } from '#util/ipadecryptOutput.js';
 import { artifactKeyForJob, promoteArtifact } from '#artifacts.js';
 import { withIpadecrypt } from '#idevice.js';
 import { terminateChildProcess } from '#jobs/process.js';
-import { currentCorrelation } from '#correlation.js';
+import { currentCorrelation, withCorrelation } from '#correlation.js';
 import { startSpan } from '#telemetry.js';
 import { abortedOperationError, throwIfAborted } from '#util/abort.js';
 
@@ -22,15 +22,22 @@ const log = scopedLogger('jobs');
 import { appendJobTimelineEvent, type Job } from '#jobs/types.js';
 
 export async function runDecrypt(job: Job, device: DeviceRecord, signal?: AbortSignal): Promise<void> {
-  const span = startSpan('job.decrypt', { 'job.id': job.id, 'job.bundle_id': job.bundleId, 'job.device_id': device.id }, currentCorrelation()?.traceContext);
-  try {
-    await runDecryptOperation(job, device, signal);
-    span.end();
-  } catch (error) {
-    if (job.filePath?.includes('/.staging/')) await rm(job.filePath, { force: true }).catch(() => {});
-    span.end(error);
-    throw error;
-  }
+  const parent = currentCorrelation();
+  const span = startSpan('job.decrypt', { 'job.id': job.id, 'job.bundle_id': job.bundleId, 'job.device_id': device.id }, parent?.traceContext);
+  return withCorrelation({
+    correlationId: parent?.correlationId ?? job.correlationId ?? job.id,
+    traceId: span.context.traceId,
+    traceContext: span.context,
+  }, async () => {
+    try {
+      await runDecryptOperation(job, device, signal);
+      span.end();
+    } catch (error) {
+      if (job.filePath?.includes('/.staging/')) await rm(job.filePath, { force: true }).catch(() => {});
+      span.end(error);
+      throw error;
+    }
+  });
 }
 
 async function runDecryptOperation(job: Job, device: DeviceRecord, signal?: AbortSignal): Promise<void> {

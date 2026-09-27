@@ -9,6 +9,7 @@ import { TypeBoxTypeProvider } from '@fastify/type-provider-typebox';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { drainBackgroundWork, trackBackgroundWork } from '#backgroundWork.js';
 import { config } from '#config.js';
+import { withCorrelation } from '#correlation.js';
 import { closeJobStore, getArtifactBackedJobs, shutdownJobs, startJobSweeper, stopAcceptingJobs, stopJobSweeper } from '#jobs/store.js';
 import { startJobWebhookDispatcher, stopJobWebhookDispatcher } from '#jobWebhook.js';
 import { startKeyExpiryPoller, stopKeyExpiryPoller } from '#keyExpiryPoller.js';
@@ -176,7 +177,7 @@ export async function buildServer(options: { includePublicRoutes?: boolean } = {
         return;
       }
     }
-    done();
+    withCorrelation({ correlationId: requestId, traceId: trace.context.traceId, traceContext: trace.context }, done);
   });
 
   server.addHook('onResponse', (request, reply, done) => {

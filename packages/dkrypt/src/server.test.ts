@@ -4,6 +4,7 @@ import path from 'node:path';
 import { expect, test } from 'bun:test';
 import { buildArtifactFileUrl, promoteArtifact, touchArtifact } from '#artifacts.js';
 import { exportBillingSnapshot, replaceBillingSnapshot, upsertBillingSubscription } from '#billing.js';
+import { currentCorrelation } from '#correlation.js';
 import { deleteAuthProfile, upsertAuthProfile } from '#identity.js';
 import { scopedLogger } from '#logger.js';
 import { emitJobsChanged } from '#events.js';
@@ -16,6 +17,36 @@ import { parseDeviceConnection } from '#routes/dashboardDeviceRoutes.js';
 import type { Response } from '#http.js';
 import { addAllowedUser, createApiKey, createDevice, createProject, createRole, createTestFlightSubscription, createWatch, deleteDevice, deleteRole, deleteUserPersonalData, deleteWatch, getEffectiveSettings, recordAudit, recordDeviceActivity, recordGitHubBudgetTelemetry, recordJobHistory, recordNotification, revokeApiKey, updateRole, updateSettings, withdrawTestFlightSubscription } from '#store/state.js';
 import { setSessionCookie } from '#session.js';
+
+test('request trace context is available throughout the Fastify request lifecycle', async () => {
+  const server = await buildServer({ includePublicRoutes: false });
+  let observedCorrelation: ReturnType<typeof currentCorrelation>;
+  server.addHook('preHandler', (_request, _reply, done) => {
+    observedCorrelation = currentCorrelation();
+    done();
+  });
+
+  try {
+    const response = await server.inject({
+      method: 'GET',
+      url: '/v1/status',
+      headers: {
+        'x-request-id': 'request-trace-123',
+        traceparent: '00-0123456789abcdef0123456789abcdef-0123456789abcdef-01',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(observedCorrelation).toMatchObject({
+      correlationId: 'request-trace-123',
+      traceId: '0123456789abcdef0123456789abcdef',
+      traceContext: { traceId: '0123456789abcdef0123456789abcdef' },
+    });
+    expect(response.headers.traceparent).toBe(observedCorrelation?.traceContext?.traceparent);
+  } finally {
+    await server.close();
+  }
+});
 
 function createSessionCookie(userId: string, permissions: bigint): string {
   let cookieHeader = '';

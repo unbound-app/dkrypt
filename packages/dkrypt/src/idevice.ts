@@ -8,6 +8,7 @@ import type { DeviceTransport } from '#apiCommonContracts.js';
 import { scopedLogger } from '#logger.js';
 import { BRIDGE_PROTOCOL_VERSION } from '#bridgeProtocol.js';
 import type { BridgeChannel } from '#bridgeProtocol.js';
+import { currentCorrelation } from '#correlation.js';
 import { startSpan } from '#telemetry.js';
 import { incrementMetric, observeMetric } from '#metrics.js';
 import { abortedOperationError, delayWithSignal, throwIfAborted } from '#util/abort.js';
@@ -161,7 +162,7 @@ class RustDeviceBridgeClient {
 
   async request(operation: string, details: Record<string, unknown>, timeoutMs = REMOTE_COMMAND_TIMEOUT_MS, signal?: AbortSignal): Promise<unknown> {
     const startedAt = performance.now();
-    const span = startSpan('device.bridge.request', { 'device.operation': operation, 'device.timeout_ms': timeoutMs });
+    const span = startSpan('device.bridge.request', { 'device.operation': operation, 'device.timeout_ms': timeoutMs }, currentCorrelation()?.traceContext);
     try {
       throwIfAborted(signal);
       const result = await this.requestRaw(operation, details, timeoutMs, true, signal);

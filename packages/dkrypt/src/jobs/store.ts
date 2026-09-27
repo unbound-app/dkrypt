@@ -21,7 +21,7 @@ import { terminateChildProcess } from '#jobs/process.js';
 import { classifyJobFailure } from '#util/failureCategory.js';
 import { incrementMetric, observeMetric } from '#metrics.js';
 import { recordJobStarted } from '#jobs/metrics.js';
-import { withCorrelation } from '#correlation.js';
+import { currentCorrelation, withCorrelation } from '#correlation.js';
 import { EMBED_COLOR, notify } from '#notify.js';
 import { runWithJobDeadline } from '#jobs/deadline.js';
 import { delayWithSignal } from '#util/abort.js';
@@ -205,6 +205,7 @@ function createCachedJob(
   const job: Job = {
     id: randomUUID(),
     correlationId: randomUUID(),
+    traceContext: currentCorrelation()?.traceContext,
     projectId,
     bundleId,
     externalVersionId,
@@ -335,6 +336,7 @@ export function enqueueDecryptJob(
   const job: Job = {
     id: randomUUID(),
     correlationId: randomUUID(),
+    traceContext: currentCorrelation()?.traceContext,
     projectId,
     bundleId,
     externalVersionId,
@@ -679,7 +681,11 @@ function pumpWorkers(): void {
     if (!job) continue;
 
     busyDeviceIds.add(device.id);
-    const run = withCorrelation({ correlationId: job.correlationId ?? job.id }, () => runOneJob(device, job));
+    const run = withCorrelation({
+      correlationId: job.correlationId ?? job.id,
+      traceId: job.traceContext?.traceId,
+      traceContext: job.traceContext,
+    }, () => runOneJob(device, job));
     runningJobs.set(job.id, run);
     void run.finally(() => {
       runningJobs.delete(job.id);

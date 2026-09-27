@@ -6,10 +6,12 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { Client } from 'ssh2';
 import type { BridgeEnvelope, DeviceClient, DeviceSession } from './idevice.js';
+import { withCorrelation } from '#correlation.js';
 import { config } from '#config.js';
 import { BRIDGE_CAPABILITIES, BRIDGE_PROTOCOL_VERSION, TESTFLIGHT_LIFECYCLE_CAPABILITIES } from './bridgeProtocol.js';
+import { flushTelemetry, startSpan } from '#telemetry.js';
 
-const { armAppStoreAutoConfirm, buildIpadecryptRuntimeConfig, clearAppStoreAutoConfirm, createBridgeEnvelope, createDeviceAgentEnvelope, execCommand, getDeviceAgentRetryDelay, getDeviceTransportOrder, isDirectUsbDeviceAgentConnection, probeDeviceSshTunnel, readBridgeHeartbeats, retryRustDeviceHealthProbe, retryTransientSshConnection, sendAppStoreBridgeRequest, withSSH } = await import('./idevice.js' + '?idevice-transport-test');
+const { armAppStoreAutoConfirm, buildIpadecryptRuntimeConfig, clearAppStoreAutoConfirm, createBridgeEnvelope, createDeviceAgentEnvelope, execCommand, getDeviceAgentRetryDelay, getDeviceTransportOrder, getRustDeviceBridgeStatus, isDirectUsbDeviceAgentConnection, probeDeviceSshTunnel, readBridgeHeartbeats, retryRustDeviceHealthProbe, retryTransientSshConnection, sendAppStoreBridgeRequest, withSSH } = await import('./idevice.js' + '?idevice-transport-test');
 
 type FakeExecStream = {
   stderr: {
@@ -74,6 +76,51 @@ function writeFrame(socket: import('node:net').Socket, value: Record<string, unk
   body.copy(frame, 4);
   socket.end(frame);
 }
+
+test('Rust device bridge spans inherit the active operation span', async () => {
+  const runtimeDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-device-trace-'));
+  const originalSocket = config.deviceBridgeSocket;
+  const originalSecret = config.deviceBridgeSecret;
+  const originalSampleRate = config.otelSampleRate;
+  const originalBatchSize = config.otelBatchSize;
+  config.deviceBridgeSocket = path.join(runtimeDir, 'unavailable.sock');
+  config.deviceBridgeSecret = 'bridge-test-secret-0123456789abcdef';
+  config.otelSampleRate = 1;
+  config.otelBatchSize = 128;
+  const parent = startSpan('test.device.operation');
+  let exportedSpans: Array<{ name: string; traceId: string; parentSpanId?: string }> = [];
+
+  try {
+    await expect(withCorrelation({
+      correlationId: 'device-operation-123',
+      traceId: parent.context.traceId,
+      traceContext: parent.context,
+    }, () => getRustDeviceBridgeStatus())).rejects.toThrow();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    parent.end();
+    await flushTelemetry({
+      endpoint: 'https://collector.example/v1/traces',
+      fetcher: async (_input, init) => {
+        const payload = JSON.parse(String(init?.body)) as {
+          resourceSpans: Array<{ scopeSpans: Array<{ spans: Array<{ name: string; traceId: string; parentSpanId?: string }> }> }>;
+        };
+        exportedSpans = payload.resourceSpans.flatMap((resource) => resource.scopeSpans.flatMap((scope) => scope.spans));
+        return Response.json({});
+      },
+    });
+
+    const bridgeSpans = exportedSpans.filter((span) => span.name === 'device.bridge.request');
+    expect(bridgeSpans).toHaveLength(2);
+    expect(bridgeSpans.every((span) => span.traceId === parent.context.traceId)).toBe(true);
+    expect(bridgeSpans.every((span) => span.parentSpanId === parent.context.spanId)).toBe(true);
+  } finally {
+    config.deviceBridgeSocket = originalSocket;
+    config.deviceBridgeSecret = originalSecret;
+    config.otelSampleRate = originalSampleRate;
+    config.otelBatchSize = originalBatchSize;
+    await rm(runtimeDir, { recursive: true, force: true });
+  }
+});
 
 test('createBridgeEnvelope matches the shared bridge fixture', async () => {
   const fixturePath = path.resolve(import.meta.dir, '../../autoinstall/protocol/bridge-v1.fixture.json');
