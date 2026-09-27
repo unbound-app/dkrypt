@@ -1,6 +1,24 @@
 <script lang="ts">
+	import { untrack } from "svelte";
 	import { LoaderCircle, TriangleAlert } from "lucide-svelte";
-	import { queueDecrypt } from "#lib/api";
+	import {
+		fetchTestFlightBuilds,
+		fetchTestFlightTrains,
+		queueDecrypt,
+		queueTestFlightDecrypt,
+		type TFBuild,
+	} from "#lib/api";
+	import {
+		BATCH_QUEUE_TEMPLATES,
+		MAX_BATCH_QUEUE_ENTRIES,
+		TESTFLIGHT_ACCESS_MAX_AGE_MS,
+		batchQueueEntryKey,
+		getRecentlyVerifiedTestFlightDevices,
+		isValidBatchQueueSelector,
+		parseBatchQueueEntries,
+		type BatchQueueEntry,
+		type BatchQueueSource,
+	} from "#lib/batchQueue";
 	import {
 		appDisplayName,
 		appIconUrl,
@@ -8,6 +26,7 @@
 	} from "#lib/appCatalog.svelte";
 	import Button from "#lib/components/ui/Button.svelte";
 	import Dialog from "#lib/components/ui/Dialog.svelte";
+	import Select from "#lib/components/ui/Select.svelte";
 	import Textarea from "#lib/components/ui/Textarea.svelte";
 	import {
 		addDecrypt,
@@ -16,6 +35,7 @@
 	} from "#lib/decrypts.svelte";
 	import { liveState } from "#lib/live.svelte";
 	import { requestNotificationPermission } from "#lib/notifications";
+	import { loadTestFlightCatalog, testFlightCatalogState } from "#lib/testflightCatalog.svelte";
 	import { showToast } from "#lib/ui.svelte";
 	import { cn } from "#lib/utils";
 
@@ -24,56 +44,78 @@
 		onOpenChange,
 	}: { open: boolean; onOpenChange: (open: boolean) => void } = $props();
 
-	const MAX_BUNDLE_IDS = 50;
 	const BUNDLE_ID_RE = /^[A-Za-z0-9.-]{3,200}$/;
-	const EXTERNAL_VERSION_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
-
-	interface BatchEntry {
-		bundleId: string;
-		externalVersionId?: string;
-	}
+	type BatchResult = BatchQueueEntry & {
+		state: "pending" | "ok" | "error";
+		error?: string;
+	};
 
 	let text = $state("");
+	let source = $state<BatchQueueSource>("appstore");
+	let submittedSource = $state<BatchQueueSource>("appstore");
+	let selectedDeviceByBundleId = $state<Record<string, string>>({});
+	let now = $state(Date.now());
 	let submitting = $state(false);
-	let results = $state<
-		{
-			bundleId: string;
-			externalVersionId?: string;
-			state: "pending" | "ok" | "error";
-			error?: string;
-		}[]
-	>([]);
+	let results = $state<BatchResult[]>([]);
 
-	function parseEntries(raw: string): {
-		entries: BatchEntry[];
-		duplicateBundleIds: string[];
-	} {
-		const seen = new Set<string>();
-		const seenBundleIds = new Set<string>();
-		const duplicateBundleIds = new Set<string>();
-		const entries: BatchEntry[] = [];
-		for (const line of raw.split(/[\n,]/)) {
-			const trimmed = line.trim();
-			if (!trimmed) continue;
-			const [bundleId, externalVersionId] = trimmed
-				.split("@")
-				.map((s) => s.trim());
-			const key = `${bundleId}@${externalVersionId ?? ""}`;
-			if (seenBundleIds.has(bundleId)) duplicateBundleIds.add(bundleId);
-			seenBundleIds.add(bundleId);
-			if (seen.has(key)) continue;
-			seen.add(key);
-			entries.push({
-				bundleId,
-				externalVersionId: externalVersionId || undefined,
-			});
-			if (entries.length >= MAX_BUNDLE_IDS) break;
-		}
-		return { entries, duplicateBundleIds: [...duplicateBundleIds] };
-	}
-
-	const parsedResult = $derived(parseEntries(text));
+	const parsedResult = $derived(parseBatchQueueEntries(text, source));
 	const parsed = $derived(parsedResult.entries);
+	const activeTemplate = $derived(BATCH_QUEUE_TEMPLATES.find((template) => template.source === source)!);
+	const missingTestFlightSelectors = $derived(source === "testflight" ? parsed.filter((entry) => !entry.selector) : []);
+	const testFlightCatalogBusy = $derived(testFlightCatalogState.loading || testFlightCatalogState.refreshing);
+	const testFlightAppSelections = $derived.by(() => {
+		if (source !== "testflight") return [];
+		const bundleIds = [...new Set(parsed.map((entry) => entry.bundleId))];
+		return bundleIds.map((bundleId) => {
+			const app = testFlightCatalogState.apps.find((candidate) => candidate.bundleId === bundleId);
+			return {
+				bundleId,
+				app,
+				devices: app && !testFlightCatalogState.error
+					? getRecentlyVerifiedTestFlightDevices(app, now)
+					: [],
+			};
+		});
+	});
+	const unavailableTestFlightApps = $derived(testFlightAppSelections.filter((selection) => selection.devices.length === 0));
+	const availableTestFlightApps = $derived(testFlightAppSelections.filter((selection) => selection.devices.length > 0));
+	const queueableTestFlightEntries = $derived(parsed.filter((entry) =>
+		entry.selector
+		&& isValidBatchQueueSelector(entry.selector, "testflight")
+		&& availableTestFlightApps.some((selection) => selection.bundleId === entry.bundleId),
+	));
+
+	$effect(() => {
+		if (!open || source !== "testflight") return;
+		untrack(() => {
+			const fetchedAt = testFlightCatalogState.fetchedAt;
+			const stale = !fetchedAt || now - fetchedAt > TESTFLIGHT_ACCESS_MAX_AGE_MS || testFlightCatalogState.error;
+			void loadTestFlightCatalog(Boolean(stale));
+		});
+	});
+
+	$effect(() => {
+		if (!open || source !== "testflight") return;
+		const timer = setInterval(() => (now = Date.now()), 60_000);
+		return () => clearInterval(timer);
+	});
+
+	$effect(() => {
+		if (source !== "testflight") return;
+		let next = selectedDeviceByBundleId;
+		let changed = false;
+		for (const selection of availableTestFlightApps) {
+			if (selection.devices.some((device) => device.id === next[selection.bundleId])) continue;
+			if (!changed) next = { ...next };
+			next[selection.bundleId] = selection.devices[0]!.id;
+			changed = true;
+		}
+		if (changed) selectedDeviceByBundleId = next;
+	});
+
+	function setSelectedTestFlightDevice(bundleId: string, deviceId: string): void {
+		selectedDeviceByBundleId = { ...selectedDeviceByBundleId, [bundleId]: deviceId };
+	}
 
 	const activeBundleIds = $derived.by(() => {
 		const set = new Set<string>();
@@ -98,6 +140,13 @@
 		]);
 	});
 
+	function updateResult(entry: BatchQueueEntry, changes: Partial<BatchResult>): void {
+		const entryKey = batchQueueEntryKey(entry);
+		results = results.map((result) => batchQueueEntryKey(result) === entryKey
+			? { ...result, ...changes }
+			: result);
+	}
+
 	function close(): void {
 		if (submitting) return;
 		text = "";
@@ -105,58 +154,70 @@
 		onOpenChange(false);
 	}
 
-	async function submitEntries(entries: BatchEntry[]): Promise<void> {
+	async function submitEntries(entries: BatchQueueEntry[], queueSource: BatchQueueSource): Promise<void> {
 		requestNotificationPermission();
 		submitting = true;
 
 		let ok = 0;
 		for (const entry of entries) {
-			const { bundleId, externalVersionId } = entry;
+			const { bundleId, selector } = entry;
 			if (!BUNDLE_ID_RE.test(bundleId)) {
-				results = results.map((r) =>
-					r.bundleId === bundleId
-						? {
-								...r,
-								state: "error",
-								error: "doesn't look like a bundle ID",
-							}
-						: r,
-				);
+				updateResult(entry, { state: "error", error: "doesn't look like a bundle ID" });
 				continue;
 			}
-			if (
-				externalVersionId &&
-				!EXTERNAL_VERSION_ID_RE.test(externalVersionId)
-			) {
-				results = results.map((r) =>
-					r.bundleId === bundleId
-						? {
-								...r,
-								state: "error",
-								error: "The requested App Store version could not be found.",
-							}
-						: r,
-				);
+			if (selector && !isValidBatchQueueSelector(selector, queueSource)) {
+				updateResult(entry, {
+					state: "error",
+					error: queueSource === "testflight" ? "use version_build" : "invalid App Store version ID",
+				});
+				continue;
+			}
+			if (queueSource === "testflight" && !selector) {
+				updateResult(entry, { state: "error", error: "add a version_build selector" });
 				continue;
 			}
 			try {
-				const { ok: queuedOk, data } = await queueDecrypt(
-					bundleId,
-					externalVersionId,
-				);
+				let response;
+				let trackName = appDisplayName(bundleId);
+				let versionLabel = selector;
+				let testflight: { appId: number; build: TFBuild } | undefined;
+				if (queueSource === "testflight") {
+					const app = testFlightCatalogState.apps.find((candidate) => candidate.bundleId === bundleId);
+					if (!app || testFlightCatalogState.error) throw new Error("not available via TestFlight on an enabled device");
+					const deviceOptions = getRecentlyVerifiedTestFlightDevices(app, Date.now());
+					const selectedDeviceId = selectedDeviceByBundleId[bundleId];
+					if (!selectedDeviceId || !deviceOptions.some((device) => device.id === selectedDeviceId)) {
+						throw new Error("no recently verified device has access");
+					}
+					if (!selector) throw new Error("add a version_build selector");
+					const [trainVersion, buildNumber] = selector.split("_");
+					const trainsResult = await fetchTestFlightTrains(app.appId, selectedDeviceId);
+					if ("error" in trainsResult) throw new Error(trainsResult.error);
+					const train = trainsResult.trains.find((candidate) => candidate.trainVersion === trainVersion);
+					if (!train) throw new Error("TestFlight train not found");
+					const buildsResult = await fetchTestFlightBuilds(app.appId, train.trainVersion, selectedDeviceId);
+					if ("error" in buildsResult) throw new Error(buildsResult.error);
+					const build = buildsResult.builds.find((candidate) => candidate.bundleId === bundleId && candidate.cfBundleVersion === buildNumber);
+					if (!build) throw new Error("TestFlight build not found");
+					trackName = app.displayName;
+					versionLabel = `TestFlight ${selector}`;
+					testflight = { appId: app.appId, build };
+					response = await queueTestFlightDecrypt(bundleId, app.appId, build, false, selectedDeviceId);
+				} else {
+					response = await queueDecrypt(bundleId, selector);
+				}
+				const { ok: queuedOk, data } = response;
 				if (!queuedOk) {
-					results = results.map((r) =>
-						r.bundleId === bundleId
-							? { ...r, state: "error", error: "rejected" }
-							: r,
-					);
+					updateResult(entry, { state: "error", error: "rejected" });
 					continue;
 				}
 				addDecrypt({
 					id: data.id,
 					bundleId,
-					trackName: bundleId,
-					externalVersionId,
+					trackName,
+					versionLabel,
+					externalVersionId: queueSource === "appstore" ? selector : undefined,
+					testflight,
 					status: data.status,
 					progress: data.progress,
 					queue: data.queue,
@@ -164,16 +225,10 @@
 					artifactUrl: data.artifactUrl,
 				});
 				pushRecentBundleId(bundleId);
-				results = results.map((r) =>
-					r.bundleId === bundleId ? { ...r, state: "ok" } : r,
-				);
+				updateResult(entry, { state: "ok" });
 				ok += 1;
-			} catch {
-				results = results.map((r) =>
-					r.bundleId === bundleId
-						? { ...r, state: "error", error: "request failed" }
-						: r,
-				);
+			} catch (error) {
+				updateResult(entry, { state: "error", error: error instanceof Error ? error.message : "request failed" });
 			}
 		}
 
@@ -187,12 +242,9 @@
 	async function submit(): Promise<void> {
 		const entries = parsed;
 		if (entries.length === 0) return;
-		results = entries.map((e) => ({
-			bundleId: e.bundleId,
-			externalVersionId: e.externalVersionId,
-			state: "pending",
-		}));
-		await submitEntries(entries);
+		submittedSource = source;
+		results = entries.map((entry) => ({ ...entry, state: "pending" }));
+		await submitEntries(entries, source);
 	}
 
 	const failedCount = $derived(
@@ -202,38 +254,94 @@
 	async function retryFailed(): Promise<void> {
 		const failed = results
 			.filter((r) => r.state === "error")
-			.map((r) => ({
-				bundleId: r.bundleId,
-				externalVersionId: r.externalVersionId,
-			}));
+			.map(({ bundleId, selector }) => ({ bundleId, selector }));
 		if (failed.length === 0) return;
 		results = results.map((r) =>
 			r.state === "error"
 				? { ...r, state: "pending", error: undefined }
 				: r,
 		);
-		await submitEntries(failed);
+		await submitEntries(failed, submittedSource);
 	}
 </script>
 
 <Dialog {open} onOpenChange={(v) => !v && close()} class="max-w-md">
 	<div class="mb-1 text-sm font-medium">Batch decrypt</div>
 	<div class="mb-3 text-xs text-muted">
-		One bundle ID per line (optionally {"`id@version`"}), up to {MAX_BUNDLE_IDS}
-		at once.
+		Choose a workflow. Enter up to {MAX_BATCH_QUEUE_ENTRIES} bundle IDs, one per line.
 	</div>
 
 	{#if results.length === 0}
+		<div class="mb-2 flex gap-2" role="group" aria-label="Batch queue template">
+			{#each BATCH_QUEUE_TEMPLATES as template (template.source)}
+				<Button
+					variant={source === template.source ? "default" : "secondary"}
+					size="sm"
+					aria-pressed={source === template.source}
+					onclick={() => (source = template.source)}>{template.label}</Button
+				>
+			{/each}
+		</div>
+		<div class="mb-2 text-xs text-muted">{activeTemplate.description}</div>
+		{#if source === "testflight"}
+			{#if parsed.length === 0}
+				<div class="mb-2 text-xs text-muted">Enter apps available via TestFlight to check eligible devices.</div>
+			{:else if testFlightCatalogBusy}
+				<div class="mb-2 text-xs text-muted" role="status">Checking recent TestFlight access…</div>
+			{:else if testFlightCatalogState.error}
+				<div class="mb-2 flex items-center justify-between gap-2 text-xs text-warn" role="status">
+					<span>TestFlight access could not be refreshed.</span>
+					<Button size="sm" variant="ghost" onclick={() => void loadTestFlightCatalog(true)}>Retry</Button>
+				</div>
+			{:else}
+				<div class="mb-2 flex flex-col gap-2">
+					{#each testFlightAppSelections as selection (selection.bundleId)}
+						<div class="border-border bg-panel-muted flex min-w-0 items-center justify-between gap-3 rounded-md border px-3 py-2">
+							<div class="min-w-0">
+								<div class="truncate text-xs font-medium">{selection.app?.displayName ?? selection.bundleId}</div>
+								<div class="truncate font-mono text-[10px] text-muted">{selection.bundleId}</div>
+							</div>
+							{#if selection.devices.length === 0}
+								<span class="shrink-0 text-xs text-warn">Unavailable</span>
+							{:else if selection.devices.length === 1}
+								<span class="shrink-0 text-xs text-muted">{selection.devices[0]!.name}</span>
+							{:else}
+								<label class="sr-only" for={`batch-testflight-device-${selection.bundleId}`}>Eligible device for {selection.app?.displayName ?? selection.bundleId}</label>
+								<Select
+									id={`batch-testflight-device-${selection.bundleId}`}
+									items={selection.devices.map((device) => ({ value: device.id, label: device.name }))}
+									value={selectedDeviceByBundleId[selection.bundleId] ?? ""}
+									onValueChange={(deviceId) => setSelectedTestFlightDevice(selection.bundleId, deviceId)}
+									class="w-44 shrink-0"
+								/>
+							{/if}
+						</div>
+					{/each}
+				</div>
+				{#if unavailableTestFlightApps.length > 0}
+					<div class="mb-2 text-xs text-warn" role="status">Unavailable apps will be marked failed; available apps can still be queued.</div>
+				{/if}
+				{#if missingTestFlightSelectors.length > 0}
+					<div class="mb-2 text-xs text-warn" role="status">Add a version_build selector to queue each TestFlight app.</div>
+				{/if}
+			{/if}
+		{/if}
 		<Textarea
 			bind:value={text}
 			disabled={submitting}
-			placeholder={"com.example.app\ncom.example.app2@abc123\ncom.example.app3"}
+			placeholder={activeTemplate.placeholder}
 			rows={6}
 			class="border-border bg-panel-muted focus:border-accent w-full rounded-md border px-3 py-2 font-mono text-xs text-text focus:outline-none disabled:opacity-60"
 		></Textarea>
 		<div class="mt-1.5 text-xs text-muted">
 			{parsed.length} bundle ID{parsed.length === 1 ? "" : "s"} recognized
 		</div>
+		{#if parsedResult.invalidSelectors.length > 0}
+			<div class="text-warn mt-1 flex items-start gap-1.5 text-xs" role="status">
+				<TriangleAlert class="mt-0.5 h-3.5 w-3.5 shrink-0" />
+				<span>Check version selector format: {parsedResult.invalidSelectors.join(", ")}</span>
+			</div>
+		{/if}
 		{#if parsedResult.duplicateBundleIds.length > 0}
 			<div class="text-warn mt-1 flex items-start gap-1.5 text-xs">
 				<TriangleAlert class="mt-0.5 h-3.5 w-3.5 shrink-0" />
@@ -256,13 +364,13 @@
 		{/if}
 		<Button
 			class="mt-3 w-full"
-			disabled={parsed.length === 0}
+			disabled={parsed.length === 0 || (source === "testflight" && (testFlightCatalogBusy || queueableTestFlightEntries.length === 0))}
 			loading={submitting}
 			onclick={submit}>Queue all</Button
 		>
 	{:else}
 		<div class="flex max-h-72 flex-col gap-1 overflow-y-auto">
-			{#each results as r (r.bundleId + (r.externalVersionId ?? ""))}
+			{#each results as r (batchQueueEntryKey(r))}
 				<div class="flex items-center gap-2 text-xs">
 					{#if r.state === "pending"}
 						<LoaderCircle
@@ -294,9 +402,9 @@
 					</span>
 					<span
 						class="truncate font-mono text-muted"
-						title={r.bundleId}
-						>{r.bundleId}{r.externalVersionId
-							? `@${r.externalVersionId}`
+						title={batchQueueEntryKey(r)}
+						>{r.bundleId}{r.selector
+							? `@${r.selector}`
 							: ""}</span
 					>
 					{#if r.error}<span class="text-muted">- {r.error}</span

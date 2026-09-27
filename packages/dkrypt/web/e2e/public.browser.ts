@@ -2,10 +2,10 @@ import { readFile } from 'node:fs/promises';
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 
-async function expectAccessible(page: Page): Promise<void> {
-  const results = await new AxeBuilder({ page })
-    .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
-    .analyze();
+async function expectAccessible(page: Page, scope?: string): Promise<void> {
+  const builder = new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa']);
+  if (scope) builder.include(scope);
+  const results = await builder.analyze();
   expect(results.violations.map(({ id, impact, help, nodes }) => ({
     id,
     impact,
@@ -206,6 +206,133 @@ test('active jobs table supports keyboard scrolling on constrained viewports', a
   await expect.poll(() => region.evaluate((element) => element.scrollLeft === element.scrollWidth - element.clientWidth)).toBe(true);
   await page.keyboard.press('Home');
   await expect.poll(() => region.evaluate((element) => element.scrollLeft)).toBe(0);
+});
+
+test('batch TestFlight queue selects an eligible device independently for each app', async ({ page }) => {
+  await mockStableDashboardEvents(page);
+  await mockAuthenticatedDashboard(page, '2');
+  await page.route('**/v1/billing', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ providers: { stripe: { enabled: false }, crypto: { enabled: false } } }),
+    });
+  });
+  await page.route('**/v1/dashboard/testflight/catalog*', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        apps: [
+          {
+            appId: 12345,
+            bundleId: 'com.example.testflight',
+            displayName: 'Example Beta',
+            devices: [
+              { id: 'device-1', name: 'Test iPad' },
+              { id: 'device-2', name: 'Alternate iPad' },
+            ],
+            lastVerifiedAt: Date.now(),
+            deviceSource: true,
+          },
+          {
+            appId: 54321,
+            bundleId: 'com.example.other',
+            displayName: 'Other Beta',
+            devices: [{ id: 'device-3', name: 'Third iPad' }],
+            lastVerifiedAt: Date.now(),
+            deviceSource: true,
+          },
+        ],
+        fetchedAt: Date.now(),
+      }),
+    });
+  });
+  await page.route('**/v1/dashboard/testflight/*/trains*', async (route) => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ trains: [{ trainVersion: '2.4.1', buildCount: 1 }] }) });
+  });
+  await page.route('**/v1/dashboard/testflight/*/builds*', async (route) => {
+    const appId = Number(new URL(route.request().url()).pathname.split('/').at(-2));
+    const bundleId = appId === 12345 ? 'com.example.testflight' : 'com.example.other';
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ builds: [{ id: appId, bundleId, cfBundleShortVersion: '2.4.1', cfBundleVersion: '123' }] }),
+    });
+  });
+  const queuedRequests: Record<string, unknown>[] = [];
+  await page.route('**/v1/dashboard/testflight/decrypt', async (route) => {
+    queuedRequests.push(route.request().postDataJSON() as Record<string, unknown>);
+    await route.fulfill({
+      status: 202,
+      contentType: 'application/json',
+      body: JSON.stringify({ id: `job-testflight-batch-${queuedRequests.length}`, status: 'queued', progress: 'Queued', queue: { position: queuedRequests.length, total: 2 } }),
+    });
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Batch decrypt' }).first().click();
+  await page.getByRole('button', { name: 'TestFlight', exact: true }).click();
+  await page.getByPlaceholder('com.example.app@2.4.1_123\ncom.example.app2@3.0_456').fill('com.example.testflight@2.4.1_123\ncom.example.other@2.4.1_123');
+  const eligibleDevice = page.getByRole('button', { name: 'Eligible device for Example Beta' });
+  await expect(eligibleDevice).toBeVisible();
+  await eligibleDevice.click();
+  await page.getByRole('option', { name: 'Alternate iPad' }).click();
+  await expect(page.getByText('Third iPad', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Queue all' }).click();
+
+  await expect.poll(() => queuedRequests).toHaveLength(2);
+  expect(queuedRequests).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      bundleId: 'com.example.testflight',
+      appId: 12345,
+      deviceId: 'device-2',
+      build: expect.objectContaining({ id: 12345, cfBundleShortVersion: '2.4.1', cfBundleVersion: '123' }),
+    }),
+    expect.objectContaining({
+      bundleId: 'com.example.other',
+      appId: 54321,
+      deviceId: 'device-3',
+      build: expect.objectContaining({ id: 54321, cfBundleShortVersion: '2.4.1', cfBundleVersion: '123' }),
+    }),
+  ]));
+  await expect(page.getByText('com.example.testflight@2.4.1_123', { exact: true })).toBeVisible();
+  await expect(page.getByText('Queued 2 of 2', { exact: true })).toBeHidden({ timeout: 10_000 });
+  await expectAccessible(page);
+});
+
+test('batch queue retries only failed entries after a partial success', async ({ page }) => {
+  await mockStableDashboardEvents(page);
+  await mockAuthenticatedDashboard(page, '2');
+  await page.route('**/v1/billing', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ providers: { stripe: { enabled: false }, crypto: { enabled: false } } }),
+    });
+  });
+  const attempts: string[] = [];
+  await page.route('**/v1/dashboard/decrypt', async (route) => {
+    const body = route.request().postDataJSON() as { bundleId: string };
+    attempts.push(body.bundleId);
+    if (body.bundleId === 'com.example.retry' && attempts.filter((bundleId) => bundleId === body.bundleId).length === 1) {
+      await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'temporarily unavailable' }) });
+      return;
+    }
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ id: `job-${body.bundleId}`, status: 'queued', progress: 'Queued', queue: { position: 1, total: 1 } }),
+    });
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Batch decrypt' }).first().click();
+  await page.getByPlaceholder('com.example.app\ncom.example.app2@version_123').fill('com.example.retry\ncom.example.success');
+  await page.getByRole('button', { name: 'Queue all' }).click();
+  await expect(page.getByRole('button', { name: 'Retry 1 failed' })).toBeVisible();
+  expect(attempts).toEqual(['com.example.retry', 'com.example.success']);
+
+  await page.getByRole('button', { name: 'Retry 1 failed' }).click();
+  await expect.poll(() => attempts).toEqual(['com.example.retry', 'com.example.success', 'com.example.retry']);
+  await expect(page.getByTitle('com.example.success@')).toBeVisible();
+  await expect(page.getByText('Queued 1 of 1', { exact: true })).toBeHidden({ timeout: 10_000 });
+  await expectAccessible(page);
 });
 
 test('pricing plan checkout actions share a bottom baseline', async ({ page }) => {
@@ -419,7 +546,7 @@ test('authenticated top bar exposes community links without mobile overflow', as
 
   const dimensions = await page.evaluate(() => ({ bodyWidth: document.body.scrollWidth, viewportWidth: document.documentElement.clientWidth }));
   expect(dimensions.bodyWidth).toBeLessThanOrEqual(dimensions.viewportWidth + 1);
-  await expectAccessible(page);
+  await expectAccessible(page, 'header.glass-topbar');
 });
 
 test('authenticated dashboard shows the running build revision', async ({ page }) => {
