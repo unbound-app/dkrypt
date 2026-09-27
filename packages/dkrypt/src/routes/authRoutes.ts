@@ -51,6 +51,7 @@ import {
   setFastifySessionCookie,
 } from '#session.js';
 import { FixedWindowRateLimiter } from '#util/rateLimit.js';
+import { getDeploymentMetadata } from '#deployment.js';
 
 const LOCKOUT_AFTER = 5;
 const MAX_LOCKOUT_MS = 5 * 60_000;
@@ -140,6 +141,7 @@ export const authRoutes: FastifyPluginAsyncTypebox = async (server) => {
       expiresAt: session?.exp,
       githubOauthEnabled,
       discordOauthEnabled,
+      deployment: { ref: getDeploymentMetadata().ref },
       publicBaseUrl: config.publicBaseUrl,
       mfa: session ? { ...mfaStatus(session.sub), required: !session.mfaVerified } : undefined,
     });

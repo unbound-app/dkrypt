@@ -92,7 +92,7 @@ test('native auth routes preserve cookie sessions, refresh, logout, and session 
   try {
     const session = await server.inject({ method: 'GET', url: '/v1/auth/session', headers: { cookie } });
     expect(session.statusCode).toBe(200);
-    expect(session.json()).toMatchObject({ loggedIn: true, sub: 'root' });
+    expect(session.json()).toMatchObject({ loggedIn: true, sub: 'root', deployment: { ref: expect.any(String) } });
 
     const mfa = await server.inject({ method: 'GET', url: '/v1/auth/mfa', headers: { cookie } });
     expect(mfa.statusCode).toBe(200);
@@ -2190,6 +2190,10 @@ test('Fastify normalizes API errors into the shared error envelope', async () =>
 });
 
 test('health responses expose transport and subsystem recovery states', async () => {
+  const originalDeploymentId = process.env.DEPLOYMENT_ID;
+  const originalBuildRef = process.env.BUILD_REF;
+  process.env.DEPLOYMENT_ID = 'deploy-456-attempt-2';
+  process.env.BUILD_REF = 'abcdef0123456789';
   const server = await buildServer({ includePublicRoutes: false });
 
   try {
@@ -2200,6 +2204,10 @@ test('health responses expose transport and subsystem recovery states', async ()
     });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
+      deployment: {
+        id: 'deploy-456-attempt-2',
+        ref: 'abcdef0123456789',
+      },
       device: {
         transportState: expect.stringMatching(/^(discovered|pairing|connecting|ready|degraded|recovering|offline|unsupported)$/),
         capabilities: expect.any(Array),
@@ -2208,10 +2216,16 @@ test('health responses expose transport and subsystem recovery states', async ()
     });
   } finally {
     await server.close();
+    if (originalDeploymentId === undefined) delete process.env.DEPLOYMENT_ID;
+    else process.env.DEPLOYMENT_ID = originalDeploymentId;
+    if (originalBuildRef === undefined) delete process.env.BUILD_REF;
+    else process.env.BUILD_REF = originalBuildRef;
   }
 });
 
 test('Fastify exposes coarse public service status without device details', async () => {
+  const originalBuildRef = process.env.BUILD_REF;
+  process.env.BUILD_REF = '0123456789abcdef';
   const server = await buildServer({ includePublicRoutes: false });
 
   try {
@@ -2220,6 +2234,7 @@ test('Fastify exposes coarse public service status without device details', asyn
     expect(response.json()).toMatchObject({
       status: expect.stringMatching(/^(operational|degraded|maintenance)$/),
       checkedAt: expect.any(String),
+      deployment: { ref: '0123456789abcdef' },
       components: {
         service: { state: expect.any(String) },
         automation: { state: expect.any(String) },
@@ -2230,6 +2245,8 @@ test('Fastify exposes coarse public service status without device details', asyn
     expect(response.body).not.toContain('capabilities');
   } finally {
     await server.close();
+    if (originalBuildRef === undefined) delete process.env.BUILD_REF;
+    else process.env.BUILD_REF = originalBuildRef;
   }
 });
 

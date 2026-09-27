@@ -11,6 +11,7 @@
   type PublicStatus = {
     status: 'operational' | 'degraded' | 'maintenance';
     checkedAt: string;
+    deployment: { ref: string };
     components: {
       service: { state: ComponentState };
       automation: { state: ComponentState };
@@ -109,7 +110,10 @@
               <span class="size-2.5 rounded-full {status.status === 'operational' ? 'bg-ok' : status.status === 'maintenance' ? 'bg-destructive' : 'bg-warn'}" aria-hidden="true"></span>
               <h2 class="text-lg font-semibold">{statusLabel}</h2>
             </div>
-            <div class="mt-2 flex items-center gap-2 text-xs text-muted"><Clock3 class="size-3.5" /> Checked {formatCheckedAt(status.checkedAt)}</div>
+            <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
+              <span class="flex items-center gap-2"><Clock3 class="size-3.5" /> Checked {formatCheckedAt(status.checkedAt)}</span>
+              <span title={status.deployment.ref}>Build {status.deployment.ref.slice(0, 7)}</span>
+            </div>
           </div>
           <Badge variant={stateVariant(status.status)}>{labels[status.status]}</Badge>
         </div>

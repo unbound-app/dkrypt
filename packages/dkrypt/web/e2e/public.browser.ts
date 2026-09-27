@@ -28,6 +28,7 @@ async function mockAuthenticatedSession(page: Page, permissions: string): Promis
         linkedProviders: [],
         githubOauthEnabled: false,
         discordOauthEnabled: false,
+        deployment: { ref: 'abcdef0123456789' },
         mfa: { enabled: false, recoveryCodesRemaining: 0, required: false },
       }),
     });
@@ -118,6 +119,7 @@ test('status page renders an operational service and remains keyboard accessible
       body: JSON.stringify({
         status: 'operational',
         checkedAt: '2026-09-24T20:00:00.000Z',
+        deployment: { ref: 'abcdef0123456789' },
         components: {
           service: { state: 'operational' },
           automation: { state: 'operational' },
@@ -130,6 +132,7 @@ test('status page renders an operational service and remains keyboard accessible
   await page.goto('/status');
   await expect(page.getByRole('heading', { name: 'dkrypt status' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'All systems operational' })).toBeVisible();
+  await expect(page.getByText('Build abcdef0', { exact: true })).toBeVisible();
   await expect(page.getByText('Device automation', { exact: true })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Pricing' }).first()).toHaveAttribute('href', '/pricing');
 
@@ -260,6 +263,14 @@ test('authenticated top bar exposes community links without mobile overflow', as
   const dimensions = await page.evaluate(() => ({ bodyWidth: document.body.scrollWidth, viewportWidth: document.documentElement.clientWidth }));
   expect(dimensions.bodyWidth).toBeLessThanOrEqual(dimensions.viewportWidth + 1);
   await expectAccessible(page);
+});
+
+test('authenticated dashboard shows the running build revision', async ({ page }) => {
+  await mockAuthenticatedDashboard(page, '1');
+
+  await page.goto('/');
+
+  await expect(page.getByText('Build abcdef0', { exact: true })).toBeVisible();
 });
 
 test('API documentation opens in a standalone page instead of an embedded frame', async ({ page }) => {

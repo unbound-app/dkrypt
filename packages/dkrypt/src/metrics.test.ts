@@ -45,6 +45,44 @@ describe('OpenTelemetry metrics', () => {
     }));
   });
 
+  it('identifies the deployed build and release in trace and metric resources', async () => {
+    const originalDeploymentId = process.env.DEPLOYMENT_ID;
+    const originalBuildRef = process.env.BUILD_REF;
+    const originalSampleRate = config.otelSampleRate;
+    const originalBatchSize = config.otelBatchSize;
+    process.env.DEPLOYMENT_ID = 'deploy-789-attempt-1';
+    process.env.BUILD_REF = 'feedface01234567';
+    config.otelSampleRate = 1;
+    config.otelBatchSize = 128;
+
+    try {
+      const metrics = createOtlpMetricsPayload('dkrypt', 1234);
+      let traces: any;
+      startSpan('deployment.identity').end();
+      await flushTelemetry({
+        endpoint: 'https://collector.example/v1/traces',
+        fetcher: async (_input, init) => {
+          traces = JSON.parse(String(init?.body));
+          return Response.json({});
+        },
+      });
+
+      const expectedAttributes = [
+        { key: 'deployment.id', value: { stringValue: 'deploy-789-attempt-1' } },
+        { key: 'service.version', value: { stringValue: 'feedface01234567' } },
+      ];
+      expect(metrics.resourceMetrics[0].resource.attributes).toEqual(expect.arrayContaining(expectedAttributes));
+      expect(traces.resourceSpans[0].resource.attributes).toEqual(expect.arrayContaining(expectedAttributes));
+    } finally {
+      if (originalDeploymentId === undefined) delete process.env.DEPLOYMENT_ID;
+      else process.env.DEPLOYMENT_ID = originalDeploymentId;
+      if (originalBuildRef === undefined) delete process.env.BUILD_REF;
+      else process.env.BUILD_REF = originalBuildRef;
+      config.otelSampleRate = originalSampleRate;
+      config.otelBatchSize = originalBatchSize;
+    }
+  });
+
   it('bounds series cardinality and reports dropped measurements', () => {
     for (let index = 0; index < 5000; index += 1) incrementMetric('high_cardinality_total', { key: String(index) });
 

@@ -317,6 +317,7 @@ test('support bundles require management permission and redact sensitive diagnos
     expect(denied.statusCode).toBe(403);
     expect(response.statusCode).toBe(200);
     expect(response.headers['content-disposition']).toBe('attachment; filename="dkrypt-support-bundle.json"');
+    expect(bundle.deployment).toMatchObject({ id: expect.any(String), ref: expect.any(String), node: expect.any(String) });
     expect(bundle.devices).toEqual([{ id: 'ipad-1', name: 'iPad', enabled: true, isPrimary: true }]);
     expect(bundle.watches).toEqual([{ bundleId: 'com.example.app', enabled: true, pollCron: '0 * * * *', destinations: 0 }]);
     expect(bundle.watchHealth).toHaveLength(1);

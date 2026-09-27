@@ -34,6 +34,8 @@ RUN bun run build
 
 FROM oven/bun:1.3.14-slim
 WORKDIR /app
+ARG BUILD_REF=development
+ARG DEPLOYMENT_ID=local
 
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates findutils libusb-1.0-0 passwd util-linux \
   && rm -rf /var/lib/apt/lists/*
@@ -51,7 +53,7 @@ COPY packages/dkrypt/entrypoint.sh /usr/local/bin/dkrypt-entrypoint
 COPY --from=web /public ./public
 RUN chmod 0755 /usr/local/bin/dkrypt-entrypoint
 
-ENV NODE_ENV=production
+ENV NODE_ENV=production BUILD_REF=$BUILD_REF DEPLOYMENT_ID=$DEPLOYMENT_ID
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \

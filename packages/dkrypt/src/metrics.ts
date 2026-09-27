@@ -1,3 +1,5 @@
+import { getOtelResourceAttributes } from '#deployment.js';
+
 type MetricLabelValue = string | number | boolean;
 
 interface MetricLabels {
@@ -220,7 +222,7 @@ export function createOtlpMetricsPayload(serviceName: string, timestampMs = Date
   });
   return {
     resourceMetrics: [{
-      resource: { attributes: [{ key: 'service.name', value: { stringValue: serviceName } }] },
+      resource: { attributes: getOtelResourceAttributes(serviceName) },
       scopeMetrics: [{ scope: { name: 'dkrypt' }, metrics }],
     }],
   };

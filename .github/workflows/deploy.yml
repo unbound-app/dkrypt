@@ -91,7 +91,9 @@ jobs:
           context: .
           file: packages/dkrypt/Dockerfile
           push: true
-          build-args: BUILD_REF=${{ github.sha }}
+          build-args: |
+            BUILD_REF=${{ github.sha }}
+            DEPLOYMENT_ID=${{ github.run_id }}
           tags: |
             ghcr.io/${{ github.repository }}:${{ github.sha }}
             ghcr.io/${{ github.repository }}:main
@@ -137,6 +139,9 @@ jobs:
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     runs-on: [self-hosted, homelab]
     timeout-minutes: 15
+    env:
+      EXPECTED_BUILD_REF: ${{ github.sha }}
+      EXPECTED_DEPLOYMENT_ID: ${{ github.run_id }}
     concurrency:
       group: deploy-homelab
       cancel-in-progress: false
@@ -280,7 +285,7 @@ jobs:
             exit 1
           }
           smoke() {
-            docker exec -i dkrypt bun - <<'JS'
+            docker exec -i -e EXPECTED_BUILD_REF="$EXPECTED_BUILD_REF" -e EXPECTED_DEPLOYMENT_ID="$EXPECTED_DEPLOYMENT_ID" dkrypt bun - <<'JS'
           const base = `http://127.0.0.1:${process.env.PORT || 8080}`;
           const headers = { authorization: `Bearer ${process.env.API_KEY}` };
           const fetchWithTimeout = (input, init = {}) => fetch(input, { ...init, signal: init.signal ?? AbortSignal.timeout(5_000) });
@@ -306,6 +311,9 @@ jobs:
             }
             if (attempt === 29) throw new Error(`deployment device readiness did not settle: ${readinessDetail}`);
             await new Promise(resolve => setTimeout(resolve, 2_000));
+          }
+          if (health.deployment?.id !== process.env.EXPECTED_DEPLOYMENT_ID || health.deployment?.ref !== process.env.EXPECTED_BUILD_REF) {
+            throw new Error(`deployment identity mismatch: expected ${process.env.EXPECTED_DEPLOYMENT_ID}@${process.env.EXPECTED_BUILD_REF}, received ${JSON.stringify(health.deployment)}`);
           }
           const metrics = await (await fetchWithTimeout(`${base}/v1/metrics`, { headers })).text();
           if (!metrics.includes('dkrypt_device_bridge_event_stream_connected{transport="usbmux"} 1')) throw new Error('Rust usbmuxd event stream is not connected');

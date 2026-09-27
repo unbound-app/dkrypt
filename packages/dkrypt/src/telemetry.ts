@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { trackBackgroundWork } from '#backgroundWork.js';
 import { config } from '#config.js';
+import { getOtelResourceAttributes } from '#deployment.js';
 import { createOtlpMetricsPayload, incrementMetric } from '#metrics.js';
 
 export interface TraceContext {
@@ -233,7 +234,7 @@ export async function flushTelemetry(options: OtlpTraceFlushOptions = {}): Promi
   flushInFlight = Promise.resolve()
     .then(() => postOtlpJson('traces', url, {
       resourceSpans: [{
-        resource: { attributes: [{ key: 'service.name', value: { stringValue: config.otelServiceName } }] },
+        resource: { attributes: getOtelResourceAttributes(config.otelServiceName) },
         scopeSpans: [{ spans }],
       }],
     }, fetcher))

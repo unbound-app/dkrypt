@@ -6,6 +6,7 @@ import { canAccessProject } from '#dashboardJobPresentation.js';
 import { logBelongsToProject } from '#dashboardLogPresentation.js';
 import { config } from '#config.js';
 import { getRouteContract } from '#contracts.js';
+import { getDeploymentMetadata } from '#deployment.js';
 import { getRecentLogs } from '#logger.js';
 import { PermissionFlag } from '#permissions.js';
 import { fastifyRequirePermission, fastifyRequireSession, getFastifySession, type Session } from '#session.js';
@@ -218,7 +219,7 @@ export function createDashboardReportingRoutes(overrides: Partial<DashboardRepor
       reply.header('Content-Disposition', 'attachment; filename="dkrypt-support-bundle.json"');
       return {
         generatedAt: new Date().toISOString(),
-        deployment: { ref: process.env.BUILD_REF ?? process.env.VITE_BUILD_REF ?? 'development', node: process.version },
+        deployment: { ...getDeploymentMetadata(), node: process.version },
         database: services.getStateDatabaseStatus(),
         latestBackup: services.verifyLatestDatabaseBackup(),
         disk: services.getDiskUsage(services.artifactDir),

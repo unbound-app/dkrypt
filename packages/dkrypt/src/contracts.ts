@@ -278,6 +278,7 @@ const PublicStatusState = Type.Union([
 const PublicStatusResponse = Type.Object({
   status: Type.Union([Type.Literal('operational'), Type.Literal('degraded'), Type.Literal('maintenance')]),
   checkedAt: Type.String(),
+  deployment: Type.Object({ ref: Type.String() }),
   components: Type.Object({
     service: Type.Object({ state: PublicStatusState }),
     automation: Type.Object({ state: PublicStatusState }),
@@ -338,6 +339,7 @@ const HealthResponse = object({
   ok: Type.Boolean(),
   serviceReady: Type.Boolean(),
   schedulerEnabled: Type.Boolean(),
+  deployment: object({ id: Type.String(), ref: Type.String() }),
   database: object({ path: Type.String(), schemaVersion: Type.Integer(), integrity: Type.Literal('ok') }),
   bridge: object({ state: Type.Union([Type.Literal('ready'), Type.Literal('offline')]), transport: Type.String(), deviceCount: Type.Integer(), capabilities: Type.Array(Type.String()) }),
   device: object({
@@ -429,6 +431,7 @@ const AuthSessionResponse = object({
   expiresAt: Type.Optional(Type.Integer()),
   githubOauthEnabled: Type.Boolean(),
   discordOauthEnabled: Type.Boolean(),
+  deployment: object({ ref: Type.String() }),
   publicBaseUrl: Type.String(),
   mfa: Type.Optional(object({ ...AuthMfaResponse.properties, required: Type.Boolean() })),
 });
@@ -681,7 +684,7 @@ export type DashboardWebhookDeliveriesRoute = {
 };
 const SupportBundleResponse = Type.Object({
   generatedAt: Type.String({ format: 'date-time' }),
-  deployment: Type.Object({ ref: Type.String(), node: Type.String() }, { additionalProperties: true }),
+  deployment: Type.Object({ id: Type.String(), ref: Type.String(), node: Type.String() }, { additionalProperties: true }),
   database: Type.Object({ path: Type.String(), schemaVersion: Type.Integer({ minimum: 0 }), integrity: Type.Literal('ok') }, { additionalProperties: true }),
   latestBackup: Type.Object({ ok: Type.Boolean(), detail: Type.String() }, { additionalProperties: true }),
   disk: Type.Optional(Type.Object({

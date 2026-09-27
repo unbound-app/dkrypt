@@ -6,6 +6,7 @@ import { getEffectiveWatches, getPrimaryDevice, getStateDatabaseStatus, isWatchS
 import { renderMetrics } from '#metrics.js';
 import { getMaintenanceStatus } from '#maintenance.js';
 import { getRouteContract } from '#contracts.js';
+import { getDeploymentMetadata } from '#deployment.js';
 
 export const healthRoutes: FastifyPluginAsyncTypebox = async (server) => {
   server.get('/v1/health', { schema: getRouteContract('GET', '/v1/health'), preHandler: fastifyRequireApiKey }, async (_req, reply) => {
@@ -23,6 +24,7 @@ export const healthRoutes: FastifyPluginAsyncTypebox = async (server) => {
       ok: database.integrity === 'ok',
       serviceReady: database.integrity === 'ok' && bridge.state === 'ready',
       schedulerEnabled,
+      deployment: getDeploymentMetadata(),
       database,
       bridge,
       device: {
@@ -56,6 +58,7 @@ interface PublicStatusComponent {
 export interface PublicStatusResponse {
   status: 'operational' | 'degraded' | 'maintenance';
   checkedAt: string;
+  deployment: { ref: string };
   components: {
     service: PublicStatusComponent;
     automation: PublicStatusComponent;
@@ -103,6 +106,7 @@ export async function getPublicStatus(): Promise<PublicStatusResponse> {
   return {
     status,
     checkedAt,
+    deployment: { ref: getDeploymentMetadata().ref },
     components: {
       service: { state: service },
       automation: { state: automation },

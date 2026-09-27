@@ -798,6 +798,7 @@
                     "ok",
                     "serviceReady",
                     "schedulerEnabled",
+                    "deployment",
                     "database",
                     "bridge",
                     "device"
@@ -811,6 +812,22 @@
                     },
                     "schedulerEnabled": {
                       "type": "boolean"
+                    },
+                    "deployment": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "ref"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "ref": {
+                          "type": "string"
+                        }
+                      }
                     },
                     "database": {
                       "additionalProperties": true,
@@ -1787,6 +1804,7 @@
                   "required": [
                     "status",
                     "checkedAt",
+                    "deployment",
                     "components"
                   ],
                   "properties": {
@@ -1814,6 +1832,17 @@
                     },
                     "checkedAt": {
                       "type": "string"
+                    },
+                    "deployment": {
+                      "type": "object",
+                      "required": [
+                        "ref"
+                      ],
+                      "properties": {
+                        "ref": {
+                          "type": "string"
+                        }
+                      }
                     },
                     "components": {
                       "type": "object",
@@ -8659,6 +8688,7 @@
                     "linkedProviders",
                     "githubOauthEnabled",
                     "discordOauthEnabled",
+                    "deployment",
                     "publicBaseUrl"
                   ],
                   "properties": {
@@ -8701,6 +8731,18 @@
                     },
                     "discordOauthEnabled": {
                       "type": "boolean"
+                    },
+                    "deployment": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "required": [
+                        "ref"
+                      ],
+                      "properties": {
+                        "ref": {
+                          "type": "string"
+                        }
+                      }
                     },
                     "publicBaseUrl": {
                       "type": "string"
@@ -44319,10 +44361,14 @@
                       "additionalProperties": true,
                       "type": "object",
                       "required": [
+                        "id",
                         "ref",
                         "node"
                       ],
                       "properties": {
+                        "id": {
+                          "type": "string"
+                        },
                         "ref": {
                           "type": "string"
                         },

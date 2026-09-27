@@ -112,7 +112,8 @@ test('core operational responses publish their required fields', async () => {
       paths?: Record<string, Record<string, { responses?: Record<string, { content?: Record<string, { schema?: { properties?: Record<string, unknown>; items?: { properties?: Record<string, unknown> } } }> }> }>>;
     };
     const assertions: Array<[string, string, string[]]> = [
-      ['/v1/health', 'get', ['ok', 'serviceReady', 'database', 'bridge', 'device']],
+      ['/v1/health', 'get', ['ok', 'serviceReady', 'deployment', 'database', 'bridge', 'device']],
+      ['/v1/status', 'get', ['status', 'checkedAt', 'deployment', 'components']],
       ['/v1/billing', 'get', ['enabled', 'provider', 'plans', 'providers', 'entitlement']],
       ['/v1/dashboard/overview', 'get', ['schedulerEnabled', 'watches', 'devices', 'activeJobs']],
       ['/v1/dashboard/jobs', 'get', ['history', 'total', 'nextCursor']],
@@ -141,7 +142,7 @@ test('core operational responses publish their required fields', async () => {
       ['/v1/dashboard/settings/artifact-storage', 'get', ['count', 'usedBytes', 'maxBytes']],
       ['/v1/dashboard/settings/job-history-retention/preview', 'get', ['retentionDays', 'currentEntries', 'retained', 'removed', 'agePruned', 'capacityPruned', 'afterNextWrite', 'maxEntries', 'artifacts']],
       ['/v1/dashboard/artifacts/retention-preview', 'get', ['targetMaxBytes', 'currentBytes', 'retainedBytes', 'evictedCount', 'evictionExamples']],
-      ['/v1/auth/session', 'get', ['loggedIn', 'identities', 'linkedProviders', 'publicBaseUrl', 'mfa']],
+      ['/v1/auth/session', 'get', ['loggedIn', 'identities', 'linkedProviders', 'publicBaseUrl', 'deployment', 'mfa']],
       ['/v1/auth/mfa/verify', 'post', ['ok', 'expiresAt']],
       ['/v1/auth/reauthenticate', 'post', ['ok', 'expiresAt']],
       ['/v1/auth/passkeys', 'get', ['passkeys']],

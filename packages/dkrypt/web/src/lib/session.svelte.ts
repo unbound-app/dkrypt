@@ -43,6 +43,7 @@ export interface SessionInfo {
   expiresAt?: number;
   githubOauthEnabled: boolean;
   discordOauthEnabled: boolean;
+  deployment?: { ref: string };
   publicBaseUrl?: string;
   mfa?: { enabled: boolean; recoveryCodesRemaining: number; required: boolean };
 }

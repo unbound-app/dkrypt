@@ -700,7 +700,12 @@
 			</div>
 			<div class="hidden min-w-0 flex-1 lg:block">
 				<div class="text-[11px] font-medium tracking-[0.14em] text-muted-foreground uppercase">Workspace</div>
-				<div class="truncate text-sm font-semibold text-foreground">{visibleTabs.find((t) => t.id === tabState.active)?.label ?? "Workspace"}</div>
+				<div class="flex min-w-0 items-center justify-between gap-3">
+					<div class="truncate text-sm font-semibold text-foreground">{visibleTabs.find((t) => t.id === tabState.active)?.label ?? "Workspace"}</div>
+					{#if sessionState.deployment?.ref}
+						<span class="shrink-0 font-mono text-[10px] text-muted" title={sessionState.deployment.ref}>Build {sessionState.deployment.ref.slice(0, 7)}</span>
+					{/if}
+				</div>
 			</div>
 			<div class="flex items-center gap-2.5">
 				<HeaderOnlineUsers />
