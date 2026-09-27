@@ -8,6 +8,7 @@ import {
 } from '#config.js';
 import type { BillingCheckout, BillingSubscription, PlanId } from '#billing.js';
 import { scopedLogger } from '#logger.js';
+import { isValidCredentialRotation } from '#util/secretRotation.js';
 
 const REQUEST_TIMEOUT_MS = 15_000;
 const log = scopedLogger('nowpayments');
@@ -145,7 +146,7 @@ export class NowPaymentsClient {
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
     let response = await request(this.apiKey);
-    if (response.status === 401 && this.apiKey.length >= 16 && this.apiKeyPrevious.length >= 16 && this.apiKeyPrevious !== this.apiKey) {
+    if (response.status === 401 && isValidCredentialRotation(this.apiKey, this.apiKeyPrevious, 16)) {
       response = await request(this.apiKeyPrevious);
       if (response.ok) log.warn('NOWPayments request used previous API key');
     }

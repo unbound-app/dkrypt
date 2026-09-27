@@ -4,6 +4,7 @@ import { getRustDeviceBridgeStatus } from '#idevice.js';
 import { getNowPaymentsProviderStatus } from '#nowpayments.js';
 import { getStateDatabaseStatus, verifyLatestDatabaseBackup } from '#store/state.js';
 import { getDiskUsage } from '#util/diskUsage.js';
+import { isValidCredentialRotation } from '#util/secretRotation.js';
 
 export interface DoctorCheck {
   id: string;
@@ -12,7 +13,7 @@ export interface DoctorCheck {
 }
 
 function rotationCheck(id: string, current: string, previous: string, minimumLength: number): DoctorCheck {
-  const valid = !previous || (current.length >= minimumLength && previous.length >= minimumLength && previous !== current);
+  const valid = !previous || isValidCredentialRotation(current, previous, minimumLength);
   return {
     id,
     status: valid ? 'ok' : 'error',
