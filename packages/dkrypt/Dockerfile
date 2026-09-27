@@ -2,7 +2,7 @@ FROM golang:1.27-bookworm AS ipadecrypt
 ARG IPADECRYPT_VERSION=v0.7.3
 RUN go install github.com/londek/ipadecrypt/cmd/ipadecrypt@${IPADECRYPT_VERSION}
 
-FROM rust:1.89-bookworm AS device-bridge
+FROM rust:1.98-bookworm AS device-bridge
 WORKDIR /bridge
 COPY packages/device-bridge/Cargo.toml packages/device-bridge/Cargo.lock ./
 COPY packages/device-bridge/src ./src
@@ -23,7 +23,7 @@ RUN set -eu; \
   tar --extract --file /tmp/netmuxd.tar.gz --directory /usr/local/bin; \
   chmod 0755 /usr/local/bin/netmuxd
 
-FROM oven/bun:1.3.14-slim AS web
+FROM oven/bun:1.4.2-slim AS web
 WORKDIR /web
 COPY packages/dkrypt/web/package.json packages/dkrypt/web/bun.lock ./
 RUN bun install --frozen-lockfile
@@ -32,7 +32,7 @@ ARG BUILD_REF=development
 ENV VITE_BUILD_REF=$BUILD_REF
 RUN bun run build
 
-FROM oven/bun:1.3.14-slim
+FROM oven/bun:1.4.2-slim
 WORKDIR /app
 ARG BUILD_REF=development
 ARG DEPLOYMENT_ID=local
