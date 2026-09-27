@@ -1,6 +1,26 @@
 export const GENERATED_CHANGELOG = [
   {
     "date": "2026-09-27",
+    "title": "chore(api): refresh generated clients",
+    "description": "Released in ac06613."
+  },
+  {
+    "date": "2026-09-27",
+    "title": "test(web): verify standalone API documentation",
+    "description": "Released in 5e8f05e."
+  },
+  {
+    "date": "2026-09-27",
+    "title": "fix(webhooks): trace deliveries and normalize failures",
+    "description": "Released in e530258."
+  },
+  {
+    "date": "2026-09-27",
+    "title": "chore(web): refresh generated changelog",
+    "description": "Released in 80d6a03."
+  },
+  {
+    "date": "2026-09-27",
     "title": "feat(telemetry): trace artifact promotion",
     "description": "Released in 2689adf."
   },
@@ -18,25 +38,5 @@ export const GENERATED_CHANGELOG = [
     "date": "2026-09-27",
     "title": "chore(web): refresh generated changelog",
     "description": "Released in d6861b0."
-  },
-  {
-    "date": "2026-09-27",
-    "title": "fix(telemetry): correlate rejected requests",
-    "description": "Released in 6849d81."
-  },
-  {
-    "date": "2026-09-27",
-    "title": "chore(web): refresh generated changelog",
-    "description": "Released in 45a7589."
-  },
-  {
-    "date": "2026-09-27",
-    "title": "fix(telemetry): retain parent correlation for jobs",
-    "description": "Released in 2933414."
-  },
-  {
-    "date": "2026-09-27",
-    "title": "chore(web): refresh generated changelog",
-    "description": "Released in c052a09."
   }
 ] as const;
