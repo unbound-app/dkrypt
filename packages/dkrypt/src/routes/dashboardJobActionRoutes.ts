@@ -75,6 +75,32 @@ function hasProjectAccess(services: DashboardJobActionServices, userId: string, 
   return services.canAccessProject(userId, permissions, projectId);
 }
 
+async function resolveMinimumOsVersion(
+  services: DashboardJobActionServices,
+  input: {
+    bundleId: string;
+    externalVersionId?: string;
+    versionLabel?: string;
+    currentMinimumOsVersion?: string;
+    testflight?: boolean;
+    action: 'dispatch' | 'retry';
+  },
+): Promise<string | undefined> {
+  if (input.currentMinimumOsVersion || input.testflight || (input.externalVersionId && !input.versionLabel)) {
+    return input.currentMinimumOsVersion;
+  }
+  try {
+    return (await services.resolveDecryptTarget(input.bundleId, input.versionLabel)).minimumOsVersion;
+  } catch (error) {
+    log.warn(`App Store minimum iOS lookup failed before ${input.action}`, {
+      bundleId: input.bundleId,
+      versionLabel: input.versionLabel,
+      error: String(error),
+    });
+    return undefined;
+  }
+}
+
 export function createDashboardJobActionRoutes(overrides: Partial<DashboardJobActionServices> = {}): FastifyPluginAsyncTypebox {
   const services = { ...defaultServices, ...overrides };
 
@@ -107,14 +133,13 @@ export function createDashboardJobActionRoutes(overrides: Partial<DashboardJobAc
         : undefined;
       const versionLabel = request.body.versionLabel?.trim().slice(0, 64) || undefined;
       const preferredDeviceId = request.body.preferPrimary ? services.getPrimaryDevice()?.id : undefined;
-      let minimumOsVersion = request.body.minimumOsVersion;
-      if (!minimumOsVersion && (!externalVersionId || versionLabel)) {
-        try {
-          minimumOsVersion = (await services.resolveDecryptTarget(bundleId, versionLabel)).minimumOsVersion;
-        } catch (error) {
-          log.warn('App Store minimum iOS lookup failed before dispatch', { bundleId, versionLabel, error: String(error) });
-        }
-      }
+      const minimumOsVersion = await resolveMinimumOsVersion(services, {
+        bundleId,
+        externalVersionId,
+        versionLabel,
+        currentMinimumOsVersion: request.body.minimumOsVersion,
+        action: 'dispatch',
+      });
       const job = services.enqueueDecryptJob(
         bundleId,
         'manual',
@@ -204,14 +229,14 @@ export function createDashboardJobActionRoutes(overrides: Partial<DashboardJobAc
       }
 
       const preferredDeviceId = request.body.preferPrimary ? services.getPrimaryDevice()?.id : undefined;
-      let minimumOsVersion = entry.minimumOsVersion;
-      if (!minimumOsVersion && (!entry.externalVersionId || entry.versionLabel)) {
-        try {
-          minimumOsVersion = (await services.resolveDecryptTarget(entry.bundleId, entry.versionLabel)).minimumOsVersion;
-        } catch (error) {
-          log.warn('App Store minimum iOS lookup failed before retry', { bundleId: entry.bundleId, versionLabel: entry.versionLabel, error: String(error) });
-        }
-      }
+      const minimumOsVersion = await resolveMinimumOsVersion(services, {
+        bundleId: entry.bundleId,
+        externalVersionId: entry.externalVersionId,
+        versionLabel: entry.versionLabel,
+        currentMinimumOsVersion: entry.minimumOsVersion,
+        testflight: entry.testflight !== undefined,
+        action: 'retry',
+      });
       const job = services.enqueueDecryptJob(
         entry.bundleId,
         'manual',
