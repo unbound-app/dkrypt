@@ -1407,3 +1407,33 @@ export function verifyDatabaseBackup(databasePath: string): { schemaVersion: num
     database.close();
   }
 }
+
+export function verifyDatabaseForMigration(databasePath: string): { schemaVersion: number; integrity: 'ok'; hasStateSnapshot: true; stateSnapshotChecksum: string } {
+  if (!existsSync(databasePath)) throw new Error(`SQLite database does not exist: ${databasePath}`);
+  const database = new Database(databasePath, { create: false, readonly: true, strict: true });
+  try {
+    verifyIntegrity(database);
+    const migrationsTable = database.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'").get() as { name?: string } | null;
+    if (migrationsTable?.name !== 'schema_migrations') throw new Error('SQLite database is missing schema migration records');
+    const applied = database.query('SELECT version, checksum FROM schema_migrations ORDER BY version').all() as Array<{ version: number; checksum: string }>;
+    const latestVersion = Math.max(...applied.map((row) => row.version), 0);
+    if (latestVersion > migrations.length) throw new Error(`SQLite database schema ${latestVersion} is newer than this release`);
+    const appliedByVersion = new Map(applied.map((row) => [row.version, row.checksum]));
+    for (let version = 1; version <= latestVersion; version += 1) {
+      const migration = migrations[version - 1];
+      const checksum = appliedByVersion.get(version);
+      if (!checksum) throw new Error(`SQLite database is missing migration record ${version}`);
+      if (checksum !== sha256(migration.sql)) throw new Error(`SQLite database migration checksum mismatch for version ${version}`);
+    }
+    const snapshotTable = database.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'state_snapshots'").get() as { name?: string } | null;
+    if (snapshotTable?.name !== 'state_snapshots') throw new Error('SQLite database is missing its state snapshot table');
+    const snapshot = database.query('SELECT payload, sha256 FROM state_snapshots WHERE id = 1').get() as StateSnapshotRow | null;
+    if (!snapshot) throw new Error('SQLite database is missing its state snapshot');
+    if (sha256(snapshot.payload) !== snapshot.sha256) throw new Error('SQLite state snapshot checksum mismatch');
+    const state = JSON.parse(snapshot.payload) as unknown;
+    if (typeof state !== 'object' || state === null || Array.isArray(state)) throw new Error('SQLite state snapshot is not an object');
+    return { schemaVersion: latestVersion, integrity: 'ok', hasStateSnapshot: true, stateSnapshotChecksum: snapshot.sha256 };
+  } finally {
+    database.close();
+  }
+}

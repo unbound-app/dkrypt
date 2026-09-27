@@ -1,0 +1,69 @@
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import { tmpdir } from 'node:os';
+import { Database } from 'bun:sqlite';
+import { expect, test } from 'bun:test';
+import { runDeploymentPreflight } from '#deploymentPreflight.js';
+import { openStateDatabase } from '#store/sqlite.js';
+
+test('deployment preflight dry-runs and restores a database without changing the live schema', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'dkrypt-deployment-preflight-'));
+  const stateDir = path.join(root, 'live-state');
+  await mkdir(stateDir, { recursive: true });
+  const state = { version: 18, devices: [{ id: 'device-private', name: 'Test iPad' }], settings: { maintenanceMode: false } };
+  const database = openStateDatabase({ stateDir, filename: 'dkrypt.sqlite' });
+  try {
+    database.writeState(state);
+    database.db.exec(`
+      DROP TABLE billing_customers;
+      DROP TABLE billing_subscriptions;
+      DROP TABLE billing_checkouts;
+      DROP TABLE billing_charges;
+      DROP TABLE billing_entitlement_history;
+      DROP INDEX billing_events_by_provider_event;
+      DROP INDEX billing_events_by_processed_at;
+      ALTER TABLE billing_events DROP COLUMN provider;
+      ALTER TABLE billing_events DROP COLUMN event_id;
+      ALTER TABLE billing_events DROP COLUMN occurred_at;
+      ALTER TABLE billing_events DROP COLUMN processed_at;
+      DELETE FROM schema_migrations WHERE version = 17;
+    `);
+
+    const result = runDeploymentPreflight(path.join(stateDir, 'dkrypt.sqlite'), root);
+    expect(result).toEqual({ status: 'verified', sourceSchemaVersion: 16, candidateSchemaVersion: 17, integrity: 'ok', restoredState: true });
+    expect(database.schemaVersion).toBe(16);
+    expect(database.readState()).toEqual(state);
+
+    const liveDatabase = new Database(path.join(stateDir, 'dkrypt.sqlite'), { create: false, readonly: true, strict: true });
+    try {
+      expect(liveDatabase.query('SELECT MAX(version) AS version FROM schema_migrations').get()).toEqual({ version: 16 });
+      expect(JSON.parse((liveDatabase.query('SELECT payload FROM state_snapshots WHERE id = 1').get() as { payload: string }).payload)).toEqual(state);
+      expect(liveDatabase.query('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' });
+    } finally {
+      liveDatabase.close();
+    }
+  } finally {
+    database.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('deployment preflight rejects a corrupt existing database', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'dkrypt-deployment-preflight-corrupt-'));
+  const databasePath = path.join(root, 'dkrypt.sqlite');
+  try {
+    await writeFile(databasePath, 'not a SQLite database');
+    expect(() => runDeploymentPreflight(databasePath, root)).toThrow();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('deployment preflight permits a fresh state volume without a database', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'dkrypt-deployment-preflight-empty-'));
+  try {
+    expect(runDeploymentPreflight(path.join(root, 'dkrypt.sqlite'), root)).toEqual({ status: 'no_database' });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

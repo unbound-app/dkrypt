@@ -25,3 +25,16 @@ test('Compose binds the USB bus directory and permits USB character devices', ()
   expect(deploymentWorkflow).toContain("              device_cgroup_rules:\n                - 'c 189:* rwm'");
   expect(deploymentWorkflow).not.toContain('              devices:\n                - /dev/bus/usb:/dev/bus/usb');
 });
+
+test('production verifies database migration and restore before replacing the running container', () => {
+  const preflightIndex = deploymentWorkflow.indexOf('src/deploymentPreflight.ts');
+  const volumeCheckIndex = deploymentWorkflow.indexOf('docker volume inspect dkrypt_state >/dev/null');
+  const stopIndex = deploymentWorkflow.indexOf('docker rm -f dkrypt');
+  expect(preflightIndex).toBeGreaterThan(-1);
+  expect(volumeCheckIndex).toBeGreaterThan(-1);
+  expect(volumeCheckIndex).toBeLessThan(preflightIndex);
+  expect(preflightIndex).toBeLessThan(stopIndex);
+  expect(deploymentWorkflow).toContain('--network none');
+  expect(deploymentWorkflow).toContain('--mount type=volume,source=dkrypt_state,target=/data/state,readonly');
+  expect(deploymentWorkflow).toContain('--tmpfs /tmp:rw,nosuid,size=1g,uid=10001,gid=10001');
+});
