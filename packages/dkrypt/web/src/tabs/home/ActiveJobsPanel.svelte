@@ -220,6 +220,22 @@
 		}
 		return known ? total : null;
 	});
+
+	function tableKeyboardScroll(element: HTMLDivElement): { destroy: () => void } {
+		const onKeydown = (event: KeyboardEvent): void => {
+			if (event.target !== element) return;
+			let scrollLeft = element.scrollLeft;
+			if (event.key === "ArrowRight") scrollLeft += 48;
+			else if (event.key === "ArrowLeft") scrollLeft -= 48;
+			else if (event.key === "Home") scrollLeft = 0;
+			else if (event.key === "End") scrollLeft = element.scrollWidth;
+			else return;
+			event.preventDefault();
+			element.scrollTo({ left: Math.max(0, Math.min(scrollLeft, element.scrollWidth - element.clientWidth)) });
+		};
+		element.addEventListener("keydown", onKeydown);
+		return { destroy: () => element.removeEventListener("keydown", onKeydown) };
+	}
 </script>
 
 <Card title="Active jobs" id="active-jobs">
@@ -248,7 +264,7 @@
 			</span>
 		{/if}
 	{/snippet}
-	<div class="scroll-fade-x overflow-x-auto" use:scrollFade role="region" aria-label="Active jobs table scroll area" tabindex="0">
+	<div class="scroll-fade-x overflow-x-auto" use:scrollFade use:tableKeyboardScroll role="region" aria-label="Active jobs table scroll area" tabindex="0">
 		<table class="responsive-table min-w-[860px]">
 			<thead>
 				<tr>

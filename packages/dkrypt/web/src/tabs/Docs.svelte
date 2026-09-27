@@ -1,16 +1,22 @@
 <script lang="ts">
   import { ExternalLink } from 'lucide-svelte';
-  import Card from '#lib/components/ui/Card.svelte';
   import { buttonVariants } from '#lib/components/ui/variants';
 </script>
 
-<Card class="flex min-h-64 flex-col items-start justify-center gap-3 p-6">
-  <h1 class="text-base font-semibold">API documentation</h1>
-  <p class="text-muted max-w-xl text-sm">Some browser previews block embedded pages. Open the reference in the full window, or choose a new tab.</p>
-  <a href="/reference/" target="_top" rel="noopener noreferrer" class={buttonVariants('default')}>
-    <ExternalLink class="h-4 w-4" />Open API reference
-  </a>
-  <a href="/reference/" target="_blank" rel="noopener noreferrer" class={buttonVariants('secondary')}>
-    <ExternalLink class="h-4 w-4" />Open in a new tab
-  </a>
-</Card>
+<section class="flex min-h-[calc(100dvh-12rem)] w-full flex-col gap-4">
+  <header class="flex flex-wrap items-center justify-between gap-3">
+    <div class="space-y-1">
+      <h1 class="text-base font-semibold">API documentation</h1>
+      <p class="text-muted text-sm">Browse the dkrypt API endpoints and schemas.</p>
+    </div>
+    <a href="/reference/" target="_blank" rel="noopener noreferrer" class={buttonVariants('secondary')}>
+      <ExternalLink class="h-4 w-4" />Open standalone reference
+    </a>
+  </header>
+  <iframe
+    title="dkrypt API reference"
+    src="/reference/"
+    loading="lazy"
+    class="min-h-[34rem] w-full flex-1 rounded-xl border bg-background"
+  ></iframe>
+</section>

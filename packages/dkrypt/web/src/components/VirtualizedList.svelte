@@ -88,9 +88,27 @@
   function measureRow(element: HTMLDivElement): void {
     $virtualizer.measureElement(element);
   }
+
+  function virtualizedListKeyboardScroll(element: HTMLDivElement): { destroy: () => void } {
+    const onKeydown = (event: KeyboardEvent): void => {
+      if (event.target !== element) return;
+      let scrollTop = element.scrollTop;
+      if (event.key === 'ArrowDown') scrollTop += 48;
+      else if (event.key === 'ArrowUp') scrollTop -= 48;
+      else if (event.key === 'PageDown') scrollTop += Math.max(48, element.clientHeight * 0.8);
+      else if (event.key === 'PageUp') scrollTop -= Math.max(48, element.clientHeight * 0.8);
+      else if (event.key === 'Home') scrollTop = 0;
+      else if (event.key === 'End') scrollTop = element.scrollHeight;
+      else return;
+      event.preventDefault();
+      element.scrollTo({ top: Math.max(0, Math.min(scrollTop, element.scrollHeight - element.clientHeight)) });
+    };
+    element.addEventListener('keydown', onKeydown);
+    return { destroy: () => element.removeEventListener('keydown', onKeydown) };
+  }
 </script>
 
-<div bind:this={viewport} class={cn(className)} style={style} onscroll={onScroll} role="region" aria-label={`${label} scroll area`} tabindex="0">
+<div bind:this={viewport} class={cn(className)} style={style} onscroll={onScroll} use:virtualizedListKeyboardScroll role="region" aria-label={`${label} scroll area`} tabindex="0">
   <div class="relative w-full" style={`height:${totalSize}px`} role="list" aria-label={label}>
     {#each virtualRows as virtualRow (virtualRow.key)}
       {@const item = items[virtualRow.index]}

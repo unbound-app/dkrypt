@@ -162,6 +162,52 @@ test('pricing page fits a phone viewport without horizontal overflow', async ({ 
   await expectAccessible(page);
 });
 
+test('active jobs table supports keyboard scrolling on constrained viewports', async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 812 });
+  await mockStableDashboardEvents(page);
+  await mockAuthenticatedDashboard(page, '1');
+  await page.route('**/v1/dashboard/overview*', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        schedulerEnabled: false,
+        settings: {},
+        watches: [],
+        devices: [],
+        schedulerRunHistory: [],
+        disk: { totalBytes: 1, freeBytes: 1, usedBytes: 0, usedPercent: 0 },
+        isPaidPlan: false,
+        maintenance: { active: false, manual: false, auto: false },
+        activeJobs: [{
+          id: 'job-keyboard-scroll',
+          bundleId: 'com.example.keyboard-scroll',
+          source: 'App Store',
+          status: 'queued',
+          progress: 'Waiting for a device',
+          createdAt: '2026-09-27T00:00:00.000Z',
+          priority: 0,
+          queuedBy: 'member',
+          versionLabel: '1.0',
+        }],
+      }),
+    });
+  });
+
+  await page.goto('/');
+
+  const region = page.getByRole('region', { name: 'Active jobs table scroll area' });
+  await expect(region).toBeVisible();
+  await region.scrollIntoViewIfNeeded();
+  await expect.poll(() => region.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+  await region.focus();
+  await page.keyboard.press('ArrowRight');
+  await expect.poll(() => region.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
+  await page.keyboard.press('End');
+  await expect.poll(() => region.evaluate((element) => element.scrollLeft === element.scrollWidth - element.clientWidth)).toBe(true);
+  await page.keyboard.press('Home');
+  await expect.poll(() => region.evaluate((element) => element.scrollLeft)).toBe(0);
+});
+
 test('pricing plan checkout actions share a bottom baseline', async ({ page }) => {
   for (const width of [1264, 1280, 1365, 1440, 1600]) {
     await page.setViewportSize({ width, height: 1000 });
@@ -384,21 +430,28 @@ test('authenticated dashboard shows the running build revision', async ({ page }
   await expect(page.getByText('Build abcdef0', { exact: true })).toBeVisible();
 });
 
-test('API documentation links escape browser embeds and offer a new tab', async ({ page }) => {
+test('API documentation loads inside the dashboard and can open in a new tab', async ({ page }) => {
   await mockAuthenticatedDashboard(page, '1');
+  await page.context().route(/\/reference\/?$/, async (route) => {
+    await route.fulfill({
+      headers: { 'content-security-policy': "default-src 'self'; frame-ancestors 'self'" },
+      contentType: 'text/html',
+      body: '<!doctype html><html><body><h1>API reference is ready</h1></body></html>',
+    });
+  });
 
   await page.goto('/?tab=docs');
-  const referenceLink = page.getByRole('link', { name: 'Open API reference' });
-  const newTabLink = page.getByRole('link', { name: 'Open in a new tab' });
+  const reference = page.frameLocator('iframe[title="dkrypt API reference"]');
+  const newTabLink = page.getByRole('link', { name: 'Open standalone reference' });
 
-  await expect(referenceLink).toBeVisible();
-  await expect(referenceLink).toHaveAttribute('href', '/reference/');
-  await expect(referenceLink).toHaveAttribute('target', '_top');
+  await expect(reference.locator('body')).toContainText('API reference is ready');
   await expect(newTabLink).toHaveAttribute('href', '/reference/');
   await expect(newTabLink).toHaveAttribute('target', '_blank');
-  await expect(page.locator('iframe[title="dkrypt API reference"]')).toHaveCount(0);
-  await referenceLink.click();
-  await expect(page).toHaveURL(/\/reference\/$/);
+  const popupPromise = page.waitForEvent('popup');
+  await newTabLink.click();
+  const popup = await popupPromise;
+  await expect(popup).toHaveURL(/\/reference\/$/);
+  await expect(popup.getByRole('heading', { name: 'API reference is ready' })).toBeVisible();
 });
 
 test('high contrast preference updates the interface and persists to the account', async ({ page }) => {
@@ -555,7 +608,7 @@ test('populated device management and preflight dialog meet accessibility checks
   await expectAccessible(page);
 });
 
-test('IPA Library reveals artifact provenance and decrypt warnings on demand', async ({ page }) => {
+test('IPA Library supports keyboard-scrolled virtualization and reveals artifact provenance on demand', async ({ page }) => {
   const sha256 = 'a'.repeat(64);
   const warning = 'Payload/Example.app/Extensions/Share.appex/Share still encrypted (cryptid != 0)';
   const artifacts = Array.from({ length: 100 }, (_, index) => ({
@@ -607,9 +660,10 @@ test('IPA Library reveals artifact provenance and decrypt warnings on demand', a
   await expect(artifact.getByText(sha256, { exact: true })).toBeVisible();
   await expect(artifact.getByText('job-provenance-0', { exact: true })).toBeVisible();
   await expect(artifact.getByText(warning, { exact: true })).toBeVisible();
-  await viewport.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  await viewport.focus();
+  await page.keyboard.press('End');
   await expect(list.getByText('com.example.provenance.99', { exact: true }).first()).toBeVisible();
-  await viewport.evaluate((element) => { element.scrollTop = 0; });
+  await page.keyboard.press('Home');
   await expect(artifact.getByText(sha256, { exact: true })).toBeVisible();
 });
 
