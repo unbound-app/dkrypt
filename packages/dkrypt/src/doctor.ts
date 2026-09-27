@@ -67,6 +67,7 @@ export async function runConfigurationDoctor(): Promise<{ ok: boolean; checkedAt
   }
   checks.push(rotationCheck('device-bridge-rotation', config.deviceBridgeSecret, config.deviceBridgeSecretPrevious, 32));
   checks.push(rotationCheck('stripe-webhook-rotation', config.stripeWebhookSecret, config.stripeWebhookSecretPrevious, 16));
+  checks.push(rotationCheck('crypto-api-key-rotation', config.nowpaymentsApiKey, config.nowpaymentsApiKeyPrevious, 16));
   checks.push(rotationCheck('crypto-webhook-rotation', config.nowpaymentsIpnSecret, config.nowpaymentsIpnSecretPrevious, 16));
   checks.push(rotationCheck('outbound-webhook-rotation', config.outboundWebhookSecret, config.outboundWebhookSecretPrevious, 16));
   checks.push(rotationCheck('github-oauth-secret-rotation', config.githubOauthClientSecret, config.githubOauthClientSecretPrevious, 16));

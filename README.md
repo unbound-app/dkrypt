@@ -72,6 +72,8 @@ Copy `.env.example` to `.env` and configure the required values. The important r
 | `DISCORD_OAUTH_CLIENT_ID` | Discord sign-in application identifier |
 | `DISCORD_OAUTH_CLIENT_SECRET` | Current Discord sign-in secret |
 | `DISCORD_OAUTH_CLIENT_SECRET_PREVIOUS` | Previous Discord OAuth secret retained during a provider-supported rotation window |
+| `NOWPAYMENTS_API_KEY` | Current NOWPayments API credential |
+| `NOWPAYMENTS_API_KEY_PREVIOUS` | Previous NOWPayments API key tried only after HTTP 401 from the current key |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` | SMTP credentials and server used for optional email notifications |
 | `SMTP_PASS_PREVIOUS` | Previous SMTP password used only after a permanent authentication rejection |
 | `OUTBOUND_WEBHOOK_SECRET` | HMAC key for signing outgoing notification webhooks |
@@ -86,6 +88,8 @@ The Bun API runs as an unprivileged service account; the USB bridge retains root
 Outgoing notification webhooks include `X-Dkrypt-Event`, `X-Dkrypt-Timestamp`, and `X-Dkrypt-Signature`. The signature is `sha256=` followed by the HMAC-SHA256 hex digest of `<timestamp>.<raw JSON body>`. During rotation, set `OUTBOUND_WEBHOOK_SECRET` to the new key and `OUTBOUND_WEBHOOK_SECRET_PREVIOUS` to the old key; dkrypt sends the old-key signature in `X-Dkrypt-Signature-Previous` over the same timestamp and body. Configure receivers to accept either signature, reject stale timestamps, and compare signatures in constant time. Remove the previous key after every receiver accepts the current key.
 
 For SMTP rotation, set `SMTP_PASS` to the new password and `SMTP_PASS_PREVIOUS` to the old one. Email delivery tries the previous password only when the server definitively rejects the current password with SMTP 535; network and temporary SMTP failures are not retried with another credential. Successful fallback is logged without including either password. Remove the previous password after confirming current-credential delivery. GitHub and Discord OAuth callbacks similarly try their previous client secret only for the provider's explicit invalid-client-secret response, never for an invalid authorization code or network error. Keep previous OAuth secrets only while the provider still accepts them; some providers invalidate a secret immediately when it is regenerated.
+
+For NOWPayments API-key rotation, set `NOWPAYMENTS_API_KEY` to the new key and `NOWPAYMENTS_API_KEY_PREVIOUS` to the old key during the overlap window. dkrypt retries with the previous key only after an HTTP 401; permission, server, and network failures are not retried with another credential. Successful fallback is logged without exposing either key. Remove the previous key after confirming requests use the current credential.
 
 The SQLite database uses WAL mode, foreign keys, migration checksums, integrity checks, and an atomic pre-migration backup. Startup fails closed when the database or migration checksums are invalid. The dashboard doctor is available to managers at `/v1/dashboard/doctor`.
 
@@ -133,6 +137,7 @@ Keep it disabled until the provider dashboard, wallet, IPN secret, webhook URL, 
 ```text
 CRYPTO_BILLING_ENABLED=true
 NOWPAYMENTS_API_KEY=...
+NOWPAYMENTS_API_KEY_PREVIOUS=...
 NOWPAYMENTS_IPN_SECRET=...
 NOWPAYMENTS_API_BASE_URL=https://api.nowpayments.io/v1
 NOWPAYMENTS_ENVIRONMENT=live

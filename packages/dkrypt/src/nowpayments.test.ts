@@ -31,6 +31,45 @@ describe('NOWPayments adapter', () => {
     expect(requestBody).toMatchObject({ price_amount: 10, price_currency: 'eur', pay_currency: 'usdt', order_id: 'dkrypt_order' });
   });
 
+  test('uses the previous API key after NOWPayments rejects the current key', async () => {
+    const usedKeys: string[] = [];
+    const fetchFn = (async (_input: string | URL | Request, init?: RequestInit) => {
+      const key = new Headers(init?.headers).get('x-api-key') ?? '';
+      usedKeys.push(key);
+      return key === 'current_api_key_123456'
+        ? new Response(JSON.stringify({ message: 'API key is not valid' }), { status: 401 })
+        : new Response(JSON.stringify({ currencies: ['USDC_base'] }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const client = new NowPaymentsClient({
+      baseUrl: 'https://api.example/v1',
+      apiKey: 'current_api_key_123456',
+      apiKeyPrevious: 'previous_api_key_123456',
+      fetchFn,
+    });
+
+    await expect(client.getCurrencies()).resolves.toEqual(['USDC_base']);
+    expect(usedKeys).toEqual(['current_api_key_123456', 'previous_api_key_123456']);
+  });
+
+  test('does not try the previous API key for permission or provider errors', async () => {
+    for (const status of [403, 500]) {
+      const usedKeys: string[] = [];
+      const fetchFn = (async (_input: string | URL | Request, init?: RequestInit) => {
+        usedKeys.push(new Headers(init?.headers).get('x-api-key') ?? '');
+        return new Response(JSON.stringify({ message: 'request rejected' }), { status });
+      }) as unknown as typeof fetch;
+      const client = new NowPaymentsClient({
+        baseUrl: 'https://api.example/v1',
+        apiKey: 'current_api_key_123456',
+        apiKeyPrevious: 'previous_api_key_123456',
+        fetchFn,
+      });
+
+      await expect(client.getCurrencies()).rejects.toMatchObject({ status });
+      expect(usedKeys).toEqual(['current_api_key_123456']);
+    }
+  });
+
   test('verifies the sorted JSON IPN signature', () => {
     const payload = { b: 2, a: { d: 4, c: 3 } };
     const canonical = JSON.stringify({ a: { c: 3, d: 4 }, b: 2 });

@@ -79,6 +79,7 @@ export const config = {
   cryptoBillingPollIntervalSeconds: optionalInt('CRYPTO_BILLING_POLL_INTERVAL_SECONDS', 300),
   cryptoDunningGraceHours: optionalInt('CRYPTO_DUNNING_GRACE_HOURS', 72),
   nowpaymentsApiKey: optional('NOWPAYMENTS_API_KEY', ''),
+  nowpaymentsApiKeyPrevious: optional('NOWPAYMENTS_API_KEY_PREVIOUS', ''),
   nowpaymentsIpnSecret: optional('NOWPAYMENTS_IPN_SECRET', ''),
   nowpaymentsIpnSecretPrevious: optional('NOWPAYMENTS_IPN_SECRET_PREVIOUS', ''),
   nowpaymentsApiBaseUrl: optional('NOWPAYMENTS_API_BASE_URL', 'https://api.nowpayments.io/v1'),

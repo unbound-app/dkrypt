@@ -24,6 +24,7 @@
     'device-agent': 'Device agent',
     'device-bridge-rotation': 'Device bridge secret rotation',
     'stripe-webhook-rotation': 'Stripe webhook secret rotation',
+    'crypto-api-key-rotation': 'NOWPayments API key rotation',
     'crypto-webhook-rotation': 'Crypto webhook secret rotation',
     'outbound-webhook-rotation': 'Outbound webhook secret rotation',
     'pairing-store': 'Device pairing store',

@@ -7,8 +7,10 @@ import {
   nowpaymentsMissingConfiguration,
 } from '#config.js';
 import type { BillingCheckout, BillingSubscription, PlanId } from '#billing.js';
+import { scopedLogger } from '#logger.js';
 
 const REQUEST_TIMEOUT_MS = 15_000;
+const log = scopedLogger('nowpayments');
 
 export interface NowPaymentsInvoice {
   id: string | number;
@@ -81,11 +83,13 @@ type FetchLike = typeof fetch;
 export class NowPaymentsClient {
   private readonly baseUrl: string;
   private readonly apiKey: string;
+  private readonly apiKeyPrevious: string;
   private readonly fetchFn: FetchLike;
 
-  constructor(options: { baseUrl?: string; apiKey?: string; fetchFn?: FetchLike } = {}) {
+  constructor(options: { baseUrl?: string; apiKey?: string; apiKeyPrevious?: string; fetchFn?: FetchLike } = {}) {
     this.baseUrl = (options.baseUrl ?? config.nowpaymentsApiBaseUrl).replace(/\/$/, '');
     this.apiKey = options.apiKey ?? config.nowpaymentsApiKey;
+    this.apiKeyPrevious = options.apiKeyPrevious ?? config.nowpaymentsApiKeyPrevious;
     this.fetchFn = options.fetchFn ?? fetch;
   }
 
@@ -130,16 +134,21 @@ export class NowPaymentsClient {
 
   private async request<T>(path: string, input: { method?: string; body?: unknown } = {}): Promise<T> {
     if (!this.apiKey) throw new NowPaymentsApiError('NOWPayments API key is not configured', 0, false);
-    const response = await this.fetchFn(`${this.baseUrl}${path}`, {
+    const request = (apiKey: string) => this.fetchFn(`${this.baseUrl}${path}`, {
       method: input.method ?? 'GET',
       headers: {
         Accept: 'application/json',
-        'x-api-key': this.apiKey,
+        'x-api-key': apiKey,
         ...(input.body === undefined ? {} : { 'Content-Type': 'application/json' }),
       },
       body: input.body === undefined ? undefined : JSON.stringify(input.body),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
+    let response = await request(this.apiKey);
+    if (response.status === 401 && this.apiKey.length >= 16 && this.apiKeyPrevious.length >= 16 && this.apiKeyPrevious !== this.apiKey) {
+      response = await request(this.apiKeyPrevious);
+      if (response.ok) log.warn('NOWPayments request used previous API key');
+    }
     const text = await response.text();
     let payload: unknown;
     try {
