@@ -1,7 +1,7 @@
 .PHONY: check autoinstall-package autoinstall-deploy autoinstall-rollback
 
 check:
-	cd packages/dkrypt && bun test && bun run typecheck && bun run typecheck:web
+	cd packages/dkrypt && bun run test && bun run typecheck && bun run typecheck:web
 
 autoinstall-package:
 	gmake -C packages/autoinstall clean package

@@ -456,6 +456,20 @@ interface OAuthTokenResponse {
   error?: string;
 }
 
+async function exchangeOAuthTokenWithRotation(
+  provider: OAuthProvider,
+  currentSecret: string,
+  previousSecret: string,
+  credentialError: string,
+  exchange: (secret: string) => Promise<OAuthTokenResponse>,
+): Promise<OAuthTokenResponse> {
+  const token = await exchange(currentSecret);
+  if (token.error !== credentialError || currentSecret.length < 16 || previousSecret.length < 16 || previousSecret === currentSecret) return token;
+  const previousToken = await exchange(previousSecret);
+  if (previousToken.access_token) log.warn(`${provider} OAuth token exchange used previous client secret`);
+  return previousToken;
+}
+
 function oauthCookie(name: string, value: string, maxAge: number): string {
   const secure = config.publicBaseUrl.startsWith('https://') ? '; Secure' : '';
   return `${name}=${value}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAge}${secure}`;
@@ -524,11 +538,7 @@ async function exchangeGithubCode(code: string, codeVerifier?: string): Promise<
     });
     return (await response.json()) as OAuthTokenResponse;
   };
-  const token = await exchange(currentSecret);
-  if (token.error !== 'incorrect_client_credentials' || currentSecret.length < 16 || previousSecret.length < 16 || previousSecret === currentSecret) return token;
-  const previousToken = await exchange(previousSecret);
-  if (previousToken.access_token) log.warn('github OAuth token exchange used previous client secret');
-  return previousToken;
+  return exchangeOAuthTokenWithRotation('github', currentSecret, previousSecret, 'incorrect_client_credentials', exchange);
 }
 
 async function exchangeDiscordCode(code: string, redirectUri: string, codeVerifier: string): Promise<OAuthTokenResponse> {
@@ -550,11 +560,7 @@ async function exchangeDiscordCode(code: string, redirectUri: string, codeVerifi
     });
     return (await response.json()) as OAuthTokenResponse;
   };
-  const token = await exchange(currentSecret);
-  if (token.error !== 'invalid_client' || currentSecret.length < 16 || previousSecret.length < 16 || previousSecret === currentSecret) return token;
-  const previousToken = await exchange(previousSecret);
-  if (previousToken.access_token) log.warn('discord OAuth token exchange used previous client secret');
-  return previousToken;
+  return exchangeOAuthTokenWithRotation('discord', currentSecret, previousSecret, 'invalid_client', exchange);
 }
 
 function registerOAuthRoutes(server: Parameters<FastifyPluginAsyncTypebox>[0]): void {

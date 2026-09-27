@@ -142,23 +142,22 @@ export const config = {
   smtpFrom: optional('SMTP_FROM', 'dkrypt <dkrypt@dylib.dev>'),
 };
 
-export const githubOauthEnabled = config.githubOauthClientId !== '' && config.githubOauthClientSecret !== '';
-
 export function isGithubOauthEnabled(): boolean {
   return config.githubOauthClientId !== '' && config.githubOauthClientSecret !== '';
 }
 
-export const discordOauthEnabled = config.discordOauthClientId !== '' && config.discordOauthClientSecret !== '';
+export const githubOauthEnabled = isGithubOauthEnabled();
 
 export function isDiscordOauthEnabled(): boolean {
   return config.discordOauthClientId !== '' && config.discordOauthClientSecret !== '';
 }
 
-export const discordBotEnabled = config.discordBotToken !== '';
+export const discordOauthEnabled = isDiscordOauthEnabled();
 
 export function isDiscordBotEnabled(): boolean {
   return config.discordBotToken !== '';
 }
+export const discordBotEnabled = isDiscordBotEnabled();
 export const stripeEnvironment = config.stripeSecretKey.startsWith('sk_live_') || config.stripeSecretKey.startsWith('rk_live_') ? 'live' : 'test';
 const stripeRequirements = [
   ['STRIPE_SECRET_KEY', config.stripeSecretKey],
@@ -183,8 +182,8 @@ export const nowpaymentsMissingConfiguration = nowpaymentsRequirements
   .map(([name]) => name);
 export const nowpaymentsConfigured = nowpaymentsMissingConfiguration.length === 0;
 export const cryptoBillingEnabled = config.cryptoBillingEnabled && nowpaymentsConfigured;
-export const emailEnabled = config.smtpHost !== '' && config.smtpUser !== '' && config.smtpPass !== '';
-
 export function isEmailEnabled(): boolean {
   return config.smtpHost !== '' && config.smtpUser !== '' && config.smtpPass !== '';
 }
+
+export const emailEnabled = isEmailEnabled();

@@ -78,6 +78,51 @@ async function startSmtpServer(acceptedPassword: string, rejectedAuthCode = 535)
   };
 }
 
+async function withSmtpRotationProfile<T>(
+  smtp: Awaited<ReturnType<typeof startSmtpServer>>,
+  rejectedPassword: string,
+  acceptedPassword: string,
+  run: (userId: string) => Promise<T>,
+): Promise<T> {
+  const previousConfig = {
+    host: config.smtpHost,
+    port: config.smtpPort,
+    user: config.smtpUser,
+    password: config.smtpPass,
+    previousPassword: config.smtpPassPrevious,
+    from: config.smtpFrom,
+  };
+  const userId = `smtp-rotation-${crypto.randomUUID()}`;
+  config.smtpHost = '127.0.0.1';
+  config.smtpPort = smtp.port;
+  config.smtpUser = 'test-user';
+  config.smtpPass = rejectedPassword;
+  config.smtpPassPrevious = acceptedPassword;
+  config.smtpFrom = 'dkrypt@example.test';
+  upsertAuthProfile({
+    userId,
+    provider: 'github',
+    providerId: userId,
+    username: userId,
+    displayName: 'SMTP rotation test',
+    email: 'notify@example.test',
+    updatedAt: new Date().toISOString(),
+  });
+
+  try {
+    return await run(userId);
+  } finally {
+    deleteAuthProfile(userId);
+    config.smtpHost = previousConfig.host;
+    config.smtpPort = previousConfig.port;
+    config.smtpUser = previousConfig.user;
+    config.smtpPass = previousConfig.password;
+    config.smtpPassPrevious = previousConfig.previousPassword;
+    config.smtpFrom = previousConfig.from;
+    await smtp.close();
+  }
+}
+
 describe('mail', () => {
   test('sendMailToUser is a no-op without SMTP configured', async () => {
     await expect(sendMailToUser('nobody', { subject: 'x', text: 'y' })).resolves.toBeUndefined();
@@ -88,94 +133,26 @@ describe('mail', () => {
   });
 
   test('delivers once with the previous SMTP password after a definitive current-password rejection', async () => {
-    const previousConfig = {
-      host: config.smtpHost,
-      port: config.smtpPort,
-      user: config.smtpUser,
-      password: config.smtpPass,
-      previousPassword: config.smtpPassPrevious,
-      from: config.smtpFrom,
-    };
     const currentPassword = 'new-current-smtp-password';
     const previousPassword = 'old-previous-smtp-password';
-    const userId = `smtp-rotation-${crypto.randomUUID()}`;
     const smtp = await startSmtpServer(previousPassword);
-    config.smtpHost = '127.0.0.1';
-    config.smtpPort = smtp.port;
-    config.smtpUser = 'test-user';
-    config.smtpPass = currentPassword;
-    config.smtpPassPrevious = previousPassword;
-    config.smtpFrom = 'dkrypt@example.test';
-    upsertAuthProfile({
-      userId,
-      provider: 'github',
-      providerId: userId,
-      username: userId,
-      displayName: 'SMTP rotation test',
-      email: 'notify@example.test',
-      updatedAt: new Date().toISOString(),
-    });
-
-    try {
+    await withSmtpRotationProfile(smtp, currentPassword, previousPassword, async (userId) => {
       await sendMailToUser(userId, { subject: 'Rotation test', text: 'Local test message' });
 
       expect(smtp.credentials).toEqual([currentPassword, previousPassword]);
       expect(smtp.deliveredMessages).toBe(1);
-    } finally {
-      deleteAuthProfile(userId);
-      config.smtpHost = previousConfig.host;
-      config.smtpPort = previousConfig.port;
-      config.smtpUser = previousConfig.user;
-      config.smtpPass = previousConfig.password;
-      config.smtpPassPrevious = previousConfig.previousPassword;
-      config.smtpFrom = previousConfig.from;
-      await smtp.close();
-    }
+    });
   });
 
   test('does not try the previous SMTP password after a temporary authentication failure', async () => {
-    const previousConfig = {
-      host: config.smtpHost,
-      port: config.smtpPort,
-      user: config.smtpUser,
-      password: config.smtpPass,
-      previousPassword: config.smtpPassPrevious,
-      from: config.smtpFrom,
-    };
     const currentPassword = 'new-current-smtp-password';
     const previousPassword = 'old-previous-smtp-password';
-    const userId = `smtp-temporary-auth-${crypto.randomUUID()}`;
     const smtp = await startSmtpServer(previousPassword, 454);
-    config.smtpHost = '127.0.0.1';
-    config.smtpPort = smtp.port;
-    config.smtpUser = 'test-user';
-    config.smtpPass = currentPassword;
-    config.smtpPassPrevious = previousPassword;
-    config.smtpFrom = 'dkrypt@example.test';
-    upsertAuthProfile({
-      userId,
-      provider: 'github',
-      providerId: userId,
-      username: userId,
-      displayName: 'SMTP rotation test',
-      email: 'notify@example.test',
-      updatedAt: new Date().toISOString(),
-    });
-
-    try {
+    await withSmtpRotationProfile(smtp, currentPassword, previousPassword, async (userId) => {
       await sendMailToUser(userId, { subject: 'Rotation test', text: 'Local test message' });
 
       expect(smtp.credentials).toEqual([currentPassword]);
       expect(smtp.deliveredMessages).toBe(0);
-    } finally {
-      deleteAuthProfile(userId);
-      config.smtpHost = previousConfig.host;
-      config.smtpPort = previousConfig.port;
-      config.smtpUser = previousConfig.user;
-      config.smtpPass = previousConfig.password;
-      config.smtpPassPrevious = previousConfig.previousPassword;
-      config.smtpFrom = previousConfig.from;
-      await smtp.close();
-    }
+    });
   });
 });
