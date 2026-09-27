@@ -293,6 +293,12 @@ jobs:
           if (!csp.includes('style-src-elem')) throw new Error('content security policy is incomplete');
           const session = await fetch(`${base}/v1/auth/session`);
           if (!session.headers.get('x-ratelimit-limit')) throw new Error('shared API rate limit is not active');
+          if ((await session.json()).loggedIn !== false) throw new Error('unauthenticated session endpoint did not report signed-out state');
+          const [events, artifacts] = await Promise.all([
+            fetch(`${base}/v1/dashboard/events`),
+            fetch(`${base}/v1/dashboard/artifacts?limit=1`),
+          ]);
+          if (events.status !== 401 || artifacts.status !== 401) throw new Error('dashboard event and artifact routes did not enforce session authentication');
           const stat = await import('node:fs/promises');
           await stat.stat(process.env.DEVICE_BRIDGE_SOCKET || '/run/dkrypt/device-bridge.sock');
           const processIds = (await stat.readdir('/proc')).filter((entry) => /^\d+$/.test(entry));
@@ -323,7 +329,23 @@ jobs:
           } catch (error) {
             if (error instanceof Error && !String(error.message).includes('ENOENT')) throw error;
           }
-          console.log(JSON.stringify({ health: health.ok, device, bridge: health.bridge, apiUid: apiIdentity[2], bridgeUid: bridgeIdentity[2], paths: Object.keys(openapi.paths).length, csp: true, rateLimit: true }));
+          const { getPrimaryDevice } = await import('/app/src/store/state.ts');
+          const { withAutoinstallDeviceAgent } = await import('/app/src/idevice.ts');
+          const primaryDevice = getPrimaryDevice();
+          if (!primaryDevice?.udid || primaryDevice.host || primaryDevice.usbmuxNetwork === true) throw new Error('configured primary device is not a direct USB pairing');
+          const agentStatus = await withAutoinstallDeviceAgent(primaryDevice, client => client.call('status', {}, 3_000));
+          if (typeof agentStatus.agentVersion !== 'string') throw new Error('signed USB device-agent status request was incomplete');
+          console.log(JSON.stringify({
+            health: health.ok,
+            device,
+            bridge: health.bridge,
+            usbAgent: { version: agentStatus.agentVersion },
+            runtime: { apiUid: apiIdentity[2], bridgeUid: bridgeIdentity[2] },
+            routes: Object.keys(openapi.paths).length,
+            csp: true,
+            rateLimit: true,
+            authGuards: true,
+          }));
           JS
           }
           smoke_success=0
