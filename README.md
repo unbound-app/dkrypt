@@ -66,12 +66,16 @@ Copy `.env.example` to `.env` and configure the required values. The important r
 | `BACKUP_MANIFEST_SECRET_PREVIOUS` | Comma-separated previous manifest keys retained while older snapshots still exist |
 | `ADMIN_PASSWORD` | Local administrator sign-in |
 | `PUBLIC_BASE_URL` | Public origin for OAuth, webhooks, and secure cookies |
+| `OUTBOUND_WEBHOOK_SECRET` | HMAC key for signing outgoing notification webhooks |
+| `OUTBOUND_WEBHOOK_SECRET_PREVIOUS` | Previous HMAC key used during outbound webhook key rotation |
 | `DEVICE_SSH_KEY_PATH` | Runtime path to the key used only by the `ipadecrypt` compatibility channel |
 | `DEVICE_SSH_KEY_HOST_PATH` | Host key copied read-only into the container runtime directory |
 | `ARTIFACT_DIR` | IPA storage volume |
 | `STATE_DIR` | SQLite database, pairing material, backups, and mirrors |
 
 The Bun API runs as an unprivileged service account; the USB bridge retains root access for direct device transport, with a small root supervisor managing both processes. Startup migrates existing state and artifact volume permissions once, keeps pairing records root-only, and exposes the SSH key to the API through a read-only group-readable copy in tmpfs. Keep `.env`, pairing material, and SSH private keys out of Git. Use an HTTPS reverse proxy when exposing the dashboard beyond localhost.
+
+Outgoing notification webhooks include `X-Dkrypt-Event`, `X-Dkrypt-Timestamp`, and `X-Dkrypt-Signature`. The signature is `sha256=` followed by the HMAC-SHA256 hex digest of `<timestamp>.<raw JSON body>`. During rotation, set `OUTBOUND_WEBHOOK_SECRET` to the new key and `OUTBOUND_WEBHOOK_SECRET_PREVIOUS` to the old key; dkrypt sends the old-key signature in `X-Dkrypt-Signature-Previous` over the same timestamp and body. Configure receivers to accept either signature, reject stale timestamps, and compare signatures in constant time. Remove the previous key after every receiver accepts the current key.
 
 The SQLite database uses WAL mode, foreign keys, migration checksums, integrity checks, and an atomic pre-migration backup. Startup fails closed when the database or migration checksums are invalid. The dashboard doctor is available to managers at `/v1/dashboard/doctor`.
 

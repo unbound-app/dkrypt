@@ -120,11 +120,15 @@ function webhookHeaders(event: string, payload: Record<string, unknown>): Record
   if (!config.outboundWebhookSecret) return {};
   const timestamp = new Date().toISOString();
   const body = JSON.stringify(payload);
-  return {
+  const headers: Record<string, string> = {
     'X-Dkrypt-Event': event,
     'X-Dkrypt-Timestamp': timestamp,
     'X-Dkrypt-Signature': webhookSignature(config.outboundWebhookSecret, timestamp, body),
   };
+  if (config.outboundWebhookSecretPrevious && config.outboundWebhookSecretPrevious !== config.outboundWebhookSecret) {
+    headers['X-Dkrypt-Signature-Previous'] = webhookSignature(config.outboundWebhookSecretPrevious, timestamp, body);
+  }
+  return headers;
 }
 
 function targetHost(url: string): string {

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { config } from '#config.js';
 import { flushNotificationDigests, notify, sendTestNotification, webhookSignature } from '#notify.js';
 import { updateSettings } from '#store/state.js';
 
@@ -192,5 +193,34 @@ describe('sendTestNotification', () => {
     const result = await sendTestNotification('https://example.test/webhook');
     expect(result.ok).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test('signs deliveries with both current and previous secrets during rotation', async () => {
+    const previousCurrentSecret = config.outboundWebhookSecret;
+    const previousPreviousSecret = config.outboundWebhookSecretPrevious;
+    const currentSecret = 'current_outbound_signing_secret_123';
+    const previousSecret = 'previous_outbound_signing_secret_456';
+    let request: RequestInit | undefined;
+    config.outboundWebhookSecret = currentSecret;
+    config.outboundWebhookSecretPrevious = previousSecret;
+    const fetchMock = mock((_url: string, init?: RequestInit) => {
+      request = init;
+      return Promise.resolve(new Response('{}', { status: 200 }));
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    try {
+      const result = await sendTestNotification('https://example.test/webhook');
+      const headers = new Headers(request?.headers);
+      const timestamp = headers.get('X-Dkrypt-Timestamp') ?? '';
+      const body = String(request?.body ?? '');
+
+      expect(result.ok).toBe(true);
+      expect(headers.get('X-Dkrypt-Signature')).toBe(webhookSignature(currentSecret, timestamp, body));
+      expect(headers.get('X-Dkrypt-Signature-Previous')).toBe(webhookSignature(previousSecret, timestamp, body));
+    } finally {
+      config.outboundWebhookSecret = previousCurrentSecret;
+      config.outboundWebhookSecretPrevious = previousPreviousSecret;
+    }
   });
 });

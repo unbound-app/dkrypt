@@ -12,11 +12,11 @@ export interface DoctorCheck {
 }
 
 function rotationCheck(id: string, current: string, previous: string, minimumLength: number): DoctorCheck {
-  const valid = !previous || (previous.length >= minimumLength && previous !== current);
+  const valid = !previous || (current.length >= minimumLength && previous.length >= minimumLength && previous !== current);
   return {
     id,
     status: valid ? 'ok' : 'error',
-    detail: valid ? (previous ? 'Current and previous credentials are ready for rotation' : 'No overlapping previous credential is configured') : 'Previous credential is too short or matches the current credential',
+    detail: valid ? (previous ? 'Current and previous credentials are ready for rotation' : 'No overlapping previous credential is configured') : 'Current and previous credentials must both meet the minimum length and be different',
   };
 }
 

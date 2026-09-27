@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test';
+import { config } from '#config.js';
 import { runConfigurationDoctor } from '#doctor.js';
 
 test('configuration doctor reports runtime security and persistence checks', async () => {
@@ -12,4 +13,22 @@ test('configuration doctor reports runtime security and persistence checks', asy
   expect(ids.has('runtime-limits')).toBe(true);
   expect(ids.has('device-bridge')).toBe(true);
   expect(ids.has('otel')).toBe(true);
+});
+
+test('configuration doctor rejects an outbound rotation with no active signing key', async () => {
+  const currentSecret = config.outboundWebhookSecret;
+  const previousSecret = config.outboundWebhookSecretPrevious;
+  config.outboundWebhookSecret = '';
+  config.outboundWebhookSecretPrevious = 'previous_outbound_signing_secret_456';
+
+  try {
+    const result = await runConfigurationDoctor();
+    expect(result.checks.find((check) => check.id === 'outbound-webhook-rotation')).toMatchObject({
+      status: 'error',
+      detail: expect.stringContaining('both meet the minimum length'),
+    });
+  } finally {
+    config.outboundWebhookSecret = currentSecret;
+    config.outboundWebhookSecretPrevious = previousSecret;
+  }
 });
