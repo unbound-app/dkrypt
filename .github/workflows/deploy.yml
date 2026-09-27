@@ -264,38 +264,62 @@ jobs:
         run: |
           set -e
           rollback() {
-            echo "deployment smoke test failed; rolling back" >&2
+            echo "deployment verification failed; rolling back" >&2
             if docker image inspect dkrypt:previous >/dev/null 2>&1; then
-              DKRYPT_IMAGE=dkrypt:previous docker compose --env-file /home/adrian/.local/share/dkrypt/.env --project-name dkrypt -f /home/adrian/.local/share/dkrypt/compose.yml up -d --no-build
+              if ! DKRYPT_IMAGE=dkrypt:previous docker compose --env-file /home/adrian/.local/share/dkrypt/.env --project-name dkrypt -f /home/adrian/.local/share/dkrypt/compose.yml up -d --no-build; then
+                echo "rollback command failed" >&2
+                return 1
+              fi
+            else
+              echo "no previous image to roll back to" >&2
             fi
           }
-          trap 'rollback' ERR
+          fail_deployment() {
+            docker logs --tail 100 dkrypt || true
+            rollback || echo "rollback did not complete successfully" >&2
+            exit 1
+          }
           smoke() {
             docker exec -i dkrypt bun - <<'JS'
-          const headers = { authorization: `Bearer ${process.env.API_KEY}` };
           const base = `http://127.0.0.1:${process.env.PORT || 8080}`;
-          const health = await (await fetch(`${base}/v1/health`, { headers })).json();
-          const capabilities = health.bridge?.capabilities ?? [];
-          if (!health.ok || health.database?.integrity !== 'ok' || health.serviceReady !== true || health.bridge?.state !== 'ready' || !capabilities.includes('list_devices') || !capabilities.includes('cancel')) {
-            throw new Error(JSON.stringify(health));
+          const headers = { authorization: `Bearer ${process.env.API_KEY}` };
+          const fetchWithTimeout = (input, init = {}) => fetch(input, { ...init, signal: init.signal ?? AbortSignal.timeout(5_000) });
+          const readObject = async response => {
+            const value = await response.json().catch(() => ({}));
+            return value && typeof value === 'object' ? value : {};
+          };
+          let health;
+          let device;
+          let readinessDetail = 'health probe has not completed';
+          for (let attempt = 0; attempt < 30; attempt += 1) {
+            try {
+              const response = await fetchWithTimeout(`${base}/v1/health`, { headers, signal: AbortSignal.timeout(3_000) });
+              if (!response.ok) throw new Error(`health probe returned HTTP ${response.status}`);
+              health = await readObject(response);
+              const capabilities = health.bridge?.capabilities ?? [];
+              device = health.device;
+              const ready = health.ok && health.database?.integrity === 'ok' && health.serviceReady === true && health.bridge?.state === 'ready' && capabilities.includes('list_devices') && capabilities.includes('cancel') && device?.transport === 'usb' && device.reachable && device.transportState === 'ready' && device.readiness === 'ready' && device.subsystems?.agent === 'ready';
+              if (ready) break;
+              readinessDetail = JSON.stringify({ health, device });
+            } catch (error) {
+              readinessDetail = String(error);
+            }
+            if (attempt === 29) throw new Error(`deployment device readiness did not settle: ${readinessDetail}`);
+            await new Promise(resolve => setTimeout(resolve, 2_000));
           }
-          const device = health.device;
-          if (!device || device.transport !== 'usb' || !device.reachable || device.transportState !== 'ready' || device.readiness !== 'ready' || device.subsystems?.agent !== 'ready') {
-            throw new Error(`configured Rust USB device or signed Autoinstall agent is not ready: ${JSON.stringify(device)}`);
-          }
-          const metrics = await (await fetch(`${base}/v1/metrics`, { headers })).text();
+          const metrics = await (await fetchWithTimeout(`${base}/v1/metrics`, { headers })).text();
           if (!metrics.includes('dkrypt_device_bridge_event_stream_connected{transport="usbmux"} 1')) throw new Error('Rust usbmuxd event stream is not connected');
-          const openapi = await (await fetch(`${base}/openapi.json`)).json();
+          const openapi = await (await fetchWithTimeout(`${base}/openapi.json`)).json();
           if (!openapi.paths || Object.keys(openapi.paths).length < 20) throw new Error('OpenAPI route inventory is incomplete');
-          const status = await fetch(`${base}/v1/status`);
+          const status = await fetchWithTimeout(`${base}/v1/status`);
           const csp = status.headers.get('content-security-policy') ?? '';
           if (!csp.includes('style-src-elem')) throw new Error('content security policy is incomplete');
-          const session = await fetch(`${base}/v1/auth/session`);
+          const session = await fetchWithTimeout(`${base}/v1/auth/session`);
           if (!session.headers.get('x-ratelimit-limit')) throw new Error('shared API rate limit is not active');
           if ((await session.json()).loggedIn !== false) throw new Error('unauthenticated session endpoint did not report signed-out state');
           const [events, artifacts] = await Promise.all([
-            fetch(`${base}/v1/dashboard/events`),
-            fetch(`${base}/v1/dashboard/artifacts?limit=1`),
+            fetchWithTimeout(`${base}/v1/dashboard/events`),
+            fetchWithTimeout(`${base}/v1/dashboard/artifacts?limit=1`),
           ]);
           if (events.status !== 401 || artifacts.status !== 401) throw new Error('dashboard event and artifact routes did not enforce session authentication');
           const fs = await import('node:fs/promises');
@@ -323,41 +347,74 @@ jobs:
             const secretFile = process.env.DEVICE_BRIDGE_SECRET_FILE || path.join(process.env.STATE_DIR || '/data/state', 'device-bridge.secret');
             config.deviceBridgeSecret = (await fs.readFile(secretFile, 'utf8')).trim();
           }
-          const { setFastifySessionCookie } = await import('/app/src/session.ts');
-          const { ALL_PERMISSION_BITS } = await import('/app/src/permissions.ts');
-          const { getPrimaryDevice, revokeSessionRecord } = await import('/app/src/store/state.ts');
-          let sessionCookie = '';
-          setFastifySessionCookie({ header: (_name, value) => { sessionCookie = String(value); } }, { sub: 'root', permissions: ALL_PERMISSION_BITS });
-          const cookieHeader = sessionCookie.split(';', 1)[0];
-          const cookieBody = cookieHeader.slice('session='.length).split('.')[0];
-          const sessionId = JSON.parse(Buffer.from(cookieBody, 'base64url').toString('utf8')).sid;
-          let eventReader;
-          const eventController = new AbortController();
-          const eventTimeout = setTimeout(() => eventController.abort(), 5_000);
-          try {
-            const authenticatedArtifacts = await fetch(`${base}/v1/dashboard/artifacts?limit=1`, { headers: { cookie: cookieHeader } });
-            const artifactPage = await authenticatedArtifacts.json();
+          const { getPrimaryDevice } = await import('/app/src/store/state.ts');
+          async function verifyAuthenticatedRoutes(cookieHeaders) {
+            const authenticatedSession = await fetchWithTimeout(`${base}/v1/auth/session`, { headers: cookieHeaders });
+            const sessionPage = await readObject(authenticatedSession);
+            if (authenticatedSession.status !== 200 || sessionPage.loggedIn !== true) {
+              throw new Error(`authenticated session check failed: HTTP ${authenticatedSession.status}, code=${sessionPage.code ?? 'unknown'}`);
+            }
+            const authenticatedArtifacts = await fetchWithTimeout(`${base}/v1/dashboard/artifacts?limit=1`, { headers: cookieHeaders });
+            const artifactPage = await readObject(authenticatedArtifacts);
             if (authenticatedArtifacts.status !== 200 || !Array.isArray(artifactPage.artifacts) || typeof artifactPage.total !== 'number' || typeof artifactPage.totalBytes !== 'number' || typeof artifactPage.maxBytes !== 'number') {
-              throw new Error('authenticated artifact listing did not return a valid page');
+              throw new Error(JSON.stringify({
+                message: 'authenticated artifact listing did not return a valid page',
+                status: authenticatedArtifacts.status,
+                contentType: authenticatedArtifacts.headers.get('content-type'),
+                bodyKeys: Object.keys(artifactPage),
+                code: artifactPage.code,
+                messageDetail: artifactPage.message,
+                expectedFields: {
+                  artifacts: Array.isArray(artifactPage.artifacts),
+                  total: typeof artifactPage.total,
+                  totalBytes: typeof artifactPage.totalBytes,
+                  maxBytes: typeof artifactPage.maxBytes,
+                },
+              }));
             }
-            const eventStream = await fetch(`${base}/v1/dashboard/events?projectId=default`, { headers: { cookie: cookieHeader }, signal: eventController.signal });
-            if (eventStream.status !== 200 || !eventStream.headers.get('content-type')?.includes('text/event-stream') || !eventStream.body) {
-              throw new Error('authenticated dashboard event stream did not open');
+            let eventReader;
+            const eventController = new AbortController();
+            const eventTimeout = setTimeout(() => eventController.abort(), 5_000);
+            try {
+              const eventStream = await fetchWithTimeout(`${base}/v1/dashboard/events?projectId=default`, { headers: cookieHeaders, signal: eventController.signal });
+              if (eventStream.status !== 200 || !eventStream.headers.get('content-type')?.includes('text/event-stream') || !eventStream.body) {
+                throw new Error('authenticated dashboard event stream did not open');
+              }
+              eventReader = eventStream.body.getReader();
+              const decoder = new TextDecoder();
+              let initialEvents = '';
+              while (!initialEvents.includes('event: overview') && initialEvents.length < 262_144) {
+                const chunk = await eventReader.read();
+                if (chunk.done) break;
+                initialEvents += decoder.decode(chunk.value, { stream: true });
+              }
+              if (!initialEvents.includes('event: overview')) throw new Error('authenticated dashboard event stream did not send its initial overview');
+            } finally {
+              clearTimeout(eventTimeout);
+              await eventReader?.cancel().catch(() => {});
+              eventController.abort();
             }
-            eventReader = eventStream.body.getReader();
-            const decoder = new TextDecoder();
-            let initialEvents = '';
-            while (!initialEvents.includes('event: overview') && initialEvents.length < 262_144) {
-              const chunk = await eventReader.read();
-              if (chunk.done) break;
-              initialEvents += decoder.decode(chunk.value, { stream: true });
+          }
+          const login = await fetchWithTimeout(`${base}/v1/auth/login`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ password: process.env.ADMIN_PASSWORD }),
+          });
+          let authenticatedRoutes = false;
+          if (login.ok) {
+            const cookie = login.headers.get('set-cookie')?.split(';', 1)[0];
+            const cookieHeaders = { cookie: cookie ?? '' };
+            try {
+              if (!cookie?.startsWith('session=')) throw new Error('smoke login succeeded without issuing a session cookie');
+              await verifyAuthenticatedRoutes(cookieHeaders);
+              authenticatedRoutes = true;
+            } finally {
+              await fetchWithTimeout(`${base}/v1/auth/logout`, { method: 'POST', headers: cookieHeaders }).catch(() => {});
             }
-            if (!initialEvents.includes('event: overview')) throw new Error('authenticated dashboard event stream did not send its initial overview');
-          } finally {
-            clearTimeout(eventTimeout);
-            await eventReader?.cancel().catch(() => {});
-            eventController.abort();
-            revokeSessionRecord(sessionId, 'root');
+          } else {
+            const loginError = await readObject(login);
+            if (loginError.code !== 'mfa_required') throw new Error(`smoke login failed: HTTP ${login.status}, code=${loginError.code ?? 'unknown'}`);
+            console.log('authenticated dashboard probes skipped because root MFA is enabled');
           }
           await fs.stat(process.env.DEVICE_BRIDGE_SOCKET || '/run/dkrypt/device-bridge.sock');
           const processIds = (await fs.readdir('/proc')).filter((entry) => /^\d+$/.test(entry));
@@ -403,31 +460,27 @@ jobs:
             csp: true,
             rateLimit: true,
             authGuards: true,
+            authenticatedRoutes,
           }));
           JS
           }
-          smoke_success=0
-          for i in $(seq 1 30); do
-            if smoke; then
-              smoke_success=1
-              break
-            fi
-            sleep 2
-          done
-          if [ "$smoke_success" -ne 1 ]; then
-            echo 'deployment smoke test did not become ready in time' >&2
-            docker logs --tail 100 dkrypt || true
-            false
+          if ! smoke; then
+            echo 'deployment smoke tests failed' >&2
+            fail_deployment
           fi
-          if docker inspect --format '{{json .Mounts}}' dkrypt | grep -q '/root/.ipadecrypt'; then
+          if ! mounts=$(docker inspect --format '{{json .Mounts}}' dkrypt); then
+            echo 'deployment container mount inventory is unavailable' >&2
+            fail_deployment
+          fi
+          if printf '%s' "$mounts" | grep -q '/root/.ipadecrypt'; then
             echo 'legacy .ipadecrypt mount is present' >&2
-            false
+            fail_deployment
           fi
           if systemctl is-enabled --quiet ssh-over-usb.service 2>/dev/null; then
             echo 'legacy ssh-over-usb service is enabled' >&2
-            false
+            fail_deployment
           fi
           if systemctl is-active --quiet ssh-over-usb.service 2>/dev/null; then
             echo 'legacy ssh-over-usb service is active' >&2
-            false
+            fail_deployment
           fi

@@ -75,6 +75,24 @@ test('native auth routes preserve cookie sessions, refresh, logout, and session 
   }
 });
 
+test('root login session can access the dashboard artifact page', async () => {
+  const { server, cookie } = await signIn();
+  try {
+    const response = await server.inject({ method: 'GET', url: '/v1/dashboard/artifacts?limit=1', headers: { cookie } });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      artifacts: expect.any(Array),
+      total: expect.any(Number),
+      totalBytes: expect.any(Number),
+      maxBytes: expect.any(Number),
+    });
+    const logout = await server.inject({ method: 'POST', url: '/v1/auth/logout', headers: { cookie } });
+    expect(logout.statusCode).toBe(200);
+  } finally {
+    await server.close();
+  }
+});
+
 test('native auth logout-everywhere expires all existing session versions', async () => {
   const { server, cookie } = await signIn();
   try {
