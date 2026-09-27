@@ -283,6 +283,25 @@ const migrations = [
       DELETE FROM device_health WHERE device_id IS NULL;
     `,
   },
+  {
+    version: 12,
+    sql: `
+      ALTER TABLE notifications ADD COLUMN user_id TEXT;
+      ALTER TABLE notifications ADD COLUMN created_at INTEGER;
+      ALTER TABLE notifications ADD COLUMN read_at INTEGER;
+      ALTER TABLE notifications ADD COLUMN severity TEXT;
+      ALTER TABLE notifications ADD COLUMN job_id TEXT;
+      UPDATE notifications
+      SET user_id = lower(json_extract(payload, '$.userId')),
+          created_at = COALESCE(json_extract(payload, '$.createdAt'), updated_at),
+          read_at = json_extract(payload, '$.readAt'),
+          severity = json_extract(payload, '$.severity'),
+          job_id = json_extract(payload, '$.jobId')
+      WHERE json_valid(payload) = 1;
+      CREATE INDEX IF NOT EXISTS notifications_by_user_time ON notifications(user_id, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS notifications_unread_by_user ON notifications(user_id, read_at) WHERE read_at IS NULL;
+    `,
+  },
 ] as const;
 
 const domainTables = [
@@ -410,6 +429,18 @@ function deviceHealthIndexValues(payload: unknown, updatedAt: number): Array<str
   ];
 }
 
+function notificationIndexValues(payload: unknown, updatedAt: number): Array<string | number | null> {
+  const notification = asRecord(payload);
+  const userId = stringField(notification, 'userId');
+  return [
+    userId?.toLowerCase() ?? null,
+    numberField(notification, 'createdAt') ?? updatedAt,
+    numberField(notification, 'readAt'),
+    stringField(notification, 'severity'),
+    stringField(notification, 'jobId'),
+  ];
+}
+
 function deviceHealthRows(value: unknown): DomainRow[] {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return [];
   return Object.entries(value as StateRecord).flatMap(([deviceId, rawHistory]) => {
@@ -484,6 +515,17 @@ function replaceCollectionRows(database: Database, replacement: StateCollectionR
     for (const row of replacement.rows) {
       const updatedAt = row.updatedAt ?? Date.now();
       statement.run(row.id, json(row.payload), updatedAt, ...deviceHealthIndexValues(row.payload, updatedAt));
+    }
+    return;
+  }
+  if (replacement.table === 'notifications') {
+    const statement = database.query(`
+      INSERT INTO notifications (id, payload, updated_at, user_id, created_at, read_at, severity, job_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+    `);
+    for (const row of replacement.rows) {
+      const updatedAt = row.updatedAt ?? Date.now();
+      statement.run(row.id, json(row.payload), updatedAt, ...notificationIndexValues(row.payload, updatedAt));
     }
     return;
   }

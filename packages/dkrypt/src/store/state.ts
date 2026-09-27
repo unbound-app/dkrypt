@@ -29,6 +29,7 @@ import { categorizeFailure } from '#util/failureCategory.js';
 import { combineBits, hasPermission, parseBits, PermissionFlag, serializeBits } from '#permissions.js';
 import { createDeviceHistoryRepository } from '#store/deviceHistoryRepository.js';
 import { createDeviceHealthRepository } from '#store/deviceHealthRepository.js';
+import { createNotificationRepository } from '#store/notificationRepository.js';
 import { openStateDatabase, readStateCollection, verifyDatabaseBackup, writeStateMirror, type StateCollectionReplacement, type StateDatabase } from '#store/sqlite.js';
 import { paginateCursor } from '#util/cursor.js';
 
@@ -652,6 +653,7 @@ const stateDatabase: StateDatabase = openStateDatabase({
 });
 const deviceHistoryRepository = createDeviceHistoryRepository(stateDatabase.db);
 const deviceHealthRepository = createDeviceHealthRepository(stateDatabase.db);
+const notificationRepository = createNotificationRepository(stateDatabase.db);
 
 export function getStateDatabaseStatus(): { path: string; schemaVersion: number; integrity: 'ok' } {
   return { path: stateDatabase.path, schemaVersion: stateDatabase.schemaVersion, integrity: stateDatabase.integrityStatus() };
@@ -3601,7 +3603,7 @@ export function listNotifications(userId: string, limit = 50): { notifications: 
 
 export function listNotificationsPage(userId: string, offset = 0, limit = 50, cursor?: string): { notifications: NotificationRecord[]; unread: number; total: number; nextCursor?: string } {
   const lower = userId.toLowerCase();
-  const owned = state.notifications.filter((notification) => notification.userId.toLowerCase() === lower);
+  const owned = notificationRepository.listByUser(lower);
   const page = paginateCursor(owned, {
     cursor,
     offset,

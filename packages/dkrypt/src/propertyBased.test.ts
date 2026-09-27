@@ -129,6 +129,12 @@ function restoreSchemaAtVersion(database: ReturnType<typeof openStateDatabase>, 
       database.db.exec(`ALTER TABLE device_health DROP COLUMN ${column};`);
     }
   }
+  if (version < 12) {
+    database.db.exec('DROP INDEX IF EXISTS notifications_by_user_time; DROP INDEX IF EXISTS notifications_unread_by_user;');
+    for (const column of ['job_id', 'severity', 'read_at', 'created_at', 'user_id']) {
+      database.db.exec(`ALTER TABLE notifications DROP COLUMN ${column};`);
+    }
+  }
   if (version < 5) database.db.exec('DROP TABLE IF EXISTS projects;');
   if (version < 4) database.db.exec('DROP TABLE IF EXISTS scheduler_runs;');
   if (version < 3) database.db.exec('DROP INDEX IF EXISTS artifacts_updated_at;');
@@ -226,7 +232,7 @@ test('SQLite upgrades generated records from every prior schema and restores the
         database.close();
         database = undefined;
         database = openStateDatabase({ stateDir, filename: 'state.sqlite' });
-        expect(database.schemaVersion).toBe(11);
+        expect(database.schemaVersion).toBe(12);
         expect(database.integrityStatus()).toBe('ok');
         expect(database.readState()).toEqual(expectedState);
         expect(sortById(database.readCollection('jobs') as typeof expectedJobs)).toEqual(expectedJobs);
@@ -235,7 +241,7 @@ test('SQLite upgrades generated records from every prior schema and restores the
         expect(sortById(migratedTimelines.map((timeline) => ({ id: timeline.jobId, events: timeline.events })))).toEqual(sortById(expectedTimelines.map((timeline) => ({ id: timeline.jobId, events: timeline.events }))));
         expect(sortById(database.readCollection('scheduler_runs') as typeof expectedSchedulerRuns)).toEqual(sortById(expectedSchedulerRuns));
         database.backupTo(backupPath);
-        expect(verifyDatabaseBackup(backupPath)).toEqual({ schemaVersion: 11, integrity: 'ok', hasStateSnapshot: true });
+        expect(verifyDatabaseBackup(backupPath)).toEqual({ schemaVersion: 12, integrity: 'ok', hasStateSnapshot: true });
         database.close();
         database = undefined;
         database = openStateDatabase({ stateDir, filename: 'restore.sqlite' });

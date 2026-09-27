@@ -49,6 +49,7 @@ import {
   listAllowedUsers,
   listProjectsForUser,
   listNotifications,
+  listNotificationsPage,
   listPasskeysForUser,
   recordDeviceHealthCheck,
   recordApiKeyBundleUsage,
@@ -81,6 +82,12 @@ describe('dashboard notifications', () => {
     recordNotification({ userId: `other-${randomUUID()}`, title: 'Hidden', message: 'Not yours', severity: 'info' });
 
     expect(listNotifications(userId)).toMatchObject({ unread: 2, notifications: expect.arrayContaining([expect.objectContaining({ id: first.id })]) });
+    const firstPage = listNotificationsPage(userId, 0, 1);
+    const secondPage = listNotificationsPage(userId, 0, 1, firstPage.nextCursor);
+    expect(firstPage.notifications).toHaveLength(1);
+    expect(secondPage.notifications).toHaveLength(1);
+    expect(secondPage.notifications[0]?.id).not.toBe(firstPage.notifications[0]?.id);
+    expect(secondPage.total).toBe(2);
     expect(markNotificationsRead(userId, [first.id])).toBe(1);
     expect(listNotifications(userId)).toMatchObject({ unread: 1 });
   });
