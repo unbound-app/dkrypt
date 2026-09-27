@@ -223,4 +223,24 @@ describe('sendTestNotification', () => {
       config.outboundWebhookSecretPrevious = previousPreviousSecret;
     }
   });
+
+  test('rejects delivery when a previous key is configured without a valid current key', async () => {
+    const previousCurrentSecret = config.outboundWebhookSecret;
+    const previousPreviousSecret = config.outboundWebhookSecretPrevious;
+    config.outboundWebhookSecret = '';
+    config.outboundWebhookSecretPrevious = 'previous_outbound_signing_secret_456';
+    const fetchMock = mock(() => Promise.resolve(new Response('{}', { status: 200 })));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    try {
+      const result = await sendTestNotification('https://example.test/webhook');
+
+      expect(result.ok).toBe(false);
+      expect(result.error).toMatch(/rotation is invalid/);
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      config.outboundWebhookSecret = previousCurrentSecret;
+      config.outboundWebhookSecretPrevious = previousPreviousSecret;
+    }
+  });
 });

@@ -116,7 +116,17 @@ export function webhookSignature(secret: string, timestamp: string, payload: str
   return `sha256=${createHmac('sha256', secret).update(`${timestamp}.${payload}`).digest('hex')}`;
 }
 
+function webhookSigningConfigError(): string | undefined {
+  const current = config.outboundWebhookSecret;
+  const previous = config.outboundWebhookSecretPrevious;
+  if (!previous) return undefined;
+  if (current.length >= 16 && previous.length >= 16 && current !== previous) return undefined;
+  return 'outbound webhook signing rotation is invalid: current and previous secrets must be distinct and at least 16 characters';
+}
+
 function webhookHeaders(event: string, payload: Record<string, unknown>): Record<string, string> {
+  const signingConfigError = webhookSigningConfigError();
+  if (signingConfigError) throw new Error(signingConfigError);
   if (!config.outboundWebhookSecret) return {};
   const timestamp = new Date().toISOString();
   const body = JSON.stringify(payload);
@@ -175,7 +185,12 @@ async function postWebhook(
   event: string,
 ): Promise<{ ok: boolean; status?: number; error?: string }> {
   const payload = buildPayload(embed, format);
-  const result = await postJsonWithRetry(url, payload, webhookHeaders(event, payload));
+  let result;
+  try {
+    result = await postJsonWithRetry(url, payload, webhookHeaders(event, payload));
+  } catch (error) {
+    result = { ok: false, error: String(error), durationMs: 0 };
+  }
   recordWebhookDelivery({
     kind: event === 'jobCompleted' ? 'job' : 'scheduler',
     event,
@@ -288,6 +303,8 @@ export async function sendTestNotification(urlOverride?: string): Promise<{ ok: 
     { title: 'Test notification', description: 'This is what a notification from dkrypt looks like.', color: EMBED_COLOR.info },
     settings.notifyFormat,
   );
+  const signingConfigError = webhookSigningConfigError();
+  if (signingConfigError) return { ok: false, error: signingConfigError };
   const result = await postJsonWithRetry(url, payload, webhookHeaders('testNotification', payload));
   return result.ok ? { ok: true } : { ok: false, error: result.error ?? `webhook returned HTTP ${result.status}` };
 }
