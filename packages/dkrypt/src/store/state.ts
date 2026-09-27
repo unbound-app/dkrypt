@@ -31,6 +31,7 @@ import { createDeviceHistoryRepository } from '#store/deviceHistoryRepository.js
 import { createDeviceHealthRepository } from '#store/deviceHealthRepository.js';
 import { createNotificationRepository } from '#store/notificationRepository.js';
 import { createAuditRepository } from '#store/auditRepository.js';
+import { createTestFlightSubscriptionRepository } from '#store/testFlightSubscriptionRepository.js';
 import { openStateDatabase, readStateCollection, verifyDatabaseBackup, writeStateMirror, type StateCollectionReplacement, type StateDatabase } from '#store/sqlite.js';
 import { paginateCursor } from '#util/cursor.js';
 
@@ -656,6 +657,7 @@ const deviceHistoryRepository = createDeviceHistoryRepository(stateDatabase.db);
 const deviceHealthRepository = createDeviceHealthRepository(stateDatabase.db);
 const notificationRepository = createNotificationRepository(stateDatabase.db);
 const auditRepository = createAuditRepository(stateDatabase.db);
+const testFlightSubscriptionRepository = createTestFlightSubscriptionRepository(stateDatabase.db);
 
 export function getStateDatabaseStatus(): { path: string; schemaVersion: number; integrity: 'ok' } {
   return { path: stateDatabase.path, schemaVersion: stateDatabase.schemaVersion, integrity: stateDatabase.integrityStatus() };
@@ -2686,21 +2688,20 @@ function notificationForSubscription(userId: string, title: string, message: str
 }
 
 export function getTestFlightSubscriptions(): TestFlightSubscription[] {
-  return state.testFlightSubscriptions.map(cloneTestFlightSubscription);
+  return testFlightSubscriptionRepository.listAll().map(cloneTestFlightSubscription);
 }
 
 export function getTestFlightSubscription(id: string): TestFlightSubscription | undefined {
-  const subscription = state.testFlightSubscriptions.find((entry) => entry.id === id);
+  const subscription = testFlightSubscriptionRepository.findById(id);
   return subscription ? cloneTestFlightSubscription(subscription) : undefined;
 }
 
 export function listTestFlightSubscriptionsForUser(userId: string): TestFlightSubscription[] {
-  const lower = userId.toLowerCase();
-  return state.testFlightSubscriptions.filter((subscription) => subscription.requestedBy === lower).map(cloneTestFlightSubscription);
+  return testFlightSubscriptionRepository.listByUser(userId).map(cloneTestFlightSubscription);
 }
 
 export function findTestFlightSubscriptionByInviteCode(inviteCode: string): TestFlightSubscription | undefined {
-  const subscription = state.testFlightSubscriptions.find((entry) => entry.inviteCode === inviteCode && entry.status !== 'withdrawn');
+  const subscription = testFlightSubscriptionRepository.findByInviteCode(inviteCode);
   return subscription ? cloneTestFlightSubscription(subscription) : undefined;
 }
 

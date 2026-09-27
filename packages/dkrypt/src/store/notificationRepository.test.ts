@@ -77,7 +77,7 @@ test('notification repository backfills per-user fields when migrating an existi
 
     const migrated = openStateDatabase(options);
     try {
-      expect(migrated.schemaVersion).toBe(13);
+      expect(migrated.schemaVersion).toBe(14);
       expect(createNotificationRepository(migrated.db).listByUser('member@example.com')).toEqual([notification]);
     } finally {
       migrated.close();

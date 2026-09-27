@@ -318,6 +318,55 @@ const migrations = [
       CREATE INDEX IF NOT EXISTS audit_events_by_time ON audit_events(occurred_at DESC, id DESC);
     `,
   },
+  {
+    version: 14,
+    sql: `
+      ALTER TABLE testflight_subscriptions ADD COLUMN invite_code TEXT;
+      ALTER TABLE testflight_subscriptions ADD COLUMN requester_id TEXT;
+      ALTER TABLE testflight_subscriptions ADD COLUMN subscription_status TEXT;
+      ALTER TABLE testflight_subscriptions ADD COLUMN bundle_id TEXT;
+      ALTER TABLE testflight_subscriptions ADD COLUMN created_at INTEGER;
+      UPDATE testflight_subscriptions
+      SET invite_code = json_extract(payload, '$.inviteCode'),
+          requester_id = lower(json_extract(payload, '$.requestedBy')),
+          subscription_status = json_extract(payload, '$.status'),
+          bundle_id = json_extract(payload, '$.bundleId'),
+          created_at = COALESCE(json_extract(payload, '$.createdAt'), updated_at)
+      WHERE json_valid(payload) = 1;
+      CREATE INDEX IF NOT EXISTS testflight_subscriptions_by_invite ON testflight_subscriptions(invite_code, subscription_status);
+      CREATE INDEX IF NOT EXISTS testflight_subscriptions_by_requester ON testflight_subscriptions(requester_id, created_at DESC, id DESC);
+      CREATE TABLE IF NOT EXISTS testflight_subscription_devices (
+        subscription_id TEXT NOT NULL REFERENCES testflight_subscriptions(id) ON DELETE CASCADE,
+        device_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        apple_membership TEXT,
+        last_verified_at INTEGER,
+        last_synced_at INTEGER,
+        last_error TEXT,
+        payload TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (subscription_id, device_id)
+      );
+      INSERT OR IGNORE INTO testflight_subscription_devices (
+        subscription_id, device_id, status, apple_membership, last_verified_at,
+        last_synced_at, last_error, payload, updated_at
+      )
+      SELECT subscriptions.id,
+             json_extract(device.value, '$.deviceId'),
+             json_extract(device.value, '$.status'),
+             json_extract(device.value, '$.appleMembership'),
+             json_extract(device.value, '$.lastVerifiedAt'),
+             json_extract(device.value, '$.lastSyncedAt'),
+             json_extract(device.value, '$.lastError'),
+             device.value,
+             COALESCE(json_extract(device.value, '$.lastSyncedAt'), json_extract(device.value, '$.lastVerifiedAt'), subscriptions.updated_at)
+      FROM testflight_subscriptions AS subscriptions,
+           json_each(CASE WHEN json_valid(subscriptions.payload) = 1 THEN subscriptions.payload ELSE '{}' END, '$.devices') AS device
+      WHERE json_type(device.value, '$.deviceId') = 'text'
+        AND json_type(device.value, '$.status') = 'text';
+      CREATE INDEX IF NOT EXISTS testflight_subscription_devices_by_device ON testflight_subscription_devices(device_id, status, subscription_id);
+    `,
+  },
 ] as const;
 
 const domainTables = [
@@ -467,6 +516,29 @@ function auditIndexValues(payload: unknown, updatedAt: number): Array<string | n
   ];
 }
 
+function testFlightSubscriptionIndexValues(payload: unknown, updatedAt: number): Array<string | number | null> {
+  const subscription = asRecord(payload);
+  const requestedBy = stringField(subscription, 'requestedBy');
+  return [
+    stringField(subscription, 'inviteCode'),
+    requestedBy?.toLowerCase() ?? null,
+    stringField(subscription, 'status'),
+    stringField(subscription, 'bundleId'),
+    numberField(subscription, 'createdAt') ?? updatedAt,
+  ];
+}
+
+function testFlightSubscriptionDevices(payload: unknown): Array<{ deviceId: string; payload: Record<string, unknown> }> {
+  const subscription = asRecord(payload);
+  if (!Array.isArray(subscription.devices)) return [];
+  return subscription.devices.flatMap((value) => {
+    const device = asRecord(value);
+    const deviceId = stringField(device, 'deviceId');
+    const status = stringField(device, 'status');
+    return deviceId && status ? [{ deviceId, payload: device }] : [];
+  });
+}
+
 function deviceHealthRows(value: unknown): DomainRow[] {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return [];
   return Object.entries(value as StateRecord).flatMap(([deviceId, rawHistory]) => {
@@ -563,6 +635,38 @@ function replaceCollectionRows(database: Database, replacement: StateCollectionR
     for (const row of replacement.rows) {
       const updatedAt = row.updatedAt ?? Date.now();
       statement.run(row.id, json(row.payload), updatedAt, ...auditIndexValues(row.payload, updatedAt));
+    }
+    return;
+  }
+  if (replacement.table === 'testflight_subscriptions') {
+    const statement = database.query(`
+      INSERT INTO testflight_subscriptions (
+        id, payload, updated_at, invite_code, requester_id, subscription_status, bundle_id, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+    `);
+    const deviceStatement = database.query(`
+      INSERT INTO testflight_subscription_devices (
+        subscription_id, device_id, status, apple_membership, last_verified_at,
+        last_synced_at, last_error, payload, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+    `);
+    for (const row of replacement.rows) {
+      const updatedAt = row.updatedAt ?? Date.now();
+      statement.run(row.id, json(row.payload), updatedAt, ...testFlightSubscriptionIndexValues(row.payload, updatedAt));
+      for (const device of testFlightSubscriptionDevices(row.payload)) {
+        const deviceUpdatedAt = numberField(device.payload, 'lastSyncedAt') ?? numberField(device.payload, 'lastVerifiedAt') ?? updatedAt;
+        deviceStatement.run(
+          row.id,
+          device.deviceId,
+          stringField(device.payload, 'status'),
+          stringField(device.payload, 'appleMembership'),
+          numberField(device.payload, 'lastVerifiedAt'),
+          numberField(device.payload, 'lastSyncedAt'),
+          stringField(device.payload, 'lastError'),
+          json(device.payload),
+          deviceUpdatedAt,
+        );
+      }
     }
     return;
   }
