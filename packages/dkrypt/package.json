@@ -14,6 +14,7 @@
     "dev": "bun --watch src/server.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "bun test",
+    "load-test": "bun scripts/load-test.ts",
     "stripe:seed": "bun scripts/seed-stripe-catalog.ts",
     "stripe:webhook": "bun scripts/configure-stripe-webhook.ts",
     "stripe:verify": "bun scripts/verify-stripe.ts",

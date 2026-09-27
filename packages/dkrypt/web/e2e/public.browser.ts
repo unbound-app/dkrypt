@@ -168,22 +168,32 @@ test('pricing plan checkout actions share a bottom baseline', async ({ page }) =
     const paymentDetails = page.getByText('Stripe or crypto checkout', { exact: true });
     await expect(buttons).toHaveCount(4);
     await expect(paymentDetails).toHaveCount(4);
-    const rowSize = width < 1280 ? 2 : 4;
-    const assertRowsShareBaseline = (positions: number[]) => {
-      for (let start = 0; start < positions.length; start += rowSize) {
-        const row = positions.slice(start, start + rowSize);
-        expect(Math.max(...row) - Math.min(...row)).toBeLessThanOrEqual(2);
+    const cardLayout = await page.locator('main > div.grid > [data-slot="card"]').evaluateAll((cards) => cards.map((card) => {
+      const rect = card.getBoundingClientRect();
+      const button = card.querySelector('a[href="/#sign-in"]');
+      const price = card.querySelector('.text-3xl');
+      const paymentDetails = [...card.querySelectorAll('div')].find((element) => element.textContent?.trim() === 'Stripe or crypto checkout');
+      return {
+        top: rect.top,
+        buttonBottom: button?.getBoundingClientRect().bottom ?? Number.NaN,
+        buttonWidth: button?.getBoundingClientRect().width ?? Number.NaN,
+        priceTop: price?.getBoundingClientRect().top ?? Number.NaN,
+        paymentDetailsTop: paymentDetails?.getBoundingClientRect().top ?? Number.NaN,
+        paymentDetailsWidth: paymentDetails?.getBoundingClientRect().width ?? Number.NaN,
+      };
+    }));
+    const rows = new Map<number, typeof cardLayout>();
+    for (const card of cardLayout) {
+      const rowTop = [...rows.keys()].find((top) => Math.abs(top - card.top) <= 2) ?? card.top;
+      rows.set(rowTop, [...(rows.get(rowTop) ?? []), card]);
+    }
+    for (const row of rows.values()) {
+      for (const key of ['buttonBottom', 'priceTop', 'paymentDetailsTop'] as const) {
+        const positions = row.map((card) => card[key]);
+        expect(Math.max(...positions) - Math.min(...positions)).toBeLessThanOrEqual(2);
       }
-    };
-    const priceTops = await page.locator('[data-slot="card"] .text-3xl').evaluateAll((prices) => prices.map((price) => price.getBoundingClientRect().top));
-    assertRowsShareBaseline(priceTops);
-    const bottoms = await buttons.evaluateAll((links) => links.map((link) => link.getBoundingClientRect().bottom));
-    assertRowsShareBaseline(bottoms);
-    const widths = await buttons.evaluateAll((links) => links.map((link) => link.getBoundingClientRect().width));
-    const paymentDetailWidths = await paymentDetails.evaluateAll((details) => details.map((detail) => detail.getBoundingClientRect().width));
-    expect(widths.every((buttonWidth, index) => Math.abs(buttonWidth - (paymentDetailWidths[index] ?? 0)) <= 2)).toBe(true);
-    const paymentDetailTops = await paymentDetails.evaluateAll((details) => details.map((detail) => detail.getBoundingClientRect().top));
-    assertRowsShareBaseline(paymentDetailTops);
+      expect(row.every((card) => Math.abs(card.buttonWidth - card.paymentDetailsWidth) <= 2)).toBe(true);
+    }
   }
 });
 

@@ -35,6 +35,10 @@ jobs:
           cd web && bun install --frozen-lockfile
       - name: Run Moon checks
         run: bunx @moonrepo/cli@2.4.6 run dkrypt:check
+      - name: Run isolated service load scenarios
+        run: |
+          cd packages/dkrypt
+          bun run load-test
       - name: Verify generated API clients
         run: |
           cd packages/dkrypt
