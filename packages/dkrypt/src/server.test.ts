@@ -92,6 +92,18 @@ test('cookie-authenticated mutations reject non-same-origin Fetch Metadata value
       expect(response.json()).toMatchObject({ code: 'csrf_origin_rejected' });
     }
 
+    const mismatchedOrigin = await server.inject({
+      method: 'POST',
+      url: '/v1/auth/logout',
+      headers: {
+        cookie: createSessionCookie('root', PermissionFlag.administrator),
+        origin: 'https://attacker.example',
+      },
+    });
+
+    expect(mismatchedOrigin.statusCode).toBe(403);
+    expect(mismatchedOrigin.json()).toMatchObject({ code: 'csrf_origin_rejected', message: 'request origin is not allowed' });
+
     const sameOrigin = await server.inject({
       method: 'POST',
       url: '/v1/auth/logout',

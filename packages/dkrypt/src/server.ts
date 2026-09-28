@@ -6,7 +6,7 @@ import fastifyStatic from '@fastify/static';
 import fastifySwagger from '@fastify/swagger';
 import scalarApiReference from '@scalar/fastify-api-reference';
 import { TypeBoxTypeProvider } from '@fastify/type-provider-typebox';
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyReply } from 'fastify';
 import { fastifyRejectGeneratedApiKeyOutsidePublicApi } from '#auth.js';
 import { drainBackgroundWork, trackBackgroundWork } from '#backgroundWork.js';
 import { config } from '#config.js';
@@ -110,6 +110,10 @@ function normalizeApiErrorPayload(
   });
 }
 
+function rejectCsrfMutation(reply: FastifyReply, requestId: string, message: string): void {
+  reply.code(403).send({ error: message, code: 'csrf_origin_rejected', message, requestId, retryable: false });
+}
+
 export async function buildServer(options: { includePublicRoutes?: boolean } = {}): Promise<FastifyInstance> {
   const server = Fastify({ bodyLimit: 5 * 1024 * 1024, trustProxy: 'loopback' }).withTypeProvider<TypeBoxTypeProvider>();
 
@@ -151,18 +155,18 @@ export async function buildServer(options: { includePublicRoutes?: boolean } = {
       if (isMutation && !isWebhook && hasCookie) {
         const fetchSite = request.headers['sec-fetch-site'];
         if (typeof fetchSite === 'string' && fetchSite.toLowerCase() !== 'same-origin') {
-          reply.code(403).send({ error: 'request fetch site is not same-origin', code: 'csrf_origin_rejected', message: 'request fetch site is not same-origin', requestId, retryable: false });
+          rejectCsrfMutation(reply, requestId, 'request fetch site is not same-origin');
           return;
         }
         const origin = request.headers.origin;
         if (typeof origin === 'string') {
           try {
             if (new URL(origin).origin !== new URL(config.publicBaseUrl).origin) {
-              reply.code(403).send({ error: 'request origin is not allowed', code: 'csrf_origin_rejected', message: 'request origin is not allowed', requestId, retryable: false });
+              rejectCsrfMutation(reply, requestId, 'request origin is not allowed');
               return;
             }
           } catch {
-            reply.code(403).send({ error: 'request origin is not allowed', code: 'csrf_origin_rejected', message: 'request origin is not allowed', requestId, retryable: false });
+            rejectCsrfMutation(reply, requestId, 'request origin is not allowed');
             return;
           }
         }
