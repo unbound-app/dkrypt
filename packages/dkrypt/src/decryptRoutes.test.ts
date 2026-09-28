@@ -5,12 +5,13 @@ import { join } from 'node:path';
 import { TypeBoxTypeProvider } from '@fastify/type-provider-typebox';
 import Fastify from 'fastify';
 import type { ArtifactRecord } from '#artifacts.js';
+import { config } from '#config.js';
 import { createArtifactCatalogRoutes, createDecryptRoutes, createTestFlightCatalogRoutes } from '#routes/decrypt.js';
 import type { Job } from '#jobs/types.js';
 import { PermissionFlag, serializeBits } from '#permissions.js';
 import { addAllowedUser, bulkSetApiKeyAllowedBundleIds, createApiKey, createProject, createRole, getEffectiveSettings, revokeApiKey, updateProject, updateSettings } from '#store/state.js';
 
-test('typed TestFlight catalog routes enforce key scopes and normalize bridge failures', async () => {
+test('TestFlight catalog routes require the internal service key and normalize bridge failures', async () => {
   let trainLookupAppId = 0;
   let buildLookup: { appId: number; trainVersion: string } | undefined;
   let shouldFailTrainLookup = false;
@@ -53,19 +54,29 @@ test('typed TestFlight catalog routes enforce key scopes and normalize bridge fa
       headers: { authorization: `Bearer ${deniedKey.key}` },
     });
     expect(denied.statusCode).toBe(403);
-    expect(denied.json()).toMatchObject({ code: 'testflight_scope_denied', retryable: false });
+    expect(denied.json()).toMatchObject({ code: 'public_api_scope_denied', retryable: false });
+
+    const generatedKey = await server.inject({
+      method: 'GET',
+      url: '/v1/testflight/123/trains',
+      headers: { authorization: `Bearer ${allowedKey.key}` },
+    });
+    expect(generatedKey.statusCode).toBe(403);
+    expect(generatedKey.json()).toMatchObject({ code: 'public_api_scope_denied', retryable: false });
+
+    const internalHeaders = { authorization: `Bearer ${config.apiKey}` };
 
     const malformed = await server.inject({
       method: 'GET',
       url: '/v1/testflight/not-an-app-id/trains',
-      headers: { authorization: `Bearer ${allowedKey.key}` },
+      headers: internalHeaders,
     });
     expect(malformed.statusCode).toBe(400);
 
     const trains = await server.inject({
       method: 'GET',
       url: '/v1/testflight/123/trains',
-      headers: { authorization: `Bearer ${allowedKey.key}` },
+      headers: internalHeaders,
     });
     expect(trains.statusCode).toBe(200);
     expect(trains.json() as unknown).toEqual({ trains: [{ trainVersion: '4.0', buildCount: 2 }] });
@@ -74,7 +85,7 @@ test('typed TestFlight catalog routes enforce key scopes and normalize bridge fa
     const builds = await server.inject({
       method: 'GET',
       url: '/v1/testflight/123/builds?trainVersion=4.0',
-      headers: { authorization: `Bearer ${allowedKey.key}` },
+      headers: internalHeaders,
     });
     expect(builds.statusCode).toBe(200);
     expect(buildLookup).toEqual({ appId: 123, trainVersion: '4.0' });
@@ -84,7 +95,7 @@ test('typed TestFlight catalog routes enforce key scopes and normalize bridge fa
     const failure = await server.inject({
       method: 'GET',
       url: '/v1/testflight/123/trains',
-      headers: { authorization: `Bearer ${allowedKey.key}` },
+      headers: internalHeaders,
     });
     expect(failure.statusCode).toBe(502);
     expect(failure.json()).toMatchObject({ code: 'testflight_lookup_failed', requestId: expect.any(String), retryable: true });

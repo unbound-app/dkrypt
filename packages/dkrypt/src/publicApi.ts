@@ -13,8 +13,6 @@ export const publicApiOperations = {
   '/v1/decrypts': ['post'],
   '/v1/jobs/{id}': ['get'],
   '/v1/testflight/decrypt': ['post'],
-  '/v1/testflight/{appId}/trains': ['get'],
-  '/v1/testflight/{appId}/builds': ['get'],
   '/v1/artifacts': ['get'],
   '/v1/artifacts/{id}': ['get'],
   '/v1/artifacts/{id}/file': ['get'],

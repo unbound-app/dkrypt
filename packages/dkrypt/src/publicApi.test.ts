@@ -18,8 +18,6 @@ test('public OpenAPI contains only decrypt and IPA artifact routes', async () =>
       '/v1/decrypts',
       '/v1/jobs/{id}',
       '/v1/testflight/decrypt',
-      '/v1/testflight/{appId}/builds',
-      '/v1/testflight/{appId}/trains',
     ]);
     expect(document.info?.description).toContain('decrypt');
     expect(JSON.stringify(document).toLowerCase()).not.toContain('billing');
@@ -34,8 +32,13 @@ test('public OpenAPI contains only decrypt and IPA artifact routes', async () =>
 
 test('API-key route policy matches concrete job and TestFlight paths only', () => {
   expect(isPublicApiKeyRoute('GET', '/v1/jobs/job-123')).toBe(true);
-  expect(isPublicApiKeyRoute('GET', '/v1/testflight/123/builds')).toBe(true);
+  expect(isPublicApiKeyRoute('POST', '/v1/testflight/decrypt')).toBe(true);
+  expect(isPublicApiKeyRoute('GET', '/v1/testflight/123/builds')).toBe(false);
+  expect(isPublicApiKeyRoute('GET', '/v1/testflight/123/trains')).toBe(false);
   expect(isPublicApiKeyRoute('GET', '/v1/billing')).toBe(false);
+  expect(isPublicApiKeyRoute('POST', '/v1/billing/checkout')).toBe(false);
+  expect(isPublicApiKeyRoute('GET', '/v1/auth/session')).toBe(false);
+  expect(isPublicApiKeyRoute('GET', '/v1/auth/sessions')).toBe(false);
   expect(isPublicApiKeyRoute('GET', '/v1/health')).toBe(false);
   expect(isPublicApiKeyRoute('POST', '/v1/artifacts')).toBe(false);
 });
@@ -51,12 +54,16 @@ test('generated API keys cannot access internal health, billing, session, or das
     const billing = await server.inject({ method: 'GET', url: '/v1/billing', headers });
     const sessions = await server.inject({ method: 'GET', url: '/v1/auth/sessions', headers });
     const dashboard = await server.inject({ method: 'GET', url: '/v1/dashboard/overview', headers });
+    const testFlightTrains = await server.inject({ method: 'GET', url: '/v1/testflight/123/trains', headers });
+    const testFlightBuilds = await server.inject({ method: 'GET', url: '/v1/testflight/123/builds?trainVersion=1.0', headers });
 
     expect(health.statusCode).toBe(403);
     expect(metrics.statusCode).toBe(403);
     expect(billing.statusCode).toBe(401);
     expect(sessions.statusCode).toBe(401);
     expect(dashboard.statusCode).toBe(401);
+    expect(testFlightTrains.statusCode).toBe(403);
+    expect(testFlightBuilds.statusCode).toBe(403);
   } finally {
     revokeApiKey(apiKey.id, 'root', true);
     await server.close();

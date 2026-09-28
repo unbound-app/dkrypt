@@ -4,8 +4,6 @@ export type DkryptRoute =
   | "GET /v1/artifacts/{id}/file"
   | "GET /v1/decrypt"
   | "GET /v1/jobs/{id}"
-  | "GET /v1/testflight/{appId}/builds"
-  | "GET /v1/testflight/{appId}/trains"
   | "POST /v1/decrypts"
   | "POST /v1/testflight/decrypt";
 

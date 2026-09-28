@@ -159,8 +159,6 @@ Public API requests use `Authorization: Bearer <API_KEY>` and cover decrypt work
 | `GET /v1/decrypt` | Request a decrypt and stream the completed IPA |
 | `POST /v1/decrypts` | Queue a decrypt by release selector |
 | `POST /v1/testflight/decrypt` | Queue a TestFlight build decrypt |
-| `GET /v1/testflight/:appId/trains` | List TestFlight trains for a decrypt workflow |
-| `GET /v1/testflight/:appId/builds` | List TestFlight builds for a decrypt workflow |
 | `GET /v1/jobs/:id` | Read job status, attempts, deadline, warnings, and transport evidence |
 | `GET /v1/artifacts` | List IPA artifacts |
 | `GET /v1/artifacts/:id` | Read IPA artifact metadata |
