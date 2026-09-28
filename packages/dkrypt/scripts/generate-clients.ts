@@ -113,7 +113,7 @@ function renderPython(routes: string[]): string {
 
 import json
 from dataclasses import dataclass
-from urllib.error import HTTPError, URLError
+from urllib.error import HTTPError
 from urllib.parse import SplitResult, urljoin, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
@@ -148,8 +148,6 @@ class DkryptClient:
         except HTTPError as error:
             detail = error.read().decode("utf-8", errors="replace")
             raise RuntimeError(f"dkrypt request failed with HTTP {error.code}: {detail}") from error
-        except URLError as error:
-            raise RuntimeError(f"dkrypt request failed: {error.reason}") from error
 
     def _build_url(self, path: str) -> str:
         base_url = self.base_url.rstrip("/") + "/"
