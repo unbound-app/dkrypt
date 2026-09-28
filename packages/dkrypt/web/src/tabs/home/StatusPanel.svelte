@@ -37,7 +37,7 @@
 		appIconUrl,
 		ensureAppCatalog,
 	} from "#lib/appCatalog.svelte";
-	import { fmtBytesGB, fmtCalendarDate, fmtDateTime, fmtUntil, trendDelta } from "#lib/format";
+	import { fmtBytesGB, fmtCalendarDate, fmtDateTime, fmtNumber, fmtUntil, trendDelta } from "#lib/format.svelte";
 	import { liveState } from "#lib/live.svelte";
 
 	const overview = $derived(liveState.overview);
@@ -281,7 +281,7 @@
 	function temperatureBucketTitle(bucket: HourlyTemperatureBucket): string {
 		const time = fmtDateTime(bucket.hourStart, { year: undefined, minute: undefined });
 		if (bucket.batteryTemperatureC === null) return `${time}: no data`;
-		return `${time}: ${bucket.batteryTemperatureC.toFixed(1)}°C`;
+		return `${time}: ${fmtNumber(bucket.batteryTemperatureC, 1, 1)}°C`;
 	}
 
 	const hasTemperatureHistory = $derived(
@@ -489,7 +489,7 @@
 				{/snippet}
 				<div class="flex flex-col gap-1 whitespace-nowrap">
 					<div>
-						<span class="text-muted">Watching</span> · {schedulableWatchCount}
+						<span class="text-muted">Watching</span> · {fmtNumber(schedulableWatchCount, 0)}
 						app{schedulableWatchCount === 1 ? "" : "s"}
 					</div>
 					{#if nextRunLabel}
@@ -508,7 +508,7 @@
 		<Popover>
 			{#snippet trigger()}
 				<Badge variant={activeJobs > 0 ? "default" : "secondary"}
-					>{activeJobs} active job{activeJobs === 1 ? "" : "s"}</Badge
+					>{fmtNumber(activeJobs, 0)} active job{activeJobs === 1 ? "" : "s"}</Badge
 				>
 			{/snippet}
 			<div class="flex max-w-xs flex-col gap-1">
@@ -659,7 +659,7 @@
 										class="mr-1 inline h-3 w-3"
 									/>
 								{/if}
-								{h.batteryPercent}%
+								{fmtNumber(h.batteryPercent ?? 0, 0)}%
 							</Badge>
 						{/snippet}
 						<div class="flex flex-col gap-1 whitespace-nowrap">
@@ -668,19 +668,19 @@
 									<span class="text-muted"
 										>Battery health</span
 									>
-									· {h.batteryHealthPercent}%
+									· {fmtNumber(h.batteryHealthPercent, 0)}%
 								</div>
 							{/if}
 							{#if h.batteryCycleCount !== undefined}
 								<div>
 									<span class="text-muted">Cycle count</span>
-									· {h.batteryCycleCount}
+									· {fmtNumber(h.batteryCycleCount, 0)}
 								</div>
 							{/if}
 							{#if h.batteryMaxCapacityMah !== undefined && h.batteryDesignCapacityMah !== undefined}
 								<div>
-									<span class="text-muted">Capacity</span> · {h.batteryMaxCapacityMah}
-									/ {h.batteryDesignCapacityMah} mAh
+									<span class="text-muted">Capacity</span> · {fmtNumber(h.batteryMaxCapacityMah, 0)}
+									/ {fmtNumber(h.batteryDesignCapacityMah, 0)} mAh
 								</div>
 							{/if}
 						</div>
@@ -692,7 +692,7 @@
 						{#snippet trigger()}
 							<Badge variant={thermalBadgeVariant(temp)}>
 								<Thermometer class="mr-1 inline h-3 w-3" />
-								{temp.toFixed(1)}°C
+								{fmtNumber(temp, 1, 1)}°C
 								{#if h.batteryCharging}
 									<Zap class="ml-1 inline h-3 w-3" />
 								{/if}

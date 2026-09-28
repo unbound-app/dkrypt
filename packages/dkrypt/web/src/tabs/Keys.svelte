@@ -34,7 +34,7 @@
   import Select from '#lib/components/ui/Select.svelte';
   import Switch from '#lib/components/ui/Switch.svelte';
   import { statusToBadgeVariant } from '#lib/components/ui/variants';
-  import { debounce, fmtUntil } from '#lib/format';
+  import { debounce, fmtUntil } from '#lib/format.svelte';
   import { scrollFade } from '#lib/scrollFade';
   import { PermissionFlag } from '#lib/permissions';
   import { sessionHasAnyPermission, sessionHasPermission, sessionState } from '#lib/session.svelte';

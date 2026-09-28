@@ -14,7 +14,7 @@
 	} from "#lib/appCatalog.svelte";
 	import Dialog from "#lib/components/ui/Dialog.svelte";
 	import Sparkline from "#components/Sparkline.svelte";
-	import { fmtCalendarDate } from "#lib/format";
+	import { fmtCalendarDate, fmtNumber } from "#lib/format.svelte";
 
 	let {
 		open = $bindable(),
@@ -87,7 +87,7 @@
 					class="mb-1.5 flex items-center justify-between text-xs text-muted"
 				>
 					<span>Today</span>
-					<span>{todayCount} / {dailyLimit}</span>
+					<span>{fmtNumber(todayCount, 0)} / {fmtNumber(dailyLimit, 0)}</span>
 				</div>
 				<div
 					class="bg-panel-muted h-1.5 w-full overflow-hidden rounded-full"
@@ -157,7 +157,7 @@
 							</div>
 							<span
 								class="w-6 shrink-0 text-right text-xs text-muted"
-								>{b.count}</span
+				>{fmtNumber(b.count, 0)}</span
 							>
 						</div>
 					{/each}
@@ -174,7 +174,7 @@
 					{#each outcomeUsage as outcome (outcome.route)}
 						<div class="flex items-center justify-between gap-2">
 							<span class="truncate font-mono text-muted" title={outcome.route}>{outcome.route}</span>
-							<span class="shrink-0"><span class="text-ok">{outcome.success} ok</span> · <span class={outcome.clientError || outcome.serverError ? 'text-err' : 'text-muted'}>{outcome.clientError + outcome.serverError} failed</span></span>
+							<span class="shrink-0"><span class="text-ok">{fmtNumber(outcome.success, 0)} ok</span> · <span class={outcome.clientError || outcome.serverError ? 'text-err' : 'text-muted'}>{fmtNumber(outcome.clientError + outcome.serverError, 0)} failed</span></span>
 						</div>
 					{/each}
 				</div>

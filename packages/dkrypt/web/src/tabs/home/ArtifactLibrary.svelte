@@ -9,7 +9,7 @@
   import Input from '#lib/components/ui/Input.svelte';
   import { fetchArtifacts, observeArtifacts, setDashboardArtifactPinned, type ArtifactRecord } from '#lib/api';
   import { appDisplayName, appIconUrl, ensureAppCatalog } from '#lib/appCatalog.svelte';
-  import { fmtBytesGB, fmtSize, fmtTime } from '#lib/format';
+  import { fmtBytesGB, fmtSize, fmtTime } from '#lib/format.svelte';
   import { PermissionFlag } from '#lib/permissions';
   import { sessionHasPermission } from '#lib/session.svelte';
   import { isServerQueryCancelled, mergeServerPage, serverQueryStatus } from '#lib/serverStateCache.svelte';

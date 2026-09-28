@@ -12,7 +12,7 @@
   import Input from '#lib/components/ui/Input.svelte';
   import Select from '#lib/components/ui/Select.svelte';
   import type { BadgeVariant } from '#lib/components/ui/variants';
-  import { csvCell, downloadBlob } from '#lib/format';
+  import { csvCell, downloadBlob } from '#lib/format.svelte';
   import { liveState } from '#lib/live.svelte';
   import { createSavedViews } from '#lib/savedViews.svelte';
   import { tabState } from '#lib/ui.svelte';

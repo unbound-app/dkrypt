@@ -21,7 +21,7 @@
 	import Card from "#lib/components/ui/Card.svelte";
 	import Checkbox from "#lib/components/ui/Checkbox.svelte";
 	import { statusToBadgeVariant } from "#lib/components/ui/variants";
-	import { fmtDurationApprox } from "#lib/format";
+	import { fmtDurationApprox } from "#lib/format.svelte";
 	import { liveState } from "#lib/live.svelte";
 	import { scrollFade } from "#lib/scrollFade";
 	import { PermissionFlag } from "#lib/permissions";

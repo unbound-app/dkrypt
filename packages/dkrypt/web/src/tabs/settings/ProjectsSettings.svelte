@@ -12,6 +12,7 @@
   import { PermissionFlag } from '#lib/permissions';
   import { sessionHasPermission } from '#lib/session.svelte';
   import { confirmDialog } from '#lib/ui.svelte';
+  import { fmtBytesGB, fmtNumber } from '#lib/format.svelte';
 
   const canManage = $derived(sessionHasPermission(PermissionFlag.manageProjects));
 
@@ -167,10 +168,10 @@
           {/if}
         </div>
         <div class="mt-4 grid grid-cols-2 gap-2 text-xs">
-          <div class="rounded-lg bg-muted/40 px-3 py-2"><div class="text-muted-foreground">Members</div><div class="mt-1 font-medium">{project.isDefault ? 'Everyone' : project.memberIds?.length ?? 'Your project'}</div></div>
-          <div class="rounded-lg bg-muted/40 px-3 py-2"><div class="text-muted-foreground">Storage quota</div><div class="mt-1 font-medium">{project.storageQuotaBytes ? `${(project.storageQuotaBytes / 1024 / 1024 / 1024).toFixed(1)} GB` : 'No limit'}</div></div>
-          <div class="rounded-lg bg-muted/40 px-3 py-2"><div class="text-muted-foreground">Daily jobs</div><div class="mt-1 font-medium">{project.dailyJobQuota ?? 'No limit'}</div></div>
-          <div class="rounded-lg bg-muted/40 px-3 py-2"><div class="text-muted-foreground">Concurrent jobs</div><div class="mt-1 font-medium">{project.maxConcurrentJobs ?? 'No limit'}</div></div>
+          <div class="rounded-lg bg-muted/40 px-3 py-2"><div class="text-muted-foreground">Members</div><div class="mt-1 font-medium">{project.isDefault ? 'Everyone' : project.memberIds ? fmtNumber(project.memberIds.length, 0) : 'Your project'}</div></div>
+          <div class="rounded-lg bg-muted/40 px-3 py-2"><div class="text-muted-foreground">Storage quota</div><div class="mt-1 font-medium">{project.storageQuotaBytes ? fmtBytesGB(project.storageQuotaBytes) : 'No limit'}</div></div>
+          <div class="rounded-lg bg-muted/40 px-3 py-2"><div class="text-muted-foreground">Daily jobs</div><div class="mt-1 font-medium">{project.dailyJobQuota === undefined ? 'No limit' : fmtNumber(project.dailyJobQuota, 0)}</div></div>
+          <div class="rounded-lg bg-muted/40 px-3 py-2"><div class="text-muted-foreground">Concurrent jobs</div><div class="mt-1 font-medium">{project.maxConcurrentJobs === undefined ? 'No limit' : fmtNumber(project.maxConcurrentJobs, 0)}</div></div>
         </div>
       </Card>
     {/each}

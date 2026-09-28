@@ -67,6 +67,7 @@
 		permissionsSummary,
 		pushAccentPref,
 		pushHighContrastPref,
+		pushFormattingLocale,
 		fetchNotificationPrefs,
 		pushNotificationPrefs,
 		pushSoundPref,
@@ -87,6 +88,7 @@
 		confirmDialog,
 		initAccent,
 		initHighContrast,
+		initFormattingLocale,
 		initTheme,
 		initUrlTabSync,
 		openHelp,
@@ -94,16 +96,19 @@
 		setAccent,
 		setActiveTab,
 		setHighContrast,
+		setFormattingLocale,
 		setSoundEnabled,
 		setTheme,
 		showToast,
 		soundEnabledState,
 		highContrastState,
+		formattingLocaleState,
 		tabState,
 		themePrefState,
 		themeState,
 		type TabId,
 	} from "#lib/ui.svelte";
+	import { isFormattingLocalePreference } from "#lib/locale";
 
 	import Docs from "#tabs/Docs.svelte";
 	import Billing from "#tabs/Billing.svelte";
@@ -116,6 +121,7 @@
 
 	initTheme();
 	initHighContrast();
+	initFormattingLocale();
 	initAccent();
 	initUrlTabSync();
 
@@ -635,6 +641,12 @@
 		setHighContrast(next);
 		void pushHighContrastPref(next);
 	}
+
+	function chooseFormattingLocale(value: string): void {
+		if (!isFormattingLocalePreference(value)) return;
+		setFormattingLocale(value);
+		void pushFormattingLocale(value);
+	}
 </script>
 
 <svelte:window onkeydown={onKeydown} onpointerdown={onMobilePointerDown} onpointerup={onMobilePointerUp} />
@@ -999,6 +1011,20 @@
 									>
 										{highContrastState.value ? "On" : "Off"}
 									</Button>
+								</div>
+								<div class="mb-3 flex items-center justify-between gap-3">
+									<label for="formatting-locale" class="text-[13px]">Date and number format</label>
+									<select
+										id="formatting-locale"
+										class="rounded-md border border-border bg-background px-2 py-1 text-xs text-text focus-visible:ring-2 focus-visible:ring-accent"
+										value={formattingLocaleState.value}
+										onchange={(event) => chooseFormattingLocale(event.currentTarget.value)}
+										aria-label="Date and number format"
+									>
+										<option value="system">Automatic</option>
+										<option value="en">English</option>
+										<option value="de">Deutsch</option>
+									</select>
 								</div>
 								<div class="mb-1.5 text-[11px] text-muted">
 									Accent color

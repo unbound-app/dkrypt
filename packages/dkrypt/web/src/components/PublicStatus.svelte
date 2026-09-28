@@ -5,7 +5,7 @@
   import Card from '#lib/components/ui/Card.svelte';
   import PublicPageFooter from '#components/PublicPageFooter.svelte';
   import PublicPageHeader from '#components/PublicPageHeader.svelte';
-  import { fmtDateTime } from '#lib/format';
+  import { fmtDateTime } from '#lib/format.svelte';
 
   type ComponentState = 'operational' | 'degraded' | 'maintenance' | 'not_configured' | 'paused' | 'unknown';
   type PublicStatus = {

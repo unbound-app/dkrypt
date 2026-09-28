@@ -3,7 +3,7 @@
   import type { BulkJobPreview } from '#lib/api';
   import Button from '#lib/components/ui/Button.svelte';
   import Dialog from '#lib/components/ui/Dialog.svelte';
-  import { fmtDurationApprox, fmtSize } from '#lib/format';
+  import { fmtDurationApprox, fmtSize } from '#lib/format.svelte';
 
   interface Props {
     open: boolean;

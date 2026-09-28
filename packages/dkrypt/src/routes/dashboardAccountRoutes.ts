@@ -54,6 +54,7 @@ export const dashboardAccountRoutes: FastifyPluginAsyncTypebox = async (server) 
   server.put<DashboardPrefsUpdateRoute>('/v1/dashboard/me/prefs', { schema: getRouteContract('PUT', '/v1/dashboard/me/prefs') }, async (request) => {
     const body = request.body;
     const patch: Partial<UserPrefs> = {};
+    if (body.formattingLocale) patch.formattingLocale = body.formattingLocale;
     if (body.theme) patch.theme = body.theme;
     if (body.density) patch.density = body.density;
     if (typeof body.accent === 'string' && /^[a-z-]{1,32}$/.test(body.accent)) patch.accent = body.accent;

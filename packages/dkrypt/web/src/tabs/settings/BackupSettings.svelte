@@ -25,7 +25,7 @@
   import Input from '#lib/components/ui/Input.svelte';
   import Switch from '#lib/components/ui/Switch.svelte';
   import { buttonVariants } from '#lib/components/ui/variants';
-  import { debounce, fmtRelative, fmtSize, fmtTime } from '#lib/format';
+  import { debounce, fmtRelative, fmtSize, fmtTime } from '#lib/format.svelte';
   import { PermissionFlag } from '#lib/permissions';
   import { sessionHasPermission } from '#lib/session.svelte';
   import { confirmDialog } from '#lib/ui.svelte';

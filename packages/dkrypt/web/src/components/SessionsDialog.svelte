@@ -4,7 +4,7 @@
   import Badge from '#lib/components/ui/Badge.svelte';
   import Button from '#lib/components/ui/Button.svelte';
   import Dialog from '#lib/components/ui/Dialog.svelte';
-  import { fmtRelative, fmtTime } from '#lib/format';
+  import { fmtRelative, fmtTime } from '#lib/format.svelte';
   import { confirmDialog } from '#lib/ui.svelte';
   import { cn } from '#lib/utils';
 

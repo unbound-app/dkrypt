@@ -5,7 +5,7 @@
   import Button from '#lib/components/ui/Button.svelte';
   import Card from '#lib/components/ui/Card.svelte';
   import { fetchDashboardDoctor, runDashboardSyntheticProbes, type DashboardDoctorReport, type DashboardSyntheticReport } from '#lib/api';
-  import { fmtDateTime } from '#lib/format';
+  import { fmtDateTime } from '#lib/format.svelte';
 
   const checkTitles: Record<string, string> = {
     'session-secret': 'Session signing secret',

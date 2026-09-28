@@ -36,7 +36,7 @@
 		starredAppsState,
 		toggleStarredApp,
 	} from "#lib/decrypts.svelte";
-	import { debounce, fmtDateTime, fmtDurationApprox } from "#lib/format";
+	import { debounce, fmtDateTime, fmtDurationApprox } from "#lib/format.svelte";
 	import { liveState } from "#lib/live.svelte";
 	import { requestNotificationPermission } from "#lib/notifications";
 	import { PermissionFlag } from "#lib/permissions";

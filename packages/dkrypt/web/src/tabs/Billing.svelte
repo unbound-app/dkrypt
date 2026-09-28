@@ -8,7 +8,7 @@
   import { refreshSession } from '#lib/session.svelte';
   import { showToast } from '#lib/ui.svelte';
   import type { BadgeVariant } from '#lib/components/ui/variants';
-  import { fmtCalendarDate } from '#lib/format';
+  import { fmtCalendarDate, fmtCurrency } from '#lib/format.svelte';
 
   type PlanId = 'viewer' | 'regular' | 'priority' | 'api' | 'priority_api';
   type CheckoutState = 'success' | 'cancelled' | undefined;
@@ -217,7 +217,7 @@
   }
 
   function fallbackPrice(plan: Plan): string {
-    return new Intl.NumberFormat(undefined, { style: 'currency', currency: plan.currency }).format(plan.amount);
+    return fmtCurrency(plan.amount, plan.currency);
   }
 
   function formatDate(value: string): string {

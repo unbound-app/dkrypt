@@ -1,8 +1,27 @@
 import { toast } from 'svelte-sonner';
 import { getQueryParam, setQueryParams } from '#lib/urlState';
+import { normalizeFormattingLocalePreference, type FormattingLocalePreference } from '#lib/locale';
 
 export type Theme = 'dark' | 'light';
 export type ThemePref = Theme | 'auto';
+
+function readStoredFormattingLocale(): FormattingLocalePreference {
+  return normalizeFormattingLocalePreference(localStorage.getItem('formattingLocale'));
+}
+
+export const formattingLocaleState = $state<{ value: FormattingLocalePreference }>({ value: readStoredFormattingLocale() });
+export const systemLocalesState = $state<{ value: string[] }>({ value: [...navigator.languages] });
+
+export function setFormattingLocale(preference: FormattingLocalePreference): void {
+  formattingLocaleState.value = preference;
+  localStorage.setItem('formattingLocale', preference);
+}
+
+export function initFormattingLocale(): void {
+  window.addEventListener('languagechange', () => {
+    systemLocalesState.value = [...navigator.languages];
+  });
+}
 
 function readStoredThemePref(): ThemePref {
   const stored = localStorage.getItem('theme');

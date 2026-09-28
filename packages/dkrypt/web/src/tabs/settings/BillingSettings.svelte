@@ -11,7 +11,7 @@
   import { sessionHasPermission } from '#lib/session.svelte';
   import { showToast } from '#lib/ui.svelte';
   import type { BadgeVariant } from '#lib/components/ui/variants';
-  import { fmtCalendarDate } from '#lib/format';
+  import { fmtCalendarDate, fmtCurrency } from '#lib/format.svelte';
 
   const canManage = $derived(sessionHasPermission(PermissionFlag.manageBilling));
   let subscriptions = $state<BillingManagerSubscription[]>([]);
@@ -124,7 +124,7 @@
 
   function money(value?: number, currency = 'EUR'): string {
     if (value === undefined) return '—';
-    return new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(value);
+    return fmtCurrency(value, currency);
   }
 
   function date(value?: string): string {

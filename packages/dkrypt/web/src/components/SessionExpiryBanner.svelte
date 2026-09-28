@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { fmtCountdown } from '#lib/format';
+  import { fmtCountdown } from '#lib/format.svelte';
   import { refreshSessionTtl, sessionState } from '#lib/session.svelte';
   import Alert from '#lib/components/ui/Alert.svelte';
   import Button from '#lib/components/ui/Button.svelte';

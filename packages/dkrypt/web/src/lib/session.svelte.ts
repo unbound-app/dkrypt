@@ -5,14 +5,17 @@ import { clearPersistedTestFlightCatalog } from '#lib/testFlightCatalogPersisten
 import {
   accentState,
   highContrastState,
+  formattingLocaleState,
   setAccent,
   setHighContrast,
+  setFormattingLocale,
   setSoundEnabled,
   setTheme,
   soundEnabledState,
   themePrefState,
   type ThemePref,
 } from '#lib/ui.svelte';
+import type { FormattingLocalePreference } from '#lib/locale';
 
 export interface Role {
   id: string;
@@ -123,7 +126,9 @@ export async function updateProfileDisplayName(displayName: string): Promise<{ o
 async function syncThemeFromServer(): Promise<void> {
   const res = await fetch('/v1/dashboard/me/prefs');
   if (!res.ok) return;
-  const prefs = (await res.json()) as { theme?: ThemePref; accent?: string; sound?: boolean; highContrast?: boolean };
+  const prefs = (await res.json()) as { formattingLocale?: FormattingLocalePreference; theme?: ThemePref; accent?: string; sound?: boolean; highContrast?: boolean };
+  const formattingLocale = prefs.formattingLocale ?? 'system';
+  if (formattingLocale !== formattingLocaleState.value) setFormattingLocale(formattingLocale);
   if (prefs.theme && prefs.theme !== themePrefState.value) setTheme(prefs.theme);
   if (prefs.accent && prefs.accent !== accentState.value) setAccent(prefs.accent);
   if (prefs.highContrast !== undefined && prefs.highContrast !== highContrastState.value) setHighContrast(prefs.highContrast);
@@ -164,6 +169,15 @@ export async function pushThemePref(theme: ThemePref): Promise<void> {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ theme }),
+  });
+}
+
+export async function pushFormattingLocale(preference: FormattingLocalePreference): Promise<void> {
+  if (!sessionState.loggedIn) return;
+  await fetch('/v1/dashboard/me/prefs', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ formattingLocale: preference }),
   });
 }
 

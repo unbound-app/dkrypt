@@ -5,7 +5,7 @@
   import Card from '#lib/components/ui/Card.svelte';
   import Input from '#lib/components/ui/Input.svelte';
   import { fetchArtifactStorageStats, previewArtifactQuotaRetention, type ArtifactQuotaRetentionPreview, type ArtifactStorageStats } from '#lib/api';
-  import { fmtBytesGB, fmtSize } from '#lib/format';
+  import { fmtBytesGB, fmtNumber, fmtSize } from '#lib/format.svelte';
 
   let storageStats = $state<ArtifactStorageStats | null>(null);
   let storageLoading = $state(false);
@@ -74,7 +74,7 @@
     <div class="text-err mt-4 text-xs" role="alert">{storageError}</div>
   {:else if storageStats}
     <div class="mt-4 rounded-lg border border-border/70 bg-muted/20 px-3 py-2.5 text-xs">
-      <span class="font-medium">Current usage:</span> {fmtBytesGB(storageStats.usedBytes)} of {fmtBytesGB(storageStats.maxBytes)} across {storageStats.count} IPA files
+      <span class="font-medium">Current usage:</span> {fmtBytesGB(storageStats.usedBytes)} of {fmtBytesGB(storageStats.maxBytes)} across {fmtNumber(storageStats.count, 0)} IPA files
     </div>
   {:else}
     <div class="text-muted mt-4 text-xs" role="status">Loading storage details…</div>
@@ -96,12 +96,12 @@
         {#if quotaPreview.remainingOverQuotaBytes > 0}
           Pinned files exceed this quota by {fmtBytesGB(quotaPreview.remainingOverQuotaBytes)}. Unpin files or raise the quota before storing more.
         {:else if quotaPreview.evictedCount > 0}
-          Would keep {quotaPreview.retainedCount} of {quotaPreview.currentCount} files, reclaiming {fmtBytesGB(quotaPreview.reclaimedBytes)}.
+          Would keep {fmtNumber(quotaPreview.retainedCount, 0)} of {fmtNumber(quotaPreview.currentCount, 0)} files, reclaiming {fmtBytesGB(quotaPreview.reclaimedBytes)}.
         {:else}
           No files would be evicted at this quota.
         {/if}
       </div>
-      <div class="text-muted mt-1">Retained storage: {fmtBytesGB(quotaPreview.retainedBytes)} / {fmtBytesGB(quotaPreview.targetMaxBytes)}. {quotaPreview.pinnedCount} pinned files ({fmtBytesGB(quotaPreview.pinnedBytes)}) are protected.</div>
+      <div class="text-muted mt-1">Retained storage: {fmtBytesGB(quotaPreview.retainedBytes)} / {fmtBytesGB(quotaPreview.targetMaxBytes)}. {fmtNumber(quotaPreview.pinnedCount, 0)} pinned files ({fmtBytesGB(quotaPreview.pinnedBytes)}) are protected.</div>
       {#if quotaPreview.evictionExamples.length > 0}
         <ul class="mt-2 divide-y divide-border/70">
           {#each quotaPreview.evictionExamples.slice(0, 5) as candidate (candidate.id)}
@@ -112,7 +112,7 @@
           {/each}
         </ul>
         {#if quotaPreview.evictedCount > Math.min(quotaPreview.evictionExamples.length, 5)}
-          <div class="text-muted mt-1.5">and {quotaPreview.evictedCount - Math.min(quotaPreview.evictionExamples.length, 5)} more oldest files</div>
+          <div class="text-muted mt-1.5">and {fmtNumber(quotaPreview.evictedCount - Math.min(quotaPreview.evictionExamples.length, 5), 0)} more oldest files</div>
         {/if}
       {/if}
     </div>

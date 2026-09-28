@@ -1,6 +1,7 @@
 import { Type, type Static } from '@sinclair/typebox';
 
 const userPrefsProperties = {
+  formattingLocale: Type.Optional(Type.Union([Type.Literal('system'), Type.Literal('en'), Type.Literal('de')])),
   theme: Type.Optional(Type.Union([Type.Literal('dark'), Type.Literal('light'), Type.Literal('auto')])),
   density: Type.Optional(Type.Union([Type.Literal('comfortable'), Type.Literal('compact')])),
   accent: Type.Optional(Type.String()),

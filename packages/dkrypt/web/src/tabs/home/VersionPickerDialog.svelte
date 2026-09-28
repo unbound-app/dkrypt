@@ -6,7 +6,7 @@
   import Button from '#lib/components/ui/Button.svelte';
   import Dialog from '#lib/components/ui/Dialog.svelte';
   import Input from '#lib/components/ui/Input.svelte';
-  import { fmtDateTime } from '#lib/format';
+  import { fmtDateTime } from '#lib/format.svelte';
   import { buttonVariants } from '#lib/components/ui/variants';
 
   interface Props {

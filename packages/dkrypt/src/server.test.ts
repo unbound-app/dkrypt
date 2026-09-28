@@ -1314,17 +1314,21 @@ test('dashboard account and notification routes validate requests and preserve s
     expect(invalidPrefs.statusCode).toBe(400);
     expect(invalidPrefs.json()).toMatchObject({ code: 'request_error' });
 
+    const invalidLocale = await server.inject({ method: 'PUT', url: '/v1/dashboard/me/prefs', headers: { cookie }, payload: { formattingLocale: 'fr' } });
+    expect(invalidLocale.statusCode).toBe(400);
+    expect(invalidLocale.json()).toMatchObject({ code: 'request_error' });
+
     const updatedPrefs = await server.inject({
       method: 'PUT',
       url: '/v1/dashboard/me/prefs',
       headers: { cookie },
-      payload: { theme: 'dark', density: 'compact', accent: 'slate', highContrast: true, pushOnSuccess: false, notifyEmail: 'test@example.com' },
+      payload: { formattingLocale: 'de', theme: 'dark', density: 'compact', accent: 'slate', highContrast: true, pushOnSuccess: false, notifyEmail: 'test@example.com' },
     });
     expect(updatedPrefs.statusCode).toBe(200);
-    expect(updatedPrefs.json()).toMatchObject({ theme: 'dark', density: 'compact', accent: 'slate', highContrast: true, pushOnSuccess: false });
+    expect(updatedPrefs.json()).toMatchObject({ formattingLocale: 'de', theme: 'dark', density: 'compact', accent: 'slate', highContrast: true, pushOnSuccess: false });
 
     const prefs = await server.inject({ method: 'GET', url: '/v1/dashboard/me/prefs', headers: { cookie } });
-    expect(prefs.json()).toMatchObject({ theme: 'dark', density: 'compact', accent: 'slate', highContrast: true, pushOnSuccess: false });
+    expect(prefs.json()).toMatchObject({ formattingLocale: 'de', theme: 'dark', density: 'compact', accent: 'slate', highContrast: true, pushOnSuccess: false });
 
     const invalidSubscription = await server.inject({
       method: 'POST',

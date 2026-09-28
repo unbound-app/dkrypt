@@ -8,7 +8,7 @@
   import Dialog from '#lib/components/ui/Dialog.svelte';
   import Input from '#lib/components/ui/Input.svelte';
   import Select from '#lib/components/ui/Select.svelte';
-  import { fmtDateTime } from '#lib/format';
+  import { fmtDateTime } from '#lib/format.svelte';
 
   interface Props {
     open: boolean;

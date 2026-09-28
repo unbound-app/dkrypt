@@ -5,7 +5,7 @@
   import Badge from '#lib/components/ui/Badge.svelte';
   import Button from '#lib/components/ui/Button.svelte';
   import Dialog from '#lib/components/ui/Dialog.svelte';
-  import { fmtSize, fmtTime } from '#lib/format';
+  import { fmtSize, fmtTime } from '#lib/format.svelte';
   import { buttonVariants, statusToBadgeVariant } from '#lib/components/ui/variants';
   import { showToast } from '#lib/ui.svelte';
 

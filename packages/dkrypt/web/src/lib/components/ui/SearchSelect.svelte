@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Combobox } from "bits-ui";
 	import { Check, ChevronDown } from "lucide-svelte";
+	import { fmtNumber } from "#lib/format.svelte";
 	import { cn } from "#lib/utils";
 
 	interface Item {
@@ -108,7 +109,7 @@
 					<div class="px-2 py-2 text-xs text-muted">No matches.</div>
 				{:else if hiddenCount > 0}
 					<div class="px-2 py-1.5 text-[11px] text-muted">
-						{hiddenCount} more - keep typing to narrow it down
+						{fmtNumber(hiddenCount, 0)} more - keep typing to narrow it down
 					</div>
 				{/if}
 			</Combobox.Viewport>

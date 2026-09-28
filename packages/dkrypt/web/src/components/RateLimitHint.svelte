@@ -1,5 +1,6 @@
 <script lang="ts">
   import { rateLimitState } from '#lib/api';
+  import { fmtNumber } from '#lib/format.svelte';
 
   let { bucket }: { bucket: string } = $props();
 
@@ -18,9 +19,9 @@
 {#if info && info.remaining <= 3}
   <div class="text-warn text-xs">
     {#if info.remaining === 0}
-      Rate limited - try again in {secondsLeft}s
+      Rate limited - try again in {fmtNumber(secondsLeft, 0)}s
     {:else}
-      {info.remaining} request{info.remaining === 1 ? '' : 's'} left this minute
+      {fmtNumber(info.remaining, 0)} request{info.remaining === 1 ? '' : 's'} left this minute
     {/if}
   </div>
 {/if}

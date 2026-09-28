@@ -16,7 +16,7 @@
 		appIconUrl,
 		ensureAppCatalog,
 	} from "#lib/appCatalog.svelte";
-	import { fmtBytesGB, fmtDurationApprox } from "#lib/format";
+	import { fmtBytesGB, fmtDurationApprox, fmtNumber } from "#lib/format.svelte";
 	import RelativeTime from "#components/RelativeTime.svelte";
 	import RateLimitHint from "#components/RateLimitHint.svelte";
 	import { projectSelectionState } from "#lib/projectSelection.svelte";
@@ -145,13 +145,13 @@
 		<dl class="flex flex-col gap-2 text-sm">
 			<div class="flex items-center justify-between">
 				<dt class="text-muted">Total runs</dt>
-				<dd>{stats.totalRuns}</dd>
+				<dd>{fmtNumber(stats.totalRuns, 0)}</dd>
 			</div>
 			<div class="flex items-center justify-between">
 				<dt class="text-muted">Success rate</dt>
 				<dd>
-					{Math.round(stats.successRate * 100)}% ({stats.doneCount} done,
-					{stats.failedCount} failed)
+					{fmtNumber(Math.round(stats.successRate * 100), 0)}% ({fmtNumber(stats.doneCount, 0)} done,
+					{fmtNumber(stats.failedCount, 0)} failed)
 				</dd>
 			</div>
 			<div class="flex items-center justify-between">
@@ -192,7 +192,7 @@
 							</div>
 							<span
 								class="w-6 shrink-0 text-right text-xs text-muted"
-								>{f.count}</span
+				>{fmtNumber(f.count, 0)}</span
 							>
 						</div>
 					{/each}

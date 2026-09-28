@@ -63,7 +63,7 @@
 	import SearchSelect from "#lib/components/ui/SearchSelect.svelte";
 	import Switch from "#lib/components/ui/Switch.svelte";
 	import { buttonVariants } from "#lib/components/ui/variants";
-	import { debounce, fmtSize } from "#lib/format";
+	import { debounce, fmtCalendarDate, fmtNumber, fmtSize } from "#lib/format.svelte";
 	import {
 		appDisplayName,
 		appIconUrl,
@@ -376,14 +376,14 @@
 
 	function scheduleRunTime(run: SchedulerCalendarRun): string {
 		const timezone = watches.find((watch) => watch.id === run.watchId)?.timezone ?? LOCAL_TIME_ZONE;
-		return new Intl.DateTimeFormat(undefined, {
+		return fmtCalendarDate(run.at, {
 			weekday: "short",
 			month: "short",
 			day: "numeric",
 			hour: "numeric",
 			minute: "2-digit",
 			timeZone: timezone,
-		}).format(new Date(run.at));
+		});
 	}
 
 	$effect(() => {
@@ -774,7 +774,7 @@
 			const parsed = JSON.parse(await file.text()) as { watches?: WatchInput[] };
 			if (!Array.isArray(parsed.watches)) throw new Error("This file does not contain watches");
 			const { ok, data } = await importWatches(parsed.watches);
-			if (ok && data.skipped.length) showToast(`${data.watches.length} watches imported; ${data.skipped.length} skipped`, "success");
+			if (ok && data.skipped.length) showToast(`${fmtNumber(data.watches.length, 0)} watches imported; ${fmtNumber(data.skipped.length, 0)} skipped`, "success");
 		} catch (err) {
 			showToast(err instanceof Error ? err.message : "Could not import watches", "error");
 		} finally {
@@ -1069,7 +1069,7 @@
 	<Card title="Automation health">
 		<div class="flex flex-wrap items-center gap-2 text-sm">
 			<Badge variant={failedWatchCount > 0 ? "destructive" : "success"}>{failedWatchCount > 0 ? "attention needed" : "healthy"}</Badge>
-			<span class="text-muted">{healthyWatchCount} healthy · {failedWatchCount} needs attention · {watches.filter((watch) => watch.schedulable).length} active</span>
+			<span class="text-muted">{fmtNumber(healthyWatchCount, 0)} healthy · {fmtNumber(failedWatchCount, 0)} needs attention · {fmtNumber(watches.filter((watch) => watch.schedulable).length, 0)} active</span>
 			{#if canManageSchedulerSettings}
 				<div class="ml-auto flex flex-wrap items-center gap-1.5">
 					<Button size="sm" variant="secondary" loading={loadingBridgeDiagnostics} onclick={openBridgeDiagnostics}>Inspect autoinstall</Button>
@@ -1077,7 +1077,7 @@
 			{/if}
 		</div>
 		<div class="mt-2 flex items-center gap-2 text-xs text-muted">
-			<span>{appCatalogStats ? `${appCatalogStats.entries} catalogued apps · ${appCatalogStats.icons} icons cached` : "Loading app catalog…"}</span>
+			<span>{appCatalogStats ? `${fmtNumber(appCatalogStats.entries, 0)} catalogued apps · ${fmtNumber(appCatalogStats.icons, 0)} icons cached` : "Loading app catalog…"}</span>
 			{#if canManageWatches}
 				<Button size="sm" variant="secondary" class="ml-auto" loading={refreshingCatalog} onclick={refreshWatchedCatalog}>Refresh app metadata</Button>
 			{/if}
@@ -1085,8 +1085,8 @@
 		{#if githubRateLimit?.remaining !== undefined}
 			<div class="border-border mt-2 flex flex-wrap items-center gap-2 rounded-lg border px-2.5 py-2 text-xs">
 				<Badge variant={githubRateLimit.remaining < 100 ? "destructive" : "secondary"}>GitHub API</Badge>
-				<span class="font-medium">{githubRateLimit.remaining}/{githubRateLimit.limit ?? "?"} remaining</span>
-				{#if githubRateLimit.reset}<span class="text-muted">resets {new Date(githubRateLimit.reset * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>{/if}
+				<span class="font-medium">{fmtNumber(githubRateLimit.remaining, 0)}/{githubRateLimit.limit === undefined ? "?" : fmtNumber(githubRateLimit.limit, 0)} remaining</span>
+				{#if githubRateLimit.reset}<span class="text-muted">resets {fmtCalendarDate(githubRateLimit.reset * 1000, { hour: "2-digit", minute: "2-digit" })}</span>{/if}
 			</div>
 		{/if}
 	</Card>
@@ -1206,7 +1206,7 @@
 							class="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 font-mono text-[11px] text-muted"
 						>
 							<span>{projectName(w.projectId)}</span>
-							<span title={w.repo}>{w.dispatchTargets?.length ? `${w.dispatchTargets.length} destinations` : w.repo || "-"}</span>
+							<span title={w.repo}>{w.dispatchTargets?.length ? `${fmtNumber(w.dispatchTargets.length, 0)} destinations` : w.repo || "-"}</span>
 			<span title="poll cron in the selected time zone">{w.pollCron} · {w.timezone ?? LOCAL_TIME_ZONE}</span>
 			{#if w.maintenanceWindow}
 				<span title="Automatic checks pause during this local-time window">Quiet {w.maintenanceWindow.start}–{w.maintenanceWindow.end}</span>
@@ -1303,7 +1303,7 @@
 			</div>
 			<div class="flex items-center justify-between gap-3">
 				<dt class="text-muted">Alerts enabled</dt>
-				<dd>{enabledAlertCount} / {NOTIFY_EVENTS.length}</dd>
+				<dd>{fmtNumber(enabledAlertCount, 0)} / {fmtNumber(NOTIFY_EVENTS.length, 0)}</dd>
 			</div>
 			<div class="flex items-center justify-between gap-3">
 				<dt class="text-muted">Retry on failure</dt>

@@ -10,7 +10,7 @@
 		type JobHistoryEntry,
 	} from "#lib/api";
 	import { addDecrypt, pushRecentBundleId } from "#lib/decrypts.svelte";
-	import { debounce } from "#lib/format";
+	import { debounce } from "#lib/format.svelte";
 	import { appDisplayName, ensureAppCatalog } from "#lib/appCatalog.svelte";
 	import { PermissionFlag } from "#lib/permissions";
 	import {

@@ -162,6 +162,143 @@ test('pricing page fits a phone viewport without horizontal overflow', async ({ 
   await expectAccessible(page);
 });
 
+test('date and number format preference is saved and restored from the account', async ({ page }) => {
+  await mockStableDashboardEvents(page);
+  await mockAuthenticatedDashboard(page, '1');
+  const preferenceUpdates: Array<Record<string, unknown>> = [];
+  let savedFormattingLocale = 'en';
+  await page.route('**/v1/dashboard/me/prefs', async (route) => {
+    if (route.request().method() === 'GET') {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ formattingLocale: savedFormattingLocale, theme: 'dark', accent: 'violet', sound: true }),
+      });
+      return;
+    }
+    const patch = route.request().postDataJSON() as Record<string, unknown>;
+    preferenceUpdates.push(patch);
+    if (typeof patch.formattingLocale === 'string') savedFormattingLocale = patch.formattingLocale;
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ formattingLocale: savedFormattingLocale }) });
+  });
+  await page.route('**/v1/billing', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        enabled: true,
+        provider: 'stripe',
+        environment: 'live',
+        managedPayments: true,
+        missingConfiguration: [],
+        plans: [{ id: 'regular', name: 'Regular', description: 'Standard access', amount: 5, currency: 'EUR', priceId: 'price_regular' }],
+        legacyBilling: false,
+        entitlement: { planId: 'viewer', decrypt: true, api: false, priority: 0 },
+        providers: {
+          stripe: { enabled: true, ready: true, environment: 'live' },
+          crypto: { enabled: false, ready: false, environment: 'live', provider: 'nowpayments', assets: [] },
+        },
+      }),
+    });
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Account menu' }).click();
+  const locale = page.getByLabel('Date and number format');
+  await expect(locale).toHaveValue('en');
+  await locale.selectOption('de');
+
+  await expect.poll(() => preferenceUpdates).toEqual([{ formattingLocale: 'de' }]);
+  await page.keyboard.press('Escape');
+  const expectedPrice = await page.evaluate(() => new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(5));
+  await page.getByRole('button', { name: 'Plans', exact: true }).click();
+  await expect(page.getByText(expectedPrice, { exact: true })).toBeVisible();
+
+  await page.evaluate(() => localStorage.removeItem('formattingLocale'));
+  await page.reload();
+  await page.getByRole('button', { name: 'Plans', exact: true }).click();
+  await expect(page.getByText(expectedPrice, { exact: true })).toBeVisible();
+
+  const checkedAt = '2026-09-27T00:30:00.000Z';
+  await page.route('**/v1/status', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        status: 'operational',
+        checkedAt,
+        deployment: { ref: 'abcdef0123456789' },
+        components: {
+          service: { state: 'operational' },
+          automation: { state: 'operational' },
+          scheduler: { state: 'operational' },
+        },
+      }),
+    });
+  });
+  await page.goto('/status');
+  const expectedCheckedAt = await page.evaluate((value) => new Intl.DateTimeFormat('de-DE', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  }).format(new Date(value)), checkedAt);
+  await expect(page.getByText(expectedCheckedAt, { exact: false })).toBeVisible();
+});
+
+test('automatic date formatting follows system language changes', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'languages', { configurable: true, value: ['en-US'] });
+  });
+  const checkedAt = '2026-09-27T00:30:00.000Z';
+  await page.route('**/v1/status', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        status: 'operational',
+        checkedAt,
+        deployment: { ref: 'abcdef0123456789' },
+        components: {
+          service: { state: 'operational' },
+          automation: { state: 'operational' },
+          scheduler: { state: 'operational' },
+        },
+      }),
+    });
+  });
+
+  await page.goto('/status');
+  const formatCheckedAt = (locale: string) => page.evaluate((input) => new Intl.DateTimeFormat(input.locale, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  }).format(new Date(input.checkedAt)), { locale, checkedAt });
+  const englishCheckedAt = await formatCheckedAt('en-US');
+  const germanCheckedAt = await formatCheckedAt('de-DE');
+  await expect(page.getByText(englishCheckedAt, { exact: false })).toBeVisible();
+
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'languages', { configurable: true, value: ['de-DE'] });
+    window.dispatchEvent(new Event('languagechange'));
+  });
+
+  await expect(page.getByText(germanCheckedAt, { exact: false })).toBeVisible();
+  await expect(page.getByText(englishCheckedAt, { exact: false })).not.toBeVisible();
+});
+
+test('accounts without a saved format preference do not inherit the previous browser choice', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('formattingLocale', 'de'));
+  await mockStableDashboardEvents(page);
+  await mockAuthenticatedDashboard(page, '1');
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Account menu' }).click();
+
+  await expect(page.getByLabel('Date and number format')).toHaveValue('system');
+});
+
 test('active jobs table supports keyboard scrolling on constrained viewports', async ({ page }) => {
   await page.setViewportSize({ width: 900, height: 812 });
   await mockStableDashboardEvents(page);
@@ -399,15 +536,36 @@ test('scheduler watch time zone selection is searchable and defaults to the brow
 });
 
 test('scheduler calendar preview labels checks deferred by quiet hours', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('formattingLocale', 'de'));
   await mockStableDashboardEvents(page);
   await mockAuthenticatedDashboard(page, '1');
+  await page.route('**/v1/dashboard/me/prefs', async (route) => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ formattingLocale: 'de', theme: 'dark', accent: 'violet' }) });
+  });
+  await page.route('**/v1/dashboard/overview*', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        schedulerEnabled: false,
+        settings: {},
+        watches: [{ id: 'watch-quiet', bundleId: 'com.example.quiet', repo: 'example/repo', ghWorkflowFile: 'dispatch.yml', pollCron: '0 * * * *', timezone: 'America/Los_Angeles', enabled: true, createdAt: 1, updatedAt: 1, schedulable: true, configIssues: [] }],
+        devices: [],
+        schedulerRunHistory: [],
+        disk: { totalBytes: 1, freeBytes: 1, usedBytes: 0, usedPercent: 0 },
+        isPaidPlan: false,
+        maintenance: { active: false, manual: false, auto: false },
+        activeJobs: [],
+      }),
+    });
+  });
+  const scheduledAt = Date.parse('2026-10-25T09:00:00.000Z');
   await page.route('**/v1/dashboard/watches/calendar*', async (route) => {
     await route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify({
         fromAt: Date.parse('2026-10-25T08:00:00.000Z'),
         untilAt: Date.parse('2026-10-26T08:00:00.000Z'),
-        runs: [{ watchId: 'watch-quiet', bundleId: 'com.example.quiet', at: Date.parse('2026-10-25T09:00:00.000Z'), deferred: true }],
+        runs: [{ watchId: 'watch-quiet', bundleId: 'com.example.quiet', at: scheduledAt, deferred: true }],
         truncated: false,
       }),
     });
@@ -417,8 +575,17 @@ test('scheduler calendar preview labels checks deferred by quiet hours', async (
   await page.getByRole('button', { name: 'Preview next 24 hours' }).click();
   await expect(page.getByRole('heading', { name: 'Next 24 hours' })).toBeVisible();
   await expect(page.getByText('After quiet hours')).toBeVisible();
-  await expect(page.getByText('com.example.quiet')).toBeVisible();
-  await expectAccessible(page);
+  await expect(page.getByText('com.example.quiet').first()).toBeVisible();
+  const expectedScheduleTime = await page.evaluate((at) => new Intl.DateTimeFormat('de-DE', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZone: 'America/Los_Angeles',
+  }).format(new Date(at)), scheduledAt);
+  await expect(page.getByRole('main').locator('time')).toContainText(`${expectedScheduleTime} · America/Los_Angeles`);
+  await expectAccessible(page, 'main div.max-h-64.divide-border');
 });
 
 test('self-hosters can review configuration doctor checks from Settings', async ({ page }) => {

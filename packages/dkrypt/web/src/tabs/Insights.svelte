@@ -25,8 +25,9 @@
 		fmtBytesGB,
 		fmtDurationApprox,
 		fmtCalendarDate,
+		fmtNumber,
 		trendDelta,
-	} from "#lib/format";
+	} from "#lib/format.svelte";
 	import { liveState } from "#lib/live.svelte";
 	import { PermissionFlag } from "#lib/permissions";
 	import { projectSelectionState } from "#lib/projectSelection.svelte";
@@ -281,12 +282,12 @@
 		<div class="mb-4 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
 			<div class="border-border rounded-lg border p-3">
 				<div class="text-xs text-muted">Total runs</div>
-				<div class="text-xl font-semibold">{insights.totalRuns}</div>
+				<div class="text-xl font-semibold">{fmtNumber(insights.totalRuns, 0)}</div>
 			</div>
 			<div class="border-border rounded-lg border p-3">
 				<div class="text-xs text-muted">Success rate</div>
 				<div class="text-xl font-semibold">
-					{Math.round(insights.successRate * 100)}%
+					{fmtNumber(Math.round(insights.successRate * 100), 0)}%
 				</div>
 			</div>
 			<div class="border-border rounded-lg border p-3">
@@ -298,7 +299,7 @@
 			<div class="border-border rounded-lg border p-3">
 				<div class="text-xs text-muted">Manual / scheduler</div>
 				<div class="text-xl font-semibold">
-					{insights.manualCount} / {insights.schedulerCount}
+					{fmtNumber(insights.manualCount, 0)} / {fmtNumber(insights.schedulerCount, 0)}
 				</div>
 			</div>
 		</div>
@@ -306,7 +307,7 @@
 		<div class="border-border mb-4 border-t pt-3">
 			<div class="mb-1.5 flex items-center justify-between gap-2">
 				<div class="flex items-center gap-2 text-xs text-muted">
-					<span>Decrypts · last {trendDays} days</span>
+					<span>Decrypts · last {fmtNumber(Number(trendDays), 0)} days</span>
 					{#if trendDeltaPct !== null}
 						<Badge
 							variant={trendDeltaPct > 0
@@ -362,7 +363,7 @@
 							</div>
 							<span
 								class="w-6 shrink-0 text-right text-xs text-muted"
-								>{f.count}</span
+				>{fmtNumber(f.count, 0)}</span
 							>
 						</Button>
 					{/each}
@@ -374,7 +375,7 @@
 			<div class="border-border mb-4 border-t pt-3">
 				<div class="mb-2 flex items-center justify-between gap-2">
 					<div class="text-xs text-muted">Performance anomalies</div>
-					<Badge variant="warning">{insights.anomalies.length} recent</Badge>
+					<Badge variant="warning">{fmtNumber(insights.anomalies.length, 0)} recent</Badge>
 				</div>
 				<div class="flex flex-col gap-1.5">
 					{#each insights.anomalies.slice(0, 6) as anomaly (anomaly.jobId)}
@@ -385,8 +386,8 @@
 									<Badge variant="destructive">{anomaly.kind === "duration-and-size" ? "slow + large" : anomaly.kind === "duration" ? "slow" : "large"}</Badge>
 								</div>
 								<div class="mt-1 text-muted">
-									{#if anomaly.durationRatio}{Math.round(anomaly.durationRatio * 100)}% of baseline runtime{/if}
-									{#if anomaly.sizeRatio}{anomaly.durationRatio ? " · " : ""}{Math.round(anomaly.sizeRatio * 100)}% of baseline size{/if}
+									{#if anomaly.durationRatio}{fmtNumber(Math.round(anomaly.durationRatio * 100), 0)}% of baseline runtime{/if}
+									{#if anomaly.sizeRatio}{anomaly.durationRatio ? " · " : ""}{fmtNumber(Math.round(anomaly.sizeRatio * 100), 0)}% of baseline size{/if}
 									 · <RelativeTime ms={anomaly.finishedAt} />
 								</div>
 							</div>
@@ -442,7 +443,7 @@
 									</span>
 								</Button>
 							</td>
-							<td data-label="Runs">{app.totalRuns}</td>
+							<td data-label="Runs">{fmtNumber(app.totalRuns, 0)}</td>
 							<td data-label="Success rate">
 								<Badge
 									variant={app.successRate >= 0.9
@@ -451,7 +452,7 @@
 											? "secondary"
 											: "destructive"}
 								>
-									{Math.round(app.successRate * 100)}%
+								{fmtNumber(Math.round(app.successRate * 100), 0)}%
 								</Badge>
 							</td>
 							<td data-label="Avg duration" class="text-muted"
@@ -494,7 +495,7 @@
 											(removed)</span
 										>{/if}
 								</td>
-								<td data-label="Runs">{d.totalRuns}</td>
+							<td data-label="Runs">{fmtNumber(d.totalRuns, 0)}</td>
 								<td data-label="Success rate">
 									<Badge
 										variant={d.successRate >= 0.9
@@ -528,8 +529,8 @@
 		{#if storageForecast?.sampleCount}
 			<div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
 				<Badge variant={storageForecast.daysRemaining !== null && storageForecast.daysRemaining < 14 ? "destructive" : "secondary"}>{fmtBytesGB(storageForecast.freeBytes)} free</Badge>
-				<span class="text-muted">~{fmtBytesGB(storageForecast.bytesPerDay)} retained per day from {storageForecast.sampleCount} completed jobs</span>
-				<span class="font-medium">{storageForecast.daysRemaining === null ? "Forecast unavailable" : `${storageForecast.daysRemaining} days at current volume`}</span>
+				<span class="text-muted">~{fmtBytesGB(storageForecast.bytesPerDay)} retained per day from {fmtNumber(storageForecast.sampleCount, 0)} completed jobs</span>
+				<span class="font-medium">{storageForecast.daysRemaining === null ? "Forecast unavailable" : `${fmtNumber(storageForecast.daysRemaining, 0)} days at current volume`}</span>
 			</div>
 		{:else}
 			<EmptyState message="Storage forecast will appear after completed decrypts with recorded artifact sizes." />
@@ -543,8 +544,8 @@
 			<div class="flex flex-col gap-2">
 				{#each failurePatterns as pattern (pattern.message)}
 					<div class="border-border rounded-lg border p-2.5 text-xs">
-						<div class="flex items-center gap-2"><Badge variant="destructive">{pattern.count}×</Badge><span class="min-w-0 flex-1 truncate" title={pattern.message}>{pattern.message}</span></div>
-						<div class="mt-1 text-muted">{pattern.bundleIds.length} app{pattern.bundleIds.length === 1 ? "" : "s"} · last seen <RelativeTime ms={pattern.lastSeen} /></div>
+						<div class="flex items-center gap-2"><Badge variant="destructive">{fmtNumber(pattern.count, 0)}×</Badge><span class="min-w-0 flex-1 truncate" title={pattern.message}>{pattern.message}</span></div>
+						<div class="mt-1 text-muted">{fmtNumber(pattern.bundleIds.length, 0)} app{pattern.bundleIds.length === 1 ? "" : "s"} · last seen <RelativeTime ms={pattern.lastSeen} /></div>
 					</div>
 				{/each}
 			</div>
@@ -578,7 +579,7 @@
 			{#each watchHealth.filter((w) => w.schedulable) as w (w.watchId)}
 				<div class="border-border flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border px-2.5 py-2 text-xs">
 					<span class="min-w-0 flex-1 truncate" title={w.bundleId}>{appDisplayName(w.bundleId)}</span>
-					<span class="text-muted">{w.dispatchTargetCount} destination{w.dispatchTargetCount === 1 ? "" : "s"}</span>
+					<span class="text-muted">{fmtNumber(w.dispatchTargetCount, 0)} destination{w.dispatchTargetCount === 1 ? "" : "s"}</span>
 					{#if w.schedulerJobSuccessRate !== undefined}
 						<Badge variant={w.schedulerJobSuccessRate >= 0.9 ? "success" : w.schedulerJobSuccessRate >= 0.5 ? "secondary" : "destructive"}>{Math.round(w.schedulerJobSuccessRate * 100)}% success</Badge>
 					{:else}
@@ -609,11 +610,11 @@
 						>
 						{#if w.consecutiveFailures >= 3}
 							<Badge variant="destructive"
-								>{w.consecutiveFailures} checks failed in a row</Badge
+								>{fmtNumber(w.consecutiveFailures, 0)} checks failed in a row</Badge
 							>
 						{:else}
 							<Badge variant="secondary"
-								>no match in visible history ({w.historyCount} checks)</Badge
+								>no match in visible history ({fmtNumber(w.historyCount, 0)} checks)</Badge
 							>
 						{/if}
 						{#if w.lastCheckAt}

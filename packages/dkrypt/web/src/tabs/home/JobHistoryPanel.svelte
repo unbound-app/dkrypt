@@ -36,7 +36,7 @@
 		statusToBadgeVariant,
 	} from "#lib/components/ui/variants";
 	import { addDecrypt, pushRecentBundleId } from "#lib/decrypts.svelte";
-	import { csvCell, debounce, downloadBlob, fmtCalendarDate, fmtSize } from "#lib/format";
+	import { csvCell, debounce, downloadBlob, fmtCalendarDate, fmtSize } from "#lib/format.svelte";
 	import { liveState } from "#lib/live.svelte";
 	import { createSavedViews } from "#lib/savedViews.svelte";
 	import { sessionState } from "#lib/session.svelte";
