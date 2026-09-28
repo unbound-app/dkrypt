@@ -21,7 +21,7 @@ async function expectAccessible(page: Page, scope?: string): Promise<void> {
 
 async function expectVisualSnapshot(page: Page, target: Page | Locator, name: string, fullPage = false): Promise<void> {
   await page.addStyleTag({
-    content: ':root, body { scrollbar-gutter: auto !important; scrollbar-width: none !important; } :root::-webkit-scrollbar, body::-webkit-scrollbar { display: none !important; width: 0 !important; }',
+    content: ':root, body { scrollbar-gutter: auto !important; scrollbar-width: none !important; } :root::-webkit-scrollbar, body::-webkit-scrollbar { display: none !important; width: 0 !important; } * { font-family: Arial, sans-serif !important; }',
   });
   await expect(target).toHaveScreenshot(name, {
     animations: 'disabled',
