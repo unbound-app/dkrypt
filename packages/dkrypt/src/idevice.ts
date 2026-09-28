@@ -961,12 +961,29 @@ export function isDirectUsbDeviceAgentConnection(connection: DeviceConnection | 
   return isRustDeviceConnection(connection) && connection.usbmuxNetwork !== true;
 }
 
+async function getRustDeviceBridgeCapabilities(bridge: RustDeviceBridgeClient): Promise<string[]> {
+  try {
+    const result = await bridge.capabilities();
+    return Array.isArray(result.capabilities) ? result.capabilities.filter((value): value is string => typeof value === 'string') : [];
+  } catch (error) {
+    log.warn('Rust device bridge capability discovery failed', { error: error instanceof Error ? error.message : String(error) });
+    return [];
+  }
+}
+
 export async function getRustDeviceBridgeHealth(connection: DeviceConnection): Promise<{ state: 'ready' | 'offline'; transport: DeviceTransport; deviceCount: number; capabilities: string[] }> {
   if (!isRustDeviceConnection(connection)) throw new DeviceAgentUnavailableError('Rust device bridge is unavailable for this connection');
   const bridge = new RustDeviceBridgeClient();
-  const [health, capabilities] = await Promise.all([retryRustDeviceHealthProbe(() => bridge.health(connection.udid)), bridge.capabilities()]);
-  const values = Array.isArray(capabilities.capabilities) ? capabilities.capabilities.filter((value): value is string => typeof value === 'string') : [];
-  return { state: health.devicePresent && health.state === 'ready' ? 'ready' : 'offline', transport: connection.usbmuxNetwork ? 'wifi' : 'usb', deviceCount: health.deviceCount, capabilities: values };
+  const [health, capabilities] = await Promise.all([
+    retryRustDeviceHealthProbe(() => bridge.health(connection.udid)),
+    getRustDeviceBridgeCapabilities(bridge),
+  ]);
+  return {
+    state: health.devicePresent && health.state === 'ready' ? 'ready' : 'offline',
+    transport: connection.usbmuxNetwork ? 'wifi' : 'usb',
+    deviceCount: health.deviceCount,
+    capabilities,
+  };
 }
 
 export interface RustDeviceBridgeStatus {
@@ -978,13 +995,12 @@ export interface RustDeviceBridgeStatus {
 
 export async function getRustDeviceBridgeStatus(): Promise<RustDeviceBridgeStatus> {
   const bridge = new RustDeviceBridgeClient();
-  const [health, capabilities] = await Promise.all([bridge.health(), bridge.capabilities()]);
-  const values = Array.isArray(capabilities.capabilities) ? capabilities.capabilities.filter((value): value is string => typeof value === 'string') : [];
+  const [health, capabilities] = await Promise.all([bridge.health(), getRustDeviceBridgeCapabilities(bridge)]);
   return {
     state: health.state === 'ready' ? 'ready' : 'offline',
     transport: health.transport,
     deviceCount: health.deviceCount,
-    capabilities: values,
+    capabilities,
   };
 }
 

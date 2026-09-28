@@ -11,7 +11,7 @@ import { config } from '#config.js';
 import { BRIDGE_CAPABILITIES, BRIDGE_PROTOCOL_VERSION, TESTFLIGHT_LIFECYCLE_CAPABILITIES } from './bridgeProtocol.js';
 import { flushTelemetry, startSpan } from '#telemetry.js';
 
-const { armAppStoreAutoConfirm, buildIpadecryptRuntimeConfig, clearAppStoreAutoConfirm, createBridgeEnvelope, createDeviceAgentEnvelope, execCommand, getDeviceAgentRetryDelay, getDeviceTransportOrder, getRustDeviceBridgeStatus, isDirectUsbDeviceAgentConnection, probeDeviceSshTunnel, readBridgeHeartbeats, retryRustDeviceHealthProbe, retryTransientSshConnection, sendAppStoreBridgeRequest, withSSH } = await import('./idevice.js' + '?idevice-transport-test');
+const { armAppStoreAutoConfirm, buildIpadecryptRuntimeConfig, clearAppStoreAutoConfirm, createBridgeEnvelope, createDeviceAgentEnvelope, execCommand, getDeviceAgentRetryDelay, getDeviceTransportOrder, getRustDeviceBridgeHealth, getRustDeviceBridgeStatus, isDirectUsbDeviceAgentConnection, probeDeviceSshTunnel, readBridgeHeartbeats, retryRustDeviceHealthProbe, retryTransientSshConnection, sendAppStoreBridgeRequest, withSSH } = await import('./idevice.js' + '?idevice-transport-test');
 
 type FakeExecStream = {
   stderr: {
@@ -118,6 +118,51 @@ test('Rust device bridge spans inherit the active operation span', async () => {
     config.deviceBridgeSecret = originalSecret;
     config.otelSampleRate = originalSampleRate;
     config.otelBatchSize = originalBatchSize;
+    await rm(runtimeDir, { recursive: true, force: true });
+  }
+});
+
+test('keeps a connected USB device ready when capability discovery fails', async () => {
+  const runtimeDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-device-health-capabilities-'));
+  const socketPath = path.join(runtimeDir, 'bridge.sock');
+  const originalSocket = config.deviceBridgeSocket;
+  const originalSecret = config.deviceBridgeSecret;
+  const bridgeSecret = '0123456789abcdef0123456789abcdef';
+  const server = createServer((socket) => {
+    socket.once('data', (chunk) => {
+      const frame = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      const length = frame.readUInt32BE(0);
+      const request = JSON.parse(frame.subarray(4, length + 4).toString('utf8')) as { requestId: string; operation: string };
+      if (request.operation === 'health') {
+        writeFrame(socket, { version: 1, requestId: request.requestId, ok: true, result: { state: 'ready', transport: 'usb', deviceCount: 1, devicePresent: true }, error: null });
+        return;
+      }
+      writeFrame(socket, { version: 1, requestId: request.requestId, ok: false, result: null, error: { code: 'temporarily_unavailable', message: 'capability discovery failed', retryable: true } });
+    });
+  });
+
+  config.deviceBridgeSocket = socketPath;
+  config.deviceBridgeSecret = bridgeSecret;
+
+  try {
+    await new Promise<void>((resolve, reject) => server.listen(socketPath, resolve).once('error', reject));
+
+    await expect(getRustDeviceBridgeHealth({ transport: 'usb', udid: 'fixture-health-device' })).resolves.toEqual({
+      state: 'ready',
+      transport: 'usb',
+      deviceCount: 1,
+      capabilities: [],
+    });
+    await expect(getRustDeviceBridgeStatus()).resolves.toEqual({
+      state: 'ready',
+      transport: 'usb',
+      deviceCount: 1,
+      capabilities: [],
+    });
+  } finally {
+    config.deviceBridgeSocket = originalSocket;
+    config.deviceBridgeSecret = originalSecret;
+    await new Promise<void>((resolve) => server.close(() => resolve()));
     await rm(runtimeDir, { recursive: true, force: true });
   }
 });
