@@ -38,8 +38,10 @@ import { getAuthProfile } from '#identity.js';
 import { log } from '#logger.js';
 import { EMBED_COLOR, notify } from '#notify.js';
 import { recordAudit } from '#store/state.js';
+import { runKeyedSerial } from '#util/keyedSerial.js';
 
 const RENEWAL_GRACE_MS = config.cryptoDunningGraceHours * 60 * 60 * 1000;
+const pendingPaymentEvents = new Map<string, { count: number; latestTimestamp?: number }>();
 
 export class CryptoBillingError extends Error {
   constructor(
@@ -133,20 +135,66 @@ export async function cancelCryptoSubscription(userId: string, subscription: Bil
   });
 }
 
-export async function processNowPaymentsEvent(event: NowPaymentsEvent): Promise<void> {
-  if (!event.id || hasProcessedBillingEvent(event.id, 'nowpayments')) return;
-  const occurredAt = eventDate(event.payment.updated_at ?? event.payment.created_at);
+export async function processNowPaymentsEvent(event: NowPaymentsEvent, client = new NowPaymentsClient()): Promise<void> {
+  if (!event.id) return;
+  const checkout = findCheckoutForPayment(event.payment);
+  const paymentKey = checkout?.checkoutId ?? String(event.payment.payment_id ?? event.payment.invoice_id ?? event.payment.order_id ?? event.id);
+  const releaseObservation = observePaymentEvent(paymentKey, event.payment);
   try {
-    const status = event.payment.payment_status?.toLowerCase();
-    if (status === 'finished') await processPaymentFinished(event.payment, occurredAt);
-    else if (status === 'failed' || status === 'expired' || status === 'refunded') processPaymentFailed(event.payment, occurredAt);
-    else processPaymentPending(event.payment, occurredAt);
+    await runKeyedSerial(`nowpayments:${paymentKey}`, () => processNowPaymentsEventLocked(event, client, paymentKey));
+  } finally {
+    releaseObservation();
+  }
+}
+
+async function processNowPaymentsEventLocked(event: NowPaymentsEvent, client: NowPaymentsClient, paymentKey: string): Promise<void> {
+  if (!event.id || hasProcessedBillingEvent(event.id, 'nowpayments')) return;
+  const checkout = findCheckoutForPayment(event.payment);
+  const payment = await reconcilePaymentEvent(event.payment, checkout, client);
+  const occurredAt = eventDate(event.payment.updated_at ?? event.payment.created_at);
+  if (payment && (isOlderPaymentEvent(payment, findCheckoutForPayment(payment)) || isSupersededByPendingPaymentEvent(paymentKey, payment))) {
+    recordBillingEvent({ provider: 'nowpayments', eventId: event.id, occurredAt, processedAt: new Date().toISOString() });
+    recordAudit('nowpayments', 'billing.webhook', event.id, `ignored stale ${event.payment.payment_status ?? 'unknown'} event`);
+    return;
+  }
+  if (!payment) {
+    recordBillingEvent({ provider: 'nowpayments', eventId: event.id, occurredAt, processedAt: new Date().toISOString() });
+    recordAudit('nowpayments', 'billing.webhook', event.id, `ignored stale ${event.payment.payment_status ?? 'unknown'} event`);
+    return;
+  }
+  const paymentOccurredAt = eventDate(payment.updated_at ?? payment.created_at);
+  try {
+    const status = payment.payment_status?.toLowerCase();
+    if (status === 'finished') await processPaymentFinished(payment, paymentOccurredAt);
+    else if (status === 'failed' || status === 'expired' || status === 'refunded') processPaymentFailed(payment, paymentOccurredAt);
+    else processPaymentPending(payment);
     recordBillingEvent({ provider: 'nowpayments', eventId: event.id, occurredAt, processedAt: new Date().toISOString() });
     recordAudit('nowpayments', 'billing.webhook', event.id, status ?? 'unknown');
   } catch (error) {
-    log.error('NOWPayments webhook processing failed', { eventId: event.id, status: event.payment.payment_status, error: String(error) });
+    log.error('NOWPayments webhook processing failed', { eventId: event.id, status: payment.payment_status, error: String(error) });
     throw error;
   }
+}
+
+function observePaymentEvent(paymentKey: string, payment: NowPaymentsPayment): () => void {
+  const observation = pendingPaymentEvents.get(paymentKey) ?? { count: 0 };
+  const timestamp = paymentTimestamp(payment);
+  if (timestamp !== undefined && (observation.latestTimestamp === undefined || timestamp > observation.latestTimestamp)) {
+    observation.latestTimestamp = timestamp;
+  }
+  observation.count += 1;
+  pendingPaymentEvents.set(paymentKey, observation);
+  return () => {
+    observation.count -= 1;
+    if (observation.count === 0 && pendingPaymentEvents.get(paymentKey) === observation) pendingPaymentEvents.delete(paymentKey);
+  };
+}
+
+function isSupersededByPendingPaymentEvent(paymentKey: string, payment: NowPaymentsPayment): boolean {
+  const latestTimestamp = pendingPaymentEvents.get(paymentKey)?.latestTimestamp;
+  if (latestTimestamp === undefined) return false;
+  const incomingTimestamp = paymentTimestamp(payment);
+  return incomingTimestamp === undefined || incomingTimestamp < latestTimestamp;
 }
 
 export function verifyNowPaymentsEvent(rawBody: Buffer | string, signature: string, previousSignature = ''): boolean {
@@ -170,7 +218,7 @@ export async function reconcileCryptoBilling(): Promise<void> {
     try {
       const payment = await client.getPaymentStatus(checkout.providerPaymentId);
       if (payment.payment_status === 'finished' || payment.payment_status === 'failed' || payment.payment_status === 'expired') {
-        await processNowPaymentsEvent({ id: paymentEventId(payment), payment });
+        await processNowPaymentsEvent({ id: paymentEventId(payment), payment }, client);
       }
     } catch (error) {
       log.warn('NOWPayments checkout reconciliation failed', { checkoutId: checkout.checkoutId, error: String(error) });
@@ -256,7 +304,7 @@ async function processPaymentFinished(payment: NowPaymentsPayment, occurredAt: s
   if (!checkout) return;
   if (checkout.status === 'completed') return;
   if (!isSupportedNowPaymentsPayment(payment)) {
-    upsertCryptoCheckout({ ...checkout, status: 'expired', updatedAt: occurredAt });
+    savePaymentCheckout(checkout, payment, 'expired');
     recordAudit(checkout.userId, 'billing.webhook', checkout.checkoutId, 'unsupported NOWPayments asset');
     return;
   }
@@ -274,7 +322,7 @@ async function processPaymentFinished(payment: NowPaymentsPayment, occurredAt: s
   });
   deactivateOtherCryptoSubscriptions(checkout.userId, localSubscription.subscriptionId, occurredAt);
   const applied = upsertBillingSubscription(localSubscription);
-  upsertCryptoCheckout({ ...checkout, providerPaymentId: paymentId, status: 'completed', updatedAt: occurredAt });
+  savePaymentCheckout(checkout, payment, 'completed');
   upsertBillingCharge(chargeFromPayment(payment, localSubscription, checkout.userId, 'succeeded', occurredAt));
   if (!applied) return;
   recordAudit(checkout.userId, 'billing.activated', localSubscription.subscriptionId, `nowpayments ${checkout.planId}`);
@@ -285,31 +333,117 @@ async function processPaymentFinished(payment: NowPaymentsPayment, occurredAt: s
   });
 }
 
-function processPaymentPending(payment: NowPaymentsPayment, occurredAt: string): void {
+function processPaymentPending(payment: NowPaymentsPayment): void {
   const checkout = findCheckoutForPayment(payment);
   if (!checkout || checkout.status === 'completed') return;
-  upsertCryptoCheckout({ ...checkout, providerPaymentId: payment.payment_id === undefined ? checkout.providerPaymentId : String(payment.payment_id), status: 'pending', updatedAt: occurredAt });
+  savePaymentCheckout(checkout, payment, 'pending');
 }
 
 function processPaymentFailed(payment: NowPaymentsPayment, occurredAt: string): void {
   const checkout = findCheckoutForPayment(payment);
-  if (!checkout || checkout.status === 'completed') return;
-  upsertCryptoCheckout({ ...checkout, providerPaymentId: payment.payment_id === undefined ? checkout.providerPaymentId : String(payment.payment_id), status: payment.payment_status === 'expired' ? 'expired' : 'cancelled', updatedAt: occurredAt });
+  if (!checkout) return;
+  const status = payment.payment_status?.toLowerCase();
+  if (checkout.status === 'completed') {
+    if (status !== 'refunded') return;
+    const paymentId = payment.payment_id === undefined ? checkout.checkoutId : String(payment.payment_id);
+    const subscription = getBillingSubscriptionById(`nowpayments:${paymentId}`);
+    savePaymentCheckout(checkout, payment, 'completed');
+    if (!subscription) return;
+    upsertBillingCharge({
+      ...chargeFromPayment(payment, subscription, checkout.userId, 'refunded', occurredAt),
+      failureReason: 'payment refunded',
+    });
+    if (Date.parse(subscription.occurredAt) > Date.parse(occurredAt)) return;
+    const revokedSubscription: BillingSubscription = {
+      ...subscription,
+      status: 'revoked',
+      nextBilledAt: undefined,
+      lastChargeAt: occurredAt,
+      lastChargeStatus: 'refunded',
+      failureReason: 'payment refunded',
+      graceUntil: undefined,
+      occurredAt,
+      updatedAt: occurredAt,
+    };
+    const applied = upsertBillingSubscription(revokedSubscription);
+    if (applied) recordAudit(checkout.userId, 'billing.refund', subscription.subscriptionId, 'payment refunded');
+    return;
+  }
+  savePaymentCheckout(checkout, payment, payment.payment_status?.toLowerCase() === 'expired' ? 'expired' : 'cancelled');
+}
+
+function savePaymentCheckout(checkout: BillingCheckout, payment: NowPaymentsPayment, status: BillingCheckout['status']): void {
+  const providerTimestamp = paymentTimestamp(payment);
+  upsertCryptoCheckout({
+    ...checkout,
+    providerPaymentId: payment.payment_id === undefined ? checkout.providerPaymentId : String(payment.payment_id),
+    status,
+    providerOccurredAt: providerTimestamp === undefined ? checkout.providerOccurredAt : new Date(providerTimestamp).toISOString(),
+    providerStatus: payment.payment_status?.toLowerCase(),
+    updatedAt: new Date().toISOString(),
+  });
 }
 
 function findCheckoutForPayment(payment: NowPaymentsPayment): BillingCheckout | undefined {
   const reference = payment.order_id;
   if (reference) {
     const byOrder = getCryptoCheckout(reference);
-    if (byOrder) return byOrder;
+    if (byOrder?.provider === 'nowpayments') return byOrder;
   }
   const invoiceId = payment.invoice_id === undefined ? undefined : String(payment.invoice_id);
   if (!invoiceId) return undefined;
-  return listPendingCheckouts().find((checkout) => checkout.providerCheckoutId === invoiceId);
+  return listCryptoCheckouts().find((checkout) => checkout.provider === 'nowpayments' && checkout.providerCheckoutId === invoiceId);
 }
 
 function listPendingCheckouts(): BillingCheckout[] {
   return listCryptoCheckouts().filter((checkout) => checkout.provider === 'nowpayments' && checkout.status === 'pending');
+}
+
+async function reconcilePaymentEvent(
+  payment: NowPaymentsPayment,
+  checkout: BillingCheckout | undefined,
+  client: NowPaymentsClient,
+): Promise<NowPaymentsPayment | undefined> {
+  if (!checkout) return payment;
+  const incomingTimestamp = paymentTimestamp(payment);
+  const currentProviderTimestamp = checkout.providerOccurredAt;
+  if (!currentProviderTimestamp) {
+    if (checkout.status !== 'cancelled' && checkout.status !== 'expired') return payment;
+    return fetchLatestPayment(payment, checkout, client);
+  }
+  const currentTimestamp = Date.parse(currentProviderTimestamp);
+  if (incomingTimestamp === undefined || incomingTimestamp < currentTimestamp) return undefined;
+  if (incomingTimestamp > currentTimestamp || payment.payment_status?.toLowerCase() === checkout.providerStatus?.toLowerCase()) return payment;
+
+  return fetchLatestPayment(payment, checkout, client, currentTimestamp);
+}
+
+async function fetchLatestPayment(
+  payment: NowPaymentsPayment,
+  checkout: BillingCheckout,
+  client: NowPaymentsClient,
+  currentTimestamp?: number,
+): Promise<NowPaymentsPayment | undefined> {
+  const paymentId = payment.payment_id === undefined ? checkout.providerPaymentId : String(payment.payment_id);
+  if (!paymentId) return undefined;
+  const latest = await client.getPaymentStatus(paymentId);
+  const latestTimestamp = paymentTimestamp(latest);
+  if (currentTimestamp !== undefined && (latestTimestamp === undefined || latestTimestamp < currentTimestamp)) return undefined;
+  return {
+    ...payment,
+    ...latest,
+    payment_id: latest.payment_id ?? payment.payment_id,
+    order_id: latest.order_id ?? payment.order_id,
+    invoice_id: latest.invoice_id ?? payment.invoice_id,
+  };
+}
+
+function isOlderPaymentEvent(payment: NowPaymentsPayment, checkout: BillingCheckout | undefined): boolean {
+  if (!checkout) return false;
+  const currentProviderTimestamp = checkout.providerOccurredAt;
+  if (!currentProviderTimestamp) return false;
+  const incomingTimestamp = paymentTimestamp(payment);
+  return incomingTimestamp === undefined || incomingTimestamp < Date.parse(currentProviderTimestamp);
 }
 
 function deactivateOtherCryptoSubscriptions(userId: string, currentId: string, occurredAt: string): void {
@@ -373,6 +507,13 @@ function paymentEventId(payment: NowPaymentsPayment): string {
 function eventDate(value: string | undefined): string {
   if (value && !Number.isNaN(Date.parse(value))) return new Date(value).toISOString();
   return new Date().toISOString();
+}
+
+function paymentTimestamp(payment: NowPaymentsPayment): number | undefined {
+  const value = payment.updated_at ?? payment.created_at;
+  if (!value) return undefined;
+  const timestamp = Date.parse(value);
+  return Number.isNaN(timestamp) ? undefined : timestamp;
 }
 
 function stringValue(value: unknown): string | undefined {

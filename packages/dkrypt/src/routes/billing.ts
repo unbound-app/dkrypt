@@ -16,6 +16,7 @@ import { getRouteContract } from '#contracts.js';
 import {
   acquireBillingCheckoutLock,
   getBillingCustomerId,
+  getBillingSubscriptionById,
   getBillingEntitlements,
   getBillingSubscription,
   getBillingUserId,
@@ -52,6 +53,7 @@ import { constructStripeWebhookEvent, getStripe } from '#stripe.js';
 import { claimWebhook, countWebhookInbox, getWebhookInboxRecord, listWebhookInbox, markWebhookFailed, markWebhookProcessed, quarantineWebhook, receiveWebhook, releaseWebhookClaim } from '#webhookInbox.js';
 import { withCorrelationSpan } from '#correlation.js';
 import { decodeCursor, nextCursor, paginateCursor } from '#util/cursor.js';
+import { runKeyedSerial } from '#util/keyedSerial.js';
 
 function metadataUserId(metadata: unknown): string | undefined {
   if (typeof metadata !== 'object' || metadata === null) return undefined;
@@ -109,7 +111,7 @@ function processCheckoutSession(event: Stripe.Event): void {
   if (customerId && userId) linkBillingCustomer(customerId, userId);
 }
 
-function persistStripeSubscription(subscription: Stripe.Subscription, occurredAt: string, fallbackUserId?: string): void {
+function persistStripeSubscription(subscription: Stripe.Subscription, occurredAt: string, fallbackUserId?: string, updatedAt = occurredAt): void {
   const item = subscription.items?.data?.[0];
   const customerId = stripeObjectId(subscription.customer);
   if (!item || !customerId) return;
@@ -142,15 +144,28 @@ function persistStripeSubscription(subscription: Stripe.Subscription, occurredAt
     scheduledChangeAction,
     scheduledChangeAt,
     occurredAt,
-    updatedAt: occurredAt,
+    updatedAt,
   });
 }
 
-function processSubscription(event: Stripe.Event): void {
-  persistStripeSubscription(event.data.object as Stripe.Subscription, eventDate(event));
+async function processSubscription(event: Stripe.Event, stripeClient?: Stripe): Promise<void> {
+  const incoming = event.data.object as Stripe.Subscription;
+  await runKeyedSerial(`stripe:${incoming.id}`, async () => {
+    const occurredAt = eventDate(event);
+    const existing = getBillingSubscriptionById(incoming.id);
+    if (existing && Date.parse(existing.occurredAt) >= Date.parse(occurredAt)) {
+      const current = await (stripeClient ?? getStripe()).subscriptions.retrieve(incoming.id);
+      const latest = getBillingSubscriptionById(incoming.id);
+      if (latest && Date.parse(latest.occurredAt) > Date.parse(occurredAt)) return;
+      const reconciledAt = new Date().toISOString();
+      persistStripeSubscription(current, reconciledAt, existing.userId, reconciledAt);
+      return;
+    }
+    persistStripeSubscription(incoming, occurredAt);
+  });
 }
 
-export async function processStripeEvent(event: Stripe.Event): Promise<void> {
+export async function processStripeEvent(event: Stripe.Event, stripeClient?: Stripe): Promise<void> {
   switch (event.type) {
     case 'checkout.session.completed':
     case 'checkout.session.async_payment_succeeded':
@@ -164,7 +179,7 @@ export async function processStripeEvent(event: Stripe.Event): Promise<void> {
     case 'customer.subscription.created':
     case 'customer.subscription.updated':
     case 'customer.subscription.deleted':
-      processSubscription(event);
+      await processSubscription(event, stripeClient);
       return;
   }
 }

@@ -8,7 +8,7 @@ import { hasPermission, PermissionFlag } from '#permissions.js';
 
 export type BillingProvider = 'stripe' | 'nowpayments' | 'legacy';
 export type PlanId = 'viewer' | 'regular' | 'priority' | 'api' | 'priority_api';
-export type BillingChargeStatus = 'pending' | 'succeeded' | 'failed';
+export type BillingChargeStatus = 'pending' | 'succeeded' | 'failed' | 'refunded';
 export type BillingCheckoutStatus = 'pending' | 'completed' | 'expired' | 'cancelled';
 export type BillingTaxStatus = 'not_required' | 'pending' | 'recorded' | 'failed';
 
@@ -80,6 +80,8 @@ export interface BillingCheckout {
   status: BillingCheckoutStatus;
   checkoutUrl: string;
   asset?: string;
+  providerOccurredAt?: string;
+  providerStatus?: string;
   taxAddress?: BillingTaxAddress;
   taxCalculationId?: string;
   taxStatus?: BillingTaxStatus;
@@ -545,6 +547,7 @@ export function upsertCryptoCheckout(checkout: BillingCheckout): void {
   const existing = state.cryptoCheckouts.find((item) => item.checkoutId === checkout.checkoutId);
   if (existing) {
     if (existing.status === 'completed' && checkout.status !== 'completed') return;
+    if (existing.providerOccurredAt && checkout.providerOccurredAt && Date.parse(existing.providerOccurredAt) > Date.parse(checkout.providerOccurredAt)) return;
     if (checkout.status !== 'completed' && Date.parse(existing.updatedAt) > Date.parse(checkout.updatedAt)) return;
     Object.assign(existing, checkout);
   } else state.cryptoCheckouts.push(checkout);
@@ -554,7 +557,8 @@ export function upsertCryptoCheckout(checkout: BillingCheckout): void {
 export function upsertBillingCharge(charge: BillingCharge): void {
   const existing = state.cryptoCharges.find((item) => item.chargeId === charge.chargeId);
   if (existing) {
-    if (existing.status === 'succeeded' && charge.status !== 'succeeded') return;
+    if (existing.status === 'refunded' && charge.status !== 'refunded') return;
+    if (existing.status === 'succeeded' && charge.status !== 'succeeded' && charge.status !== 'refunded') return;
     if (existing.status !== 'pending' && Date.parse(existing.occurredAt) > Date.parse(charge.occurredAt)) return;
     Object.assign(existing, charge);
   } else state.cryptoCharges.push(charge);
@@ -735,7 +739,7 @@ function billingProvider(value: unknown): BillingProvider | undefined {
 }
 
 function billingChargeStatus(value: unknown): BillingChargeStatus | undefined {
-  return value === 'pending' || value === 'succeeded' || value === 'failed' ? value : undefined;
+  return value === 'pending' || value === 'succeeded' || value === 'failed' || value === 'refunded' ? value : undefined;
 }
 
 function billingTaxStatus(value: unknown): BillingTaxStatus | undefined {
@@ -783,6 +787,8 @@ function isBillingCheckout(value: unknown): value is BillingCheckout {
     typeof record.status === 'string' &&
     ['pending', 'completed', 'expired', 'cancelled'].includes(record.status) &&
     typeof record.checkoutUrl === 'string' &&
+    (record.providerOccurredAt === undefined || typeof record.providerOccurredAt === 'string') &&
+    (record.providerStatus === undefined || typeof record.providerStatus === 'string') &&
     (record.taxStatus === undefined || billingTaxStatus(record.taxStatus) !== undefined) &&
     typeof record.createdAt === 'string' &&
     typeof record.updatedAt === 'string'

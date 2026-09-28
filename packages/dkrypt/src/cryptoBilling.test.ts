@@ -9,6 +9,7 @@ import {
   type BillingCheckout,
 } from '#billing.js';
 import { processNowPaymentsEvent } from '#cryptoBilling.js';
+import type { NowPaymentsClient } from '#nowpayments.js';
 
 function checkout(userId: string): BillingCheckout {
   const checkoutId = `dkrypt_${crypto.randomUUID()}`;
@@ -83,5 +84,214 @@ describe('crypto billing lifecycle', () => {
     });
 
     expect(getCryptoCheckout(localCheckout.checkoutId)?.status).toBe('completed');
+  });
+
+  test('revokes paid access when NOWPayments confirms a later refund', async () => {
+    replaceBillingSnapshot({ customers: [], subscriptions: [] });
+    const userId = `crypto-refund-${crypto.randomUUID()}`;
+    const localCheckout = checkout(userId);
+    upsertCryptoCheckout(localCheckout);
+    const finished = paymentEvent(localCheckout, `evt_${crypto.randomUUID()}`);
+    const finishedAt = new Date(Date.now() - 2_000).toISOString();
+    finished.payment.updated_at = finishedAt;
+    await processNowPaymentsEvent(finished);
+
+    const refundedAt = new Date(Date.parse(finishedAt) + 1_000).toISOString();
+    await processNowPaymentsEvent({
+      id: `evt_${crypto.randomUUID()}`,
+      payment: { ...finished.payment, payment_status: 'refunded', updated_at: refundedAt },
+    });
+
+    const subscriptionId = `nowpayments:${finished.payment.payment_id}`;
+    expect(getCryptoCheckout(localCheckout.checkoutId)).toMatchObject({ status: 'completed', providerStatus: 'refunded', providerOccurredAt: refundedAt });
+    expect(getBillingSubscriptionById(subscriptionId)).toMatchObject({ status: 'revoked', lastChargeStatus: 'refunded', failureReason: 'payment refunded' });
+    expect(listBillingCharges().find((charge) => charge.subscriptionId === subscriptionId)).toMatchObject({ status: 'refunded', failureReason: 'payment refunded' });
+    expect(getBillingEntitlements(userId).planId).toBe('viewer');
+  });
+
+  test('ignores an older finished webhook after a newer failure', async () => {
+    replaceBillingSnapshot({ customers: [], subscriptions: [] });
+    const userId = `crypto-stale-finish-${crypto.randomUUID()}`;
+    const localCheckout = checkout(userId);
+    localCheckout.createdAt = new Date(Date.now() - 10_000).toISOString();
+    localCheckout.updatedAt = localCheckout.createdAt;
+    upsertCryptoCheckout(localCheckout);
+    const failed = paymentEvent(localCheckout, `evt_${crypto.randomUUID()}`, 'failed');
+    const failedAt = new Date(Date.now() - 1_000).toISOString();
+    failed.payment.updated_at = failedAt;
+    await processNowPaymentsEvent(failed);
+    const failedCheckout = getCryptoCheckout(localCheckout.checkoutId)!;
+    upsertCryptoCheckout({ ...failedCheckout, providerOccurredAt: undefined, providerStatus: undefined });
+
+    const statusLookups: string[] = [];
+    const client = {
+      getPaymentStatus: async (paymentId: string) => {
+        statusLookups.push(paymentId);
+        return { ...failed.payment, payment_status: 'failed' };
+      },
+    } as unknown as NowPaymentsClient;
+    await processNowPaymentsEvent({
+      id: `evt_${crypto.randomUUID()}`,
+      payment: { ...failed.payment, payment_status: 'finished', updated_at: new Date(Date.parse(failedAt) - 1_000).toISOString() },
+    }, client);
+
+    const paymentId = String(failed.payment.payment_id);
+    expect(statusLookups).toEqual([paymentId]);
+    expect(getCryptoCheckout(localCheckout.checkoutId)?.status).toBe('cancelled');
+    expect(getBillingSubscriptionById(`nowpayments:${paymentId}`)).toBeUndefined();
+    expect(getBillingEntitlements(userId).planId).toBe('viewer');
+  });
+
+  test('uses provider state instead of local receipt time for legacy failed checkouts', async () => {
+    replaceBillingSnapshot({ customers: [], subscriptions: [] });
+    const userId = `crypto-legacy-finish-${crypto.randomUUID()}`;
+    const localCheckout = checkout(userId);
+    localCheckout.createdAt = new Date(Date.now() - 10_000).toISOString();
+    localCheckout.updatedAt = localCheckout.createdAt;
+    upsertCryptoCheckout(localCheckout);
+    const failedAt = new Date(Date.now() - 5_000).toISOString();
+    const failed = paymentEvent(localCheckout, `evt_${crypto.randomUUID()}`, 'failed');
+    failed.payment.updated_at = failedAt;
+    await processNowPaymentsEvent(failed);
+    const legacyCheckout = getCryptoCheckout(localCheckout.checkoutId)!;
+    upsertCryptoCheckout({ ...legacyCheckout, providerOccurredAt: undefined, providerStatus: undefined });
+
+    const finishedAt = new Date(Date.parse(failedAt) + 1_000).toISOString();
+    const finished = { ...failed.payment, payment_status: 'finished', updated_at: finishedAt };
+    const client = {
+      getPaymentStatus: async () => finished,
+    } as unknown as NowPaymentsClient;
+    await processNowPaymentsEvent({ id: `evt_${crypto.randomUUID()}`, payment: finished }, client);
+
+    expect(getCryptoCheckout(localCheckout.checkoutId)).toMatchObject({ status: 'completed', providerOccurredAt: finishedAt });
+    expect(getBillingSubscriptionById(`nowpayments:${String(failed.payment.payment_id)}`)?.status).toBe('active');
+    expect(getBillingEntitlements(userId).planId).toBe(localCheckout.planId);
+  });
+
+  test('reconciles conflicting NOWPayments events with the same timestamp', async () => {
+    replaceBillingSnapshot({ customers: [], subscriptions: [] });
+    const userId = `crypto-same-time-${crypto.randomUUID()}`;
+    const localCheckout = checkout(userId);
+    localCheckout.createdAt = new Date(Date.now() - 10_000).toISOString();
+    localCheckout.updatedAt = localCheckout.createdAt;
+    upsertCryptoCheckout(localCheckout);
+    const failed = paymentEvent(localCheckout, `evt_${crypto.randomUUID()}`, 'failed');
+    const failedAt = new Date(Date.now() - 1_000).toISOString();
+    failed.payment.updated_at = failedAt;
+    await processNowPaymentsEvent(failed);
+
+    const statusLookups: string[] = [];
+    const client = {
+      getPaymentStatus: async (paymentId: string) => {
+        statusLookups.push(paymentId);
+        return { ...failed.payment, payment_status: 'failed' };
+      },
+    } as unknown as NowPaymentsClient;
+    await processNowPaymentsEvent({
+      id: `evt_${crypto.randomUUID()}`,
+      payment: { ...failed.payment, payment_status: 'finished', updated_at: failedAt },
+    }, client);
+
+    expect(statusLookups).toEqual([String(failed.payment.payment_id)]);
+    expect(getCryptoCheckout(localCheckout.checkoutId)).toMatchObject({ status: 'cancelled', providerOccurredAt: failedAt, providerStatus: 'failed' });
+    expect(getBillingEntitlements(userId).planId).toBe('viewer');
+  });
+
+  test('serializes conflicting same-time events for one NOWPayments payment', async () => {
+    replaceBillingSnapshot({ customers: [], subscriptions: [] });
+    const userId = `crypto-concurrent-same-time-${crypto.randomUUID()}`;
+    const localCheckout = checkout(userId);
+    localCheckout.createdAt = new Date(Date.now() - 10_000).toISOString();
+    localCheckout.updatedAt = localCheckout.createdAt;
+    upsertCryptoCheckout(localCheckout);
+    const failed = paymentEvent(localCheckout, `evt_${crypto.randomUUID()}`, 'failed');
+    const finished = paymentEvent(localCheckout, `evt_${crypto.randomUUID()}`, 'finished');
+    finished.payment.payment_id = failed.payment.payment_id;
+    const occurredAt = new Date(Date.now() - 1_000).toISOString();
+    failed.payment.updated_at = occurredAt;
+    finished.payment.updated_at = occurredAt;
+    const statusLookups: string[] = [];
+    const client = {
+      getPaymentStatus: async (paymentId: string) => {
+        statusLookups.push(paymentId);
+        return { ...failed.payment, payment_status: 'failed' };
+      },
+    } as unknown as NowPaymentsClient;
+
+    await Promise.all([
+      processNowPaymentsEvent(failed, client),
+      processNowPaymentsEvent(finished, client),
+    ]);
+
+    expect(statusLookups).toEqual([String(failed.payment.payment_id)]);
+    expect(getCryptoCheckout(localCheckout.checkoutId)).toMatchObject({ status: 'cancelled', providerStatus: 'failed' });
+    expect(getBillingSubscriptionById(`nowpayments:${String(failed.payment.payment_id)}`)).toBeUndefined();
+    expect(getBillingEntitlements(userId).planId).toBe('viewer');
+  });
+
+  test('does not apply an ambiguous same-time event when provider reconciliation fails', async () => {
+    replaceBillingSnapshot({ customers: [], subscriptions: [] });
+    const userId = `crypto-unavailable-${crypto.randomUUID()}`;
+    const localCheckout = checkout(userId);
+    localCheckout.createdAt = new Date(Date.now() - 10_000).toISOString();
+    localCheckout.updatedAt = localCheckout.createdAt;
+    upsertCryptoCheckout(localCheckout);
+    const failed = paymentEvent(localCheckout, `evt_${crypto.randomUUID()}`, 'failed');
+    const failedAt = new Date(Date.now() - 1_000).toISOString();
+    failed.payment.updated_at = failedAt;
+    await processNowPaymentsEvent(failed);
+
+    const client = {
+      getPaymentStatus: async () => { throw new Error('provider unavailable'); },
+    } as unknown as NowPaymentsClient;
+    await expect(processNowPaymentsEvent({
+      id: `evt_${crypto.randomUUID()}`,
+      payment: { ...failed.payment, payment_status: 'finished', updated_at: failedAt },
+    }, client)).rejects.toThrow('provider unavailable');
+
+    expect(getCryptoCheckout(localCheckout.checkoutId)).toMatchObject({ status: 'cancelled', providerStatus: 'failed' });
+    expect(getBillingEntitlements(userId).planId).toBe('viewer');
+  });
+
+  test('does not grant access from a delayed completion after a newer failure', async () => {
+    replaceBillingSnapshot({ customers: [], subscriptions: [] });
+    const userId = `crypto-race-${crypto.randomUUID()}`;
+    const localCheckout = checkout(userId);
+    localCheckout.createdAt = new Date(Date.now() - 10_000).toISOString();
+    localCheckout.updatedAt = localCheckout.createdAt;
+    upsertCryptoCheckout(localCheckout);
+    const failedAt = new Date(Date.now() - 2_000).toISOString();
+    const failed = paymentEvent(localCheckout, `evt_${crypto.randomUUID()}`, 'failed');
+    failed.payment.updated_at = failedAt;
+    await processNowPaymentsEvent(failed);
+
+    let signalLookup = () => {};
+    let releaseLookup = () => {};
+    const lookupStarted = new Promise<void>((resolve) => { signalLookup = resolve; });
+    const lookupGate = new Promise<void>((resolve) => { releaseLookup = resolve; });
+    const client = {
+      getPaymentStatus: async () => {
+        signalLookup();
+        await lookupGate;
+        return { ...failed.payment, payment_status: 'finished' };
+      },
+    } as unknown as NowPaymentsClient;
+    const staleCompletion = processNowPaymentsEvent({
+      id: `evt_${crypto.randomUUID()}`,
+      payment: { ...failed.payment, payment_status: 'finished', updated_at: failedAt },
+    }, client);
+    await lookupStarted;
+
+    const newerFailure = {
+      id: `evt_${crypto.randomUUID()}`,
+      payment: { ...failed.payment, payment_status: 'failed', updated_at: new Date(Date.parse(failedAt) + 1_000).toISOString() },
+    };
+    const newerFailureProcessing = processNowPaymentsEvent(newerFailure, client);
+    releaseLookup();
+    await Promise.all([staleCompletion, newerFailureProcessing]);
+
+    expect(getCryptoCheckout(localCheckout.checkoutId)?.status).toBe('cancelled');
+    expect(getBillingSubscriptionById(`nowpayments:${String(failed.payment.payment_id)}`)).toBeUndefined();
+    expect(getBillingEntitlements(userId).planId).toBe('viewer');
   });
 });

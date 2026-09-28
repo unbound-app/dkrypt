@@ -8,6 +8,7 @@ import {
   exportBillingSnapshot,
   getBillingCustomerId,
   getBillingEntitlements,
+  getBillingSubscriptionById,
   replaceBillingSnapshot,
 } from '#billing.js';
 import { config } from '#config.js';
@@ -113,6 +114,107 @@ describe('Stripe billing webhooks', () => {
 
     expect(getBillingCustomerId(userId)).toBe(customerId);
     expect(getBillingEntitlements(userId)).toMatchObject({ planId: 'priority', decrypt: true, priority: 5 });
+  });
+
+  test('reconciles same-second subscription events from Stripe current state', async () => {
+    const userId = `stripe-order-${crypto.randomUUID()}`;
+    const customerId = `cus_${crypto.randomUUID()}`;
+    const subscriptionId = `sub_${crypto.randomUUID()}`;
+    replaceBillingSnapshot({ customers: [], subscriptions: [] });
+    const currentEvent = subscriptionEvent(userId, customerId, subscriptionId);
+    await processStripeEvent(currentEvent);
+
+    const incomingSubscription = { ...(currentEvent.data.object as Stripe.Subscription), status: 'canceled' } as Stripe.Subscription;
+    const eventInSameSecond = {
+      ...currentEvent,
+      id: `evt_${crypto.randomUUID()}`,
+      type: 'customer.subscription.deleted',
+      data: { object: incomingSubscription },
+    } as Stripe.Event;
+    const currentSubscription = { ...incomingSubscription, status: 'active' } as Stripe.Subscription;
+    const retrievedIds: string[] = [];
+    const client = {
+      subscriptions: {
+        retrieve: async (id: string) => {
+          retrievedIds.push(id);
+          return currentSubscription;
+        },
+      },
+    } as unknown as Stripe;
+
+    await processStripeEvent(eventInSameSecond, client);
+
+    expect(retrievedIds).toEqual([subscriptionId]);
+    expect(getBillingSubscriptionById(subscriptionId)?.status).toBe('active');
+  });
+
+  test('does not apply an ambiguous same-second event when Stripe reconciliation fails', async () => {
+    const userId = `stripe-unavailable-${crypto.randomUUID()}`;
+    const customerId = `cus_${crypto.randomUUID()}`;
+    const subscriptionId = `sub_${crypto.randomUUID()}`;
+    replaceBillingSnapshot({ customers: [], subscriptions: [] });
+    const currentEvent = subscriptionEvent(userId, customerId, subscriptionId);
+    await processStripeEvent(currentEvent);
+    const staleEvent = {
+      ...currentEvent,
+      id: `evt_${crypto.randomUUID()}`,
+      type: 'customer.subscription.deleted',
+      data: { object: { ...(currentEvent.data.object as Stripe.Subscription), status: 'canceled' } },
+    } as Stripe.Event;
+    const client = {
+      subscriptions: {
+        retrieve: async () => { throw new Error('Stripe unavailable'); },
+      },
+    } as unknown as Stripe;
+
+    await expect(processStripeEvent(staleEvent, client)).rejects.toThrow('Stripe unavailable');
+
+    expect(getBillingSubscriptionById(subscriptionId)?.status).toBe('active');
+  });
+
+  test('does not overwrite a newer subscription event after a delayed Stripe lookup', async () => {
+    const userId = `stripe-race-${crypto.randomUUID()}`;
+    const customerId = `cus_${crypto.randomUUID()}`;
+    const subscriptionId = `sub_${crypto.randomUUID()}`;
+    replaceBillingSnapshot({ customers: [], subscriptions: [] });
+    const currentEvent = subscriptionEvent(userId, customerId, subscriptionId);
+    await processStripeEvent(currentEvent);
+
+    let signalLookup = () => {};
+    let releaseLookup = () => {};
+    const lookupStarted = new Promise<void>((resolve) => { signalLookup = resolve; });
+    const lookupGate = new Promise<void>((resolve) => { releaseLookup = resolve; });
+    const client = {
+      subscriptions: {
+        retrieve: async () => {
+          signalLookup();
+          await lookupGate;
+          return currentEvent.data.object as Stripe.Subscription;
+        },
+      },
+    } as unknown as Stripe;
+    const staleEvent = {
+      ...currentEvent,
+      id: `evt_${crypto.randomUUID()}`,
+      type: 'customer.subscription.deleted',
+      data: { object: { ...(currentEvent.data.object as Stripe.Subscription), status: 'canceled' } },
+    } as Stripe.Event;
+    const staleProcessing = processStripeEvent(staleEvent, client);
+    await lookupStarted;
+
+    const newerEvent = {
+      ...currentEvent,
+      id: `evt_${crypto.randomUUID()}`,
+      created: currentEvent.created + 1,
+      type: 'customer.subscription.updated',
+      data: { object: { ...(currentEvent.data.object as Stripe.Subscription), status: 'canceled' } },
+    } as Stripe.Event;
+    const newerProcessing = processStripeEvent(newerEvent, client);
+    releaseLookup();
+    await staleProcessing;
+    await newerProcessing;
+
+    expect(getBillingSubscriptionById(subscriptionId)?.status).toBe('canceled');
   });
 
   test('keeps async payment failures from granting entitlements', async () => {
