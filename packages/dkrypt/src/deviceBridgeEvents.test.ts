@@ -2,6 +2,10 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import { createOtlpMetricsPayload, resetMetrics } from '#metrics.js';
 import { calculateRustDeviceEventRetry, RustDeviceEventMetricTracker, startRustDeviceEventMonitoring } from '#deviceBridgeEvents.js';
 
+async function waitForAttempts(readAttempts: () => number, minimum: number): Promise<void> {
+  for (let attempt = 0; attempt < 100 && readAttempts() < minimum; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 2));
+}
+
 describe('Rust device bridge event metrics', () => {
   afterEach(() => resetMetrics());
 
@@ -55,7 +59,7 @@ describe('Rust device bridge event metrics', () => {
       retryMaxDelayMs: 2,
     });
     try {
-      for (let attempt = 0; attempt < 100 && attempts < 2; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 2));
+      await waitForAttempts(() => attempts, 2);
       expect(attempts).toBeGreaterThanOrEqual(2);
     } finally {
       await stop();
@@ -77,7 +81,7 @@ describe('Rust device bridge event metrics', () => {
     });
 
     try {
-      for (let attempt = 0; attempt < 100 && attempts < 2; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 2));
+      await waitForAttempts(() => attempts, 2);
 
       const metrics = createOtlpMetricsPayload('dkrypt').resourceMetrics[0].scopeMetrics[0].metrics;
       const streamFailures = metrics.find((metric) => metric.name === 'dkrypt_device_bridge_event_stream_failures_total')?.sum?.dataPoints;

@@ -386,6 +386,103 @@ test('cancels a pending Rust device-agent request when a running job is aborted'
   }
 });
 
+test('reopens the Rust USB agent after a dropped RPC and retries a transient recovery failure', async () => {
+  const runtimeDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-device-agent-recovery-'));
+  const socketPath = path.join(runtimeDir, 'bridge.sock');
+  const bridgeSecret = '0123456789abcdef0123456789abcdef';
+  const originalSocket = config.deviceBridgeSocket;
+  const originalSecret = config.deviceBridgeSecret;
+  const originalRuntimeDir = config.deviceRuntimeDir;
+  const operations: string[] = [];
+  const commands: string[] = [];
+  const sockets = new Set<import('node:net').Socket>();
+  let statusAttempts = 0;
+  let droppedFirstCommand = false;
+  let invalidAuthentication = false;
+  const server = createServer((socket) => {
+    sockets.add(socket);
+    socket.once('close', () => sockets.delete(socket));
+    let input = Buffer.alloc(0);
+    socket.on('data', (chunk) => {
+      input = Buffer.concat([input, Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)]);
+      while (input.length >= 4) {
+        const length = input.readUInt32BE(0);
+        if (input.length < length + 4) return;
+        const request = JSON.parse(input.subarray(4, length + 4).toString('utf8')) as Record<string, unknown>;
+        input = input.subarray(length + 4);
+        const requestId = String(request.requestId);
+        operations.push(String(request.operation));
+        invalidAuthentication ||= request.auth !== bridgeSecret;
+        if (request.operation === 'capabilities') {
+          writeFrame(socket, { version: 1, requestId, ok: true, result: { protocolVersion: 1, capabilities: ['agent', 'cancel'] }, error: null });
+          continue;
+        }
+        if (request.operation !== 'agent') {
+          writeFrame(socket, { version: 1, requestId, ok: false, result: null, error: { code: 'unsupported', message: 'unexpected RPC', retryable: false } });
+          continue;
+        }
+        const envelope = request.payload as Record<string, unknown>;
+        const agentRequest = JSON.parse(Buffer.from(String(envelope.payload), 'base64url').toString('utf8')) as Record<string, unknown>;
+        const agentSecret = String(request.agentSecret);
+        if (agentRequest.action === 'status') {
+          statusAttempts += 1;
+          if (statusAttempts === 2) {
+            writeFrame(socket, { version: 1, requestId, ok: false, result: null, error: { code: 'agent_unavailable', message: 'device agent is restarting', retryable: true } });
+            continue;
+          }
+          writeFrame(socket, { version: 1, requestId, ok: true, result: signedAgentResponse(agentSecret, String(envelope.requestId), { agentVersion: '1.4.0' }), error: null });
+          continue;
+        }
+        if (agentRequest.action === 'exec') {
+          const command = String(agentRequest.command);
+          commands.push(command);
+          if (command === 'disconnect-once' && !droppedFirstCommand) {
+            droppedFirstCommand = true;
+            socket.destroy();
+            continue;
+          }
+          writeFrame(socket, { version: 1, requestId, ok: true, result: signedAgentResponse(agentSecret, String(envelope.requestId), { stdout: 'recovered', stderr: '', code: 0 }), error: null });
+          continue;
+        }
+        writeFrame(socket, { version: 1, requestId, ok: false, result: null, error: { code: 'unsupported', message: 'unexpected agent action', retryable: false } });
+      }
+    });
+  });
+  const device = { transport: 'usb' as const, udid: 'fixture-agent-recovery-device' };
+
+  config.deviceBridgeSocket = socketPath;
+  config.deviceBridgeSecret = bridgeSecret;
+  config.deviceRuntimeDir = runtimeDir;
+
+  try {
+    await new Promise<void>((resolve, reject) => server.listen(socketPath, resolve).once('error', reject));
+
+    await expect(withSSH(device, (client: DeviceClient) => (client as DeviceSession).exec('disconnect-once', 1_000))).rejects.toThrow('device agent connection was lost');
+    const recovered = await withSSH(device, async (client: DeviceClient) => {
+      const session = client as DeviceSession;
+      try {
+        return await session.exec('recovered', 1_000);
+      } finally {
+        session.close();
+      }
+    });
+
+    expect(recovered).toMatchObject({ stdout: 'recovered', code: 0 });
+    expect(statusAttempts).toBe(3);
+    expect(commands).toEqual(['disconnect-once', 'recovered']);
+    expect(operations.filter((operation) => operation === 'capabilities')).toHaveLength(3);
+    expect(operations.every((operation) => operation === 'capabilities' || operation === 'agent')).toBe(true);
+    expect(invalidAuthentication).toBe(false);
+  } finally {
+    config.deviceBridgeSocket = originalSocket;
+    config.deviceBridgeSecret = originalSecret;
+    config.deviceRuntimeDir = originalRuntimeDir;
+    for (const socket of sockets) socket.destroy();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await rm(runtimeDir, { recursive: true, force: true });
+  }
+});
+
 test('identifies direct USB connections that can recover without SSH', () => {
   expect(isDirectUsbDeviceAgentConnection({ transport: 'usb', udid: '2a0e0924d60bbd25e9ce1398fa5543128ec5a5dd' })).toBe(true);
   expect(isDirectUsbDeviceAgentConnection({ transport: 'wifi', udid: '2a0e0924d60bbd25e9ce1398fa5543128ec5a5dd', usbmuxNetwork: true })).toBe(false);
