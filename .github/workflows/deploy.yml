@@ -99,7 +99,7 @@ jobs:
             ghcr.io/${{ github.repository }}:${{ github.sha }}
             ghcr.io/${{ github.repository }}:main
       - name: Generate image SBOM
-        uses: anchore/sbom-action@v0.20.10
+        uses: anchore/sbom-action@v0.24.2
         with:
           image: ghcr.io/${{ github.repository }}@${{ steps.build.outputs.digest }}
           output-file: dkrypt-sbom.spdx.json
@@ -113,19 +113,19 @@ jobs:
           ignore-unfixed: true
           exit-code: '0'
       - name: Upload image SBOM
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dkrypt-sbom-${{ github.sha }}
           path: dkrypt-sbom.spdx.json
           if-no-files-found: error
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-name: ghcr.io/${{ github.repository }}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
       - name: Install Cosign
-        uses: sigstore/cosign-installer@v3.8.1
+        uses: sigstore/cosign-installer@v4.1.2
       - name: Sign image and attest SBOM
         env:
           COSIGN_EXPERIMENTAL: '1'
