@@ -126,6 +126,15 @@ export interface BillingEntitlementEvent {
   detail?: string;
 }
 
+export interface StripeCheckoutIdempotencyAttempt {
+  userId: string;
+  idempotencyKey: string;
+  requestFingerprint: string;
+  parametersFingerprint: string;
+  createdAt: number;
+  sessionId?: string;
+}
+
 export interface BillingSnapshot {
   customers: BillingCustomer[];
   subscriptions: BillingSubscription[];
@@ -133,7 +142,10 @@ export interface BillingSnapshot {
   cryptoCharges: BillingCharge[];
   processedEvents: BillingEventRecord[];
   entitlementHistory?: BillingEntitlementEvent[];
+  stripeCheckoutIdempotency?: StripeCheckoutIdempotencyAttempt[];
 }
+
+export const STRIPE_CHECKOUT_IDEMPOTENCY_TTL_MS = 23 * 60 * 60 * 1000;
 
 export interface BillingEntitlements {
   planId: PlanId;
@@ -203,7 +215,7 @@ const checkoutLocks = new Set<string>();
 let loadedFromLegacyFile = false;
 
 function emptySnapshot(): BillingSnapshot {
-  return { customers: [], subscriptions: [], cryptoCheckouts: [], cryptoCharges: [], processedEvents: [], entitlementHistory: [] };
+  return { customers: [], subscriptions: [], cryptoCheckouts: [], cryptoCharges: [], processedEvents: [], entitlementHistory: [], stripeCheckoutIdempotency: [] };
 }
 
 function load(): BillingSnapshot {
@@ -375,6 +387,11 @@ export function anonymizeBillingUser(userId: string): void {
     event.userId = undefined;
     changed = true;
   }
+  const retainedAttempts = (state.stripeCheckoutIdempotency ?? []).filter((attempt) => attempt.userId !== userId);
+  if (retainedAttempts.length !== (state.stripeCheckoutIdempotency ?? []).length) {
+    state.stripeCheckoutIdempotency = retainedAttempts;
+    changed = true;
+  }
   if (changed) persist();
 }
 
@@ -446,6 +463,12 @@ export function mergeBillingAccounts(targetUserId: string, sourceUserId: string)
       changed = true;
     }
   }
+  for (const attempt of state.stripeCheckoutIdempotency ?? []) {
+    if (attempt.userId === sourceUserId) {
+      attempt.userId = targetUserId;
+      changed = true;
+    }
+  }
   if (changed) persist();
 }
 
@@ -483,7 +506,31 @@ export function resolveBillingEntitlements(subscriptions: BillingSubscription[])
 }
 
 export function findCryptoCheckout(userId: string, idempotencyKey: string): BillingCheckout | undefined {
-  return billingRepository.findCheckoutByUserKey(userId, idempotencyKey);
+  const checkout = billingRepository.findCheckoutByUserKey(userId, idempotencyKey);
+  return checkout?.provider === 'nowpayments' ? checkout : undefined;
+}
+
+export function findStripeCheckoutIdempotencyAttempt(userId: string, idempotencyKey: string): StripeCheckoutIdempotencyAttempt | undefined {
+  const attempt = state.stripeCheckoutIdempotency?.find((record) => record.userId === userId && record.idempotencyKey === idempotencyKey);
+  const age = attempt ? Date.now() - attempt.createdAt : undefined;
+  if (!attempt || age === undefined || age < 0 || age > STRIPE_CHECKOUT_IDEMPOTENCY_TTL_MS) return undefined;
+  return structuredClone(attempt);
+}
+
+export function recordStripeCheckoutIdempotencyAttempt(attempt: StripeCheckoutIdempotencyAttempt): void {
+  const now = Date.now();
+  const records = (state.stripeCheckoutIdempotency ?? []).filter((record) => {
+    const age = now - record.createdAt;
+    return age >= 0 && age <= STRIPE_CHECKOUT_IDEMPOTENCY_TTL_MS;
+  });
+  const existingIndex = records.findIndex((record) => record.userId === attempt.userId && record.idempotencyKey === attempt.idempotencyKey);
+  if (existingIndex >= 0) {
+    const existing = records[existingIndex];
+    if (existing.requestFingerprint !== attempt.requestFingerprint || existing.parametersFingerprint !== attempt.parametersFingerprint || existing.sessionId || !attempt.sessionId) return;
+    records[existingIndex] = { ...existing, sessionId: attempt.sessionId };
+  } else records.push(structuredClone(attempt));
+  state.stripeCheckoutIdempotency = records;
+  persist();
 }
 
 export function getCryptoCheckout(checkoutId: string): BillingCheckout | undefined {
@@ -560,6 +607,7 @@ export function replaceBillingSnapshot(snapshot: BillingSnapshot | { customers: 
   state.cryptoCharges = normalized.cryptoCharges;
   state.processedEvents = normalized.processedEvents;
   state.entitlementHistory = normalized.entitlementHistory ?? [];
+  state.stripeCheckoutIdempotency = normalized.stripeCheckoutIdempotency ?? [];
   if (options.persist !== false) persist();
 }
 
@@ -658,7 +706,20 @@ function normalizeBillingSnapshot(value: unknown): BillingSnapshot | undefined {
     cryptoCharges: Array.isArray(snapshot.cryptoCharges) ? snapshot.cryptoCharges.map(normalizeRetiredBillingProvider).filter(isBillingCharge).map((item) => structuredClone(item)) : [],
     processedEvents: Array.isArray(snapshot.processedEvents) ? snapshot.processedEvents.map(normalizeRetiredBillingProvider).filter(isBillingEvent).map((item) => structuredClone(item)) : [],
     entitlementHistory: Array.isArray(snapshot.entitlementHistory) ? snapshot.entitlementHistory.map(normalizeRetiredBillingProvider).filter(isEntitlementEvent).map((item) => structuredClone(item)) : [],
+    stripeCheckoutIdempotency: Array.isArray(snapshot.stripeCheckoutIdempotency) ? snapshot.stripeCheckoutIdempotency.filter(isStripeCheckoutIdempotencyAttempt).map((item) => structuredClone(item)) : [],
   };
+}
+
+function isStripeCheckoutIdempotencyAttempt(value: unknown): value is StripeCheckoutIdempotencyAttempt {
+  if (typeof value !== 'object' || value === null) return false;
+  const record = value as Record<string, unknown>;
+  return typeof record.userId === 'string'
+    && typeof record.idempotencyKey === 'string'
+    && typeof record.requestFingerprint === 'string'
+    && typeof record.parametersFingerprint === 'string'
+    && typeof record.createdAt === 'number'
+    && Number.isSafeInteger(record.createdAt)
+    && (record.sessionId === undefined || typeof record.sessionId === 'string');
 }
 
 function normalizeRetiredBillingProvider(value: unknown): unknown {

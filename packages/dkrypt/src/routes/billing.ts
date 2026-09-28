@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import Stripe from 'stripe';
 import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
 import type { FastifyReply, FastifyRequest } from 'fastify';
@@ -20,6 +20,8 @@ import {
   getBillingSubscription,
   getBillingUserId,
   getPlan,
+  findCryptoCheckout,
+  findStripeCheckoutIdempotencyAttempt,
   hasActiveBillingSubscription,
   hasLegacyBillingRecord,
   linkBillingCustomer,
@@ -29,6 +31,7 @@ import {
   upsertBillingCustomer,
   upsertBillingSubscription,
   releaseBillingCheckoutLock,
+  recordStripeCheckoutIdempotencyAttempt,
 } from '#billing.js';
 import { config, stripeEnabled, stripeEnvironment, stripeMissingConfiguration } from '#config.js';
 import {
@@ -272,7 +275,8 @@ export const billingWebhookRoutes: FastifyPluginAsyncTypebox = async (server) =>
   });
 };
 
-export const billingRoutes: FastifyPluginAsyncTypebox = async (server) => {
+export const billingRoutes: FastifyPluginAsyncTypebox<{ stripeClient?: () => Stripe }> = async (server, options) => {
+  const stripeClient = options.stripeClient ?? getStripe;
   server.get('/v1/billing', { schema: getRouteContract('GET', '/v1/billing'), preHandler: fastifyRequireSession }, async (request, reply) => {
     const userId = getFastifySession(request)!.sub;
     const profile = getAuthProfile(userId);
@@ -308,14 +312,13 @@ export const billingRoutes: FastifyPluginAsyncTypebox = async (server) => {
     return `dkrypt-${operation}-${createHash('sha256').update(`${operation}:${userId}:${key}`).digest('hex')}`;
   }
 
-  function createIntegrationIdentifier(): string {
+  function createIntegrationIdentifier(idempotencyKey: string): string {
     const alphabet = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
-    const suffix = Array.from(randomBytes(8), (byte) => alphabet[byte % alphabet.length]).join('');
+    const suffix = Array.from(createHash('sha256').update(idempotencyKey).digest().subarray(0, 8), (byte) => alphabet[byte % alphabet.length]).join('');
     return `dkrypt_${suffix}`;
   }
 
   server.post<BillingCheckoutRoute>('/v1/billing/checkout', { schema: getRouteContract('POST', '/v1/billing/checkout'), preHandler: fastifyRequireSession }, async (request, reply) => {
-    if (areNewBillingCheckoutsPaused()) return sendBillingError(request, reply, 503, 'New checkouts are temporarily paused by an administrator', 'billing_checkouts_paused');
     const userId = getFastifySession(request)!.sub;
     const target = getPlan(request.body.planId);
     if (!target) return sendBillingError(request, reply, 400, 'unknown plan');
@@ -323,8 +326,18 @@ export const billingRoutes: FastifyPluginAsyncTypebox = async (server) => {
     const idempotencyKey = getBillingIdempotencyKey(request, reply, userId, `checkout-${provider}`);
     if (!idempotencyKey) return;
     if (!acquireBillingCheckoutLock(userId)) return sendBillingError(request, reply, 409, 'another checkout is already in progress for this account');
+    const existingCryptoCheckout = provider === 'crypto' ? findCryptoCheckout(userId, idempotencyKey) : undefined;
+    const existingStripeAttempt = provider === 'stripe' ? findStripeCheckoutIdempotencyAttempt(userId, idempotencyKey) : undefined;
+    if (!existingCryptoCheckout && !existingStripeAttempt && areNewBillingCheckoutsPaused()) {
+      releaseBillingCheckoutLock(userId);
+      return sendBillingError(request, reply, 503, 'New checkouts are temporarily paused by an administrator', 'billing_checkouts_paused');
+    }
     if (provider === 'crypto') {
       try {
+        const requestedAsset = request.body.cryptoAsset?.trim().toUpperCase() || config.nowpaymentsDefaultAsset;
+        if (existingCryptoCheckout && (existingCryptoCheckout.planId !== target.id || (existingCryptoCheckout.asset?.toUpperCase() ?? requestedAsset) !== requestedAsset)) {
+          return sendBillingError(request, reply, 409, 'Idempotency-Key was already used with a different checkout request', 'idempotency_conflict');
+        }
         const result = await createCryptoCheckout({ userId, planId: target.id, idempotencyKey, asset: request.body.cryptoAsset });
         return reply.code(result.reused ? 200 : 201).send({ url: result.checkout.checkoutUrl, provider: 'nowpayments', checkoutId: result.checkout.checkoutId, status: result.checkout.status });
       } catch (error) {
@@ -337,11 +350,9 @@ export const billingRoutes: FastifyPluginAsyncTypebox = async (server) => {
     }
     try {
       if (!requireStripeBilling(request, reply)) return;
-      if (hasActiveBillingSubscription(userId)) return sendBillingError(request, reply, 409, 'this account already has a subscription');
-
       const profile = getAuthProfile(userId);
       const customerId = getBillingCustomerId(userId);
-      const session = await getStripe().checkout.sessions.create({
+      const parameters = {
         mode: 'subscription',
         line_items: [{ price: target.priceId, quantity: 1 }],
         customer: customerId,
@@ -353,9 +364,30 @@ export const billingRoutes: FastifyPluginAsyncTypebox = async (server) => {
         cancel_url: `${config.publicBaseUrl}/?tab=billing&checkout=cancelled`,
         billing_address_collection: 'required',
         managed_payments: { enabled: true },
-        integration_identifier: createIntegrationIdentifier(),
-      }, { idempotencyKey });
-      if (!session.url) return sendBillingError(request, reply, 502, 'Stripe did not return a checkout URL');
+        integration_identifier: createIntegrationIdentifier(idempotencyKey),
+      } satisfies Stripe.Checkout.SessionCreateParams;
+      const requestFingerprint = createHash('sha256').update(JSON.stringify({ provider, planId: target.id })).digest('hex');
+      const parametersFingerprint = createHash('sha256').update(JSON.stringify(parameters)).digest('hex');
+      if (existingStripeAttempt && existingStripeAttempt.requestFingerprint !== requestFingerprint) {
+        return sendBillingError(request, reply, 409, 'Idempotency-Key was already used with a different checkout request', 'idempotency_conflict');
+      }
+      if (existingStripeAttempt && !existingStripeAttempt.sessionId && existingStripeAttempt.parametersFingerprint !== parametersFingerprint) {
+        return sendBillingError(request, reply, 409, 'Idempotency-Key was already used with a different checkout request', 'idempotency_conflict');
+      }
+      if (!existingStripeAttempt && hasActiveBillingSubscription(userId)) return sendBillingError(request, reply, 409, 'this account already has a subscription');
+      if (!existingStripeAttempt) {
+        recordStripeCheckoutIdempotencyAttempt({ userId, idempotencyKey, requestFingerprint, parametersFingerprint, createdAt: Date.now() });
+      }
+      const session = existingStripeAttempt?.sessionId
+        ? await stripeClient().checkout.sessions.retrieve(existingStripeAttempt.sessionId)
+        : await stripeClient().checkout.sessions.create(parameters, { idempotencyKey });
+      if (!existingStripeAttempt?.sessionId && session.id) {
+        recordStripeCheckoutIdempotencyAttempt({ userId, idempotencyKey, requestFingerprint, parametersFingerprint, createdAt: Date.now(), sessionId: session.id });
+      }
+      if (!session.url) {
+        const statusCode = existingStripeAttempt?.sessionId ? 409 : 502;
+        return sendBillingError(request, reply, statusCode, 'Stripe did not return an active checkout URL', existingStripeAttempt?.sessionId ? 'checkout_session_unavailable' : undefined);
+      }
       return reply.send({ url: session.url });
     } catch (error) {
       log.error('Stripe checkout session failed', { userId, planId: target.id, error: String(error) });
@@ -374,7 +406,7 @@ export const billingRoutes: FastifyPluginAsyncTypebox = async (server) => {
     if (!requireStripeBilling(request, reply)) return;
 
     try {
-      const portal = await getStripe().billingPortal.sessions.create({
+      const portal = await stripeClient().billingPortal.sessions.create({
         customer: customerId,
         return_url: `${config.publicBaseUrl}/?tab=billing`,
       });
@@ -406,7 +438,7 @@ export const billingRoutes: FastifyPluginAsyncTypebox = async (server) => {
     if (!requireStripeBilling(request, reply)) return;
     if (subscription.scheduledChangeAction === 'cancel') return reply.send({ success: true, status: subscription.status, cancelAtPeriodEnd: true, provider: 'stripe', idempotencyKey });
     try {
-      const updated = await getStripe().subscriptions.update(subscription.subscriptionId, { cancel_at_period_end: true });
+      const updated = await stripeClient().subscriptions.update(subscription.subscriptionId, { cancel_at_period_end: true });
       persistStripeSubscription(updated, new Date().toISOString(), userId);
       recordAudit(userId, 'billing.cancel', subscription.subscriptionId, 'Stripe cancellation scheduled');
       return reply.send({ success: true, status: updated.status, cancelAtPeriodEnd: true, provider: 'stripe', idempotencyKey });
@@ -511,10 +543,10 @@ export const billingRoutes: FastifyPluginAsyncTypebox = async (server) => {
     const current = getPlan(subscription.planId);
 
     try {
-      const stripeSubscription = await getStripe().subscriptions.retrieve(subscription.subscriptionId);
+      const stripeSubscription = await stripeClient().subscriptions.retrieve(subscription.subscriptionId);
       const item = stripeSubscription.items.data.find((candidate) => candidate.id === subscription.subscriptionItemId) ?? stripeSubscription.items.data[0];
       if (!item) return sendBillingError(request, reply, 502, 'subscription has no billable item');
-      const updated = await getStripe().subscriptions.update(subscription.subscriptionId, {
+      const updated = await stripeClient().subscriptions.update(subscription.subscriptionId, {
         items: [{ id: item.id, price: target.priceId, quantity: item.quantity ?? 1 }],
         proration_behavior: current && target.amount > current.amount ? 'always_invoice' : 'create_prorations',
         payment_behavior: 'error_if_incomplete',

@@ -50,6 +50,7 @@ test('generated API keys are rejected outside the decrypt and artifact API allow
   const headers = { authorization: `Bearer ${apiKey.key}` };
 
   try {
+    const artifactLibrary = await server.inject({ method: 'GET', url: '/v1/artifacts', headers });
     const health = await server.inject({ method: 'GET', url: '/v1/health', headers });
     const metrics = await server.inject({ method: 'GET', url: '/v1/metrics', headers });
     const billing = await server.inject({ method: 'GET', url: '/v1/billing', headers });
@@ -62,6 +63,7 @@ test('generated API keys are rejected outside the decrypt and artifact API allow
     const testFlightTrains = await server.inject({ method: 'GET', url: '/v1/testflight/123/trains', headers });
     const testFlightBuilds = await server.inject({ method: 'GET', url: '/v1/testflight/123/builds?trainVersion=1.0', headers });
 
+    expect(artifactLibrary.statusCode).toBe(200);
     expect(health.statusCode).toBe(403);
     expect(metrics.statusCode).toBe(403);
     expect(billing.statusCode).toBe(403);

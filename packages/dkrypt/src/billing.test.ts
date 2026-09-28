@@ -4,10 +4,12 @@ import {
   type BillingSubscription,
   canCreateApiKeyImmediately,
   exportBillingSnapshot,
+  findStripeCheckoutIdempotencyAttempt,
   getBillingCustomerId,
   getBillingEntitlements,
   hasLegacyBillingRecord,
   isBillingSnapshot,
+  recordStripeCheckoutIdempotencyAttempt,
   replaceBillingSnapshot,
   resolveBillingEntitlements,
 } from '#billing.js';
@@ -108,6 +110,59 @@ describe('billing provider cutover', () => {
     expect(getBillingCustomerId(userId)).toBeUndefined();
     expect(getBillingEntitlements(userId).planId).toBe('viewer');
     replaceBillingSnapshot({ customers: [], subscriptions: [] });
+  });
+});
+
+describe('Stripe checkout idempotency persistence', () => {
+  test('retains existing attempts across persisted billing snapshots', () => {
+    const previousSnapshot = exportBillingSnapshot();
+    const attempt = {
+      userId: `checkout-user-${crypto.randomUUID()}`,
+      idempotencyKey: `dkrypt-checkout-${crypto.randomUUID()}`,
+      requestFingerprint: `fingerprint-${crypto.randomUUID()}`,
+      parametersFingerprint: `parameters-${crypto.randomUUID()}`,
+      createdAt: Date.now(),
+    };
+
+    try {
+      recordStripeCheckoutIdempotencyAttempt(attempt);
+
+      expect(findStripeCheckoutIdempotencyAttempt(attempt.userId, attempt.idempotencyKey)).toEqual(attempt);
+      expect(exportBillingSnapshot().stripeCheckoutIdempotency).toContainEqual(attempt);
+      expect(isBillingSnapshot(exportBillingSnapshot())).toBe(true);
+    } finally {
+      replaceBillingSnapshot(previousSnapshot);
+    }
+  });
+
+  test('keeps every unexpired attempt when a busy period exceeds ten thousand checkouts', () => {
+    const previousSnapshot = exportBillingSnapshot();
+    const createdAt = Date.now();
+    const retainedAttempts = Array.from({ length: 10_000 }, (_, index) => ({
+      userId: `busy-checkout-user-${index}`,
+      idempotencyKey: `busy-checkout-key-${index}`,
+      requestFingerprint: `busy-checkout-request-${index}`,
+      parametersFingerprint: `busy-checkout-parameters-${index}`,
+      createdAt,
+    }));
+    const finalAttempt = {
+      userId: 'busy-checkout-final-user',
+      idempotencyKey: 'busy-checkout-final-key',
+      requestFingerprint: 'busy-checkout-final-request',
+      parametersFingerprint: 'busy-checkout-final-parameters',
+      createdAt,
+    };
+
+    try {
+      replaceBillingSnapshot({ ...previousSnapshot, stripeCheckoutIdempotency: retainedAttempts });
+      recordStripeCheckoutIdempotencyAttempt(finalAttempt);
+
+      expect(exportBillingSnapshot().stripeCheckoutIdempotency).toHaveLength(10_001);
+      expect(findStripeCheckoutIdempotencyAttempt(retainedAttempts[0].userId, retainedAttempts[0].idempotencyKey)).toEqual(retainedAttempts[0]);
+      expect(findStripeCheckoutIdempotencyAttempt(finalAttempt.userId, finalAttempt.idempotencyKey)).toEqual(finalAttempt);
+    } finally {
+      replaceBillingSnapshot(previousSnapshot);
+    }
   });
 });
 

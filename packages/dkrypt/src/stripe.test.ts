@@ -1,15 +1,17 @@
-import { createHmac } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
+import Fastify from 'fastify';
 import Stripe from 'stripe';
 import { describe, expect, test } from 'bun:test';
 import type { Response as HttpResponse } from '#http.js';
 import { PermissionFlag } from '#permissions.js';
 import {
+  exportBillingSnapshot,
   getBillingCustomerId,
   getBillingEntitlements,
   replaceBillingSnapshot,
 } from '#billing.js';
 import { config } from '#config.js';
-import { processStripeEvent } from '#routes/billing.js';
+import { billingRoutes, processStripeEvent } from '#routes/billing.js';
 import { buildServer } from '#server.js';
 import { flushTelemetry } from '#telemetry.js';
 import { setSessionCookie } from '#session.js';
@@ -21,6 +23,37 @@ function createSessionCookie(permissions: bigint): string {
   const response = { setHeader: (_name: string, value: string) => { cookieHeader = value; } } as unknown as HttpResponse;
   setSessionCookie(response, { sub: 'root', permissions });
   return cookieHeader.split(';', 1)[0];
+}
+
+function createStripeCheckoutDouble() {
+  const calls: Array<{ parameters: Record<string, unknown>; idempotencyKey: string }> = [];
+  const retrievals: string[] = [];
+  const sessions = new Map<string, { fingerprint: string; session: { id: string; url: string } }>();
+  const client = {
+    checkout: {
+      sessions: {
+        create: async (parameters: Record<string, unknown>, options: { idempotencyKey?: string }) => {
+          const idempotencyKey = options.idempotencyKey;
+          if (!idempotencyKey) throw new Error('Stripe idempotency key is required');
+          const fingerprint = JSON.stringify(parameters);
+          calls.push({ parameters, idempotencyKey });
+          const existing = sessions.get(idempotencyKey);
+          if (existing && existing.fingerprint !== fingerprint) throw new Error('Stripe idempotency parameters conflict');
+          if (existing) return existing.session;
+          const session = { id: `cs_${sessions.size + 1}`, url: `https://checkout.stripe.com/c/${sessions.size + 1}` };
+          sessions.set(idempotencyKey, { fingerprint, session });
+          return session;
+        },
+        retrieve: async (sessionId: string) => {
+          retrievals.push(sessionId);
+          const entry = [...sessions.values()].find(({ session }) => session.id === sessionId);
+          if (!entry) throw new Error('Stripe checkout session was not found');
+          return entry.session;
+        },
+      },
+    },
+  } as unknown as Stripe;
+  return { calls, client, retrievals, sessions };
 }
 
 function event(type: string, object: Record<string, unknown>): Stripe.Event {
@@ -35,6 +68,11 @@ function event(type: string, object: Record<string, unknown>): Stripe.Event {
     request: null,
     type,
   } as unknown as Stripe.Event;
+}
+
+function checkoutIdempotencyKey(provider: 'crypto' | 'stripe', userId: string, key: string): string {
+  const operation = `checkout-${provider}`;
+  return `dkrypt-${operation}-${createHash('sha256').update(`${operation}:${userId}:${key}`).digest('hex')}`;
 }
 
 function checkoutEvent(userId: string, customerId: string, subscriptionId: string, type = 'checkout.session.completed'): Stripe.Event {
@@ -259,6 +297,27 @@ describe('Stripe billing webhooks', () => {
   });
 
   test('checkout pause is manager-only and blocks new provider checkouts', async () => {
+    const previousBillingSnapshot = exportBillingSnapshot();
+    const createdAt = new Date().toISOString();
+    replaceBillingSnapshot({
+      ...previousBillingSnapshot,
+      customers: [],
+      subscriptions: [],
+      cryptoCheckouts: [{
+        provider: 'nowpayments',
+        checkoutId: 'existing-checkout-before-pause',
+        userId: 'root',
+        idempotencyKey: checkoutIdempotencyKey('crypto', 'root', 'paused-crypto-checkout'),
+        planId: 'regular',
+        amount: 5,
+        currency: 'EUR',
+        status: 'pending',
+        checkoutUrl: 'https://nowpayments.example/invoice/already-created',
+        asset: 'USDC',
+        createdAt,
+        updatedAt: createdAt,
+      }],
+    });
     const server = await buildServer({ includePublicRoutes: false });
     const managerCookie = createSessionCookie(PermissionFlag.manageBilling);
     const viewerCookie = createSessionCookie(0n);
@@ -281,7 +340,13 @@ describe('Stripe billing webhooks', () => {
         method: 'POST',
         url: '/v1/billing/checkout',
         headers: { ...managerHeaders, 'idempotency-key': 'paused-crypto-checkout' },
-        payload: { planId: 'regular', provider: 'crypto' },
+        payload: { planId: 'regular', provider: 'crypto', cryptoAsset: 'USDC' },
+      });
+      const newCryptoCheckout = await server.inject({
+        method: 'POST',
+        url: '/v1/billing/checkout',
+        headers: { ...managerHeaders, 'idempotency-key': 'paused-new-crypto-checkout' },
+        payload: { planId: 'regular', provider: 'crypto', cryptoAsset: 'USDC' },
       });
 
       expect(anonymous.statusCode).toBe(401);
@@ -292,11 +357,57 @@ describe('Stripe billing webhooks', () => {
       expect(pausedStatus.json()).toMatchObject({ checkoutsPaused: true });
       expect(stripeCheckout.statusCode).toBe(503);
       expect(stripeCheckout.json()).toMatchObject({ code: 'billing_checkouts_paused', retryable: true });
-      expect(cryptoCheckout.statusCode).toBe(503);
-      expect(cryptoCheckout.json()).toMatchObject({ code: 'billing_checkouts_paused', retryable: true });
+      expect(cryptoCheckout.statusCode).toBe(200);
+      expect(cryptoCheckout.json()).toMatchObject({
+        url: 'https://nowpayments.example/invoice/already-created',
+        provider: 'nowpayments',
+        checkoutId: 'existing-checkout-before-pause',
+      });
+      expect(newCryptoCheckout.statusCode).toBe(503);
+      expect(newCryptoCheckout.json()).toMatchObject({ code: 'billing_checkouts_paused', retryable: true });
     } finally {
       await server.inject({ method: 'PUT', url: '/v1/billing/checkouts', headers: managerHeaders, payload: { paused: false } });
       await server.close();
+      replaceBillingSnapshot(previousBillingSnapshot);
+    }
+  });
+
+  test('checkout pause replays existing Stripe idempotency keys but rejects new checkouts', async () => {
+    const previousBillingSnapshot = exportBillingSnapshot();
+    replaceBillingSnapshot({ customers: [], subscriptions: [] });
+    const provider = createStripeCheckoutDouble();
+    const server = Fastify();
+    await server.register(billingRoutes, { stripeClient: () => provider.client });
+    const managerCookie = createSessionCookie(PermissionFlag.manageBilling);
+    const headers = { cookie: managerCookie, 'idempotency-key': 'stripe-pause-idempotency' };
+
+    try {
+      const created = await server.inject({ method: 'POST', url: '/v1/billing/checkout', headers, payload: { planId: 'regular', provider: 'stripe' } });
+      const paused = await server.inject({ method: 'PUT', url: '/v1/billing/checkouts', headers: { cookie: managerCookie }, payload: { paused: true } });
+      const retry = await server.inject({ method: 'POST', url: '/v1/billing/checkout', headers, payload: { planId: 'regular', provider: 'stripe' } });
+      const changedRequest = await server.inject({ method: 'POST', url: '/v1/billing/checkout', headers, payload: { planId: 'priority', provider: 'stripe' } });
+      const newCheckout = await server.inject({
+        method: 'POST',
+        url: '/v1/billing/checkout',
+        headers: { cookie: managerCookie, 'idempotency-key': 'stripe-pause-new-idempotency' },
+        payload: { planId: 'regular', provider: 'stripe' },
+      });
+
+      expect(created.statusCode).toBe(200);
+      expect(paused.statusCode).toBe(200);
+      expect(retry.statusCode).toBe(200);
+      expect(retry.json()).toEqual(created.json());
+      expect(changedRequest.statusCode).toBe(409);
+      expect(changedRequest.json()).toMatchObject({ code: 'idempotency_conflict' });
+      expect(newCheckout.statusCode).toBe(503);
+      expect(newCheckout.json()).toMatchObject({ code: 'billing_checkouts_paused' });
+      expect(provider.calls).toHaveLength(1);
+      expect(provider.retrievals).toEqual(['cs_1']);
+      expect(provider.sessions.size).toBe(1);
+    } finally {
+      await server.inject({ method: 'PUT', url: '/v1/billing/checkouts', headers: { cookie: managerCookie }, payload: { paused: false } });
+      await server.close();
+      replaceBillingSnapshot(previousBillingSnapshot);
     }
   });
 

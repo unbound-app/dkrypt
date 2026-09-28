@@ -120,6 +120,7 @@ const BillingSnapshot = Type.Object({
   cryptoCharges: Type.Optional(Type.Array(JsonObject)),
   processedEvents: Type.Optional(Type.Array(JsonObject)),
   entitlementHistory: Type.Optional(Type.Array(JsonObject)),
+  stripeCheckoutIdempotency: Type.Optional(Type.Array(JsonObject)),
 }, { additionalProperties: true });
 const AuthIdentity = Type.Object({
   provider: Type.Union([Type.Literal('github'), Type.Literal('discord')]),
