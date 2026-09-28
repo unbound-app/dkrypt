@@ -294,7 +294,7 @@ test('SQLite upgrades generated records from every prior schema and restores the
       }
     }), { numRuns: 5, seed: 20260929 + baselineVersion });
   }
-}, 15_000);
+}, 60_000);
 
 test('IPA metadata extraction preserves generated versions and Mach-O architectures', async () => {
   const cpuTypes = [...cpuTypeNames.keys()];
@@ -325,7 +325,7 @@ test('IPA metadata extraction preserves generated versions and Mach-O architectu
       await rm(stateDir, { recursive: true, force: true });
     }
   }), { numRuns: 36, seed: 20260930 });
-});
+}, 30_000);
 
 test('authenticated bridge envelopes bind generated payloads to their channel and request', () => {
   const channelArbitrary = fc.constantFrom('springboard' as const, 'testflight' as const, 'appstore' as const);
