@@ -24,14 +24,14 @@
     {
       name: 'API',
       price: '€15',
-      description: 'Dashboard decrypts and API key access with standard priority.',
+      description: 'Dashboard decrypts and decrypt API + IPA library access with standard priority.',
       api: true,
       priority: false,
     },
     {
       name: 'Priority API',
       price: '€20',
-      description: 'Dashboard decrypts and API key access with high priority.',
+      description: 'Dashboard decrypts and decrypt API + IPA library access with high priority.',
       api: true,
       priority: true,
     },
@@ -78,9 +78,9 @@
             <div class="mb-5 flex flex-col gap-2 text-sm">
               <div class="flex items-center gap-2"><Check class="h-4 w-4 text-ok" /> Dashboard decrypts</div>
               {#if plan.api}
-                <div class="flex items-center gap-2"><Check class="h-4 w-4 text-ok" /> API key access</div>
+                <div class="flex items-center gap-2"><Check class="h-4 w-4 text-ok" /> Decrypt API + IPA library</div>
               {:else}
-                <div class="flex items-center gap-2 text-muted"><X class="h-4 w-4" /> API key access</div>
+                <div class="flex items-center gap-2 text-muted"><X class="h-4 w-4" /> Decrypt API + IPA library</div>
               {/if}
               {#if plan.priority}
                 <div class="flex items-center gap-2"><Check class="h-4 w-4 text-ok" /> High queue priority</div>

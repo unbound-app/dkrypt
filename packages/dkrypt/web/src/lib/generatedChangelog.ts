@@ -1,42 +1,42 @@
 export const GENERATED_CHANGELOG = [
   {
     "date": "2026-09-28",
+    "title": "fix(api): clarify API key access scope",
+    "description": "Released in 89448a8."
+  },
+  {
+    "date": "2026-09-28",
+    "title": "fix(ops): account for device parallelism in queue objectives",
+    "description": "Released in 9c84f4c."
+  },
+  {
+    "date": "2026-09-28",
+    "title": "test(web): stabilize cross-platform mobile snapshots",
+    "description": "Released in f668a91."
+  },
+  {
+    "date": "2026-09-28",
+    "title": "fix(api): scope generated keys to public operations",
+    "description": "Released in 643ea8b."
+  },
+  {
+    "date": "2026-09-28",
+    "title": "fix(web): compact IPA library and add visual baselines",
+    "description": "Released in 107a915."
+  },
+  {
+    "date": "2026-09-28",
+    "title": "fix(device): scope install eligibility by source",
+    "description": "Released in d9b5da2."
+  },
+  {
+    "date": "2026-09-28",
+    "title": "feat(web): add account-level regional formatting",
+    "description": "Released in c378b57."
+  },
+  {
+    "date": "2026-09-28",
     "title": "fix(clients): retain urllib transport errors",
     "description": "Released in 4cb4ba5."
-  },
-  {
-    "date": "2026-09-28",
-    "title": "fix(clients): preserve same-origin redirects",
-    "description": "Released in 643427a."
-  },
-  {
-    "date": "2026-09-28",
-    "title": "fix(clients): prevent Python API key leakage",
-    "description": "Released in 640b412."
-  },
-  {
-    "date": "2026-09-28",
-    "title": "fix(clients): keep API keys on the dkrypt origin",
-    "description": "Released in d2f1b1d."
-  },
-  {
-    "date": "2026-09-28",
-    "title": "feat(clients): support authenticated IPA downloads",
-    "description": "Released in 3439df6."
-  },
-  {
-    "date": "2026-09-28",
-    "title": "test(deploy): match smoke checks to public API contract",
-    "description": "Released in 2343073."
-  },
-  {
-    "date": "2026-09-28",
-    "title": "fix(api): limit generated keys to decrypt and artifacts",
-    "description": "Released in 376a48b."
-  },
-  {
-    "date": "2026-09-28",
-    "title": "fix(jobs): require known OS for minimum-version builds",
-    "description": "Released in 5e888b1."
   }
 ] as const;

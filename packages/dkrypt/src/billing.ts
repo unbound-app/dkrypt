@@ -174,7 +174,7 @@ const planDefinitions = [
   {
     id: 'api',
     name: 'API',
-    description: 'Dashboard decrypts and API key access with standard priority.',
+    description: 'Dashboard decrypts and decrypt API + IPA library access with standard priority.',
     amount: 15,
     currency: 'EUR',
     priceId: config.stripeApiPriceId,
@@ -185,7 +185,7 @@ const planDefinitions = [
   {
     id: 'priority_api',
     name: 'Priority API',
-    description: 'Dashboard decrypts and API key access with high queue priority.',
+    description: 'Dashboard decrypts and decrypt API + IPA library access with high queue priority.',
     amount: 20,
     currency: 'EUR',
     priceId: config.stripePriorityApiPriceId,

@@ -446,7 +446,7 @@
   {#if canCreate || canRequest}
   <Card title={canCreate ? 'Create API key' : 'Request API key'}>
     <div class="mb-2.5 text-sm text-muted">
-      {canCreate ? 'This key is created immediately and is ready to use.' : 'This request needs approval from someone with Manage API keys before it works.'}
+      {canCreate ? 'API keys can submit decrypts, check job status, and access the IPA library. Sessions, billing, and dashboard management stay in dkrypt. This key is created immediately and is ready to use.' : 'API keys can submit decrypts, check job status, and access the IPA library. Sessions, billing, and dashboard management stay in dkrypt. This request needs approval from someone with Manage API keys before it works.'}
     </div>
     <label for="key-name" class="mb-1 block text-xs text-muted">Name</label>
     <Input id="key-name" placeholder="e.g. laptop, ci-runner" bind:value={keyName} />

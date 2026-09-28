@@ -34,7 +34,7 @@
     {
       icon: KeyRound,
       title: 'API keys for scripts & CI',
-      body: 'Everything you can do from the dashboard is also available over HTTP with an API key - see the Docs tab for curl examples.',
+      body: 'API keys are for decrypt automation: they can submit decrypt jobs, check job status, and access the IPA library. Sessions, billing, and dashboard management stay in dkrypt.',
       actionLabel: 'Go to API Keys',
       action: () => setActiveTab('keys'),
     },
