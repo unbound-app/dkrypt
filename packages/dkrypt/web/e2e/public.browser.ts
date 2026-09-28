@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import AxeBuilder from '@axe-core/playwright';
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 
 async function expectAccessible(page: Page, scope?: string): Promise<void> {
   const builder = new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa']);
@@ -12,6 +12,16 @@ async function expectAccessible(page: Page, scope?: string): Promise<void> {
     help,
     nodes: nodes.map(({ target, html, failureSummary }) => ({ target, html, failureSummary })),
   }))).toEqual([]);
+}
+
+async function expectVisualSnapshot(page: Page | Locator, name: string, fullPage = false): Promise<void> {
+  await expect(page).toHaveScreenshot(name, {
+    animations: 'disabled',
+    caret: 'hide',
+    fullPage,
+    maxDiffPixelRatio: 0.08,
+    scale: 'css',
+  });
 }
 
 async function mockAuthenticatedSession(page: Page, permissions: string): Promise<void> {
@@ -65,6 +75,49 @@ async function mockAuthenticatedDashboard(page: Page, permissions: string): Prom
   await page.addInitScript(() => {
     localStorage.setItem('onboardingTourSeen', 'true');
     localStorage.setItem('onboardingDismissed', 'true');
+  });
+}
+
+async function mockVisualDashboardData(page: Page): Promise<void> {
+  await page.route('**/v1/dashboard/**', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        activeJobs: [],
+        apps: [],
+        auditLog: [],
+        data: [],
+        devices: [],
+        entries: [],
+        failurePatterns: [],
+        jobs: [],
+        keys: [],
+        logs: [],
+        members: [],
+        notifications: [],
+        patterns: [],
+        projects: [],
+        repos: [],
+        roles: [],
+        runs: [],
+        settings: {},
+        subscriptions: [],
+        total: 0,
+        users: [],
+        watches: [],
+        webhooks: [],
+        workflows: [],
+      }),
+    });
+  });
+  await page.route('**/v1/billing*', async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    const body = path.endsWith('/provider-status')
+      ? { providers: [], enabled: false, ready: false }
+      : path.endsWith('/subscriptions')
+        ? { subscriptions: [], total: 0 }
+        : { enabled: false, providers: {}, plans: [], entitlement: { planId: 'viewer', decrypt: true, api: false, priority: 0 } };
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) });
   });
 }
 
@@ -160,6 +213,135 @@ test('pricing page fits a phone viewport without horizontal overflow', async ({ 
   await page.keyboard.press('Tab');
   await expect(page.locator(':focus')).toBeVisible();
   await expectAccessible(page);
+});
+
+test('pricing page visual layout stays consistent on desktop and mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto('/pricing');
+  await expect(page.getByRole('heading', { name: 'Choose a dkrypt plan' })).toBeVisible();
+  await expectVisualSnapshot(page, 'pricing-desktop.png', true);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expectVisualSnapshot(page, 'pricing-mobile.png', true);
+});
+
+test('device overview visual layout stays consistent on desktop and mobile', async ({ page }) => {
+  const device = {
+    id: 'visual-device',
+    name: 'Lab iPad',
+    transport: 'usb',
+    port: 22,
+    user: 'mobile',
+    udid: '00008110-001234567890001E',
+    productType: 'iPad14,1',
+    iosVersion: '18.0',
+    enabled: true,
+    isPrimary: true,
+    createdAt: 1,
+    updatedAt: 1,
+  };
+
+  await mockVisualDashboardData(page);
+  await mockAuthenticatedSession(page, '2097152');
+  await page.route('**/v1/dashboard/overview*', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        schedulerEnabled: false,
+        settings: {},
+        watches: [],
+        devices: [device],
+        schedulerRunHistory: [],
+        disk: { totalBytes: 1, freeBytes: 1, usedBytes: 0, usedPercent: 0 },
+        isPaidPlan: false,
+        maintenance: { active: false, manual: false, auto: false },
+        activeJobs: [],
+      }),
+    });
+  });
+  await page.route('**/v1/dashboard/events', async (route) => {
+    await route.fulfill({ contentType: 'text/event-stream', body: ': connected\n\n' });
+  });
+  await page.route('**/v1/dashboard/devices/visual-device/health*', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        reachable: true,
+        screenIsOn: false,
+        batteryPercent: 82,
+        checkedAt: 1790604000000,
+        bridgeHeartbeats: { springboard: { bridgeVersion: '1.2.0' } },
+        readiness: { score: 100, state: 'ready', reasons: [] },
+        subsystems: { usb: 'ready', mux: 'ready', agent: 'ready', appStore: 'ready', testFlight: 'ready', sshTunnel: 'ready' },
+      }),
+    });
+  });
+  await page.route('**/v1/dashboard/devices/visual-device/activity*', async (route) => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ activity: [], total: 0 }) });
+  });
+  await page.addInitScript(() => {
+    localStorage.setItem('onboardingTourSeen', 'true');
+    localStorage.setItem('onboardingDismissed', 'true');
+  });
+
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto('/?tab=settings&stab=devices');
+  const deviceCard = page.locator('[data-slot="card"]').filter({ has: page.getByRole('heading', { name: 'Devices', exact: true }) });
+  await expect(page.getByText('Lab iPad', { exact: true })).toBeVisible();
+  await expectVisualSnapshot(deviceCard, 'devices-desktop.png');
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expectVisualSnapshot(deviceCard, 'devices-mobile.png');
+});
+
+test('IPA Library visual layout stays consistent on desktop and mobile', async ({ page }) => {
+  await mockVisualDashboardData(page);
+  await mockStableDashboardEvents(page);
+  await mockAuthenticatedDashboard(page, '1');
+  await page.route('**/v1/dashboard/apps/metadata?*', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ entries: [{ bundleId: 'com.example.visual', displayName: 'Visual App', updatedAt: 1790604000000 }] }),
+    });
+  });
+  await page.route('**/v1/dashboard/artifacts*', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        artifacts: [{
+          id: 'visual-artifact',
+          key: 'com.example.visual:appstore:123',
+          projectIds: ['default'],
+          bundleId: 'com.example.visual',
+          channel: 'appstore',
+          versionLabel: '2.4.0',
+          buildNumber: '240',
+          fileSizeBytes: 104857600,
+          sha256: 'a'.repeat(64),
+          createdAt: '2026-09-25T12:00:00.000Z',
+          lastAccessedAt: '2026-09-25T13:00:00.000Z',
+          accessCount: 3,
+          sourceJobId: 'job-visual',
+          warnings: [],
+          fileUrl: '/v1/dashboard/artifacts/visual-artifact/file',
+        }],
+        total: 1,
+        totalBytes: 104857600,
+        maxBytes: 1048576000,
+      }),
+    });
+  });
+
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  const artifactResponse = page.waitForResponse((response) => response.url().includes('/v1/dashboard/artifacts?') && response.ok());
+  await page.goto('/?tab=home');
+  await artifactResponse;
+  const libraryCard = page.locator('[data-slot="card"]').filter({ hasText: 'IPA Library' });
+  await expect(page.getByText('Visual App', { exact: true })).toBeVisible();
+  await expectVisualSnapshot(libraryCard, 'ipa-library-desktop.png');
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expectVisualSnapshot(libraryCard, 'ipa-library-mobile.png');
 });
 
 test('date and number format preference is saved and restored from the account', async ({ page }) => {

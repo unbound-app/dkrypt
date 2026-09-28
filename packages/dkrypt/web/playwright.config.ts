@@ -15,6 +15,11 @@ export default defineConfig({
     video: 'retain-on-failure',
     ...devices['Desktop Chrome'],
   },
+  expect: {
+    toHaveScreenshot: {
+      pathTemplate: '{testDir}/{testFilePath}-snapshots/{arg}{ext}',
+    },
+  },
   webServer: {
     command: 'bun run build && bunx vite preview --host 127.0.0.1 --port 4173',
     url: 'http://127.0.0.1:4173/status',

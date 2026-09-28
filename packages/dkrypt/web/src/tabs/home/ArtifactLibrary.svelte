@@ -181,7 +181,8 @@
             estimateSize={204}
             overscan={5}
             label="IPA library artifacts"
-            class="h-[34rem] max-h-[70dvh] overflow-y-auto divide-y divide-border rounded-xl border border-border/70"
+            class="overflow-y-auto divide-y divide-border rounded-xl border border-border/70"
+            style={`height:min(34rem, ${Math.max(200, Math.min(artifacts.length * 204, 544))}px, 70dvh)`}
           >
             {#snippet children(artifact: ArtifactRecord)}
               <article class="grid gap-x-5 gap-y-2.5 px-3.5 py-3 first:pt-3 last:pb-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:px-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1.65fr)_auto] lg:items-center">
