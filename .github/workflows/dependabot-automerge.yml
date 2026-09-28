@@ -29,15 +29,15 @@ jobs:
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           [ -n "$PR_NUMBER" ] || exit 0
-          pull_request="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '[.user.login, .head.sha, .state, (.auto_merge != null)] | @tsv')"
-          IFS=$'\t' read -r author head_sha state auto_merge <<< "$pull_request"
+          pull_request="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '[.user.login, .head.sha, .state] | @tsv')"
+          IFS=$'\t' read -r author head_sha state <<< "$pull_request"
           [ "$author" = "dependabot[bot]" ] || exit 0
           [ "$head_sha" = "$HEAD_SHA" ] || exit 0
           [ "$state" = "open" ] || exit 0
-          gh pr merge "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --auto --squash --delete-branch
-          pull_request="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '[.state, (.auto_merge != null)] | @tsv')"
-          IFS=$'\t' read -r state auto_merge <<< "$pull_request"
-          if [ "$state" = "open" ] && [ "$auto_merge" != "true" ]; then
-            printf 'GitHub did not merge or queue Dependabot PR #%s\n' "$PR_NUMBER" >&2
+          gh pr merge "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --match-head-commit "$HEAD_SHA" --squash --delete-branch
+          pull_request="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '[.state, .merged] | @tsv')"
+          IFS=$'\t' read -r state merged <<< "$pull_request"
+          if [ "$state" != "closed" ] || [ "$merged" != "true" ]; then
+            printf 'GitHub did not merge Dependabot PR #%s after successful CI\n' "$PR_NUMBER" >&2
             exit 1
           fi
