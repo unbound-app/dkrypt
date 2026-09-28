@@ -131,7 +131,7 @@
 	initUrlTabSync();
 	const interfaceLanguage = $derived(resolveInterfaceLanguage(interfaceLanguageState.value, systemLocalesState.value));
 	const msg = (key: MessageKey) => translateMessage(key, interfaceLanguage);
-	const themeLabel = $derived(themePrefState.value === "auto" ? msg("appearance.system") : themePrefState.value === "light" ? msg("appearance.lightTheme") : msg("appearance.darkTheme"));
+	const themeLabel = $derived(themePrefState.value === "auto" ? msg("appearance.autoPreference") : themePrefState.value === "light" ? msg("appearance.lightPreference") : msg("appearance.darkPreference"));
 	const accentMessageKeys: Record<string, MessageKey> = {
 		blue: "appearance.accentBlue",
 		teal: "appearance.accentTeal",
@@ -1025,7 +1025,7 @@
 										variant="secondary"
 										size="sm"
 										onclick={toggleHighContrast}
-										aria-label={msg("appearance.highContrast")}
+										aria-label={msg("appearance.highContrastMode")}
 										aria-pressed={highContrastState.value}
 									>
 										{highContrastState.value ? msg("appearance.on") : msg("appearance.off")}

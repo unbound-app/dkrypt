@@ -8,4 +8,6 @@ test('provides localized messages for the dashboard shell', () => {
   expect(translateMessage('appearance.interfaceLanguage', 'de')).toBe('Anzeigesprache');
   expect(translateMessage('appearance.accentBlue', 'de')).toBe('Blau');
   expect(translateMessage('appearance.accentGreen', 'de')).toBe('Grün');
+  expect(translateMessage('appearance.highContrastMode', 'en')).toBe('High contrast mode');
+  expect(translateMessage('appearance.darkPreference', 'de')).toBe('dunkel');
 });
