@@ -75,17 +75,20 @@ describe('job device eligibility', () => {
     expect(getJobDeviceBlocker(job, { id: 'ipad-a' }, { testFlightCatalog: catalog }, 1_001)).toContain('individually verified');
   });
 
-  test('rejects a device whose known iOS version is below the build minimum', () => {
+  test('requires a reported iOS version before dispatching a minimum-OS build', () => {
     const job = makeJob({ testflight: { appId: 42, build: { id: 7, bundleId: 'com.example.app', cfBundleShortVersion: '2.0', cfBundleVersion: '7', minimumOsVersion: '17.0' } } });
     expect(getJobDeviceBlocker(job, { id: 'ipad-a', iosVersion: '16.7.10' }, { testFlightCatalog: makeCatalog() }, 1_001))
       .toContain('requires iOS 17.0');
     expect(getJobDeviceBlocker(job, { id: 'ipad-a', iosVersion: '17.0' }, { testFlightCatalog: makeCatalog() }, 1_001)).toBeUndefined();
-    expect(getJobDeviceBlocker(job, { id: 'ipad-a' }, { testFlightCatalog: makeCatalog() }, 1_001)).toBeUndefined();
+    expect(getJobDeviceBlocker(job, { id: 'ipad-a' }, { testFlightCatalog: makeCatalog() }, 1_001))
+      .toBe('device iOS version is unknown; cannot verify minimum iOS 17.0');
   });
 
-  test('rejects App Store devices below a known minimum iOS version', () => {
+  test('requires a reported iOS version before dispatching a minimum-OS App Store build', () => {
     const job = makeJob({ minimumOsVersion: '17.0' });
     expect(getJobDeviceBlocker(job, { id: 'ipad-a', iosVersion: '16.7.10' }, {}, 1_001)).toContain('requires iOS 17.0');
     expect(getJobDeviceBlocker(job, { id: 'ipad-a', iosVersion: '17.0' }, {}, 1_001)).toBeUndefined();
+    expect(getJobDeviceBlocker(job, { id: 'ipad-a' }, {}, 1_001))
+      .toBe('device iOS version is unknown; cannot verify minimum iOS 17.0');
   });
 });

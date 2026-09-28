@@ -43,8 +43,10 @@ export function getJobDeviceBlocker(
   if (job.preferredDeviceId && job.preferredDeviceId !== device.id) return 'job is assigned to another device';
 
   const minimumOsVersion = job.minimumOsVersion ?? minimumOsVersionForBuild(job.testflight?.build);
-  if (minimumOsVersion && device.iosVersion && compareVersions(device.iosVersion, minimumOsVersion) < 0) {
-    return `device is running iOS ${device.iosVersion}; this build requires iOS ${minimumOsVersion}`;
+  const deviceOsVersion = device.iosVersion?.trim();
+  if (minimumOsVersion && !deviceOsVersion) return `device iOS version is unknown; cannot verify minimum iOS ${minimumOsVersion}`;
+  if (minimumOsVersion && deviceOsVersion && compareVersions(deviceOsVersion, minimumOsVersion) < 0) {
+    return `device is running iOS ${deviceOsVersion}; this build requires iOS ${minimumOsVersion}`;
   }
 
   const healthBlocker = state.health
