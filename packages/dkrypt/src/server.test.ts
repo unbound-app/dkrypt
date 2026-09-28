@@ -2140,7 +2140,7 @@ test('Fastify serves browser identity assets from the public root', async () => 
   }
 });
 
-test('Scalar API reference renders with a per-response nonce and allows only same-origin framing', async () => {
+test('Scalar API reference renders with a per-response nonce and cannot be framed', async () => {
   const server = await buildServer();
 
   try {
@@ -2155,8 +2155,8 @@ test('Scalar API reference renders with a per-response nonce and allows only sam
     expect(nonce).toBeTruthy();
     expect(scriptTags.length).toBeGreaterThan(1);
     expect(scriptTags.every((tag) => tag.includes(`nonce="${nonce}"`))).toBe(true);
-    expect(policy).toContain("frame-ancestors 'self'");
-    expect(policy).not.toContain("frame-ancestors 'none'");
+    expect(policy).toContain("frame-ancestors 'none'");
+    expect(policy).not.toContain("frame-ancestors 'self'");
     expect(dashboard.headers['content-security-policy']).toContain("frame-ancestors 'none'");
     expect(policy).toContain(`script-src 'self' 'nonce-${nonce}'`);
     expect(policy).not.toContain("script-src 'self' 'unsafe-inline'");

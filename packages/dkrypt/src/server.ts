@@ -232,7 +232,7 @@ export async function buildServer(options: { includePublicRoutes?: boolean } = {
           .replace(/<script\b/gi, `<script nonce="${nonce}"`)
           .replace('</head>', `<meta property="csp-nonce" content="${nonce}" />\n  </head>`);
       }
-      reply.header('Content-Security-Policy', `default-src 'self'; base-uri 'self'; frame-ancestors 'self'; object-src 'none'; img-src 'self' data: https:; style-src 'self'; style-src-elem 'self' 'nonce-${nonce}'; style-src-attr 'unsafe-inline'; script-src 'self' 'nonce-${nonce}'; connect-src 'self'; font-src 'self' data:`);
+      reply.header('Content-Security-Policy', `default-src 'self'; base-uri 'self'; frame-ancestors 'none'; object-src 'none'; img-src 'self' data: https:; style-src 'self'; style-src-elem 'self' 'nonce-${nonce}'; style-src-attr 'unsafe-inline'; script-src 'self' 'nonce-${nonce}'; connect-src 'self'; font-src 'self' data:`);
     } else {
       reply.header('Content-Security-Policy', "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; object-src 'none'; img-src 'self' data: https:; style-src 'self'; style-src-elem 'self'; style-src-attr 'unsafe-inline'; script-src 'self'; connect-src 'self'; font-src 'self' data:");
     }
