@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from urllib.error import HTTPError
+from urllib.parse import SplitResult, urljoin, urlsplit
 from urllib.request import Request, urlopen
 
 ROUTES = (
@@ -30,14 +31,35 @@ class DkryptClient:
 
     def _send(self, method: str, path: str, payload: bytes | None, accept: str) -> bytes:
         headers = {"Accept": accept}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
         if payload is not None:
             headers["Content-Type"] = "application/json"
-        request = Request(self.base_url.rstrip("/") + path, data=payload, headers=headers, method=method.upper())
+        request = Request(self._build_url(path), data=payload, headers=headers, method=method.upper())
+        if self.api_key:
+            request.add_unredirected_header("Authorization", f"Bearer {self.api_key}")
         try:
             with urlopen(request) as response:
                 return response.read()
         except HTTPError as error:
             detail = error.read().decode("utf-8", errors="replace")
             raise RuntimeError(f"dkrypt request failed with HTTP {error.code}: {detail}") from error
+
+    def _build_url(self, path: str) -> str:
+        base_url = self.base_url.rstrip("/") + "/"
+        request_url = urljoin(base_url, path)
+        base = urlsplit(base_url)
+        target = urlsplit(request_url)
+        if (
+            target.scheme.lower() not in ("http", "https")
+            or target.username is not None
+            or target.password is not None
+            or self._origin(base) != self._origin(target)
+        ):
+            raise ValueError("dkrypt requests must use the configured origin")
+        return request_url
+
+    @staticmethod
+    def _origin(url: SplitResult) -> tuple[str, str | None, int]:
+        scheme = url.scheme.lower()
+        default_port = 443 if scheme == "https" else 80
+        port = url.port
+        return scheme, url.hostname, default_port if port is None else port
