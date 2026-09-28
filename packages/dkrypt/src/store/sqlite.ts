@@ -1245,10 +1245,14 @@ function markStateSnapshotInitialized(db: Database): void {
     INSERT INTO metadata (key, value) VALUES ('state_snapshot_initialized', '1')
     ON CONFLICT(key) DO UPDATE SET value = excluded.value
   `).run();
+  db.query('DELETE FROM metadata WHERE key = ?').run('state_snapshot_pending_initialization');
 }
 
-function hasPersistedApplicationData(db: Database): boolean {
-  return [...collectionTables].some((table) => db.query(`SELECT 1 FROM ${table} LIMIT 1`).get() !== null);
+function markStateSnapshotPendingInitialization(db: Database): void {
+  db.query(`
+    INSERT INTO metadata (key, value) VALUES ('state_snapshot_pending_initialization', '1')
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+  `).run();
 }
 
 export class StateDatabase {
@@ -1267,7 +1271,8 @@ export class StateDatabase {
       verifyIntegrity(this.db);
       if (existed) backupBeforeMigrations(this.db, this.path, options.stateDir);
       applyMigrations(this.db, options.migrationDryRun ?? false);
-      if (this.readState({ allowLegacyFallback: true }) !== undefined) markStateSnapshotInitialized(this.db);
+      if (!existed) markStateSnapshotPendingInitialization(this.db);
+      if (this.readState({ legacyMirrorAvailable: true }) !== undefined) markStateSnapshotInitialized(this.db);
     } catch (error) {
       this.db.close();
       throw error;
@@ -1284,12 +1289,14 @@ export class StateDatabase {
     return 'ok';
   }
 
-  readState(options: { allowLegacyFallback?: boolean } = {}): unknown | undefined {
+  readState(options: { legacyMirrorAvailable?: boolean } = {}): unknown | undefined {
     const row = this.db.query('SELECT payload, sha256 FROM state_snapshots WHERE id = 1').get() as StateSnapshotRow | null;
     if (!row) {
       const initialized = this.db.query('SELECT value FROM metadata WHERE key = ?').get('state_snapshot_initialized') as { value?: string } | null;
       if (initialized?.value === '1') throw new Error('SQLite state snapshot is missing after initialization');
-      if (!options.allowLegacyFallback && hasPersistedApplicationData(this.db)) throw new Error('SQLite state snapshot is missing while persisted application data exists');
+      const pending = this.db.query('SELECT value FROM metadata WHERE key = ?').get('state_snapshot_pending_initialization') as { value?: string } | null;
+      if (pending?.value === '1') return undefined;
+      if (!options.legacyMirrorAvailable) throw new Error('SQLite state snapshot is missing and initialization is not pending');
       return undefined;
     }
     if (sha256(row.payload) !== row.sha256) throw new Error('SQLite state snapshot checksum mismatch');
@@ -1373,6 +1380,7 @@ export function openStateCollectionDatabase(options: StateDatabaseOptions, table
     verifyIntegrity(database);
     if (existed) backupBeforeMigrations(database, databasePath, options.stateDir);
     applyMigrations(database, options.migrationDryRun ?? false);
+    if (!existed) markStateSnapshotPendingInitialization(database);
     for (const table of tables) {
       assertCollectionTable(table);
       database.exec(`CREATE TABLE IF NOT EXISTS ${table} (id TEXT PRIMARY KEY NOT NULL, payload TEXT NOT NULL, updated_at INTEGER NOT NULL);`);

@@ -90,6 +90,7 @@ test('SQLite state snapshots survive restart and retain independently owned coll
   const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-sqlite-'));
   try {
     const database = openStateDatabase({ stateDir, filename: 'state.sqlite' });
+    expect(database.readState()).toBeUndefined();
     const state = { version: 16, devices: [{ id: 'device-1', updatedAt: 10 }], projects: [{ id: 'project-1', name: 'Default workspace', memberIds: [], isDefault: true, createdBy: 'system', createdAt: 10, updatedAt: 10 }], settings: { maintenanceMode: false } };
     database.writeState(state);
     database.replaceCollection('jobs', [{ id: 'job-1', payload: { id: 'job-1', status: 'queued' }, updatedAt: 20 }]);
@@ -472,8 +473,8 @@ test('SQLite rejects an unmarked missing snapshot when application data remains'
       database.writeState({ version: 18, devices: [{ id: 'device-1' }], settings: {} });
       database.db.query('DELETE FROM metadata WHERE key = ?').run('state_snapshot_initialized');
       database.db.exec('DELETE FROM state_snapshots WHERE id = 1;');
-      expect(database.readState({ allowLegacyFallback: true })).toBeUndefined();
-      expect(() => database.readState()).toThrow(/persisted application data/i);
+      expect(database.readState({ legacyMirrorAvailable: true })).toBeUndefined();
+      expect(() => database.readState()).toThrow(/state snapshot is missing/i);
     } finally {
       database.close();
     }
@@ -522,6 +523,24 @@ test('SQLite startup preserves an existing database with an unrecognized schema'
       expect(preservedDatabase.query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all()).toEqual([{ name: 'unrelated' }]);
     } finally {
       preservedDatabase.close();
+    }
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test('SQLite refuses to initialize an existing database without a snapshot or legacy mirror', async () => {
+  const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-sqlite-startup-missing-state-'));
+  try {
+    const original = openStateDatabase({ stateDir, filename: 'state.sqlite' });
+    original.db.query('DELETE FROM metadata WHERE key IN (?, ?)').run('state_snapshot_initialized', 'state_snapshot_pending_initialization');
+    original.close();
+
+    const reopened = openStateDatabase({ stateDir, filename: 'state.sqlite' });
+    try {
+      expect(() => reopened.readState()).toThrow(/state snapshot is missing/i);
+    } finally {
+      reopened.close();
     }
   } finally {
     await rm(stateDir, { recursive: true, force: true });
