@@ -1,0 +1,88 @@
+import type { InterfaceLanguage } from './locale';
+
+const englishMessages = {
+  'brand.operationsConsole': 'Operations console',
+  'nav.primary': 'Primary',
+  'nav.workspace': 'Workspace',
+  'nav.home': 'Home',
+  'nav.plans': 'Plans',
+  'nav.apiKeys': 'API Keys',
+  'nav.logs': 'Logs',
+  'nav.insights': 'Insights',
+  'nav.docs': 'Docs',
+  'nav.settings': 'Settings',
+  'appearance.title': 'Appearance',
+  'appearance.theme': 'Theme',
+  'appearance.clickToCycle': 'click to cycle',
+  'appearance.lightTheme': 'Light theme',
+  'appearance.darkTheme': 'Dark theme',
+  'appearance.jobSound': 'Job-completion sound',
+  'appearance.toggleJobSound': 'Toggle job-completion sound',
+  'appearance.soundOn': 'Sound on - click to mute',
+  'appearance.soundOff': 'Sound off - click to enable',
+  'appearance.highContrast': 'High contrast',
+  'appearance.highContrastDescription': 'Stronger text, borders, and focus outlines',
+  'appearance.on': 'On',
+  'appearance.off': 'Off',
+  'appearance.interfaceLanguage': 'Interface language',
+  'appearance.dateNumberFormat': 'Date and number format',
+  'appearance.system': 'Automatic',
+  'appearance.english': 'English',
+  'appearance.german': 'Deutsch',
+  'appearance.accentColor': 'Accent color',
+  'appearance.accentBlue': 'Blue',
+  'appearance.accentTeal': 'Teal',
+  'appearance.accentPurple': 'Purple',
+  'appearance.accentPink': 'Pink',
+  'appearance.accentOrange': 'Orange',
+  'appearance.accentGreen': 'Green',
+} as const;
+
+const germanMessages: Record<keyof typeof englishMessages, string> = {
+  'brand.operationsConsole': 'Betriebskonsole',
+  'nav.primary': 'Hauptnavigation',
+  'nav.workspace': 'Arbeitsbereich',
+  'nav.home': 'Startseite',
+  'nav.plans': 'Tarife',
+  'nav.apiKeys': 'API-Schlüssel',
+  'nav.logs': 'Protokolle',
+  'nav.insights': 'Analysen',
+  'nav.docs': 'Dokumentation',
+  'nav.settings': 'Einstellungen',
+  'appearance.title': 'Darstellung',
+  'appearance.theme': 'Design',
+  'appearance.clickToCycle': 'zum Wechseln anklicken',
+  'appearance.lightTheme': 'Helles Design',
+  'appearance.darkTheme': 'Dunkles Design',
+  'appearance.jobSound': 'Ton bei Jobabschluss',
+  'appearance.toggleJobSound': 'Ton bei Jobabschluss umschalten',
+  'appearance.soundOn': 'Ton an – zum Stummschalten klicken',
+  'appearance.soundOff': 'Ton aus – zum Einschalten klicken',
+  'appearance.highContrast': 'Hoher Kontrast',
+  'appearance.highContrastDescription': 'Deutlichere Texte, Rahmen und Fokusmarkierungen',
+  'appearance.on': 'An',
+  'appearance.off': 'Aus',
+  'appearance.interfaceLanguage': 'Anzeigesprache',
+  'appearance.dateNumberFormat': 'Datums- und Zahlenformat',
+  'appearance.system': 'Automatisch',
+  'appearance.english': 'English',
+  'appearance.german': 'Deutsch',
+  'appearance.accentColor': 'Akzentfarbe',
+  'appearance.accentBlue': 'Blau',
+  'appearance.accentTeal': 'Türkis',
+  'appearance.accentPurple': 'Lila',
+  'appearance.accentPink': 'Pink',
+  'appearance.accentOrange': 'Orange',
+  'appearance.accentGreen': 'Grün',
+};
+
+export type MessageKey = keyof typeof englishMessages;
+
+const messageCatalog: Record<InterfaceLanguage, Record<MessageKey, string>> = {
+  en: englishMessages,
+  de: germanMessages,
+};
+
+export function translateMessage(key: MessageKey, language: InterfaceLanguage): string {
+  return messageCatalog[language][key];
+}

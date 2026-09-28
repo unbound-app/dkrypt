@@ -1,6 +1,6 @@
 import { toast } from 'svelte-sonner';
 import { getQueryParam, setQueryParams } from '#lib/urlState';
-import { normalizeFormattingLocalePreference, type FormattingLocalePreference } from '#lib/locale';
+import { normalizeFormattingLocalePreference, normalizeInterfaceLanguagePreference, type FormattingLocalePreference, type InterfaceLanguagePreference } from '#lib/locale';
 
 export type Theme = 'dark' | 'light';
 export type ThemePref = Theme | 'auto';
@@ -11,6 +11,17 @@ function readStoredFormattingLocale(): FormattingLocalePreference {
 
 export const formattingLocaleState = $state<{ value: FormattingLocalePreference }>({ value: readStoredFormattingLocale() });
 export const systemLocalesState = $state<{ value: string[] }>({ value: [...navigator.languages] });
+
+function readStoredInterfaceLanguage(): InterfaceLanguagePreference {
+  return normalizeInterfaceLanguagePreference(localStorage.getItem('interfaceLanguage'));
+}
+
+export const interfaceLanguageState = $state<{ value: InterfaceLanguagePreference }>({ value: readStoredInterfaceLanguage() });
+
+export function setInterfaceLanguage(preference: InterfaceLanguagePreference): void {
+  interfaceLanguageState.value = preference;
+  localStorage.setItem('interfaceLanguage', preference);
+}
 
 export function setFormattingLocale(preference: FormattingLocalePreference): void {
   formattingLocaleState.value = preference;

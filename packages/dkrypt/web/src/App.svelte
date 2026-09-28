@@ -68,6 +68,7 @@
 		pushAccentPref,
 		pushHighContrastPref,
 		pushFormattingLocale,
+		pushInterfaceLanguage,
 		fetchNotificationPrefs,
 		pushNotificationPrefs,
 		pushSoundPref,
@@ -97,18 +98,22 @@
 		setActiveTab,
 		setHighContrast,
 		setFormattingLocale,
+		setInterfaceLanguage,
 		setSoundEnabled,
 		setTheme,
 		showToast,
 		soundEnabledState,
 		highContrastState,
 		formattingLocaleState,
+		interfaceLanguageState,
+		systemLocalesState,
 		tabState,
 		themePrefState,
 		themeState,
 		type TabId,
 	} from "#lib/ui.svelte";
-	import { isFormattingLocalePreference } from "#lib/locale";
+	import { isFormattingLocalePreference, isInterfaceLanguagePreference, resolveInterfaceLanguage } from "#lib/locale";
+	import { translateMessage, type MessageKey } from "#lib/messages";
 
 	import Docs from "#tabs/Docs.svelte";
 	import Billing from "#tabs/Billing.svelte";
@@ -124,6 +129,18 @@
 	initFormattingLocale();
 	initAccent();
 	initUrlTabSync();
+	const interfaceLanguage = $derived(resolveInterfaceLanguage(interfaceLanguageState.value, systemLocalesState.value));
+	const msg = (key: MessageKey) => translateMessage(key, interfaceLanguage);
+	const themeLabel = $derived(themePrefState.value === "auto" ? msg("appearance.system") : themePrefState.value === "light" ? msg("appearance.lightTheme") : msg("appearance.darkTheme"));
+	const accentMessageKeys: Record<string, MessageKey> = {
+		blue: "appearance.accentBlue",
+		teal: "appearance.accentTeal",
+		purple: "appearance.accentPurple",
+		pink: "appearance.accentPink",
+		orange: "appearance.accentOrange",
+		green: "appearance.accentGreen",
+	};
+	const accentLabel = (id: string) => msg(accentMessageKeys[id] ?? "appearance.accentColor");
 
 	const publicPage = {
 		"/pricing": "pricing",
@@ -358,12 +375,12 @@
 		}
 	}
 
-	const TABS: { id: TabId; label: string; requires?: bigint[] }[] = [
-		{ id: "home", label: "Home" },
-		{ id: "billing", label: "Plans" },
+	const TABS: { id: TabId; label: MessageKey; requires?: bigint[] }[] = [
+		{ id: "home", label: "nav.home" },
+		{ id: "billing", label: "nav.plans" },
 		{
 			id: "keys",
-			label: "API Keys",
+			label: "nav.apiKeys",
 			requires: [
 				PermissionFlag.requestApiKeys,
 				PermissionFlag.createApiKeys,
@@ -371,10 +388,10 @@
 				PermissionFlag.manageApiKeys,
 			],
 		},
-		{ id: "logs", label: "Logs", requires: [PermissionFlag.viewLogs] },
-		{ id: "insights", label: "Insights" },
-		{ id: "docs", label: "Docs" },
-		{ id: "settings", label: "Settings" },
+		{ id: "logs", label: "nav.logs", requires: [PermissionFlag.viewLogs] },
+		{ id: "insights", label: "nav.insights" },
+		{ id: "docs", label: "nav.docs" },
+		{ id: "settings", label: "nav.settings" },
 	];
 
 	const visibleTabs = $derived(
@@ -647,6 +664,12 @@
 		setFormattingLocale(value);
 		void pushFormattingLocale(value);
 	}
+
+	function chooseInterfaceLanguage(value: string): void {
+		if (!isInterfaceLanguagePreference(value)) return;
+		setInterfaceLanguage(value);
+		void pushInterfaceLanguage(value);
+	}
 </script>
 
 <svelte:window onkeydown={onKeydown} onpointerdown={onMobilePointerDown} onpointerup={onMobilePointerUp} />
@@ -683,12 +706,12 @@
 						</div>
 						<div class="min-w-0">
 							<div class="text-sm font-semibold tracking-tight text-sidebar-foreground">dkrypt</div>
-							<div class="truncate text-xs text-sidebar-foreground/60">Operations console</div>
+							<div class="truncate text-xs text-sidebar-foreground/60" lang={interfaceLanguage}>{msg("brand.operationsConsole")}</div>
 						</div>
 					</div>
 				</div>
-				<nav class="flex flex-1 flex-col gap-1 p-4" aria-label="Workspace">
-					<div class="mb-2 px-3 text-[10px] font-semibold tracking-[0.14em] text-sidebar-foreground/65 uppercase">Workspace</div>
+				<nav class="flex flex-1 flex-col gap-1 p-4" aria-label={msg("nav.workspace")} lang={interfaceLanguage}>
+					<div class="mb-2 px-3 text-[10px] font-semibold tracking-[0.14em] text-sidebar-foreground/65 uppercase">{msg("nav.workspace")}</div>
 					{#each visibleTabs as t (t.id)}
 						<Button
 							variant={tabState.active === t.id ? "secondary" : "ghost"}
@@ -697,7 +720,7 @@
 							aria-current={tabState.active === t.id ? "page" : undefined}
 						>
 							<TabIcon id={t.id} class="size-4" />
-							<span>{t.label}</span>
+							<span>{msg(t.label)}</span>
 						</Button>
 					{/each}
 				</nav>
@@ -711,9 +734,9 @@
 				<h1 class="text-[15px] font-semibold tracking-tight">dkrypt</h1>
 			</div>
 			<div class="hidden min-w-0 flex-1 lg:block">
-				<div class="text-[11px] font-medium tracking-[0.14em] text-muted-foreground uppercase">Workspace</div>
+				<div class="text-[11px] font-medium tracking-[0.14em] text-muted-foreground uppercase" lang={interfaceLanguage}>{msg("nav.workspace")}</div>
 				<div class="flex min-w-0 items-center justify-between gap-3">
-					<div class="truncate text-sm font-semibold text-foreground">{visibleTabs.find((t) => t.id === tabState.active)?.label ?? "Workspace"}</div>
+					<div class="truncate text-sm font-semibold text-foreground" lang={interfaceLanguage}>{msg(visibleTabs.find((tab) => tab.id === tabState.active)?.label ?? "nav.workspace")}</div>
 					{#if sessionState.deployment?.ref}
 						<span class="shrink-0 font-mono text-[10px] text-muted" title={sessionState.deployment.ref}>Build {sessionState.deployment.ref.slice(0, 7)}</span>
 					{/if}
@@ -767,8 +790,9 @@
 					variant="secondary"
 					size="icon"
 					onclick={cycleTheme}
-					aria-label="Theme: {themePrefState.value} (click to cycle)"
-					title="Theme: {themePrefState.value} (click to cycle)"
+					lang={interfaceLanguage}
+					aria-label="{msg('appearance.theme')}: {themeLabel} ({msg('appearance.clickToCycle')})"
+					title="{msg('appearance.theme')}: {themeLabel} ({msg('appearance.clickToCycle')})"
 				>
 					{#if themePrefState.value === "auto"}
 						<Monitor class="h-4 w-4" />
@@ -974,21 +998,16 @@
 								</div>
 							{/if}
 
-							<div class="border-border mb-3 border-t pt-3">
-								<div
-									class="mb-1.5 flex items-center justify-between gap-3"
-								>
-									<div class="text-[13px]">
-										Job-completion sound
-									</div>
+							<div class="border-border mb-3 border-t pt-3" lang={interfaceLanguage}>
+								<div class="mb-2 text-[11px] font-semibold text-muted">{msg("appearance.title")}</div>
+								<div class="mb-1.5 flex items-center justify-between gap-3">
+									<div class="text-[13px]">{msg("appearance.jobSound")}</div>
 									<Button
 										variant="secondary"
 										size="icon"
 										onclick={toggleSound}
-										aria-label="Toggle job-completion sound"
-										title={soundEnabledState.value
-											? "Sound on - click to mute"
-											: "Sound off - click to enable"}
+										aria-label={msg("appearance.toggleJobSound")}
+										title={soundEnabledState.value ? msg("appearance.soundOn") : msg("appearance.soundOff")}
 									>
 										{#if soundEnabledState.value}
 											<Volume2 class="h-4 w-4" />
@@ -999,38 +1018,51 @@
 								</div>
 								<div class="mb-2 flex items-center justify-between gap-3">
 									<div>
-										<div class="text-[13px]">High contrast</div>
-										<div class="text-[11px] text-muted">Stronger text, borders, and focus outlines</div>
+										<div class="text-[13px]">{msg("appearance.highContrast")}</div>
+										<div class="text-[11px] text-muted">{msg("appearance.highContrastDescription")}</div>
 									</div>
 									<Button
 										variant="secondary"
 										size="sm"
 										onclick={toggleHighContrast}
-										aria-label="High contrast mode"
+										aria-label={msg("appearance.highContrast")}
 										aria-pressed={highContrastState.value}
 									>
-										{highContrastState.value ? "On" : "Off"}
+										{highContrastState.value ? msg("appearance.on") : msg("appearance.off")}
 									</Button>
 								</div>
 								<div class="mb-3 flex items-center justify-between gap-3">
-									<label for="formatting-locale" class="text-[13px]">Date and number format</label>
+									<label for="interface-language" class="text-[13px]">{msg("appearance.interfaceLanguage")}</label>
+									<select
+										id="interface-language"
+										class="rounded-md border border-border bg-background px-2 py-1 text-xs text-text focus-visible:ring-2 focus-visible:ring-accent"
+										value={interfaceLanguageState.value}
+										onchange={(event) => chooseInterfaceLanguage(event.currentTarget.value)}
+										aria-label={msg("appearance.interfaceLanguage")}
+									>
+										<option value="system">{msg("appearance.system")}</option>
+										<option value="en">{msg("appearance.english")}</option>
+										<option value="de">{msg("appearance.german")}</option>
+									</select>
+								</div>
+								<div class="mb-3 flex items-center justify-between gap-3">
+									<label for="formatting-locale" class="text-[13px]">{msg("appearance.dateNumberFormat")}</label>
 									<select
 										id="formatting-locale"
 										class="rounded-md border border-border bg-background px-2 py-1 text-xs text-text focus-visible:ring-2 focus-visible:ring-accent"
 										value={formattingLocaleState.value}
 										onchange={(event) => chooseFormattingLocale(event.currentTarget.value)}
-										aria-label="Date and number format"
+										aria-label={msg("appearance.dateNumberFormat")}
 									>
-										<option value="system">Automatic</option>
-										<option value="en">English</option>
-										<option value="de">Deutsch</option>
+										<option value="system">{msg("appearance.system")}</option>
+										<option value="en">{msg("appearance.english")}</option>
+										<option value="de">{msg("appearance.german")}</option>
 									</select>
 								</div>
-								<div class="mb-1.5 text-[11px] text-muted">
-									Accent color
-								</div>
+								<div class="mb-1.5 text-[11px] text-muted">{msg("appearance.accentColor")}</div>
 								<div class="flex flex-wrap gap-1.5">
 									{#each ACCENT_PRESETS as preset (preset.id)}
+										{@const label = `${msg("appearance.accentColor")}: ${accentLabel(preset.id)}`}
 										<Button
 											variant="ghost"
 											size="icon"
@@ -1045,8 +1077,8 @@
 											onclick={() =>
 												chooseAccent(preset.id)}
 											aria-pressed={accentState.value === preset.id}
-											aria-label="Accent: {preset.label}"
-											title={preset.label}
+											aria-label={label}
+											title={label}
 										></Button>
 									{/each}
 								</div>
@@ -1283,7 +1315,7 @@
 			</div>
 			<StatusPanel />
 		</aside>
-		<nav class="mobile-primary-nav fixed z-40 flex overflow-x-auto border border-border bg-card p-1 shadow-lg lg:hidden" aria-label="Primary">
+		<nav class="mobile-primary-nav fixed z-40 flex overflow-x-auto border border-border bg-card p-1 shadow-lg lg:hidden" aria-label={msg("nav.primary")} lang={interfaceLanguage}>
 			{#each visibleTabs as t (t.id)}
 				<Button
 					variant={tabState.active === t.id ? "secondary" : "ghost"}
@@ -1295,7 +1327,7 @@
 					aria-current={tabState.active === t.id ? "page" : undefined}
 				>
 						<TabIcon id={t.id} class="size-5" />
-					{t.label}
+					{msg(t.label)}
 				</Button>
 			{/each}
 		</nav>

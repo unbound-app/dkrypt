@@ -1,5 +1,12 @@
 import { describe, expect, test } from 'bun:test';
-import { isFormattingLocalePreference, normalizeFormattingLocalePreference, resolveLocaleTag } from './locale';
+import {
+  isFormattingLocalePreference,
+  isInterfaceLanguagePreference,
+  normalizeFormattingLocalePreference,
+  normalizeInterfaceLanguagePreference,
+  resolveInterfaceLanguage,
+  resolveLocaleTag,
+} from './locale';
 
 describe('locale preferences', () => {
   test('accepts only system, English, and German preferences', () => {
@@ -20,5 +27,16 @@ describe('locale preferences', () => {
     expect(resolveLocaleTag('system', ['de-DE', 'en-US'])).toBe('de-DE');
     expect(resolveLocaleTag('system', ['invalid_locale', 'en-GB'])).toBe('en-GB');
     expect(resolveLocaleTag('system', [])).toBe('en');
+  });
+
+  test('resolves interface language independently from date and number formatting', () => {
+    expect(isInterfaceLanguagePreference('de')).toBe(true);
+    expect(isInterfaceLanguagePreference('fr')).toBe(false);
+    expect(normalizeInterfaceLanguagePreference('en')).toBe('en');
+    expect(normalizeInterfaceLanguagePreference('fr')).toBe('system');
+    expect(resolveInterfaceLanguage('de', ['en-US'])).toBe('de');
+    expect(resolveInterfaceLanguage('en', ['de-DE'])).toBe('en');
+    expect(resolveInterfaceLanguage('system', ['de-DE', 'en-US'])).toBe('de');
+    expect(resolveInterfaceLanguage('system', ['fr-FR'])).toBe('en');
   });
 });

@@ -480,6 +480,7 @@ export interface TestFlightSubscription {
 
 export interface UserPrefs {
   formattingLocale?: 'system' | 'en' | 'de';
+  interfaceLanguage?: 'system' | 'en' | 'de';
   theme?: 'dark' | 'light' | 'auto';
   density?: 'comfortable' | 'compact';
   accent?: string;
