@@ -1,10 +1,90 @@
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { Database } from 'bun:sqlite';
 import { expect, test } from 'bun:test';
 import { createDeviceHistoryRepository } from '#store/deviceHistoryRepository.js';
 import { createDeviceHealthRepository } from '#store/deviceHealthRepository.js';
 import { openStateCollectionDatabase, openStateDatabase, readStateCollection, replaceStateCollections } from '#store/sqlite.js';
+
+function rewindToSchemaVersion16(database: ReturnType<typeof openStateDatabase>): void {
+  database.db.exec(`
+    DROP INDEX billing_events_by_provider_event;
+    DROP INDEX billing_events_by_processed_at;
+    DROP TABLE billing_customers;
+    DROP TABLE billing_subscriptions;
+    DROP TABLE billing_checkouts;
+    DROP TABLE billing_charges;
+    DROP TABLE billing_entitlement_history;
+    ALTER TABLE billing_events DROP COLUMN provider;
+    ALTER TABLE billing_events DROP COLUMN event_id;
+    ALTER TABLE billing_events DROP COLUMN occurred_at;
+    ALTER TABLE billing_events DROP COLUMN processed_at;
+    DELETE FROM schema_migrations WHERE version = 17;
+  `);
+}
+
+function expectVersion16AfterMigrationRollback(database: Database): void {
+  const tables = database.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('billing_customers', 'billing_subscriptions', 'billing_checkouts', 'billing_charges', 'billing_entitlement_history') ORDER BY name;").all();
+  expect(tables).toEqual([]);
+  expect(database.query('SELECT MAX(version) AS version FROM schema_migrations').get()).toEqual({ version: 16 });
+  expect(database.query('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' });
+}
+
+async function killChildAtOutput(child: ChildProcess, marker: string): Promise<void> {
+  child.stdout?.setEncoding('utf8');
+  child.stderr?.setEncoding('utf8');
+  let output = '';
+  let errorOutput = '';
+  child.stderr?.on('data', (chunk: string) => { errorOutput += chunk; });
+
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const timeout = setTimeout(() => finish(new Error(`child did not reach ${marker}: ${output}${errorOutput}`)), 10_000);
+    const onData = (chunk: string) => {
+      output += chunk;
+      if (output.includes(marker)) finish();
+    };
+    const onError = (error: Error) => finish(error);
+    const onExit = (code: number | null, signal: NodeJS.Signals | null) => finish(new Error(`child exited before reaching ${marker}: code=${code} signal=${signal} ${errorOutput}`));
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      child.stdout?.off('data', onData);
+      child.off('error', onError);
+      child.off('exit', onExit);
+      if (error) reject(error);
+      else resolve();
+    };
+    child.stdout?.on('data', onData);
+    child.once('error', onError);
+    child.once('exit', onExit);
+  });
+
+  const childExit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error(`child did not stop after SIGKILL at ${marker}`)), 5_000);
+    child.once('exit', (code, signal) => {
+      clearTimeout(timeout);
+      resolve({ code, signal });
+    });
+    child.once('error', (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+  });
+
+  if (!child.kill('SIGKILL')) throw new Error(`could not send SIGKILL to child at ${marker}`);
+  expect(await childExit).toEqual({ code: null, signal: 'SIGKILL' });
+}
+
+async function stopChild(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  const childExit = new Promise<void>((resolve) => child.once('exit', () => resolve()));
+  child.kill('SIGKILL');
+  await childExit;
+}
 
 test('SQLite state snapshots survive restart and retain independently owned collections', async () => {
   const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-sqlite-'));
@@ -158,6 +238,130 @@ test('SQLite collection updates commit together and roll back together on failur
   }
 });
 
+test('SQLite rolls back schema changes when a migration fails partway through', async () => {
+  const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-sqlite-interrupted-migration-'));
+  const databasePath = path.join(stateDir, 'state.sqlite');
+  const database = openStateDatabase({ stateDir, filename: 'state.sqlite' });
+  let databaseOpen = true;
+
+  try {
+    rewindToSchemaVersion16(database);
+    database.db.exec('ALTER TABLE billing_events ADD COLUMN provider TEXT;');
+    database.close();
+    databaseOpen = false;
+
+    expect(() => openStateDatabase({ stateDir, filename: 'state.sqlite' })).toThrow(/duplicate column name: provider/i);
+
+    const failedMigration = new Database(databasePath, { create: false, strict: true });
+    try {
+      expectVersion16AfterMigrationRollback(failedMigration);
+    } finally {
+      failedMigration.close();
+    }
+  } finally {
+    if (databaseOpen) database.close();
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test('SQLite rolls back an in-progress migration after abrupt process termination', async () => {
+  if (process.platform === 'win32') return;
+
+  const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-sqlite-killed-migration-'));
+  try {
+    const databasePath = path.join(stateDir, 'state.sqlite');
+    const database = openStateDatabase({ stateDir, filename: 'state.sqlite' });
+    try {
+      rewindToSchemaVersion16(database);
+    } finally {
+      database.close();
+    }
+
+    const sqliteModulePath = path.join(process.cwd(), 'src/store/sqlite.ts');
+    const childSource = [
+      "const { Database } = require('bun:sqlite')",
+      'const originalExec = Database.prototype.exec',
+      'Database.prototype.exec = function(sql, ...args) {',
+      '  const result = originalExec.call(this, sql, ...args)',
+      "  if (typeof sql === 'string' && sql.includes('CREATE TABLE IF NOT EXISTS billing_customers')) {",
+      "    process.stdout.write('migration-uncommitted\\n')",
+      '    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 30000)',
+      '  }',
+      '  return result',
+      '}',
+      `require(${JSON.stringify(sqliteModulePath)}).openStateDatabase({ stateDir: ${JSON.stringify(stateDir)}, filename: 'state.sqlite' })`,
+    ].join('\n');
+    const child = spawn(process.execPath, ['-e', childSource], { cwd: process.cwd(), stdio: ['ignore', 'pipe', 'pipe'] });
+
+    try {
+      await killChildAtOutput(child, 'migration-uncommitted');
+
+      const interruptedMigration = new Database(databasePath, { create: false, strict: true });
+      try {
+        expectVersion16AfterMigrationRollback(interruptedMigration);
+      } finally {
+        interruptedMigration.close();
+      }
+    } finally {
+      await stopChild(child);
+    }
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test('SQLite preserves the last committed state after abrupt process termination', async () => {
+  if (process.platform === 'win32') return;
+
+  const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-sqlite-killed-state-write-'));
+  let child: ChildProcess | undefined;
+  try {
+    const database = openStateDatabase({ stateDir, filename: 'state.sqlite' });
+    const committedState = { version: 18, devices: [{ id: 'device-1' }], settings: { maintenanceMode: false } };
+    try {
+      database.writeState(committedState, undefined, [{
+        table: 'jobs',
+        rows: [{ id: 'job-1', payload: { id: 'job-1', status: 'queued' }, updatedAt: 10 }],
+      }]);
+    } finally {
+      database.close();
+    }
+
+    const sqliteModulePath = path.join(process.cwd(), 'src/store/sqlite.ts');
+    const childSource = [
+      "const { Database } = require('bun:sqlite')",
+      'const originalExec = Database.prototype.exec',
+      'Database.prototype.exec = function(sql, ...args) {',
+      "  if (typeof sql === 'string' && sql.trim() === 'COMMIT;') {",
+      "    const snapshot = this.query('SELECT payload FROM state_snapshots WHERE id = 1').get()",
+      "    if (snapshot?.payload.includes('state-crash-target')) {",
+      "      process.stdout.write('state-uncommitted\\n')",
+      '      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 30000)',
+      '    }',
+      '  }',
+      '  return originalExec.call(this, sql, ...args)',
+      '}',
+      `const database = require(${JSON.stringify(sqliteModulePath)}).openStateDatabase({ stateDir: ${JSON.stringify(stateDir)}, filename: 'state.sqlite' })`,
+      "database.writeState({ version: 18, devices: [{ id: 'device-1' }], settings: { maintenanceMode: true }, marker: 'state-crash-target' }, undefined, [{ table: 'jobs', rows: [{ id: 'job-1', payload: { id: 'job-1', status: 'done' }, updatedAt: 20 }] }])",
+    ].join('\n');
+    child = spawn(process.execPath, ['-e', childSource], { cwd: process.cwd(), stdio: ['ignore', 'pipe', 'pipe'] });
+
+    await killChildAtOutput(child, 'state-uncommitted');
+
+    const recovered = openStateDatabase({ stateDir, filename: 'state.sqlite' });
+    try {
+      expect(recovered.readState()).toEqual(committedState);
+      expect(recovered.readCollection('jobs')).toEqual([{ id: 'job-1', status: 'queued' }]);
+      expect(recovered.integrityStatus()).toBe('ok');
+    } finally {
+      recovered.close();
+    }
+  } finally {
+    if (child) await stopChild(child);
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
 test('SQLite backup is atomic and can be reopened with its checksum intact', async () => {
   const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-sqlite-backup-'));
   try {
@@ -184,6 +388,19 @@ test('SQLite rejects a tampered state snapshot instead of returning empty state'
     database.db.query("UPDATE state_snapshots SET payload = '{\"version\":0}' WHERE id = 1").run();
     expect(() => database.readState()).toThrow('checksum mismatch');
     database.close();
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test('SQLite startup fails closed without replacing a corrupt database', async () => {
+  const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-sqlite-startup-corrupt-'));
+  const databasePath = path.join(stateDir, 'state.sqlite');
+  const contents = 'not a SQLite database';
+  try {
+    await writeFile(databasePath, contents);
+    expect(() => openStateDatabase({ stateDir, filename: 'state.sqlite' })).toThrow();
+    expect(await readFile(databasePath, 'utf8')).toBe(contents);
   } finally {
     await rm(stateDir, { recursive: true, force: true });
   }

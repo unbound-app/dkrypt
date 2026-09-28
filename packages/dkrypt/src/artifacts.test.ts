@@ -1,11 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import { existsSync } from 'node:fs';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { config } from '#config.js';
 import { withCorrelation } from '#correlation.js';
 import { createProject, exportBackup, importBackup } from '#store/state.js';
+import { openStateCollectionDatabase } from '#store/sqlite.js';
 import { flushTelemetry, startSpan } from '#telemetry.js';
 import {
   artifactFileAvailable,
@@ -47,6 +48,50 @@ describe('persistent artifact store', () => {
     const before = artifact.accessCount;
     await touchArtifact(artifact);
     expect(getArtifactById(artifact.id)?.accessCount).toBe(before + 1);
+  });
+
+  test('failed artifact metadata persistence leaves no orphan IPA and preserves prior artifacts', async () => {
+    const previousQuota = config.artifactMaxBytes;
+    const database = openStateCollectionDatabase({
+      stateDir: config.stateDir,
+      filename: config.stateDatabaseFile,
+      busyTimeoutMs: config.stateDbBusyTimeoutMs,
+    }, ['artifacts']);
+    const trigger = `fail_artifact_promotion_${crypto.randomUUID().replaceAll('-', '')}`;
+    let stagingPath: string | undefined;
+
+    try {
+      config.artifactMaxBytes = Number.MAX_SAFE_INTEGER;
+      const existing = await promoteArtifact({
+        key: `test-preserve-on-failure-${crypto.randomUUID()}`,
+        bundleId: 'com.example.preserve-on-failure',
+        channel: 'appstore',
+        stagingPath: await stagingFile('existing artifact'),
+      });
+      const priorArtifacts = listArtifacts({ limit: 200 }).artifacts;
+      const priorFileNames = (await readdir(config.artifactDir)).filter((name) => name.endsWith('.ipa')).sort();
+      const priorStats = getArtifactStorageStats();
+      stagingPath = await stagingFile('new artifact');
+
+      database.exec(`CREATE TRIGGER ${trigger} BEFORE INSERT ON artifacts BEGIN SELECT RAISE(ABORT, 'forced artifact metadata failure'); END;`);
+
+      await expect(promoteArtifact({
+        key: `test-failed-metadata-${crypto.randomUUID()}`,
+        bundleId: 'com.example.failed-metadata',
+        channel: 'appstore',
+        stagingPath,
+      })).rejects.toThrow('forced artifact metadata failure');
+
+      expect(listArtifacts({ limit: 200 }).artifacts.map((artifact) => artifact.id).sort()).toEqual(priorArtifacts.map((artifact) => artifact.id).sort());
+      expect(getArtifactStorageStats()).toMatchObject(priorStats);
+      expect(artifactFileAvailable(getArtifactById(existing.id))).toBe(true);
+      expect((await readdir(config.artifactDir)).filter((name) => name.endsWith('.ipa')).sort()).toEqual(priorFileNames);
+    } finally {
+      database.exec(`DROP TRIGGER IF EXISTS ${trigger};`);
+      database.close();
+      config.artifactMaxBytes = previousQuota;
+      if (stagingPath) await rm(path.dirname(stagingPath), { recursive: true, force: true });
+    }
   });
 
   test('links artifact promotion telemetry to the initiating request trace', async () => {
