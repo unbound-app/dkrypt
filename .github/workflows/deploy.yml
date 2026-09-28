@@ -162,7 +162,24 @@ jobs:
           if [ -n "${DEVICE_SSH_KEY_HOST_PATH:-}" ] && { [ ! -r "$DEVICE_SSH_KEY_HOST_PATH" ] || [ ! -s "$DEVICE_SSH_KEY_HOST_PATH" ]; }; then
             unset DEVICE_SSH_KEY_HOST_PATH
           fi
-          if docker container inspect dkrypt >/dev/null 2>&1; then
+          if [ -z "${DEVICE_SSH_KEY_HOST_PATH:-}" ]; then
+            configured_key_path=$(awk '
+              /^[[:space:]]*DEVICE_SSH_KEY_HOST_PATH=/ {
+                sub(/^[[:space:]]*DEVICE_SSH_KEY_HOST_PATH=/, "")
+                sub(/[[:space:]]*$/, "")
+                if (substr($0, 1, 1) == "\"" || substr($0, 1, 1) == "\047") {
+                  quote = substr($0, 1, 1)
+                  if (substr($0, length($0), 1) == quote) $0 = substr($0, 2, length($0) - 2)
+                }
+                configured = $0
+              }
+              END { print configured }
+            ' "$RUNTIME_DIR/.env")
+            if [ -n "$configured_key_path" ] && [ -r "$configured_key_path" ] && [ -s "$configured_key_path" ]; then
+              DEVICE_SSH_KEY_HOST_PATH="$configured_key_path"
+            fi
+          fi
+          if [ -z "${DEVICE_SSH_KEY_HOST_PATH:-}" ] && docker container inspect dkrypt >/dev/null 2>&1; then
             existing_key_path=$(docker inspect --format '{{range .Mounts}}{{if or (eq .Destination "/device-ssh-key-source") (eq .Destination "/run/dkrypt/host-ssh-key") (eq .Destination "/root/.ssh/id_ed25519")}}{{.Source}}{{end}}{{end}}' dkrypt 2>/dev/null || true)
             if [ -n "$existing_key_path" ] && [ -r "$existing_key_path" ] && [ -s "$existing_key_path" ]; then
               DEVICE_SSH_KEY_HOST_PATH="$existing_key_path"

@@ -32,6 +32,9 @@ test('USB bridge startup does not require an SSH key', () => {
   expect(dockerfile).toContain('RUN touch /device-ssh-key-source && chmod 0600 /device-ssh-key-source');
   expect(compose).toContain('${DEVICE_SSH_KEY_HOST_PATH:-/dev/null}:/device-ssh-key-source:ro');
   expect(deploymentWorkflow).toContain('${DEVICE_SSH_KEY_HOST_PATH:-/dev/null}:/device-ssh-key-source:ro');
+  expect(deploymentWorkflow).toContain('configured_key_path=$(awk');
+  expect(deploymentWorkflow).toContain('DEVICE_SSH_KEY_HOST_PATH="$configured_key_path"');
+  expect(deploymentWorkflow.indexOf('configured_key_path=$(awk')).toBeLessThan(deploymentWorkflow.indexOf('existing_key_path=$(docker inspect'));
   expect(deploymentWorkflow).toContain('DEVICE_SSH_KEY_HOST_PATH=/dev/null');
   expect(deploymentWorkflow).toContain('if (!key.isFile() || key.size === 0 || key.uid !== 0 || key.gid !== 10001 || (key.mode & 0o777) !== 0o440)');
   expect(deploymentWorkflow).toContain('let sshKeyAvailable = false;');
