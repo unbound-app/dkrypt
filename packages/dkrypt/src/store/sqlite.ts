@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { chmodSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { Database } from 'bun:sqlite';
 
@@ -1214,6 +1214,39 @@ function verifyIntegrity(db: Database): void {
   if (row?.integrity_check !== 'ok') throw new Error(`SQLite integrity check failed: ${row?.integrity_check ?? 'unknown result'}`);
 }
 
+function verifyExistingDatabaseSchema(db: Database): void {
+  const tableNames = new Set((db.query("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map((table) => table.name));
+  const hasMigrationLedger = tableNames.has('schema_migrations');
+  const hasStateSnapshots = tableNames.has('state_snapshots');
+  const migrationCount = hasMigrationLedger
+    ? (db.query('SELECT COUNT(*) AS count FROM schema_migrations').get() as { count?: number } | null)?.count ?? 0
+    : 0;
+
+  if (migrationCount > 0) {
+    if (hasStateSnapshots) return;
+    throw new Error('SQLite database has no recognized schema');
+  }
+
+  const legacyTables = [...tableNames].filter((table) => collectionTables.has(table));
+  if (legacyTables.length === 0) throw new Error('SQLite database has no recognized schema');
+
+  for (const table of legacyTables) {
+    const columns = new Set((db.query(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((column) => column.name));
+    if (!columns.has('id') || !columns.has('payload') || !columns.has('updated_at')) throw new Error('SQLite database has no recognized schema');
+  }
+}
+
+function rejectEmptyExistingDatabase(databasePath: string, existed: boolean): void {
+  if (existed && statSync(databasePath).size === 0) throw new Error('SQLite database has no recognized schema');
+}
+
+function markStateSnapshotInitialized(db: Database): void {
+  db.query(`
+    INSERT INTO metadata (key, value) VALUES ('state_snapshot_initialized', '1')
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+  `).run();
+}
+
 export class StateDatabase {
   readonly db: Database;
   readonly path: string;
@@ -1222,12 +1255,15 @@ export class StateDatabase {
     mkdirSync(options.stateDir, { recursive: true });
     this.path = path.join(options.stateDir, options.filename ?? 'dkrypt.sqlite');
     const existed = existsSync(this.path);
+    rejectEmptyExistingDatabase(this.path, existed);
     this.db = new Database(this.path, { create: true, strict: true });
     try {
+      if (existed) verifyExistingDatabaseSchema(this.db);
       applyPragmas(this.db, options.busyTimeoutMs ?? 5000);
       verifyIntegrity(this.db);
       if (existed) backupBeforeMigrations(this.db, this.path, options.stateDir);
       applyMigrations(this.db, options.migrationDryRun ?? false);
+      if (this.readState() !== undefined) markStateSnapshotInitialized(this.db);
     } catch (error) {
       this.db.close();
       throw error;
@@ -1246,7 +1282,11 @@ export class StateDatabase {
 
   readState(): unknown | undefined {
     const row = this.db.query('SELECT payload, sha256 FROM state_snapshots WHERE id = 1').get() as StateSnapshotRow | null;
-    if (!row) return undefined;
+    if (!row) {
+      const initialized = this.db.query('SELECT value FROM metadata WHERE key = ?').get('state_snapshot_initialized') as { value?: string } | null;
+      if (initialized?.value === '1') throw new Error('SQLite state snapshot is missing after initialization');
+      return undefined;
+    }
     if (sha256(row.payload) !== row.sha256) throw new Error('SQLite state snapshot checksum mismatch');
     return JSON.parse(row.payload) as unknown;
   }
@@ -1269,6 +1309,7 @@ export class StateDatabase {
         VALUES (1, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET state_version = excluded.state_version, payload = excluded.payload, sha256 = excluded.sha256, updated_at = excluded.updated_at
       `).run(stateVersion, payload, checksum, Date.now());
+      markStateSnapshotInitialized(this.db);
       for (const table of stateOwnedDomainTables) {
         replaceCollectionRows(this.db, { table, rows: rows[table] });
       }
@@ -1319,8 +1360,10 @@ export function openStateCollectionDatabase(options: StateDatabaseOptions, table
   mkdirSync(options.stateDir, { recursive: true });
   const databasePath = path.join(options.stateDir, options.filename ?? 'dkrypt.sqlite');
   const existed = existsSync(databasePath);
+  rejectEmptyExistingDatabase(databasePath, existed);
   const database = new Database(databasePath, { create: true, strict: true });
   try {
+    if (existed) verifyExistingDatabaseSchema(database);
     applyPragmas(database, options.busyTimeoutMs ?? 5000);
     verifyIntegrity(database);
     if (existed) backupBeforeMigrations(database, databasePath, options.stateDir);

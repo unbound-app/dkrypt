@@ -428,6 +428,42 @@ test('SQLite rejects a tampered state snapshot instead of returning empty state'
   }
 });
 
+test('SQLite rejects a missing state snapshot after a committed state write', async () => {
+  const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-sqlite-missing-snapshot-'));
+  try {
+    const database = openStateDatabase({ stateDir, filename: 'state.sqlite' });
+    try {
+      database.writeState({ version: 18, devices: [{ id: 'device-1' }], settings: {} });
+      database.db.exec('DELETE FROM state_snapshots WHERE id = 1;');
+      expect(() => database.readState()).toThrow(/state snapshot is missing/i);
+    } finally {
+      database.close();
+    }
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test('SQLite backfills the state snapshot marker before protecting an upgraded database', async () => {
+  const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-sqlite-snapshot-marker-upgrade-'));
+  try {
+    const original = openStateDatabase({ stateDir, filename: 'state.sqlite' });
+    original.writeState({ version: 18, devices: [{ id: 'device-1' }], settings: {} });
+    original.db.query('DELETE FROM metadata WHERE key = ?').run('state_snapshot_initialized');
+    original.close();
+
+    const upgraded = openStateDatabase({ stateDir, filename: 'state.sqlite' });
+    try {
+      upgraded.db.exec('DELETE FROM state_snapshots WHERE id = 1;');
+      expect(() => upgraded.readState()).toThrow(/state snapshot is missing/i);
+    } finally {
+      upgraded.close();
+    }
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
 test('SQLite startup fails closed without replacing a corrupt database', async () => {
   const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-sqlite-startup-corrupt-'));
   const databasePath = path.join(stateDir, 'state.sqlite');
@@ -436,6 +472,39 @@ test('SQLite startup fails closed without replacing a corrupt database', async (
     await writeFile(databasePath, contents);
     expect(() => openStateDatabase({ stateDir, filename: 'state.sqlite' })).toThrow();
     expect(await readFile(databasePath, 'utf8')).toBe(contents);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test('SQLite startup fails closed when an existing database has no schema', async () => {
+  const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-sqlite-startup-empty-'));
+  const databasePath = path.join(stateDir, 'state.sqlite');
+  try {
+    await writeFile(databasePath, '');
+    expect(() => openStateDatabase({ stateDir, filename: 'state.sqlite' })).toThrow(/recognized schema/i);
+    expect(await readFile(databasePath, 'utf8')).toBe('');
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test('SQLite startup preserves an existing database with an unrecognized schema', async () => {
+  const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-sqlite-startup-unrecognized-'));
+  const databasePath = path.join(stateDir, 'state.sqlite');
+  try {
+    const unrelatedDatabase = new Database(databasePath, { create: true, strict: true });
+    unrelatedDatabase.exec('CREATE TABLE unrelated (id INTEGER PRIMARY KEY);');
+    unrelatedDatabase.close();
+
+    expect(() => openStateDatabase({ stateDir, filename: 'state.sqlite' })).toThrow(/recognized schema/i);
+
+    const preservedDatabase = new Database(databasePath, { create: false, strict: true });
+    try {
+      expect(preservedDatabase.query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all()).toEqual([{ name: 'unrelated' }]);
+    } finally {
+      preservedDatabase.close();
+    }
   } finally {
     await rm(stateDir, { recursive: true, force: true });
   }
