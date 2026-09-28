@@ -15,6 +15,44 @@ describe('getDeviceReadiness', () => {
     expect(getDeviceReadiness(health({ testFlightBridgeReachable: false })).state).toBe('blocked');
   });
 
+  test('uses source-specific subsystem and heartbeat health', () => {
+    const subsystems = {
+      usb: 'ready',
+      mux: 'ready',
+      agent: 'ready',
+      appStore: 'offline',
+      testFlight: 'ready',
+      sshTunnel: 'ready',
+      storage: 'ready',
+      battery: 'ready',
+      thermal: 'ready',
+    } as const;
+    const appStoreUnavailable = health({ subsystems });
+
+    expect(getDeviceInstallBlocker(appStoreUnavailable, undefined, 'appstore')).toBe('App Store subsystem is offline');
+    expect(getDeviceInstallBlocker(appStoreUnavailable, undefined, 'testflight')).toBeUndefined();
+    expect(getDeviceReadiness(appStoreUnavailable, 'appstore').state).toBe('blocked');
+    expect(getDeviceReadiness(appStoreUnavailable, 'testflight').state).toBe('ready');
+
+    const testFlightUnavailable = health({
+      subsystems: { ...subsystems, appStore: 'ready', testFlight: 'unknown' },
+      bridgeHeartbeats: { testflight: { at: 0 } },
+    });
+
+    expect(getDeviceInstallBlocker(testFlightUnavailable, undefined, 'appstore')).toBeUndefined();
+    expect(getDeviceInstallBlocker(testFlightUnavailable, undefined, 'testflight')).toBe('TestFlight bridge heartbeat is stale');
+    expect(getDeviceReadiness(testFlightUnavailable, 'appstore').state).toBe('ready');
+    expect(getDeviceReadiness(testFlightUnavailable, 'testflight').state).toBe('blocked');
+
+    const appStoreHeartbeatUnavailable = health({ bridgeHeartbeats: { appstore: { at: 0 } } });
+    expect(getDeviceInstallBlocker(appStoreHeartbeatUnavailable, undefined, 'appstore')).toBe('App Store bridge heartbeat is stale');
+    expect(getDeviceInstallBlocker(appStoreHeartbeatUnavailable, undefined, 'testflight')).toBeUndefined();
+
+    const testFlightBridgeUnavailable = health({ testFlightBridgeReachable: false });
+    expect(getDeviceInstallBlocker(testFlightBridgeUnavailable, undefined, 'appstore')).toBe('autoinstall SpringBoard bridge is unresponsive');
+    expect(getDeviceInstallBlocker(testFlightBridgeUnavailable, undefined, 'testflight')).toBe('autoinstall SpringBoard bridge is unresponsive');
+  });
+
   test('defers installs for unsafe battery, thermal, and size-aware storage conditions', () => {
     expect(getDeviceInstallBlocker(health({ batteryPercent: 14, batteryCharging: false }))).toContain('battery');
     expect(getDeviceInstallBlocker(health({ batteryTemperatureC: 45 }))).toContain('temperature');

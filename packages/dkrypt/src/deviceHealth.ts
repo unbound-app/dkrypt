@@ -9,7 +9,8 @@ import { getDiskUsage } from '#util/diskUsage.js';
 import { getCachedDeviceHealth, setCachedDeviceHealth } from '#deviceHealthCache.js';
 import { incrementMetric, observeMetric, setGaugeMetric } from '#metrics.js';
 import { throwIfAborted } from '#util/abort.js';
-import { isBridgeHeartbeatFresh } from '#deviceInstallEligibility.js';
+import { getDeviceSourceBlocker, isBridgeHeartbeatFresh } from '#deviceInstallEligibility.js';
+import type { DeviceInstallSource } from '#deviceInstallEligibility.js';
 export { getDeviceInstallBlocker, isBridgeHeartbeatFresh } from '#deviceInstallEligibility.js';
 
 const log = scopedLogger('idevice');
@@ -103,7 +104,7 @@ export function testFlightBridgeReachability(health: Pick<DeviceHealth, 'reachab
   return health.testFlightBridgeReachable;
 }
 
-export function getDeviceReadiness(health: DeviceHealth): DeviceReadiness {
+export function getDeviceReadiness(health: DeviceHealth, source?: DeviceInstallSource): DeviceReadiness {
   const reasons: string[] = [];
   let score = 100;
   if (!health.reachable) {
@@ -113,9 +114,13 @@ export function getDeviceReadiness(health: DeviceHealth): DeviceReadiness {
     score -= 50;
     reasons.push('no internet access');
   }
-  if (health.testFlightBridgeReachable === false) {
+  const sourceBlocker = source ? getDeviceSourceBlocker(health, source) : undefined;
+  if (sourceBlocker) {
     score -= 50;
-    reasons.push('autoinstall bridge is unresponsive');
+    reasons.push(sourceBlocker);
+  } else if (!source && health.testFlightBridgeReachable === false) {
+    score -= 50;
+    reasons.push('autoinstall SpringBoard bridge is unresponsive');
   }
   if (health.subsystems?.agent === 'degraded' || health.subsystems?.agent === 'offline') {
     score -= 30;

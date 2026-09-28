@@ -110,6 +110,7 @@ export function createDashboardDecryptPreflightRoutes(overrides: Partial<Dashboa
       }
 
       const verifiedDeviceIds = verifiedTestFlightApp ? new Set(verifiedTestFlightApp.devices.map((device) => device.id)) : undefined;
+      const installSource = testflight ? 'testflight' : 'appstore';
       const devices = requestedDevice
         ? [requestedDevice]
         : services.getEffectiveDevices().filter((device) => device.enabled && (!verifiedDeviceIds || verifiedDeviceIds.has(device.id)));
@@ -117,20 +118,20 @@ export function createDashboardDecryptPreflightRoutes(overrides: Partial<Dashboa
       const checks = await Promise.all(devices.map(async (device) => {
         try {
           const health = await services.getDeviceHealth(device.id, true);
+          const readiness = services.getDeviceReadiness(health, installSource);
           const blockers: string[] = [];
           if (!health.reachable) blockers.push(health.error ?? 'device is unreachable');
           if (health.internetAccess === false) blockers.push('device cannot reach Apple services');
-          const installBlocker = services.getDeviceInstallBlocker(health, installSizeBytes);
+          const installBlocker = services.getDeviceInstallBlocker(health, installSizeBytes, installSource);
           if (installBlocker) blockers.push(installBlocker);
-          if (health.readiness?.state === 'blocked') blockers.push(...(health.readiness.reasons.length > 0 ? health.readiness.reasons : ['device readiness is blocked']));
-          if (testflight && health.testFlightBridgeReachable === false) blockers.push('TestFlight bridge is unresponsive');
+          if (readiness.state === 'blocked') blockers.push(...(readiness.reasons.length > 0 ? readiness.reasons : ['device readiness is blocked']));
           return {
             id: device.id,
             name: device.name,
             isPrimary: device.id === primary?.id,
             ready: blockers.length === 0,
             blockers: [...new Set(blockers)],
-            readiness: health.readiness ?? services.getDeviceReadiness(health),
+            readiness,
             reachable: health.reachable,
             storageFreeBytes: health.storageFreeBytes,
             batteryPercent: health.batteryPercent,

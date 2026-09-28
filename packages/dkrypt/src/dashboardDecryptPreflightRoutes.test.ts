@@ -106,7 +106,7 @@ test('decrypt preflight limits checks to enabled devices and returns project que
         internetAccess: false,
         storageFreeBytes: 128,
         batteryPercent: 71,
-        readiness: { score: 40, state: 'blocked', reasons: ['no internet access', 'no internet access'] },
+        readiness: { score: 50, state: 'blocked', reasons: ['no internet access'] },
       });
     },
     getDeviceInstallBlocker: () => 'device storage is below the install threshold',
@@ -135,13 +135,41 @@ test('decrypt preflight limits checks to enabled devices and returns project que
         isPrimary: true,
         ready: false,
         blockers: ['device cannot reach Apple services', 'device storage is below the install threshold', 'no internet access'],
-        readiness: { score: 40, state: 'blocked', reasons: ['no internet access', 'no internet access'] },
+        readiness: { score: 50, state: 'blocked', reasons: ['no internet access'] },
         reachable: true,
         storageFreeBytes: 128,
         batteryPercent: 71,
       }],
     });
     expect(checkedDevices).toEqual(['enabled-device']);
+  } finally {
+    await server.close();
+  }
+});
+
+test('App Store preflight reports the shared SpringBoard bridge outage', async () => {
+  const device = createDevice('appstore-device');
+  const server = build({
+    getEffectiveDevices: () => [device],
+    getDeviceHealth: async () => createHealth({
+      testFlightBridgeReachable: false,
+      readiness: { score: 0, state: 'blocked', reasons: ['autoinstall bridge is unresponsive'] },
+    }),
+  });
+
+  try {
+    const response = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/decrypt/preflight',
+      headers: { cookie: sessionCookie(PermissionFlag.requestDecrypt) },
+      payload: { bundleId: 'com.example.app' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      canQueue: false,
+      devices: [{ id: device.id, ready: false, blockers: ['autoinstall SpringBoard bridge is unresponsive'], readiness: { state: 'blocked' } }],
+    });
   } finally {
     await server.close();
   }

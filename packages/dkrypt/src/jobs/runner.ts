@@ -67,7 +67,7 @@ async function runDecryptOperation(job: Job, device: DeviceRecord, signal?: Abor
     }
   }
   ensureNotCancelled();
-  const installBlocker = getDeviceInstallBlocker(health, job.testflight?.build.fileSize ?? currentAppStoreVersion?.fileSizeBytes);
+  const installBlocker = getDeviceInstallBlocker(health, job.testflight?.build.fileSize ?? currentAppStoreVersion?.fileSizeBytes, job.testflight ? 'testflight' : 'appstore');
   if (installBlocker) throw new Error(`decrypt deferred: ${installBlocker}`);
   const stagingDir = path.join(config.artifactDir, '.staging');
   await mkdir(stagingDir, { recursive: true });

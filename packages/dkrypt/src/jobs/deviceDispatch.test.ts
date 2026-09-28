@@ -49,6 +49,30 @@ describe('job device eligibility', () => {
       .toBe('device is unreachable');
   });
 
+  test('blocks both install sources when the shared SpringBoard bridge is unavailable', () => {
+    const health = makeHealth({ testFlightBridgeReachable: false });
+    const testFlightJob = makeJob({ testflight: { appId: 42, build: { id: 7, bundleId: 'com.example.app', cfBundleShortVersion: '2.0', cfBundleVersion: '7' } } });
+    const state = { health, testFlightCatalog: makeCatalog() };
+
+    expect(getJobDeviceBlocker(makeJob(), { id: 'ipad-a' }, state, 1_001)).toBe('autoinstall SpringBoard bridge is unresponsive');
+    expect(getJobDeviceBlocker(testFlightJob, { id: 'ipad-a' }, state, 1_001)).toBe('autoinstall SpringBoard bridge is unresponsive');
+  });
+
+  test('applies App Store and TestFlight subsystem failures only to matching jobs', () => {
+    const testFlightJob = makeJob({ testflight: { appId: 42, build: { id: 7, bundleId: 'com.example.app', cfBundleShortVersion: '2.0', cfBundleVersion: '7' } } });
+    const appStoreOffline = makeHealth({ subsystems: {
+      usb: 'ready', mux: 'ready', agent: 'ready', appStore: 'offline', testFlight: 'ready', sshTunnel: 'ready', storage: 'ready', battery: 'ready', thermal: 'ready',
+    } });
+    const testFlightOffline = makeHealth({ subsystems: {
+      usb: 'ready', mux: 'ready', agent: 'ready', appStore: 'ready', testFlight: 'offline', sshTunnel: 'ready', storage: 'ready', battery: 'ready', thermal: 'ready',
+    } });
+
+    expect(getJobDeviceBlocker(makeJob(), { id: 'ipad-a' }, { health: appStoreOffline }, 1_001)).toBe('App Store subsystem is offline');
+    expect(getJobDeviceBlocker(testFlightJob, { id: 'ipad-a' }, { health: appStoreOffline, testFlightCatalog: makeCatalog() }, 1_001)).toBeUndefined();
+    expect(getJobDeviceBlocker(makeJob(), { id: 'ipad-a' }, { health: testFlightOffline }, 1_001)).toBeUndefined();
+    expect(getJobDeviceBlocker(testFlightJob, { id: 'ipad-a' }, { health: testFlightOffline, testFlightCatalog: makeCatalog() }, 1_001)).toBe('TestFlight subsystem is offline');
+  });
+
   test('checks storage requirements before assigning a known TestFlight build', () => {
     const job = makeJob({ testflight: { appId: 42, build: { id: 7, bundleId: 'com.example.app', cfBundleShortVersion: '2.0', cfBundleVersion: '7', fileSize: 100 } } });
     expect(getJobDeviceBlocker(job, { id: 'ipad-a' }, { health: makeHealth({ storageFreeBytes: 150 }), testFlightCatalog: makeCatalog() }, 1_000))

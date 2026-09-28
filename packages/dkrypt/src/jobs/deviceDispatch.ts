@@ -50,7 +50,7 @@ export function getJobDeviceBlocker(
   }
 
   const healthBlocker = state.health
-    ? getDeviceInstallBlocker(state.health, job.testflight?.build.fileSize)
+    ? getDeviceInstallBlocker(state.health, job.testflight?.build.fileSize, job.testflight ? 'testflight' : 'appstore')
     : undefined;
   if (healthBlocker) return healthBlocker;
 
