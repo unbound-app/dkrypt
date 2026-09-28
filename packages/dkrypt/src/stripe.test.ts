@@ -14,8 +14,10 @@ import {
 import { config } from '#config.js';
 import { billingRoutes, processStripeEvent } from '#routes/billing.js';
 import { buildServer } from '#server.js';
+import { getAuditLog } from '#store/state.js';
 import { flushTelemetry } from '#telemetry.js';
 import { setSessionCookie } from '#session.js';
+import { claimWebhook, getWebhookInboxRecord, markWebhookProcessed, quarantineWebhook, receiveWebhook, releaseWebhookClaim } from '#webhookInbox.js';
 
 const webhookSecret = 'whsec_dkrypt_test';
 
@@ -319,6 +321,89 @@ describe('Stripe billing webhooks', () => {
         retryable: false,
       });
     } finally {
+      await server.close();
+    }
+  });
+
+  test('billing managers can replay quarantined webhook deliveries', async () => {
+    const server = await buildServer({ includePublicRoutes: false });
+    const eventId = `evt_quarantined_${crypto.randomUUID()}`;
+    const payload = JSON.stringify(event('invoice.created', {}));
+    const received = receiveWebhook('stripe', eventId, payload);
+    quarantineWebhook(received.record.id, 'held for review');
+    const headers = { cookie: createSessionCookie(PermissionFlag.manageBilling | PermissionFlag.viewLogs) };
+
+    try {
+      const replay = await server.inject({
+        method: 'POST',
+        url: `/v1/billing/webhooks/inbox/${received.record.id}/replay`,
+        headers,
+      });
+
+      expect(replay.statusCode).toBe(200);
+      expect(replay.json()).toMatchObject({ replayed: true, status: 'processed' });
+
+      const inbox = await server.inject({
+        method: 'GET',
+        url: `/v1/billing/webhooks/inbox?provider=stripe&limit=200`,
+        headers,
+      });
+
+      expect(inbox.statusCode).toBe(200);
+      expect(inbox.json().inbox).toContainEqual(expect.objectContaining({ eventId, status: 'processed' }));
+      expect(getAuditLog()).toContainEqual(expect.objectContaining({ action: 'billing.webhook.replay', target: eventId, actor: 'root' }));
+    } finally {
+      await server.close();
+    }
+  });
+
+  test('billing manager webhook quarantine actions are audited', async () => {
+    const server = await buildServer({ includePublicRoutes: false });
+    const eventId = `evt_quarantine_audit_${crypto.randomUUID()}`;
+    const payload = JSON.stringify(event('invoice.created', {}));
+    const received = receiveWebhook('stripe', eventId, payload);
+    const headers = { cookie: createSessionCookie(PermissionFlag.manageBilling | PermissionFlag.viewLogs) };
+
+    try {
+      const quarantine = await server.inject({
+        method: 'POST',
+        url: `/v1/billing/webhooks/inbox/${received.record.id}/quarantine`,
+        headers,
+        payload: { reason: 'held for review' },
+      });
+
+      expect(quarantine.statusCode).toBe(200);
+      expect(quarantine.json()).toMatchObject({ record: { eventId, status: 'quarantined', lastError: 'held for review' } });
+      expect(getAuditLog()).toContainEqual(expect.objectContaining({ action: 'billing.webhook.quarantine', target: eventId, actor: 'root', detail: expect.stringContaining('held for review') }));
+    } finally {
+      await server.close();
+    }
+  });
+
+  test('billing managers cannot quarantine processed or in-flight webhook deliveries', async () => {
+    const server = await buildServer({ includePublicRoutes: false });
+    const processedEvent = receiveWebhook('stripe', `evt_processed_${crypto.randomUUID()}`, JSON.stringify(event('invoice.created', {})));
+    markWebhookProcessed(processedEvent.record.id);
+    const inFlightEvent = receiveWebhook('stripe', `evt_in_flight_${crypto.randomUUID()}`, JSON.stringify(event('invoice.created', {})));
+    expect(claimWebhook(inFlightEvent.record.id)).toBe(true);
+    const headers = { cookie: createSessionCookie(PermissionFlag.manageBilling | PermissionFlag.viewLogs) };
+
+    try {
+      for (const record of [processedEvent.record, inFlightEvent.record]) {
+        const quarantine = await server.inject({
+          method: 'POST',
+          url: `/v1/billing/webhooks/inbox/${record.id}/quarantine`,
+          headers,
+          payload: { reason: 'held for review' },
+        });
+
+        expect(quarantine.statusCode).toBe(409);
+      }
+
+      expect(getWebhookInboxRecord(processedEvent.record.id)?.status).toBe('processed');
+      expect(getWebhookInboxRecord(inFlightEvent.record.id)?.status).toBe('received');
+    } finally {
+      releaseWebhookClaim(inFlightEvent.record.id);
       await server.close();
     }
   });

@@ -53,9 +53,9 @@ export function receiveWebhook(provider: WebhookInboxRecord['provider'], eventId
   return { record: result.record, duplicate: false };
 }
 
-export function claimWebhook(id: string): boolean {
+export function claimWebhook(id: string, options: { allowQuarantined?: boolean } = {}): boolean {
   const record = repository.findById(id);
-  if (!record || record.status === 'processed' || record.status === 'quarantined' || claimedRecords.has(id)) {
+  if (!record || record.status === 'processed' || (record.status === 'quarantined' && !options.allowQuarantined) || claimedRecords.has(id)) {
     if (record) incrementMetric('webhook_claim_conflicts_total', { provider: record.provider });
     return false;
   }
@@ -98,7 +98,7 @@ export function markWebhookFailed(id: string, error: string): WebhookInboxRecord
 
 export function quarantineWebhook(id: string, reason: string): WebhookInboxRecord | undefined {
   const record = repository.findById(id);
-  if (!record) return undefined;
+  if (!record || record.status === 'processed' || claimedRecords.has(id)) return undefined;
   record.status = 'quarantined';
   record.lastError = reason.slice(0, 500);
   repository.save(record);

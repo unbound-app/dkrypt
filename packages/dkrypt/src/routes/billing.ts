@@ -516,6 +516,8 @@ export const billingRoutes: FastifyPluginAsyncTypebox<{ stripeClient?: () => Str
     if (!current) return sendBillingError(request, reply, 404, 'webhook inbox record not found');
     const reason = request.body.reason?.trim() || 'quarantined by manager';
     const record = quarantineWebhook(current.id, reason);
+    if (!record) return sendBillingError(request, reply, 409, 'processed or in-flight webhooks cannot be quarantined');
+    recordAudit(getFastifySession(request)!.sub, 'billing.webhook.quarantine', current.eventId, `${current.provider}: ${reason}`);
     return reply.send({ record: record ? { ...record, rawBody: undefined } : undefined });
   });
 
@@ -523,7 +525,7 @@ export const billingRoutes: FastifyPluginAsyncTypebox<{ stripeClient?: () => Str
     const current = getWebhookInboxRecord(request.params.id);
     if (!current) return sendBillingError(request, reply, 404, 'webhook inbox record not found');
     if (current.status === 'processed') return reply.send({ replayed: false, duplicate: true, status: current.status });
-    if (!claimWebhook(current.id)) return sendBillingError(request, reply, 409, 'webhook is already being processed');
+    if (!claimWebhook(current.id, { allowQuarantined: true })) return sendBillingError(request, reply, 409, 'webhook is already being processed');
     try {
       const payload = JSON.parse(current.rawBody) as Record<string, unknown>;
       if (current.provider === 'stripe') {

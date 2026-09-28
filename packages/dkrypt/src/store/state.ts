@@ -531,6 +531,7 @@ export type AuditAction =
   | 'billing.cancel'
   | 'billing.webhook'
   | 'billing.webhook.replay'
+  | 'billing.webhook.quarantine'
   | 'billing.checkouts.pause'
   | 'privacy.export'
   | 'privacy.delete'
