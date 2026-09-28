@@ -46,3 +46,23 @@ test('TypeScript client downloads IPA files with API-key authentication', async 
   expect(receivedHeaders?.get('Authorization')).toBe('Bearer dk_test_key');
   expect(receivedHeaders?.get('Accept')).toBe('application/octet-stream');
 });
+
+test('TypeScript client never sends an API key to a different origin', async () => {
+  let called = false;
+  const fetchImpl = (async () => {
+    called = true;
+    return new Response(new Uint8Array([73, 80, 65]), { status: 200 });
+  }) as unknown as typeof fetch;
+  const client = new DkryptClient('https://ipa.dylib.dev', { apiKey: 'dk_test_key', fetchImpl });
+
+  await expect(client.download('https://attacker.example/file')).rejects.toThrow('configured origin');
+
+  expect(called).toBe(false);
+});
+
+test('TypeScript client returns the HTTP error for non-object error JSON', async () => {
+  const fetchImpl = (async () => new Response(JSON.stringify('upstream error'), { status: 502 })) as unknown as typeof fetch;
+  const client = new DkryptClient('https://ipa.dylib.dev', { apiKey: 'dk_test_key', fetchImpl });
+
+  await expect(client.request({ path: '/v1/jobs/job-1' })).rejects.toThrow('HTTP 502');
+});

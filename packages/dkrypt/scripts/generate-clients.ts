@@ -59,7 +59,7 @@ export class DkryptClient {
 
   async request<T>(init: DkryptRequestInit): Promise<T> {
     const { path, ...request } = init;
-    const response = await this.fetchImpl(new URL(path, this.baseUrl), {
+    const response = await this.fetchImpl(this.buildUrl(path), {
       ...request,
       headers: this.createHeaders(request.headers, 'application/json'),
     });
@@ -68,7 +68,7 @@ export class DkryptClient {
   }
 
   async download(path: string, init: Pick<RequestInit, 'headers' | 'signal'> = {}): Promise<ArrayBuffer> {
-    const response = await this.fetchImpl(new URL(path, this.baseUrl), {
+    const response = await this.fetchImpl(this.buildUrl(path), {
       ...init,
       method: 'GET',
       headers: this.createHeaders(init.headers, 'application/octet-stream'),
@@ -84,9 +84,23 @@ export class DkryptClient {
     return result;
   }
 
+  private buildUrl(path: string): URL {
+    const baseUrl = new URL(this.baseUrl);
+    const url = new URL(path, baseUrl);
+    if (!['http:', 'https:'].includes(url.protocol) || url.origin !== baseUrl.origin) {
+      throw new Error('dkrypt requests must use the configured origin');
+    }
+    return url;
+  }
+
   private async responseError(response: Response): Promise<string> {
-    const body = await response.json().catch(() => undefined) as { message?: string; error?: string } | undefined;
-    const detail = body && ('message' in body || 'error' in body) ? body.message ?? body.error : undefined;
+    const body: unknown = await response.json().catch(() => undefined);
+    let detail: string | undefined;
+    if (typeof body === 'object' && body !== null && !Array.isArray(body)) {
+      const errorBody = body as Record<string, unknown>;
+      if (typeof errorBody.message === 'string') detail = errorBody.message;
+      else if (typeof errorBody.error === 'string') detail = errorBody.error;
+    }
     return detail ?? \`dkrypt request failed with HTTP \${response.status}\`;
   }
 }
