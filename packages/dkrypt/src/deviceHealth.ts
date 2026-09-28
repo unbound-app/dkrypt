@@ -9,7 +9,7 @@ import { getDiskUsage } from '#util/diskUsage.js';
 import { getCachedDeviceHealth, setCachedDeviceHealth } from '#deviceHealthCache.js';
 import { incrementMetric, observeMetric, setGaugeMetric } from '#metrics.js';
 import { throwIfAborted } from '#util/abort.js';
-import { getDeviceSourceBlocker, isBridgeHeartbeatFresh } from '#deviceInstallEligibility.js';
+import { getDeviceSourceBlocker, getRootlessJailbreakBlocker, isBridgeHeartbeatFresh } from '#deviceInstallEligibility.js';
 import type { DeviceInstallSource } from '#deviceInstallEligibility.js';
 export { getDeviceInstallBlocker, isBridgeHeartbeatFresh } from '#deviceInstallEligibility.js';
 
@@ -22,7 +22,9 @@ export interface DeviceHealth {
   capabilities?: string[];
   lastSeenAt?: number;
   recoveryState?: 'stable' | 'recovering' | 'degraded' | 'offline';
+  agentHeartbeatAt?: number;
   error?: string;
+  jailbreakAvailable?: boolean;
   testFlightRunning?: boolean;
   testFlightBridgeReachable?: boolean;
   darkEnabled?: boolean;
@@ -55,6 +57,7 @@ export interface DeviceSubsystemHealth {
   usb: DeviceSubsystemState;
   mux: DeviceSubsystemState;
   agent: DeviceSubsystemState;
+  jailbreak?: DeviceSubsystemState;
   appStore: DeviceSubsystemState;
   testFlight: DeviceSubsystemState;
   sshTunnel: DeviceSubsystemState;
@@ -110,6 +113,11 @@ export function getDeviceReadiness(health: DeviceHealth, source?: DeviceInstallS
   if (!health.reachable) {
     return { score: 0, state: 'blocked', reasons: ['device is unreachable'] };
   }
+  const jailbreakBlocker = getRootlessJailbreakBlocker(health);
+  if (jailbreakBlocker) {
+    score = 0;
+    reasons.push(jailbreakBlocker);
+  }
   if (health.internetAccess === false) {
     score -= 50;
     reasons.push('no internet access');
@@ -143,7 +151,7 @@ export function getDeviceReadiness(health: DeviceHealth, source?: DeviceInstallS
     reasons.push(`storage is ${Math.round(health.storageUsedPercent * 100)}% full`);
   }
   score = Math.max(0, score);
-  return { score, state: score >= 80 ? 'ready' : score >= 55 ? 'caution' : 'blocked', reasons };
+  return { score, state: jailbreakBlocker ? 'blocked' : score >= 80 ? 'ready' : score >= 55 ? 'caution' : 'blocked', reasons };
 }
 
 function parseIoregValue(output: string, key: string): string | undefined {
@@ -277,6 +285,7 @@ interface SpringBoardStatusResult {
 export interface DeviceHealthQueries {
   testFlightRunning: () => Promise<boolean>;
   springBoardStatus: () => Promise<SpringBoardStatusResult>;
+  jailbreakAvailable: () => Promise<boolean | undefined>;
   battery: () => Promise<BatteryStatus | undefined>;
   storage: () => Promise<DeviceStorage | undefined>;
   network: () => Promise<NetworkStatus | undefined>;
@@ -286,6 +295,7 @@ export interface DeviceHealthQueries {
 export interface DeviceTelemetry {
   testFlightRunning: boolean;
   testFlightBridgeReachable?: boolean;
+  jailbreakAvailable?: boolean;
   darkEnabled?: boolean;
   screenIsOn?: boolean;
   backlightState?: number;
@@ -311,6 +321,7 @@ async function runHealthQuery<T>(name: string, query: () => Promise<T>, fallback
 export async function collectDeviceTelemetry(queries: DeviceHealthQueries, signal?: AbortSignal): Promise<DeviceTelemetry> {
   const testFlightRunning = await runHealthQuery('TestFlight process status', queries.testFlightRunning, false, signal);
   const springBoardStatus = await runHealthQuery('SpringBoard bridge status', queries.springBoardStatus, { ok: false }, signal);
+  const jailbreakAvailable = await runHealthQuery('rootless jailbreak status', queries.jailbreakAvailable, undefined, signal);
   const battery = await runHealthQuery('battery status', queries.battery, undefined, signal);
   const storage = await runHealthQuery('storage status', queries.storage, undefined, signal);
   const network = await runHealthQuery('network status', queries.network, undefined, signal);
@@ -319,6 +330,7 @@ export async function collectDeviceTelemetry(queries: DeviceHealthQueries, signa
   return {
     testFlightRunning,
     testFlightBridgeReachable: springBoardStatus.ok,
+    jailbreakAvailable,
     darkEnabled: springBoardStatus.value?.darkEnabled,
     screenIsOn: springBoardStatus.value?.screenIsOn,
     backlightState: springBoardStatus.value?.backlightState,
@@ -391,6 +403,7 @@ export function coalesceDeviceHealthRequest<T>(pending: Map<string, Promise<T>>,
 }
 
 export function stabilizeDeviceHealth(previous: DeviceHealth | undefined, next: DeviceHealth, consecutiveFailures: number): DeviceHealth {
+  if (next.reachable && getRootlessJailbreakBlocker(next)) return next;
   const nextReadiness = next.readiness ?? getDeviceReadiness(next);
   const previousReadiness = previous?.readiness ?? (previous ? getDeviceReadiness(previous) : undefined);
   const nextIsHealthy = next.reachable && nextReadiness.state !== 'blocked';
@@ -461,24 +474,46 @@ function cacheDeviceHealth(deviceId: string, value: DeviceHealth): void {
 }
 
 async function computeDeviceHealth(device: DeviceRecord, signal?: AbortSignal): Promise<DeviceHealth> {
+  const bridgeHealthPromise = isRustDeviceConnection(device)
+    ? getRustDeviceBridgeHealth(device).catch((error) => {
+      if (!signal?.aborted) log.warn('Rust device bridge health lookup failed', { deviceId: device.id, error: error instanceof Error ? error.message : String(error) });
+      return undefined;
+    })
+    : Promise.resolve(undefined);
+  let agentHeartbeatAt: number | undefined;
   try {
-    const telemetry = await withSSH(device, async (conn) => collectDeviceTelemetry({
-        testFlightRunning: () => isTestFlightRunning(conn),
-        springBoardStatus: () => sendSpringBoardBridgeRequest(conn, { action: 'screen_status' }, 8_000).then((value) => ({ ok: true, value })),
-        battery: () => queryBatteryStatus(conn),
-        storage: () => queryDeviceStorage(conn),
-        network: () => queryNetworkStatus(conn),
-        bridgeHeartbeats: () => readBridgeHeartbeats(conn),
-      }, signal), signal);
+    const telemetry = await withSSH(device, async (conn) => {
+      const trackAgentHeartbeat = <T>(query: () => Promise<T>) => async (): Promise<T> => {
+        const value = await query();
+        if ('transport' in conn && conn.transport === 'autoinstall') agentHeartbeatAt = Date.now();
+        return value;
+      };
+      return collectDeviceTelemetry({
+        testFlightRunning: trackAgentHeartbeat(() => isTestFlightRunning(conn)),
+        springBoardStatus: trackAgentHeartbeat(() => sendSpringBoardBridgeRequest(conn, { action: 'screen_status' }, 8_000).then((value) => ({ ok: true, value }))),
+        jailbreakAvailable: trackAgentHeartbeat(async () => {
+          const { code } = await execCommand(conn, 'test -d /var/jb');
+          return code === 0 ? true : code === 1 ? false : undefined;
+        }),
+        battery: trackAgentHeartbeat(() => queryBatteryStatus(conn)),
+        storage: trackAgentHeartbeat(() => queryDeviceStorage(conn)),
+        network: trackAgentHeartbeat(() => queryNetworkStatus(conn)),
+        bridgeHeartbeats: trackAgentHeartbeat(() => readBridgeHeartbeats(conn)),
+      }, signal);
+    }, signal);
+    const bridge = await bridgeHealthPromise;
     const sshSftpReady = await probeDeviceSshTunnel(device, signal);
     const health: DeviceHealth = {
       reachable: true,
       transport: device.transport ?? (device.udid ? 'usb' : 'wifi'),
       transportState: 'ready',
+      capabilities: bridge?.capabilities,
       lastSeenAt: Date.now(),
       recoveryState: 'stable',
+      agentHeartbeatAt,
       testFlightRunning: telemetry.testFlightRunning,
       testFlightBridgeReachable: telemetry.testFlightBridgeReachable,
+      jailbreakAvailable: telemetry.jailbreakAvailable,
       darkEnabled: telemetry.darkEnabled,
       screenIsOn: telemetry.screenIsOn,
       backlightState: telemetry.backlightState,
@@ -502,6 +537,7 @@ async function computeDeviceHealth(device: DeviceRecord, signal?: AbortSignal): 
         usb: device.transport === 'usb' ? 'ready' : 'unsupported',
         mux: 'ready',
         agent: getDeviceAgentSubsystemState(device, true),
+        jailbreak: telemetry.jailbreakAvailable === undefined ? 'unknown' : telemetry.jailbreakAvailable ? 'ready' : 'unsupported',
         appStore: isBridgeHeartbeatFresh(telemetry.bridgeHeartbeats.appstore) ? 'ready' : 'unknown',
         testFlight: isBridgeHeartbeatFresh(telemetry.bridgeHeartbeats.testflight) ? 'ready' : 'unknown',
         sshTunnel: getDeviceSshTunnelSubsystemState(device, sshSftpReady),
@@ -518,9 +554,9 @@ async function computeDeviceHealth(device: DeviceRecord, signal?: AbortSignal): 
     log.warn('device health check failed', { deviceId: device.id, error });
     if (isRustDeviceConnection(device)) {
       try {
-        const bridge = await getRustDeviceBridgeHealth(device);
+        const bridge = await bridgeHealthPromise;
         throwIfAborted(signal);
-        if (bridge.state === 'ready') {
+        if (bridge?.state === 'ready') {
           const sshSftpReady = await probeDeviceSshTunnel(device, signal);
           const health: DeviceHealth = {
             reachable: true,
@@ -529,12 +565,14 @@ async function computeDeviceHealth(device: DeviceRecord, signal?: AbortSignal): 
             capabilities: bridge.capabilities,
             lastSeenAt: Date.now(),
             recoveryState: 'degraded',
+            agentHeartbeatAt,
             error: `device agent unavailable: ${error}`,
             testFlightBridgeReachable: undefined,
             subsystems: {
               usb: bridge.transport === 'usb' ? 'ready' : 'unsupported',
               mux: 'ready',
-              agent: getDeviceAgentSubsystemState(device, false),
+              agent: getDeviceAgentSubsystemState(device, agentHeartbeatAt !== undefined),
+              jailbreak: 'unknown',
               appStore: 'unknown',
               testFlight: 'unknown',
               sshTunnel: getDeviceSshTunnelSubsystemState(device, sshSftpReady),
@@ -561,6 +599,7 @@ async function computeDeviceHealth(device: DeviceRecord, signal?: AbortSignal): 
         usb: device.transport === 'usb' ? 'offline' : 'unsupported',
         mux: device.transport === 'usb' ? 'offline' : 'unsupported',
         agent: getDeviceAgentSubsystemState(device, false),
+        jailbreak: 'unknown',
         appStore: 'offline',
         testFlight: 'offline',
         sshTunnel: device.transport === 'usb' ? 'offline' : 'degraded',

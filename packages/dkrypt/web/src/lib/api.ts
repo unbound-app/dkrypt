@@ -247,7 +247,14 @@ export interface DispatchTarget {
   inputs?: Record<string, string>;
 }
 
-export interface DeviceRecord {
+interface DeviceTransportStatus {
+  transportState?: 'discovered' | 'pairing' | 'connecting' | 'ready' | 'degraded' | 'recovering' | 'offline' | 'unsupported';
+  lastSeenAt?: number;
+  agentHeartbeatAt?: number;
+  recoveryState?: 'stable' | 'recovering' | 'degraded' | 'offline';
+}
+
+export interface DeviceRecord extends DeviceTransportStatus {
   id: string;
   name: string;
   transport: 'wifi' | 'usb';
@@ -261,6 +268,7 @@ export interface DeviceRecord {
   iosVersion?: string;
   toolchain?: string;
   notes?: string;
+  transportCapabilities?: string[];
   enabled: boolean;
   isPrimary?: boolean;
   createdAt: number;
@@ -701,9 +709,12 @@ export function fetchOverview(): Promise<OverviewPayload> {
   return apiJson(`/v1/dashboard/overview?projectId=${encodeURIComponent(projectSelectionState.id)}`);
 }
 
-export interface DeviceHealth {
+export interface DeviceHealth extends DeviceTransportStatus {
   reachable: boolean;
+  transport?: 'usb' | 'wifi';
+  capabilities?: string[];
   error?: string;
+  jailbreakAvailable?: boolean;
   testFlightRunning?: boolean;
   testFlightBridgeReachable?: boolean;
   darkEnabled?: boolean;
@@ -725,7 +736,7 @@ export interface DeviceHealth {
   networkIpAddress?: string;
   networkInterface?: string;
   bridgeHeartbeats?: Partial<Record<'springboard' | 'testflight' | 'appstore', { bridgeVersion?: string; channel?: string; process?: string; at?: number }>>;
-  subsystems?: Partial<Record<'usb' | 'mux' | 'agent' | 'appStore' | 'testFlight' | 'sshTunnel' | 'storage' | 'battery' | 'thermal', 'ready' | 'degraded' | 'offline' | 'unsupported' | 'unknown'>>;
+  subsystems?: Partial<Record<'usb' | 'mux' | 'agent' | 'jailbreak' | 'appStore' | 'testFlight' | 'sshTunnel' | 'storage' | 'battery' | 'thermal', 'ready' | 'degraded' | 'offline' | 'unsupported' | 'unknown'>>;
   readiness?: DeviceReadiness;
   checkedAt: number;
 }

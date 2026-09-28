@@ -13,6 +13,7 @@ export function serializeDashboardDevice(deviceRecord: DeviceRecord, health = ge
     transportState: health?.transportState ?? 'discovered',
     transportCapabilities: health?.capabilities ?? [],
     lastSeenAt: health?.lastSeenAt,
+    agentHeartbeatAt: health?.agentHeartbeatAt,
     recoveryState: health?.recoveryState ?? 'recovering',
     ...(health?.bridgeHeartbeats ? { bridgeHeartbeats: health.bridgeHeartbeats } : {}),
   };

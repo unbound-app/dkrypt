@@ -19,7 +19,7 @@ function makeJob(overrides: Partial<Job> = {}): Job {
 }
 
 function makeHealth(overrides: Partial<DeviceHealth> = {}): DeviceHealth {
-  return { reachable: true, checkedAt: 1, ...overrides };
+  return { reachable: true, jailbreakAvailable: true, checkedAt: 1, ...overrides };
 }
 
 function makeCatalog(overrides: Partial<TestFlightCatalogCache> = {}): TestFlightCatalogCache {
@@ -47,6 +47,16 @@ describe('job device eligibility', () => {
   test('waits instead of assigning a job to a device with a known install blocker', () => {
     expect(getJobDeviceBlocker(makeJob(), { id: 'ipad-a' }, { health: makeHealth({ reachable: false, error: 'device is unreachable' }) }, 1_000))
       .toBe('device is unreachable');
+  });
+
+  test('waits for a device whose rootless jailbreak is unavailable', () => {
+    expect(getJobDeviceBlocker(makeJob(), { id: 'ipad-a' }, { health: makeHealth({ jailbreakAvailable: false }) }, 1_000))
+      .toBe('rootless jailbreak is unavailable');
+  });
+
+  test('waits for a device whose rootless jailbreak could not be verified', () => {
+    expect(getJobDeviceBlocker(makeJob(), { id: 'ipad-a' }, { health: makeHealth({ jailbreakAvailable: undefined }) }, 1_000))
+      .toBe('rootless jailbreak status could not be verified');
   });
 
   test('blocks both install sources when the shared SpringBoard bridge is unavailable', () => {

@@ -59,6 +59,7 @@ function createJob(id: string, projectId: string): Job {
 function createHealth(overrides: Partial<DeviceHealth> = {}): DeviceHealth {
   return {
     reachable: true,
+    jailbreakAvailable: true,
     checkedAt: 1,
     ...overrides,
   };

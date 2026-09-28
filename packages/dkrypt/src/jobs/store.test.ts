@@ -400,7 +400,7 @@ test('keeps a job queued for a known device blocker and dispatches it after reco
   try {
     expect(job.status).toBe('queued');
     expect(getQueueReason(job)).toContain('USB device is offline');
-    setCachedDeviceHealth(testDeviceId, { reachable: true, checkedAt: Date.now() });
+    setCachedDeviceHealth(testDeviceId, { reachable: true, jailbreakAvailable: true, checkedAt: Date.now() });
     notifyDeviceDispatchStateChanged();
     for (let attempt = 0; attempt < 100 && job.status !== 'running'; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 1));
@@ -410,7 +410,7 @@ test('keeps a job queued for a known device blocker and dispatches it after reco
   } finally {
     if (job.status === 'running') cancelJob(job.id, 'dispatch recovery test cleanup');
     await waitForJob(job, 1_000);
-    setCachedDeviceHealth(testDeviceId, { reachable: true, checkedAt: Date.now() });
+    setCachedDeviceHealth(testDeviceId, { reachable: true, jailbreakAvailable: true, checkedAt: Date.now() });
   }
 });
 

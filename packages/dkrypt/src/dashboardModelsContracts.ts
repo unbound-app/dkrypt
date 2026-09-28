@@ -46,6 +46,7 @@ export const dashboardDeviceResponseSchema = Type.Object({
   transportState: deviceTransportStateSchema,
   transportCapabilities: Type.Array(Type.String()),
   lastSeenAt: Type.Optional(Type.Number()),
+  agentHeartbeatAt: Type.Optional(Type.Number()),
   bridgeHeartbeats: Type.Optional(bridgeHeartbeatsSchema),
   recoveryState: Type.Union([Type.Literal('stable'), Type.Literal('recovering'), Type.Literal('degraded'), Type.Literal('offline')]),
 }, { additionalProperties: true });

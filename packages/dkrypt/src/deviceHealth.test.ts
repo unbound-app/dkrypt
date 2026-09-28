@@ -2,12 +2,58 @@ import { describe, expect, test } from 'bun:test';
 import { applyDeviceSshTunnelHealth, coalesceDeviceHealthRequest, collectDeviceTelemetry, formatTestFlightBridgeDownDescription, getDeviceAgentSubsystemState, getDeviceInstallBlocker, getDeviceReadiness, getDeviceSshTunnelSubsystemState, isBridgeHeartbeatFresh, parseDeviceStorageDf, stabilizeDeviceHealth, testFlightBridgeReachability, type DeviceHealth } from '#deviceHealth.js';
 
 function health(overrides: Partial<DeviceHealth> = {}): DeviceHealth {
-  return { reachable: true, checkedAt: 0, ...overrides };
+  return { reachable: true, jailbreakAvailable: true, checkedAt: 0, ...overrides };
 }
 
 describe('getDeviceReadiness', () => {
   test('keeps a healthy device ready', () => {
     expect(getDeviceReadiness(health())).toEqual({ score: 100, state: 'ready', reasons: [] });
+  });
+
+  test('blocks readiness when the rootless jailbreak is unavailable', () => {
+    const deviceHealth = health({ jailbreakAvailable: false });
+
+    expect(getDeviceReadiness(deviceHealth)).toEqual({
+      score: 0,
+      state: 'blocked',
+      reasons: ['rootless jailbreak is unavailable'],
+    });
+    expect(getDeviceInstallBlocker(deviceHealth)).toBe('rootless jailbreak is unavailable');
+  });
+
+  test('holds installs when rootless jailbreak status could not be verified', () => {
+    const deviceHealth = health({ jailbreakAvailable: undefined });
+
+    expect(getDeviceReadiness(deviceHealth)).toEqual({
+      score: 0,
+      state: 'blocked',
+      reasons: ['rootless jailbreak status could not be verified'],
+    });
+    expect(getDeviceInstallBlocker(deviceHealth)).toBe('rootless jailbreak status could not be verified');
+  });
+
+  test('reports transport failures before an unverified jailbreak capability', () => {
+    const deviceHealth = health({
+      jailbreakAvailable: undefined,
+      subsystems: {
+        usb: 'ready',
+        mux: 'ready',
+        agent: 'offline',
+        appStore: 'unknown',
+        testFlight: 'unknown',
+        sshTunnel: 'ready',
+        storage: 'unknown',
+        battery: 'unknown',
+        thermal: 'unknown',
+      },
+    });
+
+    expect(getDeviceInstallBlocker(deviceHealth)).toBe('device agent is unavailable while the USB transport is still connected');
+    expect(getDeviceReadiness(deviceHealth)).toEqual({
+      score: 0,
+      state: 'blocked',
+      reasons: ['rootless jailbreak status could not be verified', 'device agent is unavailable'],
+    });
   });
 
   test('blocks automation when the device loses internet or bridge access', () => {
@@ -70,6 +116,7 @@ describe('getDeviceReadiness', () => {
   test('blocks decrypt when USB SSH or SFTP is unavailable without marking the device offline', () => {
     const deviceHealth = applyDeviceSshTunnelHealth({
       reachable: true,
+      jailbreakAvailable: true,
       checkedAt: 0,
       subsystems: {
         usb: 'ready',
@@ -150,6 +197,7 @@ describe('collectDeviceTelemetry', () => {
     const telemetry = await collectDeviceTelemetry({
       testFlightRunning: query(false, true),
       springBoardStatus: query({ ok: false, value: undefined }, true),
+      jailbreakAvailable: query(false),
       battery: query(undefined),
       storage: query(undefined),
       network: query(undefined),
@@ -159,6 +207,7 @@ describe('collectDeviceTelemetry', () => {
     expect(maxActiveQueries).toBe(1);
     expect(telemetry.testFlightRunning).toBeFalse();
     expect(telemetry.testFlightBridgeReachable).toBeFalse();
+    expect(telemetry.jailbreakAvailable).toBeFalse();
     expect(telemetry.bridgeHeartbeats).toEqual({});
   });
 
@@ -176,6 +225,7 @@ describe('collectDeviceTelemetry', () => {
         calls.push('springBoardStatus');
         return { ok: true };
       },
+      jailbreakAvailable: async () => true,
       battery: async () => undefined,
       storage: async () => undefined,
       network: async () => undefined,
@@ -239,5 +289,12 @@ describe('device health coordination', () => {
     const failed = health({ reachable: false, error: 'Connection lost before handshake', checkedAt: 200 });
 
     expect(stabilizeDeviceHealth(previous, failed, 1)).toBe(failed);
+  });
+
+  test('does not reuse confirmed jailbreak availability when the current probe is unknown', () => {
+    const previous = health({ checkedAt: 100, readiness: { score: 100, state: 'ready', reasons: [] } });
+    const unverified = health({ checkedAt: 200, jailbreakAvailable: undefined });
+
+    expect(stabilizeDeviceHealth(previous, unverified, 1)).toBe(unverified);
   });
 });

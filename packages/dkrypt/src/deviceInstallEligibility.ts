@@ -27,10 +27,20 @@ export function getDeviceSourceBlocker(health: DeviceHealth, source: DeviceInsta
   return undefined;
 }
 
+export function getRootlessJailbreakBlocker(health: Pick<DeviceHealth, 'jailbreakAvailable' | 'subsystems'>): string | undefined {
+  if (health.jailbreakAvailable === false || (health.jailbreakAvailable === undefined && health.subsystems?.jailbreak === 'unsupported')) {
+    return 'rootless jailbreak is unavailable';
+  }
+  if (health.jailbreakAvailable === true || health.subsystems?.jailbreak === 'ready') return undefined;
+  return 'rootless jailbreak status could not be verified';
+}
+
 export function getDeviceInstallBlocker(health: DeviceHealth, installSizeBytes?: number, source?: DeviceInstallSource): string | undefined {
   if (!health.reachable) return health.error ?? 'device is unreachable';
   if (health.subsystems?.agent === 'offline') return 'device agent is unavailable while the USB transport is still connected';
   if (health.subsystems?.sshTunnel === 'degraded' || health.subsystems?.sshTunnel === 'offline') return 'device SSH/SFTP tunnel is unavailable for decrypt';
+  const jailbreakBlocker = getRootlessJailbreakBlocker(health);
+  if (jailbreakBlocker) return jailbreakBlocker;
   if (health.internetAccess === false) return 'device cannot reach Apple services';
   const sourceBlocker = source ? getDeviceSourceBlocker(health, source) : undefined;
   if (sourceBlocker) return sourceBlocker;
