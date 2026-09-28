@@ -2,7 +2,7 @@
 
 Self-hosted App Store and TestFlight decryption for jailbroken iPhone and iPad devices.
 
-dkrypt provides an authenticated dashboard and API for decrypting releases, retaining IPA artifacts, scheduling watches, dispatching updates, managing devices, and administering billing.
+dkrypt provides an authenticated dashboard for managing decrypts, IPA artifacts, devices, automation, and billing, plus a narrow public API for decrypt workflows and IPA artifact access.
 
 ## Quick start
 
@@ -107,7 +107,7 @@ docker compose up -d --build
 
 Set `OTEL_EXPORTER_OTLP_ENDPOINT` to a collector base URL to send traces and metrics to its `/v1/traces` and `/v1/metrics` paths. Signal-specific `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` and `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` values are sent to exactly the URLs provided. Configure shared or signal-specific authorization headers with the matching `OTEL_EXPORTER_OTLP_*_HEADERS` variables as comma-separated `name=value` pairs. Device reconnect metrics come from the Rust bridge's native usbmuxd attach/detach events; `device_bridge_event_stream_connected` reports whether that event feed is live.
 
-dkrypt sends OTLP over HTTP using JSON encoding. Exported metrics include job queue and decrypt duration, device availability and reconnects, bridge and agent health, TestFlight lookup performance, artifact and device storage pressure, and webhook reconciliation. The authenticated `GET /v1/metrics` endpoint continues to provide Prometheus text format using `Authorization: Bearer <API_KEY>`.
+dkrypt sends OTLP over HTTP using JSON encoding. Exported metrics include job queue and decrypt duration, device availability and reconnects, bridge and agent health, TestFlight lookup performance, artifact and device storage pressure, and webhook reconciliation. The internal `GET /v1/metrics` endpoint provides Prometheus text format to dkrypt's service credential and is unavailable to generated API keys.
 
 </details>
 
@@ -152,19 +152,21 @@ Set the IPN destination to `https://<your-host>/v1/nowpayments/webhook`. The pro
 <details>
 <summary>API</summary>
 
-API requests use `Authorization: Bearer <API_KEY>`. Dashboard downloads use the signed-in session.
+Public API requests use `Authorization: Bearer <API_KEY>` and cover decrypt workflows and IPA artifacts only. Dashboard requests use the signed-in session.
 
 | Endpoint | Purpose |
 | --- | --- |
-| `GET /v1/health` | Service, database, and primary-device health |
+| `GET /v1/decrypt` | Request a decrypt and stream the completed IPA |
 | `POST /v1/decrypts` | Queue a decrypt by release selector |
+| `POST /v1/testflight/decrypt` | Queue a TestFlight build decrypt |
+| `GET /v1/testflight/:appId/trains` | List TestFlight trains for a decrypt workflow |
+| `GET /v1/testflight/:appId/builds` | List TestFlight builds for a decrypt workflow |
 | `GET /v1/jobs/:id` | Read job status, attempts, deadline, warnings, and transport evidence |
 | `GET /v1/artifacts` | List IPA artifacts |
+| `GET /v1/artifacts/:id` | Read IPA artifact metadata |
 | `GET /v1/artifacts/:id/file` | Download an IPA artifact |
-| `GET /v1/billing/subscriptions` | Manager subscription ledger and filters |
-| `GET /v1/billing/provider-status` | Manager provider readiness |
 
-OpenAPI is available at `/openapi.json` and the Scalar reference UI at `/reference`.
+Dashboard, billing, account, session, health, and administration routes are internal to dkrypt and are not available to generated API keys. The public OpenAPI document is available at `/openapi.json` and the Scalar reference UI at `/reference`.
 
 </details>
 

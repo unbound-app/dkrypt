@@ -1100,7 +1100,7 @@ register('POST', '/v1/dashboard/jobs/reorder', { body: object({ ids: Type.Array(
 register('POST', '/v1/stripe/webhook', { headers: object({ 'stripe-signature': Type.String({ minLength: 1, maxLength: 200 }) }), body: Type.Any() });
 register('POST', '/v1/nowpayments/webhook', { headers: object({ 'x-nowpayments-sig': Type.String({ minLength: 1, maxLength: 500 }) }), body: Type.Any() });
 
-register('GET', '/v1/health', { response: { 200: HealthResponse } });
+register('GET', '/v1/health', { response: { 200: HealthResponse, 401: ErrorEnvelope, 403: ErrorEnvelope, 429: ErrorEnvelope } });
 register('GET', '/v1/billing', { response: { 200: BillingResponse } });
 register('GET', '/v1/billing/subscriptions', { response: { 200: BillingSubscriptionPage } });
 register('GET', '/v1/dashboard/overview', { querystring: dashboardOverviewQuerySchema, response: { 200: dashboardOverviewResponseSchema } });
@@ -1619,7 +1619,7 @@ register('POST', '/v1/nowpayments/webhook', {
   response: { 200: WebhookReceiptResponse },
 });
 register('GET', '/v1/metrics', {
-  response: { 200: PrometheusResponse },
+  response: { 200: PrometheusResponse, 401: ErrorEnvelope, 403: ErrorEnvelope, 429: ErrorEnvelope },
 });
 register('GET', '/v1/decrypt', {
   headers: IdempotencyKeyHeaders,

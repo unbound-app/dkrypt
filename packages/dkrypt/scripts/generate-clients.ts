@@ -11,9 +11,10 @@ process.env.OUTPUT_DIR = path.join(stateDir, 'tmp');
 process.env.ARTIFACT_DIR = path.join(stateDir, 'artifacts');
 
 const { buildServer } = await import('../src/server.ts');
+const { createPublicOpenApiDocument } = await import('../src/publicApi.ts');
 const server = await buildServer({ includePublicRoutes: false });
 await server.ready();
-const document = server.swagger() as { paths?: Record<string, Record<string, unknown>> };
+const document = createPublicOpenApiDocument(server.swagger());
 const openApiPath = path.resolve(process.cwd(), 'clients', 'openapi.json');
 if (existsSync(openApiPath)) {
   const previousDocument = JSON.parse(readFileSync(openApiPath, 'utf8')) as { paths?: Record<string, Record<string, unknown>> };

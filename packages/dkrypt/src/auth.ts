@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from '#http.js';
 import type { FastifyReply, FastifyRequest, HookHandlerDoneFunction } from 'fastify';
 import { recordApiKeyOutcome, verifyApiKey, type ApiKeyAuthResult } from '#store/state.js';
+import { isPublicApiKeyRoute } from '#publicApi.js';
 
 const fastifyApiKeyContext = new WeakMap<FastifyRequest, ApiKeyAuthResult>();
 
@@ -54,8 +55,19 @@ export function fastifyRequireApiKey(request: FastifyRequest, reply: FastifyRepl
     reply.code(401).send({ error: 'unauthorized', code: 'unauthorized', message: 'unauthorized', requestId: request.id, retryable: false });
     return;
   }
-  fastifyApiKeyContext.set(request, result);
   const keyId = result.keyId;
+  if (keyId && !isPublicApiKeyRoute(request.method, request.routeOptions.url)) {
+    reply.raw.once('finish', () => recordApiKeyOutcome(keyId, request.method, request.routeOptions.url ?? request.url.split('?')[0], reply.raw.statusCode));
+    reply.code(403).send({
+      error: 'this API key is limited to decrypt and IPA artifact routes',
+      code: 'public_api_scope_denied',
+      message: 'this API key is limited to decrypt and IPA artifact routes',
+      requestId: request.id,
+      retryable: false,
+    });
+    return;
+  }
+  fastifyApiKeyContext.set(request, result);
   if (keyId) {
     reply.raw.once('finish', () => recordApiKeyOutcome(keyId, request.method, request.routeOptions.url ?? request.url.split('?')[0], reply.raw.statusCode));
   }

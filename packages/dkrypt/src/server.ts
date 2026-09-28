@@ -62,6 +62,7 @@ import { startSpan, startTelemetry, stopTelemetry, traceContextFromHeader, type 
 import { FixedWindowRateLimiter } from '#util/rateLimit.js';
 import { createHttpErrorEnvelope } from '#util/httpResponse.js';
 import { startRustDeviceEventMonitoring } from '#deviceBridgeEvents.js';
+import { createPublicOpenApiDocument } from '#publicApi.js';
 
 const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 const sharedApiRateLimiter = new FixedWindowRateLimiter(config.apiRateLimitPerMinute, 60_000);
@@ -124,7 +125,7 @@ export async function buildServer(options: { includePublicRoutes?: boolean } = {
     mode: 'dynamic',
     openapi: {
       openapi: '3.1.0',
-      info: { title: 'dkrypt API', version: '1.0.0', description: 'Typed API for dkrypt device operations, decrypt jobs, artifacts, billing, and administration.' },
+      info: { title: 'dkrypt API', version: '1.0.0', description: 'Typed internal API for dkrypt dashboard and operations.' },
       servers: [{ url: '/' }],
       components: { securitySchemes: { bearerAuth: { type: 'http', scheme: 'bearer' } } },
       security: [{ bearerAuth: [] }],
@@ -236,7 +237,7 @@ export async function buildServer(options: { includePublicRoutes?: boolean } = {
     done(null, normalizedPayload);
   });
 
-  server.get('/openapi.json', (_request, reply) => reply.send(server.swagger()));
+  server.get('/openapi.json', (_request, reply) => reply.send(createPublicOpenApiDocument(server.swagger())));
 
   if (options.includePublicRoutes !== false) {
     const ogImageVersion = createHash('sha256').update(readFileSync(path.join(publicDir, 'og-image.png'))).digest('hex').slice(0, 10);
