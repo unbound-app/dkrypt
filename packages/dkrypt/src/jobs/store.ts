@@ -18,6 +18,7 @@ import { appendJobTimelineEvent, type Job, type JobSource, type TestFlightJobSou
 import { artifactKeyForJob, buildDashboardArtifactFileUrl, getArtifactById, getArtifactByKey, getArtifactForJob, linkArtifactToProject, migrateLegacyPath, type ArtifactRecord } from '#artifacts.js';
 import { closePersistedJobs, findPersistedActiveJobId, findPersistedReusableCompletedJobIds, loadPersistedJobs, replacePersistedJobs, type JobBuildLookup } from '#jobs/repository.js';
 import { terminateChildProcess } from '#jobs/process.js';
+import { assessQueueServiceObjective, projectCompletedJobDurationP95Ms, queueServiceObjectiveBreachDescription, queueServiceObjectiveMs } from '#jobs/slo.js';
 import { classifyJobFailure } from '#util/failureCategory.js';
 import { incrementMetric, observeMetric } from '#metrics.js';
 import { recordJobStarted } from '#jobs/metrics.js';
@@ -649,6 +650,10 @@ export function isJobDispatchable(job: Job, device: DeviceRecord): boolean {
   return !jobDeviceBlocker(job, device);
 }
 
+export function getJobEligibleDeviceCount(job: Job): number {
+  return getEffectiveDevices().filter((device) => device.enabled && isJobDispatchable(job, device)).length;
+}
+
 export function notifyDeviceDispatchStateChanged(): void {
   pumpWorkers();
 }
@@ -911,35 +916,34 @@ async function reclaimAndMaybeUninstall(job: Job): Promise<void> {
 
 let jobSweepTimer: NodeJS.Timeout | undefined;
 
-function queueSloTarget(): { targetMs: number; historicalP95Ms: number | null } {
-  const durations = getAllJobHistory()
-    .filter((job) => job.status === 'done' && job.startedAt && job.finishedAt > job.startedAt)
-    .map((job) => job.finishedAt - (job.startedAt as number))
-    .sort((a, b) => a - b);
-  const historicalP95Ms = durations.length === 0 ? null : durations[Math.ceil(durations.length * 0.95) - 1];
-  return { targetMs: historicalP95Ms ?? config.queueSloMinutes * 60_000, historicalP95Ms };
-}
-
-function queueSloBreached(job: Job, now: number, targetMs: number, historicalP95Ms: number | null): boolean {
-  const waitedMs = now - job.createdAt;
-  const queue = job.status === 'queued' ? getQueueInfo(job.id) : undefined;
-  const predictedStartMs = queue && historicalP95Ms !== null ? Math.max(0, queue.position - 1) * historicalP95Ms : null;
-  const predictedCompletionMs = predictedStartMs === null || historicalP95Ms === null ? null : predictedStartMs + historicalP95Ms;
-  return waitedMs > targetMs || (predictedCompletionMs !== null && waitedMs + predictedCompletionMs > targetMs);
-}
-
 async function monitorQueueSlo(): Promise<void> {
   const active = getActiveJobs();
   const activeIds = new Set(active.map((job) => job.id));
   for (const jobId of queueSloNotified) if (!activeIds.has(jobId)) queueSloNotified.delete(jobId);
-  const { targetMs, historicalP95Ms } = queueSloTarget();
+  const targetMs = queueServiceObjectiveMs(config.queueSloMinutes);
+  const completedHistory = getAllJobHistory();
+  const historicalP95ByProject = new Map<string, number | null>();
   const now = Date.now();
   for (const job of active) {
-    if (!queueSloBreached(job, now, targetMs, historicalP95Ms) || queueSloNotified.has(job.id)) continue;
+    const projectId = job.projectId ?? DEFAULT_PROJECT_ID;
+    if (!historicalP95ByProject.has(projectId)) {
+      historicalP95ByProject.set(projectId, projectCompletedJobDurationP95Ms(completedHistory, projectId, DEFAULT_PROJECT_ID));
+    }
+    const queue = job.status === 'queued' ? getQueueInfo(job.id) : undefined;
+    const assessment = assessQueueServiceObjective({
+      createdAt: job.createdAt,
+      now,
+      status: job.status,
+      queuePosition: queue?.position,
+      parallelism: getJobEligibleDeviceCount(job),
+      objectiveMs: targetMs,
+      serviceDurationP95Ms: historicalP95ByProject.get(projectId) ?? null,
+    });
+    if (assessment.objective !== 'breached' || queueSloNotified.has(job.id)) continue;
     queueSloNotified.add(job.id);
     void notify('queueSloBreach', {
       title: 'Queue service objective breached',
-      description: `${job.bundleId} has waited ${Math.max(0, Math.round((now - job.createdAt) / 60_000))} minutes and is outside the ${Math.max(1, Math.round(targetMs / 60_000))}-minute queue objective.`,
+      description: queueServiceObjectiveBreachDescription(job.bundleId, assessment, targetMs),
       color: EMBED_COLOR.warn,
       fields: [
         { name: 'Job', value: job.id, inline: true },

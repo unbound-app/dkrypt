@@ -1170,6 +1170,27 @@ export function fetchJobVolume(days = 14): Promise<{ days: { date: string; count
   return apiJson(`/v1/dashboard/jobs/volume?days=${days}&projectId=${encodeURIComponent(projectSelectionState.id)}`);
 }
 
+export interface JobSloAssessment {
+  id: string;
+  bundleId: string;
+  status: 'queued' | 'running';
+  waitedMs: number;
+  predictedStartMs: number | null;
+  predictedCompletionMs: number | null;
+  parallelism: number;
+  objective: 'within' | 'breached';
+}
+
+export interface JobSloSummary {
+  targetMs: number;
+  historicalP95Ms: number | null;
+  jobs: JobSloAssessment[];
+}
+
+export function fetchJobSlo(): Promise<JobSloSummary> {
+  return apiJson(`/v1/dashboard/jobs/slo?projectId=${encodeURIComponent(projectSelectionState.id)}`);
+}
+
 export interface InsightsAppStats {
   bundleId: string;
   totalRuns: number;

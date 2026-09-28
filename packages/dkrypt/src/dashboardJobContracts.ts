@@ -196,6 +196,7 @@ export const dashboardJobSloResponseSchema = Type.Object({
     waitedMs: Type.Number(),
     predictedStartMs: Type.Union([Type.Number(), Type.Null()]),
     predictedCompletionMs: Type.Union([Type.Number(), Type.Null()]),
+    parallelism: Type.Integer({ minimum: 0 }),
     objective: Type.Union([Type.Literal('within'), Type.Literal('breached')]),
   }, { additionalProperties: true })),
 }, { additionalProperties: true });

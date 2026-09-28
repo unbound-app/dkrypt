@@ -4,7 +4,8 @@ import { recordFastifyDashboardActivity } from '#dashboardActivity.js';
 import { canAccessProject } from '#dashboardJobPresentation.js';
 import { config } from '#config.js';
 import { getRouteContract } from '#contracts.js';
-import { getActiveJobs, getQueueInfo } from '#jobs/store.js';
+import { getActiveJobs, getJobEligibleDeviceCount, getQueueInfo } from '#jobs/store.js';
+import { assessQueueServiceObjective, projectCompletedJobDurationP95Ms, queueServiceObjectiveMs } from '#jobs/slo.js';
 import { PermissionFlag } from '#permissions.js';
 import { fastifyRequirePermission, fastifyRequireSession, getFastifySession } from '#session.js';
 import { DEFAULT_PROJECT_ID, getAllJobHistory, getAverageJobDurationMs, getBundleStats, getDailyVolume } from '#store/state.js';
@@ -88,27 +89,26 @@ export function createDashboardJobAnalyticsRoutes(overrides: Partial<DashboardJo
         return createHttpErrorEnvelope(request.id, 404, 'project not found');
       }
       const now = Date.now();
-      const completed = services.getAllJobHistory().filter((job) =>
-        (job.projectId ?? DEFAULT_PROJECT_ID) === projectId && job.status === 'done' && job.startedAt && job.finishedAt > job.startedAt,
-      );
-      const durations = completed.map((job) => job.finishedAt - (job.startedAt as number)).sort((a, b) => a - b);
-      const historicalP95Ms = durations.length === 0 ? null : durations[Math.ceil(durations.length * 0.95) - 1]!;
-      const targetMs = historicalP95Ms ?? services.queueSloMinutes * 60_000;
+      const historicalP95Ms = projectCompletedJobDurationP95Ms(services.getAllJobHistory(), projectId, DEFAULT_PROJECT_ID);
+      const targetMs = queueServiceObjectiveMs(services.queueSloMinutes);
       const jobs = services.getActiveJobs()
         .filter((job) => (job.projectId ?? DEFAULT_PROJECT_ID) === projectId)
         .map((job) => {
           const queue = job.status === 'queued' ? services.getQueueInfo(job.id) : undefined;
-          const waitedMs = now - job.createdAt;
-          const predictedStartMs = queue && historicalP95Ms !== null ? Math.max(0, queue.position - 1) * historicalP95Ms : null;
-          const predictedCompletionMs = predictedStartMs === null || historicalP95Ms === null ? null : predictedStartMs + historicalP95Ms;
+          const assessment = assessQueueServiceObjective({
+            createdAt: job.createdAt,
+            now,
+            status: job.status,
+            queuePosition: queue?.position,
+            parallelism: getJobEligibleDeviceCount(job),
+            objectiveMs: targetMs,
+            serviceDurationP95Ms: historicalP95Ms,
+          });
           return {
             id: job.id,
             bundleId: job.bundleId,
             status: job.status,
-            waitedMs,
-            predictedStartMs,
-            predictedCompletionMs,
-            objective: waitedMs > targetMs || (predictedCompletionMs !== null && waitedMs + predictedCompletionMs > targetMs) ? 'breached' as const : 'within' as const,
+            ...assessment,
           };
         });
       return { targetMs, historicalP95Ms, jobs };

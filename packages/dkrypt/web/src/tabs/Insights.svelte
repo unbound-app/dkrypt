@@ -1,13 +1,15 @@
 <script lang="ts">
-	import { BarChart3, TriangleAlert, X } from "lucide-svelte";
+	import { BarChart3, CircleCheck, RefreshCw, TriangleAlert, X } from "lucide-svelte";
 	import BundleStatsDialog from "#components/BundleStatsDialog.svelte";
 	import EmptyState from "#components/EmptyState.svelte";
 	import Sparkline from "#components/Sparkline.svelte";
 	import {
 		fetchInsights,
 		fetchFailurePatterns,
+		fetchJobSlo,
 		fetchStorageForecast,
 		fetchWatchHealth,
+		type JobSloSummary,
 		type InsightsSummary,
 		type FailurePattern,
 		type SchedulerRunEntry,
@@ -94,6 +96,63 @@
 			PermissionFlag.manageDevices,
 		]),
 	);
+	const canViewQueueSlo = $derived(
+		sessionHasAnyPermission([
+			PermissionFlag.viewAutomation,
+			PermissionFlag.manageAutomation,
+		]),
+	);
+	let queueSlo = $state<JobSloSummary | null>(null);
+	let queueSloLoading = $state(false);
+	let queueSloError = $state(false);
+	let queueSloRequestId = 0;
+	let queueSloProjectId = "";
+	const activeJobSloSignature = $derived(
+		(liveState.overview?.activeJobs ?? [])
+			.map((job) => `${job.id}:${job.status}`)
+			.join("|"),
+	);
+	const historySloSignature = $derived(
+		liveState.historyAdditions.map((entry) => entry.id).join("|"),
+	);
+
+	async function loadQueueSlo(): Promise<void> {
+		const requestId = ++queueSloRequestId;
+		queueSloLoading = true;
+		queueSloError = false;
+		try {
+			const result = await fetchJobSlo();
+			if (requestId === queueSloRequestId) queueSlo = result;
+		} catch {
+			if (requestId === queueSloRequestId) queueSloError = true;
+		} finally {
+			if (requestId === queueSloRequestId) queueSloLoading = false;
+		}
+	}
+
+	$effect(() => {
+		const projectId = projectSelectionState.id;
+		activeJobSloSignature;
+		historySloSignature;
+		if (queueSloProjectId !== projectId) {
+			queueSloProjectId = projectId;
+			queueSlo = null;
+		}
+		if (!canViewQueueSlo) {
+			queueSloRequestId += 1;
+			queueSloProjectId = "";
+			queueSlo = null;
+			queueSloError = false;
+			queueSloLoading = false;
+			return;
+		}
+		void loadQueueSlo();
+	});
+	$effect(() => {
+		if (!canViewQueueSlo) return;
+		const refreshTimer = setInterval(() => void loadQueueSlo(), 30_000);
+		return () => clearInterval(refreshTimer);
+	});
 	let watchHealth = $state<WatchHealthSummary[] | null>(null);
 	let storageForecast = $state<StorageForecast | null>(null);
 	let failurePatterns = $state<FailurePattern[]>([]);
@@ -523,6 +582,46 @@
 		{/if}
 	{/if}
 </Card>
+
+{#if canViewQueueSlo}
+	<Card title="Queue objective" class="mt-4">
+		<div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+			<div>
+				<div class="text-sm font-medium">Completion target</div>
+				<div class="text-xs text-muted">{queueSlo ? fmtDurationApprox(queueSlo.targetMs) : "Configured target"} from submission</div>
+			</div>
+			<div class="flex items-center gap-2">
+				{#if queueSloLoading}<span class="text-xs text-muted">Updating</span>{/if}
+				<Button size="icon" variant="ghost" aria-label="Refresh queue objective" title="Refresh" onclick={() => void loadQueueSlo()}>
+					<RefreshCw class="h-4 w-4" />
+				</Button>
+			</div>
+		</div>
+		{#if queueSloError}
+			<div class="text-sm text-muted">Queue objective status is temporarily unavailable.</div>
+		{:else if queueSloLoading && !queueSlo}
+			<div class="text-sm text-muted">Checking active decrypts…</div>
+		{:else if queueSlo}
+			{@const breachedJobs = queueSlo.jobs.filter((job) => job.objective === "breached")}
+			{#if queueSlo.jobs.length === 0}
+				<div class="text-sm text-muted">No active decrypts.</div>
+			{:else if breachedJobs.length === 0}
+				<div class="flex items-center gap-2 text-sm"><CircleCheck class="h-4 w-4 text-ok" />All {fmtNumber(queueSlo.jobs.length, 0)} active jobs are within the objective.</div>
+			{:else}
+				<div class="mb-2 flex items-center gap-2 text-sm"><TriangleAlert class="h-4 w-4 text-warn" />{fmtNumber(breachedJobs.length, 0)} active job{breachedJobs.length === 1 ? " is" : "s are"} at risk.</div>
+				<div class="flex flex-col gap-1.5">
+					{#each breachedJobs.slice(0, 5) as job (job.id)}
+						<div class="border-border flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border px-2.5 py-2 text-xs">
+							<span class="min-w-0 flex-1 truncate font-medium" title={job.bundleId}>{appDisplayName(job.bundleId)}</span>
+							<Badge variant={job.waitedMs > queueSlo.targetMs ? "destructive" : "warning"}>{job.waitedMs > queueSlo.targetMs ? "Objective missed" : "Projected late"}</Badge>
+							<span class="w-full text-muted sm:w-auto">Elapsed {fmtDurationApprox(job.waitedMs)}{job.predictedCompletionMs !== null ? ` · best-case total ${fmtDurationApprox(job.waitedMs + job.predictedCompletionMs)} across up to ${job.parallelism} compatible device${job.parallelism === 1 ? "" : "s"}` : ""}</span>
+						</div>
+					{/each}
+				</div>
+			{/if}
+		{/if}
+	</Card>
+{/if}
 
 {#if canViewScheduler && watchHealth !== null && watchHealth.some((w) => w.schedulable)}
 	<Card title="Storage forecast" class="mt-4">

@@ -535,6 +535,90 @@ test('active jobs table supports keyboard scrolling on constrained viewports', a
   await expect.poll(() => region.evaluate((element) => element.scrollLeft)).toBe(0);
 });
 
+test('automation managers can inspect queue objective breaches in Insights', async ({ page }) => {
+  await page.clock.install();
+  await mockStableDashboardEvents(page);
+  await mockAuthenticatedDashboard(page, '4294967296');
+  await page.route('**/v1/dashboard/insights*', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        totalRuns: 0,
+        doneCount: 0,
+        failedCount: 0,
+        successRate: 0,
+        totalSizeBytes: 0,
+        manualCount: 0,
+        schedulerCount: 0,
+        topApps: [],
+        trend: [],
+        failureBreakdown: [],
+        byDevice: [],
+        anomalies: [],
+      }),
+    });
+  });
+  let sloRequests = 0;
+  let elapsedBreach = false;
+  await page.route('**/v1/dashboard/jobs/slo*', async (route) => {
+    sloRequests += 1;
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        targetMs: 300_000,
+        historicalP95Ms: 120_000,
+        jobs: [{
+          id: 'job-slo-1',
+          bundleId: 'com.example.slo',
+          status: 'queued',
+          waitedMs: elapsedBreach ? 301_000 : 70_000,
+          predictedStartMs: elapsedBreach ? null : 120_000,
+          predictedCompletionMs: elapsedBreach ? null : 240_000,
+          parallelism: 2,
+          objective: 'breached',
+        }],
+      }),
+    });
+  });
+  await page.route('**/v1/dashboard/failure-patterns*', async (route) => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ patterns: [] }) });
+  });
+  await page.route('**/v1/dashboard/storage-forecast*', async (route) => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ freeBytes: 0, bytesPerDay: 0, daysRemaining: null, sampleCount: 0 }) });
+  });
+  await page.route('**/v1/dashboard/watches/health*', async (route) => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ watches: [] }) });
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Insights', exact: true }).click();
+
+  await expect(page.getByRole('heading', { name: 'Queue objective' })).toBeVisible();
+  await expect(page.getByText('Projected late', { exact: true })).toBeVisible();
+  await expect(page.getByText(/best-case total/)).toBeVisible();
+  const initialRequests = sloRequests;
+  elapsedBreach = true;
+  await page.clock.fastForward(30_000);
+  await expect.poll(() => sloRequests).toBeGreaterThan(initialRequests);
+  await expect(page.getByText('Objective missed', { exact: true })).toBeVisible();
+});
+
+test('queue objective details stay hidden from members without automation access', async ({ page }) => {
+  await mockStableDashboardEvents(page);
+  await mockAuthenticatedDashboard(page, '2');
+  let sloRequests = 0;
+  await page.route('**/v1/dashboard/jobs/slo*', async (route) => {
+    sloRequests += 1;
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ targetMs: 300_000, historicalP95Ms: null, jobs: [] }) });
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Insights', exact: true }).click();
+
+  await expect(page.getByRole('heading', { name: 'Queue objective' })).toHaveCount(0);
+  expect(sloRequests).toBe(0);
+});
+
 test('batch TestFlight queue selects an eligible device independently for each app', async ({ page }) => {
   await mockStableDashboardEvents(page);
   await mockAuthenticatedDashboard(page, '2');

@@ -72,6 +72,15 @@ test('queue SLO data remains manager-gated and includes the active queue objecti
     createdAt: now - 20,
     startedAt: now - 10,
     finishedAt: now,
+  }, {
+    id: 'other-project-completed-job',
+    projectId: 'another-project',
+    bundleId: 'com.example.app',
+    status: 'done',
+    source: 'manual',
+    createdAt: now - 2_000,
+    startedAt: now - 1_000,
+    finishedAt: now,
   }];
   const active: Job[] = [{
     id: 'active-job',
@@ -104,9 +113,9 @@ test('queue SLO data remains manager-gated and includes the active queue objecti
     expect(denied.statusCode).toBe(403);
     expect(allowed.statusCode).toBe(200);
     expect(JSON.parse(allowed.body)).toMatchObject({
-      targetMs: 10,
+      targetMs: 300_000,
       historicalP95Ms: 10,
-      jobs: [{ id: 'active-job', bundleId: 'com.example.app', status: 'queued', objective: 'breached' }],
+      jobs: [{ id: 'active-job', bundleId: 'com.example.app', status: 'queued', objective: 'within' }],
     });
   } finally {
     await server.close();
