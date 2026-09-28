@@ -37,6 +37,7 @@ test('API-key route policy matches concrete job and TestFlight paths only', () =
   expect(isPublicApiKeyRoute('GET', '/v1/testflight/123/trains')).toBe(false);
   expect(isPublicApiKeyRoute('GET', '/v1/billing')).toBe(false);
   expect(isPublicApiKeyRoute('POST', '/v1/billing/checkout')).toBe(false);
+  expect(isPublicApiKeyRoute('PUT', '/v1/billing/checkouts')).toBe(false);
   expect(isPublicApiKeyRoute('GET', '/v1/auth/session')).toBe(false);
   expect(isPublicApiKeyRoute('GET', '/v1/auth/sessions')).toBe(false);
   expect(isPublicApiKeyRoute('GET', '/v1/health')).toBe(false);
@@ -53,6 +54,7 @@ test('generated API keys are rejected outside the decrypt and artifact API allow
     const metrics = await server.inject({ method: 'GET', url: '/v1/metrics', headers });
     const billing = await server.inject({ method: 'GET', url: '/v1/billing', headers });
     const billingCheckout = await server.inject({ method: 'POST', url: '/v1/billing/checkout', headers, payload: {} });
+    const billingCheckoutControl = await server.inject({ method: 'PUT', url: '/v1/billing/checkouts', headers, payload: { paused: true } });
     const session = await server.inject({ method: 'GET', url: '/v1/auth/session', headers });
     const sessions = await server.inject({ method: 'GET', url: '/v1/auth/sessions', headers });
     const dashboard = await server.inject({ method: 'GET', url: '/v1/dashboard/overview', headers });
@@ -64,6 +66,7 @@ test('generated API keys are rejected outside the decrypt and artifact API allow
     expect(metrics.statusCode).toBe(403);
     expect(billing.statusCode).toBe(403);
     expect(billingCheckout.statusCode).toBe(403);
+    expect(billingCheckoutControl.statusCode).toBe(403);
     expect(session.statusCode).toBe(403);
     expect(sessions.statusCode).toBe(403);
     expect(dashboard.statusCode).toBe(403);

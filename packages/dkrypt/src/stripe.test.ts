@@ -1,6 +1,8 @@
 import { createHmac } from 'node:crypto';
 import Stripe from 'stripe';
 import { describe, expect, test } from 'bun:test';
+import type { Response as HttpResponse } from '#http.js';
+import { PermissionFlag } from '#permissions.js';
 import {
   getBillingCustomerId,
   getBillingEntitlements,
@@ -10,8 +12,16 @@ import { config } from '#config.js';
 import { processStripeEvent } from '#routes/billing.js';
 import { buildServer } from '#server.js';
 import { flushTelemetry } from '#telemetry.js';
+import { setSessionCookie } from '#session.js';
 
 const webhookSecret = 'whsec_dkrypt_test';
+
+function createSessionCookie(permissions: bigint): string {
+  let cookieHeader = '';
+  const response = { setHeader: (_name: string, value: string) => { cookieHeader = value; } } as unknown as HttpResponse;
+  setSessionCookie(response, { sub: 'root', permissions });
+  return cookieHeader.split(';', 1)[0];
+}
 
 function event(type: string, object: Record<string, unknown>): Stripe.Event {
   return {
@@ -244,6 +254,48 @@ describe('Stripe billing webhooks', () => {
       expect(response.statusCode).toBe(400);
       expect(response.json()).toMatchObject({ error: 'Idempotency-Key must be 1-200 URL-safe characters' });
     } finally {
+      await server.close();
+    }
+  });
+
+  test('checkout pause is manager-only and blocks new provider checkouts', async () => {
+    const server = await buildServer({ includePublicRoutes: false });
+    const managerCookie = createSessionCookie(PermissionFlag.manageBilling);
+    const viewerCookie = createSessionCookie(0n);
+    const managerHeaders = { cookie: managerCookie };
+
+    try {
+      const anonymous = await server.inject({ method: 'PUT', url: '/v1/billing/checkouts', payload: { paused: true } });
+      const viewer = await server.inject({ method: 'PUT', url: '/v1/billing/checkouts', headers: { cookie: viewerCookie }, payload: { paused: true } });
+      const resumed = await server.inject({ method: 'PUT', url: '/v1/billing/checkouts', headers: managerHeaders, payload: { paused: false } });
+      const initialStatus = await server.inject({ method: 'GET', url: '/v1/billing/provider-status', headers: managerHeaders });
+      const paused = await server.inject({ method: 'PUT', url: '/v1/billing/checkouts', headers: managerHeaders, payload: { paused: true } });
+      const pausedStatus = await server.inject({ method: 'GET', url: '/v1/billing/provider-status', headers: managerHeaders });
+      const stripeCheckout = await server.inject({
+        method: 'POST',
+        url: '/v1/billing/checkout',
+        headers: { ...managerHeaders, 'idempotency-key': 'paused-stripe-checkout' },
+        payload: { planId: 'regular', provider: 'stripe' },
+      });
+      const cryptoCheckout = await server.inject({
+        method: 'POST',
+        url: '/v1/billing/checkout',
+        headers: { ...managerHeaders, 'idempotency-key': 'paused-crypto-checkout' },
+        payload: { planId: 'regular', provider: 'crypto' },
+      });
+
+      expect(anonymous.statusCode).toBe(401);
+      expect(viewer.statusCode).toBe(403);
+      expect(resumed.statusCode).toBe(200);
+      expect(initialStatus.json()).toMatchObject({ checkoutsPaused: false });
+      expect(paused.json()).toMatchObject({ paused: true });
+      expect(pausedStatus.json()).toMatchObject({ checkoutsPaused: true });
+      expect(stripeCheckout.statusCode).toBe(503);
+      expect(stripeCheckout.json()).toMatchObject({ code: 'billing_checkouts_paused', retryable: true });
+      expect(cryptoCheckout.statusCode).toBe(503);
+      expect(cryptoCheckout.json()).toMatchObject({ code: 'billing_checkouts_paused', retryable: true });
+    } finally {
+      await server.inject({ method: 'PUT', url: '/v1/billing/checkouts', headers: managerHeaders, payload: { paused: false } });
       await server.close();
     }
   });

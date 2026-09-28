@@ -1,12 +1,12 @@
 <script lang="ts">
-  import { AlertTriangle, CreditCard, LoaderCircle, RefreshCw, RotateCcw, ShieldAlert, WalletCards } from 'lucide-svelte';
+  import { AlertTriangle, CreditCard, LoaderCircle, Pause, Play, RefreshCw, RotateCcw, ShieldAlert, WalletCards } from 'lucide-svelte';
   import { onMount } from 'svelte';
   import Badge from '#lib/components/ui/Badge.svelte';
   import Button from '#lib/components/ui/Button.svelte';
   import Card from '#lib/components/ui/Card.svelte';
   import EmptyState from '#components/EmptyState.svelte';
   import Input from '#lib/components/ui/Input.svelte';
-  import { fetchBillingProviderStatus, fetchBillingSubscriptions, fetchBillingWebhookInbox, quarantineBillingWebhook, replayBillingWebhook, type BillingManagerSubscription, type BillingProviderStatus, type BillingWebhookInboxRecord } from '#lib/api';
+  import { fetchBillingProviderStatus, fetchBillingSubscriptions, fetchBillingWebhookInbox, quarantineBillingWebhook, replayBillingWebhook, setBillingCheckoutPaused, type BillingManagerSubscription, type BillingProviderStatus, type BillingWebhookInboxRecord } from '#lib/api';
   import { PermissionFlag } from '#lib/permissions';
   import { sessionHasPermission } from '#lib/session.svelte';
   import { showToast } from '#lib/ui.svelte';
@@ -36,6 +36,7 @@
   let webhookAction = $state<string | undefined>(undefined);
   let webhookProviderFilter = $state('');
   let webhookStatusFilter = $state('');
+  let checkoutPauseLoading = $state(false);
 
   function subscriptionFilters(cursor?: string): Parameters<typeof fetchBillingSubscriptions>[0] {
     return { q: search || undefined, planId: planId || undefined, provider: providerFilter || undefined, status: statusFilter || undefined, from: from || undefined, to: to || undefined, wallet: wallet || undefined, invoice: invoice || undefined, cursor, limit: 50 };
@@ -111,6 +112,20 @@
     }
   }
 
+  async function changeCheckoutPause(paused: boolean): Promise<void> {
+    if (!providerStatus) return;
+    checkoutPauseLoading = true;
+    try {
+      const result = await setBillingCheckoutPaused(paused);
+      providerStatus = { ...providerStatus, checkoutsPaused: result.paused };
+      showToast(result.paused ? 'New checkouts paused' : 'New checkouts resumed', 'success');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Couldn't update checkout availability", 'error');
+    } finally {
+      checkoutPauseLoading = false;
+    }
+  }
+
   function statusVariant(status: string): BadgeVariant {
     if (status === 'active' || status === 'trialing') return 'success';
     if (status === 'past_due') return 'warning';
@@ -166,6 +181,14 @@
       <Card title="Stripe"><div class="flex items-center justify-between gap-3 text-sm"><span>{providerStatus.stripe.enabled ? 'Ready for card and bank checkout' : 'Not configured'}</span><Badge variant={providerStatus.stripe.enabled ? 'success' : 'secondary'}>{providerStatus.stripe.environment}</Badge></div></Card>
       <Card title="Crypto · NOWPayments"><div class="flex items-center justify-between gap-3 text-sm"><span>{!providerStatus.crypto.enabled ? 'Disabled for new checkouts' : providerStatus.crypto.ready ? 'Ready for EUR-priced crypto invoices' : providerStatus.crypto.issues[0] ?? 'Not ready'}</span><Badge variant={providerStatus.crypto.enabled && providerStatus.crypto.ready ? 'success' : 'warning'}>{providerStatus.crypto.environment}</Badge></div><div class="mt-2 text-xs text-muted">Crypto checkout is separate from Stripe and does not collect billing information.</div></Card>
     </div>
+    <Card title="New checkout availability">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <p class="max-w-3xl text-sm text-muted">{providerStatus.checkoutsPaused ? 'New subscriptions are paused. Existing subscriptions, renewals, cancellations, and payment events continue normally.' : 'New subscriptions are available through configured payment providers.'}</p>
+        <Button variant={providerStatus.checkoutsPaused ? 'default' : 'destructive'} loading={checkoutPauseLoading} onclick={() => void changeCheckoutPause(!providerStatus?.checkoutsPaused)}>
+          {#if providerStatus.checkoutsPaused}<Play class="h-4 w-4" /> Resume new checkouts{:else}<Pause class="h-4 w-4" /> Pause new checkouts{/if}
+        </Button>
+      </div>
+    </Card>
   {/if}
 
   <Card>

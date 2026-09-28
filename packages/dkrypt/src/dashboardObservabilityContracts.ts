@@ -34,6 +34,7 @@ const auditActionSchema = Type.Union([
   Type.Literal('billing.cancel'),
   Type.Literal('billing.webhook'),
   Type.Literal('billing.webhook.replay'),
+  Type.Literal('billing.checkouts.pause'),
   Type.Literal('privacy.export'),
   Type.Literal('privacy.delete'),
   Type.Literal('auth.passkey.add'),

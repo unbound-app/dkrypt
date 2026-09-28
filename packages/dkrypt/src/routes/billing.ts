@@ -4,6 +4,7 @@ import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import type {
   BillingCancelRoute,
+  BillingCheckoutControlRoute,
   BillingCheckoutRoute,
   BillingSubscriptionRoute,
   BillingSubscriptionsRoute,
@@ -43,7 +44,7 @@ import { getAuthProfile, resolveAuthUserId } from '#identity.js';
 import { log } from '#logger.js';
 import { fastifyRequirePermission, fastifyRequireSession, getFastifySession } from '#session.js';
 import { PermissionFlag } from '#permissions.js';
-import { recordAudit } from '#store/state.js';
+import { areNewBillingCheckoutsPaused, recordAudit, setNewBillingCheckoutsPaused } from '#store/state.js';
 import { constructStripeWebhookEvent, getStripe } from '#stripe.js';
 import { claimWebhook, countWebhookInbox, getWebhookInboxRecord, listWebhookInbox, markWebhookFailed, markWebhookProcessed, quarantineWebhook, receiveWebhook, releaseWebhookClaim } from '#webhookInbox.js';
 import { withCorrelationSpan } from '#correlation.js';
@@ -55,10 +56,10 @@ function metadataUserId(metadata: unknown): string | undefined {
   return typeof value === 'string' && value.length <= 160 ? resolveAuthUserId(value) : undefined;
 }
 
-function sendBillingError(request: FastifyRequest, reply: FastifyReply, statusCode: number, message: string) {
+function sendBillingError(request: FastifyRequest, reply: FastifyReply, statusCode: number, message: string, code?: string) {
   return reply.code(statusCode).send({
     error: message,
-    code: statusCode >= 500 ? 'internal_error' : 'request_error',
+    code: code ?? (statusCode >= 500 ? 'internal_error' : 'request_error'),
     message,
     requestId: request.id,
     retryable: statusCode >= 500 || statusCode === 429 || statusCode === 503,
@@ -314,6 +315,7 @@ export const billingRoutes: FastifyPluginAsyncTypebox = async (server) => {
   }
 
   server.post<BillingCheckoutRoute>('/v1/billing/checkout', { schema: getRouteContract('POST', '/v1/billing/checkout'), preHandler: fastifyRequireSession }, async (request, reply) => {
+    if (areNewBillingCheckoutsPaused()) return sendBillingError(request, reply, 503, 'New checkouts are temporarily paused by an administrator', 'billing_checkouts_paused');
     const userId = getFastifySession(request)!.sub;
     const target = getPlan(request.body.planId);
     if (!target) return sendBillingError(request, reply, 400, 'unknown plan');
@@ -416,8 +418,18 @@ export const billingRoutes: FastifyPluginAsyncTypebox = async (server) => {
 
   const requireBillingManager = fastifyRequirePermission(PermissionFlag.manageBilling);
 
+  server.put<BillingCheckoutControlRoute>('/v1/billing/checkouts', {
+    schema: getRouteContract('PUT', '/v1/billing/checkouts'),
+    attachValidation: true,
+    preHandler: requireBillingManager,
+  }, (request, reply) => {
+    if (request.validationError) return sendBillingError(request, reply, 400, 'checkout control request is malformed');
+    const paused = setNewBillingCheckoutsPaused(request.body.paused, getFastifySession(request)!.sub);
+    return reply.send({ paused });
+  });
+
   server.get('/v1/billing/provider-status', { schema: getRouteContract('GET', '/v1/billing/provider-status'), preHandler: requireBillingManager }, async (_request, reply) => {
-    return reply.send({ stripe: { enabled: stripeEnabled, environment: stripeEnvironment, missingConfiguration: stripeMissingConfiguration }, crypto: await getNowPaymentsProviderStatus() });
+    return reply.send({ checkoutsPaused: areNewBillingCheckoutsPaused(), stripe: { enabled: stripeEnabled, environment: stripeEnvironment, missingConfiguration: stripeMissingConfiguration }, crypto: await getNowPaymentsProviderStatus() });
   });
 
   server.get<BillingSubscriptionsRoute>('/v1/billing/subscriptions', { schema: getRouteContract('GET', '/v1/billing/subscriptions'), preHandler: fastifyRequirePermission(PermissionFlag.viewBilling, PermissionFlag.manageBilling) }, (request, reply) => {

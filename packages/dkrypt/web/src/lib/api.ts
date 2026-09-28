@@ -2118,10 +2118,15 @@ export function quarantineBillingWebhook(id: string, reason?: string): Promise<{
 }
 
 export interface BillingProviderStatus {
+  checkoutsPaused: boolean;
   stripe: { enabled: boolean; environment: 'test' | 'live'; missingConfiguration: string[] };
   crypto: { enabled: boolean; configured: boolean; ready: boolean; environment: 'test' | 'live'; settlementType?: string; settlementCurrency: string; supportedChains: string[]; supportedAssets: string[]; missingConfiguration: string[]; issues: string[]; checkedAt?: string };
 }
 
 export function fetchBillingProviderStatus(): Promise<BillingProviderStatus> {
   return apiJson('/v1/billing/provider-status');
+}
+
+export function setBillingCheckoutPaused(paused: boolean): Promise<{ paused: boolean }> {
+  return apiJson('/v1/billing/checkouts', { method: 'PUT', body: JSON.stringify({ paused }) });
 }

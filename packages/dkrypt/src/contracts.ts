@@ -14,6 +14,7 @@ import {
 } from '#authContracts.js';
 import {
   billingCheckoutBodySchema,
+  billingCheckoutControlBodySchema,
   billingIdempotencyKeyHeadersSchema,
   billingSubscriptionBodySchema,
   billingSubscriptionsQuerySchema,
@@ -448,6 +449,7 @@ const AuthSessionListResponse = Type.Array(
   }),
 );
 const BillingProviderStatusResponse = object({
+  checkoutsPaused: Type.Boolean(),
   stripe: object({ enabled: Type.Boolean(), environment: ProviderEnvironment, missingConfiguration: Type.Array(Type.String()) }),
   crypto: object({
     enabled: Type.Boolean(),
@@ -463,6 +465,7 @@ const BillingProviderStatusResponse = object({
     checkedAt: Type.Optional(Type.String()),
   }),
 });
+const BillingCheckoutControlResponse = object({ paused: Type.Boolean() });
 const WebhookInboxPage = object({ inbox: Type.Array(JsonObject), total: Type.Integer({ minimum: 0 }), nextCursor: PageCursor });
 const DeviceHealthHistoryResponse = object({
   buckets: Type.Array(object({ hourStart: Type.Number(), reachablePercent: Type.Union([Type.Number(), Type.Null()]) })),
@@ -875,6 +878,7 @@ register('POST', '/v1/billing/cancel', { headers: billingIdempotencyKeyHeadersSc
 register('GET', '/v1/billing', {});
 register('POST', '/v1/billing/portal', {});
 register('GET', '/v1/billing/provider-status', {});
+register('PUT', '/v1/billing/checkouts', { body: billingCheckoutControlBodySchema });
 register('GET', '/v1/billing/subscriptions', {
   querystring: billingSubscriptionsQuerySchema,
 });
@@ -1128,6 +1132,7 @@ register('GET', '/v1/auth/sessions', { response: { 200: AuthSessionListResponse 
 register('DELETE', '/v1/auth/sessions/:id', { params: object({ id: Identifier }), response: { 200: OkResponse } });
 register('POST', '/v1/auth/sessions/revoke-others', { response: { 200: AuthRevokeOthersResponse } });
 register('GET', '/v1/billing/provider-status', { response: { 200: BillingProviderStatusResponse } });
+register('PUT', '/v1/billing/checkouts', { response: { 200: BillingCheckoutControlResponse, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope, 503: ErrorEnvelope } });
 register('GET', '/v1/billing/webhooks/inbox', { response: { 200: WebhookInboxPage } });
 register('GET', '/v1/dashboard/doctor', { response: { 200: dashboardDoctorResponseSchema } });
 register('GET', '/v1/dashboard/synthetic', { response: { 200: dashboardSyntheticResponseSchema } });
@@ -1164,7 +1169,7 @@ register('POST', '/v1/auth/passkeys/reauth/verify', { response: { 200: AuthToken
 register('POST', '/v1/billing/checkout', {
   headers: billingIdempotencyKeyHeadersSchema,
   body: billingCheckoutBodySchema,
-  response: { 200: BillingCheckoutResponse, 201: BillingCheckoutResponse },
+  response: { 200: BillingCheckoutResponse, 201: BillingCheckoutResponse, 503: ErrorEnvelope },
 });
 register('POST', '/v1/billing/portal', { response: { 200: UrlResponse } });
 register('POST', '/v1/billing/cancel', { headers: billingIdempotencyKeyHeadersSchema, response: { 200: BillingCancelResponse } });

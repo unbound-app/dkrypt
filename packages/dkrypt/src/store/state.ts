@@ -296,6 +296,10 @@ export interface SchedulerSettings {
   maintenanceMode: boolean;
 }
 
+export interface PersistedSettings extends Partial<SchedulerSettings> {
+  billingCheckoutsPaused?: boolean;
+}
+
 export interface AppWatch {
   id: string;
   projectId?: string;
@@ -525,6 +529,7 @@ export type AuditAction =
   | 'billing.cancel'
   | 'billing.webhook'
   | 'billing.webhook.replay'
+  | 'billing.checkouts.pause'
   | 'privacy.export'
   | 'privacy.delete'
   | 'auth.passkey.add'
@@ -617,7 +622,7 @@ interface PersistedState {
   allowedUsers: AllowedUser[];
   roles: Role[];
   projects: ProjectRecord[];
-  settings: Partial<SchedulerSettings>;
+  settings: PersistedSettings;
   watches: AppWatch[];
   devices: DeviceRecord[];
   jobHistory: JobHistoryEntry[];
@@ -1090,7 +1095,7 @@ function migrateToV17(raw: Record<string, unknown>): PersistedState {
         approvedAt: k.createdAt as number,
         lastUsedAt: k.lastUsedAt as number | undefined,
       })),
-      settings: (raw.settings as Partial<SchedulerSettings>) ?? {},
+      settings: (raw.settings as PersistedSettings) ?? {},
       jobHistory: (raw.jobHistory as JobHistoryEntry[]) ?? [],
     }),
   )))))));
@@ -1707,6 +1712,17 @@ export function recordAudit(actor: string, action: AuditAction, target: string, 
   state.auditLog.unshift({ id: randomUUID(), ts: Date.now(), actor, action, target, detail });
   if (state.auditLog.length > MAX_AUDIT_LOG) state.auditLog.length = MAX_AUDIT_LOG;
   persistNow();
+}
+
+export function areNewBillingCheckoutsPaused(): boolean {
+  return state.settings.billingCheckoutsPaused === true;
+}
+
+export function setNewBillingCheckoutsPaused(paused: boolean, actor: string): boolean {
+  if (areNewBillingCheckoutsPaused() === paused) return paused;
+  state.settings = { ...state.settings, billingCheckoutsPaused: paused };
+  recordAudit(actor, 'billing.checkouts.pause', 'new-checkouts', paused ? 'paused' : 'resumed');
+  return paused;
 }
 
 export function getAuditLog(limit = 100): AuditLogEntry[] {
@@ -3686,7 +3702,7 @@ export interface BackupPayload {
   projects: ProjectRecord[];
   artifactProjectLinks: ArtifactProjectLink[];
   apiKeys: ApiKeyRecord[];
-  settings: Partial<SchedulerSettings>;
+  settings: PersistedSettings;
   watches: AppWatch[];
   devices: BackupDeviceRecord[];
   jobHistory: JobHistoryEntry[];
@@ -4242,7 +4258,7 @@ interface ValidatedBackupPayload {
   projects: ProjectRecord[];
   artifactProjectLinks: ArtifactProjectLink[];
   apiKeys: ApiKeyRecord[];
-  settings: Partial<SchedulerSettings>;
+  settings: PersistedSettings;
   watches: AppWatch[];
   devices: BackupDeviceRecord[];
   jobHistory: JobHistoryEntry[];
@@ -4366,7 +4382,7 @@ function validateBackupPayload(raw: unknown): { ok: true; payload: ValidatedBack
       projects: Array.isArray(b.projects) && b.projects.every(isProjectRecordShape) ? b.projects as ProjectRecord[] : [createDefaultProject()],
       artifactProjectLinks: Array.isArray(b.artifactProjectLinks) && b.artifactProjectLinks.every(isArtifactProjectLinkShape) ? b.artifactProjectLinks as ArtifactProjectLink[] : [],
       apiKeys: b.apiKeys as ApiKeyRecord[],
-      settings: b.settings as Partial<SchedulerSettings>,
+      settings: b.settings as PersistedSettings,
       watches: b.watches as AppWatch[],
       devices: b.devices as BackupDeviceRecord[],
       jobHistory: (b.jobHistory as JobHistoryEntry[]).map((entry) => ({ ...entry, projectId: entry.projectId ?? DEFAULT_PROJECT_ID })),

@@ -14,6 +14,11 @@ export const billingCheckoutBodySchema = Type.Object(
   { additionalProperties: true },
 );
 
+export const billingCheckoutControlBodySchema = Type.Object(
+  { paused: Type.Boolean() },
+  { additionalProperties: false },
+);
+
 export const billingSubscriptionsQuerySchema = Type.Object(
   {
     cursor: Type.Optional(Type.String({ minLength: 1, maxLength: 512 })),
@@ -49,6 +54,10 @@ export const billingSubscriptionBodySchema = Type.Object({ planId: Type.String({
 export type BillingCheckoutRoute = {
   Headers: Static<typeof billingIdempotencyKeyHeadersSchema>;
   Body: Static<typeof billingCheckoutBodySchema>;
+};
+
+export type BillingCheckoutControlRoute = {
+  Body: Static<typeof billingCheckoutControlBodySchema>;
 };
 
 export type BillingCancelRoute = {
