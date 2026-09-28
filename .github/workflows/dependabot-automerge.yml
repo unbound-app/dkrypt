@@ -1,8 +1,6 @@
 name: Dependabot auto-merge
 
 on:
-  pull_request_target:
-    types: [opened, reopened, synchronize, ready_for_review]
   workflow_run:
     workflows: ["CI & Deploy"]
     types: [completed]
@@ -14,28 +12,32 @@ permissions:
 jobs:
   merge:
     if: >-
-      (github.event_name == 'pull_request_target' && github.event.pull_request.user.login == 'dependabot[bot]' && github.event.pull_request.draft == false) ||
-      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request')
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - id: pull_request
         env:
-          EVENT_NAME: ${{ github.event_name }}
           GH_TOKEN: ${{ github.token }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-          PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          if [ "$EVENT_NAME" = "pull_request_target" ]; then
-            printf 'number=%s\n' "$PULL_REQUEST_NUMBER" >> "$GITHUB_OUTPUT"
-          else
-            pr_number="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/pulls" --jq '.[0].number // empty')"
-            printf 'number=%s\n' "$pr_number" >> "$GITHUB_OUTPUT"
-          fi
+          pr_number="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/pulls" --jq '[.[] | select(.state == "open" and .base.ref == "main" and .user.login == "dependabot[bot]")][0].number // empty')"
+          printf 'number=%s\n' "$pr_number" >> "$GITHUB_OUTPUT"
       - env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ steps.pull_request.outputs.number }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           [ -n "$PR_NUMBER" ] || exit 0
-          author="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json author --jq '.author.login')"
+          pull_request="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '[.user.login, .head.sha, .state, (.auto_merge != null)] | @tsv')"
+          IFS=$'\t' read -r author head_sha state auto_merge <<< "$pull_request"
           [ "$author" = "dependabot[bot]" ] || exit 0
+          [ "$head_sha" = "$HEAD_SHA" ] || exit 0
+          [ "$state" = "open" ] || exit 0
           gh pr merge "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --auto --squash --delete-branch
+          pull_request="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '[.state, (.auto_merge != null)] | @tsv')"
+          IFS=$'\t' read -r state auto_merge <<< "$pull_request"
+          if [ "$state" = "open" ] && [ "$auto_merge" != "true" ]; then
+            printf 'GitHub did not merge or queue Dependabot PR #%s\n' "$PR_NUMBER" >&2
+            exit 1
+          fi
