@@ -74,6 +74,51 @@ function createSessionCookie(userId: string, permissions: bigint): string {
   return cookieHeader.split(';', 1)[0];
 }
 
+test('cookie-authenticated mutations reject non-same-origin Fetch Metadata values', async () => {
+  const server = await buildServer({ includePublicRoutes: false });
+
+  try {
+    for (const fetchSite of ['same-site', 'cross-site', 'none']) {
+      const response = await server.inject({
+        method: 'POST',
+        url: '/v1/auth/logout',
+        headers: {
+          cookie: createSessionCookie('root', PermissionFlag.administrator),
+          'sec-fetch-site': fetchSite,
+        },
+      });
+
+      expect(response.statusCode).toBe(403);
+      expect(response.json()).toMatchObject({ code: 'csrf_origin_rejected' });
+    }
+
+    const sameOrigin = await server.inject({
+      method: 'POST',
+      url: '/v1/auth/logout',
+      headers: {
+        cookie: createSessionCookie('root', PermissionFlag.administrator),
+        origin: config.publicBaseUrl,
+        'sec-fetch-site': 'same-origin',
+      },
+    });
+
+    expect(sameOrigin.statusCode).toBe(200);
+
+    const originOnly = await server.inject({
+      method: 'POST',
+      url: '/v1/auth/logout',
+      headers: {
+        cookie: createSessionCookie('root', PermissionFlag.administrator),
+        origin: config.publicBaseUrl,
+      },
+    });
+
+    expect(originOnly.statusCode).toBe(200);
+  } finally {
+    await server.close();
+  }
+});
+
 async function signIn() {
   const server = await buildServer({ includePublicRoutes: false });
   const login = await server.inject({

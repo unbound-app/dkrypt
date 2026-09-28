@@ -150,8 +150,8 @@ export async function buildServer(options: { includePublicRoutes?: boolean } = {
       const hasCookie = typeof request.headers.cookie === 'string' && request.headers.cookie.length > 0;
       if (isMutation && !isWebhook && hasCookie) {
         const fetchSite = request.headers['sec-fetch-site'];
-        if (fetchSite === 'cross-site') {
-          reply.code(403).send({ error: 'cross-site mutation rejected', code: 'csrf_origin_rejected', message: 'cross-site mutation rejected', requestId, retryable: false });
+        if (typeof fetchSite === 'string' && fetchSite.toLowerCase() !== 'same-origin') {
+          reply.code(403).send({ error: 'request fetch site is not same-origin', code: 'csrf_origin_rejected', message: 'request fetch site is not same-origin', requestId, retryable: false });
           return;
         }
         const origin = request.headers.origin;
