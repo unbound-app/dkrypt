@@ -14,8 +14,13 @@ function delay(milliseconds: number): Promise<void> {
 function isProcessAlive(pid: number): boolean {
   const result = spawnSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' });
   if (result.error) throw result.error;
+  if (result.status !== 0) {
+    if (result.status === 1 && result.stdout.trim().length === 0 && result.stderr.trim().length === 0) return false;
+    throw new Error(`could not inspect process ${pid}: ${result.stderr.trim() || `ps exited with status ${result.status}`}`);
+  }
   const state = result.stdout.trim();
-  return result.status === 0 && state.length > 0 && !state.startsWith('Z');
+  if (!state) throw new Error(`process ${pid} returned no state`);
+  return !state.startsWith('Z');
 }
 
 async function waitForCondition(check: () => boolean | Promise<boolean>, failureMessage: string): Promise<void> {
