@@ -1210,9 +1210,9 @@
 					<div class:hidden={tabState.active !== "insights"}>
 						<Insights />
 					</div>
-					<div class:hidden={tabState.active !== "docs"}>
+					{#if tabState.active === "docs"}
 						<Docs />
-					</div>
+					{/if}
 					{#if sessionCanSeeSettings()}
 						<div class:hidden={tabState.active !== "settings"}>
 							<Settings />

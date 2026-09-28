@@ -558,21 +558,21 @@ test('authenticated dashboard shows the running build revision', async ({ page }
   await expect(page.getByText('Build abcdef0', { exact: true })).toBeVisible();
 });
 
-test('API documentation opens standalone without embedding the restricted reference page', async ({ page }) => {
+test('API documentation loads inside the dashboard and remains available standalone', async ({ page }) => {
   await mockAuthenticatedDashboard(page, '1');
   await page.context().route(/\/reference\/?$/, async (route) => {
     await route.fulfill({
-      headers: { 'content-security-policy': "default-src 'self'; frame-ancestors 'none'" },
+      headers: { 'content-security-policy': "default-src 'self'; frame-ancestors 'self'" },
       contentType: 'text/html',
       body: '<!doctype html><html><body><h1>API reference is ready</h1></body></html>',
     });
   });
 
   await page.goto('/?tab=docs');
-  const referenceFrame = page.locator('iframe[title="dkrypt API reference"]');
-  const referenceLink = page.getByRole('link', { name: 'Open API reference' });
+  const referenceFrame = page.frameLocator('iframe[title="dkrypt API reference"]');
+  const referenceLink = page.getByRole('link', { name: 'Open in new tab' });
 
-  await expect(referenceFrame).toHaveCount(0);
+  await expect(referenceFrame.getByRole('heading', { name: 'API reference is ready' })).toBeVisible();
   await expect(referenceLink).toHaveAttribute('href', '/reference/');
   await expect(referenceLink).toHaveAttribute('target', '_blank');
   const popupPromise = page.waitForEvent('popup');
