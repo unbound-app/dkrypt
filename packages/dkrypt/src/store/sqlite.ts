@@ -1,5 +1,5 @@
-import { createHash } from 'node:crypto';
-import { chmodSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { createHash, randomInt } from 'node:crypto';
+import { chmodSync, closeSync, existsSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { Database } from 'bun:sqlite';
 
@@ -1236,8 +1236,184 @@ function verifyExistingDatabaseSchema(db: Database): void {
   }
 }
 
-function rejectEmptyExistingDatabase(databasePath: string, existed: boolean): void {
-  if (existed && statSync(databasePath).size === 0) throw new Error('SQLite database has no recognized schema');
+function sqliteSchemaObjects(db: Database): Array<{ type: string; name: string; tableName: string; sql: string | null }> {
+  return db.query("SELECT type, name, tbl_name AS tableName, sql FROM sqlite_master WHERE name NOT GLOB 'sqlite_*' ORDER BY type, name").all() as Array<{ type: string; name: string; tableName: string; sql: string | null }>;
+}
+
+function appliedMigrationRows(db: Database): Array<{ version: number; checksum: string }> {
+  const columns = new Set((db.query('PRAGMA table_info(schema_migrations)').all() as Array<{ name: string }>).map((column) => column.name));
+  if (!['version', 'checksum', 'applied_at'].every((column) => columns.has(column))) throw new Error('SQLite database has no recognized schema');
+  const applied = db.query('SELECT version, checksum FROM schema_migrations ORDER BY version').all() as Array<{ version: number; checksum: string }>;
+  if (applied.length > migrations.length) throw new Error('SQLite database has no recognized schema');
+  for (const [index, row] of applied.entries()) {
+    if (row.version !== index + 1 || row.checksum !== sha256(migrations[index].sql)) throw new Error('SQLite database has no recognized schema');
+  }
+  return applied;
+}
+
+function schemaMatchesMigrationPrefix(db: Database, migrationCount: number): boolean {
+  const expected = new Database(':memory:', { create: true, strict: true });
+  try {
+    migrationRows(expected);
+    for (const migration of migrations.slice(0, migrationCount)) {
+      expected.exec(migration.sql);
+      expected.query('INSERT INTO schema_migrations (version, checksum, applied_at) VALUES (?, ?, ?)').run(migration.version, sha256(migration.sql), 0);
+    }
+    return JSON.stringify(sqliteSchemaObjects(db)) === JSON.stringify(sqliteSchemaObjects(expected));
+  } finally {
+    expected.close();
+  }
+}
+
+function initializationMarkerPath(databasePath: string): string {
+  return `${databasePath}.initializing`;
+}
+
+interface InitializationMarker {
+  applicationId: number;
+  phase: 'unbound' | 'bound';
+  device?: number;
+  inode?: number;
+}
+
+function initializationMarkerContents(databasePath: string, marker: InitializationMarker): string {
+  return `dkrypt-state-initialization-v1\n${sha256(path.resolve(databasePath))}\n${marker.applicationId}\n${marker.phase}\n${marker.device ?? '-'}\n${marker.inode ?? '-'}\n`;
+}
+
+function hasValidInitializationMarker(databasePath: string): InitializationMarker | undefined {
+  const markerPath = initializationMarkerPath(databasePath);
+  let status: ReturnType<typeof lstatSync>;
+  try {
+    status = lstatSync(markerPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw error;
+  }
+  if (!status.isFile() || (status.mode & 0o777) !== 0o600) throw new Error('SQLite initialization marker is invalid');
+  const contents = readFileSync(markerPath, 'utf8');
+  const match = /^dkrypt-state-initialization-v1\n([a-f\d]{64})\n([1-9]\d*)\n(unbound|bound)\n(-|\d+)\n(-|\d+)\n$/.exec(contents);
+  if (!match || match[1] !== sha256(path.resolve(databasePath))) throw new Error('SQLite initialization marker is invalid');
+  const applicationId = Number(match[2]);
+  if (!Number.isSafeInteger(applicationId) || applicationId > 0x7fffffff) throw new Error('SQLite initialization marker is invalid');
+  if (match[3] === 'unbound' && (match[4] !== '-' || match[5] !== '-')) throw new Error('SQLite initialization marker is invalid');
+  if (match[3] === 'bound' && (match[4] === '-' || match[5] === '-')) throw new Error('SQLite initialization marker is invalid');
+  return {
+    applicationId,
+    phase: match[3] as InitializationMarker['phase'],
+    ...(match[4] === '-' ? {} : { device: Number(match[4]) }),
+    ...(match[5] === '-' ? {} : { inode: Number(match[5]) }),
+  };
+}
+
+function verifyInterruptedFreshInitialization(db: Database): boolean {
+  const tableNames = new Set((db.query("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map((table) => table.name));
+  const objects = sqliteSchemaObjects(db);
+  if (objects.length === 0) return true;
+  if (!tableNames.has('schema_migrations')) return false;
+  const applied = appliedMigrationRows(db);
+  if (!schemaMatchesMigrationPrefix(db, applied.length)) throw new Error('SQLite database has no recognized schema');
+
+  if (tableNames.has('state_snapshots')) {
+    const snapshot = db.query('SELECT 1 AS present FROM state_snapshots LIMIT 1').get() as { present?: number } | null;
+    if (snapshot?.present === 1) return false;
+  }
+  const metadata = tableNames.has('metadata')
+    ? db.query('SELECT key, value FROM metadata').all() as Array<{ key: string; value: string }>
+    : [];
+  if (metadata.some((entry) => entry.key === 'state_snapshot_initialized')) return false;
+  if (metadata.some((entry) => entry.key !== 'state_snapshot_pending_initialization' || entry.value !== '1')) return false;
+
+  for (const table of tableNames) {
+    if (table === 'schema_migrations' || table === 'metadata') continue;
+    const rows = db.query(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count?: number } | null;
+    if ((rows?.count ?? 0) > 0) return false;
+  }
+  return true;
+}
+
+function syncDirectory(directoryPath: string): void {
+  const descriptor = openSync(directoryPath, 'r');
+  try {
+    fsyncSync(descriptor);
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
+function bindInitializationMarkerToDatabase(db: Database, databasePath: string, marker: InitializationMarker | undefined): void {
+  if (!marker) return;
+  const row = db.query('PRAGMA application_id').get() as { application_id?: number } | null;
+  const currentApplicationId = row?.application_id ?? 0;
+  if (marker.phase === 'bound') {
+    const status = statSync(databasePath);
+    if (currentApplicationId !== marker.applicationId || status.dev !== marker.device || status.ino !== marker.inode) {
+      throw new Error('SQLite initialization marker does not match the database');
+    }
+    return;
+  }
+
+  if (sqliteSchemaObjects(db).length > 0 || (currentApplicationId !== 0 && currentApplicationId !== marker.applicationId)) {
+    throw new Error('SQLite initialization marker does not match the database');
+  }
+  db.exec('PRAGMA synchronous = FULL;');
+  if (currentApplicationId === 0) db.exec(`PRAGMA application_id = ${marker.applicationId};`);
+  const boundApplicationId = db.query('PRAGMA application_id').get() as { application_id?: number } | null;
+  if (boundApplicationId?.application_id !== marker.applicationId) throw new Error('SQLite initialization marker does not match the database');
+  const status = statSync(databasePath);
+  replaceInitializationMarker(databasePath, { ...marker, phase: 'bound', device: status.dev, inode: status.ino });
+}
+
+function replaceInitializationMarker(databasePath: string, marker: InitializationMarker): void {
+  const markerPath = initializationMarkerPath(databasePath);
+  const temporaryPath = `${markerPath}.${process.pid}.${Date.now()}.${randomInt(1, 0x7fffffff)}.tmp`;
+  try {
+    const descriptor = openSync(temporaryPath, 'wx', 0o600);
+    try {
+      writeFileSync(descriptor, initializationMarkerContents(databasePath, marker));
+      fsyncSync(descriptor);
+    } finally {
+      closeSync(descriptor);
+    }
+    renameSync(temporaryPath, markerPath);
+    syncDirectory(path.dirname(markerPath));
+  } catch (error) {
+    rmSync(temporaryPath, { force: true });
+    throw error;
+  }
+}
+
+function createInitializationMarker(databasePath: string): void {
+  const markerPath = initializationMarkerPath(databasePath);
+  const marker = { applicationId: randomInt(1, 0x7fffffff), phase: 'unbound' } satisfies InitializationMarker;
+  const temporaryPath = `${markerPath}.${process.pid}.${Date.now()}.${randomInt(1, 0x7fffffff)}.tmp`;
+  try {
+    const descriptor = openSync(temporaryPath, 'wx', 0o600);
+    try {
+      writeFileSync(descriptor, initializationMarkerContents(databasePath, marker));
+      fsyncSync(descriptor);
+    } finally {
+      closeSync(descriptor);
+    }
+    try {
+      linkSync(temporaryPath, markerPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    }
+  } finally {
+    rmSync(temporaryPath, { force: true });
+  }
+  syncDirectory(path.dirname(markerPath));
+}
+
+function clearInitializationMarker(databasePath: string): void {
+  const markerPath = initializationMarkerPath(databasePath);
+  if (!existsSync(markerPath)) return;
+  rmSync(markerPath);
+  syncDirectory(path.dirname(markerPath));
+}
+
+function rejectEmptyExistingDatabase(databasePath: string, existed: boolean, initializationPending: boolean): void {
+  if (existed && !initializationPending && statSync(databasePath).size === 0) throw new Error('SQLite database has no recognized schema');
 }
 
 function markStateSnapshotInitialized(db: Database): void {
@@ -1255,24 +1431,41 @@ function markStateSnapshotPendingInitialization(db: Database): void {
   `).run();
 }
 
+function prepareStateDatabase(options: StateDatabaseOptions): { database: Database; databasePath: string } {
+  mkdirSync(options.stateDir, { recursive: true });
+  const databasePath = path.join(options.stateDir, options.filename ?? 'dkrypt.sqlite');
+  const existed = existsSync(databasePath);
+  if (!existed) createInitializationMarker(databasePath);
+  const marker = hasValidInitializationMarker(databasePath);
+  rejectEmptyExistingDatabase(databasePath, existed, marker !== undefined);
+  const database = new Database(databasePath, { create: true, strict: true });
+  try {
+    verifyIntegrity(database);
+    bindInitializationMarkerToDatabase(database, databasePath, marker);
+    applyPragmas(database, options.busyTimeoutMs ?? 5000);
+    const resumingInitialization = marker !== undefined && verifyInterruptedFreshInitialization(database);
+    if (existed && !resumingInitialization) verifyExistingDatabaseSchema(database);
+    if (existed && !resumingInitialization) backupBeforeMigrations(database, databasePath, options.stateDir);
+    applyMigrations(database, options.migrationDryRun ?? false);
+    if (!existed || resumingInitialization) markStateSnapshotPendingInitialization(database);
+    return { database, databasePath };
+  } catch (error) {
+    database.close();
+    throw error;
+  }
+}
+
 export class StateDatabase {
   readonly db: Database;
   readonly path: string;
 
   constructor(options: StateDatabaseOptions) {
-    mkdirSync(options.stateDir, { recursive: true });
-    this.path = path.join(options.stateDir, options.filename ?? 'dkrypt.sqlite');
-    const existed = existsSync(this.path);
-    rejectEmptyExistingDatabase(this.path, existed);
-    this.db = new Database(this.path, { create: true, strict: true });
+    const prepared = prepareStateDatabase(options);
+    this.path = prepared.databasePath;
+    this.db = prepared.database;
     try {
-      if (existed) verifyExistingDatabaseSchema(this.db);
-      applyPragmas(this.db, options.busyTimeoutMs ?? 5000);
-      verifyIntegrity(this.db);
-      if (existed) backupBeforeMigrations(this.db, this.path, options.stateDir);
-      applyMigrations(this.db, options.migrationDryRun ?? false);
-      if (!existed) markStateSnapshotPendingInitialization(this.db);
       if (this.readState({ legacyMirrorAvailable: true }) !== undefined) markStateSnapshotInitialized(this.db);
+      clearInitializationMarker(this.path);
     } catch (error) {
       this.db.close();
       throw error;
@@ -1369,22 +1562,14 @@ export class StateDatabase {
 }
 
 export function openStateCollectionDatabase(options: StateDatabaseOptions, tables: readonly string[]): Database {
-  mkdirSync(options.stateDir, { recursive: true });
-  const databasePath = path.join(options.stateDir, options.filename ?? 'dkrypt.sqlite');
-  const existed = existsSync(databasePath);
-  rejectEmptyExistingDatabase(databasePath, existed);
-  const database = new Database(databasePath, { create: true, strict: true });
+  const prepared = prepareStateDatabase(options);
+  const database = prepared.database;
   try {
-    if (existed) verifyExistingDatabaseSchema(database);
-    applyPragmas(database, options.busyTimeoutMs ?? 5000);
-    verifyIntegrity(database);
-    if (existed) backupBeforeMigrations(database, databasePath, options.stateDir);
-    applyMigrations(database, options.migrationDryRun ?? false);
-    if (!existed) markStateSnapshotPendingInitialization(database);
     for (const table of tables) {
       assertCollectionTable(table);
       database.exec(`CREATE TABLE IF NOT EXISTS ${table} (id TEXT PRIMARY KEY NOT NULL, payload TEXT NOT NULL, updated_at INTEGER NOT NULL);`);
     }
+    clearInitializationMarker(prepared.databasePath);
     return database;
   } catch (error) {
     database.close();

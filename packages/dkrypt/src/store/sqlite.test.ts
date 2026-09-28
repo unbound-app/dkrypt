@@ -1,4 +1,6 @@
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { statSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -7,6 +9,14 @@ import { expect, test } from 'bun:test';
 import { createDeviceHistoryRepository } from '#store/deviceHistoryRepository.js';
 import { createDeviceHealthRepository } from '#store/deviceHealthRepository.js';
 import { openStateCollectionDatabase, openStateDatabase, readStateCollection, replaceStateCollections } from '#store/sqlite.js';
+
+const initializationApplicationId = 184527631;
+
+function initializationMarkerContents(databasePath: string, phase: 'unbound' | 'bound' = 'unbound', applicationId = initializationApplicationId): string {
+  const pathHash = createHash('sha256').update(path.resolve(databasePath)).digest('hex');
+  const status = phase === 'bound' ? statSync(databasePath) : undefined;
+  return `dkrypt-state-initialization-v1\n${pathHash}\n${applicationId}\n${phase}\n${status?.dev ?? '-'}\n${status?.ino ?? '-'}\n`;
+}
 
 function rewindToSchemaVersion16(database: ReturnType<typeof openStateDatabase>): void {
   database.db.exec(`
@@ -514,7 +524,9 @@ test('SQLite startup preserves an existing database with an unrecognized schema'
   try {
     const unrelatedDatabase = new Database(databasePath, { create: true, strict: true });
     unrelatedDatabase.exec('CREATE TABLE unrelated (id INTEGER PRIMARY KEY);');
+    unrelatedDatabase.exec(`PRAGMA application_id = ${initializationApplicationId};`);
     unrelatedDatabase.close();
+    await writeFile(`${databasePath}.initializing`, initializationMarkerContents(databasePath, 'bound'), { mode: 0o600 });
 
     expect(() => openStateDatabase({ stateDir, filename: 'state.sqlite' })).toThrow(/recognized schema/i);
 
@@ -523,6 +535,102 @@ test('SQLite startup preserves an existing database with an unrecognized schema'
       expect(preservedDatabase.query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all()).toEqual([{ name: 'unrelated' }]);
     } finally {
       preservedDatabase.close();
+    }
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test('SQLite collection startup rejects a recovery marker beside an unrecognized database', async () => {
+  const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-sqlite-collection-startup-unrecognized-'));
+  const databasePath = path.join(stateDir, 'state.sqlite');
+  try {
+    const unrelatedDatabase = new Database(databasePath, { create: true, strict: true });
+    unrelatedDatabase.exec('CREATE TABLE unrelated (id INTEGER PRIMARY KEY);');
+    unrelatedDatabase.exec(`PRAGMA application_id = ${initializationApplicationId};`);
+    unrelatedDatabase.close();
+    await writeFile(`${databasePath}.initializing`, initializationMarkerContents(databasePath, 'bound'), { mode: 0o600 });
+
+    expect(() => openStateCollectionDatabase({ stateDir, filename: 'state.sqlite' }, ['jobs'])).toThrow(/recognized schema/i);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test('SQLite rejects a recovery marker when the migration ledger does not match the schema', async () => {
+  const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-sqlite-initialization-schema-mismatch-'));
+  const databasePath = path.join(stateDir, 'state.sqlite');
+  try {
+    const initialized = openStateDatabase({ stateDir, filename: 'state.sqlite' });
+    initialized.close();
+    const incompleteDatabase = new Database(databasePath, { create: false, strict: true });
+    incompleteDatabase.exec('DROP TABLE users;');
+    incompleteDatabase.exec(`PRAGMA application_id = ${initializationApplicationId};`);
+    incompleteDatabase.close();
+    await writeFile(`${databasePath}.initializing`, initializationMarkerContents(databasePath, 'bound'), { mode: 0o600 });
+
+    expect(() => openStateDatabase({ stateDir, filename: 'state.sqlite' })).toThrow(/recognized schema/i);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test('SQLite rejects a recovery marker beside an unrecognized schema object without tables', async () => {
+  const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-sqlite-initialization-view-'));
+  const databasePath = path.join(stateDir, 'state.sqlite');
+  try {
+    const unrelatedDatabase = new Database(databasePath, { create: true, strict: true });
+    unrelatedDatabase.exec('CREATE VIEW unrelated_view AS SELECT 1;');
+    unrelatedDatabase.exec(`PRAGMA application_id = ${initializationApplicationId};`);
+    unrelatedDatabase.close();
+    await writeFile(`${databasePath}.initializing`, initializationMarkerContents(databasePath, 'bound'), { mode: 0o600 });
+
+    expect(() => openStateDatabase({ stateDir, filename: 'state.sqlite' })).toThrow(/recognized schema/i);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test('SQLite rejects a recovery marker bound to a different database path', async () => {
+  const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-sqlite-initialization-marker-path-'));
+  const databasePath = path.join(stateDir, 'state.sqlite');
+  const otherDatabasePath = path.join(stateDir, 'other.sqlite');
+  try {
+    await writeFile(databasePath, '');
+    await writeFile(`${databasePath}.initializing`, initializationMarkerContents(otherDatabasePath), { mode: 0o600 });
+
+    expect(() => openStateDatabase({ stateDir, filename: 'state.sqlite' })).toThrow(/initialization marker is invalid/i);
+    expect(await readFile(databasePath, 'utf8')).toBe('');
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test('SQLite rejects a recovery marker after the bound database file is replaced', async () => {
+  const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-sqlite-initialization-marker-replaced-'));
+  const databasePath = path.join(stateDir, 'state.sqlite');
+  const replacementPath = path.join(stateDir, 'replacement.sqlite');
+  try {
+    const unrelatedDatabase = new Database(databasePath, { create: true, strict: true });
+    unrelatedDatabase.exec(`PRAGMA application_id = ${initializationApplicationId};`);
+    unrelatedDatabase.close();
+    await writeFile(`${databasePath}.initializing`, initializationMarkerContents(databasePath, 'bound'), { mode: 0o600 });
+    const replacementDatabase = new Database(replacementPath, { create: true, strict: true });
+    replacementDatabase.exec(`PRAGMA application_id = ${initializationApplicationId};`);
+    replacementDatabase.close();
+    await rm(`${databasePath}-wal`, { force: true });
+    await rm(`${databasePath}-shm`, { force: true });
+    await rm(`${replacementPath}-wal`, { force: true });
+    await rm(`${replacementPath}-shm`, { force: true });
+    await rm(databasePath);
+    await rename(replacementPath, databasePath);
+
+    expect(() => openStateDatabase({ stateDir, filename: 'state.sqlite' })).toThrow(/does not match the database/i);
+    const replacedDatabase = new Database(databasePath, { create: false, strict: true });
+    try {
+      expect(replacedDatabase.query("SELECT name FROM sqlite_master WHERE type = 'table'").all()).toEqual([]);
+    } finally {
+      replacedDatabase.close();
     }
   } finally {
     await rm(stateDir, { recursive: true, force: true });
@@ -542,6 +650,75 @@ test('SQLite refuses to initialize an existing database without a snapshot or le
     } finally {
       reopened.close();
     }
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test('SQLite resumes fresh initialization after an interrupted database-file creation', async () => {
+  const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-sqlite-initialization-resume-'));
+  const databasePath = path.join(stateDir, 'state.sqlite');
+  const markerPath = `${databasePath}.initializing`;
+  try {
+    await writeFile(markerPath, initializationMarkerContents(databasePath), { mode: 0o600 });
+    await writeFile(databasePath, '');
+
+    const database = openStateDatabase({ stateDir, filename: 'state.sqlite' });
+    try {
+      expect(database.schemaVersion).toBe(17);
+      expect(database.readState()).toBeUndefined();
+    } finally {
+      database.close();
+    }
+
+    expect(await readdir(stateDir)).not.toContain(path.basename(markerPath));
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test('SQLite collection startup resumes interrupted fresh initialization', async () => {
+  const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-sqlite-collection-initialization-resume-'));
+  const databasePath = path.join(stateDir, 'state.sqlite');
+  const markerPath = `${databasePath}.initializing`;
+  try {
+    await writeFile(markerPath, initializationMarkerContents(databasePath), { mode: 0o600 });
+    await writeFile(databasePath, '');
+
+    const database = openStateCollectionDatabase({ stateDir, filename: 'state.sqlite' }, ['jobs']);
+    try {
+      expect(database.query('SELECT name FROM sqlite_master WHERE type = ? AND name = ?').get('table', 'jobs')).toEqual({ name: 'jobs' });
+      expect(database.query('SELECT value FROM metadata WHERE key = ?').get('state_snapshot_pending_initialization')).toEqual({ value: '1' });
+    } finally {
+      database.close();
+    }
+
+    expect(await readdir(stateDir)).not.toContain(path.basename(markerPath));
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test('SQLite resumes fresh initialization after migrations commit before the first snapshot', async () => {
+  const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-sqlite-post-migration-initialization-resume-'));
+  const databasePath = path.join(stateDir, 'state.sqlite');
+  const markerPath = `${databasePath}.initializing`;
+  try {
+    const initialized = openStateDatabase({ stateDir, filename: 'state.sqlite' });
+    expect(initialized.readState()).toBeUndefined();
+    initialized.db.exec(`PRAGMA application_id = ${initializationApplicationId};`);
+    initialized.close();
+    await writeFile(markerPath, initializationMarkerContents(databasePath, 'bound'), { mode: 0o600 });
+
+    const resumed = openStateDatabase({ stateDir, filename: 'state.sqlite' });
+    try {
+      expect(resumed.schemaVersion).toBe(17);
+      expect(resumed.readState()).toBeUndefined();
+    } finally {
+      resumed.close();
+    }
+
+    expect(await readdir(stateDir)).not.toContain(path.basename(markerPath));
   } finally {
     await rm(stateDir, { recursive: true, force: true });
   }
