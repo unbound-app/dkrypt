@@ -217,6 +217,7 @@ test('batch TestFlight queue selects an eligible device independently for each a
       body: JSON.stringify({ providers: { stripe: { enabled: false }, crypto: { enabled: false } } }),
     });
   });
+  const verifiedAt = Date.now();
   await page.route('**/v1/dashboard/testflight/catalog*', async (route) => {
     await route.fulfill({
       contentType: 'application/json',
@@ -227,18 +228,18 @@ test('batch TestFlight queue selects an eligible device independently for each a
             bundleId: 'com.example.testflight',
             displayName: 'Example Beta',
             devices: [
-              { id: 'device-1', name: 'Test iPad' },
-              { id: 'device-2', name: 'Alternate iPad' },
+              { id: 'device-1', name: 'Test iPad', verifiedAt },
+              { id: 'device-2', name: 'Alternate iPad', verifiedAt },
             ],
-            lastVerifiedAt: Date.now(),
+            lastVerifiedAt: verifiedAt,
             deviceSource: true,
           },
           {
             appId: 54321,
             bundleId: 'com.example.other',
             displayName: 'Other Beta',
-            devices: [{ id: 'device-3', name: 'Third iPad' }],
-            lastVerifiedAt: Date.now(),
+            devices: [{ id: 'device-3', name: 'Third iPad', verifiedAt }],
+            lastVerifiedAt: verifiedAt,
             deviceSource: true,
           },
         ],
