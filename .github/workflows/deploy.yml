@@ -159,9 +159,12 @@ jobs:
           RUNTIME_DIR=/home/adrian/.local/share/dkrypt
           RUNTIME_HOME=$(cd "$RUNTIME_DIR/../../.." && pwd)
           test -f "$RUNTIME_DIR/.env"
+          if [ -n "${DEVICE_SSH_KEY_HOST_PATH:-}" ] && { [ ! -r "$DEVICE_SSH_KEY_HOST_PATH" ] || [ ! -s "$DEVICE_SSH_KEY_HOST_PATH" ]; }; then
+            unset DEVICE_SSH_KEY_HOST_PATH
+          fi
           if docker container inspect dkrypt >/dev/null 2>&1; then
             existing_key_path=$(docker inspect --format '{{range .Mounts}}{{if or (eq .Destination "/device-ssh-key-source") (eq .Destination "/run/dkrypt/host-ssh-key") (eq .Destination "/root/.ssh/id_ed25519")}}{{.Source}}{{end}}{{end}}' dkrypt 2>/dev/null || true)
-            if [ -n "$existing_key_path" ]; then
+            if [ -n "$existing_key_path" ] && [ -r "$existing_key_path" ] && [ -s "$existing_key_path" ]; then
               DEVICE_SSH_KEY_HOST_PATH="$existing_key_path"
             fi
           fi
@@ -170,17 +173,15 @@ jobs:
               case "$candidate" in
                 *.pub|*.cert|*.crt) continue ;;
               esac
-              if [ -f "$candidate" ] && [ -r "$candidate" ]; then
+              if [ -f "$candidate" ] && [ -r "$candidate" ] && [ -s "$candidate" ]; then
                 DEVICE_SSH_KEY_HOST_PATH="$candidate"
                 break
               fi
             done
           fi
           if [ -z "${DEVICE_SSH_KEY_HOST_PATH:-}" ]; then
-            echo "No SSH key source configured for the dkrypt compatibility channel" >&2
-            echo "Checked $RUNTIME_HOME/.ssh and ${HOME:-unknown}/.ssh" >&2
-            find "$RUNTIME_HOME/.ssh" "$HOME/.ssh" -maxdepth 1 -type f -print 2>/dev/null || true
-            exit 1
+            DEVICE_SSH_KEY_HOST_PATH=/dev/null
+            echo "No host SSH key found; deploying USB discovery and recovery without the optional ipadecrypt SSH/SFTP channel"
           fi
           printf 'DEVICE_SSH_KEY_HOST_PATH=%s\n' "$DEVICE_SSH_KEY_HOST_PATH" >> "$GITHUB_ENV"
           cat > "$RUNTIME_DIR/compose.yml" <<'EOF'
@@ -210,7 +211,7 @@ jobs:
               volumes:
                 - ipa-storage:/data/artifacts
                 - state:/data/state
-                - ${DEVICE_SSH_KEY_HOST_PATH:?DEVICE_SSH_KEY_HOST_PATH is required}:/device-ssh-key-source:ro
+                - ${DEVICE_SSH_KEY_HOST_PATH:-/dev/null}:/device-ssh-key-source:ro
                 - /dev/bus/usb:/dev/bus/usb
               device_cgroup_rules:
                 - 'c 189:* rwm'
@@ -469,8 +470,14 @@ jobs:
           if (apiIdentity?.[2] !== '10001' || bridgeIdentity?.[2] !== '0' || bridgeGroup?.[2] !== '10001') {
             throw new Error('API and USB bridge do not have the expected separated runtime identities');
           }
-          const key = await fs.stat('/run/dkrypt/device_ssh_key');
-          if (key.uid !== 0 || key.gid !== 10001 || (key.mode & 0o777) !== 0o440) throw new Error('device SSH key permissions are not restricted to the API group');
+          let sshKeyAvailable = false;
+          try {
+            const key = await fs.stat('/run/dkrypt/device_ssh_key');
+            if (!key.isFile() || key.size === 0 || key.uid !== 0 || key.gid !== 10001 || (key.mode & 0o777) !== 0o440) throw new Error('device SSH key is not a non-empty regular file with API-group-only permissions');
+            sshKeyAvailable = true;
+          } catch (error) {
+            if (error?.code !== 'ENOENT') throw error;
+          }
           try {
             await fs.stat('/root/.ipadecrypt');
             throw new Error('legacy .ipadecrypt bootstrap path is present');
@@ -487,7 +494,7 @@ jobs:
             device,
             bridge: health.bridge,
             usbAgent: { version: agentStatus.agentVersion },
-            runtime: { apiUid: apiIdentity[2], bridgeUid: bridgeIdentity[2] },
+            runtime: { apiUid: apiIdentity[2], bridgeUid: bridgeIdentity[2], sshKeyAvailable },
             routes: Object.keys(openapi.paths).length,
             csp: true,
             rateLimit: true,

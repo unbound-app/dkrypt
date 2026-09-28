@@ -3,6 +3,7 @@ import path from 'node:path';
 import { expect, test } from 'bun:test';
 
 const entrypoint = readFileSync(path.resolve(import.meta.dir, '../entrypoint.sh'), 'utf8');
+const dockerfile = readFileSync(path.resolve(import.meta.dir, '../Dockerfile'), 'utf8');
 const compose = readFileSync(path.resolve(import.meta.dir, '../../../docker-compose.yml'), 'utf8');
 const deploymentWorkflow = readFileSync(path.resolve(import.meta.dir, '../../../.github/workflows/deploy.yml'), 'utf8');
 
@@ -24,6 +25,17 @@ test('Compose binds the USB bus directory and permits USB character devices', ()
   expect(deploymentWorkflow).toContain('                - /dev/bus/usb:/dev/bus/usb');
   expect(deploymentWorkflow).toContain("              device_cgroup_rules:\n                - 'c 189:* rwm'");
   expect(deploymentWorkflow).not.toContain('              devices:\n                - /dev/bus/usb:/dev/bus/usb');
+});
+
+test('USB bridge startup does not require an SSH key', () => {
+  expect(entrypoint).toContain('if [ -s "$ssh_key_source" ]; then');
+  expect(dockerfile).toContain('RUN touch /device-ssh-key-source && chmod 0600 /device-ssh-key-source');
+  expect(compose).toContain('${DEVICE_SSH_KEY_HOST_PATH:-/dev/null}:/device-ssh-key-source:ro');
+  expect(deploymentWorkflow).toContain('${DEVICE_SSH_KEY_HOST_PATH:-/dev/null}:/device-ssh-key-source:ro');
+  expect(deploymentWorkflow).toContain('DEVICE_SSH_KEY_HOST_PATH=/dev/null');
+  expect(deploymentWorkflow).toContain('if (!key.isFile() || key.size === 0 || key.uid !== 0 || key.gid !== 10001 || (key.mode & 0o777) !== 0o440)');
+  expect(deploymentWorkflow).toContain('let sshKeyAvailable = false;');
+  expect(deploymentWorkflow).not.toContain('No SSH key source configured for the dkrypt compatibility channel');
 });
 
 test('production verifies database migration and restore before replacing the running container', () => {

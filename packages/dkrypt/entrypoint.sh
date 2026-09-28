@@ -37,7 +37,7 @@ find "$pairing_store" -type f -exec chmod 0600 {} +
 
 ssh_key_source=${DEVICE_SSH_KEY_SOURCE:-/device-ssh-key-source}
 ssh_key_path=${DEVICE_SSH_KEY_PATH:-/run/dkrypt/device_ssh_key}
-if [ -r "$ssh_key_source" ]; then
+if [ -s "$ssh_key_source" ]; then
   install -o 0 -g 10001 -m 0440 "$ssh_key_source" "$ssh_key_path"
 fi
 mkdir -p /root/.ssh

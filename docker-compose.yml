@@ -27,7 +27,7 @@ services:
     volumes:
       - ipa-storage:/data/artifacts
       - state:/data/state
-      - ${DEVICE_SSH_KEY_HOST_PATH:-${HOME}/.ssh/id_ed25519}:/device-ssh-key-source:ro
+      - ${DEVICE_SSH_KEY_HOST_PATH:-/dev/null}:/device-ssh-key-source:ro
       - /dev/bus/usb:/dev/bus/usb
     device_cgroup_rules:
       - 'c 189:* rwm'

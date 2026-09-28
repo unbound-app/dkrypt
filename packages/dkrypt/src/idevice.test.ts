@@ -431,13 +431,15 @@ test('cancels a pending Rust device-agent request when a running job is aborted'
   }
 });
 
-test('reopens the Rust USB agent after a dropped RPC and retries a transient recovery failure', async () => {
+test('recovers the Rust USB agent without an SSH key after dropped RPC and transient restart', async () => {
   const runtimeDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-device-agent-recovery-'));
   const socketPath = path.join(runtimeDir, 'bridge.sock');
+  const missingSshKeyPath = path.join(runtimeDir, 'missing-device-key');
   const bridgeSecret = '0123456789abcdef0123456789abcdef';
   const originalSocket = config.deviceBridgeSocket;
   const originalSecret = config.deviceBridgeSecret;
   const originalRuntimeDir = config.deviceRuntimeDir;
+  const originalSshKeyPath = config.deviceSshKeyPath;
   const operations: string[] = [];
   const commands: string[] = [];
   const sockets = new Set<import('node:net').Socket>();
@@ -498,9 +500,11 @@ test('reopens the Rust USB agent after a dropped RPC and retries a transient rec
   config.deviceBridgeSocket = socketPath;
   config.deviceBridgeSecret = bridgeSecret;
   config.deviceRuntimeDir = runtimeDir;
+  config.deviceSshKeyPath = missingSshKeyPath;
 
   try {
     await new Promise<void>((resolve, reject) => server.listen(socketPath, resolve).once('error', reject));
+    await expect(readFile(missingSshKeyPath)).rejects.toThrow();
 
     await expect(withSSH(device, (client: DeviceClient) => (client as DeviceSession).exec('disconnect-once', 1_000))).rejects.toThrow('device agent connection was lost');
     const recovered = await withSSH(device, async (client: DeviceClient) => {
@@ -522,6 +526,7 @@ test('reopens the Rust USB agent after a dropped RPC and retries a transient rec
     config.deviceBridgeSocket = originalSocket;
     config.deviceBridgeSecret = originalSecret;
     config.deviceRuntimeDir = originalRuntimeDir;
+    config.deviceSshKeyPath = originalSshKeyPath;
     for (const socket of sockets) socket.destroy();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     await rm(runtimeDir, { recursive: true, force: true });

@@ -79,11 +79,11 @@ Copy `.env.example` to `.env` and configure the required values. The important r
 | `OUTBOUND_WEBHOOK_SECRET` | HMAC key for signing outgoing notification webhooks |
 | `OUTBOUND_WEBHOOK_SECRET_PREVIOUS` | Previous HMAC key used during outbound webhook key rotation |
 | `DEVICE_SSH_KEY_PATH` | Runtime path to the key used only by the `ipadecrypt` compatibility channel |
-| `DEVICE_SSH_KEY_HOST_PATH` | Host key copied read-only into the container runtime directory |
+| `DEVICE_SSH_KEY_HOST_PATH` | Optional host key for the `ipadecrypt` SSH/SFTP compatibility channel; leave unset for Rust USB discovery and agent recovery |
 | `ARTIFACT_DIR` | IPA storage volume |
 | `STATE_DIR` | SQLite database, pairing material, backups, and mirrors |
 
-The Bun API runs as an unprivileged service account; the USB bridge retains root access for direct device transport, with a small root supervisor managing both processes. Startup migrates existing state and artifact volume permissions once, keeps pairing records root-only, and exposes the SSH key to the API through a read-only group-readable copy in tmpfs. Keep `.env`, pairing material, and SSH private keys out of Git. Use an HTTPS reverse proxy when exposing the dashboard beyond localhost.
+The Bun API runs as an unprivileged service account; the USB bridge retains root access for direct device transport, with a small root supervisor managing both processes. Startup migrates existing state and artifact volume permissions once and keeps pairing records root-only. When configured, the SSH key is copied read-only into tmpfs for the `ipadecrypt` compatibility channel; without it, USB discovery, pairing, agent requests, and device recovery remain available, while SSH/SFTP-dependent decrypt operations report their own capability failure. Keep `.env`, pairing material, and SSH private keys out of Git. Use an HTTPS reverse proxy when exposing the dashboard beyond localhost.
 
 Outgoing notification webhooks include `X-Dkrypt-Event`, `X-Dkrypt-Timestamp`, and `X-Dkrypt-Signature`. The signature is `sha256=` followed by the HMAC-SHA256 hex digest of `<timestamp>.<raw JSON body>`. During rotation, set `OUTBOUND_WEBHOOK_SECRET` to the new key and `OUTBOUND_WEBHOOK_SECRET_PREVIOUS` to the old key; dkrypt sends the old-key signature in `X-Dkrypt-Signature-Previous` over the same timestamp and body. Configure receivers to accept either signature, reject stale timestamps, and compare signatures in constant time. Remove the previous key after every receiver accepts the current key.
 
