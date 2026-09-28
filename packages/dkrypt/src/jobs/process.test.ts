@@ -1,12 +1,42 @@
 import { expect, test } from 'bun:test';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { terminateChildProcess } from '#jobs/process.js';
+import { runWithJobDeadline } from '#jobs/deadline.js';
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function isProcessAlive(pid: number): boolean {
+  const result = spawnSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' });
+  if (result.error) throw result.error;
+  const state = result.stdout.trim();
+  return result.status === 0 && state.length > 0 && !state.startsWith('Z');
+}
+
+async function waitForCondition(check: () => boolean | Promise<boolean>, failureMessage: string): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    if (await check()) return;
+    await delay(10);
+  }
+  throw new Error(failureMessage);
+}
+
+function settleWithin<T>(promise: Promise<T>, timeoutMs: number, failureMessage: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    promise,
+    new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => reject(new Error(failureMessage)), timeoutMs);
+    }),
+  ]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
 }
 
 test('force kill still reaches a process after a graceful signal has been sent', () => {
@@ -26,7 +56,7 @@ test('force kill still reaches a process after a graceful signal has been sent',
   expect(signals).toEqual(['SIGKILL']);
 });
 
-test('force-kills descendants that ignore graceful termination in the decrypt process group', async () => {
+test('deadline force-kills descendants that ignore graceful termination in the decrypt process group', async () => {
   if (process.platform === 'win32') return;
 
   const directory = await mkdtemp(path.join(tmpdir(), 'dkrypt-process-group-'));
@@ -52,42 +82,58 @@ test('force-kills descendants that ignore graceful termination in the decrypt pr
   });
 
   try {
-    for (let attempt = 0; attempt < 500 && descendantPid === undefined; attempt += 1) await delay(10);
-    expect(descendantPid).toBeDefined();
+    await waitForCondition(() => descendantPid !== undefined, 'decrypt fixture descendant did not start');
+    if (descendantPid === undefined) throw new Error('decrypt fixture descendant did not start');
+    const runningDescendantPid = descendantPid;
 
-    terminateChildProcess(child, 'SIGTERM');
-    let signalReceived = '';
-    for (let attempt = 0; attempt < 500 && signalReceived !== 'received'; attempt += 1) {
-      signalReceived = await readFile(signalPath, 'utf8').catch(() => '');
-      if (signalReceived !== 'received') await delay(10);
-    }
-    expect(signalReceived).toBe('received');
-
+    const graceMs = 50;
+    const controller = new AbortController();
     const firstHeartbeat = Number(await readFile(heartbeatPath, 'utf8'));
-    let heartbeatAfterGrace = firstHeartbeat;
-    for (let attempt = 0; attempt < 500 && heartbeatAfterGrace <= firstHeartbeat; attempt += 1) {
-      await delay(10);
-      heartbeatAfterGrace = Number(await readFile(heartbeatPath, 'utf8'));
-    }
-    expect(heartbeatAfterGrace).toBeGreaterThan(firstHeartbeat);
+    let deadlineAt: number | undefined;
+    let forceKillAt: number | undefined;
+    let heartbeatAtForceKill = firstHeartbeat;
+    const deadline = runWithJobDeadline(
+      (signal) => new Promise<void>((resolve) => {
+        const requestGracefulStop = () => terminateChildProcess(child, 'SIGTERM');
+        signal.addEventListener('abort', requestGracefulStop, { once: true });
+        child.once('close', () => {
+          signal.removeEventListener('abort', requestGracefulStop);
+          resolve();
+        });
+      }),
+      controller,
+      {
+        timeoutMs: graceMs,
+        graceMs,
+        forceStopWaitMs: 5_000,
+        onDeadline: () => { deadlineAt = Date.now(); },
+        forceStop: () => {
+          forceKillAt = Date.now();
+          try {
+            heartbeatAtForceKill = Number(readFileSync(heartbeatPath, 'utf8'));
+          } catch {
+            heartbeatAtForceKill = Number.NaN;
+          }
+          terminateChildProcess(child, 'SIGKILL');
+        },
+      },
+    );
 
-    terminateChildProcess(child, 'SIGKILL');
+    const deadlineOutcome = deadline.then(
+      () => { throw new Error('deadline supervisor completed without reporting the deadline'); },
+      (error: unknown) => {
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toBe('job deadline exceeded');
+      },
+    );
+    await settleWithin(deadlineOutcome, 2_000, 'deadline run did not settle after force-kill');
 
-    await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('decrypt process group did not terminate after force-kill')), 5_000);
-      child.once('close', () => {
-        clearTimeout(timer);
-        resolve();
-      });
-    });
-
-    let finalHeartbeat = await readFile(heartbeatPath, 'utf8');
-    for (let attempt = 0; attempt < 25; attempt += 1) {
-      await delay(20);
-      const currentHeartbeat = await readFile(heartbeatPath, 'utf8');
-      expect(currentHeartbeat).toBe(finalHeartbeat);
-      finalHeartbeat = currentHeartbeat;
-    }
+    await waitForCondition(async () => await readFile(signalPath, 'utf8').catch(() => '') === 'received', 'decrypt fixture descendant did not receive SIGTERM');
+    expect(heartbeatAtForceKill).toBeGreaterThan(firstHeartbeat);
+    expect(forceKillAt! - deadlineAt!).toBeGreaterThanOrEqual(graceMs - 5);
+    expect(forceKillAt! - deadlineAt!).toBeLessThan(1_000);
+    await waitForCondition(() => !isProcessAlive(runningDescendantPid), 'descendant process remained after deadline force-kill');
+    expect(Number(await readFile(heartbeatPath, 'utf8'))).toBeGreaterThan(firstHeartbeat);
   } finally {
     if (child.pid) {
       try {
