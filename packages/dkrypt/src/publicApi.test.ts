@@ -43,7 +43,7 @@ test('API-key route policy matches concrete job and TestFlight paths only', () =
   expect(isPublicApiKeyRoute('POST', '/v1/artifacts')).toBe(false);
 });
 
-test('generated API keys cannot access internal health, billing, session, or dashboard routes', async () => {
+test('generated API keys are rejected outside the decrypt and artifact API allowlist', async () => {
   const apiKey = createApiKey(`Public API boundary ${crypto.randomUUID()}`, 'root');
   const server = await buildServer({ includePublicRoutes: false });
   const headers = { authorization: `Bearer ${apiKey.key}` };
@@ -52,16 +52,22 @@ test('generated API keys cannot access internal health, billing, session, or das
     const health = await server.inject({ method: 'GET', url: '/v1/health', headers });
     const metrics = await server.inject({ method: 'GET', url: '/v1/metrics', headers });
     const billing = await server.inject({ method: 'GET', url: '/v1/billing', headers });
+    const billingCheckout = await server.inject({ method: 'POST', url: '/v1/billing/checkout', headers, payload: {} });
+    const session = await server.inject({ method: 'GET', url: '/v1/auth/session', headers });
     const sessions = await server.inject({ method: 'GET', url: '/v1/auth/sessions', headers });
     const dashboard = await server.inject({ method: 'GET', url: '/v1/dashboard/overview', headers });
+    const status = await server.inject({ method: 'GET', url: '/v1/status', headers });
     const testFlightTrains = await server.inject({ method: 'GET', url: '/v1/testflight/123/trains', headers });
     const testFlightBuilds = await server.inject({ method: 'GET', url: '/v1/testflight/123/builds?trainVersion=1.0', headers });
 
     expect(health.statusCode).toBe(403);
     expect(metrics.statusCode).toBe(403);
-    expect(billing.statusCode).toBe(401);
-    expect(sessions.statusCode).toBe(401);
-    expect(dashboard.statusCode).toBe(401);
+    expect(billing.statusCode).toBe(403);
+    expect(billingCheckout.statusCode).toBe(403);
+    expect(session.statusCode).toBe(403);
+    expect(sessions.statusCode).toBe(403);
+    expect(dashboard.statusCode).toBe(403);
+    expect(status.statusCode).toBe(403);
     expect(testFlightTrains.statusCode).toBe(403);
     expect(testFlightBuilds.statusCode).toBe(403);
   } finally {

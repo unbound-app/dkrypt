@@ -7,6 +7,7 @@ import fastifySwagger from '@fastify/swagger';
 import scalarApiReference from '@scalar/fastify-api-reference';
 import { TypeBoxTypeProvider } from '@fastify/type-provider-typebox';
 import Fastify, { type FastifyInstance } from 'fastify';
+import { fastifyRejectGeneratedApiKeyOutsidePublicApi } from '#auth.js';
 import { drainBackgroundWork, trackBackgroundWork } from '#backgroundWork.js';
 import { config } from '#config.js';
 import { withCorrelation } from '#correlation.js';
@@ -192,6 +193,8 @@ export async function buildServer(options: { includePublicRoutes?: boolean } = {
     trace?.end(reply.statusCode >= 500 ? new Error(`HTTP ${reply.statusCode}`) : undefined);
     done();
   });
+
+  server.addHook('preValidation', fastifyRejectGeneratedApiKeyOutsidePublicApi);
 
   server.addContentTypeParser('application/json', { parseAs: 'buffer' }, (request, body, done) => {
     if (request.url.startsWith('/v1/stripe/webhook') || request.url.startsWith('/v1/nowpayments/webhook')) return done(null, body);

@@ -1,6 +1,6 @@
 import type { NextFunction, Request, Response } from '#http.js';
 import type { FastifyReply, FastifyRequest, HookHandlerDoneFunction } from 'fastify';
-import { recordApiKeyOutcome, verifyApiKey, type ApiKeyAuthResult } from '#store/state.js';
+import { isGeneratedApiKey, recordApiKeyOutcome, verifyApiKey, type ApiKeyAuthResult } from '#store/state.js';
 import { isPublicApiKeyRoute } from '#publicApi.js';
 
 const fastifyApiKeyContext = new WeakMap<FastifyRequest, ApiKeyAuthResult>();
@@ -12,6 +12,13 @@ export function getFastifyApiKeyContext(request: FastifyRequest): ApiKeyAuthResu
 function trackApiKeyOutcome(req: Request, res: Response, keyId: string | undefined): void {
   if (!keyId) return;
   res.raw.once('finish', () => recordApiKeyOutcome(keyId, req.method, req.path ?? req.url.split('?')[0], res.raw.statusCode));
+}
+
+function rejectOutOfScopeApiKey(request: FastifyRequest, reply: FastifyReply, keyId?: string): void {
+  const route = request.routeOptions.url ?? request.url.split('?')[0];
+  if (keyId) reply.raw.once('finish', () => recordApiKeyOutcome(keyId, request.method, route, reply.raw.statusCode));
+  const message = 'this API key is limited to decrypt and IPA artifact routes';
+  reply.code(403).send({ error: message, code: 'public_api_scope_denied', message, requestId: request.id, retryable: false });
 }
 
 export function requireApiKey(req: Request, res: Response, next: NextFunction): void {
@@ -57,14 +64,7 @@ export function fastifyRequireApiKey(request: FastifyRequest, reply: FastifyRepl
   }
   const keyId = result.keyId;
   if (keyId && !isPublicApiKeyRoute(request.method, request.routeOptions.url)) {
-    reply.raw.once('finish', () => recordApiKeyOutcome(keyId, request.method, request.routeOptions.url ?? request.url.split('?')[0], reply.raw.statusCode));
-    reply.code(403).send({
-      error: 'this API key is limited to decrypt and IPA artifact routes',
-      code: 'public_api_scope_denied',
-      message: 'this API key is limited to decrypt and IPA artifact routes',
-      requestId: request.id,
-      retryable: false,
-    });
+    rejectOutOfScopeApiKey(request, reply, keyId);
     return;
   }
   fastifyApiKeyContext.set(request, result);
@@ -72,6 +72,18 @@ export function fastifyRequireApiKey(request: FastifyRequest, reply: FastifyRepl
     reply.raw.once('finish', () => recordApiKeyOutcome(keyId, request.method, request.routeOptions.url ?? request.url.split('?')[0], reply.raw.statusCode));
   }
   done();
+}
+
+export function fastifyRejectGeneratedApiKeyOutsidePublicApi(request: FastifyRequest, reply: FastifyReply, done: HookHandlerDoneFunction): void {
+  const route = request.routeOptions.url;
+  const header = request.headers.authorization ?? '';
+  const [scheme, token] = header.split(' ');
+  if (scheme !== 'Bearer' || !token || !route?.startsWith('/v1/') || isPublicApiKeyRoute(request.method, route) || !isGeneratedApiKey(token)) {
+    done();
+    return;
+  }
+
+  rejectOutOfScopeApiKey(request, reply);
 }
 
 export function fastifyRequireTestFlightScope(request: FastifyRequest, reply: FastifyReply, done: HookHandlerDoneFunction): void {

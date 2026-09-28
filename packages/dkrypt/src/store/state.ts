@@ -1378,6 +1378,20 @@ function hashKey(key: string): string {
   return createHash('sha256').update(key).digest('hex');
 }
 
+function findGeneratedApiKeyRecord(candidate: string): ApiKeyRecord | undefined {
+  const hash = hashKey(candidate);
+  const now = Date.now();
+  return state.apiKeys.find((record) =>
+    record.status === 'approved'
+    && (!record.expiresAt || now <= record.expiresAt)
+    && (record.hash === hash || (record.previousHash === hash && !!record.previousHashExpiresAt && now < record.previousHashExpiresAt)),
+  );
+}
+
+export function isGeneratedApiKey(candidate: string): boolean {
+  return !!findGeneratedApiKeyRecord(candidate);
+}
+
 function safeEqualStr(a: string, b: string): boolean {
   const ab = Buffer.from(a);
   const bb = Buffer.from(b);
@@ -2254,14 +2268,8 @@ export function getApiKeyUsage(id: string, days: number): ApiKeyUsageBucket[] {
 export function verifyApiKey(candidate: string, ip?: string): ApiKeyAuthResult | undefined | 'rate-limited' {
   if (safeEqualStr(candidate, config.apiKey)) return {};
 
-  const hash = hashKey(candidate);
-  const record = state.apiKeys.find((k) => {
-    if (k.status !== 'approved') return false;
-    if (k.hash === hash) return true;
-    return k.previousHash === hash && !!k.previousHashExpiresAt && Date.now() < k.previousHashExpiresAt;
-  });
+  const record = findGeneratedApiKeyRecord(candidate);
   if (!record) return undefined;
-  if (record.expiresAt && Date.now() > record.expiresAt) return undefined;
   if (record.ownerId !== 'root') {
     const permissions = getUserEffectivePermissions(record.ownerId);
     if (!hasPermission(permissions, PermissionFlag.createApiKeys)) return undefined;

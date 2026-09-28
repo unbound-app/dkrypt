@@ -3,6 +3,11 @@ import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 
 async function expectAccessible(page: Page, scope?: string): Promise<void> {
+  await page.locator('[data-sonner-toast]').evaluateAll(async (toasts) => {
+    const animations = toasts.flatMap((toast) => toast.getAnimations({ subtree: true }))
+      .filter((animation) => animation.playState === 'running' && animation.effect?.getComputedTiming().iterations !== Infinity);
+    await Promise.all(animations.map((animation) => animation.finished.catch(() => undefined)));
+  });
   const builder = new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa']);
   if (scope) builder.include(scope);
   const results = await builder.analyze();
@@ -14,8 +19,11 @@ async function expectAccessible(page: Page, scope?: string): Promise<void> {
   }))).toEqual([]);
 }
 
-async function expectVisualSnapshot(page: Page | Locator, name: string, fullPage = false): Promise<void> {
-  await expect(page).toHaveScreenshot(name, {
+async function expectVisualSnapshot(page: Page, target: Page | Locator, name: string, fullPage = false): Promise<void> {
+  await page.addStyleTag({
+    content: ':root, body { scrollbar-gutter: auto !important; scrollbar-width: none !important; } :root::-webkit-scrollbar, body::-webkit-scrollbar { display: none !important; width: 0 !important; }',
+  });
+  await expect(target).toHaveScreenshot(name, {
     animations: 'disabled',
     caret: 'hide',
     fullPage,
@@ -219,10 +227,10 @@ test('pricing page visual layout stays consistent on desktop and mobile', async 
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto('/pricing');
   await expect(page.getByRole('heading', { name: 'Choose a dkrypt plan' })).toBeVisible();
-  await expectVisualSnapshot(page, 'pricing-desktop.png', true);
+  await expectVisualSnapshot(page, page, 'pricing-desktop.png', true);
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await expectVisualSnapshot(page, 'pricing-mobile.png', true);
+  await expectVisualSnapshot(page, page, 'pricing-mobile.png', true);
 });
 
 test('device overview visual layout stays consistent on desktop and mobile', async ({ page }) => {
@@ -288,10 +296,10 @@ test('device overview visual layout stays consistent on desktop and mobile', asy
   await page.goto('/?tab=settings&stab=devices');
   const deviceCard = page.locator('[data-slot="card"]').filter({ has: page.getByRole('heading', { name: 'Devices', exact: true }) });
   await expect(page.getByText('Lab iPad', { exact: true })).toBeVisible();
-  await expectVisualSnapshot(deviceCard, 'devices-desktop.png');
+  await expectVisualSnapshot(page, deviceCard, 'devices-desktop.png');
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await expectVisualSnapshot(deviceCard, 'devices-mobile.png');
+  await expectVisualSnapshot(page, deviceCard, 'devices-mobile.png');
 });
 
 test('IPA Library visual layout stays consistent on desktop and mobile', async ({ page }) => {
@@ -338,10 +346,10 @@ test('IPA Library visual layout stays consistent on desktop and mobile', async (
   await artifactResponse;
   const libraryCard = page.locator('[data-slot="card"]').filter({ hasText: 'IPA Library' });
   await expect(page.getByText('Visual App', { exact: true })).toBeVisible();
-  await expectVisualSnapshot(libraryCard, 'ipa-library-desktop.png');
+  await expectVisualSnapshot(page, libraryCard, 'ipa-library-desktop.png');
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await expectVisualSnapshot(libraryCard, 'ipa-library-mobile.png');
+  await expectVisualSnapshot(page, libraryCard, 'ipa-library-mobile.png');
 });
 
 test('date and number format preference is saved and restored from the account', async ({ page }) => {
