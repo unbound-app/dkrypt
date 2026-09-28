@@ -501,15 +501,17 @@ jobs:
           } catch (error) {
             if (error instanceof Error && !String(error.message).includes('ENOENT')) throw error;
           }
-          const { withAutoinstallDeviceAgent } = await import('/app/src/idevice.ts');
+          const { verifyRustDevicePairing, withAutoinstallDeviceAgent } = await import('/app/src/idevice.ts');
           const primaryDevice = getPrimaryDevice();
           if (!primaryDevice?.udid || primaryDevice.host || primaryDevice.usbmuxNetwork === true) throw new Error('configured primary device is not a direct USB pairing');
+          await verifyRustDevicePairing(primaryDevice);
           const agentStatus = await withAutoinstallDeviceAgent(primaryDevice, client => client.call('status', {}, 3_000));
           if (typeof agentStatus.agentVersion !== 'string') throw new Error('signed USB device-agent status request was incomplete');
           console.log(JSON.stringify({
             health: health.ok,
             device,
             bridge: health.bridge,
+            devicePairing: true,
             usbAgent: { version: agentStatus.agentVersion },
             runtime: { apiUid: apiIdentity[2], bridgeUid: bridgeIdentity[2], sshKeyAvailable },
             routes: Object.keys(openapi.paths).length,

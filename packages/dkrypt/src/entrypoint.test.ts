@@ -53,3 +53,11 @@ test('production verifies database migration and restore before replacing the ru
   expect(deploymentWorkflow).toContain('--mount type=volume,source=dkrypt_state,target=/data/state,readonly');
   expect(deploymentWorkflow).toContain('--tmpfs /tmp:rw,nosuid,size=1g,uid=10001,gid=10001');
 });
+
+test('production smoke authenticates the saved Rust pairing before probing the USB agent', () => {
+  const pairingVerification = deploymentWorkflow.indexOf('await verifyRustDevicePairing(primaryDevice)');
+  const agentProbe = deploymentWorkflow.indexOf('withAutoinstallDeviceAgent(primaryDevice');
+  expect(pairingVerification).toBeGreaterThan(-1);
+  expect(agentProbe).toBeGreaterThan(-1);
+  expect(pairingVerification).toBeLessThan(agentProbe);
+});

@@ -11,7 +11,7 @@ import { config } from '#config.js';
 import { BRIDGE_CAPABILITIES, BRIDGE_PROTOCOL_VERSION, TESTFLIGHT_LIFECYCLE_CAPABILITIES } from './bridgeProtocol.js';
 import { flushTelemetry, startSpan } from '#telemetry.js';
 
-const { armAppStoreAutoConfirm, buildIpadecryptRuntimeConfig, clearAppStoreAutoConfirm, createBridgeEnvelope, createDeviceAgentEnvelope, execCommand, getDeviceAgentRetryDelay, getDeviceTransportOrder, getRustDeviceBridgeHealth, getRustDeviceBridgeStatus, isDirectUsbDeviceAgentConnection, probeDeviceSshTunnel, readBridgeHeartbeats, retryRustDeviceHealthProbe, retryTransientSshConnection, sendAppStoreBridgeRequest, withSSH } = await import('./idevice.js' + '?idevice-transport-test');
+const { armAppStoreAutoConfirm, buildIpadecryptRuntimeConfig, clearAppStoreAutoConfirm, createBridgeEnvelope, createDeviceAgentEnvelope, execCommand, getDeviceAgentRetryDelay, getDeviceTransportOrder, getRustDeviceBridgeHealth, getRustDeviceBridgeStatus, isDirectUsbDeviceAgentConnection, pairDevice, probeDeviceSshTunnel, readBridgeHeartbeats, retryRustDeviceHealthProbe, retryTransientSshConnection, sendAppStoreBridgeRequest, verifyRustDevicePairing, withSSH } = await import('./idevice.js' + '?idevice-transport-test');
 
 type FakeExecStream = {
   stderr: {
@@ -75,6 +75,45 @@ function writeFrame(socket: import('node:net').Socket, value: Record<string, unk
   frame.writeUInt32BE(body.length, 0);
   body.copy(frame, 4);
   socket.end(frame);
+}
+
+async function withRustBridgeFixture<T>(
+  respond: (request: Record<string, unknown>) => unknown,
+  action: () => Promise<T>,
+): Promise<{ result: T; operations: string[] }> {
+  const runtimeDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-pairing-validation-'));
+  const socketPath = path.join(runtimeDir, 'bridge.sock');
+  const secret = 'pairing-validation-secret-0123456789';
+  const originalSocket = config.deviceBridgeSocket;
+  const originalSecret = config.deviceBridgeSecret;
+  const operations: string[] = [];
+  const bridge = createServer((socket) => {
+    socket.once('data', (chunk) => {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      const length = buffer.readUInt32BE(0);
+      const request = JSON.parse(buffer.subarray(4, length + 4).toString('utf8')) as Record<string, unknown>;
+      operations.push(String(request.operation));
+      writeFrame(socket, {
+        version: 1,
+        requestId: request.requestId,
+        ok: true,
+        result: respond(request),
+        error: null,
+      });
+    });
+  });
+  await new Promise<void>((resolve) => bridge.listen(socketPath, resolve));
+  config.deviceBridgeSocket = socketPath;
+  config.deviceBridgeSecret = secret;
+
+  try {
+    return { result: await action(), operations };
+  } finally {
+    config.deviceBridgeSocket = originalSocket;
+    config.deviceBridgeSecret = originalSecret;
+    await new Promise<void>((resolve) => bridge.close(() => resolve()));
+    await rm(runtimeDir, { recursive: true, force: true });
+  }
 }
 
 test('Rust device bridge spans inherit the active operation span', async () => {
@@ -546,6 +585,29 @@ test('uses the Rust bridge for USB and paired Wi-Fi devices after cutover', () =
   expect(getDeviceTransportOrder(connection, 'autoinstall')).toEqual(['autoinstall']);
   expect(getDeviceTransportOrder(connection, 'ssh')).toEqual(['autoinstall']);
   expect(getDeviceTransportOrder(networkConnection, 'ssh')).toEqual(['autoinstall']);
+});
+
+test('reports a device as paired only after the saved record authenticates that device identity', async () => {
+  const deviceId = 'fixture-paired-device-identifier';
+  const { result, operations } = await withRustBridgeFixture((request) => request.operation === 'pair'
+    ? { deviceId, hostId: 'fixture-host-id', paired: true }
+    : { UniqueDeviceID: deviceId }, () => pairDevice({ transport: 'usb', udid: deviceId }));
+
+  expect(result).toEqual({ deviceId, hostId: 'fixture-host-id', paired: true });
+  expect(operations).toEqual(['pair', 'metadata']);
+});
+
+test('rejects a saved pairing record that authenticates a different device', async () => {
+  const deviceId = 'fixture-paired-device-identifier';
+  const { operations } = await withRustBridgeFixture(
+    () => ({ UniqueDeviceID: 'different-device-identifier' }),
+    async () => expect(verifyRustDevicePairing({ transport: 'usb', udid: deviceId })).rejects.toMatchObject({
+      code: 'pairing_identity_mismatch',
+      retryable: false,
+    }),
+  );
+
+  expect(operations).toEqual(['metadata']);
 });
 
 test('backs off USB agent reconnects long enough for USBMux to recover', () => {

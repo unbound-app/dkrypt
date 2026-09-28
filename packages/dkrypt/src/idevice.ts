@@ -645,7 +645,31 @@ async function openDeviceAgentSession(connection: DeviceConnection, key: string,
 
 export async function pairDevice(connection: DeviceConnection): Promise<{ deviceId: string; hostId: string; paired: boolean }> {
   if (!connection.udid || connection.host || connection.usbmuxNetwork === true) throw new Error('Rust pairing requires a direct USB device');
-  return new RustDeviceBridgeClient().pair(connection.udid, config.deviceBridgeHostId || undefined);
+  const pairing = await new RustDeviceBridgeClient().pair(connection.udid, config.deviceBridgeHostId || undefined);
+  await verifyRustDevicePairing(connection);
+  return pairing;
+}
+
+export async function verifyRustDevicePairing(connection: DeviceConnection): Promise<void> {
+  if (!isRustDeviceConnection(connection) || !connection.udid) {
+    throw new DeviceBridgeError('pairing_unavailable', 'a paired Rust device identifier is required', false);
+  }
+  let metadata: unknown;
+  try {
+    metadata = await new RustDeviceBridgeClient().request('metadata', { deviceId: connection.udid }, 10_000);
+  } catch (error) {
+    throw new DeviceBridgeError(
+      'pairing_validation',
+      error instanceof Error ? error.message : String(error),
+      error instanceof DeviceBridgeError ? error.retryable : true,
+    );
+  }
+  const verifiedDeviceId = metadata && typeof metadata === 'object'
+    ? (metadata as Record<string, unknown>).UniqueDeviceID
+    : undefined;
+  if (verifiedDeviceId !== connection.udid) {
+    throw new DeviceBridgeError('pairing_identity_mismatch', 'saved pairing record did not authenticate the requested device identity', false);
+  }
 }
 
 function closeDeviceAgentSession(key: string, session: DeviceAgentSession): void {
