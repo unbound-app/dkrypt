@@ -10,7 +10,10 @@ use serde_json::{Map, Value, json};
 use std::{
     collections::{BTreeMap, HashMap},
     env,
+    fs::{self, OpenOptions},
     future::Future,
+    io::Write,
+    os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
     pin::Pin,
     process::Stdio,
@@ -1140,6 +1143,55 @@ fn start_netmuxd(binary: &str, socket: &Path, pairing_store: &Path) -> Result<Ch
         .map_err(|value| format!("could not start netmuxd: {value}"))
 }
 
+fn read_pairing_host_id(path: &Path) -> Result<String, String> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|value| format!("could not inspect pairing host identity: {value}"))?;
+    if !metadata.file_type().is_file() {
+        return Err("pairing host identity is not a regular file".to_string());
+    }
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(|value| {
+        format!("could not restrict pairing host identity permissions: {value}")
+    })?;
+    let value = fs::read_to_string(path)
+        .map_err(|value| format!("could not read pairing host identity: {value}"))?;
+    let host_id = value.trim();
+    Uuid::parse_str(host_id)
+        .map_err(|value| format!("pairing host identity is invalid: {value}"))?;
+    Ok(host_id.to_string())
+}
+
+fn persistent_pairing_host_id(pairing_store: &Path) -> Result<String, String> {
+    let host_id_path = pairing_store.join(".dkrypt-host-id");
+    if host_id_path.exists() {
+        return read_pairing_host_id(&host_id_path);
+    }
+
+    let host_id = Uuid::new_v4().to_string();
+    let temporary_path = pairing_store.join(format!(".dkrypt-host-id-{}.tmp", Uuid::new_v4()));
+    let mut temporary_file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&temporary_path)
+        .map_err(|value| format!("could not create pairing host identity: {value}"))?;
+    temporary_file
+        .write_all(host_id.as_bytes())
+        .and_then(|_| temporary_file.sync_all())
+        .map_err(|value| format!("could not persist pairing host identity: {value}"))?;
+    drop(temporary_file);
+
+    let linked = fs::hard_link(&temporary_path, &host_id_path);
+    let _ = fs::remove_file(&temporary_path);
+    match linked {
+        Ok(()) => fs::File::open(pairing_store)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|value| format!("could not sync pairing host identity directory: {value}"))?,
+        Err(value) if value.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(value) => return Err(format!("could not publish pairing host identity: {value}")),
+    }
+    read_pairing_host_id(&host_id_path)
+}
+
 #[tokio::main]
 async fn main() -> Result<(), String> {
     let rpc_socket = unix_path("DEVICE_BRIDGE_SOCKET", "/run/dkrypt/device-bridge.sock");
@@ -1170,7 +1222,11 @@ async fn main() -> Result<(), String> {
     if rpc_socket.exists() {
         std::fs::remove_file(&rpc_socket).map_err(|value| value.to_string())?;
     }
-    let host_id = env::var("DEVICE_BRIDGE_HOST_ID").unwrap_or_else(|_| Uuid::new_v4().to_string());
+    let host_id = env::var("DEVICE_BRIDGE_HOST_ID")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .map(Ok)
+        .unwrap_or_else(|| persistent_pairing_host_id(&pairing_store))?;
     let state = Arc::new(BridgeState {
         secrets,
         agent_connector: Arc::new(UsbmuxdAgentConnector {

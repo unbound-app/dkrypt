@@ -68,6 +68,22 @@ async fn request_capabilities(socket_path: &Path) -> Result<Value, String> {
     serde_json::from_slice(&response).map_err(|value| value.to_string())
 }
 
+async fn stop_bridge(bridge: &mut tokio::process::Child) {
+    if let Some(pid) = bridge.id() {
+        let _ = StdCommand::new("/bin/kill")
+            .arg("-TERM")
+            .arg(pid.to_string())
+            .status();
+    }
+    if timeout(Duration::from_secs(3), bridge.wait())
+        .await
+        .is_err()
+    {
+        let _ = bridge.kill().await;
+        let _ = bridge.wait().await;
+    }
+}
+
 #[tokio::test]
 async fn rpc_remains_available_before_mux_readiness_and_across_mux_restarts() {
     let directory = PathBuf::from(format!("/tmp/dkrypt-bridge-process-{}", Uuid::new_v4()));
@@ -119,19 +135,65 @@ async fn rpc_remains_available_before_mux_readiness_and_across_mux_restarts() {
     }
     .await;
 
-    if let Some(pid) = bridge.id() {
-        let _ = StdCommand::new("/bin/kill")
-            .arg("-TERM")
-            .arg(pid.to_string())
-            .status();
-    }
-    if timeout(Duration::from_secs(3), bridge.wait())
-        .await
-        .is_err()
-    {
-        let _ = bridge.kill().await;
-        let _ = bridge.wait().await;
-    }
+    stop_bridge(&mut bridge).await;
     let _ = fs::remove_dir_all(&directory);
     result.expect("bridge should survive netmuxd start and restart");
+}
+
+#[tokio::test]
+async fn generated_pairing_host_identity_survives_bridge_process_restarts() {
+    let directory = PathBuf::from(format!("/tmp/dkrypt-pairing-identity-{}", Uuid::new_v4()));
+    let rpc_socket = directory.join("device-bridge.sock");
+    let mux_socket = directory.join("netmuxd.sock");
+    let pairing_store = directory.join("pairing");
+    let host_id_path = pairing_store.join(".dkrypt-host-id");
+    let netmuxd = directory.join("netmuxd-fixture");
+    fs::create_dir_all(&pairing_store).expect("pairing store should be created");
+    fs::write(
+        &netmuxd,
+        "#!/bin/sh\nset -eu\nsocket=\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"--socket-path\" ]; then socket=$2; shift 2; else shift; fi\ndone\n: > \"$socket\"\nsleep 30\n",
+    )
+    .expect("fixture executable should be written");
+    fs::set_permissions(&netmuxd, fs::Permissions::from_mode(0o700))
+        .expect("fixture executable should be executable");
+
+    let bridge_binary = std::env::var("CARGO_BIN_EXE_dkrypt-device-bridge")
+        .expect("Cargo should provide the device bridge binary path");
+    let host_ids = async {
+        let mut observed_host_ids = Vec::new();
+        for _ in 0..2 {
+            let mut bridge = Command::new(&bridge_binary)
+                .env("DEVICE_BRIDGE_SOCKET", &rpc_socket)
+                .env("DEVICE_MUX_SOCKET", &mux_socket)
+                .env("DEVICE_PAIRING_STORE", &pairing_store)
+                .env("DEVICE_BRIDGE_SECRET", SECRET)
+                .env("NETMUXD_BIN", &netmuxd)
+                .env_remove("DEVICE_BRIDGE_HOST_ID")
+                .spawn()
+                .expect("device bridge should start");
+            let host_id = async {
+                wait_for_file(&rpc_socket).await?;
+                wait_for_file(&host_id_path).await?;
+                fs::read_to_string(&host_id_path).map_err(|value| value.to_string())
+            }
+            .await;
+            stop_bridge(&mut bridge).await;
+            observed_host_ids.push(host_id?);
+        }
+        Ok::<Vec<String>, String>(observed_host_ids)
+    }
+    .await;
+
+    let observed_host_ids = host_ids.expect("bridge should persist its generated pairing identity");
+    assert_eq!(observed_host_ids[0], observed_host_ids[1]);
+    assert!(Uuid::parse_str(observed_host_ids[0].trim()).is_ok());
+    assert_eq!(
+        fs::metadata(&host_id_path)
+            .expect("pairing identity should remain stored")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600
+    );
+    let _ = fs::remove_dir_all(&directory);
 }
