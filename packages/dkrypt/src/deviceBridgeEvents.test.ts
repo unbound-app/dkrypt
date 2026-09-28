@@ -61,4 +61,33 @@ describe('Rust device bridge event metrics', () => {
       await stop();
     }
   });
+
+  it('reconnects after an established native event stream drops', async () => {
+    let attempts = 0;
+    const stop = startRustDeviceEventMonitoring({
+      subscriber: async (onEvent, onError) => {
+        attempts += 1;
+        onEvent({ type: 'device_snapshot', sequence: attempts, devices: [] });
+        if (attempts === 1) queueMicrotask(() => onError?.(new Error('fixture stream closed')));
+        return () => {};
+      },
+      retryBaseDelayMs: 1,
+      retryMaxDelayMs: 1,
+      stableConnectionMs: 1_000,
+    });
+
+    try {
+      for (let attempt = 0; attempt < 100 && attempts < 2; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 2));
+
+      const metrics = createOtlpMetricsPayload('dkrypt').resourceMetrics[0].scopeMetrics[0].metrics;
+      const streamFailures = metrics.find((metric) => metric.name === 'dkrypt_device_bridge_event_stream_failures_total')?.sum?.dataPoints;
+      const connected = metrics.find((metric) => metric.name === 'dkrypt_device_bridge_event_stream_connected')?.gauge?.dataPoints;
+
+      expect(attempts).toBeGreaterThanOrEqual(2);
+      expect(streamFailures?.[0].asInt).toBe('1');
+      expect(connected?.[0].asDouble).toBe(1);
+    } finally {
+      await stop();
+    }
+  });
 });
