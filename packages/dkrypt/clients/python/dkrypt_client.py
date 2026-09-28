@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.parse import SplitResult, urljoin, urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 ROUTES = (
     "GET /v1/artifacts",
@@ -37,11 +37,14 @@ class DkryptClient:
         if self.api_key:
             request.add_unredirected_header("Authorization", f"Bearer {self.api_key}")
         try:
-            with urlopen(request) as response:
+            redirect_handler = DkryptRedirectHandler(self._origin(urlsplit(self.base_url)), self.api_key)
+            with build_opener(redirect_handler).open(request) as response:
                 return response.read()
         except HTTPError as error:
             detail = error.read().decode("utf-8", errors="replace")
             raise RuntimeError(f"dkrypt request failed with HTTP {error.code}: {detail}") from error
+        except URLError as error:
+            raise RuntimeError(f"dkrypt request failed: {error.reason}") from error
 
     def _build_url(self, path: str) -> str:
         base_url = self.base_url.rstrip("/") + "/"
@@ -63,3 +66,22 @@ class DkryptClient:
         default_port = 443 if scheme == "https" else 80
         port = url.port
         return scheme, url.hostname, default_port if port is None else port
+
+class DkryptRedirectHandler(HTTPRedirectHandler):
+    def __init__(self, origin: tuple[str, str | None, int], api_key: str | None):
+        super().__init__()
+        self.origin = origin
+        self.api_key = api_key
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
+        target = urlsplit(newurl)
+        if (
+            redirected is not None
+            and self.api_key
+            and target.username is None
+            and target.password is None
+            and DkryptClient._origin(target) == self.origin
+        ):
+            redirected.add_unredirected_header("Authorization", f"Bearer {self.api_key}")
+        return redirected
