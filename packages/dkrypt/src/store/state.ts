@@ -1167,7 +1167,7 @@ function normalizeBackupHistoryEntry(raw: unknown): BackupHistoryEntry {
 
 function load(): PersistedState {
   mkdirSync(config.stateDir, { recursive: true });
-  const stored = stateDatabase.readState();
+  const stored = stateDatabase.readState({ allowLegacyFallback: existsSync(statePath) });
   if (stored !== undefined) {
     const migrated = normalizeLoadedState(migrate(asStateRecord(stored)));
     if (JSON.stringify(stored) !== JSON.stringify(migrated)) stateDatabase.writeState(migrated, statePath);

@@ -464,6 +464,24 @@ test('SQLite backfills the state snapshot marker before protecting an upgraded d
   }
 });
 
+test('SQLite rejects an unmarked missing snapshot when application data remains', async () => {
+  const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-sqlite-unmarked-missing-snapshot-'));
+  try {
+    const database = openStateDatabase({ stateDir, filename: 'state.sqlite' });
+    try {
+      database.writeState({ version: 18, devices: [{ id: 'device-1' }], settings: {} });
+      database.db.query('DELETE FROM metadata WHERE key = ?').run('state_snapshot_initialized');
+      database.db.exec('DELETE FROM state_snapshots WHERE id = 1;');
+      expect(database.readState({ allowLegacyFallback: true })).toBeUndefined();
+      expect(() => database.readState()).toThrow(/persisted application data/i);
+    } finally {
+      database.close();
+    }
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
 test('SQLite startup fails closed without replacing a corrupt database', async () => {
   const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-sqlite-startup-corrupt-'));
   const databasePath = path.join(stateDir, 'state.sqlite');

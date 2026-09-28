@@ -1247,6 +1247,10 @@ function markStateSnapshotInitialized(db: Database): void {
   `).run();
 }
 
+function hasPersistedApplicationData(db: Database): boolean {
+  return [...collectionTables].some((table) => db.query(`SELECT 1 FROM ${table} LIMIT 1`).get() !== null);
+}
+
 export class StateDatabase {
   readonly db: Database;
   readonly path: string;
@@ -1263,7 +1267,7 @@ export class StateDatabase {
       verifyIntegrity(this.db);
       if (existed) backupBeforeMigrations(this.db, this.path, options.stateDir);
       applyMigrations(this.db, options.migrationDryRun ?? false);
-      if (this.readState() !== undefined) markStateSnapshotInitialized(this.db);
+      if (this.readState({ allowLegacyFallback: true }) !== undefined) markStateSnapshotInitialized(this.db);
     } catch (error) {
       this.db.close();
       throw error;
@@ -1280,11 +1284,12 @@ export class StateDatabase {
     return 'ok';
   }
 
-  readState(): unknown | undefined {
+  readState(options: { allowLegacyFallback?: boolean } = {}): unknown | undefined {
     const row = this.db.query('SELECT payload, sha256 FROM state_snapshots WHERE id = 1').get() as StateSnapshotRow | null;
     if (!row) {
       const initialized = this.db.query('SELECT value FROM metadata WHERE key = ?').get('state_snapshot_initialized') as { value?: string } | null;
       if (initialized?.value === '1') throw new Error('SQLite state snapshot is missing after initialization');
+      if (!options.allowLegacyFallback && hasPersistedApplicationData(this.db)) throw new Error('SQLite state snapshot is missing while persisted application data exists');
       return undefined;
     }
     if (sha256(row.payload) !== row.sha256) throw new Error('SQLite state snapshot checksum mismatch');
