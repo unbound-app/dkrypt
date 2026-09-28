@@ -75,7 +75,7 @@ function pathPattern(path: string): RegExp {
   const escaped = path.split('/').map((segment) => /^\{[^{}]+\}$/.test(segment)
     ? '[^/]+'
     : segment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-  return new RegExp(`^${escaped.join('/')}?$`);
+  return new RegExp(`^${escaped.join('/')}$`);
 }
 
 function isHttpMethod(value: string): boolean {

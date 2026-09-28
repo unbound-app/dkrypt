@@ -33,13 +33,23 @@ test('public OpenAPI contains only decrypt and IPA artifact routes', async () =>
 test('API-key route policy matches concrete job and TestFlight paths only', () => {
   expect(isPublicApiKeyRoute('GET', '/v1/jobs/job-123')).toBe(true);
   expect(isPublicApiKeyRoute('POST', '/v1/testflight/decrypt')).toBe(true);
+  expect(isPublicApiKeyRoute('POST', '/v1/decrypt')).toBe(false);
+  expect(isPublicApiKeyRoute('GET', '/v1/decryp')).toBe(false);
+  expect(isPublicApiKeyRoute('GET', '/v1/decrypts')).toBe(false);
+  expect(isPublicApiKeyRoute('POST', '/v1/jobs/job-123')).toBe(false);
+  expect(isPublicApiKeyRoute('GET', '/v1/jobs/job-123/')).toBe(false);
+  expect(isPublicApiKeyRoute('GET', '/v1/artifact')).toBe(false);
+  expect(isPublicApiKeyRoute('GET', '/v1/artifacts/')).toBe(false);
   expect(isPublicApiKeyRoute('GET', '/v1/testflight/123/builds')).toBe(false);
   expect(isPublicApiKeyRoute('GET', '/v1/testflight/123/trains')).toBe(false);
   expect(isPublicApiKeyRoute('GET', '/v1/billing')).toBe(false);
   expect(isPublicApiKeyRoute('POST', '/v1/billing/checkout')).toBe(false);
+  expect(isPublicApiKeyRoute('POST', '/v1/billing/cancel')).toBe(false);
+  expect(isPublicApiKeyRoute('GET', '/v1/billing/subscriptions')).toBe(false);
   expect(isPublicApiKeyRoute('PUT', '/v1/billing/checkouts')).toBe(false);
   expect(isPublicApiKeyRoute('GET', '/v1/auth/session')).toBe(false);
   expect(isPublicApiKeyRoute('GET', '/v1/auth/sessions')).toBe(false);
+  expect(isPublicApiKeyRoute('POST', '/v1/auth/sessions/revoke-others')).toBe(false);
   expect(isPublicApiKeyRoute('GET', '/v1/health')).toBe(false);
   expect(isPublicApiKeyRoute('POST', '/v1/artifacts')).toBe(false);
 });
@@ -51,30 +61,32 @@ test('generated API keys are rejected outside the decrypt and artifact API allow
 
   try {
     const artifactLibrary = await server.inject({ method: 'GET', url: '/v1/artifacts', headers });
-    const health = await server.inject({ method: 'GET', url: '/v1/health', headers });
-    const metrics = await server.inject({ method: 'GET', url: '/v1/metrics', headers });
-    const billing = await server.inject({ method: 'GET', url: '/v1/billing', headers });
-    const billingCheckout = await server.inject({ method: 'POST', url: '/v1/billing/checkout', headers, payload: {} });
-    const billingCheckoutControl = await server.inject({ method: 'PUT', url: '/v1/billing/checkouts', headers, payload: { paused: true } });
-    const session = await server.inject({ method: 'GET', url: '/v1/auth/session', headers });
-    const sessions = await server.inject({ method: 'GET', url: '/v1/auth/sessions', headers });
-    const dashboard = await server.inject({ method: 'GET', url: '/v1/dashboard/overview', headers });
-    const status = await server.inject({ method: 'GET', url: '/v1/status', headers });
-    const testFlightTrains = await server.inject({ method: 'GET', url: '/v1/testflight/123/trains', headers });
-    const testFlightBuilds = await server.inject({ method: 'GET', url: '/v1/testflight/123/builds?trainVersion=1.0', headers });
+    const internalRequests = [
+      ['GET', '/v1/health'],
+      ['GET', '/v1/metrics'],
+      ['GET', '/v1/billing'],
+      ['GET', '/v1/billing/subscriptions'],
+      ['GET', '/v1/billing/provider-status'],
+      ['POST', '/v1/billing/checkout'],
+      ['POST', '/v1/billing/cancel'],
+      ['POST', '/v1/billing/portal'],
+      ['PUT', '/v1/billing/checkouts'],
+      ['GET', '/v1/auth/session'],
+      ['GET', '/v1/auth/sessions'],
+      ['DELETE', '/v1/auth/sessions/session-123'],
+      ['POST', '/v1/auth/sessions/revoke-others'],
+      ['GET', '/v1/dashboard/overview'],
+      ['GET', '/v1/status'],
+      ['GET', '/v1/testflight/123/trains'],
+      ['GET', '/v1/testflight/123/builds?trainVersion=1.0'],
+    ] as const;
+    const rejectedResponses = await Promise.all(internalRequests.map(([method, url]) =>
+      server.inject({ method, url, headers, payload: method === 'GET' || method === 'DELETE' ? undefined : {} }),
+    ));
 
     expect(artifactLibrary.statusCode).toBe(200);
-    expect(health.statusCode).toBe(403);
-    expect(metrics.statusCode).toBe(403);
-    expect(billing.statusCode).toBe(403);
-    expect(billingCheckout.statusCode).toBe(403);
-    expect(billingCheckoutControl.statusCode).toBe(403);
-    expect(session.statusCode).toBe(403);
-    expect(sessions.statusCode).toBe(403);
-    expect(dashboard.statusCode).toBe(403);
-    expect(status.statusCode).toBe(403);
-    expect(testFlightTrains.statusCode).toBe(403);
-    expect(testFlightBuilds.statusCode).toBe(403);
+    expect(rejectedResponses.map((response) => response.statusCode)).toEqual(internalRequests.map(() => 403));
+    expect(rejectedResponses.map((response) => response.json().code)).toEqual(internalRequests.map(() => 'public_api_scope_denied'));
   } finally {
     revokeApiKey(apiKey.id, 'root', true);
     await server.close();

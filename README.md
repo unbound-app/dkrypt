@@ -60,7 +60,7 @@ Copy `.env.example` to `.env` and configure the required values. The important r
 
 | Setting | Purpose |
 | --- | --- |
-| `API_KEY` | API authentication and health checks |
+| `API_KEY` | Self-hosted service credential for direct API and health checks; separate from dashboard-generated user keys |
 | `SESSION_SIGNING_SECRET` | Dashboard session signing |
 | `BACKUP_MANIFEST_SECRET` | Stable key for encrypted backup manifests; keep it independent from session rotation |
 | `BACKUP_MANIFEST_SECRET_PREVIOUS` | Comma-separated previous manifest keys retained while older snapshots still exist |
@@ -152,7 +152,7 @@ Set the IPN destination to `https://<your-host>/v1/nowpayments/webhook`. The pro
 <details>
 <summary>API</summary>
 
-Public API requests use `Authorization: Bearer <API_KEY>` and cover decrypt workflows and IPA artifacts only. Dashboard requests use the signed-in session.
+Dashboard-generated API keys use `Authorization: Bearer <generated-key>` and cover decrypt workflows, job status, and IPA artifacts only. Dashboard requests use the signed-in session. The self-hosted `API_KEY` setting is a separate service credential and is not a dashboard-generated user key.
 
 | Endpoint | Purpose |
 | --- | --- |
