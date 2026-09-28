@@ -58,15 +58,17 @@ describe('persistent artifact store', () => {
       busyTimeoutMs: config.stateDbBusyTimeoutMs,
     }, ['artifacts']);
     const trigger = `fail_artifact_promotion_${crypto.randomUUID().replaceAll('-', '')}`;
+    let existingStagingPath: string | undefined;
     let stagingPath: string | undefined;
 
     try {
       config.artifactMaxBytes = Number.MAX_SAFE_INTEGER;
+      existingStagingPath = await stagingFile('existing artifact');
       const existing = await promoteArtifact({
         key: `test-preserve-on-failure-${crypto.randomUUID()}`,
         bundleId: 'com.example.preserve-on-failure',
         channel: 'appstore',
-        stagingPath: await stagingFile('existing artifact'),
+        stagingPath: existingStagingPath,
       });
       const priorArtifacts = listArtifacts({ limit: 200 }).artifacts;
       const priorFileNames = (await readdir(config.artifactDir)).filter((name) => name.endsWith('.ipa')).sort();
@@ -90,6 +92,7 @@ describe('persistent artifact store', () => {
       database.exec(`DROP TRIGGER IF EXISTS ${trigger};`);
       database.close();
       config.artifactMaxBytes = previousQuota;
+      if (existingStagingPath) await rm(path.dirname(existingStagingPath), { recursive: true, force: true });
       if (stagingPath) await rm(path.dirname(stagingPath), { recursive: true, force: true });
     }
   });

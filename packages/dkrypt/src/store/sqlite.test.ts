@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -304,6 +304,41 @@ test('SQLite rolls back an in-progress migration after abrupt process terminatio
       }
     } finally {
       await stopChild(child);
+    }
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test('SQLite creates a verified pre-migration backup before upgrading an existing database', async () => {
+  const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-sqlite-pre-migration-backup-'));
+  const state = { version: 18, devices: [{ id: 'device-before-migration' }], settings: { maintenanceMode: false } };
+  try {
+    const original = openStateDatabase({ stateDir, filename: 'state.sqlite' });
+    try {
+      original.writeState(state);
+      rewindToSchemaVersion16(original);
+    } finally {
+      original.close();
+    }
+
+    const migrated = openStateDatabase({ stateDir, filename: 'state.sqlite' });
+    try {
+      expect(migrated.schemaVersion).toBe(17);
+      const backupDirectory = path.join(stateDir, 'backups');
+      const backupNames = (await readdir(backupDirectory)).filter((name) => name.startsWith('pre-migration-'));
+      expect(backupNames).toHaveLength(1);
+
+      const backup = new Database(path.join(backupDirectory, backupNames[0]), { create: false, strict: true });
+      try {
+        expect(backup.query('SELECT MAX(version) AS version FROM schema_migrations').get()).toEqual({ version: 16 });
+        expect(backup.query('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' });
+        expect(JSON.parse((backup.query('SELECT payload FROM state_snapshots WHERE id = 1').get() as { payload: string }).payload)).toEqual(state);
+      } finally {
+        backup.close();
+      }
+    } finally {
+      migrated.close();
     }
   } finally {
     await rm(stateDir, { recursive: true, force: true });
