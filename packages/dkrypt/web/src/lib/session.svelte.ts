@@ -1,4 +1,4 @@
-import { hasPermission, parseBits, PermissionFlag, permissionLabels } from '#lib/permissions';
+import { hasPermission, parseBits, PermissionFlag, permissionKeys, permissionLabels, type PermissionMetaKey } from '#lib/permissions';
 import { serverStateCache } from '#lib/serverStateCache.svelte';
 import { resetTestFlightCatalogState } from '#lib/testFlightCatalogState.svelte';
 import { clearPersistedTestFlightCatalog } from '#lib/testFlightCatalogPersistence';
@@ -70,6 +70,10 @@ export function sessionHasAnyPermission(flags: bigint[]): boolean {
 
 export function sessionPermissionLabels(): string[] {
   return permissionLabels(sessionBits());
+}
+
+export function sessionPermissionKeys(): PermissionMetaKey[] {
+  return permissionKeys(sessionBits());
 }
 
 export function sessionCanSeeSettings(): boolean {

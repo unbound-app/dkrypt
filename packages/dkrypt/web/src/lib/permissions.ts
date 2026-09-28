@@ -81,7 +81,7 @@ export interface PermissionMeta {
   group: PermissionGroup;
 }
 
-export const PERMISSION_META: PermissionMeta[] = [
+export const PERMISSION_META = [
   { key: 'administrator', label: 'Administrator', description: 'Grants every current and future dashboard permission. This bypasses every individual permission check and should be limited to fully trusted operators.', group: 'General' },
   { key: 'requestDecrypt', label: 'Request and manage own decrypts', description: 'Submit manual and TestFlight decrypt requests, then cancel, prioritize, retry, and download only jobs owned by this account.', group: 'General' },
   { key: 'viewLogs', label: 'View operational logs', description: 'Read the live scheduler and job log stream plus webhook delivery records. This does not grant permission to change automation or webhook settings.', group: 'General' },
@@ -105,9 +105,16 @@ export const PERMISSION_META: PermissionMeta[] = [
   { key: 'manageRoles', label: 'Manage dashboard roles', description: 'Create, edit, delete, and reorder dashboard roles. A user can only grant permissions they already hold unless they also hold this permission.', group: 'Members & Roles' },
   { key: 'viewBackup', label: 'View backups', description: 'Read backup schedules and history and download existing backup files. It does not create, delete, import, or change retention.', group: 'Backups' },
   { key: 'manageBackup', label: 'Manage backups', description: 'Export or import server state, create or delete backup snapshots, and change backup schedules and retention. It does not grant member or role management.', group: 'Backups' },
-];
+] satisfies PermissionMeta[];
+
+export type PermissionMetaKey = (typeof PERMISSION_META)[number]['key'];
 
 export function permissionLabels(bits: bigint): string[] {
   if (hasPermission(bits, PermissionFlag.administrator)) return ['Administrator'];
   return PERMISSION_META.filter((f) => f.key !== 'administrator' && (bits & PermissionFlag[f.key]) !== 0n).map((f) => f.label);
+}
+
+export function permissionKeys(bits: bigint): PermissionMetaKey[] {
+  if (hasPermission(bits, PermissionFlag.administrator)) return ['administrator'];
+  return PERMISSION_META.filter((f) => f.key !== 'administrator' && (bits & PermissionFlag[f.key]) !== 0n).map((f) => f.key);
 }

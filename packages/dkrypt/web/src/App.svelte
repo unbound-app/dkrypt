@@ -78,7 +78,7 @@
 		sessionCanSeeSettings,
 		sessionHasAnyPermission,
 		sessionHasPermission,
-		sessionPermissionLabels,
+		sessionPermissionKeys,
 		sessionState,
 		updateProfileDisplayName,
 	} from "#lib/session.svelte";
@@ -113,7 +113,7 @@
 		type TabId,
 	} from "#lib/ui.svelte";
 	import { isFormattingLocalePreference, isInterfaceLanguagePreference, resolveInterfaceLanguage } from "#lib/locale";
-	import { translateMessage, type MessageKey } from "#lib/messages";
+	import { translateMessage, translatePermissionLabel, type MessageKey } from "#lib/messages";
 
 	import Docs from "#tabs/Docs.svelte";
 	import Billing from "#tabs/Billing.svelte";
@@ -180,7 +180,7 @@
 		return name.slice(0, 2).toUpperCase();
 	}
 
-	const myGrantedPermissions = $derived(sessionPermissionLabels());
+	const myGrantedPermissions = $derived(sessionPermissionKeys());
 
 	async function loadPasskeys(): Promise<void> {
 		if (!sessionState.loggedIn) return;
@@ -670,6 +670,13 @@
 		setInterfaceLanguage(value);
 		void pushInterfaceLanguage(value);
 	}
+
+	function localizedPermissionsSummary(): string {
+		const summary = permissionsSummary(sessionBits());
+		if (summary === "administrator") return msg("account.permissionAdministrator");
+		if (summary === "viewer") return msg("account.permissionViewer");
+		return msg("account.permissionCustom");
+	}
 </script>
 
 <svelte:window onkeydown={onKeydown} onpointerdown={onMobilePointerDown} onpointerup={onMobilePointerUp} />
@@ -759,8 +766,9 @@
 					target="_blank"
 					rel="noopener noreferrer"
 					class={buttonVariants("discord", "icon")}
-					aria-label="Join the dkrypt Discord server"
-					title="Join the dkrypt Discord server"
+					lang={interfaceLanguage}
+					aria-label={msg("social.discord")}
+					title={msg("social.discord")}
 				>
 					<svg width="19" height="15" viewBox="0 0 64 48" fill="none" aria-hidden="true">
 						<path d="M40.575 0C39.9562 1.09866 39.4006 2.2352 38.8954 3.397C34.0967 2.67719 29.2096 2.67719 24.3982 3.397C23.9057 2.2352 23.3374 1.09866 22.7186 0C18.2104 0.770324 13.8157 2.12155 9.64839 4.02841C1.38951 16.2652 -0.845688 28.1863 0.265599 39.9432C5.10222 43.517 10.5197 46.2447 16.2909 47.9874C17.5916 46.2447 18.7407 44.3883 19.7257 42.4562C17.8568 41.7616 16.0509 40.8903 14.3208 39.88C14.7755 39.5517 15.2175 39.2107 15.6468 38.8824C25.7873 43.6559 37.5316 43.6559 47.6847 38.8824C48.1141 39.236 48.5561 39.577 49.0107 39.88C47.2806 40.9029 45.4748 41.7616 43.5931 42.4688C44.5781 44.4009 45.7273 46.2573 47.028 48C52.7991 46.2573 58.2167 43.5422 63.0533 39.9684C64.3666 26.3299 60.8055 14.5099 53.6452 4.04104C49.4905 2.13418 45.0959 0.782952 40.5876 0.0252565L40.575 0ZM21.1401 32.7072C18.0209 32.7072 15.4321 29.8785 15.4321 26.3804C15.4321 22.8824 17.9199 20.041 21.1275 20.041C24.3351 20.041 26.886 22.895 26.8354 26.3804C26.7848 29.8658 24.3224 32.7072 21.1401 32.7072ZM42.1788 32.7072C39.047 32.7072 36.4834 29.8785 36.4834 26.3804C36.4834 22.8824 38.9712 20.041 42.1788 20.041C45.3864 20.041 47.9246 22.895 47.8741 26.3804C47.8236 29.8658 45.3611 32.7072 42.1788 32.7072Z" fill="currentColor" />
@@ -771,8 +779,9 @@
 					target="_blank"
 					rel="noopener noreferrer"
 					class={buttonVariants("secondary", "icon")}
-					aria-label="Support on Ko-fi"
-					title="Support on Ko-fi"
+					lang={interfaceLanguage}
+					aria-label={msg("social.kofi")}
+					title={msg("social.kofi")}
 				>
 					<svg
 						width="16"
@@ -806,8 +815,9 @@
 					variant="secondary"
 					size="icon"
 					onclick={openPalette}
-					aria-label="Open command menu"
-					title="Command menu (⌘/Ctrl K)"
+					lang={interfaceLanguage}
+					aria-label={msg("command.open")}
+					title={msg("command.title")}
 				>
 					<Command class="h-4 w-4" />
 				</Button>
@@ -816,7 +826,8 @@
 				<DropdownMenu.Root bind:open={accountMenuOpen}>
 					<DropdownMenu.Trigger
 						class="relative shrink-0 cursor-pointer rounded-full border border-border transition-colors hover:border-primary"
-						aria-label="Account menu"
+						lang={interfaceLanguage}
+						aria-label={msg("account.menu")}
 						title={sessionState.displayName ?? sessionState.sub}
 					>
 						<Avatar
@@ -832,6 +843,7 @@
 					</DropdownMenu.Trigger>
 					<DropdownMenu.Content
 							class="account-menu z-50 w-72 rounded-lg border border-border bg-popover p-3 text-popover-foreground shadow-md"
+							lang={interfaceLanguage}
 							sideOffset={8}
 							align="end"
 						>
@@ -844,7 +856,7 @@
 									}}
 								>
 									<Input
-										aria-label="Profile name"
+										aria-label={msg("account.profileName")}
 										maxlength={64}
 										bind:value={profileNameDraft}
 										class="h-8"
@@ -853,7 +865,7 @@
 									<Button
 										size="sm"
 										type="submit"
-										loading={savingProfileName}>Save</Button
+										loading={savingProfileName}>{msg("account.save")}</Button
 									>
 									<Button
 										size="sm"
@@ -861,7 +873,7 @@
 										variant="secondary"
 										onclick={() =>
 											(editingProfileName = false)}
-										>Cancel</Button
+										>{msg("account.cancel")}</Button
 									>
 								</form>
 							{:else}
@@ -878,8 +890,8 @@
 											size="icon"
 											class="h-7 w-7"
 											onclick={startEditingProfileName}
-											aria-label="Edit profile name"
-											title="Edit profile name"
+											aria-label={msg("account.editProfileName")}
+											title={msg("account.editProfileName")}
 										>
 											<Pencil class="h-3.5 w-3.5" />
 										</Button>
@@ -894,7 +906,7 @@
 								{/if}
 							{/if}
 							<div class="mb-3 text-xs text-muted">
-								{permissionsSummary(sessionBits())}
+								{localizedPermissionsSummary()}
 							</div>
 							{#if sessionState.identities?.length}
 								<div class="mb-3 flex flex-col gap-1.5">
@@ -924,7 +936,7 @@
 												class="ml-auto h-auto shrink-0 p-0 text-xs text-muted hover:text-destructive"
 												onclick={() => disconnectIdentity(identity.provider)}
 											>
-												Disconnect
+											{msg("account.disconnect")}
 											</Button>
 											{/if}
 										</div>
@@ -933,16 +945,16 @@
 							{/if}
 							{#if sessionState.sub !== "root"}
 								<div class="border-border mb-3 border-t pt-3">
-									<div class="mb-1.5 text-[11px] text-muted">Login connections</div>
+									<div class="mb-1.5 text-[11px] text-muted">{msg("account.loginConnections")}</div>
 									<div class="flex flex-wrap gap-1.5">
 										{#if sessionState.githubOauthEnabled && !sessionState.linkedProviders?.includes("github")}
-											<Button size="sm" variant="secondary" onclick={() => connectIdentity("github")}>Connect GitHub</Button>
+											<Button size="sm" variant="secondary" onclick={() => connectIdentity("github")}>{msg("account.connectGitHub")}</Button>
 										{/if}
 										{#if sessionState.discordOauthEnabled && !sessionState.linkedProviders?.includes("discord")}
-											<Button size="sm" variant="secondary" onclick={() => connectIdentity("discord")}>Connect Discord</Button>
+											<Button size="sm" variant="secondary" onclick={() => connectIdentity("discord")}>{msg("account.connectDiscord")}</Button>
 										{/if}
 										{#if sessionState.linkedProviders?.length === 2}
-											<span class="text-xs text-muted">GitHub and Discord connected</span>
+											<span class="text-xs text-muted">{msg("account.providersConnected")}</span>
 										{/if}
 									</div>
 								</div>
@@ -950,19 +962,19 @@
 								{#if myGrantedPermissions.length > 0}
 									<div class="mb-3 flex flex-wrap gap-1.5">
 									{#each myGrantedPermissions as label (label)}
-										<Badge variant="default">{label}</Badge>
+										<Badge variant="default">{translatePermissionLabel(label, interfaceLanguage)}</Badge>
 									{/each}
 									</div>
 								{/if}
 								<div class="border-border mb-3 border-t pt-3">
 									<div class="mb-1.5 flex items-center justify-between gap-2">
 										<div>
-											<div class="text-[13px]">Passkeys</div>
-											<div class="text-[11px] text-muted">Fast, phishing-resistant sign-in</div>
+											<div class="text-[13px]">{msg("account.passkeys")}</div>
+											<div class="text-[11px] text-muted">{msg("account.passkeysDescription")}</div>
 										</div>
 										<Button size="sm" variant="secondary" loading={passkeyBusy} onclick={() => void registerPasskey()}>
 											<KeyRound class="h-3.5 w-3.5" />
-											Add
+											{msg("account.addPasskey")}
 										</Button>
 									</div>
 									{#if passkeys.length > 0}
@@ -970,23 +982,20 @@
 											{#each passkeys as passkey (passkey.id)}
 												<div class="flex items-center gap-2 text-xs text-muted">
 													<KeyRound class="h-3.5 w-3.5 shrink-0" />
-													<span class="min-w-0 flex-1 truncate">{passkey.name ?? "Unnamed passkey"}</span>
-													<Button variant="link" size="sm" class="h-auto shrink-0 p-0 text-xs text-muted hover:text-destructive" onclick={() => void removePasskey(passkey.id)}>Remove</Button>
+													<span class="min-w-0 flex-1 truncate">{passkey.name ?? msg("account.unnamedPasskey")}</span>
+													<Button variant="link" size="sm" class="h-auto shrink-0 p-0 text-xs text-muted hover:text-destructive" onclick={() => void removePasskey(passkey.id)}>{msg("account.removePasskey")}</Button>
 												</div>
 											{/each}
 										</div>
 									{:else}
-										<div class="text-[11px] text-muted">No passkeys registered.</div>
+										<div class="text-[11px] text-muted">{msg("account.noPasskeys")}</div>
 									{/if}
 								</div>
 
 								{#if otherOnlineUsers.length > 0}
 								<div class="border-border mb-3 border-t pt-3">
 									<div class="mb-1.5 text-[11px] text-muted">
-										{otherOnlineUsers.length} other{otherOnlineUsers.length ===
-										1
-											? ""
-											: "s"} online
+										{otherOnlineUsers.length} {msg(otherOnlineUsers.length === 1 ? "account.otherUserOnline" : "account.otherUsersOnline")}
 									</div>
 									<div class="flex flex-wrap gap-1">
 										{#each otherOnlineUsers as u (u)}
@@ -1088,20 +1097,20 @@
 								<div
 									class="flex items-center justify-between gap-3"
 								>
-									<div class="text-[13px]">Notifications</div>
+									<div class="text-[13px]">{msg("notifications.title")}</div>
 									{#if notifPermission === "granted" && pushEnabled}
 										<Button
 											size="sm"
 											variant="secondary"
 											loading={enablingPush}
 											onclick={disableNotifications}
-											>Disable push</Button
+											>{msg("notifications.disablePush")}</Button
 										>
 									{:else if notifPermission === "denied"}
 										<Badge
 											variant="destructive"
-											title="Blocked by your browser - check site settings"
-											>Push blocked</Badge
+											title={msg("notifications.browserBlockedTitle")}
+											>{msg("notifications.pushBlocked")}</Badge
 										>
 									{:else if notifPermission !== "unsupported"}
 										<Button
@@ -1109,7 +1118,7 @@
 											variant="secondary"
 											loading={enablingPush}
 											onclick={enableNotifications}
-											>Enable push</Button
+											>{msg("notifications.enablePush")}</Button
 										>
 									{/if}
 								</div>
@@ -1117,8 +1126,7 @@
 								<Input
 									type="email"
 									class="mt-2 h-8 text-xs"
-									placeholder={accountEmail ??
-										"Email address"}
+									placeholder={accountEmail ?? msg("notifications.emailAddress")}
 									bind:value={notifyEmail}
 									onblur={saveNotifyEmail}
 								/>
@@ -1127,24 +1135,24 @@
 									class="mt-3 grid grid-cols-[1fr_auto_auto] items-center gap-x-3 gap-y-1.5 text-xs text-muted"
 								>
 									<div></div>
-									<div class="text-center">Push</div>
-									<div class="text-center">Email</div>
+									<div class="text-center">{msg("notifications.pushColumn")}</div>
+									<div class="text-center">{msg("notifications.emailColumn")}</div>
 
-									<div>Successful decrypts</div>
-										<Checkbox class="justify-self-center" checked={pushOnSuccess} onCheckedChange={togglePushOnSuccess} aria-label="Push notifications for successful decrypts" />
-										<Checkbox class="justify-self-center" checked={emailOnSuccess} onCheckedChange={toggleEmailOnSuccess} aria-label="Email notifications for successful decrypts" />
+									<div>{msg("notifications.successfulDecrypts")}</div>
+										<Checkbox class="justify-self-center" checked={pushOnSuccess} onCheckedChange={togglePushOnSuccess} aria-label={msg("notifications.pushSuccessfulDecrypts")} />
+										<Checkbox class="justify-self-center" checked={emailOnSuccess} onCheckedChange={toggleEmailOnSuccess} aria-label={msg("notifications.emailSuccessfulDecrypts")} />
 
-									<div>Failed decrypts</div>
-										<Checkbox class="justify-self-center" checked={pushOnFailure} onCheckedChange={togglePushOnFailure} aria-label="Push notifications for failed decrypts" />
-										<Checkbox class="justify-self-center" checked={emailOnFailure} onCheckedChange={toggleEmailOnFailure} aria-label="Email notifications for failed decrypts" />
+									<div>{msg("notifications.failedDecrypts")}</div>
+										<Checkbox class="justify-self-center" checked={pushOnFailure} onCheckedChange={togglePushOnFailure} aria-label={msg("notifications.pushFailedDecrypts")} />
+										<Checkbox class="justify-self-center" checked={emailOnFailure} onCheckedChange={toggleEmailOnFailure} aria-label={msg("notifications.emailFailedDecrypts")} />
 
-									<div>Device/system alerts</div>
-										<Checkbox class="justify-self-center" checked={pushOnAlerts} onCheckedChange={togglePushOnAlerts} aria-label="Push notifications for device and system alerts" />
-										<Checkbox class="justify-self-center" checked={emailOnAlerts} onCheckedChange={toggleEmailOnAlerts} aria-label="Email notifications for device and system alerts" />
+									<div>{msg("notifications.deviceSystemAlerts")}</div>
+										<Checkbox class="justify-self-center" checked={pushOnAlerts} onCheckedChange={togglePushOnAlerts} aria-label={msg("notifications.pushDeviceSystemAlerts")} />
+										<Checkbox class="justify-self-center" checked={emailOnAlerts} onCheckedChange={toggleEmailOnAlerts} aria-label={msg("notifications.emailDeviceSystemAlerts")} />
 
-									<div>API key expiring soon</div>
-										<Checkbox class="justify-self-center" checked={pushOnKeyExpiry} onCheckedChange={togglePushOnKeyExpiry} aria-label="Push notifications for expiring API keys" />
-										<Checkbox class="justify-self-center" checked={emailOnKeyExpiry} onCheckedChange={toggleEmailOnKeyExpiry} aria-label="Email notifications for expiring API keys" />
+									<div>{msg("notifications.apiKeyExpiring")}</div>
+										<Checkbox class="justify-self-center" checked={pushOnKeyExpiry} onCheckedChange={togglePushOnKeyExpiry} aria-label={msg("notifications.pushApiKeyExpiring")} />
+										<Checkbox class="justify-self-center" checked={emailOnKeyExpiry} onCheckedChange={toggleEmailOnKeyExpiry} aria-label={msg("notifications.emailApiKeyExpiring")} />
 								</div>
 
 								<div class="mt-3 flex gap-2">
@@ -1154,7 +1162,7 @@
 											variant="secondary"
 											loading={sendingTestPush}
 											onclick={sendTestPush}
-											>Test push</Button
+											>{msg("notifications.testPush")}</Button
 										>
 									{/if}
 									<Button
@@ -1162,7 +1170,7 @@
 										variant="secondary"
 										loading={sendingTestEmail}
 										onclick={sendTestEmail}
-										>Test email</Button
+										>{msg("notifications.testEmail")}</Button
 									>
 								</div>
 							</div>
@@ -1176,7 +1184,7 @@
 										onclick={() => void promptPwaInstall()}
 									>
 										<Download class="h-3.5 w-3.5" />
-										Install app
+										{msg("pwa.installApp")}
 									</Button>
 								</div>
 							{/if}
@@ -1191,7 +1199,7 @@
 									onclick={() => (accountMenuOpen = false)}
 								>
 									<Download class="h-3.5 w-3.5" />
-									Export my data
+									{msg("account.exportMyData")}
 								</a>
 								<Button
 									variant="secondary"
@@ -1203,7 +1211,7 @@
 									}}
 								>
 									<Monitor class="h-3.5 w-3.5" />
-									Manage sessions
+									{msg("account.manageSessions")}
 								</Button>
 								<Button
 									variant="secondary"
@@ -1213,7 +1221,7 @@
 									onclick={doLogout}
 								>
 									<LogOut class="h-3.5 w-3.5" />
-									Log out
+									{msg("account.logOut")}
 								</Button>
 								<Button
 									variant="destructive"
@@ -1222,7 +1230,7 @@
 									loading={loggingOutEverywhere}
 									onclick={doLogoutEverywhere}
 								>
-									Log out everywhere
+									{msg("account.logOutEverywhere")}
 								</Button>
 								{#if sessionState.sub !== "root"}
 									<Button
@@ -1232,7 +1240,7 @@
 										onclick={() => void doDeleteAccount()}
 									>
 										<Trash2 class="h-3.5 w-3.5" />
-										Delete account
+										{msg("account.deleteAccount")}
 									</Button>
 								{/if}
 							</div>

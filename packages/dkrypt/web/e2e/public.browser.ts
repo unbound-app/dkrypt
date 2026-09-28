@@ -1022,6 +1022,41 @@ test('API documentation opens standalone without embedding the restricted refere
   await expect(popup.getByRole('heading', { name: 'API reference is ready' })).toBeVisible();
 });
 
+test('interface language localizes the account menu and persists to the account', async ({ page }) => {
+  await mockAuthenticatedDashboard(page, '2');
+  await page.unroute('**/v1/dashboard/me/prefs');
+
+  const savedPrefs = { theme: 'dark', accent: 'violet', sound: true };
+  await page.route('**/v1/dashboard/me/prefs', async (route) => {
+    if (route.request().method() === 'PUT') {
+      Object.assign(savedPrefs, route.request().postDataJSON());
+    }
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify(savedPrefs),
+    });
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Account menu' }).click();
+  await page.locator('#interface-language').selectOption('de');
+
+  await expect(page.getByRole('button', { name: 'Startseite', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Kontomenü' })).toBeVisible();
+  await expect(page.getByText('Anmeldeverbindungen')).toBeVisible();
+  await expect(page.getByText('Eigene Entschlüsselungsaufträge beantragen und verwalten')).toBeVisible();
+  await expect(page.getByText('Noch keine Passkeys registriert.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Sitzungen verwalten' })).toBeVisible();
+  await expect(page.locator('#interface-language option[value="en"]')).toHaveText('Englisch');
+  await expect(page.locator('.account-menu')).toHaveAttribute('lang', 'de');
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+  await expect.poll(() => savedPrefs.interfaceLanguage).toBe('de');
+
+  await page.reload();
+  await page.getByRole('button', { name: 'Kontomenü' }).click();
+  await expect(page.getByText('Sitzungen verwalten')).toBeVisible();
+});
+
 test('high contrast preference updates the interface and persists to the account', async ({ page }) => {
   await mockAuthenticatedDashboard(page, '1');
   await page.unroute('**/v1/dashboard/me/prefs');
