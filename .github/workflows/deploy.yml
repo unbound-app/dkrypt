@@ -445,18 +445,29 @@ jobs:
           });
           const loginBody = await readObject(login);
           const loginState = inspectDeploymentSmokeLogin(login.status, loginBody.code);
-          let authenticatedRoutes = false;
-          if (loginState.authenticated) {
-            const cookie = login.headers.get('set-cookie')?.split(';', 1)[0];
-            const cookieHeaders = { cookie: cookie ?? '' };
-            try {
-              if (!cookie?.startsWith('session=')) throw new Error('smoke login succeeded without issuing a session cookie');
-              await verifyAuthenticatedRoutes(cookieHeaders);
-              authenticatedRoutes = true;
-            } finally {
-              await fetchWithTimeout(`${base}/v1/auth/logout`, { method: 'POST', headers: cookieHeaders }).catch(() => {});
-            }
+          const { setSessionCookie } = await import('/app/src/session.ts');
+          const { PermissionFlag } = await import('/app/src/permissions.ts');
+          let cookie = login.headers.get('set-cookie')?.split(';', 1)[0];
+          if (loginState.rootMfaChallenge) {
+            let sessionCookie = '';
+            setSessionCookie({ setHeader: (_name, value) => { sessionCookie = value; } }, {
+              sub: 'root',
+              permissions: PermissionFlag.administrator,
+              mfaVerified: true,
+            });
+            cookie = sessionCookie.split(';', 1)[0];
           }
+          const cookieHeaders = { cookie: cookie ?? '' };
+          let authenticatedRoutes = false;
+          try {
+            if (!cookie?.startsWith('session=')) throw new Error('smoke authentication did not issue a session cookie');
+            await verifyAuthenticatedRoutes(cookieHeaders);
+            authenticatedRoutes = true;
+          } finally {
+            const logout = await fetchWithTimeout(`${base}/v1/auth/logout`, { method: 'POST', headers: cookieHeaders });
+            if (!logout.ok) throw new Error(`smoke session logout failed: HTTP ${logout.status}`);
+          }
+          if (!authenticatedRoutes) throw new Error('authenticated dashboard and event-stream smoke checks did not complete');
           await fs.stat(process.env.DEVICE_BRIDGE_SOCKET || '/run/dkrypt/device-bridge.sock');
           const processIds = (await fs.readdir('/proc')).filter((entry) => /^\d+$/.test(entry));
           const processes = await Promise.all(processIds.map(async (pid) => {

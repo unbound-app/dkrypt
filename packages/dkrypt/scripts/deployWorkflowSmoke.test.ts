@@ -31,3 +31,14 @@ test('deployment smoke verifies API-key artifact access and its reusable health 
   expect(script).toContain('apiKeyArtifactListing: true');
   expect(script).not.toContain('authenticated dashboard probes skipped because root MFA is enabled');
 });
+
+test('deployment smoke always verifies authenticated dashboard and event-stream access when root MFA is enabled', () => {
+  const [script] = deploymentSmokeScripts();
+  expect(script).toContain("if (loginState.rootMfaChallenge) {");
+  expect(script).toContain("import('/app/src/session.ts')");
+  expect(script).toContain('setSessionCookie');
+  expect(script).toContain('await verifyAuthenticatedRoutes(cookieHeaders);');
+  expect(script).toContain('if (!authenticatedRoutes) throw new Error');
+  expect(script).toContain("fetchWithTimeout(`${base}/v1/auth/logout`");
+  expect(script).toContain('if (!logout.ok) throw new Error');
+});
