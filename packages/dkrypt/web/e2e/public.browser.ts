@@ -633,6 +633,94 @@ test('IPA Library never renders an empty viewport during repeated scrolling', as
   await expect.poll(() => artifactListRequestCount).toBe(1);
 });
 
+test('IPA Library keeps its loaded results mounted during real wheel scrolling', async ({ page }) => {
+  await mockStableDashboardEvents(page);
+  await mockAuthenticatedDashboard(page, '1');
+  let artifactListRequestCount = 0;
+  const artifacts = Array.from({ length: 120 }, (_, index) => ({
+    id: `wheel-scroll-artifact-${index}`,
+    key: `com.example.wheel${index}:appstore:${index}`,
+    projectIds: ['default'],
+    bundleId: `com.example.wheel${index}`,
+    channel: 'appstore' as const,
+    versionLabel: '1.0.0',
+    fileSizeBytes: 1024,
+    sha256: 'a'.repeat(64),
+    createdAt: '2026-09-25T12:00:00.000Z',
+    lastAccessedAt: '2026-09-25T13:00:00.000Z',
+    accessCount: 1,
+    sourceJobId: `job-wheel-scroll-artifact-${index}`,
+    warnings: [],
+    fileUrl: `/v1/dashboard/artifacts/wheel-scroll-artifact-${index}/file`,
+  }));
+  await page.route('**/v1/dashboard/apps/metadata?*', async (route) => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ entries: [] }) });
+  });
+  await page.route('**/v1/dashboard/artifacts*', async (route) => {
+    artifactListRequestCount += 1;
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ artifacts, total: artifacts.length, totalBytes: 122_880, maxBytes: 245_760 }),
+    });
+  });
+
+  await page.goto('/?tab=home');
+  const viewport = page.getByRole('region', { name: 'IPA library artifacts scroll area' });
+  await expect(viewport.locator('[role="listitem"]').first()).toBeVisible();
+  await expect(viewport.locator('[role="listitem"]').first()).toHaveAttribute('aria-setsize', '120');
+  await viewport.evaluate((element) => {
+    (window as typeof window & { __artifactScrollProbe?: { blankFrames: number; missingLists: number; samples: number; active: boolean } }).__artifactScrollProbe = {
+      blankFrames: 0,
+      missingLists: 0,
+      samples: 0,
+      active: true,
+    };
+    const probe = (window as typeof window & { __artifactScrollProbe: { blankFrames: number; missingLists: number; samples: number; active: boolean } }).__artifactScrollProbe;
+    const sample = (): void => {
+      if (!probe.active) return;
+      probe.samples += 1;
+      const currentViewport = document.querySelector<HTMLElement>('[aria-label="IPA library artifacts scroll area"]');
+      const list = currentViewport?.querySelector<HTMLElement>('[role="list"]');
+      if (!currentViewport || !list) {
+        probe.missingLists += 1;
+      } else {
+        const bounds = currentViewport.getBoundingClientRect();
+        const hasVisibleRow = Array.from(list.querySelectorAll<HTMLElement>('[role="listitem"]')).some((row) => {
+          const rowBounds = row.getBoundingClientRect();
+          return rowBounds.bottom > bounds.top && rowBounds.top < bounds.bottom;
+        });
+        if (!hasVisibleRow) probe.blankFrames += 1;
+      }
+      requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+  });
+
+  const bounds = await viewport.boundingBox();
+  if (!bounds) throw new Error('IPA Library scroll viewport is not visible');
+  await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+  for (let pass = 0; pass < 2; pass += 1) {
+    for (const direction of [1, -1]) {
+      for (let step = 0; step < 14; step += 1) {
+        await page.mouse.wheel(0, direction * 260);
+        await page.waitForTimeout(45);
+      }
+    }
+  }
+  const probe = await page.evaluate(() => {
+    const state = (window as typeof window & { __artifactScrollProbe?: { blankFrames: number; missingLists: number; samples: number; active: boolean } }).__artifactScrollProbe;
+    if (!state) throw new Error('IPA Library scroll probe was not initialized');
+    state.active = false;
+    return state;
+  });
+
+  expect(probe.samples).toBeGreaterThan(100);
+  expect(probe.blankFrames).toBe(0);
+  expect(probe.missingLists).toBe(0);
+  await expect.poll(() => artifactListRequestCount).toBe(1);
+  await expect(viewport.locator('[role="listitem"]').first()).toHaveAttribute('aria-setsize', '120');
+});
+
 test('IPA Library discards a page response from a source filter that is no longer active', async ({ page }) => {
   await mockStableDashboardEvents(page);
   await mockAuthenticatedDashboard(page, '1');
