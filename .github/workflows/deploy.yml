@@ -356,8 +356,7 @@ jobs:
           if (publicPaths.some(path => path.startsWith('/v1/dashboard/') || path.startsWith('/v1/auth/') || path.startsWith('/v1/billing'))) {
             throw new Error('private API routes are exposed in public OpenAPI');
           }
-          const status = await fetchWithTimeout(`${base}/v1/status`);
-          const csp = status.headers.get('content-security-policy') ?? '';
+          const csp = deploymentStatusResponse.headers.get('content-security-policy') ?? '';
           if (!csp.includes('style-src-elem')) throw new Error('content security policy is incomplete');
           const session = await fetchWithTimeout(`${base}/v1/auth/session`);
           if (!session.headers.get('x-ratelimit-limit')) throw new Error('shared API rate limit is not active');
