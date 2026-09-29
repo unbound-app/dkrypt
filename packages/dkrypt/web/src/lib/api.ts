@@ -2196,7 +2196,18 @@ export function quarantineBillingWebhook(id: string, reason?: string): Promise<{
 
 export interface BillingProviderStatus {
   checkoutsPaused: boolean;
-  stripe: { enabled: boolean; environment: 'test' | 'live'; missingConfiguration: string[] };
+  stripe: {
+    enabled: boolean;
+    environment: 'test' | 'live';
+    missingConfiguration: string[];
+    webhook: {
+      state: 'ready' | 'missing_endpoint' | 'missing_events' | 'unavailable' | 'not_configured';
+      endpointUrl: string;
+      requiredEvents: string[];
+      missingEvents: string[];
+      checkedAt?: string;
+    };
+  };
   crypto: { enabled: boolean; configured: boolean; ready: boolean; environment: 'test' | 'live'; settlementType?: string; settlementCurrency: string; supportedChains: string[]; supportedAssets: string[]; missingConfiguration: string[]; issues: string[]; checkedAt?: string };
 }
 

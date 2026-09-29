@@ -458,7 +458,24 @@ const AuthSessionListResponse = Type.Array(
 );
 const BillingProviderStatusResponse = object({
   checkoutsPaused: Type.Boolean(),
-  stripe: object({ enabled: Type.Boolean(), environment: ProviderEnvironment, missingConfiguration: Type.Array(Type.String()) }),
+  stripe: object({
+    enabled: Type.Boolean(),
+    environment: ProviderEnvironment,
+    missingConfiguration: Type.Array(Type.String()),
+    webhook: object({
+      state: Type.Union([
+        Type.Literal('ready'),
+        Type.Literal('missing_endpoint'),
+        Type.Literal('missing_events'),
+        Type.Literal('unavailable'),
+        Type.Literal('not_configured'),
+      ]),
+      endpointUrl: Type.String(),
+      requiredEvents: Type.Array(Type.String()),
+      missingEvents: Type.Array(Type.String()),
+      checkedAt: Type.Optional(Type.String()),
+    }),
+  }),
   crypto: object({
     enabled: Type.Boolean(),
     configured: Type.Boolean(),

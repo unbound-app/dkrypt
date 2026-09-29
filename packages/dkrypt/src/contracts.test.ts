@@ -183,6 +183,10 @@ test('core operational responses publish their required fields', async () => {
       const properties = schema?.properties ?? schema?.items?.properties ?? {};
       for (const field of fields) expect(Object.keys(properties)).toContain(field);
     }
+    const billingStatus = document.paths?.['/v1/billing/provider-status']?.get?.responses?.['200']?.content?.['application/json']?.schema;
+    const stripeProperties = (billingStatus?.properties?.stripe as { properties?: Record<string, { properties?: Record<string, unknown> }> } | undefined)?.properties;
+    const webhookProperties = stripeProperties?.webhook?.properties;
+    for (const field of ['state', 'endpointUrl', 'requiredEvents', 'missingEvents', 'checkedAt']) expect(Object.keys(webhookProperties ?? {})).toContain(field);
     const healthDevice = document.paths?.['/v1/health']?.get?.responses?.['200']?.content?.['application/json']?.schema?.properties?.device as { properties?: Record<string, unknown> } | undefined;
     for (const field of ['transportState', 'capabilities', 'recoveryState', 'subsystems', 'bridgeHeartbeats']) expect(Object.keys(healthDevice?.properties ?? {})).toContain(field);
     const healthHeartbeats = healthDevice?.properties?.bridgeHeartbeats as { properties?: Record<string, unknown> } | undefined;

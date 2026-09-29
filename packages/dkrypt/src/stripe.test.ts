@@ -809,7 +809,15 @@ describe('Stripe billing webhooks', () => {
         updatedAt: createdAt,
       }],
     });
-    const server = await buildServer({ includePublicRoutes: false });
+    const server = await buildServer({
+      includePublicRoutes: false,
+      stripeWebhookHealth: async () => ({
+        state: 'not_configured',
+        endpointUrl: 'https://dkrypt.example/v1/stripe/webhook',
+        requiredEvents: [...STRIPE_WEBHOOK_EVENTS],
+        missingEvents: [],
+      }),
+    });
     const managerCookie = createSessionCookie(PermissionFlag.manageBilling);
     const viewerCookie = createSessionCookie(0n);
     const managerHeaders = { cookie: managerCookie };
@@ -899,6 +907,45 @@ describe('Stripe billing webhooks', () => {
       await server.inject({ method: 'PUT', url: '/v1/billing/checkouts', headers: { cookie: managerCookie }, payload: { paused: false } });
       await server.close();
       replaceBillingSnapshot(previousBillingSnapshot);
+    }
+  });
+
+  test('manager provider status reports missing live Stripe webhook events', async () => {
+    const missingEvents = ['invoice.paid', 'invoice.payment_failed', 'charge.refunded'];
+    const endpointUrl = 'https://dkrypt.example/v1/stripe/webhook';
+    const server = Fastify();
+    const managerCookie = createSessionCookie(PermissionFlag.manageBilling);
+    let healthChecks = 0;
+    await server.register(billingRoutes, {
+      stripeWebhookHealth: async () => {
+        healthChecks += 1;
+        return {
+          state: 'missing_events',
+          endpointUrl,
+          requiredEvents: [...STRIPE_WEBHOOK_EVENTS],
+          missingEvents,
+          checkedAt: new Date().toISOString(),
+        };
+      },
+    });
+
+    try {
+      const anonymous = await server.inject({ method: 'GET', url: '/v1/billing/provider-status' });
+      const viewer = await server.inject({ method: 'GET', url: '/v1/billing/provider-status', headers: { cookie: createSessionCookie(0n) } });
+      const status = await server.inject({ method: 'GET', url: '/v1/billing/provider-status', headers: { cookie: managerCookie } });
+
+      expect(anonymous.statusCode).toBe(401);
+      expect(viewer.statusCode).toBe(403);
+      expect(status.statusCode).toBe(200);
+      expect(status.json().stripe.webhook).toMatchObject({
+        state: 'missing_events',
+        endpointUrl,
+        missingEvents,
+      });
+      expect(status.json().stripe.webhook.checkedAt).toEqual(expect.any(String));
+      expect(healthChecks).toBe(1);
+    } finally {
+      await server.close();
     }
   });
 

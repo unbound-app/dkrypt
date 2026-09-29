@@ -50,6 +50,7 @@ import { fastifyRequirePermission, fastifyRequireSession, getFastifySession } fr
 import { PermissionFlag } from '#permissions.js';
 import { areNewBillingCheckoutsPaused, recordAudit, setNewBillingCheckoutsPaused } from '#store/state.js';
 import { constructStripeWebhookEvent, getStripe } from '#stripe.js';
+import { getStripeWebhookHealth as inspectStripeWebhookHealth, type StripeWebhookHealth } from '#stripeWebhookHealth.js';
 import { claimWebhook, countWebhookInbox, getWebhookInboxRecord, listWebhookInbox, markWebhookFailed, markWebhookProcessed, quarantineWebhook, receiveWebhook, releaseWebhookClaim } from '#webhookInbox.js';
 import { withCorrelationSpan } from '#correlation.js';
 import { decodeCursor, nextCursor, paginateCursor } from '#util/cursor.js';
@@ -360,7 +361,10 @@ export const billingWebhookRoutes: FastifyPluginAsyncTypebox<{ stripeClient?: ()
   });
 };
 
-export const billingRoutes: FastifyPluginAsyncTypebox<{ stripeClient?: () => Stripe }> = async (server, options) => {
+export const billingRoutes: FastifyPluginAsyncTypebox<{
+  stripeClient?: () => Stripe;
+  stripeWebhookHealth?: () => Promise<StripeWebhookHealth>;
+}> = async (server, options) => {
   const stripeClient = options.stripeClient ?? getStripe;
   server.get('/v1/billing', { schema: getRouteContract('GET', '/v1/billing'), preHandler: fastifyRequireSession }, async (request, reply) => {
     const userId = getFastifySession(request)!.sub;
@@ -546,7 +550,8 @@ export const billingRoutes: FastifyPluginAsyncTypebox<{ stripeClient?: () => Str
   });
 
   server.get('/v1/billing/provider-status', { schema: getRouteContract('GET', '/v1/billing/provider-status'), preHandler: requireBillingManager }, async (_request, reply) => {
-    return reply.send({ checkoutsPaused: areNewBillingCheckoutsPaused(), stripe: { enabled: stripeEnabled, environment: stripeEnvironment, missingConfiguration: stripeMissingConfiguration }, crypto: await getNowPaymentsProviderStatus() });
+    const stripeWebhook = await (options.stripeWebhookHealth ?? (() => inspectStripeWebhookHealth(config.stripeSecretKey ? stripeClient() : undefined)))();
+    return reply.send({ checkoutsPaused: areNewBillingCheckoutsPaused(), stripe: { enabled: stripeEnabled, environment: stripeEnvironment, missingConfiguration: stripeMissingConfiguration, webhook: stripeWebhook }, crypto: await getNowPaymentsProviderStatus() });
   });
 
   server.get<BillingSubscriptionsRoute>('/v1/billing/subscriptions', { schema: getRouteContract('GET', '/v1/billing/subscriptions'), preHandler: fastifyRequirePermission(PermissionFlag.viewBilling, PermissionFlag.manageBilling) }, (request, reply) => {

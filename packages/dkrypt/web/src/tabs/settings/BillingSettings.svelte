@@ -42,6 +42,31 @@
     return { q: search || undefined, planId: planId || undefined, provider: providerFilter || undefined, status: statusFilter || undefined, from: from || undefined, to: to || undefined, wallet: wallet || undefined, invoice: invoice || undefined, cursor, limit: 50 };
   }
 
+  function stripeWebhookStatusText(): string {
+    if (!providerStatus) return '';
+    if (providerStatus.stripe.missingConfiguration.includes('STRIPE_WEBHOOK_SECRET')) return 'Stripe signing secret is missing; incoming webhook deliveries will be rejected.';
+    const webhook = providerStatus.stripe.webhook;
+    if (webhook.state === 'ready') return 'All required events are enabled on the endpoint. Delivery status is shown in the inbox below.';
+    if (webhook.state === 'missing_endpoint') return 'The Stripe webhook endpoint is missing or disabled.';
+    if (webhook.state === 'missing_events') return `Missing events: ${webhook.missingEvents.join(', ')}`;
+    if (webhook.state === 'unavailable') return 'Could not verify the Stripe webhook configuration.';
+    return 'Webhook verification requires a Stripe API key.';
+  }
+
+  function stripeWebhookStatusVariant(): BadgeVariant {
+    if (!providerStatus) return 'secondary';
+    if (providerStatus.stripe.missingConfiguration.includes('STRIPE_WEBHOOK_SECRET')) return 'warning';
+    const state = providerStatus.stripe.webhook.state;
+    return state === 'ready' ? 'success' : state === 'not_configured' ? 'secondary' : 'warning';
+  }
+
+  function stripeWebhookStatusLabel(): string {
+    if (!providerStatus) return '';
+    if (providerStatus.stripe.missingConfiguration.includes('STRIPE_WEBHOOK_SECRET')) return 'Signing secret missing';
+    const state = providerStatus.stripe.webhook.state;
+    return state === 'ready' ? 'Events configured' : state === 'not_configured' ? 'Webhook not configured' : 'Webhook needs attention';
+  }
+
   async function load(): Promise<void> {
     refreshing = true;
     try {
@@ -178,7 +203,7 @@
 
   {#if providerStatus}
     <div class="grid gap-3 md:grid-cols-2">
-      <Card title="Stripe"><div class="flex items-center justify-between gap-3 text-sm"><span>{providerStatus.stripe.enabled ? 'Ready for card and bank checkout' : 'Not configured'}</span><Badge variant={providerStatus.stripe.enabled ? 'success' : 'secondary'}>{providerStatus.stripe.environment}</Badge></div></Card>
+      <Card title="Stripe"><div class="flex items-center justify-between gap-3 text-sm"><span>{providerStatus.stripe.enabled ? 'Stripe credentials are configured' : 'Not configured'}</span><Badge variant={providerStatus.stripe.enabled ? 'success' : 'secondary'}>{providerStatus.stripe.environment}</Badge></div><div class="mt-3 flex items-start gap-2 text-xs text-muted"><Badge variant={stripeWebhookStatusVariant()}>{stripeWebhookStatusLabel()}</Badge><span class="min-w-0 break-words">{stripeWebhookStatusText()}</span></div></Card>
       <Card title="Crypto · NOWPayments"><div class="flex items-center justify-between gap-3 text-sm"><span>{!providerStatus.crypto.enabled ? 'Disabled for new checkouts' : providerStatus.crypto.ready ? 'Ready for EUR-priced crypto invoices' : providerStatus.crypto.issues[0] ?? 'Not ready'}</span><Badge variant={providerStatus.crypto.enabled && providerStatus.crypto.ready ? 'success' : 'warning'}>{providerStatus.crypto.environment}</Badge></div><div class="mt-2 text-xs text-muted">Crypto checkout is separate from Stripe and does not collect billing information.</div></Card>
     </div>
     <Card title="New checkout availability">

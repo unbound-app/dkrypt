@@ -44,6 +44,7 @@ import { dashboardTestFlightRoutes } from '#routes/dashboardTestFlightRoutes.js'
 import { dashboardTestFlightBrowseRoutes } from '#routes/dashboardTestFlightBrowseRoutes.js';
 import { dashboardAppRoutes } from '#routes/dashboardAppRoutes.js';
 import { billingRoutes, billingWebhookRoutes } from '#routes/billing.js';
+import type { StripeWebhookHealth } from '#stripeWebhookHealth.js';
 import { artifactCatalogRoutes, decryptRoutes, testFlightCatalogRoutes } from '#routes/decrypt.js';
 import { healthRoutes } from '#routes/health.js';
 import { startScheduler, stopScheduler } from '#scheduler/index.js';
@@ -116,7 +117,11 @@ function rejectCsrfMutation(reply: FastifyReply, requestId: string, message: str
   reply.code(403).send({ error: message, code: 'csrf_origin_rejected', message, requestId, retryable: false });
 }
 
-export async function buildServer(options: { includePublicRoutes?: boolean; stripeClient?: () => Stripe } = {}): Promise<FastifyInstance> {
+export async function buildServer(options: {
+  includePublicRoutes?: boolean;
+  stripeClient?: () => Stripe;
+  stripeWebhookHealth?: () => Promise<StripeWebhookHealth>;
+} = {}): Promise<FastifyInstance> {
   const server = Fastify({ bodyLimit: 5 * 1024 * 1024, trustProxy: 'loopback' }).withTypeProvider<TypeBoxTypeProvider>();
 
   server.setNotFoundHandler((request, reply) => reply.code(404).send({ error: 'not found', code: 'not_found', message: 'not found', requestId: request.id, retryable: false }));
@@ -302,7 +307,7 @@ export async function buildServer(options: { includePublicRoutes?: boolean; stri
   await server.register(dashboardDiscordRoutes);
   await server.register(dashboardEventsRoutes);
   await server.register(dashboardWatchRoutes);
-  await server.register(billingRoutes, { stripeClient: options.stripeClient });
+  await server.register(billingRoutes, { stripeClient: options.stripeClient, stripeWebhookHealth: options.stripeWebhookHealth });
   return server;
 }
 
