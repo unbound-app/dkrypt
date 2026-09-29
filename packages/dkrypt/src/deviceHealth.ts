@@ -1,6 +1,6 @@
 import { config } from '#config.js';
 import { trackBackgroundWork } from '#backgroundWork.js';
-import { execCommand, getRustDeviceBridgeHealth, isRustDeviceConnection, isTestFlightRunning, probeDeviceSshTunnel, readBridgeHeartbeats, sendSpringBoardBridgeRequest, tryIoregCandidates, withSSH, type BridgeHeartbeat, type DeviceClient, type DeviceConnection, type DeviceTransport } from '#idevice.js';
+import { execCommand, getRustDeviceBridgeHealth, isDirectUsbDeviceAgentConnection, isRustDeviceConnection, isTestFlightRunning, probeDeviceSshTunnel, readBridgeHeartbeats, sendSpringBoardBridgeRequest, tryIoregCandidates, withSSH, type BridgeHeartbeat, type DeviceClient, type DeviceConnection, type DeviceTransport } from '#idevice.js';
 import { scopedLogger } from '#logger.js';
 import { EMBED_COLOR, notify } from '#notify.js';
 import { notifyDeviceDispatchStateChanged, releasePinnedJobsForDevice } from '#jobs/store.js';
@@ -385,7 +385,11 @@ const HEALTH_CACHE_TTL_MS = 45_000;
 const HEALTH_FAILURE_CACHE_TTL_MS = 2 * 60_000;
 const HEALTH_FAILURE_CONFIRMATIONS = 3;
 
-export function coalesceDeviceHealthRequest<T>(pending: Map<string, Promise<T>>, deviceId: string, request: () => Promise<T>): Promise<T> {
+export function coalesceDeviceHealthRequest<T>(
+  pending: Map<string, Promise<T>>,
+  deviceId: string,
+  request: () => Promise<T>,
+): Promise<T> {
   const existing = pending.get(deviceId);
   if (existing) return existing;
 
@@ -400,6 +404,43 @@ export function coalesceDeviceHealthRequest<T>(pending: Map<string, Promise<T>>,
   });
   pending.set(deviceId, tracked);
   return tracked;
+}
+
+export class DeviceHealthRefreshQueue {
+  private readonly active = new Map<string, { promise: Promise<void>; running: boolean; rerun: boolean }>();
+
+  request(deviceId: string, refresh: () => Promise<void>, waitFor?: Promise<unknown>): Promise<void> {
+    const current = this.active.get(deviceId);
+    if (current) {
+      if (current.running) current.rerun = true;
+      return current.promise;
+    }
+
+    const state = { promise: Promise.resolve(), running: false, rerun: false };
+    const run = async () => {
+      if (waitFor) await waitFor.catch(() => undefined);
+      let failed = false;
+      let failure: unknown;
+      do {
+        state.rerun = false;
+        state.running = true;
+        try {
+          await refresh();
+          failed = false;
+          failure = undefined;
+        } catch (error) {
+          failed = true;
+          failure = error;
+        }
+      } while (state.rerun);
+      if (failed) throw failure;
+    };
+    state.promise = run().finally(() => {
+      if (this.active.get(deviceId) === state) this.active.delete(deviceId);
+    });
+    this.active.set(deviceId, state);
+    return state.promise;
+  }
 }
 
 export function stabilizeDeviceHealth(previous: DeviceHealth | undefined, next: DeviceHealth, consecutiveFailures: number): DeviceHealth {
@@ -850,11 +891,24 @@ async function pollOneDevice(device: DeviceRecord): Promise<void> {
   ]);
 }
 
+const pendingDeviceHealthPolls = new Map<string, Promise<void>>();
+const usbDeviceHealthRefreshQueue = new DeviceHealthRefreshQueue();
+
+function pollOneDeviceOnce(device: DeviceRecord): Promise<void> {
+  return coalesceDeviceHealthRequest(pendingDeviceHealthPolls, device.id, () => pollOneDevice(device));
+}
+
+export function refreshUsbDeviceHealth(udid: string): Promise<void> {
+  const device = getEffectiveDevices().find((entry) => entry.enabled && entry.udid === udid && isDirectUsbDeviceAgentConnection(entry));
+  if (!device) return Promise.resolve();
+  return usbDeviceHealthRefreshQueue.request(device.id, () => pollOneDeviceOnce(device), pendingDeviceHealthPolls.get(device.id));
+}
+
 export function startDeviceHealthPoller(): void {
   if (deviceHealthTimer) return;
   const poll = async () => {
     const devices = getEffectiveDevices().filter((d) => d.enabled);
-    await Promise.all(devices.map((d) => pollOneDevice(d).catch((err) => log.warn('device health poll failed', { deviceId: d.id, error: String(err) }))));
+    await Promise.all(devices.map((d) => pollOneDeviceOnce(d).catch((err) => log.warn('device health poll failed', { deviceId: d.id, error: String(err) }))));
     await checkDiskFullAlert().catch((err) => log.warn('disk full check failed', { error: String(err) }));
   };
 

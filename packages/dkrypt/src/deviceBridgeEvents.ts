@@ -11,6 +11,25 @@ interface DeviceSummary {
   transport?: unknown;
 }
 
+function usbDeviceIds(devices: unknown[]): string[] {
+  return devices.flatMap((device) => {
+    if (!device || typeof device !== 'object') return [];
+    const summary = device as DeviceSummary;
+    const id = typeof summary.id === 'string' ? summary.id : typeof summary.udid === 'string' ? summary.udid : undefined;
+    return id && summary.transport === 'usb' ? [id] : [];
+  });
+}
+
+function usbDeviceUdidsToRefresh(event: RustDeviceBridgeEvent, streamAttempt: number, previous: Set<string>): string[] {
+  const current = new Set(usbDeviceIds(event.devices));
+  if (event.type === 'device_snapshot') {
+    return streamAttempt > 1 ? [...new Set([...previous, ...current])] : [];
+  }
+  if (event.type === 'device_connected') return [...current].filter((udid) => !previous.has(udid));
+  if (event.type === 'device_disconnected') return [...previous].filter((udid) => !current.has(udid));
+  return [];
+}
+
 export class RustDeviceEventMetricTracker {
   private currentUsbDeviceIds?: Set<string>;
   private readonly seenUsbDeviceIds = new Set<string>();
@@ -19,12 +38,7 @@ export class RustDeviceEventMetricTracker {
   record(event: RustDeviceBridgeEvent): void {
     if (this.lastSequence === event.sequence) return;
     this.lastSequence = event.sequence;
-    const current = new Set(event.devices.flatMap((device) => {
-      if (!device || typeof device !== 'object') return [];
-      const summary = device as DeviceSummary;
-      const id = typeof summary.id === 'string' ? summary.id : typeof summary.udid === 'string' ? summary.udid : undefined;
-      return id && summary.transport === 'usb' ? [id] : [];
-    }));
+    const current = new Set(usbDeviceIds(event.devices));
     if (this.currentUsbDeviceIds) {
       for (const id of this.currentUsbDeviceIds) {
         if (!current.has(id)) incrementMetric('device_usb_disconnects_total', { source: 'usbmux_event' });
@@ -58,6 +72,7 @@ type DeviceEventSubscriber = typeof subscribeRustDeviceBridgeEvents;
 
 export interface RustDeviceEventMonitoringOptions {
   subscriber?: DeviceEventSubscriber;
+  onUsbDeviceHealthRefresh?: (udid: string) => void;
   initialSnapshotTimeoutMs?: number;
   retryBaseDelayMs?: number;
   retryMaxDelayMs?: number;
@@ -138,13 +153,17 @@ function subscribeWithInitialSnapshotDeadline(
 
 async function monitorRustDeviceEvents(signal: AbortSignal, options: RustDeviceEventMonitoringOptions): Promise<void> {
   const tracker = new RustDeviceEventMetricTracker();
+  let currentUsbDeviceUdids = new Set<string>();
   let failures = 0;
+  let streamAttempt = 0;
   const subscriber = options.subscriber ?? subscribeRustDeviceBridgeEvents;
   const retryBaseDelayMs = Math.max(1, options.retryBaseDelayMs ?? 1000);
   const retryMaxDelayMs = Math.max(retryBaseDelayMs, options.retryMaxDelayMs ?? 30_000);
   const stableConnectionMs = Math.max(1, options.stableConnectionMs ?? 30_000);
   setGaugeMetric('device_bridge_event_stream_connected', 0, { transport: 'usbmux' });
   while (!signal.aborted) {
+    const currentStreamAttempt = ++streamAttempt;
+    let lastEventSequence: number | undefined;
     let stopStream: (() => void) | undefined;
     let resolveStreamFailure: (error: Error) => void = () => {};
     let firstEventAt: number | undefined;
@@ -156,9 +175,20 @@ async function monitorRustDeviceEvents(signal: AbortSignal, options: RustDeviceE
       stopStream = await subscribeWithInitialSnapshotDeadline(
         subscriber,
         (event) => {
+          if (lastEventSequence === event.sequence) return;
+          lastEventSequence = event.sequence;
           firstEventAt ??= Date.now();
           setGaugeMetric('device_bridge_event_stream_connected', 1, { transport: 'usbmux' });
+          const refreshUdids = usbDeviceUdidsToRefresh(event, currentStreamAttempt, currentUsbDeviceUdids);
+          currentUsbDeviceUdids = new Set(usbDeviceIds(event.devices));
           tracker.record(event);
+          for (const udid of refreshUdids) {
+            try {
+              options.onUsbDeviceHealthRefresh?.(udid);
+            } catch (error) {
+              log.warn('USB device availability handler failed', { error: error instanceof Error ? error.message : String(error) });
+            }
+          }
         },
         resolveStreamFailure,
         signal,

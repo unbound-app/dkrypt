@@ -94,4 +94,66 @@ describe('Rust device bridge event metrics', () => {
       await stop();
     }
   });
+
+  it('refreshes health on USB connect and disconnect while ignoring startup snapshots and Wi-Fi changes', async () => {
+    const refreshedDeviceIds: string[] = [];
+    let attempts = 0;
+    const stop = startRustDeviceEventMonitoring({
+      onUsbDeviceHealthRefresh: (deviceId) => refreshedDeviceIds.push(deviceId),
+      subscriber: async (onEvent) => {
+        attempts += 1;
+        const devices = [
+          { id: 'usb-udid', transport: 'usb' },
+          { id: 'wifi-udid', transport: 'wifi:192.0.2.5' },
+        ];
+        onEvent({ type: 'device_snapshot', sequence: 1, devices });
+        onEvent({ type: 'device_connected', sequence: 2, devices });
+        onEvent({ type: 'device_disconnected', sequence: 3, devices: [devices[1]] });
+        onEvent({ type: 'device_connected', sequence: 4, devices });
+        onEvent({ type: 'device_connected', sequence: 4, devices });
+        return () => {};
+      },
+    });
+
+    try {
+      await waitForAttempts(() => attempts, 1);
+      expect(refreshedDeviceIds).toEqual(['usb-udid', 'usb-udid']);
+    } finally {
+      await stop();
+    }
+  });
+
+  it('refreshes present USB devices from a replacement stream snapshot', async () => {
+    const refreshedDeviceIds: string[] = [];
+    let attempts = 0;
+    const stop = startRustDeviceEventMonitoring({
+      onUsbDeviceHealthRefresh: (deviceId) => refreshedDeviceIds.push(deviceId),
+      subscriber: async (onEvent, onError) => {
+        attempts += 1;
+        onEvent({
+          type: 'device_snapshot',
+          sequence: attempts,
+          devices: attempts === 1 ? [
+            { id: 'missing-udid', transport: 'usb' },
+            { id: 'wifi-udid', transport: 'wifi:192.0.2.5' },
+          ] : [
+            { id: 'usb-udid', transport: 'usb' },
+            { id: 'wifi-udid', transport: 'wifi:192.0.2.5' },
+          ],
+        });
+        if (attempts === 1) queueMicrotask(() => onError?.(new Error('fixture stream closed')));
+        return () => {};
+      },
+      retryBaseDelayMs: 1,
+      retryMaxDelayMs: 1,
+    });
+
+    try {
+      await waitForAttempts(() => refreshedDeviceIds.length, 1);
+      expect(attempts).toBeGreaterThanOrEqual(2);
+      expect(refreshedDeviceIds.sort()).toEqual(['missing-udid', 'usb-udid']);
+    } finally {
+      await stop();
+    }
+  });
 });

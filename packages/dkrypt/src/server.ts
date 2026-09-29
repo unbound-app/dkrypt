@@ -47,7 +47,7 @@ import { artifactCatalogRoutes, decryptRoutes, testFlightCatalogRoutes } from '#
 import { healthRoutes } from '#routes/health.js';
 import { startScheduler, stopScheduler } from '#scheduler/index.js';
 import { closeStateDatabase, startApiKeySweeper, startSessionSweeper, startStateFlusher, stopStateBackgroundServices } from '#store/state.js';
-import { startDeviceHealthPoller, stopDeviceHealthPoller } from '#deviceHealth.js';
+import { refreshUsbDeviceHealth, startDeviceHealthPoller, stopDeviceHealthPoller } from '#deviceHealth.js';
 import { renderPublicPage } from '#publicPages.js';
 import { startNotificationDigestScheduler } from '#notify.js';
 import { closeArtifactDatabase, initializeArtifactStore } from '#artifacts.js';
@@ -306,7 +306,12 @@ export async function buildServer(options: { includePublicRoutes?: boolean; stri
 
 async function startBackgroundServices(): Promise<void> {
   startTelemetry();
-  stopRustDeviceEventMonitoring = startRustDeviceEventMonitoring();
+  stopRustDeviceEventMonitoring = startRustDeviceEventMonitoring({
+    onUsbDeviceHealthRefresh: (udid) => {
+      void trackBackgroundWork('device-health-usb-event', () => refreshUsbDeviceHealth(udid))
+        .catch((error: unknown) => log.warn('device health refresh after USB event failed', { error: String(error) }));
+    },
+  });
   await initializeArtifactStore(getArtifactBackedJobs());
   startJobSweeper();
   startStateFlusher();

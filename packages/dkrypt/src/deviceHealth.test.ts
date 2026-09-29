@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { applyDeviceSshTunnelHealth, coalesceDeviceHealthRequest, collectDeviceTelemetry, formatTestFlightBridgeDownDescription, getDeviceAgentSubsystemState, getDeviceInstallBlocker, getDeviceReadiness, getDeviceSshTunnelSubsystemState, isBridgeHeartbeatFresh, parseDeviceStorageDf, stabilizeDeviceHealth, testFlightBridgeReachability, type DeviceHealth } from '#deviceHealth.js';
+import { applyDeviceSshTunnelHealth, coalesceDeviceHealthRequest, collectDeviceTelemetry, DeviceHealthRefreshQueue, formatTestFlightBridgeDownDescription, getDeviceAgentSubsystemState, getDeviceInstallBlocker, getDeviceReadiness, getDeviceSshTunnelSubsystemState, isBridgeHeartbeatFresh, parseDeviceStorageDf, stabilizeDeviceHealth, testFlightBridgeReachability, type DeviceHealth } from '#deviceHealth.js';
 
 function health(overrides: Partial<DeviceHealth> = {}): DeviceHealth {
   return { reachable: true, jailbreakAvailable: true, checkedAt: 0, ...overrides };
@@ -255,6 +255,48 @@ describe('device health coordination', () => {
     await expect(Promise.all([first, second])).resolves.toEqual([42, 42]);
     expect(calls).toBe(1);
     expect(pending).toHaveLength(0);
+  });
+
+  test('runs one fresh poll after an earlier periodic poll completes', async () => {
+    const queue = new DeviceHealthRefreshQueue();
+    let finishPoll = () => {};
+    const currentPoll = new Promise<void>((resolve) => {
+      finishPoll = resolve;
+    });
+    let calls = 0;
+    const refresh = async () => {
+      calls += 1;
+    };
+
+    const first = queue.request('device-a', refresh, currentPoll);
+    const second = queue.request('device-a', refresh, currentPoll);
+
+    expect(calls).toBe(0);
+    finishPoll();
+    await expect(Promise.all([first, second])).resolves.toEqual([undefined, undefined]);
+    expect(calls).toBe(1);
+  });
+
+  test('runs again when another USB event arrives during a health refresh', async () => {
+    const queue = new DeviceHealthRefreshQueue();
+    let finishFirstRefresh = () => {};
+    let calls = 0;
+    const refresh = () => {
+      calls += 1;
+      return calls === 1
+        ? new Promise<void>((resolve) => {
+          finishFirstRefresh = resolve;
+        })
+        : Promise.resolve();
+    };
+
+    const first = queue.request('device-a', refresh);
+    const second = queue.request('device-a', refresh);
+
+    expect(calls).toBe(1);
+    finishFirstRefresh();
+    await Promise.all([first, second]);
+    expect(calls).toBe(2);
   });
 
   test('keeps a known-good status through one transient failure', () => {
