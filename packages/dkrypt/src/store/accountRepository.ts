@@ -2,14 +2,19 @@ import type { Database } from 'bun:sqlite';
 import type { AllowedUser, Role } from '#store/state.js';
 import { replaceStateCollections, type StateCollectionReplacement } from '#store/sqlite.js';
 
+export interface AccountCollections {
+  users: AllowedUser[];
+  roles: Role[];
+}
+
 export interface AccountRepository {
   listUsers(): AllowedUser[];
   findUser(username: string): AllowedUser | undefined;
-  hasCanonicalUserKeys(): boolean;
+  hasNormalizedUsernameRowIds(): boolean;
   listRoles(): Role[];
   findRole(roleId: string): Role | undefined;
-  collectionReplacements(users: AllowedUser[], roles: Role[]): StateCollectionReplacement[];
-  replaceAll(users: AllowedUser[], roles: Role[]): void;
+  collectionReplacements(collections: AccountCollections): StateCollectionReplacement[];
+  replaceAll(collections: AccountCollections): void;
 }
 
 export function isUserMfaRecord(value: unknown): boolean {
@@ -65,14 +70,18 @@ function parseRole(payload: unknown): Role {
   return structuredClone(payload);
 }
 
-function normalizedCollections(users: AllowedUser[], roles: Role[]): { users: AllowedUser[]; roles: Role[] } {
+export function validateAccountCollections({ users, roles }: AccountCollections): void {
   if (!users.every(isAllowedUserRecord)) throw new Error('account records are malformed');
   if (!roles.every(isRoleRecord)) throw new Error('role records are malformed');
-  const normalizedUsers = users.map(normalizeUser);
-  if (new Set(normalizedUsers.map((user) => user.username)).size !== normalizedUsers.length) throw new Error('account usernames must be unique ignoring case');
+  const normalizedUsernames = users.map((user) => user.username.toLowerCase());
+  if (new Set(normalizedUsernames).size !== normalizedUsernames.length) throw new Error('account usernames must be unique ignoring case');
   if (new Set(roles.map((role) => role.id)).size !== roles.length) throw new Error('role ids must be unique');
-  if (roles.filter((role) => role.isDefault).length !== 1) throw new Error('exactly one default role is required');
-  return { users: normalizedUsers, roles: roles.map((role) => structuredClone(role)) };
+  if (roles.filter((role) => role.isDefault).length > 1) throw new Error('at most one default role is allowed');
+}
+
+function normalizedCollections({ users, roles }: AccountCollections): AccountCollections {
+  validateAccountCollections({ users, roles });
+  return { users: users.map(normalizeUser), roles: roles.map((role) => structuredClone(role)) };
 }
 
 export function createAccountRepository(database: Database): AccountRepository {
@@ -85,7 +94,7 @@ export function createAccountRepository(database: Database): AccountRepository {
     return (listUsersQuery.all() as Array<{ id: string; payload: string }>).map(({ payload }) => parseUser(JSON.parse(payload) as unknown));
   }
 
-  function hasCanonicalUserKeys(): boolean {
+  function hasNormalizedUsernameRowIds(): boolean {
     return (listUsersQuery.all() as Array<{ id: string; payload: string }>).every(({ id, payload }) => {
       const user = parseUser(JSON.parse(payload) as unknown);
       return id === user.username;
@@ -100,8 +109,8 @@ export function createAccountRepository(database: Database): AccountRepository {
     });
   }
 
-  function collectionReplacements(users: AllowedUser[], roles: Role[]): StateCollectionReplacement[] {
-    const normalized = normalizedCollections(users, roles);
+  function collectionReplacements(collections: AccountCollections): StateCollectionReplacement[] {
+    const normalized = normalizedCollections(collections);
     return [
       {
         table: 'users',
@@ -122,7 +131,7 @@ export function createAccountRepository(database: Database): AccountRepository {
       if (row) return parseUser(JSON.parse(row.payload) as unknown);
       return listUsers().find((user) => user.username === normalized);
     },
-    hasCanonicalUserKeys,
+    hasNormalizedUsernameRowIds,
     listRoles,
     findRole(roleId) {
       const row = findRoleQuery.get(roleId) as { id: string; payload: string } | null;
@@ -132,8 +141,8 @@ export function createAccountRepository(database: Database): AccountRepository {
       return role;
     },
     collectionReplacements,
-    replaceAll(users, roles) {
-      replaceStateCollections(database, collectionReplacements(users, roles));
+    replaceAll(collections) {
+      replaceStateCollections(database, collectionReplacements(collections));
     },
   };
 }

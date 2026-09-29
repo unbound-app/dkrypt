@@ -757,7 +757,7 @@ describe('exportBackup / importBackup', () => {
     const result = importBackup(tampered, 'tester');
 
     expect(result.ok).toBe(false);
-    expect(result.error).toMatch(/exactly one default role/);
+    expect(result.error).toMatch(/at most one default role/);
     expect(exportBackup().roles).toEqual(before.roles);
   });
 

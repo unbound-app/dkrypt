@@ -25,7 +25,7 @@ import {
 } from '#identity.js';
 import { log } from '#logger.js';
 import type { JobTimelineEvent, TestFlightJobSource } from '#jobs/types.js';
-import { createAccountRepository, isAllowedUserRecord, isRoleRecord, isUserMfaRecord } from '#store/accountRepository.js';
+import { createAccountRepository, isAllowedUserRecord, isRoleRecord, isUserMfaRecord, validateAccountCollections, type AccountCollections } from '#store/accountRepository.js';
 import { createBillingRepository } from '#store/billingRepository.js';
 import { createApiKeyRepository, isApiKeyRecordShape } from '#store/apiKeyRepository.js';
 import { categorizeFailure } from '#util/failureCategory.js';
@@ -1017,6 +1017,8 @@ function migrateV12ToV13(v12: Record<string, unknown>): Record<string, unknown> 
 }
 
 function migrateV13ToV14(v13: Record<string, unknown>): PersistedState {
+  if (Object.hasOwn(v13, 'roles') && (!Array.isArray(v13.roles) || !v13.roles.every(isRoleRecord))) throw new Error('persistent role data is malformed');
+  if (Object.hasOwn(v13, 'allowedUsers') && (!Array.isArray(v13.allowedUsers) || !v13.allowedUsers.every(isAllowedUserRecord))) throw new Error('persistent account data is malformed');
   const migrated = {
     ...defaultState(),
     ...v13,
@@ -1030,7 +1032,7 @@ function migrateV13ToV14(v13: Record<string, unknown>): PersistedState {
   migrated.testFlightSubscriptions = Array.isArray(v13.testFlightSubscriptions)
     ? (v13.testFlightSubscriptions as TestFlightSubscription[])
     : [];
-  migrated.roles = Array.isArray(v13.roles)
+  migrated.roles = Object.hasOwn(v13, 'roles')
     ? (v13.roles as Role[]).map((role) => ({ ...role, permissions: serializeBits(parseBits(role.permissions)) }))
     : [seedDefaultRole(Date.now())];
   return migrated;
@@ -1210,11 +1212,9 @@ function asStateRecord(value: unknown): Record<string, unknown> {
 }
 
 function normalizeLoadedState(migrated: PersistedState): PersistedState {
-  migrated.allowedUsers = Array.isArray(migrated.allowedUsers)
-    ? migrated.allowedUsers.map((user) => ({ ...user, username: user.username.toLowerCase() }))
-    : [];
-  migrated.roles = Array.isArray(migrated.roles) ? migrated.roles : [];
-  if (!migrated.roles.some((role) => role.isDefault)) migrated.roles.push(seedDefaultRole(Date.now()));
+  if (!Array.isArray(migrated.allowedUsers) || !Array.isArray(migrated.roles)) throw new Error('persistent account or role data is malformed');
+  validateAccountCollections({ users: migrated.allowedUsers, roles: migrated.roles });
+  migrated.allowedUsers = migrated.allowedUsers.map((user) => ({ ...user, username: user.username.toLowerCase() }));
   migrated.devices = migrated.devices.map(normalizeLoadedDevice);
   migrated.backupHistory = Array.isArray(migrated.backupHistory) ? migrated.backupHistory.map(normalizeBackupHistoryEntry) : [];
   migrated.schedulerRunHistory = normalizeLegacySchedulerRunHistory(migrated.schedulerRunHistory);
@@ -1223,7 +1223,6 @@ function normalizeLoadedState(migrated: PersistedState): PersistedState {
   migrated.notifications = Array.isArray(migrated.notifications) ? migrated.notifications.slice(0, MAX_NOTIFICATIONS) : [];
   migrated.testFlightSubscriptions = Array.isArray(migrated.testFlightSubscriptions) ? migrated.testFlightSubscriptions : [];
   validateProjectCollection(migrated.projects);
-  validateAccountCollections(migrated.allowedUsers, migrated.roles);
   return migrated;
 }
 
@@ -1232,16 +1231,6 @@ function validateProjectCollection(projects: ProjectRecord[]): void {
   const projectIds = new Set(projects.map((project) => project.id));
   if (projectIds.size !== projects.length || projects.filter((project) => project.isDefault).length !== 1 || projects.filter((project) => project.isDefault && project.id === DEFAULT_PROJECT_ID).length !== 1) {
     throw new Error('persistent project data must contain unique ids and one default workspace');
-  }
-}
-
-function validateAccountCollections(users: AllowedUser[], roles: Role[]): void {
-  if (!users.every(isAllowedUserRecord) || !roles.every(isRoleRecord)) throw new Error('persistent account or role data is malformed');
-  const userIds = users.map((user) => user.username.toLowerCase());
-  const roleIds = roles.map((role) => role.id);
-  if (new Set(userIds).size !== users.length) throw new Error('persistent account data contains duplicate usernames');
-  if (new Set(roleIds).size !== roles.length || roles.filter((role) => role.isDefault).length !== 1) {
-    throw new Error('persistent role data must contain unique ids and exactly one default role');
   }
 }
 
@@ -1352,15 +1341,15 @@ let dirty = false;
 const state: PersistedState = load();
 let persistedAllowedUsers = accountRepository.listUsers();
 let persistedRoles = accountRepository.listRoles();
-if ((persistedAllowedUsers.length === 0 && state.allowedUsers.length > 0) || (persistedRoles.length === 0 && state.roles.length > 0) || !accountRepository.hasCanonicalUserKeys()) {
-  accountRepository.replaceAll(state.allowedUsers, state.roles);
+if ((persistedAllowedUsers.length === 0 && state.allowedUsers.length > 0) || (persistedRoles.length === 0 && state.roles.length > 0) || !accountRepository.hasNormalizedUsernameRowIds()) {
+  accountRepository.replaceAll({ users: state.allowedUsers, roles: state.roles });
   persistedAllowedUsers = accountRepository.listUsers();
   persistedRoles = accountRepository.listRoles();
 }
 if (JSON.stringify(state.allowedUsers) !== JSON.stringify(persistedAllowedUsers) || JSON.stringify(state.roles) !== JSON.stringify(persistedRoles)) {
   throw new Error('persistent account and role repositories do not match the state snapshot');
 }
-validateAccountCollections(state.allowedUsers, state.roles);
+validateAccountCollections({ users: state.allowedUsers, roles: state.roles });
 let persistedApiKeys = apiKeyRepository.listAll();
 if (persistedApiKeys.length === 0 && state.apiKeys.length > 0) {
   apiKeyRepository.replaceAll(state.apiKeys);
@@ -1404,7 +1393,7 @@ function fsyncPath(filePath: string): void {
 
 function persistNow(additionalCollections: readonly StateCollectionReplacement[] = []): void {
   const collections = [...additionalCollections];
-  for (const replacement of accountRepository.collectionReplacements(state.allowedUsers, state.roles)) {
+  for (const replacement of accountRepository.collectionReplacements({ users: state.allowedUsers, roles: state.roles })) {
     if (!collections.some((collection) => collection.table === replacement.table)) collections.push(replacement);
   }
   if (!collections.some((collection) => collection.table === 'api_keys')) {
@@ -1511,7 +1500,7 @@ function safeEqualStr(a: string, b: string): boolean {
 }
 
 export function listAllowedUsers(): AllowedUser[] {
-  return accountRepository.listUsers();
+  return state.allowedUsers.map((user) => structuredClone(user));
 }
 
 export function getUserMfa(username: string): UserMfaRecord | undefined {
@@ -1569,7 +1558,7 @@ export function deletePasskey(userId: string, id: string): boolean {
 }
 
 export function listRoles(): Role[] {
-  return accountRepository.listRoles().sort((a, b) => a.position - b.position);
+  return state.roles.map((role) => structuredClone(role)).sort((a, b) => a.position - b.position);
 }
 
 export interface CreateProjectInput {
@@ -1682,7 +1671,8 @@ export function updateProject(id: string, patch: UpdateProjectInput, actor: stri
 }
 
 export function getRole(id: string): Role | undefined {
-  return accountRepository.findRole(id);
+  const role = state.roles.find((candidate) => candidate.id === id);
+  return role ? structuredClone(role) : undefined;
 }
 
 export function getUserEffectivePermissions(username: string): bigint {
@@ -4469,8 +4459,8 @@ function validateBackupPayload(raw: unknown): { ok: true; payload: ValidatedBack
     return { ok: false, error: 'roles is missing or malformed' };
   }
   const backupRoles = b.roles as Role[];
-  if (new Set(backupRoles.map((role) => role.id)).size !== backupRoles.length || backupRoles.filter((role) => role.isDefault).length !== 1) {
-    return { ok: false, error: 'roles must contain unique ids and exactly one default role' };
+  if (new Set(backupRoles.map((role) => role.id)).size !== backupRoles.length || backupRoles.filter((role) => role.isDefault).length > 1) {
+    return { ok: false, error: 'roles must contain unique ids and at most one default role' };
   }
   if (!Array.isArray(b.apiKeys) || !b.apiKeys.every(isApiKeyRecordShape)) {
     return { ok: false, error: 'apiKeys is missing or malformed' };
@@ -4664,12 +4654,12 @@ function prepareBackupRestore(payload: ValidatedBackupPayload): Pick<PersistedSt
 function backupDatabaseCollections(
   payload: ValidatedBackupPayload,
   projects: ProjectRecord[] = payload.projects,
-  accounts: Pick<PersistedState, 'allowedUsers' | 'roles'> = payload,
+  accounts: AccountCollections = { users: payload.allowedUsers, roles: payload.roles },
 ): StateCollectionReplacement[] {
   return [
     ...billingSnapshotCollections(payload.billing),
     ...identitySnapshotCollections(payload.identities),
-    ...accountRepository.collectionReplacements(accounts.allowedUsers, accounts.roles),
+    ...accountRepository.collectionReplacements(accounts),
     projectCollectionReplacement(projects),
   ];
 }
@@ -4702,7 +4692,7 @@ function temporaryDatabaseRestoreCheck(payload: ValidatedBackupPayload, restored
   try {
     let database = openStateDatabase(options);
     try {
-      database.writeState(restoredState, undefined, [...backupDatabaseCollections(payload, restored.projects, restored), ...additionalCollections]);
+      database.writeState(restoredState, undefined, [...backupDatabaseCollections(payload, restored.projects, { users: restored.allowedUsers, roles: restored.roles }), ...additionalCollections]);
       database.integrityStatus();
     } finally {
       database.close();
@@ -4722,7 +4712,7 @@ function temporaryDatabaseRestoreCheck(payload: ValidatedBackupPayload, restored
 
       const accounts = createAccountRepository(database.db);
       if (
-        !accounts.hasCanonicalUserKeys() ||
+        !accounts.hasNormalizedUsernameRowIds() ||
         !sameRecordsByKey(accounts.listUsers(), restored.allowedUsers, (user) => user.username) ||
         !sameRecordsByKey(accounts.listRoles(), restored.roles, (role) => role.id)
       ) {
@@ -4779,7 +4769,7 @@ function backupRestoreChecks(payload: ValidatedBackupPayload, restored: BackupRe
   const projectMemberIds = new Set(payload.allowedUsers.map((user) => user.username.toLowerCase()));
   const checks = [
     { label: 'Unique role IDs', ok: roleIds.size === payload.roles.length, detail: `${roleIds.size} roles` },
-    { label: 'Default role', ok: payload.roles.filter((role) => role.isDefault).length === 1, detail: `${payload.roles.filter((role) => role.isDefault).length} default roles` },
+    { label: 'Default role', ok: payload.roles.filter((role) => role.isDefault).length <= 1, detail: `${payload.roles.filter((role) => role.isDefault).length} default roles` },
     { label: 'User role assignments', ok: payload.allowedUsers.every((user) => user.roleIds.every((id) => roleIds.has(id))), detail: `${payload.allowedUsers.length} users checked` },
     { label: 'API key owners', ok: payload.apiKeys.every((key) => key.ownerId === 'root' || userIds.has(key.ownerId.toLowerCase())), detail: `${payload.apiKeys.length} keys checked` },
     { label: 'Unique watch IDs', ok: watchIds.size === payload.watches.length, detail: `${watchIds.size} watches` },
@@ -4819,7 +4809,7 @@ export function importBackup(raw: unknown, actor: string): ImportBackupResult {
   }
   restored.projects = preservedProjects.projects;
   const artifactCollections = artifactProjectLinksReplacement(b.artifactProjectLinks, currentArtifactLinks);
-  const restoreCollections = [...backupDatabaseCollections(b, restored.projects, restored), ...artifactCollections];
+  const restoreCollections = [...backupDatabaseCollections(b, restored.projects, { users: restored.allowedUsers, roles: restored.roles }), ...artifactCollections];
   const checks = backupRestoreChecks(b, restored, artifactCollections);
   if (checks.some((check) => !check.ok)) {
     return { ok: false, error: `backup restore test failed: ${checks.filter((check) => !check.ok).map((check) => check.label).join(', ')}` };

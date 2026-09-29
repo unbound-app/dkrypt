@@ -39,7 +39,7 @@ test('account repository stores users by normalized username and preserves role 
   await withAccountRepository(async (repository, database, stateDir) => {
     const users = [user('adrian', 100), user('second-user', 200)];
     const roles = [role('everyone', 0), role('manager', 1)];
-    repository.replaceAll([user('Adrian', 100), users[1]], roles);
+    repository.replaceAll({ users: [user('Adrian', 100), users[1]], roles });
 
     expect(database.query('SELECT id FROM users ORDER BY rowid ASC').all()).toEqual([
       { id: 'adrian' },
@@ -61,9 +61,9 @@ test('account repository stores users by normalized username and preserves role 
 
 test('account repository rejects case-colliding usernames before replacing either collection', async () => {
   await withAccountRepository(async (repository) => {
-    repository.replaceAll([user('existing', 1)], [role('everyone', 0)]);
+    repository.replaceAll({ users: [user('existing', 1)], roles: [role('everyone', 0)] });
 
-    expect(() => repository.replaceAll([user('duplicate', 2), user('DUPLICATE', 3)], [role('everyone', 0)])).toThrow('account usernames must be unique ignoring case');
+    expect(() => repository.replaceAll({ users: [user('duplicate', 2), user('DUPLICATE', 3)], roles: [role('everyone', 0)] })).toThrow('account usernames must be unique ignoring case');
     expect(repository.listUsers()).toEqual([user('existing', 1)]);
   });
 });
@@ -73,23 +73,32 @@ test('account repository detects legacy user row ids and keeps lookups available
     const legacyUser = user('Adrian', 100);
     replaceStateCollection(database, 'users', [{ id: 'user-0', payload: legacyUser, updatedAt: legacyUser.addedAt }]);
 
-    expect(repository.hasCanonicalUserKeys()).toBe(false);
+    expect(repository.hasNormalizedUsernameRowIds()).toBe(false);
     expect(repository.findUser('ADRIAN')).toEqual(user('adrian', 100));
 
-    repository.replaceAll([legacyUser], [role('everyone', 0)]);
+    repository.replaceAll({ users: [legacyUser], roles: [role('everyone', 0)] });
 
-    expect(repository.hasCanonicalUserKeys()).toBe(true);
+    expect(repository.hasNormalizedUsernameRowIds()).toBe(true);
     expect(repository.findUser('Adrian')).toEqual(user('adrian', 100));
   });
 });
 
 test('account repository rolls back users when writing a role fails', async () => {
   await withAccountRepository(async (repository, database) => {
-    repository.replaceAll([user('existing', 1)], [role('everyone', 0)]);
+    repository.replaceAll({ users: [user('existing', 1)], roles: [role('everyone', 0)] });
     database.exec("CREATE TRIGGER reject_account_role_insert BEFORE INSERT ON roles BEGIN SELECT RAISE(ABORT, 'role write rejected'); END;");
 
-    expect(() => repository.replaceAll([user('replacement', 2)], [role('everyone', 0)])).toThrow('role write rejected');
+    expect(() => repository.replaceAll({ users: [user('replacement', 2)], roles: [role('everyone', 0)] })).toThrow('role write rejected');
     expect(repository.listUsers()).toEqual([user('existing', 1)]);
     expect(repository.listRoles()).toEqual([role('everyone', 0)]);
+  });
+});
+
+test('account repository preserves role collections without a default role', async () => {
+  await withAccountRepository(async (repository) => {
+    const roles = [role('legacy-manager', 1)];
+    repository.replaceAll({ users: [user('legacy-user', 1)], roles });
+
+    expect(repository.listRoles()).toEqual(roles);
   });
 });

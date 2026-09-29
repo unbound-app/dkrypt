@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { openStateDatabase, readStateCollection } from '#store/sqlite.js';
@@ -47,7 +47,7 @@ describe('state migrations', () => {
     };
     expect(migrated.version).toBe(18);
     expect(migrated.roles[0]?.permissions).toBe('0');
-    expect(migrated.roles.filter((role) => role.isDefault)).toEqual([expect.objectContaining({ id: 'everyone' })]);
+    expect(migrated.roles).toEqual([expect.objectContaining({ id: 'legacy', isDefault: false, permissions: '0' })]);
     expect(migrated.projects).toContainEqual(expect.objectContaining({ id: 'default', isDefault: true }));
     expect(migrated.jobHistory).toContainEqual(expect.objectContaining({ id: 'legacy-job', projectId: 'default' }));
     expect(migrated.backupHistory).toContainEqual(expect.objectContaining({ id: 'legacy-backup', restoreDrillStatus: 'not_run' }));
@@ -58,6 +58,45 @@ describe('state migrations', () => {
       expect(readStateCollection(database.db, 'projects')).toContainEqual(expect.objectContaining({ id: 'default', isDefault: true }));
     } finally {
       database.close();
+    }
+  });
+
+  test('fails closed on malformed v18 account collections without rewriting the legacy state file', async () => {
+    const malformedStates = [
+      { version: 18, allowedUsers: { username: 'lost-user' }, roles: [] },
+      { version: 18, allowedUsers: [], roles: 'lost-role' },
+    ];
+
+    for (const [index, malformedState] of malformedStates.entries()) {
+      const stateDir = await mkdtemp(path.join(tmpdir(), `dkrypt-state-malformed-accounts-${index}-`));
+      const source = JSON.stringify(malformedState);
+      const statePath = path.join(stateDir, 'state.json');
+      await writeFile(statePath, source);
+
+      try {
+        const child = Bun.spawn(
+          [process.execPath, '-e', "await import('./src/store/state.ts')"],
+          {
+            cwd: process.cwd(),
+            env: {
+              API_KEY: 'state-malformed-api-key',
+              SESSION_SIGNING_SECRET: 'state-malformed-session-secret',
+              ADMIN_PASSWORD: 'state-malformed-admin-password',
+              STATE_DIR: stateDir,
+              STATE_DATABASE_FILE: 'state.sqlite',
+            },
+            stdout: 'pipe',
+            stderr: 'pipe',
+          },
+        );
+        const [stderr, exitCode] = await Promise.all([new Response(child.stderr).text(), child.exited]);
+
+        expect(exitCode).not.toBe(0);
+        expect(stderr).toContain('persistent account or role data is malformed');
+        expect(await readFile(statePath, 'utf8')).toBe(source);
+      } finally {
+        await rm(stateDir, { recursive: true, force: true });
+      }
     }
   });
 });
