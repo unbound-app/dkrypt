@@ -1,6 +1,6 @@
 import { createHmac, randomBytes } from 'node:crypto';
-import Stripe from 'stripe';
 import { createStripeCliClient } from './stripe-cli.js';
+import { STRIPE_WEBHOOK_EVENTS } from '../src/stripeWebhookEvents.js';
 
 const webhookUrl = process.env.STRIPE_WEBHOOK_URL;
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
@@ -16,17 +16,6 @@ const expectedPrices = [
   { key: 'STRIPE_API_PRICE_ID', amount: 1500 },
   { key: 'STRIPE_PRIORITY_API_PRICE_ID', amount: 2000 },
 ] as const;
-
-const requiredEvents: Stripe.WebhookEndpointCreateParams.EnabledEvent[] = [
-  'checkout.session.completed',
-  'checkout.session.async_payment_failed',
-  'checkout.session.async_payment_succeeded',
-  'customer.created',
-  'customer.updated',
-  'customer.subscription.created',
-  'customer.subscription.updated',
-  'customer.subscription.deleted',
-];
 
 const { client: stripe, environment } = createStripeCliClient();
 
@@ -64,7 +53,7 @@ const priceChecks = prices.map((price, index) => {
 });
 const endpoint = endpoints.data.find((candidate) => candidate.url === webhookUrl && candidate.status === 'enabled');
 const configuredEvents = new Set(endpoint?.enabled_events ?? []);
-const missingEvents = requiredEvents.filter((event) => !configuredEvents.has(event));
+const missingEvents = STRIPE_WEBHOOK_EVENTS.filter((event) => !configuredEvents.has(event));
 const webhookProbe = endpoint
   ? await (async () => {
       const probePayload = JSON.stringify({

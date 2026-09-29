@@ -119,6 +119,20 @@ function processCheckoutSession(event: Stripe.Event): void {
   if (customerId && userId) linkBillingCustomer(customerId, userId);
 }
 
+function processStripeRefund(event: Stripe.Event): void {
+  const charge = event.data.object as Stripe.Charge;
+  if (!charge?.id) return;
+  const customerId = stripeObjectId(charge.customer);
+  const actor = customerId ? getBillingUserId(customerId) ?? 'stripe' : 'stripe';
+  const amount = Number.isFinite(charge.amount) ? charge.amount : undefined;
+  const refundedAmount = Number.isFinite(charge.amount_refunded) ? charge.amount_refunded : undefined;
+  const currency = charge.currency?.toUpperCase();
+  const refundSummary = amount !== undefined && refundedAmount !== undefined && currency
+    ? `${refundedAmount}/${amount} ${currency} minor units`
+    : 'amount unavailable';
+  recordAudit(actor, 'billing.refund', charge.id, `${refundSummary}; Stripe event ${event.id}`);
+}
+
 async function reconcileSuccessfulCheckoutSession(event: Stripe.Event, stripeClient?: Stripe): Promise<void> {
   processCheckoutSession(event);
   const session = event.data.object as Stripe.Checkout.Session;
@@ -217,6 +231,9 @@ export async function processStripeEvent(event: Stripe.Event, stripeClient?: Str
     case 'customer.subscription.updated':
     case 'customer.subscription.deleted':
       await processSubscription(event, stripeClient);
+      return;
+    case 'charge.refunded':
+      processStripeRefund(event);
       return;
     case 'invoice.paid':
     case 'invoice.payment_failed':

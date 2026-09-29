@@ -1,27 +1,16 @@
-import Stripe from 'stripe';
 import { createStripeCliClient } from './stripe-cli.js';
+import { STRIPE_WEBHOOK_EVENTS } from '../src/stripeWebhookEvents.js';
 
 const destination = process.env.STRIPE_WEBHOOK_URL;
 if (!destination) throw new Error('STRIPE_WEBHOOK_URL is required');
 if (!destination.startsWith('https://')) throw new Error('STRIPE_WEBHOOK_URL must use HTTPS');
 
 const { client: stripe, environment } = createStripeCliClient();
-const enabledEvents: Stripe.WebhookEndpointCreateParams.EnabledEvent[] = [
-  'checkout.session.completed',
-  'checkout.session.async_payment_failed',
-  'checkout.session.async_payment_succeeded',
-  'customer.created',
-  'customer.updated',
-  'customer.subscription.created',
-  'customer.subscription.updated',
-  'customer.subscription.deleted',
-];
-
 const endpoints = await stripe.webhookEndpoints.list({ limit: 100 });
 const existing = endpoints.data.find((endpoint) => endpoint.url === destination);
 const endpoint = existing
-  ? await stripe.webhookEndpoints.update(existing.id, { description: 'dkrypt Stripe billing', enabled_events: enabledEvents, disabled: false })
-  : await stripe.webhookEndpoints.create({ url: destination, description: 'dkrypt Stripe billing', enabled_events: enabledEvents });
+  ? await stripe.webhookEndpoints.update(existing.id, { description: 'dkrypt Stripe billing', enabled_events: [...STRIPE_WEBHOOK_EVENTS], disabled: false })
+  : await stripe.webhookEndpoints.create({ url: destination, description: 'dkrypt Stripe billing', enabled_events: [...STRIPE_WEBHOOK_EVENTS] });
 
 console.log(
   JSON.stringify(

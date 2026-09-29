@@ -14,6 +14,7 @@ import {
 import { config } from '#config.js';
 import { billingRoutes, processStripeEvent } from '#routes/billing.js';
 import { buildServer } from '#server.js';
+import { STRIPE_WEBHOOK_EVENTS } from '#stripeWebhookEvents.js';
 import { getAuditLog } from '#store/state.js';
 import { flushTelemetry } from '#telemetry.js';
 import { setSessionCookie } from '#session.js';
@@ -119,6 +120,15 @@ function subscriptionEvent(userId: string, customerId: string, subscriptionId: s
 }
 
 describe('Stripe billing webhooks', () => {
+  test('configures the payment and refund events processed by dkrypt', () => {
+    expect(new Set(STRIPE_WEBHOOK_EVENTS).size).toBe(STRIPE_WEBHOOK_EVENTS.length);
+    expect(STRIPE_WEBHOOK_EVENTS).toEqual(expect.arrayContaining([
+      'invoice.paid',
+      'invoice.payment_failed',
+      'charge.refunded',
+    ]));
+  });
+
   test('links checkout sessions and grants the plan from a subscription event', async () => {
     const userId = `stripe-user-${crypto.randomUUID()}`;
     const customerId = `cus_${crypto.randomUUID()}`;
@@ -213,6 +223,40 @@ describe('Stripe billing webhooks', () => {
     expect(retrievedIds).toEqual([subscriptionId]);
     expect(getBillingSubscriptionById(subscriptionId)?.status).toBe('past_due');
     expect(getBillingEntitlements(userId).planId).toBe('priority');
+  });
+
+  test('audits a Stripe refund without changing subscription entitlement status', async () => {
+    const userId = `stripe-refund-${crypto.randomUUID()}`;
+    const customerId = `cus_${crypto.randomUUID()}`;
+    const subscriptionId = `sub_${crypto.randomUUID()}`;
+    const chargeId = `ch_${crypto.randomUUID()}`;
+    replaceBillingSnapshot({ customers: [], subscriptions: [] });
+    await processStripeEvent(event('customer.created', {
+      id: customerId,
+      object: 'customer',
+      email: `${userId}@example.test`,
+      metadata: { dkrypt_user_id: userId },
+    }));
+    await processStripeEvent(subscriptionEvent(userId, customerId, subscriptionId));
+
+    const refundEvent = event('charge.refunded', {
+      id: chargeId,
+      object: 'charge',
+      customer: customerId,
+      amount: 1500,
+      amount_refunded: 1500,
+      currency: 'eur',
+      refunded: true,
+    });
+    await processStripeEvent(refundEvent);
+
+    expect(getAuditLog()).toContainEqual(expect.objectContaining({
+      actor: userId,
+      action: 'billing.refund',
+      target: chargeId,
+      detail: expect.stringContaining(refundEvent.id),
+    }));
+    expect(getBillingEntitlements(userId)).toMatchObject({ planId: 'priority', decrypt: true });
   });
 
   test('reconciles same-second subscription events from Stripe current state', async () => {
