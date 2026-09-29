@@ -6,6 +6,7 @@ const entrypoint = readFileSync(path.resolve(import.meta.dir, '../entrypoint.sh'
 const dockerfile = readFileSync(path.resolve(import.meta.dir, '../Dockerfile'), 'utf8');
 const compose = readFileSync(path.resolve(import.meta.dir, '../../../docker-compose.yml'), 'utf8');
 const deploymentWorkflow = readFileSync(path.resolve(import.meta.dir, '../../../.github/workflows/deploy.yml'), 'utf8');
+const composeUpCommand = 'DKRYPT_IMAGE="$IMAGE" docker compose --env-file /home/adrian/.local/share/dkrypt/.env --project-name dkrypt -f /home/adrian/.local/share/dkrypt/compose.yml up -d --no-build';
 
 test('every device bridge launch runs with USB access and API socket group access', () => {
   const launchCommands = entrypoint
@@ -44,20 +45,28 @@ test('USB bridge startup does not require an SSH key', () => {
 test('production verifies database migration and restore before replacing the running container', () => {
   const preflightIndex = deploymentWorkflow.indexOf('src/deploymentPreflight.ts');
   const volumeCheckIndex = deploymentWorkflow.indexOf('docker volume inspect dkrypt_state >/dev/null');
-  const stopIndex = deploymentWorkflow.indexOf('docker rm -f dkrypt');
+  const replaceIndex = deploymentWorkflow.indexOf(composeUpCommand);
   expect(preflightIndex).toBeGreaterThan(-1);
   expect(volumeCheckIndex).toBeGreaterThan(-1);
   expect(volumeCheckIndex).toBeLessThan(preflightIndex);
-  expect(preflightIndex).toBeLessThan(stopIndex);
+  expect(preflightIndex).toBeLessThan(replaceIndex);
   expect(deploymentWorkflow).toContain('--network none');
   expect(deploymentWorkflow).toContain('--mount type=volume,source=dkrypt_state,target=/data/state,readonly');
   expect(deploymentWorkflow).toContain('--tmpfs /tmp:rw,nosuid,size=1g,uid=10001,gid=10001');
 });
 
-test('production smoke authenticates the saved Rust pairing before probing the USB agent', () => {
+test('production replaces the container through Compose graceful shutdown', () => {
+  expect(deploymentWorkflow).toContain('stop_grace_period: 30s');
+  expect(deploymentWorkflow).not.toContain('docker rm -f dkrypt');
+  expect(deploymentWorkflow).toContain(composeUpCommand);
+});
+
+test('production smoke probes the saved Rust pairing and USB agent without disrupting the bridge', () => {
   const pairingVerification = deploymentWorkflow.indexOf('await verifyRustDevicePairing(primaryDevice)');
   const agentProbe = deploymentWorkflow.indexOf('withAutoinstallDeviceAgent(primaryDevice');
   expect(pairingVerification).toBeGreaterThan(-1);
   expect(agentProbe).toBeGreaterThan(-1);
   expect(pairingVerification).toBeLessThan(agentProbe);
+  expect(deploymentWorkflow).toContain("client.call('status', {}, 3_000)");
+  expect(deploymentWorkflow).not.toContain('process.kill(');
 });

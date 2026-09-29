@@ -266,7 +266,6 @@ jobs:
           DKRYPT_IMAGE="$IMAGE" docker compose --env-file /home/adrian/.local/share/dkrypt/.env --project-name dkrypt -f /home/adrian/.local/share/dkrypt/compose.yml config >/dev/null
           docker volume inspect dkrypt_state >/dev/null
           docker run --rm --network none --user 10001:10001 --mount type=volume,source=dkrypt_state,target=/data/state,readonly --tmpfs /tmp:rw,nosuid,size=1g,uid=10001,gid=10001 --env STATE_DIR=/data/state --env STATE_DATABASE_FILE=dkrypt.sqlite --entrypoint bun "$IMAGE" src/deploymentPreflight.ts
-          docker rm -f dkrypt 2>/dev/null || true
           DKRYPT_IMAGE="$IMAGE" docker compose --env-file /home/adrian/.local/share/dkrypt/.env --project-name dkrypt -f /home/adrian/.local/share/dkrypt/compose.yml up -d --no-build
 
       - name: Wait for health, roll back on failure
