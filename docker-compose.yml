@@ -22,12 +22,13 @@ services:
       DEVICE_MUX_SOCKET: /run/dkrypt/usbmuxd.sock
       DEVICE_PAIRING_STORE: /data/state/device-pairing
       NETMUXD_BIN: /usr/local/bin/netmuxd
-      DEVICE_SSH_KEY_PATH: /run/dkrypt/device_ssh_key
-      DEVICE_SSH_KEY_SOURCE: /device-ssh-key-source
+      DEVICE_SSH_KEY_DIR: /data/device-ssh
+      DEVICE_SSH_KEY_PATH: /data/device-ssh/id_ed25519
+      DEVICE_SSH_PUBLIC_KEY_PATH: /data/device-ssh/id_ed25519.pub
     volumes:
       - ipa-storage:/data/artifacts
       - state:/data/state
-      - ${DEVICE_SSH_KEY_HOST_PATH:-/dev/null}:/device-ssh-key-source:ro
+      - device-ssh:/data/device-ssh
       - /dev/bus/usb:/dev/bus/usb
     device_cgroup_rules:
       - 'c 189:* rwm'
@@ -46,3 +47,6 @@ volumes:
     name: dkrypt_ipa-tmp
   state:
     name: dkrypt_state
+  device-ssh:
+    external: true
+    name: dkrypt_device_ssh

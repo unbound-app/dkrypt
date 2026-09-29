@@ -827,6 +827,27 @@ export async function probeDeviceSshTunnel(connection: DeviceConnection, signal?
   }
 }
 
+function readDkryptSshPublicKey(value: string): string {
+  const fields = value.trim().split(/\s+/);
+  const [algorithm, encodedKey] = fields;
+  if (algorithm !== 'ssh-ed25519' || !encodedKey || !/^[A-Za-z0-9+/]+={0,2}$/.test(encodedKey)) {
+    throw new Error('dkrypt SSH public key is invalid');
+  }
+  const keyBlob = Buffer.from(encodedKey, 'base64');
+  if (keyBlob.toString('base64') !== encodedKey || keyBlob.length !== 51 || keyBlob.readUInt32BE(0) !== 11 || keyBlob.subarray(4, 15).toString('ascii') !== algorithm || keyBlob.readUInt32BE(15) !== 32) {
+    throw new Error('dkrypt SSH public key is invalid');
+  }
+  return `${algorithm} ${encodedKey}`;
+}
+
+async function installDkryptSshPublicKey(connection: DeviceClient): Promise<void> {
+  const publicKey = readDkryptSshPublicKey(await readFile(config.deviceSshPublicKeyPath, 'utf8'));
+  const quotedKey = shellQuote(publicKey);
+  const command = `set -e; ssh_home="\${HOME:-/var/jb/var/mobile}"; ssh_dir="$ssh_home/.ssh"; authorized_keys="$ssh_dir/authorized_keys"; mkdir -p "$ssh_dir"; chmod 700 "$ssh_dir"; touch "$authorized_keys"; chmod 600 "$authorized_keys"; if ! grep -Fqx ${quotedKey} "$authorized_keys"; then printf '%s\\n' ${quotedKey} >> "$authorized_keys"; fi`;
+  const { code, stderr } = await execCommand(connection, command, REMOTE_COMMAND_TIMEOUT_MS);
+  if (code !== 0) throw new Error(stderr.trim() || 'could not authorize dkrypt SSH access on the device');
+}
+
 function makeSerialQueue() {
   let queue: Promise<unknown> = Promise.resolve();
   return function withLock<T>(fn: () => Promise<T>): Promise<T> {
@@ -1186,7 +1207,13 @@ async function readRemoteValue(conn: DeviceClient, command: string): Promise<str
 
 export async function setupDeviceConnection(connection: DeviceConnection): Promise<DeviceSetupResult> {
   if (isDirectUsbDeviceAgentConnection(connection)) await pairDevice(connection);
-  return withSSH(connection, async (conn) => {
+  let sshKeyInstallError: string | undefined;
+  const result = await withSSH(connection, async (conn) => {
+    try {
+      await installDkryptSshPublicKey(conn);
+    } catch (error) {
+      sshKeyInstallError = error instanceof Error ? error.message : String(error);
+    }
     const system = await readRemoteValue(conn, 'uname -s 2>/dev/null');
     const model = await readRemoteValue(conn, 'sysctl -n hw.machine 2>/dev/null') ?? await readRemoteValue(conn, 'uname -m 2>/dev/null');
     const productVersion = await readRemoteValue(conn, '/var/jb/usr/bin/sw_vers -productVersion 2>/dev/null');
@@ -1222,8 +1249,20 @@ export async function setupDeviceConnection(connection: DeviceConnection): Promi
       { id: 'bridge', label: 'autoinstall bridge', status: bridgeReady ? 'ready' : 'attention', detail: bridgeReady ? 'SpringBoard heartbeat is responding' : 'Install autoinstall, then run setup again.' },
     ];
     if (!systemReady) steps[1] = { id: 'ios', label: 'iOS device detected', status: 'unavailable', detail: 'The device connection did not report Darwin.' };
-    return { info, steps, ready: steps.every((step) => step.status === 'ready') };
+    return { info, steps };
   });
+  const sshSftpReady = await probeDeviceSshTunnel(connection);
+  result.steps.push({
+    id: 'ssh_sftp',
+    label: 'SSH/SFTP for decrypts',
+    status: sshSftpReady ? 'ready' : 'attention',
+    detail: sshSftpReady
+      ? 'dkrypt SSH authentication and the SFTP service are responding.'
+      : sshKeyInstallError
+        ? `Could not authorize dkrypt SSH access: ${sshKeyInstallError}`
+        : 'SSH authentication or the SFTP service did not respond. Check that OpenSSH and its SFTP subsystem are enabled.',
+  });
+  return { ...result, ready: result.steps.every((step) => step.status === 'ready') };
 }
 
 async function loadBridgeSecret(rootDir: string): Promise<string> {

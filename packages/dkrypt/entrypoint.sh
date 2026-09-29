@@ -35,15 +35,31 @@ chown -R 0:0 "$pairing_store"
 find "$pairing_store" -type d -exec chmod 0700 {} +
 find "$pairing_store" -type f -exec chmod 0600 {} +
 
-ssh_key_source=${DEVICE_SSH_KEY_SOURCE:-/device-ssh-key-source}
-ssh_key_path=${DEVICE_SSH_KEY_PATH:-/run/dkrypt/device_ssh_key}
-if [ -s "$ssh_key_source" ]; then
-  install -o 0 -g 10001 -m 0440 "$ssh_key_source" "$ssh_key_path"
+device_ssh_dir=${DEVICE_SSH_KEY_DIR:-/data/device-ssh}
+ssh_key_path=${DEVICE_SSH_KEY_PATH:-$device_ssh_dir/id_ed25519}
+ssh_public_key_path=${DEVICE_SSH_PUBLIC_KEY_PATH:-$ssh_key_path.pub}
+case "$ssh_key_path" in "$device_ssh_dir"/*) ;; *) printf '%s\n' 'DEVICE_SSH_KEY_PATH must be stored in DEVICE_SSH_KEY_DIR' >&2; exit 1 ;; esac
+case "$ssh_public_key_path" in "$device_ssh_dir"/*) ;; *) printf '%s\n' 'DEVICE_SSH_PUBLIC_KEY_PATH must be stored in DEVICE_SSH_KEY_DIR' >&2; exit 1 ;; esac
+mkdir -p "$device_ssh_dir"
+chown 0:10001 "$device_ssh_dir"
+chmod 0750 "$device_ssh_dir"
+if [ ! -s "$ssh_key_path" ]; then
+  if [ -e "$ssh_public_key_path" ]; then
+    printf '%s\n' 'device SSH public key exists without its private key' >&2
+    exit 1
+  fi
+  umask 077
+  ssh-keygen -q -t ed25519 -N '' -C dkrypt-device -f "$ssh_key_path"
 fi
-mkdir -p /root/.ssh
-chown 0:10001 /root /root/.ssh
-chmod 0710 /root /root/.ssh
-ln -sfn "$ssh_key_path" /root/.ssh/id_ed25519
+umask 077
+ssh-keygen -y -P '' -f "$ssh_key_path" > "$ssh_public_key_path.tmp"
+if ! awk '$1 == "ssh-ed25519" { found = 1 } END { exit !found }' "$ssh_public_key_path.tmp"; then
+  printf '%s\n' 'device SSH key must use Ed25519' >&2
+  exit 1
+fi
+mv "$ssh_public_key_path.tmp" "$ssh_public_key_path"
+chown 0:10001 "$ssh_key_path" "$ssh_public_key_path"
+chmod 0440 "$ssh_key_path" "$ssh_public_key_path"
 
 secret_file=${DEVICE_BRIDGE_SECRET_FILE:-$state_dir/device-bridge.secret}
 if [ -z "${DEVICE_BRIDGE_SECRET:-}" ]; then

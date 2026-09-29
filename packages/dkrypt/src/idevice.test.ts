@@ -5,13 +5,13 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { Client } from 'ssh2';
-import type { BridgeEnvelope, DeviceClient, DeviceSession } from './idevice.js';
+import type { BridgeEnvelope, DeviceClient, DeviceSession, DeviceSetupResult } from './idevice.js';
 import { withCorrelation } from '#correlation.js';
 import { config } from '#config.js';
 import { BRIDGE_CAPABILITIES, BRIDGE_PROTOCOL_VERSION, TESTFLIGHT_LIFECYCLE_CAPABILITIES } from './bridgeProtocol.js';
 import { flushTelemetry, startSpan } from '#telemetry.js';
 
-const { armAppStoreAutoConfirm, buildIpadecryptRuntimeConfig, clearAppStoreAutoConfirm, createBridgeEnvelope, createDeviceAgentEnvelope, execCommand, getDeviceAgentRetryDelay, getDeviceTransportOrder, getRustDeviceBridgeHealth, getRustDeviceBridgeStatus, isDirectUsbDeviceAgentConnection, pairDevice, probeDeviceSshTunnel, readBridgeHeartbeats, retryRustDeviceHealthProbe, retryTransientSshConnection, sendAppStoreBridgeRequest, verifyRustDevicePairing, withSSH } = await import('./idevice.js' + '?idevice-transport-test');
+const { armAppStoreAutoConfirm, buildIpadecryptRuntimeConfig, clearAppStoreAutoConfirm, createBridgeEnvelope, createDeviceAgentEnvelope, execCommand, getDeviceAgentRetryDelay, getDeviceTransportOrder, getRustDeviceBridgeHealth, getRustDeviceBridgeStatus, isDirectUsbDeviceAgentConnection, pairDevice, probeDeviceSshTunnel, readBridgeHeartbeats, retryRustDeviceHealthProbe, retryTransientSshConnection, sendAppStoreBridgeRequest, setupDeviceConnection, verifyRustDevicePairing, withSSH } = await import('./idevice.js' + '?idevice-transport-test');
 
 type FakeExecStream = {
   stderr: {
@@ -610,6 +610,77 @@ test('rejects a saved pairing record that authenticates a different device', asy
   expect(operations).toEqual(['metadata']);
 });
 
+test('device setup provisions dkrypt SSH access and does not report decrypt readiness without SFTP', async () => {
+  const runtimeDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-device-setup-'));
+  const privateKeyPath = path.join(runtimeDir, 'device-key');
+  const publicKeyPath = path.join(runtimeDir, 'device-key.pub');
+  const keyPair = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const ed25519PublicKey = generateKeyPairSync('ed25519').publicKey.export({ format: 'der', type: 'spki' }).subarray(-32);
+  const algorithm = Buffer.from('ssh-ed25519');
+  const algorithmLength = Buffer.alloc(4);
+  const keyLength = Buffer.alloc(4);
+  algorithmLength.writeUInt32BE(algorithm.length);
+  keyLength.writeUInt32BE(ed25519PublicKey.length);
+  const publicKey = `ssh-ed25519 ${Buffer.concat([algorithmLength, algorithm, keyLength, ed25519PublicKey]).toString('base64')}`;
+  await writeFile(privateKeyPath, keyPair.privateKey.export({ format: 'pem', type: 'pkcs1' }), { mode: 0o600 });
+  await writeFile(publicKeyPath, `${publicKey} dkrypt-device\n`, { mode: 0o600 });
+  const unavailableService = createServer();
+  await new Promise<void>((resolve) => unavailableService.listen(0, '127.0.0.1', resolve));
+  const port = (unavailableService.address() as AddressInfo).port;
+  await new Promise<void>((resolve) => unavailableService.close(() => resolve()));
+  const originalRuntimeDir = config.deviceRuntimeDir;
+  const originalSshKeyPath = config.deviceSshKeyPath;
+  const originalSshPublicKeyPath = config.deviceSshPublicKeyPath;
+  const originalSshPort = config.deviceSshPort;
+  const commands: string[] = [];
+  const deviceId = 'fixture-setup-device';
+
+  config.deviceRuntimeDir = runtimeDir;
+  config.deviceSshKeyPath = privateKeyPath;
+  config.deviceSshPublicKeyPath = publicKeyPath;
+  config.deviceSshPort = 22;
+
+  try {
+    const { result } = await withRustBridgeFixture<DeviceSetupResult>((request) => {
+      if (request.operation === 'pair') return { deviceId, hostId: 'fixture-host', paired: true };
+      if (request.operation === 'metadata') return { UniqueDeviceID: deviceId };
+      if (request.operation === 'capabilities') return { protocolVersion: 1, capabilities: ['agent'] };
+      if (request.operation === 'open_tunnel') return { tunnelId: 'fixture-ssh-tunnel', host: '127.0.0.1', port };
+      if (request.operation === 'close_tunnel') return { closed: true };
+      if (request.operation !== 'agent') return {};
+
+      const envelope = request.payload as Record<string, unknown>;
+      const agentRequest = JSON.parse(Buffer.from(String(envelope.payload), 'base64url').toString('utf8')) as Record<string, unknown>;
+      const agentSecret = String(request.agentSecret);
+      if (agentRequest.action === 'status') {
+        return signedAgentResponse(agentSecret, String(envelope.requestId), { agentVersion: '1.4.0' });
+      }
+
+      const command = String(agentRequest.command);
+      commands.push(command);
+      const stdout = command === 'uname -s 2>/dev/null' ? 'Darwin'
+        : command === 'sysctl -n hw.machine 2>/dev/null' ? 'iPad14,1'
+          : command === '/var/jb/usr/bin/sw_vers -productVersion 2>/dev/null' ? '18.0'
+            : command === 'uname -p 2>/dev/null' ? 'arm'
+              : command === 'scutil --get ComputerName 2>/dev/null' ? 'iPad'
+                : command.startsWith('/var/jb/usr/bin/dpkg-query') ? 'install ok installed|1.4.0'
+                  : '';
+      return signedAgentResponse(agentSecret, String(envelope.requestId), { stdout, stderr: '', code: 0 });
+    }, () => setupDeviceConnection({ transport: 'usb', udid: deviceId }));
+
+    expect(result.ready).toBe(false);
+    expect(result.steps.find((step) => step.id === 'ssh_sftp')).toMatchObject({ status: 'attention' });
+    expect(commands.some((command) => command.includes(publicKey) && command.includes('authorized_keys'))).toBe(true);
+    expect(commands.some((command) => command.includes('ssh_home="${HOME:-/var/jb/var/mobile}"'))).toBe(true);
+  } finally {
+    config.deviceRuntimeDir = originalRuntimeDir;
+    config.deviceSshKeyPath = originalSshKeyPath;
+    config.deviceSshPublicKeyPath = originalSshPublicKeyPath;
+    config.deviceSshPort = originalSshPort;
+    await rm(runtimeDir, { recursive: true, force: true });
+  }
+});
+
 test('backs off USB agent reconnects long enough for USBMux to recover', () => {
   expect([0, 1, 2, 3, 4, 5].map(getDeviceAgentRetryDelay)).toEqual([500, 1_000, 2_000, 4_000, 5_000, 5_000]);
 });
@@ -678,7 +749,7 @@ test('closes the Rust-managed SSH tunnel when the SFTP service cannot be reached
 });
 
 test('creates an ipadecrypt runtime config without requiring bootstrap credentials', () => {
-  const config = JSON.parse(buildIpadecryptRuntimeConfig({ host: '127.0.0.1', port: 2222, user: 'mobile', keyPath: '/root/.ssh/id_ed25519' })) as {
+  const config = JSON.parse(buildIpadecryptRuntimeConfig({ host: '127.0.0.1', port: 2222, user: 'mobile', keyPath: '/data/device-ssh/id_ed25519' })) as {
     version: number;
     apple?: { email?: string; password?: string };
     device?: { host?: string; port?: number; user?: string; auth?: { kind?: string; keyPath?: string } };
@@ -687,7 +758,7 @@ test('creates an ipadecrypt runtime config without requiring bootstrap credentia
   expect(config).toMatchObject({
     version: 2,
     apple: { email: 'managed-device@dkrypt.invalid' },
-    device: { host: '127.0.0.1', port: 2222, user: 'mobile', auth: { kind: 'key', keyPath: '/root/.ssh/id_ed25519' } },
+    device: { host: '127.0.0.1', port: 2222, user: 'mobile', auth: { kind: 'key', keyPath: '/data/device-ssh/id_ed25519' } },
   });
   expect(config.apple?.password).toBeUndefined();
 });

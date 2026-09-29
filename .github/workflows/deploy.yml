@@ -157,50 +157,7 @@ jobs:
         run: |
           set -e
           RUNTIME_DIR=/home/adrian/.local/share/dkrypt
-          RUNTIME_HOME=$(cd "$RUNTIME_DIR/../../.." && pwd)
           test -f "$RUNTIME_DIR/.env"
-          if [ -n "${DEVICE_SSH_KEY_HOST_PATH:-}" ] && { [ ! -r "$DEVICE_SSH_KEY_HOST_PATH" ] || [ ! -s "$DEVICE_SSH_KEY_HOST_PATH" ]; }; then
-            unset DEVICE_SSH_KEY_HOST_PATH
-          fi
-          if [ -z "${DEVICE_SSH_KEY_HOST_PATH:-}" ]; then
-            configured_key_path=$(awk '
-              /^[[:space:]]*DEVICE_SSH_KEY_HOST_PATH=/ {
-                sub(/^[[:space:]]*DEVICE_SSH_KEY_HOST_PATH=/, "")
-                sub(/[[:space:]]*$/, "")
-                if (substr($0, 1, 1) == "\"" || substr($0, 1, 1) == "\047") {
-                  quote = substr($0, 1, 1)
-                  if (substr($0, length($0), 1) == quote) $0 = substr($0, 2, length($0) - 2)
-                }
-                configured = $0
-              }
-              END { print configured }
-            ' "$RUNTIME_DIR/.env")
-            if [ -n "$configured_key_path" ] && [ -r "$configured_key_path" ] && [ -s "$configured_key_path" ]; then
-              DEVICE_SSH_KEY_HOST_PATH="$configured_key_path"
-            fi
-          fi
-          if [ -z "${DEVICE_SSH_KEY_HOST_PATH:-}" ] && docker container inspect dkrypt >/dev/null 2>&1; then
-            existing_key_path=$(docker inspect --format '{{range .Mounts}}{{if or (eq .Destination "/device-ssh-key-source") (eq .Destination "/run/dkrypt/host-ssh-key") (eq .Destination "/root/.ssh/id_ed25519")}}{{.Source}}{{end}}{{end}}' dkrypt 2>/dev/null || true)
-            if [ -n "$existing_key_path" ] && [ -r "$existing_key_path" ] && [ -s "$existing_key_path" ]; then
-              DEVICE_SSH_KEY_HOST_PATH="$existing_key_path"
-            fi
-          fi
-          if [ -z "${DEVICE_SSH_KEY_HOST_PATH:-}" ]; then
-            for candidate in "$RUNTIME_HOME"/.ssh/id_* "$HOME"/.ssh/id_*; do
-              case "$candidate" in
-                *.pub|*.cert|*.crt) continue ;;
-              esac
-              if [ -f "$candidate" ] && [ -r "$candidate" ] && [ -s "$candidate" ]; then
-                DEVICE_SSH_KEY_HOST_PATH="$candidate"
-                break
-              fi
-            done
-          fi
-          if [ -z "${DEVICE_SSH_KEY_HOST_PATH:-}" ]; then
-            DEVICE_SSH_KEY_HOST_PATH=/dev/null
-            echo "No host SSH key found; deploying USB discovery and recovery without the optional ipadecrypt SSH/SFTP channel"
-          fi
-          printf 'DEVICE_SSH_KEY_HOST_PATH=%s\n' "$DEVICE_SSH_KEY_HOST_PATH" >> "$GITHUB_ENV"
           cat > "$RUNTIME_DIR/compose.yml" <<'EOF'
           name: dkrypt
           services:
@@ -223,12 +180,13 @@ jobs:
                 DEVICE_MUX_SOCKET: /run/dkrypt/usbmuxd.sock
                 DEVICE_PAIRING_STORE: /data/state/device-pairing
                 NETMUXD_BIN: /usr/local/bin/netmuxd
-                DEVICE_SSH_KEY_PATH: /run/dkrypt/device_ssh_key
-                DEVICE_SSH_KEY_SOURCE: /device-ssh-key-source
+                DEVICE_SSH_KEY_DIR: /data/device-ssh
+                DEVICE_SSH_KEY_PATH: /data/device-ssh/id_ed25519
+                DEVICE_SSH_PUBLIC_KEY_PATH: /data/device-ssh/id_ed25519.pub
               volumes:
                 - ipa-storage:/data/artifacts
                 - state:/data/state
-                - ${DEVICE_SSH_KEY_HOST_PATH:-/dev/null}:/device-ssh-key-source:ro
+                - device-ssh:/data/device-ssh
                 - /dev/bus/usb:/dev/bus/usb
               device_cgroup_rules:
                 - 'c 189:* rwm'
@@ -248,6 +206,9 @@ jobs:
             state:
               external: true
               name: dkrypt_state
+            device-ssh:
+              external: true
+              name: dkrypt_device_ssh
           EOF
       - name: Pull and deploy immutable image
         env:
@@ -263,6 +224,7 @@ jobs:
           fi
           docker pull "$IMAGE"
           docker tag "$IMAGE" dkrypt:latest
+          docker volume inspect dkrypt_device_ssh >/dev/null 2>&1 || docker volume create dkrypt_device_ssh >/dev/null
           DKRYPT_IMAGE="$IMAGE" docker compose --env-file /home/adrian/.local/share/dkrypt/.env --project-name dkrypt -f /home/adrian/.local/share/dkrypt/compose.yml config >/dev/null
           docker volume inspect dkrypt_state >/dev/null
           docker run --rm --network none --user 10001:10001 --mount type=volume,source=dkrypt_state,target=/data/state,readonly --tmpfs /tmp:rw,nosuid,size=1g,uid=10001,gid=10001 --env STATE_DIR=/data/state --env STATE_DATABASE_FILE=dkrypt.sqlite --entrypoint bun "$IMAGE" src/deploymentPreflight.ts
@@ -309,7 +271,7 @@ jobs:
             exit 1
           }
           smoke() {
-            docker exec -i -e EXPECTED_BUILD_REF="$EXPECTED_BUILD_REF" -e EXPECTED_DEPLOYMENT_ID="$EXPECTED_DEPLOYMENT_ID" dkrypt bun - <<'JS'
+            docker exec -i --user 10001:10001 -e EXPECTED_BUILD_REF="$EXPECTED_BUILD_REF" -e EXPECTED_DEPLOYMENT_ID="$EXPECTED_DEPLOYMENT_ID" dkrypt bun - <<'JS'
           const base = `http://127.0.0.1:${process.env.PORT || 8080}`;
           const headers = { authorization: `Bearer ${process.env.API_KEY}` };
           const fetchWithTimeout = (input, init = {}) => fetch(input, { ...init, signal: init.signal ?? AbortSignal.timeout(5_000) });
@@ -486,21 +448,18 @@ jobs:
           if (apiIdentity?.[2] !== '10001' || bridgeIdentity?.[2] !== '0' || bridgeGroup?.[2] !== '10001') {
             throw new Error('API and USB bridge do not have the expected separated runtime identities');
           }
-          let sshKeyAvailable = false;
-          try {
-            const key = await fs.stat('/run/dkrypt/device_ssh_key');
-            if (!key.isFile() || key.size === 0 || key.uid !== 0 || key.gid !== 10001 || (key.mode & 0o777) !== 0o440) throw new Error('device SSH key is not a non-empty regular file with API-group-only permissions');
-            sshKeyAvailable = true;
-          } catch (error) {
-            if (error?.code !== 'ENOENT') throw error;
-          }
+          const key = await fs.stat(process.env.DEVICE_SSH_KEY_PATH || '/data/device-ssh/id_ed25519');
+          const publicKey = await fs.stat(process.env.DEVICE_SSH_PUBLIC_KEY_PATH || '/data/device-ssh/id_ed25519.pub');
+          if (!key.isFile() || key.size === 0 || key.uid !== 0 || key.gid !== 10001 || (key.mode & 0o777) !== 0o440) throw new Error('device SSH private key is not a non-empty regular file with API-group-only permissions');
+          if (!publicKey.isFile() || publicKey.size === 0 || publicKey.uid !== 0 || publicKey.gid !== 10001 || (publicKey.mode & 0o777) !== 0o440) throw new Error('device SSH public key is not a non-empty regular file with API-group-only permissions');
+          const sshKeyAvailable = true;
           try {
             await fs.stat('/root/.ipadecrypt');
             throw new Error('legacy .ipadecrypt bootstrap path is present');
           } catch (error) {
             if (error instanceof Error && !String(error.message).includes('ENOENT')) throw error;
           }
-          const { verifyRustDevicePairing, withAutoinstallDeviceAgent } = await import('/app/src/idevice.ts');
+          const { setupDeviceConnection, verifyRustDevicePairing, withAutoinstallDeviceAgent } = await import('/app/src/idevice.ts');
           const primaryDevice = getPrimaryDevice();
           if (!primaryDevice?.udid || primaryDevice.host || primaryDevice.usbmuxNetwork === true) throw new Error('configured primary device is not a direct USB pairing');
           await verifyRustDevicePairing(primaryDevice);
@@ -519,15 +478,21 @@ jobs:
               }
             }
           }
-          await verifyPairingStorePermissions(pairingStore);
           const agentStatus = await withAutoinstallDeviceAgent(primaryDevice, client => client.call('status', {}, 3_000));
           if (typeof agentStatus.agentVersion !== 'string') throw new Error('signed USB device-agent status request was incomplete');
+          const setup = await setupDeviceConnection(primaryDevice);
+          if (!setup.ready) {
+            const blockers = setup.steps.filter(step => step.status !== 'ready').map(step => `${step.label}: ${step.detail ?? step.status}`);
+            throw new Error(`device setup did not verify decrypt readiness: ${blockers.join('; ')}`);
+          }
+          await verifyPairingStorePermissions(pairingStore);
           console.log(JSON.stringify({
             health: health.ok,
             device,
             bridge: health.bridge,
             devicePairing: true,
             usbAgent: { version: agentStatus.agentVersion },
+            decryptSftpReady: setup.steps.some(step => step.id === 'ssh_sftp' && step.status === 'ready'),
             runtime: { apiUid: apiIdentity[2], bridgeUid: bridgeIdentity[2], sshKeyAvailable },
             routes: Object.keys(openapi.paths).length,
             csp: true,
@@ -543,6 +508,14 @@ jobs:
           fi
           if ! mounts=$(docker inspect --format '{{json .Mounts}}' dkrypt); then
             echo 'deployment container mount inventory is unavailable' >&2
+            fail_deployment
+          fi
+          if ! printf '%s' "$mounts" | grep -q '"Name":"dkrypt_device_ssh"'; then
+            echo 'dedicated device SSH key volume is not attached' >&2
+            fail_deployment
+          fi
+          if printf '%s' "$mounts" | grep -Eq '"Destination":"/device-ssh-key-source"|"Destination":"/root/.ssh/id_ed25519"'; then
+            echo 'host SSH identity is unexpectedly mounted into dkrypt' >&2
             fail_deployment
           fi
           if printf '%s' "$mounts" | grep -q '/root/.ipadecrypt'; then

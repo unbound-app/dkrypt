@@ -12,12 +12,13 @@ dkrypt provides an authenticated dashboard for managing decrypts, IPA artifacts,
 4. Start dkrypt:
 
    ```sh
+   docker volume create dkrypt_device_ssh
    docker compose up -d --build
    ```
 
 5. Open `http://localhost:8080`, sign in, open **Settings → Devices**, select the discovered device, and choose **Set up**.
 
-The setup flow pairs the device, verifies iOS and the jailbreak, checks ElleKit and autoinstall, and stores the device record. A device does not need an `.ipadecrypt` directory or a setup CLI command to be recognized.
+The setup flow pairs the device, verifies iOS and the jailbreak, checks ElleKit and autoinstall, installs dkrypt's SSH public key through the authenticated device agent, verifies SSH/SFTP for decrypts, and stores the device record. A device does not need an `.ipadecrypt` directory or a setup CLI command to be recognized.
 
 ## Requirements
 
@@ -25,6 +26,7 @@ The setup flow pairs the device, verifies iOS and the jailbreak, checks ElleKit 
 - Linux host access to `/dev/bus/usb` for USB devices
 - A rootless jailbreak with ElleKit
 - The dkrypt autoinstall package installed on the device
+- OpenSSH with its SFTP subsystem enabled for decrypts; device discovery and recovery do not depend on SSH
 - An App Store Apple ID; TestFlight jobs also need TestFlight access
 
 The image contains the Rust device bridge, the pinned `idevice` revision, and the pinned `netmuxd` release. USB discovery, pairing, reconnects, and local service tunnels are owned by the bridge; the host does not need Apple device CLI tools or a mounted mux socket.
@@ -78,12 +80,10 @@ Copy `.env.example` to `.env` and configure the required values. The important r
 | `SMTP_PASS_PREVIOUS` | Previous SMTP password used only after a permanent authentication rejection |
 | `OUTBOUND_WEBHOOK_SECRET` | HMAC key for signing outgoing notification webhooks |
 | `OUTBOUND_WEBHOOK_SECRET_PREVIOUS` | Previous HMAC key used during outbound webhook key rotation |
-| `DEVICE_SSH_KEY_PATH` | Runtime path to the key used only by the `ipadecrypt` compatibility channel |
-| `DEVICE_SSH_KEY_HOST_PATH` | Optional host key for the `ipadecrypt` SSH/SFTP compatibility channel; leave unset for Rust USB discovery and agent recovery |
 | `ARTIFACT_DIR` | IPA storage volume |
 | `STATE_DIR` | SQLite database, pairing material, backups, and mirrors |
 
-The Bun API runs as an unprivileged service account; the USB bridge retains root access for direct device transport, with a small root supervisor managing both processes. Startup migrates existing state and artifact volume permissions once and keeps pairing records root-only. When configured, the SSH key is copied read-only into tmpfs for the `ipadecrypt` compatibility channel; without it, USB discovery, pairing, agent requests, and device recovery remain available, while SSH/SFTP-dependent decrypt operations report their own capability failure. Keep `.env`, pairing material, and SSH private keys out of Git. Use an HTTPS reverse proxy when exposing the dashboard beyond localhost.
+The Bun API runs as an unprivileged service account; the USB bridge retains root access for direct device transport, with a small root supervisor managing both processes. Startup migrates existing state and artifact volume permissions once and keeps pairing records root-only. dkrypt creates its own Ed25519 SSH key in a separate persistent `dkrypt_device_ssh` Docker volume; it does not import or scan the host's personal SSH keys. USB setup installs the public half through the authenticated device agent and only reports decrypt readiness after SSH and SFTP respond. Preserve this volume across container replacements. If it is deleted, run USB setup again so the device can authorize the newly generated key. Protect access to the volume like any other service credential. Use an HTTPS reverse proxy when exposing the dashboard beyond localhost.
 
 Outgoing notification webhooks include `X-Dkrypt-Event`, `X-Dkrypt-Timestamp`, and `X-Dkrypt-Signature`. The signature is `sha256=` followed by the HMAC-SHA256 hex digest of `<timestamp>.<raw JSON body>`. During rotation, set `OUTBOUND_WEBHOOK_SECRET` to the new key and `OUTBOUND_WEBHOOK_SECRET_PREVIOUS` to the old key; dkrypt sends the old-key signature in `X-Dkrypt-Signature-Previous` over the same timestamp and body. Configure receivers to accept either signature, reject stale timestamps, and compare signatures in constant time. Remove the previous key after every receiver accepts the current key.
 

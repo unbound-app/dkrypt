@@ -28,18 +28,23 @@ test('Compose binds the USB bus directory and permits USB character devices', ()
   expect(deploymentWorkflow).not.toContain('              devices:\n                - /dev/bus/usb:/dev/bus/usb');
 });
 
-test('USB bridge startup does not require an SSH key', () => {
-  expect(entrypoint).toContain('if [ -s "$ssh_key_source" ]; then');
-  expect(dockerfile).toContain('RUN touch /device-ssh-key-source && chmod 0600 /device-ssh-key-source');
-  expect(compose).toContain('${DEVICE_SSH_KEY_HOST_PATH:-/dev/null}:/device-ssh-key-source:ro');
-  expect(deploymentWorkflow).toContain('${DEVICE_SSH_KEY_HOST_PATH:-/dev/null}:/device-ssh-key-source:ro');
-  expect(deploymentWorkflow).toContain('configured_key_path=$(awk');
-  expect(deploymentWorkflow).toContain('DEVICE_SSH_KEY_HOST_PATH="$configured_key_path"');
-  expect(deploymentWorkflow.indexOf('configured_key_path=$(awk')).toBeLessThan(deploymentWorkflow.indexOf('existing_key_path=$(docker inspect'));
-  expect(deploymentWorkflow).toContain('DEVICE_SSH_KEY_HOST_PATH=/dev/null');
-  expect(deploymentWorkflow).toContain('if (!key.isFile() || key.size === 0 || key.uid !== 0 || key.gid !== 10001 || (key.mode & 0o777) !== 0o440)');
-  expect(deploymentWorkflow).toContain('let sshKeyAvailable = false;');
-  expect(deploymentWorkflow).not.toContain('No SSH key source configured for the dkrypt compatibility channel');
+test('a dedicated Ed25519 SSH key persists independently of host credentials', () => {
+  expect(entrypoint).toContain('ssh-keygen -q -t ed25519 -N');
+  expect(entrypoint).toContain('DEVICE_SSH_KEY_PATH must be stored in DEVICE_SSH_KEY_DIR');
+  expect(entrypoint).toContain('chmod 0440 "$ssh_key_path" "$ssh_public_key_path"');
+  expect(dockerfile).toContain('openssh-client');
+  expect(compose).toContain('      - device-ssh:/data/device-ssh');
+  expect(compose).toContain('  device-ssh:\n    external: true\n    name: dkrypt_device_ssh');
+  expect(deploymentWorkflow).toContain('                - device-ssh:/data/device-ssh');
+  expect(deploymentWorkflow).toContain('docker volume inspect dkrypt_device_ssh');
+  expect(deploymentWorkflow).toContain('name: dkrypt_device_ssh');
+  expect(deploymentWorkflow).toContain("process.env.DEVICE_SSH_KEY_PATH || '/data/device-ssh/id_ed25519'");
+  expect(deploymentWorkflow).toContain("process.env.DEVICE_SSH_PUBLIC_KEY_PATH || '/data/device-ssh/id_ed25519.pub'");
+  expect(deploymentWorkflow).toContain('"Name":"dkrypt_device_ssh"');
+  expect(deploymentWorkflow).toContain('host SSH identity is unexpectedly mounted into dkrypt');
+  expect(compose).not.toContain('DEVICE_SSH_KEY_HOST_PATH');
+  expect(deploymentWorkflow).not.toContain('DEVICE_SSH_KEY_HOST_PATH');
+  expect(deploymentWorkflow).not.toContain('RUNTIME_HOME/.ssh/id_');
 });
 
 test('production verifies database migration and restore before replacing the running container', () => {
@@ -61,12 +66,18 @@ test('production replaces the container through Compose graceful shutdown', () =
   expect(deploymentWorkflow).toContain(composeUpCommand);
 });
 
-test('production smoke probes the saved Rust pairing and USB agent without disrupting the bridge', () => {
+test('production smoke verifies the saved Rust pairing, USB agent, and decrypt SFTP setup', () => {
   const pairingVerification = deploymentWorkflow.indexOf('await verifyRustDevicePairing(primaryDevice)');
   const agentProbe = deploymentWorkflow.indexOf('withAutoinstallDeviceAgent(primaryDevice');
+  const decryptSetup = deploymentWorkflow.indexOf('await setupDeviceConnection(primaryDevice)');
   expect(pairingVerification).toBeGreaterThan(-1);
   expect(agentProbe).toBeGreaterThan(-1);
+  expect(decryptSetup).toBeGreaterThan(-1);
   expect(pairingVerification).toBeLessThan(agentProbe);
+  expect(agentProbe).toBeLessThan(decryptSetup);
   expect(deploymentWorkflow).toContain("client.call('status', {}, 3_000)");
+  expect(deploymentWorkflow).toContain('device setup did not verify decrypt readiness');
+  expect(deploymentWorkflow).toContain("step.id === 'ssh_sftp' && step.status === 'ready'");
+  expect(deploymentWorkflow).toContain('docker exec -i --user 10001:10001');
   expect(deploymentWorkflow).not.toContain('process.kill(');
 });
