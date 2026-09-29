@@ -26,11 +26,12 @@ export function classifyTestFlightCatalogProbe(cache: ReturnType<typeof getTestF
   return { status: 'ok', detail: `${cache.apps.length} app(s) recently verified on device` };
 }
 
-async function probe<T extends SyntheticProbeResult['id']>(id: T, action: () => Promise<Omit<SyntheticProbeResult, 'id' | 'durationMs'>>): Promise<SyntheticProbeResult> {
+export async function runSyntheticProbe<T extends SyntheticProbeResult['id']>(id: T, action: () => Promise<Omit<SyntheticProbeResult, 'id' | 'durationMs'>>): Promise<SyntheticProbeResult> {
   const startedAt = performance.now();
   try {
     const result = await action();
     const durationMs = Math.round(performance.now() - startedAt);
+    if (result.status === 'error') incrementMetric('synthetic_probe_failures_total', { probe: id });
     observeMetric('synthetic_probe_duration_ms', durationMs, { probe: id, outcome: result.status });
     return { id, durationMs, ...result };
   } catch (error) {
@@ -43,13 +44,13 @@ async function probe<T extends SyntheticProbeResult['id']>(id: T, action: () => 
 
 export async function runSyntheticProbes(): Promise<{ ok: boolean; checkedAt: string; probes: SyntheticProbeResult[] }> {
   const probes = await Promise.all([
-    probe('database', async () => {
+    runSyntheticProbe('database', async () => {
       const status = getStateDatabaseStatus();
       return status.integrity === 'ok'
         ? { status: 'ok' as const, detail: `SQLite schema ${status.schemaVersion} is intact` }
         : { status: 'error' as const, detail: 'SQLite integrity check failed' };
     }),
-    probe('artifacts', async () => {
+    runSyntheticProbe('artifacts', async () => {
       const usage = getDiskUsage(config.artifactDir);
       if (!usage) {
         setGaugeMetric('artifact_storage_available', 0);
@@ -62,14 +63,14 @@ export async function runSyntheticProbes(): Promise<{ ok: boolean; checkedAt: st
       if (usage.usedPercent >= 0.85) return { status: 'warn' as const, detail: `${Math.round(usage.usedPercent * 100)}% of artifact storage is used` };
       return { status: 'ok' as const, detail: `${Math.round(usage.usedPercent * 100)}% of artifact storage is used` };
     }),
-    probe('device-bridge', async () => {
+    runSyntheticProbe('device-bridge', async () => {
       const status = await getRustDeviceBridgeStatus();
       return {
         status: status.state === 'ready' ? 'ok' as const : 'warn' as const,
         detail: `Rust bridge is ${status.state} with ${status.deviceCount} discovered device(s)`,
       };
     }),
-    probe('device-agent', async () => {
+    runSyntheticProbe('device-agent', async () => {
       const devices = getEffectiveDevices().filter((device) => device.enabled);
       if (devices.length === 0) return { status: 'skipped' as const, detail: 'No enabled device is configured' };
       const primary = devices.find((device) => device.isPrimary) ?? devices[0];
@@ -78,12 +79,12 @@ export async function runSyntheticProbes(): Promise<{ ok: boolean; checkedAt: st
       if (health.subsystems?.agent === 'offline') return { status: 'warn' as const, detail: 'USB transport is ready but the device agent is unavailable' };
       return { status: 'ok' as const, detail: 'Configured device agent responded' };
     }),
-    probe('testflight', async () => {
+    runSyntheticProbe('testflight', async () => {
       const devices = getEffectiveDevices().filter((device) => device.enabled);
       if (devices.length === 0) return { status: 'skipped' as const, detail: 'No enabled device is configured' };
       return classifyTestFlightCatalogProbe(getTestFlightCatalogCacheState());
     }),
-    probe('webhooks', async () => {
+    runSyntheticProbe('webhooks', async () => {
       const inbox = listWebhookInbox();
       const failures = inbox.filter((record) => record.status === 'failed' || record.status === 'quarantined').length;
       const providers = [stripeEnabled ? 'Stripe' : undefined, cryptoBillingEnabled ? 'NOWPayments' : undefined].filter(Boolean);
