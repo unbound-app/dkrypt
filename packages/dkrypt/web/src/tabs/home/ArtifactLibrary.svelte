@@ -1,21 +1,38 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
-  import { Download, Pin, PinOff, RefreshCw } from 'lucide-svelte';
+  import { Download, Pin, PinOff, RefreshCw, X } from 'lucide-svelte';
   import AppIcon from '#components/AppIcon.svelte';
   import EmptyState from '#components/EmptyState.svelte';
   import Badge from '#lib/components/ui/Badge.svelte';
   import Button from '#lib/components/ui/Button.svelte';
   import Card from '#lib/components/ui/Card.svelte';
   import Input from '#lib/components/ui/Input.svelte';
+  import Select from '#lib/components/ui/Select.svelte';
   import { fetchArtifacts, observeArtifacts, setDashboardArtifactPinned, setDashboardArtifactsPinned, type ArtifactRecord } from '#lib/api';
   import { appDisplayName, appIconUrl, ensureAppCatalog } from '#lib/appCatalog.svelte';
   import { fmtBytesGB, fmtSize, fmtTime } from '#lib/format.svelte';
+  import { createSavedViews } from '#lib/savedViews.svelte';
   import { PermissionFlag } from '#lib/permissions';
   import { sessionHasPermission } from '#lib/session.svelte';
   import { isServerQueryCancelled, mergeServerPage, serverQueryStatus } from '#lib/serverStateCache.svelte';
   import { buttonVariants } from '#lib/components/ui/variants';
   import { projectSelectionState } from '#lib/projectSelection.svelte';
   import VirtualizedList from '#components/VirtualizedList.svelte';
+
+  type ArtifactSourceFilter = 'all' | ArtifactRecord['channel'];
+
+  interface ArtifactFilterPreset {
+    name: string;
+    query: string;
+    channel: ArtifactSourceFilter;
+  }
+
+  const ARTIFACT_SOURCE_OPTIONS = [
+    { value: 'all', label: 'All sources' },
+    { value: 'appstore', label: 'App Store' },
+    { value: 'testflight', label: 'TestFlight' },
+  ];
+  const savedViews = createSavedViews<ArtifactFilterPreset>('artifactFilterPresets');
 
   const canDecrypt = $derived(sessionHasPermission(PermissionFlag.requestDecrypt));
   const canManageStorage = $derived(sessionHasPermission(PermissionFlag.manageAutomation));
@@ -24,6 +41,8 @@
   let totalBytes = $state(0);
   let maxBytes = $state(0);
   let query = $state('');
+  let channelFilter = $state<ArtifactSourceFilter>('all');
+  let newFilterName = $state('');
   let loading = $state(false);
   let loadingMore = $state(false);
   let pinningArtifactIds = $state<string[]>([]);
@@ -45,7 +64,12 @@
     error = '';
     nextCursor = undefined;
     const searchQuery = query.trim() || undefined;
-    const artifactQuery = { cursorOrOffset: undefined, limit: 50, q: searchQuery };
+    const artifactQuery = {
+      cursorOrOffset: undefined,
+      limit: 50,
+      q: searchQuery,
+      channel: channelFilter === 'all' ? undefined : channelFilter,
+    };
     const artifactQueryKey = JSON.stringify([projectSelectionState.id, artifactQuery]);
     const previousArtifactQueryKey = activeArtifactQueryKey;
     if (artifactQueryKey !== previousArtifactQueryKey) selectedArtifactIds = new Set();
@@ -90,7 +114,12 @@
     if (loadingMore || !nextCursor) return;
     loadingMore = true;
     try {
-      const result = await fetchArtifacts({ cursorOrOffset: nextCursor, limit: 50, q: query.trim() || undefined });
+      const result = await fetchArtifacts({
+        cursorOrOffset: nextCursor,
+        limit: 50,
+        q: query.trim() || undefined,
+        channel: channelFilter === 'all' ? undefined : channelFilter,
+      });
       const seenIds = new Set(artifacts.map((artifact) => artifact.id));
       artifacts = [...artifacts, ...result.artifacts.filter((artifact) => !seenIds.has(artifact.id))];
       total = result.total;
@@ -125,6 +154,23 @@
     if (expanded) next.add(artifactId);
     else next.delete(artifactId);
     expandedArtifactIds = next;
+  }
+
+  function applySavedFilter(preset: ArtifactFilterPreset): void {
+    query = preset.query;
+    channelFilter = preset.channel;
+    void load(true);
+  }
+
+  function saveCurrentFilter(): void {
+    const name = newFilterName.trim().slice(0, 40);
+    if (!name) return;
+    savedViews.save({ name, query: query.trim(), channel: channelFilter });
+    newFilterName = '';
+  }
+
+  function removeSavedFilter(name: string): void {
+    savedViews.remove(name);
   }
 
   async function toggleArtifactPin(artifact: ArtifactRecord): Promise<void> {
@@ -193,23 +239,62 @@
 {#if canDecrypt}
   <Card class="overflow-hidden">
     <div class="-m-5 overflow-hidden">
-      <div class="border-border/70 flex flex-col gap-3 border-b px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:px-5">
-        <div class="min-w-0">
-          <div class="flex items-center gap-2">
-            <div class="text-sm font-semibold tracking-tight">IPA Library</div>
-            <Badge variant="secondary">{total}</Badge>
+      <div class="border-border/70 flex flex-col gap-3 border-b px-4 py-3.5 sm:px-5">
+        <div class="flex min-w-0 items-center justify-between gap-3">
+          <div class="min-w-0">
+            <div class="flex items-center gap-2">
+              <div class="text-sm font-semibold tracking-tight">IPA Library</div>
+              <Badge variant="secondary">{total}</Badge>
+            </div>
+            <div class="text-muted mt-0.5 text-xs">{fmtBytesGB(totalBytes)} / {fmtBytesGB(maxBytes)} used</div>
           </div>
-          <div class="text-muted mt-0.5 text-xs">{fmtBytesGB(totalBytes)} / {fmtBytesGB(maxBytes)} used</div>
-        </div>
-        <div class="flex w-full items-center gap-2 sm:w-auto sm:min-w-[18rem]">
-          <Input bind:value={query} onkeydown={(event) => event.key === 'Enter' && void load(true)} placeholder="Search apps or versions…" class="min-w-0 flex-1 sm:w-64" />
           <Button variant="ghost" size="icon" class="text-muted hover:text-foreground h-8 w-8 shrink-0 p-0" disabled={loading} onclick={() => void load(true)} aria-label="Refresh IPA Library" title="Refresh IPA Library">
             <RefreshCw class={loading ? 'h-3.5 w-3.5 animate-spin' : 'h-3.5 w-3.5'} />
           </Button>
         </div>
+        <div class="flex w-full min-w-0 items-center gap-2">
+          <Input bind:value={query} onkeydown={(event) => event.key === 'Enter' && void load(true)} placeholder="Search apps or versions…" class="min-w-0 flex-1" />
+          <Select
+            items={ARTIFACT_SOURCE_OPTIONS}
+            value={channelFilter}
+            onValueChange={(value) => {
+              channelFilter = value as ArtifactSourceFilter;
+              void load(true);
+            }}
+            class="w-36 shrink-0"
+          />
+        </div>
       </div>
 
       <div class="p-4 sm:p-5">
+        <div class="mb-3 flex flex-wrap items-center gap-2" role="group" aria-label="Saved library filters">
+          {#each savedViews.presets as preset (preset.name)}
+            <span class="border-border text-muted hover:text-foreground hover:border-accent inline-flex items-center gap-1 rounded-full border pr-1 pl-2.5 py-1 text-[12px]">
+              <Button variant="link" size="sm" class="h-auto p-0 text-xs text-muted" onclick={() => applySavedFilter(preset)}>{preset.name}</Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                class="text-muted hover:text-destructive h-6 w-6 rounded-full p-0"
+                onclick={() => removeSavedFilter(preset.name)}
+                aria-label="Delete saved filter {preset.name}"
+                title="Delete saved filter"
+              >
+                <X class="h-3 w-3" />
+              </Button>
+            </span>
+          {/each}
+          <div class="flex items-center gap-1.5">
+            <Input
+              bind:value={newFilterName}
+              maxlength={40}
+              placeholder="Name this filter…"
+              aria-label="Saved filter name"
+              class="h-7 w-36 text-xs"
+              onkeydown={(event) => event.key === 'Enter' && saveCurrentFilter()}
+            />
+            <Button size="sm" variant="secondary" disabled={!newFilterName.trim()} onclick={saveCurrentFilter}>Save filter</Button>
+          </div>
+        </div>
         {#if refreshError}
           <div class="mb-3 rounded-md border border-border/70 px-3 py-2 text-xs text-muted" role="status" aria-live="polite">{refreshError}</div>
         {/if}

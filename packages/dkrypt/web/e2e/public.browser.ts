@@ -352,6 +352,52 @@ test('IPA Library visual layout stays consistent on desktop and mobile', async (
   await expectVisualSnapshot(page, libraryCard, 'ipa-library-mobile.png');
 });
 
+test('IPA Library filters can be saved and reapplied across reloads', async ({ page }) => {
+  await mockStableDashboardEvents(page);
+  await mockAuthenticatedDashboard(page, '1');
+  const requestedFilters: Array<{ channel: string; query: string }> = [];
+  await page.route('**/v1/dashboard/apps/metadata?*', async (route) => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ entries: [] }) });
+  });
+  await page.route('**/v1/dashboard/artifacts*', async (route) => {
+    const requestUrl = new URL(route.request().url());
+    requestedFilters.push({
+      channel: requestUrl.searchParams.get('channel') ?? 'all',
+      query: requestUrl.searchParams.get('q') ?? '',
+    });
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ artifacts: [], total: 0, totalBytes: 0, maxBytes: 1024 }),
+    });
+  });
+
+  await page.goto('/?tab=home');
+  const search = page.getByRole('textbox', { name: 'Search apps or versions…' });
+  await search.fill('com.example.saved');
+  await search.press('Enter');
+  await expect.poll(() => requestedFilters.at(-1)?.query).toBe('com.example.saved');
+  await page.getByRole('button', { name: 'All sources' }).click();
+  await page.getByRole('option', { name: 'TestFlight', exact: true }).click();
+  await expect.poll(() => requestedFilters.at(-1)).toEqual({ channel: 'testflight', query: 'com.example.saved' });
+
+  await page.getByRole('textbox', { name: 'Saved filter name' }).fill('TestFlight only');
+  await page.getByRole('button', { name: 'Save filter', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'TestFlight only', exact: true })).toBeVisible();
+
+  await page.getByRole('button', { name: 'TestFlight', exact: true }).click();
+  await page.getByRole('option', { name: 'App Store', exact: true }).click();
+  await expect.poll(() => requestedFilters.at(-1)).toEqual({ channel: 'appstore', query: 'com.example.saved' });
+  await page.getByRole('button', { name: 'TestFlight only', exact: true }).click();
+  await expect.poll(() => requestedFilters.at(-1)).toEqual({ channel: 'testflight', query: 'com.example.saved' });
+
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'TestFlight only', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'TestFlight only', exact: true }).click();
+  await expect.poll(() => requestedFilters.at(-1)).toEqual({ channel: 'testflight', query: 'com.example.saved' });
+  await expect(search).toHaveValue('com.example.saved');
+  await expectAccessible(page);
+});
+
 test('date and number format preference is saved and restored from the account', async ({ page }) => {
   await mockStableDashboardEvents(page);
   await mockAuthenticatedDashboard(page, '1');
