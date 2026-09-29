@@ -2108,6 +2108,7 @@ export interface BillingWebhookInboxRecord {
   processedAt?: number;
   attempts: number;
   lastError?: string;
+  replayableProcessed: boolean;
 }
 
 export function fetchBillingWebhookInbox(filters: { provider?: string; status?: string; cursor?: string; limit?: number } = {}): Promise<{ inbox: BillingWebhookInboxRecord[]; total: number } & CursorPage> {

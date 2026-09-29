@@ -53,9 +53,9 @@ export function receiveWebhook(provider: WebhookInboxRecord['provider'], eventId
   return { record: result.record, duplicate: false };
 }
 
-export function claimWebhook(id: string, options: { allowQuarantined?: boolean } = {}): boolean {
+export function claimWebhook(id: string, options: { allowQuarantined?: boolean; allowProcessed?: boolean } = {}): boolean {
   const record = repository.findById(id);
-  if (!record || record.status === 'processed' || (record.status === 'quarantined' && !options.allowQuarantined) || claimedRecords.has(id)) {
+  if (!record || (record.status === 'processed' && !options.allowProcessed) || (record.status === 'quarantined' && !options.allowQuarantined) || claimedRecords.has(id)) {
     if (record) incrementMetric('webhook_claim_conflicts_total', { provider: record.provider });
     return false;
   }

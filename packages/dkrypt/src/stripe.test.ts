@@ -500,6 +500,87 @@ describe('Stripe billing webhooks', () => {
     }
   });
 
+  test('billing managers can replay processed Stripe invoice deliveries to restore stale access', async () => {
+    const userId = `stripe-invoice-replay-${crypto.randomUUID()}`;
+    const customerId = `cus_${crypto.randomUUID()}`;
+    const subscriptionId = `sub_${crypto.randomUUID()}`;
+    replaceBillingSnapshot({ customers: [], subscriptions: [] });
+    const currentSubscription = subscriptionEvent(userId, customerId, subscriptionId).data.object as Stripe.Subscription;
+    const stripeClient = {
+      subscriptions: {
+        retrieve: async (id: string) => {
+          expect(id).toBe(subscriptionId);
+          return currentSubscription;
+        },
+      },
+    } as unknown as Stripe;
+    const server = await buildServer({ includePublicRoutes: false, stripeClient: () => stripeClient });
+    const invoiceEvent = event('invoice.paid', {
+      id: `in_${crypto.randomUUID()}`,
+      object: 'invoice',
+      parent: { type: 'subscription_details', subscription_details: { subscription: subscriptionId } },
+    });
+    const received = receiveWebhook('stripe', invoiceEvent.id, JSON.stringify(invoiceEvent));
+    markWebhookProcessed(received.record.id);
+    const headers = { cookie: createSessionCookie(PermissionFlag.manageBilling | PermissionFlag.viewLogs) };
+
+    try {
+      const inbox = await server.inject({
+        method: 'GET',
+        url: '/v1/billing/webhooks/inbox?provider=stripe&status=processed&limit=200',
+        headers,
+      });
+      expect(inbox.json().inbox).toContainEqual(expect.objectContaining({ eventId: invoiceEvent.id, replayableProcessed: true }));
+
+      const replay = await server.inject({
+        method: 'POST',
+        url: `/v1/billing/webhooks/inbox/${received.record.id}/replay`,
+        headers,
+      });
+
+      expect(replay.statusCode).toBe(200);
+      expect(replay.json()).toMatchObject({ replayed: true, status: 'processed' });
+      expect(getBillingEntitlements(userId)).toMatchObject({ planId: 'priority', decrypt: true, priority: 5 });
+      expect(getWebhookInboxRecord(received.record.id)?.attempts).toBe(2);
+      expect(getAuditLog()).toContainEqual(expect.objectContaining({
+        action: 'billing.webhook.replay',
+        target: invoiceEvent.id,
+        actor: 'root',
+        detail: 'stripe: previously processed subscription invoice',
+      }));
+    } finally {
+      await server.close();
+    }
+  });
+
+  test('processed Stripe webhook deliveries outside subscription invoices remain deduplicated', async () => {
+    const server = await buildServer({ includePublicRoutes: false });
+    const customerEvent = event('customer.updated', { id: `cus_${crypto.randomUUID()}`, object: 'customer' });
+    const received = receiveWebhook('stripe', customerEvent.id, JSON.stringify(customerEvent));
+    markWebhookProcessed(received.record.id);
+    const headers = { cookie: createSessionCookie(PermissionFlag.manageBilling | PermissionFlag.viewLogs) };
+
+    try {
+      const replay = await server.inject({
+        method: 'POST',
+        url: `/v1/billing/webhooks/inbox/${received.record.id}/replay`,
+        headers,
+      });
+
+      expect(replay.statusCode).toBe(200);
+      expect(replay.json()).toMatchObject({ replayed: false, duplicate: true, status: 'processed' });
+      expect(getWebhookInboxRecord(received.record.id)?.attempts).toBe(1);
+      const inbox = await server.inject({
+        method: 'GET',
+        url: '/v1/billing/webhooks/inbox?provider=stripe&status=processed&limit=200',
+        headers,
+      });
+      expect(inbox.json().inbox).toContainEqual(expect.objectContaining({ eventId: customerEvent.id, replayableProcessed: false }));
+    } finally {
+      await server.close();
+    }
+  });
+
   test('billing manager webhook quarantine actions are audited', async () => {
     const server = await buildServer({ includePublicRoutes: false });
     const eventId = `evt_quarantine_audit_${crypto.randomUUID()}`;

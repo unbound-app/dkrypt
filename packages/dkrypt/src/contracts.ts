@@ -466,7 +466,20 @@ const BillingProviderStatusResponse = object({
   }),
 });
 const BillingCheckoutControlResponse = object({ paused: Type.Boolean() });
-const WebhookInboxPage = object({ inbox: Type.Array(JsonObject), total: Type.Integer({ minimum: 0 }), nextCursor: PageCursor });
+const WebhookInboxRecordResponse = object({
+  id: Identifier,
+  provider: Type.Union([Type.Literal('stripe'), Type.Literal('nowpayments')]),
+  eventId: Type.String(),
+  status: Type.Union([Type.Literal('received'), Type.Literal('processed'), Type.Literal('failed'), Type.Literal('quarantined')]),
+  rawBodySha256: Type.String(),
+  rawBodyBytes: Type.Integer({ minimum: 0 }),
+  receivedAt: Type.Number(),
+  processedAt: Type.Optional(Type.Number()),
+  attempts: Type.Integer({ minimum: 0 }),
+  lastError: Type.Optional(Type.String()),
+  replayableProcessed: Type.Boolean(),
+});
+const WebhookInboxPage = object({ inbox: Type.Array(WebhookInboxRecordResponse), total: Type.Integer({ minimum: 0 }), nextCursor: PageCursor });
 const DeviceHealthHistoryResponse = object({
   buckets: Type.Array(object({ hourStart: Type.Number(), reachablePercent: Type.Union([Type.Number(), Type.Null()]) })),
   uptimePercent: Type.Union([Type.Number(), Type.Null()]),

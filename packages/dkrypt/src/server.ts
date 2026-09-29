@@ -7,6 +7,7 @@ import fastifySwagger from '@fastify/swagger';
 import scalarApiReference from '@scalar/fastify-api-reference';
 import { TypeBoxTypeProvider } from '@fastify/type-provider-typebox';
 import Fastify, { type FastifyInstance, type FastifyReply } from 'fastify';
+import type Stripe from 'stripe';
 import { fastifyRejectGeneratedApiKeyOutsidePublicApi } from '#auth.js';
 import { drainBackgroundWork, trackBackgroundWork } from '#backgroundWork.js';
 import { config } from '#config.js';
@@ -114,7 +115,7 @@ function rejectCsrfMutation(reply: FastifyReply, requestId: string, message: str
   reply.code(403).send({ error: message, code: 'csrf_origin_rejected', message, requestId, retryable: false });
 }
 
-export async function buildServer(options: { includePublicRoutes?: boolean } = {}): Promise<FastifyInstance> {
+export async function buildServer(options: { includePublicRoutes?: boolean; stripeClient?: () => Stripe } = {}): Promise<FastifyInstance> {
   const server = Fastify({ bodyLimit: 5 * 1024 * 1024, trustProxy: 'loopback' }).withTypeProvider<TypeBoxTypeProvider>();
 
   server.setNotFoundHandler((request, reply) => reply.code(404).send({ error: 'not found', code: 'not_found', message: 'not found', requestId: request.id, retryable: false }));
@@ -268,7 +269,7 @@ export async function buildServer(options: { includePublicRoutes?: boolean } = {
     server.get('/sw.js', (_request, reply) => reply.type('application/javascript').sendFile('sw.js', publicDir));
   }
 
-  await server.register(billingWebhookRoutes);
+  await server.register(billingWebhookRoutes, { stripeClient: options.stripeClient });
   await server.register(healthRoutes);
   await server.register(decryptRoutes);
   await server.register(artifactCatalogRoutes);
@@ -299,7 +300,7 @@ export async function buildServer(options: { includePublicRoutes?: boolean } = {
   await server.register(dashboardDiscordRoutes);
   await server.register(dashboardEventsRoutes);
   await server.register(dashboardWatchRoutes);
-  await server.register(billingRoutes);
+  await server.register(billingRoutes, { stripeClient: options.stripeClient });
   return server;
 }
 

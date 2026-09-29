@@ -264,12 +264,24 @@ async function processWebhookDelivery(
   });
 }
 
+function isProcessedStripeInvoiceDelivery(provider: 'stripe' | 'nowpayments', rawBody: string): boolean {
+  if (provider !== 'stripe') return false;
+  try {
+    const event = JSON.parse(rawBody) as Stripe.Event;
+    if (event.type !== 'invoice.paid' && event.type !== 'invoice.payment_failed') return false;
+    const invoice = event.data?.object as Stripe.Invoice | undefined;
+    return !!invoice && !!invoiceSubscriptionId(invoice);
+  } catch {
+    return false;
+  }
+}
+
 function sendWebhookDeliveryResult(request: FastifyRequest, reply: FastifyReply, result: WebhookDeliveryResult) {
   if (result.statusCode === 500) return sendBillingError(request, reply, 500, 'webhook processing failed');
   return reply.code(result.statusCode).send(result.payload);
 }
 
-export const billingWebhookRoutes: FastifyPluginAsyncTypebox = async (server) => {
+export const billingWebhookRoutes: FastifyPluginAsyncTypebox<{ stripeClient?: () => Stripe }> = async (server, options) => {
   server.post('/v1/stripe/webhook', { schema: getRouteContract('POST', '/v1/stripe/webhook') }, async (request, reply) => {
     const signature = webhookSignatureHeader(request.headers['stripe-signature']);
     const rawBody = webhookRawBody(request.body);
@@ -284,7 +296,7 @@ export const billingWebhookRoutes: FastifyPluginAsyncTypebox = async (server) =>
       return sendBillingError(request, reply, 400, 'invalid webhook signature');
     }
 
-    const result = await processWebhookDelivery('stripe', event.id, rawBody, () => processStripeEvent(event), (error) => {
+    const result = await processWebhookDelivery('stripe', event.id, rawBody, () => processStripeEvent(event, options.stripeClient?.()), (error) => {
       log.error('Stripe webhook failed', { eventType: event.type, error: String(error) });
     });
     return sendWebhookDeliveryResult(request, reply, result);
@@ -535,7 +547,11 @@ export const billingRoutes: FastifyPluginAsyncTypebox<{ stripeClient?: () => Str
     const limit = Math.min(Math.max(requestedLimit ?? 50, 1), 200);
     const offset = cursor ? decodeCursor(cursor) : Math.max(requestedOffset ?? 0, 0);
     const total = countWebhookInbox(filter);
-    const page = listWebhookInbox(filter, { limit, offset }).map(({ rawBody, ...record }) => ({ ...record, rawBodyBytes: Buffer.byteLength(rawBody) }));
+    const page = listWebhookInbox(filter, { limit, offset }).map(({ rawBody, ...record }) => ({
+      ...record,
+      rawBodyBytes: Buffer.byteLength(rawBody),
+      replayableProcessed: record.status === 'processed' && isProcessedStripeInvoiceDelivery(record.provider, rawBody),
+    }));
     return reply.send({ inbox: page, total, nextCursor: nextCursor(offset, page.length, total) });
   });
 
@@ -552,19 +568,22 @@ export const billingRoutes: FastifyPluginAsyncTypebox<{ stripeClient?: () => Str
   server.post<BillingWebhookInboxParamsRoute>('/v1/billing/webhooks/inbox/:id/replay', { schema: getRouteContract('POST', '/v1/billing/webhooks/inbox/:id/replay'), preHandler: requireBillingManager }, async (request, reply) => {
     const current = getWebhookInboxRecord(request.params.id);
     if (!current) return sendBillingError(request, reply, 404, 'webhook inbox record not found');
-    if (current.status === 'processed') return reply.send({ replayed: false, duplicate: true, status: current.status });
-    if (!claimWebhook(current.id, { allowQuarantined: true })) return sendBillingError(request, reply, 409, 'webhook is already being processed');
+    const replayingProcessedInvoice = current.status === 'processed' && isProcessedStripeInvoiceDelivery(current.provider, current.rawBody);
+    if (current.status === 'processed' && !replayingProcessedInvoice) return reply.send({ replayed: false, duplicate: true, status: current.status });
+    if (createHash('sha256').update(current.rawBody).digest('hex') !== current.rawBodySha256) return sendBillingError(request, reply, 409, 'stored webhook body failed its integrity check');
+    if (!claimWebhook(current.id, { allowQuarantined: true, allowProcessed: replayingProcessedInvoice })) return sendBillingError(request, reply, 409, 'webhook is already being processed');
     try {
       const payload = JSON.parse(current.rawBody) as Record<string, unknown>;
       if (current.provider === 'stripe') {
         if (typeof payload.id !== 'string' || typeof payload.type !== 'string' || typeof payload.data !== 'object' || payload.data === null) throw new Error('stored Stripe event is malformed');
-        await processStripeEvent(payload as unknown as Stripe.Event);
+        await processStripeEvent(payload as unknown as Stripe.Event, options.stripeClient?.());
       } else {
         if (typeof payload.payment_status !== 'string') throw new Error('stored NOWPayments event is malformed');
         await processNowPaymentsEvent({ id: current.eventId, payment: payload as Parameters<typeof processNowPaymentsEvent>[0]['payment'] });
       }
       markWebhookProcessed(current.id);
-      recordAudit(getFastifySession(request)!.sub, 'billing.webhook.replay', current.eventId, current.provider);
+      const replayDetail = replayingProcessedInvoice ? `${current.provider}: previously processed subscription invoice` : current.provider;
+      recordAudit(getFastifySession(request)!.sub, 'billing.webhook.replay', current.eventId, replayDetail);
       return reply.send({ replayed: true, status: 'processed' });
     } catch (error) {
       markWebhookFailed(current.id, String(error));
