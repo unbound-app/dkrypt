@@ -1617,14 +1617,24 @@ test('operational logs render a small accessible window and older rows remain re
 test('dashboard notifications virtualize older entries while keeping them scrollable', async ({ page }) => {
   await mockStableDashboardEvents(page);
   await mockAuthenticatedDashboard(page, '2048');
-  const notifications = Array.from({ length: 100 }, (_, index) => ({
-    id: `virtual-notification-${index}`,
-    title: `History notification ${String(index).padStart(3, '0')}`,
-    message: 'This notification remains available in the account history.',
-    severity: 'info',
-    createdAt: Date.now() - index * 1_000,
-    readAt: Date.now(),
-  }));
+  const notifications = Array.from({ length: 100 }, (_, index) => {
+    const createdAt = Date.now() - index * 1_000;
+    return {
+      id: `virtual-notification-${index}`,
+      title: `History notification ${String(index).padStart(3, '0')}`,
+      message: 'This notification remains available in the account history.',
+      severity: 'info',
+      createdAt,
+      readAt: Date.now(),
+      ...(index === 0 ? {
+        occurrenceCount: 3,
+        firstOccurredAt: createdAt - 20_000,
+        lastOccurredAt: createdAt,
+        deviceId: 'device-1',
+        href: '/?tab=settings&stab=devices#device-device-1',
+      } : {}),
+    };
+  });
   let notificationRequests = 0;
   await page.route('**/v1/dashboard/notifications*', async (route) => {
     notificationRequests += 1;
@@ -1641,6 +1651,8 @@ test('dashboard notifications virtualize older entries while keeping them scroll
   const list = page.getByRole('list', { name: 'Dashboard notifications' });
   const viewport = page.getByRole('region', { name: 'Dashboard notifications scroll area' });
   await expect(list.getByRole('listitem').first()).toContainText('History notification 000');
+  await expect(list.getByText(/Occurred 3 times · last/)).toBeVisible();
+  await expect(list.getByRole('link', { name: 'Open device' })).toHaveAttribute('href', '/?tab=settings&stab=devices#device-device-1');
   await expect(list.getByRole('listitem').first()).toHaveAttribute('aria-posinset', '1');
   await expect(list.getByRole('listitem').first()).toHaveAttribute('aria-setsize', '100');
   await expect.poll(() => list.getByRole('listitem').count()).toBeLessThan(60);

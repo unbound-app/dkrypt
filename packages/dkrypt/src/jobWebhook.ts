@@ -32,6 +32,7 @@ export function startJobWebhookDispatcher(): void {
         : 'Decrypt failed',
       message: entry.status === 'done' ? `${completionMessage}${warningMessage}` : `${labelText}: ${entry.error ?? 'the decrypt failed'}`,
       severity: entry.status === 'done' ? hasWarnings ? 'warning' : hasArtifact ? 'success' : 'warning' : 'error',
+      groupKey: `job:${entry.id}:${entry.status}`,
       jobId: entry.id,
       href: `/?tab=home&job=${encodeURIComponent(entry.id)}`,
     });

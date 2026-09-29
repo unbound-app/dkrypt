@@ -455,6 +455,7 @@ export async function syncTestFlightSubscription(id: string, actor = 'system'): 
       title: failed === 0 ? 'TestFlight access verified' : 'TestFlight access partially available',
       message: `${updated.displayName ?? updated.url}: ${active}/${completed.length} enabled device(s) verified.`,
       severity: failed === 0 ? 'success' : active > 0 ? 'warning' : 'error',
+      groupKey: `testflight-sync:${updated.id}:${failed === 0 ? 'verified' : active > 0 ? 'partial' : 'unavailable'}`,
       href: '/?tab=settings&stab=testflight',
     });
   }
@@ -510,6 +511,7 @@ export async function unsubscribeTestFlightSubscription(id: string, actor: strin
       title: failures.length > 0 ? 'TestFlight subscription removed with warnings' : 'TestFlight subscription removed',
       message: failures.length > 0 ? `${result.displayName ?? result.url}: ${failures.join(' | ')}` : `${result.displayName ?? result.url} was removed from dkrypt automation.`,
       severity: failures.length > 0 ? 'warning' : 'success',
+      groupKey: `testflight-unsubscribe:${result.id}:${failures.length > 0 ? 'warning' : 'success'}`,
       href: '/?tab=settings&stab=testflight',
     });
   }
@@ -570,6 +572,7 @@ export async function unsubscribeDeviceTestFlightApp(bundleId: string, actor: st
     title: failures.length > 0 ? 'TestFlight device access removed with warnings' : 'TestFlight device access removed',
     message: `${app.displayName}: ${detail}`,
     severity: failures.length > 0 ? 'warning' : 'success',
+    groupKey: `testflight-device-cleanup:${bundleId}:${failures.length > 0 ? 'warning' : 'success'}`,
     href: '/?tab=settings&stab=testflight',
   });
   return { bundleId, removedDeviceIds, failures };

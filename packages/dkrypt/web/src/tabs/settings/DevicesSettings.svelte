@@ -372,7 +372,7 @@
       {#each devices as device (device.id)}
         {@const h = health[device.id]}
         {@const model = getAppleDeviceModelName(device.productType, device.name)}
-        <div class="border-border/80 bg-background/30 min-w-0 rounded-xl border p-4">
+        <div id={`device-${encodeURIComponent(device.id)}`} class="border-border/80 bg-background/30 min-w-0 scroll-mt-4 rounded-xl border p-4">
           <div class="flex items-start gap-3">
             <DeviceArtwork productType={device.productType} name={device.name} />
             <div class="min-w-0 flex-1">

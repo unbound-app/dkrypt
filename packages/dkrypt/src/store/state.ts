@@ -616,8 +616,13 @@ export interface NotificationRecord {
   message: string;
   severity: NotificationSeverity;
   createdAt: number;
+  firstOccurredAt?: number;
+  lastOccurredAt?: number;
+  occurrenceCount?: number;
   readAt?: number;
   jobId?: string;
+  deviceId?: string;
+  groupKey?: string;
   href?: string;
 }
 
@@ -669,6 +674,7 @@ const DEVICE_OFFLINE_CONFIRMATION_SPAN_MS = 10 * 60_000;
 const MAX_DEVICE_ACTIVITY = 300;
 const MAX_WEBHOOK_LOG = 200;
 const MAX_NOTIFICATIONS = 500;
+const NOTIFICATION_GROUP_WINDOW_MS = 15 * 60_000;
 const statePath = path.join(config.stateDir, 'state.json');
 const backupsDir = path.join(config.stateDir, 'backups');
 const stateDatabase: StateDatabase = openStateDatabase({
@@ -1595,6 +1601,13 @@ export function getUserEffectivePermissions(username: string): bigint {
     (billing.decrypt ? PermissionFlag.requestDecrypt : 0n) |
     (billing.api ? PermissionFlag.createApiKeys : 0n);
   return effectiveBitsForRoleIds(user?.roleIds ?? [], state.roles) | billingBits;
+}
+
+export function listDeviceAlertRecipients(): string[] {
+  const recipients = state.allowedUsers
+    .filter((user) => hasPermission(getUserEffectivePermissions(user.username), PermissionFlag.viewDevices | PermissionFlag.manageDevices))
+    .map((user) => user.username);
+  return [...new Set(['root', ...recipients])];
 }
 
 export function getSessionVersion(username: string): number {
@@ -2767,8 +2780,8 @@ function cloneTestFlightSubscription(subscription: TestFlightSubscription): Test
   return { ...subscription, devices: subscription.devices.map((device) => ({ ...device })) };
 }
 
-function notificationForSubscription(userId: string, title: string, message: string, severity: NotificationSeverity): void {
-  recordNotification({ userId, title, message, severity, href: '/?tab=settings&stab=testflight' });
+function notificationForSubscription(userId: string, title: string, message: string, severity: NotificationSeverity, subscriptionId: string): void {
+  recordNotification({ userId, title, message, severity, groupKey: `testflight-subscription:${subscriptionId}:${title}`, href: '/?tab=settings&stab=testflight' });
 }
 
 export function getTestFlightSubscriptions(): TestFlightSubscription[] {
@@ -2834,6 +2847,7 @@ export function createTestFlightSubscription(input: CreateTestFlightSubscription
     'TestFlight subscription submitted',
     subscription.status === 'approved' ? `${subscription.displayName ?? subscription.url} is being synchronized.` : `${subscription.displayName ?? subscription.url} is awaiting approval.`,
     subscription.status === 'approved' ? 'info' : 'success',
+    subscription.id,
   );
   return cloneTestFlightSubscription(subscription);
 }
@@ -2851,7 +2865,7 @@ export function approveTestFlightSubscription(id: string, actor: string): TestFl
   ensureTestFlightSubscriptionDevices(id);
   persistNow();
   recordAudit(actor, 'testflight-subscription.approve', id, subscription.url);
-  notificationForSubscription(subscription.requestedBy, 'TestFlight subscription approved', `${subscription.displayName ?? subscription.url} is being synchronized to enabled devices.`, 'success');
+  notificationForSubscription(subscription.requestedBy, 'TestFlight subscription approved', `${subscription.displayName ?? subscription.url} is being synchronized to enabled devices.`, 'success', subscription.id);
   return cloneTestFlightSubscription(subscription);
 }
 
@@ -2865,7 +2879,7 @@ export function denyTestFlightSubscription(id: string, actor: string): TestFligh
   subscription.updatedAt = now;
   persistNow();
   recordAudit(actor, 'testflight-subscription.deny', id, subscription.url);
-  notificationForSubscription(subscription.requestedBy, 'TestFlight subscription denied', subscription.displayName ?? subscription.url, 'warning');
+  notificationForSubscription(subscription.requestedBy, 'TestFlight subscription denied', subscription.displayName ?? subscription.url, 'warning', subscription.id);
   return cloneTestFlightSubscription(subscription);
 }
 
@@ -3680,11 +3694,64 @@ export function updateUserPrefs(username: string, patch: Partial<UserPrefs>): Us
 }
 
 export function recordNotification(input: Omit<NotificationRecord, 'id' | 'createdAt' | 'readAt'>): NotificationRecord {
-  const notification: NotificationRecord = { ...input, id: randomUUID(), createdAt: Date.now() };
+  const now = Date.now();
+  const userId = input.userId.toLowerCase();
+  const existing = input.groupKey
+    ? state.notifications.find((notification) => {
+      if (notification.userId.toLowerCase() !== userId || notification.groupKey !== input.groupKey) return false;
+      const lastOccurredAt = notification.lastOccurredAt ?? notification.createdAt;
+      const age = now - lastOccurredAt;
+      return age >= 0 && age <= NOTIFICATION_GROUP_WINDOW_MS;
+    })
+    : undefined;
+
+  if (existing) {
+    existing.title = input.title;
+    existing.message = input.message;
+    existing.severity = input.severity;
+    existing.firstOccurredAt ??= existing.createdAt;
+    existing.createdAt = now;
+    existing.lastOccurredAt = now;
+    existing.occurrenceCount = (existing.occurrenceCount ?? 1) + 1;
+    existing.readAt = undefined;
+    existing.jobId = input.jobId ?? existing.jobId;
+    existing.deviceId = input.deviceId ?? existing.deviceId;
+    existing.href = input.href ?? existing.href;
+    persistNow();
+    return { ...existing };
+  }
+
+  const notification: NotificationRecord = {
+    ...input,
+    userId,
+    id: randomUUID(),
+    createdAt: now,
+    ...(input.groupKey ? { firstOccurredAt: now, lastOccurredAt: now, occurrenceCount: 1 } : {}),
+  };
   state.notifications.unshift(notification);
   if (state.notifications.length > MAX_NOTIFICATIONS) state.notifications.length = MAX_NOTIFICATIONS;
   persistNow();
-  return notification;
+  return { ...notification };
+}
+
+export function recordDeviceAlertNotification(input: {
+  deviceId: string;
+  groupKey: string;
+  title: string;
+  message: string;
+  severity: NotificationSeverity;
+}): void {
+  for (const userId of listDeviceAlertRecipients()) {
+    recordNotification({
+      userId,
+      title: input.title,
+      message: input.message,
+      severity: input.severity,
+      groupKey: input.groupKey,
+      deviceId: input.deviceId,
+      href: `/?tab=settings&stab=devices#device-${encodeURIComponent(input.deviceId)}`,
+    });
+  }
 }
 
 export function listNotifications(userId: string, limit = 50): { notifications: NotificationRecord[]; unread: number } {
@@ -3703,7 +3770,7 @@ export function listNotificationsPage(userId: string, offset = 0, limit = 50, cu
     order: 'desc',
   });
   return {
-    notifications: page.items.map((notification) => ({ ...notification })),
+    notifications: page.items.map(({ groupKey: _groupKey, ...notification }) => ({ ...notification })),
     unread: owned.filter((notification) => !notification.readAt).length,
     total: owned.length,
     nextCursor: page.nextCursor,

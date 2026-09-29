@@ -508,8 +508,12 @@ export interface DashboardNotification {
   message: string;
   severity: 'info' | 'success' | 'warning' | 'error';
   createdAt: number;
+  firstOccurredAt?: number;
+  lastOccurredAt?: number;
+  occurrenceCount?: number;
   readAt?: number;
   jobId?: string;
+  deviceId?: string;
   href?: string;
 }
 

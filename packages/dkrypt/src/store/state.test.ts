@@ -51,11 +51,13 @@ import {
   getWebhookDeliveryLog,
   importBackup,
   listAllowedUsers,
+  listDeviceAlertRecipients,
   listProjectsForUser,
   listNotifications,
   listNotificationsPage,
   listPasskeysForUser,
   recordDeviceHealthCheck,
+  recordDeviceAlertNotification,
   recordApiKeyBundleUsage,
   recordJobHistory,
   recordNotification,
@@ -95,6 +97,96 @@ describe('dashboard notifications', () => {
     expect(secondPage.total).toBe(2);
     expect(markNotificationsRead(userId, [first.id])).toBe(1);
     expect(listNotifications(userId)).toMatchObject({ unread: 1 });
+  });
+
+  test('groups repeated notifications, refreshes their unread state, and retains their destination', () => {
+    const originalNow = Date.now;
+    let now = originalNow();
+    const userId = `grouped-notifications-${randomUUID()}`;
+    const groupKey = `device-offline:${randomUUID()}`;
+
+    try {
+      Date.now = () => now;
+      const first = recordNotification({
+        userId,
+        title: 'Device unavailable',
+        message: 'The device stopped responding.',
+        severity: 'error',
+        groupKey,
+        href: '/?tab=settings&stab=devices',
+      });
+
+      expect(first).toMatchObject({ occurrenceCount: 1, firstOccurredAt: now, lastOccurredAt: now });
+      expect(markNotificationsRead(userId, [first.id])).toBe(1);
+
+      now += 30_000;
+      const repeated = recordNotification({
+        userId,
+        title: 'Device unavailable',
+        message: 'The device is still not responding.',
+        severity: 'error',
+        groupKey,
+        href: '/?tab=settings&stab=devices',
+      });
+
+      expect(repeated).toMatchObject({
+        id: first.id,
+        message: 'The device is still not responding.',
+        occurrenceCount: 2,
+        firstOccurredAt: first.createdAt,
+        lastOccurredAt: now,
+        createdAt: now,
+        href: '/?tab=settings&stab=devices',
+      });
+      expect(repeated.readAt).toBeUndefined();
+      expect(listNotificationsPage(userId)).toMatchObject({ total: 1, unread: 1 });
+
+      now += 16 * 60_000;
+      const later = recordNotification({
+        userId,
+        title: 'Device unavailable',
+        message: 'The device stopped responding again.',
+        severity: 'error',
+        groupKey,
+        href: '/?tab=settings&stab=devices',
+      });
+
+      expect(later.id).not.toBe(first.id);
+      expect(listNotificationsPage(userId)).toMatchObject({ total: 2, unread: 2 });
+      expect(listNotifications(userId).notifications[0]).not.toHaveProperty('groupKey');
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
+  test('sends device alerts to device viewers with a device-page link', () => {
+    const role = createRole({
+      name: `Device alert role ${randomUUID()}`,
+      color: '#3498db',
+      permissions: serializeBits(PermissionFlag.viewDevices),
+    }, 'root');
+    const viewer = `device-alert-viewer-${randomUUID()}`;
+    const outsider = `device-alert-outsider-${randomUUID()}`;
+    addAllowedUser(viewer, [role.id], 'root');
+    addAllowedUser(outsider, [], 'root');
+    const deviceId = `device-${randomUUID()}`;
+
+    expect(listDeviceAlertRecipients()).toEqual(expect.arrayContaining(['root', viewer]));
+    expect(listDeviceAlertRecipients()).not.toContain(outsider);
+
+    recordDeviceAlertNotification({
+      deviceId,
+      groupKey: `device-unreachable:${deviceId}`,
+      title: 'Device unreachable',
+      message: 'The device did not respond.',
+      severity: 'error',
+    });
+
+    expect(listNotifications(viewer).notifications[0]).toMatchObject({
+      deviceId,
+      href: '/?tab=settings&stab=devices',
+    });
+    expect(listNotifications(outsider).notifications).toHaveLength(0);
   });
 });
 

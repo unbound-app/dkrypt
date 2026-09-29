@@ -108,10 +108,17 @@
               <div class="min-w-0 flex-1">
                 <div class="font-medium text-text">{notification.title}</div>
                 <div class="mt-0.5 text-muted">{notification.message}</div>
+                {#if (notification.occurrenceCount ?? 1) > 1}
+                  <div class="mt-1 text-muted">
+                    Occurred {notification.occurrenceCount} times · last <RelativeTime ms={notification.lastOccurredAt ?? notification.createdAt} />
+                  </div>
+                {/if}
                 <div class="mt-1 flex items-center justify-between gap-2">
                   <span class="text-muted"><RelativeTime ms={notification.createdAt} /></span>
                   {#if notification.href}
-                    <a class="text-accent hover:text-text font-medium" href={notification.href} onclick={() => void onOpenChange(false)}>Inspect</a>
+                    <a class="text-accent hover:text-text font-medium" href={notification.href} onclick={() => void onOpenChange(false)}>
+                      {notification.jobId ? 'Open job' : notification.deviceId ? 'Open device' : 'Inspect'}
+                    </a>
                   {/if}
                 </div>
               </div>

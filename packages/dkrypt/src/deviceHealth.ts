@@ -4,7 +4,7 @@ import { execCommand, getRustDeviceBridgeHealth, isDirectUsbDeviceAgentConnectio
 import { scopedLogger } from '#logger.js';
 import { EMBED_COLOR, notify } from '#notify.js';
 import { notifyDeviceDispatchStateChanged, releasePinnedJobsForDevice } from '#jobs/store.js';
-import { getEffectiveDevices, getEffectiveSettings, hasSustainedDeviceHealthFailures, recordDeviceActivity, recordDeviceHealthCheck, type DeviceRecord } from '#store/state.js';
+import { getEffectiveDevices, getEffectiveSettings, hasSustainedDeviceHealthFailures, recordDeviceActivity, recordDeviceAlertNotification, recordDeviceHealthCheck, type DeviceRecord } from '#store/state.js';
 import { getDiskUsage } from '#util/diskUsage.js';
 import { getCachedDeviceHealth, setCachedDeviceHealth } from '#deviceHealthCache.js';
 import { incrementMetric, observeMetric, setGaugeMetric } from '#metrics.js';
@@ -714,8 +714,18 @@ function alertStateFor(deviceId: string): DeviceAlertState {
 async function checkOfflineAlert(device: DeviceRecord, reachable: boolean): Promise<void> {
   const s = alertStateFor(device.id);
   if (reachable) {
+    const recovered = s.offlineAlertSentAt !== undefined;
     s.unreachableSince = undefined;
     s.offlineAlertSentAt = undefined;
+    if (recovered) {
+      recordDeviceAlertNotification({
+        deviceId: device.id,
+        groupKey: `device-recovered:${device.id}`,
+        title: 'Device recovered',
+        message: `${device.name} is reachable again.`,
+        severity: 'success',
+      });
+    }
     return;
   }
 
@@ -732,9 +742,17 @@ async function checkOfflineAlert(device: DeviceRecord, reachable: boolean): Prom
   if (Date.now() - s.unreachableSince < thresholdMs) return;
 
   s.offlineAlertSentAt = Date.now();
+  const message = `${device.name} has been unreachable for at least ${settings.deviceOfflineAlertMinutes} minutes. Decrypts assigned to it cannot run until it recovers.`;
+  recordDeviceAlertNotification({
+    deviceId: device.id,
+    groupKey: `device-unreachable:${device.id}`,
+    title: 'Device unreachable',
+    message,
+    severity: 'error',
+  });
   await notify('deviceOffline', {
     title: 'Device unreachable',
-    description: `${device.name} has been unreachable for at least ${settings.deviceOfflineAlertMinutes} minutes - decrypts assigned to it can't run until it's back.`,
+    description: message,
     color: EMBED_COLOR.err,
   });
 }
@@ -751,6 +769,13 @@ async function checkBatteryHotAlert(device: DeviceRecord, tempC: number | undefi
   if (tempC < settings.batteryHotAlertC || s.batteryHotAlertSentAt !== undefined) return;
 
   s.batteryHotAlertSentAt = Date.now();
+  recordDeviceAlertNotification({
+    deviceId: device.id,
+    groupKey: `device-battery-hot:${device.id}`,
+    title: 'Device running hot',
+    message: `${device.name}'s battery temperature reached ${tempC.toFixed(1)}°C (alert threshold ${settings.batteryHotAlertC}°C).`,
+    severity: 'warning',
+  });
   await notify('deviceBatteryHot', {
     title: 'iDevice running hot',
     description: `${device.name}'s battery temperature reached ${tempC.toFixed(1)}°C (alert threshold ${settings.batteryHotAlertC}°C).`,
@@ -770,6 +795,13 @@ async function checkBatteryLowAlert(device: DeviceRecord, percent: number | unde
   if (percent > settings.batteryLowAlertPercent || s.batteryLowAlertSentAt !== undefined) return;
 
   s.batteryLowAlertSentAt = Date.now();
+  recordDeviceAlertNotification({
+    deviceId: device.id,
+    groupKey: `device-battery-low:${device.id}`,
+    title: 'Device battery low',
+    message: `${device.name}'s battery is at ${percent}% and not charging (alert threshold ${settings.batteryLowAlertPercent}%).`,
+    severity: 'warning',
+  });
   await notify('deviceBatteryLow', {
     title: 'iDevice battery low',
     description: `${device.name}'s battery is at ${percent}% and not charging (alert threshold ${settings.batteryLowAlertPercent}%).`,
@@ -790,6 +822,13 @@ async function checkDeviceStorageAlert(device: DeviceRecord, usedPercent: number
   if (percent < settings.deviceStorageAlertPercent || s.deviceStorageAlertSentAt !== undefined) return;
 
   s.deviceStorageAlertSentAt = Date.now();
+  recordDeviceAlertNotification({
+    deviceId: device.id,
+    groupKey: `device-storage-low:${device.id}`,
+    title: 'Device storage running low',
+    message: `${device.name}'s storage is ${Math.round(percent)}% full (alert threshold ${settings.deviceStorageAlertPercent}%). Decrypts and TestFlight installs need available storage.`,
+    severity: 'warning',
+  });
   await notify('deviceStorageLow', {
     title: 'iDevice storage running low',
     description: `${device.name}'s storage is ${Math.round(percent)}% full (alert threshold ${settings.deviceStorageAlertPercent}%) - decrypts and TestFlight installs need room to work in.`,
@@ -822,9 +861,19 @@ async function checkDiskFullAlert(): Promise<void> {
 async function checkTestFlightBridgeAlert(device: DeviceRecord, reachable: boolean): Promise<void> {
   const s = alertStateFor(device.id);
   if (reachable) {
+    const recovered = s.bridgeDownAlertSentAt !== undefined;
     s.bridgeEverReachable = true;
     s.bridgeUnreachableSince = undefined;
     s.bridgeDownAlertSentAt = undefined;
+    if (recovered) {
+      recordDeviceAlertNotification({
+        deviceId: device.id,
+        groupKey: `device-testflight-bridge-recovered:${device.id}`,
+        title: 'TestFlight bridge recovered',
+        message: `${device.name}'s TestFlight bridge is responding again.`,
+        severity: 'success',
+      });
+    }
     return;
   }
   if (!s.bridgeEverReachable) return;
@@ -837,9 +886,17 @@ async function checkTestFlightBridgeAlert(device: DeviceRecord, reachable: boole
   if (Date.now() - s.bridgeUnreachableSince < thresholdMs) return;
 
   s.bridgeDownAlertSentAt = Date.now();
+  const message = formatTestFlightBridgeDownDescription(device.name, settings.testFlightBridgeAlertMinutes);
+  recordDeviceAlertNotification({
+    deviceId: device.id,
+    groupKey: `device-testflight-bridge-unresponsive:${device.id}`,
+    title: 'TestFlight bridge unresponsive',
+    message,
+    severity: 'warning',
+  });
   await notify('testFlightBridgeDown', {
     title: 'TestFlight bridge unresponsive',
-    description: formatTestFlightBridgeDownDescription(device.name, settings.testFlightBridgeAlertMinutes),
+    description: message,
     color: EMBED_COLOR.warn,
   });
 }
