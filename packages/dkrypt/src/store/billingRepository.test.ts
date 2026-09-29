@@ -98,6 +98,32 @@ function billingSnapshotWithProvider(snapshot: BillingSnapshot, provider: string
   } as unknown as BillingSnapshot;
 }
 
+test('billing repository replaces and reloads typed snapshots across database reopen', async () => {
+  const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-billing-repository-snapshot-'));
+  const options = { stateDir, filename: 'state.sqlite' };
+  let database = openStateDatabase(options);
+  const snapshot = billingSnapshot();
+
+  try {
+    createBillingRepository(database.db).replaceSnapshot(snapshot);
+    expect(createBillingRepository(database.db).loadSnapshot()).toEqual({ kind: 'snapshot', value: snapshot });
+    database.close();
+
+    database = openStateDatabase(options);
+    const repository = createBillingRepository(database.db);
+    expect(repository.loadSnapshot()).toEqual({ kind: 'snapshot', value: snapshot });
+    expect(repository.listSubscriptions()).toEqual(snapshot.subscriptions);
+    expect(repository.listCustomers()).toEqual(snapshot.customers);
+    expect(repository.listCheckouts()).toEqual(snapshot.cryptoCheckouts);
+    expect(repository.listCharges()).toEqual(snapshot.cryptoCharges);
+    expect(repository.listProcessedEvents()).toEqual(snapshot.processedEvents);
+    expect(repository.listEntitlementHistory()).toEqual(snapshot.entitlementHistory ?? []);
+  } finally {
+    database.close();
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
 test('billing repository filters subscriptions and retrieves durable payment history', async () => {
   const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-billing-repository-'));
   const database = openStateDatabase({ stateDir, filename: 'state.sqlite' });

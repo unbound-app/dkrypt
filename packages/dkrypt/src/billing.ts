@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { openStateCollectionDatabase, readStateCollection, replaceStateCollections, writeStateMirror, type StateCollectionReplacement } from '#store/sqlite.js';
-import { createBillingRepository, type BillingSubscriptionFilter } from '#store/billingRepository.js';
+import { openStateCollectionDatabase, writeStateMirror, type StateCollectionReplacement } from '#store/sqlite.js';
+import { billingSnapshotReplacements, createBillingRepository, type BillingSubscriptionFilter } from '#store/billingRepository.js';
 import { config } from '#config.js';
 import { hasPermission, PermissionFlag } from '#permissions.js';
 
@@ -222,9 +222,8 @@ function emptySnapshot(): BillingSnapshot {
 
 function load(): BillingSnapshot {
   mkdirSync(config.stateDir, { recursive: true });
-  const records = readStateCollection(billingDatabase, 'billing_records');
-  if (records.length > 0) {
-    const record = records[0];
+  const record = billingRepository.loadSnapshot();
+  if (record !== undefined) {
     if (typeof record !== 'object' || record === null || (record as { kind?: unknown }).kind !== 'snapshot') throw new Error('billing database record is malformed');
     const snapshot = normalizeBillingSnapshot((record as { value?: unknown }).value);
     if (!snapshot) throw new Error('billing database snapshot is malformed');
@@ -245,23 +244,18 @@ const state = load();
 if (loadedFromLegacyFile) persist();
 
 export function billingSnapshotCollections(snapshot: BillingSnapshot): StateCollectionReplacement[] {
-  const normalized = normalizeBillingSnapshot(snapshot);
-  if (!normalized) throw new Error('billing snapshot is malformed');
-  const entitlementHistory = normalized.entitlementHistory ?? [];
-  return [
-    { table: 'billing_records', rows: [{ id: 'billing-snapshot', payload: { kind: 'snapshot', value: normalized }, updatedAt: Date.now() }] },
-    { table: 'billing_events', rows: normalized.processedEvents.map((event) => ({ id: `${event.provider}:${event.eventId}`, payload: event, updatedAt: Date.parse(event.processedAt) || Date.now() })) },
-    { table: 'billing_customers', rows: normalized.customers.map((customer, ordinal) => ({ id: `${customer.provider}:${customer.customerId}`, payload: customer, updatedAt: Date.parse(customer.updatedAt) || Date.now(), ordinal })) },
-    { table: 'billing_subscriptions', rows: normalized.subscriptions.map((subscription, ordinal) => ({ id: `${subscription.provider}:${subscription.subscriptionId}`, payload: subscription, updatedAt: Date.parse(subscription.updatedAt) || Date.now(), ordinal })) },
-    { table: 'billing_checkouts', rows: normalized.cryptoCheckouts.map((checkout, ordinal) => ({ id: `${checkout.provider}:${checkout.checkoutId}`, payload: checkout, updatedAt: Date.parse(checkout.updatedAt) || Date.now(), ordinal })) },
-    { table: 'billing_charges', rows: normalized.cryptoCharges.map((charge, ordinal) => ({ id: `${charge.provider}:${charge.chargeId}`, payload: charge, updatedAt: Date.parse(charge.updatedAt) || Date.now(), ordinal })) },
-    { table: 'billing_entitlement_history', rows: entitlementHistory.map((event) => ({ id: event.id, payload: event, updatedAt: Date.parse(event.at) || Date.now() })) },
-  ];
+  return billingSnapshotReplacements(requireBillingSnapshot(snapshot));
 }
 
 function persist(): void {
-  replaceStateCollections(billingDatabase, billingSnapshotCollections(state));
+  billingRepository.replaceSnapshot(requireBillingSnapshot(state));
   writeBillingSnapshotMirror();
+}
+
+function requireBillingSnapshot(value: unknown): BillingSnapshot {
+  const normalized = normalizeBillingSnapshot(value);
+  if (!normalized) throw new Error('billing snapshot is malformed');
+  return normalized;
 }
 
 export function writeBillingSnapshotMirror(): void {
@@ -603,8 +597,7 @@ export function isBillingSnapshot(value: unknown): value is BillingSnapshot {
 export function replaceBillingSnapshot(snapshot: BillingSnapshot, options?: { persist?: boolean }): void;
 export function replaceBillingSnapshot(snapshot: { customers: BillingCustomer[]; subscriptions: BillingSubscription[] }, options?: { persist?: boolean }): void;
 export function replaceBillingSnapshot(snapshot: BillingSnapshot | { customers: BillingCustomer[]; subscriptions: BillingSubscription[] }, options: { persist?: boolean } = {}): void {
-  const normalized = normalizeBillingSnapshot(snapshot);
-  if (!normalized) throw new Error('billing snapshot is malformed');
+  const normalized = requireBillingSnapshot(snapshot);
   state.customers = normalized.customers;
   state.subscriptions = normalized.subscriptions;
   state.cryptoCheckouts = normalized.cryptoCheckouts;

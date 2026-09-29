@@ -1,5 +1,6 @@
 import type { Database } from 'bun:sqlite';
-import type { BillingCharge, BillingCheckout, BillingCustomer, BillingEntitlementEvent, BillingEventRecord, BillingProvider, BillingSubscription } from '#billing.js';
+import type { BillingCharge, BillingCheckout, BillingCustomer, BillingEntitlementEvent, BillingEventRecord, BillingProvider, BillingSnapshot, BillingSubscription } from '#billing.js';
+import { replaceStateCollections, type StateCollectionReplacement } from '#store/sqlite.js';
 
 export interface BillingSubscriptionFilter {
   userId?: string;
@@ -14,6 +15,8 @@ export interface BillingSubscriptionFilter {
 }
 
 export interface BillingRepository {
+  loadSnapshot(): unknown;
+  replaceSnapshot(snapshot: BillingSnapshot): void;
   listCustomers(): BillingCustomer[];
   findCustomer(provider: BillingProvider, customerId: string): BillingCustomer | undefined;
   findCustomerForUser(provider: BillingProvider, userId: string): BillingCustomer | undefined;
@@ -85,8 +88,28 @@ function subscriptionConditions(filter: BillingSubscriptionFilter): { sql: strin
   return { sql: conditions.length ? `WHERE ${conditions.join(' AND ')}` : '', parameters };
 }
 
+export function billingSnapshotReplacements(snapshot: BillingSnapshot): StateCollectionReplacement[] {
+  const entitlementHistory = snapshot.entitlementHistory ?? [];
+  return [
+    { table: 'billing_records', rows: [{ id: 'billing-snapshot', payload: { kind: 'snapshot', value: snapshot }, updatedAt: Date.now() }] },
+    { table: 'billing_events', rows: snapshot.processedEvents.map((event) => ({ id: `${event.provider}:${event.eventId}`, payload: event, updatedAt: Date.parse(event.processedAt) || Date.now() })) },
+    { table: 'billing_customers', rows: snapshot.customers.map((customer, ordinal) => ({ id: `${customer.provider}:${customer.customerId}`, payload: customer, updatedAt: Date.parse(customer.updatedAt) || Date.now(), ordinal })) },
+    { table: 'billing_subscriptions', rows: snapshot.subscriptions.map((subscription, ordinal) => ({ id: `${subscription.provider}:${subscription.subscriptionId}`, payload: subscription, updatedAt: Date.parse(subscription.updatedAt) || Date.now(), ordinal })) },
+    { table: 'billing_checkouts', rows: snapshot.cryptoCheckouts.map((checkout, ordinal) => ({ id: `${checkout.provider}:${checkout.checkoutId}`, payload: checkout, updatedAt: Date.parse(checkout.updatedAt) || Date.now(), ordinal })) },
+    { table: 'billing_charges', rows: snapshot.cryptoCharges.map((charge, ordinal) => ({ id: `${charge.provider}:${charge.chargeId}`, payload: charge, updatedAt: Date.parse(charge.updatedAt) || Date.now(), ordinal })) },
+    { table: 'billing_entitlement_history', rows: entitlementHistory.map((event) => ({ id: event.id, payload: event, updatedAt: Date.parse(event.at) || Date.now() })) },
+  ];
+}
+
 export function createBillingRepository(database: Database): BillingRepository {
   return {
+    loadSnapshot() {
+      const row = database.query('SELECT payload FROM billing_records WHERE id = ? LIMIT 1;').get('billing-snapshot') as { payload: string } | null;
+      return row ? JSON.parse(row.payload) as unknown : undefined;
+    },
+    replaceSnapshot(snapshot) {
+      replaceStateCollections(database, billingSnapshotReplacements(snapshot));
+    },
     listCustomers() {
       const rows = database.query('SELECT payload FROM billing_customers ORDER BY ordinal ASC, id ASC;').all() as Array<{ payload: string }>;
       return rows.map((row) => JSON.parse(row.payload) as BillingCustomer);
