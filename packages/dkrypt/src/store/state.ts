@@ -893,7 +893,12 @@ function migrateV5ToV6(v5: Record<string, unknown>): Record<string, unknown> {
   };
 }
 
+function assertLegacyCollectionArray(raw: Record<string, unknown>, key: string, collectionName: string): void {
+  if (Object.hasOwn(raw, key) && !Array.isArray(raw[key])) throw new Error(`persistent ${collectionName} data is malformed`);
+}
+
 function migrateV6ToV8(v6: Record<string, unknown>): Record<string, unknown> {
+  assertLegacyCollectionArray(v6, 'allowedUsers', 'account');
   const now = Date.now();
   const roles: Role[] = [seedDefaultRole(now)];
   const roleIdByBits = new Map<string, string>();
@@ -919,7 +924,7 @@ function migrateV6ToV8(v6: Record<string, unknown>): Record<string, unknown> {
     return [role.id];
   }
 
-  const legacyUsers = Array.isArray(v6.allowedUsers) ? (v6.allowedUsers as Record<string, unknown>[]) : [];
+  const legacyUsers = Object.hasOwn(v6, 'allowedUsers') ? v6.allowedUsers as Record<string, unknown>[] : [];
   const allowedUsers: AllowedUser[] = legacyUsers.map((u) => ({
     username: u.username as string,
     roleIds: roleIdForBits(legacyBooleansToBits((u.permissions ?? LEGACY_VIEWER_PERMISSIONS) as LegacyPermissions)),
@@ -933,7 +938,8 @@ function migrateV6ToV8(v6: Record<string, unknown>): Record<string, unknown> {
 }
 
 function migrateV7ToV8(v7: Record<string, unknown>): Record<string, unknown> {
-  const roles = Array.isArray(v7.roles)
+  if (Object.hasOwn(v7, 'roles') && (!Array.isArray(v7.roles) || !v7.roles.every(isRoleRecord))) throw new Error('persistent role data is malformed');
+  const roles = Object.hasOwn(v7, 'roles')
     ? (v7.roles as Role[]).map((role) => {
         const permissions = parseBits(role.permissions);
         const migratedPermissions = hasPermission(permissions, PermissionFlag.requestDecrypt)
@@ -988,7 +994,8 @@ function consolidatePermissionBits(bits: bigint): bigint {
 }
 
 function migrateV9ToV10(v9: Record<string, unknown> | PersistedState): Record<string, unknown> {
-  const roles = Array.isArray(v9.roles)
+  if (Object.hasOwn(v9, 'roles') && (!Array.isArray(v9.roles) || !v9.roles.every(isRoleRecord))) throw new Error('persistent role data is malformed');
+  const roles = Object.hasOwn(v9, 'roles')
     ? (v9.roles as Role[]).map((role) => ({ ...role, permissions: serializeBits(upgradePermissionBits(parseBits(role.permissions))) }))
     : [seedDefaultRole(Date.now())];
   return { ...defaultState(), ...v9, version: 10, roles };
@@ -1063,7 +1070,8 @@ function migrateToV17(raw: Record<string, unknown>): PersistedState {
   if (raw.version === 5) return migrateV16ToV17(migrateV13ToV14(migrateV12ToV13(migrateV11ToV12(migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(migrateV5ToV6(raw))))))));
 
   if (raw.version === 4) {
-    const v4Users = Array.isArray(raw.allowedUsers) ? (raw.allowedUsers as Record<string, unknown>[]) : [];
+    assertLegacyCollectionArray(raw, 'allowedUsers', 'account');
+    const v4Users = Object.hasOwn(raw, 'allowedUsers') ? raw.allowedUsers as Record<string, unknown>[] : [];
     return migrateV16ToV17(migrateV13ToV14(migrateV12ToV13(migrateV11ToV12(migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(
       migrateV5ToV6({
         ...raw,
@@ -1078,7 +1086,8 @@ function migrateToV17(raw: Record<string, unknown>): PersistedState {
   }
 
   if (raw.version === 3) {
-    const v3Users = Array.isArray(raw.allowedUsers) ? (raw.allowedUsers as Record<string, unknown>[]) : [];
+    assertLegacyCollectionArray(raw, 'allowedUsers', 'account');
+    const v3Users = Object.hasOwn(raw, 'allowedUsers') ? raw.allowedUsers as Record<string, unknown>[] : [];
     return migrateV16ToV17(migrateV13ToV14(migrateV12ToV13(migrateV11ToV12(migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(
       migrateV5ToV6({
         ...raw,
@@ -1093,7 +1102,8 @@ function migrateToV17(raw: Record<string, unknown>): PersistedState {
   }
 
   if (raw.version === 2) {
-    const legacyUsers = Array.isArray(raw.allowedUsers) ? (raw.allowedUsers as Record<string, unknown>[]) : [];
+    assertLegacyCollectionArray(raw, 'allowedUsers', 'account');
+    const legacyUsers = Object.hasOwn(raw, 'allowedUsers') ? raw.allowedUsers as Record<string, unknown>[] : [];
     return migrateV16ToV17(migrateV13ToV14(migrateV12ToV13(migrateV11ToV12(migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(
       migrateV5ToV6({
         ...raw,
@@ -1107,6 +1117,10 @@ function migrateToV17(raw: Record<string, unknown>): PersistedState {
     )))))));
   }
 
+  assertLegacyCollectionArray(raw, 'allowedUsers', 'account');
+  assertLegacyCollectionArray(raw, 'roles', 'role');
+  if (Array.isArray(raw.allowedUsers) && raw.allowedUsers.length > 0) throw new Error('persistent account data has no supported migration');
+  if (Array.isArray(raw.roles) && raw.roles.length > 0) throw new Error('persistent role data has no supported migration');
   const legacyKeys = Array.isArray(raw.apiKeys) ? (raw.apiKeys as Record<string, unknown>[]) : [];
   return migrateV16ToV17(migrateV13ToV14(migrateV12ToV13(migrateV11ToV12(migrateV10ToV11(migrateV8ToV9(migrateV6ToV8(
     migrateV5ToV6({

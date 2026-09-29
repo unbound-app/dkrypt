@@ -61,8 +61,19 @@ describe('state migrations', () => {
     }
   });
 
-  test('fails closed on malformed v18 account collections without rewriting the legacy state file', async () => {
+  test('fails closed on malformed account and role collections without rewriting the legacy state file', async () => {
     const malformedStates = [
+      { version: 1, allowedUsers: 'lost-users' },
+      { version: 1, allowedUsers: [{ username: 'lost-user' }] },
+      { version: 1, roles: 'lost-roles' },
+      { version: 2, allowedUsers: 'lost-users' },
+      { version: 3, allowedUsers: 'lost-users' },
+      { version: 4, allowedUsers: 'lost-users' },
+      { version: 5, allowedUsers: 'lost-users' },
+      { version: 6, allowedUsers: 'lost-users' },
+      { version: 7, roles: 'lost-roles' },
+      { version: 8, roles: 'lost-roles' },
+      { version: 9, roles: 'lost-roles' },
       { version: 18, allowedUsers: { username: 'lost-user' }, roles: [] },
       { version: 18, allowedUsers: [], roles: 'lost-role' },
     ];
@@ -92,7 +103,7 @@ describe('state migrations', () => {
         const [stderr, exitCode] = await Promise.all([new Response(child.stderr).text(), child.exited]);
 
         expect(exitCode).not.toBe(0);
-        expect(stderr).toContain('persistent account or role data is malformed');
+        expect(stderr).toMatch(/persistent (account|role|account or role) data (is malformed|has no supported migration)/);
         expect(await readFile(statePath, 'utf8')).toBe(source);
       } finally {
         await rm(stateDir, { recursive: true, force: true });
