@@ -330,10 +330,10 @@ jobs:
           if (health.deployment?.id !== process.env.EXPECTED_DEPLOYMENT_ID || health.deployment?.ref !== process.env.EXPECTED_BUILD_REF) {
             throw new Error(`deployment identity mismatch: expected ${process.env.EXPECTED_DEPLOYMENT_ID}@${process.env.EXPECTED_BUILD_REF}, received ${JSON.stringify(health.deployment)}`);
           }
-          const statusResponse = await fetchWithTimeout(`${base}/v1/status`);
-          const status = await readObject(statusResponse);
-          if (statusResponse.status !== 200 || status.status !== 'operational' || status.components?.automation?.state !== 'operational') {
-            throw new Error(`deployment is not operational after device recovery: ${JSON.stringify(status)}`);
+          const deploymentStatusResponse = await fetchWithTimeout(`${base}/v1/status`);
+          const deploymentStatus = await readObject(deploymentStatusResponse);
+          if (deploymentStatusResponse.status !== 200 || deploymentStatus.status !== 'operational' || deploymentStatus.components?.automation?.state !== 'operational') {
+            throw new Error(`deployment is not operational after device recovery: ${JSON.stringify(deploymentStatus)}`);
           }
           const metrics = await (await fetchWithTimeout(`${base}/v1/metrics`, { headers })).text();
           if (!metrics.includes('dkrypt_device_bridge_event_stream_connected{transport="usbmux"} 1')) throw new Error('Rust usbmuxd event stream is not connected');
