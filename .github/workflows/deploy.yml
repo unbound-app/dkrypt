@@ -505,6 +505,22 @@ jobs:
           const primaryDevice = getPrimaryDevice();
           if (!primaryDevice?.udid || primaryDevice.host || primaryDevice.usbmuxNetwork === true) throw new Error('configured primary device is not a direct USB pairing');
           await verifyRustDevicePairing(primaryDevice);
+          const pairingStore = process.env.DEVICE_PAIRING_STORE || path.join(process.env.STATE_DIR || '/data/state', 'device-pairing');
+          async function verifyPairingStorePermissions(directory) {
+            const metadata = await fs.lstat(directory);
+            if (!metadata.isDirectory() || (metadata.mode & 0o777) !== 0o700) throw new Error('device pairing directory permissions are not owner-only');
+            for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+              const entryPath = path.join(directory, entry.name);
+              const entryMetadata = await fs.lstat(entryPath);
+              if (entryMetadata.isDirectory()) {
+                if ((entryMetadata.mode & 0o777) !== 0o700) throw new Error('device pairing subdirectory permissions are not owner-only');
+                await verifyPairingStorePermissions(entryPath);
+              } else if (!entryMetadata.isFile() || (entryMetadata.mode & 0o777) !== 0o600) {
+                throw new Error('device pairing file permissions are not owner-only');
+              }
+            }
+          }
+          await verifyPairingStorePermissions(pairingStore);
           const agentStatus = await withAutoinstallDeviceAgent(primaryDevice, client => client.call('status', {}, 3_000));
           if (typeof agentStatus.agentVersion !== 'string') throw new Error('signed USB device-agent status request was incomplete');
           console.log(JSON.stringify({

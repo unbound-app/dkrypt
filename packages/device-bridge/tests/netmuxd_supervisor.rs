@@ -96,7 +96,7 @@ async fn rpc_remains_available_before_mux_readiness_and_across_mux_restarts() {
     fs::create_dir_all(&pairing_store).expect("pairing store should be created");
     fs::write(
         &netmuxd,
-        "#!/bin/sh\nset -eu\nsocket=\nstore=\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"--socket-path\" ]; then socket=$2; shift 2; elif [ \"$1\" = \"--plist-storage\" ]; then store=$2; shift 2; else shift; fi\ndone\nprintf x >> \"$store/restarts\"\ncount=$(wc -c < \"$store/restarts\")\nif [ \"$count\" -eq 1 ]; then : > \"$store/first-start\"; sleep 0.5; exit 1; fi\n: > \"$socket\"\nsleep 0.5\n",
+        "#!/bin/sh\nset -eu\nsocket=\nstore=\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"--socket-path\" ]; then socket=$2; shift 2; elif [ \"$1\" = \"--plist-storage\" ]; then store=$2; shift 2; else shift; fi\ndone\nmkdir -p \"$store/new-pairing-record\"\n: > \"$store/new-pairing-record/record.plist\"\nprintf x >> \"$store/restarts\"\ncount=$(wc -c < \"$store/restarts\")\nif [ \"$count\" -eq 1 ]; then : > \"$store/first-start\"; sleep 0.5; exit 1; fi\n: > \"$socket\"\nsleep 0.5\n",
     )
     .expect("fixture executable should be written");
     fs::set_permissions(&netmuxd, fs::Permissions::from_mode(0o700))
@@ -104,7 +104,11 @@ async fn rpc_remains_available_before_mux_readiness_and_across_mux_restarts() {
 
     let bridge_binary = std::env::var("CARGO_BIN_EXE_dkrypt-device-bridge")
         .expect("Cargo should provide the device bridge binary path");
-    let mut bridge = Command::new(bridge_binary)
+    let mut bridge = Command::new("/bin/sh")
+        .arg("-c")
+        .arg("umask 0022; exec \"$@\"")
+        .arg("dkrypt-device-bridge-fixture")
+        .arg(bridge_binary)
         .env("DEVICE_BRIDGE_SOCKET", &rpc_socket)
         .env("DEVICE_MUX_SOCKET", &mux_socket)
         .env("DEVICE_PAIRING_STORE", &pairing_store)
@@ -116,6 +120,30 @@ async fn rpc_remains_available_before_mux_readiness_and_across_mux_restarts() {
     let result: Result<(), String> = async {
         wait_for_file(&rpc_socket).await?;
         wait_for_file(&first_start).await?;
+        let pairing_directory = pairing_store.join("new-pairing-record");
+        wait_for_file(&pairing_directory).await?;
+        let pairing_directory_mode = fs::metadata(&pairing_directory)
+            .map_err(|value| value.to_string())?
+            .permissions()
+            .mode()
+            & 0o777;
+        if pairing_directory_mode != 0o700 {
+            return Err(format!(
+                "new pairing directory mode is {pairing_directory_mode:o}, expected 700"
+            ));
+        }
+        let pairing_record = pairing_directory.join("record.plist");
+        wait_for_file(&pairing_record).await?;
+        let pairing_record_mode = fs::metadata(&pairing_record)
+            .map_err(|value| value.to_string())?
+            .permissions()
+            .mode()
+            & 0o777;
+        if pairing_record_mode != 0o600 {
+            return Err(format!(
+                "new pairing record mode is {pairing_record_mode:o}, expected 600"
+            ));
+        }
 
         let before_mux_ready = request_capabilities(&rpc_socket).await?;
         if before_mux_ready["ok"] != Value::Bool(true)

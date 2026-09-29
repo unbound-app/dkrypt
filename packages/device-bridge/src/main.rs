@@ -14,6 +14,7 @@ use std::{
     future::Future,
     io::Write,
     os::unix::fs::{OpenOptionsExt, PermissionsExt},
+    os::unix::process::CommandExt,
     path::{Path, PathBuf},
     pin::Pin,
     process::Stdio,
@@ -1128,7 +1129,14 @@ async fn supervise_netmuxd(
 }
 
 fn start_netmuxd(binary: &str, socket: &Path, pairing_store: &Path) -> Result<Child, String> {
-    Command::new(binary)
+    let mut command = Command::new(binary);
+    unsafe {
+        command.as_std_mut().pre_exec(|| {
+            libc::umask(0o077);
+            Ok(())
+        });
+    }
+    command
         .arg("--socket-path")
         .arg(socket)
         .arg("--plist-storage")
