@@ -87,6 +87,12 @@ test('persistent shared volumes can replace legacy root-owned files after rollba
   expect(entrypoint).not.toContain('chmod 3770 "$volume_dir"');
 });
 
+test('the bridge secret is available only to the API service identity', () => {
+  expect(entrypoint).toContain('chown 10001:10001 "$secret_file"');
+  expect(entrypoint).toContain('chmod 0400 "$secret_file"');
+  expect(entrypoint).not.toContain('chown 0:0 "$secret_file"');
+});
+
 test('production smoke verifies the saved Rust pairing, USB agent, and decrypt SFTP setup', () => {
   const pairingVerification = deploymentWorkflow.indexOf('await verifyRustDevicePairing(primaryDevice)');
   const agentProbe = deploymentWorkflow.indexOf('withAutoinstallDeviceAgent(primaryDevice');

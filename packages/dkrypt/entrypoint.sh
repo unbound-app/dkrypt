@@ -76,8 +76,8 @@ if [ -z "${DEVICE_BRIDGE_SECRET:-}" ]; then
   export DEVICE_BRIDGE_SECRET
 fi
 if [ -e "$secret_file" ]; then
-  chown 0:0 "$secret_file"
-  chmod 0600 "$secret_file"
+  chown 10001:10001 "$secret_file"
+  chmod 0400 "$secret_file"
 fi
 
 umask 007
