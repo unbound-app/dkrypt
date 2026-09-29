@@ -296,7 +296,7 @@ class RustDeviceBridgeClient {
       });
     } catch (error) {
       throwIfAborted(signal);
-      if (error instanceof DeviceAgentUnavailableError) throw error;
+      if (error instanceof DeviceAgentUnavailableError || error instanceof DeviceBridgeError) throw error;
       throw new DeviceAgentUnavailableError(`Rust device bridge request failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
     }
   }

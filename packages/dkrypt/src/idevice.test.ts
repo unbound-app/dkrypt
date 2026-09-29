@@ -11,7 +11,7 @@ import { config } from '#config.js';
 import { BRIDGE_CAPABILITIES, BRIDGE_PROTOCOL_VERSION, TESTFLIGHT_LIFECYCLE_CAPABILITIES } from './bridgeProtocol.js';
 import { flushTelemetry, startSpan } from '#telemetry.js';
 
-const { armAppStoreAutoConfirm, buildIpadecryptRuntimeConfig, clearAppStoreAutoConfirm, createBridgeEnvelope, createDeviceAgentEnvelope, execCommand, getDeviceAgentRetryDelay, getDeviceTransportOrder, getRustDeviceBridgeHealth, getRustDeviceBridgeStatus, isDirectUsbDeviceAgentConnection, pairDevice, probeDeviceSshTunnel, readBridgeHeartbeats, retryRustDeviceHealthProbe, retryTransientSshConnection, sendAppStoreBridgeRequest, setupDeviceConnection, verifyRustDevicePairing, withSSH } = await import('./idevice.js' + '?idevice-transport-test');
+const { armAppStoreAutoConfirm, buildIpadecryptRuntimeConfig, clearAppStoreAutoConfirm, createBridgeEnvelope, createDeviceAgentEnvelope, DeviceBridgeError, execCommand, getDeviceAgentRetryDelay, getDeviceTransportOrder, getRustDeviceBridgeHealth, getRustDeviceBridgeStatus, isDirectUsbDeviceAgentConnection, pairDevice, probeDeviceSshTunnel, readBridgeHeartbeats, retryRustDeviceHealthProbe, retryTransientSshConnection, sendAppStoreBridgeRequest, setupDeviceConnection, verifyRustDevicePairing, withSSH } = await import('./idevice.js' + '?idevice-transport-test');
 
 type FakeExecStream = {
   stderr: {
@@ -208,6 +208,16 @@ test('keeps a connected USB device ready when capability discovery fails', async
     await new Promise<void>((resolve) => server.close(() => resolve()));
     await rm(runtimeDir, { recursive: true, force: true });
   }
+});
+
+test('preserves a specific Rust bridge operation error instead of reporting device unavailability', async () => {
+  await withRustBridgeFixture((request) => request.operation === 'health'
+    ? { __bridgeError: { code: 'pairing_required', message: 'device must be paired', retryable: false } }
+    : { capabilities: [] }, async () => {
+    const result = getRustDeviceBridgeStatus();
+    await expect(result).rejects.toBeInstanceOf(DeviceBridgeError);
+    await expect(result).rejects.toMatchObject({ code: 'pairing_required', retryable: false });
+  });
 });
 
 test('createBridgeEnvelope matches the shared bridge fixture', async () => {
