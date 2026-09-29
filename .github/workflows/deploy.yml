@@ -444,12 +444,6 @@ jobs:
           if (!key.isFile() || key.size === 0 || key.uid !== 10001 || key.gid !== 10001 || (key.mode & 0o777) !== 0o400) throw new Error('device SSH private key is not a non-empty regular file owned only by the API user');
           if (!publicKey.isFile() || publicKey.size === 0 || publicKey.uid !== 10001 || publicKey.gid !== 10001 || (publicKey.mode & 0o777) !== 0o440) throw new Error('device SSH public key is not a non-empty regular file with API-group-only permissions');
           const sshKeyAvailable = true;
-          try {
-            await fs.stat('/root/.ipadecrypt');
-            throw new Error('legacy .ipadecrypt bootstrap path is present');
-          } catch (error) {
-            if (error instanceof Error && !String(error.message).includes('ENOENT')) throw error;
-          }
           const { setupDeviceConnection, verifyRustDevicePairing, withAutoinstallDeviceAgent } = await import('/app/src/idevice.ts');
           const primaryDevice = getPrimaryDevice();
           if (!primaryDevice?.udid || primaryDevice.host || primaryDevice.usbmuxNetwork === true) throw new Error('configured primary device is not a direct USB pairing');

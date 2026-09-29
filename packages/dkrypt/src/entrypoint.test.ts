@@ -105,6 +105,8 @@ test('production smoke verifies the saved Rust pairing, USB agent, and decrypt S
   expect(deploymentWorkflow).toContain("client.call('status', {}, 3_000)");
   expect(deploymentWorkflow).toContain('device setup did not verify decrypt readiness');
   expect(deploymentWorkflow).toContain("step.id === 'ssh_sftp' && step.status === 'ready'");
+  expect(deploymentWorkflow).not.toContain("await fs.stat('/root/.ipadecrypt')");
+  expect(deploymentWorkflow).toContain("grep -q '/root/.ipadecrypt'");
   expect(deploymentWorkflow).toContain('docker exec -i --user 10001:10001');
   expect(deploymentWorkflow).not.toContain('process.kill(');
 });
