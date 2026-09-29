@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, test } from 'bun:test';
 import { config } from '#config.js';
@@ -1002,6 +1004,56 @@ describe('device CRUD primary invariant', () => {
 
     deleteDevice(a.id, 'tester');
     expect(getEffectiveDevices()).toEqual([]);
+  });
+
+  test('primary selection ignores disabled devices, falls back on disable, and survives a process restart', async () => {
+    const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-device-primary-'));
+    const createDevices = `
+      import { createDevice, getEffectiveDevices, updateDevice } from './src/store/state.ts';
+      createDevice({ name: 'disabled-first', transport: 'wifi', host: '192.168.1.10', enabled: false }, 'tester');
+      const second = createDevice({ name: 'enabled-second', transport: 'wifi', host: '192.168.1.11', enabled: true }, 'tester');
+      createDevice({ name: 'enabled-third', transport: 'wifi', host: '192.168.1.12', enabled: true }, 'tester');
+      updateDevice(second.id, { enabled: false }, 'tester');
+      console.log(JSON.stringify(getEffectiveDevices()));
+    `;
+    const reloadDevices = `
+      import { getEffectiveDevices } from './src/store/state.ts';
+      console.log(JSON.stringify(getEffectiveDevices()));
+    `;
+
+    async function runStateProcess(source: string): Promise<Array<{ id: string; name: string; enabled: boolean; isPrimary?: boolean }>> {
+      const child = Bun.spawn([process.execPath, '-e', source], {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          API_KEY: 'device-primary-api-key',
+          SESSION_SIGNING_SECRET: 'device-primary-session-secret',
+          ADMIN_PASSWORD: 'device-primary-admin-password',
+          STATE_DIR: stateDir,
+          STATE_DATABASE_FILE: 'state.sqlite',
+        },
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+        child.exited,
+      ]);
+      if (exitCode !== 0) throw new Error(`device state process failed: ${stderr}`);
+      return JSON.parse(stdout) as Array<{ id: string; name: string; enabled: boolean; isPrimary?: boolean }>;
+    }
+
+    try {
+      const created = await runStateProcess(createDevices);
+      const reloaded = await runStateProcess(reloadDevices);
+
+      expect(created.filter((device) => device.enabled && device.isPrimary).map((device) => device.name)).toEqual(['enabled-third']);
+      expect(created.filter((device) => !device.enabled && device.isPrimary)).toEqual([]);
+      expect(reloaded).toEqual(created);
+    } finally {
+      await rm(stateDir, { recursive: true, force: true });
+    }
   });
 });
 

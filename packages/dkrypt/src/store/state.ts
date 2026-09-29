@@ -28,6 +28,7 @@ import type { JobTimelineEvent, TestFlightJobSource } from '#jobs/types.js';
 import { createBillingRepository } from '#store/billingRepository.js';
 import { categorizeFailure } from '#util/failureCategory.js';
 import { combineBits, hasPermission, parseBits, PermissionFlag, serializeBits } from '#permissions.js';
+import { createDeviceRepository } from '#store/deviceRepository.js';
 import { createDeviceHistoryRepository } from '#store/deviceHistoryRepository.js';
 import { createDeviceHealthRepository } from '#store/deviceHealthRepository.js';
 import { createNotificationRepository } from '#store/notificationRepository.js';
@@ -696,6 +697,7 @@ const auditRepository = createAuditRepository(stateDatabase.db);
 const testFlightSubscriptionRepository = createTestFlightSubscriptionRepository(stateDatabase.db);
 const jobHistoryRepository = createJobHistoryRepository(stateDatabase.db);
 const sessionRepository = createSessionRepository(stateDatabase.db);
+const deviceRepository = createDeviceRepository(stateDatabase.db);
 
 export function getStateDatabaseStatus(): { path: string; schemaVersion: number; integrity: 'ok' } {
   return { path: stateDatabase.path, schemaVersion: stateDatabase.schemaVersion, integrity: stateDatabase.integrityStatus() };
@@ -1328,6 +1330,11 @@ export function upsertAppCatalogEntries(entries: Array<Omit<AppCatalogEntry, 'up
 
 let dirty = false;
 const state: PersistedState = load();
+const persistedDevices = deviceRepository.listAll();
+if (JSON.stringify(state.devices) !== JSON.stringify(persistedDevices)) {
+  state.devices = persistedDevices;
+  dirty = true;
+}
 const persistedSessions = sessionRepository.listAll();
 if (JSON.stringify(state.activeSessions) !== JSON.stringify(persistedSessions)) {
   state.activeSessions = persistedSessions;
@@ -2803,7 +2810,7 @@ export function getWatchConfigIssues(watch: AppWatch): string[] {
 }
 
 export function getEffectiveDevices(): DeviceRecord[] {
-  return state.devices;
+  return deviceRepository.listAll();
 }
 
 export function listDevices(): DeviceRecord[] {
@@ -2811,7 +2818,7 @@ export function listDevices(): DeviceRecord[] {
 }
 
 export function getDevice(id: string): DeviceRecord | undefined {
-  return getEffectiveDevices().find((d) => d.id === id);
+  return deviceRepository.findById(id);
 }
 
 export function getPrimaryDevice(): DeviceRecord | undefined {
@@ -3005,13 +3012,9 @@ export interface CreateDeviceInput {
   isPrimary?: boolean;
 }
 
-function clearOtherPrimaries(exceptId?: string): void {
-  for (const d of state.devices) if (d.id !== exceptId) d.isPrimary = false;
-}
-
 export function createDevice(input: CreateDeviceInput, actor: string): DeviceRecord {
   const now = Date.now();
-  const makePrimary = input.isPrimary || !state.devices.some((d) => d.isPrimary);
+  const makePrimary = (input.enabled ?? true) && (input.isPrimary || !state.devices.some((d) => d.enabled && d.isPrimary));
   const transport = input.transport ?? (input.udid ? input.usbmuxNetwork ? 'wifi' : 'usb' : 'wifi');
   const device: DeviceRecord = {
     id: randomUUID(),
@@ -3031,41 +3034,30 @@ export function createDevice(input: CreateDeviceInput, actor: string): DeviceRec
     createdAt: now,
     updatedAt: now,
   };
-  if (makePrimary) clearOtherPrimaries();
-  state.devices.push(device);
+  state.devices = deviceRepository.create(device);
+  const createdDevice = state.devices.find((candidate) => candidate.id === device.id)!;
   persistNow();
-  recordAudit(actor, 'device.add', device.id, device.name);
-  return device;
+  recordAudit(actor, 'device.add', createdDevice.id, createdDevice.name);
+  return createdDevice;
 }
 
 export function updateDevice(id: string, patch: Partial<CreateDeviceInput>, actor: string): { ok: boolean; device?: DeviceRecord; error?: string } {
-  const device = state.devices.find((d) => d.id === id);
-  if (!device) return { ok: false, error: 'device not found' };
-  Object.assign(device, patch, { updatedAt: Date.now() });
-  if (patch.isPrimary) clearOtherPrimaries(device.id);
-
-  if (!state.devices.some((d) => d.enabled && d.isPrimary)) {
-    const fallback = state.devices.find((d) => d.enabled);
-    if (fallback) fallback.isPrimary = true;
-  }
+  const devices = deviceRepository.update(id, { ...patch, updatedAt: Date.now() });
+  if (!devices) return { ok: false, error: 'device not found' };
+  state.devices = devices;
+  const device = state.devices.find((candidate) => candidate.id === id)!;
   persistNow();
   recordAudit(actor, 'device.update', device.id, device.name);
   return { ok: true, device };
 }
 
 export function deleteDevice(id: string, actor: string): boolean {
-  const before = state.devices.length;
-  state.devices = state.devices.filter((d) => d.id !== id);
-  const changed = state.devices.length !== before;
-  if (changed) {
-    if (!state.devices.some((d) => d.enabled && d.isPrimary)) {
-      const fallback = state.devices.find((d) => d.enabled);
-      if (fallback) fallback.isPrimary = true;
-    }
-    persistNow();
-    recordAudit(actor, 'device.remove', id);
-  }
-  return changed;
+  const result = deviceRepository.delete(id);
+  if (!result.changed) return false;
+  state.devices = result.devices;
+  persistNow();
+  recordAudit(actor, 'device.remove', id);
+  return true;
 }
 
 export function recordWebhookDelivery(entry: Omit<WebhookDeliveryEntry, 'id' | 'ts'>): void {
