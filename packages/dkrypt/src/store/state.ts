@@ -26,6 +26,7 @@ import {
 import { log } from '#logger.js';
 import type { JobTimelineEvent, TestFlightJobSource } from '#jobs/types.js';
 import { createBillingRepository } from '#store/billingRepository.js';
+import { createApiKeyRepository, isApiKeyRecordShape } from '#store/apiKeyRepository.js';
 import { categorizeFailure } from '#util/failureCategory.js';
 import { combineBits, hasPermission, parseBits, PermissionFlag, serializeBits } from '#permissions.js';
 import { createDeviceRepository } from '#store/deviceRepository.js';
@@ -685,6 +686,7 @@ const stateDatabase: StateDatabase = openStateDatabase({
   busyTimeoutMs: config.stateDbBusyTimeoutMs,
   migrationDryRun: config.stateDbMigrationDryRun,
 });
+const apiKeyRepository = createApiKeyRepository(stateDatabase.db);
 const deviceHistoryRepository = createDeviceHistoryRepository(stateDatabase.db);
 const deviceHealthRepository = createDeviceHealthRepository(stateDatabase.db);
 const notificationRepository = createNotificationRepository(stateDatabase.db);
@@ -1330,6 +1332,15 @@ export function upsertAppCatalogEntries(entries: Array<Omit<AppCatalogEntry, 'up
 
 let dirty = false;
 const state: PersistedState = load();
+let persistedApiKeys = apiKeyRepository.listAll();
+if (persistedApiKeys.length === 0 && state.apiKeys.length > 0) {
+  apiKeyRepository.replaceAll(state.apiKeys);
+  persistedApiKeys = apiKeyRepository.listAll();
+}
+if (JSON.stringify(state.apiKeys) !== JSON.stringify(persistedApiKeys)) {
+  state.apiKeys = persistedApiKeys;
+  dirty = true;
+}
 let persistedProjects = projectRepository.listAll();
 if (persistedProjects.length === 0) {
   projectRepository.replaceAll(state.projects);
@@ -1364,6 +1375,9 @@ function fsyncPath(filePath: string): void {
 
 function persistNow(additionalCollections: readonly StateCollectionReplacement[] = []): void {
   const collections = [...additionalCollections];
+  if (!collections.some((collection) => collection.table === 'api_keys')) {
+    collections.push(apiKeyRepository.collectionReplacement(state.apiKeys));
+  }
   if (!collections.some((collection) => collection.table === 'projects')) {
     collections.push(projectCollectionReplacement(state.projects));
   }
@@ -1449,12 +1463,8 @@ function hashKey(key: string): string {
 
 function findGeneratedApiKeyRecord(candidate: string): ApiKeyRecord | undefined {
   const hash = hashKey(candidate);
-  const now = Date.now();
-  return state.apiKeys.find((record) =>
-    record.status === 'approved'
-    && (!record.expiresAt || now <= record.expiresAt)
-    && (record.hash === hash || (record.previousHash === hash && !!record.previousHashExpiresAt && now < record.previousHashExpiresAt)),
-  );
+  const record = apiKeyRepository.findApprovedByHash(hash, Date.now());
+  return record ? state.apiKeys.find((candidateRecord) => candidateRecord.id === record.id) ?? record : undefined;
 }
 
 export function isGeneratedApiKey(candidate: string): boolean {
@@ -2292,27 +2302,25 @@ export function revealApiKeySecret(id: string, requesterId: string): string | un
 }
 
 export function getApiKeyById(id: string): ReturnType<typeof redact> | undefined {
-  const record = state.apiKeys.find((k) => k.id === id);
+  const record = apiKeyRepository.findById(id);
   return record ? redact(record) : undefined;
 }
 
 export function listApiKeysForOwner(ownerId: string) {
-  return state.apiKeys.filter((k) => k.ownerId === ownerId).map(redact);
+  return apiKeyRepository.listByOwner(ownerId).map(redact);
 }
 
 export function listAllApiKeys() {
-  return state.apiKeys.map(redact);
+  return apiKeyRepository.listAll().map(redact);
 }
 
 export function listAllApiKeysPage(offset: number, limit: number, search?: string): { keys: ReturnType<typeof redact>[]; total: number } {
-  const needle = search?.trim().toLowerCase();
-  const matching = needle ? state.apiKeys.filter((k) => k.name.toLowerCase().includes(needle) || k.ownerId.toLowerCase().includes(needle)) : state.apiKeys;
-  const sorted = [...matching].sort((a, b) => b.createdAt - a.createdAt);
-  return { keys: sorted.slice(offset, offset + limit).map(redact), total: sorted.length };
+  const page = apiKeyRepository.listPage(offset, limit, search);
+  return { keys: page.records.map(redact), total: page.total };
 }
 
 export function listPendingApiKeys() {
-  return state.apiKeys.filter((k) => k.status === 'pending').map(redact);
+  return apiKeyRepository.listPending().map(redact);
 }
 
 export function revokeApiKey(id: string, requesterId: string, requesterIsAdmin: boolean): boolean {
@@ -2410,8 +2418,10 @@ export function verifyApiKey(candidate: string, ip?: string): ApiKeyAuthResult |
   }
   if (record.dailyLimit && todayUsageCount(record.id) >= record.dailyLimit) return 'rate-limited';
 
-  record.lastUsedAt = Date.now();
+  const lastUsedAt = Date.now();
+  record.lastUsedAt = lastUsedAt;
   if (ip) record.lastUsedIp = ip;
+  apiKeyRepository.touchLastUsed(record.id, lastUsedAt, ip);
   recordApiKeyUsage(record.id);
   dirty = true;
   const billingPriority = record.ownerId === 'root' ? 0 : getBillingEntitlements(record.ownerId).priority;
@@ -4305,18 +4315,6 @@ function isRoleShape(value: unknown): value is Role {
     typeof r.permissions === 'string' &&
     typeof r.position === 'number' &&
     typeof r.isDefault === 'boolean'
-  );
-}
-
-function isApiKeyRecordShape(value: unknown): value is ApiKeyRecord {
-  if (typeof value !== 'object' || value === null) return false;
-  const k = value as Record<string, unknown>;
-  return (
-    typeof k.id === 'string' &&
-    typeof k.name === 'string' &&
-    typeof k.ownerId === 'string' &&
-    (k.status === 'pending' || k.status === 'approved' || k.status === 'denied') &&
-    typeof k.createdAt === 'number'
   );
 }
 

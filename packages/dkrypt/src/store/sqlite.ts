@@ -649,6 +649,37 @@ const migrations = [
       CREATE INDEX IF NOT EXISTS sessions_by_expiry ON sessions(last_seen_at);
     `,
   },
+  {
+    version: 19,
+    sql: `
+      ALTER TABLE api_keys ADD COLUMN owner_id TEXT GENERATED ALWAYS AS (
+        CASE WHEN json_valid(payload) = 1 THEN lower(json_extract(payload, '$.ownerId')) END
+      ) VIRTUAL;
+      ALTER TABLE api_keys ADD COLUMN status TEXT GENERATED ALWAYS AS (
+        CASE WHEN json_valid(payload) = 1 THEN json_extract(payload, '$.status') END
+      ) VIRTUAL;
+      ALTER TABLE api_keys ADD COLUMN key_hash TEXT GENERATED ALWAYS AS (
+        CASE WHEN json_valid(payload) = 1 THEN json_extract(payload, '$.hash') END
+      ) VIRTUAL;
+      ALTER TABLE api_keys ADD COLUMN previous_hash TEXT GENERATED ALWAYS AS (
+        CASE WHEN json_valid(payload) = 1 THEN json_extract(payload, '$.previousHash') END
+      ) VIRTUAL;
+      ALTER TABLE api_keys ADD COLUMN previous_hash_expires_at INTEGER GENERATED ALWAYS AS (
+        CASE WHEN json_valid(payload) = 1 THEN CAST(json_extract(payload, '$.previousHashExpiresAt') AS INTEGER) END
+      ) VIRTUAL;
+      ALTER TABLE api_keys ADD COLUMN created_at INTEGER GENERATED ALWAYS AS (
+        CASE WHEN json_valid(payload) = 1 THEN CAST(json_extract(payload, '$.createdAt') AS INTEGER) END
+      ) VIRTUAL;
+      ALTER TABLE api_keys ADD COLUMN expires_at INTEGER GENERATED ALWAYS AS (
+        CASE WHEN json_valid(payload) = 1 THEN CAST(json_extract(payload, '$.expiresAt') AS INTEGER) END
+      ) VIRTUAL;
+      CREATE INDEX IF NOT EXISTS api_keys_by_owner_created ON api_keys(owner_id, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS api_keys_by_status_created ON api_keys(status, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS api_keys_by_current_hash ON api_keys(key_hash, expires_at, created_at DESC) WHERE status = 'approved' AND key_hash IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS api_keys_by_previous_hash ON api_keys(previous_hash, previous_hash_expires_at, expires_at, created_at DESC) WHERE status = 'approved' AND previous_hash IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS api_keys_by_expiry ON api_keys(expires_at) WHERE expires_at IS NOT NULL;
+    `,
+  },
 ] as const;
 
 export const LATEST_SQLITE_SCHEMA_VERSION = migrations.at(-1)?.version ?? 0;

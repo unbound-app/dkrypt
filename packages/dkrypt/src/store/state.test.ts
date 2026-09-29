@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -16,6 +16,7 @@ import {
 } from '#billing.js';
 import { exportIdentitySnapshot, getAuthProfile, replaceIdentitySnapshot, upsertAuthProfile } from '#identity.js';
 import { PermissionFlag, serializeBits } from '#permissions.js';
+import { createApiKeyRepository } from '#store/apiKeyRepository.js';
 import {
   addAllowedUser,
   addPasskey,
@@ -61,6 +62,7 @@ import {
   listProjectsForUser,
   listNotifications,
   listNotificationsPage,
+  listAllApiKeysPage,
   listPasskeysForUser,
   recordDeploymentReadyNotifications,
   recordDeviceHealthCheck,
@@ -70,6 +72,7 @@ import {
   recordJobHistory,
   recordNotification,
   revokeSessionRecord,
+  revokeApiKey,
   recordWebhookDelivery,
   setDiscordGuildIds,
   syncDiscordPerkRoles,
@@ -908,6 +911,24 @@ describe('API subscription entitlement', () => {
     updateAllowedUserRoles(username, [role.id], 'tester');
 
     expect(verifyApiKey(created.key)).toMatchObject({ ownerId: username });
+  });
+
+  test('created API keys and last-used details are available through the persistent key repository', () => {
+    const name = `repository-key-${randomUUID()}`;
+    const created = createApiKey(name, 'root');
+    const hash = createHash('sha256').update(created.key).digest('hex');
+    const database = openStateDatabase({ stateDir: config.stateDir, filename: config.stateDatabaseFile });
+
+    try {
+      const repository = createApiKeyRepository(database.db);
+      expect(repository.findApprovedByHash(hash, Date.now())).toMatchObject({ id: created.id, name });
+      expect(verifyApiKey(created.key, '192.0.2.15')).toMatchObject({ keyId: created.id });
+      expect(repository.findApprovedByHash(hash, Date.now())).toMatchObject({ lastUsedIp: '192.0.2.15' });
+      expect(listAllApiKeysPage(0, 10, name).keys.map((key) => key.id)).toContain(created.id);
+    } finally {
+      database.close();
+      revokeApiKey(created.id, 'root', true);
+    }
   });
 });
 

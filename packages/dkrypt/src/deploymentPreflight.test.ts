@@ -5,7 +5,7 @@ import { Database } from 'bun:sqlite';
 import { expect, test } from 'bun:test';
 import { runDeploymentPreflight } from '#deploymentPreflight.js';
 import { LATEST_SQLITE_SCHEMA_VERSION, openStateDatabase } from '#store/sqlite.js';
-import { rewindSessionSearchMigration } from '#store/sqliteTestHelpers.js';
+import { rewindApiKeySearchMigration, rewindSessionSearchMigration } from '#store/sqliteTestHelpers.js';
 
 test('deployment preflight dry-runs and restores a database without changing the live schema', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'dkrypt-deployment-preflight-'));
@@ -20,6 +20,7 @@ test('deployment preflight dry-runs and restores a database without changing the
   const database = openStateDatabase({ stateDir, filename: 'dkrypt.sqlite' });
   try {
     database.writeState(state);
+    rewindApiKeySearchMigration(database.db);
     rewindSessionSearchMigration(database.db);
     database.db.exec(`
       DROP TABLE billing_customers;
@@ -33,7 +34,7 @@ test('deployment preflight dry-runs and restores a database without changing the
       ALTER TABLE billing_events DROP COLUMN event_id;
       ALTER TABLE billing_events DROP COLUMN occurred_at;
       ALTER TABLE billing_events DROP COLUMN processed_at;
-      DELETE FROM schema_migrations WHERE version IN (17, 18);
+      DELETE FROM schema_migrations WHERE version IN (17, 18, 19);
     `);
 
     const result = runDeploymentPreflight(path.join(stateDir, 'dkrypt.sqlite'), root);

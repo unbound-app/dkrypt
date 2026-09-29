@@ -10,7 +10,7 @@ import { createBridgeEnvelope, createDeviceAgentEnvelope, parseDeviceAgentRespon
 import { BRIDGE_PROTOCOL_VERSION } from '#bridgeProtocol.js';
 import { createSessionRepository } from '#store/sessionRepository.js';
 import { LATEST_SQLITE_SCHEMA_VERSION, openStateDatabase, verifyDatabaseBackup } from '#store/sqlite.js';
-import { rewindSessionSearchMigration } from '#store/sqliteTestHelpers.js';
+import { rewindApiKeySearchMigration, rewindSessionSearchMigration } from '#store/sqliteTestHelpers.js';
 import { normalizeTestFlightInvite } from '#testflightSubscriptions.js';
 import { extractIpaMetadata } from '#util/ipaMetadata.js';
 import { compareVersions, normalizeVersion } from '#util/version.js';
@@ -67,6 +67,9 @@ function sortById<T extends { id: string }>(records: T[]): T[] {
 }
 
 function restoreSchemaAtVersion(database: ReturnType<typeof openStateDatabase>, version: number): void {
+  if (version < 19) {
+    rewindApiKeySearchMigration(database.db);
+  }
   if (version < 18) {
     rewindSessionSearchMigration(database.db);
   }

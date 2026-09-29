@@ -9,7 +9,7 @@ import { expect, test } from 'bun:test';
 import { createDeviceHistoryRepository } from '#store/deviceHistoryRepository.js';
 import { createDeviceHealthRepository } from '#store/deviceHealthRepository.js';
 import { LATEST_SQLITE_SCHEMA_VERSION, openStateCollectionDatabase, openStateDatabase, readStateCollection, replaceStateCollections } from '#store/sqlite.js';
-import { rewindSessionSearchMigration } from '#store/sqliteTestHelpers.js';
+import { rewindApiKeySearchMigration, rewindSessionSearchMigration } from '#store/sqliteTestHelpers.js';
 
 const initializationApplicationId = 184527631;
 
@@ -20,6 +20,7 @@ function initializationMarkerContents(databasePath: string, phase: 'unbound' | '
 }
 
 function rewindToSchemaVersion16(database: ReturnType<typeof openStateDatabase>): void {
+  rewindApiKeySearchMigration(database.db);
   rewindSessionSearchMigration(database.db);
   database.db.exec(`
     DROP INDEX billing_events_by_provider_event;
@@ -33,7 +34,7 @@ function rewindToSchemaVersion16(database: ReturnType<typeof openStateDatabase>)
     ALTER TABLE billing_events DROP COLUMN event_id;
     ALTER TABLE billing_events DROP COLUMN occurred_at;
     ALTER TABLE billing_events DROP COLUMN processed_at;
-    DELETE FROM schema_migrations WHERE version IN (17, 18);
+    DELETE FROM schema_migrations WHERE version IN (17, 18, 19);
   `);
 }
 
