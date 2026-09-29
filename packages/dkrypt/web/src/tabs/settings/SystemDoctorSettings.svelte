@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { CircleAlert, CircleCheck, CircleX, RefreshCw, ServerCog } from 'lucide-svelte';
   import Badge from '#lib/components/ui/Badge.svelte';
   import Button from '#lib/components/ui/Button.svelte';
@@ -76,6 +76,13 @@
   onMount(() => {
     void loadChecks();
   });
+
+  $effect(() => {
+    const deploymentId = report?.deployment?.id;
+    const fragment = window.location.hash.slice(1);
+    if (!deploymentId || fragment !== `deployment-${encodeURIComponent(deploymentId)}`) return;
+    void tick().then(() => document.getElementById(fragment)?.scrollIntoView({ block: 'start' }));
+  });
 </script>
 
 <Card class="overflow-hidden">
@@ -91,6 +98,19 @@
       <RefreshCw class="h-3.5 w-3.5" /> Refresh
     </Button>
   </div>
+
+  {#if report?.deployment}
+    <div id={`deployment-${encodeURIComponent(report.deployment.id)}`} class="mt-4 grid gap-2 rounded-lg border border-border/70 bg-muted/20 px-3 py-2.5 sm:grid-cols-2">
+      <div class="min-w-0">
+        <div class="text-[11px] text-muted">Running deployment</div>
+        <div class="truncate font-mono text-xs" title={report.deployment.id}>{report.deployment.id}</div>
+      </div>
+      <div class="min-w-0">
+        <div class="text-[11px] text-muted">Build</div>
+        <div class="truncate font-mono text-xs" title={report.deployment.ref}>{report.deployment.ref}</div>
+      </div>
+    </div>
+  {/if}
 
   {#if error}
     <div class="mt-4 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-err" role="alert">{error}</div>

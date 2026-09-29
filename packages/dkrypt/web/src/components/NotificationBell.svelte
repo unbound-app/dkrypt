@@ -117,7 +117,7 @@
                   <span class="text-muted"><RelativeTime ms={notification.createdAt} /></span>
                   {#if notification.href}
                     <a class="text-accent hover:text-text font-medium" href={notification.href} onclick={() => void onOpenChange(false)}>
-                      {notification.jobId ? 'Open job' : notification.deviceId ? 'Open device' : 'Inspect'}
+                      {notification.jobId ? 'Open job' : notification.deviceId ? 'Open device' : notification.deploymentId ? 'Open deployment' : 'Inspect'}
                     </a>
                   {/if}
                 </div>

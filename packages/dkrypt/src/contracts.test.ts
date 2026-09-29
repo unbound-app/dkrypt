@@ -153,7 +153,7 @@ test('core operational responses publish their required fields', async () => {
       ['/v1/auth/connections/{provider}', 'delete', ['identities', 'linkedProviders']],
       ['/v1/billing/provider-status', 'get', ['stripe', 'crypto']],
       ['/v1/billing/webhooks/inbox', 'get', ['inbox', 'total', 'nextCursor']],
-      ['/v1/dashboard/doctor', 'get', ['ok', 'checkedAt', 'checks']],
+      ['/v1/dashboard/doctor', 'get', ['ok', 'checkedAt', 'deployment', 'checks']],
       ['/v1/dashboard/synthetic', 'get', ['ok', 'checkedAt', 'probes']],
       ['/v1/dashboard/notifications', 'get', ['notifications', 'unread', 'total', 'nextCursor']],
       ['/v1/dashboard/devices/discover', 'get', ['devices', 'scannedNetworks', 'warnings']],
@@ -457,7 +457,7 @@ test('administrative, notification, and diagnostic contracts publish structured 
     };
     const assertions: Array<[string, string, string, string[]]> = [
       ['/v1/dashboard/logs', 'get', '200', ['logs', 'total', 'nextCursor']],
-      ['/v1/dashboard/doctor', 'get', '200', ['ok', 'checkedAt', 'checks']],
+      ['/v1/dashboard/doctor', 'get', '200', ['ok', 'checkedAt', 'deployment', 'checks']],
       ['/v1/dashboard/synthetic', 'get', '200', ['ok', 'checkedAt', 'probes']],
       ['/v1/dashboard/webhooks', 'get', '200', ['deliveries']],
       ['/v1/dashboard/jobs/{id}/diagnostic', 'get', '200', ['generatedAt', 'correlationId', 'job', 'timeline']],

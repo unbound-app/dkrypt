@@ -1,11 +1,13 @@
 import { Type, type Static } from '@sinclair/typebox';
 import type { ApiErrorEnvelope } from '#contracts.js';
+import { deploymentMetadataSchema } from '#deploymentContracts.js';
 
 const diagnosticStatusSchema = Type.Union([Type.Literal('ok'), Type.Literal('warn'), Type.Literal('error')]);
 
 export const dashboardDoctorResponseSchema = Type.Object({
   ok: Type.Boolean(),
   checkedAt: Type.String(),
+  deployment: deploymentMetadataSchema,
   checks: Type.Array(Type.Object({ id: Type.String(), status: diagnosticStatusSchema, detail: Type.String() })),
 });
 

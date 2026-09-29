@@ -577,3 +577,26 @@ jobs:
             echo 'legacy ssh-over-usb service is active' >&2
             fail_deployment
           fi
+          record_deployment_notice() {
+            docker exec -i --user 10001:10001 -e EXPECTED_BUILD_REF="$EXPECTED_BUILD_REF" -e EXPECTED_DEPLOYMENT_ID="$EXPECTED_DEPLOYMENT_ID" dkrypt bun - <<'JS'
+          const base = `http://127.0.0.1:${process.env.PORT || 8080}`;
+          const response = await fetch(`${base}/v1/internal/deployment/ready`, {
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${process.env.API_KEY}`,
+              'content-type': 'application/json',
+            },
+            body: '{}',
+          });
+          const body = await response.json().catch(() => ({}));
+          if (!response.ok || body.ok !== true || body.deployment?.id !== process.env.EXPECTED_DEPLOYMENT_ID || body.deployment?.ref !== process.env.EXPECTED_BUILD_REF) {
+            throw new Error(`deployment notification failed: HTTP ${response.status}, ${JSON.stringify(body)}`);
+          }
+          console.log(JSON.stringify({ deploymentNotice: true, created: body.created, deployment: body.deployment }));
+          JS
+          }
+          if record_deployment_notice; then
+            echo 'deployment notice recorded'
+          else
+            echo 'deployment succeeded, but its notification could not be recorded' >&2
+          fi

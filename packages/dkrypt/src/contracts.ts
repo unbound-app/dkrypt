@@ -61,6 +61,7 @@ import {
   deviceRecoveryResponseSchema as DeviceRecoveryResponse,
 } from '#dashboardDeviceOperationContracts.js';
 import { dashboardDoctorResponseSchema, dashboardSyntheticResponseSchema } from '#dashboardDiagnosticsContracts.js';
+import { deploymentReadyBodySchema, deploymentReadyResponseSchema } from '#internalDeploymentContracts.js';
 import { dashboardOverviewQuerySchema, dashboardOverviewResponseSchema } from '#dashboardOverviewContracts.js';
 import {
   dashboardAppCatalogStatsResponseSchema as AppCatalogStatsResponse,
@@ -997,6 +998,7 @@ const remainingContracts: Array<[ContractMethod, string]> = [
   ['POST', '/v1/stripe/webhook'],
   ['GET', '/v1/dashboard/overview'],
   ['GET', '/v1/dashboard/doctor'],
+  ['POST', '/v1/internal/deployment/ready'],
   ['GET', '/v1/dashboard/synthetic'],
   ['POST', '/v1/dashboard/notifications/read'],
   ['GET', '/v1/dashboard/events'],
@@ -1152,6 +1154,7 @@ register('GET', '/v1/billing/provider-status', { response: { 200: BillingProvide
 register('PUT', '/v1/billing/checkouts', { response: { 200: BillingCheckoutControlResponse, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope, 503: ErrorEnvelope } });
 register('GET', '/v1/billing/webhooks/inbox', { response: { 200: WebhookInboxPage } });
 register('GET', '/v1/dashboard/doctor', { response: { 200: dashboardDoctorResponseSchema } });
+register('POST', '/v1/internal/deployment/ready', { body: deploymentReadyBodySchema, response: { 200: deploymentReadyResponseSchema, 401: ErrorEnvelope, 403: ErrorEnvelope } });
 register('GET', '/v1/dashboard/synthetic', { response: { 200: dashboardSyntheticResponseSchema } });
 register('GET', '/v1/dashboard/notifications', { response: { 200: notificationPageResponseSchema } });
 register('GET', '/v1/dashboard/devices/discover', { response: { 200: DeviceDiscoveryResponse, 401: ErrorEnvelope, 403: ErrorEnvelope, 502: ErrorEnvelope } });

@@ -622,6 +622,7 @@ export interface NotificationRecord {
   readAt?: number;
   jobId?: string;
   deviceId?: string;
+  deploymentId?: string;
   groupKey?: string;
   href?: string;
 }
@@ -1608,6 +1609,32 @@ export function listDeviceAlertRecipients(): string[] {
     .filter((user) => hasPermission(getUserEffectivePermissions(user.username), PermissionFlag.viewDevices | PermissionFlag.manageDevices))
     .map((user) => user.username);
   return [...new Set(['root', ...recipients])];
+}
+
+export function recordDeploymentReadyNotifications(deployment: { id: string; ref: string }): number {
+  if (deployment.id === 'local' || deployment.ref === 'development') return 0;
+  const recipients = state.allowedUsers
+    .filter((user) => hasPermission(getUserEffectivePermissions(user.username), PermissionFlag.manageDevices))
+    .map((user) => user.username);
+  const groupKey = `deployment-ready:${deployment.id}`;
+  let created = 0;
+  for (const userId of new Set(['root', ...recipients])) {
+    const alreadyNotified = state.notifications.some((notification) =>
+      notification.userId.toLowerCase() === userId.toLowerCase() && notification.deploymentId === deployment.id,
+    );
+    if (alreadyNotified) continue;
+    recordNotification({
+      userId,
+      title: 'dkrypt deployment is live',
+      message: `Build ${deployment.ref.slice(0, 12)} is serving traffic.`,
+      severity: 'success',
+      deploymentId: deployment.id,
+      groupKey,
+      href: `/?tab=settings&stab=doctor#deployment-${encodeURIComponent(deployment.id)}`,
+    });
+    created += 1;
+  }
+  return created;
 }
 
 export function getSessionVersion(username: string): number {
@@ -3716,7 +3743,12 @@ export function recordNotification(input: Omit<NotificationRecord, 'id' | 'creat
     existing.readAt = undefined;
     existing.jobId = input.jobId ?? existing.jobId;
     existing.deviceId = input.deviceId ?? existing.deviceId;
+    existing.deploymentId = input.deploymentId ?? existing.deploymentId;
     existing.href = input.href ?? existing.href;
+    const existingIndex = state.notifications.indexOf(existing);
+    if (existingIndex >= 0) state.notifications.splice(existingIndex, 1);
+    state.notifications.unshift(existing);
+    if (state.notifications.length > MAX_NOTIFICATIONS) state.notifications.length = MAX_NOTIFICATIONS;
     persistNow();
     return { ...existing };
   }

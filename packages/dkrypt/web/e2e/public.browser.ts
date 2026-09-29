@@ -888,6 +888,7 @@ test('self-hosters can review configuration doctor checks from Settings', async 
           { id: 'session-secret-rotation', status: 'warn', detail: 'No overlapping previous credential is configured' },
           { id: 'device-bridge', status: 'error', detail: 'Rust device bridge socket is not available yet' },
         ],
+        deployment: { id: 'run-doctor-1', ref: 'abcdef0123456789' },
       }),
     });
   });
@@ -895,6 +896,8 @@ test('self-hosters can review configuration doctor checks from Settings', async 
   await page.goto('/?tab=settings&stab=doctor');
 
   await expect(page.getByRole('heading', { name: 'System doctor' })).toBeVisible();
+  await expect(page.getByText('run-doctor-1')).toBeVisible();
+  await expect(page.getByText('abcdef0123456789')).toBeVisible();
   await expect(page.getByText('Configuration needs attention')).toBeVisible();
   await expect(page.getByText('SQLite schema 12 is intact')).toBeVisible();
   await expect(page.getByText('Rust device bridge socket is not available yet')).toBeVisible();
@@ -921,7 +924,7 @@ test('system doctor is hidden from accounts without device-management permission
   let doctorRequests = 0;
   await page.route('**/v1/dashboard/doctor', async (route) => {
     doctorRequests += 1;
-    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, checkedAt: '2026-09-27T12:00:00.000Z', checks: [] }) });
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, checkedAt: '2026-09-27T12:00:00.000Z', deployment: { id: 'run-device-1', ref: 'abcdef0123456789' }, checks: [] }) });
   });
 
   await page.goto('/?tab=settings&stab=doctor');
@@ -942,7 +945,7 @@ test('device managers can run on-demand service health checks', async ({ page })
   await mockStableDashboardEvents(page);
   await mockAuthenticatedDashboard(page, '1');
   await page.route('**/v1/dashboard/doctor', async (route) => {
-    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, checkedAt: '2026-09-27T12:00:00.000Z', checks: [] }) });
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, checkedAt: '2026-09-27T12:00:00.000Z', deployment: { id: 'run-device-2', ref: 'abcdef0123456789' }, checks: [] }) });
   });
   let probeRequests = 0;
   await page.route('**/v1/dashboard/synthetic', async (route) => {
@@ -1633,6 +1636,10 @@ test('dashboard notifications virtualize older entries while keeping them scroll
         deviceId: 'device-1',
         href: '/?tab=settings&stab=devices#device-device-1',
       } : {}),
+      ...(index === 1 ? {
+        deploymentId: 'run-notification-2',
+        href: '/?tab=settings&stab=doctor#deployment-run-notification-2',
+      } : {}),
     };
   });
   let notificationRequests = 0;
@@ -1653,6 +1660,7 @@ test('dashboard notifications virtualize older entries while keeping them scroll
   await expect(list.getByRole('listitem').first()).toContainText('History notification 000');
   await expect(list.getByText(/Occurred 3 times · last/)).toBeVisible();
   await expect(list.getByRole('link', { name: 'Open device' })).toHaveAttribute('href', '/?tab=settings&stab=devices#device-device-1');
+  await expect(list.getByRole('link', { name: 'Open deployment' })).toHaveAttribute('href', '/?tab=settings&stab=doctor#deployment-run-notification-2');
   await expect(list.getByRole('listitem').first()).toHaveAttribute('aria-posinset', '1');
   await expect(list.getByRole('listitem').first()).toHaveAttribute('aria-setsize', '100');
   await expect.poll(() => list.getByRole('listitem').count()).toBeLessThan(60);
@@ -1661,6 +1669,97 @@ test('dashboard notifications virtualize older entries while keeping them scroll
   await expect(list.getByText('History notification 099')).toBeVisible();
   await expect(list.getByRole('listitem').last()).toHaveAttribute('aria-posinset', '100');
   await expectAccessible(page);
+});
+
+test('device and deployment notification links reach targets rendered after asynchronous loads', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 240 });
+  await mockStableDashboardEvents(page);
+  await mockAuthenticatedDashboard(page, '128');
+  await page.unroute('**/v1/dashboard/overview*');
+  await page.route('**/v1/dashboard/overview*', async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        schedulerEnabled: false,
+        settings: {},
+        watches: [],
+        devices: [
+          ...Array.from({ length: 5 }, (_, index) => ({
+            id: `device-before-${index}`,
+            name: `iPad ${index}`,
+            productType: 'iPad13,8',
+            transport: 'usb',
+            enabled: true,
+            isPrimary: false,
+            udid: `udid-before-${index}`,
+          })),
+          { id: 'device-target', name: 'Target iPad', productType: 'iPad13,8', transport: 'usb', enabled: true, isPrimary: true, udid: 'udid-target' },
+        ],
+        schedulerRunHistory: [],
+        disk: { totalBytes: 1, freeBytes: 1, usedBytes: 0, usedPercent: 0 },
+        isPaidPlan: false,
+        maintenance: { active: false, manual: false, auto: false },
+        activeJobs: [],
+      }),
+    });
+  });
+  await page.route('**/v1/dashboard/doctor', async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        checkedAt: new Date().toISOString(),
+        checks: [],
+        deployment: { id: 'run-notification-target', ref: 'abcdef0123456789' },
+      }),
+    });
+  });
+  const notifications = [
+    {
+      id: 'device-target-notification',
+      title: 'Device unavailable',
+      message: 'The target device needs attention.',
+      severity: 'error',
+      createdAt: Date.now(),
+      readAt: Date.now(),
+      deviceId: 'device-target',
+      href: '/?tab=settings&stab=devices#device-device-target',
+    },
+    {
+      id: 'deployment-target-notification',
+      title: 'Deployment ready',
+      message: 'A deployment is live.',
+      severity: 'success',
+      createdAt: Date.now() - 1,
+      readAt: Date.now(),
+      deploymentId: 'run-notification-target',
+      href: '/?tab=settings&stab=doctor#deployment-run-notification-target',
+    },
+  ];
+  await page.route('**/v1/dashboard/notifications*', async (route) => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ notifications, unread: 0, total: notifications.length }) });
+  });
+
+  await page.goto('/?tab=home');
+  await page.getByRole('button', { name: 'Notifications' }).click();
+  await page.getByRole('link', { name: 'Open device' }).click();
+  const deviceTarget = page.locator('#device-device-target');
+  await expect(deviceTarget).toBeVisible();
+  await expect.poll(() => deviceTarget.evaluate((element) => {
+    const top = element.getBoundingClientRect().top;
+    return top > -30 && top < 100;
+  })).toBe(true);
+
+  await page.getByRole('button', { name: 'Notifications' }).click();
+  await page.getByRole('link', { name: 'Open deployment' }).click();
+  const deploymentTarget = page.locator('#deployment-run-notification-target');
+  await expect(deploymentTarget).toBeVisible();
+  await expect.poll(() => deploymentTarget.evaluate((element) => {
+    const top = element.getBoundingClientRect().top;
+    return top > -30 && top < 100;
+  })).toBe(true);
 });
 
 test('job history stays virtualized as older cursor pages are loaded', async ({ page }) => {

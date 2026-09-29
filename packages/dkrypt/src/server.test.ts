@@ -1151,6 +1151,7 @@ test('dashboard diagnostics use native Fastify routes with session and device-ma
     const doctor = await server.inject({ method: 'GET', url: '/v1/dashboard/doctor', headers: { cookie: administratorCookie } });
     expect(doctor.statusCode).toBe(200);
     expect(doctor.json()).toMatchObject({ ok: expect.any(Boolean), checkedAt: expect.any(String), checks: expect.arrayContaining([expect.objectContaining({ id: 'database', status: expect.any(String), detail: expect.any(String) })]) });
+    expect(doctor.json().deployment).toMatchObject({ id: expect.any(String), ref: expect.any(String) });
     const doctorPayload = JSON.stringify(doctor.json());
     const configuredSecrets = [config.apiKey, config.sessionSigningSecret, config.sessionSigningSecretPrevious, config.backupManifestSecret, ...config.backupManifestSecretPrevious, config.adminPassword, config.adminPasswordPrevious, config.githubOauthClientSecret, config.githubOauthClientSecretPrevious, config.discordOauthClientSecret, config.discordOauthClientSecretPrevious, config.stripeSecretKey, config.stripeWebhookSecret, config.stripeWebhookSecretPrevious, config.nowpaymentsApiKey, config.nowpaymentsApiKeyPrevious, config.nowpaymentsIpnSecret, config.nowpaymentsIpnSecretPrevious, config.deviceBridgeSecret, config.deviceBridgeSecretPrevious, config.outboundWebhookSecret, config.outboundWebhookSecretPrevious, config.smtpPass, config.smtpPassPrevious].filter(Boolean);
     for (const secret of configuredSecrets) expect(doctorPayload).not.toContain(secret);
@@ -1159,6 +1160,41 @@ test('dashboard diagnostics use native Fastify routes with session and device-ma
     expect(synthetic.statusCode).toBe(200);
     expect(synthetic.json()).toMatchObject({ ok: expect.any(Boolean), checkedAt: expect.any(String), probes: expect.arrayContaining([expect.objectContaining({ id: 'database', status: expect.any(String), detail: expect.any(String) })]) });
   } finally {
+    await server.close();
+  }
+});
+
+test('internal deployment notices require the service API key and reject generated user API keys', async () => {
+  const server = await buildServer({ includePublicRoutes: false });
+  const generatedKey = createApiKey('deployment notice scope test', 'root');
+
+  try {
+    const unauthenticated = await server.inject({ method: 'POST', url: '/v1/internal/deployment/ready', payload: {} });
+    expect(unauthenticated.statusCode).toBe(401);
+
+    const generatedKeyResponse = await server.inject({
+      method: 'POST',
+      url: '/v1/internal/deployment/ready',
+      headers: { authorization: `Bearer ${generatedKey.key}` },
+      payload: {},
+    });
+    expect(generatedKeyResponse.statusCode).toBe(403);
+    expect(generatedKeyResponse.json()).toMatchObject({ code: 'public_api_scope_denied' });
+
+    const deploymentReady = await server.inject({
+      method: 'POST',
+      url: '/v1/internal/deployment/ready',
+      headers: { authorization: `Bearer ${config.apiKey}` },
+      payload: {},
+    });
+    expect(deploymentReady.statusCode).toBe(200);
+    expect(deploymentReady.json()).toMatchObject({
+      ok: true,
+      created: expect.any(Number),
+      deployment: { id: expect.any(String), ref: expect.any(String) },
+    });
+  } finally {
+    revokeApiKey(generatedKey.id, 'root', true);
     await server.close();
   }
 });

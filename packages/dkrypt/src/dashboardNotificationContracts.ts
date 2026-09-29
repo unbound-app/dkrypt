@@ -19,6 +19,7 @@ export const notificationPageResponseSchema = Type.Object({
     readAt: Type.Optional(Type.Number()),
     jobId: Type.Optional(Type.String()),
     deviceId: Type.Optional(Type.String()),
+    deploymentId: Type.Optional(Type.String()),
     href: Type.Optional(Type.String()),
   }, { additionalProperties: true })),
   unread: Type.Integer({ minimum: 0 }),

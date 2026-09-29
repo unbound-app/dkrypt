@@ -117,3 +117,18 @@ test('production smoke checks bridge-private pairing material as root', () => {
   expect(deploymentWorkflow).toContain('entryMetadata.uid !== 0 || entryMetadata.gid !== 0');
   expect(deploymentWorkflow.indexOf('await verifyPairingStorePermissions(pairingStore)')).toBeGreaterThan(deploymentWorkflow.indexOf('verify_pairing_store() {'));
 });
+
+test('production records manager notifications after all deployment gates without rolling back on notification failure', () => {
+  const smokeInvocation = deploymentWorkflow.indexOf('if ! smoke; then');
+  const bridgeStorageChecks = deploymentWorkflow.lastIndexOf("grep -q '/root/.ipadecrypt'");
+  const deploymentNotice = deploymentWorkflow.indexOf('if record_deployment_notice; then');
+  expect(smokeInvocation).toBeGreaterThan(-1);
+  expect(bridgeStorageChecks).toBeGreaterThan(smokeInvocation);
+  expect(deploymentNotice).toBeGreaterThan(bridgeStorageChecks);
+  expect(deploymentWorkflow).toContain('/v1/internal/deployment/ready');
+  expect(deploymentWorkflow).toContain('authorization: `Bearer ${process.env.API_KEY}`');
+  expect(deploymentWorkflow).toContain('EXPECTED_DEPLOYMENT_ID');
+  expect(deploymentWorkflow).toContain('EXPECTED_BUILD_REF');
+  expect(deploymentWorkflow).toContain("echo 'deployment succeeded, but its notification could not be recorded' >&2");
+  expect(deploymentWorkflow.slice(deploymentNotice)).not.toContain('fail_deployment');
+});

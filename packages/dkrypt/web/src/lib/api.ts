@@ -514,6 +514,7 @@ export interface DashboardNotification {
   readAt?: number;
   jobId?: string;
   deviceId?: string;
+  deploymentId?: string;
   href?: string;
 }
 
@@ -1458,6 +1459,7 @@ export interface DashboardDoctorCheck {
 export interface DashboardDoctorReport {
   ok: boolean;
   checkedAt: string;
+  deployment: { id: string; ref: string };
   checks: DashboardDoctorCheck[];
 }
 

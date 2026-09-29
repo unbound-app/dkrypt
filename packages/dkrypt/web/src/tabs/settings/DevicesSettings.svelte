@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import { AlertTriangle, CheckCircle2, CircleX, Pencil, RefreshCw, Search, Smartphone, Star, Trash2, Usb, Wifi } from 'lucide-svelte';
   import DeviceArtwork from '#components/DeviceArtwork.svelte';
   import EmptyState from '#components/EmptyState.svelte';
@@ -120,6 +121,10 @@
 
   $effect(() => {
     devices;
+    const fragment = window.location.hash.slice(1);
+    if (fragment.startsWith('device-')) {
+      void tick().then(() => document.getElementById(fragment)?.scrollIntoView({ block: 'start' }));
+    }
     loadHealth();
     const interval = setInterval(loadHealth, 30_000);
     return () => clearInterval(interval);

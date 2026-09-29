@@ -56,6 +56,7 @@ import {
   listNotifications,
   listNotificationsPage,
   listPasskeysForUser,
+  recordDeploymentReadyNotifications,
   recordDeviceHealthCheck,
   recordDeviceAlertNotification,
   recordApiKeyBundleUsage,
@@ -159,6 +160,59 @@ describe('dashboard notifications', () => {
     }
   });
 
+  test('keeps a recently repeated notification when the history reaches its retention limit', () => {
+    const originalNow = Date.now;
+    let now = originalNow();
+    const userId = `retained-grouped-notifications-${randomUUID()}`;
+    const groupKey = `device-offline:${randomUUID()}`;
+
+    try {
+      Date.now = () => now;
+      const first = recordNotification({
+        userId,
+        title: 'Device unavailable',
+        message: 'The device stopped responding.',
+        severity: 'error',
+        groupKey,
+      });
+
+      for (let index = 0; index < 499; index += 1) {
+        now += 1;
+        recordNotification({
+          userId,
+          title: `New notification ${index}`,
+          message: 'A newer notification.',
+          severity: 'info',
+        });
+      }
+
+      now += 1;
+      const repeated = recordNotification({
+        userId,
+        title: 'Device unavailable',
+        message: 'The device is still not responding.',
+        severity: 'error',
+        groupKey,
+      });
+
+      now += 1;
+      recordNotification({
+        userId,
+        title: 'The newest notification',
+        message: 'This should not evict the recently repeated alert.',
+        severity: 'info',
+      });
+
+      expect(repeated.id).toBe(first.id);
+      expect(listNotifications(userId).notifications).toContainEqual(expect.objectContaining({
+        id: first.id,
+        occurrenceCount: 2,
+      }));
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
   test('sends device alerts to device viewers with a device-page link', () => {
     const role = createRole({
       name: `Device alert role ${randomUUID()}`,
@@ -185,6 +239,28 @@ describe('dashboard notifications', () => {
     expect(listNotifications(viewer).notifications[0]).toMatchObject({
       deviceId,
       href: `/?tab=settings&stab=devices#device-${encodeURIComponent(deviceId)}`,
+    });
+    expect(listNotifications(outsider).notifications).toHaveLength(0);
+  });
+
+  test('notifies device managers once when a deployment becomes live', () => {
+    const role = createRole({
+      name: `Deployment alert role ${randomUUID()}`,
+      color: '#3498db',
+      permissions: serializeBits(PermissionFlag.manageDevices),
+    }, 'root');
+    const manager = `deployment-alert-manager-${randomUUID()}`;
+    const outsider = `deployment-alert-outsider-${randomUUID()}`;
+    addAllowedUser(manager, [role.id], 'root');
+    addAllowedUser(outsider, [], 'root');
+    const deployment = { id: `run-${randomUUID()}`, ref: 'abcdef0123456789' };
+
+    expect(recordDeploymentReadyNotifications(deployment)).toBe(2);
+    expect(recordDeploymentReadyNotifications(deployment)).toBe(0);
+    expect(listNotifications(manager).notifications[0]).toMatchObject({
+      title: 'dkrypt deployment is live',
+      deploymentId: deployment.id,
+      href: `/?tab=settings&stab=doctor#deployment-${encodeURIComponent(deployment.id)}`,
     });
     expect(listNotifications(outsider).notifications).toHaveLength(0);
   });

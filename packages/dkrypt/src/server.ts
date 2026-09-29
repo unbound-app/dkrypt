@@ -38,6 +38,7 @@ import { dashboardJobAnalyticsRoutes } from '#routes/dashboardJobAnalyticsRoutes
 import { dashboardJobHistoryRoutes } from '#routes/dashboardJobHistoryRoutes.js';
 import { dashboardReportingRoutes } from '#routes/dashboardReportingRoutes.js';
 import { dashboardDiscordRoutes } from '#routes/dashboardDiscordRoutes.js';
+import { internalDeploymentRoutes } from '#routes/internalDeploymentRoutes.js';
 import { dashboardEventsRoutes } from '#routes/dashboardEventsRoutes.js';
 import { dashboardTestFlightRoutes } from '#routes/dashboardTestFlightRoutes.js';
 import { dashboardTestFlightBrowseRoutes } from '#routes/dashboardTestFlightBrowseRoutes.js';
@@ -271,6 +272,7 @@ export async function buildServer(options: { includePublicRoutes?: boolean; stri
 
   await server.register(billingWebhookRoutes, { stripeClient: options.stripeClient });
   await server.register(healthRoutes);
+  await server.register(internalDeploymentRoutes);
   await server.register(decryptRoutes);
   await server.register(artifactCatalogRoutes);
   await server.register(testFlightCatalogRoutes);
