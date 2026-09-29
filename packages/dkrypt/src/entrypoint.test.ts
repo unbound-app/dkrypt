@@ -66,6 +66,21 @@ test('production replaces the container through Compose graceful shutdown', () =
   expect(deploymentWorkflow).toContain(composeUpCommand);
 });
 
+test('production verifies persistent storage as the already-unprivileged smoke-test user', () => {
+  const smokeStart = deploymentWorkflow.indexOf('const artifactProbePath =');
+  const smokeEnd = deploymentWorkflow.indexOf('const { config }', smokeStart);
+  const storageProbe = deploymentWorkflow.slice(smokeStart, smokeEnd);
+  expect(storageProbe).toContain('await Bun.write(artifactProbePath, artifactProbeContent)');
+  expect(storageProbe).not.toContain('spawnSync');
+  expect(storageProbe).not.toContain('setpriv');
+});
+
+test('persistent shared volumes can replace legacy root-owned files after rollback', () => {
+  expect(entrypoint).toContain('.dkrypt-api-access-v2');
+  expect(entrypoint).toContain('chmod 2770 "$volume_dir"');
+  expect(entrypoint).not.toContain('chmod 3770 "$volume_dir"');
+});
+
 test('production smoke verifies the saved Rust pairing, USB agent, and decrypt SFTP setup', () => {
   const pairingVerification = deploymentWorkflow.indexOf('await verifyRustDevicePairing(primaryDevice)');
   const agentProbe = deploymentWorkflow.indexOf('withAutoinstallDeviceAgent(primaryDevice');

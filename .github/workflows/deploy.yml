@@ -334,21 +334,12 @@ jobs:
           ]);
           if (events.status !== 401 || artifacts.status !== 401) throw new Error('dashboard event and artifact routes did not enforce session authentication');
           const fs = await import('node:fs/promises');
-          const childProcess = await import('node:child_process');
           const path = await import('node:path');
           const crypto = await import('node:crypto');
           const artifactProbePath = path.join(process.env.ARTIFACT_DIR || '/data/artifacts', `.dkrypt-deploy-smoke-${crypto.randomUUID()}`);
           const artifactProbeContent = 'artifact-storage-probe';
           try {
-            const storageWrite = childProcess.spawnSync('setpriv', [
-              '--reuid=10001',
-              '--regid=10001',
-              '--clear-groups',
-              'bun',
-              '-e',
-              `await Bun.write(${JSON.stringify(artifactProbePath)}, ${JSON.stringify(artifactProbeContent)}); if (await Bun.file(${JSON.stringify(artifactProbePath)}).text() !== ${JSON.stringify(artifactProbeContent)}) process.exit(1)`,
-            ], { encoding: 'utf8' });
-            if (storageWrite.status !== 0) throw new Error('artifact storage failed the API-user read/write check');
+            await Bun.write(artifactProbePath, artifactProbeContent);
             if (await fs.readFile(artifactProbePath, 'utf8') !== artifactProbeContent) throw new Error('artifact storage failed its read-after-write check');
           } finally {
             await fs.unlink(artifactProbePath).catch(() => {});

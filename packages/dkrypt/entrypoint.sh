@@ -14,7 +14,7 @@ migrate_shared_volume() {
     chmod 0440 "$marker"
   fi
   chown 0:10001 "$volume_dir"
-  chmod 3770 "$volume_dir"
+  chmod 2770 "$volume_dir"
 }
 
 state_dir=$(realpath -m "${STATE_DIR:-/data/state}")
@@ -25,8 +25,8 @@ mkdir -p /run/dkrypt /data/tmp "$state_dir" "$artifact_dir"
 chown 0:10001 /run/dkrypt /data/tmp
 chmod 0710 /run/dkrypt
 chmod 1770 /data/tmp
-migrate_shared_volume "$state_dir" "$state_dir/.dkrypt-api-access-v1"
-migrate_shared_volume "$artifact_dir" "$artifact_dir/.dkrypt-api-access-v1"
+migrate_shared_volume "$state_dir" "$state_dir/.dkrypt-api-access-v2"
+migrate_shared_volume "$artifact_dir" "$artifact_dir/.dkrypt-api-access-v2"
 
 pairing_store=$(realpath -m "${DEVICE_PAIRING_STORE:-$state_dir/device-pairing}")
 case "$pairing_store" in "$state_dir"/*) ;; *) printf '%s\n' 'DEVICE_PAIRING_STORE must resolve below STATE_DIR' >&2; exit 1 ;; esac
