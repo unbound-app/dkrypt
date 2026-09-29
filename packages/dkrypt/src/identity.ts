@@ -1,7 +1,8 @@
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { config } from '#config.js';
-import { openStateCollectionDatabase, readStateCollection, replaceStateCollections, writeStateMirror, type StateCollectionReplacement } from '#store/sqlite.js';
+import { createIdentityRepository, identityProfileStateRow, isAuthProfileRecord, type IdentityProfileChanges } from '#store/identityRepository.js';
+import { openStateCollectionDatabase, writeStateMirror, type StateCollectionReplacement } from '#store/sqlite.js';
 
 export type AuthProvider = 'github' | 'discord';
 
@@ -36,6 +37,7 @@ export interface IdentitySnapshot {
 
 const identityPath = path.join(config.stateDir, 'identities.json');
 const identityDatabase = openStateCollectionDatabase({ stateDir: config.stateDir, filename: config.stateDatabaseFile, busyTimeoutMs: config.stateDbBusyTimeoutMs }, ['auth_profiles']);
+const identityRepository = createIdentityRepository(identityDatabase);
 
 function identityKey(identity: Pick<AuthIdentity, 'provider' | 'providerId'>): string {
   return `${identity.provider}:${identity.providerId}`;
@@ -77,24 +79,17 @@ function normalizeProfile(profile: AuthProfile): AuthProfile {
 }
 
 function load(): IdentitySnapshot {
-  mkdirSync(config.stateDir, { recursive: true });
-  const records = readStateCollection(identityDatabase, 'auth_profiles');
-  if (records.length > 0) {
-    const profiles = records.map((record) => {
-      if (typeof record !== 'object' || record === null || !('value' in record)) throw new Error('identity database record is malformed');
-      const profile = (record as { value?: unknown }).value;
-      if (!isAuthProfile(profile)) throw new Error('identity database profile is malformed');
-      return normalizeProfile(profile);
-    });
-    return { profiles };
-  }
-  if (!existsSync(identityPath)) return { profiles: [] };
+  const storedProfiles = identityRepository.listAll();
+  identityRepository.importLegacySnapshot(() => storedProfiles.length === 0 ? loadLegacyProfiles() : []);
+  return { profiles: identityRepository.listAll().map(normalizeProfile) };
+}
+
+function loadLegacyProfiles(): AuthProfile[] | undefined {
+  if (!existsSync(identityPath)) return undefined;
   try {
-    const parsed = JSON.parse(readFileSync(identityPath, 'utf8')) as Partial<IdentitySnapshot>;
-    if (!Array.isArray(parsed.profiles) || !parsed.profiles.every(isAuthProfile)) throw new Error('identity JSON snapshot is malformed');
-    const snapshot = { profiles: parsed.profiles.map(normalizeProfile) };
-    replaceStateCollections(identityDatabase, identitySnapshotCollections(snapshot));
-    return snapshot;
+    const parsed: unknown = JSON.parse(readFileSync(identityPath, 'utf8'));
+    if (!isIdentitySnapshot(parsed)) throw new Error('identity JSON snapshot is malformed');
+    return parsed.profiles.map(normalizeProfile);
   } catch (error) {
     throw new Error(`could not initialize identity state: ${error instanceof Error ? error.message : String(error)}`);
   }
@@ -105,17 +100,16 @@ const state = load();
 export function identitySnapshotCollections(snapshot: IdentitySnapshot): StateCollectionReplacement[] {
   return [{
     table: 'auth_profiles',
-    rows: snapshot.profiles.map((profile) => ({
-      id: profile.userId,
-      payload: { kind: 'profile', value: profile },
-      updatedAt: Date.parse(profile.updatedAt) || Date.now(),
-    })),
+    rows: snapshot.profiles.map(identityProfileStateRow),
   }];
 }
 
-function persist(): void {
-  replaceStateCollections(identityDatabase, identitySnapshotCollections(state));
-  writeIdentitySnapshotMirror();
+function persistProfiles(changes: IdentityProfileChanges): void {
+  identityRepository.applyChanges(changes);
+}
+
+function persistIdentitySnapshot(): void {
+  identityRepository.replaceAll(state.profiles);
 }
 
 export function writeIdentitySnapshotMirror(): void {
@@ -123,7 +117,7 @@ export function writeIdentitySnapshotMirror(): void {
 }
 
 export function closeIdentityDatabase(): void {
-  identityDatabase.close();
+  identityRepository.close();
 }
 
 export function upsertAuthProfile(profile: AuthProfile): AuthProfile {
@@ -131,7 +125,7 @@ export function upsertAuthProfile(profile: AuthProfile): AuthProfile {
   const existing = state.profiles.find((item) => item.userId === incoming.userId);
   if (!existing) {
     state.profiles.push(incoming);
-    persist();
+    persistProfiles({ upserts: [incoming], deletedUserIds: [] });
     return incoming;
   }
 
@@ -142,7 +136,7 @@ export function upsertAuthProfile(profile: AuthProfile): AuthProfile {
     identities: mergeIdentities(existing.identities ?? [], incoming.identities ?? []),
     aliases: [...new Set([...(existing.aliases ?? []), ...(incoming.aliases ?? [])])],
   });
-  persist();
+  persistProfiles({ upserts: [existing], deletedUserIds: [] });
   return existing;
 }
 
@@ -172,7 +166,7 @@ export function upsertAuthIdentity(userId: string, identity: AuthIdentity): Auth
     existing.displayName = existing.customDisplayName ?? identity.displayName;
   }
   existing.updatedAt = identity.updatedAt;
-  persist();
+  persistProfiles({ upserts: [existing], deletedUserIds: [] });
   return existing;
 }
 
@@ -203,9 +197,10 @@ export function mergeAuthProfiles(targetUserId: string, sourceUserId: string): A
   if (!source) return target;
 
   if (!target) {
+    const previousUserId = source.userId;
     source.aliases = [...new Set([...(source.aliases ?? []), source.userId])];
     source.userId = targetUserId;
-    persist();
+    persistProfiles({ upserts: [source], deletedUserIds: [previousUserId] });
     return source;
   }
 
@@ -220,7 +215,7 @@ export function mergeAuthProfiles(targetUserId: string, sourceUserId: string): A
   target.avatarUrl = target.avatarUrl ?? source.avatarUrl;
   target.updatedAt = new Date().toISOString();
   state.profiles = state.profiles.filter((profile) => profile !== source);
-  persist();
+  persistProfiles({ upserts: [target], deletedUserIds: [source.userId] });
   return target;
 }
 
@@ -230,7 +225,7 @@ export function setAuthDisplayName(userId: string, displayName: string): AuthPro
   profile.customDisplayName = displayName;
   profile.displayName = displayName;
   profile.updatedAt = new Date().toISOString();
-  persist();
+  persistProfiles({ upserts: [profile], deletedUserIds: [] });
   return profile;
 }
 
@@ -263,7 +258,7 @@ export function removeAuthIdentity(userId: string, provider: AuthProvider): Auth
   profile.aliases = (profile.aliases ?? []).filter((alias) => alias !== `${provider}:${removedIdentity.providerId}`);
   profile.displayName = profile.customDisplayName ?? primary.displayName;
   profile.updatedAt = new Date().toISOString();
-  persist();
+  persistProfiles({ upserts: [profile], deletedUserIds: [] });
   return profile;
 }
 
@@ -275,54 +270,17 @@ export function deleteAuthProfile(userId: string): boolean {
   const profile = getAuthProfile(userId);
   if (!profile) return false;
   state.profiles = state.profiles.filter((candidate) => candidate !== profile);
-  persist();
+  persistProfiles({ upserts: [], deletedUserIds: [profile.userId] });
   return true;
-}
-
-function isAuthIdentity(value: unknown): value is AuthIdentity {
-  if (typeof value !== 'object' || value === null) return false;
-  const record = value as Record<string, unknown>;
-  return (
-    (record.provider === 'github' || record.provider === 'discord') &&
-    typeof record.providerId === 'string' &&
-    typeof record.username === 'string' &&
-    typeof record.displayName === 'string' &&
-    (record.source === 'oauth' || record.source === 'discord_connection') &&
-    typeof record.updatedAt === 'string'
-  );
-}
-
-function isAuthProfile(value: unknown): value is AuthProfile {
-  if (typeof value !== 'object' || value === null) return false;
-  const record = value as Record<string, unknown>;
-  return typeof record.userId === 'string' && (record.provider === 'github' || record.provider === 'discord') && typeof record.providerId === 'string' && typeof record.username === 'string' && typeof record.displayName === 'string' && typeof record.updatedAt === 'string';
 }
 
 export function isIdentitySnapshot(value: unknown): value is IdentitySnapshot {
   if (typeof value !== 'object' || value === null) return false;
   const profiles = (value as Record<string, unknown>).profiles;
-  return (
-    Array.isArray(profiles) &&
-    profiles.every((profile) => {
-      if (typeof profile !== 'object' || profile === null) return false;
-      const record = profile as Record<string, unknown>;
-      return (
-        typeof record.userId === 'string' &&
-        (record.provider === 'github' || record.provider === 'discord') &&
-        typeof record.providerId === 'string' &&
-        typeof record.username === 'string' &&
-        typeof record.displayName === 'string' &&
-        typeof record.updatedAt === 'string' &&
-        (record.identities === undefined ||
-          (Array.isArray(record.identities) && record.identities.every(isAuthIdentity))) &&
-        (record.aliases === undefined ||
-          (Array.isArray(record.aliases) && record.aliases.every((alias) => typeof alias === 'string')))
-      );
-    })
-  );
+  return Array.isArray(profiles) && profiles.every(isAuthProfileRecord);
 }
 
 export function replaceIdentitySnapshot(snapshot: IdentitySnapshot, options: { persist?: boolean } = {}): void {
   state.profiles = structuredClone(snapshot.profiles).map(normalizeProfile);
-  if (options.persist !== false) persist();
+  if (options.persist !== false) persistIdentitySnapshot();
 }
