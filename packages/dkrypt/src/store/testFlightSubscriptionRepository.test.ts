@@ -4,7 +4,7 @@ import path from 'node:path';
 import { expect, test } from 'bun:test';
 import { createTestFlightSubscriptionRepository } from '#store/testFlightSubscriptionRepository.js';
 import type { TestFlightSubscription } from '#store/state.js';
-import { openStateDatabase } from '#store/sqlite.js';
+import { LATEST_SQLITE_SCHEMA_VERSION, openStateDatabase } from '#store/sqlite.js';
 
 function subscription(overrides: Partial<TestFlightSubscription> = {}): TestFlightSubscription {
   return {
@@ -71,7 +71,7 @@ test('TestFlight subscription migration preserves device-specific enrollment sta
 
     const migrated = openStateDatabase(options);
     try {
-      expect(migrated.schemaVersion).toBe(17);
+      expect(migrated.schemaVersion).toBe(LATEST_SQLITE_SCHEMA_VERSION);
       expect(createTestFlightSubscriptionRepository(migrated.db).findById(saved.id)).toEqual(saved);
     } finally {
       migrated.close();

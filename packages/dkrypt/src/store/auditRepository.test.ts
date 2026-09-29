@@ -4,7 +4,7 @@ import path from 'node:path';
 import { expect, test } from 'bun:test';
 import { createAuditRepository } from '#store/auditRepository.js';
 import type { AuditLogEntry } from '#store/state.js';
-import { openStateDatabase } from '#store/sqlite.js';
+import { LATEST_SQLITE_SCHEMA_VERSION, openStateDatabase } from '#store/sqlite.js';
 
 test('audit repository returns newest events with a stable timestamp tie break', async () => {
   const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-audit-repository-'));
@@ -56,7 +56,7 @@ test('audit repository backfills event fields when migrating an existing databas
 
     const migrated = openStateDatabase(options);
     try {
-      expect(migrated.schemaVersion).toBe(17);
+      expect(migrated.schemaVersion).toBe(LATEST_SQLITE_SCHEMA_VERSION);
       expect(createAuditRepository(migrated.db).listRecent()).toEqual([event]);
     } finally {
       migrated.close();

@@ -34,6 +34,7 @@ import { createNotificationRepository } from '#store/notificationRepository.js';
 import { createAuditRepository } from '#store/auditRepository.js';
 import { createTestFlightSubscriptionRepository } from '#store/testFlightSubscriptionRepository.js';
 import { createJobHistoryRepository } from '#store/jobHistoryRepository.js';
+import { createSessionRepository } from '#store/sessionRepository.js';
 import { openStateDatabase, readStateCollection, verifyDatabaseBackup, writeStateMirror, type StateCollectionReplacement, type StateDatabase } from '#store/sqlite.js';
 import { paginateCursor } from '#util/cursor.js';
 import { effectiveTimeZone, isValidTimeZone } from '#util/timezone.js';
@@ -694,6 +695,7 @@ const notificationRepository = createNotificationRepository(stateDatabase.db);
 const auditRepository = createAuditRepository(stateDatabase.db);
 const testFlightSubscriptionRepository = createTestFlightSubscriptionRepository(stateDatabase.db);
 const jobHistoryRepository = createJobHistoryRepository(stateDatabase.db);
+const sessionRepository = createSessionRepository(stateDatabase.db);
 
 export function getStateDatabaseStatus(): { path: string; schemaVersion: number; integrity: 'ok' } {
   return { path: stateDatabase.path, schemaVersion: stateDatabase.schemaVersion, integrity: stateDatabase.integrityStatus() };
@@ -1324,9 +1326,14 @@ export function upsertAppCatalogEntries(entries: Array<Omit<AppCatalogEntry, 'up
   return updated;
 }
 
-const state: PersistedState = load();
-cleanupBackupSnapshotDirectories(state.backupHistory);
 let dirty = false;
+const state: PersistedState = load();
+const persistedSessions = sessionRepository.listAll();
+if (JSON.stringify(state.activeSessions) !== JSON.stringify(persistedSessions)) {
+  state.activeSessions = persistedSessions;
+  dirty = true;
+}
+cleanupBackupSnapshotDirectories(state.backupHistory);
 const unavailableLegacyMirrors = new Set<string>();
 
 function fsyncPath(filePath: string): void {
@@ -1662,15 +1669,21 @@ export function getSessionVersion(username: string): number {
 export function bumpSessionVersion(username: string): void {
   if (username === 'root') {
     state.rootSessionVersion += 1;
-    state.activeSessions = state.activeSessions.filter((s) => s.sub !== 'root');
+    revokeUserSessions(username);
     persistNow();
     return;
   }
   const user = state.allowedUsers.find((u) => u.username === username.toLowerCase());
   if (!user) return;
   user.sessionVersion = (user.sessionVersion ?? 0) + 1;
-  state.activeSessions = state.activeSessions.filter((s) => s.sub !== user.username);
+  revokeUserSessions(user.username);
   persistNow();
+}
+
+function revokeUserSessions(userId: string): number {
+  const revoked = sessionRepository.revokeUser(userId);
+  if (revoked > 0) state.activeSessions = sessionRepository.listAll();
+  return revoked;
 }
 
 const SESSION_RECORD_THROTTLE_MS = 60_000;
@@ -1696,19 +1709,15 @@ export function createSessionRecord(sub: string, userAgent: string | undefined, 
     ip,
     ...(newContext ? { risk: 'new_context' as const } : {}),
   };
-  state.activeSessions.push(record);
-  const forUser = state.activeSessions.filter((s) => s.sub === sub);
-  if (forUser.length > MAX_SESSIONS_PER_USER) {
-    const dropIds = new Set(forUser.slice(0, forUser.length - MAX_SESSIONS_PER_USER).map((s) => s.id));
-    state.activeSessions = state.activeSessions.filter((s) => !dropIds.has(s.id));
-  }
+  sessionRepository.create(record, MAX_SESSIONS_PER_USER);
+  state.activeSessions = sessionRepository.listAll();
   if (newContext) recordAudit(sub, 'auth.session.new_context', record.id, 'new browser and network context while another session was active');
   else persistNow();
   return record;
 }
 
 export function isSessionRecordActive(id: string): boolean {
-  return state.activeSessions.some((s) => s.id === id);
+  return sessionRepository.isActive(id);
 }
 
 export function touchSessionRecord(id: string): void {
@@ -1716,36 +1725,39 @@ export function touchSessionRecord(id: string): void {
   if (!record) return;
   const now = Date.now();
   if (now - record.lastSeenAt < SESSION_RECORD_THROTTLE_MS) return;
-  record.lastSeenAt = now;
+  if (!sessionRepository.touch(id, now)) return;
+  state.activeSessions = sessionRepository.listAll();
   dirty = true;
 }
 
 export function listSessionsForUser(sub: string): ActiveSessionRecord[] {
-  return state.activeSessions.filter((s) => s.sub === sub).sort((a, b) => b.lastSeenAt - a.lastSeenAt);
+  return sessionRepository.listByUser(sub);
 }
 
 export function revokeSessionRecord(id: string, sub: string): boolean {
-  const idx = state.activeSessions.findIndex((s) => s.id === id && s.sub === sub);
-  if (idx === -1) return false;
-  state.activeSessions.splice(idx, 1);
+  if (!sessionRepository.revoke(id, sub)) return false;
+  state.activeSessions = sessionRepository.listAll();
   persistNow();
   return true;
 }
 
 export function revokeOtherSessionRecords(sub: string, keepId: string): number {
-  const before = state.activeSessions.length;
-  state.activeSessions = state.activeSessions.filter((s) => s.sub !== sub || s.id === keepId);
-  const removed = before - state.activeSessions.length;
-  if (removed > 0) persistNow();
+  const removed = sessionRepository.revokeOthers(sub, keepId);
+  if (removed > 0) {
+    state.activeSessions = sessionRepository.listAll();
+    persistNow();
+  }
   return removed;
 }
 
 export function startSessionSweeper(): void {
   sessionSweepTimer ??= setInterval(() => {
     const now = Date.now();
-    const before = state.activeSessions.length;
-    state.activeSessions = state.activeSessions.filter((s) => now - s.lastSeenAt < SESSION_RECORD_TTL_MS);
-    if (state.activeSessions.length !== before) persistNow();
+    const expired = sessionRepository.deleteExpiredBefore(now - SESSION_RECORD_TTL_MS);
+    if (expired > 0) {
+      state.activeSessions = sessionRepository.listAll();
+      persistNow();
+    }
   }, 60_000).unref();
 }
 
@@ -2092,7 +2104,7 @@ export function deleteUserPersonalData(username: string): boolean {
   const existed = state.allowedUsers.some((user) => user.username === lower);
   if (!existed || lower === 'root') return false;
   state.allowedUsers = state.allowedUsers.filter((user) => user.username !== lower);
-  state.activeSessions = state.activeSessions.filter((session) => session.sub !== lower);
+  revokeUserSessions(lower);
   state.passkeys = state.passkeys.filter((credential) => credential.userId !== lower);
   state.apiKeys = state.apiKeys.filter((key) => key.ownerId !== lower);
   state.jobHistory = state.jobHistory.filter((entry) => entry.queuedBy?.toLowerCase() !== lower);

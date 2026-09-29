@@ -9,6 +9,7 @@ import { dashboardRouter } from '#routes/dashboard.js';
 import { createDashboardReportingRoutes } from '#routes/dashboardReportingRoutes.js';
 import { setSessionCookie } from '#session.js';
 import type { AppWatch, DeviceRecord, InsightsSummary, JobHistoryEntry, SchedulerRunEntry, WatchHealthSummary, WebhookDeliveryEntry } from '#store/state.js';
+import { LATEST_SQLITE_SCHEMA_VERSION } from '#store/sqlite.js';
 
 function sessionCookie(permissions = 0n): string {
   let value = '';
@@ -293,7 +294,7 @@ test('support bundles require management permission and redact sensitive diagnos
   await server.register(createDashboardReportingRoutes({
     canAccessProject: (_userId, _permissions, projectId) => projectId === 'default',
     getAllJobHistory: () => [job, privateJob],
-    getStateDatabaseStatus: () => ({ path: '/state/dkrypt.sqlite', schemaVersion: 17, integrity: 'ok' }),
+    getStateDatabaseStatus: () => ({ path: '/state/dkrypt.sqlite', schemaVersion: LATEST_SQLITE_SCHEMA_VERSION, integrity: 'ok' }),
     verifyLatestDatabaseBackup: () => ({ ok: true, detail: 'verified' }),
     getDiskUsage: () => ({ totalBytes: 100, freeBytes: 50, usedBytes: 50, usedPercent: 0.5 }),
     getAppCatalogStats: () => ({ entries: 1, icons: 1 }),

@@ -4,7 +4,7 @@ import path from 'node:path';
 import { expect, test } from 'bun:test';
 import { createJobHistoryRepository } from '#store/jobHistoryRepository.js';
 import type { JobHistoryEntry } from '#store/state.js';
-import { openStateDatabase } from '#store/sqlite.js';
+import { LATEST_SQLITE_SCHEMA_VERSION, openStateDatabase } from '#store/sqlite.js';
 
 function historyEntry(overrides: Partial<JobHistoryEntry> = {}): JobHistoryEntry {
   return {
@@ -62,7 +62,7 @@ test('job history migration backfills existing snapshot records', async () => {
 
     const migrated = openStateDatabase(options);
     try {
-      expect(migrated.schemaVersion).toBe(17);
+      expect(migrated.schemaVersion).toBe(LATEST_SQLITE_SCHEMA_VERSION);
       expect(createJobHistoryRepository(migrated.db).list()).toEqual([entry]);
     } finally {
       migrated.close();

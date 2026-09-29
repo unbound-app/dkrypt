@@ -634,6 +634,21 @@ const migrations = [
       CREATE INDEX IF NOT EXISTS billing_events_by_processed_at ON billing_events(processed_at DESC, id DESC);
     `,
   },
+  {
+    version: 18,
+    sql: `
+      ALTER TABLE sessions ADD COLUMN user_id TEXT;
+      ALTER TABLE sessions ADD COLUMN created_at INTEGER;
+      ALTER TABLE sessions ADD COLUMN last_seen_at INTEGER;
+      UPDATE sessions
+      SET user_id = lower(json_extract(payload, '$.sub')),
+          created_at = CAST(json_extract(payload, '$.createdAt') AS INTEGER),
+          last_seen_at = CAST(json_extract(payload, '$.lastSeenAt') AS INTEGER)
+      WHERE json_valid(payload) = 1;
+      CREATE INDEX IF NOT EXISTS sessions_by_user_last_seen ON sessions(user_id, last_seen_at DESC);
+      CREATE INDEX IF NOT EXISTS sessions_by_expiry ON sessions(last_seen_at);
+    `,
+  },
 ] as const;
 
 export const LATEST_SQLITE_SCHEMA_VERSION = migrations.at(-1)?.version ?? 0;
@@ -788,6 +803,16 @@ function notificationIndexValues(payload: unknown, updatedAt: number): Array<str
   ];
 }
 
+function sessionIndexValues(payload: unknown, updatedAt: number): Array<string | number | null> {
+  const session = asRecord(payload);
+  const userId = stringField(session, 'sub');
+  return [
+    userId?.toLowerCase() ?? null,
+    numberField(session, 'createdAt') ?? updatedAt,
+    numberField(session, 'lastSeenAt') ?? updatedAt,
+  ];
+}
+
 function auditIndexValues(payload: unknown, updatedAt: number): Array<string | number | null> {
   const entry = asRecord(payload);
   return [
@@ -855,6 +880,14 @@ function deviceHealthRows(value: unknown): DomainRow[] {
 
 function replaceCollectionRows(database: Database, replacement: StateCollectionReplacement): void {
   database.exec(`DELETE FROM ${replacement.table};`);
+  if (replacement.table === 'sessions') {
+    const statement = database.query('INSERT INTO sessions (id, payload, updated_at, user_id, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?);');
+    for (const row of replacement.rows) {
+      const updatedAt = row.updatedAt ?? Date.now();
+      statement.run(row.id, json(row.payload), updatedAt, ...sessionIndexValues(row.payload, updatedAt));
+    }
+    return;
+  }
   if (replacement.table === 'billing_customers') {
     const statement = database.query('INSERT INTO billing_customers (id, payload, updated_at, ordinal, provider, customer_id, user_id, email) VALUES (?, ?, ?, ?, ?, ?, ?, ?);');
     for (const [index, row] of replacement.rows.entries()) {
@@ -1518,6 +1551,7 @@ export class StateDatabase {
       `).run(stateVersion, payload, checksum, Date.now());
       markStateSnapshotInitialized(this.db);
       for (const table of stateOwnedDomainTables) {
+        if (updatedTables.has(table)) continue;
         replaceCollectionRows(this.db, { table, rows: rows[table] });
       }
       for (const replacement of additionalCollections) {

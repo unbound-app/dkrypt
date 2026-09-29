@@ -46,7 +46,9 @@ import {
   getTestFlightSubscription,
   getWatchDispatchTargets,
   getWatchConfigIssues,
+  isSessionRecordActive,
   isWatchSchedulable,
+  listSessionsForUser,
   markWatchScheduleRun,
   getWebhookDeliveryLog,
   importBackup,
@@ -59,6 +61,7 @@ import {
   recordDeploymentReadyNotifications,
   recordDeviceHealthCheck,
   recordDeviceAlertNotification,
+  recordAudit,
   recordApiKeyBundleUsage,
   recordJobHistory,
   recordNotification,
@@ -73,6 +76,7 @@ import {
   updateSettings,
   updateWatch,
   upsertAppCatalogEntry,
+  touchSessionRecord,
   verifyApiKey,
   markNotificationsRead,
   approveTestFlightSubscription,
@@ -318,6 +322,36 @@ test('expired sessions do not trigger new-context risk audits', () => {
     Date.now = originalNow;
     if (firstId) revokeSessionRecord(firstId, userId);
     if (secondId) revokeSessionRecord(secondId, userId);
+  }
+});
+
+test('session repository reads stay active across snapshot writes and revocation', () => {
+  const userId = `session-repository-${randomUUID()}`;
+  const session = createSessionRecord(userId, 'browser', '198.51.100.8');
+
+  expect(isSessionRecordActive(session.id)).toBe(true);
+  expect(listSessionsForUser(userId)).toContainEqual(session);
+  recordAudit(userId, 'auth.session.new_context', session.id, 'repository persistence check');
+  expect(isSessionRecordActive(session.id)).toBe(true);
+  expect(revokeSessionRecord(session.id, userId)).toBe(true);
+  expect(isSessionRecordActive(session.id)).toBe(false);
+  expect(listSessionsForUser(userId)).toEqual([]);
+});
+
+test('session inventory reflects a recent session touch immediately', () => {
+  const originalNow = Date.now;
+  let now = originalNow();
+  const userId = `session-touch-${randomUUID()}`;
+
+  try {
+    Date.now = () => now;
+    const session = createSessionRecord(userId, 'browser', '198.51.100.9');
+    now += 60_001;
+    touchSessionRecord(session.id);
+
+    expect(listSessionsForUser(userId)).toMatchObject([{ id: session.id, lastSeenAt: now }]);
+  } finally {
+    Date.now = originalNow;
   }
 });
 

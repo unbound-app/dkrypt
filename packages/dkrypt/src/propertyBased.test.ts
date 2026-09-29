@@ -8,7 +8,9 @@ import { build as buildPlist } from 'plist';
 import { tmpdir } from 'node:os';
 import { createBridgeEnvelope, createDeviceAgentEnvelope, parseDeviceAgentResponse, type DeviceAgentEnvelope } from '#idevice.js';
 import { BRIDGE_PROTOCOL_VERSION } from '#bridgeProtocol.js';
-import { openStateDatabase, verifyDatabaseBackup } from '#store/sqlite.js';
+import { createSessionRepository } from '#store/sessionRepository.js';
+import { LATEST_SQLITE_SCHEMA_VERSION, openStateDatabase, verifyDatabaseBackup } from '#store/sqlite.js';
+import { rewindSessionSearchMigration } from '#store/sqliteTestHelpers.js';
 import { normalizeTestFlightInvite } from '#testflightSubscriptions.js';
 import { extractIpaMetadata } from '#util/ipaMetadata.js';
 import { compareVersions, normalizeVersion } from '#util/version.js';
@@ -65,6 +67,9 @@ function sortById<T extends { id: string }>(records: T[]): T[] {
 }
 
 function restoreSchemaAtVersion(database: ReturnType<typeof openStateDatabase>, version: number): void {
+  if (version < 18) {
+    rewindSessionSearchMigration(database.db);
+  }
   if (version >= 6) {
     database.db.exec(`
       UPDATE jobs SET payload = json_set(payload, '$.projectId', 'default')
@@ -218,6 +223,17 @@ test('TestFlight invite normalization is idempotent for generated public invite 
 test('SQLite upgrades generated records from every prior schema and restores them from backup', async () => {
   const stateArbitrary = fc.record({
     version: fc.constant(16),
+    activeSessions: fc.uniqueArray(
+      fc.record({
+        id: fc.uuid(),
+        sub: fc.string({ minLength: 1, maxLength: 32 }),
+        createdAt: fc.nat({ max: 2_000_000_000_000 }),
+        lastSeenAt: fc.nat({ max: 2_000_000_000_000 }),
+        userAgent: fc.string({ maxLength: 32 }),
+        ip: fc.string({ maxLength: 40 }),
+      }),
+      { selector: (session) => session.id, maxLength: 8 },
+    ),
     devices: fc.uniqueArray(
       fc.record({ id: fc.uuid(), name: fc.string({ maxLength: 32 }), enabled: fc.boolean(), updatedAt: fc.nat({ max: 2_000_000_000_000 }) }),
       { selector: (device) => device.id, maxLength: 8 },
@@ -268,21 +284,23 @@ test('SQLite upgrades generated records from every prior schema and restores the
         database.close();
         database = undefined;
         database = openStateDatabase({ stateDir, filename: 'state.sqlite' });
-        expect(database.schemaVersion).toBe(17);
+        expect(database.schemaVersion).toBe(LATEST_SQLITE_SCHEMA_VERSION);
         expect(database.integrityStatus()).toBe('ok');
         expect(database.readState()).toEqual(expectedState);
+        expect(createSessionRepository(database.db).listAll()).toEqual(expectedState.activeSessions);
         expect(sortById(database.readCollection('jobs') as typeof expectedJobs)).toEqual(expectedJobs);
         expect(sortById(database.readCollection('artifacts') as typeof expectedArtifacts)).toEqual(expectedArtifacts);
         const migratedTimelines = database.readCollection('job_timelines') as Array<{ jobId: string; events: string[] }>;
         expect(sortById(migratedTimelines.map((timeline) => ({ id: timeline.jobId, events: timeline.events })))).toEqual(sortById(expectedTimelines.map((timeline) => ({ id: timeline.jobId, events: timeline.events }))));
         expect(sortById(database.readCollection('scheduler_runs') as typeof expectedSchedulerRuns)).toEqual(sortById(expectedSchedulerRuns));
         database.backupTo(backupPath);
-        expect(verifyDatabaseBackup(backupPath)).toEqual({ schemaVersion: 17, integrity: 'ok', hasStateSnapshot: true });
+        expect(verifyDatabaseBackup(backupPath)).toEqual({ schemaVersion: LATEST_SQLITE_SCHEMA_VERSION, integrity: 'ok', hasStateSnapshot: true });
         database.close();
         database = undefined;
         database = openStateDatabase({ stateDir, filename: 'restore.sqlite' });
         expect(database.integrityStatus()).toBe('ok');
         expect(database.readState()).toEqual(expectedState);
+        expect(createSessionRepository(database.db).listAll()).toEqual(expectedState.activeSessions);
         expect(sortById(database.readCollection('jobs') as typeof expectedJobs)).toEqual(expectedJobs);
         expect(sortById(database.readCollection('artifacts') as typeof expectedArtifacts)).toEqual(expectedArtifacts);
         const restoredTimelines = database.readCollection('job_timelines') as Array<{ jobId: string; events: string[] }>;

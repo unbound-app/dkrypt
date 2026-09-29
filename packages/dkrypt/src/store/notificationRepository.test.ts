@@ -4,7 +4,7 @@ import path from 'node:path';
 import { expect, test } from 'bun:test';
 import { createNotificationRepository } from '#store/notificationRepository.js';
 import type { NotificationRecord } from '#store/state.js';
-import { openStateDatabase } from '#store/sqlite.js';
+import { LATEST_SQLITE_SCHEMA_VERSION, openStateDatabase } from '#store/sqlite.js';
 
 test('notification repository returns only one user notifications newest first', async () => {
   const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-notification-repository-'));
@@ -77,7 +77,7 @@ test('notification repository backfills per-user fields when migrating an existi
 
     const migrated = openStateDatabase(options);
     try {
-      expect(migrated.schemaVersion).toBe(17);
+      expect(migrated.schemaVersion).toBe(LATEST_SQLITE_SCHEMA_VERSION);
       expect(createNotificationRepository(migrated.db).listByUser('member@example.com')).toEqual([notification]);
     } finally {
       migrated.close();

@@ -8,7 +8,8 @@ import { Database } from 'bun:sqlite';
 import { expect, test } from 'bun:test';
 import { createDeviceHistoryRepository } from '#store/deviceHistoryRepository.js';
 import { createDeviceHealthRepository } from '#store/deviceHealthRepository.js';
-import { openStateCollectionDatabase, openStateDatabase, readStateCollection, replaceStateCollections } from '#store/sqlite.js';
+import { LATEST_SQLITE_SCHEMA_VERSION, openStateCollectionDatabase, openStateDatabase, readStateCollection, replaceStateCollections } from '#store/sqlite.js';
+import { rewindSessionSearchMigration } from '#store/sqliteTestHelpers.js';
 
 const initializationApplicationId = 184527631;
 
@@ -19,6 +20,7 @@ function initializationMarkerContents(databasePath: string, phase: 'unbound' | '
 }
 
 function rewindToSchemaVersion16(database: ReturnType<typeof openStateDatabase>): void {
+  rewindSessionSearchMigration(database.db);
   database.db.exec(`
     DROP INDEX billing_events_by_provider_event;
     DROP INDEX billing_events_by_processed_at;
@@ -31,7 +33,7 @@ function rewindToSchemaVersion16(database: ReturnType<typeof openStateDatabase>)
     ALTER TABLE billing_events DROP COLUMN event_id;
     ALTER TABLE billing_events DROP COLUMN occurred_at;
     ALTER TABLE billing_events DROP COLUMN processed_at;
-    DELETE FROM schema_migrations WHERE version = 17;
+    DELETE FROM schema_migrations WHERE version IN (17, 18);
   `);
 }
 
@@ -111,7 +113,7 @@ test('SQLite state snapshots survive restart and retain independently owned coll
 
     const reopened = openStateDatabase({ stateDir, filename: 'state.sqlite' });
     expect(reopened.integrityStatus()).toBe('ok');
-    expect(reopened.schemaVersion).toBe(17);
+    expect(reopened.schemaVersion).toBe(LATEST_SQLITE_SCHEMA_VERSION);
     expect(reopened.readCollection('jobs')).toEqual([{ id: 'job-1', status: 'queued' }]);
     expect(reopened.readCollection('scheduler_runs')).toEqual([]);
     expect(reopened.readCollection('projects')).toEqual(state.projects);
@@ -173,7 +175,7 @@ test('SQLite backfills indexed device activity from its state snapshot during mi
 
     const migrated = openStateDatabase({ stateDir, filename: 'state.sqlite' });
     const repository = createDeviceHistoryRepository(migrated.db);
-    expect(migrated.schemaVersion).toBe(17);
+    expect(migrated.schemaVersion).toBe(LATEST_SQLITE_SCHEMA_VERSION);
     expect(repository.listByDevice('device-a')).toEqual([newer, older]);
     expect(repository.listByDevice('device-b')).toEqual([]);
     migrated.close();
@@ -207,7 +209,7 @@ test('SQLite backfills normalized device health checks from its state snapshot d
 
     const migrated = openStateDatabase({ stateDir, filename: 'state.sqlite' });
     const repository = createDeviceHealthRepository(migrated.db);
-    expect(migrated.schemaVersion).toBe(17);
+    expect(migrated.schemaVersion).toBe(LATEST_SQLITE_SCHEMA_VERSION);
     expect(repository.listByDevice('device-a')).toEqual([newer, older]);
     expect(repository.listByDevice('device-b')).toEqual([legacyCheck]);
     migrated.close();
@@ -335,7 +337,7 @@ test('SQLite creates a verified pre-migration backup before upgrading an existin
 
     const migrated = openStateDatabase({ stateDir, filename: 'state.sqlite' });
     try {
-      expect(migrated.schemaVersion).toBe(17);
+      expect(migrated.schemaVersion).toBe(LATEST_SQLITE_SCHEMA_VERSION);
       const backupDirectory = path.join(stateDir, 'backups');
       const backupNames = (await readdir(backupDirectory)).filter((name) => name.startsWith('pre-migration-'));
       expect(backupNames).toHaveLength(1);
@@ -665,7 +667,7 @@ test('SQLite resumes fresh initialization after an interrupted database-file cre
 
     const database = openStateDatabase({ stateDir, filename: 'state.sqlite' });
     try {
-      expect(database.schemaVersion).toBe(17);
+      expect(database.schemaVersion).toBe(LATEST_SQLITE_SCHEMA_VERSION);
       expect(database.readState()).toBeUndefined();
     } finally {
       database.close();
@@ -712,7 +714,7 @@ test('SQLite resumes fresh initialization after migrations commit before the fir
 
     const resumed = openStateDatabase({ stateDir, filename: 'state.sqlite' });
     try {
-      expect(resumed.schemaVersion).toBe(17);
+      expect(resumed.schemaVersion).toBe(LATEST_SQLITE_SCHEMA_VERSION);
       expect(resumed.readState()).toBeUndefined();
     } finally {
       resumed.close();

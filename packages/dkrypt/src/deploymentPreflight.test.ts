@@ -4,16 +4,23 @@ import { tmpdir } from 'node:os';
 import { Database } from 'bun:sqlite';
 import { expect, test } from 'bun:test';
 import { runDeploymentPreflight } from '#deploymentPreflight.js';
-import { openStateDatabase } from '#store/sqlite.js';
+import { LATEST_SQLITE_SCHEMA_VERSION, openStateDatabase } from '#store/sqlite.js';
+import { rewindSessionSearchMigration } from '#store/sqliteTestHelpers.js';
 
 test('deployment preflight dry-runs and restores a database without changing the live schema', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'dkrypt-deployment-preflight-'));
   const stateDir = path.join(root, 'live-state');
   await mkdir(stateDir, { recursive: true });
-  const state = { version: 18, devices: [{ id: 'device-private', name: 'Test iPad' }], settings: { maintenanceMode: false } };
+  const state = {
+    version: 18,
+    activeSessions: [{ id: 'session-preflight', sub: 'manager@example.com', createdAt: 100, lastSeenAt: 200 }],
+    devices: [{ id: 'device-private', name: 'Test iPad' }],
+    settings: { maintenanceMode: false },
+  };
   const database = openStateDatabase({ stateDir, filename: 'dkrypt.sqlite' });
   try {
     database.writeState(state);
+    rewindSessionSearchMigration(database.db);
     database.db.exec(`
       DROP TABLE billing_customers;
       DROP TABLE billing_subscriptions;
@@ -26,11 +33,11 @@ test('deployment preflight dry-runs and restores a database without changing the
       ALTER TABLE billing_events DROP COLUMN event_id;
       ALTER TABLE billing_events DROP COLUMN occurred_at;
       ALTER TABLE billing_events DROP COLUMN processed_at;
-      DELETE FROM schema_migrations WHERE version = 17;
+      DELETE FROM schema_migrations WHERE version IN (17, 18);
     `);
 
     const result = runDeploymentPreflight(path.join(stateDir, 'dkrypt.sqlite'), root);
-    expect(result).toEqual({ status: 'verified', sourceSchemaVersion: 16, candidateSchemaVersion: 17, integrity: 'ok', restoredState: true });
+    expect(result).toEqual({ status: 'verified', sourceSchemaVersion: 16, candidateSchemaVersion: LATEST_SQLITE_SCHEMA_VERSION, integrity: 'ok', restoredState: true });
     expect(database.schemaVersion).toBe(16);
     expect(database.readState()).toEqual(state);
 

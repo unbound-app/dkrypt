@@ -4,7 +4,7 @@ import path from 'node:path';
 import { expect, test } from 'bun:test';
 import { createWebhookInboxRepository } from '#store/webhookInboxRepository.js';
 import type { WebhookInboxRecord } from '#webhookInbox.js';
-import { openStateDatabase } from '#store/sqlite.js';
+import { LATEST_SQLITE_SCHEMA_VERSION, openStateDatabase } from '#store/sqlite.js';
 
 function webhookRecord(overrides: Partial<WebhookInboxRecord> = {}): WebhookInboxRecord {
   return {
@@ -101,7 +101,7 @@ test('webhook inbox migration backfills indexed state from existing payloads', a
 
     const migrated = openStateDatabase(options);
     try {
-      expect(migrated.schemaVersion).toBe(17);
+      expect(migrated.schemaVersion).toBe(LATEST_SQLITE_SCHEMA_VERSION);
       expect(createWebhookInboxRepository(migrated.db).findById(record.id)).toEqual(record);
       expect(migrated.db.query('SELECT provider, event_id, status, received_at, attempts FROM webhook_inbox WHERE id = ?').get(record.id)).toEqual({
         provider: 'stripe',

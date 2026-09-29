@@ -4,7 +4,7 @@ import path from 'node:path';
 import { expect, test } from 'bun:test';
 import { billingSnapshotCollections, type BillingCharge, type BillingCheckout, type BillingEntitlementEvent, type BillingEventRecord, type BillingSnapshot, type BillingSubscription } from '#billing.js';
 import { createBillingRepository } from '#store/billingRepository.js';
-import { openStateDatabase, replaceStateCollections } from '#store/sqlite.js';
+import { LATEST_SQLITE_SCHEMA_VERSION, openStateDatabase, replaceStateCollections } from '#store/sqlite.js';
 
 function billingSnapshot(): BillingSnapshot {
   const subscription: BillingSubscription = {
@@ -190,7 +190,7 @@ test('billing migration backfills indexed records from the prior JSON snapshot',
 
     const migrated = openStateDatabase(options);
     try {
-      expect(migrated.schemaVersion).toBe(17);
+      expect(migrated.schemaVersion).toBe(LATEST_SQLITE_SCHEMA_VERSION);
       const repository = createBillingRepository(migrated.db);
       expect(repository.listCustomers()).toEqual(normalizedSnapshot.customers);
       expect(repository.listSubscriptions()).toEqual(normalizedSnapshot.subscriptions);
