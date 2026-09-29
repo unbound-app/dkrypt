@@ -3829,18 +3829,15 @@ export function listNotifications(userId: string, limit = 50): { notifications: 
 
 export function listNotificationsPage(userId: string, offset = 0, limit = 50, cursor?: string): { notifications: NotificationRecord[]; unread: number; total: number; nextCursor?: string } {
   const lower = userId.toLowerCase();
-  const owned = notificationRepository.listByUser(lower);
-  const page = paginateCursor(owned, {
+  const page = notificationRepository.listPageByUser(lower, {
     cursor,
     offset,
-    limit: Math.min(Math.max(limit, 1), 100),
-    keyOf: (notification) => [notification.createdAt, notification.id],
-    order: 'desc',
+    limit,
   });
   return {
-    notifications: page.items.map(({ groupKey: _groupKey, ...notification }) => ({ ...notification })),
-    unread: owned.filter((notification) => !notification.readAt).length,
-    total: owned.length,
+    notifications: page.notifications.map(({ groupKey: _groupKey, ...notification }) => ({ ...notification })),
+    unread: page.unread,
+    total: page.total,
     nextCursor: page.nextCursor,
   };
 }

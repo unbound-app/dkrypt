@@ -61,6 +61,11 @@ function decodeCursorPayload(value: string | undefined): KeysetCursor | LegacyOf
   return undefined;
 }
 
+export function decodeKeysetCursor(value: string | undefined): CursorKey | undefined {
+  const cursor = decodeCursorPayload(value);
+  return cursor && 'key' in cursor ? cursor.key : undefined;
+}
+
 function compareKey(left: CursorKey, right: CursorKey): number {
   const length = Math.min(left.length, right.length);
   for (let index = 0; index < length; index += 1) {
