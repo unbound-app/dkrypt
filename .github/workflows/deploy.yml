@@ -441,8 +441,8 @@ jobs:
           }
           const key = await fs.stat(process.env.DEVICE_SSH_KEY_PATH || '/data/device-ssh/id_ed25519');
           const publicKey = await fs.stat(process.env.DEVICE_SSH_PUBLIC_KEY_PATH || '/data/device-ssh/id_ed25519.pub');
-          if (!key.isFile() || key.size === 0 || key.uid !== 0 || key.gid !== 10001 || (key.mode & 0o777) !== 0o440) throw new Error('device SSH private key is not a non-empty regular file with API-group-only permissions');
-          if (!publicKey.isFile() || publicKey.size === 0 || publicKey.uid !== 0 || publicKey.gid !== 10001 || (publicKey.mode & 0o777) !== 0o440) throw new Error('device SSH public key is not a non-empty regular file with API-group-only permissions');
+          if (!key.isFile() || key.size === 0 || key.uid !== 10001 || key.gid !== 10001 || (key.mode & 0o777) !== 0o400) throw new Error('device SSH private key is not a non-empty regular file owned only by the API user');
+          if (!publicKey.isFile() || publicKey.size === 0 || publicKey.uid !== 10001 || publicKey.gid !== 10001 || (publicKey.mode & 0o777) !== 0o440) throw new Error('device SSH public key is not a non-empty regular file with API-group-only permissions');
           const sshKeyAvailable = true;
           try {
             await fs.stat('/root/.ipadecrypt');

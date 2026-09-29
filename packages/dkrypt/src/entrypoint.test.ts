@@ -31,7 +31,9 @@ test('Compose binds the USB bus directory and permits USB character devices', ()
 test('a dedicated Ed25519 SSH key persists independently of host credentials', () => {
   expect(entrypoint).toContain('ssh-keygen -q -t ed25519 -N');
   expect(entrypoint).toContain('DEVICE_SSH_KEY_PATH must be stored in DEVICE_SSH_KEY_DIR');
-  expect(entrypoint).toContain('chmod 0440 "$ssh_key_path" "$ssh_public_key_path"');
+  expect(entrypoint).toContain('chown 10001:10001 "$ssh_key_path" "$ssh_public_key_path"');
+  expect(entrypoint).toContain('chmod 0400 "$ssh_key_path"');
+  expect(entrypoint).toContain('chmod 0440 "$ssh_public_key_path"');
   expect(dockerfile).toContain('openssh-client');
   expect(compose).toContain('      - device-ssh:/data/device-ssh');
   expect(compose).toContain('  device-ssh:\n    external: true\n    name: dkrypt_device_ssh');
@@ -41,6 +43,8 @@ test('a dedicated Ed25519 SSH key persists independently of host credentials', (
   expect(deploymentWorkflow).toContain("process.env.DEVICE_SSH_KEY_PATH || '/data/device-ssh/id_ed25519'");
   expect(deploymentWorkflow).toContain("process.env.DEVICE_SSH_PUBLIC_KEY_PATH || '/data/device-ssh/id_ed25519.pub'");
   expect(deploymentWorkflow).toContain('"Name":"dkrypt_device_ssh"');
+  expect(deploymentWorkflow).toContain('key.uid !== 10001 || key.gid !== 10001 || (key.mode & 0o777) !== 0o400');
+  expect(deploymentWorkflow).toContain('publicKey.uid !== 10001 || publicKey.gid !== 10001 || (publicKey.mode & 0o777) !== 0o440');
   expect(deploymentWorkflow).toContain('host SSH identity is unexpectedly mounted into dkrypt');
   expect(compose).not.toContain('DEVICE_SSH_KEY_HOST_PATH');
   expect(deploymentWorkflow).not.toContain('DEVICE_SSH_KEY_HOST_PATH');
