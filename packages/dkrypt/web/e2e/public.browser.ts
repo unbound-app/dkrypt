@@ -519,6 +519,50 @@ test('IPA Library archive and restore keep archive state separate from eviction 
   await expectAccessible(page);
 });
 
+test('IPA Library keeps loaded artifacts visible while scrolling its virtualized rows', async ({ page }) => {
+  await mockStableDashboardEvents(page);
+  await mockAuthenticatedDashboard(page, '1');
+  let artifactListRequestCount = 0;
+  const artifacts = Array.from({ length: 40 }, (_, index) => ({
+    id: `scroll-artifact-${index}`,
+    key: `com.example.scroll${index}:appstore:${index}`,
+    projectIds: ['default'],
+    bundleId: `com.example.scroll${index}`,
+    channel: 'appstore' as const,
+    versionLabel: '1.0.0',
+    fileSizeBytes: 1024,
+    sha256: 'a'.repeat(64),
+    createdAt: '2026-09-25T12:00:00.000Z',
+    lastAccessedAt: '2026-09-25T13:00:00.000Z',
+    accessCount: 1,
+    sourceJobId: `job-scroll-artifact-${index}`,
+    warnings: [],
+    fileUrl: `/v1/dashboard/artifacts/scroll-artifact-${index}/file`,
+  }));
+  await page.route('**/v1/dashboard/apps/metadata?*', async (route) => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ entries: [] }) });
+  });
+  await page.route('**/v1/dashboard/artifacts*', async (route) => {
+    artifactListRequestCount += 1;
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ artifacts, total: artifacts.length, totalBytes: 40_960, maxBytes: 81_920 }),
+    });
+  });
+
+  await page.goto('/?tab=home');
+  const list = page.getByRole('region', { name: 'IPA library artifacts' });
+  for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    await expect(list.locator('article').filter({ hasText: 'com.example.scroll0' })).toBeVisible();
+    await list.evaluate((element) => element.scrollTo({ top: element.scrollHeight, behavior: 'instant' }));
+    await expect(list.locator('article').filter({ hasText: 'com.example.scroll39' })).toBeVisible();
+    await list.evaluate((element) => element.scrollTo({ top: 0, behavior: 'instant' }));
+    await expect(list.locator('article').filter({ hasText: 'com.example.scroll0' })).toBeVisible();
+  }
+  await expect.poll(() => artifactListRequestCount).toBe(1);
+});
+
 test('IPA Library discards a page response from a source filter that is no longer active', async ({ page }) => {
   await mockStableDashboardEvents(page);
   await mockAuthenticatedDashboard(page, '1');
@@ -1230,7 +1274,7 @@ test('authenticated dashboard shows the running build revision', async ({ page }
   await expect(page.getByText('Build abcdef0', { exact: true })).toBeVisible();
 });
 
-test('API documentation opens standalone without embedding the restricted reference', async ({ page }) => {
+test('API documentation embeds Scalar in the Docs tab with a new-tab fallback', async ({ page }) => {
   await mockAuthenticatedDashboard(page, '1');
   await page.context().route(/\/reference\/?$/, async (route) => {
     await route.fulfill({
@@ -1241,16 +1285,14 @@ test('API documentation opens standalone without embedding the restricted refere
   });
 
   await page.goto('/?tab=docs');
-  const referenceLink = page.getByRole('link', { name: 'Open API reference' });
+  const reference = page.frameLocator('iframe[title="dkrypt API reference"]');
+  const referenceLink = page.getByRole('link', { name: 'Open API reference in new tab' });
 
-  await expect(page.locator('iframe[title="dkrypt API reference"]')).toHaveCount(0);
+  await expect(page.locator('iframe[title="dkrypt API reference"]')).toBeVisible();
+  await expect(page.locator('iframe[title="dkrypt API reference"]')).toHaveAttribute('src', '/reference/');
   await expect(referenceLink).toHaveAttribute('href', '/reference/');
   await expect(referenceLink).toHaveAttribute('target', '_blank');
-  const popupPromise = page.waitForEvent('popup');
-  await referenceLink.click();
-  const popup = await popupPromise;
-  await expect(popup).toHaveURL(/\/reference\/$/);
-  await expect(popup.getByRole('heading', { name: 'API reference is ready' })).toBeVisible();
+  await expect(reference.getByRole('heading', { name: 'API reference is ready' })).toBeVisible();
 });
 
 test('interface language localizes the account menu and persists to the account', async ({ page }) => {

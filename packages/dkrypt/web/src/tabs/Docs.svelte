@@ -3,14 +3,23 @@
   import { buttonVariants } from '#lib/components/ui/variants';
 </script>
 
-<section class="flex min-h-[70vh] items-center justify-center px-4 py-12">
-  <div class="flex w-full max-w-lg flex-col items-center gap-4 rounded-2xl border bg-card p-8 text-center">
-    <div>
+<section class="flex min-w-0 flex-col gap-3">
+  <div class="flex min-w-0 items-center justify-between gap-3">
+    <div class="min-w-0">
       <h1 class="text-base font-semibold">API documentation</h1>
-      <p class="mt-2 text-muted text-sm">Open the interactive API reference in a separate tab to avoid browser embedding restrictions.</p>
+      <p class="mt-1 text-muted text-sm">Browse dkrypt’s API reference without leaving the dashboard.</p>
     </div>
-    <a href="/reference/" target="_blank" rel="noopener noreferrer" class={buttonVariants('secondary')}>
-      <ExternalLink class="h-4 w-4" />Open API reference
+    <a href="/reference/" target="_blank" rel="noopener noreferrer" class={buttonVariants('secondary', 'sm')}>
+      <ExternalLink class="h-4 w-4" />Open API reference in new tab
     </a>
+  </div>
+  <div class="min-w-0 overflow-hidden rounded-xl border border-border/70 bg-background">
+    <iframe
+      src="/reference/"
+      title="dkrypt API reference"
+      loading="lazy"
+      referrerpolicy="same-origin"
+      class="block h-[min(78vh,58rem)] min-h-[36rem] w-full border-0"
+    ></iframe>
   </div>
 </section>

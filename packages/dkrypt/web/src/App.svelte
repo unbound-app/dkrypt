@@ -1256,7 +1256,7 @@
 			<UpdateAvailableBanner />
 			<SetupBanner />
 			<div
-				class="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_340px] lg:gap-5"
+				class={tabState.active === "docs" ? "grid grid-cols-1 items-start" : "grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_340px] lg:gap-5"}
 			>
 				<div class="workspace-content min-w-0">
 					<div class:hidden={tabState.active !== "home"}>
@@ -1285,9 +1285,11 @@
 						</div>
 					{/if}
 				</div>
-				<div class="hidden min-w-0 flex-col gap-4 lg:sticky lg:top-6 lg:flex">
-					<StatusPanel />
-				</div>
+				{#if tabState.active !== "docs"}
+					<div class="hidden min-w-0 flex-col gap-4 lg:sticky lg:top-6 lg:flex">
+						<StatusPanel />
+					</div>
+				{/if}
 			</div>
 		</main>
 		<Button
