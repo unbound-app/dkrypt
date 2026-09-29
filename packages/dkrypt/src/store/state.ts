@@ -779,6 +779,25 @@ const LEGACY_ADMIN_PERMISSIONS: LegacyPermissions = {
   manageUsers: true,
 };
 
+function isLegacyPermissionsRecord(value: unknown): value is LegacyPermissions {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const permissions = value as Record<string, unknown>;
+  const permissionKeys = Object.keys(LEGACY_VIEWER_PERMISSIONS) as Array<keyof LegacyPermissions>;
+  return Object.keys(permissions).length === permissionKeys.length
+    && permissionKeys.every((key) => Object.hasOwn(permissions, key) && typeof permissions[key] === 'boolean');
+}
+
+function isLegacyV6AccountRecord(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const user = value as Record<string, unknown>;
+  return typeof user.username === 'string'
+    && typeof user.addedAt === 'number'
+    && (user.permissions === undefined || isLegacyPermissionsRecord(user.permissions))
+    && (user.sessionVersion === undefined || typeof user.sessionVersion === 'number')
+    && (user.lastActiveAt === undefined || typeof user.lastActiveAt === 'number')
+    && (user.priority === undefined || typeof user.priority === 'number');
+}
+
 function legacyRoleToPermissions(role: string): LegacyPermissions {
   switch (role) {
     case 'admin':
@@ -925,9 +944,10 @@ function migrateV6ToV8(v6: Record<string, unknown>): Record<string, unknown> {
   }
 
   const legacyUsers = Object.hasOwn(v6, 'allowedUsers') ? v6.allowedUsers as Record<string, unknown>[] : [];
+  if (!legacyUsers.every(isLegacyV6AccountRecord)) throw new Error('persistent account data is malformed');
   const allowedUsers: AllowedUser[] = legacyUsers.map((u) => ({
     username: u.username as string,
-    roleIds: roleIdForBits(legacyBooleansToBits((u.permissions ?? LEGACY_VIEWER_PERMISSIONS) as LegacyPermissions)),
+    roleIds: roleIdForBits(legacyBooleansToBits(u.permissions === undefined ? LEGACY_VIEWER_PERMISSIONS : u.permissions as LegacyPermissions)),
     addedAt: u.addedAt as number,
     sessionVersion: u.sessionVersion as number | undefined,
     lastActiveAt: u.lastActiveAt as number | undefined,

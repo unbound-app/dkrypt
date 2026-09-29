@@ -48,6 +48,7 @@ export function isRoleRecord(value: unknown): value is Role {
     && typeof role.name === 'string'
     && typeof role.color === 'string'
     && typeof role.permissions === 'string'
+    && /^\d+$/.test(role.permissions)
     && typeof role.position === 'number'
     && typeof role.isDefault === 'boolean'
     && (role.createdAt === undefined || typeof role.createdAt === 'number')

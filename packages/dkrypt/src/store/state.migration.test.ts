@@ -61,7 +61,39 @@ describe('state migrations', () => {
     }
   });
 
+  test('preserves valid v6 accounts that use the viewer permission default', async () => {
+    const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-state-v6-account-'));
+    const statePath = path.join(stateDir, 'state.json');
+    await writeFile(statePath, JSON.stringify({ version: 6, allowedUsers: [{ username: 'legacy-viewer', addedAt: 1 }] }));
+
+    try {
+      const child = Bun.spawn(
+        [process.execPath, '-e', "await import('./src/store/state.ts')"],
+        {
+          cwd: process.cwd(),
+          env: {
+            API_KEY: 'state-v6-account-api-key',
+            SESSION_SIGNING_SECRET: 'state-v6-account-session-secret',
+            ADMIN_PASSWORD: 'state-v6-account-admin-password',
+            STATE_DIR: stateDir,
+            STATE_DATABASE_FILE: 'state.sqlite',
+          },
+          stdout: 'pipe',
+          stderr: 'pipe',
+        },
+      );
+      const [stderr, exitCode] = await Promise.all([new Response(child.stderr).text(), child.exited]);
+      if (exitCode !== 0) throw new Error(`valid v6 account migration failed: ${stderr}`);
+
+      const migrated = JSON.parse(await readFile(statePath, 'utf8')) as { allowedUsers: Array<{ username: string; roleIds: string[]; addedAt: number }> };
+      expect(migrated.allowedUsers).toEqual([{ username: 'legacy-viewer', roleIds: [], addedAt: 1 }]);
+    } finally {
+      await rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
   test('fails closed on malformed account and role collections without rewriting the legacy state file', async () => {
+    const invalidRole = { id: 'legacy-role', name: 'Legacy', color: '#000000', permissions: 'not-a-bitfield', position: 0, isDefault: false, createdAt: 1, updatedAt: 1 };
     const malformedStates = [
       { version: 1, allowedUsers: 'lost-users' },
       { version: 1, allowedUsers: [{ username: 'lost-user' }] },
@@ -71,9 +103,15 @@ describe('state migrations', () => {
       { version: 4, allowedUsers: 'lost-users' },
       { version: 5, allowedUsers: 'lost-users' },
       { version: 6, allowedUsers: 'lost-users' },
+      { version: 6, allowedUsers: [{ username: 'escalated-user', addedAt: 1, permissions: [] }] },
+      { version: 6, allowedUsers: [{ username: 'escalated-user', addedAt: 1, permissions: {} }] },
       { version: 7, roles: 'lost-roles' },
       { version: 8, roles: 'lost-roles' },
       { version: 9, roles: 'lost-roles' },
+      { version: 7, roles: [invalidRole] },
+      { version: 8, roles: [invalidRole] },
+      { version: 9, roles: [invalidRole] },
+      { version: 13, roles: [invalidRole] },
       { version: 18, allowedUsers: { username: 'lost-user' }, roles: [] },
       { version: 18, allowedUsers: [], roles: 'lost-role' },
     ];
