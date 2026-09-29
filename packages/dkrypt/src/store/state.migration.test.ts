@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { openStateDatabase, readStateCollection } from '#store/sqlite.js';
 
 describe('state migrations', () => {
   test('removes v13 share records and obsolete permission bits', async () => {
@@ -27,6 +28,7 @@ describe('state migrations', () => {
           SESSION_SIGNING_SECRET: 'state-migration-session-secret',
           ADMIN_PASSWORD: 'state-migration-admin-password',
           STATE_DIR: stateDir,
+          STATE_DATABASE_FILE: 'state.sqlite',
         },
         stdout: 'pipe',
         stderr: 'pipe',
@@ -49,5 +51,12 @@ describe('state migrations', () => {
     expect(migrated.jobHistory).toContainEqual(expect.objectContaining({ id: 'legacy-job', projectId: 'default' }));
     expect(migrated.backupHistory).toContainEqual(expect.objectContaining({ id: 'legacy-backup', restoreDrillStatus: 'not_run' }));
     expect(migrated.shareLinks).toBeUndefined();
+
+    const database = openStateDatabase({ stateDir, filename: 'state.sqlite' });
+    try {
+      expect(readStateCollection(database.db, 'projects')).toContainEqual(expect.objectContaining({ id: 'default', isDefault: true }));
+    } finally {
+      database.close();
+    }
   });
 });

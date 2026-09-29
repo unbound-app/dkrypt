@@ -27,6 +27,7 @@ import {
   createRole,
   createSessionRecord,
   createTestFlightSubscription,
+  deleteUserPersonalData,
   createWatch,
   deleteDevice,
   deletePasskey,
@@ -52,6 +53,7 @@ import {
   isWatchSchedulable,
   listSessionsForUser,
   markWatchScheduleRun,
+  mergeUserAccounts,
   getWebhookDeliveryLog,
   importBackup,
   listAllowedUsers,
@@ -396,6 +398,32 @@ describe('projects', () => {
 
     const actions = getAuditLog(10).filter((entry) => entry.target === project.id).map((entry) => entry.action);
     expect(actions).toEqual(['project.restore', 'project.archive', 'project.add']);
+  });
+
+  test('project memberships follow account merge and deletion in SQLite', () => {
+    const sourceId = `project-source-${randomUUID()}`;
+    const targetId = `project-target-${randomUUID()}`;
+    addAllowedUser(sourceId, [], 'tester');
+    const project = createProject({ name: `Membership ${randomUUID()}`, memberIds: [sourceId] }, 'root').project!;
+
+    try {
+      expect(mergeUserAccounts(targetId, sourceId, 'root')).toBe(true);
+      expect(getProject(project.id)?.memberIds).toContain(targetId);
+      expect(getProject(project.id)?.memberIds).not.toContain(sourceId);
+
+      const database = openStateDatabase({ stateDir: config.stateDir, filename: config.stateDatabaseFile });
+      try {
+        expect(readStateCollection(database.db, 'projects')).toContainEqual(expect.objectContaining({ id: project.id, memberIds: [targetId] }));
+      } finally {
+        database.close();
+      }
+
+      expect(deleteUserPersonalData(targetId)).toBe(true);
+      expect(getProject(project.id)?.memberIds).not.toContain(targetId);
+    } finally {
+      deleteUserPersonalData(targetId);
+      deleteUserPersonalData(sourceId);
+    }
   });
 
   test('filters history to one project without leaking records from another', () => {

@@ -29,6 +29,7 @@ import { createBillingRepository } from '#store/billingRepository.js';
 import { categorizeFailure } from '#util/failureCategory.js';
 import { combineBits, hasPermission, parseBits, PermissionFlag, serializeBits } from '#permissions.js';
 import { createDeviceRepository } from '#store/deviceRepository.js';
+import { createProjectRepository, isProjectRecordShape } from '#store/projectRepository.js';
 import { createDeviceHistoryRepository } from '#store/deviceHistoryRepository.js';
 import { createDeviceHealthRepository } from '#store/deviceHealthRepository.js';
 import { createNotificationRepository } from '#store/notificationRepository.js';
@@ -104,12 +105,6 @@ function createDefaultProject(now = Date.now()): ProjectRecord {
     createdAt: now,
     updatedAt: now,
   };
-}
-
-function isProjectRecordShape(value: unknown): value is ProjectRecord {
-  if (!value || typeof value !== 'object') return false;
-  const project = value as Partial<ProjectRecord>;
-  return typeof project.id === 'string' && project.id.length > 0 && typeof project.name === 'string' && project.name.trim().length > 0 && Array.isArray(project.memberIds) && project.memberIds.every((id) => typeof id === 'string' && id === id.toLowerCase()) && new Set(project.memberIds).size === project.memberIds.length && typeof project.isDefault === 'boolean' && typeof project.createdBy === 'string' && typeof project.createdAt === 'number' && typeof project.updatedAt === 'number' && (project.archivedAt === undefined || typeof project.archivedAt === 'number') && (project.storageQuotaBytes === undefined || (Number.isSafeInteger(project.storageQuotaBytes) && project.storageQuotaBytes > 0)) && (project.dailyJobQuota === undefined || (Number.isSafeInteger(project.dailyJobQuota) && project.dailyJobQuota > 0)) && (project.maxConcurrentJobs === undefined || (Number.isSafeInteger(project.maxConcurrentJobs) && project.maxConcurrentJobs > 0));
 }
 
 export const DEFAULT_ROLE_ID = 'everyone';
@@ -698,6 +693,7 @@ const testFlightSubscriptionRepository = createTestFlightSubscriptionRepository(
 const jobHistoryRepository = createJobHistoryRepository(stateDatabase.db);
 const sessionRepository = createSessionRepository(stateDatabase.db);
 const deviceRepository = createDeviceRepository(stateDatabase.db);
+const projectRepository = createProjectRepository(stateDatabase.db);
 
 export function getStateDatabaseStatus(): { path: string; schemaVersion: number; integrity: 'ok' } {
   return { path: stateDatabase.path, schemaVersion: stateDatabase.schemaVersion, integrity: stateDatabase.integrityStatus() };
@@ -1217,12 +1213,16 @@ function normalizeLoadedState(migrated: PersistedState): PersistedState {
   migrated.testFlightCatalog = isTestFlightCatalogCacheShape(migrated.testFlightCatalog) ? migrated.testFlightCatalog : undefined;
   migrated.notifications = Array.isArray(migrated.notifications) ? migrated.notifications.slice(0, MAX_NOTIFICATIONS) : [];
   migrated.testFlightSubscriptions = Array.isArray(migrated.testFlightSubscriptions) ? migrated.testFlightSubscriptions : [];
-  if (!Array.isArray(migrated.projects) || !migrated.projects.every(isProjectRecordShape)) throw new Error('persistent project data is malformed');
-  const projectIds = new Set(migrated.projects.map((project) => project.id));
-  if (projectIds.size !== migrated.projects.length || migrated.projects.filter((project) => project.isDefault).length !== 1 || migrated.projects.filter((project) => project.isDefault && project.id === DEFAULT_PROJECT_ID).length !== 1) {
+  validateProjectCollection(migrated.projects);
+  return migrated;
+}
+
+function validateProjectCollection(projects: ProjectRecord[]): void {
+  if (!Array.isArray(projects) || !projects.every(isProjectRecordShape)) throw new Error('persistent project data is malformed');
+  const projectIds = new Set(projects.map((project) => project.id));
+  if (projectIds.size !== projects.length || projects.filter((project) => project.isDefault).length !== 1 || projects.filter((project) => project.isDefault && project.id === DEFAULT_PROJECT_ID).length !== 1) {
     throw new Error('persistent project data must contain unique ids and one default workspace');
   }
-  return migrated;
 }
 
 function normalizeLoadedDevice(device: DeviceRecord): DeviceRecord {
@@ -1330,6 +1330,16 @@ export function upsertAppCatalogEntries(entries: Array<Omit<AppCatalogEntry, 'up
 
 let dirty = false;
 const state: PersistedState = load();
+let persistedProjects = projectRepository.listAll();
+if (persistedProjects.length === 0) {
+  projectRepository.replaceAll(state.projects);
+  persistedProjects = projectRepository.listAll();
+}
+validateProjectCollection(persistedProjects);
+if (JSON.stringify(state.projects) !== JSON.stringify(persistedProjects)) {
+  state.projects = persistedProjects;
+  dirty = true;
+}
 const persistedDevices = deviceRepository.listAll();
 if (JSON.stringify(state.devices) !== JSON.stringify(persistedDevices)) {
   state.devices = persistedDevices;
@@ -1353,9 +1363,17 @@ function fsyncPath(filePath: string): void {
 }
 
 function persistNow(additionalCollections: readonly StateCollectionReplacement[] = []): void {
-  stateDatabase.writeState(state, undefined, additionalCollections);
+  const collections = [...additionalCollections];
+  if (!collections.some((collection) => collection.table === 'projects')) {
+    collections.push(projectCollectionReplacement(state.projects));
+  }
+  stateDatabase.writeState(state, undefined, collections);
   dirty = false;
   syncLegacyStateMirror('state', () => writeStateMirror(statePath, state));
+}
+
+function projectCollectionReplacement(projects: ProjectRecord[]): StateCollectionReplacement {
+  return { table: 'projects', rows: projects.map((project) => ({ id: project.id, payload: project, updatedAt: project.updatedAt })) };
 }
 
 function syncLegacyStateMirror(name: string, sync: () => void): void {
@@ -1545,20 +1563,19 @@ function projectMembersExist(memberIds: string[]): boolean {
 }
 
 export function getProject(id: string): ProjectRecord | undefined {
-  const project = state.projects.find((candidate) => candidate.id === id);
-  return project ? { ...project, memberIds: [...project.memberIds] } : undefined;
+  return projectRepository.findById(id);
 }
 
 export function listProjectsForUser(userId: string, includeAll = false): ProjectRecord[] {
   const normalizedUserId = userId.toLowerCase();
-  return state.projects
+  return projectRepository.listAll()
     .filter((project) => includeAll || project.isDefault || project.memberIds.includes(normalizedUserId))
     .sort((a, b) => Number(b.isDefault) - Number(a.isDefault) || a.name.localeCompare(b.name))
     .map((project) => ({ ...project, memberIds: [...project.memberIds] }));
 }
 
 export function userCanAccessProject(userId: string, projectId: string): boolean {
-  const project = state.projects.find((candidate) => candidate.id === projectId);
+  const project = projectRepository.findById(projectId);
   if (!project || project.archivedAt !== undefined) return false;
   return project.isDefault || project.memberIds.includes(userId.toLowerCase());
 }
@@ -1571,7 +1588,7 @@ export function createProject(input: CreateProjectInput, actor: string): { ok: b
   if (description && description.length > 240) return { ok: false, error: 'project description must be at most 240 characters' };
   if (!validProjectQuota(input.storageQuotaBytes) || !validProjectQuota(input.dailyJobQuota) || !validProjectQuota(input.maxConcurrentJobs)) return { ok: false, error: 'project quotas must be positive whole numbers' };
   if (!projectMembersExist(memberIds)) return { ok: false, error: 'every project member must have an authorized account' };
-  if (state.projects.some((project) => project.name.toLowerCase() === name.toLowerCase())) return { ok: false, error: 'a project with that name already exists' };
+  if (projectRepository.listAll().some((project) => project.name.toLowerCase() === name.toLowerCase())) return { ok: false, error: 'a project with that name already exists' };
   const now = Date.now();
   const project: ProjectRecord = {
     id: randomUUID(),
@@ -1587,38 +1604,38 @@ export function createProject(input: CreateProjectInput, actor: string): { ok: b
     updatedAt: now,
   };
   state.projects.push(project);
-  persistNow();
   recordAudit(actor, 'project.add', project.id, project.name);
   return { ok: true, project: getProject(project.id) };
 }
 
 export function updateProject(id: string, patch: UpdateProjectInput, actor: string): { ok: boolean; project?: ProjectRecord; error?: string } {
-  const project = state.projects.find((candidate) => candidate.id === id);
+  const project = projectRepository.findById(id);
   if (!project) return { ok: false, error: 'project not found' };
   const wasArchived = project.archivedAt !== undefined;
   const name = patch.name?.trim();
   const description = patch.description?.trim() ?? '';
   const memberIds = patch.memberIds === undefined ? undefined : normalizeProjectMemberIds(patch.memberIds);
   if (patch.name !== undefined && (!name || name.length > 80)) return { ok: false, error: 'project name must contain 1 to 80 characters' };
-  if (name && state.projects.some((candidate) => candidate.id !== id && candidate.name.toLowerCase() === name.toLowerCase())) return { ok: false, error: 'a project with that name already exists' };
+  if (name && projectRepository.listAll().some((candidate) => candidate.id !== id && candidate.name.toLowerCase() === name.toLowerCase())) return { ok: false, error: 'a project with that name already exists' };
   if (description.length > 240) return { ok: false, error: 'project description must be at most 240 characters' };
   if (memberIds && !projectMembersExist(memberIds)) return { ok: false, error: 'every project member must have an authorized account' };
   if (![patch.storageQuotaBytes, patch.dailyJobQuota, patch.maxConcurrentJobs].every(validProjectQuota)) return { ok: false, error: 'project quotas must be positive whole numbers' };
   if (patch.archived && project.isDefault) return { ok: false, error: 'the default workspace cannot be archived' };
-  if (name !== undefined) project.name = name;
-  if (patch.description !== undefined) project.description = description || undefined;
-  if (memberIds && !project.isDefault) project.memberIds = memberIds;
-  if (patch.storageQuotaBytes !== undefined) project.storageQuotaBytes = patch.storageQuotaBytes ?? undefined;
-  if (patch.dailyJobQuota !== undefined) project.dailyJobQuota = patch.dailyJobQuota ?? undefined;
-  if (patch.maxConcurrentJobs !== undefined) project.maxConcurrentJobs = patch.maxConcurrentJobs ?? undefined;
+  const updatedProject: ProjectRecord = { ...project };
+  if (name !== undefined) updatedProject.name = name;
+  if (patch.description !== undefined) updatedProject.description = description || undefined;
+  if (memberIds && !project.isDefault) updatedProject.memberIds = memberIds;
+  if (patch.storageQuotaBytes !== undefined) updatedProject.storageQuotaBytes = patch.storageQuotaBytes ?? undefined;
+  if (patch.dailyJobQuota !== undefined) updatedProject.dailyJobQuota = patch.dailyJobQuota ?? undefined;
+  if (patch.maxConcurrentJobs !== undefined) updatedProject.maxConcurrentJobs = patch.maxConcurrentJobs ?? undefined;
   if (patch.archived !== undefined) {
-    project.archivedAt = patch.archived ? project.archivedAt ?? Date.now() : undefined;
+    updatedProject.archivedAt = patch.archived ? project.archivedAt ?? Date.now() : undefined;
   }
-  project.updatedAt = Date.now();
+  updatedProject.updatedAt = Date.now();
   const archiveChanged = patch.archived !== undefined && patch.archived !== wasArchived;
   const action: AuditAction = archiveChanged ? patch.archived ? 'project.archive' : 'project.restore' : 'project.update';
-  persistNow();
-  recordAudit(actor, action, project.id, archiveChanged ? (patch.archived ? 'archived' : 'restored') : project.name);
+  state.projects = state.projects.map((candidate) => candidate.id === id ? updatedProject : candidate);
+  recordAudit(actor, action, updatedProject.id, archiveChanged ? (patch.archived ? 'archived' : 'restored') : updatedProject.name);
   return { ok: true, project: getProject(id) };
 }
 
@@ -1999,7 +2016,6 @@ export function mergeUserAccounts(targetUsername: string, sourceUsername: string
   }
   delete state.pushSubscriptions[sourceId];
 
-  persistNow();
   recordAudit(actor, 'user.update', targetId, `merged account ${sourceId}`);
   return true;
 }
@@ -4648,8 +4664,12 @@ function prepareBackupRestore(payload: ValidatedBackupPayload): Pick<PersistedSt
   };
 }
 
-function backupDatabaseCollections(payload: ValidatedBackupPayload): StateCollectionReplacement[] {
-  return [...billingSnapshotCollections(payload.billing), ...identitySnapshotCollections(payload.identities)];
+function backupDatabaseCollections(payload: ValidatedBackupPayload, projects: ProjectRecord[] = payload.projects): StateCollectionReplacement[] {
+  return [
+    ...billingSnapshotCollections(payload.billing),
+    ...identitySnapshotCollections(payload.identities),
+    projectCollectionReplacement(projects),
+  ];
 }
 
 type BackupRestoredFields = ReturnType<typeof prepareBackupRestore>;
@@ -4808,7 +4828,7 @@ export function importBackup(raw: unknown, actor: string): ImportBackupResult {
   try {
     replaceBillingSnapshot(b.billing, { persist: false });
     replaceIdentitySnapshot(b.identities, { persist: false });
-    stateDatabase.writeState(restoredState, undefined, [...backupDatabaseCollections(b), ...artifactCollections]);
+    stateDatabase.writeState(restoredState, undefined, [...backupDatabaseCollections(b, restored.projects), ...artifactCollections]);
   } catch (error) {
     replaceBillingSnapshot(previousBilling, { persist: false });
     replaceIdentitySnapshot(previousIdentities, { persist: false });
