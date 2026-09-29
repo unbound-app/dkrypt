@@ -3014,7 +3014,6 @@ export interface CreateDeviceInput {
 
 export function createDevice(input: CreateDeviceInput, actor: string): DeviceRecord {
   const now = Date.now();
-  const makePrimary = (input.enabled ?? true) && (input.isPrimary || !state.devices.some((d) => d.enabled && d.isPrimary));
   const transport = input.transport ?? (input.udid ? input.usbmuxNetwork ? 'wifi' : 'usb' : 'wifi');
   const device: DeviceRecord = {
     id: randomUUID(),
@@ -3030,7 +3029,7 @@ export function createDevice(input: CreateDeviceInput, actor: string): DeviceRec
     toolchain: input.toolchain?.trim() || undefined,
     notes: input.notes?.trim() || undefined,
     enabled: input.enabled ?? true,
-    isPrimary: makePrimary,
+    isPrimary: input.enabled !== false && input.isPrimary === true,
     createdAt: now,
     updatedAt: now,
   };
