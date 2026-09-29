@@ -184,7 +184,7 @@ describe('dashboard notifications', () => {
 
     expect(listNotifications(viewer).notifications[0]).toMatchObject({
       deviceId,
-      href: '/?tab=settings&stab=devices',
+      href: `/?tab=settings&stab=devices#device-${encodeURIComponent(deviceId)}`,
     });
     expect(listNotifications(outsider).notifications).toHaveLength(0);
   });
