@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte';
-  import { Download, Pin, PinOff, RefreshCw, X } from 'lucide-svelte';
+  import { onDestroy, untrack } from 'svelte';
+  import { Archive, ArchiveRestore, Download, Pin, PinOff, RefreshCw, X } from 'lucide-svelte';
   import AppIcon from '#components/AppIcon.svelte';
   import EmptyState from '#components/EmptyState.svelte';
   import Badge from '#lib/components/ui/Badge.svelte';
@@ -8,7 +8,7 @@
   import Card from '#lib/components/ui/Card.svelte';
   import Input from '#lib/components/ui/Input.svelte';
   import Select from '#lib/components/ui/Select.svelte';
-  import { fetchArtifacts, observeArtifacts, setDashboardArtifactPinned, setDashboardArtifactsPinned, type ArtifactRecord } from '#lib/api';
+  import { fetchArtifacts, observeArtifacts, setDashboardArtifactArchived, setDashboardArtifactPinned, setDashboardArtifactsArchived, setDashboardArtifactsPinned, type ArtifactRecord } from '#lib/api';
   import { appDisplayName, appIconUrl, ensureAppCatalog } from '#lib/appCatalog.svelte';
   import { fmtBytesGB, fmtSize, fmtTime } from '#lib/format.svelte';
   import { createSavedViews } from '#lib/savedViews.svelte';
@@ -25,12 +25,17 @@
     name: string;
     query: string;
     channel: ArtifactSourceFilter;
+    archived?: boolean;
   }
 
   const ARTIFACT_SOURCE_OPTIONS = [
     { value: 'all', label: 'All sources' },
     { value: 'appstore', label: 'App Store' },
     { value: 'testflight', label: 'TestFlight' },
+  ];
+  const ARTIFACT_STATUS_OPTIONS = [
+    { value: 'active', label: 'Active' },
+    { value: 'archived', label: 'Archived' },
   ];
   const savedViews = createSavedViews<ArtifactFilterPreset>('artifactFilterPresets');
 
@@ -42,16 +47,18 @@
   let maxBytes = $state(0);
   let query = $state('');
   let channelFilter = $state<ArtifactSourceFilter>('all');
+  let archiveFilter = $state<'active' | 'archived'>('active');
   let newFilterName = $state('');
   let loading = $state(false);
   let loadingMore = $state(false);
-  let pinningArtifactIds = $state<string[]>([]);
+  let updatingArtifactIds = $state<string[]>([]);
   let selectedArtifactIds = $state<Set<string>>(new Set());
-  let bulkPinning = $state(false);
+  let bulkUpdating = $state(false);
   let expandedArtifactIds = $state<Set<string>>(new Set());
   let nextCursor = $state<string | undefined>(undefined);
   let error = $state('');
   let refreshError = $state('');
+  let archiveAnnouncement = $state('');
   let stopObservingArtifacts: (() => void) | undefined;
   let artifactLoadVersion = 0;
   let artifactPageVersion = 0;
@@ -63,6 +70,7 @@
       limit: 50,
       q: query.trim() || undefined,
       channel: channelFilter === 'all' ? undefined : channelFilter,
+      archived: archiveFilter === 'archived',
     };
   }
 
@@ -82,11 +90,13 @@
     const artifactQuery = createArtifactQuery();
     const artifactQueryKey = currentArtifactQueryKey();
     const previousArtifactQueryKey = activeArtifactQueryKey;
-    if (artifactQueryKey !== previousArtifactQueryKey) selectedArtifactIds = new Set();
+    if (artifactQueryKey !== previousArtifactQueryKey || force) selectedArtifactIds = new Set();
     activeArtifactQueryKey = artifactQueryKey;
     const request = fetchArtifacts(artifactQuery, force);
     const applyPage = (result: Awaited<ReturnType<typeof fetchArtifacts>>) => {
-      artifacts = mergeServerPage(result.artifacts, artifacts, previousArtifactQueryKey, artifactQueryKey);
+      artifacts = force
+        ? result.artifacts
+        : mergeServerPage(result.artifacts, artifacts, previousArtifactQueryKey, artifactQueryKey);
       total = result.total;
       totalBytes = result.totalBytes;
       maxBytes = result.maxBytes;
@@ -109,7 +119,11 @@
       loading = snapshot.isFetching;
     });
     try {
-      await request;
+      const result = await request;
+      if (loadVersion !== artifactLoadVersion || artifactQueryKey !== currentArtifactQueryKey()) return;
+      applyPage(result);
+      loading = false;
+      refreshError = '';
     } catch (err) {
       if (loadVersion === artifactLoadVersion && !isServerQueryCancelled(err)) error = err instanceof Error ? err.message : 'Failed to load artifacts';
     }
@@ -151,7 +165,7 @@
 
   $effect(() => {
     projectSelectionState.id;
-    if (canDecrypt) void load();
+    if (canDecrypt) untrack(() => void load());
   });
 
   $effect(() => {
@@ -175,13 +189,14 @@
   function applySavedFilter(preset: ArtifactFilterPreset): void {
     query = preset.query;
     channelFilter = preset.channel;
+    archiveFilter = preset.archived ? 'archived' : 'active';
     void load(true);
   }
 
   function saveCurrentFilter(): void {
     const name = newFilterName.trim().slice(0, 40);
     if (!name) return;
-    savedViews.save({ name, query: query.trim(), channel: channelFilter });
+    savedViews.save({ name, query: query.trim(), channel: channelFilter, archived: archiveFilter === 'archived' });
     newFilterName = '';
   }
 
@@ -189,17 +204,44 @@
     savedViews.remove(name);
   }
 
+  function focusArchiveStatus(): void {
+    document.getElementById('artifact-archive-status')?.focus();
+  }
+
   async function toggleArtifactPin(artifact: ArtifactRecord): Promise<void> {
-    if (pinningArtifactIds.includes(artifact.id)) return;
-    pinningArtifactIds = [...pinningArtifactIds, artifact.id];
+    if (updatingArtifactIds.includes(artifact.id)) return;
+    updatingArtifactIds = [...updatingArtifactIds, artifact.id];
     try {
       const result = await setDashboardArtifactPinned(artifact.id, artifact.pinnedAt === undefined);
       if (!result.ok) return;
       artifacts = artifacts.map((candidate) => candidate.id === artifact.id
         ? { ...candidate, pinnedAt: result.data.pinnedAt }
         : candidate);
+    } catch (err) {
+      error = err instanceof Error ? err.message : 'Could not update artifact protection';
     } finally {
-      pinningArtifactIds = pinningArtifactIds.filter((id) => id !== artifact.id);
+      updatingArtifactIds = updatingArtifactIds.filter((id) => id !== artifact.id);
+    }
+  }
+
+  async function toggleArtifactArchived(artifact: ArtifactRecord): Promise<void> {
+    if (updatingArtifactIds.includes(artifact.id)) return;
+    updatingArtifactIds = [...updatingArtifactIds, artifact.id];
+    error = '';
+    const archived = artifact.archivedAt === undefined;
+    try {
+      const result = await setDashboardArtifactArchived(artifact.id, archived);
+      if (result.ok) {
+        const nextSelectedIds = new Set(selectedArtifactIds);
+        nextSelectedIds.delete(artifact.id);
+        selectedArtifactIds = nextSelectedIds;
+        archiveAnnouncement = `${archived ? 'Archived' : 'Restored'} ${appDisplayName(artifact.bundleId)}.`;
+        focusArchiveStatus();
+      }
+    } catch (err) {
+      error = err instanceof Error ? err.message : 'Could not update artifact archive status';
+    } finally {
+      updatingArtifactIds = updatingArtifactIds.filter((id) => id !== artifact.id);
     }
   }
 
@@ -232,8 +274,8 @@
   }
 
   async function bulkSetPinned(pinned: boolean): Promise<void> {
-    if (bulkPinning || selectedArtifactIds.size === 0) return;
-    bulkPinning = true;
+    if (bulkUpdating || selectedArtifactIds.size === 0) return;
+    bulkUpdating = true;
     error = '';
     try {
       const result = await setDashboardArtifactsPinned([...selectedArtifactIds], pinned);
@@ -247,7 +289,25 @@
     } catch (err) {
       error = err instanceof Error ? err.message : 'Could not update the selected artifacts';
     } finally {
-      bulkPinning = false;
+      bulkUpdating = false;
+    }
+  }
+
+  async function bulkSetArchived(archived: boolean): Promise<void> {
+    if (bulkUpdating || selectedArtifactIds.size === 0) return;
+    bulkUpdating = true;
+    error = '';
+    try {
+      const result = await setDashboardArtifactsArchived([...selectedArtifactIds], archived);
+      if (!result.ok) return;
+      selectedArtifactIds = new Set();
+      const count = result.data.changedIds.length;
+      archiveAnnouncement = `${archived ? 'Archived' : 'Restored'} ${count} ${count === 1 ? 'artifact' : 'artifacts'}.`;
+      focusArchiveStatus();
+    } catch (err) {
+      error = err instanceof Error ? err.message : 'Could not update the selected artifacts';
+    } finally {
+      bulkUpdating = false;
     }
   }
 </script>
@@ -256,6 +316,7 @@
   <Card class="overflow-hidden">
     <div class="-m-5 overflow-hidden">
       <div class="border-border/70 flex flex-col gap-3 border-b px-4 py-3.5 sm:px-5">
+        <span id="artifact-archive-announcement" class="sr-only" role="status" aria-live="polite">{archiveAnnouncement}</span>
         <div class="flex min-w-0 items-center justify-between gap-3">
           <div class="min-w-0">
             <div class="flex items-center gap-2">
@@ -268,8 +329,8 @@
             <RefreshCw class={loading ? 'h-3.5 w-3.5 animate-spin' : 'h-3.5 w-3.5'} />
           </Button>
         </div>
-        <div class="flex w-full min-w-0 items-center gap-2">
-          <Input bind:value={query} onkeydown={(event) => event.key === 'Enter' && void load(true)} placeholder="Search apps or versions…" class="min-w-0 flex-1" />
+        <div class="flex w-full min-w-0 flex-wrap items-center gap-2">
+          <Input bind:value={query} onkeydown={(event) => event.key === 'Enter' && void load(true)} placeholder="Search apps or versions…" class="min-w-[12rem] flex-1" />
           <Select
             items={ARTIFACT_SOURCE_OPTIONS}
             value={channelFilter}
@@ -278,6 +339,16 @@
               void load(true);
             }}
             class="w-36 shrink-0"
+          />
+          <Select
+            id="artifact-archive-status"
+            items={ARTIFACT_STATUS_OPTIONS}
+            value={archiveFilter}
+            onValueChange={(value) => {
+              archiveFilter = value as 'active' | 'archived';
+              void load(true);
+            }}
+            class="w-32 shrink-0"
           />
         </div>
       </div>
@@ -314,6 +385,9 @@
         {#if refreshError}
           <div class="mb-3 rounded-md border border-border/70 px-3 py-2 text-xs text-muted" role="status" aria-live="polite">{refreshError}</div>
         {/if}
+        {#if archiveFilter === 'archived'}
+          <div class="mb-3 text-muted text-xs" role="note">Archived items still use library storage and may be removed automatically unless pinned.</div>
+        {/if}
         {#if canManageStorage && artifacts.length > 0}
           <div class="mb-3 flex flex-wrap items-center gap-2" role="group" aria-label="Bulk artifact actions">
             <Button variant="ghost" size="sm" onclick={toggleAllLoadedArtifacts}>
@@ -321,13 +395,16 @@
             </Button>
             {#if selectedArtifactIds.size > 0}
               <span class="text-muted text-xs" role="status" aria-live="polite">{selectedArtifactIds.size} selected</span>
-              <Button variant="secondary" size="sm" loading={bulkPinning} onclick={() => void bulkSetPinned(true)}>
+              <Button variant="secondary" size="sm" loading={bulkUpdating} onclick={() => void bulkSetPinned(true)}>
                 <Pin class="h-3.5 w-3.5" />Pin selected
               </Button>
-              <Button variant="secondary" size="sm" loading={bulkPinning} onclick={() => void bulkSetPinned(false)}>
+              <Button variant="secondary" size="sm" loading={bulkUpdating} onclick={() => void bulkSetPinned(false)}>
                 <PinOff class="h-3.5 w-3.5" />Unpin selected
               </Button>
-              <Button variant="ghost" size="sm" disabled={bulkPinning} onclick={() => (selectedArtifactIds = new Set())}>Clear</Button>
+              <Button variant="secondary" size="sm" loading={bulkUpdating} onclick={() => void bulkSetArchived(archiveFilter !== 'archived')}>
+                {#if archiveFilter === 'archived'}<ArchiveRestore class="h-3.5 w-3.5" />Restore selected{:else}<Archive class="h-3.5 w-3.5" />Archive selected{/if}
+              </Button>
+              <Button variant="ghost" size="sm" disabled={bulkUpdating} onclick={() => (selectedArtifactIds = new Set())}>Clear</Button>
             {/if}
           </div>
         {/if}
@@ -364,7 +441,7 @@
                       type="checkbox"
                       class="accent-accent size-4 shrink-0 rounded border-border"
                       checked={selectedArtifactIds.has(artifact.id)}
-                      disabled={bulkPinning || (selectedArtifactIds.size >= 100 && !selectedArtifactIds.has(artifact.id))}
+                      disabled={bulkUpdating || (selectedArtifactIds.size >= 100 && !selectedArtifactIds.has(artifact.id))}
                       onchange={(event) => toggleArtifactSelection(artifact.id, event.currentTarget.checked)}
                       aria-label="Select {appDisplayName(artifact.bundleId)} {artifactVersion(artifact)}"
                     />
@@ -396,12 +473,23 @@
                       variant="ghost"
                       size="icon"
                       class="h-8 w-8 shrink-0"
-                      disabled={pinningArtifactIds.includes(artifact.id)}
+                      disabled={updatingArtifactIds.includes(artifact.id)}
                       onclick={() => void toggleArtifactPin(artifact)}
                       aria-label={artifact.pinnedAt ? `Unpin ${artifact.bundleId}` : `Pin ${artifact.bundleId}`}
                       title={artifact.pinnedAt ? 'Unpin artifact' : 'Keep artifact from automatic eviction'}
                     >
                       {#if artifact.pinnedAt}<PinOff class="h-4 w-4" />{:else}<Pin class="h-4 w-4" />{/if}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      class="h-8 w-8 shrink-0"
+                      disabled={updatingArtifactIds.includes(artifact.id)}
+                      onclick={() => void toggleArtifactArchived(artifact)}
+                      aria-label={artifact.archivedAt ? `Restore ${artifact.bundleId}` : `Archive ${artifact.bundleId}`}
+                      title={artifact.archivedAt ? 'Restore to active library' : 'Hide from active library'}
+                    >
+                      {#if artifact.archivedAt}<ArchiveRestore class="h-4 w-4" />{:else}<Archive class="h-4 w-4" />{/if}
                     </Button>
                   {/if}
                   <a href={artifact.fileUrl} download class="{buttonVariants('secondary', 'sm')} justify-center">

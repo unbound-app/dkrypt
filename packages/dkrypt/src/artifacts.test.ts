@@ -19,6 +19,8 @@ import {
   reconcileArtifactStore,
   setArtifactPinned,
   setArtifactsPinned,
+  setArtifactArchived,
+  setArtifactsArchived,
   touchArtifact,
 } from './artifacts.js';
 
@@ -281,6 +283,110 @@ describe('persistent artifact store', () => {
       await expect(setArtifactsPinned([first.id, second.id], false)).rejects.toThrow('forced artifact bulk pin failure');
       expect(getArtifactById(first.id)?.pinnedAt).toBeDefined();
       expect(getArtifactById(second.id)?.pinnedAt).toBeDefined();
+    } finally {
+      database.exec(`DROP TRIGGER IF EXISTS ${trigger};`);
+      database.close();
+      await setArtifactsPinned([first.id, second.id], false);
+    }
+  });
+
+  test('archiving persists organizational state without changing quota or eviction protection', async () => {
+    config.artifactMaxBytes = 1024 * 1024;
+    const archivedArtifact = await promoteArtifact({
+      key: `test-archived-${crypto.randomUUID()}`,
+      bundleId: 'com.example.archived',
+      channel: 'appstore',
+      stagingPath: await stagingFile('archive me'),
+    });
+    const initialStats = getArtifactStorageStats();
+
+    const archived = await setArtifactArchived(archivedArtifact.id, true);
+    expect(archived).toMatchObject({ changed: true, artifact: { archivedAt: expect.any(Number) } });
+    expect(listArtifacts({ query: archivedArtifact.bundleId, archived: false }).total).toBe(0);
+    expect(listArtifacts({ query: archivedArtifact.bundleId, archived: true }).artifacts).toMatchObject([{ id: archivedArtifact.id }]);
+    expect(getArtifactStorageStats()).toMatchObject(initialStats);
+    reloadArtifactIndex();
+    expect(getArtifactById(archivedArtifact.id)?.archivedAt).toBeTypeOf('number');
+
+    const restored = await setArtifactArchived(archivedArtifact.id, false);
+    expect(restored).toMatchObject({ changed: true, artifact: { archivedAt: undefined } });
+    expect(listArtifacts({ query: archivedArtifact.bundleId, archived: false }).artifacts).toMatchObject([{ id: archivedArtifact.id }]);
+  });
+
+  test('archived unpinned artifacts remain eviction candidates while pinned archives are protected', async () => {
+    const previousQuota = config.artifactMaxBytes;
+    config.artifactMaxBytes = 4;
+
+    try {
+      const archivedArtifact = await promoteArtifact({
+        key: `test-archived-eviction-${crypto.randomUUID()}`,
+        bundleId: 'com.example.archived-eviction',
+        channel: 'appstore',
+        stagingPath: await stagingFile('1234'),
+      });
+
+      await setArtifactArchived(archivedArtifact.id, true);
+      const unpinnedPreview = previewArtifactQuotaRetention(1);
+      expect(unpinnedPreview).toMatchObject({
+        evictedCount: 1,
+        evictionExamples: [expect.objectContaining({ id: archivedArtifact.id })],
+      });
+
+      await setArtifactPinned(archivedArtifact.id, true);
+      const pinnedPreview = previewArtifactQuotaRetention(1);
+      expect(pinnedPreview).toMatchObject({ evictedCount: 0, remainingOverQuotaBytes: 3 });
+
+      await setArtifactPinned(archivedArtifact.id, false);
+      const replacement = await promoteArtifact({
+        key: `test-after-archived-eviction-${crypto.randomUUID()}`,
+        bundleId: 'com.example.after-archived-eviction',
+        channel: 'appstore',
+        stagingPath: await stagingFile('5678'),
+      });
+      expect(getArtifactById(archivedArtifact.id)).toBeUndefined();
+      expect(artifactFileAvailable(replacement)).toBe(true);
+    } finally {
+      config.artifactMaxBytes = previousQuota;
+    }
+  });
+
+  test('bulk archive updates metadata together and rolls back if persistence fails', async () => {
+    config.artifactMaxBytes = 1024 * 1024;
+    const first = await promoteArtifact({
+      key: `test-bulk-archive-a-${crypto.randomUUID()}`,
+      bundleId: 'com.example.bulk-archive-a',
+      channel: 'appstore',
+      stagingPath: await stagingFile('bulk archive a'),
+    });
+    const second = await promoteArtifact({
+      key: `test-bulk-archive-b-${crypto.randomUUID()}`,
+      bundleId: 'com.example.bulk-archive-b',
+      channel: 'testflight',
+      stagingPath: await stagingFile('bulk archive b'),
+    });
+
+    const archived = await setArtifactsArchived([first.id, second.id], true);
+    expect(archived).toMatchObject({ changedIds: [first.id, second.id], missingIds: [] });
+    expect(archived.artifacts.every((artifact) => artifact.archivedAt !== undefined)).toBe(true);
+    reloadArtifactIndex();
+    expect(getArtifactById(first.id)?.archivedAt).toBeDefined();
+    expect(getArtifactById(second.id)?.archivedAt).toBeDefined();
+
+    const missing = await setArtifactsArchived([first.id, 'missing-artifact'], false);
+    expect(missing).toMatchObject({ artifacts: [], changedIds: [], missingIds: ['missing-artifact'] });
+    expect(getArtifactById(first.id)?.archivedAt).toBeDefined();
+
+    const database = openStateCollectionDatabase({
+      stateDir: config.stateDir,
+      filename: config.stateDatabaseFile,
+      busyTimeoutMs: config.stateDbBusyTimeoutMs,
+    }, ['artifacts']);
+    const trigger = `fail_artifact_bulk_archive_${crypto.randomUUID().replaceAll('-', '')}`;
+    try {
+      database.exec(`CREATE TRIGGER ${trigger} BEFORE INSERT ON artifacts BEGIN SELECT RAISE(ABORT, 'forced artifact bulk archive failure'); END;`);
+      await expect(setArtifactsArchived([first.id, second.id], false)).rejects.toThrow('forced artifact bulk archive failure');
+      expect(getArtifactById(first.id)?.archivedAt).toBeDefined();
+      expect(getArtifactById(second.id)?.archivedAt).toBeDefined();
     } finally {
       database.exec(`DROP TRIGGER IF EXISTS ${trigger};`);
       database.close();

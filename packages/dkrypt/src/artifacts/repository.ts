@@ -6,6 +6,7 @@ import type { Database } from 'bun:sqlite';
 export interface ArtifactRepositoryFilter {
   query?: string;
   channel?: ArtifactChannel;
+  archived?: boolean;
   bundleIds?: string[];
   projectIds?: string[];
 }
@@ -59,6 +60,11 @@ function listArtifacts(database: Database, filter: ArtifactRepositoryFilter = {}
   if (filter.channel) {
     conditions.push('channel = ?');
     parameters.push(filter.channel);
+  }
+  if (filter.archived !== undefined) {
+    conditions.push(filter.archived
+      ? "json_extract(payload, '$.archivedAt') IS NOT NULL"
+      : "json_extract(payload, '$.archivedAt') IS NULL");
   }
   const query = filter.query?.trim().toLowerCase();
   if (query) {

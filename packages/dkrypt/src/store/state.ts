@@ -548,7 +548,9 @@ export type AuditAction =
   | 'project.archive'
   | 'project.restore'
   | 'artifact.pin'
-  | 'artifact.unpin';
+  | 'artifact.unpin'
+  | 'artifact.archive'
+  | 'artifact.restore';
 
 export interface AuditLogEntry {
   id: string;

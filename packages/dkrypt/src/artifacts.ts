@@ -22,6 +22,7 @@ export interface ArtifactListOptions {
   cursor?: string;
   query?: string;
   channel?: ArtifactChannel;
+  archived?: boolean;
   bundleIds?: string[];
   projectIds?: string[];
 }
@@ -51,6 +52,12 @@ export interface ArtifactQuotaRetentionPreview {
 }
 
 export interface ArtifactPinBatchResult {
+  artifacts: ArtifactRecord[];
+  changedIds: string[];
+  missingIds: string[];
+}
+
+export interface ArtifactArchiveBatchResult {
   artifacts: ArtifactRecord[];
   changedIds: string[];
   missingIds: string[];
@@ -231,6 +238,35 @@ export async function setArtifactsPinned(ids: string[], pinned: boolean): Promis
   });
 }
 
+export async function setArtifactArchived(id: string, archived: boolean): Promise<{ artifact?: ArtifactRecord; changed: boolean }> {
+  const result = await setArtifactsArchived([id], archived);
+  return { artifact: result.artifacts[0], changed: result.changedIds.includes(id) };
+}
+
+export async function setArtifactsArchived(ids: string[], archived: boolean): Promise<ArtifactArchiveBatchResult> {
+  return withMutation(async () => {
+    const uniqueIds = [...new Set(ids)];
+    const artifacts = uniqueIds.map(getArtifactById);
+    const missingIds = uniqueIds.filter((_id, index) => artifacts[index] === undefined);
+    if (missingIds.length > 0) return { artifacts: [], changedIds: [], missingIds };
+
+    const currentArtifacts = artifacts as ArtifactRecord[];
+    const changedArtifacts = currentArtifacts.filter((artifact) => (artifact.archivedAt !== undefined) !== archived);
+    if (changedArtifacts.length === 0) return { artifacts: currentArtifacts, changedIds: [], missingIds: [] };
+
+    const previousArchivedAt = changedArtifacts.map((artifact) => artifact.archivedAt);
+    const archivedAt = archived ? Date.now() : undefined;
+    for (const artifact of changedArtifacts) artifact.archivedAt = archivedAt;
+    try {
+      persistIndex();
+    } catch (error) {
+      changedArtifacts.forEach((artifact, index) => { artifact.archivedAt = previousArchivedAt[index]; });
+      throw error;
+    }
+    return { artifacts: currentArtifacts, changedIds: changedArtifacts.map((artifact) => artifact.id), missingIds: [] };
+  });
+}
+
 export function linkArtifactToProject(id: string, projectId: string): ArtifactRecord | undefined {
   const artifact = getArtifactById(id);
   if (!artifact) return undefined;
@@ -309,6 +345,7 @@ export function listArtifacts(options: ArtifactListOptions = {}): ArtifactListRe
   const filtered = artifactRepository.list({
     query: options.query,
     channel: options.channel,
+    archived: options.archived,
     bundleIds: options.bundleIds,
     projectIds: options.projectIds,
   }).filter(artifactFileAvailable);

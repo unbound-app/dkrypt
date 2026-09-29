@@ -50,6 +50,8 @@ const auditActionSchema = Type.Union([
   Type.Literal('project.restore'),
   Type.Literal('artifact.pin'),
   Type.Literal('artifact.unpin'),
+  Type.Literal('artifact.archive'),
+  Type.Literal('artifact.restore'),
 ]);
 
 export const dashboardLogsQuerySchema = Type.Object({

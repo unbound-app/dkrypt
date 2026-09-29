@@ -1,6 +1,6 @@
 import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
-import type { DashboardArtifactBulkPinRoute, DashboardArtifactFileRoute, DashboardArtifactListRoute, DashboardArtifactPinRoute } from '#dashboardArtifactContracts.js';
-import { artifactDownloadName, artifactFileAvailable, getArtifactById, listArtifacts, setArtifactPinned, setArtifactsPinned, touchArtifact } from '#artifacts.js';
+import type { DashboardArtifactArchiveRoute, DashboardArtifactBulkArchiveRoute, DashboardArtifactBulkPinRoute, DashboardArtifactFileRoute, DashboardArtifactListRoute, DashboardArtifactPinRoute } from '#dashboardArtifactContracts.js';
+import { artifactDownloadName, artifactFileAvailable, getArtifactById, listArtifacts, setArtifactArchived, setArtifactPinned, setArtifactsArchived, setArtifactsPinned, touchArtifact } from '#artifacts.js';
 import { recordFastifyDashboardActivity } from '#dashboardActivity.js';
 import { canAccessProject } from '#dashboardJobPresentation.js';
 import { getRouteContract } from '#contracts.js';
@@ -18,6 +18,8 @@ interface DashboardArtifactServices {
   listArtifacts: typeof listArtifacts;
   setArtifactPinned: typeof setArtifactPinned;
   setArtifactsPinned: typeof setArtifactsPinned;
+  setArtifactArchived: typeof setArtifactArchived;
+  setArtifactsArchived: typeof setArtifactsArchived;
   touchArtifact: typeof touchArtifact;
   canAccessProject: typeof canAccessProject;
   recordAudit: typeof recordAudit;
@@ -30,6 +32,8 @@ const defaultServices: DashboardArtifactServices = {
   listArtifacts,
   setArtifactPinned,
   setArtifactsPinned,
+  setArtifactArchived,
+  setArtifactsArchived,
   touchArtifact,
   canAccessProject,
   recordAudit,
@@ -62,6 +66,7 @@ export function createDashboardArtifactRoutes(overrides: Partial<DashboardArtifa
         cursor,
         query: request.query.q,
         channel: request.query.channel,
+        archived: request.query.archived ?? false,
         projectIds: [projectId],
       });
       return {
@@ -73,8 +78,68 @@ export function createDashboardArtifactRoutes(overrides: Partial<DashboardArtifa
           createdAt: new Date(artifact.createdAt).toISOString(),
           lastAccessedAt: new Date(artifact.lastAccessedAt).toISOString(),
           pinnedAt: artifact.pinnedAt === undefined ? undefined : new Date(artifact.pinnedAt).toISOString(),
+          archivedAt: artifact.archivedAt === undefined ? undefined : new Date(artifact.archivedAt).toISOString(),
         })),
         nextCursor: result.nextCursor,
+      };
+    });
+
+    server.put<DashboardArtifactArchiveRoute>('/v1/dashboard/artifacts/:id/archive', {
+      schema: getRouteContract('PUT', '/v1/dashboard/artifacts/:id/archive'),
+      preHandler: canManageStorage,
+    }, async (request, reply) => {
+      const artifact = services.getArtifactById(request.params.id);
+      const session = getFastifySession(request)!;
+      const allowed = artifact?.projectIds.some((projectId) => services.canAccessProject(session.sub, session.permissions, projectId)) ?? false;
+      if (!artifact || !services.artifactFileAvailable(artifact) || !allowed) {
+        reply.code(404);
+        return createHttpErrorEnvelope(request.id, 404, 'artifact not found');
+      }
+      const result = await services.setArtifactArchived(artifact.id, request.body.archived);
+      if (!result.artifact) {
+        reply.code(404);
+        return createHttpErrorEnvelope(request.id, 404, 'artifact not found');
+      }
+      if (result.changed) services.recordAudit(session.sub, request.body.archived ? 'artifact.archive' : 'artifact.restore', artifact.id);
+      return {
+        ok: true,
+        artifactId: artifact.id,
+        archived: result.artifact.archivedAt !== undefined,
+        archivedAt: result.artifact.archivedAt === undefined ? undefined : new Date(result.artifact.archivedAt).toISOString(),
+      };
+    });
+
+    server.post<DashboardArtifactBulkArchiveRoute>('/v1/dashboard/artifacts/bulk-archive', {
+      schema: getRouteContract('POST', '/v1/dashboard/artifacts/bulk-archive'),
+      preHandler: canManageStorage,
+    }, async (request, reply) => {
+      const session = getFastifySession(request)!;
+      const artifacts = request.body.ids.map((id) => services.getArtifactById(id));
+      const allAccessible = artifacts.every((artifact) => artifact
+        && services.artifactFileAvailable(artifact)
+        && artifact.projectIds.some((projectId) => services.canAccessProject(session.sub, session.permissions, projectId)));
+      if (!allAccessible) {
+        reply.code(404);
+        return createHttpErrorEnvelope(request.id, 404, 'one or more artifacts were not found');
+      }
+
+      const result = await services.setArtifactsArchived(request.body.ids, request.body.archived);
+      if (result.missingIds.length > 0) {
+        reply.code(404);
+        return createHttpErrorEnvelope(request.id, 404, 'one or more artifacts were not found');
+      }
+      for (const id of result.changedIds) {
+        services.recordAudit(session.sub, request.body.archived ? 'artifact.archive' : 'artifact.restore', id);
+      }
+      return {
+        ok: true,
+        archived: request.body.archived,
+        changedIds: result.changedIds,
+        artifacts: result.artifacts.map((artifact) => ({
+          artifactId: artifact.id,
+          archived: artifact.archivedAt !== undefined,
+          archivedAt: artifact.archivedAt === undefined ? undefined : new Date(artifact.archivedAt).toISOString(),
+        })),
       };
     });
 

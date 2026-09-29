@@ -75,6 +75,10 @@ import {
   dashboardAppVersionsResponseSchema,
 } from '#dashboardAppCatalogContracts.js';
 import {
+  dashboardArtifactArchiveBodySchema,
+  dashboardArtifactArchiveResponseSchema,
+  dashboardArtifactBulkArchiveBodySchema,
+  dashboardArtifactBulkArchiveResponseSchema,
   dashboardArtifactBulkPinBodySchema,
   dashboardArtifactBulkPinResponseSchema,
   dashboardArtifactListQuerySchema,
@@ -940,9 +944,11 @@ register('POST', '/v1/dashboard/jobs/:id/prioritize', { params: object({ id: Ide
 register('POST', '/v1/dashboard/jobs/:id/retry', { params: object({ id: Identifier }) });
 register('GET', '/v1/dashboard/notifications', { querystring: notificationListQuerySchema });
 register('GET', '/v1/dashboard/jobs', { querystring: dashboardJobListQuerySchema });
-register('GET', '/v1/dashboard/artifacts', { querystring: object({ ...PaginationQuery.properties, projectId: Type.Optional(Identifier), q: Type.Optional(Type.String({ maxLength: 200 })), channel: Type.Optional(Type.Union([Type.Literal('appstore'), Type.Literal('testflight')])) }) });
+register('GET', '/v1/dashboard/artifacts', { querystring: dashboardArtifactListQuerySchema });
 register('PUT', '/v1/dashboard/artifacts/:id/pin', { params: object({ id: Identifier }), body: object({ pinned: Type.Boolean() }) });
 register('POST', '/v1/dashboard/artifacts/bulk-pin', { body: dashboardArtifactBulkPinBodySchema });
+register('PUT', '/v1/dashboard/artifacts/:id/archive', { params: dashboardArtifactParamsSchema, body: dashboardArtifactArchiveBodySchema });
+register('POST', '/v1/dashboard/artifacts/bulk-archive', { body: dashboardArtifactBulkArchiveBodySchema });
 register('GET', '/v1/dashboard/artifacts/retention-preview', { querystring: object({ maxBytes: Type.Integer({ minimum: 1 }) }) });
 register('GET', '/v1/dashboard/logs', { querystring: dashboardLogsQuerySchema });
 register('GET', '/v1/dashboard/audit-log', { querystring: dashboardAuditLogQuerySchema });
@@ -1291,6 +1297,15 @@ register('PUT', '/v1/dashboard/artifacts/:id/pin', {
 register('POST', '/v1/dashboard/artifacts/bulk-pin', {
   body: dashboardArtifactBulkPinBodySchema,
   response: { 200: dashboardArtifactBulkPinResponseSchema, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope, 500: ErrorEnvelope },
+});
+register('PUT', '/v1/dashboard/artifacts/:id/archive', {
+  params: dashboardArtifactParamsSchema,
+  body: dashboardArtifactArchiveBodySchema,
+  response: { 200: dashboardArtifactArchiveResponseSchema, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope, 500: ErrorEnvelope },
+});
+register('POST', '/v1/dashboard/artifacts/bulk-archive', {
+  body: dashboardArtifactBulkArchiveBodySchema,
+  response: { 200: dashboardArtifactBulkArchiveResponseSchema, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope, 500: ErrorEnvelope },
 });
 register('GET', '/v1/dashboard/artifacts/retention-preview', {
   querystring: dashboardArtifactRetentionQuerySchema,

@@ -355,7 +355,7 @@ test('IPA Library visual layout stays consistent on desktop and mobile', async (
 test('IPA Library filters can be saved and reapplied across reloads', async ({ page }) => {
   await mockStableDashboardEvents(page);
   await mockAuthenticatedDashboard(page, '1');
-  const requestedFilters: Array<{ channel: string; query: string }> = [];
+  const requestedFilters: Array<{ channel: string; query: string; archived: boolean }> = [];
   await page.route('**/v1/dashboard/apps/metadata?*', async (route) => {
     await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ entries: [] }) });
   });
@@ -364,6 +364,7 @@ test('IPA Library filters can be saved and reapplied across reloads', async ({ p
     requestedFilters.push({
       channel: requestUrl.searchParams.get('channel') ?? 'all',
       query: requestUrl.searchParams.get('q') ?? '',
+      archived: requestUrl.searchParams.get('archived') === 'true',
     });
     await route.fulfill({
       contentType: 'application/json',
@@ -378,23 +379,143 @@ test('IPA Library filters can be saved and reapplied across reloads', async ({ p
   await expect.poll(() => requestedFilters.at(-1)?.query).toBe('com.example.saved');
   await page.getByRole('button', { name: 'All sources' }).click();
   await page.getByRole('option', { name: 'TestFlight', exact: true }).click();
-  await expect.poll(() => requestedFilters.at(-1)).toEqual({ channel: 'testflight', query: 'com.example.saved' });
+  await expect.poll(() => requestedFilters.at(-1)).toEqual({ channel: 'testflight', query: 'com.example.saved', archived: false });
 
-  await page.getByRole('textbox', { name: 'Saved filter name' }).fill('TestFlight only');
+  await page.getByRole('button', { name: 'Active', exact: true }).click();
+  await page.getByRole('option', { name: 'Archived', exact: true }).click();
+  await expect.poll(() => requestedFilters.at(-1)).toEqual({ channel: 'testflight', query: 'com.example.saved', archived: true });
+
+  await page.getByRole('textbox', { name: 'Saved filter name' }).fill('Archived TestFlight');
   await page.getByRole('button', { name: 'Save filter', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'TestFlight only', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Archived TestFlight', exact: true })).toBeVisible();
 
   await page.getByRole('button', { name: 'TestFlight', exact: true }).click();
   await page.getByRole('option', { name: 'App Store', exact: true }).click();
-  await expect.poll(() => requestedFilters.at(-1)).toEqual({ channel: 'appstore', query: 'com.example.saved' });
-  await page.getByRole('button', { name: 'TestFlight only', exact: true }).click();
-  await expect.poll(() => requestedFilters.at(-1)).toEqual({ channel: 'testflight', query: 'com.example.saved' });
+  await expect.poll(() => requestedFilters.at(-1)).toEqual({ channel: 'appstore', query: 'com.example.saved', archived: true });
+  await page.getByRole('button', { name: 'Archived', exact: true }).click();
+  await page.getByRole('option', { name: 'Active', exact: true }).click();
+  await expect.poll(() => requestedFilters.at(-1)).toEqual({ channel: 'appstore', query: 'com.example.saved', archived: false });
+  await page.getByRole('button', { name: 'Archived TestFlight', exact: true }).click();
+  await expect.poll(() => requestedFilters.at(-1)).toEqual({ channel: 'testflight', query: 'com.example.saved', archived: true });
 
   await page.reload();
-  await expect(page.getByRole('button', { name: 'TestFlight only', exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'TestFlight only', exact: true }).click();
-  await expect.poll(() => requestedFilters.at(-1)).toEqual({ channel: 'testflight', query: 'com.example.saved' });
+  await expect(page.getByRole('button', { name: 'Archived TestFlight', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Archived TestFlight', exact: true }).click();
+  await expect.poll(() => requestedFilters.at(-1)).toEqual({ channel: 'testflight', query: 'com.example.saved', archived: true });
   await expect(search).toHaveValue('com.example.saved');
+  await expectAccessible(page);
+});
+
+test('IPA Library archive and restore keep archive state separate from eviction protection', async ({ page }) => {
+  await mockStableDashboardEvents(page);
+  await mockAuthenticatedDashboard(page, '8589934594');
+  const artifact = {
+    id: 'archive-artifact',
+    key: 'com.example.archive:appstore:123',
+    projectIds: ['default'],
+    bundleId: 'com.example.archive',
+    channel: 'appstore',
+    versionLabel: '2.4.0',
+    buildNumber: '240',
+    fileSizeBytes: 1024,
+    sha256: 'a'.repeat(64),
+    createdAt: '2026-09-25T12:00:00.000Z',
+    lastAccessedAt: '2026-09-25T13:00:00.000Z',
+    accessCount: 1,
+    fileUrl: '/v1/dashboard/artifacts/archive-artifact/file',
+  };
+  let artifactArchivedAt: string | undefined;
+  let artifactPinnedAt: string | undefined;
+  let artifactListRequestCount = 0;
+  const bulkArchiveRequests: Array<{ ids: string[]; archived: boolean }> = [];
+  await page.route('**/v1/dashboard/apps/metadata?*', async (route) => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ entries: [] }) });
+  });
+  await page.route('**/v1/dashboard/artifacts**', async (route) => {
+    const url = new URL(route.request().url());
+    if (route.request().method() === 'PUT' && url.pathname.endsWith('/archive')) {
+      const payload = route.request().postDataJSON() as { archived: boolean };
+      artifactArchivedAt = payload.archived ? '2026-09-26T13:00:00.000Z' : undefined;
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, artifactId: artifact.id, archived: payload.archived, archivedAt: artifactArchivedAt }) });
+      return;
+    }
+    if (route.request().method() === 'PUT' && url.pathname.endsWith('/pin')) {
+      const payload = route.request().postDataJSON() as { pinned: boolean };
+      artifactPinnedAt = payload.pinned ? '2026-09-26T14:00:00.000Z' : undefined;
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, artifactId: artifact.id, pinned: payload.pinned, pinnedAt: artifactPinnedAt }) });
+      return;
+    }
+    if (route.request().method() === 'POST') {
+      const payload = route.request().postDataJSON() as { ids: string[]; archived: boolean };
+      bulkArchiveRequests.push(payload);
+      artifactArchivedAt = payload.archived ? '2026-09-26T15:00:00.000Z' : undefined;
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          archived: payload.archived,
+          changedIds: payload.ids,
+          artifacts: payload.ids.map((artifactId) => ({ artifactId, archived: payload.archived, archivedAt: artifactArchivedAt })),
+        }),
+      });
+      return;
+    }
+    artifactListRequestCount += 1;
+    const wantsArchived = url.searchParams.get('archived') === 'true';
+    const isInCurrentView = wantsArchived === (artifactArchivedAt !== undefined);
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        artifacts: isInCurrentView ? [{ ...artifact, pinnedAt: artifactPinnedAt, archivedAt: artifactArchivedAt }] : [],
+        total: isInCurrentView ? 1 : 0,
+        totalBytes: 1024,
+        maxBytes: 10240,
+      }),
+    });
+  });
+
+  const artifactResponse = page.waitForResponse((response) => response.url().includes('/v1/dashboard/artifacts?') && response.ok());
+  await page.goto('/?tab=home');
+  await artifactResponse;
+  await expect(page.locator('article').filter({ hasText: 'com.example.archive' })).toHaveCount(1);
+  const listRequestsBeforeSingleArchive = artifactListRequestCount;
+  await page.getByRole('button', { name: 'Archive com.example.archive' }).click();
+  await expect(page.locator('article').filter({ hasText: 'com.example.archive' })).toHaveCount(0);
+  await expect.poll(() => artifactListRequestCount).toBe(listRequestsBeforeSingleArchive + 1);
+  await expect(page.locator('#artifact-archive-status')).toBeFocused();
+  await expect(page.locator('#artifact-archive-announcement')).toHaveText('Archived com.example.archive.');
+
+  await page.getByRole('button', { name: 'Active', exact: true }).click();
+  await page.getByRole('option', { name: 'Archived', exact: true }).click();
+  const archivedArtifact = page.locator('article').filter({ hasText: 'com.example.archive' });
+  await expect(archivedArtifact).toHaveCount(1);
+  await expect(page.getByText('Archived items still use library storage and may be removed automatically unless pinned.')).toBeVisible();
+  await archivedArtifact.getByRole('button', { name: 'Pin com.example.archive' }).click();
+  await expect(page.getByText('Pinned', { exact: true })).toBeVisible();
+  await expect(archivedArtifact.getByRole('button', { name: 'Restore com.example.archive' })).toBeVisible();
+  const listRequestsBeforeRestore = artifactListRequestCount;
+  await archivedArtifact.getByRole('button', { name: 'Restore com.example.archive' }).click();
+  await expect(page.locator('article').filter({ hasText: 'com.example.archive' })).toHaveCount(0);
+  await expect.poll(() => artifactListRequestCount).toBe(listRequestsBeforeRestore + 1);
+  await expect(page.locator('#artifact-archive-status')).toBeFocused();
+  await expect(page.locator('#artifact-archive-announcement')).toHaveText('Restored com.example.archive.');
+
+  await page.getByRole('button', { name: 'Archived', exact: true }).click();
+  await page.getByRole('option', { name: 'Active', exact: true }).click();
+  const activeArtifact = page.locator('article').filter({ hasText: 'com.example.archive' });
+  await expect(activeArtifact).toHaveCount(1);
+  await activeArtifact.getByRole('checkbox', { name: 'Select com.example.archive 2.4.0 (240)' }).check();
+  const listRequestsBeforeBulkArchive = artifactListRequestCount;
+  await page.getByRole('button', { name: 'Archive selected', exact: true }).click();
+  await expect.poll(() => bulkArchiveRequests).toEqual([{ ids: ['archive-artifact'], archived: true }]);
+  await expect(activeArtifact).toHaveCount(0);
+  await expect.poll(() => artifactListRequestCount).toBe(listRequestsBeforeBulkArchive + 1);
+  await expect(page.locator('#artifact-archive-status')).toBeFocused();
+  await expect(page.locator('#artifact-archive-announcement')).toHaveText('Archived 1 artifact.');
+  await page.getByRole('button', { name: 'Active', exact: true }).click();
+  await page.getByRole('option', { name: 'Archived', exact: true }).click();
+  await expect(archivedArtifact).toHaveCount(1);
+  expect(artifactListRequestCount).toBeLessThan(20);
   await expectAccessible(page);
 });
 

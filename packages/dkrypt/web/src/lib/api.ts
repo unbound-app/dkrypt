@@ -433,6 +433,7 @@ export interface ArtifactRecord {
   createdAt: string;
   lastAccessedAt: string;
   pinnedAt?: string;
+  archivedAt?: string;
   accessCount: number;
   fileUrl: string;
   sourceJobId?: string;
@@ -619,7 +620,12 @@ export interface AuditLogEntry {
     | 'auth.session.new_context'
     | 'project.add'
     | 'project.update'
-    | 'project.archive';
+    | 'project.archive'
+    | 'project.restore'
+    | 'artifact.pin'
+    | 'artifact.unpin'
+    | 'artifact.archive'
+    | 'artifact.restore';
   target: string;
   detail?: string;
 }
@@ -1052,13 +1058,15 @@ export interface ArtifactQuery {
   limit: number;
   q?: string;
   channel?: ArtifactRecord['channel'];
+  archived?: boolean;
 }
 
-function artifactsPath({ cursorOrOffset, limit, q, channel }: ArtifactQuery): string {
+function artifactsPath({ cursorOrOffset, limit, q, channel, archived }: ArtifactQuery): string {
   const pageQuery = paginationQuery(cursorOrOffset);
   const query = q ? `&q=${encodeURIComponent(q)}` : '';
   const channelQuery = channel ? `&channel=${channel}` : '';
-  return `/v1/dashboard/artifacts?limit=${limit}&projectId=${encodeURIComponent(projectSelectionState.id)}${pageQuery}${query}${channelQuery}`;
+  const archivedQuery = archived === undefined ? '' : `&archived=${archived}`;
+  return `/v1/dashboard/artifacts?limit=${limit}&projectId=${encodeURIComponent(projectSelectionState.id)}${pageQuery}${query}${channelQuery}${archivedQuery}`;
 }
 
 export function fetchArtifacts(
@@ -1104,6 +1112,35 @@ export function setDashboardArtifactsPinned(ids: string[], pinned: boolean): Pro
   return apiAction('/v1/dashboard/artifacts/bulk-pin', {
     method: 'POST',
     body: JSON.stringify({ ids, pinned }),
+  });
+}
+
+export interface ArtifactArchiveResult {
+  ok: boolean;
+  artifactId: string;
+  archived: boolean;
+  archivedAt?: string;
+}
+
+export function setDashboardArtifactArchived(id: string, archived: boolean): Promise<{ ok: boolean; data: ArtifactArchiveResult }> {
+  return apiAction(`/v1/dashboard/artifacts/${encodeURIComponent(id)}/archive`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ archived }),
+  });
+}
+
+export interface ArtifactBulkArchiveResult {
+  ok: boolean;
+  archived: boolean;
+  changedIds: string[];
+  artifacts: Array<{ artifactId: string; archived: boolean; archivedAt?: string }>;
+}
+
+export function setDashboardArtifactsArchived(ids: string[], archived: boolean): Promise<{ ok: boolean; data: ArtifactBulkArchiveResult }> {
+  return apiAction('/v1/dashboard/artifacts/bulk-archive', {
+    method: 'POST',
+    body: JSON.stringify({ ids, archived }),
   });
 }
 

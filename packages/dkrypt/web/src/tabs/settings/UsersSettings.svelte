@@ -66,6 +66,11 @@
     'project.add': 'created project',
     'project.update': 'updated project',
     'project.archive': 'changed project availability',
+    'project.restore': 'changed project availability',
+    'artifact.pin': 'protected artifact from eviction',
+    'artifact.unpin': 'removed artifact eviction protection',
+    'artifact.archive': 'archived artifact in IPA library',
+    'artifact.restore': 'restored artifact to IPA library',
   };
 
   const assignableRoles = $derived((roles ?? []).filter((r) => !r.isDefault).sort((a, b) => b.position - a.position));

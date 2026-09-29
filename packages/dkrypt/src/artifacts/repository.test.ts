@@ -79,6 +79,25 @@ test('artifact repository keeps records and indexed lookups across restart', asy
   }
 });
 
+test('artifact repository filters active, archived, and unfiltered records', async () => {
+  const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-artifact-repository-archive-'));
+  let repository: ReturnType<typeof createArtifactRepository> | undefined;
+
+  try {
+    repository = createArtifactRepository(openStateCollectionDatabase({ stateDir, filename: 'state.sqlite' }, ['artifacts']));
+    const active = createArtifact({ id: 'active-artifact' });
+    const archived = createArtifact({ id: 'archived-artifact', archivedAt: 150 });
+    repository.replace([active, archived]);
+
+    expect(repository.list({ archived: false })).toEqual([active]);
+    expect(repository.list({ archived: true })).toEqual([archived]);
+    expect(repository.list()).toHaveLength(2);
+  } finally {
+    repository?.close();
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
 test('artifact repository imports the legacy JSON index without modifying the source file', async () => {
   const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-artifact-repository-json-import-'));
   const legacyIndexPath = path.join(stateDir, 'artifacts.json');
