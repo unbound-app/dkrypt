@@ -519,7 +519,7 @@ test('IPA Library archive and restore keep archive state separate from eviction 
   await expectAccessible(page);
 });
 
-test('IPA Library keeps loaded artifacts visible while scrolling its virtualized rows', async ({ page }) => {
+test('IPA Library keeps loaded artifacts visible while scrolling its rows', async ({ page }) => {
   await mockStableDashboardEvents(page);
   await mockAuthenticatedDashboard(page, '1');
   let artifactListRequestCount = 0;
@@ -551,7 +551,7 @@ test('IPA Library keeps loaded artifacts visible while scrolling its virtualized
   });
 
   await page.goto('/?tab=home');
-  const list = page.getByRole('region', { name: 'IPA library artifacts' });
+  const list = page.getByRole('region', { name: 'IPA library artifacts scroll area' });
   for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {
     await page.setViewportSize(viewport);
     await expect(list.locator('article').filter({ hasText: 'com.example.scroll0' })).toBeVisible();
@@ -594,7 +594,11 @@ test('IPA Library never renders an empty viewport during repeated scrolling', as
     });
   });
 
+  const artifactResponse = page.waitForResponse((response) =>
+    new URL(response.url()).pathname === '/v1/dashboard/artifacts' && response.ok(),
+  );
   await page.goto('/?tab=home');
+  await artifactResponse;
   const viewport = page.getByRole('region', { name: 'IPA library artifacts scroll area' });
   await expect(viewport.locator('[role="listitem"]').first()).toBeVisible();
 
@@ -664,7 +668,11 @@ test('IPA Library keeps its loaded results mounted during real wheel scrolling',
     });
   });
 
+  const artifactResponse = page.waitForResponse((response) =>
+    new URL(response.url()).pathname === '/v1/dashboard/artifacts' && response.ok(),
+  );
   await page.goto('/?tab=home');
+  await artifactResponse;
   const viewport = page.getByRole('region', { name: 'IPA library artifacts scroll area' });
   await expect(viewport.locator('[role="listitem"]').first()).toBeVisible();
   await expect(viewport.locator('[role="listitem"]').first()).toHaveAttribute('aria-setsize', '120');
@@ -718,6 +726,7 @@ test('IPA Library keeps its loaded results mounted during real wheel scrolling',
   expect(probe.blankFrames).toBe(0);
   expect(probe.missingLists).toBe(0);
   await expect.poll(() => artifactListRequestCount).toBe(1);
+  await expect(viewport.locator('[role="listitem"]')).toHaveCount(120);
   await expect(viewport.locator('[role="listitem"]').first()).toHaveAttribute('aria-setsize', '120');
 });
 
@@ -771,15 +780,19 @@ test('IPA Library discards a page response from a source filter that is no longe
     });
   });
 
+  const initialArtifactResponse = page.waitForResponse((response) =>
+    new URL(response.url()).pathname === '/v1/dashboard/artifacts' && response.ok(),
+  );
   await page.goto('/?tab=home');
-  await expect(page.locator('article').filter({ hasText: 'com.example.initial' })).toHaveCount(1);
+  await initialArtifactResponse;
+  await expect(page.locator('[data-artifact-id="initial-appstore"]')).toHaveCount(1);
   await page.getByRole('button', { name: /Load more/ }).click();
   await oldPageStarted;
   await page.getByRole('button', { name: 'All sources' }).click();
   await page.getByRole('option', { name: 'TestFlight', exact: true }).click();
-  await expect(page.locator('article').filter({ hasText: 'com.example.current-testflight' })).toHaveCount(1);
+  await expect(page.locator('[data-artifact-id="current-testflight"]')).toHaveCount(1);
   releaseOldPage();
-  await expect(page.locator('article').filter({ hasText: 'com.example.old-page' })).toHaveCount(0);
+  await expect(page.locator('[data-artifact-id="old-appstore"]')).toHaveCount(0);
 });
 
 test('date and number format preference is saved and restored from the account', async ({ page }) => {
@@ -1642,7 +1655,7 @@ test('populated device management and preflight dialog meet accessibility checks
   await expectAccessible(page);
 });
 
-test('IPA Library supports keyboard-scrolled virtualization and reveals artifact provenance on demand', async ({ page }) => {
+test('IPA Library keeps all loaded rows keyboard-scrollable and reveals artifact provenance on demand', async ({ page }) => {
   const sha256 = 'a'.repeat(64);
   const warning = 'Payload/Example.app/Extensions/Share.appex/Share still encrypted (cryptid != 0)';
   const artifacts = Array.from({ length: 100 }, (_, index) => ({
@@ -1685,7 +1698,7 @@ test('IPA Library supports keyboard-scrolled virtualization and reveals artifact
   const viewport = page.getByRole('region', { name: 'IPA library artifacts scroll area' });
   const artifact = list.getByRole('listitem').filter({ hasText: 'com.example.provenance' }).first();
   await expect(artifact).toBeVisible();
-  await expect.poll(() => list.getByRole('listitem').count()).toBeLessThan(60);
+  await expect(list.getByRole('listitem')).toHaveCount(100);
   const details = artifact.locator('summary').filter({ hasText: 'Artifact details' });
   await expect(details).toBeVisible();
   await expect(artifact.getByText(sha256, { exact: true })).not.toBeVisible();
