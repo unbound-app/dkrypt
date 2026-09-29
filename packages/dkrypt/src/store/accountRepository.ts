@@ -1,6 +1,10 @@
 import type { Database } from 'bun:sqlite';
 import type { AllowedUser, Role } from '#store/state.js';
+import { ALL_PERMISSION_BITS } from '#permissions.js';
 import { replaceStateCollections, type StateCollectionReplacement } from '#store/sqlite.js';
+
+const RETIRED_PERMISSION_BITS = 1n << 10n;
+const ACCEPTED_ROLE_PERMISSION_BITS = ALL_PERMISSION_BITS | RETIRED_PERMISSION_BITS;
 
 export interface AccountCollections {
   users: AllowedUser[];
@@ -48,11 +52,16 @@ export function isRoleRecord(value: unknown): value is Role {
     && typeof role.name === 'string'
     && typeof role.color === 'string'
     && typeof role.permissions === 'string'
-    && /^\d+$/.test(role.permissions)
+    && isRolePermissionString(role.permissions)
     && typeof role.position === 'number'
     && typeof role.isDefault === 'boolean'
     && (role.createdAt === undefined || typeof role.createdAt === 'number')
     && (role.updatedAt === undefined || typeof role.updatedAt === 'number');
+}
+
+function isRolePermissionString(value: string): boolean {
+  if (!/^\d+$/.test(value)) return false;
+  return (BigInt(value) & ~ACCEPTED_ROLE_PERMISSION_BITS) === 0n;
 }
 
 function normalizeUser(user: AllowedUser): AllowedUser {

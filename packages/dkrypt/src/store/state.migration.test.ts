@@ -112,6 +112,7 @@ describe('state migrations', () => {
       { version: 8, roles: [invalidRole] },
       { version: 9, roles: [invalidRole] },
       { version: 13, roles: [invalidRole] },
+      { version: 13, roles: [{ ...invalidRole, permissions: (1n << 50n).toString() }] },
       { version: 18, allowedUsers: { username: 'lost-user' }, roles: [] },
       { version: 18, allowedUsers: [], roles: 'lost-role' },
     ];
