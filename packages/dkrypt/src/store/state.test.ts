@@ -1013,7 +1013,14 @@ describe('device CRUD primary invariant', () => {
       createDevice({ name: 'disabled-first', transport: 'wifi', host: '192.168.1.10', enabled: false }, 'tester');
       const second = createDevice({ name: 'enabled-second', transport: 'wifi', host: '192.168.1.11', enabled: true }, 'tester');
       createDevice({ name: 'enabled-third', transport: 'wifi', host: '192.168.1.12', enabled: true }, 'tester');
+      createDevice({ name: 'enabled-fourth', transport: 'wifi', host: '192.168.1.13', enabled: true }, 'tester');
       updateDevice(second.id, { enabled: false }, 'tester');
+      console.log(JSON.stringify(getEffectiveDevices()));
+    `;
+    const deletePrimary = `
+      import { deleteDevice, getEffectiveDevices } from './src/store/state.ts';
+      const primary = getEffectiveDevices().find((device) => device.isPrimary);
+      if (!primary || !deleteDevice(primary.id, 'tester')) throw new Error('primary device could not be deleted');
       console.log(JSON.stringify(getEffectiveDevices()));
     `;
     const reloadDevices = `
@@ -1046,11 +1053,14 @@ describe('device CRUD primary invariant', () => {
 
     try {
       const created = await runStateProcess(createDevices);
+      const afterDelete = await runStateProcess(deletePrimary);
       const reloaded = await runStateProcess(reloadDevices);
 
       expect(created.filter((device) => device.enabled && device.isPrimary).map((device) => device.name)).toEqual(['enabled-third']);
       expect(created.filter((device) => !device.enabled && device.isPrimary)).toEqual([]);
-      expect(reloaded).toEqual(created);
+      expect(afterDelete.find((device) => device.name === 'enabled-third')).toBeUndefined();
+      expect(afterDelete.filter((device) => device.enabled && device.isPrimary).map((device) => device.name)).toEqual(['enabled-fourth']);
+      expect(reloaded).toEqual(afterDelete);
     } finally {
       await rm(stateDir, { recursive: true, force: true });
     }
