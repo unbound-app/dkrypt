@@ -98,6 +98,10 @@ export const dashboardJobDiffQuerySchema = Type.Object({
 const dashboardJobDiffVersionSchema = Type.Object({
   id: identifierSchema,
   versionLabel: Type.Optional(Type.String()),
+  buildNumber: Type.Optional(Type.String()),
+  releaseNotes: Type.Optional(Type.String()),
+  channel: Type.Optional(Type.Union([Type.Literal('appstore'), Type.Literal('testflight')])),
+  cacheHit: Type.Optional(Type.Boolean()),
   sizeBytes: Type.Optional(Type.Number()),
   finishedAt: Type.Number(),
   metadata: Type.Optional(dashboardJobIpaMetadataSchema),
@@ -144,6 +148,7 @@ const DashboardJobHistoryEntry = Type.Object({
   timeline: Type.Optional(Type.Array(dashboardJobTimelineEventSchema)),
   attempt: Type.Optional(Type.Number()),
   retryCount: Type.Optional(Type.Number()),
+  cacheHit: Type.Optional(Type.Boolean()),
   deadlineAt: Type.Optional(Type.Number()),
   deadlineExceeded: Type.Optional(Type.Boolean()),
   failureClass: Type.Optional(Type.String()),

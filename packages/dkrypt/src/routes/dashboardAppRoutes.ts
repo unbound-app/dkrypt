@@ -54,6 +54,7 @@ const defaultServices: DashboardAppServices = {
 const canViewScheduler = fastifyRequirePermission(PermissionFlag.viewAutomation, PermissionFlag.manageAutomation);
 const canManageAppCatalog = fastifyRequirePermission(PermissionFlag.manageAutomation);
 const bundleIdPattern = /^[A-Za-z0-9.-]{3,200}$/;
+const APP_CATALOG_REVALIDATION_MS = 24 * 60 * 60 * 1000;
 const log = scopedLogger('app-catalog');
 
 function catalogEntryFromMetadata(metadata: ItunesAppMetadata): Omit<AppCatalogEntry, 'updatedAt'> {
@@ -68,6 +69,7 @@ function catalogEntryFromMetadata(metadata: ItunesAppMetadata): Omit<AppCatalogE
     screenshots: metadata.screenshots,
     releaseNotes: metadata.releaseNotes,
     price: metadata.price,
+    metadataFetchedAt: Date.now(),
   };
 }
 
@@ -162,9 +164,13 @@ export function createDashboardAppRoutes(overrides: Partial<DashboardAppServices
         .filter((bundleId) => bundleIdPattern.test(bundleId)))].slice(0, 200);
       if (bundleIds.length === 0) return { entries: [] };
 
+      const now = Date.now();
       const existing = new Map(services.getAppCatalogEntries(bundleIds).map((entry) => [entry.bundleId, entry]));
-      const missing = bundleIds.filter((bundleId) => !existing.has(bundleId)).slice(0, 40);
-      if (missing.length > 0) await fetchCatalogEntries(services, missing);
+      const staleOrMissing = bundleIds.filter((bundleId) => {
+        const entry = existing.get(bundleId);
+        return !entry?.metadataFetchedAt || now - entry.metadataFetchedAt >= APP_CATALOG_REVALIDATION_MS;
+      }).slice(0, 40);
+      if (staleOrMissing.length > 0) await fetchCatalogEntries(services, staleOrMissing);
 
       return { entries: services.getAppCatalogEntries(bundleIds) };
     });

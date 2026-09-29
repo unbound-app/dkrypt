@@ -532,6 +532,7 @@ function toHistoryEntry(job: Job) {
     timeline: job.timeline,
     attempt: job.attempt,
     retryCount: job.retryCount,
+    cacheHit: job.cacheHit,
     deadlineAt: job.deadlineAt,
     deadlineExceeded: job.deadlineExceeded,
     failureClass: job.failureClass,

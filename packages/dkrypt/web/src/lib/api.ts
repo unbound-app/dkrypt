@@ -408,6 +408,7 @@ export interface JobHistoryEntry {
   fileAvailable: boolean;
   attempt?: number;
   retryCount?: number;
+  cacheHit?: boolean;
   deadlineAt?: number;
   deadlineExceeded?: boolean;
   failureClass?: string;
@@ -708,6 +709,7 @@ export interface AppCatalogEntry {
   screenshots?: string[];
   releaseNotes?: string;
   price?: number;
+  metadataFetchedAt?: number;
   updatedAt: number;
 }
 
@@ -963,6 +965,10 @@ export function fetchWebhookDeliveries(limit = 100): Promise<{ deliveries: Webho
 export interface JobDiffSide {
   id: string;
   versionLabel?: string;
+  buildNumber?: string;
+  releaseNotes?: string;
+  channel?: 'appstore' | 'testflight';
+  cacheHit?: boolean;
   sizeBytes?: number;
   finishedAt: number;
   metadata?: IpaMetadata;

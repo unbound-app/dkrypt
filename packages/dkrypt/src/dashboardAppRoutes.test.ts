@@ -113,7 +113,7 @@ test('App Store version lookup failures use the standard retryable API envelope'
   }
 });
 
-test('app search decorates TestFlight shortcuts and refreshes only missing catalog entries', async () => {
+test('app search caches discovery data and metadata requests hydrate app details', async () => {
   const catalog = new Map<string, AppCatalogEntry>();
   const lookups: string[] = [];
   const server = Fastify().withTypeProvider<TypeBoxTypeProvider>();
@@ -155,7 +155,7 @@ test('app search decorates TestFlight shortcuts and refreshes only missing catal
     getAppCatalogEntries: (bundleIds) => bundleIds.flatMap((bundleId) => catalog.get(bundleId) ?? []),
     getAppCatalogStats: () => ({ entries: catalog.size, icons: catalog.size, oldestUpdatedAt: 123, newestUpdatedAt: 456 }),
     upsertAppCatalogEntries: (entries) => entries.map((entry) => {
-      const stored = { ...entry, updatedAt: 123 };
+      const stored = { ...entry, metadataFetchedAt: entry.releaseNotes ? Date.now() : undefined, updatedAt: Date.now() };
       catalog.set(entry.bundleId, stored);
       return stored;
     }),
@@ -180,12 +180,12 @@ test('app search decorates TestFlight shortcuts and refreshes only missing catal
     expect(JSON.parse(search.body)).toMatchObject({ results: [{ minimumOsVersion: '17.0', testflight: { appId: 12345, devices: [{ id: 'ipad', verifiedAt: 123 }] } }] });
     expect(metadata.statusCode).toBe(200);
     expect(JSON.parse(metadata.body)).toMatchObject({ entries: [
-      { bundleId: 'com.example.app', displayName: 'Example app' },
+      { bundleId: 'com.example.app', displayName: 'Cached metadata', releaseNotes: 'What is new' },
       { bundleId: 'com.example.missing', displayName: 'Cached metadata' },
     ] });
     expect(refresh.statusCode).toBe(200);
     expect(JSON.parse(refresh.body)).toMatchObject({ entries: [{ bundleId: 'com.example.refresh' }] });
-    expect(lookups).toEqual(['com.example.missing', 'com.example.refresh']);
+    expect(lookups).toEqual(['com.example.app', 'com.example.missing', 'com.example.refresh']);
   } finally {
     await server.close();
   }
@@ -217,6 +217,54 @@ test('app catalog cache and refresh routes retain their manager permissions', as
     expect(allowedCache.statusCode).toBe(200);
     expect(allowedCache.json()).toMatchObject({ entries: 9, icons: 8 });
     expect(deniedRefresh.statusCode).toBe(403);
+  } finally {
+    await server.close();
+  }
+});
+
+test('metadata requests refresh stale app notes for regular dashboard users', async () => {
+  const staleEntry: AppCatalogEntry = {
+    bundleId: 'com.example.stale',
+    displayName: 'Example app',
+    releaseNotes: 'Old notes',
+    metadataFetchedAt: Date.now() - 2 * 24 * 60 * 60 * 1000,
+    updatedAt: Date.now() - 2 * 24 * 60 * 60 * 1000,
+  };
+  const catalog = new Map([[staleEntry.bundleId, staleEntry]]);
+  const lookups: string[] = [];
+  const server = Fastify().withTypeProvider<TypeBoxTypeProvider>();
+  await server.register(createDashboardAppRoutes({
+    lookupAppMetadata: async (bundleId) => {
+      lookups.push(bundleId);
+      return {
+        bundleId,
+        trackId: 12345,
+        trackName: 'Example app',
+        sellerName: 'Example seller',
+        artworkUrl: 'https://example.com/icon.png',
+        version: '2.0',
+        releaseNotes: 'Current notes',
+      };
+    },
+    getAppCatalogEntries: (bundleIds) => bundleIds.flatMap((bundleId) => catalog.get(bundleId) ?? []),
+    upsertAppCatalogEntries: (entries) => entries.map((entry) => {
+      const stored = { ...entry, updatedAt: Date.now() };
+      catalog.set(entry.bundleId, stored);
+      return stored;
+    }),
+  }));
+
+  try {
+    const response = await server.inject({
+      method: 'GET',
+      url: '/v1/dashboard/apps/metadata?bundleIds=com.example.stale',
+      headers: { cookie: sessionCookie(0n) },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(lookups).toEqual(['com.example.stale']);
+    expect(response.json().entries).toMatchObject([{ releaseNotes: 'Current notes' }]);
+    expect(response.json().entries[0].metadataFetchedAt).toBeGreaterThan(staleEntry.metadataFetchedAt!);
   } finally {
     await server.close();
   }

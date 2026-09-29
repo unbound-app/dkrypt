@@ -232,6 +232,7 @@ describe('enqueueDecryptJob', () => {
     const shared = enqueueDecryptJob(bundleId, 'manual', { externalVersionId: 'project-cache-build', projectId: projectB });
 
     expect(shared).toMatchObject({ status: 'done', projectId: projectB, artifactId: artifact.id, cacheHit: true });
+    expect(getJobHistoryEntryById(shared.id)).toMatchObject({ status: 'done', cacheHit: true });
     expect(artifact.projectIds).toContain(projectB);
   });
 

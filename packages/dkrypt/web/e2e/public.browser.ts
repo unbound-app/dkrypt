@@ -1817,3 +1817,113 @@ test('job history stays virtualized as older cursor pages are loaded', async ({ 
   await expect.poll(() => list.getByRole('listitem').count()).toBeLessThan(35);
   await expectAccessible(page);
 });
+
+test('release comparisons show build numbers, release notes, metadata freshness, and cache reuse', async ({ page }) => {
+  const bundleId = 'com.example.release-comparison';
+  const finishedAt = Date.now() - 60_000;
+  const entries = [
+    {
+      id: 'comparison-appstore',
+      bundleId,
+      versionLabel: '1.0',
+      status: 'done',
+      source: 'manual',
+      createdAt: finishedAt - 5_000,
+      finishedAt,
+      fileAvailable: false,
+      cacheHit: true,
+      ipaMetadata: { shortVersion: '1.0', bundleVersion: '100' },
+    },
+    {
+      id: 'comparison-testflight',
+      bundleId,
+      versionLabel: '1.1',
+      status: 'done',
+      source: 'manual',
+      createdAt: finishedAt,
+      finishedAt: finishedAt + 1,
+      fileAvailable: false,
+      testflight: {
+        appId: 123,
+        build: {
+          id: 456,
+          bundleId,
+          cfBundleShortVersion: '1.1',
+          cfBundleVersion: '101',
+          whatsNew: 'TestFlight build notes',
+        },
+      },
+    },
+  ];
+
+  await mockStableDashboardEvents(page);
+  await mockAuthenticatedDashboard(page, '2');
+  await page.route('**/v1/dashboard/jobs?*', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ history: entries, total: entries.length }),
+    });
+  });
+  await page.route('**/v1/dashboard/jobs/stats/*', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        bundleId,
+        totalRuns: 2,
+        doneCount: 2,
+        failedCount: 0,
+        successRate: 1,
+        avgDurationMs: 1_000,
+        lastRunAt: finishedAt,
+        failureBreakdown: [],
+      }),
+    });
+  });
+  await page.route('**/v1/dashboard/jobs/diff*', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        a: { id: entries[0].id, versionLabel: '1.0', buildNumber: '100', channel: 'appstore', cacheHit: true, finishedAt },
+        b: { id: entries[1].id, versionLabel: '1.1', buildNumber: '101', releaseNotes: 'TestFlight build notes', channel: 'testflight', finishedAt: finishedAt + 1 },
+        sizeDeltaBytes: 0,
+        plistDiff: [],
+      }),
+    });
+  });
+  await page.route('**/v1/dashboard/apps/metadata*', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        entries: [{
+          bundleId,
+          displayName: 'Release comparison app',
+          releaseNotes: 'Latest App Store notes',
+          metadataFetchedAt: Date.now(),
+          updatedAt: Date.now(),
+        }],
+      }),
+    });
+  });
+
+  await page.goto('/?tab=home');
+  const jobHistory = page.getByRole('heading', { name: 'Job history' });
+  await jobHistory.scrollIntoViewIfNeeded();
+  const statsButton = page.getByRole('button', { name: 'Release comparison app', exact: true }).first();
+  await expect(statsButton).toBeVisible();
+  await statsButton.click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText('Versions - pick 2 to compare');
+  const appStoreBuild = dialog.getByRole('checkbox', { name: 'Select 1.0, build 100' });
+  const testFlightBuild = dialog.getByRole('checkbox', { name: 'Select 1.1, build 101' });
+  await appStoreBuild.click();
+  await testFlightBuild.click();
+  await dialog.getByRole('button', { name: 'Compare' }).click();
+  await expect(dialog).toContainText('build 100');
+  await expect(dialog).toContainText('build 101');
+  await expect(dialog).toContainText('reused existing IPA');
+  await expect(dialog).toContainText('TestFlight build notes');
+  await expect(dialog).toContainText('App Store metadata');
+  await expect(dialog).toContainText('Latest App Store notes');
+  await expectAccessible(page, '[role="dialog"]');
+});

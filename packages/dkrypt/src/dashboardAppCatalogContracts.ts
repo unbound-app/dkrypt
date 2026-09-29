@@ -36,6 +36,7 @@ export const dashboardAppCatalogEntrySchema = Type.Object({
   screenshots: Type.Optional(Type.Array(Type.String())),
   releaseNotes: Type.Optional(Type.String()),
   price: Type.Optional(Type.Number()),
+  metadataFetchedAt: Type.Optional(Type.Number()),
   updatedAt: Type.Number(),
 }, additionalProperties);
 export const dashboardAppMetadataResponseSchema = Type.Object({ entries: Type.Array(dashboardAppCatalogEntrySchema) }, additionalProperties);

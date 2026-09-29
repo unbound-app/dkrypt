@@ -12,6 +12,7 @@
 	import Checkbox from "#lib/components/ui/Checkbox.svelte";
 	import Dialog from "#lib/components/ui/Dialog.svelte";
 	import {
+		appCatalogEntry,
 		appDisplayName,
 		appIconUrl,
 		ensureAppCatalog,
@@ -44,6 +45,7 @@
 	let selected = $state<Set<string>>(new Set());
 	let diff = $state<JobDiffResult | null>(null);
 	let diffing = $state(false);
+	let currentAppMetadata = $derived(appCatalogEntry(bundleId));
 
 	async function loadVersionsPage(offset: number): Promise<void> {
 		try {
@@ -120,7 +122,7 @@
 	}
 </script>
 
-<Dialog {open} {onOpenChange} class="max-w-sm">
+<Dialog {open} {onOpenChange} class="max-h-[85vh] max-w-xl overflow-y-auto">
 	<div class="mb-3 flex items-center gap-2">
 		{#if appIconUrl(bundleId)}
 			<img
@@ -214,6 +216,7 @@
 				<RateLimitHint bucket="jobDiff" />
 				<div class="flex max-h-40 flex-col gap-1 overflow-y-auto">
 					{#each versions as v (v.id)}
+						{@const buildNumber = v.testflight?.build.cfBundleVersion ?? v.ipaMetadata?.bundleVersion}
 						<div
 							class="hover:bg-panel-muted/80 hover:ring-accent/60 flex cursor-pointer items-center gap-2 rounded-lg px-1.5 py-1 text-xs hover:ring-1"
 						>
@@ -222,13 +225,15 @@
 								disabled={!selected.has(v.id) &&
 									selected.size >= 2}
 								onCheckedChange={() => toggleSelect(v.id)}
-								aria-label="Select {v.versionLabel ?? 'version'}"
+								aria-label="Select {v.versionLabel ?? 'version'}{buildNumber ? `, build ${buildNumber}` : ''}"
 							/>
 							<span
 								class="min-w-0 flex-1 truncate"
 								title={v.versionLabel ?? ""}
-								>{v.versionLabel ?? "(no version label)"}</span
 							>
+								{v.versionLabel ?? "(no version label)"}
+								{#if buildNumber}<span class="text-muted"> · build {buildNumber}</span>{/if}
+							</span>
 							<span class="text-muted"
 								><RelativeTime ms={v.finishedAt} /></span
 							>
@@ -250,6 +255,21 @@
 		{/if}
 		{#if diff}
 			<div class="border-border mt-3 border-t pt-3">
+				<div class="grid grid-cols-2 gap-2 text-xs">
+					{#each [diff.a, diff.b] as side (side.id)}
+						<div class="bg-panel-muted/60 min-w-0 rounded-md p-2">
+							<div class="truncate font-medium">
+								{side.versionLabel ?? "Unknown version"}
+								{#if side.buildNumber}<span class="text-muted"> · build {side.buildNumber}</span>{/if}
+							</div>
+							<div class="text-muted mt-1">
+								{side.channel === "testflight" ? "TestFlight" : "App Store"}
+								{#if side.cacheHit === true}<span> · reused existing IPA</span>{/if}
+							</div>
+							{#if side.releaseNotes}<p class="text-muted mt-2 line-clamp-3 whitespace-pre-wrap">{side.releaseNotes}</p>{/if}
+						</div>
+					{/each}
+				</div>
 				<div class="mb-2 flex items-center justify-between text-xs">
 					<span class="text-muted">Size delta</span>
 					<Badge
@@ -293,6 +313,18 @@
 								</div>
 							</div>
 						{/each}
+					</div>
+				{/if}
+				{#if currentAppMetadata}
+					<div class="border-border mt-3 border-t pt-3">
+						<div class="flex items-center justify-between gap-2 text-xs">
+							<span class="font-medium">App Store metadata</span>
+							<span class="text-muted">Updated <RelativeTime ms={currentAppMetadata.metadataFetchedAt ?? currentAppMetadata.updatedAt} /></span>
+						</div>
+						{#if currentAppMetadata.releaseNotes}
+							<div class="mt-2 text-xs font-medium">Latest release notes</div>
+							<p class="text-muted mt-1 whitespace-pre-wrap text-xs">{currentAppMetadata.releaseNotes}</p>
+						{/if}
 					</div>
 				{/if}
 			</div>

@@ -72,6 +72,7 @@ import {
   updateDevice,
   updateSettings,
   updateWatch,
+  upsertAppCatalogEntry,
   verifyApiKey,
   markNotificationsRead,
   approveTestFlightSubscription,
@@ -81,6 +82,32 @@ import {
   updateTestFlightSubscriptionDevice,
 } from '#store/state.js';
 import { openStateCollectionDatabase, openStateDatabase, readStateCollection, replaceStateCollection } from '#store/sqlite.js';
+
+test('app catalog search updates preserve richer App Store metadata', () => {
+  const bundleId = `com.example.catalog-${randomUUID()}`;
+  const first = upsertAppCatalogEntry({
+    bundleId,
+    displayName: 'Original app name',
+    description: 'Full description',
+    releaseNotes: 'Release notes',
+    metadataFetchedAt: 123,
+  });
+  const updated = upsertAppCatalogEntry({
+    bundleId,
+    displayName: 'Current app name',
+    trackId: 12345,
+  });
+
+  expect(updated).toMatchObject({
+    bundleId,
+    displayName: 'Current app name',
+    description: 'Full description',
+    releaseNotes: 'Release notes',
+    metadataFetchedAt: 123,
+    trackId: 12345,
+  });
+  expect(updated.updatedAt).toBeGreaterThanOrEqual(first.updatedAt);
+});
 
 describe('dashboard notifications', () => {
   test('stores notifications per user and marks selected entries read', () => {

@@ -91,6 +91,10 @@ function summarizeComparedJob(entry: JobHistoryEntry) {
   return {
     id: entry.id,
     versionLabel: entry.versionLabel,
+    buildNumber: entry.ipaMetadata?.bundleVersion ?? entry.testflight?.build.cfBundleVersion,
+    releaseNotes: entry.testflight?.build.whatsNew,
+    channel: entry.testflight ? 'testflight' as const : 'appstore' as const,
+    cacheHit: entry.cacheHit,
     sizeBytes: entry.sizeBytes,
     finishedAt: entry.finishedAt,
     metadata: entry.ipaMetadata,

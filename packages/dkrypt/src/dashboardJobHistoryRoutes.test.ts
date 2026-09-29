@@ -59,6 +59,8 @@ test('job history route contracts are explicit and routes are mounted by the API
   expect(getRouteContract('GET', '/v1/dashboard/jobs/export')).toHaveProperty('response.200.content.text/csv.schema.type', 'string');
   expect(getRouteContract('POST', '/v1/dashboard/jobs/bulk-preview')).toHaveProperty('body.properties.ids.description');
   expect(getRouteContract('POST', '/v1/dashboard/jobs/bulk-preview')).toHaveProperty('response.200.properties.items.items.properties.action');
+  expect(getRouteContract('GET', '/v1/dashboard/jobs/diff')).toHaveProperty('response.200.properties.a.properties.buildNumber');
+  expect(getRouteContract('GET', '/v1/dashboard/jobs/diff')).toHaveProperty('response.200.properties.a.properties.cacheHit');
   expect(getRouteContract('GET', '/v1/dashboard/jobs/diff')).toHaveProperty('response.200.properties.plistDiff.items.properties.key');
 
   const server = await buildServer({ includePublicRoutes: false });
@@ -185,7 +187,8 @@ test('job diff validates project and bundle ownership and returns sorted plist c
   const first = historyEntry({
     id: 'history-a',
     ipaInfoPlist: { CFBundleName: 'Old', CFBundleVersion: '1', unchanged: true },
-    ipaMetadata: { shortVersion: '1.0' },
+    ipaMetadata: { shortVersion: '1.0', bundleVersion: '100' },
+    cacheHit: true,
   });
   const second = historyEntry({
     id: 'history-b',
@@ -194,6 +197,10 @@ test('job diff validates project and bundle ownership and returns sorted plist c
     finishedAt: 300,
     ipaInfoPlist: { CFBundleName: 'New', CFBundleVersion: '2', added: 'value', unchanged: true },
     ipaMetadata: { shortVersion: '2.0' },
+    testflight: {
+      appId: 123,
+      build: { id: 42, cfBundleShortVersion: '2.0', cfBundleVersion: '200', bundleId: 'com.example.app', whatsNew: 'TestFlight changes' },
+    },
   });
   const server = build({ getJobHistoryEntryById: (id) => id === first.id ? first : id === second.id ? second : undefined });
 
@@ -217,8 +224,8 @@ test('job diff validates project and bundle ownership and returns sorted plist c
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
-      a: { id: first.id, versionLabel: first.versionLabel, metadata: first.ipaMetadata },
-      b: { id: second.id, versionLabel: second.versionLabel, metadata: second.ipaMetadata },
+      a: { id: first.id, versionLabel: first.versionLabel, buildNumber: '100', channel: 'appstore', cacheHit: true, metadata: first.ipaMetadata },
+      b: { id: second.id, versionLabel: second.versionLabel, buildNumber: '200', releaseNotes: 'TestFlight changes', channel: 'testflight', metadata: second.ipaMetadata },
       sizeDeltaBytes: 4096,
       plistDiff: [
         { key: 'added', after: 'value' },

@@ -404,6 +404,7 @@ export interface JobHistoryEntry {
   timeline?: JobTimelineEvent[];
   attempt?: number;
   retryCount?: number;
+  cacheHit?: boolean;
   deadlineAt?: number;
   deadlineExceeded?: boolean;
   failureClass?: string;
@@ -420,6 +421,7 @@ export interface AppCatalogEntry {
   screenshots?: string[];
   releaseNotes?: string;
   price?: number;
+  metadataFetchedAt?: number;
   updatedAt: number;
 }
 
@@ -1270,10 +1272,22 @@ export function setTestFlightCatalogCache(cache: TestFlightCatalogCache): void {
 }
 
 export function upsertAppCatalogEntry(entry: Omit<AppCatalogEntry, 'updatedAt'>): AppCatalogEntry {
+  const bundleId = entry.bundleId.trim();
+  const previous = state.appCatalog[bundleId];
   const normalized: AppCatalogEntry = {
+    ...previous,
     ...entry,
-    bundleId: entry.bundleId.trim(),
+    bundleId,
     displayName: entry.displayName.trim(),
+    iconUrl: entry.iconUrl ?? previous?.iconUrl,
+    trackId: entry.trackId ?? previous?.trackId,
+    sellerName: entry.sellerName ?? previous?.sellerName,
+    category: entry.category ?? previous?.category,
+    description: entry.description ?? previous?.description,
+    screenshots: entry.screenshots ?? previous?.screenshots,
+    releaseNotes: entry.releaseNotes ?? previous?.releaseNotes,
+    price: entry.price ?? previous?.price,
+    metadataFetchedAt: entry.metadataFetchedAt ?? previous?.metadataFetchedAt,
     updatedAt: Date.now(),
   };
   if (!normalized.bundleId || !normalized.displayName) {
@@ -1300,6 +1314,7 @@ export function upsertAppCatalogEntries(entries: Array<Omit<AppCatalogEntry, 'up
         screenshots: entry.screenshots?.slice(0, 10),
         releaseNotes: entry.releaseNotes,
         price: entry.price,
+        metadataFetchedAt: entry.metadataFetchedAt,
       }),
     );
   }

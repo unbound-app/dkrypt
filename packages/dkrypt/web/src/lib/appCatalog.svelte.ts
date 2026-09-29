@@ -2,6 +2,7 @@ import { fetchAppCatalog, refreshAppCatalog as requestAppCatalogRefresh, type Ap
 
 const catalogState = $state<{ byBundleId: Record<string, AppCatalogEntry> }>({ byBundleId: {} });
 const inFlight = new Set<string>();
+const APP_CATALOG_REVALIDATION_MS = 24 * 60 * 60 * 1000;
 
 function normalizeBundleIds(bundleIds: string[]): string[] {
   return [...new Set(bundleIds.map((bundleId) => bundleId.trim()).filter(Boolean))];
@@ -12,7 +13,21 @@ function mergeEntries(entries: AppCatalogEntry[]): void {
   const next = { ...catalogState.byBundleId };
   for (const entry of entries) {
     if (!entry.bundleId || !entry.displayName) continue;
-    next[entry.bundleId] = entry;
+    const previous = next[entry.bundleId];
+    next[entry.bundleId] = {
+      ...previous,
+      ...entry,
+      iconUrl: entry.iconUrl ?? previous?.iconUrl,
+      trackId: entry.trackId ?? previous?.trackId,
+      sellerName: entry.sellerName ?? previous?.sellerName,
+      category: entry.category ?? previous?.category,
+      description: entry.description ?? previous?.description,
+      screenshots: entry.screenshots ?? previous?.screenshots,
+      releaseNotes: entry.releaseNotes ?? previous?.releaseNotes,
+      price: entry.price ?? previous?.price,
+      metadataFetchedAt: entry.metadataFetchedAt ?? previous?.metadataFetchedAt,
+      updatedAt: entry.metadataFetchedAt ? entry.updatedAt : previous?.updatedAt ?? entry.updatedAt,
+    };
   }
   catalogState.byBundleId = next;
 }
@@ -34,16 +49,19 @@ export function primeAppCatalogFromSearch(results: AppStoreSearchResult[]): void
 
 export async function ensureAppCatalog(bundleIds: string[]): Promise<void> {
   const unique = normalizeBundleIds(bundleIds);
-  const missing = unique.filter((bundleId) => !catalogState.byBundleId[bundleId] && !inFlight.has(bundleId));
-  if (missing.length === 0) return;
+  const staleOrMissing = unique.filter((bundleId) => {
+    const entry = catalogState.byBundleId[bundleId];
+    return (!entry?.metadataFetchedAt || Date.now() - entry.metadataFetchedAt >= APP_CATALOG_REVALIDATION_MS) && !inFlight.has(bundleId);
+  }).slice(0, 40);
+  if (staleOrMissing.length === 0) return;
 
-  for (const bundleId of missing) inFlight.add(bundleId);
+  for (const bundleId of staleOrMissing) inFlight.add(bundleId);
   try {
-    const { entries } = await fetchAppCatalog(missing);
+    const { entries } = await fetchAppCatalog(staleOrMissing);
     mergeEntries(entries);
   } catch {
   } finally {
-    for (const bundleId of missing) inFlight.delete(bundleId);
+    for (const bundleId of staleOrMissing) inFlight.delete(bundleId);
   }
 }
 
@@ -61,4 +79,8 @@ export function appDisplayName(bundleId: string, fallback?: string): string {
 
 export function appIconUrl(bundleId: string): string | undefined {
   return catalogState.byBundleId[bundleId]?.iconUrl;
+}
+
+export function appCatalogEntry(bundleId: string): AppCatalogEntry | undefined {
+  return catalogState.byBundleId[bundleId];
 }
