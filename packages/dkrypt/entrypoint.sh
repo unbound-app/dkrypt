@@ -51,6 +51,8 @@ if [ ! -s "$ssh_key_path" ]; then
   umask 077
   ssh-keygen -q -t ed25519 -N '' -C dkrypt-device -f "$ssh_key_path"
 fi
+chown 10001:10001 "$ssh_key_path"
+chmod 0400 "$ssh_key_path"
 umask 077
 ssh-keygen -y -P '' -f "$ssh_key_path" > "$ssh_public_key_path.tmp"
 if ! awk '$1 == "ssh-ed25519" { found = 1 } END { exit !found }' "$ssh_public_key_path.tmp"; then
@@ -58,8 +60,7 @@ if ! awk '$1 == "ssh-ed25519" { found = 1 } END { exit !found }' "$ssh_public_ke
   exit 1
 fi
 mv "$ssh_public_key_path.tmp" "$ssh_public_key_path"
-chown 10001:10001 "$ssh_key_path" "$ssh_public_key_path"
-chmod 0400 "$ssh_key_path"
+chown 10001:10001 "$ssh_public_key_path"
 chmod 0440 "$ssh_public_key_path"
 
 secret_file=${DEVICE_BRIDGE_SECRET_FILE:-$state_dir/device-bridge.secret}
