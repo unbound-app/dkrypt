@@ -5,13 +5,13 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { Client } from 'ssh2';
-import type { BridgeEnvelope, DeviceClient, DeviceSession, DeviceSetupResult } from './idevice.js';
+import type { BridgeEnvelope, DeviceClient, DeviceSession, DeviceSetupResult, RustDeviceBridgeEvent } from './idevice.js';
 import { withCorrelation } from '#correlation.js';
 import { config } from '#config.js';
 import { BRIDGE_CAPABILITIES, BRIDGE_PROTOCOL_VERSION, TESTFLIGHT_LIFECYCLE_CAPABILITIES } from './bridgeProtocol.js';
 import { flushTelemetry, startSpan } from '#telemetry.js';
 
-const { armAppStoreAutoConfirm, buildIpadecryptRuntimeConfig, clearAppStoreAutoConfirm, createBridgeEnvelope, createDeviceAgentEnvelope, DeviceBridgeError, execCommand, getDeviceAgentRetryDelay, getDeviceTransportOrder, getRustDeviceBridgeHealth, getRustDeviceBridgeStatus, isDirectUsbDeviceAgentConnection, pairDevice, probeDeviceSshTunnel, readBridgeHeartbeats, retryRustDeviceHealthProbe, retryTransientSshConnection, sendAppStoreBridgeRequest, setupDeviceConnection, verifyRustDevicePairing, withSSH } = await import('./idevice.js' + '?idevice-transport-test');
+const { armAppStoreAutoConfirm, buildIpadecryptRuntimeConfig, clearAppStoreAutoConfirm, createBridgeEnvelope, createDeviceAgentEnvelope, DeviceBridgeError, execCommand, getDeviceAgentRetryDelay, getDeviceTransportOrder, getRustDeviceBridgeHealth, getRustDeviceBridgeStatus, isDirectUsbDeviceAgentConnection, pairDevice, probeDeviceSshTunnel, readBridgeHeartbeats, retryRustDeviceHealthProbe, retryTransientSshConnection, sendAppStoreBridgeRequest, setupDeviceConnection, subscribeRustDeviceBridgeEvents, verifyRustDevicePairing, withSSH } = await import('./idevice.js' + '?idevice-transport-test');
 
 type FakeExecStream = {
   stderr: {
@@ -119,6 +119,141 @@ async function withRustBridgeFixture<T>(
     await rm(runtimeDir, { recursive: true, force: true });
   }
 }
+
+test('Rust device bridge RPCs retry the previous shared secret only after unauthorized', async () => {
+  const runtimeDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-device-secret-rotation-'));
+  const socketPath = path.join(runtimeDir, 'bridge.sock');
+  const originalSocket = config.deviceBridgeSocket;
+  const originalSecret = config.deviceBridgeSecret;
+  const originalPreviousSecret = config.deviceBridgeSecretPrevious;
+  const currentSecret = 'current-device-bridge-secret-0123456789';
+  const previousSecret = 'previous-device-bridge-secret-0123456789';
+  const attemptedSecrets: string[] = [];
+  const bridge = createServer((socket) => {
+    socket.once('data', (chunk) => {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      const length = buffer.readUInt32BE(0);
+      const request = JSON.parse(buffer.subarray(4, length + 4).toString('utf8')) as Record<string, unknown>;
+      attemptedSecrets.push(String(request.auth));
+      const ok = request.auth === previousSecret;
+      const result = request.operation === 'health'
+        ? { state: 'ready', transport: 'usb', deviceCount: 1, devicePresent: true }
+        : { protocolVersion: 1, capabilities: ['agent'] };
+      writeFrame(socket, {
+        version: 1,
+        requestId: request.requestId,
+        ok,
+        ...(ok ? { result } : { error: { code: 'unauthorized', message: 'device bridge authentication failed', retryable: false } }),
+      });
+    });
+  });
+  config.deviceBridgeSocket = socketPath;
+  config.deviceBridgeSecret = currentSecret;
+  config.deviceBridgeSecretPrevious = previousSecret;
+
+  try {
+    await new Promise<void>((resolve, reject) => bridge.listen(socketPath, resolve).once('error', reject));
+    await expect(getRustDeviceBridgeStatus()).resolves.toMatchObject({ state: 'ready', deviceCount: 1 });
+    expect(attemptedSecrets.filter((secret) => secret === currentSecret)).toHaveLength(2);
+    expect(attemptedSecrets.filter((secret) => secret === previousSecret)).toHaveLength(2);
+  } finally {
+    config.deviceBridgeSocket = originalSocket;
+    config.deviceBridgeSecret = originalSecret;
+    config.deviceBridgeSecretPrevious = originalPreviousSecret;
+    await flushTelemetry({ endpoint: 'https://collector.example/v1/traces', fetcher: async () => Response.json({}) });
+    await new Promise<void>((resolve) => bridge.close(() => resolve()));
+    await rm(runtimeDir, { recursive: true, force: true });
+  }
+});
+
+test('Rust device bridge RPCs do not retry the previous secret after non-authentication errors', async () => {
+  const runtimeDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-device-secret-error-'));
+  const socketPath = path.join(runtimeDir, 'bridge.sock');
+  const originalSocket = config.deviceBridgeSocket;
+  const originalSecret = config.deviceBridgeSecret;
+  const originalPreviousSecret = config.deviceBridgeSecretPrevious;
+  const attemptedSecrets: string[] = [];
+  const bridge = createServer((socket) => {
+    socket.once('data', (chunk) => {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      const length = buffer.readUInt32BE(0);
+      const request = JSON.parse(buffer.subarray(4, length + 4).toString('utf8')) as Record<string, unknown>;
+      attemptedSecrets.push(String(request.auth));
+      writeFrame(socket, {
+        version: 1,
+        requestId: request.requestId,
+        ok: false,
+        error: { code: 'device_not_found', message: 'device was not found', retryable: false },
+      });
+    });
+  });
+  config.deviceBridgeSocket = socketPath;
+  config.deviceBridgeSecret = 'current-device-bridge-secret-0123456789';
+  config.deviceBridgeSecretPrevious = 'previous-device-bridge-secret-0123456789';
+
+  try {
+    await new Promise<void>((resolve, reject) => bridge.listen(socketPath, resolve).once('error', reject));
+    await expect(getRustDeviceBridgeStatus()).rejects.toThrow('device_not_found');
+    expect(attemptedSecrets).toEqual([config.deviceBridgeSecret, config.deviceBridgeSecret]);
+  } finally {
+    config.deviceBridgeSocket = originalSocket;
+    config.deviceBridgeSecret = originalSecret;
+    config.deviceBridgeSecretPrevious = originalPreviousSecret;
+    await flushTelemetry({ endpoint: 'https://collector.example/v1/traces', fetcher: async () => Response.json({}) });
+    await new Promise<void>((resolve) => bridge.close(() => resolve()));
+    await rm(runtimeDir, { recursive: true, force: true });
+  }
+});
+
+test('Rust device bridge event subscriptions retry the previous shared secret after unauthorized', async () => {
+  const runtimeDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-device-event-secret-rotation-'));
+  const socketPath = path.join(runtimeDir, 'bridge.sock');
+  const originalSocket = config.deviceBridgeSocket;
+  const originalSecret = config.deviceBridgeSecret;
+  const originalPreviousSecret = config.deviceBridgeSecretPrevious;
+  const currentSecret = 'current-event-bridge-secret-0123456789';
+  const previousSecret = 'previous-event-bridge-secret-0123456789';
+  const attemptedSecrets: string[] = [];
+  const bridge = createServer((socket) => {
+    socket.once('data', (chunk) => {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      const length = buffer.readUInt32BE(0);
+      const request = JSON.parse(buffer.subarray(4, length + 4).toString('utf8')) as Record<string, unknown>;
+      attemptedSecrets.push(String(request.auth));
+      const ok = request.auth === previousSecret;
+      const value = { type: 'snapshot', sequence: 1, devices: [] };
+      const body = Buffer.from(JSON.stringify({
+        version: 1,
+        requestId: request.requestId,
+        ok,
+        ...(ok ? { result: value } : { error: { code: 'unauthorized', message: 'device bridge authentication failed', retryable: false } }),
+      }));
+      const frame = Buffer.allocUnsafe(body.length + 4);
+      frame.writeUInt32BE(body.length, 0);
+      body.copy(frame, 4);
+      socket.write(frame);
+    });
+  });
+  config.deviceBridgeSocket = socketPath;
+  config.deviceBridgeSecret = currentSecret;
+  config.deviceBridgeSecretPrevious = previousSecret;
+  let stop: (() => void) | undefined;
+
+  try {
+    await new Promise<void>((resolve, reject) => bridge.listen(socketPath, resolve).once('error', reject));
+    const events: unknown[] = [];
+    stop = await subscribeRustDeviceBridgeEvents((event: RustDeviceBridgeEvent) => events.push(event));
+    expect(events).toEqual([{ type: 'snapshot', sequence: 1, devices: [] }]);
+    expect(attemptedSecrets).toEqual([currentSecret, previousSecret]);
+  } finally {
+    stop?.();
+    config.deviceBridgeSocket = originalSocket;
+    config.deviceBridgeSecret = originalSecret;
+    config.deviceBridgeSecretPrevious = originalPreviousSecret;
+    await new Promise<void>((resolve) => bridge.close(() => resolve()));
+    await rm(runtimeDir, { recursive: true, force: true });
+  }
+});
 
 test('Rust device bridge spans inherit the active operation span', async () => {
   const runtimeDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-device-trace-'));

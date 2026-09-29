@@ -14,6 +14,13 @@ import { incrementMetric, observeMetric } from '#metrics.js';
 import { abortedOperationError, delayWithSignal, throwIfAborted } from '#util/abort.js';
 
 const log = scopedLogger('idevice');
+let previousBridgeSecretWarningEmitted = false;
+
+function warnPreviousBridgeSecretUse(): void {
+  if (previousBridgeSecretWarningEmitted) return;
+  previousBridgeSecretWarningEmitted = true;
+  log.warn('Rust device bridge authenticated with DEVICE_BRIDGE_SECRET_PREVIOUS; finish the shared-secret rotation');
+}
 
 const AUTOCONFIRM_FLAG_PATH = '/tmp/autoinstall-autoconfirm.flag';
 const AUTOCONFIRM_FLAG_PATHS = [
@@ -159,13 +166,29 @@ interface RustRpcResponse {
 class RustDeviceBridgeClient {
   private readonly socketPath = config.deviceBridgeSocket;
   private readonly secret = config.deviceBridgeSecret;
+  private readonly previousSecret = config.deviceBridgeSecretPrevious;
+
+  private sharedSecrets(): string[] {
+    if (this.secret.length < 32) throw new DeviceAgentUnavailableError('DEVICE_BRIDGE_SECRET is missing or too short');
+    return [...new Set([this.secret, this.previousSecret].filter((secret) => secret.length >= 32))];
+  }
 
   async request(operation: string, details: Record<string, unknown>, timeoutMs = REMOTE_COMMAND_TIMEOUT_MS, signal?: AbortSignal): Promise<unknown> {
     const startedAt = performance.now();
     const span = startSpan('device.bridge.request', { 'device.operation': operation, 'device.timeout_ms': timeoutMs }, currentCorrelation()?.traceContext);
     try {
       throwIfAborted(signal);
-      const result = await this.requestRaw(operation, details, timeoutMs, true, signal);
+      const secrets = this.sharedSecrets();
+      let result: unknown;
+      for (let index = 0; index < secrets.length; index += 1) {
+        try {
+          result = await this.requestRaw(operation, details, timeoutMs, true, signal, secrets[index]);
+          if (index > 0) warnPreviousBridgeSecretUse();
+          break;
+        } catch (error) {
+          if (!(error instanceof DeviceBridgeError) || error.code !== 'unauthorized' || index + 1 >= secrets.length) throw error;
+        }
+      }
       incrementMetric('device_bridge_requests_total', { operation, outcome: 'success' });
       observeMetric('device_bridge_request_duration_ms', performance.now() - startedAt, { operation });
       span.end();
@@ -179,11 +202,11 @@ class RustDeviceBridgeClient {
     }
   }
 
-  private async requestRaw(operation: string, details: Record<string, unknown>, timeoutMs = REMOTE_COMMAND_TIMEOUT_MS, cancelOnTimeout = true, signal?: AbortSignal): Promise<unknown> {
+  private async requestRaw(operation: string, details: Record<string, unknown>, timeoutMs = REMOTE_COMMAND_TIMEOUT_MS, cancelOnTimeout = true, signal?: AbortSignal, secret = this.secret): Promise<unknown> {
     throwIfAborted(signal);
-    if (this.secret.length < 32) throw new DeviceAgentUnavailableError('DEVICE_BRIDGE_SECRET is missing or too short');
+    if (secret.length < 32) throw new DeviceAgentUnavailableError('DEVICE_BRIDGE_SECRET is missing or too short');
     const requestId = randomUUID();
-    const body = Buffer.from(JSON.stringify({ version: 1, requestId, auth: this.secret, operation, ...details }), 'utf8');
+    const body = Buffer.from(JSON.stringify({ version: 1, requestId, auth: secret, operation, ...details }), 'utf8');
     if (body.length === 0 || body.length > 16 * 1024 * 1024) throw new Error('Rust device bridge request is too large');
     const frame = Buffer.allocUnsafe(body.length + 4);
     frame.writeUInt32BE(body.length, 0);
@@ -276,12 +299,12 @@ class RustDeviceBridgeClient {
         };
         const cancelRequest = () => {
           finish(new Error('Rust device bridge request timed out'));
-          if (cancelOnTimeout) void this.requestRaw('cancel', { payload: requestId }, 5_000, false).catch(() => undefined);
+          if (cancelOnTimeout) void this.requestRaw('cancel', { payload: requestId }, 5_000, false, undefined, secret).catch(() => undefined);
         };
         const timeoutRequest = () => cancelRequest();
         onAbort = () => {
           finish(abortedOperationError(signal as AbortSignal));
-          if (cancelOnTimeout) void this.requestRaw('cancel', { payload: requestId }, 5_000, false).catch(() => undefined);
+          if (cancelOnTimeout) void this.requestRaw('cancel', { payload: requestId }, 5_000, false, undefined, secret).catch(() => undefined);
         };
         timer = setTimeout(timeoutRequest, Math.max(1, timeoutMs));
         socket.on('data', receive);
@@ -347,10 +370,23 @@ class RustDeviceBridgeClient {
   }
 
   async subscribeEvents(onEvent: (event: RustDeviceBridgeEvent) => void, onError?: (error: Error) => void, signal?: AbortSignal): Promise<() => void> {
-    if (this.secret.length < 32) throw new DeviceAgentUnavailableError('DEVICE_BRIDGE_SECRET is missing or too short');
+    const secrets = this.sharedSecrets();
+    for (let index = 0; index < secrets.length; index += 1) {
+      try {
+        const stop = await this.subscribeEventsWithSecret(onEvent, onError, signal, secrets[index]);
+        if (index > 0) warnPreviousBridgeSecretUse();
+        return stop;
+      } catch (error) {
+        if (!(error instanceof DeviceBridgeError) || error.code !== 'unauthorized' || index + 1 >= secrets.length) throw error;
+      }
+    }
+    throw new DeviceAgentUnavailableError('Rust device bridge event subscription could not authenticate');
+  }
+
+  private async subscribeEventsWithSecret(onEvent: (event: RustDeviceBridgeEvent) => void, onError: ((error: Error) => void) | undefined, signal: AbortSignal | undefined, secret: string): Promise<() => void> {
     throwIfAborted(signal);
     const requestId = randomUUID();
-    const body = Buffer.from(JSON.stringify({ version: 1, requestId, auth: this.secret, operation: 'events', follow: true }), 'utf8');
+    const body = Buffer.from(JSON.stringify({ version: 1, requestId, auth: secret, operation: 'events', follow: true }), 'utf8');
     const frame = Buffer.allocUnsafe(body.length + 4);
     frame.writeUInt32BE(body.length, 0);
     body.copy(frame, 4);
