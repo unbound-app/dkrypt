@@ -138,3 +138,98 @@ test('artifact listing and pinning keep their permission and project boundaries'
     await server.close();
   }
 });
+
+test('bulk pinning updates only artifacts in projects the manager can access', async () => {
+  const records = new Map([
+    ['artifact-a', artifact({ id: 'artifact-a' })],
+    ['artifact-b', artifact({ id: 'artifact-b', projectIds: ['private'] })],
+  ]);
+  const calls: Array<{ ids: string[]; pinned: boolean }> = [];
+  const audits: Array<[string, string, string, string?]> = [];
+  const server = Fastify().withTypeProvider<TypeBoxTypeProvider>();
+  await server.register(createDashboardArtifactRoutes({
+    canAccessProject: (_userId, _permissions, projectId) => projectId === 'default',
+    artifactFileAvailable: () => true,
+    getArtifactById: (id) => records.get(id),
+    setArtifactsPinned: async (ids, pinned) => {
+      calls.push({ ids, pinned });
+      const updated = ids.map((id) => {
+        const value = records.get(id)!;
+        const next = artifact({ ...value, pinnedAt: pinned ? 4 : undefined });
+        records.set(id, next);
+        return next;
+      });
+      return { artifacts: updated, changedIds: ids, missingIds: [] };
+    },
+    recordAudit: (...entry) => { audits.push(entry); },
+  }));
+
+  try {
+    const response = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/artifacts/bulk-pin',
+      headers: { cookie: sessionCookie(PermissionFlag.manageAutomation) },
+      payload: { ids: ['artifact-a'], pinned: true },
+    });
+    const inaccessible = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/artifacts/bulk-pin',
+      headers: { cookie: sessionCookie(PermissionFlag.manageAutomation) },
+      payload: { ids: ['artifact-a', 'artifact-b'], pinned: true },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body)).toEqual({
+      ok: true,
+      pinned: true,
+      changedIds: ['artifact-a'],
+      artifacts: [{ artifactId: 'artifact-a', pinned: true, pinnedAt: '1970-01-01T00:00:00.004Z' }],
+    });
+    expect(inaccessible.statusCode).toBe(404);
+    expect(calls).toEqual([{ ids: ['artifact-a'], pinned: true }]);
+    expect(audits).toEqual([['root', 'artifact.pin', 'artifact-a']]);
+  } finally {
+    await server.close();
+  }
+});
+
+test('bulk pinning requires storage permission and rejects oversized selections', async () => {
+  const server = Fastify().withTypeProvider<TypeBoxTypeProvider>();
+  server.setErrorHandler((error, request, reply) => {
+    const statusCode = error && typeof error === 'object' && 'statusCode' in error && typeof error.statusCode === 'number' ? error.statusCode : 500;
+    const message = error instanceof Error ? error.message : String(error);
+    return reply.code(statusCode).send({
+      error: message,
+      code: statusCode === 400 ? 'request_error' : 'internal_error',
+      message,
+      requestId: request.id,
+      retryable: statusCode >= 500,
+    });
+  });
+  await server.register(createDashboardArtifactRoutes({
+    canAccessProject: () => true,
+    artifactFileAvailable: () => true,
+    getArtifactById: (id) => artifact({ id }),
+    setArtifactsPinned: async (ids) => ({ artifacts: ids.map((id) => artifact({ id })), changedIds: ids, missingIds: [] }),
+  }));
+
+  try {
+    const denied = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/artifacts/bulk-pin',
+      headers: { cookie: sessionCookie(PermissionFlag.requestDecrypt) },
+      payload: { ids: ['artifact-a'], pinned: true },
+    });
+    const oversized = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/artifacts/bulk-pin',
+      headers: { cookie: sessionCookie(PermissionFlag.manageAutomation) },
+      payload: { ids: Array.from({ length: 101 }, (_, index) => `artifact-${index}`), pinned: true },
+    });
+
+    expect(denied.statusCode).toBe(403);
+    expect(oversized.statusCode).toBe(400);
+  } finally {
+    await server.close();
+  }
+});

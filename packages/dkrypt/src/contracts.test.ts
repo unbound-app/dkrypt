@@ -118,6 +118,7 @@ test('core operational responses publish their required fields', async () => {
       ['/v1/dashboard/overview', 'get', ['schedulerEnabled', 'watches', 'devices', 'activeJobs']],
       ['/v1/dashboard/jobs', 'get', ['history', 'total', 'nextCursor']],
       ['/v1/dashboard/artifacts', 'get', ['artifacts', 'total', 'totalBytes', 'maxBytes']],
+      ['/v1/dashboard/artifacts/bulk-pin', 'post', ['ok', 'pinned', 'changedIds', 'artifacts']],
       ['/v1/dashboard/devices', 'get', ['devices']],
       ['/v1/dashboard/testflight/catalog', 'get', ['apps', 'refreshing']],
       ['/v1/dashboard/search', 'get', ['results']],

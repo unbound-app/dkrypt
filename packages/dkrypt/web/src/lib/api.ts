@@ -1082,6 +1082,20 @@ export function setDashboardArtifactPinned(id: string, pinned: boolean): Promise
   });
 }
 
+export interface ArtifactBulkPinResult {
+  ok: boolean;
+  pinned: boolean;
+  changedIds: string[];
+  artifacts: Array<{ artifactId: string; pinned: boolean; pinnedAt?: string }>;
+}
+
+export function setDashboardArtifactsPinned(ids: string[], pinned: boolean): Promise<{ ok: boolean; data: ArtifactBulkPinResult }> {
+  return apiAction('/v1/dashboard/artifacts/bulk-pin', {
+    method: 'POST',
+    body: JSON.stringify({ ids, pinned }),
+  });
+}
+
 export function dashboardArtifactDownloadUrl(id: string): string {
   return `/v1/dashboard/artifacts/${encodeURIComponent(id)}/file`;
 }

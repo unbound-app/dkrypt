@@ -50,6 +50,22 @@ export const dashboardArtifactPinResponseSchema = Type.Object({
   pinnedAt: Type.Optional(Type.String({ format: 'date-time' })),
 }, additionalProperties);
 
+export const dashboardArtifactBulkPinBodySchema = Type.Object({
+  ids: Type.Array(identifierSchema, { minItems: 1, maxItems: 100, uniqueItems: true }),
+  pinned: Type.Boolean(),
+}, additionalProperties);
+
+export const dashboardArtifactBulkPinResponseSchema = Type.Object({
+  ok: Type.Boolean(),
+  pinned: Type.Boolean(),
+  changedIds: Type.Array(identifierSchema),
+  artifacts: Type.Array(Type.Object({
+    artifactId: identifierSchema,
+    pinned: Type.Boolean(),
+    pinnedAt: Type.Optional(Type.String({ format: 'date-time' })),
+  }, additionalProperties)),
+}, additionalProperties);
+
 export type DashboardArtifactListRoute = {
   Querystring: Static<typeof dashboardArtifactListQuerySchema>;
   Reply: { 200: Static<typeof dashboardArtifactListResponseSchema>; 400: ApiErrorEnvelope; 401: ApiErrorEnvelope; 403: ApiErrorEnvelope; 404: ApiErrorEnvelope; 500: ApiErrorEnvelope };
@@ -59,6 +75,11 @@ export type DashboardArtifactPinRoute = {
   Params: Static<typeof dashboardArtifactParamsSchema>;
   Body: Static<typeof dashboardArtifactPinBodySchema>;
   Reply: { 200: Static<typeof dashboardArtifactPinResponseSchema>; 400: ApiErrorEnvelope; 401: ApiErrorEnvelope; 403: ApiErrorEnvelope; 404: ApiErrorEnvelope; 500: ApiErrorEnvelope };
+};
+
+export type DashboardArtifactBulkPinRoute = {
+  Body: Static<typeof dashboardArtifactBulkPinBodySchema>;
+  Reply: { 200: Static<typeof dashboardArtifactBulkPinResponseSchema>; 400: ApiErrorEnvelope; 401: ApiErrorEnvelope; 403: ApiErrorEnvelope; 404: ApiErrorEnvelope; 500: ApiErrorEnvelope };
 };
 
 export type DashboardArtifactFileRoute = {

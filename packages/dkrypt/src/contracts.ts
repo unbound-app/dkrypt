@@ -74,6 +74,8 @@ import {
   dashboardAppVersionsResponseSchema,
 } from '#dashboardAppCatalogContracts.js';
 import {
+  dashboardArtifactBulkPinBodySchema,
+  dashboardArtifactBulkPinResponseSchema,
   dashboardArtifactListQuerySchema,
   dashboardArtifactListResponseSchema,
   dashboardArtifactPinBodySchema,
@@ -939,6 +941,7 @@ register('GET', '/v1/dashboard/notifications', { querystring: notificationListQu
 register('GET', '/v1/dashboard/jobs', { querystring: dashboardJobListQuerySchema });
 register('GET', '/v1/dashboard/artifacts', { querystring: object({ ...PaginationQuery.properties, projectId: Type.Optional(Identifier), q: Type.Optional(Type.String({ maxLength: 200 })), channel: Type.Optional(Type.Union([Type.Literal('appstore'), Type.Literal('testflight')])) }) });
 register('PUT', '/v1/dashboard/artifacts/:id/pin', { params: object({ id: Identifier }), body: object({ pinned: Type.Boolean() }) });
+register('POST', '/v1/dashboard/artifacts/bulk-pin', { body: dashboardArtifactBulkPinBodySchema });
 register('GET', '/v1/dashboard/artifacts/retention-preview', { querystring: object({ maxBytes: Type.Integer({ minimum: 1 }) }) });
 register('GET', '/v1/dashboard/logs', { querystring: dashboardLogsQuerySchema });
 register('GET', '/v1/dashboard/audit-log', { querystring: dashboardAuditLogQuerySchema });
@@ -1281,6 +1284,10 @@ register('PUT', '/v1/dashboard/artifacts/:id/pin', {
   params: dashboardArtifactParamsSchema,
   body: dashboardArtifactPinBodySchema,
   response: { 200: dashboardArtifactPinResponseSchema, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope, 500: ErrorEnvelope },
+});
+register('POST', '/v1/dashboard/artifacts/bulk-pin', {
+  body: dashboardArtifactBulkPinBodySchema,
+  response: { 200: dashboardArtifactBulkPinResponseSchema, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope, 500: ErrorEnvelope },
 });
 register('GET', '/v1/dashboard/artifacts/retention-preview', {
   querystring: dashboardArtifactRetentionQuerySchema,

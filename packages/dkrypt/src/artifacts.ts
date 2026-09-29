@@ -50,6 +50,12 @@ export interface ArtifactQuotaRetentionPreview {
   additionalEvictions: number;
 }
 
+export interface ArtifactPinBatchResult {
+  artifacts: ArtifactRecord[];
+  changedIds: string[];
+  missingIds: string[];
+}
+
 interface ArtifactIndex {
   version: 1;
   artifacts: ArtifactRecord[];
@@ -197,20 +203,31 @@ export function getArtifactByKey(key: string): ArtifactRecord | undefined {
 }
 
 export async function setArtifactPinned(id: string, pinned: boolean): Promise<{ artifact?: ArtifactRecord; changed: boolean }> {
-  return withMutation(async () => {
-    const artifact = getArtifactById(id);
-    if (!artifact) return { changed: false };
-    if ((artifact.pinnedAt !== undefined) === pinned) return { artifact, changed: false };
+  const result = await setArtifactsPinned([id], pinned);
+  return { artifact: result.artifacts[0], changed: result.changedIds.includes(id) };
+}
 
-    const previousPinnedAt = artifact.pinnedAt;
-    artifact.pinnedAt = pinned ? Date.now() : undefined;
+export async function setArtifactsPinned(ids: string[], pinned: boolean): Promise<ArtifactPinBatchResult> {
+  return withMutation(async () => {
+    const uniqueIds = [...new Set(ids)];
+    const artifacts = uniqueIds.map(getArtifactById);
+    const missingIds = uniqueIds.filter((_id, index) => artifacts[index] === undefined);
+    if (missingIds.length > 0) return { artifacts: [], changedIds: [], missingIds };
+
+    const currentArtifacts = artifacts as ArtifactRecord[];
+    const changedArtifacts = currentArtifacts.filter((artifact) => (artifact.pinnedAt !== undefined) !== pinned);
+    if (changedArtifacts.length === 0) return { artifacts: currentArtifacts, changedIds: [], missingIds: [] };
+
+    const previousPinnedAt = changedArtifacts.map((artifact) => artifact.pinnedAt);
+    const pinnedAt = pinned ? Date.now() : undefined;
+    for (const artifact of changedArtifacts) artifact.pinnedAt = pinnedAt;
     try {
       persistIndex();
     } catch (error) {
-      artifact.pinnedAt = previousPinnedAt;
+      changedArtifacts.forEach((artifact, index) => { artifact.pinnedAt = previousPinnedAt[index]; });
       throw error;
     }
-    return { artifact, changed: true };
+    return { artifacts: currentArtifacts, changedIds: changedArtifacts.map((artifact) => artifact.id), missingIds: [] };
   });
 }
 

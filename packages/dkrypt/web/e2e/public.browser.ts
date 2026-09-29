@@ -1270,6 +1270,63 @@ test('IPA Library supports keyboard-scrolled virtualization and reveals artifact
   await expect(artifact.getByText(sha256, { exact: true })).toBeVisible();
 });
 
+test('IPA Library bulk pinning sends one bounded update for the selected artifacts', async ({ page }) => {
+  await mockStableDashboardEvents(page);
+  await mockAuthenticatedDashboard(page, '8589934593');
+  const artifact = {
+    id: 'bulk-artifact-a',
+    key: 'com.example.bulk:appstore:123',
+    projectIds: ['default'],
+    bundleId: 'com.example.bulk',
+    channel: 'appstore',
+    versionLabel: '2.4.0',
+    buildNumber: '240',
+    fileSizeBytes: 1024,
+    sha256: 'a'.repeat(64),
+    createdAt: '2026-09-25T12:00:00.000Z',
+    lastAccessedAt: '2026-09-25T13:00:00.000Z',
+    accessCount: 1,
+    fileUrl: '/v1/dashboard/artifacts/bulk-artifact-a/file',
+  };
+  const bulkRequests: Array<{ ids: string[]; pinned: boolean }> = [];
+  let artifactPinnedAt: string | undefined;
+  await page.route('**/v1/dashboard/apps/metadata?*', async (route) => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ entries: [] }) });
+  });
+  await page.route('**/v1/dashboard/artifacts**', async (route) => {
+    if (route.request().method() === 'POST') {
+      const payload = route.request().postDataJSON() as { ids: string[]; pinned: boolean };
+      bulkRequests.push(payload);
+      artifactPinnedAt = payload.pinned ? '2026-09-26T13:00:00.000Z' : undefined;
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          pinned: payload.pinned,
+          changedIds: payload.ids,
+          artifacts: payload.ids.map((artifactId) => ({ artifactId, pinned: payload.pinned, pinnedAt: artifactPinnedAt })),
+        }),
+      });
+      return;
+    }
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ artifacts: [{ ...artifact, pinnedAt: artifactPinnedAt }], total: 1, totalBytes: 1024, maxBytes: 10240 }),
+    });
+  });
+
+  const artifactResponse = page.waitForResponse((response) => response.url().includes('/v1/dashboard/artifacts?') && response.ok());
+  await page.goto('/?tab=home');
+  await artifactResponse;
+  await page.getByRole('checkbox', { name: 'Select com.example.bulk 2.4.0 (240)' }).check();
+  await page.getByRole('button', { name: 'Pin selected', exact: true }).click();
+
+  await expect.poll(() => bulkRequests.length).toBe(1);
+  expect(bulkRequests[0]).toEqual({ ids: ['bulk-artifact-a'], pinned: true });
+  await expect(page.getByText('Pinned', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Pin selected', exact: true })).not.toBeVisible();
+});
+
 test('audit history virtualizes entries without losing older records', async ({ page }) => {
   await mockStableDashboardEvents(page);
   await mockAuthenticatedDashboard(page, '135168');

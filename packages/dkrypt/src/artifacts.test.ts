@@ -18,6 +18,7 @@ import {
   reloadArtifactIndex,
   reconcileArtifactStore,
   setArtifactPinned,
+  setArtifactsPinned,
   touchArtifact,
 } from './artifacts.js';
 
@@ -241,6 +242,49 @@ describe('persistent artifact store', () => {
     });
     expect(getArtifactById(protectedArtifact.id)).toBeUndefined();
     expect(artifactFileAvailable(replacement)).toBe(true);
+  });
+
+  test('bulk pinning updates metadata together and preserves prior state when persistence fails', async () => {
+    config.artifactMaxBytes = 1024 * 1024;
+    const first = await promoteArtifact({
+      key: `test-bulk-pin-a-${crypto.randomUUID()}`,
+      bundleId: 'com.example.bulk-pin-a',
+      channel: 'appstore',
+      stagingPath: await stagingFile('bulk pin a'),
+    });
+    const second = await promoteArtifact({
+      key: `test-bulk-pin-b-${crypto.randomUUID()}`,
+      bundleId: 'com.example.bulk-pin-b',
+      channel: 'testflight',
+      stagingPath: await stagingFile('bulk pin b'),
+    });
+
+    const pinned = await setArtifactsPinned([first.id, second.id], true);
+    expect(pinned).toMatchObject({ changedIds: [first.id, second.id], missingIds: [] });
+    expect(pinned.artifacts.every((artifact) => artifact.pinnedAt !== undefined)).toBe(true);
+    reloadArtifactIndex();
+    expect(getArtifactById(first.id)?.pinnedAt).toBeDefined();
+    expect(getArtifactById(second.id)?.pinnedAt).toBeDefined();
+
+    const missing = await setArtifactsPinned([first.id, 'missing-artifact'], false);
+    expect(missing).toMatchObject({ artifacts: [], changedIds: [], missingIds: ['missing-artifact'] });
+    expect(getArtifactById(first.id)?.pinnedAt).toBeDefined();
+
+    const database = openStateCollectionDatabase({
+      stateDir: config.stateDir,
+      filename: config.stateDatabaseFile,
+      busyTimeoutMs: config.stateDbBusyTimeoutMs,
+    }, ['artifacts']);
+    const trigger = `fail_artifact_bulk_pin_${crypto.randomUUID().replaceAll('-', '')}`;
+    try {
+      database.exec(`CREATE TRIGGER ${trigger} BEFORE INSERT ON artifacts BEGIN SELECT RAISE(ABORT, 'forced artifact bulk pin failure'); END;`);
+      await expect(setArtifactsPinned([first.id, second.id], false)).rejects.toThrow('forced artifact bulk pin failure');
+      expect(getArtifactById(first.id)?.pinnedAt).toBeDefined();
+      expect(getArtifactById(second.id)?.pinnedAt).toBeDefined();
+    } finally {
+      database.exec(`DROP TRIGGER IF EXISTS ${trigger};`);
+      database.close();
+    }
   });
 
   test('rejects an artifact larger than the quota without promoting it', async () => {

@@ -1,6 +1,6 @@
 import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
-import type { DashboardArtifactFileRoute, DashboardArtifactListRoute, DashboardArtifactPinRoute } from '#dashboardArtifactContracts.js';
-import { artifactDownloadName, artifactFileAvailable, getArtifactById, listArtifacts, setArtifactPinned, touchArtifact } from '#artifacts.js';
+import type { DashboardArtifactBulkPinRoute, DashboardArtifactFileRoute, DashboardArtifactListRoute, DashboardArtifactPinRoute } from '#dashboardArtifactContracts.js';
+import { artifactDownloadName, artifactFileAvailable, getArtifactById, listArtifacts, setArtifactPinned, setArtifactsPinned, touchArtifact } from '#artifacts.js';
 import { recordFastifyDashboardActivity } from '#dashboardActivity.js';
 import { canAccessProject } from '#dashboardJobPresentation.js';
 import { getRouteContract } from '#contracts.js';
@@ -17,6 +17,7 @@ interface DashboardArtifactServices {
   getArtifactById: typeof getArtifactById;
   listArtifacts: typeof listArtifacts;
   setArtifactPinned: typeof setArtifactPinned;
+  setArtifactsPinned: typeof setArtifactsPinned;
   touchArtifact: typeof touchArtifact;
   canAccessProject: typeof canAccessProject;
   recordAudit: typeof recordAudit;
@@ -28,6 +29,7 @@ const defaultServices: DashboardArtifactServices = {
   getArtifactById,
   listArtifacts,
   setArtifactPinned,
+  setArtifactsPinned,
   touchArtifact,
   canAccessProject,
   recordAudit,
@@ -98,6 +100,40 @@ export function createDashboardArtifactRoutes(overrides: Partial<DashboardArtifa
         artifactId: artifact.id,
         pinned: result.artifact.pinnedAt !== undefined,
         pinnedAt: result.artifact.pinnedAt === undefined ? undefined : new Date(result.artifact.pinnedAt).toISOString(),
+      };
+    });
+
+    server.post<DashboardArtifactBulkPinRoute>('/v1/dashboard/artifacts/bulk-pin', {
+      schema: getRouteContract('POST', '/v1/dashboard/artifacts/bulk-pin'),
+      preHandler: canManageStorage,
+    }, async (request, reply) => {
+      const session = getFastifySession(request)!;
+      const artifacts = request.body.ids.map((id) => services.getArtifactById(id));
+      const allAccessible = artifacts.every((artifact) => artifact
+        && services.artifactFileAvailable(artifact)
+        && artifact.projectIds.some((projectId) => services.canAccessProject(session.sub, session.permissions, projectId)));
+      if (!allAccessible) {
+        reply.code(404);
+        return createHttpErrorEnvelope(request.id, 404, 'one or more artifacts were not found');
+      }
+
+      const result = await services.setArtifactsPinned(request.body.ids, request.body.pinned);
+      if (result.missingIds.length > 0) {
+        reply.code(404);
+        return createHttpErrorEnvelope(request.id, 404, 'one or more artifacts were not found');
+      }
+      for (const id of result.changedIds) {
+        services.recordAudit(session.sub, request.body.pinned ? 'artifact.pin' : 'artifact.unpin', id);
+      }
+      return {
+        ok: true,
+        pinned: request.body.pinned,
+        changedIds: result.changedIds,
+        artifacts: result.artifacts.map((artifact) => ({
+          artifactId: artifact.id,
+          pinned: artifact.pinnedAt !== undefined,
+          pinnedAt: artifact.pinnedAt === undefined ? undefined : new Date(artifact.pinnedAt).toISOString(),
+        })),
       };
     });
 

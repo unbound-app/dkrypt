@@ -7,7 +7,7 @@
   import Button from '#lib/components/ui/Button.svelte';
   import Card from '#lib/components/ui/Card.svelte';
   import Input from '#lib/components/ui/Input.svelte';
-  import { fetchArtifacts, observeArtifacts, setDashboardArtifactPinned, type ArtifactRecord } from '#lib/api';
+  import { fetchArtifacts, observeArtifacts, setDashboardArtifactPinned, setDashboardArtifactsPinned, type ArtifactRecord } from '#lib/api';
   import { appDisplayName, appIconUrl, ensureAppCatalog } from '#lib/appCatalog.svelte';
   import { fmtBytesGB, fmtSize, fmtTime } from '#lib/format.svelte';
   import { PermissionFlag } from '#lib/permissions';
@@ -27,6 +27,8 @@
   let loading = $state(false);
   let loadingMore = $state(false);
   let pinningArtifactIds = $state<string[]>([]);
+  let selectedArtifactIds = $state<Set<string>>(new Set());
+  let bulkPinning = $state(false);
   let expandedArtifactIds = $state<Set<string>>(new Set());
   let nextCursor = $state<string | undefined>(undefined);
   let error = $state('');
@@ -46,6 +48,7 @@
     const artifactQuery = { cursorOrOffset: undefined, limit: 50, q: searchQuery };
     const artifactQueryKey = JSON.stringify([projectSelectionState.id, artifactQuery]);
     const previousArtifactQueryKey = activeArtifactQueryKey;
+    if (artifactQueryKey !== previousArtifactQueryKey) selectedArtifactIds = new Set();
     activeArtifactQueryKey = artifactQueryKey;
     const request = fetchArtifacts(artifactQuery, force);
     const applyPage = (result: Awaited<ReturnType<typeof fetchArtifacts>>) => {
@@ -137,6 +140,54 @@
       pinningArtifactIds = pinningArtifactIds.filter((id) => id !== artifact.id);
     }
   }
+
+  function toggleArtifactSelection(artifactId: string, selected: boolean): void {
+    const next = new Set(selectedArtifactIds);
+    if (selected && next.size >= 100 && !next.has(artifactId)) {
+      error = 'Select up to 100 artifacts at a time';
+      return;
+    }
+    if (selected) next.add(artifactId);
+    else next.delete(artifactId);
+    selectedArtifactIds = next;
+    error = '';
+  }
+
+  function toggleAllLoadedArtifacts(): void {
+    const allLoadedSelected = artifacts.length > 0 && artifacts.every((artifact) => selectedArtifactIds.has(artifact.id));
+    if (allLoadedSelected) {
+      selectedArtifactIds = new Set();
+      error = '';
+      return;
+    }
+    const next = new Set([...selectedArtifactIds, ...artifacts.map((artifact) => artifact.id)]);
+    if (next.size > 100) {
+      error = 'Select up to 100 artifacts at a time';
+      return;
+    }
+    selectedArtifactIds = next;
+    error = '';
+  }
+
+  async function bulkSetPinned(pinned: boolean): Promise<void> {
+    if (bulkPinning || selectedArtifactIds.size === 0) return;
+    bulkPinning = true;
+    error = '';
+    try {
+      const result = await setDashboardArtifactsPinned([...selectedArtifactIds], pinned);
+      if (!result.ok) return;
+      const updatedById = new Map(result.data.artifacts.map((artifact) => [artifact.artifactId, artifact]));
+      artifacts = artifacts.map((artifact) => {
+        const updated = updatedById.get(artifact.id);
+        return updated ? { ...artifact, pinnedAt: updated.pinnedAt } : artifact;
+      });
+      selectedArtifactIds = new Set();
+    } catch (err) {
+      error = err instanceof Error ? err.message : 'Could not update the selected artifacts';
+    } finally {
+      bulkPinning = false;
+    }
+  }
 </script>
 
 {#if canDecrypt}
@@ -161,6 +212,26 @@
       <div class="p-4 sm:p-5">
         {#if refreshError}
           <div class="mb-3 rounded-md border border-border/70 px-3 py-2 text-xs text-muted" role="status" aria-live="polite">{refreshError}</div>
+        {/if}
+        {#if canManageStorage && artifacts.length > 0}
+          <div class="mb-3 flex flex-wrap items-center gap-2" role="group" aria-label="Bulk artifact actions">
+            <Button variant="ghost" size="sm" onclick={toggleAllLoadedArtifacts}>
+              {artifacts.every((artifact) => selectedArtifactIds.has(artifact.id)) ? 'Clear selection' : 'Select loaded'}
+            </Button>
+            {#if selectedArtifactIds.size > 0}
+              <span class="text-muted text-xs" role="status" aria-live="polite">{selectedArtifactIds.size} selected</span>
+              <Button variant="secondary" size="sm" loading={bulkPinning} onclick={() => void bulkSetPinned(true)}>
+                <Pin class="h-3.5 w-3.5" />Pin selected
+              </Button>
+              <Button variant="secondary" size="sm" loading={bulkPinning} onclick={() => void bulkSetPinned(false)}>
+                <PinOff class="h-3.5 w-3.5" />Unpin selected
+              </Button>
+              <Button variant="ghost" size="sm" disabled={bulkPinning} onclick={() => (selectedArtifactIds = new Set())}>Clear</Button>
+            {/if}
+          </div>
+        {/if}
+        {#if error && artifacts.length > 0}
+          <div class="text-err mb-3 text-[13px]" role="alert">{error}</div>
         {/if}
         {#if error && artifacts.length === 0}
           <div class="text-err text-[13px]" role="alert">{error}</div>
@@ -187,6 +258,16 @@
             {#snippet children(artifact: ArtifactRecord)}
               <article class="grid gap-x-5 gap-y-2.5 px-3.5 py-3 first:pt-3 last:pb-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:px-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1.65fr)_auto] lg:items-center">
                 <div class="flex min-w-0 items-center gap-3">
+                  {#if canManageStorage}
+                    <input
+                      type="checkbox"
+                      class="accent-accent size-4 shrink-0 rounded border-border"
+                      checked={selectedArtifactIds.has(artifact.id)}
+                      disabled={bulkPinning || (selectedArtifactIds.size >= 100 && !selectedArtifactIds.has(artifact.id))}
+                      onchange={(event) => toggleArtifactSelection(artifact.id, event.currentTarget.checked)}
+                      aria-label="Select {appDisplayName(artifact.bundleId)} {artifactVersion(artifact)}"
+                    />
+                  {/if}
                   <AppIcon bundleId={artifact.bundleId} src={appIconUrl(artifact.bundleId)} label={appDisplayName(artifact.bundleId)} class="h-9 w-9" />
                   <div class="min-w-0 flex-1">
                     <div class="truncate text-[13px] font-semibold" title={appDisplayName(artifact.bundleId)}>{appDisplayName(artifact.bundleId)}</div>
