@@ -124,11 +124,39 @@ describe('Stripe billing webhooks', () => {
     const customerId = `cus_${crypto.randomUUID()}`;
     const subscriptionId = `sub_${crypto.randomUUID()}`;
     replaceBillingSnapshot({ customers: [], subscriptions: [] });
+    const currentSubscription = subscriptionEvent(userId, customerId, subscriptionId).data.object as Stripe.Subscription;
+    const client = {
+      subscriptions: {
+        retrieve: async () => currentSubscription,
+      },
+    } as unknown as Stripe;
 
-    await processStripeEvent(checkoutEvent(userId, customerId, subscriptionId));
-    await processStripeEvent(subscriptionEvent(userId, customerId, subscriptionId));
+    await processStripeEvent(checkoutEvent(userId, customerId, subscriptionId), client);
+    await processStripeEvent(subscriptionEvent(userId, customerId, subscriptionId), client);
 
     expect(getBillingCustomerId(userId)).toBe(customerId);
+    expect(getBillingEntitlements(userId)).toMatchObject({ planId: 'priority', decrypt: true, priority: 5 });
+  });
+
+  test('grants access from a completed subscription checkout when the subscription event is delayed', async () => {
+    const userId = `stripe-checkout-reconcile-${crypto.randomUUID()}`;
+    const customerId = `cus_${crypto.randomUUID()}`;
+    const subscriptionId = `sub_${crypto.randomUUID()}`;
+    replaceBillingSnapshot({ customers: [], subscriptions: [] });
+    const currentSubscription = subscriptionEvent(userId, customerId, subscriptionId).data.object as Stripe.Subscription;
+    const retrievedIds: string[] = [];
+    const client = {
+      subscriptions: {
+        retrieve: async (id: string) => {
+          retrievedIds.push(id);
+          return currentSubscription;
+        },
+      },
+    } as unknown as Stripe;
+
+    await processStripeEvent(checkoutEvent(userId, customerId, subscriptionId), client);
+
+    expect(retrievedIds).toEqual([subscriptionId]);
     expect(getBillingEntitlements(userId)).toMatchObject({ planId: 'priority', decrypt: true, priority: 5 });
   });
 
@@ -302,10 +330,17 @@ describe('Stripe billing webhooks', () => {
   test('accepts a signed raw webhook request', async () => {
     const userId = `stripe-webhook-${crypto.randomUUID()}`;
     const customerId = `cus_${crypto.randomUUID()}`;
-    const request = signedStripeWebhook(checkoutEvent(userId, customerId, `sub_${crypto.randomUUID()}`), {
+    const subscriptionId = `sub_${crypto.randomUUID()}`;
+    const request = signedStripeWebhook(checkoutEvent(userId, customerId, subscriptionId), {
       traceparent: '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01',
     });
-    const server = await buildServer({ includePublicRoutes: false });
+    const currentSubscription = subscriptionEvent(userId, customerId, subscriptionId).data.object as Stripe.Subscription;
+    const stripeClient = {
+      subscriptions: {
+        retrieve: async () => currentSubscription,
+      },
+    } as unknown as Stripe;
+    const server = await buildServer({ includePublicRoutes: false, stripeClient: () => stripeClient });
     const previousSampleRate = config.otelSampleRate;
     config.otelSampleRate = 1;
 
@@ -319,6 +354,7 @@ describe('Stripe billing webhooks', () => {
 
       expect(response.statusCode).toBe(200);
       expect(getBillingCustomerId(userId)).toBe(customerId);
+      expect(getBillingEntitlements(userId)).toMatchObject({ planId: 'priority', decrypt: true, priority: 5 });
       const [, traceId, requestSpanId] = String(response.headers.traceparent).split('-');
       const failedEvent = { ...event('customer.subscription.created', {}), data: null } as unknown as Stripe.Event;
       const failedRequest = signedStripeWebhook(failedEvent, {

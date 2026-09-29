@@ -119,6 +119,17 @@ function processCheckoutSession(event: Stripe.Event): void {
   if (customerId && userId) linkBillingCustomer(customerId, userId);
 }
 
+async function reconcileSuccessfulCheckoutSession(event: Stripe.Event, stripeClient?: Stripe): Promise<void> {
+  processCheckoutSession(event);
+  const session = event.data.object as Stripe.Checkout.Session;
+  const subscriptionId = stripeObjectId(session.subscription);
+  if (!subscriptionId) return;
+  const userId = metadataUserId(session.metadata);
+  await runKeyedSerial(`stripe:${subscriptionId}`, async () => {
+    await reconcileStripeSubscription(subscriptionId, stripeClient, eventDate(event), userId);
+  });
+}
+
 function persistStripeSubscription(subscription: Stripe.Subscription, occurredAt: string, fallbackUserId?: string, updatedAt = occurredAt): void {
   const item = subscription.items?.data?.[0];
   const customerId = stripeObjectId(subscription.customer);
@@ -193,6 +204,8 @@ export async function processStripeEvent(event: Stripe.Event, stripeClient?: Str
   switch (event.type) {
     case 'checkout.session.completed':
     case 'checkout.session.async_payment_succeeded':
+      await reconcileSuccessfulCheckoutSession(event, stripeClient);
+      return;
     case 'checkout.session.async_payment_failed':
       processCheckoutSession(event);
       return;
