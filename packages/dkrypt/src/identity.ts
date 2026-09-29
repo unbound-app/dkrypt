@@ -79,8 +79,7 @@ function normalizeProfile(profile: AuthProfile): AuthProfile {
 }
 
 function load(): IdentitySnapshot {
-  const storedProfiles = identityRepository.listAll();
-  identityRepository.importLegacySnapshot(() => storedProfiles.length === 0 ? loadLegacyProfiles() : []);
+  identityRepository.importLegacySnapshot(loadLegacyProfiles);
   return { profiles: identityRepository.listAll().map(normalizeProfile) };
 }
 
