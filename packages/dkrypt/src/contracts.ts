@@ -445,6 +445,7 @@ const AuthSessionListResponse = Type.Array(
     lastSeenAt: Type.Integer(),
     userAgent: Type.Optional(Type.String()),
     ip: Type.Optional(Type.String()),
+    risk: Type.Optional(Type.Literal('new_context')),
     current: Type.Boolean(),
   }),
 );

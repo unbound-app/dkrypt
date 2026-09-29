@@ -144,6 +144,25 @@ async function signIn() {
   return { server, cookie: value.split(';', 1)[0] };
 }
 
+async function signInFromContext(
+  server: Awaited<ReturnType<typeof buildServer>>,
+  userAgent: string,
+  remoteAddress: string,
+): Promise<string> {
+  const response = await server.inject({
+    method: 'POST',
+    url: '/v1/auth/login',
+    headers: { 'user-agent': userAgent },
+    remoteAddress,
+    payload: { password: process.env.ADMIN_PASSWORD },
+  });
+  expect(response.statusCode).toBe(200);
+  const setCookie = response.headers['set-cookie'];
+  const value = Array.isArray(setCookie) ? setCookie[0] : setCookie;
+  if (typeof value !== 'string') throw new Error('login did not set a session cookie');
+  return value.split(';', 1)[0]!;
+}
+
 test('native auth routes preserve cookie sessions, refresh, logout, and session inventory', async () => {
   const { server, cookie } = await signIn();
   try {
@@ -177,6 +196,66 @@ test('native auth routes preserve cookie sessions, refresh, logout, and session 
 
     const afterLogout = await server.inject({ method: 'GET', url: '/v1/auth/session', headers: { cookie } });
     expect(afterLogout.json()).toMatchObject({ loggedIn: false });
+  } finally {
+    await server.close();
+  }
+});
+
+test('root login records a manager-visible audit event for a new browser and network context', async () => {
+  const server = await buildServer({ includePublicRoutes: false });
+  const contextId = crypto.randomUUID();
+
+  try {
+    const firstCookie = await signInFromContext(server, `dkrypt-test-${contextId}-browser-a`, '198.51.100.17');
+    const secondCookie = await signInFromContext(server, `dkrypt-test-${contextId}-browser-b`, '203.0.113.29');
+    const sessions = await server.inject({ method: 'GET', url: '/v1/auth/sessions', headers: { cookie: secondCookie } });
+    const currentSession = (sessions.json() as { id: string; current: boolean; risk?: string }[]).find((session) => session.current);
+    const audit = await server.inject({ method: 'GET', url: '/v1/dashboard/audit-log?limit=100', headers: { cookie: secondCookie } });
+
+    expect(sessions.statusCode).toBe(200);
+    expect(currentSession).toBeDefined();
+    expect(currentSession?.risk).toBe('new_context');
+    expect(audit.statusCode).toBe(200);
+    expect(audit.json().entries).toContainEqual(expect.objectContaining({
+      actor: 'root',
+      action: 'auth.session.new_context',
+      target: currentSession?.id,
+      detail: 'new browser and network context while another session was active',
+    }));
+    expect(audit.body).not.toContain(`dkrypt-test-${contextId}`);
+    expect(audit.body).not.toContain('198.51.100.17');
+    expect(audit.body).not.toContain('203.0.113.29');
+
+    await server.inject({ method: 'POST', url: '/v1/auth/logout', headers: { cookie: firstCookie } });
+    await server.inject({ method: 'POST', url: '/v1/auth/logout', headers: { cookie: secondCookie } });
+  } finally {
+    await server.close();
+  }
+});
+
+test('root login does not flag a network change when the browser context is unchanged', async () => {
+  const server = await buildServer({ includePublicRoutes: false });
+  const userAgent = `dkrypt-test-${crypto.randomUUID()}-same-browser`;
+
+  try {
+    const firstCookie = await signInFromContext(server, userAgent, '198.51.100.38');
+    const secondCookie = await signInFromContext(server, userAgent, '203.0.113.51');
+    const sessions = await server.inject({ method: 'GET', url: '/v1/auth/sessions', headers: { cookie: secondCookie } });
+    const currentSession = (sessions.json() as { id: string; current: boolean; risk?: string }[]).find((session) => session.current);
+    const audit = await server.inject({ method: 'GET', url: '/v1/dashboard/audit-log?limit=100', headers: { cookie: secondCookie } });
+
+    expect(sessions.statusCode).toBe(200);
+    expect(currentSession).toBeDefined();
+    expect(currentSession?.risk).toBeUndefined();
+    expect(audit.statusCode).toBe(200);
+    expect(audit.json().entries).not.toContainEqual(expect.objectContaining({
+      action: 'auth.session.new_context',
+      target: currentSession?.id,
+    }));
+    expect((sessions.json() as { current: boolean }[]).filter((session) => session.current)).toHaveLength(1);
+
+    await server.inject({ method: 'POST', url: '/v1/auth/logout', headers: { cookie: firstCookie } });
+    await server.inject({ method: 'POST', url: '/v1/auth/logout', headers: { cookie: secondCookie } });
   } finally {
     await server.close();
   }

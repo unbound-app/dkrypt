@@ -62,6 +62,7 @@
     'role.add': 'added role',
     'role.update': 'updated role',
     'role.remove': 'removed role',
+    'auth.session.new_context': 'signed in from a new browser and network',
     'project.add': 'created project',
     'project.update': 'updated project',
     'project.archive': 'changed project availability',

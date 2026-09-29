@@ -610,6 +610,7 @@ export interface AuditLogEntry {
     | 'role.add'
     | 'role.update'
     | 'role.remove'
+    | 'auth.session.new_context'
     | 'project.add'
     | 'project.update'
     | 'project.archive';
@@ -2018,6 +2019,7 @@ export interface ActiveSessionInfo {
   lastSeenAt: number;
   userAgent?: string;
   ip?: string;
+  risk?: 'new_context';
   current: boolean;
 }
 

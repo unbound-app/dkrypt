@@ -231,6 +231,7 @@ export interface ActiveSessionRecord {
   lastSeenAt: number;
   userAgent?: string;
   ip?: string;
+  risk?: 'new_context';
 }
 
 export interface ApiKeyRecord {
@@ -539,6 +540,7 @@ export type AuditAction =
   | 'auth.passkey.remove'
   | 'auth.passkey.login'
   | 'auth.passkey.reauthenticate'
+  | 'auth.session.new_context'
   | 'project.add'
   | 'project.update'
   | 'project.archive'
@@ -1619,14 +1621,32 @@ const MAX_SESSIONS_PER_USER = 20;
 const SESSION_RECORD_TTL_MS = 12 * 60 * 60 * 1000;
 
 export function createSessionRecord(sub: string, userAgent: string | undefined, ip: string | undefined): ActiveSessionRecord {
-  const record: ActiveSessionRecord = { id: randomUUID(), sub, createdAt: Date.now(), lastSeenAt: Date.now(), userAgent, ip };
+  const now = Date.now();
+  const newContext = userAgent !== undefined && ip !== undefined && state.activeSessions.some((session) =>
+    session.sub === sub &&
+    now - session.lastSeenAt < SESSION_RECORD_TTL_MS &&
+    session.userAgent !== undefined &&
+    session.ip !== undefined &&
+    session.userAgent !== userAgent &&
+    session.ip !== ip,
+  );
+  const record: ActiveSessionRecord = {
+    id: randomUUID(),
+    sub,
+    createdAt: now,
+    lastSeenAt: now,
+    userAgent,
+    ip,
+    ...(newContext ? { risk: 'new_context' as const } : {}),
+  };
   state.activeSessions.push(record);
   const forUser = state.activeSessions.filter((s) => s.sub === sub);
   if (forUser.length > MAX_SESSIONS_PER_USER) {
     const dropIds = new Set(forUser.slice(0, forUser.length - MAX_SESSIONS_PER_USER).map((s) => s.id));
     state.activeSessions = state.activeSessions.filter((s) => !dropIds.has(s.id));
   }
-  persistNow();
+  if (newContext) recordAudit(sub, 'auth.session.new_context', record.id, 'new browser and network context while another session was active');
+  else persistNow();
   return record;
 }
 

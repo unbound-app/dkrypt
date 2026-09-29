@@ -43,6 +43,7 @@ const auditActionSchema = Type.Union([
   Type.Literal('auth.passkey.remove'),
   Type.Literal('auth.passkey.login'),
   Type.Literal('auth.passkey.reauthenticate'),
+  Type.Literal('auth.session.new_context'),
   Type.Literal('project.add'),
   Type.Literal('project.update'),
   Type.Literal('project.archive'),

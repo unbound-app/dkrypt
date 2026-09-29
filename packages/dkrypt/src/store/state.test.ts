@@ -23,6 +23,7 @@ import {
   createDiscordRolePerk,
   createProject,
   createRole,
+  createSessionRecord,
   createTestFlightSubscription,
   createWatch,
   deleteDevice,
@@ -58,6 +59,7 @@ import {
   recordApiKeyBundleUsage,
   recordJobHistory,
   recordNotification,
+  revokeSessionRecord,
   recordWebhookDelivery,
   setDiscordGuildIds,
   syncDiscordPerkRoles,
@@ -94,6 +96,34 @@ describe('dashboard notifications', () => {
     expect(markNotificationsRead(userId, [first.id])).toBe(1);
     expect(listNotifications(userId)).toMatchObject({ unread: 1 });
   });
+});
+
+test('expired sessions do not trigger new-context risk audits', () => {
+  const originalNow = Date.now;
+  let now = originalNow();
+  const userId = `session-risk-${randomUUID()}`;
+  let firstId = '';
+  let secondId = '';
+
+  try {
+    Date.now = () => now;
+    const first = createSessionRecord(userId, 'browser-a', '198.51.100.17');
+    firstId = first.id;
+    now += 13 * 60 * 60 * 1000;
+    const second = createSessionRecord(userId, 'browser-b', '203.0.113.29');
+    secondId = second.id;
+
+    expect(second.risk).toBeUndefined();
+    expect(getAuditLog()).not.toContainEqual(expect.objectContaining({
+      actor: userId,
+      action: 'auth.session.new_context',
+      target: second.id,
+    }));
+  } finally {
+    Date.now = originalNow;
+    if (firstId) revokeSessionRecord(firstId, userId);
+    if (secondId) revokeSessionRecord(secondId, userId);
+  }
 });
 
 describe('projects', () => {

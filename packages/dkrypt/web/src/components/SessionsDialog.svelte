@@ -80,6 +80,9 @@
               {#if s.current}
                 <Badge variant="default">This device</Badge>
               {/if}
+              {#if s.risk === 'new_context'}
+                <Badge variant="warning">Review sign-in</Badge>
+              {/if}
             </div>
             <div class="text-muted" title={fmtTime(s.createdAt)}>
               {s.ip ?? 'unknown IP'} · active {fmtRelative(s.lastSeenAt)}

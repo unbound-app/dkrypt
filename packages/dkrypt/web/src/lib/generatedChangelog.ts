@@ -1,42 +1,42 @@
 export const GENERATED_CHANGELOG = [
   {
-    "date": "2026-09-28",
-    "title": "fix(api): clarify API key access scope",
-    "description": "Released in 89448a8."
+    "date": "2026-09-29",
+    "title": "fix(device): refresh health on USB events",
+    "description": "Released in 35a2627."
   },
   {
-    "date": "2026-09-28",
-    "title": "fix(ops): account for device parallelism in queue objectives",
-    "description": "Released in 9c84f4c."
+    "date": "2026-09-29",
+    "title": "fix(ops): always smoke test authenticated dashboard",
+    "description": "Released in c8c38e2."
   },
   {
-    "date": "2026-09-28",
-    "title": "test(web): stabilize cross-platform mobile snapshots",
-    "description": "Released in f668a91."
+    "date": "2026-09-29",
+    "title": "fix(billing): reconcile Stripe checkout subscriptions",
+    "description": "Released in 88bad09."
   },
   {
-    "date": "2026-09-28",
-    "title": "fix(api): scope generated keys to public operations",
-    "description": "Released in 643ea8b."
+    "date": "2026-09-29",
+    "title": "fix(device): preserve typed Rust bridge errors",
+    "description": "Released in ace7dea."
   },
   {
-    "date": "2026-09-28",
-    "title": "fix(web): compact IPA library and add visual baselines",
-    "description": "Released in 107a915."
+    "date": "2026-09-29",
+    "title": "test(deploy): assert database migration and MFA login",
+    "description": "Released in b818d1d."
   },
   {
-    "date": "2026-09-28",
-    "title": "fix(device): scope install eligibility by source",
-    "description": "Released in d9b5da2."
+    "date": "2026-09-29",
+    "title": "test(deploy): verify artifact access with root MFA",
+    "description": "Released in 8c78e92."
   },
   {
-    "date": "2026-09-28",
-    "title": "feat(web): add account-level regional formatting",
-    "description": "Released in c378b57."
+    "date": "2026-09-29",
+    "title": "refactor(deploy): reuse operational status response",
+    "description": "Released in 551c775."
   },
   {
-    "date": "2026-09-28",
-    "title": "fix(clients): retain urllib transport errors",
-    "description": "Released in 4cb4ba5."
+    "date": "2026-09-29",
+    "title": "test(deploy): validate smoke scripts before rollout",
+    "description": "Released in 44b6c86."
   }
 ] as const;
