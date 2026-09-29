@@ -110,3 +110,10 @@ test('production smoke verifies the saved Rust pairing, USB agent, and decrypt S
   expect(deploymentWorkflow).toContain('docker exec -i --user 10001:10001');
   expect(deploymentWorkflow).not.toContain('process.kill(');
 });
+
+test('production smoke checks bridge-private pairing material as root', () => {
+  expect(deploymentWorkflow).toContain('docker exec -i --user 0:0 dkrypt bun -');
+  expect(deploymentWorkflow).toContain('metadata.uid !== 0 || metadata.gid !== 0');
+  expect(deploymentWorkflow).toContain('entryMetadata.uid !== 0 || entryMetadata.gid !== 0');
+  expect(deploymentWorkflow.indexOf('await verifyPairingStorePermissions(pairingStore)')).toBeGreaterThan(deploymentWorkflow.indexOf('verify_pairing_store() {'));
+});

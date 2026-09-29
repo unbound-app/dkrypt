@@ -448,21 +448,6 @@ jobs:
           const primaryDevice = getPrimaryDevice();
           if (!primaryDevice?.udid || primaryDevice.host || primaryDevice.usbmuxNetwork === true) throw new Error('configured primary device is not a direct USB pairing');
           await verifyRustDevicePairing(primaryDevice);
-          const pairingStore = process.env.DEVICE_PAIRING_STORE || path.join(process.env.STATE_DIR || '/data/state', 'device-pairing');
-          async function verifyPairingStorePermissions(directory) {
-            const metadata = await fs.lstat(directory);
-            if (!metadata.isDirectory() || (metadata.mode & 0o777) !== 0o700) throw new Error('device pairing directory permissions are not owner-only');
-            for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
-              const entryPath = path.join(directory, entry.name);
-              const entryMetadata = await fs.lstat(entryPath);
-              if (entryMetadata.isDirectory()) {
-                if ((entryMetadata.mode & 0o777) !== 0o700) throw new Error('device pairing subdirectory permissions are not owner-only');
-                await verifyPairingStorePermissions(entryPath);
-              } else if (!entryMetadata.isFile() || (entryMetadata.mode & 0o777) !== 0o600) {
-                throw new Error('device pairing file permissions are not owner-only');
-              }
-            }
-          }
           const agentStatus = await withAutoinstallDeviceAgent(primaryDevice, client => client.call('status', {}, 3_000));
           if (typeof agentStatus.agentVersion !== 'string') throw new Error('signed USB device-agent status request was incomplete');
           const setup = await setupDeviceConnection(primaryDevice);
@@ -470,7 +455,6 @@ jobs:
             const blockers = setup.steps.filter(step => step.status !== 'ready').map(step => `${step.label}: ${step.detail ?? step.status}`);
             throw new Error(`device setup did not verify decrypt readiness: ${blockers.join('; ')}`);
           }
-          await verifyPairingStorePermissions(pairingStore);
           console.log(JSON.stringify({
             health: health.ok,
             device,
@@ -489,6 +473,32 @@ jobs:
           }
           if ! smoke; then
             echo 'deployment smoke tests failed' >&2
+            fail_deployment
+          fi
+          verify_pairing_store() {
+            docker exec -i --user 0:0 dkrypt bun - <<'JS'
+          const fs = await import('node:fs/promises');
+          const path = await import('node:path');
+          const pairingStore = process.env.DEVICE_PAIRING_STORE || '/data/state/device-pairing';
+          async function verifyPairingStorePermissions(directory) {
+            const metadata = await fs.lstat(directory);
+            if (!metadata.isDirectory() || metadata.uid !== 0 || metadata.gid !== 0 || (metadata.mode & 0o777) !== 0o700) throw new Error('device pairing directory ownership or permissions are invalid');
+            for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+              const entryPath = path.join(directory, entry.name);
+              const entryMetadata = await fs.lstat(entryPath);
+              if (entryMetadata.isDirectory()) {
+                if (entryMetadata.uid !== 0 || entryMetadata.gid !== 0 || (entryMetadata.mode & 0o777) !== 0o700) throw new Error('device pairing subdirectory ownership or permissions are invalid');
+                await verifyPairingStorePermissions(entryPath);
+              } else if (!entryMetadata.isFile() || entryMetadata.uid !== 0 || entryMetadata.gid !== 0 || (entryMetadata.mode & 0o777) !== 0o600) {
+                throw new Error('device pairing file ownership or permissions are invalid');
+              }
+            }
+          }
+          await verifyPairingStorePermissions(pairingStore);
+          JS
+          }
+          if ! verify_pairing_store; then
+            echo 'device pairing material failed owner-only permission checks' >&2
             fail_deployment
           fi
           if ! mounts=$(docker inspect --format '{{json .Mounts}}' dkrypt); then
