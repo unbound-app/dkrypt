@@ -658,6 +658,8 @@ export async function verifyRustDevicePairing(connection: DeviceConnection): Pro
   try {
     metadata = await new RustDeviceBridgeClient().request('metadata', { deviceId: connection.udid }, 10_000);
   } catch (error) {
+    if (error instanceof DeviceAgentUnavailableError && error.cause instanceof DeviceBridgeError) throw error.cause;
+    if (error instanceof DeviceBridgeError) throw error;
     throw new DeviceBridgeError(
       'pairing_validation',
       error instanceof Error ? error.message : String(error),
@@ -1206,7 +1208,14 @@ async function readRemoteValue(conn: DeviceClient, command: string): Promise<str
 }
 
 export async function setupDeviceConnection(connection: DeviceConnection): Promise<DeviceSetupResult> {
-  if (isDirectUsbDeviceAgentConnection(connection)) await pairDevice(connection);
+  if (isDirectUsbDeviceAgentConnection(connection)) {
+    try {
+      await verifyRustDevicePairing(connection);
+    } catch (error) {
+      if (!(error instanceof DeviceBridgeError) || error.code !== 'pairing_unavailable') throw error;
+      await pairDevice(connection);
+    }
+  }
   let sshKeyInstallError: string | undefined;
   const result = await withSSH(connection, async (conn) => {
     try {

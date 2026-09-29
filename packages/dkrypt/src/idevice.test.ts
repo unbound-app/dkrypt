@@ -93,12 +93,16 @@ async function withRustBridgeFixture<T>(
       const length = buffer.readUInt32BE(0);
       const request = JSON.parse(buffer.subarray(4, length + 4).toString('utf8')) as Record<string, unknown>;
       operations.push(String(request.operation));
+      const result = respond(request);
+      const bridgeError = result && typeof result === 'object' && '__bridgeError' in result
+        ? (result as { __bridgeError?: { code?: string; message?: string; retryable?: boolean } }).__bridgeError
+        : undefined;
       writeFrame(socket, {
         version: 1,
         requestId: request.requestId,
-        ok: true,
-        result: respond(request),
-        error: null,
+        ok: !bridgeError,
+        result: bridgeError ? null : result,
+        error: bridgeError ?? null,
       });
     });
   });
@@ -634,6 +638,7 @@ test('device setup provisions dkrypt SSH access and does not report decrypt read
   const originalSshPort = config.deviceSshPort;
   const commands: string[] = [];
   const deviceId = 'fixture-setup-device';
+  let paired = false;
 
   config.deviceRuntimeDir = runtimeDir;
   config.deviceSshKeyPath = privateKeyPath;
@@ -641,9 +646,16 @@ test('device setup provisions dkrypt SSH access and does not report decrypt read
   config.deviceSshPort = 22;
 
   try {
-    const { result } = await withRustBridgeFixture<DeviceSetupResult>((request) => {
-      if (request.operation === 'pair') return { deviceId, hostId: 'fixture-host', paired: true };
-      if (request.operation === 'metadata') return { UniqueDeviceID: deviceId };
+    const { result, operations } = await withRustBridgeFixture<DeviceSetupResult[]>((request) => {
+      if (request.operation === 'pair') {
+        paired = true;
+        return { deviceId, hostId: 'fixture-host', paired: true };
+      }
+      if (request.operation === 'metadata') {
+        return paired
+          ? { UniqueDeviceID: deviceId }
+          : { __bridgeError: { code: 'pairing_unavailable', message: 'no saved pairing record', retryable: true } };
+      }
       if (request.operation === 'capabilities') return { protocolVersion: 1, capabilities: ['agent'] };
       if (request.operation === 'open_tunnel') return { tunnelId: 'fixture-ssh-tunnel', host: '127.0.0.1', port };
       if (request.operation === 'close_tunnel') return { closed: true };
@@ -666,10 +678,16 @@ test('device setup provisions dkrypt SSH access and does not report decrypt read
                 : command.startsWith('/var/jb/usr/bin/dpkg-query') ? 'install ok installed|1.4.0'
                   : '';
       return signedAgentResponse(agentSecret, String(envelope.requestId), { stdout, stderr: '', code: 0 });
-    }, () => setupDeviceConnection({ transport: 'usb', udid: deviceId }));
+    }, async () => [
+      await setupDeviceConnection({ transport: 'usb', udid: deviceId }),
+      await setupDeviceConnection({ transport: 'usb', udid: deviceId }),
+    ]);
 
-    expect(result.ready).toBe(false);
-    expect(result.steps.find((step) => step.id === 'ssh_sftp')).toMatchObject({ status: 'attention' });
+    expect(result).toHaveLength(2);
+    expect(result.every((setup) => !setup.ready)).toBe(true);
+    expect(operations.slice(0, 3)).toEqual(['metadata', 'pair', 'metadata']);
+    expect(operations.filter((operation) => operation === 'pair')).toHaveLength(1);
+    expect(result[0]?.steps.find((step) => step.id === 'ssh_sftp')).toMatchObject({ status: 'attention' });
     expect(commands.some((command) => command.includes(publicKey) && command.includes('authorized_keys'))).toBe(true);
     expect(commands.some((command) => command.includes('ssh_home="${HOME:-/var/jb/var/mobile}"'))).toBe(true);
   } finally {
