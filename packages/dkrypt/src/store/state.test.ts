@@ -403,11 +403,12 @@ describe('projects', () => {
     expect(actions).toEqual(['project.restore', 'project.archive', 'project.add']);
   });
 
-  test('project memberships follow account merge and deletion in SQLite', () => {
+  test('project memberships and API key ownership follow account merge in SQLite', () => {
     const sourceId = `project-source-${randomUUID()}`;
     const targetId = `project-target-${randomUUID()}`;
     addAllowedUser(sourceId, [], 'tester');
     const project = createProject({ name: `Membership ${randomUUID()}`, memberIds: [sourceId] }, 'root').project!;
+    const apiKey = createApiKey(`Merged API key ${randomUUID()}`, sourceId);
 
     try {
       expect(mergeUserAccounts(targetId, sourceId, 'root')).toBe(true);
@@ -417,6 +418,9 @@ describe('projects', () => {
       const database = openStateDatabase({ stateDir: config.stateDir, filename: config.stateDatabaseFile });
       try {
         expect(readStateCollection(database.db, 'projects')).toContainEqual(expect.objectContaining({ id: project.id, memberIds: [targetId] }));
+        const apiKeyRepository = createApiKeyRepository(database.db);
+        expect(apiKeyRepository.listByOwner(targetId)).toContainEqual(expect.objectContaining({ id: apiKey.id, ownerId: targetId }));
+        expect(apiKeyRepository.listByOwner(sourceId)).toEqual([]);
       } finally {
         database.close();
       }
@@ -424,6 +428,7 @@ describe('projects', () => {
       expect(deleteUserPersonalData(targetId)).toBe(true);
       expect(getProject(project.id)?.memberIds).not.toContain(targetId);
     } finally {
+      revokeApiKey(apiKey.id, targetId, true);
       deleteUserPersonalData(targetId);
       deleteUserPersonalData(sourceId);
     }
