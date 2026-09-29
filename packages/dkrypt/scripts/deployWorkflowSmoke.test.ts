@@ -21,11 +21,13 @@ test('deployment smoke syntax validation detects duplicate declarations', () => 
   expect(() => new Bun.Transpiler({ loader: 'js' }).transformSync(invalidScript)).toThrow('already been declared');
 });
 
-test('deployment smoke verifies API-key artifact access and the configured root login gate', () => {
+test('deployment smoke verifies API-key artifact access and its reusable health and login assertions', () => {
   const [script] = deploymentSmokeScripts();
   expect(script).toContain("`${base}/v1/artifacts?limit=1`");
-  expect(script).toContain("loginError.code !== 'mfa_required'");
-  expect(script).toContain('rootMfaChallenge = true;');
+  expect(script).toContain("import('/app/src/deploymentSmokeAssertions.ts')");
+  expect(script).toContain("import('/app/src/store/sqlite.ts')");
+  expect(script).toContain('assertDatabaseSchemaVersion(health.database?.schemaVersion, LATEST_SQLITE_SCHEMA_VERSION);');
+  expect(script).toContain('inspectDeploymentSmokeLogin(login.status, loginBody.code);');
   expect(script).toContain('apiKeyArtifactListing: true');
   expect(script).not.toContain('authenticated dashboard probes skipped because root MFA is enabled');
 });

@@ -636,6 +636,8 @@ const migrations = [
   },
 ] as const;
 
+export const LATEST_SQLITE_SCHEMA_VERSION = migrations.at(-1)?.version ?? 0;
+
 const domainTables = [
   'users',
   'roles',

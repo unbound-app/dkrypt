@@ -327,6 +327,9 @@ jobs:
             if (attempt === 29) throw new Error(`deployment device readiness did not settle: ${readinessDetail}`);
             await new Promise(resolve => setTimeout(resolve, 2_000));
           }
+          const { assertDatabaseSchemaVersion, inspectDeploymentSmokeLogin } = await import('/app/src/deploymentSmokeAssertions.ts');
+          const { LATEST_SQLITE_SCHEMA_VERSION } = await import('/app/src/store/sqlite.ts');
+          assertDatabaseSchemaVersion(health.database?.schemaVersion, LATEST_SQLITE_SCHEMA_VERSION);
           if (health.deployment?.id !== process.env.EXPECTED_DEPLOYMENT_ID || health.deployment?.ref !== process.env.EXPECTED_BUILD_REF) {
             throw new Error(`deployment identity mismatch: expected ${process.env.EXPECTED_DEPLOYMENT_ID}@${process.env.EXPECTED_BUILD_REF}, received ${JSON.stringify(health.deployment)}`);
           }
@@ -440,9 +443,10 @@ jobs:
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ password: process.env.ADMIN_PASSWORD }),
           });
+          const loginBody = await readObject(login);
+          const loginState = inspectDeploymentSmokeLogin(login.status, loginBody.code);
           let authenticatedRoutes = false;
-          let rootMfaChallenge = false;
-          if (login.ok) {
+          if (loginState.authenticated) {
             const cookie = login.headers.get('set-cookie')?.split(';', 1)[0];
             const cookieHeaders = { cookie: cookie ?? '' };
             try {
@@ -452,10 +456,6 @@ jobs:
             } finally {
               await fetchWithTimeout(`${base}/v1/auth/logout`, { method: 'POST', headers: cookieHeaders }).catch(() => {});
             }
-          } else {
-            const loginError = await readObject(login);
-            if (login.status !== 401 || loginError.code !== 'mfa_required') throw new Error(`smoke login failed: HTTP ${login.status}, code=${loginError.code ?? 'unknown'}`);
-            rootMfaChallenge = true;
           }
           await fs.stat(process.env.DEVICE_BRIDGE_SOCKET || '/run/dkrypt/device-bridge.sock');
           const processIds = (await fs.readdir('/proc')).filter((entry) => /^\d+$/.test(entry));
@@ -507,7 +507,7 @@ jobs:
             rateLimit: true,
             authGuards: true,
             authenticatedRoutes,
-            rootMfaChallenge,
+            rootMfaChallenge: loginState.rootMfaChallenge,
             apiKeyArtifactListing: true,
           }));
           JS
