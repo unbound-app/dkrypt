@@ -661,6 +661,9 @@ const MAX_AUDIT_LOG = 200;
 const MAX_SCHEDULER_RUNS = 20;
 const MAX_USAGE_DAYS = 30;
 const MAX_DEVICE_HEALTH_CHECKS = 288;
+const DEVICE_OFFLINE_CONFIRMATION_CHECKS = 3;
+const DEVICE_OFFLINE_CONFIRMATION_WINDOW_MS = 15 * 60_000;
+const DEVICE_OFFLINE_CONFIRMATION_SPAN_MS = 10 * 60_000;
 const MAX_DEVICE_ACTIVITY = 300;
 const MAX_WEBHOOK_LOG = 200;
 const MAX_NOTIFICATIONS = 500;
@@ -3532,6 +3535,21 @@ export function getConsecutiveDeviceHealthFailures(deviceId: string): number {
     failures += 1;
   }
   return failures;
+}
+
+export function hasSustainedDeviceHealthFailures(deviceId: string): boolean {
+  const latestChecks = historyFor(deviceId).slice(0, DEVICE_OFFLINE_CONFIRMATION_CHECKS);
+  if (latestChecks.length < DEVICE_OFFLINE_CONFIRMATION_CHECKS || latestChecks.some((check) => check.reachable)) return false;
+
+  const now = Date.now();
+  const newestCheck = latestChecks[0];
+  const oldestCheck = latestChecks[latestChecks.length - 1];
+  const newestCheckAge = now - newestCheck.ts;
+  const oldestCheckAge = now - oldestCheck.ts;
+  return newestCheckAge >= 0
+    && newestCheckAge <= DEVICE_OFFLINE_CONFIRMATION_WINDOW_MS
+    && oldestCheckAge <= DEVICE_OFFLINE_CONFIRMATION_WINDOW_MS
+    && newestCheck.ts - oldestCheck.ts >= DEVICE_OFFLINE_CONFIRMATION_SPAN_MS;
 }
 
 export interface HourlyBatteryBucket {

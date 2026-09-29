@@ -1,7 +1,7 @@
 import type { NextFunction, Request, Response } from '#http.js';
 import type { FastifyReply, FastifyRequest, HookHandlerDoneFunction } from 'fastify';
-import { getDeviceHealthFailureCount, getDeviceReadiness, peekPrimaryDeviceHealth } from '#deviceHealth.js';
-import { getEffectiveSettings, getPrimaryDevice } from '#store/state.js';
+import { getDeviceReadiness, peekPrimaryDeviceHealth } from '#deviceHealth.js';
+import { getEffectiveSettings, getPrimaryDevice, hasSustainedDeviceHealthFailures } from '#store/state.js';
 
 export interface MaintenanceStatus {
   active: boolean;
@@ -19,7 +19,7 @@ export function getMaintenanceStatus(): MaintenanceStatus {
   if (health) {
     const readiness = health.readiness ?? getDeviceReadiness(health);
     const primary = getPrimaryDevice();
-    const offlineConfirmed = primary !== undefined && getDeviceHealthFailureCount(primary.id) >= 3;
+    const offlineConfirmed = primary !== undefined && hasSustainedDeviceHealthFailures(primary.id);
     const hardBlock = readiness.reasons.some((reason) => /unreachable|storage|temperature|battery|internet access/i.test(reason));
     if (readiness.state === 'blocked' && (health.reachable ? hardBlock : offlineConfirmed)) {
       auto = true;

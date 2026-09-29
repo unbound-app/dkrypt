@@ -4,7 +4,7 @@ import { execCommand, getRustDeviceBridgeHealth, isRustDeviceConnection, isTestF
 import { scopedLogger } from '#logger.js';
 import { EMBED_COLOR, notify } from '#notify.js';
 import { notifyDeviceDispatchStateChanged, releasePinnedJobsForDevice } from '#jobs/store.js';
-import { getConsecutiveDeviceHealthFailures, getEffectiveDevices, getEffectiveSettings, recordDeviceActivity, recordDeviceHealthCheck, type DeviceRecord } from '#store/state.js';
+import { getEffectiveDevices, getEffectiveSettings, hasSustainedDeviceHealthFailures, recordDeviceActivity, recordDeviceHealthCheck, type DeviceRecord } from '#store/state.js';
 import { getDiskUsage } from '#util/diskUsage.js';
 import { getCachedDeviceHealth, setCachedDeviceHealth } from '#deviceHealthCache.js';
 import { incrementMetric, observeMetric, setGaugeMetric } from '#metrics.js';
@@ -620,10 +620,6 @@ export function peekPrimaryDeviceHealth(): DeviceHealth | undefined {
   return getCachedDeviceHealth(primary.id)?.value;
 }
 
-export function getDeviceHealthFailureCount(deviceId: string): number {
-  return Math.max(deviceHealthFailures.get(deviceId) ?? 0, getConsecutiveDeviceHealthFailures(deviceId));
-}
-
 export async function getDeviceHealth(deviceId: string, force = false, signal?: AbortSignal): Promise<DeviceHealth> {
   throwIfAborted(signal);
   const cached = getCachedDeviceHealth(deviceId);
@@ -682,7 +678,7 @@ async function checkOfflineAlert(device: DeviceRecord, reachable: boolean): Prom
     return;
   }
 
-  if (getDeviceHealthFailureCount(device.id) < 3) return;
+  if (!hasSustainedDeviceHealthFailures(device.id)) return;
 
   if (s.unreachableSince === undefined) {
     s.unreachableSince = Date.now();
