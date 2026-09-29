@@ -689,7 +689,8 @@ test('device setup provisions dkrypt SSH access and does not report decrypt read
     expect(operations.filter((operation) => operation === 'pair')).toHaveLength(1);
     expect(result[0]?.steps.find((step) => step.id === 'ssh_sftp')).toMatchObject({ status: 'attention' });
     expect(commands.some((command) => command.includes(publicKey) && command.includes('authorized_keys'))).toBe(true);
-    expect(commands.some((command) => command.includes('ssh_home=/var/mobile'))).toBe(true);
+    expect(commands.some((command) => command.includes('ssh_home=/var/jb/var/mobile'))).toBe(true);
+    expect(commands.some((command) => command.includes('ssh_home=/var/mobile;'))).toBe(false);
     expect(commands.some((command) => command.includes('HOME:-/var/jb/var/mobile'))).toBe(false);
   } finally {
     config.deviceRuntimeDir = originalRuntimeDir;
