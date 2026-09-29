@@ -88,6 +88,14 @@ function eventDate(event: Stripe.Event): string {
   return new Date(event.created * 1000).toISOString();
 }
 
+function invoiceSubscriptionId(invoice: Stripe.Invoice): string | undefined {
+  const parentSubscription = invoice.parent?.type === 'subscription_details'
+    ? invoice.parent.subscription_details?.subscription
+    : undefined;
+  const legacySubscription = (invoice as Stripe.Invoice & { subscription?: string | Stripe.Subscription | null }).subscription;
+  return stripeObjectId(parentSubscription) ?? stripeObjectId(legacySubscription);
+}
+
 function unixDate(value: unknown): string | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? new Date(value * 1000).toISOString() : undefined;
 }
@@ -114,14 +122,16 @@ function processCheckoutSession(event: Stripe.Event): void {
 function persistStripeSubscription(subscription: Stripe.Subscription, occurredAt: string, fallbackUserId?: string, updatedAt = occurredAt): void {
   const item = subscription.items?.data?.[0];
   const customerId = stripeObjectId(subscription.customer);
-  if (!item || !customerId) return;
+  if (!item) throw new Error(`Stripe subscription ${subscription.id} has no billable items`);
+  if (!customerId) throw new Error(`Stripe subscription ${subscription.id} has no customer`);
 
   const price = typeof item.price === 'string' ? undefined : item.price;
   const priceId = typeof item.price === 'string' ? item.price : price?.id;
+  if (!priceId) throw new Error(`Stripe subscription ${subscription.id} has no price ID`);
   const productId = stripeObjectId(price?.product);
-  if (!priceId || !productId) return;
+  if (!productId) throw new Error(`Stripe subscription ${subscription.id} price ${priceId} has no product ID`);
   const planId = planForPrice(priceId);
-  if (!planId) return;
+  if (!planId) throw new Error(`Stripe subscription ${subscription.id} uses an unconfigured price ${priceId}`);
 
   const scheduledChangeAction = subscription.cancel_at_period_end || subscription.cancel_at ? 'cancel' : undefined;
   const scheduledChangeAt = subscription.cancel_at
@@ -148,20 +158,34 @@ function persistStripeSubscription(subscription: Stripe.Subscription, occurredAt
   });
 }
 
+async function reconcileStripeSubscription(subscriptionId: string, stripeClient?: Stripe, newerThan?: string, fallbackUserId?: string): Promise<void> {
+  const current = await (stripeClient ?? getStripe()).subscriptions.retrieve(subscriptionId);
+  const latest = getBillingSubscriptionById(subscriptionId);
+  if (newerThan && latest && Date.parse(latest.occurredAt) > Date.parse(newerThan)) return;
+  const reconciledAt = new Date().toISOString();
+  persistStripeSubscription(current, reconciledAt, fallbackUserId ?? latest?.userId, reconciledAt);
+}
+
 async function processSubscription(event: Stripe.Event, stripeClient?: Stripe): Promise<void> {
   const incoming = event.data.object as Stripe.Subscription;
   await runKeyedSerial(`stripe:${incoming.id}`, async () => {
     const occurredAt = eventDate(event);
     const existing = getBillingSubscriptionById(incoming.id);
     if (existing && Date.parse(existing.occurredAt) >= Date.parse(occurredAt)) {
-      const current = await (stripeClient ?? getStripe()).subscriptions.retrieve(incoming.id);
-      const latest = getBillingSubscriptionById(incoming.id);
-      if (latest && Date.parse(latest.occurredAt) > Date.parse(occurredAt)) return;
-      const reconciledAt = new Date().toISOString();
-      persistStripeSubscription(current, reconciledAt, existing.userId, reconciledAt);
+      await reconcileStripeSubscription(incoming.id, stripeClient, occurredAt, existing.userId);
       return;
     }
     persistStripeSubscription(incoming, occurredAt);
+  });
+}
+
+async function processInvoice(event: Stripe.Event, stripeClient?: Stripe): Promise<void> {
+  const invoice = event.data.object as Stripe.Invoice;
+  const subscriptionId = invoiceSubscriptionId(invoice);
+  if (!subscriptionId) return;
+
+  await runKeyedSerial(`stripe:${subscriptionId}`, async () => {
+    await reconcileStripeSubscription(subscriptionId, stripeClient);
   });
 }
 
@@ -180,6 +204,10 @@ export async function processStripeEvent(event: Stripe.Event, stripeClient?: Str
     case 'customer.subscription.updated':
     case 'customer.subscription.deleted':
       await processSubscription(event, stripeClient);
+      return;
+    case 'invoice.paid':
+    case 'invoice.payment_failed':
+      await processInvoice(event, stripeClient);
       return;
   }
 }
