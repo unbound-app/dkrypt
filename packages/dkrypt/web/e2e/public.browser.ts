@@ -398,6 +398,67 @@ test('IPA Library filters can be saved and reapplied across reloads', async ({ p
   await expectAccessible(page);
 });
 
+test('IPA Library discards a page response from a source filter that is no longer active', async ({ page }) => {
+  await mockStableDashboardEvents(page);
+  await mockAuthenticatedDashboard(page, '1');
+  let beginOldPage!: () => void;
+  let releaseOldPage!: () => void;
+  const oldPageStarted = new Promise<void>((resolve) => {
+    beginOldPage = resolve;
+  });
+  const oldPageGate = new Promise<void>((resolve) => {
+    releaseOldPage = resolve;
+  });
+  const artifact = (id: string, bundleId: string, channel: 'appstore' | 'testflight') => ({
+    id,
+    key: `${bundleId}:${channel}:${id}`,
+    projectIds: ['default'],
+    bundleId,
+    channel,
+    versionLabel: '1.0.0',
+    fileSizeBytes: 1024,
+    sha256: 'a'.repeat(64),
+    createdAt: '2026-09-25T12:00:00.000Z',
+    lastAccessedAt: '2026-09-25T13:00:00.000Z',
+    accessCount: 1,
+    sourceJobId: `job-${id}`,
+    warnings: [],
+    fileUrl: `/v1/dashboard/artifacts/${id}/file`,
+  });
+  await page.route('**/v1/dashboard/apps/metadata?*', async (route) => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ entries: [] }) });
+  });
+  await page.route('**/v1/dashboard/artifacts*', async (route) => {
+    const requestUrl = new URL(route.request().url());
+    const channel = requestUrl.searchParams.get('channel');
+    if (requestUrl.searchParams.get('cursor') === 'appstore-older') {
+      beginOldPage();
+      await oldPageGate;
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ artifacts: [artifact('old-appstore', 'com.example.old-page', 'appstore')], total: 2, totalBytes: 2048, maxBytes: 4096 }),
+      });
+      return;
+    }
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify(channel === 'testflight'
+        ? { artifacts: [artifact('current-testflight', 'com.example.current-testflight', 'testflight')], total: 1, totalBytes: 1024, maxBytes: 4096 }
+        : { artifacts: [artifact('initial-appstore', 'com.example.initial', 'appstore')], total: 2, totalBytes: 2048, maxBytes: 4096, nextCursor: 'appstore-older' }),
+    });
+  });
+
+  await page.goto('/?tab=home');
+  await expect(page.locator('article').filter({ hasText: 'com.example.initial' })).toHaveCount(1);
+  await page.getByRole('button', { name: /Load more/ }).click();
+  await oldPageStarted;
+  await page.getByRole('button', { name: 'All sources' }).click();
+  await page.getByRole('option', { name: 'TestFlight', exact: true }).click();
+  await expect(page.locator('article').filter({ hasText: 'com.example.current-testflight' })).toHaveCount(1);
+  releaseOldPage();
+  await expect(page.locator('article').filter({ hasText: 'com.example.old-page' })).toHaveCount(0);
+});
+
 test('date and number format preference is saved and restored from the account', async ({ page }) => {
   await mockStableDashboardEvents(page);
   await mockAuthenticatedDashboard(page, '1');

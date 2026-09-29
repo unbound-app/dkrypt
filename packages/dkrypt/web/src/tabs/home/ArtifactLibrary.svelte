@@ -54,23 +54,33 @@
   let refreshError = $state('');
   let stopObservingArtifacts: (() => void) | undefined;
   let artifactLoadVersion = 0;
+  let artifactPageVersion = 0;
   let activeArtifactQueryKey = '';
+
+  function createArtifactQuery(cursorOrOffset?: string | number) {
+    return {
+      cursorOrOffset,
+      limit: 50,
+      q: query.trim() || undefined,
+      channel: channelFilter === 'all' ? undefined : channelFilter,
+    };
+  }
+
+  function currentArtifactQueryKey(): string {
+    return JSON.stringify([projectSelectionState.id, createArtifactQuery()]);
+  }
 
   async function load(force = false): Promise<void> {
     if (!canDecrypt) return;
     const loadVersion = ++artifactLoadVersion;
+    artifactPageVersion += 1;
+    loadingMore = false;
     stopObservingArtifacts?.();
     loading = true;
     error = '';
     nextCursor = undefined;
-    const searchQuery = query.trim() || undefined;
-    const artifactQuery = {
-      cursorOrOffset: undefined,
-      limit: 50,
-      q: searchQuery,
-      channel: channelFilter === 'all' ? undefined : channelFilter,
-    };
-    const artifactQueryKey = JSON.stringify([projectSelectionState.id, artifactQuery]);
+    const artifactQuery = createArtifactQuery();
+    const artifactQueryKey = currentArtifactQueryKey();
     const previousArtifactQueryKey = activeArtifactQueryKey;
     if (artifactQueryKey !== previousArtifactQueryKey) selectedArtifactIds = new Set();
     activeArtifactQueryKey = artifactQueryKey;
@@ -107,19 +117,25 @@
 
   onDestroy(() => {
     artifactLoadVersion += 1;
+    artifactPageVersion += 1;
     stopObservingArtifacts?.();
   });
 
   async function loadMore(): Promise<void> {
     if (loadingMore || !nextCursor) return;
     loadingMore = true;
+    const loadVersion = artifactLoadVersion;
+    const pageVersion = ++artifactPageVersion;
+    const queryKey = activeArtifactQueryKey;
+    const artifactQuery = createArtifactQuery(nextCursor);
     try {
-      const result = await fetchArtifacts({
-        cursorOrOffset: nextCursor,
-        limit: 50,
-        q: query.trim() || undefined,
-        channel: channelFilter === 'all' ? undefined : channelFilter,
-      });
+      const result = await fetchArtifacts(artifactQuery);
+      if (
+        loadVersion !== artifactLoadVersion ||
+        pageVersion !== artifactPageVersion ||
+        queryKey !== activeArtifactQueryKey ||
+        queryKey !== currentArtifactQueryKey()
+      ) return;
       const seenIds = new Set(artifacts.map((artifact) => artifact.id));
       artifacts = [...artifacts, ...result.artifacts.filter((artifact) => !seenIds.has(artifact.id))];
       total = result.total;
@@ -127,9 +143,9 @@
       maxBytes = result.maxBytes;
       nextCursor = result.nextCursor;
     } catch (err) {
-      if (!isServerQueryCancelled(err)) error = err instanceof Error ? err.message : 'Failed to load more artifacts';
+      if (loadVersion === artifactLoadVersion && !isServerQueryCancelled(err)) error = err instanceof Error ? err.message : 'Failed to load more artifacts';
     } finally {
-      loadingMore = false;
+      if (pageVersion === artifactPageVersion) loadingMore = false;
     }
   }
 
