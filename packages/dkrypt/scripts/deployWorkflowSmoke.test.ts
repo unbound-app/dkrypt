@@ -20,3 +20,12 @@ test('deployment smoke syntax validation detects duplicate declarations', () => 
   const invalidScript = 'const status = 1;\nconst status = 2;';
   expect(() => new Bun.Transpiler({ loader: 'js' }).transformSync(invalidScript)).toThrow('already been declared');
 });
+
+test('deployment smoke verifies API-key artifact access and the configured root login gate', () => {
+  const [script] = deploymentSmokeScripts();
+  expect(script).toContain("`${base}/v1/artifacts?limit=1`");
+  expect(script).toContain("loginError.code !== 'mfa_required'");
+  expect(script).toContain('rootMfaChallenge = true;');
+  expect(script).toContain('apiKeyArtifactListing: true');
+  expect(script).not.toContain('authenticated dashboard probes skipped because root MFA is enabled');
+});

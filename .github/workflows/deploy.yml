@@ -356,6 +356,11 @@ jobs:
           if (publicPaths.some(path => path.startsWith('/v1/dashboard/') || path.startsWith('/v1/auth/') || path.startsWith('/v1/billing'))) {
             throw new Error('private API routes are exposed in public OpenAPI');
           }
+          const artifactApiResponse = await fetchWithTimeout(`${base}/v1/artifacts?limit=1`, { headers });
+          const artifactApiPage = await readObject(artifactApiResponse);
+          if (artifactApiResponse.status !== 200 || !Array.isArray(artifactApiPage.artifacts) || typeof artifactApiPage.total !== 'number') {
+            throw new Error(`API-key artifact listing failed: HTTP ${artifactApiResponse.status}, code=${artifactApiPage.code ?? 'unknown'}`);
+          }
           const csp = deploymentStatusResponse.headers.get('content-security-policy') ?? '';
           if (!csp.includes('style-src-elem')) throw new Error('content security policy is incomplete');
           const session = await fetchWithTimeout(`${base}/v1/auth/session`);
@@ -436,6 +441,7 @@ jobs:
             body: JSON.stringify({ password: process.env.ADMIN_PASSWORD }),
           });
           let authenticatedRoutes = false;
+          let rootMfaChallenge = false;
           if (login.ok) {
             const cookie = login.headers.get('set-cookie')?.split(';', 1)[0];
             const cookieHeaders = { cookie: cookie ?? '' };
@@ -448,8 +454,8 @@ jobs:
             }
           } else {
             const loginError = await readObject(login);
-            if (loginError.code !== 'mfa_required') throw new Error(`smoke login failed: HTTP ${login.status}, code=${loginError.code ?? 'unknown'}`);
-            console.log('authenticated dashboard probes skipped because root MFA is enabled');
+            if (login.status !== 401 || loginError.code !== 'mfa_required') throw new Error(`smoke login failed: HTTP ${login.status}, code=${loginError.code ?? 'unknown'}`);
+            rootMfaChallenge = true;
           }
           await fs.stat(process.env.DEVICE_BRIDGE_SOCKET || '/run/dkrypt/device-bridge.sock');
           const processIds = (await fs.readdir('/proc')).filter((entry) => /^\d+$/.test(entry));
@@ -501,6 +507,8 @@ jobs:
             rateLimit: true,
             authGuards: true,
             authenticatedRoutes,
+            rootMfaChallenge,
+            apiKeyArtifactListing: true,
           }));
           JS
           }
