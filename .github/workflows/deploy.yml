@@ -39,6 +39,10 @@ jobs:
         run: |
           cd packages/dkrypt && bun install --frozen-lockfile
           cd web && bun install --frozen-lockfile
+      - name: Audit dependencies
+        run: |
+          cd packages/dkrypt && bun audit --audit-level high
+          cd web && bun audit --audit-level high
       - name: Run Moon checks
         run: bunx @moonrepo/cli@2.4.6 run dkrypt:check
       - name: Run isolated service load scenarios
@@ -74,7 +78,7 @@ jobs:
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     outputs:
-      digest: ${{ steps.build.outputs.digest }}
+      digest: ${{ steps.publish.outputs.digest }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -93,31 +97,56 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/build-push-action@v7
-        id: build
+        id: build-candidate
         with:
           context: .
           file: packages/dkrypt/Dockerfile
-          push: true
+          load: true
+          push: false
           build-args: |
             BUILD_REF=${{ github.sha }}
             DEPLOYMENT_ID=${{ github.run_id }}
           tags: |
             ghcr.io/${{ github.repository }}:${{ github.sha }}
-            ghcr.io/${{ github.repository }}:main
       - name: Generate image SBOM
         uses: anchore/sbom-action@v0.24.2
         with:
-          image: ghcr.io/${{ github.repository }}@${{ steps.build.outputs.digest }}
+          image: ghcr.io/${{ github.repository }}:${{ github.sha }}
           output-file: dkrypt-sbom.spdx.json
           format: spdx-json
+      - name: Verify Rust bridge dependencies in SBOM
+        run: jq -e '.packages | any(.name == "idevice")' dkrypt-sbom.spdx.json > /dev/null
       - name: Scan image vulnerabilities
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: ghcr.io/${{ github.repository }}@${{ steps.build.outputs.digest }}
+          image-ref: ghcr.io/${{ github.repository }}:${{ github.sha }}
           format: table
           severity: CRITICAL,HIGH
           ignore-unfixed: true
-          exit-code: '0'
+          exit-code: '1'
+      - name: Scan SBOM vulnerabilities
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: sbom
+          scan-ref: dkrypt-sbom.spdx.json
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'
+      - name: Publish scanned image
+        id: publish
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          push_output="$(docker push "${IMAGE}:${IMAGE_TAG}" 2>&1)"
+          printf '%s\n' "$push_output"
+          digest="$(printf '%s\n' "$push_output" | sed -nE 's/.*digest: (sha256:[0-9a-f]{64}).*/\1/p' | tail -n 1)"
+          test -n "$digest"
+          docker tag "${IMAGE}:${IMAGE_TAG}" "${IMAGE}:main"
+          docker push "${IMAGE}:main"
+          printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
       - name: Upload image SBOM
         uses: actions/upload-artifact@v7
         with:
@@ -128,14 +157,14 @@ jobs:
         uses: actions/attest-build-provenance@v4
         with:
           subject-name: ghcr.io/${{ github.repository }}
-          subject-digest: ${{ steps.build.outputs.digest }}
+          subject-digest: ${{ steps.publish.outputs.digest }}
           push-to-registry: true
       - name: Install Cosign
         uses: sigstore/cosign-installer@v4.1.2
       - name: Sign image and attest SBOM
         env:
           COSIGN_EXPERIMENTAL: '1'
-          IMAGE: ghcr.io/${{ github.repository }}@${{ steps.build.outputs.digest }}
+          IMAGE: ghcr.io/${{ github.repository }}@${{ steps.publish.outputs.digest }}
         run: |
           cosign sign --yes "$IMAGE"
           cosign attest --yes --predicate dkrypt-sbom.spdx.json --type https://spdx.dev/Document "$IMAGE"

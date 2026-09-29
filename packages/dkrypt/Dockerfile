@@ -1,14 +1,25 @@
-FROM golang:1.27-bookworm AS ipadecrypt
-ARG IPADECRYPT_VERSION=v0.7.3
-RUN go install github.com/londek/ipadecrypt/cmd/ipadecrypt@${IPADECRYPT_VERSION}
+FROM golang:1.27.1-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195 AS ipadecrypt
+ARG IPADECRYPT_VERSION=v0.7.5
+RUN set -eu; \
+  go mod download github.com/londek/ipadecrypt@${IPADECRYPT_VERSION}; \
+  source="$(go env GOMODCACHE)/github.com/londek/ipadecrypt@${IPADECRYPT_VERSION}"; \
+  mkdir -p /src/ipadecrypt; \
+  cp -R "${source}"/. /src/ipadecrypt/; \
+  cd /src/ipadecrypt; \
+  go mod edit -require=golang.org/x/crypto@v0.55.0 -require=golang.org/x/mod@v0.40.0 -require=golang.org/x/net@v0.56.0; \
+  go mod tidy; \
+  go test ./...; \
+  go build -trimpath -o /go/bin/ipadecrypt ./cmd/ipadecrypt
 
-FROM rust:1.98-bookworm AS device-bridge
+FROM rust:1.98.0-bookworm@sha256:82150a52ec202c1b14d7817e14516c392bb7f5cfebd88f1ed531cb37ebd39922 AS device-bridge
 WORKDIR /bridge
 COPY packages/device-bridge/Cargo.toml packages/device-bridge/Cargo.lock ./
 COPY packages/device-bridge/src ./src
-RUN cargo build --release --locked
+ARG CARGO_AUDITABLE_VERSION=0.7.4
+RUN cargo install cargo-auditable --version ${CARGO_AUDITABLE_VERSION} --locked \
+  && cargo auditable build --release --locked
 
-FROM debian:bookworm-slim AS netmuxd
+FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251 AS netmuxd
 ARG NETMUXD_VERSION=v0.4.3
 ARG TARGETARCH=amd64
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl tar && rm -rf /var/lib/apt/lists/*
@@ -23,7 +34,7 @@ RUN set -eu; \
   tar --extract --file /tmp/netmuxd.tar.gz --directory /usr/local/bin; \
   chmod 0755 /usr/local/bin/netmuxd
 
-FROM oven/bun:1.4.2-slim AS web
+FROM oven/bun:1.4.2-slim@sha256:cb3bbbb08e13a4a2ff400f24c7a2a1d5efa83f6ef8544d52d95a519631e2fc61 AS web
 WORKDIR /web
 COPY packages/dkrypt/web/package.json packages/dkrypt/web/bun.lock ./
 RUN bun install --frozen-lockfile
@@ -32,12 +43,12 @@ ARG BUILD_REF=development
 ENV VITE_BUILD_REF=$BUILD_REF
 RUN bun run build
 
-FROM oven/bun:1.4.2-slim
+FROM oven/bun:1.4.2-slim@sha256:cb3bbbb08e13a4a2ff400f24c7a2a1d5efa83f6ef8544d52d95a519631e2fc61
 WORKDIR /app
 ARG BUILD_REF=development
 ARG DEPLOYMENT_ID=local
 
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates findutils libusb-1.0-0 openssh-client passwd util-linux \
+RUN apt-get update && apt-get upgrade -y --no-install-recommends && apt-get install -y --no-install-recommends ca-certificates findutils libusb-1.0-0 openssh-client passwd util-linux \
   && rm -rf /var/lib/apt/lists/*
 
 RUN groupadd --system --gid 10001 dkrypt && useradd --system --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin dkrypt
