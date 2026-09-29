@@ -563,6 +563,76 @@ test('IPA Library keeps loaded artifacts visible while scrolling its virtualized
   await expect.poll(() => artifactListRequestCount).toBe(1);
 });
 
+test('IPA Library never renders an empty viewport during repeated scrolling', async ({ page }) => {
+  await mockStableDashboardEvents(page);
+  await mockAuthenticatedDashboard(page, '1');
+  let artifactListRequestCount = 0;
+  const artifacts = Array.from({ length: 120 }, (_, index) => ({
+    id: `scroll-stress-artifact-${index}`,
+    key: `com.example.stress${index}:appstore:${index}`,
+    projectIds: ['default'],
+    bundleId: `com.example.stress${index}`,
+    channel: 'appstore' as const,
+    versionLabel: '1.0.0',
+    fileSizeBytes: 1024,
+    sha256: 'a'.repeat(64),
+    createdAt: '2026-09-25T12:00:00.000Z',
+    lastAccessedAt: '2026-09-25T13:00:00.000Z',
+    accessCount: 1,
+    sourceJobId: `job-scroll-stress-artifact-${index}`,
+    warnings: [],
+    fileUrl: `/v1/dashboard/artifacts/scroll-stress-artifact-${index}/file`,
+  }));
+  await page.route('**/v1/dashboard/apps/metadata?*', async (route) => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ entries: [] }) });
+  });
+  await page.route('**/v1/dashboard/artifacts*', async (route) => {
+    artifactListRequestCount += 1;
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ artifacts, total: artifacts.length, totalBytes: 122_880, maxBytes: 245_760 }),
+    });
+  });
+
+  await page.goto('/?tab=home');
+  const viewport = page.getByRole('region', { name: 'IPA library artifacts scroll area' });
+  await expect(viewport.locator('[role="listitem"]').first()).toBeVisible();
+
+  const emptyVisibleFrames = await viewport.evaluate(async (element) => {
+    const list = element.querySelector<HTMLElement>('[role="list"]');
+    if (!list) throw new Error('IPA library list was not rendered');
+    let emptyFrames = 0;
+    let sampling = true;
+    const sample = (): void => {
+      if (!sampling) return;
+      const viewportBounds = element.getBoundingClientRect();
+      const hasVisibleRow = Array.from(list.querySelectorAll<HTMLElement>('[role="listitem"]')).some((row) => {
+        const rowBounds = row.getBoundingClientRect();
+        return rowBounds.bottom > viewportBounds.top && rowBounds.top < viewportBounds.bottom;
+      });
+      if (!hasVisibleRow) emptyFrames += 1;
+      requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    const step = Math.max(1200, Math.floor(element.clientHeight * 3.5));
+    for (let pass = 0; pass < 2; pass += 1) {
+      for (const direction of [1, -1]) {
+        const limit = direction > 0 ? element.scrollHeight : 0;
+        for (let position = direction > 0 ? 0 : element.scrollHeight; direction > 0 ? position < limit : position > limit; position += direction * step) {
+          element.scrollTop = Math.max(0, Math.min(position, element.scrollHeight - element.clientHeight));
+          await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        }
+      }
+    }
+    sampling = false;
+    return emptyFrames;
+  });
+
+  expect(emptyVisibleFrames).toBe(0);
+  await expect.poll(() => artifactListRequestCount).toBe(1);
+});
+
 test('IPA Library discards a page response from a source filter that is no longer active', async ({ page }) => {
   await mockStableDashboardEvents(page);
   await mockAuthenticatedDashboard(page, '1');
