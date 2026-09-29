@@ -845,7 +845,7 @@ function readDkryptSshPublicKey(value: string): string {
 async function installDkryptSshPublicKey(connection: DeviceClient): Promise<void> {
   const publicKey = readDkryptSshPublicKey(await readFile(config.deviceSshPublicKeyPath, 'utf8'));
   const quotedKey = shellQuote(publicKey);
-  const command = `set -e; ssh_home="\${HOME:-/var/jb/var/mobile}"; ssh_dir="$ssh_home/.ssh"; authorized_keys="$ssh_dir/authorized_keys"; mkdir -p "$ssh_dir"; chmod 700 "$ssh_dir"; touch "$authorized_keys"; chmod 600 "$authorized_keys"; if ! grep -Fqx ${quotedKey} "$authorized_keys"; then printf '%s\\n' ${quotedKey} >> "$authorized_keys"; fi`;
+  const command = `set -e; ssh_home=/var/mobile; ssh_dir="$ssh_home/.ssh"; authorized_keys="$ssh_dir/authorized_keys"; mkdir -p "$ssh_dir"; chmod 700 "$ssh_dir"; touch "$authorized_keys"; chmod 600 "$authorized_keys"; if ! grep -Fqx ${quotedKey} "$authorized_keys"; then printf '%s\\n' ${quotedKey} >> "$authorized_keys"; fi; if ! grep -Fqx ${quotedKey} "$authorized_keys"; then printf '%s\\n' 'dkrypt SSH key was not saved in the mobile account authorized keys' >&2; exit 1; fi`;
   const { code, stderr } = await execCommand(connection, command, REMOTE_COMMAND_TIMEOUT_MS);
   if (code !== 0) throw new Error(stderr.trim() || 'could not authorize dkrypt SSH access on the device');
 }
