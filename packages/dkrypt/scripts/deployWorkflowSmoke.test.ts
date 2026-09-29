@@ -10,10 +10,49 @@ function deploymentSmokeScripts(): string[] {
     });
 }
 
+function workflowLines(): string[] {
+  return readFileSync(new URL('../../../.github/workflows/deploy.yml', import.meta.url), 'utf8').split(/\r?\n/);
+}
+
+function workflowJob(name: string): string[] {
+  const lines = workflowLines();
+  const start = lines.indexOf(`  ${name}:`);
+  if (start < 0) throw new Error(`missing workflow job ${name}`);
+  const end = lines.findIndex((line, index) => index > start && /^  [a-z][a-z0-9_-]*:$/.test(line));
+  return lines.slice(start, end < 0 ? lines.length : end);
+}
+
+function permissionsFor(lines: string[], headingIndent: number): Record<string, string> {
+  const heading = `${' '.repeat(headingIndent)}permissions:`;
+  const headingIndex = lines.indexOf(heading);
+  if (headingIndex < 0) return {};
+  const rowPrefix = ' '.repeat(headingIndent + 2);
+  const permissions: Record<string, string> = {};
+  for (const line of lines.slice(headingIndex + 1)) {
+    if (!line.startsWith(rowPrefix)) break;
+    const match = line.match(/^\s+([a-z-]+): ([a-z]+)$/);
+    if (match) permissions[match[1]] = match[2];
+  }
+  return permissions;
+}
+
 test('deployment smoke scripts are valid JavaScript before they reach the homelab', () => {
   const scripts = deploymentSmokeScripts();
   expect(scripts.length).toBeGreaterThan(0);
   for (const script of scripts) expect(() => new Bun.Transpiler({ loader: 'js' }).transformSync(script)).not.toThrow();
+});
+
+test('workflow grants supply-chain permissions only to the image publisher', () => {
+  expect(permissionsFor(workflowLines(), 0)).toEqual({ contents: 'read' });
+  expect(permissionsFor(workflowJob('ci'), 4)).toEqual({});
+  expect(permissionsFor(workflowJob('image'), 4)).toEqual({
+    contents: 'read',
+    packages: 'write',
+    'id-token': 'write',
+    attestations: 'write',
+    'artifact-metadata': 'write',
+  });
+  expect(permissionsFor(workflowJob('deploy'), 4)).toEqual({ packages: 'read' });
 });
 
 test('deployment smoke syntax validation detects duplicate declarations', () => {

@@ -13,9 +13,6 @@ concurrency:
 
 permissions:
   contents: read
-  packages: write
-  id-token: write
-  attestations: write
 
 jobs:
   ci:
@@ -77,6 +74,12 @@ jobs:
     needs: ci
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     outputs:
       digest: ${{ steps.publish.outputs.digest }}
     steps:
@@ -174,6 +177,8 @@ jobs:
     needs: image
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     runs-on: [self-hosted, homelab]
+    permissions:
+      packages: read
     timeout-minutes: 15
     env:
       EXPECTED_BUILD_REF: ${{ github.sha }}
