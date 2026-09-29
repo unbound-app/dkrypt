@@ -39,7 +39,7 @@ describe('state migrations', () => {
 
     const migrated = JSON.parse(await readFile(path.join(stateDir, 'state.json'), 'utf8')) as {
       version: number;
-      roles: Array<{ permissions: string }>;
+      roles: Array<{ id: string; permissions: string; isDefault: boolean }>;
       projects: Array<{ id: string; isDefault: boolean }>;
       jobHistory: Array<{ id: string; projectId?: string }>;
       backupHistory: Array<{ id: string; restoreDrillStatus: string }>;
@@ -47,6 +47,7 @@ describe('state migrations', () => {
     };
     expect(migrated.version).toBe(18);
     expect(migrated.roles[0]?.permissions).toBe('0');
+    expect(migrated.roles.filter((role) => role.isDefault)).toEqual([expect.objectContaining({ id: 'everyone' })]);
     expect(migrated.projects).toContainEqual(expect.objectContaining({ id: 'default', isDefault: true }));
     expect(migrated.jobHistory).toContainEqual(expect.objectContaining({ id: 'legacy-job', projectId: 'default' }));
     expect(migrated.backupHistory).toContainEqual(expect.objectContaining({ id: 'legacy-backup', restoreDrillStatus: 'not_run' }));

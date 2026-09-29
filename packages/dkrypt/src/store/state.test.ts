@@ -46,6 +46,7 @@ import {
   getDiscordRolePerks,
   getInsightsSummary,
   getProject,
+  getRole,
   getEffectiveDevices,
   getTestFlightSubscription,
   getWatchDispatchTargets,
@@ -600,6 +601,7 @@ describe('exportBackup / importBackup', () => {
     const result = importBackup(backup, 'tester');
     expect(result.ok).toBe(true);
     expect(listAllowedUsers().some((u) => u.username === 'roundtrip-user')).toBe(true);
+    expect(getRole(role.id)).toMatchObject({ id: role.id, name: 'Roundtrip Role' });
     expect(getProject(project.id)?.memberIds).toContain('roundtrip-user');
   });
 
@@ -725,6 +727,38 @@ describe('exportBackup / importBackup', () => {
     const result = importBackup({ ...backup, allowedUsers: [{ username: 'bad' }] }, 'tester');
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/allowedUsers/);
+  });
+
+  test('rejects case-colliding account names before restoring any data', () => {
+    const backup = exportBackup();
+    const username = `backup-user-${randomUUID()}`;
+    const allowedUsers = [
+      { username, roleIds: [], addedAt: Date.now() },
+      { username: username.toUpperCase(), roleIds: [], addedAt: Date.now() },
+    ];
+    const before = exportBackup();
+
+    const result = importBackup({ ...backup, allowedUsers }, 'tester');
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/duplicate usernames/);
+    expect(exportBackup().allowedUsers).toEqual(before.allowedUsers);
+  });
+
+  test('rejects multiple default roles before restoring any data', () => {
+    const backup = exportBackup();
+    const defaultRole = backup.roles.find((role) => role.isDefault)!;
+    const tampered = {
+      ...backup,
+      roles: [...backup.roles, { ...defaultRole, id: randomUUID() }],
+    };
+    const before = exportBackup();
+
+    const result = importBackup(tampered, 'tester');
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/exactly one default role/);
+    expect(exportBackup().roles).toEqual(before.roles);
   });
 
   test('rejects a non-object payload', () => {

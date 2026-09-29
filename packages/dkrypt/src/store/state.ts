@@ -25,6 +25,7 @@ import {
 } from '#identity.js';
 import { log } from '#logger.js';
 import type { JobTimelineEvent, TestFlightJobSource } from '#jobs/types.js';
+import { createAccountRepository, isAllowedUserRecord, isRoleRecord, isUserMfaRecord } from '#store/accountRepository.js';
 import { createBillingRepository } from '#store/billingRepository.js';
 import { createApiKeyRepository, isApiKeyRecordShape } from '#store/apiKeyRepository.js';
 import { categorizeFailure } from '#util/failureCategory.js';
@@ -687,6 +688,7 @@ const stateDatabase: StateDatabase = openStateDatabase({
   migrationDryRun: config.stateDbMigrationDryRun,
 });
 const apiKeyRepository = createApiKeyRepository(stateDatabase.db);
+const accountRepository = createAccountRepository(stateDatabase.db);
 const deviceHistoryRepository = createDeviceHistoryRepository(stateDatabase.db);
 const deviceHealthRepository = createDeviceHealthRepository(stateDatabase.db);
 const notificationRepository = createNotificationRepository(stateDatabase.db);
@@ -1208,6 +1210,11 @@ function asStateRecord(value: unknown): Record<string, unknown> {
 }
 
 function normalizeLoadedState(migrated: PersistedState): PersistedState {
+  migrated.allowedUsers = Array.isArray(migrated.allowedUsers)
+    ? migrated.allowedUsers.map((user) => ({ ...user, username: user.username.toLowerCase() }))
+    : [];
+  migrated.roles = Array.isArray(migrated.roles) ? migrated.roles : [];
+  if (!migrated.roles.some((role) => role.isDefault)) migrated.roles.push(seedDefaultRole(Date.now()));
   migrated.devices = migrated.devices.map(normalizeLoadedDevice);
   migrated.backupHistory = Array.isArray(migrated.backupHistory) ? migrated.backupHistory.map(normalizeBackupHistoryEntry) : [];
   migrated.schedulerRunHistory = normalizeLegacySchedulerRunHistory(migrated.schedulerRunHistory);
@@ -1216,6 +1223,7 @@ function normalizeLoadedState(migrated: PersistedState): PersistedState {
   migrated.notifications = Array.isArray(migrated.notifications) ? migrated.notifications.slice(0, MAX_NOTIFICATIONS) : [];
   migrated.testFlightSubscriptions = Array.isArray(migrated.testFlightSubscriptions) ? migrated.testFlightSubscriptions : [];
   validateProjectCollection(migrated.projects);
+  validateAccountCollections(migrated.allowedUsers, migrated.roles);
   return migrated;
 }
 
@@ -1224,6 +1232,16 @@ function validateProjectCollection(projects: ProjectRecord[]): void {
   const projectIds = new Set(projects.map((project) => project.id));
   if (projectIds.size !== projects.length || projects.filter((project) => project.isDefault).length !== 1 || projects.filter((project) => project.isDefault && project.id === DEFAULT_PROJECT_ID).length !== 1) {
     throw new Error('persistent project data must contain unique ids and one default workspace');
+  }
+}
+
+function validateAccountCollections(users: AllowedUser[], roles: Role[]): void {
+  if (!users.every(isAllowedUserRecord) || !roles.every(isRoleRecord)) throw new Error('persistent account or role data is malformed');
+  const userIds = users.map((user) => user.username.toLowerCase());
+  const roleIds = roles.map((role) => role.id);
+  if (new Set(userIds).size !== users.length) throw new Error('persistent account data contains duplicate usernames');
+  if (new Set(roleIds).size !== roles.length || roles.filter((role) => role.isDefault).length !== 1) {
+    throw new Error('persistent role data must contain unique ids and exactly one default role');
   }
 }
 
@@ -1332,6 +1350,17 @@ export function upsertAppCatalogEntries(entries: Array<Omit<AppCatalogEntry, 'up
 
 let dirty = false;
 const state: PersistedState = load();
+let persistedAllowedUsers = accountRepository.listUsers();
+let persistedRoles = accountRepository.listRoles();
+if ((persistedAllowedUsers.length === 0 && state.allowedUsers.length > 0) || (persistedRoles.length === 0 && state.roles.length > 0) || !accountRepository.hasCanonicalUserKeys()) {
+  accountRepository.replaceAll(state.allowedUsers, state.roles);
+  persistedAllowedUsers = accountRepository.listUsers();
+  persistedRoles = accountRepository.listRoles();
+}
+if (JSON.stringify(state.allowedUsers) !== JSON.stringify(persistedAllowedUsers) || JSON.stringify(state.roles) !== JSON.stringify(persistedRoles)) {
+  throw new Error('persistent account and role repositories do not match the state snapshot');
+}
+validateAccountCollections(state.allowedUsers, state.roles);
 let persistedApiKeys = apiKeyRepository.listAll();
 if (persistedApiKeys.length === 0 && state.apiKeys.length > 0) {
   apiKeyRepository.replaceAll(state.apiKeys);
@@ -1375,6 +1404,9 @@ function fsyncPath(filePath: string): void {
 
 function persistNow(additionalCollections: readonly StateCollectionReplacement[] = []): void {
   const collections = [...additionalCollections];
+  for (const replacement of accountRepository.collectionReplacements(state.allowedUsers, state.roles)) {
+    if (!collections.some((collection) => collection.table === replacement.table)) collections.push(replacement);
+  }
   if (!collections.some((collection) => collection.table === 'api_keys')) {
     collections.push(apiKeyRepository.collectionReplacement(state.apiKeys));
   }
@@ -1479,7 +1511,7 @@ function safeEqualStr(a: string, b: string): boolean {
 }
 
 export function listAllowedUsers(): AllowedUser[] {
-  return state.allowedUsers;
+  return accountRepository.listUsers();
 }
 
 export function getUserMfa(username: string): UserMfaRecord | undefined {
@@ -1537,7 +1569,7 @@ export function deletePasskey(userId: string, id: string): boolean {
 }
 
 export function listRoles(): Role[] {
-  return [...state.roles].sort((a, b) => a.position - b.position);
+  return accountRepository.listRoles().sort((a, b) => a.position - b.position);
 }
 
 export interface CreateProjectInput {
@@ -1650,7 +1682,7 @@ export function updateProject(id: string, patch: UpdateProjectInput, actor: stri
 }
 
 export function getRole(id: string): Role | undefined {
-  return state.roles.find((r) => r.id === id);
+  return accountRepository.findRole(id);
 }
 
 export function getUserEffectivePermissions(username: string): bigint {
@@ -4264,18 +4296,6 @@ export function deleteBackupSnapshot(id: string, actor: string): boolean {
   return true;
 }
 
-function isAllowedUserShape(value: unknown): value is AllowedUser {
-  if (typeof value !== 'object' || value === null) return false;
-  const u = value as Record<string, unknown>;
-  return (
-    typeof u.username === 'string' &&
-    typeof u.addedAt === 'number' &&
-    Array.isArray(u.roleIds) &&
-    u.roleIds.every((id) => typeof id === 'string') &&
-    (u.mfa === undefined || isUserMfaShape(u.mfa))
-  );
-}
-
 function isPasskeyCredentialShape(value: unknown): value is PasskeyCredential {
   if (typeof value !== 'object' || value === null) return false;
   const credential = value as Record<string, unknown>;
@@ -4290,31 +4310,6 @@ function isPasskeyCredentialShape(value: unknown): value is PasskeyCredential {
     (credential.name === undefined || typeof credential.name === 'string') &&
     typeof credential.createdAt === 'number' &&
     (credential.lastUsedAt === undefined || typeof credential.lastUsedAt === 'number')
-  );
-}
-
-function isUserMfaShape(value: unknown): value is UserMfaRecord {
-  if (typeof value !== 'object' || value === null) return false;
-  const mfa = value as Record<string, unknown>;
-  return (
-    typeof mfa.enabled === 'boolean' &&
-    (mfa.secretCiphertext === undefined || typeof mfa.secretCiphertext === 'string') &&
-    (mfa.pendingSecretCiphertext === undefined || typeof mfa.pendingSecretCiphertext === 'string') &&
-    (mfa.recoveryCodeHashes === undefined || (Array.isArray(mfa.recoveryCodeHashes) && mfa.recoveryCodeHashes.every((hash) => typeof hash === 'string'))) &&
-    (mfa.updatedAt === undefined || typeof mfa.updatedAt === 'number')
-  );
-}
-
-function isRoleShape(value: unknown): value is Role {
-  if (typeof value !== 'object' || value === null) return false;
-  const r = value as Record<string, unknown>;
-  return (
-    typeof r.id === 'string' &&
-    typeof r.name === 'string' &&
-    typeof r.color === 'string' &&
-    typeof r.permissions === 'string' &&
-    typeof r.position === 'number' &&
-    typeof r.isDefault === 'boolean'
   );
 }
 
@@ -4464,11 +4459,18 @@ function validateBackupPayload(raw: unknown): { ok: true; payload: ValidatedBack
   if (b.backupVersion !== 3 && b.backupVersion !== 4 && b.backupVersion !== 5 && b.backupVersion !== 6 && b.backupVersion !== 7 && b.backupVersion !== 8 && b.backupVersion !== BACKUP_VERSION) {
     return { ok: false, error: `unsupported backup version (expected 3, 4, 5, 6, 7, 8, or ${BACKUP_VERSION})` };
   }
-  if (!Array.isArray(b.allowedUsers) || !b.allowedUsers.every(isAllowedUserShape)) {
+  if (!Array.isArray(b.allowedUsers) || !b.allowedUsers.every(isAllowedUserRecord)) {
     return { ok: false, error: 'allowedUsers is missing or malformed' };
   }
-  if (!Array.isArray(b.roles) || !b.roles.every(isRoleShape) || !b.roles.some((r) => (r as Role).isDefault)) {
+  if (new Set((b.allowedUsers as AllowedUser[]).map((user) => user.username.toLowerCase())).size !== b.allowedUsers.length) {
+    return { ok: false, error: 'allowedUsers contains duplicate usernames' };
+  }
+  if (!Array.isArray(b.roles) || !b.roles.every(isRoleRecord)) {
     return { ok: false, error: 'roles is missing or malformed' };
+  }
+  const backupRoles = b.roles as Role[];
+  if (new Set(backupRoles.map((role) => role.id)).size !== backupRoles.length || backupRoles.filter((role) => role.isDefault).length !== 1) {
+    return { ok: false, error: 'roles must contain unique ids and exactly one default role' };
   }
   if (!Array.isArray(b.apiKeys) || !b.apiKeys.every(isApiKeyRecordShape)) {
     return { ok: false, error: 'apiKeys is missing or malformed' };
@@ -4500,7 +4502,7 @@ function validateBackupPayload(raw: unknown): { ok: true; payload: ValidatedBack
   if (typeof b.rootSessionVersion !== 'number') {
     return { ok: false, error: 'rootSessionVersion is missing or malformed' };
   }
-  if (b.rootMfa !== undefined && !isUserMfaShape(b.rootMfa)) {
+  if (b.rootMfa !== undefined && !isUserMfaRecord(b.rootMfa)) {
     return { ok: false, error: 'rootMfa is malformed' };
   }
   if (b.passkeys !== undefined && (!Array.isArray(b.passkeys) || !b.passkeys.every(isPasskeyCredentialShape))) {
@@ -4638,7 +4640,7 @@ export interface BackupRestoreDrill {
 
 function prepareBackupRestore(payload: ValidatedBackupPayload): Pick<PersistedState, 'allowedUsers' | 'roles' | 'projects' | 'apiKeys' | 'settings' | 'watches' | 'devices' | 'jobHistory' | 'auditLog' | 'schedulerRunHistory' | 'userPrefs' | 'apiKeyUsage' | 'rootSessionVersion' | 'apiKeyBundleUsage' | 'deviceActivity' | 'testFlightSubscriptions' | 'rootMfa' | 'passkeys'> {
   return {
-    allowedUsers: payload.allowedUsers,
+    allowedUsers: payload.allowedUsers.map((user) => ({ ...user, username: user.username.toLowerCase() })),
     roles: payload.roles.map((role) => ({ ...role, permissions: serializeBits(consolidatePermissionBits(upgradePermissionBits(parseBits(role.permissions)))) })),
     projects: payload.projects,
     apiKeys: payload.apiKeys.map((key) => ({ ...key, pendingReveal: undefined })),
@@ -4659,10 +4661,15 @@ function prepareBackupRestore(payload: ValidatedBackupPayload): Pick<PersistedSt
   };
 }
 
-function backupDatabaseCollections(payload: ValidatedBackupPayload, projects: ProjectRecord[] = payload.projects): StateCollectionReplacement[] {
+function backupDatabaseCollections(
+  payload: ValidatedBackupPayload,
+  projects: ProjectRecord[] = payload.projects,
+  accounts: Pick<PersistedState, 'allowedUsers' | 'roles'> = payload,
+): StateCollectionReplacement[] {
   return [
     ...billingSnapshotCollections(payload.billing),
     ...identitySnapshotCollections(payload.identities),
+    ...accountRepository.collectionReplacements(accounts.allowedUsers, accounts.roles),
     projectCollectionReplacement(projects),
   ];
 }
@@ -4695,7 +4702,7 @@ function temporaryDatabaseRestoreCheck(payload: ValidatedBackupPayload, restored
   try {
     let database = openStateDatabase(options);
     try {
-      database.writeState(restoredState, undefined, [...backupDatabaseCollections(payload), ...additionalCollections]);
+      database.writeState(restoredState, undefined, [...backupDatabaseCollections(payload, restored.projects, restored), ...additionalCollections]);
       database.integrityStatus();
     } finally {
       database.close();
@@ -4711,6 +4718,15 @@ function temporaryDatabaseRestoreCheck(payload: ValidatedBackupPayload, restored
       const normalized = normalizeLoadedState(migrate(asStateRecord(persistedState)));
       if (normalized.version !== state.version) {
         return { label: 'Temporary SQLite restore', ok: false, detail: `Restored state migrated to unsupported version ${normalized.version}` };
+      }
+
+      const accounts = createAccountRepository(database.db);
+      if (
+        !accounts.hasCanonicalUserKeys() ||
+        !sameRecordsByKey(accounts.listUsers(), restored.allowedUsers, (user) => user.username) ||
+        !sameRecordsByKey(accounts.listRoles(), restored.roles, (role) => role.id)
+      ) {
+        return { label: 'Temporary SQLite restore', ok: false, detail: 'Account and role records did not survive a database reopen' };
       }
 
       const billingRecords = readStateCollection(database.db, 'billing_records');
@@ -4743,7 +4759,7 @@ function temporaryDatabaseRestoreCheck(payload: ValidatedBackupPayload, restored
         return { label: 'Temporary SQLite restore', ok: false, detail: 'Identity records did not survive a database reopen' };
       }
 
-      return { label: 'Temporary SQLite restore', ok: true, detail: `SQLite schema ${database.schemaVersion} reopened with state, billing, and identity records intact` };
+      return { label: 'Temporary SQLite restore', ok: true, detail: `SQLite schema ${database.schemaVersion} reopened with state, accounts, roles, billing, and identity records intact` };
     } finally {
       database.close();
     }
@@ -4803,6 +4819,7 @@ export function importBackup(raw: unknown, actor: string): ImportBackupResult {
   }
   restored.projects = preservedProjects.projects;
   const artifactCollections = artifactProjectLinksReplacement(b.artifactProjectLinks, currentArtifactLinks);
+  const restoreCollections = [...backupDatabaseCollections(b, restored.projects, restored), ...artifactCollections];
   const checks = backupRestoreChecks(b, restored, artifactCollections);
   if (checks.some((check) => !check.ok)) {
     return { ok: false, error: `backup restore test failed: ${checks.filter((check) => !check.ok).map((check) => check.label).join(', ')}` };
@@ -4823,7 +4840,7 @@ export function importBackup(raw: unknown, actor: string): ImportBackupResult {
   try {
     replaceBillingSnapshot(b.billing, { persist: false });
     replaceIdentitySnapshot(b.identities, { persist: false });
-    stateDatabase.writeState(restoredState, undefined, [...backupDatabaseCollections(b, restored.projects), ...artifactCollections]);
+    stateDatabase.writeState(restoredState, undefined, restoreCollections);
   } catch (error) {
     replaceBillingSnapshot(previousBilling, { persist: false });
     replaceIdentitySnapshot(previousIdentities, { persist: false });
