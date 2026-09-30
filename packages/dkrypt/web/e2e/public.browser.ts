@@ -1946,6 +1946,21 @@ test('populated device management and preflight dialog meet accessibility checks
   await expectAccessible(page);
 });
 
+test('first-time device setup explains USB pairing without asking for manual Wi-Fi connection details', async ({ page }) => {
+  await mockAuthenticatedDashboard(page, '128');
+  await page.route('**/v1/dashboard/devices/discover', async (route) => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ devices: [], scannedNetworks: [], warnings: [] }) });
+  });
+
+  await page.goto('/?tab=settings&stab=devices');
+  await page.getByRole('button', { name: 'Find a device' }).click();
+
+  await expect(page.getByText('Connect the device by USB for first-time setup. Paired Wi-Fi devices are discovered automatically afterward.', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Wi-Fi device address')).toHaveCount(0);
+  await expect(page.getByLabel('SSH port')).toHaveCount(0);
+  await expectAccessible(page);
+});
+
 test('IPA Library virtualizes loaded rows and reveals artifact provenance on demand', async ({ page }) => {
   const sha256 = 'a'.repeat(64);
   const warning = 'Payload/Example.app/Extensions/Share.appex/Share still encrypted (cryptid != 0)';

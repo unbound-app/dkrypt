@@ -220,9 +220,6 @@
   let setupExistingId = $state<string | undefined>();
   let setupCandidate = $state<DeviceDiscoveryCandidate | null>(null);
   let setupName = $state('');
-  let manualHost = $state('');
-  let manualPort = $state('22');
-  let manualUser = $state('mobile');
 
   let setupOpen = $state(false);
   let setupRunning = $state(false);
@@ -251,16 +248,6 @@
     setupResult = null;
     setupOpen = true;
     void runSetup(candidate);
-  }
-
-  function prepareManualSetup(): void {
-    const host = manualHost.trim();
-    const port = Number.parseInt(manualPort, 10);
-    if (!host || !Number.isInteger(port) || port < 1 || port > 65_535) {
-      showToast('Enter a valid Wi-Fi address and port', 'error');
-      return;
-    }
-    prepareSetup({ discoveryId: `manual-${host}`, name: host, transport: 'wifi', host, port, user: manualUser.trim() || 'mobile', source: 'wifi' });
   }
 
   async function runSetup(candidate: DeviceDiscoveryCandidate): Promise<void> {
@@ -419,11 +406,10 @@
 {#if canManageDevices}
   <Dialog open={discoveryOpen} onOpenChange={(value) => (discoveryOpen = value)} class="max-w-2xl">
     <div class="mb-1 flex items-center justify-between gap-3"><div class="text-sm font-semibold">Find a device</div><Button size="icon" variant="ghost" class="h-8 w-8" loading={discoveryLoading} onclick={() => void openDiscovery(setupExistingId)} aria-label="Scan again" title="Scan again"><RefreshCw class="h-3.5 w-3.5" /></Button></div>
-    <div class="mb-4 text-xs text-muted">USB devices and paired Wi-Fi devices appear automatically. dkrypt also checks reachable iOS SSH services on the local network.</div>
+    <div class="mb-4 text-xs text-muted">Connect the device by USB for first-time setup. Paired Wi-Fi devices are discovered automatically afterward.</div>
     {#if discoveryError}<div class="border-err/40 bg-err/10 text-err mb-3 rounded-lg border px-3 py-2 text-sm">{discoveryError}</div>{/if}
     {#if discovery?.warnings.length}<div class="border-warn/40 bg-warn/10 text-warn mb-3 rounded-lg border px-3 py-2 text-xs">{discovery.warnings.join(' · ')}</div>{/if}
-    {#if discoveryLoading}<div class="flex items-center justify-center gap-2 py-10 text-sm text-muted"><RefreshCw class="h-4 w-4 animate-spin" />Scanning for USB and Wi-Fi devices…</div>{:else if discovery?.devices.length}<div class="flex max-h-80 flex-col gap-2 overflow-auto">{#each discovery.devices as candidate (candidate.discoveryId)}<div class="border-border flex items-center gap-3 rounded-lg border p-3"><div class="bg-muted/40 flex h-8 w-8 shrink-0 items-center justify-center rounded-md">{#if candidate.transport === 'usb'}<Usb class="h-4 w-4" />{:else}<Wifi class="h-4 w-4" />{/if}</div><div class="min-w-0 flex-1"><div class="truncate text-sm font-medium">{candidate.name}</div><div class="truncate font-mono text-[11px] text-muted">{candidate.host ? `${candidate.user}@${candidate.host}:${candidate.port}` : candidate.udid}</div>{#if candidate.productType || candidate.productVersion}<div class="mt-0.5 text-[11px] text-muted">{candidate.productType ?? 'iDevice'}{candidate.productVersion ? ` · iOS ${candidate.productVersion}` : ''}</div>{/if}</div><Badge variant="secondary">{candidate.transport === 'usb' ? 'USB' : 'Wi-Fi'}</Badge><Button size="sm" onclick={() => prepareSetup(candidate)}>Set up</Button></div>{/each}</div>{:else}<EmptyState icon={Search} message="No iOS devices found on the connected networks." />{/if}
-    <div class="border-border/70 mt-4 border-t pt-4"><div class="mb-2 text-xs font-medium">Have the address already?</div><div class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]"><Input placeholder="192.168.2.158" bind:value={manualHost} aria-label="Wi-Fi device address" /><Input class="w-20" placeholder="22" aria-label="SSH port" bind:value={manualPort} /><Button variant="secondary" onclick={prepareManualSetup}>Use address</Button></div><div class="mt-1.5 text-[11px] text-muted">First-time Wi-Fi setup needs dkrypt’s key authorized on the device. USB setup can add it automatically.</div></div>
+    {#if discoveryLoading}<div class="flex items-center justify-center gap-2 py-10 text-sm text-muted"><RefreshCw class="h-4 w-4 animate-spin" />Scanning for USB and paired Wi-Fi devices…</div>{:else if discovery?.devices.length}<div class="flex max-h-80 flex-col gap-2 overflow-auto">{#each discovery.devices as candidate (candidate.discoveryId)}<div class="border-border flex items-center gap-3 rounded-lg border p-3"><div class="bg-muted/40 flex h-8 w-8 shrink-0 items-center justify-center rounded-md">{#if candidate.transport === 'usb'}<Usb class="h-4 w-4" />{:else}<Wifi class="h-4 w-4" />{/if}</div><div class="min-w-0 flex-1"><div class="truncate text-sm font-medium">{candidate.name}</div><div class="truncate font-mono text-[11px] text-muted">{candidate.host ? `${candidate.user}@${candidate.host}:${candidate.port}` : candidate.udid}</div>{#if candidate.productType || candidate.productVersion}<div class="mt-0.5 text-[11px] text-muted">{candidate.productType ?? 'iDevice'}{candidate.productVersion ? ` · iOS ${candidate.productVersion}` : ''}</div>{/if}</div><Badge variant="secondary">{candidate.transport === 'usb' ? 'USB' : 'Wi-Fi'}</Badge><Button size="sm" onclick={() => prepareSetup(candidate)}>Set up</Button></div>{/each}</div>{:else}<EmptyState icon={Search} message="No devices found. Connect the device by USB for first-time setup; paired Wi-Fi devices appear automatically." />{/if}
   </Dialog>
 
   <Dialog open={setupOpen} onOpenChange={(value) => (setupOpen = value)} class="max-w-xl">
