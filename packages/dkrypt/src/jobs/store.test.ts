@@ -598,6 +598,54 @@ test('defers a scheduler request for an existing queued job while its device is 
   }
 });
 
+test('defers a scheduler request for an existing job blocked by its owner concurrency limit', async () => {
+  await clearActiveTestJobs();
+  const originalUserConcurrencyCap = config.userConcurrencyCap;
+  const secondaryDevice = createDevice({ name: 'job-test-secondary-device', transport: 'wifi', host: '127.0.0.2' }, 'tests').id;
+  config.userConcurrencyCap = 1;
+  setCachedDeviceHealth(testDeviceId, { reachable: true, jailbreakAvailable: true, checkedAt: Date.now() });
+  setCachedDeviceHealth(secondaryDevice, { reachable: true, jailbreakAvailable: true, checkedAt: Date.now() });
+  const running = enqueueDecryptJob(`com.test.scheduler-concurrency-blocker.${crypto.randomUUID()}`, 'manual', {
+    queuedBy: 'scheduler-concurrency-owner',
+    preferredDeviceId: testDeviceId,
+  });
+  const bundleId = `com.test.scheduler-concurrency-deferred.${crypto.randomUUID()}`;
+  const queued = enqueueDecryptJob(bundleId, 'manual', {
+    queuedBy: 'scheduler-concurrency-owner',
+    preferredDeviceId: secondaryDevice,
+  });
+
+  try {
+    expect(running.status).toBe('running');
+    expect(queued.status).toBe('queued');
+
+    let deferredError: unknown;
+    try {
+      enqueueDecryptJob(bundleId, 'scheduler', {
+        preferredDeviceId: secondaryDevice,
+        deferWhenNoDispatchableDevice: true,
+      });
+    } catch (error) {
+      deferredError = error;
+    }
+
+    if (!(deferredError instanceof ScheduledJobDeferredError)) {
+      queued.deadlineAt = Date.now() - 1;
+      notifyDeviceDispatchStateChanged();
+    }
+
+    expect({ status: queued.status, error: queued.error }).toEqual({ status: 'queued', error: undefined });
+    expect(deferredError).toBeInstanceOf(ScheduledJobDeferredError);
+    expect(deferredError).toMatchObject({ message: expect.stringContaining('Waiting for your concurrency limit (1) to free up') });
+  } finally {
+    config.userConcurrencyCap = originalUserConcurrencyCap;
+    if (queued.status === 'queued') cancelQueuedJob(queued.id, 'scheduler concurrency test cleanup');
+    if (running.status === 'running') cancelJob(running.id, 'scheduler concurrency test cleanup');
+    await Promise.all([waitForJob(queued, 1_000), waitForJob(running, 1_000)]);
+    deleteDevice(secondaryDevice, 'tests');
+  }
+});
+
 test('retains the resolved minimum iOS version in the queued job', () => {
   const job = enqueueDecryptJob(`com.test.minimum-os.${crypto.randomUUID()}`, 'manual', { versionLabel: '2.0', minimumOsVersion: '17.0' });
   expect(job.minimumOsVersion).toBe('17.0');

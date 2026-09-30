@@ -521,13 +521,8 @@ export function getQueueReason(job: Job): string | undefined {
     return reasons.length === 1 ? `Waiting for a compatible device · ${reasons[0]}` : 'Waiting for a compatible device';
   }
 
-  if (config.userConcurrencyCap > 0 && job.queuedBy && queuedByActiveCount(job.queuedBy) >= config.userConcurrencyCap) {
-    return `Waiting for your concurrency limit (${config.userConcurrencyCap}) to free up`;
-  }
-  if (job.apiKeyId) {
-    const maxConcurrent = getApiKeyById(job.apiKeyId)?.maxConcurrent;
-    if (maxConcurrent && apiKeyActiveCount(job.apiKeyId) >= maxConcurrent) return `Waiting for API key concurrency limit (${maxConcurrent}) to free up`;
-  }
+  const concurrencyBlocker = getJobConcurrencyBlocker(job);
+  if (concurrencyBlocker) return concurrencyBlocker;
 
   const available = eligible.filter((device) => !busyDeviceIds.has(device.id));
   if (available.length === 0) {
@@ -710,6 +705,7 @@ export function getJobEligibleDeviceCount(job: Job): number {
 }
 
 function getJobDispatchableDeviceCount(job: Job): number {
+  if (getJobConcurrencyBlocker(job)) return 0;
   return getEffectiveDevices().filter((device) => device.enabled && !busyDeviceIds.has(device.id) && isJobDispatchable(job, device)).length;
 }
 
@@ -749,16 +745,25 @@ function apiKeyActiveCount(apiKeyId: string): number {
   return count;
 }
 
-function takeNextDispatchableJobId(device: DeviceRecord): string | undefined {
+function getJobConcurrencyBlocker(job: Job): string | undefined {
   const cap = config.userConcurrencyCap;
+  if (cap > 0 && job.queuedBy && queuedByActiveCount(job.queuedBy) >= cap) {
+    return `Waiting for your concurrency limit (${cap}) to free up`;
+  }
+  if (job.apiKeyId) {
+    const maxConcurrent = getApiKeyById(job.apiKeyId)?.maxConcurrent;
+    if (maxConcurrent && apiKeyActiveCount(job.apiKeyId) >= maxConcurrent) {
+      return `Waiting for API key concurrency limit (${maxConcurrent}) to free up`;
+    }
+  }
+  return undefined;
+}
+
+function takeNextDispatchableJobId(device: DeviceRecord): string | undefined {
   for (let i = 0; i < queue.length; i++) {
     const job = jobs.get(queue[i]);
     if (!job || !isJobDispatchable(job, device)) continue;
-    if (cap > 0 && job.queuedBy && queuedByActiveCount(job.queuedBy) >= cap) continue;
-    if (job.apiKeyId) {
-      const keyMaxConcurrent = getApiKeyById(job.apiKeyId)?.maxConcurrent;
-      if (keyMaxConcurrent && apiKeyActiveCount(job.apiKeyId) >= keyMaxConcurrent) continue;
-    }
+    if (getJobConcurrencyBlocker(job)) continue;
     queue.splice(i, 1);
     return job.id;
   }
