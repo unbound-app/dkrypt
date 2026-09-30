@@ -424,11 +424,9 @@
           {/if}
         {:else}
           <div
-            class="overflow-y-auto divide-y divide-border rounded-xl border border-border/70"
-            style={`height:min(34rem, ${Math.max(200, Math.min(artifacts.length * 204, 544))}px, 70dvh)`}
+            class="divide-y divide-border rounded-xl border border-border/70"
             role="region"
-            aria-label="IPA library artifacts scroll area"
-            tabindex="0"
+            aria-label="IPA Library"
           >
             <div role="list" aria-label="IPA library artifacts">
               {#each artifacts as artifact, index (artifact.id)}
