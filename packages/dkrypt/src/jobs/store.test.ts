@@ -532,7 +532,7 @@ test('does not queue a TestFlight scheduler job when every device is blocked', a
     try {
       enqueueDecryptJob(bundleId, 'scheduler', {
         testflight: { appId: 42, build: { id: 501, cfBundleShortVersion: '2.0', cfBundleVersion: '501', bundleId } },
-        deferWhenNoEligibleDevice: true,
+        deferWhenNoDispatchableDevice: true,
       });
     } catch (error) {
       deferredError = error;
@@ -543,6 +543,58 @@ test('does not queue a TestFlight scheduler job when every device is blocked', a
   } finally {
     setCachedDeviceHealth(testDeviceId, { reachable: true, jailbreakAvailable: true, checkedAt: Date.now() });
     notifyDeviceDispatchStateChanged();
+  }
+});
+
+test('defers a scheduler job while its only eligible device is already running work', async () => {
+  await clearActiveTestJobs();
+  setCachedDeviceHealth(testDeviceId, { reachable: true, jailbreakAvailable: true, checkedAt: Date.now() });
+  const running = enqueueDecryptJob(`com.test.scheduler-busy-blocker.${crypto.randomUUID()}`, 'manual', { preferredDeviceId: testDeviceId });
+  const bundleId = `com.test.scheduler-busy-deferred.${crypto.randomUUID()}`;
+
+  try {
+    expect(running.status).toBe('running');
+    let deferredError: unknown;
+    try {
+      enqueueDecryptJob(bundleId, 'scheduler', {
+        preferredDeviceId: testDeviceId,
+        deferWhenNoDispatchableDevice: true,
+      });
+    } catch (error) {
+      deferredError = error;
+    }
+    expect(deferredError).toBeInstanceOf(ScheduledJobDeferredError);
+    expect(deferredError).toMatchObject({ message: expect.stringContaining('job-test-device to become available') });
+    expect(getActiveJobs().filter((job) => job.bundleId === bundleId)).toHaveLength(0);
+  } finally {
+    if (running.status === 'running') cancelJob(running.id, 'scheduler busy device test cleanup');
+    await waitForJob(running, 1_000);
+  }
+});
+
+test('defers a scheduler request for an existing queued job while its device is busy', async () => {
+  await clearActiveTestJobs();
+  setCachedDeviceHealth(testDeviceId, { reachable: true, jailbreakAvailable: true, checkedAt: Date.now() });
+  const running = enqueueDecryptJob(`com.test.scheduler-existing-busy-blocker.${crypto.randomUUID()}`, 'manual', { preferredDeviceId: testDeviceId });
+  const bundleId = `com.test.scheduler-existing-busy.${crypto.randomUUID()}`;
+  const queued = enqueueDecryptJob(bundleId, 'manual', { preferredDeviceId: testDeviceId });
+
+  try {
+    expect(running.status).toBe('running');
+    expect(queued.status).toBe('queued');
+    let deferredError: unknown;
+    try {
+      enqueueDecryptJob(bundleId, 'scheduler', {
+        preferredDeviceId: testDeviceId,
+        deferWhenNoDispatchableDevice: true,
+      });
+    } catch (error) {
+      deferredError = error;
+    }
+    expect(deferredError).toBeInstanceOf(ScheduledJobDeferredError);
+    expect(queued.status).toBe('queued');
+  } finally {
+    await clearActiveTestJobs();
   }
 });
 

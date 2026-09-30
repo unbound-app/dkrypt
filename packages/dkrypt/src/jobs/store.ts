@@ -354,7 +354,7 @@ export interface EnqueueDecryptJobOptions {
   apiKeyId?: string;
   projectId?: string;
   minimumOsVersion?: string;
-  deferWhenNoEligibleDevice?: boolean;
+  deferWhenNoDispatchableDevice?: boolean;
 }
 
 export class ScheduledJobDeferredError extends Error {
@@ -362,6 +362,11 @@ export class ScheduledJobDeferredError extends Error {
     super(reason);
     this.name = 'ScheduledJobDeferredError';
   }
+}
+
+function deferScheduledJobIfUnavailable(source: JobSource, job: Job, enabled: boolean | undefined): void {
+  if (source !== 'scheduler' || !enabled || job.status !== 'queued' || getJobDispatchableDeviceCount(job) > 0) return;
+  throw new ScheduledJobDeferredError(getQueueReason(job) ?? 'No enabled device is available for this job');
 }
 
 export function enqueueDecryptJob(bundleId: string, source: JobSource, options: EnqueueDecryptJobOptions = {}): Job {
@@ -380,7 +385,10 @@ export function enqueueDecryptJob(bundleId: string, source: JobSource, options: 
   const lookup = { bundleId, externalVersionId, testFlightBuildId: testflight?.build.id, projectId };
   const existing = findActiveJobForBundle(lookup);
   if (existing) {
-    if (source === 'scheduler') extendJobDeadlineForScheduler(existing);
+    deferScheduledJobIfUnavailable(source, existing, options.deferWhenNoDispatchableDevice);
+    if (source === 'scheduler') {
+      extendJobDeadlineForScheduler(existing);
+    }
     return existing;
   }
   enforceProjectQuotas(projectId);
@@ -422,9 +430,7 @@ export function enqueueDecryptJob(bundleId: string, source: JobSource, options: 
     waiters: [],
   };
 
-  if (source === 'scheduler' && options.deferWhenNoEligibleDevice && getJobEligibleDeviceCount(job) === 0) {
-    throw new ScheduledJobDeferredError(getQueueReason(job) ?? 'No enabled device is eligible for this job');
-  }
+  deferScheduledJobIfUnavailable(source, job, options.deferWhenNoDispatchableDevice);
 
   jobs.set(job.id, job);
   if (source === 'scheduler') {
@@ -701,6 +707,10 @@ export function isJobDispatchable(job: Job, device: DeviceRecord): boolean {
 
 export function getJobEligibleDeviceCount(job: Job): number {
   return getEffectiveDevices().filter((device) => device.enabled && isJobDispatchable(job, device)).length;
+}
+
+function getJobDispatchableDeviceCount(job: Job): number {
+  return getEffectiveDevices().filter((device) => device.enabled && !busyDeviceIds.has(device.id) && isJobDispatchable(job, device)).length;
 }
 
 export function notifyDeviceDispatchStateChanged(): void {

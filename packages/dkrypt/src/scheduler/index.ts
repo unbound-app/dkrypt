@@ -231,11 +231,11 @@ function enqueueScheduledDecryptJob(bundleId: string, options: EnqueueDecryptJob
   try {
     return {
       kind: 'job',
-      job: enqueueDecryptJob(bundleId, 'scheduler', { ...options, deferWhenNoEligibleDevice: true }),
+      job: enqueueDecryptJob(bundleId, 'scheduler', { ...options, deferWhenNoDispatchableDevice: true }),
     };
   } catch (error) {
     if (!(error instanceof ScheduledJobDeferredError)) throw error;
-    log.info('scheduled decrypt deferred until a device is eligible', { bundleId, reason: error.message });
+    log.info('scheduled decrypt deferred because no device can start the job', { bundleId, reason: error.message });
     return { kind: 'deferred', reason: error.message };
   }
 }
