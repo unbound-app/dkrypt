@@ -1202,6 +1202,8 @@ function normalizeLegacySchedulerRunHistory(entries: unknown): SchedulerRunEntry
   return (entries as Record<string, unknown>[]).map((e) => ({
     id: typeof e.id === 'string' ? e.id : randomUUID(),
     ts: e.ts as number,
+    ...(typeof e.watchId === 'string' ? { watchId: e.watchId } : {}),
+    ...(typeof e.bundleId === 'string' ? { bundleId: e.bundleId } : {}),
     appStore: normalizeLegacySchedulerRunOutcome(e.appStore),
     testflight: normalizeLegacySchedulerRunOutcome(e.testflight),
   }));
@@ -1236,7 +1238,7 @@ function load(): PersistedState {
   const stored = stateDatabase.readState({ legacyMirrorAvailable: existsSync(statePath) });
   if (stored !== undefined) {
     const storedRecord = asStateRecord(stored);
-    const migrated = normalizeLoadedState(migrate(storedRecord));
+    const migrated = normalizeLoadedState(migrate(structuredClone(storedRecord)));
     if (JSON.stringify(stored) !== JSON.stringify(migrated)) {
       assertStructuredIndexesMatchSnapshot(storedRecord, migrated);
       stateDatabase.writeState(migrated, statePath);

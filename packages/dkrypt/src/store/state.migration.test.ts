@@ -30,6 +30,63 @@ async function runStateModule(stateDir: string, script = "await import('./src/st
 }
 
 describe('state migrations', () => {
+  test('persists normalized scheduler history before validating its SQLite repository', async () => {
+    const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-scheduler-normalization-'));
+    try {
+      const initialLoad = await runStateModule(stateDir);
+      expect(initialLoad.exitCode).toBe(0);
+
+      const database = openStateDatabase({ stateDir, filename: 'state.sqlite' });
+      const entry = {
+        id: 'scheduler-run-legacy-shape',
+        ts: 100,
+        watchId: 'watch-a',
+        bundleId: 'com.example.app',
+        appStore: { reason: 'dispatched' },
+        testflight: { reason: 'no eligible build' },
+      };
+
+      try {
+        const state = database.readState() as Record<string, unknown>;
+        state.schedulerRunHistory = [entry];
+        const payload = JSON.stringify(state);
+        database.db.query('UPDATE state_snapshots SET payload = ?, sha256 = ?, updated_at = ? WHERE id = 1;')
+          .run(payload, createHash('sha256').update(payload).digest('hex'), Date.now());
+        database.db.query('DELETE FROM scheduler_runs;').run();
+        database.db.query('INSERT INTO scheduler_runs (id, payload, updated_at) VALUES (?, ?, ?);')
+          .run(entry.id, JSON.stringify(entry), entry.ts);
+      } finally {
+        database.close();
+      }
+
+      const reload = await runStateModule(stateDir);
+      expect(reload.exitCode).toBe(0);
+      const normalizedDatabase = openStateDatabase({ stateDir, filename: 'state.sqlite' });
+      try {
+        expect(normalizedDatabase.readState()).toMatchObject({
+          schedulerRunHistory: [{
+            id: entry.id,
+            watchId: entry.watchId,
+            bundleId: entry.bundleId,
+            appStore: { ok: true, triggered: false, reason: 'dispatched' },
+            testflight: { ok: true, triggered: false, reason: 'no eligible build' },
+          }],
+        });
+        expect(readStateCollection(normalizedDatabase.db, 'scheduler_runs')).toMatchObject([{
+          id: entry.id,
+          watchId: entry.watchId,
+          bundleId: entry.bundleId,
+          appStore: { ok: true, triggered: false, reason: 'dispatched' },
+          testflight: { ok: true, triggered: false, reason: 'no eligible build' },
+        }]);
+      } finally {
+        normalizedDatabase.close();
+      }
+    } finally {
+      await rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
   test('removes v13 share records and obsolete permission bits', async () => {
     const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-state-migration-'));
     const obsoletePermissions = (1n << 10n).toString();
