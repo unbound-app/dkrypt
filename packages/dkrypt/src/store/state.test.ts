@@ -45,6 +45,7 @@ import {
   getDiscordGuildIds,
   getDiscordRolePerks,
   getInsightsSummary,
+  getEffectiveSettings,
   getProject,
   getRole,
   getEffectiveDevices,
@@ -1153,6 +1154,19 @@ describe('device CRUD primary invariant', () => {
       await rm(stateDir, { recursive: true, force: true });
     }
   });
+});
+
+test('settings mutations persist through the typed SQLite settings collection', () => {
+  const previousRetentionDays = getEffectiveSettings().jobHistoryRetentionDays;
+  const database = openStateDatabase({ stateDir: config.stateDir, filename: config.stateDatabaseFile });
+
+  try {
+    updateSettings({ jobHistoryRetentionDays: 37 });
+    expect(readStateCollection(database.db, 'settings')).toContainEqual({ key: 'jobHistoryRetentionDays', value: 37 });
+  } finally {
+    database.close();
+    updateSettings({ jobHistoryRetentionDays: previousRetentionDays });
+  }
 });
 
 describe('job history retention', () => {

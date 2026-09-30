@@ -39,6 +39,7 @@ import { createAuditRepository } from '#store/auditRepository.js';
 import { createTestFlightSubscriptionRepository } from '#store/testFlightSubscriptionRepository.js';
 import { createJobHistoryRepository } from '#store/jobHistoryRepository.js';
 import { createSessionRepository } from '#store/sessionRepository.js';
+import { createSettingsRepository } from '#store/settingsRepository.js';
 import { openStateDatabase, readStateCollection, verifyDatabaseBackup, writeStateMirror, type StateCollectionReplacement, type StateDatabase } from '#store/sqlite.js';
 import { paginateCursor } from '#util/cursor.js';
 import { effectiveTimeZone, isValidTimeZone } from '#util/timezone.js';
@@ -696,6 +697,7 @@ const auditRepository = createAuditRepository(stateDatabase.db);
 const testFlightSubscriptionRepository = createTestFlightSubscriptionRepository(stateDatabase.db);
 const jobHistoryRepository = createJobHistoryRepository(stateDatabase.db);
 const sessionRepository = createSessionRepository(stateDatabase.db);
+const settingsRepository = createSettingsRepository(stateDatabase.db);
 const deviceRepository = createDeviceRepository(stateDatabase.db);
 const projectRepository = createProjectRepository(stateDatabase.db);
 
@@ -1373,6 +1375,15 @@ export function upsertAppCatalogEntries(entries: Array<Omit<AppCatalogEntry, 'up
 
 let dirty = false;
 const state: PersistedState = load();
+let persistedSettings = settingsRepository.listAll();
+if (Object.keys(persistedSettings).length === 0 && Object.keys(state.settings).length > 0) {
+  settingsRepository.replaceAll(state.settings);
+  persistedSettings = settingsRepository.listAll();
+}
+if (JSON.stringify(state.settings) !== JSON.stringify(persistedSettings)) {
+  state.settings = persistedSettings;
+  dirty = true;
+}
 let persistedAllowedUsers = accountRepository.listUsers();
 let persistedRoles = accountRepository.listRoles();
 if ((persistedAllowedUsers.length === 0 && state.allowedUsers.length > 0) || (persistedRoles.length === 0 && state.roles.length > 0) || !accountRepository.hasNormalizedUsernameRowIds()) {
@@ -1435,6 +1446,9 @@ function persistNow(additionalCollections: readonly StateCollectionReplacement[]
   }
   if (!collections.some((collection) => collection.table === 'projects')) {
     collections.push(projectCollectionReplacement(state.projects));
+  }
+  if (!collections.some((collection) => collection.table === 'settings')) {
+    collections.push(settingsRepository.collectionReplacement(state.settings));
   }
   stateDatabase.writeState(state, undefined, collections);
   dirty = false;
