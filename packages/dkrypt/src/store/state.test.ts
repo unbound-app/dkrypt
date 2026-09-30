@@ -8,6 +8,7 @@ import { config } from '#config.js';
 import {
   exportBillingSnapshot,
   getBillingCustomerId,
+  getBillingEntitlements,
   listBillingEntitlementHistory,
   listBillingSubscriptions,
   replaceBillingSnapshot,
@@ -15,7 +16,7 @@ import {
   upsertBillingSubscription,
 } from '#billing.js';
 import { exportIdentitySnapshot, getAuthProfile, replaceIdentitySnapshot, upsertAuthProfile } from '#identity.js';
-import { PermissionFlag, serializeBits } from '#permissions.js';
+import { hasPermission, PermissionFlag, serializeBits } from '#permissions.js';
 import { createApiKeyRepository } from '#store/apiKeyRepository.js';
 import { createBackupRepository } from '#store/backupRepository.js';
 import {
@@ -49,6 +50,7 @@ import {
   getInsightsSummary,
   getEffectiveSettings,
   getProject,
+  getUserEffectivePermissions,
   getRole,
   getEffectiveDevices,
   getTestFlightSubscription,
@@ -79,6 +81,7 @@ import {
   revokeSessionRecord,
   revokeApiKey,
   recordWebhookDelivery,
+  removeAllowedUser,
   setDiscordGuildIds,
   setBackupSchedule,
   syncDiscordPerkRoles,
@@ -992,6 +995,38 @@ describe('API subscription entitlement', () => {
     } finally {
       database.close();
       revokeApiKey(created.id, 'root', true);
+    }
+  });
+});
+
+describe('paid dashboard entitlement', () => {
+  test('grants Regular decrypt access without assigning a named role', () => {
+    const username = `paid-member-${randomUUID()}`;
+    const now = new Date().toISOString();
+    const previousBilling = exportBillingSnapshot();
+    replaceBillingSnapshot({ customers: [], subscriptions: [] });
+
+    try {
+      const user = addAllowedUser(username, [], 'tests');
+      upsertBillingSubscription({
+        provider: 'stripe',
+        subscriptionId: `sub_${randomUUID()}`,
+        customerId: `cus_${randomUUID()}`,
+        userId: username,
+        status: 'active',
+        planId: 'regular',
+        priceId: 'price_regular_test',
+        productId: 'prod_regular_test',
+        occurredAt: now,
+        updatedAt: now,
+      });
+
+      expect(user.roleIds).toEqual([]);
+      expect(getBillingEntitlements(username)).toMatchObject({ planId: 'regular', decrypt: true, api: false, priority: 0 });
+      expect(hasPermission(getUserEffectivePermissions(username), PermissionFlag.requestDecrypt)).toBeTrue();
+    } finally {
+      replaceBillingSnapshot(previousBilling);
+      removeAllowedUser(username, 'tests');
     }
   });
 });
