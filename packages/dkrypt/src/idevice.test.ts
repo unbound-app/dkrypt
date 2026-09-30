@@ -5,13 +5,13 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { Client } from 'ssh2';
-import type { BridgeEnvelope, DeviceClient, DeviceSession, DeviceSetupResult, RustDeviceBridgeEvent } from './idevice.js';
+import type { BridgeEnvelope, DeviceClient, DeviceConnection, DeviceSession, DeviceSetupResult, RustDeviceBridgeEvent } from './idevice.js';
 import { withCorrelation } from '#correlation.js';
 import { config } from '#config.js';
 import { BRIDGE_CAPABILITIES, BRIDGE_PROTOCOL_VERSION, TESTFLIGHT_LIFECYCLE_CAPABILITIES } from './bridgeProtocol.js';
 import { flushTelemetry, startSpan } from '#telemetry.js';
 
-const { armAppStoreAutoConfirm, buildIpadecryptRuntimeConfig, clearAppStoreAutoConfirm, createBridgeEnvelope, createDeviceAgentEnvelope, DeviceBridgeError, execCommand, getDeviceAgentRetryDelay, getDeviceTransportOrder, getRustDeviceBridgeHealth, getRustDeviceBridgeStatus, isDirectUsbDeviceAgentConnection, pairDevice, probeDeviceSshTunnel, readBridgeHeartbeats, retryRustDeviceHealthProbe, retryTransientSshConnection, sendAppStoreBridgeRequest, setupDeviceConnection, subscribeRustDeviceBridgeEvents, verifyRustDevicePairing, withSSH } = await import('./idevice.js' + '?idevice-transport-test');
+const { armAppStoreAutoConfirm, buildIpadecryptRuntimeConfig, clearAppStoreAutoConfirm, createBridgeEnvelope, createDeviceAgentEnvelope, DeviceBridgeError, execCommand, getDeviceAgentRetryDelay, getDeviceTransportOrder, getRustDeviceBridgeHealth, getRustDeviceBridgeStatus, isDirectUsbDeviceAgentConnection, pairDevice, probeDeviceSshTunnel, readBridgeHeartbeats, retryRustDeviceHealthProbe, retryTransientSshConnection, sendAppStoreBridgeRequest, setupDeviceConnection, subscribeRustDeviceBridgeEvents, verifyRustDevicePairing, withIpadecrypt, withSSH } = await import('./idevice.js' + '?idevice-transport-test');
 
 type FakeExecStream = {
   stderr: {
@@ -454,7 +454,7 @@ test('removes a bridge request if publishing it is interrupted after the rename'
   let requestRemoved = false;
   const client: DeviceSession = {
     transport: 'autoinstall',
-    rootDir: runtimeDir,
+    runtimeDir,
     async exec(command) {
       if (command.startsWith('mv ') && command.includes('/appstore/requests/')) {
         requestPublished = true;
@@ -910,6 +910,30 @@ test('closes the Rust-managed SSH tunnel when the SFTP service cannot be reached
     config.deviceSshUser = oldUser;
     await new Promise<void>((resolve) => bridge.close(() => resolve()));
     await rm(runtimeDir, { recursive: true, force: true });
+  }
+});
+
+test('device operations do not treat legacy config directories as discovered devices', async () => {
+  const legacyRoot = await mkdtemp(path.join(tmpdir(), 'dkrypt-obsolete-device-config-'));
+  await writeFile(path.join(legacyRoot, 'config.json'), JSON.stringify({
+    version: 2,
+    device: { host: '192.0.2.10', port: 22, user: 'mobile', auth: { kind: 'key', keyPath: '/tmp/legacy-device-key' } },
+  }));
+  const legacyConnection = { id: 'legacy-device', rootDir: legacyRoot } as unknown as DeviceConnection;
+  let operationStarted = false;
+
+  try {
+    await expect(withIpadecrypt(legacyRoot as unknown as DeviceConnection, async () => {
+      operationStarted = true;
+      return true;
+    })).rejects.toThrow('device connection must be discovered over USB or Wi-Fi');
+    await expect(withIpadecrypt(legacyConnection, async () => {
+      operationStarted = true;
+      return true;
+    })).rejects.toThrow('device connection must be discovered over USB or Wi-Fi');
+    expect(operationStarted).toBe(false);
+  } finally {
+    await rm(legacyRoot, { recursive: true, force: true });
   }
 });
 

@@ -52,12 +52,12 @@ mock.module('#idevice.js', () => ({
     if (request.action === 'list_builds') return { data: [{ id: 1, cfBundleShortVersion: '341.0', cfBundleVersion: '107127', bundleId: 'com.hammerandchisel.discord' }] };
     return { ok: true };
   },
-  withSSH: async (_rootDir: string, fn: (conn: object) => Promise<void>) => fn({}),
+  withSSH: async (_device: object, fn: (conn: object) => Promise<void>) => fn({}),
 }));
 
 mock.module('#store/state.js', () => ({
   ...state,
-  getPrimaryDevice: () => ({ rootDir: '/device' }),
+  getPrimaryDevice: () => ({ id: 'test-device', transport: 'usb', udid: 'test-device' }),
 }));
 
 const { installBuild, listTestFlightApps, listTrains, statusTestFlightInvite, subscribeToTestFlightInvite, unsubscribeFromTestFlightInvite } = await import('./testflight.js');
@@ -145,7 +145,7 @@ describe('installBuild', () => {
     config.otelSampleRate = 1;
     listTrainTraceContexts.length = 0;
     const requestSpan = startSpan('test.http.request');
-    const device = { id: `device-${crypto.randomUUID()}`, rootDir: '/device' } as unknown as NonNullable<Parameters<typeof listTrains>[1]>;
+    const device = { id: `device-${crypto.randomUUID()}`, transport: 'usb', udid: 'test-device' } as unknown as NonNullable<Parameters<typeof listTrains>[1]>;
     let exportedSpans: Array<{ name: string; traceId: string; spanId: string; parentSpanId?: string }> = [];
 
     try {

@@ -57,7 +57,7 @@ mock.module('#idevice.js', () => ({
     calls.push('force-uninstall');
     return true;
   },
-  withSSH: async (_rootDir: string, fn: (conn: object) => Promise<void>) => fn({}),
+  withSSH: async (_device: object, fn: (conn: object) => Promise<void>) => fn({}),
 }));
 
 mock.module('#scheduler/itunes.js', () => ({
@@ -67,7 +67,7 @@ mock.module('#scheduler/itunes.js', () => ({
 
 mock.module('#store/state.js', () => ({
   ...state,
-  getPrimaryDevice: () => ({ rootDir: '/device' }),
+  getPrimaryDevice: () => ({ id: 'test-device', transport: 'usb', udid: 'test-device' }),
 }));
 
 const { buildAppStoreOperationId, installFromAppStore } = await import('./appStoreInstall.js');

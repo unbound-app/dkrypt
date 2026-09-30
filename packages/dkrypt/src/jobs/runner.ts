@@ -117,9 +117,9 @@ async function runDecryptOperation(job: Job, device: DeviceRecord, signal?: Abor
 
   recordDeviceActivity({ deviceId: device.id, kind: 'job', bundleId: job.bundleId, message: 'Decrypting app bundle' });
 
-  await withIpadecrypt(device, async (rootDir) => {
+  await withIpadecrypt(device, async (runtimeDir) => {
     ensureNotCancelled();
-    const args = ['--root-dir', rootDir, 'decrypt', job.bundleId, '--use-installed', '--output', outputPath];
+    const args = ['--root-dir', runtimeDir, 'decrypt', job.bundleId, '--use-installed', '--output', outputPath];
     await new Promise<void>((resolve, reject) => {
       const child = spawn(config.ipadecryptBin, args, { stdio: ['ignore', 'pipe', 'pipe'], detached: process.platform !== 'win32' });
       job.childProcess = child;

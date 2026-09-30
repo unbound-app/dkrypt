@@ -93,29 +93,19 @@ interface DeviceAuth {
   keyPath: string;
 }
 
-interface RawDeviceConfig {
-  device?: {
-    host?: string;
-    port?: number;
-    user?: string;
-    auth?: { keyPath?: string };
-  };
-}
-
-const authCache = new Map<string, DeviceAuth>();
 const bridgeSecretCache = new Map<string, string>();
-const connectionRoots = new WeakMap<Client, string>();
+const connectionRuntimeDirs = new WeakMap<Client, string>();
 
 interface SshSession {
   conn: Client;
-  rootDir: string;
+  runtimeDir: string;
   idleTimer?: NodeJS.Timeout;
   unusable: boolean;
 }
 
 export interface DeviceSession {
   readonly transport: 'ssh' | 'autoinstall';
-  readonly rootDir: string;
+  readonly runtimeDir: string;
   exec(command: string, timeoutMs?: number, signal?: AbortSignal): Promise<{ stdout: string; stderr: string; code: number | null }>;
   close(): void;
 }
@@ -498,7 +488,7 @@ class RustDeviceAgentClient implements DeviceAgentClient {
   private readonly abortController = new AbortController();
   private readonly pendingRequests = new Set<AbortController>();
 
-  constructor(readonly deviceId: string, readonly secret: string, readonly rootDir: string) {}
+  constructor(readonly deviceId: string, readonly secret: string, readonly runtimeDir: string) {}
 
   get isUnusable(): boolean {
     return this.closed;
@@ -558,7 +548,6 @@ export interface DeviceConnection {
   udid?: string;
   usbmuxNetwork?: boolean;
   keyPath?: string;
-  rootDir?: string;
 }
 
 export interface DeviceDiscoveryCandidate {
@@ -603,25 +592,6 @@ export interface DeviceSetupResult {
   ready: boolean;
 }
 
-async function loadDeviceAuth(rootDir: string): Promise<DeviceAuth> {
-  const cached = authCache.get(rootDir);
-  if (cached) return cached;
-  const configPath = path.join(rootDir, 'config.json');
-  const raw = JSON.parse(await readFile(configPath, 'utf8')) as RawDeviceConfig;
-  const device = raw.device;
-  if (!device?.host || !device.port || !device.user || !device.auth?.keyPath) {
-    throw new Error(`device connection config at ${configPath} is missing connection info (host/port/user/auth.keyPath)`);
-  }
-  const auth: DeviceAuth = { host: device.host, port: device.port, user: device.user, keyPath: device.auth.keyPath };
-  authCache.set(rootDir, auth);
-  return auth;
-}
-
-export async function validateDeviceRootDir(rootDir: string): Promise<void> {
-  authCache.delete(rootDir);
-  await loadDeviceAuth(rootDir);
-}
-
 function connectionIdentity(connection: DeviceConnection): string {
   return connection.id ?? connection.udid ?? `${connection.host ?? 'device'}:${connection.port ?? config.deviceSshPort}`;
 }
@@ -635,7 +605,7 @@ function connectionRuntimeRoot(connection: DeviceConnection): string {
 
 function directDeviceAuth(connection: DeviceConnection): DeviceAuth {
   const usesUsbmux = !connection.host && Boolean(connection.udid);
-  if (!usesUsbmux && !connection.host) throw new Error('device host is required');
+  if (!usesUsbmux && !connection.host) throw new Error('device connection must be discovered over USB or Wi-Fi');
   return {
     host: connection.host ?? '127.0.0.1',
     port: connection.port ?? config.deviceSshPort,
@@ -644,16 +614,11 @@ function directDeviceAuth(connection: DeviceConnection): DeviceAuth {
   };
 }
 
-async function resolveDeviceAuth(connection: DeviceConnection | string): Promise<{ auth: DeviceAuth; rootDir: string; usesUsbmux: boolean }> {
-  if (typeof connection === 'string') {
-    return { auth: await loadDeviceAuth(connection), rootDir: connection, usesUsbmux: false };
-  }
-  if (!connection.host && !connection.udid && connection.rootDir) {
-    return { auth: await loadDeviceAuth(connection.rootDir), rootDir: connection.rootDir, usesUsbmux: false };
-  }
+function resolveDeviceAuth(connection: DeviceConnection): { auth: DeviceAuth; runtimeDir: string; usesUsbmux: boolean } {
+  if (!connection || typeof connection !== 'object') throw new Error('device connection must be discovered over USB or Wi-Fi');
   return {
     auth: directDeviceAuth(connection),
-    rootDir: connectionRuntimeRoot(connection),
+    runtimeDir: connectionRuntimeRoot(connection),
     usesUsbmux: !connection.host && Boolean(connection.udid),
   };
 }
@@ -661,12 +626,12 @@ async function resolveDeviceAuth(connection: DeviceConnection | string): Promise
 async function openDeviceAgentSession(connection: DeviceConnection, key: string, signal?: AbortSignal): Promise<DeviceAgentSession> {
   if (!isRustDeviceConnection(connection)) throw new Error('the autoinstall device agent requires a paired Rust device connection');
   if (!connection.udid) throw new Error('the autoinstall device agent requires a device identifier');
-  const rootDir = connectionRuntimeRoot(connection);
-  const secret = await loadBridgeSecret(rootDir);
+  const runtimeDir = connectionRuntimeRoot(connection);
+  const secret = await loadBridgeSecret(runtimeDir);
   const capabilities = await new RustDeviceBridgeClient().capabilities(signal);
   const supported = Array.isArray(capabilities.capabilities) && capabilities.capabilities.includes('agent');
   if (!supported) throw new DeviceAgentUnavailableError('the Rust device bridge does not support the autoinstall agent capability');
-  const client = new RustDeviceAgentClient(connection.udid, secret, rootDir);
+  const client = new RustDeviceAgentClient(connection.udid, secret, runtimeDir);
   try {
     await client.call('status', {}, 3_000, signal);
     const session: DeviceAgentSession = { client };
@@ -776,12 +741,12 @@ function releaseDeviceAgentSession(key: string, session: DeviceAgentSession): vo
   session.idleTimer.unref();
 }
 
-async function ensureIpadecryptRuntime(rootDir: string, auth: DeviceAuth): Promise<string> {
-  await mkdir(rootDir, { recursive: true });
-  const configPath = path.join(rootDir, 'config.json');
+async function ensureIpadecryptRuntime(runtimeDir: string, auth: DeviceAuth): Promise<string> {
+  await mkdir(runtimeDir, { recursive: true });
+  const configPath = path.join(runtimeDir, 'config.json');
   await writeFile(configPath, buildIpadecryptRuntimeConfig(auth), { mode: 0o600 });
   await chmod(configPath, 0o600);
-  return rootDir;
+  return runtimeDir;
 }
 
 export function buildIpadecryptRuntimeConfig(auth: { host: string; port: number; user: string; keyPath: string }): string {
@@ -792,17 +757,17 @@ export function buildIpadecryptRuntimeConfig(auth: { host: string; port: number;
   })}\n`;
 }
 
-async function withDeviceTunnel<T>(connection: DeviceConnection | string, fn: (auth: DeviceAuth, rootDir: string) => Promise<T>, signal?: AbortSignal): Promise<T> {
+async function withDeviceTunnel<T>(connection: DeviceConnection, fn: (auth: DeviceAuth, runtimeDir: string) => Promise<T>, signal?: AbortSignal): Promise<T> {
   throwIfAborted(signal);
   const resolved = await resolveDeviceAuth(connection);
   throwIfAborted(signal);
-  if (!resolved.usesUsbmux) return fn(resolved.auth, resolved.rootDir);
-  if (typeof connection === 'string' || !connection.udid) throw new Error('a paired device identifier is required for USB setup');
+  if (!resolved.usesUsbmux) return fn(resolved.auth, resolved.runtimeDir);
+  if (!connection.udid) throw new Error('a paired device identifier is required for USB setup');
   const bridge = new RustDeviceBridgeClient();
   const tunnel = await bridge.openTunnel(connection.udid, resolved.auth.port, undefined, signal);
   try {
     throwIfAborted(signal);
-    return await fn({ ...resolved.auth, host: tunnel.host, port: tunnel.port }, resolved.rootDir);
+    return await fn({ ...resolved.auth, host: tunnel.host, port: tunnel.port }, resolved.runtimeDir);
   } finally {
     await bridge.closeTunnel(tunnel.tunnelId).catch(() => {});
   }
@@ -881,7 +846,7 @@ function readDkryptSshPublicKey(value: string): string {
 async function installDkryptSshPublicKey(connection: DeviceClient): Promise<void> {
   const publicKey = readDkryptSshPublicKey(await readFile(config.deviceSshPublicKeyPath, 'utf8'));
   const quotedKey = shellQuote(publicKey);
-  const command = `set -e; ssh_home=/var/jb/var/mobile; ssh_dir="$ssh_home/.ssh"; authorized_keys="$ssh_dir/authorized_keys"; mkdir -p "$ssh_dir"; chmod 700 "$ssh_dir"; touch "$authorized_keys"; chmod 600 "$authorized_keys"; if ! grep -Fqx ${quotedKey} "$authorized_keys"; then printf '%s\\n' ${quotedKey} >> "$authorized_keys"; fi; if ! grep -Fqx ${quotedKey} "$authorized_keys"; then printf '%s\\n' 'dkrypt SSH key was not saved in the bootstrap mobile account authorized keys' >&2; exit 1; fi`;
+  const command = `set -e; ssh_home=/var/jb/var/mobile; ssh_dir="$ssh_home/.ssh"; authorized_keys="$ssh_dir/authorized_keys"; mkdir -p "$ssh_dir"; chmod 700 "$ssh_dir"; touch "$authorized_keys"; chmod 600 "$authorized_keys"; if ! grep -Fqx ${quotedKey} "$authorized_keys"; then printf '%s\\n' ${quotedKey} >> "$authorized_keys"; fi; if ! grep -Fqx ${quotedKey} "$authorized_keys"; then printf '%s\\n' 'dkrypt SSH key was not saved in the mobile account authorized keys' >&2; exit 1; fi`;
   const { code, stderr } = await execCommand(connection, command, REMOTE_COMMAND_TIMEOUT_MS);
   if (code !== 0) throw new Error(stderr.trim() || 'could not authorize dkrypt SSH access on the device');
 }
@@ -900,8 +865,7 @@ function makeSerialQueue() {
 
 const withSSHLock = makeSerialQueue();
 
-function sshSessionKey(connection: DeviceConnection | string): string {
-  if (typeof connection === 'string') return 'root:' + connection;
+function sshSessionKey(connection: DeviceConnection): string {
   if (connection.id) return 'id:' + connection.id;
   if (connection.udid) return 'udid:' + connection.udid;
   return 'host:' + (connection.host ?? 'device') + ':' + (connection.port ?? config.deviceSshPort);
@@ -963,11 +927,11 @@ function closeSshSession(key: string, session: SshSession): void {
   if (sshSessions.get(key) === session) sshSessions.delete(key);
   if (session.idleTimer) clearTimeout(session.idleTimer);
   session.unusable = true;
-  connectionRoots.delete(session.conn);
+  connectionRuntimeDirs.delete(session.conn);
   session.conn.end();
 }
 
-async function openSshSession(connection: DeviceConnection | string, key: string, signal?: AbortSignal): Promise<SshSession> {
+async function openSshSession(connection: DeviceConnection, key: string, signal?: AbortSignal): Promise<SshSession> {
   throwIfAborted(signal);
   const resolved = await resolveDeviceAuth(connection);
   throwIfAborted(signal);
@@ -977,12 +941,11 @@ async function openSshSession(connection: DeviceConnection | string, key: string
     privateKey = await readFile(resolved.auth.keyPath);
     throwIfAborted(signal);
   } catch (err) {
-    invalidateAuthCache(connection);
     throw err;
   }
   try {
     const conn = await retryTransientSshConnection(() => connectSshClient(resolved.auth, privateKey, signal), SSH_HANDSHAKE_RETRIES, SSH_HANDSHAKE_RETRY_DELAY_MS, signal);
-    const session: SshSession = { conn, rootDir: resolved.rootDir, unusable: false };
+    const session: SshSession = { conn, runtimeDir: resolved.runtimeDir, unusable: false };
     conn.on('error', () => {
       session.unusable = true;
     });
@@ -992,7 +955,7 @@ async function openSshSession(connection: DeviceConnection | string, key: string
     conn.once('close', () => {
       session.unusable = true;
     });
-    connectionRoots.set(conn, resolved.rootDir);
+    connectionRuntimeDirs.set(conn, resolved.runtimeDir);
     sshSessions.set(key, session);
     return session;
   } catch (err) {
@@ -1000,7 +963,7 @@ async function openSshSession(connection: DeviceConnection | string, key: string
   }
 }
 
-async function getSshSession(connection: DeviceConnection | string, signal?: AbortSignal): Promise<{ key: string; session: SshSession }> {
+async function getSshSession(connection: DeviceConnection, signal?: AbortSignal): Promise<{ key: string; session: SshSession }> {
   throwIfAborted(signal);
   const key = sshSessionKey(connection);
   const existing = sshSessions.get(key);
@@ -1028,19 +991,11 @@ function releaseSshSession(key: string, session: SshSession): void {
   session.idleTimer.unref();
 }
 
-function invalidateAuthCache(connection: DeviceConnection | string): void {
-  if (typeof connection === 'string') {
-    authCache.delete(connection);
-  } else if (connection.rootDir) {
-    authCache.delete(connection.rootDir);
-  }
+export function isRustDeviceConnection(connection: DeviceConnection): boolean {
+  return Boolean(connection.udid && !connection.host);
 }
 
-export function isRustDeviceConnection(connection: DeviceConnection | string): connection is DeviceConnection {
-  return typeof connection !== 'string' && Boolean(connection.udid && !connection.host);
-}
-
-export function isDirectUsbDeviceAgentConnection(connection: DeviceConnection | string): connection is DeviceConnection {
+export function isDirectUsbDeviceAgentConnection(connection: DeviceConnection): boolean {
   return isRustDeviceConnection(connection) && connection.usbmuxNetwork !== true;
 }
 
@@ -1091,11 +1046,11 @@ export async function subscribeRustDeviceBridgeEvents(onEvent: (event: RustDevic
   return new RustDeviceBridgeClient().subscribeEvents(onEvent, onError, signal);
 }
 
-export function getDeviceTransportOrder(connection: DeviceConnection | string, mode = config.deviceTransport): Array<'autoinstall' | 'ssh'> {
+export function getDeviceTransportOrder(connection: DeviceConnection, mode = config.deviceTransport): Array<'autoinstall' | 'ssh'> {
   const normalizedMode = mode.toLowerCase();
-  if (typeof connection !== 'string' && isRustDeviceConnection(connection)) return ['autoinstall'];
+  if (isRustDeviceConnection(connection)) return ['autoinstall'];
   if (normalizedMode === 'ssh') return ['ssh'];
-  if (typeof connection === 'string' || !isRustDeviceConnection(connection)) return ['ssh'];
+  if (!isRustDeviceConnection(connection)) return ['ssh'];
   return normalizedMode === 'autoinstall' ? ['autoinstall'] : ['autoinstall', 'ssh'];
 }
 
@@ -1135,11 +1090,11 @@ export async function withAutoinstallDeviceAgent<T>(connection: DeviceConnection
   return withDeviceAgent(connection, fn, signal);
 }
 
-export async function withSSH<T>(connection: DeviceConnection | string, fn: (conn: DeviceClient) => Promise<T>, signal?: AbortSignal): Promise<T> {
+export async function withSSH<T>(connection: DeviceConnection, fn: (conn: DeviceClient) => Promise<T>, signal?: AbortSignal): Promise<T> {
   throwIfAborted(signal);
   const transportOrder = getDeviceTransportOrder(connection);
   if (transportOrder[0] === 'autoinstall' && isRustDeviceConnection(connection)) {
-    return withDeviceAgent(connection as DeviceConnection, fn, signal);
+    return withDeviceAgent(connection, fn, signal);
   }
   return withSSHLock(async () => {
     throwIfAborted(signal);
@@ -1162,7 +1117,6 @@ export async function withSSH<T>(connection: DeviceConnection | string, fn: (con
       return result;
     } catch (err) {
       throwIfAborted(signal);
-      invalidateAuthCache(connection);
       if (session && (session.unusable || isTransientSshConnectionError(err))) closeSshSession(key, session);
       throw err;
     } finally {
@@ -1175,13 +1129,13 @@ export async function withSSH<T>(connection: DeviceConnection | string, fn: (con
   });
 }
 
-export async function withIpadecrypt<T>(connection: DeviceConnection | string, fn: (rootDir: string) => Promise<T>, signal?: AbortSignal): Promise<T> {
+export async function withIpadecrypt<T>(connection: DeviceConnection, fn: (runtimeDir: string) => Promise<T>, signal?: AbortSignal): Promise<T> {
   throwIfAborted(signal);
-  return withDeviceTunnel(connection, async (auth, rootDir) => {
+  return withDeviceTunnel(connection, async (auth, runtimeDir) => {
     throwIfAborted(signal);
-    const runtimeRoot = typeof connection === 'string' ? rootDir : await ensureIpadecryptRuntime(rootDir, auth);
+    const readyRuntimeDir = await ensureIpadecryptRuntime(runtimeDir, auth);
     throwIfAborted(signal);
-    return fn(runtimeRoot);
+    return fn(readyRuntimeDir);
   }, signal);
 }
 
@@ -1310,22 +1264,22 @@ export async function setupDeviceConnection(connection: DeviceConnection): Promi
   return { ...result, ready: result.steps.every((step) => step.status === 'ready') };
 }
 
-async function loadBridgeSecret(rootDir: string): Promise<string> {
-  const cached = bridgeSecretCache.get(rootDir);
+async function loadBridgeSecret(runtimeDir: string): Promise<string> {
+  const cached = bridgeSecretCache.get(runtimeDir);
   if (cached) return cached;
-  const secretPath = path.join(rootDir, BRIDGE_SECRET_FILE_NAME);
+  const secretPath = path.join(runtimeDir, BRIDGE_SECRET_FILE_NAME);
   try {
     const secret = (await readFile(secretPath, 'utf8')).trim();
     if (secret.length >= 32) {
-      bridgeSecretCache.set(rootDir, secret);
+      bridgeSecretCache.set(runtimeDir, secret);
       return secret;
     }
   } catch {}
-  await mkdir(rootDir, { recursive: true });
+  await mkdir(runtimeDir, { recursive: true });
   const secret = randomBytes(32).toString('base64url');
   await writeFile(secretPath, `${secret}\n`, { mode: 0o600 });
   await chmod(secretPath, 0o600);
-  bridgeSecretCache.set(rootDir, secret);
+  bridgeSecretCache.set(runtimeDir, secret);
   return secret;
 }
 
@@ -1387,7 +1341,7 @@ export function createBridgeEnvelope(secret: string, channel: BridgeChannel, req
 }
 
 function isDeviceSession(conn: DeviceClient): conn is DeviceSession {
-  return 'transport' in conn && 'rootDir' in conn && typeof conn.exec === 'function';
+  return 'transport' in conn && 'runtimeDir' in conn && typeof conn.exec === 'function';
 }
 
 export function execCommand(conn: DeviceClient, command: string, timeoutMs = REMOTE_COMMAND_TIMEOUT_MS, signal?: AbortSignal): Promise<{ stdout: string; stderr: string; code: number | null }> {
@@ -1596,9 +1550,9 @@ async function sendBridgeRequestRawTo(
   return withBridgeLock(async () => {
     throwIfAborted(signal);
     const requestId = typeof request.requestId === 'string' ? request.requestId : randomUUID();
-    const rootDir = isDeviceSession(conn) ? conn.rootDir : connectionRoots.get(conn);
-    if (!rootDir) throw new Error('autoinstall bridge requests must run through a managed device session');
-    const secret = await loadBridgeSecret(rootDir);
+    const runtimeDir = isDeviceSession(conn) ? conn.runtimeDir : connectionRuntimeDirs.get(conn);
+    if (!runtimeDir) throw new Error('autoinstall bridge requests must run through a managed device session');
+    const secret = await loadBridgeSecret(runtimeDir);
     const requestDirectory = `${BRIDGE_ROOT_PATH}/${channel}/requests`;
     const responseDirectory = `${BRIDGE_ROOT_PATH}/${channel}/responses`;
     const requestPath = `${requestDirectory}/${requestId}.json`;
