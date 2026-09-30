@@ -4,6 +4,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { config } from '#config.js';
+import { SCHEDULER_JOB_TIMEOUT_MS } from '#jobs/timeouts.js';
 import { artifactKeyForJob, promoteArtifact } from '#artifacts.js';
 import { currentCorrelation, withCorrelation } from '#correlation.js';
 import { createDevice, createProject, deleteDevice, getJobHistoryEntryById, type DeviceRecord } from '#store/state.js';
@@ -177,6 +178,21 @@ describe('enqueueDecryptJob', () => {
         error: 'job deadline exceeded while waiting in the queue',
       });
     } finally {
+      config.jobMaxWaitSeconds = originalDeadline;
+    }
+  });
+
+  test('gives scheduler jobs the full scheduler deadline instead of the interactive queue deadline', async () => {
+    const originalDeadline = config.jobMaxWaitSeconds;
+    config.jobMaxWaitSeconds = 0;
+    let job: Job | undefined;
+
+    try {
+      job = enqueueDecryptJob(`com.test.scheduler-deadline-${crypto.randomUUID()}`, 'scheduler', { preferredDeviceId: 'missing-device' });
+
+      expect(job.deadlineAt! - job.createdAt).toBe(SCHEDULER_JOB_TIMEOUT_MS);
+    } finally {
+      if (job) cancelQueuedJob(job.id, 'test cleanup');
       config.jobMaxWaitSeconds = originalDeadline;
     }
   });

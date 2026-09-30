@@ -4,6 +4,7 @@ import { config } from '#config.js';
 import { emitJobsChanged } from '#events.js';
 import type { Job } from '#jobs/types.js';
 import { enqueueDecryptJob, waitForJob } from '#jobs/store.js';
+import { SCHEDULER_JOB_TIMEOUT_MS } from '#jobs/timeouts.js';
 import { getMaintenanceStatus } from '#maintenance.js';
 import { scopedLogger } from '#logger.js';
 
@@ -47,7 +48,6 @@ function sleep(ms: number): Promise<void> {
 
 const CRON_JITTER_MAX_MS = 20_000;
 
-const SCHEDULER_JOB_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 const GITHUB_RATE_LIMIT_RESERVE = 100;
 const GITHUB_RATE_LIMIT_RETRY_PADDING_MS = 5_000;
 

@@ -25,6 +25,7 @@ import { recordJobStarted } from '#jobs/metrics.js';
 import { currentCorrelation, withCorrelation } from '#correlation.js';
 import { EMBED_COLOR, notify } from '#notify.js';
 import { runWithJobDeadline } from '#jobs/deadline.js';
+import { SCHEDULER_JOB_TIMEOUT_MS } from '#jobs/timeouts.js';
 import { delayWithSignal } from '#util/abort.js';
 import { getJobDeviceBlocker, minimumOsVersionForBuild } from '#jobs/deviceDispatch.js';
 
@@ -48,6 +49,10 @@ function serializableJob(job: Job): Omit<Job, 'childProcess' | 'waiters'> {
 function captureJobCorrelation(): Pick<Job, 'parentCorrelationId' | 'traceContext'> {
   const context = currentCorrelation();
   return { parentCorrelationId: context?.correlationId, traceContext: context?.traceContext };
+}
+
+function deadlineDurationMs(source: JobSource): number {
+  return source === 'scheduler' ? SCHEDULER_JOB_TIMEOUT_MS : config.jobMaxWaitSeconds * 1000;
 }
 
 function writeLegacyMirror(filePath: string, value: unknown): void {
@@ -236,7 +241,7 @@ function createCachedJob(
     fileSizeBytes: artifact.fileSizeBytes,
     sha256: artifact.sha256,
     createdAt: now,
-    deadlineAt: now + config.jobMaxWaitSeconds * 1000,
+    deadlineAt: now + deadlineDurationMs(source),
     attempt: 1,
     finishedAt: now,
     waiters: [],
@@ -373,7 +378,7 @@ export function enqueueDecryptJob(bundleId: string, source: JobSource, options: 
     progress: 'queued',
     timeline: [{ at: now, label: 'Queued', status: 'queued' }],
     createdAt: now,
-    deadlineAt: now + config.jobMaxWaitSeconds * 1000,
+    deadlineAt: now + deadlineDurationMs(source),
     attempt: 1,
     waiters: [],
   };
