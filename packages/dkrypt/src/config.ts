@@ -68,6 +68,7 @@ export const config = {
   discordBotToken: optional('DISCORD_BOT_TOKEN', ''),
 
   stripeSecretKey: optional('STRIPE_SECRET_KEY', ''),
+  stripeSecretKeyPrevious: optional('STRIPE_SECRET_KEY_PREVIOUS', ''),
   stripeWebhookSecret: optional('STRIPE_WEBHOOK_SECRET', ''),
   stripeWebhookSecretPrevious: optional('STRIPE_WEBHOOK_SECRET_PREVIOUS', ''),
   stripeRegularPriceId: optional('STRIPE_REGULAR_PRICE_ID', ''),
@@ -160,7 +161,22 @@ export function isDiscordBotEnabled(): boolean {
   return config.discordBotToken !== '';
 }
 export const discordBotEnabled = isDiscordBotEnabled();
-export const stripeEnvironment = config.stripeSecretKey.startsWith('sk_live_') || config.stripeSecretKey.startsWith('rk_live_') ? 'live' : 'test';
+export function stripeKeyEnvironment(secretKey: string): 'live' | 'test' | undefined {
+  if (secretKey.startsWith('sk_live_') || secretKey.startsWith('rk_live_')) return 'live';
+  if (secretKey.startsWith('sk_test_') || secretKey.startsWith('rk_test_')) return 'test';
+  return undefined;
+}
+
+export function isValidStripeSecretKeyRotation(current: string, previous: string): boolean {
+  const currentEnvironment = stripeKeyEnvironment(current);
+  return current.length >= 16
+    && previous.length >= 16
+    && current !== previous
+    && currentEnvironment !== undefined
+    && currentEnvironment === stripeKeyEnvironment(previous);
+}
+
+export const stripeEnvironment = stripeKeyEnvironment(config.stripeSecretKey) ?? 'test';
 const stripeRequirements = [
   ['STRIPE_SECRET_KEY', config.stripeSecretKey],
   ['STRIPE_WEBHOOK_SECRET', config.stripeWebhookSecret],

@@ -49,7 +49,7 @@ import { log } from '#logger.js';
 import { fastifyRequirePermission, fastifyRequireSession, getFastifySession } from '#session.js';
 import { PermissionFlag } from '#permissions.js';
 import { areNewBillingCheckoutsPaused, recordAudit, setNewBillingCheckoutsPaused } from '#store/state.js';
-import { constructStripeWebhookEvent, getStripe } from '#stripe.js';
+import { constructStripeWebhookEvent, stripeRequest } from '#stripe.js';
 import { getStripeWebhookHealth as inspectStripeWebhookHealth, type StripeWebhookHealth } from '#stripeWebhookHealth.js';
 import { claimWebhook, countWebhookInbox, getWebhookInboxRecord, listWebhookInbox, markWebhookFailed, markWebhookProcessed, quarantineWebhook, receiveWebhook, releaseWebhookClaim } from '#webhookInbox.js';
 import { withCorrelationSpan } from '#correlation.js';
@@ -185,7 +185,9 @@ function persistStripeSubscription(subscription: Stripe.Subscription, occurredAt
 }
 
 async function reconcileStripeSubscription(subscriptionId: string, stripeClient?: Stripe, newerThan?: string, fallbackUserId?: string): Promise<void> {
-  const current = await (stripeClient ?? getStripe()).subscriptions.retrieve(subscriptionId);
+  const current = stripeClient
+    ? await stripeClient.subscriptions.retrieve(subscriptionId)
+    : await stripeRequest((client) => client.subscriptions.retrieve(subscriptionId));
   const latest = getBillingSubscriptionById(subscriptionId);
   if (newerThan && latest && Date.parse(latest.occurredAt) > Date.parse(newerThan)) return;
   const reconciledAt = new Date().toISOString();
@@ -365,7 +367,9 @@ export const billingRoutes: FastifyPluginAsyncTypebox<{
   stripeClient?: () => Stripe;
   stripeWebhookHealth?: () => Promise<StripeWebhookHealth>;
 }> = async (server, options) => {
-  const stripeClient = options.stripeClient ?? getStripe;
+  const callStripe = <T>(request: (client: Stripe) => Promise<T>): Promise<T> => options.stripeClient
+    ? request(options.stripeClient())
+    : stripeRequest(request);
   server.get('/v1/billing', { schema: getRouteContract('GET', '/v1/billing'), preHandler: fastifyRequireSession }, async (request, reply) => {
     const userId = getFastifySession(request)!.sub;
     const profile = getAuthProfile(userId);
@@ -468,8 +472,8 @@ export const billingRoutes: FastifyPluginAsyncTypebox<{
         recordStripeCheckoutIdempotencyAttempt({ userId, idempotencyKey, requestFingerprint, parametersFingerprint, createdAt: Date.now() });
       }
       const session = existingStripeAttempt?.sessionId
-        ? await stripeClient().checkout.sessions.retrieve(existingStripeAttempt.sessionId)
-        : await stripeClient().checkout.sessions.create(parameters, { idempotencyKey });
+        ? await callStripe((client) => client.checkout.sessions.retrieve(existingStripeAttempt.sessionId!))
+        : await callStripe((client) => client.checkout.sessions.create(parameters, { idempotencyKey }));
       if (!existingStripeAttempt?.sessionId && session.id) {
         recordStripeCheckoutIdempotencyAttempt({ userId, idempotencyKey, requestFingerprint, parametersFingerprint, createdAt: Date.now(), sessionId: session.id });
       }
@@ -495,10 +499,10 @@ export const billingRoutes: FastifyPluginAsyncTypebox<{
     if (!requireStripeBilling(request, reply)) return;
 
     try {
-      const portal = await stripeClient().billingPortal.sessions.create({
+      const portal = await callStripe((client) => client.billingPortal.sessions.create({
         customer: customerId,
         return_url: `${config.publicBaseUrl}/?tab=billing`,
-      });
+      }));
       return reply.send({ url: portal.url });
     } catch (error) {
       log.error('Stripe portal session failed', { userId, error: String(error) });
@@ -527,7 +531,7 @@ export const billingRoutes: FastifyPluginAsyncTypebox<{
     if (!requireStripeBilling(request, reply)) return;
     if (subscription.scheduledChangeAction === 'cancel') return reply.send({ success: true, status: subscription.status, cancelAtPeriodEnd: true, provider: 'stripe', idempotencyKey });
     try {
-      const updated = await stripeClient().subscriptions.update(subscription.subscriptionId, { cancel_at_period_end: true });
+      const updated = await callStripe((client) => client.subscriptions.update(subscription.subscriptionId, { cancel_at_period_end: true }));
       persistStripeSubscription(updated, new Date().toISOString(), userId);
       recordAudit(userId, 'billing.cancel', subscription.subscriptionId, 'Stripe cancellation scheduled');
       return reply.send({ success: true, status: updated.status, cancelAtPeriodEnd: true, provider: 'stripe', idempotencyKey });
@@ -550,7 +554,7 @@ export const billingRoutes: FastifyPluginAsyncTypebox<{
   });
 
   server.get('/v1/billing/provider-status', { schema: getRouteContract('GET', '/v1/billing/provider-status'), preHandler: requireBillingManager }, async (_request, reply) => {
-    const stripeWebhook = await (options.stripeWebhookHealth ?? (() => inspectStripeWebhookHealth(config.stripeSecretKey ? stripeClient() : undefined)))();
+    const stripeWebhook = await (options.stripeWebhookHealth ?? (() => inspectStripeWebhookHealth(config.stripeSecretKey ? options.stripeClient?.() : undefined)))();
     return reply.send({ checkoutsPaused: areNewBillingCheckoutsPaused(), stripe: { enabled: stripeEnabled, environment: stripeEnvironment, missingConfiguration: stripeMissingConfiguration, webhook: stripeWebhook }, crypto: await getNowPaymentsProviderStatus() });
   });
 
@@ -642,14 +646,14 @@ export const billingRoutes: FastifyPluginAsyncTypebox<{
     const current = getPlan(subscription.planId);
 
     try {
-      const stripeSubscription = await stripeClient().subscriptions.retrieve(subscription.subscriptionId);
+      const stripeSubscription = await callStripe((client) => client.subscriptions.retrieve(subscription.subscriptionId));
       const item = stripeSubscription.items.data.find((candidate) => candidate.id === subscription.subscriptionItemId) ?? stripeSubscription.items.data[0];
       if (!item) return sendBillingError(request, reply, 502, 'subscription has no billable item');
-      const updated = await stripeClient().subscriptions.update(subscription.subscriptionId, {
+      const updated = await callStripe((client) => client.subscriptions.update(subscription.subscriptionId, {
         items: [{ id: item.id, price: target.priceId, quantity: item.quantity ?? 1 }],
         proration_behavior: current && target.amount > current.amount ? 'always_invoice' : 'create_prorations',
         payment_behavior: 'error_if_incomplete',
-      });
+      }));
       persistStripeSubscription(updated, new Date().toISOString(), userId);
       return reply.send({
         success: true,

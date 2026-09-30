@@ -1,5 +1,5 @@
 import { accessSync, constants, existsSync } from 'node:fs';
-import { config, cryptoBillingEnabled, nowpaymentsConfigured, stripeEnabled, stripeEnvironment } from '#config.js';
+import { config, cryptoBillingEnabled, isValidStripeSecretKeyRotation, nowpaymentsConfigured, stripeEnabled, stripeEnvironment } from '#config.js';
 import { getRustDeviceBridgeStatus } from '#idevice.js';
 import { getNowPaymentsProviderStatus } from '#nowpayments.js';
 import { getStateDatabaseStatus, verifyLatestDatabaseBackup } from '#store/state.js';
@@ -67,6 +67,8 @@ export async function runConfigurationDoctor(): Promise<{ ok: boolean; checkedAt
     }
   }
   checks.push(rotationCheck('device-bridge-rotation', config.deviceBridgeSecret, config.deviceBridgeSecretPrevious, 32));
+  const stripeRotationValid = !config.stripeSecretKeyPrevious || isValidStripeSecretKeyRotation(config.stripeSecretKey, config.stripeSecretKeyPrevious);
+  checks.push({ id: 'stripe-secret-key-rotation', status: stripeRotationValid ? 'ok' : 'error', detail: stripeRotationValid ? config.stripeSecretKeyPrevious ? 'Stripe API key rotation is ready in the same mode' : 'No previous Stripe API key is configured' : 'Current and previous Stripe API keys must be different, valid-length keys in the same mode' });
   checks.push(rotationCheck('stripe-webhook-rotation', config.stripeWebhookSecret, config.stripeWebhookSecretPrevious, 16));
   checks.push(rotationCheck('crypto-api-key-rotation', config.nowpaymentsApiKey, config.nowpaymentsApiKeyPrevious, 16));
   checks.push(rotationCheck('crypto-webhook-rotation', config.nowpaymentsIpnSecret, config.nowpaymentsIpnSecretPrevious, 16));

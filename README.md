@@ -74,6 +74,8 @@ Copy `.env.example` to `.env` and configure the required values. The important r
 | `DISCORD_OAUTH_CLIENT_ID` | Discord sign-in application identifier |
 | `DISCORD_OAUTH_CLIENT_SECRET` | Current Discord sign-in secret |
 | `DISCORD_OAUTH_CLIENT_SECRET_PREVIOUS` | Previous Discord OAuth secret retained during a provider-supported rotation window |
+| `STRIPE_SECRET_KEY` | Current Stripe API secret key |
+| `STRIPE_SECRET_KEY_PREVIOUS` | Previous Stripe API key tried only after an explicit HTTP 401 authentication rejection from the current key |
 | `NOWPAYMENTS_API_KEY` | Current NOWPayments API credential |
 | `NOWPAYMENTS_API_KEY_PREVIOUS` | Previous NOWPayments API key tried only after HTTP 401 from the current key |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` | SMTP credentials and server used for optional email notifications |
@@ -90,6 +92,8 @@ Outgoing notification webhooks include `X-Dkrypt-Event`, `X-Dkrypt-Timestamp`, a
 For SMTP rotation, set `SMTP_PASS` to the new password and `SMTP_PASS_PREVIOUS` to the old one. Email delivery tries the previous password only when the server definitively rejects the current password with SMTP 535; network and temporary SMTP failures are not retried with another credential. Successful fallback is logged without including either password. Remove the previous password after confirming current-credential delivery. GitHub and Discord OAuth callbacks similarly try their previous client secret only for the provider's explicit invalid-client-secret response, never for an invalid authorization code or network error. Keep previous OAuth secrets only while the provider still accepts them; some providers invalidate a secret immediately when it is regenerated.
 
 For NOWPayments API-key rotation, set `NOWPAYMENTS_API_KEY` to the new key and `NOWPAYMENTS_API_KEY_PREVIOUS` to the old key during the overlap window. dkrypt retries with the previous key only after an HTTP 401; permission, server, and network failures are not retried with another credential. Successful fallback is logged without exposing either key. Remove the previous key after confirming requests use the current credential.
+
+For Stripe API-key rotation, set `STRIPE_SECRET_KEY` to the new key and `STRIPE_SECRET_KEY_PREVIOUS` to the old key during the overlap window. Both keys must belong to the same test or live mode. dkrypt retries with the previous key only after Stripe explicitly rejects the current key with HTTP 401; permission, server, and network failures are not retried with another credential. The manager configuration doctor reports invalid or cross-mode key pairs. Successful fallback is logged without exposing either key. Remove the previous key after confirming requests use the current credential.
 
 The SQLite database uses WAL mode, foreign keys, migration checksums, integrity checks, and an atomic pre-migration backup. Startup fails closed when the database or migration checksums are invalid. The dashboard doctor is available to managers at `/v1/dashboard/doctor`.
 
@@ -123,7 +127,7 @@ Do not copy database files while the service is running. Use the dashboard backu
 <details>
 <summary>Stripe billing</summary>
 
-Stripe remains the card and bank payment path. Configure the live Stripe secret, recurring price IDs, webhook secret, and tax settings in the runtime environment. Stripe readiness is visible in the manager billing view and the configuration doctor.
+Stripe remains the card and bank payment path. Configure the live Stripe secret, recurring price IDs, webhook secret, and tax settings in the runtime environment. Rotate API keys with `STRIPE_SECRET_KEY_PREVIOUS` during the overlap window; webhook signing-secret rotation remains separate. Stripe readiness is visible in the manager billing view and the configuration doctor.
 
 </details>
 

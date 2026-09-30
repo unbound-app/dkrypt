@@ -85,3 +85,22 @@ test('configuration doctor validates SMTP and OAuth secret rotations', async () 
     config.discordOauthClientSecretPrevious = previous.discordSecretPrevious;
   }
 });
+
+test('configuration doctor requires Stripe API key rotation credentials to use the same mode', async () => {
+  const currentKey = config.stripeSecretKey;
+  const previousKey = config.stripeSecretKeyPrevious;
+  config.stripeSecretKey = 'sk_live_current_key_for_rotation_test';
+  config.stripeSecretKeyPrevious = 'sk_test_previous_key_for_rotation_test';
+
+  try {
+    const mismatched = await runConfigurationDoctor();
+    expect(mismatched.checks.find((check) => check.id === 'stripe-secret-key-rotation')).toMatchObject({ status: 'error' });
+
+    config.stripeSecretKeyPrevious = 'sk_live_previous_key_for_rotation_test';
+    const matching = await runConfigurationDoctor();
+    expect(matching.checks.find((check) => check.id === 'stripe-secret-key-rotation')).toMatchObject({ status: 'ok' });
+  } finally {
+    config.stripeSecretKey = currentKey;
+    config.stripeSecretKeyPrevious = previousKey;
+  }
+});

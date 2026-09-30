@@ -1,6 +1,7 @@
 import type Stripe from 'stripe';
 import { config } from '#config.js';
 import { log } from '#logger.js';
+import { stripeRequest } from '#stripe.js';
 import { STRIPE_WEBHOOK_EVENTS } from '#stripeWebhookEvents.js';
 
 const CACHE_TTL_MS = 60_000;
@@ -30,7 +31,7 @@ export function clearStripeWebhookHealthCache(): void {
 
 export async function getStripeWebhookHealth(client: Stripe | undefined, now = Date.now()): Promise<StripeWebhookHealth> {
   const endpointUrl = new URL(endpointPath, config.publicBaseUrl).toString();
-  if (!config.stripeSecretKey || !client) {
+  if (!config.stripeSecretKey) {
     return { state: 'not_configured', endpointUrl, requiredEvents: [...STRIPE_WEBHOOK_EVENTS], missingEvents: [] };
   }
   if (cachedStatus?.endpointUrl === endpointUrl && cachedStatus.expiresAt > now) return cloneStatus(cachedStatus.status);
@@ -42,7 +43,10 @@ export async function getStripeWebhookHealth(client: Stripe | undefined, now = D
     let endpoint: Stripe.WebhookEndpoint | undefined;
 
     while (true) {
-      const page = await client.webhookEndpoints.list({ limit: 100, ...(startingAfter ? { starting_after: startingAfter } : {}) }, requestOptions);
+      const parameters = { limit: 100, ...(startingAfter ? { starting_after: startingAfter } : {}) };
+      const page = client
+        ? await client.webhookEndpoints.list(parameters, requestOptions)
+        : await stripeRequest((activeClient) => activeClient.webhookEndpoints.list(parameters, requestOptions));
       endpoint = page.data.find((candidate) => candidate.url === endpointUrl && candidate.status === 'enabled');
       if (endpoint || !page.has_more || page.data.length === 0) break;
       startingAfter = page.data.at(-1)?.id;
