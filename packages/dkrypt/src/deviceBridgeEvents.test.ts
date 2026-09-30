@@ -95,6 +95,31 @@ describe('Rust device bridge event metrics', () => {
     }
   });
 
+  it('marks the USBMux event stream disconnected while the Rust listener is recovering', async () => {
+    const connectionStates: number[] = [];
+    const device = { id: 'usb-udid', transport: 'usb' };
+    const stop = startRustDeviceEventMonitoring({
+      subscriber: async (onEvent) => {
+        const emit = (event: Parameters<typeof onEvent>[0]) => {
+          onEvent(event);
+          const metrics = createOtlpMetricsPayload('dkrypt').resourceMetrics[0].scopeMetrics[0].metrics;
+          const gauge = metrics.find((metric) => metric.name === 'dkrypt_device_bridge_event_stream_connected')?.gauge?.dataPoints[0];
+          connectionStates.push(gauge?.asDouble ?? 0);
+        };
+        emit({ type: 'device_snapshot', sequence: 1, devices: [device] });
+        emit({ type: 'device_event_stream_reconnecting', sequence: 2, devices: [device] });
+        emit({ type: 'device_snapshot', sequence: 3, devices: [device] });
+        return () => {};
+      },
+    });
+
+    try {
+      expect(connectionStates).toEqual([1, 0, 1]);
+    } finally {
+      await stop();
+    }
+  });
+
   it('refreshes health on USB connect and disconnect while ignoring startup snapshots and Wi-Fi changes', async () => {
     const refreshedDeviceIds: string[] = [];
     let attempts = 0;
@@ -154,6 +179,25 @@ describe('Rust device bridge event metrics', () => {
       await waitForAttempts(() => refreshedDeviceIds.length, 1);
       expect(attempts).toBeGreaterThanOrEqual(2);
       expect(refreshedDeviceIds.sort()).toEqual(['missing-udid', 'unchanged-udid', 'usb-udid']);
+    } finally {
+      await stop();
+    }
+  });
+
+  it('refreshes changed USB devices from a replacement snapshot on the same RPC stream', async () => {
+    const refreshedDeviceIds: string[] = [];
+    const stop = startRustDeviceEventMonitoring({
+      onUsbDeviceHealthRefresh: (deviceId) => refreshedDeviceIds.push(deviceId),
+      subscriber: async (onEvent) => {
+        onEvent({ type: 'device_snapshot', sequence: 1, devices: [{ id: 'old-usb-udid', transport: 'usb' }] });
+        onEvent({ type: 'device_snapshot', sequence: 2, devices: [{ id: 'new-usb-udid', transport: 'usb' }] });
+        return () => {};
+      },
+    });
+
+    try {
+      await waitForAttempts(() => refreshedDeviceIds.length, 2);
+      expect(refreshedDeviceIds.sort()).toEqual(['new-usb-udid', 'old-usb-udid']);
     } finally {
       await stop();
     }

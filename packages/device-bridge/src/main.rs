@@ -413,91 +413,149 @@ async fn stream_native_device_events(
     stop: oneshot::Receiver<()>,
 ) {
     tokio::pin!(stop);
-    let mut mux = tokio::select! {
-        _ = &mut stop => return,
-        result = mux_connection(&state) => match result {
-            Ok(value) => value,
-            Err(value) => {
-                let _ = sender.send(failure(request_id, value)).await;
-                return;
-            }
-        },
-    };
-    let mut events = tokio::select! {
-        _ = &mut stop => return,
-        result = mux.listen() => match result {
-            Ok(value) => value,
-            Err(value) => {
-                let _ = sender
-                    .send(failure(
-                        request_id,
-                        error(
-                            "device_events",
-                            format!("could not listen for usbmuxd events: {value}"),
-                            true,
-                        ),
-                    ))
-                    .await;
-                return;
-            }
-        },
-    };
-    let initial = tokio::select! {
-        _ = &mut stop => return,
-        result = list_device_records(&state) => match result {
-            Ok(value) => value,
-            Err(value) => {
-                let _ = sender.send(failure(request_id, value)).await;
-                return;
-            }
-        },
-    };
-    let mut devices = initial
-        .into_iter()
-        .map(|device| (device.device_id, device))
-        .collect::<BTreeMap<_, _>>();
-    let snapshot = json!({
-        "type": "device_snapshot",
-        "sequence": next_event_sequence(&state),
-        "devices": devices.values().cloned().map(device_summary).collect::<Vec<_>>(),
-    });
-    if sender
-        .send(response(request_id.clone(), snapshot))
-        .await
-        .is_err()
-    {
-        return;
-    }
+    let mut consecutive_failures = 0_u32;
+    let mut devices = BTreeMap::new();
     loop {
-        tokio::select! {
+        let mut mux = tokio::select! {
             _ = &mut stop => return,
-            event = events.next() => {
-                let (event_type, event_device_id) = match event {
-                    Some(Ok(UsbmuxdListenEvent::Connected(device))) => {
-                        let device_id = device.device_id;
-                        devices.insert(device_id, device);
-                        ("device_connected", device_id)
-                    }
-                    Some(Ok(UsbmuxdListenEvent::Disconnected(device_id))) => {
-                        devices.remove(&device_id);
-                        ("device_disconnected", device_id)
-                    }
-                    Some(Err(value)) => {
-                        let output = failure(request_id.clone(), error("device_events", format!("usbmuxd event stream failed: {value}"), true));
-                        let _ = sender.send(output).await;
+            result = mux_connection(&state) => match result {
+                Ok(value) => value,
+                Err(value) => {
+                    if !wait_for_device_event_retry(&state, &request_id, &sender, &devices, &mut stop, &mut consecutive_failures, value.message).await {
                         return;
                     }
-                    None => return,
-                };
-                let output = response(request_id.clone(), json!({
-                    "type": event_type,
-                    "sequence": next_event_sequence(&state),
-                    "deviceId": event_device_id,
-                    "devices": devices.values().cloned().map(device_summary).collect::<Vec<_>>(),
-                }));
-                if sender.send(output).await.is_err() { return; }
-            }
+                    continue;
+                }
+            },
+        };
+        let mut events = tokio::select! {
+            _ = &mut stop => return,
+            result = mux.listen() => match result {
+                Ok(value) => value,
+                Err(value) => {
+                    if !wait_for_device_event_retry(
+                        &state,
+                        &request_id,
+                        &sender,
+                        &devices,
+                        &mut stop,
+                        &mut consecutive_failures,
+                        format!("could not listen for usbmuxd events: {value}"),
+                    ).await {
+                        return;
+                    }
+                    continue;
+                }
+            },
+        };
+        let initial = tokio::select! {
+            _ = &mut stop => return,
+            result = list_device_records(&state) => match result {
+                Ok(value) => value,
+                Err(value) => {
+                    drop(events);
+                    drop(mux);
+                    if !wait_for_device_event_retry(&state, &request_id, &sender, &devices, &mut stop, &mut consecutive_failures, value.message).await {
+                        return;
+                    }
+                    continue;
+                }
+            },
+        };
+        devices = initial
+            .into_iter()
+            .map(|device| (device.device_id, device))
+            .collect::<BTreeMap<_, _>>();
+        let snapshot = json!({
+            "type": "device_snapshot",
+            "sequence": next_event_sequence(&state),
+            "devices": devices.values().cloned().map(device_summary).collect::<Vec<_>>(),
+        });
+        if sender
+            .send(response(request_id.clone(), snapshot))
+            .await
+            .is_err()
+        {
+            return;
         }
+        let connected_at = Instant::now();
+        let reason = loop {
+            tokio::select! {
+                _ = &mut stop => return,
+                event = events.next() => {
+                    let (event_type, event_device_id) = match event {
+                        Some(Ok(UsbmuxdListenEvent::Connected(device))) => {
+                            let device_id = device.device_id;
+                            devices.insert(device_id, device);
+                            ("device_connected", device_id)
+                        }
+                        Some(Ok(UsbmuxdListenEvent::Disconnected(device_id))) => {
+                            devices.remove(&device_id);
+                            ("device_disconnected", device_id)
+                        }
+                        Some(Err(value)) => break format!("usbmuxd event stream failed: {value}"),
+                        None => break "usbmuxd event stream closed".to_string(),
+                    };
+                    let output = response(request_id.clone(), json!({
+                        "type": event_type,
+                        "sequence": next_event_sequence(&state),
+                        "deviceId": event_device_id,
+                        "devices": devices.values().cloned().map(device_summary).collect::<Vec<_>>(),
+                    }));
+                    if sender.send(output).await.is_err() { return; }
+                }
+            }
+        };
+        drop(events);
+        drop(mux);
+        if connected_at.elapsed() >= Duration::from_secs(30) {
+            consecutive_failures = 0;
+        }
+        if !wait_for_device_event_retry(
+            &state,
+            &request_id,
+            &sender,
+            &devices,
+            &mut stop,
+            &mut consecutive_failures,
+            reason,
+        )
+        .await
+        {
+            return;
+        }
+    }
+}
+
+async fn wait_for_device_event_retry(
+    state: &BridgeState,
+    request_id: &str,
+    sender: &mpsc::Sender<RpcResponse>,
+    devices: &BTreeMap<u32, UsbmuxdDevice>,
+    stop: &mut Pin<&mut oneshot::Receiver<()>>,
+    consecutive_failures: &mut u32,
+    reason: String,
+) -> bool {
+    let reconnecting = response(
+        request_id.to_string(),
+        json!({
+            "type": "device_event_stream_reconnecting",
+            "sequence": next_event_sequence(state),
+            "devices": devices.values().cloned().map(device_summary).collect::<Vec<_>>(),
+        }),
+    );
+    if sender.send(reconnecting).await.is_err() {
+        return false;
+    }
+    *consecutive_failures = consecutive_failures.saturating_add(1).min(30);
+    let delay = netmuxd_restart_delay(*consecutive_failures);
+    eprintln!(
+        "usbmuxd event stream unavailable; reconnecting in {}ms: {reason}",
+        delay.as_millis()
+    );
+    tokio::select! {
+        _ = stop.as_mut() => false,
+        _ = sleep(delay) => true,
     }
 }
 
@@ -1298,6 +1356,11 @@ mod tests {
     };
     use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
     use hmac::{Hmac, Mac};
+    use idevice::usbmuxd::{
+        RawPacket,
+        server::{UsbmuxdServerRequest, UsbmuxdServerResponse},
+    };
+    use plist::{Dictionary, Value as PlistValue};
     use serde_json::{Value, json};
     use sha2::Sha256;
     use std::{
@@ -1309,7 +1372,7 @@ mod tests {
         time::{Duration, SystemTime, UNIX_EPOCH},
     };
     use tokio::{
-        io::{AsyncWriteExt, DuplexStream},
+        io::{AsyncReadExt, AsyncWriteExt, DuplexStream},
         net::{UnixListener, UnixStream},
         process::Command,
         sync::Mutex,
@@ -1343,6 +1406,74 @@ mod tests {
                 Ok(Box::new(stream) as Box<dyn AgentStream>)
             })
         }
+    }
+
+    async fn read_usbmux_request(stream: &mut UnixStream) -> (RawPacket, UsbmuxdServerRequest) {
+        let mut header = [0u8; 16];
+        stream
+            .read_exact(&mut header)
+            .await
+            .expect("usbmux request header should be readable");
+        let packet_size = u32::from_le_bytes(header[..4].try_into().unwrap()) as usize;
+        let mut bytes = header.to_vec();
+        bytes.resize(packet_size, 0);
+        stream
+            .read_exact(&mut bytes[16..])
+            .await
+            .expect("usbmux request body should be readable");
+        let packet = RawPacket::try_from(bytes.as_slice())
+            .expect("usbmux request should decode as a packet");
+        let request = UsbmuxdServerRequest::decode(&packet)
+            .expect("usbmux request should decode as a request");
+        (packet, request)
+    }
+
+    async fn write_usbmux_response(
+        stream: &mut UnixStream,
+        response: UsbmuxdServerResponse,
+        tag: u32,
+    ) {
+        let packet: Vec<u8> = response.into_packet(tag).into();
+        stream
+            .write_all(&packet)
+            .await
+            .expect("usbmux response should be writable");
+    }
+
+    fn usbmux_device_record(device_id: u32, udid: &str) -> PlistValue {
+        let mut properties = Dictionary::new();
+        properties.insert(
+            "ConnectionType".into(),
+            PlistValue::String("USB".to_string()),
+        );
+        properties.insert("SerialNumber".into(), PlistValue::String(udid.to_string()));
+        let mut device = Dictionary::new();
+        device.insert("DeviceID".into(), device_id.into());
+        device.insert("Properties".into(), PlistValue::Dictionary(properties));
+        PlistValue::Dictionary(device)
+    }
+
+    async fn read_bridge_event(stream: &mut UnixStream) -> Value {
+        let frame = read_frame(stream)
+            .await
+            .expect("bridge event frame should be readable")
+            .expect("bridge event stream should remain open");
+        let response: Value = serde_json::from_slice(&frame).expect("bridge event should be JSON");
+        assert_eq!(response["requestId"], "event-stream-request");
+        assert_eq!(response["ok"], true);
+        response["result"].clone()
+    }
+
+    async fn write_bridge_request(stream: &mut UnixStream, request: Value) {
+        let body = serde_json::to_vec(&request).expect("bridge request should serialize");
+        stream
+            .write_u32(body.len() as u32)
+            .await
+            .expect("bridge request header should be writable");
+        stream
+            .write_all(&body)
+            .await
+            .expect("bridge request body should be writable");
     }
 
     fn hmac_signature(secret: &str, message: &str) -> String {
@@ -1865,5 +1996,206 @@ mod tests {
         );
         server.abort();
         let _ = std::fs::remove_file(socket_path);
+    }
+
+    #[tokio::test]
+    async fn rpc_event_stream_reconnects_and_refreshes_the_device_snapshot_after_listener_loss() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be available")
+            .as_nanos();
+        let socket_path = std::env::temp_dir().join(format!(
+            "dkrypt-bridge-events-{}-{unique}.sock",
+            std::process::id()
+        ));
+        let mux_socket_path = std::env::temp_dir().join(format!(
+            "dkrypt-bridge-usbmuxd-{}-{unique}.sock",
+            std::process::id()
+        ));
+        let bridge_listener = UnixListener::bind(&socket_path).expect("bridge socket bind failed");
+        let mux_listener = UnixListener::bind(&mux_socket_path).expect("mux socket bind failed");
+        let state = Arc::new(BridgeState {
+            secrets: vec!["current-secret".to_string()],
+            mux_socket: mux_socket_path.clone(),
+            host_id: "test-host".to_string(),
+            agent_connector: Arc::new(UsbmuxdAgentConnector {
+                mux_socket: mux_socket_path.clone(),
+            }),
+            tunnels: Mutex::new(HashMap::new()),
+            cancellations: Mutex::new(HashMap::new()),
+            event_sequence: AtomicU64::new(0),
+        });
+        let bridge_server = tokio::spawn(async move {
+            let (stream, _) = bridge_listener
+                .accept()
+                .await
+                .expect("bridge socket should accept a client");
+            handle_client(stream, state).await;
+        });
+        let mux_server = tokio::spawn(async move {
+            let (mut initial_listener, _) = mux_listener
+                .accept()
+                .await
+                .expect("initial mux listener should connect");
+            let (listen_packet, listen_request) = read_usbmux_request(&mut initial_listener).await;
+            assert!(matches!(listen_request, UsbmuxdServerRequest::Listen));
+            write_usbmux_response(
+                &mut initial_listener,
+                UsbmuxdServerResponse::Result(0),
+                listen_packet.tag,
+            )
+            .await;
+
+            let (mut initial_inventory, _) = mux_listener
+                .accept()
+                .await
+                .expect("initial device inventory should connect");
+            let (inventory_packet, inventory_request) =
+                read_usbmux_request(&mut initial_inventory).await;
+            assert!(matches!(
+                inventory_request,
+                UsbmuxdServerRequest::ListDevices
+            ));
+            write_usbmux_response(
+                &mut initial_inventory,
+                UsbmuxdServerResponse::DeviceList(vec![usbmux_device_record(
+                    41,
+                    "same-device-udid",
+                )]),
+                inventory_packet.tag,
+            )
+            .await;
+            write_usbmux_response(
+                &mut initial_listener,
+                UsbmuxdServerResponse::Detached(41),
+                0,
+            )
+            .await;
+
+            let mut attached = usbmux_device_record(43, "same-device-udid")
+                .as_dictionary()
+                .expect("device fixture should be a dictionary")
+                .clone();
+            attached.insert(
+                "MessageType".into(),
+                PlistValue::String("Attached".to_string()),
+            );
+            write_usbmux_response(
+                &mut initial_listener,
+                UsbmuxdServerResponse::Attached(attached),
+                0,
+            )
+            .await;
+            drop(initial_listener);
+
+            let (mut recovered_listener, _) =
+                timeout(Duration::from_secs(4), mux_listener.accept())
+                    .await
+                    .map_err(|_| "device bridge did not reopen the mux event listener".to_string())?
+                    .map_err(|value| value.to_string())?;
+            let (recovered_listen_packet, recovered_listen_request) =
+                read_usbmux_request(&mut recovered_listener).await;
+            assert!(matches!(
+                recovered_listen_request,
+                UsbmuxdServerRequest::Listen
+            ));
+            write_usbmux_response(
+                &mut recovered_listener,
+                UsbmuxdServerResponse::Result(0),
+                recovered_listen_packet.tag,
+            )
+            .await;
+
+            let (mut recovered_inventory, _) = mux_listener
+                .accept()
+                .await
+                .expect("recovered device inventory should connect");
+            let (recovered_inventory_packet, recovered_inventory_request) =
+                read_usbmux_request(&mut recovered_inventory).await;
+            assert!(matches!(
+                recovered_inventory_request,
+                UsbmuxdServerRequest::ListDevices
+            ));
+            write_usbmux_response(
+                &mut recovered_inventory,
+                UsbmuxdServerResponse::DeviceList(vec![usbmux_device_record(
+                    43,
+                    "same-device-udid",
+                )]),
+                recovered_inventory_packet.tag,
+            )
+            .await;
+            Ok::<(), String>(())
+        });
+
+        let mut client = UnixStream::connect(&socket_path)
+            .await
+            .expect("bridge client should connect");
+        write_bridge_request(
+            &mut client,
+            json!({
+                "version": RPC_VERSION,
+                "requestId": "event-stream-request",
+                "auth": "current-secret",
+                "operation": "events",
+                "follow": true
+            }),
+        )
+        .await;
+
+        let initial = timeout(Duration::from_secs(2), read_bridge_event(&mut client))
+            .await
+            .expect("initial device snapshot should arrive");
+        assert_eq!(initial["type"], "device_snapshot");
+        assert_eq!(initial["sequence"], 1);
+        assert_eq!(initial["devices"][0]["deviceId"], 41);
+
+        let disconnected = timeout(Duration::from_secs(2), read_bridge_event(&mut client))
+            .await
+            .expect("device detach event should arrive");
+        assert_eq!(disconnected["type"], "device_disconnected");
+        assert_eq!(disconnected["sequence"], 2);
+        assert_eq!(disconnected["devices"].as_array().unwrap().len(), 0);
+
+        let connected = timeout(Duration::from_secs(2), read_bridge_event(&mut client))
+            .await
+            .expect("device attach event should arrive");
+        assert_eq!(connected["type"], "device_connected");
+        assert_eq!(connected["sequence"], 3);
+        assert_eq!(connected["devices"][0]["deviceId"], 43);
+
+        let reconnecting = timeout(Duration::from_secs(2), read_bridge_event(&mut client))
+            .await
+            .expect("mux listener recovery state should arrive");
+        assert_eq!(reconnecting["type"], "device_event_stream_reconnecting");
+        assert_eq!(reconnecting["sequence"], 4);
+        assert_eq!(reconnecting["devices"][0]["deviceId"], 43);
+
+        let recovered_frame = timeout(Duration::from_secs(5), read_frame(&mut client))
+            .await
+            .expect("recovered device snapshot should arrive")
+            .expect("recovered device snapshot frame should be readable")
+            .expect("event stream should remain open during mux recovery");
+        let recovered: Value =
+            serde_json::from_slice(&recovered_frame).expect("recovered event should be JSON");
+        let mux_result = timeout(Duration::from_secs(5), mux_server)
+            .await
+            .expect("mock mux server should finish")
+            .expect("mock mux server task should not panic");
+        drop(client);
+        let bridge_result = timeout(Duration::from_secs(2), bridge_server)
+            .await
+            .expect("bridge RPC server should stop after client disconnects");
+        let _ = std::fs::remove_file(socket_path);
+        let _ = std::fs::remove_file(mux_socket_path);
+
+        assert!(mux_result.is_ok(), "{}", mux_result.unwrap_err());
+        bridge_result.expect("bridge RPC server task should not panic");
+        assert_eq!(recovered["requestId"], "event-stream-request");
+        assert_eq!(recovered["ok"], true);
+        assert_eq!(recovered["result"]["type"], "device_snapshot");
+        assert_eq!(recovered["result"]["sequence"], 5);
+        assert_eq!(recovered["result"]["devices"].as_array().unwrap().len(), 1);
+        assert_eq!(recovered["result"]["devices"][0]["deviceId"], 43);
     }
 }

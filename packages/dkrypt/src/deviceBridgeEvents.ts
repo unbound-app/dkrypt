@@ -20,10 +20,10 @@ function usbDeviceIds(devices: unknown[]): string[] {
   });
 }
 
-function usbDeviceUdidsToRefresh(event: RustDeviceBridgeEvent, streamAttempt: number, previous: Set<string>): string[] {
+function usbDeviceUdidsToRefresh(event: RustDeviceBridgeEvent, streamAttempt: number, hasSeenSnapshot: boolean, previous: Set<string>): string[] {
   const current = new Set(usbDeviceIds(event.devices));
   if (event.type === 'device_snapshot') {
-    return streamAttempt > 1 ? [...new Set([...previous, ...current])] : [];
+    return streamAttempt > 1 || hasSeenSnapshot ? [...new Set([...previous, ...current])] : [];
   }
   if (event.type === 'device_connected') return [...current].filter((udid) => !previous.has(udid));
   if (event.type === 'device_disconnected') return [...previous].filter((udid) => !current.has(udid));
@@ -167,6 +167,7 @@ async function monitorRustDeviceEvents(signal: AbortSignal, options: RustDeviceE
     let stopStream: (() => void) | undefined;
     let resolveStreamFailure: (error: Error) => void = () => {};
     let firstEventAt: number | undefined;
+    let hasSeenSnapshot = false;
     const streamFailure = new Promise<Error>((resolve) => {
       resolveStreamFailure = resolve;
     });
@@ -177,9 +178,14 @@ async function monitorRustDeviceEvents(signal: AbortSignal, options: RustDeviceE
         (event) => {
           if (lastEventSequence === event.sequence) return;
           lastEventSequence = event.sequence;
+          if (event.type === 'device_event_stream_reconnecting') {
+            setGaugeMetric('device_bridge_event_stream_connected', 0, { transport: 'usbmux' });
+            return;
+          }
           firstEventAt ??= Date.now();
           setGaugeMetric('device_bridge_event_stream_connected', 1, { transport: 'usbmux' });
-          const refreshUdids = usbDeviceUdidsToRefresh(event, currentStreamAttempt, currentUsbDeviceUdids);
+          const refreshUdids = usbDeviceUdidsToRefresh(event, currentStreamAttempt, hasSeenSnapshot, currentUsbDeviceUdids);
+          if (event.type === 'device_snapshot') hasSeenSnapshot = true;
           currentUsbDeviceUdids = new Set(usbDeviceIds(event.devices));
           tracker.record(event);
           for (const udid of refreshUdids) {

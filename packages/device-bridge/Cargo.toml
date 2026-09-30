@@ -15,4 +15,5 @@ uuid = { version = "1", features = ["v4"] }
 [dev-dependencies]
 base64 = "0.22"
 hmac = "0.12"
+plist = "1.10.1"
 sha2 = "0.10"

@@ -194,6 +194,7 @@ dependencies = [
  "hmac",
  "idevice",
  "libc",
+ "plist",
  "serde",
  "serde_json",
  "sha2",
