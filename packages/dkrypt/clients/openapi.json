@@ -201,6 +201,11 @@
                       "maxLength": 200,
                       "type": "string"
                     },
+                    "preferredDeviceId": {
+                      "minLength": 1,
+                      "maxLength": 200,
+                      "type": "string"
+                    },
                     "transport": {
                       "anyOf": [
                         {
@@ -356,7 +361,26 @@
                     "queue": {
                       "additionalProperties": true,
                       "type": "object",
-                      "properties": {}
+                      "required": [
+                        "position",
+                        "total"
+                      ],
+                      "properties": {
+                        "position": {
+                          "type": "number"
+                        },
+                        "total": {
+                          "type": "number"
+                        },
+                        "predictedStartMs": {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        "predictedCompletionMs": {
+                          "minimum": 0,
+                          "type": "number"
+                        }
+                      }
                     },
                     "queueReason": {
                       "type": "string"
@@ -648,6 +672,11 @@
                           "maxLength": 200,
                           "type": "string"
                         },
+                        "preferredDeviceId": {
+                          "minLength": 1,
+                          "maxLength": 200,
+                          "type": "string"
+                        },
                         "transport": {
                           "anyOf": [
                             {
@@ -803,7 +832,26 @@
                         "queue": {
                           "additionalProperties": true,
                           "type": "object",
-                          "properties": {}
+                          "required": [
+                            "position",
+                            "total"
+                          ],
+                          "properties": {
+                            "position": {
+                              "type": "number"
+                            },
+                            "total": {
+                              "type": "number"
+                            },
+                            "predictedStartMs": {
+                              "minimum": 0,
+                              "type": "number"
+                            },
+                            "predictedCompletionMs": {
+                              "minimum": 0,
+                              "type": "number"
+                            }
+                          }
                         },
                         "queueReason": {
                           "type": "string"
@@ -1050,6 +1098,11 @@
                           "maxLength": 200,
                           "type": "string"
                         },
+                        "preferredDeviceId": {
+                          "minLength": 1,
+                          "maxLength": 200,
+                          "type": "string"
+                        },
                         "transport": {
                           "anyOf": [
                             {
@@ -1205,7 +1258,26 @@
                         "queue": {
                           "additionalProperties": true,
                           "type": "object",
-                          "properties": {}
+                          "required": [
+                            "position",
+                            "total"
+                          ],
+                          "properties": {
+                            "position": {
+                              "type": "number"
+                            },
+                            "total": {
+                              "type": "number"
+                            },
+                            "predictedStartMs": {
+                              "minimum": 0,
+                              "type": "number"
+                            },
+                            "predictedCompletionMs": {
+                              "minimum": 0,
+                              "type": "number"
+                            }
+                          }
                         },
                         "queueReason": {
                           "type": "string"
@@ -1432,6 +1504,11 @@
                       "maxLength": 200,
                       "type": "string"
                     },
+                    "preferredDeviceId": {
+                      "minLength": 1,
+                      "maxLength": 200,
+                      "type": "string"
+                    },
                     "transport": {
                       "anyOf": [
                         {
@@ -1587,7 +1664,26 @@
                     "queue": {
                       "additionalProperties": true,
                       "type": "object",
-                      "properties": {}
+                      "required": [
+                        "position",
+                        "total"
+                      ],
+                      "properties": {
+                        "position": {
+                          "type": "number"
+                        },
+                        "total": {
+                          "type": "number"
+                        },
+                        "predictedStartMs": {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        "predictedCompletionMs": {
+                          "minimum": 0,
+                          "type": "number"
+                        }
+                      }
                     },
                     "queueReason": {
                       "type": "string"
@@ -2093,6 +2189,11 @@
                       "maxLength": 200,
                       "type": "string"
                     },
+                    "preferredDeviceId": {
+                      "minLength": 1,
+                      "maxLength": 200,
+                      "type": "string"
+                    },
                     "transport": {
                       "anyOf": [
                         {
@@ -2248,7 +2349,26 @@
                     "queue": {
                       "additionalProperties": true,
                       "type": "object",
-                      "properties": {}
+                      "required": [
+                        "position",
+                        "total"
+                      ],
+                      "properties": {
+                        "position": {
+                          "type": "number"
+                        },
+                        "total": {
+                          "type": "number"
+                        },
+                        "predictedStartMs": {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        "predictedCompletionMs": {
+                          "minimum": 0,
+                          "type": "number"
+                        }
+                      }
                     },
                     "queueReason": {
                       "type": "string"
@@ -2465,6 +2585,11 @@
                       "maxLength": 200,
                       "type": "string"
                     },
+                    "preferredDeviceId": {
+                      "minLength": 1,
+                      "maxLength": 200,
+                      "type": "string"
+                    },
                     "transport": {
                       "anyOf": [
                         {
@@ -2620,7 +2745,26 @@
                     "queue": {
                       "additionalProperties": true,
                       "type": "object",
-                      "properties": {}
+                      "required": [
+                        "position",
+                        "total"
+                      ],
+                      "properties": {
+                        "position": {
+                          "type": "number"
+                        },
+                        "total": {
+                          "type": "number"
+                        },
+                        "predictedStartMs": {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        "predictedCompletionMs": {
+                          "minimum": 0,
+                          "type": "number"
+                        }
+                      }
                     },
                     "queueReason": {
                       "type": "string"
@@ -3351,6 +3495,11 @@
                       "maxLength": 200,
                       "type": "string"
                     },
+                    "preferredDeviceId": {
+                      "minLength": 1,
+                      "maxLength": 200,
+                      "type": "string"
+                    },
                     "transport": {
                       "anyOf": [
                         {
@@ -3506,7 +3655,26 @@
                     "queue": {
                       "additionalProperties": true,
                       "type": "object",
-                      "properties": {}
+                      "required": [
+                        "position",
+                        "total"
+                      ],
+                      "properties": {
+                        "position": {
+                          "type": "number"
+                        },
+                        "total": {
+                          "type": "number"
+                        },
+                        "predictedStartMs": {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        "predictedCompletionMs": {
+                          "minimum": 0,
+                          "type": "number"
+                        }
+                      }
                     },
                     "queueReason": {
                       "type": "string"
