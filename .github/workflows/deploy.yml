@@ -511,7 +511,8 @@ jobs:
           const primaryDevice = getPrimaryDevice();
           if (!primaryDevice?.udid || primaryDevice.host || primaryDevice.usbmuxNetwork === true) throw new Error('configured primary device is not a direct USB pairing');
           await verifyRustDevicePairing(primaryDevice);
-          const agentStatus = await withAutoinstallDeviceAgent(primaryDevice, client => client.call('status', {}, 3_000));
+          const usbAgentDevice = { ...primaryDevice, keyPath: '/run/dkrypt/usb-agent-smoke-no-ssh-key' };
+          const agentStatus = await withAutoinstallDeviceAgent(usbAgentDevice, client => client.call('status', {}, 3_000));
           if (typeof agentStatus.agentVersion !== 'string') throw new Error('signed USB device-agent status request was incomplete');
           const setup = await setupDeviceConnection(primaryDevice);
           if (!setup.ready) {

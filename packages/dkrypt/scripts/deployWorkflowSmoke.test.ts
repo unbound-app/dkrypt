@@ -81,3 +81,9 @@ test('deployment smoke always verifies authenticated dashboard and event-stream 
   expect(script).toContain("fetchWithTimeout(`${base}/v1/auth/logout`");
   expect(script).toContain('if (!logout.ok) throw new Error');
 });
+
+test('deployment USB agent readiness does not require a device SSH key', () => {
+  const [script] = deploymentSmokeScripts();
+  expect(script).toContain("const usbAgentDevice = { ...primaryDevice, keyPath: '/run/dkrypt/usb-agent-smoke-no-ssh-key' };");
+  expect(script).toContain('withAutoinstallDeviceAgent(usbAgentDevice');
+});

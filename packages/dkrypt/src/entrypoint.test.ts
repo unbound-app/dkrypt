@@ -95,7 +95,7 @@ test('the bridge secret is available only to the API service identity', () => {
 
 test('production smoke verifies the saved Rust pairing, USB agent, and decrypt SFTP setup', () => {
   const pairingVerification = deploymentWorkflow.indexOf('await verifyRustDevicePairing(primaryDevice)');
-  const agentProbe = deploymentWorkflow.indexOf('withAutoinstallDeviceAgent(primaryDevice');
+  const agentProbe = deploymentWorkflow.indexOf('withAutoinstallDeviceAgent(usbAgentDevice');
   const decryptSetup = deploymentWorkflow.indexOf('await setupDeviceConnection(primaryDevice)');
   expect(pairingVerification).toBeGreaterThan(-1);
   expect(agentProbe).toBeGreaterThan(-1);
@@ -103,6 +103,7 @@ test('production smoke verifies the saved Rust pairing, USB agent, and decrypt S
   expect(pairingVerification).toBeLessThan(agentProbe);
   expect(agentProbe).toBeLessThan(decryptSetup);
   expect(deploymentWorkflow).toContain("client.call('status', {}, 3_000)");
+  expect(deploymentWorkflow).toContain("keyPath: '/run/dkrypt/usb-agent-smoke-no-ssh-key'");
   expect(deploymentWorkflow).toContain('device setup did not verify decrypt readiness');
   expect(deploymentWorkflow).toContain("step.id === 'ssh_sftp' && step.status === 'ready'");
   expect(deploymentWorkflow).not.toContain("await fs.stat('/root/.ipadecrypt')");
