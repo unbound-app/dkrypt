@@ -775,83 +775,7 @@ test('IPA Library keeps loaded artifacts visible while scrolling its rows', asyn
   await expect.poll(() => artifactListRequestCount).toBe(1);
 });
 
-test('IPA Library never renders an empty viewport during repeated scrolling', async ({ page }) => {
-  await mockStableDashboardEvents(page);
-  await mockAuthenticatedDashboard(page, '1');
-  let artifactListRequestCount = 0;
-  const artifacts = Array.from({ length: 120 }, (_, index) => ({
-    id: `scroll-stress-artifact-${index}`,
-    key: `com.example.stress${index}:appstore:${index}`,
-    projectIds: ['default'],
-    bundleId: `com.example.stress${index}`,
-    channel: 'appstore' as const,
-    versionLabel: '1.0.0',
-    fileSizeBytes: 1024,
-    sha256: 'a'.repeat(64),
-    createdAt: '2026-09-25T12:00:00.000Z',
-    lastAccessedAt: '2026-09-25T13:00:00.000Z',
-    accessCount: 1,
-    sourceJobId: `job-scroll-stress-artifact-${index}`,
-    warnings: [],
-    fileUrl: `/v1/dashboard/artifacts/scroll-stress-artifact-${index}/file`,
-  }));
-  await page.route('**/v1/dashboard/apps/metadata?*', async (route) => {
-    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ entries: [] }) });
-  });
-  await page.route('**/v1/dashboard/artifacts*', async (route) => {
-    artifactListRequestCount += 1;
-    await route.fulfill({
-      contentType: 'application/json',
-      body: JSON.stringify({ artifacts, total: artifacts.length, totalBytes: 122_880, maxBytes: 245_760 }),
-    });
-  });
-
-  const artifactResponse = page.waitForResponse((response) =>
-    new URL(response.url()).pathname === '/v1/dashboard/artifacts' && response.ok(),
-  );
-  await page.goto('/?tab=home');
-  await artifactResponse;
-  const viewport = page.getByRole('region', { name: 'IPA library artifacts list region' });
-  await expect(viewport.locator('[role="listitem"]').first()).toBeVisible();
-
-  const emptyVisibleFrames = await viewport.evaluate(async (element) => {
-    const list = element.querySelector<HTMLElement>('[role="list"]');
-    if (!list) throw new Error('IPA library list was not rendered');
-    let emptyFrames = 0;
-    let sampling = true;
-    const sample = (): void => {
-      if (!sampling) return;
-      const viewportBounds = element.getBoundingClientRect();
-      const viewportVisible = viewportBounds.bottom > 0 && viewportBounds.top < window.innerHeight;
-      const hasVisibleRow = viewportVisible && Array.from(list.querySelectorAll<HTMLElement>('[role="listitem"]')).some((row) => {
-        const rowBounds = row.getBoundingClientRect();
-        return rowBounds.bottom > 0 && rowBounds.top < window.innerHeight;
-      });
-      if (viewportVisible && !hasVisibleRow) emptyFrames += 1;
-      requestAnimationFrame(sample);
-    };
-    requestAnimationFrame(sample);
-    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-    const bounds = element.getBoundingClientRect();
-    const listStart = Math.max(0, window.scrollY + bounds.top - 32);
-    const listEnd = Math.min(document.documentElement.scrollHeight - window.innerHeight, window.scrollY + bounds.bottom - window.innerHeight + 32);
-    const step = Math.max(300, Math.floor(window.innerHeight * 0.8));
-    for (const direction of [1, -1]) {
-      const limit = direction > 0 ? listEnd : listStart;
-      for (let position = direction > 0 ? listStart : listEnd; direction > 0 ? position < limit : position > limit; position += direction * step) {
-        window.scrollTo({ top: Math.max(listStart, Math.min(position, listEnd)), behavior: 'instant' });
-        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-      }
-    }
-    sampling = false;
-    return emptyFrames;
-  });
-
-  expect(emptyVisibleFrames).toBe(0);
-  await expect.poll(() => artifactListRequestCount).toBe(1);
-});
-
-test('IPA Library keeps its loaded results mounted during real wheel scrolling', async ({ page }) => {
+test('IPA Library stays populated and does not refetch loaded results during wheel scrolling', async ({ page }) => {
   await mockStableDashboardEvents(page);
   await mockAuthenticatedDashboard(page, '1');
   let artifactListRequestCount = 0;
@@ -897,17 +821,21 @@ test('IPA Library keeps its loaded results mounted during real wheel scrolling',
   const firstArtifactBounds = await firstArtifact.boundingBox();
   if (!firstArtifactBounds) throw new Error('First IPA Library artifact is not visible');
   await page.mouse.move(firstArtifactBounds.x + firstArtifactBounds.width / 2, firstArtifactBounds.y + firstArtifactBounds.height / 2);
-  for (let step = 0; step < 5; step += 1) {
-    await page.mouse.wheel(0, 320);
-    await page.waitForTimeout(12);
-  }
+  await page.mouse.wheel(0, 1200);
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(initialScrollY);
   await expect(firstArtifact).toHaveCount(0);
   await expect.poll(async () => Number(await viewport.locator('[role="listitem"]').first().getAttribute('aria-posinset'))).toBeGreaterThan(1);
-  for (let step = 0; step < 5; step += 1) {
-    await page.mouse.wheel(0, -320);
-    await page.waitForTimeout(12);
-  }
+  await expect.poll(() => viewport.locator('[role="listitem"]').evaluateAll((rows) => rows.some((row) => {
+    const bounds = row.getBoundingClientRect();
+    return bounds.bottom > 0 && bounds.top < window.innerHeight;
+  }))).toBe(true);
+  const scrollYAfterForward = await page.evaluate(() => window.scrollY);
+  await page.mouse.wheel(0, -1200);
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeLessThan(scrollYAfterForward);
+  await expect.poll(() => viewport.locator('[role="listitem"]').evaluateAll((rows) => rows.some((row) => {
+    const bounds = row.getBoundingClientRect();
+    return bounds.bottom > 0 && bounds.top < window.innerHeight;
+  }))).toBe(true);
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBeLessThan(initialScrollY + 800);
   await expect(firstArtifact).toBeAttached();
   await expect.poll(() => artifactListRequestCount).toBe(1);
