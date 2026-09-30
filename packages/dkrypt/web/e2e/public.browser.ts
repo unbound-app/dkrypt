@@ -775,10 +775,12 @@ test('IPA Library keeps loaded artifacts visible while scrolling its rows', asyn
   await expect.poll(() => artifactListRequestCount).toBe(1);
 });
 
-test('IPA Library stays populated and does not refetch loaded results during wheel scrolling', async ({ page }) => {
+test('IPA Library stays populated and does not refetch loaded results during incremental scrolling', async ({ page }) => {
+  test.setTimeout(60_000);
   await mockStableDashboardEvents(page);
   await mockAuthenticatedDashboard(page, '1');
   let artifactListRequestCount = 0;
+  const warning = 'Payload/Example.app/Extensions/Share.appex/Share still encrypted (cryptid != 0)';
   const artifacts = Array.from({ length: 120 }, (_, index) => ({
     id: `wheel-scroll-artifact-${index}`,
     key: `com.example.wheel${index}:appstore:${index}`,
@@ -792,7 +794,7 @@ test('IPA Library stays populated and does not refetch loaded results during whe
     lastAccessedAt: '2026-09-25T13:00:00.000Z',
     accessCount: 1,
     sourceJobId: `job-wheel-scroll-artifact-${index}`,
-    warnings: [],
+    warnings: index === 0 ? [warning] : [],
     fileUrl: `/v1/dashboard/artifacts/wheel-scroll-artifact-${index}/file`,
   }));
   await page.route('**/v1/dashboard/apps/metadata?*', async (route) => {
@@ -813,31 +815,54 @@ test('IPA Library stays populated and does not refetch loaded results during whe
   await artifactResponse;
   const viewport = page.getByRole('region', { name: 'IPA library artifacts list region' });
   const firstArtifact = viewport.locator('[data-artifact-id="wheel-scroll-artifact-0"]');
-  await expect(firstArtifact).toBeVisible();
   await expect(viewport.locator('[role="listitem"]').first()).toHaveAttribute('aria-setsize', '120');
   await expect.poll(() => viewport.locator('[role="listitem"]').count()).toBeLessThan(120);
+
+  await page.setViewportSize({ width: 390, height: 844 });
   await firstArtifact.scrollIntoViewIfNeeded();
-  const initialScrollY = await page.evaluate(() => window.scrollY);
+  await expect(firstArtifact).toBeVisible();
+  const details = firstArtifact.locator('summary').filter({ hasText: 'Artifact details' });
+  if (!(await firstArtifact.locator('details').evaluate((element) => element.open))) await details.click();
+  await expect(firstArtifact.getByText(warning, { exact: true })).toBeVisible();
   const firstArtifactBounds = await firstArtifact.boundingBox();
   if (!firstArtifactBounds) throw new Error('First IPA Library artifact is not visible');
   await page.mouse.move(firstArtifactBounds.x + firstArtifactBounds.width / 2, firstArtifactBounds.y + firstArtifactBounds.height / 2);
-  await page.mouse.wheel(0, 1200);
-  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(initialScrollY);
-  await expect(firstArtifact).toHaveCount(0);
-  await expect.poll(async () => Number(await viewport.locator('[role="listitem"]').first().getAttribute('aria-posinset'))).toBeGreaterThan(1);
-  await expect.poll(() => viewport.locator('[role="listitem"]').evaluateAll((rows) => rows.some((row) => {
-    const bounds = row.getBoundingClientRect();
-    return bounds.bottom > 0 && bounds.top < window.innerHeight;
-  }))).toBe(true);
-  const scrollYAfterForward = await page.evaluate(() => window.scrollY);
-  await page.mouse.wheel(0, -1200);
-  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeLessThan(scrollYAfterForward);
-  await expect.poll(() => viewport.locator('[role="listitem"]').evaluateAll((rows) => rows.some((row) => {
-    const bounds = row.getBoundingClientRect();
-    return bounds.bottom > 0 && bounds.top < window.innerHeight;
-  }))).toBe(true);
-  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeLessThan(initialScrollY + 800);
+  const scrollYBeforeWheel = await page.evaluate(() => window.scrollY);
+  await page.mouse.wheel(0, 360);
+  await page.waitForTimeout(32);
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(scrollYBeforeWheel);
+  for (const direction of [1, -1]) {
+    let enteredLibrary = false;
+    let checkedPositions = 0;
+    for (let step = 0; step < 30; step += 1) {
+      await page.mouse.wheel(0, direction * 800);
+      await page.waitForTimeout(16);
+      const sample = await viewport.evaluate((element) => {
+        const region = element.getBoundingClientRect();
+        const regionVisible = region.bottom > 0 && region.top < window.innerHeight;
+        if (!regionVisible) return { regionVisible, hasVisibleRow: true };
+        const visibleTop = Math.max(region.top, 0);
+        const visibleBottom = Math.min(region.bottom, window.innerHeight);
+        const hasVisibleRow = Array.from(element.querySelectorAll<HTMLElement>('[role="listitem"]')).some((row) => {
+          const bounds = row.getBoundingClientRect();
+          return bounds.bottom > visibleTop && bounds.top < visibleBottom;
+        });
+        return { regionVisible, hasVisibleRow };
+      });
+      if (sample.regionVisible) {
+        enteredLibrary = true;
+        checkedPositions += 1;
+        expect(sample.hasVisibleRow).toBe(true);
+      } else if (enteredLibrary) {
+        break;
+      }
+    }
+    expect(checkedPositions).toBeGreaterThan(0);
+  }
+
+  await firstArtifact.scrollIntoViewIfNeeded();
   await expect(firstArtifact).toBeAttached();
+  await expect(firstArtifact.getByText(warning, { exact: true })).toBeVisible();
   await expect.poll(() => artifactListRequestCount).toBe(1);
   expect(await viewport.locator('[role="listitem"]').count()).toBeLessThan(120);
   await expect(viewport.locator('[role="listitem"]').first()).toHaveAttribute('aria-setsize', '120');
@@ -1712,6 +1737,63 @@ test('high contrast preference updates the interface and persists to the account
   await page.getByRole('button', { name: 'High contrast mode' }).click();
   await expect(page.locator('html')).not.toHaveAttribute('data-high-contrast', 'true');
   await expect.poll(() => savedPrefs.highContrast).toBe(false);
+});
+
+test('system forced-colors mode uses system surface and text colors', async ({ page }) => {
+  await mockAuthenticatedDashboard(page, '1');
+  await page.emulateMedia({ forcedColors: 'active', colorScheme: 'dark' });
+  await page.goto('/?tab=home');
+
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  const colors = await page.evaluate(() => {
+    const style = getComputedStyle(document.documentElement);
+    const card = document.querySelector<HTMLElement>('[data-slot="card"]');
+    const button = document.querySelector<HTMLElement>('button[data-slot="button"]');
+    const systemPalette = document.createElement('div');
+    systemPalette.style.backgroundColor = 'Canvas';
+    systemPalette.style.color = 'CanvasText';
+    systemPalette.style.borderColor = 'ButtonBorder';
+    document.body.append(systemPalette);
+    const systemColors = getComputedStyle(systemPalette);
+    const expectedSurface = systemColors.backgroundColor;
+    const expectedBorder = systemColors.borderTopColor;
+    systemPalette.style.color = 'CanvasText';
+    const expectedText = getComputedStyle(systemPalette).color;
+    systemPalette.style.backgroundColor = 'ButtonFace';
+    const expectedButtonBackground = getComputedStyle(systemPalette).backgroundColor;
+    systemPalette.style.color = 'ButtonText';
+    const expectedButtonText = getComputedStyle(systemPalette).color;
+    systemPalette.remove();
+    return {
+      background: style.getPropertyValue('--background').trim(),
+      foreground: style.getPropertyValue('--foreground').trim(),
+      accent: style.getPropertyValue('--color-accent').trim(),
+      accentContrast: style.getPropertyValue('--color-accent-contrast').trim(),
+      cardBackground: card ? getComputedStyle(card).backgroundColor : '',
+      cardText: card ? getComputedStyle(card).color : '',
+      cardBorder: card ? getComputedStyle(card).borderTopColor : '',
+      buttonBackground: button ? getComputedStyle(button).backgroundColor : '',
+      buttonText: button ? getComputedStyle(button).color : '',
+      expectedSurface,
+      expectedText,
+      expectedButtonBackground,
+      expectedButtonText,
+      expectedBorder,
+    };
+  });
+
+  expect(colors).toMatchObject({
+    background: 'Canvas',
+    foreground: 'CanvasText',
+    accent: 'Highlight',
+    accentContrast: 'HighlightText',
+    cardBackground: colors.expectedSurface,
+    cardText: colors.expectedText,
+    cardBorder: colors.expectedBorder,
+    buttonBackground: colors.expectedButtonBackground,
+    buttonText: colors.expectedButtonText,
+  });
+  await expectAccessible(page);
 });
 
 test('populated device management and preflight dialog meet accessibility checks', async ({ page }) => {

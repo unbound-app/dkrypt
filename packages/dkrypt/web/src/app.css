@@ -772,3 +772,77 @@
 		content: none;
 	}
 }
+
+@media (forced-colors: active) {
+	:root[data-theme] {
+		--background: Canvas;
+		--foreground: CanvasText;
+		--card: Canvas;
+		--card-foreground: CanvasText;
+		--popover: Canvas;
+		--popover-foreground: CanvasText;
+		--primary: Highlight;
+		--primary-foreground: HighlightText;
+		--secondary: ButtonFace;
+		--secondary-foreground: ButtonText;
+		--muted: Canvas;
+		--muted-foreground: CanvasText;
+		--accent: Highlight;
+		--accent-foreground: HighlightText;
+		--destructive: CanvasText;
+		--destructive-foreground: Canvas;
+		--border: ButtonBorder;
+		--input: ButtonBorder;
+		--ring: Highlight;
+		--chart-1: Highlight;
+		--chart-2: LinkText;
+		--chart-3: Mark;
+		--chart-4: VisitedText;
+		--chart-5: CanvasText;
+		--sidebar: Canvas;
+		--sidebar-foreground: CanvasText;
+		--sidebar-primary: Highlight;
+		--sidebar-primary-foreground: HighlightText;
+		--sidebar-accent: ButtonFace;
+		--sidebar-accent-foreground: ButtonText;
+		--sidebar-border: ButtonBorder;
+		--sidebar-ring: Highlight;
+		--color-accent: Highlight !important;
+		--color-accent-contrast: HighlightText !important;
+		--ok: CanvasText;
+		--warn: CanvasText;
+		--err: CanvasText;
+	}
+
+	body {
+		background-image: none;
+	}
+
+	.glass-topbar {
+		background: Canvas;
+		backdrop-filter: none;
+	}
+
+	.glass-card,
+	.glass-popover {
+		border: 1px solid ButtonBorder;
+		box-shadow: none;
+	}
+
+	:focus-visible {
+		outline: 2px solid Highlight !important;
+		outline-offset: 2px !important;
+	}
+
+	.skeleton,
+	.scroll-fade-x::before,
+	.scroll-fade-x::after {
+		background-image: none;
+	}
+
+	a:not([class*='bg-accent']) {
+		text-decoration-line: underline;
+		text-decoration-thickness: 1px;
+		text-underline-offset: 0.15em;
+	}
+}
