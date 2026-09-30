@@ -20,7 +20,7 @@ use std::{
     process::Stdio,
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicU64, Ordering},
     },
     time::Duration,
 };
@@ -29,7 +29,7 @@ use tokio::{
     net::{TcpListener, UnixListener, UnixStream},
     process::{Child, Command},
     signal::unix::{SignalKind, signal},
-    sync::{Mutex, Notify, mpsc, oneshot},
+    sync::{Mutex, mpsc, oneshot, watch},
     time::{Instant, sleep, timeout},
 };
 use uuid::Uuid;
@@ -102,30 +102,35 @@ struct UsbmuxdDeviceServiceConnector {
 
 #[derive(Clone)]
 struct CancellationToken {
-    cancelled: Arc<AtomicBool>,
-    notify: Arc<Notify>,
+    cancelled: watch::Sender<bool>,
 }
 
 impl CancellationToken {
     fn new() -> Self {
-        Self {
-            cancelled: Arc::new(AtomicBool::new(false)),
-            notify: Arc::new(Notify::new()),
-        }
+        let (cancelled, _) = watch::channel(false);
+        Self { cancelled }
     }
 
     fn cancel(&self) {
-        if !self.cancelled.swap(true, Ordering::Release) {
-            self.notify.notify_one();
-        }
+        self.cancelled.send_replace(true);
+    }
+
+    fn is_cancelled(&self) -> bool {
+        *self.cancelled.borrow()
     }
 
     async fn cancelled(&self) {
-        if self.cancelled.load(Ordering::Acquire) {
+        let mut receiver = self.cancelled.subscribe();
+        if *receiver.borrow() {
             return;
         }
-        self.notify.notified().await;
+        let _ = receiver.changed().await;
     }
+}
+
+struct Tunnel {
+    cancellation: CancellationToken,
+    task: tokio::task::JoinHandle<()>,
 }
 
 struct BridgeState {
@@ -133,7 +138,7 @@ struct BridgeState {
     mux_socket: PathBuf,
     host_id: String,
     service_connector: Arc<dyn DeviceServiceConnector>,
-    tunnels: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
+    tunnels: Mutex<HashMap<String, Tunnel>>,
     cancellations: Mutex<HashMap<String, CancellationToken>>,
     event_sequence: AtomicU64,
 }
@@ -785,37 +790,54 @@ async fn open_tunnel(
     let tunnel_id = Uuid::new_v4().to_string();
     let device_id = id.to_string();
     let task_state = state.clone();
+    let cancellation = CancellationToken::new();
+    let task_cancellation = cancellation.clone();
     let task = tokio::spawn(async move {
-        let mut connections = tokio::task::JoinSet::new();
+        let mut connection_tasks = tokio::task::JoinSet::new();
         loop {
             tokio::select! {
+                _ = task_cancellation.cancelled() => break,
                 accepted = listener.accept() => {
                     let Ok((mut incoming, _)) = accepted else {
                         break;
                     };
                     let connector = task_state.service_connector.clone();
                     let device_id = device_id.clone();
-                    connections.spawn(async move {
-                        let Ok(mut device) = connector.connect(device_id, remote_port).await else {
+                    let connection_cancellation = task_cancellation.clone();
+                    connection_tasks.spawn(async move {
+                        let device = tokio::select! {
+                            _ = connection_cancellation.cancelled() => return,
+                            result = connector.connect(device_id, remote_port) => result,
+                        };
+                        let Ok(mut device) = device else {
                             return;
                         };
-                        let _ = copy_bidirectional(&mut incoming, &mut device).await;
+                        tokio::select! {
+                            _ = connection_cancellation.cancelled() => {},
+                            _ = copy_bidirectional(&mut incoming, &mut device) => {},
+                        }
                     });
                 }
-                _ = connections.join_next(), if !connections.is_empty() => {}
+                _ = connection_tasks.join_next(), if !connection_tasks.is_empty() => {}
             }
         }
+        task_cancellation.cancel();
+        while connection_tasks.join_next().await.is_some() {}
     });
-    state.tunnels.lock().await.insert(tunnel_id.clone(), task);
+    state
+        .tunnels
+        .lock()
+        .await
+        .insert(tunnel_id.clone(), Tunnel { cancellation, task });
     Ok(
         json!({ "tunnelId": tunnel_id, "host": "127.0.0.1", "port": local_port, "remotePort": remote_port }),
     )
 }
 
 async fn close_tunnel(state: &BridgeState, tunnel_id: &str) -> Value {
-    if let Some(task) = state.tunnels.lock().await.remove(tunnel_id) {
-        task.abort();
-        let _ = task.await;
+    if let Some(tunnel) = state.tunnels.lock().await.remove(tunnel_id) {
+        tunnel.cancellation.cancel();
+        let _ = tunnel.task.await;
         json!({ "closed": true })
     } else {
         json!({ "closed": false })
@@ -1136,7 +1158,7 @@ async fn supervise_netmuxd(
 ) {
     let mut consecutive_failures = 0_u32;
     loop {
-        if shutdown.cancelled.load(Ordering::Acquire) {
+        if shutdown.is_cancelled() {
             break;
         }
         let mut failure = remove_socket_if_present(&socket).err();
@@ -1373,31 +1395,83 @@ mod tests {
     use sha2::Sha256;
     use std::{
         collections::HashMap,
-        fs,
+        fs, io,
         os::unix::fs::PermissionsExt,
         path::PathBuf,
+        pin::Pin,
         sync::{Arc, atomic::AtomicU64},
+        task::{Context, Poll},
         time::{Duration, SystemTime, UNIX_EPOCH},
     };
     use tokio::{
-        io::{AsyncReadExt, AsyncWriteExt, DuplexStream},
+        io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, DuplexStream, ReadBuf},
         net::{TcpStream, UnixListener, UnixStream},
         process::Command,
-        sync::Mutex,
+        sync::{Mutex, oneshot},
         time::timeout,
     };
+
+    struct DropSignalStream {
+        stream: DuplexStream,
+        drop_signal: Option<oneshot::Sender<()>>,
+    }
+
+    impl Drop for DropSignalStream {
+        fn drop(&mut self) {
+            if let Some(signal) = self.drop_signal.take() {
+                let _ = signal.send(());
+            }
+        }
+    }
+
+    impl AsyncRead for DropSignalStream {
+        fn poll_read(
+            self: Pin<&mut Self>,
+            context: &mut Context<'_>,
+            buffer: &mut ReadBuf<'_>,
+        ) -> Poll<io::Result<()>> {
+            Pin::new(&mut self.get_mut().stream).poll_read(context, buffer)
+        }
+    }
+
+    impl AsyncWrite for DropSignalStream {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            context: &mut Context<'_>,
+            buffer: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            Pin::new(&mut self.get_mut().stream).poll_write(context, buffer)
+        }
+
+        fn poll_flush(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Pin::new(&mut self.get_mut().stream).poll_flush(context)
+        }
+
+        fn poll_shutdown(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Pin::new(&mut self.get_mut().stream).poll_shutdown(context)
+        }
+    }
 
     #[derive(Clone)]
     struct FixtureDeviceServiceConnector {
         stream: Arc<Mutex<Option<DuplexStream>>>,
         connect_calls: Arc<Mutex<Vec<(String, u16)>>>,
+        drop_signal: Arc<Mutex<Option<oneshot::Sender<()>>>>,
     }
 
     impl FixtureDeviceServiceConnector {
         fn new(stream: DuplexStream) -> Self {
+            Self::with_drop_signal(stream, None)
+        }
+
+        fn with_drop_signal(
+            stream: DuplexStream,
+            drop_signal: Option<oneshot::Sender<()>>,
+        ) -> Self {
             Self {
                 stream: Arc::new(Mutex::new(Some(stream))),
                 connect_calls: Arc::new(Mutex::new(Vec::new())),
+                drop_signal: Arc::new(Mutex::new(drop_signal)),
             }
         }
     }
@@ -1406,6 +1480,7 @@ mod tests {
         fn connect(&self, device_id: String, port: u16) -> DeviceServiceConnectFuture {
             let stream = Arc::clone(&self.stream);
             let connect_calls = Arc::clone(&self.connect_calls);
+            let drop_signal = Arc::clone(&self.drop_signal);
             Box::pin(async move {
                 connect_calls.lock().await.push((device_id, port));
                 let stream = stream.lock().await.take().ok_or_else(|| {
@@ -1415,7 +1490,11 @@ mod tests {
                         true,
                     )
                 })?;
-                Ok(Box::new(stream) as Box<dyn DeviceServiceStream>)
+                let drop_signal = drop_signal.lock().await.take();
+                Ok(Box::new(DropSignalStream {
+                    stream,
+                    drop_signal,
+                }) as Box<dyn DeviceServiceStream>)
             })
         }
     }
@@ -1486,6 +1565,16 @@ mod tests {
             .write_all(&body)
             .await
             .expect("bridge request body should be writable");
+    }
+
+    async fn read_bridge_response(stream: &mut UnixStream) -> Value {
+        serde_json::from_slice(
+            &read_frame(stream)
+                .await
+                .expect("bridge response frame should be readable")
+                .expect("bridge response should not be empty"),
+        )
+        .expect("bridge response should be valid JSON")
     }
 
     fn hmac_signature(secret: &str, message: &str) -> String {
@@ -1623,20 +1712,25 @@ mod tests {
     #[tokio::test]
     async fn cancellation_wakes_waiting_requests() {
         let token = CancellationToken::new();
-        let waiter = {
-            let token = token.clone();
-            tokio::spawn(async move {
-                token.cancelled().await;
-                true
+        let waiters = (0..8)
+            .map(|_| {
+                let token = token.clone();
+                tokio::spawn(async move {
+                    token.cancelled().await;
+                    true
+                })
             })
-        };
+            .collect::<Vec<_>>();
+        tokio::task::yield_now().await;
         token.cancel();
-        assert!(
-            tokio::time::timeout(std::time::Duration::from_secs(1), waiter)
-                .await
-                .expect("cancellation waiter timed out")
-                .expect("cancellation waiter panicked")
-        );
+        for waiter in waiters {
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_secs(1), waiter)
+                    .await
+                    .expect("cancellation waiter timed out")
+                    .expect("cancellation waiter panicked")
+            );
+        }
     }
 
     #[tokio::test]
@@ -2016,7 +2110,9 @@ mod tests {
             PathBuf::from(format!("/tmp/dkrypt-tunnel-{}.sock", uuid::Uuid::new_v4()));
         let listener = UnixListener::bind(&socket_path).expect("test socket bind failed");
         let (bridge_service, mut device_service) = tokio::io::duplex(4096);
-        let connector = FixtureDeviceServiceConnector::new(bridge_service);
+        let (stream_dropped, mut stream_dropped_receiver) = oneshot::channel();
+        let connector =
+            FixtureDeviceServiceConnector::with_drop_signal(bridge_service, Some(stream_dropped));
         let state = Arc::new(BridgeState {
             secrets: vec!["current-secret".to_string()],
             mux_socket: PathBuf::from("/tmp/missing-netmuxd.sock"),
@@ -2045,13 +2141,7 @@ mod tests {
             }),
         )
         .await;
-        let opened: Value = serde_json::from_slice(
-            &read_frame(&mut client)
-                .await
-                .expect("open response frame should be readable")
-                .expect("open response should not be empty"),
-        )
-        .expect("open response should be valid JSON");
+        let opened = read_bridge_response(&mut client).await;
         assert_eq!(opened["ok"], true);
         let tunnel_id = opened["result"]["tunnelId"]
             .as_str()
@@ -2111,14 +2201,11 @@ mod tests {
             }),
         )
         .await;
-        let closed: Value = serde_json::from_slice(
-            &read_frame(&mut client)
-                .await
-                .expect("close response frame should be readable")
-                .expect("close response should not be empty"),
-        )
-        .expect("close response should be valid JSON");
+        let closed = read_bridge_response(&mut client).await;
         assert_eq!(closed["result"]["closed"], true);
+        stream_dropped_receiver
+            .try_recv()
+            .expect("close response must wait until device service streams are dropped");
         device_service_task
             .await
             .expect("closing tunnel should drop device service connections");
@@ -2130,13 +2217,7 @@ mod tests {
             "payload": tunnel_id
         });
         write_bridge_request(&mut client, second_close).await;
-        let closed_again: Value = serde_json::from_slice(
-            &read_frame(&mut client)
-                .await
-                .expect("second close response frame should be readable")
-                .expect("second close response should not be empty"),
-        )
-        .expect("second close response should be valid JSON");
+        let closed_again = read_bridge_response(&mut client).await;
         assert_eq!(closed_again["result"]["closed"], false);
         let mut trailing = [0; 1];
         assert_eq!(
