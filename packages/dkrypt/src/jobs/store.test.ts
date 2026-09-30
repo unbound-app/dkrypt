@@ -650,6 +650,31 @@ test('defers a scheduler request for an existing job blocked by its owner concur
   }
 });
 
+test('wakes an existing queued job when the scheduler adopts it after device recovery', async () => {
+  await clearActiveTestJobs();
+  setCachedDeviceHealth(testDeviceId, { reachable: false, error: 'USB device is offline', checkedAt: Date.now() });
+  const bundleId = `com.test.scheduler-adopted-recovered.${crypto.randomUUID()}`;
+  const queued = enqueueDecryptJob(bundleId, 'manual', { preferredDeviceId: testDeviceId });
+
+  try {
+    expect(queued.status).toBe('queued');
+    setCachedDeviceHealth(testDeviceId, { reachable: true, jailbreakAvailable: true, checkedAt: Date.now() });
+    const adopted = enqueueDecryptJob(bundleId, 'scheduler', {
+      preferredDeviceId: testDeviceId,
+      deferWhenNoDispatchableDevice: true,
+    });
+
+    expect(adopted).toBe(queued);
+    expect(adopted.status).toBe('running');
+  } finally {
+    if (queued.status === 'queued') cancelQueuedJob(queued.id, 'scheduler adoption test cleanup');
+    if (queued.status === 'running') cancelJob(queued.id, 'scheduler adoption test cleanup');
+    await waitForJob(queued, 1_000);
+    setCachedDeviceHealth(testDeviceId, { reachable: true, jailbreakAvailable: true, checkedAt: Date.now() });
+    notifyDeviceDispatchStateChanged();
+  }
+});
+
 test('retains the resolved minimum iOS version in the queued job', () => {
   const job = enqueueDecryptJob(`com.test.minimum-os.${crypto.randomUUID()}`, 'manual', { versionLabel: '2.0', minimumOsVersion: '17.0' });
   expect(job.minimumOsVersion).toBe('17.0');

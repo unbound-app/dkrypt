@@ -390,6 +390,7 @@ export function enqueueDecryptJob(bundleId: string, source: JobSource, options: 
     if (source === 'scheduler') {
       extendJobDeadlineForScheduler(existing);
     }
+    if (existing.status === 'queued') pumpWorkers();
     return existing;
   }
   enforceProjectQuotas(projectId);
