@@ -40,10 +40,11 @@ import { createTestFlightSubscriptionRepository } from '#store/testFlightSubscri
 import { createJobHistoryRepository } from '#store/jobHistoryRepository.js';
 import { createSessionRepository } from '#store/sessionRepository.js';
 import { createSettingsRepository } from '#store/settingsRepository.js';
+import { createWatchRepository, isAppWatchRecord } from '#store/watchRepository.js';
 import { openStateDatabase, readStateCollection, verifyDatabaseBackup, writeStateMirror, type StateCollectionReplacement, type StateDatabase } from '#store/sqlite.js';
 import { paginateCursor } from '#util/cursor.js';
-import { effectiveTimeZone, isValidTimeZone } from '#util/timezone.js';
-import { isValidMaintenanceWindow, type MaintenanceWindow } from '#util/maintenanceWindow.js';
+import { effectiveTimeZone } from '#util/timezone.js';
+import type { MaintenanceWindow } from '#util/maintenanceWindow.js';
 
 export type ApiKeyStatus = 'pending' | 'approved' | 'denied';
 
@@ -698,6 +699,7 @@ const testFlightSubscriptionRepository = createTestFlightSubscriptionRepository(
 const jobHistoryRepository = createJobHistoryRepository(stateDatabase.db);
 const sessionRepository = createSessionRepository(stateDatabase.db);
 const settingsRepository = createSettingsRepository(stateDatabase.db);
+const watchRepository = createWatchRepository(stateDatabase.db);
 const deviceRepository = createDeviceRepository(stateDatabase.db);
 const projectRepository = createProjectRepository(stateDatabase.db);
 
@@ -1375,6 +1377,15 @@ export function upsertAppCatalogEntries(entries: Array<Omit<AppCatalogEntry, 'up
 
 let dirty = false;
 const state: PersistedState = load();
+let persistedWatches = watchRepository.listAll();
+if (persistedWatches.length === 0 && state.watches.length > 0) {
+  watchRepository.replaceAll(state.watches);
+  persistedWatches = watchRepository.listAll();
+}
+if (JSON.stringify(state.watches) !== JSON.stringify(persistedWatches)) {
+  state.watches = persistedWatches;
+  dirty = true;
+}
 let persistedSettings = settingsRepository.listAll();
 if (Object.keys(persistedSettings).length === 0 && Object.keys(state.settings).length > 0) {
   settingsRepository.replaceAll(state.settings);
@@ -1449,6 +1460,9 @@ function persistNow(additionalCollections: readonly StateCollectionReplacement[]
   }
   if (!collections.some((collection) => collection.table === 'settings')) {
     collections.push(settingsRepository.collectionReplacement(state.settings));
+  }
+  if (!collections.some((collection) => collection.table === 'watches')) {
+    collections.push(watchRepository.collectionReplacement(state.watches));
   }
   stateDatabase.writeState(state, undefined, collections);
   dirty = false;
@@ -4351,19 +4365,6 @@ function isPasskeyCredentialShape(value: unknown): value is PasskeyCredential {
   );
 }
 
-function isAppWatchShape(value: unknown): value is AppWatch {
-  if (typeof value !== 'object' || value === null) return false;
-  const w = value as Record<string, unknown>;
-  return typeof w.id === 'string'
-    && typeof w.bundleId === 'string'
-    && typeof w.enabled === 'boolean'
-    && (w.projectId === undefined || (typeof w.projectId === 'string' && /^[A-Za-z0-9_-]{1,80}$/.test(w.projectId)))
-    && (w.timezone === undefined || (typeof w.timezone === 'string' && isValidTimeZone(w.timezone)))
-    && (w.maintenanceWindow === undefined || isValidMaintenanceWindow(w.maintenanceWindow))
-    && (w.missedRunPolicy === undefined || w.missedRunPolicy === 'skip' || w.missedRunPolicy === 'runOnce')
-    && (w.lastScheduledAt === undefined || (typeof w.lastScheduledAt === 'number' && Number.isFinite(w.lastScheduledAt)));
-}
-
 function isDeviceRecordShape(value: unknown): value is BackupDeviceRecord {
   if (typeof value !== 'object' || value === null) return false;
   const d = value as Record<string, unknown>;
@@ -4516,7 +4517,7 @@ function validateBackupPayload(raw: unknown): { ok: true; payload: ValidatedBack
   if (typeof b.settings !== 'object' || b.settings === null) {
     return { ok: false, error: 'settings is missing or malformed' };
   }
-  if (!Array.isArray(b.watches) || !b.watches.every(isAppWatchShape)) {
+  if (!Array.isArray(b.watches) || !b.watches.every(isAppWatchRecord)) {
     return { ok: false, error: 'watches is missing or malformed' };
   }
   if (!Array.isArray(b.devices) || !b.devices.every(isDeviceRecordShape)) {

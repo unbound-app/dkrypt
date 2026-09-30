@@ -1004,6 +1004,33 @@ describe('getWatchConfigIssues', () => {
 
 describe('watch CRUD', () => {
 
+  test('persists complete watch records through the typed SQLite repository', () => {
+    const bundleId = `com.example.watch.repository-${randomUUID()}`;
+    const created = createWatch({
+      bundleId,
+      repo: 'owner/app',
+      ghWorkflowFile: 'update.yml',
+      pollCron: '0 */6 * * *',
+      timezone: 'Europe/Berlin',
+      maintenanceWindow: { start: '23:00', end: '06:00' },
+      missedRunPolicy: 'runOnce',
+    }, 'tester');
+    const database = openStateDatabase({ stateDir: config.stateDir, filename: config.stateDatabaseFile });
+
+    try {
+      expect(readStateCollection(database.db, 'watches')).toContainEqual(created.watch);
+
+      const updated = updateWatch(created.watch!.id, {
+        dispatchTargets: [{ repo: 'owner/release', ghWorkflowFile: 'release.yml', mode: 'workflow_dispatch', ref: 'stable', inputs: { build: 'latest' } }],
+      }, 'tester');
+
+      expect(readStateCollection(database.db, 'watches')).toContainEqual(updated.watch);
+    } finally {
+      database.close();
+      deleteWatch(created.watch!.id, 'tester');
+    }
+  });
+
   test('keeps unique dispatch destinations for one watch', () => {
     const targets = getWatchDispatchTargets({
       repo: 'owner/legacy',
