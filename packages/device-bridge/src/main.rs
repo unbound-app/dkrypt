@@ -38,6 +38,7 @@ const RPC_VERSION: u16 = 1;
 const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
 const DEFAULT_AGENT_PORT: u16 = 5913;
 const DEFAULT_SSH_PORT: u16 = 22;
+const RPC_CLIENT_SHUTDOWN_GRACE: Duration = Duration::from_secs(20);
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -138,6 +139,7 @@ struct BridgeState {
     mux_socket: PathBuf,
     host_id: String,
     service_connector: Arc<dyn DeviceServiceConnector>,
+    shutdown: CancellationToken,
     tunnels: Mutex<HashMap<String, Tunnel>>,
     cancellations: Mutex<HashMap<String, CancellationToken>>,
     event_sequence: AtomicU64,
@@ -844,6 +846,19 @@ async fn close_tunnel(state: &BridgeState, tunnel_id: &str) -> Value {
     }
 }
 
+async fn close_all_tunnels(state: &BridgeState) {
+    let tunnel_ids = state
+        .tunnels
+        .lock()
+        .await
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+    for tunnel_id in tunnel_ids {
+        close_tunnel(state, &tunnel_id).await;
+    }
+}
+
 async fn execute(state: Arc<BridgeState>, request: RpcRequest) -> Result<Value, RpcError> {
     match request.operation.as_str() {
         "capabilities" => Ok(
@@ -1048,7 +1063,10 @@ async fn write_frame(stream: &mut UnixStream, response: &RpcResponse) -> Result<
 
 async fn handle_client(mut stream: UnixStream, state: Arc<BridgeState>) {
     loop {
-        let frame = match read_frame(&mut stream).await {
+        let frame = match tokio::select! {
+            _ = state.shutdown.cancelled() => return,
+            frame = read_frame(&mut stream) => frame,
+        } {
             Ok(Some(frame)) => frame,
             Ok(None) | Err(_) => return,
         };
@@ -1082,7 +1100,10 @@ async fn handle_client(mut stream: UnixStream, state: Arc<BridgeState>) {
                 false,
             ))
         } else if follow_events {
-            stream_device_events(&mut stream, state.clone(), request_id).await;
+            tokio::select! {
+                _ = state.shutdown.cancelled() => return,
+                _ = stream_device_events(&mut stream, state.clone(), request_id) => {}
+            }
             return;
         } else {
             let deadline =
@@ -1115,6 +1136,36 @@ async fn handle_client(mut stream: UnixStream, state: Arc<BridgeState>) {
             return;
         }
     }
+}
+
+async fn serve_rpc(listener: UnixListener, state: Arc<BridgeState>) -> Result<(), String> {
+    let mut clients = tokio::task::JoinSet::new();
+    let outcome = loop {
+        tokio::select! {
+            _ = state.shutdown.cancelled() => break Ok(()),
+            accepted = listener.accept() => match accepted {
+                Ok((stream, _)) => {
+                    let client_state = state.clone();
+                    clients.spawn(async move {
+                        handle_client(stream, client_state).await;
+                    });
+                }
+                Err(value) => break Err(value.to_string()),
+            },
+            _ = clients.join_next(), if !clients.is_empty() => {}
+        }
+    };
+    state.shutdown.cancel();
+    let drained = timeout(RPC_CLIENT_SHUTDOWN_GRACE, async {
+        while clients.join_next().await.is_some() {}
+    })
+    .await;
+    if drained.is_err() {
+        clients.abort_all();
+        while clients.join_next().await.is_some() {}
+    }
+    close_all_tunnels(&state).await;
+    outcome
 }
 
 async fn wait_for_path(path: &Path) -> Result<(), String> {
@@ -1323,6 +1374,7 @@ async fn main() -> Result<(), String> {
         .filter(|value| !value.trim().is_empty())
         .map(Ok)
         .unwrap_or_else(|| persistent_pairing_host_id(&pairing_store))?;
+    let shutdown = CancellationToken::new();
     let state = Arc::new(BridgeState {
         secrets,
         service_connector: Arc::new(UsbmuxdDeviceServiceConnector {
@@ -1330,6 +1382,7 @@ async fn main() -> Result<(), String> {
         }),
         mux_socket,
         host_id,
+        shutdown: shutdown.clone(),
         tunnels: Mutex::new(HashMap::new()),
         cancellations: Mutex::new(HashMap::new()),
         event_sequence: AtomicU64::new(0),
@@ -1340,7 +1393,6 @@ async fn main() -> Result<(), String> {
     let mut terminate = signal(SignalKind::terminate()).map_err(|value| value.to_string())?;
     let mut interrupt = signal(SignalKind::interrupt()).map_err(|value| value.to_string())?;
     let binary = env::var("NETMUXD_BIN").unwrap_or_else(|_| "netmuxd".to_string());
-    let shutdown = CancellationToken::new();
     let supervisor_shutdown = shutdown.clone();
     let supervisor = tokio::spawn(supervise_netmuxd(
         binary,
@@ -1348,21 +1400,17 @@ async fn main() -> Result<(), String> {
         pairing_store,
         supervisor_shutdown,
     ));
-    let outcome = loop {
-        tokio::select! {
-            accepted = listener.accept() => {
-                match accepted {
-                    Ok((stream, _)) => {
-                        let client_state = state.clone();
-                        tokio::spawn(async move {
-                            handle_client(stream, client_state).await;
-                        });
-                    }
-                    Err(value) => break Err(value.to_string()),
-                }
-            }
-            _ = terminate.recv() => break Ok(()),
-            _ = interrupt.recv() => break Ok(()),
+    let server = serve_rpc(listener, state.clone());
+    tokio::pin!(server);
+    let outcome = tokio::select! {
+        result = &mut server => result,
+        _ = terminate.recv() => {
+            shutdown.cancel();
+            server.await
+        }
+        _ = interrupt.recv() => {
+            shutdown.cancel();
+            server.await
         }
     };
     shutdown.cancel();
@@ -1382,7 +1430,7 @@ mod tests {
         DeviceServiceStream, MAX_FRAME_BYTES, RPC_VERSION, UsbmuxdDeviceServiceConnector,
         authorized_secret, bridge_capabilities, error, failure, handle_client,
         netmuxd_restart_delay, read_agent_frame, read_frame, request_agent_exchange, response,
-        supervise_netmuxd, valid_frame_length, write_agent_frame,
+        serve_rpc, supervise_netmuxd, valid_frame_length, write_agent_frame,
     };
     use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
     use hmac::{Hmac, Mac};
@@ -1851,6 +1899,7 @@ mod tests {
             mux_socket: PathBuf::from("/tmp/missing-netmuxd.sock"),
             host_id: "test-host".to_string(),
             service_connector: Arc::new(connector.clone()),
+            shutdown: CancellationToken::new(),
             tunnels: Mutex::new(HashMap::new()),
             cancellations: Mutex::new(HashMap::new()),
             event_sequence: AtomicU64::new(0),
@@ -1924,6 +1973,7 @@ mod tests {
             mux_socket: PathBuf::from("/tmp/missing-netmuxd.sock"),
             host_id: "test-host".to_string(),
             service_connector: Arc::new(connector.clone()),
+            shutdown: CancellationToken::new(),
             tunnels: Mutex::new(HashMap::new()),
             cancellations: Mutex::new(HashMap::new()),
             event_sequence: AtomicU64::new(0),
@@ -2052,6 +2102,7 @@ mod tests {
             service_connector: Arc::new(UsbmuxdDeviceServiceConnector {
                 mux_socket: PathBuf::from("/tmp/missing-netmuxd.sock"),
             }),
+            shutdown: CancellationToken::new(),
             tunnels: Mutex::new(HashMap::new()),
             cancellations: Mutex::new(HashMap::new()),
             event_sequence: AtomicU64::new(0),
@@ -2105,6 +2156,160 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rpc_server_closes_idle_clients_when_shutdown_begins() {
+        let socket_path = PathBuf::from(format!(
+            "/tmp/dkrypt-shutdown-{}.sock",
+            uuid::Uuid::new_v4()
+        ));
+        let listener = UnixListener::bind(&socket_path).expect("test socket bind failed");
+        let shutdown = CancellationToken::new();
+        let state = Arc::new(BridgeState {
+            secrets: vec!["current-secret".to_string()],
+            mux_socket: PathBuf::from("/tmp/missing-netmuxd.sock"),
+            host_id: "test-host".to_string(),
+            service_connector: Arc::new(UsbmuxdDeviceServiceConnector {
+                mux_socket: PathBuf::from("/tmp/missing-netmuxd.sock"),
+            }),
+            shutdown: shutdown.clone(),
+            tunnels: Mutex::new(HashMap::new()),
+            cancellations: Mutex::new(HashMap::new()),
+            event_sequence: AtomicU64::new(0),
+        });
+        let server = tokio::spawn(serve_rpc(listener, state));
+        let mut client = UnixStream::connect(&socket_path)
+            .await
+            .expect("test socket connect failed");
+        write_bridge_request(
+            &mut client,
+            json!({
+                "version": RPC_VERSION,
+                "requestId": "before-shutdown",
+                "auth": "current-secret",
+                "operation": "capabilities"
+            }),
+        )
+        .await;
+        assert_eq!(read_bridge_response(&mut client).await["ok"], true);
+        shutdown.cancel();
+        let closed = timeout(Duration::from_secs(1), read_frame(&mut client))
+            .await
+            .expect("bridge should close idle RPC clients during shutdown")
+            .expect("idle RPC client should observe a clean socket close");
+        assert!(closed.is_none());
+        server
+            .await
+            .expect("RPC server task should not panic")
+            .expect("RPC server should finish draining cleanly after shutdown");
+        let _ = std::fs::remove_file(socket_path);
+    }
+
+    #[tokio::test]
+    async fn rpc_server_closes_active_tunnels_before_shutdown_completes() {
+        let socket_path = PathBuf::from(format!(
+            "/tmp/dkrypt-tunnel-shutdown-{}.sock",
+            uuid::Uuid::new_v4()
+        ));
+        let listener = UnixListener::bind(&socket_path).expect("test socket bind failed");
+        let shutdown = CancellationToken::new();
+        let (bridge_service, mut device_service) = tokio::io::duplex(4096);
+        let (stream_dropped, mut stream_dropped_receiver) = oneshot::channel();
+        let connector =
+            FixtureDeviceServiceConnector::with_drop_signal(bridge_service, Some(stream_dropped));
+        let state = Arc::new(BridgeState {
+            secrets: vec!["current-secret".to_string()],
+            mux_socket: PathBuf::from("/tmp/missing-netmuxd.sock"),
+            host_id: "test-host".to_string(),
+            service_connector: Arc::new(connector),
+            shutdown: shutdown.clone(),
+            tunnels: Mutex::new(HashMap::new()),
+            cancellations: Mutex::new(HashMap::new()),
+            event_sequence: AtomicU64::new(0),
+        });
+        let server = tokio::spawn(serve_rpc(listener, state));
+        let mut client = UnixStream::connect(&socket_path)
+            .await
+            .expect("test socket connect failed");
+        write_bridge_request(
+            &mut client,
+            json!({
+                "version": RPC_VERSION,
+                "requestId": "open-before-shutdown",
+                "auth": "current-secret",
+                "operation": "service_port",
+                "deviceId": "fixture-device",
+                "port": 12345
+            }),
+        )
+        .await;
+        let opened = read_bridge_response(&mut client).await;
+        assert_eq!(opened["ok"], true);
+        let local_port = opened["result"]["port"]
+            .as_u64()
+            .expect("tunnel response should include a local port") as u16;
+        let mut local = TcpStream::connect(("127.0.0.1", local_port))
+            .await
+            .expect("local tunnel should accept connections");
+        let device_service_task = tokio::spawn(async move {
+            let mut request = [0; 4];
+            device_service
+                .read_exact(&mut request)
+                .await
+                .expect("device service should receive tunnel traffic");
+            assert_eq!(&request, b"ping");
+            device_service
+                .write_all(b"pong")
+                .await
+                .expect("device service response should be writable");
+            let mut closed = [0; 1];
+            assert_eq!(
+                device_service
+                    .read(&mut closed)
+                    .await
+                    .expect("closed device service should be readable"),
+                0
+            );
+        });
+        local
+            .write_all(b"ping")
+            .await
+            .expect("local tunnel should accept traffic");
+        let mut response = [0; 4];
+        timeout(Duration::from_secs(1), local.read_exact(&mut response))
+            .await
+            .expect("device response should arrive before timeout")
+            .expect("device response should be complete");
+        assert_eq!(&response, b"pong");
+        shutdown.cancel();
+        server
+            .await
+            .expect("RPC server task should not panic")
+            .expect("RPC server should drain clients and tunnels");
+        stream_dropped_receiver
+            .try_recv()
+            .expect("server shutdown should wait for the device service stream to close");
+        let closed = timeout(Duration::from_secs(1), read_frame(&mut client))
+            .await
+            .expect("bridge should close RPC clients during shutdown")
+            .expect("client should observe a clean RPC socket close");
+        assert!(closed.is_none());
+        let mut trailing = [0; 1];
+        assert_eq!(
+            timeout(Duration::from_secs(1), local.read(&mut trailing))
+                .await
+                .expect("server shutdown should close active local streams")
+                .expect("closed local stream should be readable"),
+            0
+        );
+        assert!(TcpStream::connect(("127.0.0.1", local_port)).await.is_err());
+        device_service_task
+            .await
+            .expect("device service task should stop during bridge shutdown");
+        drop(local);
+        drop(client);
+        let _ = std::fs::remove_file(socket_path);
+    }
+
+    #[tokio::test]
     async fn authenticated_tunnel_rpc_forwards_service_data_and_waits_for_close() {
         let socket_path =
             PathBuf::from(format!("/tmp/dkrypt-tunnel-{}.sock", uuid::Uuid::new_v4()));
@@ -2118,6 +2323,7 @@ mod tests {
             mux_socket: PathBuf::from("/tmp/missing-netmuxd.sock"),
             host_id: "test-host".to_string(),
             service_connector: Arc::new(connector.clone()),
+            shutdown: CancellationToken::new(),
             tunnels: Mutex::new(HashMap::new()),
             cancellations: Mutex::new(HashMap::new()),
             event_sequence: AtomicU64::new(0),
@@ -2259,6 +2465,7 @@ mod tests {
             service_connector: Arc::new(UsbmuxdDeviceServiceConnector {
                 mux_socket: mux_socket_path.clone(),
             }),
+            shutdown: CancellationToken::new(),
             tunnels: Mutex::new(HashMap::new()),
             cancellations: Mutex::new(HashMap::new()),
             event_sequence: AtomicU64::new(0),
