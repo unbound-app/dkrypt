@@ -17,6 +17,7 @@
   import { isServerQueryCancelled, mergeServerPage, serverQueryStatus } from '#lib/serverStateCache.svelte';
   import { buttonVariants } from '#lib/components/ui/variants';
   import { projectSelectionState } from '#lib/projectSelection.svelte';
+  import VirtualizedList from '#components/VirtualizedList.svelte';
 
   type ArtifactSourceFilter = 'all' | ArtifactRecord['channel'];
 
@@ -423,114 +424,115 @@
             <EmptyState message="No artifacts match this search." />
           {/if}
         {:else}
-          <div
-            class="divide-y divide-border rounded-xl border border-border/70"
-            role="region"
-            aria-label="IPA Library"
+          <VirtualizedList
+            items={artifacts}
+            itemKey={(artifact) => artifact.id}
+            estimateSize={(artifact) => expandedArtifactIds.has(artifact.id) ? 420 : 190}
+            overscan={4}
+            label="IPA library artifacts"
+            class="max-h-[min(74dvh,860px)] overflow-y-auto rounded-xl border border-border/70 divide-y divide-border"
           >
-            <div role="list" aria-label="IPA library artifacts">
-              {#each artifacts as artifact, index (artifact.id)}
-                <div role="listitem" data-artifact-id={artifact.id} aria-posinset={index + 1} aria-setsize={artifacts.length}>
-                  <article class="grid gap-x-5 gap-y-2.5 px-3.5 py-3 first:pt-3 last:pb-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:px-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1.65fr)_auto] lg:items-center">
-                    <div class="flex min-w-0 items-center gap-3">
-                      {#if canManageStorage}
-                        <input
-                          type="checkbox"
-                          class="accent-accent size-4 shrink-0 rounded border-border"
-                          checked={selectedArtifactIds.has(artifact.id)}
-                          disabled={bulkUpdating || (selectedArtifactIds.size >= 100 && !selectedArtifactIds.has(artifact.id))}
-                          onchange={(event) => toggleArtifactSelection(artifact.id, event.currentTarget.checked)}
-                          aria-label="Select {appDisplayName(artifact.bundleId)} {artifactVersion(artifact)}"
-                        />
-                      {/if}
-                      <AppIcon bundleId={artifact.bundleId} src={appIconUrl(artifact.bundleId)} label={appDisplayName(artifact.bundleId)} class="h-9 w-9" />
-                      <div class="min-w-0 flex-1">
-                        <div class="truncate text-[13px] font-semibold" title={appDisplayName(artifact.bundleId)}>{appDisplayName(artifact.bundleId)}</div>
-                        {#if artifact.pinnedAt}<div class="text-muted mt-0.5 text-[10px]">Pinned</div>{/if}
-                        <div class="text-muted mt-0.5 truncate font-mono text-[11px]" title={artifact.bundleId}>{artifact.bundleId}</div>
-                      </div>
+            {#snippet children(artifact: ArtifactRecord)}
+              <div class="border-b border-border/70">
+                <article data-artifact-id={artifact.id} class="grid gap-x-5 gap-y-2.5 px-3.5 py-3 first:pt-3 last:pb-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:px-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1.65fr)_auto] lg:items-center">
+                  <div class="flex min-w-0 items-center gap-3">
+                    {#if canManageStorage}
+                      <input
+                        type="checkbox"
+                        class="accent-accent size-4 shrink-0 rounded border-border"
+                        checked={selectedArtifactIds.has(artifact.id)}
+                        disabled={bulkUpdating || (selectedArtifactIds.size >= 100 && !selectedArtifactIds.has(artifact.id))}
+                        onchange={(event) => toggleArtifactSelection(artifact.id, event.currentTarget.checked)}
+                        aria-label="Select {appDisplayName(artifact.bundleId)} {artifactVersion(artifact)}"
+                      />
+                    {/if}
+                    <AppIcon bundleId={artifact.bundleId} src={appIconUrl(artifact.bundleId)} label={appDisplayName(artifact.bundleId)} class="h-9 w-9" />
+                    <div class="min-w-0 flex-1">
+                      <div class="truncate text-[13px] font-semibold" title={appDisplayName(artifact.bundleId)}>{appDisplayName(artifact.bundleId)}</div>
+                      {#if artifact.pinnedAt}<div class="text-muted mt-0.5 text-[10px]">Pinned</div>{/if}
+                      <div class="text-muted mt-0.5 truncate font-mono text-[11px]" title={artifact.bundleId}>{artifact.bundleId}</div>
                     </div>
-                    <dl class="col-span-full grid min-w-0 grid-cols-3 gap-x-3 text-xs sm:col-span-2 sm:col-start-1 sm:row-start-2 lg:col-span-1 lg:col-start-2 lg:row-start-1">
-                      <div class="min-w-0">
-                        <dt class="text-muted text-[10px] font-semibold tracking-[0.08em] uppercase">Version</dt>
-                        <dd class="mt-0.5 truncate text-[13px] font-semibold" title={artifact.buildNumber ? `${artifact.versionLabel ?? ''} (${artifact.buildNumber})` : artifact.versionLabel}>{artifactVersion(artifact)}</dd>
-                      </div>
-                      <div class="min-w-0">
-                        <dt class="text-muted text-[10px] font-semibold tracking-[0.08em] uppercase">Source</dt>
-                        <dd class="mt-0.5"><Badge variant={artifact.channel === 'testflight' ? 'secondary' : 'default'}>{artifact.channel === 'testflight' ? 'TestFlight' : 'App Store'}</Badge></dd>
-                      </div>
-                      <div class="min-w-0">
-                        <dt class="text-muted text-[10px] font-semibold tracking-[0.08em] uppercase">Size</dt>
-                        <dd class="mt-0.5 text-[13px]">{fmtSize(artifact.fileSizeBytes)}</dd>
-                      </div>
-                    </dl>
-                    <div class="flex items-center justify-end gap-1 sm:col-start-2 sm:row-start-1 lg:col-start-3 lg:row-start-1">
-                      {#if canManageStorage}
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          class="h-8 w-8 shrink-0"
-                          disabled={updatingArtifactIds.includes(artifact.id)}
-                          onclick={() => void toggleArtifactPin(artifact)}
-                          aria-label={artifact.pinnedAt ? `Unpin ${artifact.bundleId}` : `Pin ${artifact.bundleId}`}
-                          title={artifact.pinnedAt ? 'Unpin artifact' : 'Keep artifact from automatic eviction'}
-                        >
-                          {#if artifact.pinnedAt}<PinOff class="h-4 w-4" />{:else}<Pin class="h-4 w-4" />{/if}
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          class="h-8 w-8 shrink-0"
-                          disabled={updatingArtifactIds.includes(artifact.id)}
-                          onclick={() => void toggleArtifactArchived(artifact)}
-                          aria-label={artifact.archivedAt ? `Restore ${artifact.bundleId}` : `Archive ${artifact.bundleId}`}
-                          title={artifact.archivedAt ? 'Restore to active library' : 'Hide from active library'}
-                        >
-                          {#if artifact.archivedAt}<ArchiveRestore class="h-4 w-4" />{:else}<Archive class="h-4 w-4" />{/if}
-                        </Button>
-                      {/if}
-                      <a href={artifact.fileUrl} download class="{buttonVariants('secondary', 'sm')} justify-center">
-                        <Download class="h-3.5 w-3.5" />Download
-                      </a>
+                  </div>
+                  <dl class="col-span-full grid min-w-0 grid-cols-3 gap-x-3 text-xs sm:col-span-2 sm:col-start-1 sm:row-start-2 lg:col-span-1 lg:col-start-2 lg:row-start-1">
+                    <div class="min-w-0">
+                      <dt class="text-muted text-[10px] font-semibold tracking-[0.08em] uppercase">Version</dt>
+                      <dd class="mt-0.5 truncate text-[13px] font-semibold" title={artifact.buildNumber ? `${artifact.versionLabel ?? ''} (${artifact.buildNumber})` : artifact.versionLabel}>{artifactVersion(artifact)}</dd>
                     </div>
-                    <details class="col-span-full rounded-lg border border-border/70 px-3 py-2" open={expandedArtifactIds.has(artifact.id)} ontoggle={(event) => setArtifactDetailsOpen(artifact.id, event.currentTarget.open)}>
-                      <summary class="cursor-pointer text-xs font-medium">Artifact details</summary>
-                      <div class="mt-3 space-y-3">
-                        <dl class="grid gap-x-5 gap-y-3 text-xs sm:grid-cols-2">
-                          <div class="min-w-0">
-                            <dt class="text-muted text-[10px] font-semibold tracking-[0.08em] uppercase">SHA-256</dt>
-                            <dd class="mt-1 break-all font-mono">{artifact.sha256}</dd>
-                          </div>
-                          <div class="min-w-0">
-                            <dt class="text-muted text-[10px] font-semibold tracking-[0.08em] uppercase">Source job</dt>
-                            <dd class="mt-1 break-all font-mono">{artifact.sourceJobId ?? 'Unavailable'}</dd>
-                          </div>
-                          <div>
-                            <dt class="text-muted text-[10px] font-semibold tracking-[0.08em] uppercase">Created</dt>
-                            <dd class="mt-1">{fmtTime(Date.parse(artifact.createdAt))}</dd>
-                          </div>
-                          <div>
-                            <dt class="text-muted text-[10px] font-semibold tracking-[0.08em] uppercase">Last accessed</dt>
-                            <dd class="mt-1">{fmtTime(Date.parse(artifact.lastAccessedAt))}</dd>
-                          </div>
-                        </dl>
-                        {#if artifact.warnings?.length}
-                          <div class="rounded-md border border-warn/30 bg-warn/5 p-2.5 text-xs" role="note">
-                            <div class="font-semibold text-warn">Decrypt warnings</div>
-                            <ul class="mt-1 max-h-40 space-y-1 overflow-y-auto break-words text-muted">
-                              {#each artifact.warnings as warning, index (`${artifact.id}-${index}`)}
-                                <li>{warning}</li>
-                              {/each}
-                            </ul>
-                          </div>
-                        {/if}
-                      </div>
-                    </details>
-                  </article>
-                </div>
-              {/each}
-            </div>
-          </div>
+                    <div class="min-w-0">
+                      <dt class="text-muted text-[10px] font-semibold tracking-[0.08em] uppercase">Source</dt>
+                      <dd class="mt-0.5"><Badge variant={artifact.channel === 'testflight' ? 'secondary' : 'default'}>{artifact.channel === 'testflight' ? 'TestFlight' : 'App Store'}</Badge></dd>
+                    </div>
+                    <div class="min-w-0">
+                      <dt class="text-muted text-[10px] font-semibold tracking-[0.08em] uppercase">Size</dt>
+                      <dd class="mt-0.5 text-[13px]">{fmtSize(artifact.fileSizeBytes)}</dd>
+                    </div>
+                  </dl>
+                  <div class="flex items-center justify-end gap-1 sm:col-start-2 sm:row-start-1 lg:col-start-3 lg:row-start-1">
+                    {#if canManageStorage}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        class="h-8 w-8 shrink-0"
+                        disabled={updatingArtifactIds.includes(artifact.id)}
+                        onclick={() => void toggleArtifactPin(artifact)}
+                        aria-label={artifact.pinnedAt ? `Unpin ${artifact.bundleId}` : `Pin ${artifact.bundleId}`}
+                        title={artifact.pinnedAt ? 'Unpin artifact' : 'Keep artifact from automatic eviction'}
+                      >
+                        {#if artifact.pinnedAt}<PinOff class="h-4 w-4" />{:else}<Pin class="h-4 w-4" />{/if}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        class="h-8 w-8 shrink-0"
+                        disabled={updatingArtifactIds.includes(artifact.id)}
+                        onclick={() => void toggleArtifactArchived(artifact)}
+                        aria-label={artifact.archivedAt ? `Restore ${artifact.bundleId}` : `Archive ${artifact.bundleId}`}
+                        title={artifact.archivedAt ? 'Restore to active library' : 'Hide from active library'}
+                      >
+                        {#if artifact.archivedAt}<ArchiveRestore class="h-4 w-4" />{:else}<Archive class="h-4 w-4" />{/if}
+                      </Button>
+                    {/if}
+                    <a href={artifact.fileUrl} download class="{buttonVariants('secondary', 'sm')} justify-center">
+                      <Download class="h-3.5 w-3.5" />Download
+                    </a>
+                  </div>
+                  <details class="col-span-full rounded-lg border border-border/70 px-3 py-2" open={expandedArtifactIds.has(artifact.id)} ontoggle={(event) => setArtifactDetailsOpen(artifact.id, event.currentTarget.open)}>
+                    <summary class="cursor-pointer text-xs font-medium">Artifact details</summary>
+                    <div class="mt-3 space-y-3">
+                      <dl class="grid gap-x-5 gap-y-3 text-xs sm:grid-cols-2">
+                        <div class="min-w-0">
+                          <dt class="text-muted text-[10px] font-semibold tracking-[0.08em] uppercase">SHA-256</dt>
+                          <dd class="mt-1 break-all font-mono">{artifact.sha256}</dd>
+                        </div>
+                        <div class="min-w-0">
+                          <dt class="text-muted text-[10px] font-semibold tracking-[0.08em] uppercase">Source job</dt>
+                          <dd class="mt-1 break-all font-mono">{artifact.sourceJobId ?? 'Unavailable'}</dd>
+                        </div>
+                        <div>
+                          <dt class="text-muted text-[10px] font-semibold tracking-[0.08em] uppercase">Created</dt>
+                          <dd class="mt-1">{fmtTime(Date.parse(artifact.createdAt))}</dd>
+                        </div>
+                        <div>
+                          <dt class="text-muted text-[10px] font-semibold tracking-[0.08em] uppercase">Last accessed</dt>
+                          <dd class="mt-1">{fmtTime(Date.parse(artifact.lastAccessedAt))}</dd>
+                        </div>
+                      </dl>
+                      {#if artifact.warnings?.length}
+                        <div class="rounded-md border border-warn/30 bg-warn/5 p-2.5 text-xs" role="note">
+                          <div class="font-semibold text-warn">Decrypt warnings</div>
+                          <ul class="mt-1 max-h-40 space-y-1 overflow-y-auto break-words text-muted">
+                            {#each artifact.warnings as warning, index (`${artifact.id}-${index}`)}
+                              <li>{warning}</li>
+                            {/each}
+                          </ul>
+                        </div>
+                      {/if}
+                    </div>
+                  </details>
+                </article>
+              </div>
+            {/snippet}
+          </VirtualizedList>
           {#if nextCursor}
             <div class="mt-3 flex justify-center">
               <Button variant="secondary" size="sm" loading={loadingMore} onclick={() => void loadMore()}>Load more ({Math.max(0, total - artifacts.length)} older)</Button>
