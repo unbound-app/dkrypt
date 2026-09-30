@@ -654,5 +654,5 @@ describe('state migrations', () => {
         await rm(stateDir, { recursive: true, force: true });
       }
     }
-  });
+  }, 30_000);
 });

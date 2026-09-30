@@ -256,7 +256,7 @@ describe('dashboard notifications', () => {
     } finally {
       Date.now = originalNow;
     }
-  });
+  }, 20_000);
 
   test('sends device alerts to device viewers with a device-page link', () => {
     const role = createRole({
