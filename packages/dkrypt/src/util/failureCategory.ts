@@ -1,3 +1,5 @@
+import { Type, type Static } from '@sinclair/typebox';
+
 const CANCELLED_RE = /^cancelled by/i;
 const QUEUE_DEADLINE_RE = /deadline exceeded while waiting in the queue/i;
 const TIMEOUT_RE = /timed? ?out/i;
@@ -8,7 +10,19 @@ const TESTFLIGHT_RE = /TestFlight|testflight|beta app|train/i;
 const NETWORK_RE = /fetch failed|network|HTTP [45]\d\d|socket hang up|DNS/i;
 const DECRYPT_RE = /ipadecrypt|verify failed|still encrypted|cryptid/i;
 
-export type JobFailureClass = 'device_transport' | 'app_store' | 'testflight' | 'network' | 'storage' | 'decrypt' | 'queue' | 'cancelled' | 'unknown';
+export const jobFailureClassSchema = Type.Union([
+  Type.Literal('device_transport'),
+  Type.Literal('app_store'),
+  Type.Literal('testflight'),
+  Type.Literal('network'),
+  Type.Literal('storage'),
+  Type.Literal('decrypt'),
+  Type.Literal('queue'),
+  Type.Literal('cancelled'),
+  Type.Literal('unknown'),
+]);
+
+export type JobFailureClass = Static<typeof jobFailureClassSchema>;
 
 export function classifyJobFailure(message: string | undefined): JobFailureClass {
   if (!message) return 'unknown';

@@ -1397,6 +1397,7 @@ test('native dashboard job inspection serves timelines and validates history que
   const { server, cookie } = await signIn();
   const bundleId = `com.example.native-job-${crypto.randomUUID()}`;
   const historyId = `native-job-history-${crypto.randomUUID()}`;
+  const queueHistoryId = `native-job-queue-history-${crypto.randomUUID()}`;
   const missingDeviceId = `missing-device-${crypto.randomUUID()}`;
   const activeJob = enqueueDecryptJob(bundleId, 'manual', { queuedBy: 'root', preferredDeviceId: missingDeviceId });
   Object.assign(activeJob, { deviceId: 'test-device', transport: 'usb', attempt: 4 });
@@ -1413,6 +1414,17 @@ test('native dashboard job inspection serves timelines and validates history que
     timeline: [{ at: finishedAt, label: 'Finished with warning', status: 'done' }],
     warnings: ['An embedded extension remains encrypted'],
   });
+  recordJobHistory({
+    id: queueHistoryId,
+    bundleId,
+    status: 'failed',
+    source: 'scheduler',
+    createdAt: finishedAt - 2_000,
+    finishedAt: finishedAt - 1_000,
+    error: 'job deadline exceeded while waiting in the queue',
+    queueReason: 'Waiting for a compatible device',
+    failureClass: 'queue',
+  });
 
   try {
     const unauthorized = await server.inject({ method: 'GET', url: '/v1/dashboard/jobs' });
@@ -1427,6 +1439,16 @@ test('native dashboard job inspection serves timelines and validates history que
       transport: 'wifi',
       warnings: ['An embedded extension remains encrypted'],
       events: [{ label: 'Finished with warning', status: 'done' }],
+    });
+
+    const queueTimeline = await server.inject({ method: 'GET', url: `/v1/dashboard/jobs/${queueHistoryId}/timeline`, headers: { cookie } });
+    expect(queueTimeline.statusCode).toBe(200);
+    expect(queueTimeline.json()).toMatchObject({
+      queueReason: 'Waiting for a compatible device',
+      guidance: {
+        category: 'Queue wait expired',
+        action: 'Resolve the queue blocker shown in the job timeline or device status, then retry.',
+      },
     });
 
     const history = await server.inject({ method: 'GET', url: `/v1/dashboard/jobs?q=${encodeURIComponent(bundleId)}`, headers: { cookie } });

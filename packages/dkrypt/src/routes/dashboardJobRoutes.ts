@@ -23,6 +23,7 @@ type TimelineSource = {
   fileSizeBytes?: number;
   sizeBytes?: number;
   warnings?: string[];
+  queueReason?: string;
   ipaMetadata?: Job['ipaMetadata'];
   ipaInfoPlist?: Job['ipaInfoPlist'];
   timeline?: Job['timeline'];
@@ -50,10 +51,11 @@ function dashboardJobTimeline(source: TimelineSource) {
     transport: source.transport,
     sizeBytes: source.fileSizeBytes ?? source.sizeBytes,
     warnings: source.warnings,
+    queueReason: source.queueReason,
     ipaMetadata: source.ipaMetadata,
     ipaInfoPlist: source.ipaInfoPlist,
     events,
-    guidance: source.status === 'failed' ? getFailureGuidance(source.error) : undefined,
+    guidance: source.status === 'failed' ? getFailureGuidance(source.error, source.queueReason) : undefined,
   };
 }
 

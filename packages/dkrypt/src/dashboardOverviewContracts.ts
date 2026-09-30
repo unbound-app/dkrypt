@@ -1,6 +1,7 @@
 import { Type, type Static } from '@sinclair/typebox';
 import type { ApiErrorEnvelope } from '#contracts.js';
 import { bundleIdSchema as BundleId, identifierSchema, projectIdentifierSchema } from '#apiCommonContracts.js';
+import { jobFailureClassSchema as JobFailureClass } from '#util/failureCategory.js';
 import {
   dashboardDeviceResponseSchema,
   dashboardDiskUsageSchema,
@@ -11,18 +12,6 @@ import {
 } from '#dashboardModelsContracts.js';
 
 const Identifier = identifierSchema;
-const JobFailureClass = Type.Union([
-  Type.Literal('device_transport'),
-  Type.Literal('app_store'),
-  Type.Literal('testflight'),
-  Type.Literal('network'),
-  Type.Literal('storage'),
-  Type.Literal('decrypt'),
-  Type.Literal('queue'),
-  Type.Literal('cancelled'),
-  Type.Literal('unknown'),
-]);
-
 export const dashboardOverviewQuerySchema = Type.Object({ projectId: Type.Optional(projectIdentifierSchema) }, { additionalProperties: true });
 
 export const dashboardOverviewResponseSchema = Type.Object({

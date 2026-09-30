@@ -291,6 +291,7 @@ function clearQueuedDeadline(id: string): void {
 function failExpiredQueuedJob(job: Job, now = Date.now()): void {
   if (job.status !== 'queued' || job.deadlineAt === undefined || job.deadlineAt > now) return;
   const queueReason = getQueueReason(job);
+  job.queueReason = queueReason;
   clearQueuedDeadline(job.id);
   const index = queue.indexOf(job.id);
   if (index !== -1) queue.splice(index, 1);
@@ -510,6 +511,7 @@ export function getQueueInfo(jobId: string): { position: number; total: number }
 }
 
 export function getQueueReason(job: Job): string | undefined {
+  if (job.queueReason) return job.queueReason;
   if (job.status !== 'queued') return undefined;
   const devices = getEffectiveDevices().filter((device) => device.enabled);
   if (devices.length === 0) return 'Waiting for an enabled device';
@@ -585,6 +587,7 @@ function toHistoryEntry(job: Job) {
     deadlineAt: job.deadlineAt,
     deadlineExceeded: job.deadlineExceeded,
     failureClass: job.failureClass,
+    queueReason: job.queueReason,
   };
 }
 

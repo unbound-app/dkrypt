@@ -56,6 +56,7 @@ const historyCsvColumns = [
   'queuedBy',
   'status',
   'error',
+  'queueReason',
   'sizeBytes',
   'source',
   'deviceId',

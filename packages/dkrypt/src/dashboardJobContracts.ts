@@ -2,6 +2,7 @@ import { Type, type Static } from '@sinclair/typebox';
 import type { ApiErrorEnvelope, DashboardJobHistoryPage, DashboardJobSummary, DashboardJobTimeline } from '#contracts.js';
 import { bundleIdSchema as BundleId, deviceTransportSchema, identifierSchema, paginationQueryProperties, projectIdentifierSchema } from '#apiCommonContracts.js';
 import type { BundleStats } from '#store/state.js';
+import { jobFailureClassSchema } from '#util/failureCategory.js';
 
 const JobStatus = Type.Union([Type.Literal('queued'), Type.Literal('running'), Type.Literal('done'), Type.Literal('failed')]);
 const JsonObject = Type.Object({}, { additionalProperties: true });
@@ -54,7 +55,8 @@ export const dashboardJobExportEntrySchema = Type.Object({
   retryCount: Type.Optional(Type.Number()),
   deadlineAt: Type.Optional(Type.Number()),
   deadlineExceeded: Type.Optional(Type.Boolean()),
-  failureClass: Type.Optional(Type.String()),
+  failureClass: Type.Optional(jobFailureClassSchema),
+  queueReason: Type.Optional(Type.String()),
 }, { additionalProperties: true });
 export const dashboardJobExportQuerySchema = Type.Object({
   format: Type.Optional(Type.Union([
@@ -151,7 +153,8 @@ const DashboardJobHistoryEntry = Type.Object({
   cacheHit: Type.Optional(Type.Boolean()),
   deadlineAt: Type.Optional(Type.Number()),
   deadlineExceeded: Type.Optional(Type.Boolean()),
-  failureClass: Type.Optional(Type.String()),
+  failureClass: Type.Optional(jobFailureClassSchema),
+  queueReason: Type.Optional(Type.String()),
   downloadUrl: Type.Optional(Type.String()),
   fileAvailable: Type.Boolean(),
 }, { additionalProperties: true });
@@ -275,7 +278,8 @@ export const dashboardJobDiagnosticJobSchema = Type.Object({
   attempt: Type.Optional(Type.Number()),
   deadlineAt: Type.Optional(Type.Number()),
   deadlineExceeded: Type.Optional(Type.Boolean()),
-  failureClass: Type.Optional(Type.String()),
+  failureClass: Type.Optional(jobFailureClassSchema),
+  queueReason: Type.Optional(Type.String()),
   cancelledBy: Type.Optional(Type.String()),
   artifactId: Type.Optional(identifierSchema),
   cacheHit: Type.Optional(Type.Boolean()),

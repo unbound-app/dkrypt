@@ -30,7 +30,7 @@ import { createBillingRepository } from '#store/billingRepository.js';
 import { createApiKeyRepository, isApiKeyRecordShape } from '#store/apiKeyRepository.js';
 import { createBackupRepository } from '#store/backupRepository.js';
 import { createBackupScheduleRepository } from '#store/backupScheduleRepository.js';
-import { categorizeFailure } from '#util/failureCategory.js';
+import { categorizeFailure, type JobFailureClass } from '#util/failureCategory.js';
 import { combineBits, hasPermission, parseBits, PermissionFlag, serializeBits } from '#permissions.js';
 import { createDeviceRepository } from '#store/deviceRepository.js';
 import { createProjectRepository, isProjectRecordShape } from '#store/projectRepository.js';
@@ -394,6 +394,7 @@ export interface JobHistoryEntry {
   status: 'done' | 'failed';
   warnings?: string[];
   error?: string;
+  queueReason?: string;
   artifactId?: string;
   sizeBytes?: number;
   sha256?: string;
@@ -411,7 +412,7 @@ export interface JobHistoryEntry {
   cacheHit?: boolean;
   deadlineAt?: number;
   deadlineExceeded?: boolean;
-  failureClass?: string;
+  failureClass?: JobFailureClass;
 }
 
 export interface AppCatalogEntry {

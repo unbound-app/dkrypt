@@ -43,6 +43,7 @@ export interface Job {
   timeline?: JobTimelineEvent[];
   warnings?: string[];
   error?: string;
+  queueReason?: string;
   retryCount?: number;
   attempt?: number;
   deadlineAt?: number;

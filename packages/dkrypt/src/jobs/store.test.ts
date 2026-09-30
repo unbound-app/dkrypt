@@ -218,6 +218,9 @@ describe('enqueueDecryptJob', () => {
         deadlineExceeded: true,
         failureClass: 'queue',
       });
+      expect(finished.queueReason).toMatch(/^Waiting /);
+      expect(getQueueReason(finished)).toBe(finished.queueReason);
+      expect(getJobHistoryEntryById(job.id)?.queueReason).toBe(finished.queueReason);
       expect(finished.error).toContain('job deadline exceeded while waiting in the queue');
       expect(finished.error).toContain('Waiting for');
     } finally {

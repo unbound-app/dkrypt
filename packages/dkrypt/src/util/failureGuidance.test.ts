@@ -18,3 +18,19 @@ test('explains queue deadline failures using the blocker recorded on the job', (
     retryRecommended: true,
   });
 });
+
+test('does not claim a blocker is available when the queue deadline has no blocker detail', () => {
+  expect(getFailureGuidance('job deadline exceeded while waiting in the queue')).toEqual({
+    category: 'Queue wait expired',
+    title: 'The job waited too long to start',
+    action: 'Check device readiness and queue status, then retry.',
+    retryRecommended: true,
+  });
+});
+
+test('uses structured queue blocker data when the free-text error is generic', () => {
+  expect(getFailureGuidance('job deadline exceeded while waiting in the queue', 'Waiting for a compatible device')).toMatchObject({
+    category: 'Queue wait expired',
+    action: 'Resolve the queue blocker shown in the job timeline or device status, then retry.',
+  });
+});

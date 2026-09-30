@@ -1,6 +1,7 @@
 import { Type, type Static, type TSchema } from '@sinclair/typebox';
 import type { FastifySchema } from 'fastify';
 import { bundleIdSchema as BundleId, deviceTransportSchema, identifierSchema, paginationQuerySchema, projectIdentifierSchema } from '#apiCommonContracts.js';
+import { jobFailureClassSchema as JobFailureClass } from '#util/failureCategory.js';
 import {
   authConnectionParamsSchema,
   authIdentifierParamsSchema,
@@ -296,17 +297,6 @@ const PublicStatusResponse = Type.Object({
 const PaginationQuery = paginationQuerySchema;
 const ProviderEnvironment = Type.Union([Type.Literal('test'), Type.Literal('live')]);
 const JobStatus = Type.Union([Type.Literal('queued'), Type.Literal('running'), Type.Literal('done'), Type.Literal('failed')]);
-const JobFailureClass = Type.Union([
-  Type.Literal('device_transport'),
-  Type.Literal('app_store'),
-  Type.Literal('testflight'),
-  Type.Literal('network'),
-  Type.Literal('storage'),
-  Type.Literal('decrypt'),
-  Type.Literal('queue'),
-  Type.Literal('cancelled'),
-  Type.Literal('unknown'),
-]);
 const DeviceSubsystemState = Type.Union([Type.Literal('ready'), Type.Literal('degraded'), Type.Literal('offline'), Type.Literal('unsupported'), Type.Literal('unknown')]);
 export const JobSummaryResponse = object({
   id: Identifier,
@@ -413,6 +403,7 @@ export const JobTimelineResponse = object({
   transport: Type.Optional(deviceTransportSchema),
   sizeBytes: Type.Optional(Type.Number()),
   warnings: Type.Optional(Type.Array(Type.String())),
+  queueReason: Type.Optional(Type.String()),
   ipaMetadata: Type.Optional(JsonObject),
   ipaInfoPlist: Type.Optional(JsonObject),
   events: Type.Array(dashboardJobTimelineEventSchema),

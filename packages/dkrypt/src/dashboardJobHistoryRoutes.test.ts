@@ -87,7 +87,7 @@ test('job history route contracts are explicit and routes are mounted by the API
 
 test('job history export preserves project scoping, formats, and attachment names', async () => {
   const entries = [
-    historyEntry({ queuedBy: 'Doe, "A"' }),
+    historyEntry({ queuedBy: 'Doe, "A"', queueReason: 'Waiting for a compatible device' }),
     historyEntry({ id: 'other-job', projectId: 'other-project' }),
   ];
   const server = build({ getAllJobHistory: () => entries });
@@ -107,6 +107,8 @@ test('job history export preserves project scoping, formats, and attachment name
     expect(csv.headers['content-type']).toContain('text/csv');
     expect(csv.headers['content-disposition']).toBe('attachment; filename="dkrypt-job-history.csv"');
     expect(csv.body).toContain('"Doe, ""A"""');
+    expect(csv.body).toContain('queueReason');
+    expect(csv.body).toContain('Waiting for a compatible device');
     expect(unsupportedFormat.statusCode).toBe(200);
     expect(unsupportedFormat.headers['content-disposition']).toBe('attachment; filename="dkrypt-job-history.json"');
     expect(deniedProject.statusCode).toBe(404);

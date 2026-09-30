@@ -393,6 +393,7 @@ export interface JobHistoryEntry {
   status: 'done' | 'failed';
   warnings?: string[];
   error?: string;
+  queueReason?: string;
   artifactId?: string;
   sha256?: string;
   sizeBytes?: number;

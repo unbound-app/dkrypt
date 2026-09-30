@@ -56,7 +56,7 @@ export function jobSummary(job: Job) {
     startedAt: job.startedAt ? new Date(job.startedAt).toISOString() : undefined,
     finishedAt: job.finishedAt ? new Date(job.finishedAt).toISOString() : undefined,
     queue: getQueueInfo(job.id),
-    queueReason: getQueueReason(job),
+    queueReason: job.queueReason ?? getQueueReason(job),
     statusUrl: `/v1/jobs/${job.id}`,
   };
 }

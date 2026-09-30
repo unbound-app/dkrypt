@@ -1,6 +1,12 @@
 import { expect, test } from 'bun:test';
 import { buildServer } from '#server.js';
-import { getRouteContracts } from '#contracts.js';
+import { getRouteContracts, JobTimelineResponse } from '#contracts.js';
+import { Value } from '@sinclair/typebox/value';
+import {
+  dashboardJobDiagnosticResponseSchema,
+  dashboardJobExportEntrySchema,
+  dashboardJobHistoryPageSchema,
+} from '#dashboardJobContracts.js';
 
 test('every registered versioned route has an explicit TypeBox contract', async () => {
   const server = await buildServer({ includePublicRoutes: false });
@@ -88,6 +94,57 @@ test('idempotency header contracts match their endpoint validators', async () =>
   } finally {
     await server.close();
   }
+});
+
+test('job history, exports, and diagnostics expose structured queue failure details', () => {
+  const id = crypto.randomUUID();
+  const historyEntry = {
+    id,
+    bundleId: 'com.example.app',
+    status: 'failed',
+    source: 'scheduler',
+    createdAt: 1,
+    finishedAt: 2,
+    failureClass: 'queue',
+    queueReason: 'Waiting for an enabled device',
+    fileAvailable: false,
+  };
+  const exportEntry = {
+    id,
+    bundleId: 'com.example.app',
+    status: 'failed',
+    source: 'scheduler',
+    createdAt: 1,
+    finishedAt: 2,
+    failureClass: 'queue',
+    queueReason: 'Waiting for an enabled device',
+  };
+  const diagnostic = {
+    generatedAt: new Date(2).toISOString(),
+    correlationId: id,
+    job: {
+      id,
+      bundleId: 'com.example.app',
+      status: 'failed',
+      source: 'scheduler',
+      createdAt: 1,
+      queueReason: 'Waiting for an enabled device',
+      failureClass: 'queue',
+    },
+    timeline: [],
+  };
+
+  expect(Value.Check(dashboardJobHistoryPageSchema, { history: [historyEntry], total: 1 })).toBe(true);
+  expect(Value.Check(dashboardJobExportEntrySchema, exportEntry)).toBe(true);
+  expect(Value.Check(dashboardJobDiagnosticResponseSchema, diagnostic)).toBe(true);
+  expect(Object.keys(dashboardJobHistoryPageSchema.properties.history.items.properties)).toContain('queueReason');
+  expect(Object.keys(dashboardJobExportEntrySchema.properties)).toContain('queueReason');
+  expect(Object.keys(dashboardJobDiagnosticResponseSchema.properties.job.properties)).toContain('queueReason');
+  expect(Object.keys(JobTimelineResponse.properties)).toContain('queueReason');
+  expect(Value.Check(dashboardJobHistoryPageSchema, {
+    history: [{ ...historyEntry, failureClass: 'not-a-job-failure-class' }],
+    total: 1,
+  })).toBe(false);
 });
 
 test('dashboard overview project identifiers publish validation constraints', async () => {
@@ -215,7 +272,7 @@ test('dashboard job contracts describe history and transport fields', async () =
     }
     for (const [path, fields] of [
       ['/v1/dashboard/jobs/{id}/status', ['attempt', 'deadlineAt', 'deviceId', 'transport', 'warnings']],
-      ['/v1/dashboard/jobs/{id}/timeline', ['deviceId', 'transport']],
+    ['/v1/dashboard/jobs/{id}/timeline', ['deviceId', 'transport', 'queueReason']],
     ] as const) {
       const schema = document.paths?.[path]?.get?.responses?.['200']?.content?.['application/json']?.schema;
       for (const field of fields) expect(Object.keys(schema?.properties ?? {})).toContain(field);
