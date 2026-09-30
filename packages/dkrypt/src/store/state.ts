@@ -32,6 +32,7 @@ import { categorizeFailure } from '#util/failureCategory.js';
 import { combineBits, hasPermission, parseBits, PermissionFlag, serializeBits } from '#permissions.js';
 import { createDeviceRepository } from '#store/deviceRepository.js';
 import { createProjectRepository, isProjectRecordShape } from '#store/projectRepository.js';
+import { createSchedulerRunRepository } from '#store/schedulerRunRepository.js';
 import { createDeviceHistoryRepository } from '#store/deviceHistoryRepository.js';
 import { createDeviceHealthRepository } from '#store/deviceHealthRepository.js';
 import { createNotificationRepository } from '#store/notificationRepository.js';
@@ -700,6 +701,7 @@ const jobHistoryRepository = createJobHistoryRepository(stateDatabase.db);
 const sessionRepository = createSessionRepository(stateDatabase.db);
 const settingsRepository = createSettingsRepository(stateDatabase.db);
 const watchRepository = createWatchRepository(stateDatabase.db);
+const schedulerRunRepository = createSchedulerRunRepository(stateDatabase.db);
 const deviceRepository = createDeviceRepository(stateDatabase.db);
 const projectRepository = createProjectRepository(stateDatabase.db);
 
@@ -1377,6 +1379,15 @@ export function upsertAppCatalogEntries(entries: Array<Omit<AppCatalogEntry, 'up
 
 let dirty = false;
 const state: PersistedState = load();
+let persistedSchedulerRuns = schedulerRunRepository.listAll();
+if (persistedSchedulerRuns.length === 0 && state.schedulerRunHistory.length > 0) {
+  schedulerRunRepository.replaceAll(state.schedulerRunHistory);
+  persistedSchedulerRuns = schedulerRunRepository.listAll();
+}
+if (JSON.stringify(state.schedulerRunHistory) !== JSON.stringify(persistedSchedulerRuns)) {
+  state.schedulerRunHistory = persistedSchedulerRuns;
+  dirty = true;
+}
 let persistedWatches = watchRepository.listAll();
 if (persistedWatches.length === 0 && state.watches.length > 0) {
   watchRepository.replaceAll(state.watches);
@@ -1463,6 +1474,9 @@ function persistNow(additionalCollections: readonly StateCollectionReplacement[]
   }
   if (!collections.some((collection) => collection.table === 'watches')) {
     collections.push(watchRepository.collectionReplacement(state.watches));
+  }
+  if (!collections.some((collection) => collection.table === 'scheduler_runs')) {
+    collections.push(schedulerRunRepository.collectionReplacement(state.schedulerRunHistory));
   }
   stateDatabase.writeState(state, undefined, collections);
   dirty = false;

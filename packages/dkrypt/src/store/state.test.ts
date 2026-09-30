@@ -73,6 +73,7 @@ import {
   recordApiKeyBundleUsage,
   recordJobHistory,
   recordNotification,
+  recordSchedulerRunOutcome,
   revokeSessionRecord,
   revokeApiKey,
   recordWebhookDelivery,
@@ -83,6 +84,7 @@ import {
   userCanAccessProject,
   updateDevice,
   updateSettings,
+  updateSchedulerRunOutcome,
   updateWatch,
   upsertAppCatalogEntry,
   touchSessionRecord,
@@ -1193,6 +1195,27 @@ test('settings mutations persist through the typed SQLite settings collection', 
   } finally {
     database.close();
     updateSettings({ jobHistoryRetentionDays: previousRetentionDays });
+  }
+});
+
+test('scheduler outcome updates persist through the typed SQLite repository', () => {
+  const entryId = recordSchedulerRunOutcome({
+    watchId: 'typed-repository-watch',
+    bundleId: `com.example.scheduler.repository-${randomUUID()}`,
+    appStore: { ok: true, triggered: true, reason: 'dispatch requested' },
+    testflight: { ok: false, triggered: false, reason: 'no eligible build' },
+  });
+  const database = openStateDatabase({ stateDir: config.stateDir, filename: config.stateDatabaseFile });
+
+  try {
+    expect(readStateCollection(database.db, 'scheduler_runs')).toContainEqual(expect.objectContaining({ id: entryId }));
+    updateSchedulerRunOutcome(entryId, 'appStore', { reason: 'workflow completed', runStatus: 'succeeded' });
+    expect(readStateCollection(database.db, 'scheduler_runs')).toContainEqual(expect.objectContaining({
+      id: entryId,
+      appStore: expect.objectContaining({ reason: 'workflow completed', runStatus: 'succeeded' }),
+    }));
+  } finally {
+    database.close();
   }
 });
 
