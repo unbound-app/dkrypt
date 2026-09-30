@@ -1875,7 +1875,7 @@ test('populated device management and preflight dialog meet accessibility checks
     batteryPercent: 82,
     checkedAt: Date.now(),
     readiness: { score: 100, state: 'ready', reasons: [] },
-    subsystems: { usb: 'ready', mux: 'ready', agent: 'ready', appStore: 'ready', testFlight: 'ready', sshTunnel: 'ready' },
+    subsystems: { usb: 'ready', mux: 'ready', agent: 'ready', appStore: 'unknown', testFlight: 'ready', sshTunnel: 'ready' },
   };
 
   await mockAuthenticatedSession(page, '2097152');
@@ -1929,6 +1929,7 @@ test('populated device management and preflight dialog meet accessibility checks
   await page.goto('/?tab=settings&stab=devices');
   await expect(page.getByText('Lab iPad', { exact: true })).toBeVisible();
   await expect(page.getByText('online', { exact: true })).toBeVisible();
+  await expect(page.getByText('App Store bridge: no recent signal', { exact: true })).toBeVisible();
   const activityList = page.getByRole('list', { name: 'Lab iPad activity' });
   const activityViewport = page.getByRole('region', { name: 'Lab iPad activity scroll area' });
   await expect(activityList.getByRole('listitem').first()).toContainText('Device activity 000');
