@@ -420,6 +420,61 @@ test('live updates suspend while hidden and refresh immediately when visible aga
   await expect.poll(eventSourceCount).toBe(2);
 });
 
+test('live updates keep stale data visible until a reconnect refresh succeeds', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1600 });
+  await mockStableDashboardEvents(page);
+  await mockAuthenticatedDashboard(page, '1');
+  let overviewRequests = 0;
+  let releaseFailedRefresh!: () => void;
+  let markFailedRefreshStarted!: () => void;
+  const failedRefreshStarted = new Promise<void>((resolve) => {
+    markFailedRefreshStarted = resolve;
+  });
+  const awaitFailedRefreshGate = new Promise<void>((resolve) => {
+    releaseFailedRefresh = resolve;
+  });
+  const overviewPayload = {
+    schedulerEnabled: false,
+    settings: {},
+    watches: [],
+    devices: [],
+    schedulerRunHistory: [],
+    disk: { totalBytes: 1, freeBytes: 1, usedBytes: 0, usedPercent: 0 },
+    isPaidPlan: false,
+    maintenance: { active: false, manual: false, auto: false },
+    activeJobs: [],
+  };
+  await page.route('**/v1/dashboard/overview*', async (route) => {
+    overviewRequests += 1;
+    if (overviewRequests === 2) {
+      markFailedRefreshStarted();
+      await awaitFailedRefreshGate;
+      await route.fulfill({ status: 503, body: '' });
+      return;
+    }
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify(overviewPayload) });
+  });
+  await page.goto('/?tab=home');
+  await expect.poll(() => overviewRequests).toBe(1);
+
+  await page.evaluate(() => (window as typeof window & {
+    __dkryptLiveTest: { setVisibility(state: DocumentVisibilityState): void };
+  }).__dkryptLiveTest.setVisibility('hidden'));
+  await page.evaluate(() => (window as typeof window & {
+    __dkryptLiveTest: { setVisibility(state: DocumentVisibilityState): void };
+  }).__dkryptLiveTest.setVisibility('visible'));
+  await failedRefreshStarted;
+  await expect(page.getByText('Reconnected - refreshing data…')).toBeVisible();
+
+  const failedRefreshResponse = page.waitForResponse((response) => response.url().includes('/v1/dashboard/overview?') && response.status() === 503);
+  releaseFailedRefresh();
+  await failedRefreshResponse;
+  await expect(page.getByText('Reconnected - refreshing data…')).toBeVisible();
+  await page.getByRole('button', { name: 'Reconnect now' }).click();
+  await expect.poll(() => overviewRequests).toBe(3);
+  await expect(page.getByText('Reconnected - refreshing data…')).toBeHidden();
+});
+
 test('IPA Library filters can be saved and reapplied across reloads', async ({ page }) => {
   await mockStableDashboardEvents(page);
   await mockAuthenticatedDashboard(page, '1');

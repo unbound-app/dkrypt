@@ -36,6 +36,7 @@ async function refreshOverview(): Promise<void> {
 			liveState.overviewLoaded = true;
 			liveState.sequenceGap = false;
 			liveState.stale = false;
+			if (liveState.connected) liveState.disconnectedAt = null;
 		})
 		.catch(() => {})
 		.finally(() => {
@@ -87,7 +88,6 @@ function readEvent<T>(event: Event): T {
 			void refreshOverview();
 		}
 		liveState.lastEventAt = Date.now();
-		liveState.stale = false;
 	}
 	if (Array.isArray(value)) return value as T;
 	if (value.data !== undefined && Object.keys(value).length === 2) return value.data as T;
@@ -107,22 +107,26 @@ export function connectLive(): void {
 		if (source === initialSource) liveState.overviewLoaded = true;
 	});
 
-  eventSource.onopen = () => {
-    sequenceTracker.reset();
-    if (hasConnectedBefore && liveState.disconnectedAt !== null) serverStateCache.invalidateAll();
-    hasConnectedBefore = true;
-    liveState.connected = true;
-    liveState.disconnectedAt = null;
-    liveState.reconnectAttempts = 0;
-    liveState.stale = false;
-    liveState.sequenceGap = false;
-  };
+	eventSource.onopen = () => {
+		const awaitingFreshOverview = liveState.stale || liveState.sequenceGap;
+		sequenceTracker.reset();
+		if (hasConnectedBefore && liveState.disconnectedAt !== null) serverStateCache.invalidateAll();
+		hasConnectedBefore = true;
+		liveState.connected = true;
+		if (!awaitingFreshOverview) liveState.disconnectedAt = null;
+		liveState.reconnectAttempts = 0;
+		if (!awaitingFreshOverview) {
+			liveState.stale = false;
+			liveState.sequenceGap = false;
+		}
+	};
 
   eventSource.addEventListener('overview', (e) => {
     liveState.overview = readEvent<OverviewPayload>(e);
     serverStateCache.invalidatePrefix('/v1/dashboard/devices');
     liveState.overviewLoaded = true;
     liveState.connected = true;
+    liveState.stale = false;
     liveState.disconnectedAt = null;
     liveState.reconnectAttempts = 0;
   });
