@@ -23,6 +23,7 @@ let visibilityListenerInstalled = false;
 const sequenceTracker = new DashboardEventSequenceTracker();
 let overviewRefresh: Promise<void> | undefined;
 let hasConnectedBefore = false;
+let liveConnectionRequested = false;
 
 async function refreshOverview(): Promise<void> {
 	if (overviewRefresh) return overviewRefresh;
@@ -45,12 +46,36 @@ async function refreshOverview(): Promise<void> {
 }
 
 function scheduleReconnect(): void {
-	if (reconnectTimer || document.visibilityState === 'hidden') return;
+	if (!liveConnectionRequested || reconnectTimer || document.visibilityState === 'hidden') return;
 	const delay = Math.min(30_000, 1_000 * 2 ** Math.min(liveState.reconnectAttempts - 1, 5));
 	reconnectTimer = setTimeout(() => {
 		reconnectTimer = undefined;
-		connectLive();
+		if (liveConnectionRequested && document.visibilityState === 'visible') connectLive();
 	}, delay);
+}
+
+function installVisibilityListener(): void {
+	if (visibilityListenerInstalled) return;
+	document.addEventListener('visibilitychange', () => {
+		if (document.visibilityState === 'hidden') {
+			if (reconnectTimer) clearTimeout(reconnectTimer);
+			reconnectTimer = undefined;
+			source?.close();
+			source = null;
+			liveState.connected = false;
+			if (liveState.disconnectedAt === null) liveState.disconnectedAt = Date.now();
+			liveState.stale = true;
+			serverStateCache.markAllStale();
+			return;
+		}
+		if (liveConnectionRequested && !source) {
+			if (reconnectTimer) clearTimeout(reconnectTimer);
+			reconnectTimer = undefined;
+			liveState.stale = true;
+			connectLive();
+		}
+	});
+	visibilityListenerInstalled = true;
 }
 
 function readEvent<T>(event: Event): T {
@@ -71,16 +96,9 @@ function readEvent<T>(event: Event): T {
 }
 
 export function connectLive(): void {
-  if (source) return;
-  if (!visibilityListenerInstalled) {
-		document.addEventListener('visibilitychange', () => {
-			if (document.visibilityState === 'visible' && !source) {
-				liveState.stale = true;
-				scheduleReconnect();
-			}
-		});
-		visibilityListenerInstalled = true;
-	}
+  liveConnectionRequested = true;
+  installVisibilityListener();
+  if (source || document.visibilityState === 'hidden') return;
 
   const eventSource = new EventSource(`/v1/dashboard/events?projectId=${encodeURIComponent(projectSelectionState.id)}`);
   source = eventSource;
@@ -155,6 +173,7 @@ export function connectLive(): void {
 }
 
 export function disconnectLive(): void {
+  liveConnectionRequested = false;
   source?.close();
   source = null;
   if (reconnectTimer) clearTimeout(reconnectTimer);

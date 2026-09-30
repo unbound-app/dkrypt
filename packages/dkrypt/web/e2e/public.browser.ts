@@ -158,6 +158,50 @@ async function mockStableDashboardEvents(page: Page): Promise<void> {
   });
 }
 
+async function mockVisibilityAwareDashboardEvents(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    let visibilityState: DocumentVisibilityState = 'visible';
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => visibilityState });
+    const eventSources: Array<{ closeCount: number }> = [];
+    class InstrumentedEventSource extends EventTarget {
+      static readonly CONNECTING = 0;
+      static readonly OPEN = 1;
+      static readonly CLOSED = 2;
+      readonly url: string;
+      readonly withCredentials = false;
+      readyState = InstrumentedEventSource.OPEN;
+      onopen: ((event: Event) => void) | null = null;
+      onerror: ((event: Event) => void) | null = null;
+      private readonly record: { closeCount: number };
+
+      constructor(url: string | URL) {
+        super();
+        this.url = String(url);
+        this.record = { closeCount: 0 };
+        eventSources.push(this.record);
+        queueMicrotask(() => this.onopen?.(new Event('open')));
+      }
+
+      close(): void {
+        if (this.readyState === InstrumentedEventSource.CLOSED) return;
+        this.readyState = InstrumentedEventSource.CLOSED;
+        this.record.closeCount += 1;
+      }
+    }
+
+    Object.defineProperty(window, 'EventSource', { configurable: true, value: InstrumentedEventSource });
+    Object.assign(window, {
+      __dkryptLiveTest: {
+        eventSources,
+        setVisibility(state: DocumentVisibilityState) {
+          visibilityState = state;
+          document.dispatchEvent(new Event('visibilitychange'));
+        },
+      },
+    });
+  });
+}
+
 test.beforeEach(async ({ page }) => {
   await page.route('**/v1/**', async (route) => {
     await route.fulfill({
@@ -352,6 +396,31 @@ test('IPA Library visual layout stays consistent on desktop and mobile', async (
 
   await page.setViewportSize({ width: 390, height: 844 });
   await expectVisualSnapshot(page, libraryCard, 'ipa-library-mobile.png');
+});
+
+test('live updates suspend while hidden and refresh immediately when visible again', async ({ page }) => {
+  await mockVisibilityAwareDashboardEvents(page);
+  await mockAuthenticatedDashboard(page, '1');
+  await page.goto('/?tab=home');
+
+  const eventSourceCount = () => page.evaluate(() => (window as typeof window & {
+    __dkryptLiveTest: { eventSources: Array<{ closeCount: number }> };
+  }).__dkryptLiveTest.eventSources.length);
+  const eventSourceCloseCount = () => page.evaluate(() => (window as typeof window & {
+    __dkryptLiveTest: { eventSources: Array<{ closeCount: number }> };
+  }).__dkryptLiveTest.eventSources.reduce((count, source) => count + source.closeCount, 0));
+
+  await expect.poll(eventSourceCount).toBe(1);
+  await page.evaluate(() => (window as typeof window & {
+    __dkryptLiveTest: { setVisibility(state: DocumentVisibilityState): void };
+  }).__dkryptLiveTest.setVisibility('hidden'));
+  await expect.poll(eventSourceCloseCount, { timeout: 1_000 }).toBe(1);
+  await expect.poll(eventSourceCount).toBe(1);
+
+  await page.evaluate(() => (window as typeof window & {
+    __dkryptLiveTest: { setVisibility(state: DocumentVisibilityState): void };
+  }).__dkryptLiveTest.setVisibility('visible'));
+  await expect.poll(eventSourceCount).toBe(2);
 });
 
 test('IPA Library filters can be saved and reapplied across reloads', async ({ page }) => {
