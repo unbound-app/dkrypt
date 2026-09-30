@@ -569,6 +569,12 @@ test('administrative, notification, and diagnostic contracts publish structured 
       expect(schema).toBeDefined();
       for (const field of fields) expect(Object.keys(schema?.properties ?? {})).toContain(field);
     }
+    const jobsSchema = document.paths?.['/v1/dashboard/support-bundle']?.get?.responses?.['200']?.content?.['application/json']?.schema?.properties?.jobs as {
+      items?: { additionalProperties?: boolean; properties?: Record<string, unknown> };
+    } | undefined;
+    const timelineSchema = jobsSchema?.items?.properties?.timeline as { items?: { additionalProperties?: boolean } } | undefined;
+    expect(jobsSchema?.items?.additionalProperties).toBe(false);
+    expect(timelineSchema?.items?.additionalProperties).toBe(false);
   } finally {
     await server.close();
   }

@@ -187,7 +187,7 @@ export function createDashboardReportingRoutes(overrides: Partial<DashboardRepor
       const jobs = services.getAllJobHistory()
         .filter((entry) => (entry.projectId ?? DEFAULT_PROJECT_ID) === projectId)
         .slice(0, 100)
-        .map(({ id, correlationId, bundleId, status, source, versionLabel, createdAt, startedAt, finishedAt, sizeBytes, error }) => ({
+        .map(({ id, correlationId, bundleId, status, source, versionLabel, createdAt, startedAt, finishedAt, sizeBytes, error, queueReason, deadlineAt, deadlineExceeded, failureClass, deviceId, transport, attempt, retryCount, timeline }) => ({
           id,
           correlationId,
           bundleId,
@@ -199,6 +199,15 @@ export function createDashboardReportingRoutes(overrides: Partial<DashboardRepor
           finishedAt,
           sizeBytes,
           error: redactSensitiveText(error),
+          queueReason: redactSensitiveText(queueReason),
+          deadlineAt,
+          deadlineExceeded,
+          failureClass,
+          deviceId,
+          transport,
+          attempt,
+          retryCount,
+          timeline: timeline?.map(({ at, label, status }) => ({ at, label: redactSensitiveText(label) ?? label, status })),
         }));
       const logs = services.getRecentLogs({ limit: 200, filter: (entry) => services.logBelongsToProject(entry, projectId) }).logs;
       const transportTimeline = logs.filter((entry) => entry.scope === 'idevice').map((entry) => ({

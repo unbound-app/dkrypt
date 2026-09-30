@@ -258,6 +258,15 @@ test('support bundles require management permission and redact sensitive diagnos
     createdAt: 1,
     finishedAt: 2,
     error: 'Authorization: Bearer job-token password=job-password access_token=job-access at https://private.example/path',
+    queueReason: 'Waiting for a compatible device · password=queue-password',
+    deadlineAt: 3,
+    deadlineExceeded: true,
+    failureClass: 'queue',
+    deviceId: 'ipad-1',
+    transport: 'usb',
+    attempt: 2,
+    retryCount: 1,
+    timeline: [Object.assign({ at: 1, label: 'Queued password=timeline-password', status: 'queued' as const }, { token: 'timeline-extra-token' })],
   };
   const privateJob: JobHistoryEntry = { ...job, id: 'private-job', projectId: 'private', bundleId: 'com.example.private' };
   const run: SchedulerRunEntry = {
@@ -342,6 +351,17 @@ test('support bundles require management permission and redact sensitive diagnos
     expect(bundle.schedulerRuns[0].appStore.reason).toBe('Authorization: Bearer [redacted]');
     expect(bundle.schedulerRuns[0].testflight.reason).toBe('[redacted-url]');
     expect(bundle.jobs[0].error).toBe('Authorization: Bearer [redacted] password=[redacted] access_token=[redacted] at [redacted-url]');
+    expect(bundle.jobs[0]).toMatchObject({
+      queueReason: 'Waiting for a compatible device · password=[redacted]',
+      deadlineAt: 3,
+      deadlineExceeded: true,
+      failureClass: 'queue',
+      deviceId: 'ipad-1',
+      transport: 'usb',
+      attempt: 2,
+      retryCount: 1,
+    });
+    expect(bundle.jobs[0].timeline).toEqual([{ at: 1, label: 'Queued password=[redacted]', status: 'queued' }]);
     expect(dashboardRouter.routes.map((route) => `${route.method} ${route.path}`)).not.toContain('GET /v1/dashboard/support-bundle');
   } finally {
     await server.close();
