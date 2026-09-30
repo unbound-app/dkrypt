@@ -133,33 +133,6 @@ async function mockVisualDashboardData(page: Page): Promise<void> {
 
 async function mockStableDashboardEvents(page: Page): Promise<void> {
   await page.addInitScript(() => {
-    class StableEventSource extends EventTarget {
-      static readonly CONNECTING = 0;
-      static readonly OPEN = 1;
-      static readonly CLOSED = 2;
-      readonly url: string;
-      readonly withCredentials = false;
-      readyState = StableEventSource.OPEN;
-      onopen: ((event: Event) => void) | null = null;
-      onerror: ((event: Event) => void) | null = null;
-
-      constructor(url: string | URL) {
-        super();
-        this.url = String(url);
-        queueMicrotask(() => this.onopen?.(new Event('open')));
-      }
-
-      close(): void {
-        this.readyState = StableEventSource.CLOSED;
-      }
-    }
-
-    Object.defineProperty(window, 'EventSource', { configurable: true, value: StableEventSource });
-  });
-}
-
-async function mockVisibilityAwareDashboardEvents(page: Page): Promise<void> {
-  await page.addInitScript(() => {
     let visibilityState: DocumentVisibilityState = 'visible';
     Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => visibilityState });
     const eventSources: Array<{ closeCount: number }> = [];
@@ -399,7 +372,8 @@ test('IPA Library visual layout stays consistent on desktop and mobile', async (
 });
 
 test('live updates suspend while hidden and refresh immediately when visible again', async ({ page }) => {
-  await mockVisibilityAwareDashboardEvents(page);
+  await page.setViewportSize({ width: 1440, height: 1600 });
+  await mockStableDashboardEvents(page);
   await mockAuthenticatedDashboard(page, '1');
   await page.goto('/?tab=home');
 
@@ -417,6 +391,29 @@ test('live updates suspend while hidden and refresh immediately when visible aga
   await expect.poll(eventSourceCloseCount, { timeout: 1_000 }).toBe(1);
   await expect.poll(eventSourceCount).toBe(1);
 
+  await page.evaluate(() => (window as typeof window & {
+    __dkryptLiveTest: { setVisibility(state: DocumentVisibilityState): void };
+  }).__dkryptLiveTest.setVisibility('visible'));
+  await expect.poll(eventSourceCount).toBe(2);
+
+  await page.evaluate(() => (window as typeof window & {
+    __dkryptLiveTest: { setVisibility(state: DocumentVisibilityState): void };
+  }).__dkryptLiveTest.setVisibility('hidden'));
+  await expect.poll(eventSourceCloseCount).toBe(2);
+  let loggedIn = true;
+  await page.unroute('**/v1/auth/session');
+  await page.route('**/v1/auth/session', async (route) => {
+    await route.fulfill(loggedIn
+      ? { contentType: 'application/json', body: JSON.stringify({ loggedIn: true, sub: 'member', displayName: 'Administrator', permissions: '1', identities: [], linkedProviders: [], githubOauthEnabled: false, discordOauthEnabled: false, deployment: { ref: 'abcdef0123456789' }, mfa: { enabled: false, recoveryCodesRemaining: 0, required: false } }) }
+      : { contentType: 'application/json', body: JSON.stringify({ loggedIn: false }) });
+  });
+  await page.route('**/v1/auth/logout', async (route) => {
+    loggedIn = false;
+    await route.fulfill({ status: 204, body: '' });
+  });
+  await page.getByRole('button', { name: 'Account menu' }).click();
+  await page.getByRole('button', { name: 'Log out', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
   await page.evaluate(() => (window as typeof window & {
     __dkryptLiveTest: { setVisibility(state: DocumentVisibilityState): void };
   }).__dkryptLiveTest.setVisibility('visible'));
