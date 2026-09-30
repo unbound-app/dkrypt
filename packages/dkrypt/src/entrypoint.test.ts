@@ -67,9 +67,23 @@ test('production verifies database migration and restore before replacing the ru
 });
 
 test('production replaces the container through Compose graceful shutdown', () => {
-  expect(deploymentWorkflow).toContain('stop_grace_period: 30s');
+  expect(compose).toContain('stop_grace_period: 150s');
+  expect(deploymentWorkflow).toContain('stop_grace_period: 150s');
   expect(deploymentWorkflow).not.toContain('docker rm -f dkrypt');
   expect(deploymentWorkflow).toContain(composeUpCommand);
+});
+
+test('shutdown signals API and bridge before waiting for either process', () => {
+  const apiSignal = entrypoint.indexOf('request_process_stop "${api_pid:-}"');
+  const bridgeSignal = entrypoint.indexOf('request_process_stop "${bridge_pid:-}"');
+  const apiWait = entrypoint.indexOf('wait_for_process_stop "${api_pid:-}"');
+  const bridgeWait = entrypoint.indexOf('wait_for_process_stop "${bridge_pid:-}"');
+
+  expect(apiSignal).toBeGreaterThan(-1);
+  expect(bridgeSignal).toBeGreaterThan(-1);
+  expect(apiWait).toBeGreaterThan(-1);
+  expect(bridgeWait).toBeGreaterThan(-1);
+  expect(Math.max(apiSignal, bridgeSignal)).toBeLessThan(Math.min(apiWait, bridgeWait));
 });
 
 test('production verifies persistent storage as the already-unprivileged smoke-test user', () => {

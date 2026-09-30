@@ -39,7 +39,7 @@ async fn wait_for_counter(path: &Path, minimum: usize) -> Result<(), String> {
     .map_err(|_| format!("{} did not reach {minimum}", path.display()))
 }
 
-async fn request_capabilities(socket_path: &Path) -> Result<Value, String> {
+async fn open_capability_stream(socket_path: &Path) -> Result<(UnixStream, Value), String> {
     let mut stream = UnixStream::connect(socket_path)
         .await
         .map_err(|value| value.to_string())?;
@@ -65,7 +65,14 @@ async fn request_capabilities(socket_path: &Path) -> Result<Value, String> {
         .read_exact(&mut response)
         .await
         .map_err(|value| value.to_string())?;
-    serde_json::from_slice(&response).map_err(|value| value.to_string())
+    let response = serde_json::from_slice(&response).map_err(|value| value.to_string())?;
+    Ok((stream, response))
+}
+
+async fn request_capabilities(socket_path: &Path) -> Result<Value, String> {
+    open_capability_stream(socket_path)
+        .await
+        .map(|(_, response)| response)
 }
 
 async fn stop_bridge(bridge: &mut tokio::process::Child) {
@@ -224,4 +231,90 @@ async fn generated_pairing_host_identity_survives_bridge_process_restarts() {
         0o600
     );
     let _ = fs::remove_dir_all(&directory);
+}
+
+#[tokio::test]
+async fn bridge_process_drains_rpc_clients_and_stops_netmuxd_on_sigterm() {
+    let directory = PathBuf::from(format!("/tmp/dkrypt-bridge-shutdown-{}", Uuid::new_v4()));
+    let rpc_socket = directory.join("device-bridge.sock");
+    let mux_socket = directory.join("netmuxd.sock");
+    let pairing_store = directory.join("pairing");
+    let netmuxd_pid_path = pairing_store.join("netmuxd.pid");
+    let netmuxd = directory.join("netmuxd-fixture");
+    fs::create_dir_all(&pairing_store).expect("pairing store should be created");
+    fs::write(
+        &netmuxd,
+        "#!/bin/sh\nset -eu\nsocket=\nstore=\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"--socket-path\" ]; then socket=$2; shift 2; elif [ \"$1\" = \"--plist-storage\" ]; then store=$2; shift 2; else shift; fi\ndone\nprintf '%s' \"$$\" > \"$store/netmuxd.pid\"\n: > \"$socket\"\nexec sleep 30\n",
+    )
+    .expect("fixture executable should be written");
+    fs::set_permissions(&netmuxd, fs::Permissions::from_mode(0o700))
+        .expect("fixture executable should be executable");
+
+    let bridge_binary = std::env::var("CARGO_BIN_EXE_dkrypt-device-bridge")
+        .expect("Cargo should provide the device bridge binary path");
+    let mut bridge = Command::new(&bridge_binary)
+        .env("DEVICE_BRIDGE_SOCKET", &rpc_socket)
+        .env("DEVICE_MUX_SOCKET", &mux_socket)
+        .env("DEVICE_PAIRING_STORE", &pairing_store)
+        .env("DEVICE_BRIDGE_SECRET", SECRET)
+        .env("NETMUXD_BIN", &netmuxd)
+        .spawn()
+        .expect("device bridge should start");
+
+    let result: Result<(), String> = async {
+        wait_for_file(&rpc_socket).await?;
+        wait_for_file(&mux_socket).await?;
+        wait_for_file(&netmuxd_pid_path).await?;
+        let pid = fs::read_to_string(&netmuxd_pid_path)
+            .map_err(|value| value.to_string())?
+            .parse::<i32>()
+            .map_err(|value| value.to_string())?;
+        let (mut client, response) = open_capability_stream(&rpc_socket).await?;
+        if response["ok"] != Value::Bool(true) {
+            return Err("bridge RPC should remain available before shutdown".to_string());
+        }
+        let bridge_pid = bridge
+            .id()
+            .ok_or_else(|| "bridge process should still be running".to_string())?;
+        let signal_status = StdCommand::new("/bin/kill")
+            .arg("-TERM")
+            .arg(bridge_pid.to_string())
+            .status()
+            .map_err(|value| value.to_string())?;
+        if !signal_status.success() {
+            return Err("SIGTERM should be delivered to the bridge".to_string());
+        }
+        let bridge_status = timeout(Duration::from_secs(5), bridge.wait())
+            .await
+            .map_err(|_| "bridge should finish graceful shutdown before timeout".to_string())?
+            .map_err(|value| value.to_string())?;
+        if !bridge_status.success() {
+            return Err(format!("bridge exited unsuccessfully: {bridge_status}"));
+        }
+        let client_closed = timeout(Duration::from_secs(1), async { client.read_u32().await })
+            .await
+            .map_err(|_| "bridge should close existing RPC clients during shutdown".to_string())?;
+        if client_closed.is_ok() {
+            return Err("existing RPC client should observe EOF after shutdown".to_string());
+        }
+        if rpc_socket.exists() || mux_socket.exists() {
+            return Err("bridge shutdown should remove its runtime sockets".to_string());
+        }
+        let netmuxd_status = StdCommand::new("/bin/kill")
+            .arg("-0")
+            .arg(pid.to_string())
+            .status()
+            .map_err(|value| value.to_string())?;
+        if netmuxd_status.success() {
+            return Err(
+                "netmuxd child should be stopped before bridge shutdown completes".to_string(),
+            );
+        }
+        Ok(())
+    }
+    .await;
+
+    stop_bridge(&mut bridge).await;
+    let _ = fs::remove_dir_all(&directory);
+    result.expect("bridge process should drain RPC clients and stop netmuxd on SIGTERM");
 }

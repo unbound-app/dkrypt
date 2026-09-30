@@ -29,7 +29,7 @@ use tokio::{
     net::{TcpListener, UnixListener, UnixStream},
     process::{Child, Command},
     signal::unix::{SignalKind, signal},
-    sync::{Mutex, mpsc, oneshot, watch},
+    sync::{Mutex, RwLock, mpsc, oneshot, watch},
     time::{Instant, sleep, timeout},
 };
 use uuid::Uuid;
@@ -38,7 +38,9 @@ const RPC_VERSION: u16 = 1;
 const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
 const DEFAULT_AGENT_PORT: u16 = 5913;
 const DEFAULT_SSH_PORT: u16 = 22;
-const RPC_CLIENT_SHUTDOWN_GRACE: Duration = Duration::from_secs(20);
+const MAX_RPC_DEADLINE_MS: u64 = 120_000;
+const RPC_OPERATION_SHUTDOWN_GRACE: Duration = Duration::from_secs(125);
+const RPC_CLIENT_SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -140,6 +142,7 @@ struct BridgeState {
     host_id: String,
     service_connector: Arc<dyn DeviceServiceConnector>,
     shutdown: CancellationToken,
+    operation_gate: RwLock<()>,
     tunnels: Mutex<HashMap<String, Tunnel>>,
     cancellations: Mutex<HashMap<String, CancellationToken>>,
     event_sequence: AtomicU64,
@@ -1106,8 +1109,16 @@ async fn handle_client(mut stream: UnixStream, state: Arc<BridgeState>) {
             }
             return;
         } else {
-            let deadline =
-                Duration::from_millis(request.deadline_ms.unwrap_or(20_000).clamp(1, 120_000));
+            let _operation_admission = state.operation_gate.read().await;
+            if state.shutdown.is_cancelled() {
+                return;
+            }
+            let deadline = Duration::from_millis(
+                request
+                    .deadline_ms
+                    .unwrap_or(20_000)
+                    .clamp(1, MAX_RPC_DEADLINE_MS),
+            );
             if operation == "cancel" {
                 match timeout(deadline, execute(state.clone(), request)).await {
                     Ok(value) => value,
@@ -1145,6 +1156,9 @@ async fn serve_rpc(listener: UnixListener, state: Arc<BridgeState>) -> Result<()
             _ = state.shutdown.cancelled() => break Ok(()),
             accepted = listener.accept() => match accepted {
                 Ok((stream, _)) => {
+                    if state.shutdown.is_cancelled() {
+                        break Ok(());
+                    }
                     let client_state = state.clone();
                     clients.spawn(async move {
                         handle_client(stream, client_state).await;
@@ -1156,11 +1170,16 @@ async fn serve_rpc(listener: UnixListener, state: Arc<BridgeState>) -> Result<()
         }
     };
     state.shutdown.cancel();
-    let drained = timeout(RPC_CLIENT_SHUTDOWN_GRACE, async {
-        while clients.join_next().await.is_some() {}
-    })
-    .await;
-    if drained.is_err() {
+    let operations_drained = timeout(RPC_OPERATION_SHUTDOWN_GRACE, state.operation_gate.write())
+        .await
+        .is_ok();
+    let clients_drained = operations_drained
+        && timeout(RPC_CLIENT_SHUTDOWN_GRACE, async {
+            while clients.join_next().await.is_some() {}
+        })
+        .await
+        .is_ok();
+    if !clients_drained {
         clients.abort_all();
         while clients.join_next().await.is_some() {}
     }
@@ -1383,6 +1402,7 @@ async fn main() -> Result<(), String> {
         mux_socket,
         host_id,
         shutdown: shutdown.clone(),
+        operation_gate: RwLock::new(()),
         tunnels: Mutex::new(HashMap::new()),
         cancellations: Mutex::new(HashMap::new()),
         event_sequence: AtomicU64::new(0),
@@ -1427,10 +1447,11 @@ async fn main() -> Result<(), String> {
 mod tests {
     use super::{
         BridgeState, CancellationToken, DeviceServiceConnectFuture, DeviceServiceConnector,
-        DeviceServiceStream, MAX_FRAME_BYTES, RPC_VERSION, UsbmuxdDeviceServiceConnector,
-        authorized_secret, bridge_capabilities, error, failure, handle_client,
-        netmuxd_restart_delay, read_agent_frame, read_frame, request_agent_exchange, response,
-        serve_rpc, supervise_netmuxd, valid_frame_length, write_agent_frame,
+        DeviceServiceStream, MAX_FRAME_BYTES, MAX_RPC_DEADLINE_MS, RPC_OPERATION_SHUTDOWN_GRACE,
+        RPC_VERSION, UsbmuxdDeviceServiceConnector, authorized_secret, bridge_capabilities, error,
+        failure, handle_client, netmuxd_restart_delay, read_agent_frame, read_frame,
+        request_agent_exchange, response, serve_rpc, supervise_netmuxd, valid_frame_length,
+        write_agent_frame,
     };
     use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
     use hmac::{Hmac, Mac};
@@ -1455,7 +1476,7 @@ mod tests {
         io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, DuplexStream, ReadBuf},
         net::{TcpStream, UnixListener, UnixStream},
         process::Command,
-        sync::{Mutex, oneshot},
+        sync::{Mutex, RwLock, oneshot},
         time::timeout,
     };
 
@@ -1900,6 +1921,7 @@ mod tests {
             host_id: "test-host".to_string(),
             service_connector: Arc::new(connector.clone()),
             shutdown: CancellationToken::new(),
+            operation_gate: RwLock::new(()),
             tunnels: Mutex::new(HashMap::new()),
             cancellations: Mutex::new(HashMap::new()),
             event_sequence: AtomicU64::new(0),
@@ -1974,6 +1996,7 @@ mod tests {
             host_id: "test-host".to_string(),
             service_connector: Arc::new(connector.clone()),
             shutdown: CancellationToken::new(),
+            operation_gate: RwLock::new(()),
             tunnels: Mutex::new(HashMap::new()),
             cancellations: Mutex::new(HashMap::new()),
             event_sequence: AtomicU64::new(0),
@@ -2103,6 +2126,7 @@ mod tests {
                 mux_socket: PathBuf::from("/tmp/missing-netmuxd.sock"),
             }),
             shutdown: CancellationToken::new(),
+            operation_gate: RwLock::new(()),
             tunnels: Mutex::new(HashMap::new()),
             cancellations: Mutex::new(HashMap::new()),
             event_sequence: AtomicU64::new(0),
@@ -2155,6 +2179,129 @@ mod tests {
         let _ = std::fs::remove_file(socket_path);
     }
 
+    #[test]
+    fn rpc_shutdown_drain_outlasts_maximum_request_deadline() {
+        assert!(
+            RPC_OPERATION_SHUTDOWN_GRACE
+                >= Duration::from_millis(MAX_RPC_DEADLINE_MS) + Duration::from_secs(5)
+        );
+    }
+
+    #[tokio::test]
+    async fn rpc_server_rejects_operations_queued_when_shutdown_begins() {
+        let socket_path = PathBuf::from(format!(
+            "/tmp/dkrypt-operation-shutdown-{}.sock",
+            uuid::Uuid::new_v4()
+        ));
+        let listener = UnixListener::bind(&socket_path).expect("test socket bind failed");
+        let shutdown = CancellationToken::new();
+        let fixture: Value =
+            serde_json::from_str(include_str!("../fixtures/device-agent-v1.fixture.json"))
+                .expect("device-agent fixture should be valid JSON");
+        let (bridge_agent, _device_agent) = tokio::io::duplex(16 * 1024);
+        let connector = FixtureDeviceServiceConnector::new(bridge_agent);
+        let state = Arc::new(BridgeState {
+            secrets: vec!["current-secret".to_string()],
+            mux_socket: PathBuf::from("/tmp/missing-netmuxd.sock"),
+            host_id: "test-host".to_string(),
+            service_connector: Arc::new(connector.clone()),
+            shutdown: shutdown.clone(),
+            operation_gate: RwLock::new(()),
+            tunnels: Mutex::new(HashMap::new()),
+            cancellations: Mutex::new(HashMap::new()),
+            event_sequence: AtomicU64::new(0),
+        });
+        let admission_blocker = state.operation_gate.write().await;
+        let server = tokio::spawn(serve_rpc(listener, state.clone()));
+        let mut client = UnixStream::connect(&socket_path)
+            .await
+            .expect("test RPC socket should accept clients");
+        write_bridge_request(
+            &mut client,
+            json!({
+                "version": RPC_VERSION,
+                "requestId": "queued-agent-operation",
+                "auth": "current-secret",
+                "operation": "agent",
+                "deviceId": "fixture-device",
+                "payload": fixture["envelope"],
+                "agentSecret": fixture["secret"],
+                "deadlineMs": 250
+            }),
+        )
+        .await;
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        shutdown.cancel();
+        drop(admission_blocker);
+        timeout(Duration::from_secs(1), server)
+            .await
+            .expect("server should reject queued work and finish shutdown")
+            .expect("RPC server task should not panic")
+            .expect("RPC server should drain cleanly");
+        assert!(connector.connect_calls.lock().await.is_empty());
+        let closed = timeout(Duration::from_secs(1), read_frame(&mut client))
+            .await
+            .expect("bridge should close RPC clients during shutdown")
+            .expect("client should observe a clean socket close");
+        assert!(closed.is_none());
+        let _ = std::fs::remove_file(socket_path);
+    }
+
+    #[tokio::test]
+    async fn rpc_server_rejects_cancellation_queued_when_shutdown_begins() {
+        let socket_path = PathBuf::from(format!(
+            "/tmp/dkrypt-cancel-shutdown-{}.sock",
+            uuid::Uuid::new_v4()
+        ));
+        let listener = UnixListener::bind(&socket_path).expect("test socket bind failed");
+        let shutdown = CancellationToken::new();
+        let state = Arc::new(BridgeState {
+            secrets: vec!["current-secret".to_string()],
+            mux_socket: PathBuf::from("/tmp/missing-netmuxd.sock"),
+            host_id: "test-host".to_string(),
+            service_connector: Arc::new(UsbmuxdDeviceServiceConnector {
+                mux_socket: PathBuf::from("/tmp/missing-netmuxd.sock"),
+            }),
+            shutdown: shutdown.clone(),
+            operation_gate: RwLock::new(()),
+            tunnels: Mutex::new(HashMap::new()),
+            cancellations: Mutex::new(HashMap::new()),
+            event_sequence: AtomicU64::new(0),
+        });
+        let active_operation = state.register_cancellation("active-operation").await;
+        let admission_blocker = state.operation_gate.write().await;
+        let server = tokio::spawn(serve_rpc(listener, state.clone()));
+        let mut client = UnixStream::connect(&socket_path)
+            .await
+            .expect("test RPC socket should accept clients");
+        write_bridge_request(
+            &mut client,
+            json!({
+                "version": RPC_VERSION,
+                "requestId": "queued-cancel-operation",
+                "auth": "current-secret",
+                "operation": "cancel",
+                "payload": "active-operation"
+            }),
+        )
+        .await;
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        shutdown.cancel();
+        drop(admission_blocker);
+        timeout(Duration::from_secs(1), server)
+            .await
+            .expect("server should reject queued cancellation and finish shutdown")
+            .expect("RPC server task should not panic")
+            .expect("RPC server should drain cleanly");
+        assert!(!active_operation.is_cancelled());
+        let closed = timeout(Duration::from_secs(1), read_frame(&mut client))
+            .await
+            .expect("bridge should close RPC clients during shutdown")
+            .expect("client should observe a clean socket close");
+        assert!(closed.is_none());
+        let _ = std::fs::remove_file(socket_path);
+    }
+
     #[tokio::test]
     async fn rpc_server_closes_idle_clients_when_shutdown_begins() {
         let socket_path = PathBuf::from(format!(
@@ -2171,6 +2318,7 @@ mod tests {
                 mux_socket: PathBuf::from("/tmp/missing-netmuxd.sock"),
             }),
             shutdown: shutdown.clone(),
+            operation_gate: RwLock::new(()),
             tunnels: Mutex::new(HashMap::new()),
             cancellations: Mutex::new(HashMap::new()),
             event_sequence: AtomicU64::new(0),
@@ -2221,6 +2369,7 @@ mod tests {
             host_id: "test-host".to_string(),
             service_connector: Arc::new(connector),
             shutdown: shutdown.clone(),
+            operation_gate: RwLock::new(()),
             tunnels: Mutex::new(HashMap::new()),
             cancellations: Mutex::new(HashMap::new()),
             event_sequence: AtomicU64::new(0),
@@ -2324,6 +2473,7 @@ mod tests {
             host_id: "test-host".to_string(),
             service_connector: Arc::new(connector.clone()),
             shutdown: CancellationToken::new(),
+            operation_gate: RwLock::new(()),
             tunnels: Mutex::new(HashMap::new()),
             cancellations: Mutex::new(HashMap::new()),
             event_sequence: AtomicU64::new(0),
@@ -2466,6 +2616,7 @@ mod tests {
                 mux_socket: mux_socket_path.clone(),
             }),
             shutdown: CancellationToken::new(),
+            operation_gate: RwLock::new(()),
             tunnels: Mutex::new(HashMap::new()),
             cancellations: Mutex::new(HashMap::new()),
             event_sequence: AtomicU64::new(0),

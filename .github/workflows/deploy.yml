@@ -208,7 +208,7 @@ jobs:
               container_name: dkrypt
               restart: unless-stopped
               init: true
-              stop_grace_period: 30s
+              stop_grace_period: 150s
               security_opt:
                 - no-new-privileges:true
               network_mode: host

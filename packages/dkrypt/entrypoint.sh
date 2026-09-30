@@ -94,17 +94,25 @@ bridge_socket=${DEVICE_BRIDGE_SOCKET:-/run/dkrypt/device-bridge.sock}
 bridge_restart_delay=1
 bridge_restart_max_delay=30
 
-stop_process() {
+request_process_stop() {
   process_pid=$1
   if [ -n "$process_pid" ] && kill -0 "$process_pid" 2>/dev/null; then
     kill "$process_pid" 2>/dev/null || true
+  fi
+}
+
+wait_for_process_stop() {
+  process_pid=$1
+  if [ -n "$process_pid" ]; then
     wait "$process_pid" 2>/dev/null || true
   fi
 }
 
 shutdown() {
-  stop_process "${api_pid:-}"
-  stop_process "${bridge_pid:-}"
+  request_process_stop "${api_pid:-}"
+  request_process_stop "${bridge_pid:-}"
+  wait_for_process_stop "${api_pid:-}"
+  wait_for_process_stop "${bridge_pid:-}"
 }
 
 handle_signal() {
