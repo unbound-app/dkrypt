@@ -1,11 +1,14 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { CircleAlert, CircleCheck, CircleX, RefreshCw, ServerCog } from 'lucide-svelte';
+  import { CircleAlert, CircleCheck, CircleX, Download, RefreshCw, ServerCog } from 'lucide-svelte';
   import Badge from '#lib/components/ui/Badge.svelte';
   import Button from '#lib/components/ui/Button.svelte';
   import Card from '#lib/components/ui/Card.svelte';
-  import { fetchDashboardDoctor, runDashboardSyntheticProbes, type DashboardDoctorReport, type DashboardSyntheticReport } from '#lib/api';
+  import { fetchDashboardDoctor, runDashboardSyntheticProbes, supportBundleUrl, type DashboardDoctorReport, type DashboardSyntheticReport } from '#lib/api';
   import { fmtDateTime } from '#lib/format.svelte';
+  import { PermissionFlag } from '#lib/permissions';
+  import { sessionHasPermission } from '#lib/session.svelte';
+  import { buttonVariants } from '#lib/components/ui/variants';
 
   const checkTitles: Record<string, string> = {
     'session-secret': 'Session signing secret',
@@ -45,6 +48,7 @@
 
   const warningCount = $derived(report?.checks.filter((check) => check.status === 'warn').length ?? 0);
   const errorCount = $derived(report?.checks.filter((check) => check.status === 'error').length ?? 0);
+  const canDownloadSupportBundle = $derived(sessionHasPermission(PermissionFlag.manageAutomation));
 
   function checkTitle(id: string): string {
     return checkTitles[id] ?? id.split('-').map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(' ');
@@ -95,9 +99,16 @@
         <p class="mt-1 text-xs text-muted">Check service configuration, storage, backups, devices, and credential rotation. Secret values are never shown.</p>
       </div>
     </div>
-    <Button size="sm" variant="secondary" loading={loading} onclick={() => void loadChecks()} aria-label="Refresh checks">
-      <RefreshCw class="h-3.5 w-3.5" /> Refresh
-    </Button>
+    <div class="flex shrink-0 flex-wrap items-center gap-2">
+      {#if canDownloadSupportBundle}
+        <a href={supportBundleUrl()} download class={buttonVariants('secondary', 'sm')} aria-label="Download support bundle">
+          <Download class="h-3.5 w-3.5" aria-hidden="true" /> Support bundle
+        </a>
+      {/if}
+      <Button size="sm" variant="secondary" loading={loading} onclick={() => void loadChecks()} aria-label="Refresh checks">
+        <RefreshCw class="h-3.5 w-3.5" /> Refresh
+      </Button>
+    </div>
   </div>
 
   {#if report?.deployment}

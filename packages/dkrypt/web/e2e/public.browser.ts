@@ -1558,6 +1558,7 @@ test('self-hosters can review configuration doctor checks from Settings', async 
   await expect(page.getByText('SQLite schema 12 is intact')).toBeVisible();
   await expect(page.getByText('Rust device bridge socket is not available yet')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Refresh checks' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Download support bundle' })).toHaveAttribute('href', '/v1/dashboard/support-bundle?projectId=default');
   expect(doctorRequests).toBe(1);
   await page.getByRole('button', { name: 'Refresh checks' }).click();
   await expect(page.getByText('All checks passed')).toBeVisible();
@@ -1630,6 +1631,26 @@ test('device managers can run on-demand service health checks', async ({ page })
   await expect(page.getByText('The device agent did not respond')).toBeVisible();
   expect(probeRequests).toBe(1);
   await expectAccessible(page);
+});
+
+test('device managers without automation permission cannot download support bundles', async ({ page }) => {
+  await page.route('**/v1/**', async (route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify(pathname === '/v1/billing' ? { providers: { stripe: { enabled: false }, crypto: { enabled: false } } } : {}),
+    });
+  });
+  await mockStableDashboardEvents(page);
+  await mockAuthenticatedDashboard(page, '128');
+  await page.route('**/v1/dashboard/doctor', async (route) => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, checkedAt: '2026-09-27T12:00:00.000Z', checks: [] }) });
+  });
+
+  await page.goto('/?tab=settings&stab=doctor');
+
+  await expect(page.getByRole('heading', { name: 'System doctor' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Download support bundle' })).toHaveCount(0);
 });
 
 test('authenticated top bar exposes community links without mobile overflow', async ({ page }) => {
