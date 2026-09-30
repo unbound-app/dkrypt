@@ -1398,6 +1398,43 @@ test('batch queue retries only failed entries after a partial success', async ({
   await expectAccessible(page);
 });
 
+test('batch queue exports each result and error as a CSV download', async ({ page }) => {
+  await mockStableDashboardEvents(page);
+  await mockAuthenticatedDashboard(page, '2');
+  const attempts: string[] = [];
+  await page.route('**/v1/dashboard/decrypt', async (route) => {
+    const body = route.request().postDataJSON() as { bundleId: string };
+    attempts.push(body.bundleId);
+    await route.fulfill({
+      status: 202,
+      contentType: 'application/json',
+      body: JSON.stringify({ id: 'job-com.example.success', status: 'queued', progress: 'Queued', queue: { position: 1, total: 1 } }),
+    });
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Batch decrypt' }).first().click();
+  await page.getByPlaceholder('com.example.app\ncom.example.app2@version_123').fill('com.example.fail@bad"id\ncom.example.formula@=1+1\ncom.example.success@version_2');
+  await page.getByRole('button', { name: 'Queue all' }).click();
+  await expect(page.getByRole('button', { name: 'Retry 2 failed' })).toBeVisible();
+  await expect(page.getByText('Queued 1 of 2', { exact: true })).toBeHidden({ timeout: 10_000 });
+
+  const downloadPromise = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Export results' }).click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe('dkrypt-batch-results.csv');
+  const downloadPath = await download.path();
+  expect(downloadPath).toBeTruthy();
+  expect(await readFile(downloadPath!, 'utf8')).toBe([
+    '"bundle_id","selector","status","job_id","error"',
+    '"com.example.fail","bad""id","failed","","invalid App Store version ID"',
+    '"com.example.formula","\'=1+1","failed","","invalid App Store version ID"',
+    '"com.example.success","version_2","queued","job-com.example.success",""',
+  ].join('\r\n') + '\r\n');
+  expect(attempts).toEqual(['com.example.success']);
+  await expectAccessible(page);
+});
+
 test('pricing plan checkout actions share a bottom baseline', async ({ page }) => {
   for (const width of [1264, 1280, 1365, 1440, 1600]) {
     await page.setViewportSize({ width, height: 1000 });

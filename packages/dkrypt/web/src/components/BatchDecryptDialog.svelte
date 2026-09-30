@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { untrack } from "svelte";
-	import { LoaderCircle, TriangleAlert } from "lucide-svelte";
+	import { Download, LoaderCircle, TriangleAlert } from "lucide-svelte";
 	import {
 		fetchTestFlightBuilds,
 		fetchTestFlightTrains,
@@ -47,6 +47,7 @@
 	const BUNDLE_ID_RE = /^[A-Za-z0-9.-]{3,200}$/;
 	type BatchResult = BatchQueueEntry & {
 		state: "pending" | "ok" | "error";
+		jobId?: string;
 		error?: string;
 	};
 
@@ -147,6 +148,35 @@
 			: result);
 	}
 
+	function csvField(value: string | undefined): string {
+		const normalized = value ?? "";
+		const safe = /^[\t\r\n ]*[=+\-@]/.test(normalized) ? `'${normalized}` : normalized;
+		return `"${safe.replaceAll('"', '""')}"`;
+	}
+
+	function exportResults(): void {
+		if (submitting || results.length === 0) return;
+		const rows = [
+			["bundle_id", "selector", "status", "job_id", "error"],
+			...results.map((result) => [
+				result.bundleId,
+				result.selector,
+				result.state === "ok" ? "queued" : result.state === "error" ? "failed" : "pending",
+				result.jobId,
+				result.error,
+			]),
+		];
+		const content = `${rows.map((row) => row.map(csvField).join(",")).join("\r\n")}\r\n`;
+		const url = URL.createObjectURL(new Blob([content], { type: "text/csv;charset=utf-8" }));
+		const link = document.createElement("a");
+		link.href = url;
+		link.download = "dkrypt-batch-results.csv";
+		document.body.append(link);
+		link.click();
+		link.remove();
+		setTimeout(() => URL.revokeObjectURL(url), 1000);
+	}
+
 	function close(): void {
 		if (submitting) return;
 		text = "";
@@ -225,7 +255,7 @@
 					artifactUrl: data.artifactUrl,
 				});
 				pushRecentBundleId(bundleId);
-				updateResult(entry, { state: "ok" });
+				updateResult(entry, { state: "ok", jobId: data.id });
 				ok += 1;
 			} catch (error) {
 				updateResult(entry, { state: "error", error: error instanceof Error ? error.message : "request failed" });
@@ -412,20 +442,26 @@
 				</div>
 			{/each}
 		</div>
-		<div class="mt-3 flex gap-2">
-			{#if failedCount > 0}
+		<div class="mt-3 flex flex-col gap-2">
+			<Button variant="secondary" class="w-full" disabled={submitting} onclick={exportResults}>
+				<Download class="mr-2 h-4 w-4" />
+				Export results
+			</Button>
+			<div class="flex gap-2">
+				{#if failedCount > 0}
+					<Button
+						class="flex-1"
+						loading={submitting}
+						onclick={retryFailed}>Retry {failedCount} failed</Button
+					>
+				{/if}
 				<Button
+					variant="secondary"
 					class="flex-1"
-					loading={submitting}
-					onclick={retryFailed}>Retry {failedCount} failed</Button
+					disabled={submitting}
+					onclick={close}>Close</Button
 				>
-			{/if}
-			<Button
-				variant="secondary"
-				class="flex-1"
-				disabled={submitting}
-				onclick={close}>Close</Button
-			>
+			</div>
 		</div>
 	{/if}
 </Dialog>
