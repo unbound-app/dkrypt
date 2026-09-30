@@ -1,5 +1,6 @@
 <script lang="ts" generics="T">
   import { createVirtualizer, createWindowVirtualizer } from '@tanstack/svelte-virtual';
+  import { get } from 'svelte/store';
   import { untrack, type Snippet } from 'svelte';
   import { cn } from '#lib/utils';
 
@@ -101,11 +102,11 @@
       overscan: rowOverscan,
     };
     if (mode === 'window') {
-      $virtualizer.setOptions({ count: 0, enabled: false });
-      $windowVirtualizer.setOptions({ ...itemOptions, enabled: true, scrollMargin: windowMargin });
+      get(virtualizer).setOptions({ count: 0, enabled: false });
+      get(windowVirtualizer).setOptions({ ...itemOptions, enabled: true, scrollMargin: windowMargin });
     } else {
-      $windowVirtualizer.setOptions({ count: 0, enabled: false });
-      $virtualizer.setOptions({
+      get(windowVirtualizer).setOptions({ count: 0, enabled: false });
+      get(virtualizer).setOptions({
         ...itemOptions,
         enabled: true,
         getScrollElement: () => scrollContainer ?? null,

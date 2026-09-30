@@ -777,6 +777,8 @@ test('IPA Library keeps loaded artifacts visible while scrolling its rows', asyn
 
 test('IPA Library stays populated and does not refetch loaded results during incremental scrolling', async ({ page }) => {
   test.setTimeout(60_000);
+  const runtimeErrors: string[] = [];
+  page.on('pageerror', (error) => runtimeErrors.push(error.message));
   await mockStableDashboardEvents(page);
   await mockAuthenticatedDashboard(page, '1');
   let artifactListRequestCount = 0;
@@ -893,7 +895,7 @@ test('IPA Library stays populated and does not refetch loaded results during inc
 
   await firstArtifact.scrollIntoViewIfNeeded();
   await expect(firstArtifact).toBeAttached();
-  await expect(firstArtifact.getByText(warning, { exact: true })).toBeVisible();
+  await expect(firstArtifact.getByText('com.example.wheel0', { exact: true }).first()).toBeVisible();
   const scrollSamples = await page.evaluate(() => (window as typeof window & {
     __ipaLibraryScrollSamples?: Array<{ kind: 'blank' | 'detached'; scrollY: number; renderedRows: number }>;
   }).__ipaLibraryScrollSamples ?? []);
@@ -901,6 +903,7 @@ test('IPA Library stays populated and does not refetch loaded results during inc
   await expect.poll(() => artifactListRequestCount).toBe(1);
   expect(await viewport.locator('[role="listitem"]').count()).toBeLessThan(120);
   await expect(viewport.locator('[role="listitem"]').first()).toHaveAttribute('aria-setsize', '120');
+  expect(runtimeErrors.filter((message) => message.includes('effect_update_depth_exceeded'))).toEqual([]);
 });
 
 test('IPA Library discards a page response from a source filter that is no longer active', async ({ page }) => {
