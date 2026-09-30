@@ -353,8 +353,57 @@ describe('Stripe billing webhooks', () => {
       data: { object: { ...(currentEvent.data.object as Stripe.Subscription), status: 'canceled' } },
     } as Stripe.Event;
     const newerProcessing = processStripeEvent(newerEvent, client);
+    const timeUntilNewerEvent = newerEvent.created * 1000 - Date.now() + 1;
+    if (timeUntilNewerEvent > 0) await new Promise((resolve) => setTimeout(resolve, timeUntilNewerEvent));
     releaseLookup();
     await staleProcessing;
+    await newerProcessing;
+
+    expect(getBillingSubscriptionById(subscriptionId)?.status).toBe('canceled');
+  });
+
+  test('does not overwrite a newer subscription event after a delayed invoice lookup', async () => {
+    const userId = `stripe-invoice-race-${crypto.randomUUID()}`;
+    const customerId = `cus_${crypto.randomUUID()}`;
+    const subscriptionId = `sub_${crypto.randomUUID()}`;
+    replaceBillingSnapshot({ customers: [], subscriptions: [] });
+    const currentEvent = subscriptionEvent(userId, customerId, subscriptionId);
+    await processStripeEvent(currentEvent);
+
+    let signalLookup = () => {};
+    let releaseLookup = () => {};
+    const lookupStarted = new Promise<void>((resolve) => { signalLookup = resolve; });
+    const lookupGate = new Promise<void>((resolve) => { releaseLookup = resolve; });
+    const client = {
+      subscriptions: {
+        retrieve: async () => {
+          signalLookup();
+          await lookupGate;
+          return currentEvent.data.object as Stripe.Subscription;
+        },
+      },
+    } as unknown as Stripe;
+    const invoiceEvent = event('invoice.paid', {
+      id: `in_${crypto.randomUUID()}`,
+      object: 'invoice',
+      subscription: subscriptionId,
+    });
+    invoiceEvent.created = currentEvent.created;
+    const invoiceProcessing = processStripeEvent(invoiceEvent, client);
+    await lookupStarted;
+
+    const newerEvent = {
+      ...currentEvent,
+      id: `evt_${crypto.randomUUID()}`,
+      created: invoiceEvent.created + 1,
+      type: 'customer.subscription.updated',
+      data: { object: { ...(currentEvent.data.object as Stripe.Subscription), status: 'canceled' } },
+    } as Stripe.Event;
+    const newerProcessing = processStripeEvent(newerEvent, client);
+    const timeUntilNewerEvent = newerEvent.created * 1000 - Date.now() + 1;
+    if (timeUntilNewerEvent > 0) await new Promise((resolve) => setTimeout(resolve, timeUntilNewerEvent));
+    releaseLookup();
+    await invoiceProcessing;
     await newerProcessing;
 
     expect(getBillingSubscriptionById(subscriptionId)?.status).toBe('canceled');

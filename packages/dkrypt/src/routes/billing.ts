@@ -184,14 +184,14 @@ function persistStripeSubscription(subscription: Stripe.Subscription, occurredAt
   });
 }
 
-async function reconcileStripeSubscription(subscriptionId: string, stripeClient?: Stripe, newerThan?: string, fallbackUserId?: string): Promise<void> {
+async function reconcileStripeSubscription(subscriptionId: string, stripeClient?: Stripe, eventOccurredAt?: string, fallbackUserId?: string): Promise<void> {
   const current = stripeClient
     ? await stripeClient.subscriptions.retrieve(subscriptionId)
     : await stripeRequest((client) => client.subscriptions.retrieve(subscriptionId));
   const latest = getBillingSubscriptionById(subscriptionId);
-  if (newerThan && latest && Date.parse(latest.occurredAt) > Date.parse(newerThan)) return;
-  const reconciledAt = new Date().toISOString();
-  persistStripeSubscription(current, reconciledAt, fallbackUserId ?? latest?.userId, reconciledAt);
+  if (eventOccurredAt && latest && Date.parse(latest.occurredAt) > Date.parse(eventOccurredAt)) return;
+  const updatedAt = new Date().toISOString();
+  persistStripeSubscription(current, eventOccurredAt ?? updatedAt, fallbackUserId ?? latest?.userId, updatedAt);
 }
 
 async function processSubscription(event: Stripe.Event, stripeClient?: Stripe): Promise<void> {
@@ -213,7 +213,7 @@ async function processInvoice(event: Stripe.Event, stripeClient?: Stripe): Promi
   if (!subscriptionId) return;
 
   await runKeyedSerial(`stripe:${subscriptionId}`, async () => {
-    await reconcileStripeSubscription(subscriptionId, stripeClient);
+    await reconcileStripeSubscription(subscriptionId, stripeClient, eventDate(event));
   });
 }
 
