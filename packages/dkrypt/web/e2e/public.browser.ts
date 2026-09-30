@@ -824,6 +824,24 @@ test('IPA Library stays populated and does not refetch loaded results during inc
   const details = firstArtifact.locator('summary').filter({ hasText: 'Artifact details' });
   if (!(await firstArtifact.locator('details').evaluate((element) => element.open))) await details.click();
   await expect(firstArtifact.getByText(warning, { exact: true })).toBeVisible();
+  await viewport.evaluate((element) => {
+    const samples: Array<{ kind: 'blank' | 'detached'; scrollY: number; renderedRows: number }> = [];
+    const browserWindow = window as typeof window & { __ipaLibraryScrollSamples?: typeof samples };
+    browserWindow.__ipaLibraryScrollSamples = samples;
+    const sample = () => {
+      const region = element.getBoundingClientRect();
+      const regionVisible = region.bottom > 0 && region.top < window.innerHeight;
+      const rows = Array.from(element.querySelectorAll<HTMLElement>('[role="listitem"]'));
+      const hasVisibleRow = rows.some((row) => {
+        const bounds = row.getBoundingClientRect();
+        return bounds.bottom > Math.max(region.top, 0) && bounds.top < Math.min(region.bottom, window.innerHeight);
+      });
+      if (!element.isConnected) samples.push({ kind: 'detached', scrollY: window.scrollY, renderedRows: rows.length });
+      else if (regionVisible && !hasVisibleRow) samples.push({ kind: 'blank', scrollY: window.scrollY, renderedRows: rows.length });
+      requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+  });
   const firstArtifactBounds = await firstArtifact.boundingBox();
   if (!firstArtifactBounds) throw new Error('First IPA Library artifact is not visible');
   await page.mouse.move(firstArtifactBounds.x + firstArtifactBounds.width / 2, firstArtifactBounds.y + firstArtifactBounds.height / 2);
@@ -863,6 +881,10 @@ test('IPA Library stays populated and does not refetch loaded results during inc
   await firstArtifact.scrollIntoViewIfNeeded();
   await expect(firstArtifact).toBeAttached();
   await expect(firstArtifact.getByText(warning, { exact: true })).toBeVisible();
+  const scrollSamples = await page.evaluate(() => (window as typeof window & {
+    __ipaLibraryScrollSamples?: Array<{ kind: 'blank' | 'detached'; scrollY: number; renderedRows: number }>;
+  }).__ipaLibraryScrollSamples ?? []);
+  expect(scrollSamples).toEqual([]);
   await expect.poll(() => artifactListRequestCount).toBe(1);
   expect(await viewport.locator('[role="listitem"]').count()).toBeLessThan(120);
   await expect(viewport.locator('[role="listitem"]').first()).toHaveAttribute('aria-setsize', '120');
