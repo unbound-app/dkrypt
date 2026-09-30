@@ -454,6 +454,7 @@ export interface JobTimeline {
   status: 'queued' | 'running' | 'done' | 'failed';
   events: JobTimelineEvent[];
   warnings?: string[];
+  queueReason?: string;
   guidance?: { category: string; title: string; action: string; retryRecommended: boolean };
   versionLabel?: string;
   deviceId?: string;

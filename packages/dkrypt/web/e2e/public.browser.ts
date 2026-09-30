@@ -2534,6 +2534,36 @@ test('job history stays virtualized as older cursor pages are loaded', async ({ 
   await expectAccessible(page);
 });
 
+test('job details show the persisted queue blocker alongside retry guidance', async ({ page }) => {
+  await mockStableDashboardEvents(page);
+  await mockAuthenticatedDashboard(page, '2');
+  const queueReason = 'No enabled device is eligible for this scheduled job.';
+  await page.route('**/v1/dashboard/jobs/queue-timeout/timeline', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        id: 'queue-timeout',
+        correlationId: 'queue-timeout',
+        bundleId: 'com.example.queued',
+        status: 'failed',
+        queueReason,
+        events: [{ at: Date.now() - 30_000, label: 'Failed: job deadline exceeded while waiting in the queue', status: 'failed' }],
+        guidance: {
+          category: 'Queue wait expired',
+          title: 'Queue wait expired',
+          action: 'Resolve the queue blocker shown in the job timeline or device status, then retry.',
+          retryRecommended: true,
+        },
+      }),
+    });
+  });
+
+  await page.goto('/?tab=home&job=queue-timeout');
+
+  await expect(page.getByText(queueReason, { exact: true })).toBeVisible();
+  await expect(page.getByText('Resolve the queue blocker shown in the job timeline or device status, then retry.', { exact: true })).toBeVisible();
+});
+
 test('release comparisons show build numbers, release notes, metadata freshness, and cache reuse', async ({ page }) => {
   const bundleId = 'com.example.release-comparison';
   const finishedAt = Date.now() - 60_000;

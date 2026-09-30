@@ -71,10 +71,11 @@
         <div class="mt-1 text-xs">{timeline.warnings.join(' ')}</div>
       </Alert>
     {/if}
-    {#if timeline.guidance}
+    {#if timeline.guidance || timeline.queueReason}
       <div class="border-warn/40 bg-warn/10 mb-4 rounded-lg border p-3 text-sm">
-        <div class="font-medium">{timeline.guidance.title}</div>
-        <div class="mt-1 text-muted">{timeline.guidance.action}</div>
+        <div class="font-medium">{timeline.guidance?.title ?? 'Queue blocker'}</div>
+        {#if timeline.queueReason}<div class="mt-1 break-words">{timeline.queueReason}</div>{/if}
+        {#if timeline.guidance}<div class="mt-1 text-muted">{timeline.guidance.action}</div>{/if}
       </div>
     {/if}
     {#if timeline.ipaMetadata}
