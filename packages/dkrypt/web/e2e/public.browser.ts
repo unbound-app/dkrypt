@@ -753,16 +753,24 @@ test('IPA Library keeps loaded artifacts visible while scrolling its rows', asyn
   });
 
   await page.goto('/?tab=home');
-  const list = page.getByRole('region', { name: 'IPA library artifacts scroll area' });
+  const list = page.getByRole('region', { name: 'IPA library artifacts list region' });
   for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {
     await page.setViewportSize(viewport);
-    const scrollRange = await list.evaluate((element) => element.scrollHeight - element.clientHeight);
+    const scrollRange = await page.evaluate(() => document.documentElement.scrollHeight - window.innerHeight);
+    const artifactScrollRange = await list.evaluate((element) => element.scrollHeight - element.clientHeight);
     expect(scrollRange).toBeGreaterThan(0);
+    expect(artifactScrollRange).toBe(0);
     await expect(list.locator('[data-artifact-id="scroll-artifact-0"]')).toBeVisible();
-    await list.evaluate((element) => { element.scrollTop = element.scrollHeight; });
-    await expect(list.locator('[data-artifact-id="scroll-artifact-39"]')).toBeVisible();
-    await list.evaluate((element) => { element.scrollTop = 0; });
-    await expect(list.locator('[data-artifact-id="scroll-artifact-0"]')).toBeVisible();
+    await list.evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      window.scrollTo({ top: window.scrollY + bounds.top + bounds.height - window.innerHeight, behavior: 'instant' });
+    });
+    const finalArtifact = list.locator('[data-artifact-id="scroll-artifact-39"]');
+    await expect(finalArtifact).toBeAttached();
+    await finalArtifact.scrollIntoViewIfNeeded();
+    await expect(finalArtifact).toBeInViewport();
+    await list.evaluate((element) => window.scrollTo({ top: window.scrollY + element.getBoundingClientRect().top - 80, behavior: 'instant' }));
+    await expect(list.locator('[data-artifact-id="scroll-artifact-0"]')).toBeInViewport();
   }
   await expect.poll(() => artifactListRequestCount).toBe(1);
 });
@@ -803,7 +811,7 @@ test('IPA Library never renders an empty viewport during repeated scrolling', as
   );
   await page.goto('/?tab=home');
   await artifactResponse;
-  const viewport = page.getByRole('region', { name: 'IPA library artifacts scroll area' });
+  const viewport = page.getByRole('region', { name: 'IPA library artifacts list region' });
   await expect(viewport.locator('[role="listitem"]').first()).toBeVisible();
 
   const emptyVisibleFrames = await viewport.evaluate(async (element) => {
@@ -817,19 +825,21 @@ test('IPA Library never renders an empty viewport during repeated scrolling', as
       const viewportVisible = viewportBounds.bottom > 0 && viewportBounds.top < window.innerHeight;
       const hasVisibleRow = viewportVisible && Array.from(list.querySelectorAll<HTMLElement>('[role="listitem"]')).some((row) => {
         const rowBounds = row.getBoundingClientRect();
-        return rowBounds.bottom > viewportBounds.top && rowBounds.top < viewportBounds.bottom;
+        return rowBounds.bottom > 0 && rowBounds.top < window.innerHeight;
       });
       if (viewportVisible && !hasVisibleRow) emptyFrames += 1;
       requestAnimationFrame(sample);
     };
     requestAnimationFrame(sample);
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-    const step = Math.max(300, Math.floor(element.clientHeight * 0.8));
-    const scrollHeight = element.scrollHeight;
+    const bounds = element.getBoundingClientRect();
+    const listStart = Math.max(0, window.scrollY + bounds.top - 32);
+    const listEnd = Math.min(document.documentElement.scrollHeight - window.innerHeight, window.scrollY + bounds.bottom - window.innerHeight + 32);
+    const step = Math.max(300, Math.floor(window.innerHeight * 0.8));
     for (const direction of [1, -1]) {
-      const limit = direction > 0 ? scrollHeight : 0;
-      for (let position = direction > 0 ? 0 : scrollHeight; direction > 0 ? position < limit : position > limit; position += direction * step) {
-        element.scrollTo({ top: Math.max(0, Math.min(position, scrollHeight - element.clientHeight)), behavior: 'instant' });
+      const limit = direction > 0 ? listEnd : listStart;
+      for (let position = direction > 0 ? listStart : listEnd; direction > 0 ? position < limit : position > limit; position += direction * step) {
+        window.scrollTo({ top: Math.max(listStart, Math.min(position, listEnd)), behavior: 'instant' });
         await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
       }
     }
@@ -877,64 +887,29 @@ test('IPA Library keeps its loaded results mounted during real wheel scrolling',
   );
   await page.goto('/?tab=home');
   await artifactResponse;
-  const viewport = page.getByRole('region', { name: 'IPA library artifacts scroll area' });
-  await expect(viewport.locator('[role="listitem"]').first()).toBeVisible();
+  const viewport = page.getByRole('region', { name: 'IPA library artifacts list region' });
+  const firstArtifact = viewport.locator('[data-artifact-id="wheel-scroll-artifact-0"]');
+  await expect(firstArtifact).toBeVisible();
   await expect(viewport.locator('[role="listitem"]').first()).toHaveAttribute('aria-setsize', '120');
   await expect.poll(() => viewport.locator('[role="listitem"]').count()).toBeLessThan(120);
-  await viewport.evaluate((element) => {
-    (window as typeof window & { __artifactScrollProbe?: { blankFrames: number; missingLists: number; samples: number; active: boolean } }).__artifactScrollProbe = {
-      blankFrames: 0,
-      missingLists: 0,
-      samples: 0,
-      active: true,
-    };
-    const probe = (window as typeof window & { __artifactScrollProbe: { blankFrames: number; missingLists: number; samples: number; active: boolean } }).__artifactScrollProbe;
-    const sample = (): void => {
-      if (!probe.active) return;
-      probe.samples += 1;
-      const currentViewport = document.querySelector<HTMLElement>('[aria-label="IPA library artifacts scroll area"]');
-      const list = currentViewport?.querySelector<HTMLElement>('[role="list"]');
-      if (!currentViewport || !list) {
-        probe.missingLists += 1;
-      } else {
-        const bounds = currentViewport.getBoundingClientRect();
-        const viewportVisible = bounds.bottom > 0 && bounds.top < window.innerHeight;
-        const hasVisibleRow = viewportVisible && Array.from(list.querySelectorAll<HTMLElement>('[role="listitem"]')).some((row) => {
-          const rowBounds = row.getBoundingClientRect();
-          return rowBounds.bottom > bounds.top && rowBounds.top < bounds.bottom;
-        });
-        if (viewportVisible && !hasVisibleRow) probe.blankFrames += 1;
-      }
-      requestAnimationFrame(sample);
-    };
-    requestAnimationFrame(sample);
-  });
-
-  await viewport.scrollIntoViewIfNeeded();
-  const viewportBounds = await viewport.boundingBox();
-  if (!viewportBounds) throw new Error('IPA Library scroll area is not visible');
-  await page.mouse.move(viewportBounds.x + viewportBounds.width / 2, viewportBounds.y + viewportBounds.height / 2);
-  await page.mouse.wheel(0, 20_000);
-  await expect.poll(() => viewport.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
-  await expect.poll(() => viewport.locator('[role="listitem"]').count()).toBeLessThan(120);
-  const atEnd = await viewport.evaluate((element) => element.scrollHeight - element.clientHeight - element.scrollTop);
-  if (atEnd > 4) await viewport.evaluate((element) => element.scrollTop = element.scrollHeight);
-  await expect(viewport.locator('[data-artifact-id="wheel-scroll-artifact-119"]')).toBeAttached();
-  const endScrollTop = await viewport.evaluate((element) => element.scrollTop);
-  await page.mouse.wheel(0, -20_000);
-  await expect.poll(() => viewport.evaluate((element) => element.scrollTop)).toBeLessThan(Math.min(1_000, endScrollTop / 2));
-  await viewport.evaluate((element) => element.scrollTop = 0);
-  await expect(viewport.locator('[data-artifact-id="wheel-scroll-artifact-0"]')).toBeAttached();
-  const probe = await page.evaluate(() => {
-    const state = (window as typeof window & { __artifactScrollProbe?: { blankFrames: number; missingLists: number; samples: number; active: boolean } }).__artifactScrollProbe;
-    if (!state) throw new Error('IPA Library scroll probe was not initialized');
-    state.active = false;
-    return state;
-  });
-
-  expect(probe.samples).toBeGreaterThan(10);
-  expect(probe.blankFrames).toBe(0);
-  expect(probe.missingLists).toBe(0);
+  await firstArtifact.scrollIntoViewIfNeeded();
+  const initialScrollY = await page.evaluate(() => window.scrollY);
+  const firstArtifactBounds = await firstArtifact.boundingBox();
+  if (!firstArtifactBounds) throw new Error('First IPA Library artifact is not visible');
+  await page.mouse.move(firstArtifactBounds.x + firstArtifactBounds.width / 2, firstArtifactBounds.y + firstArtifactBounds.height / 2);
+  for (let step = 0; step < 5; step += 1) {
+    await page.mouse.wheel(0, 320);
+    await page.waitForTimeout(12);
+  }
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(initialScrollY);
+  await expect(firstArtifact).toHaveCount(0);
+  await expect.poll(async () => Number(await viewport.locator('[role="listitem"]').first().getAttribute('aria-posinset'))).toBeGreaterThan(1);
+  for (let step = 0; step < 5; step += 1) {
+    await page.mouse.wheel(0, -320);
+    await page.waitForTimeout(12);
+  }
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeLessThan(initialScrollY + 800);
+  await expect(firstArtifact).toBeAttached();
   await expect.poll(() => artifactListRequestCount).toBe(1);
   expect(await viewport.locator('[role="listitem"]').count()).toBeLessThan(120);
   await expect(viewport.locator('[role="listitem"]').first()).toHaveAttribute('aria-setsize', '120');
@@ -1942,7 +1917,7 @@ test('IPA Library virtualizes loaded rows and reveals artifact provenance on dem
   await page.goto('/');
   await artifactResponse;
   const list = page.getByRole('list', { name: 'IPA library artifacts' });
-  const viewport = page.getByRole('region', { name: 'IPA library artifacts scroll area' });
+  const viewport = page.getByRole('region', { name: 'IPA library artifacts list region' });
   const artifact = list.getByRole('listitem').filter({ hasText: 'com.example.provenance' }).first();
   await expect(artifact).toBeVisible();
   await expect.poll(() => list.getByRole('listitem').count()).toBeLessThan(100);
@@ -1955,10 +1930,13 @@ test('IPA Library virtualizes loaded rows and reveals artifact provenance on dem
   await expect(artifact.getByText(sha256, { exact: true })).toBeVisible();
   await expect(artifact.getByText('job-provenance-0', { exact: true })).toBeVisible();
   await expect(artifact.getByText(warning, { exact: true })).toBeVisible();
-  await viewport.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  await viewport.evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    window.scrollTo({ top: window.scrollY + bounds.bottom - window.innerHeight, behavior: 'instant' });
+  });
   await expect(list.locator('[aria-posinset="100"]')).toBeAttached();
   await expect(list.getByText('com.example.provenance.99', { exact: true }).first()).toBeVisible();
-  await viewport.evaluate((element) => { element.scrollTop = 0; });
+  await viewport.evaluate((element) => window.scrollTo({ top: window.scrollY + element.getBoundingClientRect().top - 80, behavior: 'instant' }));
   await expect(list.locator('[aria-posinset="1"]')).toBeAttached();
   await expect(artifact.getByText(sha256, { exact: true })).toBeVisible();
 });

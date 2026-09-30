@@ -179,6 +179,14 @@
     return artifact.buildNumber ? `${version} (${artifact.buildNumber})` : version;
   }
 
+  function estimateArtifactRowHeight(artifact: ArtifactRecord): number {
+    const width = typeof window === 'undefined' ? 1024 : window.innerWidth;
+    const compact = width < 640;
+    const collapsedHeight = compact ? 196 : width < 1024 ? 160 : 132;
+    if (!expandedArtifactIds.has(artifact.id)) return collapsedHeight;
+    return collapsedHeight + (compact ? 156 : 68) + (artifact.warnings?.length ? 204 : 0);
+  }
+
   function setArtifactDetailsOpen(artifactId: string, expanded: boolean): void {
     const next = new Set(expandedArtifactIds);
     if (expanded) next.add(artifactId);
@@ -427,10 +435,11 @@
           <VirtualizedList
             items={artifacts}
             itemKey={(artifact) => artifact.id}
-            estimateSize={(artifact) => expandedArtifactIds.has(artifact.id) ? 420 : 190}
+            estimateSize={estimateArtifactRowHeight}
             overscan={4}
+            scrollMode="window"
             label="IPA library artifacts"
-            class="max-h-[min(74dvh,860px)] overflow-y-auto rounded-xl border border-border/70 divide-y divide-border"
+            class="rounded-xl border border-border/70 divide-y divide-border"
           >
             {#snippet children(artifact: ArtifactRecord)}
               <div class="border-b border-border/70">
