@@ -82,18 +82,21 @@ struct DeviceSummary {
     transport: String,
 }
 
-trait AgentStream: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + Unpin {}
+trait DeviceServiceStream: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + Unpin {}
 
-impl<T> AgentStream for T where T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + Unpin {}
-
-type AgentConnectFuture =
-    Pin<Box<dyn Future<Output = Result<Box<dyn AgentStream>, RpcError>> + Send>>;
-
-trait AgentConnector: Send + Sync {
-    fn connect(&self, device_id: String, port: u16) -> AgentConnectFuture;
+impl<T> DeviceServiceStream for T where
+    T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + Unpin
+{
 }
 
-struct UsbmuxdAgentConnector {
+type DeviceServiceConnectFuture =
+    Pin<Box<dyn Future<Output = Result<Box<dyn DeviceServiceStream>, RpcError>> + Send>>;
+
+trait DeviceServiceConnector: Send + Sync {
+    fn connect(&self, device_id: String, port: u16) -> DeviceServiceConnectFuture;
+}
+
+struct UsbmuxdDeviceServiceConnector {
     mux_socket: PathBuf,
 }
 
@@ -129,7 +132,7 @@ struct BridgeState {
     secrets: Vec<String>,
     mux_socket: PathBuf,
     host_id: String,
-    agent_connector: Arc<dyn AgentConnector>,
+    service_connector: Arc<dyn DeviceServiceConnector>,
     tunnels: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
     cancellations: Mutex<HashMap<String, CancellationToken>>,
     event_sequence: AtomicU64,
@@ -297,26 +300,26 @@ async fn provider_for(
     ))
 }
 
-impl AgentConnector for UsbmuxdAgentConnector {
-    fn connect(&self, device_id: String, port: u16) -> AgentConnectFuture {
+impl DeviceServiceConnector for UsbmuxdDeviceServiceConnector {
+    fn connect(&self, device_id: String, port: u16) -> DeviceServiceConnectFuture {
         let mux_socket = self.mux_socket.clone();
         Box::pin(async move {
             let (provider, _) = provider_for(&mux_socket, &device_id).await?;
             let device = provider.connect(port).await.map_err(|value| {
                 error(
-                    "agent_unavailable",
-                    format!("could not connect to autoinstall agent: {value}"),
+                    "device_service_unavailable",
+                    format!("could not connect to device service on port {port}: {value}"),
                     true,
                 )
             })?;
             let socket = device.get_socket().ok_or_else(|| {
                 error(
-                    "agent_unavailable",
-                    "agent connection did not expose a socket",
+                    "device_service_unavailable",
+                    format!("device service on port {port} did not expose a socket"),
                     true,
                 )
             })?;
-            Ok(Box::new(socket) as Box<dyn AgentStream>)
+            Ok(Box::new(socket) as Box<dyn DeviceServiceStream>)
         })
     }
 }
@@ -754,9 +757,16 @@ async fn request_agent(
     deadline_ms: u64,
 ) -> Result<Value, RpcError> {
     let mut socket = state
-        .agent_connector
+        .service_connector
         .connect(id.to_string(), DEFAULT_AGENT_PORT)
-        .await?;
+        .await
+        .map_err(|value| {
+            if value.code == "device_service_unavailable" {
+                error("agent_unavailable", value.message, value.retryable)
+            } else {
+                value
+            }
+        })?;
     request_agent_exchange(&mut socket, &agent_secret, &payload, deadline_ms).await
 }
 
@@ -776,27 +786,24 @@ async fn open_tunnel(
     let device_id = id.to_string();
     let task_state = state.clone();
     let task = tokio::spawn(async move {
+        let mut connections = tokio::task::JoinSet::new();
         loop {
-            let accepted = listener.accept().await;
-            let (mut incoming, _) = match accepted {
-                Ok(value) => value,
-                Err(_) => break,
-            };
-            let connection = provider_for(&task_state.mux_socket, &device_id).await;
-            let (provider, _) = match connection {
-                Ok(value) => value,
-                Err(_) => continue,
-            };
-            let remote = provider.connect(remote_port).await;
-            let mut device = match remote.and_then(|value| {
-                value
-                    .get_socket()
-                    .ok_or_else(|| idevice::IdeviceError::NoEstablishedConnection)
-            }) {
-                Ok(value) => value,
-                Err(_) => continue,
-            };
-            let _ = copy_bidirectional(&mut incoming, &mut device).await;
+            tokio::select! {
+                accepted = listener.accept() => {
+                    let Ok((mut incoming, _)) = accepted else {
+                        break;
+                    };
+                    let connector = task_state.service_connector.clone();
+                    let device_id = device_id.clone();
+                    connections.spawn(async move {
+                        let Ok(mut device) = connector.connect(device_id, remote_port).await else {
+                            return;
+                        };
+                        let _ = copy_bidirectional(&mut incoming, &mut device).await;
+                    });
+                }
+                _ = connections.join_next(), if !connections.is_empty() => {}
+            }
         }
     });
     state.tunnels.lock().await.insert(tunnel_id.clone(), task);
@@ -808,6 +815,7 @@ async fn open_tunnel(
 async fn close_tunnel(state: &BridgeState, tunnel_id: &str) -> Value {
     if let Some(task) = state.tunnels.lock().await.remove(tunnel_id) {
         task.abort();
+        let _ = task.await;
         json!({ "closed": true })
     } else {
         json!({ "closed": false })
@@ -1295,7 +1303,7 @@ async fn main() -> Result<(), String> {
         .unwrap_or_else(|| persistent_pairing_host_id(&pairing_store))?;
     let state = Arc::new(BridgeState {
         secrets,
-        agent_connector: Arc::new(UsbmuxdAgentConnector {
+        service_connector: Arc::new(UsbmuxdDeviceServiceConnector {
             mux_socket: mux_socket.clone(),
         }),
         mux_socket,
@@ -1348,11 +1356,11 @@ async fn main() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        AgentConnectFuture, AgentConnector, AgentStream, BridgeState, CancellationToken,
-        MAX_FRAME_BYTES, RPC_VERSION, UsbmuxdAgentConnector, authorized_secret,
-        bridge_capabilities, error, failure, handle_client, netmuxd_restart_delay,
-        read_agent_frame, read_frame, request_agent_exchange, response, supervise_netmuxd,
-        valid_frame_length, write_agent_frame,
+        BridgeState, CancellationToken, DeviceServiceConnectFuture, DeviceServiceConnector,
+        DeviceServiceStream, MAX_FRAME_BYTES, RPC_VERSION, UsbmuxdDeviceServiceConnector,
+        authorized_secret, bridge_capabilities, error, failure, handle_client,
+        netmuxd_restart_delay, read_agent_frame, read_frame, request_agent_exchange, response,
+        supervise_netmuxd, valid_frame_length, write_agent_frame,
     };
     use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
     use hmac::{Hmac, Mac};
@@ -1373,19 +1381,19 @@ mod tests {
     };
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt, DuplexStream},
-        net::{UnixListener, UnixStream},
+        net::{TcpStream, UnixListener, UnixStream},
         process::Command,
         sync::Mutex,
         time::timeout,
     };
 
     #[derive(Clone)]
-    struct FixtureAgentConnector {
+    struct FixtureDeviceServiceConnector {
         stream: Arc<Mutex<Option<DuplexStream>>>,
         connect_calls: Arc<Mutex<Vec<(String, u16)>>>,
     }
 
-    impl FixtureAgentConnector {
+    impl FixtureDeviceServiceConnector {
         fn new(stream: DuplexStream) -> Self {
             Self {
                 stream: Arc::new(Mutex::new(Some(stream))),
@@ -1394,16 +1402,20 @@ mod tests {
         }
     }
 
-    impl AgentConnector for FixtureAgentConnector {
-        fn connect(&self, device_id: String, port: u16) -> AgentConnectFuture {
+    impl DeviceServiceConnector for FixtureDeviceServiceConnector {
+        fn connect(&self, device_id: String, port: u16) -> DeviceServiceConnectFuture {
             let stream = Arc::clone(&self.stream);
             let connect_calls = Arc::clone(&self.connect_calls);
             Box::pin(async move {
                 connect_calls.lock().await.push((device_id, port));
                 let stream = stream.lock().await.take().ok_or_else(|| {
-                    error("agent_unavailable", "fixture stream already used", true)
+                    error(
+                        "device_service_unavailable",
+                        "fixture stream already used",
+                        true,
+                    )
                 })?;
-                Ok(Box::new(stream) as Box<dyn AgentStream>)
+                Ok(Box::new(stream) as Box<dyn DeviceServiceStream>)
             })
         }
     }
@@ -1712,7 +1724,7 @@ mod tests {
             serde_json::from_str(include_str!("../fixtures/device-agent-v1.fixture.json"))
                 .expect("device-agent fixture should be valid JSON");
         let (bridge_agent, mut device_agent) = tokio::io::duplex(16 * 1024);
-        let connector = FixtureAgentConnector::new(bridge_agent);
+        let connector = FixtureDeviceServiceConnector::new(bridge_agent);
         let expected_request = fixture["envelope"].clone();
         let expected_secret = fixture["secret"]
             .as_str()
@@ -1744,7 +1756,7 @@ mod tests {
             secrets: vec!["bridge-test-secret".to_string()],
             mux_socket: PathBuf::from("/tmp/missing-netmuxd.sock"),
             host_id: "test-host".to_string(),
-            agent_connector: Arc::new(connector.clone()),
+            service_connector: Arc::new(connector.clone()),
             tunnels: Mutex::new(HashMap::new()),
             cancellations: Mutex::new(HashMap::new()),
             event_sequence: AtomicU64::new(0),
@@ -1812,12 +1824,12 @@ mod tests {
             .expect("device-agent fixture should contain a secret")
             .to_string();
         let (bridge_agent, mut device_agent) = tokio::io::duplex(16 * 1024);
-        let connector = FixtureAgentConnector::new(bridge_agent);
+        let connector = FixtureDeviceServiceConnector::new(bridge_agent);
         let state = Arc::new(BridgeState {
             secrets: vec![bridge_secret.clone()],
             mux_socket: PathBuf::from("/tmp/missing-netmuxd.sock"),
             host_id: "test-host".to_string(),
-            agent_connector: Arc::new(connector.clone()),
+            service_connector: Arc::new(connector.clone()),
             tunnels: Mutex::new(HashMap::new()),
             cancellations: Mutex::new(HashMap::new()),
             event_sequence: AtomicU64::new(0),
@@ -1943,7 +1955,7 @@ mod tests {
             secrets: vec!["current-secret".to_string()],
             mux_socket: PathBuf::from("/tmp/missing-netmuxd.sock"),
             host_id: "test-host".to_string(),
-            agent_connector: Arc::new(UsbmuxdAgentConnector {
+            service_connector: Arc::new(UsbmuxdDeviceServiceConnector {
                 mux_socket: PathBuf::from("/tmp/missing-netmuxd.sock"),
             }),
             tunnels: Mutex::new(HashMap::new()),
@@ -1999,6 +2011,151 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn authenticated_tunnel_rpc_forwards_service_data_and_waits_for_close() {
+        let socket_path =
+            PathBuf::from(format!("/tmp/dkrypt-tunnel-{}.sock", uuid::Uuid::new_v4()));
+        let listener = UnixListener::bind(&socket_path).expect("test socket bind failed");
+        let (bridge_service, mut device_service) = tokio::io::duplex(4096);
+        let connector = FixtureDeviceServiceConnector::new(bridge_service);
+        let state = Arc::new(BridgeState {
+            secrets: vec!["current-secret".to_string()],
+            mux_socket: PathBuf::from("/tmp/missing-netmuxd.sock"),
+            host_id: "test-host".to_string(),
+            service_connector: Arc::new(connector.clone()),
+            tunnels: Mutex::new(HashMap::new()),
+            cancellations: Mutex::new(HashMap::new()),
+            event_sequence: AtomicU64::new(0),
+        });
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("test socket accept failed");
+            handle_client(stream, state).await;
+        });
+        let mut client = UnixStream::connect(&socket_path)
+            .await
+            .expect("test socket connect failed");
+        write_bridge_request(
+            &mut client,
+            json!({
+                "version": RPC_VERSION,
+                "requestId": "open-tunnel",
+                "auth": "current-secret",
+                "operation": "service_port",
+                "deviceId": "fixture-device",
+                "port": 12345
+            }),
+        )
+        .await;
+        let opened: Value = serde_json::from_slice(
+            &read_frame(&mut client)
+                .await
+                .expect("open response frame should be readable")
+                .expect("open response should not be empty"),
+        )
+        .expect("open response should be valid JSON");
+        assert_eq!(opened["ok"], true);
+        let tunnel_id = opened["result"]["tunnelId"]
+            .as_str()
+            .expect("open response should include a tunnel ID")
+            .to_string();
+        let local_port = opened["result"]["port"]
+            .as_u64()
+            .expect("open response should include a local port") as u16;
+        let mut local = TcpStream::connect(("127.0.0.1", local_port))
+            .await
+            .expect("local tunnel should accept connections");
+        let device_service_task = tokio::spawn(async move {
+            let mut request = vec![0; b"device request".len()];
+            device_service
+                .read_exact(&mut request)
+                .await
+                .expect("device should receive forwarded request bytes");
+            assert_eq!(request, b"device request");
+            device_service
+                .write_all(b"device response")
+                .await
+                .expect("device response should be writable");
+            let mut closed = [0; 1];
+            assert_eq!(
+                device_service
+                    .read(&mut closed)
+                    .await
+                    .expect("closed device service should be readable"),
+                0
+            );
+        });
+        local
+            .write_all(b"device request")
+            .await
+            .expect("local tunnel should accept request bytes");
+        let mut forwarded_response = vec![0; b"device response".len()];
+        timeout(
+            Duration::from_secs(1),
+            local.read_exact(&mut forwarded_response),
+        )
+        .await
+        .expect("tunnel should return a device response before timeout")
+        .expect("tunnel should return a complete device response");
+        assert_eq!(forwarded_response, b"device response");
+        assert_eq!(
+            connector.connect_calls.lock().await.as_slice(),
+            &[("fixture-device".to_string(), 12345)]
+        );
+        write_bridge_request(
+            &mut client,
+            json!({
+                "version": RPC_VERSION,
+                "requestId": "close-tunnel",
+                "auth": "current-secret",
+                "operation": "close_tunnel",
+                "payload": tunnel_id
+            }),
+        )
+        .await;
+        let closed: Value = serde_json::from_slice(
+            &read_frame(&mut client)
+                .await
+                .expect("close response frame should be readable")
+                .expect("close response should not be empty"),
+        )
+        .expect("close response should be valid JSON");
+        assert_eq!(closed["result"]["closed"], true);
+        device_service_task
+            .await
+            .expect("closing tunnel should drop device service connections");
+        let second_close = json!({
+            "version": RPC_VERSION,
+            "requestId": "close-tunnel-again",
+            "auth": "current-secret",
+            "operation": "close_tunnel",
+            "payload": tunnel_id
+        });
+        write_bridge_request(&mut client, second_close).await;
+        let closed_again: Value = serde_json::from_slice(
+            &read_frame(&mut client)
+                .await
+                .expect("second close response frame should be readable")
+                .expect("second close response should not be empty"),
+        )
+        .expect("second close response should be valid JSON");
+        assert_eq!(closed_again["result"]["closed"], false);
+        let mut trailing = [0; 1];
+        assert_eq!(
+            timeout(Duration::from_secs(1), local.read(&mut trailing))
+                .await
+                .expect("close should shut down forwarded streams before responding")
+                .expect("closed tunnel stream should be readable"),
+            0
+        );
+        assert!(TcpStream::connect(("127.0.0.1", local_port)).await.is_err());
+        drop(local);
+        drop(client);
+        server
+            .await
+            .expect("RPC server should stop after client close");
+        let _ = std::fs::remove_file(socket_path);
+    }
+
+    #[tokio::test]
     async fn rpc_event_stream_reconnects_and_refreshes_the_device_snapshot_after_listener_loss() {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -2018,7 +2175,7 @@ mod tests {
             secrets: vec!["current-secret".to_string()],
             mux_socket: mux_socket_path.clone(),
             host_id: "test-host".to_string(),
-            agent_connector: Arc::new(UsbmuxdAgentConnector {
+            service_connector: Arc::new(UsbmuxdDeviceServiceConnector {
                 mux_socket: mux_socket_path.clone(),
             }),
             tunnels: Mutex::new(HashMap::new()),
