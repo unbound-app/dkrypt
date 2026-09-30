@@ -49,6 +49,7 @@ test('dashboard overview reports each queued job estimated start and completion 
       predictedStartMs: 10_000,
       predictedCompletionMs: 20_000,
     });
+    expect(overview.activeJobs.find((job) => job.id === queued.id)?.preferredDeviceId).toBe(device.id);
   } finally {
     if (queued.status === 'queued') cancelQueuedJob(queued.id, 'dashboard queue ETA test cleanup');
     if (running.status === 'running') cancelJob(running.id, 'dashboard queue ETA test cleanup');

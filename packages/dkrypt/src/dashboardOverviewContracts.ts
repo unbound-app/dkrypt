@@ -34,6 +34,7 @@ export const dashboardOverviewResponseSchema = Type.Object({
     progress: Type.String(),
     versionLabel: Type.Optional(Type.String()),
     deviceId: Type.Optional(Identifier),
+    preferredDeviceId: Type.Optional(Identifier),
     transport: Type.Optional(Type.Union([Type.Literal('wifi'), Type.Literal('usb')])),
     testflight: Type.Optional(Type.Object({
       appId: Type.Number(),

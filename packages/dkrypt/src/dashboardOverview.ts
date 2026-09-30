@@ -67,6 +67,7 @@ export function buildDashboardOverview(permissions: bigint, userId: string, proj
       progress: job.progress,
       versionLabel: job.versionLabel,
       deviceId: job.deviceId,
+      preferredDeviceId: job.preferredDeviceId,
       transport: job.transport,
       warnings: job.warnings,
       testflight: job.testflight

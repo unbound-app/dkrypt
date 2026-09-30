@@ -312,6 +312,7 @@ export const JobSummaryResponse = object({
   queuedBy: Type.Optional(Type.String()),
   priority: Type.Number(),
   deviceId: Type.Optional(Identifier),
+  preferredDeviceId: Type.Optional(Identifier),
   transport: Type.Optional(deviceTransportSchema),
   attempt: Type.Optional(Type.Number()),
   retryCount: Type.Optional(Type.Number()),

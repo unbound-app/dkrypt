@@ -36,6 +36,7 @@ export function jobSummary(job: Job) {
     queuedBy: job.queuedBy,
     priority: job.priority,
     deviceId: job.deviceId,
+    preferredDeviceId: job.preferredDeviceId,
     transport: job.transport,
     attempt: job.attempt,
     retryCount: job.retryCount,

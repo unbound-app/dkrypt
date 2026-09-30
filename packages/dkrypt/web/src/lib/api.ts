@@ -136,6 +136,7 @@ export interface JobSummary {
   queuedBy?: string;
   priority?: number;
   deviceId?: string;
+  preferredDeviceId?: string;
   transport?: 'usb' | 'wifi';
   attempt?: number;
   retryCount?: number;
@@ -172,6 +173,7 @@ export interface ActiveJob {
   createdAt: number;
   queue?: JobQueueSummary;
   deviceId?: string;
+  preferredDeviceId?: string;
   transport?: 'usb' | 'wifi';
   warnings?: string[];
   attempt?: number;

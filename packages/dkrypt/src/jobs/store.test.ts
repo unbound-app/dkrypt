@@ -246,6 +246,7 @@ describe('enqueueDecryptJob', () => {
       expect(queueReason).toContain('device iOS version is unknown; cannot verify minimum iOS 18.0');
       expect(queueReason).not.toContain('job is assigned to another device');
       expect(queueReason).not.toContain('iOS 17.0');
+      expect(jobSummary(job).preferredDeviceId).toBe(testDeviceId);
     } finally {
       if (job?.status === 'queued') cancelQueuedJob(job.id, 'pinned queue blocker test cleanup');
       deleteDevice(otherDevice.id, 'tests');
