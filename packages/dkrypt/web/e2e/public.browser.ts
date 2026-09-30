@@ -1929,7 +1929,7 @@ test('populated device management and preflight dialog meet accessibility checks
   await page.goto('/?tab=settings&stab=devices');
   await expect(page.getByText('Lab iPad', { exact: true })).toBeVisible();
   await expect(page.getByText('online', { exact: true })).toBeVisible();
-  await expect(page.getByText('App Store: no signal', { exact: true })).toBeVisible();
+  await expect(page.getByText('App Store: idle', { exact: true })).toBeVisible();
   const activityList = page.getByRole('list', { name: 'Lab iPad activity' });
   const activityViewport = page.getByRole('region', { name: 'Lab iPad activity scroll area' });
   await expect(activityList.getByRole('listitem').first()).toContainText('Device activity 000');
