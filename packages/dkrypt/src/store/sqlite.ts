@@ -680,6 +680,20 @@ const migrations = [
       CREATE INDEX IF NOT EXISTS api_keys_by_expiry ON api_keys(expires_at) WHERE expires_at IS NOT NULL;
     `,
   },
+  {
+    version: 20,
+    sql: `
+      CREATE TABLE IF NOT EXISTS backup_schedule (
+        id TEXT PRIMARY KEY NOT NULL CHECK (id = 'active'),
+        payload TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      INSERT OR IGNORE INTO backup_schedule (id, payload, updated_at)
+      SELECT 'active', json_extract(payload, '$.backupSchedule'), updated_at
+      FROM state_snapshots
+      WHERE id = 1 AND json_valid(payload) = 1 AND json_type(payload, '$.backupSchedule') = 'object';
+    `,
+  },
 ] as const;
 
 export const LATEST_SQLITE_SCHEMA_VERSION = migrations.at(-1)?.version ?? 0;
@@ -704,6 +718,7 @@ const domainTables = [
   'testflight_subscriptions',
   'webhook_inbox',
   'backups',
+  'backup_schedule',
   'idempotency_keys',
   'settings',
   'scheduler_runs',
@@ -1209,6 +1224,9 @@ function rowsForState(state: unknown): Record<(typeof domainTables)[number], Dom
     testflight_subscriptions: arrayRows(value.testFlightSubscriptions, 'testflight'),
     webhook_inbox: arrayRows(value.webhookDeliveryLog, 'webhook'),
     backups: arrayRows(value.backupHistory, 'backup'),
+    backup_schedule: typeof value.backupSchedule === 'object' && value.backupSchedule !== null && !Array.isArray(value.backupSchedule)
+      ? [{ id: 'active', payload: value.backupSchedule, updatedAt: 0 }]
+      : [],
     idempotency_keys: [],
     settings,
   };

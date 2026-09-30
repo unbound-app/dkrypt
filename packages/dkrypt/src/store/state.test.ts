@@ -39,6 +39,7 @@ import {
   drillBackupSnapshot,
   getAuditLog,
   getAllJobHistory,
+  getBackupSchedule,
   getJobHistoryPage,
   getDeviceHealthHourlyBuckets,
   getConsecutiveDeviceHealthFailures,
@@ -79,6 +80,7 @@ import {
   revokeApiKey,
   recordWebhookDelivery,
   setDiscordGuildIds,
+  setBackupSchedule,
   syncDiscordPerkRoles,
   updateAllowedUserRoles,
   updateProject,
@@ -1215,6 +1217,20 @@ test('settings mutations persist through the typed SQLite settings collection', 
   } finally {
     database.close();
     updateSettings({ jobHistoryRetentionDays: previousRetentionDays });
+  }
+});
+
+test('backup schedule mutations persist through the typed SQLite collection', () => {
+  const previousSchedule = getBackupSchedule();
+  const schedule = { enabled: true, cron: '15 4 * * *', retentionCount: 9 };
+  const database = openStateDatabase({ stateDir: config.stateDir, filename: config.stateDatabaseFile });
+
+  try {
+    setBackupSchedule(schedule, 'repository-test');
+    expect(readStateCollection(database.db, 'backup_schedule')).toEqual([schedule]);
+  } finally {
+    database.close();
+    setBackupSchedule(previousSchedule, 'repository-test');
   }
 });
 

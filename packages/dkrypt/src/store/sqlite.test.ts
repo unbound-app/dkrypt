@@ -30,11 +30,12 @@ function rewindToSchemaVersion16(database: ReturnType<typeof openStateDatabase>)
     DROP TABLE billing_checkouts;
     DROP TABLE billing_charges;
     DROP TABLE billing_entitlement_history;
+    DROP TABLE backup_schedule;
     ALTER TABLE billing_events DROP COLUMN provider;
     ALTER TABLE billing_events DROP COLUMN event_id;
     ALTER TABLE billing_events DROP COLUMN occurred_at;
     ALTER TABLE billing_events DROP COLUMN processed_at;
-    DELETE FROM schema_migrations WHERE version IN (17, 18, 19);
+    DELETE FROM schema_migrations WHERE version IN (17, 18, 19, 20);
   `);
 }
 
@@ -214,6 +215,28 @@ test('SQLite backfills normalized device health checks from its state snapshot d
     expect(repository.listByDevice('device-a')).toEqual([newer, older]);
     expect(repository.listByDevice('device-b')).toEqual([legacyCheck]);
     migrated.close();
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test('SQLite backfills backup schedule from its state snapshot during migration', async () => {
+  const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-sqlite-backup-schedule-migration-'));
+  const schedule = { enabled: true, cron: '15 4 * * *', retentionCount: 9 };
+
+  try {
+    const database = openStateDatabase({ stateDir, filename: 'state.sqlite' });
+    database.writeState({ version: 18, backupSchedule: schedule });
+    database.db.exec('DELETE FROM schema_migrations WHERE version = 20; DROP TABLE backup_schedule;');
+    database.close();
+
+    const migrated = openStateDatabase({ stateDir, filename: 'state.sqlite' });
+    try {
+      expect(migrated.schemaVersion).toBe(LATEST_SQLITE_SCHEMA_VERSION);
+      expect(readStateCollection(migrated.db, 'backup_schedule')).toEqual([schedule]);
+    } finally {
+      migrated.close();
+    }
   } finally {
     await rm(stateDir, { recursive: true, force: true });
   }

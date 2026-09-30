@@ -171,6 +171,68 @@ describe('state migrations', () => {
     }
   });
 
+  test('a missing backup schedule row fails closed after repository migration', async () => {
+    const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-backup-schedule-index-migration-'));
+    const statePath = path.join(stateDir, 'state.json');
+    await writeFile(statePath, JSON.stringify({
+      version: 13,
+      backupSchedule: { enabled: true, cron: '15 4 * * *', retentionCount: 9 },
+      roles: [{ id: 'legacy', name: 'Legacy', color: '#000000', permissions: '0', position: 0, isDefault: false, createdAt: 0, updatedAt: 0 }],
+    }));
+
+    try {
+      const initialLoad = Bun.spawn(
+        [process.execPath, '-e', "await import('./src/store/state.ts')"],
+        {
+          cwd: process.cwd(),
+          env: {
+            API_KEY: 'backup-schedule-api-key',
+            SESSION_SIGNING_SECRET: 'backup-schedule-session-secret',
+            ADMIN_PASSWORD: 'backup-schedule-admin-password',
+            STATE_DIR: stateDir,
+            STATE_DATABASE_FILE: 'state.sqlite',
+          },
+          stdout: 'pipe',
+          stderr: 'pipe',
+        },
+      );
+      const [initialError, initialExitCode] = await Promise.all([new Response(initialLoad.stderr).text(), initialLoad.exited]);
+      expect(initialExitCode).toBe(0);
+      expect(initialError).toBe('');
+
+      const database = openStateDatabase({ stateDir, filename: 'state.sqlite' });
+      try {
+        database.db.query('DELETE FROM backup_schedule WHERE id = ?;').run('active');
+      } finally {
+        database.close();
+      }
+
+      const reload = Bun.spawn(
+        [process.execPath, '-e', "await import('./src/store/state.ts')"],
+        {
+          cwd: process.cwd(),
+          env: {
+            API_KEY: 'backup-schedule-api-key',
+            SESSION_SIGNING_SECRET: 'backup-schedule-session-secret',
+            ADMIN_PASSWORD: 'backup-schedule-admin-password',
+            STATE_DIR: stateDir,
+            STATE_DATABASE_FILE: 'state.sqlite',
+          },
+          stdout: 'pipe',
+          stderr: 'pipe',
+        },
+      );
+      const [reloadError, reloadExitCode] = await Promise.all([new Response(reload.stderr).text(), reload.exited]);
+
+      expect(reloadExitCode).not.toBe(0);
+      expect(reloadError).toContain('persistent backup schedule repository does not match state snapshot');
+      const migrated = JSON.parse(await readFile(statePath, 'utf8')) as { backupSchedule: { enabled: boolean; cron: string; retentionCount: number } };
+      expect(migrated.backupSchedule).toEqual({ enabled: true, cron: '15 4 * * *', retentionCount: 9 });
+    } finally {
+      await rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
   test('preserves valid v6 accounts that use the viewer permission default', async () => {
     const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-state-v6-account-'));
     const statePath = path.join(stateDir, 'state.json');

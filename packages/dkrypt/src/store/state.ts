@@ -29,6 +29,7 @@ import { createAccountRepository, isAllowedUserRecord, isRoleRecord, isUserMfaRe
 import { createBillingRepository } from '#store/billingRepository.js';
 import { createApiKeyRepository, isApiKeyRecordShape } from '#store/apiKeyRepository.js';
 import { createBackupRepository } from '#store/backupRepository.js';
+import { createBackupScheduleRepository } from '#store/backupScheduleRepository.js';
 import { categorizeFailure } from '#util/failureCategory.js';
 import { combineBits, hasPermission, parseBits, PermissionFlag, serializeBits } from '#permissions.js';
 import { createDeviceRepository } from '#store/deviceRepository.js';
@@ -704,6 +705,7 @@ const settingsRepository = createSettingsRepository(stateDatabase.db);
 const watchRepository = createWatchRepository(stateDatabase.db);
 const schedulerRunRepository = createSchedulerRunRepository(stateDatabase.db);
 const backupRepository = createBackupRepository(stateDatabase.db);
+const backupScheduleRepository = createBackupScheduleRepository(stateDatabase.db);
 const deviceRepository = createDeviceRepository(stateDatabase.db);
 const projectRepository = createProjectRepository(stateDatabase.db);
 
@@ -1389,6 +1391,10 @@ if (JSON.stringify(state.backupHistory) !== JSON.stringify(persistedBackups)) {
   state.backupHistory = persistedBackups;
   dirty = true;
 }
+const persistedBackupSchedule = backupScheduleRepository.get();
+if (!persistedBackupSchedule || JSON.stringify(state.backupSchedule) !== JSON.stringify(persistedBackupSchedule)) {
+  throw new Error('persistent backup schedule repository does not match state snapshot');
+}
 let persistedSchedulerRuns = schedulerRunRepository.listAll();
 if (persistedSchedulerRuns.length === 0 && state.schedulerRunHistory.length > 0) {
   schedulerRunRepository.replaceAll(state.schedulerRunHistory);
@@ -1490,6 +1496,9 @@ function persistNow(additionalCollections: readonly StateCollectionReplacement[]
   }
   if (!collections.some((collection) => collection.table === 'backups')) {
     collections.push(backupRepository.collectionReplacement(state.backupHistory));
+  }
+  if (!collections.some((collection) => collection.table === 'backup_schedule')) {
+    collections.push(backupScheduleRepository.collectionReplacement(state.backupSchedule));
   }
   stateDatabase.writeState(state, undefined, collections);
   dirty = false;
