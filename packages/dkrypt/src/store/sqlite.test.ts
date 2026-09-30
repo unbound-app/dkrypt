@@ -35,7 +35,7 @@ function rewindToSchemaVersion16(database: ReturnType<typeof openStateDatabase>)
     ALTER TABLE billing_events DROP COLUMN event_id;
     ALTER TABLE billing_events DROP COLUMN occurred_at;
     ALTER TABLE billing_events DROP COLUMN processed_at;
-    DELETE FROM schema_migrations WHERE version IN (17, 18, 19, 20);
+    DELETE FROM schema_migrations WHERE version IN (17, 18, 19, 20, 21);
   `);
 }
 
@@ -234,6 +234,36 @@ test('SQLite backfills backup schedule from its state snapshot during migration'
     try {
       expect(migrated.schemaVersion).toBe(LATEST_SQLITE_SCHEMA_VERSION);
       expect(readStateCollection(migrated.db, 'backup_schedule')).toEqual([schedule]);
+    } finally {
+      migrated.close();
+    }
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test('SQLite backfills projects from its state snapshot during migration', async () => {
+  const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-sqlite-project-migration-'));
+  const project = {
+    id: 'default',
+    name: 'Default workspace',
+    memberIds: [],
+    isDefault: true,
+    createdBy: 'system',
+    createdAt: 100,
+    updatedAt: 200,
+  };
+
+  try {
+    const database = openStateDatabase({ stateDir, filename: 'state.sqlite' });
+    database.writeState({ version: 18, projects: [project] });
+    database.db.exec('DELETE FROM projects; DELETE FROM schema_migrations WHERE version = 21;');
+    database.close();
+
+    const migrated = openStateDatabase({ stateDir, filename: 'state.sqlite' });
+    try {
+      expect(migrated.schemaVersion).toBe(LATEST_SQLITE_SCHEMA_VERSION);
+      expect(readStateCollection(migrated.db, 'projects')).toEqual([project]);
     } finally {
       migrated.close();
     }

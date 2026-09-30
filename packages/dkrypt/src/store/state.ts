@@ -44,7 +44,7 @@ import { createJobHistoryRepository } from '#store/jobHistoryRepository.js';
 import { createSessionRepository } from '#store/sessionRepository.js';
 import { createSettingsRepository } from '#store/settingsRepository.js';
 import { createWatchRepository, isAppWatchRecord } from '#store/watchRepository.js';
-import { openStateDatabase, readStateCollection, verifyDatabaseBackup, writeStateMirror, type StateCollectionReplacement, type StateDatabase } from '#store/sqlite.js';
+import { firstStateOwnedCollectionMismatch, openStateDatabase, readStateCollection, stableJson, verifyDatabaseBackup, writeStateMirror, type StateCollectionReplacement, type StateDatabase } from '#store/sqlite.js';
 import { paginateCursor } from '#util/cursor.js';
 import { effectiveTimeZone } from '#util/timezone.js';
 import type { MaintenanceWindow } from '#util/maintenanceWindow.js';
@@ -1235,8 +1235,12 @@ function load(): PersistedState {
   mkdirSync(config.stateDir, { recursive: true });
   const stored = stateDatabase.readState({ legacyMirrorAvailable: existsSync(statePath) });
   if (stored !== undefined) {
-    const migrated = normalizeLoadedState(migrate(asStateRecord(stored)));
-    if (JSON.stringify(stored) !== JSON.stringify(migrated)) stateDatabase.writeState(migrated, statePath);
+    const storedRecord = asStateRecord(stored);
+    const migrated = normalizeLoadedState(migrate(storedRecord));
+    if (JSON.stringify(stored) !== JSON.stringify(migrated)) {
+      assertStructuredIndexesMatchSnapshot(storedRecord, migrated);
+      stateDatabase.writeState(migrated, statePath);
+    }
     return migrated;
   }
   try {
@@ -1246,6 +1250,61 @@ function load(): PersistedState {
   } catch (error) {
     throw new Error(`could not initialize persistent state: ${error instanceof Error ? error.message : String(error)}`);
   }
+}
+
+function assertStructuredIndexesMatchSnapshot(stored: Record<string, unknown>, migrated: PersistedState): void {
+  const collectionMatches = (table: string, candidates: unknown[][]): boolean => {
+    const persisted = readStateCollection(stateDatabase.db, table);
+    return candidates.some((candidate) => sameCollectionPayloads(candidate, persisted));
+  };
+  const recordCollection = (value: unknown, key: string): unknown[] => {
+    const records = (value as Record<string, unknown>)[key];
+    return Array.isArray(records) ? records : [];
+  };
+  const settingsCollection = (value: unknown): unknown[] => {
+    const settings = (value as Record<string, unknown>).settings;
+    if (typeof settings !== 'object' || settings === null || Array.isArray(settings)) return [];
+    return Object.entries(settings).map(([key, settingValue]) => ({ key, value: settingValue }));
+  };
+  const assertCollection = (table: string, candidates: unknown[][], label: string): void => {
+    if (!collectionMatches(table, candidates)) throw new Error(`persistent ${label} repository does not match state snapshot`);
+  };
+
+  assertCollection('settings', [settingsCollection(stored), settingsCollection(migrated)], 'settings');
+  assertCollection('scheduler_runs', [recordCollection(stored, 'schedulerRunHistory'), migrated.schedulerRunHistory], 'scheduler run');
+  assertCollection('watches', [recordCollection(stored, 'watches'), migrated.watches], 'watch');
+  assertCollection('users', [recordCollection(stored, 'allowedUsers'), migrated.allowedUsers], 'account');
+  assertCollection('roles', [recordCollection(stored, 'roles'), migrated.roles], 'account and role');
+  assertCollection('projects', [recordCollection(stored, 'projects'), migrated.projects], 'project');
+
+  const persistedSessions = sessionRepository.listAll();
+  if (![recordCollection(stored, 'activeSessions'), migrated.activeSessions].some((candidate) => reconcileSessionLastSeen(candidate, persistedSessions))) {
+    throw new Error('persistent session repository does not match state snapshot');
+  }
+  const reconciledSessions = reconcileSessionLastSeen(migrated.activeSessions, persistedSessions);
+  if (reconciledSessions) migrated.activeSessions = reconciledSessions;
+
+  const persistedApiKeys = readStateCollection(stateDatabase.db, 'api_keys');
+  if (![
+    recordCollection(stored, 'apiKeys'),
+    migrated.apiKeys,
+  ].some((candidate) => sameApiKeyRecordsExceptUsage(candidate, persistedApiKeys))) {
+    throw new Error('persistent API key repository does not match state snapshot');
+  }
+  const reconciledApiKeys = reconcileApiKeyUsage(migrated.apiKeys, apiKeyRepository.listAll());
+  if (reconciledApiKeys) migrated.apiKeys = reconciledApiKeys;
+
+  const mismatch = firstStateOwnedCollectionMismatch(stateDatabase.db, [stored, migrated], [
+    'settings',
+    'scheduler_runs',
+    'watches',
+    'users',
+    'roles',
+    'projects',
+    'sessions',
+    'api_keys',
+  ]);
+  if (mismatch) throw new Error(`persistent ${mismatch} index does not match state snapshot`);
 }
 
 function asStateRecord(value: unknown): Record<string, unknown> {
@@ -1395,37 +1454,25 @@ const persistedBackupSchedule = backupScheduleRepository.get();
 if (!persistedBackupSchedule || JSON.stringify(state.backupSchedule) !== JSON.stringify(persistedBackupSchedule)) {
   throw new Error('persistent backup schedule repository does not match state snapshot');
 }
-let persistedSchedulerRuns = schedulerRunRepository.listAll();
-if (persistedSchedulerRuns.length === 0 && state.schedulerRunHistory.length > 0) {
-  schedulerRunRepository.replaceAll(state.schedulerRunHistory);
-  persistedSchedulerRuns = schedulerRunRepository.listAll();
+const persistedSchedulerRuns = schedulerRunRepository.listAll();
+if (!sameRecordsByKey(state.schedulerRunHistory, persistedSchedulerRuns, (entry) => entry.id)) {
+  throw new Error('persistent scheduler run repository does not match state snapshot');
 }
-if (JSON.stringify(state.schedulerRunHistory) !== JSON.stringify(persistedSchedulerRuns)) {
-  state.schedulerRunHistory = persistedSchedulerRuns;
-  dirty = true;
+const persistedWatches = watchRepository.listAll();
+if (!sameRecordsByKey(state.watches, persistedWatches, (watch) => watch.id)) {
+  throw new Error('persistent watch repository does not match state snapshot');
 }
-let persistedWatches = watchRepository.listAll();
-if (persistedWatches.length === 0 && state.watches.length > 0) {
-  watchRepository.replaceAll(state.watches);
-  persistedWatches = watchRepository.listAll();
-}
-if (JSON.stringify(state.watches) !== JSON.stringify(persistedWatches)) {
-  state.watches = persistedWatches;
-  dirty = true;
-}
-let persistedSettings = settingsRepository.listAll();
-if (Object.keys(persistedSettings).length === 0 && Object.keys(state.settings).length > 0) {
-  settingsRepository.replaceAll(state.settings);
-  persistedSettings = settingsRepository.listAll();
-}
-if (JSON.stringify(state.settings) !== JSON.stringify(persistedSettings)) {
-  state.settings = persistedSettings;
-  dirty = true;
+const persistedSettings = settingsRepository.listAll();
+if (!sameObjectEntries(state.settings, persistedSettings)) {
+  throw new Error('persistent settings repository does not match state snapshot');
 }
 let persistedAllowedUsers = accountRepository.listUsers();
 let persistedRoles = accountRepository.listRoles();
-if ((persistedAllowedUsers.length === 0 && state.allowedUsers.length > 0) || (persistedRoles.length === 0 && state.roles.length > 0) || !accountRepository.hasNormalizedUsernameRowIds()) {
-  accountRepository.replaceAll({ users: state.allowedUsers, roles: state.roles });
+if (!accountRepository.hasNormalizedUsernameRowIds()) {
+  if (!sameRecordsByKey(state.allowedUsers, persistedAllowedUsers, (user) => user.username) || !sameRecordsByKey(state.roles, persistedRoles, (role) => role.id)) {
+    throw new Error('persistent account and role repositories do not match the state snapshot');
+  }
+  accountRepository.replaceAll({ users: persistedAllowedUsers, roles: persistedRoles });
   persistedAllowedUsers = accountRepository.listUsers();
   persistedRoles = accountRepository.listRoles();
 }
@@ -1433,24 +1480,19 @@ if (JSON.stringify(state.allowedUsers) !== JSON.stringify(persistedAllowedUsers)
   throw new Error('persistent account and role repositories do not match the state snapshot');
 }
 validateAccountCollections({ users: state.allowedUsers, roles: state.roles });
-let persistedApiKeys = apiKeyRepository.listAll();
-if (persistedApiKeys.length === 0 && state.apiKeys.length > 0) {
-  apiKeyRepository.replaceAll(state.apiKeys);
-  persistedApiKeys = apiKeyRepository.listAll();
+const persistedApiKeys = apiKeyRepository.listAll();
+const reconciledApiKeys = reconcileApiKeyUsage(state.apiKeys, persistedApiKeys);
+if (!reconciledApiKeys) {
+  throw new Error('persistent API key repository does not match state snapshot');
 }
-if (JSON.stringify(state.apiKeys) !== JSON.stringify(persistedApiKeys)) {
-  state.apiKeys = persistedApiKeys;
+if (JSON.stringify(state.apiKeys) !== JSON.stringify(reconciledApiKeys)) {
+  state.apiKeys = reconciledApiKeys;
   dirty = true;
 }
-let persistedProjects = projectRepository.listAll();
-if (persistedProjects.length === 0) {
-  projectRepository.replaceAll(state.projects);
-  persistedProjects = projectRepository.listAll();
-}
+const persistedProjects = projectRepository.listAll();
 validateProjectCollection(persistedProjects);
-if (JSON.stringify(state.projects) !== JSON.stringify(persistedProjects)) {
-  state.projects = persistedProjects;
-  dirty = true;
+if (!sameRecordsByKey(state.projects, persistedProjects, (project) => project.id)) {
+  throw new Error('persistent project repository does not match state snapshot');
 }
 const persistedDevices = deviceRepository.listAll();
 if (JSON.stringify(state.devices) !== JSON.stringify(persistedDevices)) {
@@ -1458,8 +1500,10 @@ if (JSON.stringify(state.devices) !== JSON.stringify(persistedDevices)) {
   dirty = true;
 }
 const persistedSessions = sessionRepository.listAll();
-if (JSON.stringify(state.activeSessions) !== JSON.stringify(persistedSessions)) {
-  state.activeSessions = persistedSessions;
+const reconciledSessions = reconcileSessionLastSeen(state.activeSessions, persistedSessions);
+if (!reconciledSessions) throw new Error('persistent session repository does not match state snapshot');
+if (JSON.stringify(state.activeSessions) !== JSON.stringify(reconciledSessions)) {
+  state.activeSessions = reconciledSessions;
   dirty = true;
 }
 cleanupBackupSnapshotDirectories(state.backupHistory);
@@ -4754,6 +4798,80 @@ type BackupRestoredFields = ReturnType<typeof prepareBackupRestore>;
 function sameRecordsByKey<T>(left: T[], right: T[], keyOf: (record: T) => string): boolean {
   const sorted = (records: T[]) => [...records].sort((a, b) => keyOf(a).localeCompare(keyOf(b)));
   return JSON.stringify(sorted(left)) === JSON.stringify(sorted(right));
+}
+
+function sameCollectionPayloads(left: unknown[], right: unknown[]): boolean {
+  if (left.length !== right.length) return false;
+  return left.map(stableJson).sort().join('\n') === right.map(stableJson).sort().join('\n');
+}
+
+function sameApiKeyRecordsExceptUsage(left: unknown[], right: unknown[]): boolean {
+  if (left.length !== right.length) return false;
+  const rightById = new Map<string, ApiKeyRecord>();
+  const leftIds = new Set<string>();
+  for (const record of right) {
+    if (typeof record !== 'object' || record === null || Array.isArray(record) || typeof (record as ApiKeyRecord).id !== 'string') return false;
+    const apiKey = record as ApiKeyRecord;
+    if (rightById.has(apiKey.id)) return false;
+    rightById.set(apiKey.id, apiKey);
+  }
+  return left.every((record) => {
+    if (typeof record !== 'object' || record === null || Array.isArray(record) || typeof (record as ApiKeyRecord).id !== 'string') return false;
+    const snapshotKey = record as ApiKeyRecord;
+    if (leftIds.has(snapshotKey.id)) return false;
+    leftIds.add(snapshotKey.id);
+    const repositoryKey = rightById.get(snapshotKey.id);
+    if (!repositoryKey) return false;
+    return sameCollectionPayloads([withoutApiKeyUsage(snapshotKey)], [withoutApiKeyUsage(repositoryKey)]);
+  });
+}
+
+function withoutApiKeyUsage(record: ApiKeyRecord): Omit<ApiKeyRecord, 'lastUsedAt' | 'lastUsedIp'> {
+  const core = { ...record };
+  delete core.lastUsedAt;
+  delete core.lastUsedIp;
+  return core;
+}
+
+function reconcileApiKeyUsage(snapshot: ApiKeyRecord[], repository: ApiKeyRecord[]): ApiKeyRecord[] | undefined {
+  if (!sameApiKeyRecordsExceptUsage(snapshot, repository)) return undefined;
+  const repositoryById = new Map(repository.map((record) => [record.id, record]));
+  return snapshot.map((record) => {
+    const persisted = repositoryById.get(record.id) as ApiKeyRecord;
+    return { ...record, lastUsedAt: persisted.lastUsedAt, lastUsedIp: persisted.lastUsedIp };
+  });
+}
+
+function reconcileSessionLastSeen(snapshot: unknown[], repository: ActiveSessionRecord[]): ActiveSessionRecord[] | undefined {
+  if (snapshot.length !== repository.length) return undefined;
+  const repositoryById = new Map<string, ActiveSessionRecord>();
+  for (const record of repository) {
+    if (repositoryById.has(record.id)) return undefined;
+    repositoryById.set(record.id, record);
+  }
+  const snapshotIds = new Set<string>();
+  const reconciled: ActiveSessionRecord[] = [];
+  for (const value of snapshot) {
+    if (typeof value !== 'object' || value === null || Array.isArray(value) || typeof (value as ActiveSessionRecord).id !== 'string') return undefined;
+    const record = value as ActiveSessionRecord;
+    if (snapshotIds.has(record.id)) return undefined;
+    snapshotIds.add(record.id);
+    const persisted = repositoryById.get(record.id);
+    if (!persisted || !sameCollectionPayloads([withoutSessionLastSeen(record)], [withoutSessionLastSeen(persisted)])) return undefined;
+    reconciled.push({ ...record, lastSeenAt: persisted.lastSeenAt });
+  }
+  return reconciled;
+}
+
+function withoutSessionLastSeen(record: ActiveSessionRecord): Omit<ActiveSessionRecord, 'lastSeenAt'> {
+  const core: Record<string, unknown> = { ...record };
+  delete core.lastSeenAt;
+  return core as Omit<ActiveSessionRecord, 'lastSeenAt'>;
+}
+
+function sameObjectEntries(left: object, right: object): boolean {
+  const sortedEntries = (value: object) => Object.entries(value).sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey));
+  return JSON.stringify(sortedEntries(left)) === JSON.stringify(sortedEntries(right));
 }
 
 function restoredStateForPayload(payload: ValidatedBackupPayload, restored: BackupRestoredFields, baseState: PersistedState): PersistedState {

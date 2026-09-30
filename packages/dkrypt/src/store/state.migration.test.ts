@@ -1,8 +1,33 @@
 import { describe, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { openStateDatabase, readStateCollection } from '#store/sqlite.js';
+
+async function runStateModule(stateDir: string, script = "await import('./src/store/state.ts')"): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  const child = Bun.spawn(
+    [process.execPath, '-e', script],
+    {
+      cwd: process.cwd(),
+      env: {
+        API_KEY: 'state-migration-api-key',
+        SESSION_SIGNING_SECRET: 'state-migration-session-secret',
+        ADMIN_PASSWORD: 'state-migration-admin-password',
+        STATE_DIR: stateDir,
+        STATE_DATABASE_FILE: 'state.sqlite',
+      },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    },
+  );
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ]);
+  return { exitCode, stdout, stderr };
+}
 
 describe('state migrations', () => {
   test('removes v13 share records and obsolete permission bits', async () => {
@@ -228,6 +253,254 @@ describe('state migrations', () => {
       expect(reloadError).toContain('persistent backup schedule repository does not match state snapshot');
       const migrated = JSON.parse(await readFile(statePath, 'utf8')) as { backupSchedule: { enabled: boolean; cron: string; retentionCount: number } };
       expect(migrated.backupSchedule).toEqual({ enabled: true, cron: '15 4 * * *', retentionCount: 9 });
+    } finally {
+      await rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  test('an empty settings index fails closed without rebuilding from the snapshot', async () => {
+    const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-settings-index-migration-'));
+    const statePath = path.join(stateDir, 'state.json');
+    await writeFile(statePath, JSON.stringify({
+      version: 13,
+      settings: { maintenanceMode: true },
+      roles: [{ id: 'legacy', name: 'Legacy', color: '#000000', permissions: '0', position: 0, isDefault: false, createdAt: 0, updatedAt: 0 }],
+    }));
+
+    try {
+      const initialLoad = await runStateModule(stateDir);
+      expect(initialLoad.exitCode).toBe(0);
+      expect(initialLoad.stderr).toBe('');
+
+      const database = openStateDatabase({ stateDir, filename: 'state.sqlite' });
+      try {
+        const stateRow = database.db.query('SELECT payload FROM state_snapshots WHERE id = 1;').get() as { payload: string };
+        const legacySnapshot = { ...JSON.parse(stateRow.payload), version: 17 };
+        const payload = JSON.stringify(legacySnapshot);
+        database.db.query('UPDATE state_snapshots SET state_version = 17, payload = ?, sha256 = ? WHERE id = 1;').run(
+          payload,
+          createHash('sha256').update(payload).digest('hex'),
+        );
+        database.db.exec('DELETE FROM settings;');
+      } finally {
+        database.close();
+      }
+
+      const reload = await runStateModule(stateDir);
+      expect(reload.exitCode).not.toBe(0);
+      expect(reload.stderr).toContain('persistent settings repository does not match state snapshot');
+      const migrated = JSON.parse(await readFile(statePath, 'utf8')) as { settings: { maintenanceMode: boolean } };
+      expect(migrated.settings.maintenanceMode).toBe(true);
+      const intactDatabase = openStateDatabase({ stateDir, filename: 'state.sqlite' });
+      try {
+        const stateRow = intactDatabase.db.query('SELECT payload FROM state_snapshots WHERE id = 1;').get() as { payload: string };
+        expect(JSON.parse(stateRow.payload).version).toBe(17);
+        expect(readStateCollection(intactDatabase.db, 'settings')).toEqual([]);
+      } finally {
+        intactDatabase.close();
+      }
+    } finally {
+      await rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  test('a normalized startup cannot recreate a missing device activity index', async () => {
+    const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-device-activity-index-migration-'));
+    const activity = { id: 'activity-1', ts: 10, deviceId: 'device-1', kind: 'health', message: 'Device reachable' };
+
+    try {
+      const initialLoad = await runStateModule(stateDir);
+      expect(initialLoad.exitCode).toBe(0);
+      expect(initialLoad.stderr).toBe('');
+
+      const database = openStateDatabase({ stateDir, filename: 'state.sqlite' });
+      try {
+        const stateRow = database.db.query('SELECT payload FROM state_snapshots WHERE id = 1;').get() as { payload: string };
+        const state = JSON.parse(stateRow.payload) as { deviceActivity: unknown[]; version: number };
+        state.deviceActivity = [activity];
+        state.version = 17;
+        database.writeState(state);
+        database.db.exec('DELETE FROM device_history;');
+      } finally {
+        database.close();
+      }
+
+      const reload = await runStateModule(stateDir);
+      expect(reload.exitCode).not.toBe(0);
+      expect(reload.stderr).toContain('persistent device_history index does not match state snapshot');
+    } finally {
+      await rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  test('session last-seen updates survive snapshot normalization', async () => {
+    const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-session-last-seen-migration-'));
+    const session = { id: 'session-1', sub: 'root', createdAt: 1, lastSeenAt: 2, ip: '192.0.2.1' };
+
+    try {
+      const initialLoad = await runStateModule(stateDir);
+      expect(initialLoad.exitCode).toBe(0);
+      expect(initialLoad.stderr).toBe('');
+
+      const database = openStateDatabase({ stateDir, filename: 'state.sqlite' });
+      try {
+        const stateRow = database.db.query('SELECT payload FROM state_snapshots WHERE id = 1;').get() as { payload: string };
+        const state = JSON.parse(stateRow.payload) as { activeSessions: unknown[]; version: number };
+        state.activeSessions = [session];
+        state.version = 17;
+        database.writeState(state);
+        database.db.query("UPDATE sessions SET payload = json_set(payload, '$.lastSeenAt', 42), updated_at = 42, last_seen_at = 42 WHERE id = ?;").run(session.id);
+      } finally {
+        database.close();
+      }
+
+      const reload = await runStateModule(
+        stateDir,
+        "const state = await import('./src/store/state.ts'); process.stdout.write('SESSIONS:' + JSON.stringify(state.listSessionsForUser('root')))",
+      );
+      expect(reload.exitCode).toBe(0);
+      expect(reload.stderr).toBe('');
+      expect(reload.stdout).toContain('"lastSeenAt":42');
+    } finally {
+      await rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  test('an API key index with records absent from the snapshot fails closed', async () => {
+    const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-api-key-index-migration-'));
+
+    try {
+      const initialLoad = await runStateModule(stateDir);
+      expect(initialLoad.exitCode).toBe(0);
+      expect(initialLoad.stderr).toBe('');
+
+      const database = openStateDatabase({ stateDir, filename: 'state.sqlite' });
+      try {
+        database.db.query('INSERT INTO api_keys (id, payload, updated_at) VALUES (?, ?, ?);').run(
+          'unindexed-api-key',
+          JSON.stringify({ id: 'unindexed-api-key', name: 'Unindexed', ownerId: 'root', status: 'approved', createdAt: 1 }),
+          1,
+        );
+      } finally {
+        database.close();
+      }
+
+      const reload = await runStateModule(stateDir);
+      expect(reload.exitCode).not.toBe(0);
+      expect(reload.stderr).toContain('persistent API key repository does not match state snapshot');
+    } finally {
+      await rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  test('duplicate API key snapshot ids cannot hide a different indexed key', async () => {
+    const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-api-key-duplicate-index-migration-'));
+    const firstKey = { id: 'first-key', name: 'First', ownerId: 'root', status: 'approved', hash: 'first-hash', createdAt: 1 };
+    const secondKey = { id: 'second-key', name: 'Second', ownerId: 'root', status: 'approved', hash: 'second-hash', createdAt: 2 };
+
+    try {
+      const initialLoad = await runStateModule(stateDir);
+      expect(initialLoad.exitCode).toBe(0);
+      expect(initialLoad.stderr).toBe('');
+
+      const database = openStateDatabase({ stateDir, filename: 'state.sqlite' });
+      try {
+        const stateRow = database.db.query('SELECT payload FROM state_snapshots WHERE id = 1;').get() as { payload: string };
+        const state = JSON.parse(stateRow.payload) as { apiKeys: unknown[]; version: number };
+        state.apiKeys = [firstKey, secondKey];
+        database.writeState(state);
+        state.apiKeys = [firstKey, firstKey];
+        state.version = 17;
+        const payload = JSON.stringify(state);
+        database.db.query('UPDATE state_snapshots SET state_version = 17, payload = ?, sha256 = ? WHERE id = 1;').run(
+          payload,
+          createHash('sha256').update(payload).digest('hex'),
+        );
+      } finally {
+        database.close();
+      }
+
+      const reload = await runStateModule(stateDir);
+      expect(reload.exitCode).not.toBe(0);
+      expect(reload.stderr).toContain('persistent API key repository does not match state snapshot');
+    } finally {
+      await rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  test('API key security fields must match the snapshot', async () => {
+    const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-api-key-record-migration-'));
+    const apiKey = {
+      id: 'persistent-api-key',
+      name: 'Persistent key',
+      ownerId: 'root',
+      status: 'approved',
+      hash: 'original-hash',
+      createdAt: 1,
+    };
+
+    try {
+      const initialLoad = await runStateModule(stateDir);
+      expect(initialLoad.exitCode).toBe(0);
+      expect(initialLoad.stderr).toBe('');
+
+      const database = openStateDatabase({ stateDir, filename: 'state.sqlite' });
+      try {
+        const stateRow = database.db.query('SELECT payload FROM state_snapshots WHERE id = 1;').get() as { payload: string };
+        const state = JSON.parse(stateRow.payload) as { apiKeys: unknown[]; version: number };
+        state.apiKeys = [apiKey];
+        state.version = 17;
+        database.writeState(state);
+        database.db.query("UPDATE api_keys SET payload = json_set(payload, '$.hash', 'changed-hash', '$.lastUsedAt', 2) WHERE id = ?;").run(apiKey.id);
+      } finally {
+        database.close();
+      }
+
+      const reload = await runStateModule(stateDir);
+      expect(reload.exitCode).not.toBe(0);
+      expect(reload.stderr).toContain('persistent API key repository does not match state snapshot');
+    } finally {
+      await rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  test('API key usage metadata is reconciled from its persistent index', async () => {
+    const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-api-key-usage-migration-'));
+    const apiKey = {
+      id: 'persistent-api-key',
+      name: 'Persistent key',
+      ownerId: 'root',
+      status: 'approved',
+      hash: 'original-hash',
+      createdAt: 1,
+    };
+
+    try {
+      const initialLoad = await runStateModule(stateDir);
+      expect(initialLoad.exitCode).toBe(0);
+      expect(initialLoad.stderr).toBe('');
+
+      const database = openStateDatabase({ stateDir, filename: 'state.sqlite' });
+      try {
+        const stateRow = database.db.query('SELECT payload FROM state_snapshots WHERE id = 1;').get() as { payload: string };
+        const state = JSON.parse(stateRow.payload) as { apiKeys: unknown[]; version: number };
+        state.apiKeys = [apiKey];
+        state.version = 17;
+        database.writeState(state);
+        database.db.query("UPDATE api_keys SET payload = json_set(payload, '$.lastUsedAt', 42, '$.lastUsedIp', '192.0.2.1') WHERE id = ?;").run(apiKey.id);
+      } finally {
+        database.close();
+      }
+
+      const reload = await runStateModule(
+        stateDir,
+        "const state = await import('./src/store/state.ts'); process.stdout.write('API_KEY_STATE:' + JSON.stringify(state.getApiKeyById('persistent-api-key')))",
+      );
+      expect(reload.stderr).toBe('');
+      expect(reload.exitCode).toBe(0);
+      expect(reload.stdout).toContain('API_KEY_STATE:');
+      expect(reload.stdout).toContain('"lastUsedAt":42');
+      expect(reload.stdout).toContain('"lastUsedIp":"192.0.2.1"');
     } finally {
       await rm(stateDir, { recursive: true, force: true });
     }

@@ -694,6 +694,18 @@ const migrations = [
       WHERE id = 1 AND json_valid(payload) = 1 AND json_type(payload, '$.backupSchedule') = 'object';
     `,
   },
+  {
+    version: 21,
+    sql: `
+      INSERT OR IGNORE INTO projects (id, payload, updated_at)
+      SELECT json_extract(project.value, '$.id'),
+             project.value,
+             COALESCE(json_extract(project.value, '$.updatedAt'), state_snapshots.updated_at)
+      FROM state_snapshots,
+           json_each(CASE WHEN json_valid(state_snapshots.payload) = 1 THEN state_snapshots.payload ELSE '{}' END, '$.projects') AS project
+      WHERE json_type(project.value, '$.id') = 'text';
+    `,
+  },
 ] as const;
 
 export const LATEST_SQLITE_SCHEMA_VERSION = migrations.at(-1)?.version ?? 0;
@@ -1666,6 +1678,67 @@ export function readStateCollection(database: Database, table: string): unknown[
   assertCollectionTable(table);
   const rows = database.query(`SELECT payload FROM ${table} ORDER BY updated_at DESC`).all() as Array<{ payload: string }>;
   return rows.map((row) => JSON.parse(row.payload) as unknown);
+}
+
+export function firstStateOwnedCollectionMismatch(database: Database, candidates: unknown[], excludedTables: readonly string[] = []): string | undefined {
+  const candidateRows = candidates.map(rowsForState);
+  for (const table of stateOwnedDomainTables) {
+    if (excludedTables.includes(table)) continue;
+    const expected = candidateRows.map((rows) => rows[table]);
+    const actual = database.query(`SELECT id, payload FROM ${table} ORDER BY id ASC;`).all() as Array<{ id: string; payload: string }>;
+    if (!expected.some((rows) => sameDomainRows(table, rows, actual))) return table;
+  }
+
+  const expectedTestFlightDevices = candidates.map(testFlightSubscriptionDeviceRows);
+  const actualTestFlightDevices = database.query('SELECT subscription_id, device_id, payload FROM testflight_subscription_devices ORDER BY subscription_id ASC, device_id ASC;').all() as Array<{
+    subscription_id: string;
+    device_id: string;
+    payload: string;
+  }>;
+  if (!expectedTestFlightDevices.some((rows) => sameTestFlightSubscriptionDevices(rows, actualTestFlightDevices))) return 'testflight_subscription_devices';
+  return undefined;
+}
+
+function sameDomainRows(table: string, expected: DomainRow[], actual: Array<{ id: string; payload: string }>): boolean {
+  if (expected.length !== actual.length) return false;
+  const projected = (rows: Array<{ id: string; payload: unknown }>, includeId: boolean): string[] => rows
+    .map((row) => stableJson(includeId ? { id: row.id, payload: row.payload } : row.payload))
+    .sort();
+  const expectedRows = expected.map(({ id, payload }) => ({ id, payload }));
+  const actualRows = actual.map(({ id, payload }) => ({ id, payload: JSON.parse(payload) as unknown }));
+  return projected(expectedRows, table !== 'users').join('\n') === projected(actualRows, table !== 'users').join('\n');
+}
+
+function testFlightSubscriptionDeviceRows(value: unknown): Array<{ subscription_id: string; device_id: string; payload: Record<string, unknown> }> {
+  const subscriptions = asRecord(value).testFlightSubscriptions;
+  if (!Array.isArray(subscriptions)) return [];
+  return subscriptions.flatMap((rawSubscription) => {
+    const subscription = asRecord(rawSubscription);
+    const subscriptionId = stringField(subscription, 'id');
+    if (!subscriptionId) return [];
+    return testFlightSubscriptionDevices(rawSubscription).map(({ deviceId, payload }) => ({
+      subscription_id: subscriptionId,
+      device_id: deviceId,
+      payload,
+    }));
+  });
+}
+
+function sameTestFlightSubscriptionDevices(
+  expected: Array<{ subscription_id: string; device_id: string; payload: Record<string, unknown> }>,
+  actual: Array<{ subscription_id: string; device_id: string; payload: string }>,
+): boolean {
+  if (expected.length !== actual.length) return false;
+  const serialize = (row: { subscription_id: string; device_id: string; payload: unknown }) => stableJson(row);
+  return expected.map(serialize).sort().join('\n') === actual.map((row) => serialize({ ...row, payload: JSON.parse(row.payload) as unknown })).sort().join('\n');
+}
+
+export function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (typeof value === 'object' && value !== null) {
+    return `{${Object.entries(value).filter(([, entry]) => entry !== undefined).sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey)).map(([key, entry]) => `${JSON.stringify(key)}:${stableJson(entry)}`).join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'undefined';
 }
 
 export function replaceStateCollection(database: Database, table: string, rows: Array<{ id: string; payload: unknown; updatedAt?: number }>): void {
