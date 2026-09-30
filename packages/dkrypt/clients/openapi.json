@@ -270,6 +270,12 @@
                         {
                           "type": "string",
                           "enum": [
+                            "queue"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
                             "cancelled"
                           ]
                         },
@@ -711,6 +717,12 @@
                             {
                               "type": "string",
                               "enum": [
+                                "queue"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
                                 "cancelled"
                               ]
                             },
@@ -1107,6 +1119,12 @@
                             {
                               "type": "string",
                               "enum": [
+                                "queue"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
                                 "cancelled"
                               ]
                             },
@@ -1478,6 +1496,12 @@
                           "type": "string",
                           "enum": [
                             "decrypt"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "queue"
                           ]
                         },
                         {
@@ -2138,6 +2162,12 @@
                         {
                           "type": "string",
                           "enum": [
+                            "queue"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
                             "cancelled"
                           ]
                         },
@@ -2499,6 +2529,12 @@
                           "type": "string",
                           "enum": [
                             "decrypt"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "queue"
                           ]
                         },
                         {
@@ -3379,6 +3415,12 @@
                           "type": "string",
                           "enum": [
                             "decrypt"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "queue"
                           ]
                         },
                         {

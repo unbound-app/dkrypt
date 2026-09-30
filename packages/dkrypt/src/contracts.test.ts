@@ -228,6 +228,27 @@ test('dashboard job contracts describe history and transport fields', async () =
   }
 });
 
+test('public and dashboard job responses document queue failure classification', async () => {
+  const server = await buildServer({ includePublicRoutes: false });
+  try {
+    await server.ready();
+    const document = server.swagger() as {
+      paths?: Record<string, Record<string, {
+        responses?: Record<string, { content?: Record<string, { schema?: { properties?: Record<string, unknown> } }> }>;
+      }>>;
+    };
+    const paths = ['/v1/jobs/{id}', '/v1/dashboard/jobs/{id}/status'];
+    for (const path of paths) {
+      const property = document.paths?.[path]?.get?.responses?.['200']?.content?.['application/json']?.schema?.properties?.failureClass as {
+        anyOf?: Array<{ enum?: string[] }>;
+      } | undefined;
+      expect(property?.anyOf?.flatMap((variant) => variant.enum ?? [])).toContain('queue');
+    }
+  } finally {
+    await server.close();
+  }
+});
+
 test('dashboard overview publishes typed nested dashboard records', async () => {
   const server = await buildServer({ includePublicRoutes: false });
   try {

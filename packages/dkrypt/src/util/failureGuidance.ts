@@ -10,6 +10,7 @@ export interface FailureGuidance {
 export function getFailureGuidance(message: string | undefined): FailureGuidance {
   const category = categorizeFailure(message);
   if (category === 'Cancelled') return { category, title: 'Job was cancelled', action: 'Queue the decrypt again when you are ready.', retryRecommended: true };
+  if (category === 'Queue wait expired') return { category, title: 'The job waited too long to start', action: 'Resolve the queue blocker shown in the job timeline or device status, then retry.', retryRecommended: true };
   if (category === 'Device unreachable') return { category, title: 'Device connection failed', action: 'Run a device preflight, restore the USB pairing or device connection, then retry.', retryRecommended: true };
   if (category === 'Disk full') return { category, title: 'Storage is exhausted', action: 'Free storage on the device or host, then retry.', retryRecommended: true };
   if (category === 'Timed out') return { category, title: 'The operation timed out', action: 'Check the job timeline and bridge diagnostics before retrying.', retryRecommended: true };

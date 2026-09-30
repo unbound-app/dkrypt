@@ -3,12 +3,13 @@ import type { DeviceTransport } from '#apiCommonContracts.js';
 import type { TFBuild } from '#testflight.js';
 import type { IpaMetadata } from '#store/state.js';
 import type { TraceContext } from '#telemetry.js';
+import type { JobFailureClass } from '#util/failureCategory.js';
 
 export type JobStatus = 'queued' | 'running' | 'done' | 'failed';
 
 export type JobSource = 'manual' | 'scheduler';
 
-export type JobFailureClass = 'device_transport' | 'app_store' | 'testflight' | 'network' | 'storage' | 'decrypt' | 'cancelled' | 'unknown';
+export type { JobFailureClass } from '#util/failureCategory.js';
 
 export interface TestFlightJobSource {
   appId: number;

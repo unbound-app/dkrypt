@@ -1,4 +1,5 @@
 const CANCELLED_RE = /^cancelled by/i;
+const QUEUE_DEADLINE_RE = /deadline exceeded while waiting in the queue/i;
 const TIMEOUT_RE = /timed? ?out/i;
 const UNREACHABLE_RE = /ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EHOSTUNREACH|no route to host|not reachable|connection closed/i;
 const DISK_RE = /ENOSPC|no space left/i;
@@ -7,11 +8,12 @@ const TESTFLIGHT_RE = /TestFlight|testflight|beta app|train/i;
 const NETWORK_RE = /fetch failed|network|HTTP [45]\d\d|socket hang up|DNS/i;
 const DECRYPT_RE = /ipadecrypt|verify failed|still encrypted|cryptid/i;
 
-export type JobFailureClass = 'device_transport' | 'app_store' | 'testflight' | 'network' | 'storage' | 'decrypt' | 'cancelled' | 'unknown';
+export type JobFailureClass = 'device_transport' | 'app_store' | 'testflight' | 'network' | 'storage' | 'decrypt' | 'queue' | 'cancelled' | 'unknown';
 
 export function classifyJobFailure(message: string | undefined): JobFailureClass {
   if (!message) return 'unknown';
   if (CANCELLED_RE.test(message)) return 'cancelled';
+  if (QUEUE_DEADLINE_RE.test(message)) return 'queue';
   if (DISK_RE.test(message)) return 'storage';
   if (DECRYPT_RE.test(message)) return 'decrypt';
   if (TESTFLIGHT_RE.test(message)) return 'testflight';
@@ -24,6 +26,7 @@ export function classifyJobFailure(message: string | undefined): JobFailureClass
 export function categorizeFailure(message: string | undefined): string {
   if (!message) return 'Unknown';
   if (CANCELLED_RE.test(message)) return 'Cancelled';
+  if (QUEUE_DEADLINE_RE.test(message)) return 'Queue wait expired';
   if (UNREACHABLE_RE.test(message)) return 'Device unreachable';
   if (DISK_RE.test(message)) return 'Disk full';
   if (TIMEOUT_RE.test(message)) return 'Timed out';

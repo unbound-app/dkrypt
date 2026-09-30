@@ -42,6 +42,7 @@
 	import { sessionState } from "#lib/session.svelte";
 	import { projectSelectionState } from "#lib/projectSelection.svelte";
 	import { isServerQueryCancelled, mergeServerPage, serverQueryStatus } from "#lib/serverStateCache.svelte";
+	import { categorizeFailure } from "#lib/failureCategory";
 	import {
 		historyJumpState,
 		requestFocusSearch,
@@ -82,12 +83,6 @@
 		showDateHeader: boolean;
 	};
 
-	const CANCELLED_RE = /^cancelled by/i;
-	const TIMEOUT_RE = /timed? ?out/i;
-	const UNREACHABLE_RE =
-		/ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EHOSTUNREACH|no route to host|not reachable|connection closed/i;
-	const DISK_RE = /ENOSPC|no space left/i;
-
 	function requesterInitials(name: string): string {
 		return name
 			.split(/\s+/)
@@ -95,15 +90,6 @@
 			.slice(0, 2)
 			.map((part) => part[0]?.toUpperCase())
 			.join("") || "?";
-	}
-
-	function categorizeFailure(message: string | undefined): string {
-		if (!message) return "Unknown";
-		if (CANCELLED_RE.test(message)) return "Cancelled";
-		if (UNREACHABLE_RE.test(message)) return "Device unreachable";
-		if (DISK_RE.test(message)) return "Disk full";
-		if (TIMEOUT_RE.test(message)) return "Timed out";
-		return "Other";
 	}
 
 	let entries = $state<JobHistoryEntry[]>([]);

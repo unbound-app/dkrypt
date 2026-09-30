@@ -300,7 +300,7 @@ function failExpiredQueuedJob(job: Job, now = Date.now()): void {
   job.error = queueReason
     ? `job deadline exceeded while waiting in the queue: ${queueReason}`
     : 'job deadline exceeded while waiting in the queue';
-  job.failureClass = classifyJobFailure('job deadline exceeded');
+  job.failureClass = classifyJobFailure(job.error);
   job.finishedAt = now;
   appendJobTimelineEvent(job, `Failed: ${job.error}`, 'failed', now);
   incrementMetric('jobs_failed_total', { source: job.source, failureClass: job.failureClass });

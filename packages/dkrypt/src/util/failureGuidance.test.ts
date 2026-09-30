@@ -9,3 +9,12 @@ test('offers a concrete recovery action for bridge failures', () => {
     retryRecommended: true,
   });
 });
+
+test('explains queue deadline failures using the blocker recorded on the job', () => {
+  expect(getFailureGuidance('job deadline exceeded while waiting in the queue: Waiting for a compatible device')).toEqual({
+    category: 'Queue wait expired',
+    title: 'The job waited too long to start',
+    action: 'Resolve the queue blocker shown in the job timeline or device status, then retry.',
+    retryRecommended: true,
+  });
+});

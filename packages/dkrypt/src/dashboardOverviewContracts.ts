@@ -18,6 +18,7 @@ const JobFailureClass = Type.Union([
   Type.Literal('network'),
   Type.Literal('storage'),
   Type.Literal('decrypt'),
+  Type.Literal('queue'),
   Type.Literal('cancelled'),
   Type.Literal('unknown'),
 ]);

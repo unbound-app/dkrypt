@@ -216,6 +216,7 @@ describe('enqueueDecryptJob', () => {
       expect(finished).toMatchObject({
         status: 'failed',
         deadlineExceeded: true,
+        failureClass: 'queue',
       });
       expect(finished.error).toContain('job deadline exceeded while waiting in the queue');
       expect(finished.error).toContain('Waiting for');
