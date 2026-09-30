@@ -521,7 +521,7 @@ export function getQueueReason(job: Job): string | undefined {
   const eligible = devices.filter((_, index) => !blockers[index]);
   if (eligible.length === 0) {
     const reasons = [...new Set(blockers.filter((reason): reason is string => Boolean(reason)))];
-    return reasons.length === 1 ? `Waiting for a compatible device · ${reasons[0]}` : 'Waiting for a compatible device';
+    return reasons.length > 0 ? `Waiting for a compatible device · ${reasons.join(' · ')}` : 'Waiting for a compatible device';
   }
 
   const concurrencyBlocker = getJobConcurrencyBlocker(job);

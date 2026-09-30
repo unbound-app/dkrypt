@@ -206,6 +206,27 @@ describe('enqueueDecryptJob', () => {
     expect(getQueueReason(job)).toMatch(/^Waiting /);
   });
 
+  test('preserves distinct device blockers when no device can run a queued job', () => {
+    const olderDevice = createDevice({
+      name: 'job-test-device-old-ios',
+      transport: 'wifi',
+      host: '127.0.0.2',
+      iosVersion: '17.0',
+    }, 'tests');
+    let job: Job | undefined;
+
+    try {
+      job = enqueueDecryptJob(`com.test.queue-blockers-${crypto.randomUUID()}`, 'manual', { minimumOsVersion: '18.0' });
+      const queueReason = getQueueReason(job) ?? '';
+      expect(job.status).toBe('queued');
+      expect(queueReason).toContain('device iOS version is unknown; cannot verify minimum iOS 18.0');
+      expect(queueReason).toContain('device is running iOS 17.0; this build requires iOS 18.0');
+    } finally {
+      if (job?.status === 'queued') cancelQueuedJob(job.id, 'queue blocker test cleanup');
+      deleteDevice(olderDevice.id, 'tests');
+    }
+  });
+
   test('fails a queued job when its end-to-end deadline expires before dispatch', async () => {
     const originalDeadline = config.jobMaxWaitSeconds;
     config.jobMaxWaitSeconds = 0;
