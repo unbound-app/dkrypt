@@ -514,8 +514,12 @@ export function getQueueInfo(jobId: string): { position: number; total: number }
 export function getQueueReason(job: Job): string | undefined {
   if (job.queueReason) return job.queueReason;
   if (job.status !== 'queued') return undefined;
-  const devices = getEffectiveDevices().filter((device) => device.enabled);
-  if (devices.length === 0) return 'Waiting for an enabled device';
+  const enabledDevices = getEffectiveDevices().filter((device) => device.enabled);
+  if (enabledDevices.length === 0) return 'Waiting for an enabled device';
+  const devices = job.preferredDeviceId
+    ? enabledDevices.filter((device) => device.id === job.preferredDeviceId)
+    : enabledDevices;
+  if (devices.length === 0) return 'Waiting for the assigned device to become available';
 
   const blockers = devices.map((device) => jobDeviceBlocker(job, device));
   const eligible = devices.filter((_, index) => !blockers[index]);

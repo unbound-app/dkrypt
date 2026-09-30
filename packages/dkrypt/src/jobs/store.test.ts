@@ -227,6 +227,30 @@ describe('enqueueDecryptJob', () => {
     }
   });
 
+  test('reports only the assigned device blocker for a device-pinned job', () => {
+    const otherDevice = createDevice({
+      name: 'job-test-device-other',
+      transport: 'wifi',
+      host: '127.0.0.3',
+      iosVersion: '17.0',
+    }, 'tests');
+    let job: Job | undefined;
+
+    try {
+      job = enqueueDecryptJob(`com.test.queue-pinned-blocker-${crypto.randomUUID()}`, 'manual', {
+        minimumOsVersion: '18.0',
+        preferredDeviceId: testDeviceId,
+      });
+      const queueReason = getQueueReason(job) ?? '';
+      expect(queueReason).toContain('device iOS version is unknown; cannot verify minimum iOS 18.0');
+      expect(queueReason).not.toContain('job is assigned to another device');
+      expect(queueReason).not.toContain('iOS 17.0');
+    } finally {
+      if (job?.status === 'queued') cancelQueuedJob(job.id, 'pinned queue blocker test cleanup');
+      deleteDevice(otherDevice.id, 'tests');
+    }
+  });
+
   test('fails a queued job when its end-to-end deadline expires before dispatch', async () => {
     const originalDeadline = config.jobMaxWaitSeconds;
     config.jobMaxWaitSeconds = 0;
