@@ -270,12 +270,21 @@ test('dashboard job contracts describe history and transport fields', async () =
     for (const field of ['id', 'bundleId', 'status', 'deviceId', 'transport', 'attempt', 'deadlineAt', 'warnings']) {
       expect(Object.keys(activeJobFields)).toContain(field);
     }
+    const activeQueueFields = (activeJobFields.queue as { properties?: Record<string, unknown> } | undefined)?.properties ?? {};
+    for (const field of ['position', 'total', 'predictedStartMs', 'predictedCompletionMs']) {
+      expect(Object.keys(activeQueueFields)).toContain(field);
+    }
     for (const [path, fields] of [
       ['/v1/dashboard/jobs/{id}/status', ['attempt', 'deadlineAt', 'deviceId', 'transport', 'warnings']],
     ['/v1/dashboard/jobs/{id}/timeline', ['deviceId', 'transport', 'queueReason']],
     ] as const) {
       const schema = document.paths?.[path]?.get?.responses?.['200']?.content?.['application/json']?.schema;
       for (const field of fields) expect(Object.keys(schema?.properties ?? {})).toContain(field);
+    }
+    const jobStatusSchema = document.paths?.['/v1/dashboard/jobs/{id}/status']?.get?.responses?.['200']?.content?.['application/json']?.schema;
+    const jobQueueFields = jobStatusSchema?.properties?.queue?.properties ?? {};
+    for (const field of ['position', 'total', 'predictedStartMs', 'predictedCompletionMs']) {
+      expect(Object.keys(jobQueueFields)).toContain(field);
     }
     const timelineSchema = document.paths?.['/v1/dashboard/jobs/{id}/timeline']?.get?.responses?.['200']?.content?.['application/json']?.schema;
     const eventSchema = timelineSchema?.properties?.events as { items?: { properties?: Record<string, unknown> } } | undefined;

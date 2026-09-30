@@ -1,0 +1,58 @@
+import { expect, mock, test } from 'bun:test';
+import type { Job } from '#jobs/types.js';
+import { createDevice, createProject, deleteDevice, recordJobHistory } from '#store/state.js';
+import { setCachedDeviceHealth } from '#deviceHealthCache.js';
+
+mock.module('./jobs/runner.js', () => ({
+  runDecrypt: (_job: Job, _device: unknown, signal?: AbortSignal) => new Promise<void>((_resolve, reject) => {
+    const abort = () => reject(signal?.reason instanceof Error ? signal.reason : new Error('operation aborted'));
+    if (signal?.aborted) abort();
+    else signal?.addEventListener('abort', abort, { once: true });
+  }),
+}));
+
+const { cancelJob, cancelQueuedJob, enqueueDecryptJob, waitForJob } = await import('#jobs/store.js');
+const { buildDashboardOverview } = await import('#dashboardOverview.js');
+
+test('dashboard overview reports each queued job estimated start and completion times', async () => {
+  const device = createDevice({ name: 'dashboard-eta-device', transport: 'wifi', host: '127.0.0.4' }, 'tests');
+  const project = createProject({ name: `Dashboard ETA ${crypto.randomUUID()}` }, 'tests').project!;
+  setCachedDeviceHealth(device.id, { reachable: true, jailbreakAvailable: true, checkedAt: Date.now() });
+  const bundleId = `com.test.dashboard-eta-${crypto.randomUUID()}`;
+  const historyFinishedAt = Date.now() - 20_000;
+  recordJobHistory({
+    id: `dashboard-eta-history-${crypto.randomUUID()}`,
+    projectId: project.id,
+    bundleId,
+    source: 'manual',
+    status: 'done',
+    createdAt: historyFinishedAt - 10_000,
+    startedAt: historyFinishedAt - 10_000,
+    finishedAt: historyFinishedAt,
+  });
+  const running = enqueueDecryptJob(`com.test.dashboard-eta-blocker-${crypto.randomUUID()}`, 'manual', {
+    projectId: project.id,
+    preferredDeviceId: device.id,
+  });
+  const queued = enqueueDecryptJob(bundleId, 'manual', {
+    projectId: project.id,
+    preferredDeviceId: device.id,
+  });
+
+  try {
+    const overview = buildDashboardOverview(0n, 'root', project.id);
+    expect(running.status).toBe('running');
+    expect(queued.status).toBe('queued');
+    expect(overview.activeJobs.find((job) => job.id === queued.id)?.queue).toMatchObject({
+      position: 2,
+      total: 2,
+      predictedStartMs: 10_000,
+      predictedCompletionMs: 20_000,
+    });
+  } finally {
+    if (queued.status === 'queued') cancelQueuedJob(queued.id, 'dashboard queue ETA test cleanup');
+    if (running.status === 'running') cancelJob(running.id, 'dashboard queue ETA test cleanup');
+    await Promise.all([waitForJob(queued, 1_000), waitForJob(running, 1_000)]);
+    deleteDevice(device.id, 'tests');
+  }
+});

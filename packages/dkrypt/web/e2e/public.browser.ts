@@ -2600,6 +2600,54 @@ test('job details show the persisted queue blocker alongside retry guidance', as
   await expect(page.getByText('Resolve the queue blocker shown in the job timeline or device status, then retry.', { exact: true })).toBeVisible();
 });
 
+test('active jobs show per-job queue estimates and the latest queue completion estimate', async ({ page }) => {
+  await mockAuthenticatedDashboard(page, '2');
+  await page.unroute('**/v1/dashboard/overview*');
+  await page.route('**/v1/dashboard/overview*', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        schedulerEnabled: false,
+        settings: {},
+        watches: [],
+        devices: [],
+        schedulerRunHistory: [],
+        disk: { totalBytes: 1, freeBytes: 1, usedBytes: 0, usedPercent: 0 },
+        isPaidPlan: false,
+        maintenance: { active: false, manual: false, auto: false },
+        activeJobs: [
+          {
+            id: 'queue-estimate-first',
+            bundleId: 'com.example.queue.first',
+            source: 'manual',
+            status: 'queued',
+            progress: 'queued',
+            createdAt: Date.now(),
+            priority: 0,
+            queue: { position: 2, total: 2, predictedStartMs: 45_000, predictedCompletionMs: 120_000 },
+          },
+          {
+            id: 'queue-estimate-last',
+            bundleId: 'com.example.queue.last',
+            source: 'scheduler',
+            status: 'queued',
+            progress: 'queued',
+            createdAt: Date.now(),
+            priority: 0,
+            queue: { position: 3, total: 3, predictedStartMs: 120_000, predictedCompletionMs: 300_000 },
+          },
+        ],
+      }),
+    });
+  });
+
+  await page.goto('/?tab=home');
+
+  await expect(page.getByText('Est. start in <1m', { exact: true })).toBeVisible();
+  await expect(page.getByText('Est. completion in ~2m', { exact: true })).toBeVisible();
+  await expect(page.getByText('Queue clears in ~5m', { exact: true })).toBeVisible();
+});
+
 test('release comparisons show build numbers, release notes, metadata freshness, and cache reuse', async ({ page }) => {
   const bundleId = 'com.example.release-comparison';
   const finishedAt = Date.now() - 60_000;

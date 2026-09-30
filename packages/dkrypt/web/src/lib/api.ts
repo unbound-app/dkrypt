@@ -116,6 +116,13 @@ export interface JobTestFlightSummary {
   buildNumber: string;
 }
 
+export interface JobQueueSummary {
+  position: number;
+  total: number;
+  predictedStartMs?: number;
+  predictedCompletionMs?: number;
+}
+
 export interface JobSummary {
   id: string;
   projectId?: string;
@@ -147,7 +154,7 @@ export interface JobSummary {
   createdAt: string;
   startedAt?: string;
   finishedAt?: string;
-  queue?: { position: number; total: number };
+  queue?: JobQueueSummary;
   queueReason?: string;
   statusUrl: string;
 }
@@ -163,6 +170,7 @@ export interface ActiveJob {
   queuedBy?: string;
   priority?: number;
   createdAt: number;
+  queue?: JobQueueSummary;
   deviceId?: string;
   transport?: 'usb' | 'wifi';
   warnings?: string[];

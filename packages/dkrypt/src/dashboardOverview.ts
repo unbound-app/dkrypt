@@ -1,7 +1,7 @@
 import { getBillingEntitlements } from '#billing.js';
 import { config } from '#config.js';
 import { getMaintenanceStatus } from '#maintenance.js';
-import { getActiveJobs, getQueueReason } from '#jobs/store.js';
+import { getActiveJobs, getJobQueueSummaries, getQueueReason } from '#jobs/store.js';
 import type { Job } from '#jobs/types.js';
 import { hasPermission, PermissionFlag } from '#permissions.js';
 import { serializeDashboardDevice } from '#dashboardDevicePresentation.js';
@@ -46,6 +46,7 @@ export function buildDashboardOverview(permissions: bigint, userId: string, proj
   const activeJobs = getActiveJobs().filter((job): job is Job & { status: 'queued' | 'running' } =>
     (job.status === 'queued' || job.status === 'running') && (job.projectId ?? DEFAULT_PROJECT_ID) === projectId,
   );
+  const queueSummaries = getJobQueueSummaries(activeJobs);
   return {
     schedulerEnabled: watches.some((watch) => watch.schedulable),
     settings: canViewAutomation ? settings : { ...settings, notifyWebhookUrl: '' },
@@ -74,6 +75,7 @@ export function buildDashboardOverview(permissions: bigint, userId: string, proj
       queuedBy: job.queuedBy,
       priority: job.priority,
       createdAt: job.createdAt,
+      queue: queueSummaries.get(job.id),
       attempt: job.attempt,
       retryCount: job.retryCount,
       deadlineAt: job.deadlineAt,

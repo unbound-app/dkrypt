@@ -44,6 +44,12 @@ export const dashboardOverviewResponseSchema = Type.Object({
     queuedBy: Type.Optional(Type.String()),
     priority: Type.Number(),
     createdAt: Type.Number(),
+    queue: Type.Optional(Type.Object({
+      position: Type.Number(),
+      total: Type.Number(),
+      predictedStartMs: Type.Optional(Type.Number({ minimum: 0 })),
+      predictedCompletionMs: Type.Optional(Type.Number({ minimum: 0 })),
+    }, { additionalProperties: true })),
     attempt: Type.Optional(Type.Number()),
     retryCount: Type.Optional(Type.Number()),
     deadlineAt: Type.Optional(Type.Number()),

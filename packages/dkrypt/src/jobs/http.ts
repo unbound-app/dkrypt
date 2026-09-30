@@ -3,7 +3,7 @@ import { createReadStream, existsSync } from 'node:fs';
 import { scopedLogger } from '#logger.js';
 
 const log = scopedLogger('jobs');
-import { getQueueInfo, getQueueReason } from '#jobs/store.js';
+import { getJobQueueSummaries, getQueueReason } from '#jobs/store.js';
 import type { Job } from '#jobs/types.js';
 import { artifactDownloadName, artifactFileAvailable, getArtifactForJob, touchArtifact } from '#artifacts.js';
 
@@ -19,6 +19,7 @@ export function jobFileAvailable(job: Job | undefined): boolean {
 }
 
 export function jobSummary(job: Job) {
+  const queue = getJobQueueSummaries([job]).get(job.id);
   return {
     id: job.id,
     correlationId: job.correlationId ?? job.id,
@@ -55,7 +56,7 @@ export function jobSummary(job: Job) {
     createdAt: new Date(job.createdAt).toISOString(),
     startedAt: job.startedAt ? new Date(job.startedAt).toISOString() : undefined,
     finishedAt: job.finishedAt ? new Date(job.finishedAt).toISOString() : undefined,
-    queue: getQueueInfo(job.id),
+    queue,
     queueReason: job.queueReason ?? getQueueReason(job),
     statusUrl: `/v1/jobs/${job.id}`,
   };

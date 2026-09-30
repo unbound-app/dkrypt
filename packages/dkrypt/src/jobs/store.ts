@@ -511,6 +511,50 @@ export function getQueueInfo(jobId: string): { position: number; total: number }
   return { position: idx === -1 ? ordered.length : idx + 1, total: ordered.length };
 }
 
+export interface JobQueueSummary {
+  position: number;
+  total: number;
+  predictedStartMs?: number;
+  predictedCompletionMs?: number;
+}
+
+export function getJobQueueSummaries(sourceJobs: readonly Job[], now = Date.now()): Map<string, JobQueueSummary> {
+  const queuedJobs = sourceJobs.filter((job) => job.status === 'queued');
+  const history = queuedJobs.length > 0 ? getAllJobHistory() : [];
+  const historicalP95ByProject = new Map<string, number | null>();
+  const summaries = new Map<string, JobQueueSummary>();
+
+  for (const job of sourceJobs) {
+    const queue = getQueueInfo(job.id);
+    if (!queue) continue;
+    if (job.status !== 'queued') {
+      summaries.set(job.id, queue);
+      continue;
+    }
+
+    const projectId = job.projectId ?? DEFAULT_PROJECT_ID;
+    if (!historicalP95ByProject.has(projectId)) {
+      historicalP95ByProject.set(projectId, projectCompletedJobDurationP95Ms(history, projectId, DEFAULT_PROJECT_ID));
+    }
+    const assessment = assessQueueServiceObjective({
+      createdAt: job.createdAt,
+      now,
+      status: job.status,
+      queuePosition: queue.position,
+      parallelism: getJobEligibleDeviceCount(job),
+      objectiveMs: queueServiceObjectiveMs(config.queueSloMinutes),
+      serviceDurationP95Ms: historicalP95ByProject.get(projectId) ?? null,
+    });
+    summaries.set(job.id, {
+      ...queue,
+      predictedStartMs: assessment.predictedStartMs ?? undefined,
+      predictedCompletionMs: assessment.predictedCompletionMs ?? undefined,
+    });
+  }
+
+  return summaries;
+}
+
 export function getQueueReason(job: Job): string | undefined {
   if (job.queueReason) return job.queueReason;
   if (job.status !== 'queued') return undefined;

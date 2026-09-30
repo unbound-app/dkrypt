@@ -7,7 +7,7 @@ import { config } from '#config.js';
 import { SCHEDULER_JOB_TIMEOUT_MS } from '#jobs/timeouts.js';
 import { artifactKeyForJob, promoteArtifact } from '#artifacts.js';
 import { currentCorrelation, withCorrelation } from '#correlation.js';
-import { createDevice, createProject, deleteDevice, getJobHistoryEntryById, type DeviceRecord } from '#store/state.js';
+import { createDevice, createProject, deleteDevice, getJobHistoryEntryById, recordJobHistory, type DeviceRecord } from '#store/state.js';
 import { traceContextFromHeader } from '#telemetry.js';
 import { getRecentLogs } from '#logger.js';
 import { loadPersistedJobs } from '#jobs/repository.js';
@@ -34,6 +34,7 @@ mock.module('./runner.js', () => ({
 }));
 
 const { cancelJob, cancelQueuedJob, enqueueDecryptJob, getActiveJobs, getJob, getQueueInfo, getQueueReason, isJobDispatchable, notifyDeviceDispatchStateChanged, prioritizeQueuedJob, reclaimJobFile, recoverPersistedActiveJobs, reorderQueue, ScheduledJobDeferredError, waitForJob } = await import('./store.js');
+const { jobSummary } = await import('./http.js');
 
 let testDeviceId = '';
 
@@ -248,6 +249,47 @@ describe('enqueueDecryptJob', () => {
     } finally {
       if (job?.status === 'queued') cancelQueuedJob(job.id, 'pinned queue blocker test cleanup');
       deleteDevice(otherDevice.id, 'tests');
+    }
+  });
+
+  test('includes historical queue ETA in the job response', async () => {
+    await clearActiveTestJobs();
+    setCachedDeviceHealth(testDeviceId, { reachable: true, jailbreakAvailable: true, checkedAt: Date.now() });
+    const project = createProject({ name: `Queue ETA ${crypto.randomUUID()}` }, 'tests').project!;
+    const bundleId = `com.test.queue-eta-${crypto.randomUUID()}`;
+    const historyFinishedAt = Date.now() - 20_000;
+    recordJobHistory({
+      id: `queue-eta-history-${crypto.randomUUID()}`,
+      projectId: project.id,
+      bundleId,
+      source: 'manual',
+      status: 'done',
+      createdAt: historyFinishedAt - 10_000,
+      startedAt: historyFinishedAt - 10_000,
+      finishedAt: historyFinishedAt,
+    });
+    const running = enqueueDecryptJob(`com.test.queue-eta-blocker-${crypto.randomUUID()}`, 'manual', {
+      projectId: project.id,
+      preferredDeviceId: testDeviceId,
+    });
+    const queued = enqueueDecryptJob(bundleId, 'manual', {
+      projectId: project.id,
+      preferredDeviceId: testDeviceId,
+    });
+
+    try {
+      expect(running.status).toBe('running');
+      expect(queued.status).toBe('queued');
+      expect(jobSummary(queued).queue).toMatchObject({
+        position: 2,
+        total: 2,
+        predictedStartMs: 10_000,
+        predictedCompletionMs: 20_000,
+      });
+    } finally {
+      if (queued.status === 'queued') cancelQueuedJob(queued.id, 'queue ETA test cleanup');
+      if (running.status === 'running') cancelJob(running.id, 'queue ETA test cleanup');
+      await Promise.all([waitForJob(queued, 1_000), waitForJob(running, 1_000)]);
     }
   });
 

@@ -153,6 +153,22 @@
 	const queuedJobIds = $derived(
 		jobs.filter((j) => j.status === "queued").map((j) => j.id),
 	);
+	let etaByBundle = $state<Record<string, number | null>>({});
+	const fetchedBundles = new Set<string>();
+
+	$effect(() => {
+		for (const job of jobs) {
+			if (job.status !== "running" || fetchedBundles.has(job.bundleId)) continue;
+			fetchedBundles.add(job.bundleId);
+			fetchJobEta(job.bundleId)
+				.then((result) => {
+					etaByBundle[job.bundleId] = result.avgMs;
+				})
+				.catch(() => {
+					fetchedBundles.delete(job.bundleId);
+				});
+		}
+	});
 
 	let draggingId = $state<string | null>(null);
 	let dragOverId = $state<string | null>(null);
@@ -190,35 +206,13 @@
 		dragOverId = null;
 	}
 
-	let etaByBundle = $state<Record<string, number | null>>({});
-	const fetchedBundles = new Set<string>();
-
-	$effect(() => {
-		for (const j of jobs) {
-			if (!fetchedBundles.has(j.bundleId)) {
-				fetchedBundles.add(j.bundleId);
-				fetchJobEta(j.bundleId)
-					.then((r) => {
-						etaByBundle[j.bundleId] = r.avgMs;
-					})
-					.catch(() => {
-						fetchedBundles.delete(j.bundleId);
-					});
-			}
-		}
-	});
-
 	const queueEtaMs = $derived.by(() => {
-		let total = 0;
-		let known = false;
-		for (const j of jobs) {
-			const avg = etaByBundle[j.bundleId];
-			if (avg) {
-				total += avg;
-				known = true;
-			}
-		}
-		return known ? total : null;
+		const estimates = jobs.flatMap((job) =>
+			typeof job.queue?.predictedCompletionMs === "number"
+				? [job.queue.predictedCompletionMs]
+				: [],
+		);
+		return estimates.length > 0 ? Math.max(...estimates) : null;
 	});
 
 	function tableKeyboardScroll(element: HTMLDivElement): { destroy: () => void } {
@@ -258,7 +252,7 @@
 		{:else if jobs.length > 1 && queueEtaMs !== null}
 			<span
 				class="text-xs text-muted"
-				title="Sum of each queued/running job's own average duration"
+				title="Latest predicted completion among queued jobs, based on recent project job durations"
 			>
 				Queue clears in {fmtDurationApprox(queueEtaMs)}
 			</span>
@@ -377,36 +371,24 @@
 							>
 								{#if j.status === "running"}
 									<div class="flex w-full items-start gap-2">
-										<div
-											class="progress-indeterminate bg-border relative h-1 w-10 shrink-0 overflow-hidden rounded-full after:bg-accent"
-										></div>
+										<div class="progress-indeterminate bg-border relative h-1 w-10 shrink-0 overflow-hidden rounded-full after:bg-accent"></div>
 										<div class="min-w-0 flex-1">
-											<p
-												class="break-words text-left text-xs leading-5 text-text"
-												title={j.progress}
-											>
-												{j.progress}
-											</p>
+											<p class="break-words text-left text-xs leading-5 text-text" title={j.progress}>{j.progress}</p>
 											{#if etaByBundle[j.bundleId]}
-												<p
-													class="mt-0.5 text-left text-[11px] text-muted"
-												>
-													usually {fmtDurationApprox(
-														etaByBundle[
-															j.bundleId
-														] as number,
-													)}
-												</p>
+												<p class="mt-0.5 text-left text-[11px] text-muted">usually {fmtDurationApprox(etaByBundle[j.bundleId] as number)}</p>
 											{/if}
 										</div>
 									</div>
 								{:else}
-									<p
-										class="break-words text-left text-xs leading-5"
-										title={j.progress}
-									>
-										{j.progress}
-									</p>
+									<p class="break-words text-left text-xs leading-5" title={j.progress}>{j.progress}</p>
+									{#if j.queue?.predictedStartMs !== undefined}
+										<p class="mt-0.5 text-left text-[11px] text-muted">
+											{j.queue.predictedStartMs === 0 ? "Next to start" : `Est. start in ${fmtDurationApprox(j.queue.predictedStartMs)}`}
+										</p>
+									{/if}
+									{#if j.queue?.predictedCompletionMs !== undefined}
+										<p class="mt-0.5 text-left text-[11px] text-muted">Est. completion in {fmtDurationApprox(j.queue.predictedCompletionMs)}</p>
+									{/if}
 									{#if j.queueReason}
 										<p class="mt-0.5 break-words text-left text-[11px] text-warn" title="Why this job is waiting">{j.queueReason}</p>
 									{/if}

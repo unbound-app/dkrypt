@@ -330,7 +330,12 @@ export const JobSummaryResponse = object({
   createdAt: Type.String(),
   startedAt: Type.Optional(Type.String()),
   finishedAt: Type.Optional(Type.String()),
-  queue: Type.Optional(JsonObject),
+  queue: Type.Optional(object({
+    position: Type.Number(),
+    total: Type.Number(),
+    predictedStartMs: Type.Optional(Type.Number({ minimum: 0 })),
+    predictedCompletionMs: Type.Optional(Type.Number({ minimum: 0 })),
+  })),
   queueReason: Type.Optional(Type.String()),
   statusUrl: Type.String(),
 });
