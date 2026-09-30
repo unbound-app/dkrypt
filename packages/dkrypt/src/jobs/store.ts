@@ -55,6 +55,24 @@ function deadlineDurationMs(source: JobSource): number {
   return source === 'scheduler' ? SCHEDULER_JOB_TIMEOUT_MS : config.jobMaxWaitSeconds * 1000;
 }
 
+function extendJobDeadlineForScheduler(job: Job): void {
+  if (job.deadlineExceeded) return;
+  const schedulerDeadlineAt = job.schedulerDeadlineAt
+    ?? (job.source === 'scheduler' ? job.createdAt : Date.now()) + SCHEDULER_JOB_TIMEOUT_MS;
+  const deadlineAt = Math.max(job.deadlineAt ?? 0, schedulerDeadlineAt);
+  const schedulerDeadlineChanged = job.schedulerDeadlineAt !== schedulerDeadlineAt;
+  const deadlineChanged = job.deadlineAt !== deadlineAt;
+  if (!schedulerDeadlineChanged && !deadlineChanged) return;
+
+  job.schedulerDeadlineAt = schedulerDeadlineAt;
+  if (deadlineChanged) {
+    job.deadlineAt = deadlineAt;
+    if (job.status === 'queued') scheduleQueuedDeadline(job);
+  }
+  persistActiveJobs();
+  emitJobsChanged();
+}
+
 function writeLegacyMirror(filePath: string, value: unknown): void {
   const temporaryPath = `${filePath}.${process.pid}.tmp`;
   writeFileSync(temporaryPath, JSON.stringify(value), { mode: 0o600 });
@@ -104,6 +122,11 @@ export function recoverPersistedActiveJobs(saved: Job[], now = Date.now()): { qu
   for (const job of saved) {
     const restored = { ...job, projectId: job.projectId ?? DEFAULT_PROJECT_ID, childProcess: undefined, waiters: [] };
     if (restored.status === 'queued') {
+      if (restored.source === 'scheduler') {
+        const schedulerDeadlineAt = restored.createdAt + SCHEDULER_JOB_TIMEOUT_MS;
+        restored.schedulerDeadlineAt ??= schedulerDeadlineAt;
+        restored.deadlineAt = restored.schedulerDeadlineAt;
+      }
       queued.push(restored);
       continue;
     }
@@ -345,7 +368,10 @@ export function enqueueDecryptJob(bundleId: string, source: JobSource, options: 
   if (!acceptingJobs) throw new Error('dkrypt is shutting down and is not accepting new jobs');
   const lookup = { bundleId, externalVersionId, testFlightBuildId: testflight?.build.id, projectId };
   const existing = findActiveJobForBundle(lookup);
-  if (existing) return existing;
+  if (existing) {
+    if (source === 'scheduler') extendJobDeadlineForScheduler(existing);
+    return existing;
+  }
   enforceProjectQuotas(projectId);
   const artifactKey = artifactKeyForJob({ id: 'lookup', bundleId, externalVersionId, testflight, versionLabel });
   const artifact = getArtifactByKey(artifactKey);
@@ -359,6 +385,7 @@ export function enqueueDecryptJob(bundleId: string, source: JobSource, options: 
   const resolvedLabel = versionLabel ?? (testflight ? `${testflight.build.cfBundleShortVersion}_${testflight.build.cfBundleVersion}` : 'Current App Store release');
 
   const now = Date.now();
+  const deadlineAt = now + deadlineDurationMs(source);
   const job: Job = {
     id: randomUUID(),
     correlationId: randomUUID(),
@@ -378,7 +405,8 @@ export function enqueueDecryptJob(bundleId: string, source: JobSource, options: 
     progress: 'queued',
     timeline: [{ at: now, label: 'Queued', status: 'queued' }],
     createdAt: now,
-    deadlineAt: now + deadlineDurationMs(source),
+    deadlineAt,
+    schedulerDeadlineAt: source === 'scheduler' ? deadlineAt : undefined,
     attempt: 1,
     waiters: [],
   };
@@ -766,6 +794,7 @@ async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
       controller,
       {
         timeoutMs: remainingMs,
+        getDeadlineAt: job.deadlineAt === undefined ? undefined : () => job.deadlineAt,
         graceMs: config.jobProcessGraceSeconds * 1000,
         onDeadline: () => {
           job.deadlineExceeded = true;
@@ -894,6 +923,7 @@ async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
 }
 
 async function cleanupJob(job: Job): Promise<void> {
+  clearQueuedDeadline(job.id);
   if (job.filePath && !job.artifactId && !getArtifactForJob(job)) {
     await rm(job.filePath, { force: true }).catch((err: unknown) => {
       log.warn('failed to remove job file', { jobId: job.id, error: String(err) });

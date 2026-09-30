@@ -45,6 +45,7 @@ export interface Job {
   retryCount?: number;
   attempt?: number;
   deadlineAt?: number;
+  schedulerDeadlineAt?: number;
   deadlineExceeded?: boolean;
   failureClass?: JobFailureClass;
   cancelledBy?: string;

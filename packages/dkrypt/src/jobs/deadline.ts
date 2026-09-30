@@ -1,5 +1,6 @@
 export interface JobDeadlineOptions {
   timeoutMs?: number;
+  getDeadlineAt?: () => number | undefined;
   graceMs: number;
   forceStopWaitMs?: number;
   onDeadline: () => void;
@@ -21,16 +22,26 @@ export async function runWithJobDeadline<T>(
       (error: unknown) => ({ kind: 'failed', error }),
   );
 
-  if (options.timeoutMs === undefined) return unwrapOutcome(await completion);
+  if (options.timeoutMs === undefined && options.getDeadlineAt === undefined) return unwrapOutcome(await completion);
   const timeoutMs = options.timeoutMs;
 
   let timeout: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<{ kind: 'deadline' }>((resolve) => {
-    timeout = setTimeout(() => {
-      resolve({ kind: 'deadline' });
-      controller.abort(new Error('job deadline exceeded'));
-      options.onDeadline();
-    }, Math.max(1, timeoutMs));
+    const scheduleDeadline = () => {
+      const currentDeadlineAt = options.getDeadlineAt?.();
+      const delayMs = currentDeadlineAt === undefined ? timeoutMs ?? 1 : currentDeadlineAt - Date.now();
+      timeout = setTimeout(() => {
+        const updatedDeadlineAt = options.getDeadlineAt?.();
+        if (updatedDeadlineAt !== undefined && updatedDeadlineAt > Date.now()) {
+          scheduleDeadline();
+          return;
+        }
+        resolve({ kind: 'deadline' });
+        controller.abort(new Error('job deadline exceeded'));
+        options.onDeadline();
+      }, Math.max(1, delayMs));
+    };
+    scheduleDeadline();
   });
   const outcome = await Promise.race([completion, deadline]);
   if (outcome.kind !== 'deadline') {

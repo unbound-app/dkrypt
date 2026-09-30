@@ -82,6 +82,46 @@ describe('recoverPersistedActiveJobs', () => {
       finishedAt: 3,
     });
   });
+
+  test('restores queued scheduler jobs with the scheduler deadline', () => {
+    const createdAt = 1_000;
+    const deadlineAt = createdAt + 30 * 60 * 1000;
+    const { queued } = recoverPersistedActiveJobs([{
+      id: 'legacy-scheduler-queue',
+      bundleId: 'com.test.legacy-scheduler-queue',
+      source: 'scheduler',
+      status: 'queued',
+      progress: 'queued',
+      priority: 0,
+      createdAt,
+      deadlineAt,
+      waiters: [],
+    }], createdAt + 60 * 60 * 1000);
+
+    expect(queued[0]?.deadlineAt).toBe(createdAt + SCHEDULER_JOB_TIMEOUT_MS);
+    expect(queued[0]?.schedulerDeadlineAt).toBe(createdAt + SCHEDULER_JOB_TIMEOUT_MS);
+  });
+
+  test('preserves a longer adopted manual-job deadline after a restart', () => {
+    const createdAt = 1_000;
+    const schedulerDeadlineAt = createdAt + SCHEDULER_JOB_TIMEOUT_MS;
+    const deadlineAt = schedulerDeadlineAt + SCHEDULER_JOB_TIMEOUT_MS;
+    const { queued } = recoverPersistedActiveJobs([{
+      id: 'adopted-manual-queue',
+      bundleId: 'com.test.adopted-manual-queue',
+      source: 'manual',
+      status: 'queued',
+      progress: 'queued',
+      priority: 0,
+      createdAt,
+      schedulerDeadlineAt,
+      deadlineAt,
+      waiters: [],
+    }], createdAt + 60 * 60 * 1000);
+
+    expect(queued[0]?.deadlineAt).toBe(deadlineAt);
+    expect(queued[0]?.schedulerDeadlineAt).toBe(schedulerDeadlineAt);
+  });
 });
 
 describe('enqueueDecryptJob', () => {
@@ -191,8 +231,56 @@ describe('enqueueDecryptJob', () => {
       job = enqueueDecryptJob(`com.test.scheduler-deadline-${crypto.randomUUID()}`, 'scheduler', { preferredDeviceId: 'missing-device' });
 
       expect(job.deadlineAt! - job.createdAt).toBe(SCHEDULER_JOB_TIMEOUT_MS);
+      expect(job.schedulerDeadlineAt).toBe(job.deadlineAt);
     } finally {
       if (job) cancelQueuedJob(job.id, 'test cleanup');
+      config.jobMaxWaitSeconds = originalDeadline;
+    }
+  });
+
+  test('extends a deduplicated interactive job for the scheduler deadline', async () => {
+    const originalDeadline = config.jobMaxWaitSeconds;
+    config.jobMaxWaitSeconds = 1;
+    let manualJob: Job | undefined;
+
+    try {
+      const bundleId = `com.test.scheduler-dedupe-deadline-${crypto.randomUUID()}`;
+      manualJob = enqueueDecryptJob(bundleId, 'manual', { preferredDeviceId: 'missing-device' });
+      const scheduledJob = enqueueDecryptJob(bundleId, 'scheduler', { preferredDeviceId: 'missing-device' });
+      const schedulerDeadlineAt = scheduledJob.schedulerDeadlineAt;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      const repeatedScheduledJob = enqueueDecryptJob(bundleId, 'scheduler', { preferredDeviceId: 'missing-device' });
+
+      expect(scheduledJob.id).toBe(manualJob.id);
+      expect(scheduledJob.deadlineAt).toBeGreaterThanOrEqual(manualJob.createdAt + SCHEDULER_JOB_TIMEOUT_MS);
+      expect(repeatedScheduledJob.schedulerDeadlineAt).toBe(schedulerDeadlineAt);
+      expect(repeatedScheduledJob.deadlineAt).toBe(schedulerDeadlineAt);
+    } finally {
+      if (manualJob) cancelQueuedJob(manualJob.id, 'test cleanup');
+      config.jobMaxWaitSeconds = originalDeadline;
+    }
+  });
+
+  test('keeps a deduplicated running job alive through the scheduler deadline extension', async () => {
+    const originalDeadline = config.jobMaxWaitSeconds;
+    await clearActiveTestJobs();
+    config.jobMaxWaitSeconds = 2;
+    let manualJob: Job | undefined;
+
+    try {
+      const bundleId = `com.test.scheduler-running-deadline-${crypto.randomUUID()}`;
+      manualJob = enqueueDecryptJob(bundleId, 'manual');
+      await new Promise((resolve) => setTimeout(resolve, 1_300));
+      const scheduledJob = enqueueDecryptJob(bundleId, 'scheduler');
+
+      expect(manualJob.status).toBe('running');
+      expect(scheduledJob.id).toBe(manualJob.id);
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      expect(manualJob.status).toBe('running');
+      expect(manualJob.deadlineAt).toBeGreaterThan(Date.now());
+    } finally {
+      if (manualJob?.status === 'running') cancelJob(manualJob.id, 'test cleanup');
+      if (manualJob) await waitForJob(manualJob, 1_000);
       config.jobMaxWaitSeconds = originalDeadline;
     }
   });
@@ -266,10 +354,11 @@ describe('enqueueDecryptJob', () => {
   });
 
   test('reclaims a completed job file without an artifact exception', async () => {
+    await clearActiveTestJobs();
     const outputDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-job-retention-'));
     const outputPath = path.join(outputDir, 'app.ipa');
     await writeFile(outputPath, 'ipa');
-    const job = enqueueDecryptJob('com.test.scheduler-share', 'scheduler');
+    const job = enqueueDecryptJob('com.test.scheduler-share', 'scheduler', { preferredDeviceId: 'missing-device' });
     job.status = 'done';
     job.filePath = outputPath;
     job.finishedAt = Date.now();
@@ -280,8 +369,8 @@ describe('enqueueDecryptJob', () => {
 });
 
 describe('cancelQueuedJob', () => {
-  test('removes a queued job from the queue and marks it failed, but not a running one', () => {
-
+  test('removes a queued job from the queue and marks it failed, but not a running one', async () => {
+    await clearActiveTestJobs();
     const running = enqueueDecryptJob('com.test.running', 'manual');
     expect(running.status).toBe('running');
     const queued = enqueueDecryptJob('com.test.cancel-queued', 'manual');
