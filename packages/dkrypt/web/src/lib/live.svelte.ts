@@ -10,40 +10,67 @@ export const liveState = $state<{
   onlineUsers: string[];
   connected: boolean;
   overviewLoaded: boolean;
+  overviewRefreshFailed: boolean;
   disconnectedAt: number | null;
   reconnectAttempts: number;
   stale: boolean;
   lastEventAt: number | null;
   sequenceGap: boolean;
-}>({ overview: null, logs: [], historyAdditions: [], onlineUsers: [], connected: false, overviewLoaded: false, disconnectedAt: null, reconnectAttempts: 0, stale: false, lastEventAt: null, sequenceGap: false });
+}>({
+	overview: null,
+	logs: [],
+	historyAdditions: [],
+	onlineUsers: [],
+	connected: false,
+	overviewLoaded: false,
+	overviewRefreshFailed: false,
+	disconnectedAt: null,
+	reconnectAttempts: 0,
+	stale: false,
+	lastEventAt: null,
+	sequenceGap: false,
+});
 
 let source: EventSource | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 let visibilityListenerInstalled = false;
 const sequenceTracker = new DashboardEventSequenceTracker();
 let overviewRefresh: Promise<void> | undefined;
+let overviewRefreshGeneration = 0;
 let hasConnectedBefore = false;
 let liveConnectionRequested = false;
 
-async function refreshOverview(): Promise<void> {
-	if (overviewRefresh) return overviewRefresh;
+async function refreshOverview(force = false): Promise<void> {
+	if (overviewRefresh && !force) return overviewRefresh;
+	const requestGeneration = ++overviewRefreshGeneration;
 	const controller = new AbortController();
 	const timeout = setTimeout(() => controller.abort(), 8_000);
-	overviewRefresh = fetch(`/v1/dashboard/overview?projectId=${encodeURIComponent(projectSelectionState.id)}`, { signal: controller.signal })
+	liveState.overviewRefreshFailed = false;
+	const refresh = fetch(`/v1/dashboard/overview?projectId=${encodeURIComponent(projectSelectionState.id)}`, { signal: controller.signal })
 		.then(async (response) => {
-			if (!response.ok) return;
-			liveState.overview = (await response.json()) as OverviewPayload;
+			if (requestGeneration !== overviewRefreshGeneration) return;
+			if (!response.ok) {
+				liveState.overviewRefreshFailed = true;
+				return;
+			}
+			const overview = (await response.json()) as OverviewPayload;
+			if (requestGeneration !== overviewRefreshGeneration) return;
+			liveState.overview = overview;
 			liveState.overviewLoaded = true;
 			liveState.sequenceGap = false;
 			liveState.stale = false;
+			liveState.overviewRefreshFailed = false;
 			if (liveState.connected) liveState.disconnectedAt = null;
 		})
-		.catch(() => {})
+		.catch(() => {
+			if (requestGeneration === overviewRefreshGeneration) liveState.overviewRefreshFailed = true;
+		})
 		.finally(() => {
 			clearTimeout(timeout);
-			overviewRefresh = undefined;
+			if (requestGeneration === overviewRefreshGeneration) overviewRefresh = undefined;
 		});
-	return overviewRefresh;
+	overviewRefresh = refresh;
+	return refresh;
 }
 
 function scheduleReconnect(): void {
@@ -85,7 +112,7 @@ function readEvent<T>(event: Event): T {
 		if (sequenceTracker.receive(value.sequence)) {
 			liveState.sequenceGap = true;
 			serverStateCache.invalidateAll();
-			void refreshOverview();
+			void refreshOverview(true);
 		}
 		liveState.lastEventAt = Date.now();
 	}
@@ -103,7 +130,12 @@ export function connectLive(): void {
   const eventSource = new EventSource(`/v1/dashboard/events?projectId=${encodeURIComponent(projectSelectionState.id)}`);
   source = eventSource;
   const initialSource = eventSource;
-	void refreshOverview().finally(() => {
+	const requiresFreshOverview =
+		liveState.stale ||
+		liveState.sequenceGap ||
+		liveState.disconnectedAt !== null ||
+		liveState.overviewRefreshFailed;
+	void refreshOverview(requiresFreshOverview).finally(() => {
 		if (source === initialSource) liveState.overviewLoaded = true;
 	});
 
@@ -127,6 +159,7 @@ export function connectLive(): void {
     liveState.overviewLoaded = true;
     liveState.connected = true;
     liveState.stale = false;
+    liveState.overviewRefreshFailed = false;
     liveState.disconnectedAt = null;
     liveState.reconnectAttempts = 0;
   });
@@ -159,6 +192,7 @@ export function connectLive(): void {
     liveState.historyAdditions = [];
     serverStateCache.clear();
     liveState.overviewLoaded = false;
+    liveState.stale = true;
     sequenceTracker.reset();
     connectLive();
   });
@@ -178,6 +212,8 @@ export function connectLive(): void {
 
 export function disconnectLive(): void {
   liveConnectionRequested = false;
+  overviewRefreshGeneration += 1;
+  overviewRefresh = undefined;
   source?.close();
   source = null;
   if (reconnectTimer) clearTimeout(reconnectTimer);
@@ -188,6 +224,7 @@ export function disconnectLive(): void {
   liveState.onlineUsers = [];
   liveState.connected = false;
   liveState.overviewLoaded = false;
+  liveState.overviewRefreshFailed = false;
   liveState.disconnectedAt = null;
   liveState.reconnectAttempts = 0;
   liveState.stale = false;
@@ -208,6 +245,8 @@ export function reconnectLive(resetProjectState = false): void {
     liveState.logs = [];
     liveState.historyAdditions = [];
     liveState.overviewLoaded = false;
+    liveState.overviewRefreshFailed = false;
+    liveState.stale = true;
     serverStateCache.invalidateAll();
   }
   connectLive();

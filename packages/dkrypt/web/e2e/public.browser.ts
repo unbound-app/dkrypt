@@ -469,9 +469,88 @@ test('live updates keep stale data visible until a reconnect refresh succeeds', 
   const failedRefreshResponse = page.waitForResponse((response) => response.url().includes('/v1/dashboard/overview?') && response.status() === 503);
   releaseFailedRefresh();
   await failedRefreshResponse;
-  await expect(page.getByText('Reconnected - refreshing data…')).toBeVisible();
-  await page.getByRole('button', { name: 'Reconnect now' }).click();
+  await expect(page.getByText('Dashboard data refresh failed. Try again.')).toBeVisible();
+  await page.getByRole('button', { name: 'Retry refresh' }).click();
   await expect.poll(() => overviewRequests).toBe(3);
+  await expect(page.getByText('Reconnected - refreshing data…')).toBeHidden();
+});
+
+test('live reconnect ignores overview refreshes started before suspension', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1600 });
+  await mockStableDashboardEvents(page);
+  await mockAuthenticatedDashboard(page, '1');
+  let overviewRequests = 0;
+  let releaseInitialOverview!: () => void;
+  let releaseReconnectedOverview!: () => void;
+  let markInitialOverviewStarted!: () => void;
+  let markInitialOverviewFinished!: () => void;
+  let markReconnectedOverviewStarted!: () => void;
+  let markReconnectedOverviewFinished!: () => void;
+  const initialOverviewGate = new Promise<void>((resolve) => {
+    releaseInitialOverview = resolve;
+  });
+  const reconnectedOverviewGate = new Promise<void>((resolve) => {
+    releaseReconnectedOverview = resolve;
+  });
+  const initialOverviewStarted = new Promise<void>((resolve) => {
+    markInitialOverviewStarted = resolve;
+  });
+  const initialOverviewFinished = new Promise<void>((resolve) => {
+    markInitialOverviewFinished = resolve;
+  });
+  const reconnectedOverviewStarted = new Promise<void>((resolve) => {
+    markReconnectedOverviewStarted = resolve;
+  });
+  const reconnectedOverviewFinished = new Promise<void>((resolve) => {
+    markReconnectedOverviewFinished = resolve;
+  });
+  const overviewPayload = {
+    schedulerEnabled: false,
+    settings: {},
+    watches: [],
+    devices: [],
+    schedulerRunHistory: [],
+    disk: { totalBytes: 1, freeBytes: 1, usedBytes: 0, usedPercent: 0 },
+    isPaidPlan: false,
+    maintenance: { active: false, manual: false, auto: false },
+    activeJobs: [],
+  };
+  await page.route('**/v1/dashboard/overview*', async (route) => {
+    overviewRequests += 1;
+    if (overviewRequests === 1) {
+      markInitialOverviewStarted();
+      await initialOverviewGate;
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify(overviewPayload) });
+      markInitialOverviewFinished();
+      return;
+    }
+    if (overviewRequests === 2) {
+      markReconnectedOverviewStarted();
+      await reconnectedOverviewGate;
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify(overviewPayload) });
+      markReconnectedOverviewFinished();
+      return;
+    }
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify(overviewPayload) });
+  });
+  await page.goto('/?tab=home');
+  await initialOverviewStarted;
+
+  await page.evaluate(() => (window as typeof window & {
+    __dkryptLiveTest: { setVisibility(state: DocumentVisibilityState): void };
+  }).__dkryptLiveTest.setVisibility('hidden'));
+  await page.evaluate(() => (window as typeof window & {
+    __dkryptLiveTest: { setVisibility(state: DocumentVisibilityState): void };
+  }).__dkryptLiveTest.setVisibility('visible'));
+  await expect.poll(() => overviewRequests, { timeout: 1_500 }).toBe(2);
+  await reconnectedOverviewStarted;
+  await expect(page.getByText('Reconnected - refreshing data…')).toBeVisible();
+
+  releaseInitialOverview();
+  await initialOverviewFinished;
+  await expect(page.getByText('Reconnected - refreshing data…')).toBeVisible();
+  releaseReconnectedOverview();
+  await reconnectedOverviewFinished;
   await expect(page.getByText('Reconnected - refreshing data…')).toBeHidden();
 });
 
