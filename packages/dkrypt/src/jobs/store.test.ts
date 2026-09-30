@@ -638,6 +638,37 @@ test('does not queue a TestFlight scheduler job when every device is blocked', a
   }
 });
 
+test('does not defer App Store scheduler work for a stale process heartbeat', async () => {
+  await clearActiveTestJobs();
+  setCachedDeviceHealth(testDeviceId, {
+    reachable: true,
+    jailbreakAvailable: true,
+    testFlightBridgeReachable: true,
+    bridgeHeartbeats: { appstore: { at: 0 } },
+    subsystems: {
+      usb: 'ready', mux: 'ready', agent: 'ready', appStore: 'unknown', testFlight: 'unknown', sshTunnel: 'ready', storage: 'ready', battery: 'ready', thermal: 'ready',
+    },
+    checkedAt: Date.now(),
+  });
+  const bundleId = `com.test.scheduler-stale-appstore-heartbeat.${crypto.randomUUID()}`;
+  let job: Job | undefined;
+
+  try {
+    job = enqueueDecryptJob(bundleId, 'scheduler', {
+      preferredDeviceId: testDeviceId,
+      deferWhenNoDispatchableDevice: true,
+    });
+
+    expect(job.status).toBe('running');
+  } finally {
+    if (job?.status === 'queued') cancelQueuedJob(job.id, 'stale App Store heartbeat test cleanup');
+    if (job?.status === 'running') cancelJob(job.id, 'stale App Store heartbeat test cleanup');
+    if (job) await waitForJob(job, 1_000);
+    setCachedDeviceHealth(testDeviceId, { reachable: true, jailbreakAvailable: true, checkedAt: Date.now() });
+    notifyDeviceDispatchStateChanged();
+  }
+});
+
 test('defers a scheduler job while its only eligible device is already running work', async () => {
   await clearActiveTestJobs();
   setCachedDeviceHealth(testDeviceId, { reachable: true, jailbreakAvailable: true, checkedAt: Date.now() });

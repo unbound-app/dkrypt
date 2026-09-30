@@ -83,6 +83,17 @@ describe('job device eligibility', () => {
     expect(getJobDeviceBlocker(testFlightJob, { id: 'ipad-a' }, { health: testFlightOffline, testFlightCatalog: makeCatalog() }, 1_001)).toBe('TestFlight subsystem is offline');
   });
 
+  test('does not queue App Store work because its process heartbeat is stale', () => {
+    const health = makeHealth({
+      subsystems: {
+        usb: 'ready', mux: 'ready', agent: 'ready', appStore: 'unknown', testFlight: 'unknown', sshTunnel: 'ready', storage: 'ready', battery: 'ready', thermal: 'ready',
+      },
+      bridgeHeartbeats: { appstore: { at: 0 } },
+    });
+
+    expect(getJobDeviceBlocker(makeJob(), { id: 'ipad-a' }, { health }, Date.now())).toBeUndefined();
+  });
+
   test('checks storage requirements before assigning a known TestFlight build', () => {
     const job = makeJob({ testflight: { appId: 42, build: { id: 7, bundleId: 'com.example.app', cfBundleShortVersion: '2.0', cfBundleVersion: '7', fileSize: 100 } } });
     expect(getJobDeviceBlocker(job, { id: 'ipad-a' }, { health: makeHealth({ storageFreeBytes: 150 }), testFlightCatalog: makeCatalog() }, 1_000))

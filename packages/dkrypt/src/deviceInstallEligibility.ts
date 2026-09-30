@@ -17,13 +17,12 @@ export function getDeviceSourceBlocker(health: DeviceHealth, source: DeviceInsta
   if (health.testFlightBridgeReachable === false) return 'autoinstall SpringBoard bridge is unresponsive';
 
   const sourceHealth = source === 'appstore'
-    ? { label: 'App Store', subsystem: health.subsystems?.appStore, heartbeat: health.bridgeHeartbeats?.appstore }
-    : { label: 'TestFlight', subsystem: health.subsystems?.testFlight, heartbeat: health.bridgeHeartbeats?.testflight };
+    ? { label: 'App Store', subsystem: health.subsystems?.appStore }
+    : { label: 'TestFlight', subsystem: health.subsystems?.testFlight };
 
   if (sourceHealth.subsystem === 'degraded' || sourceHealth.subsystem === 'offline' || sourceHealth.subsystem === 'unsupported') {
     return `${sourceHealth.label} subsystem is ${sourceHealth.subsystem}`;
   }
-  if (sourceHealth.heartbeat && !isBridgeHeartbeatFresh(sourceHealth.heartbeat)) return `${sourceHealth.label} bridge heartbeat is stale`;
   return undefined;
 }
 
