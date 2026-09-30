@@ -575,6 +575,12 @@ export interface AllowedUser {
   displayName?: string;
   avatarUrl?: string;
   roleIds: string[];
+  billingEntitlements?: {
+    planId: BillingPlanId;
+    decrypt: boolean;
+    api: boolean;
+    priority: number;
+  };
   addedAt: number;
   lastActiveAt?: number;
   priority?: number;
@@ -587,6 +593,8 @@ export interface AllowedUser {
     apiRequests30d: number;
   };
 }
+
+export type BillingPlanId = 'regular' | 'priority' | 'api' | 'priority_api';
 
 export interface ProjectRecord {
   id: string;

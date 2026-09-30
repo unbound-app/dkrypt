@@ -6,6 +6,7 @@ import type {
   DashboardUserListRoute,
   DashboardUserUpdateRoute,
 } from '#dashboardUserContracts.js';
+import { getBillingEntitlements } from '#billing.js';
 import { canGrantBits } from '#dashboardAdminRules.js';
 import { recordFastifyDashboardActivity } from '#dashboardActivity.js';
 import { listAuthProfiles } from '#identity.js';
@@ -48,7 +49,20 @@ export const dashboardUserRoutes: FastifyPluginAsyncTypebox = async (server) => 
   server.get<DashboardUserListRoute>('/v1/dashboard/users', {
     schema: getRouteContract('GET', '/v1/dashboard/users'),
     preHandler: canViewUsers,
-  }, () => {
+  }, (request) => {
+    const session = getFastifySession(request)!;
+    const canViewBilling = hasPermission(session.permissions, PermissionFlag.viewBilling) || hasPermission(session.permissions, PermissionFlag.manageBilling);
+    const billingEntitlementsFor = (username: string) => {
+      if (!canViewBilling) return undefined;
+      const entitlements = getBillingEntitlements(username);
+      if (entitlements.planId === 'viewer') return undefined;
+      return {
+        planId: entitlements.planId,
+        decrypt: entitlements.decrypt,
+        api: entitlements.api,
+        priority: entitlements.priority,
+      };
+    };
     const assignments = new Map(listAllowedUsers().map((user) => [user.username, user]));
     const activity = getUserActivityStats();
     const users = listAuthProfiles().map((profile) => {
@@ -58,6 +72,7 @@ export const dashboardUserRoutes: FastifyPluginAsyncTypebox = async (server) => 
         displayName: profile.displayName,
         avatarUrl: profile.avatarUrl,
         roleIds: assignment?.roleIds ?? [],
+        billingEntitlements: billingEntitlementsFor(profile.userId),
         addedAt: assignment?.addedAt ?? Date.parse(profile.updatedAt),
         lastActiveAt: assignment?.lastActiveAt,
         priority: assignment?.priority,
@@ -71,6 +86,7 @@ export const dashboardUserRoutes: FastifyPluginAsyncTypebox = async (server) => 
           displayName: assignment.username,
           avatarUrl: '',
           roleIds: assignment.roleIds,
+          billingEntitlements: billingEntitlementsFor(assignment.username),
           addedAt: assignment.addedAt,
           lastActiveAt: assignment.lastActiveAt,
           priority: assignment.priority,

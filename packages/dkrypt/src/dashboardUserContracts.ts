@@ -11,12 +11,25 @@ const userActivitySchema = Type.Object({
   apiRequests30d: Type.Integer({ minimum: 0 }),
 }, { additionalProperties: true });
 
+const userBillingEntitlementsSchema = Type.Object({
+  planId: Type.Union([
+    Type.Literal('regular'),
+    Type.Literal('priority'),
+    Type.Literal('api'),
+    Type.Literal('priority_api'),
+  ]),
+  decrypt: Type.Boolean(),
+  api: Type.Boolean(),
+  priority: Type.Number(),
+}, { additionalProperties: false });
+
 export const dashboardUserDirectoryResponseSchema = Type.Object({
   users: Type.Array(Type.Object({
     username: identifierSchema,
     displayName: Type.String(),
     avatarUrl: Type.Optional(Type.String()),
     roleIds: Type.Array(identifierSchema),
+    billingEntitlements: Type.Optional(userBillingEntitlementsSchema),
     addedAt: Type.Number(),
     lastActiveAt: Type.Optional(Type.Number()),
     priority: Type.Optional(Type.Number()),

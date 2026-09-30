@@ -13,6 +13,7 @@
     removeUser,
     updateUserRoles,
     type AllowedUser,
+    type BillingPlanId,
     type Role,
   } from '#lib/api';
   import Badge from '#lib/components/ui/Badge.svelte';
@@ -77,6 +78,18 @@
 
   function roleById(id: string): Role | undefined {
     return (roles ?? []).find((r) => r.id === id);
+  }
+
+  function billingPlanName(planId: BillingPlanId): string {
+    return ({ regular: 'Regular', priority: 'Priority', api: 'API', priority_api: 'Priority API' })[planId];
+  }
+
+  function billingAccessDescription(entitlements: NonNullable<AllowedUser['billingEntitlements']>): string {
+    return [
+      entitlements.decrypt ? 'Dashboard decrypt' : undefined,
+      entitlements.api ? 'API key access' : undefined,
+      entitlements.priority > 0 ? 'High queue priority' : undefined,
+    ].filter((capability): capability is string => capability !== undefined).join(' · ');
   }
 
   const filteredUsers = $derived(
@@ -352,6 +365,12 @@
                       {/if}
                     {/each}
                   </div>
+                  {#if u.billingEntitlements}
+                    <div class="border-border mt-1 rounded-md border px-2 py-1 text-[11px]" aria-label="Subscription-based access">
+                      <div class="font-medium">{billingPlanName(u.billingEntitlements.planId)} plan</div>
+                      <div class="text-muted">{billingAccessDescription(u.billingEntitlements)}</div>
+                    </div>
+                  {/if}
                 </td>
                 <td data-label="Added" class="text-muted"><RelativeTime ms={u.addedAt} /></td>
                 <td data-label="Last active" class="text-muted">
@@ -478,6 +497,13 @@
     {#if manageUser}
       <div class="mb-3 text-sm font-medium">Manage {manageUser.username}</div>
       <div class="max-h-[50vh] overflow-y-auto pr-0.5">
+        {#if manageUser.billingEntitlements}
+          <div class="border-border bg-panel-muted/50 mb-3 rounded-lg border p-3 text-xs" role="note">
+            <div class="font-medium">{billingPlanName(manageUser.billingEntitlements.planId)} subscription access</div>
+            <div class="text-muted mt-1">{billingAccessDescription(manageUser.billingEntitlements)}</div>
+            <div class="text-muted mt-1">This access comes from billing and is not changed by role assignments.</div>
+          </div>
+        {/if}
         <div class="mb-1 text-xs text-muted">Roles (everyone also holds @everyone)</div>
         {#if assignableRoles.length === 0}
           <div class="text-xs text-muted">No roles yet - create one on the Roles tab first.</div>

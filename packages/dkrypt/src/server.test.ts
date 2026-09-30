@@ -445,7 +445,9 @@ test('native user routes enforce permissions and return normalized management ch
   const server = await buildServer({ includePublicRoutes: false });
   const administratorCookie = createSessionCookie('root', PermissionFlag.administrator);
   const decryptOnlyCookie = createSessionCookie('root', PermissionFlag.requestDecrypt);
-  const userManagerCookie = createSessionCookie('user-manager', PermissionFlag.manageUsers);
+  const userManagerCookie = createSessionCookie('root', PermissionFlag.viewUsers | PermissionFlag.manageUsers);
+  const billingViewerCookie = createSessionCookie('root', PermissionFlag.viewUsers | PermissionFlag.viewBilling);
+  const previousBilling = exportBillingSnapshot();
   const privilegedRole = createRole({ name: 'Elevated Test', color: '#123456', permissions: serializeBits(PermissionFlag.manageRoles) }, 'test setup');
   const lastManagerRole = createRole({ name: 'Last User Manager Test', color: '#654321', permissions: serializeBits(PermissionFlag.manageUsers) }, 'test setup');
   const username = `user-${crypto.randomUUID()}`;
@@ -453,6 +455,7 @@ test('native user routes enforce permissions and return normalized management ch
   const profileUserId = `github:user-directory-${crypto.randomUUID()}`;
 
   try {
+    replaceBillingSnapshot({ customers: [], subscriptions: [] });
     addAllowedUser(lastManagerUsername, [lastManagerRole.id], 'test setup');
     upsertAuthProfile({
       userId: profileUserId,
@@ -464,6 +467,18 @@ test('native user routes enforce permissions and return normalized management ch
       updatedAt: new Date().toISOString(),
     });
     addAllowedUser(profileUserId, [privilegedRole.id], 'test setup');
+    upsertBillingSubscription({
+      provider: 'stripe',
+      subscriptionId: `sub_${crypto.randomUUID()}`,
+      customerId: `cus_${crypto.randomUUID()}`,
+      userId: profileUserId,
+      status: 'active',
+      planId: 'regular',
+      priceId: 'price_regular_test',
+      productId: 'prod_regular_test',
+      occurredAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
     const activityAt = Date.now();
     recordJobHistory({
       id: `user-directory-activity-${crypto.randomUUID()}`,
@@ -536,9 +551,31 @@ test('native user routes enforce permissions and return normalized management ch
         displayName: 'Directory Profile User',
         avatarUrl: 'https://example.com/directory-profile.png',
         roleIds: [privilegedRole.id],
+        billingEntitlements: { planId: 'regular', decrypt: true, api: false, priority: 0 },
         activity: expect.objectContaining({ manualJobs: 1, completedJobs: 1, failedJobs: 0 }),
       }),
     ]));
+
+    const userManagerListed = await server.inject({
+      method: 'GET',
+      url: '/v1/dashboard/users',
+      headers: { cookie: userManagerCookie },
+    });
+    expect(userManagerListed.statusCode).toBe(200);
+    expect(userManagerListed.json().users.find((user: { username: string }) => user.username === profileUserId)).not.toHaveProperty('billingEntitlements');
+
+    const billingViewerListed = await server.inject({
+      method: 'GET',
+      url: '/v1/dashboard/users',
+      headers: { cookie: billingViewerCookie },
+    });
+    expect(billingViewerListed.statusCode).toBe(200);
+    expect(billingViewerListed.json().users.find((user: { username: string }) => user.username === profileUserId)).toHaveProperty('billingEntitlements', {
+      planId: 'regular',
+      decrypt: true,
+      api: false,
+      priority: 0,
+    });
 
     const orphaningUpdate = await server.inject({
       method: 'PATCH',
@@ -579,6 +616,7 @@ test('native user routes enforce permissions and return normalized management ch
     });
     expect(removed.statusCode).toBe(200);
   } finally {
+    replaceBillingSnapshot(previousBilling);
     deleteUserPersonalData(username);
     deleteUserPersonalData(lastManagerUsername);
     deleteUserPersonalData(profileUserId);
