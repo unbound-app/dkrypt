@@ -123,7 +123,7 @@ describe('Rust device bridge event metrics', () => {
     }
   });
 
-  it('refreshes present USB devices from a replacement stream snapshot', async () => {
+  it('refreshes old, unchanged, and newly present USB devices from a replacement snapshot', async () => {
     const refreshedDeviceIds: string[] = [];
     let attempts = 0;
     const stop = startRustDeviceEventMonitoring({
@@ -135,9 +135,11 @@ describe('Rust device bridge event metrics', () => {
           sequence: attempts,
           devices: attempts === 1 ? [
             { id: 'missing-udid', transport: 'usb' },
+            { id: 'unchanged-udid', transport: 'usb' },
             { id: 'wifi-udid', transport: 'wifi:192.0.2.5' },
           ] : [
             { id: 'usb-udid', transport: 'usb' },
+            { id: 'unchanged-udid', transport: 'usb' },
             { id: 'wifi-udid', transport: 'wifi:192.0.2.5' },
           ],
         });
@@ -151,7 +153,7 @@ describe('Rust device bridge event metrics', () => {
     try {
       await waitForAttempts(() => refreshedDeviceIds.length, 1);
       expect(attempts).toBeGreaterThanOrEqual(2);
-      expect(refreshedDeviceIds.sort()).toEqual(['missing-udid', 'usb-udid']);
+      expect(refreshedDeviceIds.sort()).toEqual(['missing-udid', 'unchanged-udid', 'usb-udid']);
     } finally {
       await stop();
     }
