@@ -17,6 +17,7 @@ import {
 import { exportIdentitySnapshot, getAuthProfile, replaceIdentitySnapshot, upsertAuthProfile } from '#identity.js';
 import { PermissionFlag, serializeBits } from '#permissions.js';
 import { createApiKeyRepository } from '#store/apiKeyRepository.js';
+import { createBackupRepository } from '#store/backupRepository.js';
 import {
   addAllowedUser,
   addPasskey,
@@ -913,6 +914,25 @@ describe('exportBackup / importBackup', () => {
     } finally {
       database.close();
       deleteBackupSnapshot(entry.id, 'backup-consistency-test');
+    }
+  });
+
+  test('backup snapshot and restore drill metadata stay available through the typed repository', () => {
+    const entry = createBackupSnapshot('manual', 'backup-repository-test');
+    const database = openStateDatabase({ stateDir: config.stateDir, filename: config.stateDatabaseFile });
+
+    try {
+      const repository = createBackupRepository(database.db);
+      expect(repository.findById(entry.id)).toEqual(entry);
+      expect(drillBackupSnapshot(entry.id, 'backup-repository-test')?.status).toBe('passed');
+      expect(repository.findById(entry.id)).toMatchObject({
+        id: entry.id,
+        restoreDrillStatus: 'passed',
+        restoreDrillAt: expect.any(Number),
+      });
+    } finally {
+      database.close();
+      deleteBackupSnapshot(entry.id, 'backup-repository-test');
     }
   });
 

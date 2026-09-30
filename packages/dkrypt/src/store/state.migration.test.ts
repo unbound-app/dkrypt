@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { openStateDatabase, readStateCollection } from '#store/sqlite.js';
@@ -58,6 +58,86 @@ describe('state migrations', () => {
       expect(readStateCollection(database.db, 'projects')).toContainEqual(expect.objectContaining({ id: 'default', isDefault: true }));
     } finally {
       database.close();
+    }
+  });
+
+  test('a partial backup index fails closed without deleting valid snapshot files', async () => {
+    const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-backup-index-migration-'));
+    const backupDir = path.join(stateDir, 'backups');
+    const snapshots = [
+      { id: 'backup-a', directory: 'snapshot-00000000-0000-4000-8000-000000000001', contents: 'snapshot-a' },
+      { id: 'backup-b', directory: 'snapshot-00000000-0000-4000-8000-000000000002', contents: 'snapshot-b' },
+    ];
+    const state = {
+      version: 13,
+      backupHistory: snapshots.map((snapshot, index) => ({
+        id: snapshot.id,
+        createdAt: index + 1,
+        sizeBytes: 10,
+        filename: `${snapshot.directory}/backup.json`,
+        trigger: 'manual',
+      })),
+      roles: [{ id: 'legacy', name: 'Legacy', color: '#000000', permissions: '0', position: 0, isDefault: false, createdAt: 0, updatedAt: 0 }],
+    };
+    await mkdir(backupDir, { recursive: true });
+    await writeFile(path.join(stateDir, 'state.json'), JSON.stringify(state));
+    for (const snapshot of snapshots) {
+      const directory = path.join(backupDir, snapshot.directory);
+      await mkdir(directory, { recursive: true });
+      await writeFile(path.join(directory, 'backup.json'), snapshot.contents);
+    }
+
+    try {
+      const initialLoad = Bun.spawn(
+        [process.execPath, '-e', "await import('./src/store/state.ts')"],
+        {
+          cwd: process.cwd(),
+          env: {
+            API_KEY: 'backup-index-api-key',
+            SESSION_SIGNING_SECRET: 'backup-index-session-secret',
+            ADMIN_PASSWORD: 'backup-index-admin-password',
+            STATE_DIR: stateDir,
+            STATE_DATABASE_FILE: 'state.sqlite',
+          },
+          stdout: 'pipe',
+          stderr: 'pipe',
+        },
+      );
+      const [initialError, initialExitCode] = await Promise.all([new Response(initialLoad.stderr).text(), initialLoad.exited]);
+      expect(initialExitCode).toBe(0);
+      expect(initialError).toBe('');
+
+      const database = openStateDatabase({ stateDir, filename: 'state.sqlite' });
+      try {
+        database.db.query('DELETE FROM backups WHERE id = ?;').run('backup-b');
+      } finally {
+        database.close();
+      }
+
+      const reload = Bun.spawn(
+        [process.execPath, '-e', "await import('./src/store/state.ts')"],
+        {
+          cwd: process.cwd(),
+          env: {
+            API_KEY: 'backup-index-api-key',
+            SESSION_SIGNING_SECRET: 'backup-index-session-secret',
+            ADMIN_PASSWORD: 'backup-index-admin-password',
+            STATE_DIR: stateDir,
+            STATE_DATABASE_FILE: 'state.sqlite',
+          },
+          stdout: 'pipe',
+          stderr: 'pipe',
+        },
+      );
+      const [reloadError, reloadExitCode] = await Promise.all([new Response(reload.stderr).text(), reload.exited]);
+
+      expect(reloadExitCode).not.toBe(0);
+      expect(reloadError).toContain('persistent backup repository does not match state snapshot');
+      for (const snapshot of snapshots) {
+        expect(await readFile(path.join(backupDir, snapshot.directory, 'backup.json'), 'utf8')).toBe(snapshot.contents);
+      }
+    } finally {
+      await rm(stateDir, { recursive: true, force: true });
     }
   });
 
