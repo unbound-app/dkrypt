@@ -135,6 +135,7 @@ export const config = {
   otelServiceName: optional('OTEL_SERVICE_NAME', 'dkrypt'),
   otelSampleRate: optionalFloat('OTEL_SAMPLE_RATE', 1),
   otelBatchSize: optionalInt('OTEL_BSP_MAX_EXPORT_BATCH_SIZE', 64),
+  otelMaxQueueSize: Math.max(1, optionalInt('OTEL_BSP_MAX_QUEUE_SIZE', 2048)),
   otelFlushIntervalMs: optionalInt('OTEL_BSP_SCHEDULE_DELAY', 5000),
 
   smtpHost: optional('SMTP_HOST', ''),

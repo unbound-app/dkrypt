@@ -142,6 +142,22 @@ function exporterHeaders(signal: 'traces' | 'metrics'): Record<string, string> {
   return Object.fromEntries(values.values());
 }
 
+function enqueueSpan(span: SpanRecord): void {
+  if (pendingSpans.length >= config.otelMaxQueueSize) {
+    incrementMetric('telemetry_spans_dropped_total');
+    return;
+  }
+  pendingSpans.push(span);
+}
+
+function requeueSpans(spans: SpanRecord[]): void {
+  pendingSpans.unshift(...spans);
+  const overflow = pendingSpans.length - config.otelMaxQueueSize;
+  if (overflow <= 0) return;
+  pendingSpans.splice(config.otelMaxQueueSize);
+  incrementMetric('telemetry_spans_dropped_total', {}, overflow);
+}
+
 type OtlpFetcher = (input: string, init?: RequestInit) => Promise<Response>;
 
 async function postOtlpJson(signal: 'traces' | 'metrics', url: string, payload: unknown, fetcher: OtlpFetcher = fetch): Promise<number> {
@@ -213,7 +229,7 @@ export function startSpan(name: string, attributes: Record<string, string | numb
         flags: context.traceFlags,
         status: error ? { code: 2, message: error instanceof Error ? error.message : String(error) } : { code: 1 },
       };
-      pendingSpans.push(record);
+      enqueueSpan(record);
       incrementMetric('telemetry_spans_finished_total', { name });
       if (pendingSpans.length >= Math.max(1, config.otelBatchSize)) void flushTelemetry();
     },
@@ -243,7 +259,7 @@ export async function flushTelemetry(options: OtlpTraceFlushOptions = {}): Promi
       if (rejectedSpans > 0) incrementMetric('telemetry_spans_rejected_total', {}, rejectedSpans);
     })
     .catch(() => {
-      pendingSpans.unshift(...spans);
+      requeueSpans(spans);
       incrementMetric('telemetry_export_failures_total');
     })
     .finally(() => {

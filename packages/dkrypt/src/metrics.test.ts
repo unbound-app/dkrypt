@@ -177,6 +177,46 @@ describe('OpenTelemetry metrics', () => {
     }
   });
 
+  it('bounds pending spans and retries older spans before newer ones', async () => {
+    const originalSampleRate = config.otelSampleRate;
+    const originalBatchSize = config.otelBatchSize;
+    const originalMaxQueueSize = config.otelMaxQueueSize;
+    config.otelSampleRate = 1;
+    config.otelBatchSize = 64;
+    config.otelMaxQueueSize = 2;
+    try {
+      startSpan('older.first').end();
+      startSpan('older.second').end();
+      await flushTelemetry({
+        endpoint: 'https://collector.example/v1/traces',
+        fetcher: async () => {
+          startSpan('newer.first').end();
+          startSpan('newer.second').end();
+          startSpan('newer.dropped').end();
+          return new Response(null, { status: 503 });
+        },
+      });
+
+      let exportedNames: string[] = [];
+      await flushTelemetry({
+        endpoint: 'https://collector.example/v1/traces',
+        fetcher: async (_input, init) => {
+          const body = JSON.parse(String(init?.body));
+          exportedNames = body.resourceSpans[0].scopeSpans[0].spans.map((span: { name: string }) => span.name);
+          return Response.json({});
+        },
+      });
+      const metrics = createOtlpMetricsPayload('dkrypt').resourceMetrics[0].scopeMetrics[0].metrics;
+
+      expect(exportedNames).toEqual(['older.first', 'older.second']);
+      expect(metrics.find((metric) => metric.name === 'dkrypt_telemetry_spans_dropped_total')?.sum?.dataPoints[0].asInt).toBe('3');
+    } finally {
+      config.otelSampleRate = originalSampleRate;
+      config.otelBatchSize = originalBatchSize;
+      config.otelMaxQueueSize = originalMaxQueueSize;
+    }
+  });
+
   it('treats empty and malformed 2xx responses as exporter failures', async () => {
     incrementMetric('jobs_completed_total', { source: 'appstore' });
     for (const response of [new Response(null, { status: 200 }), new Response('{', { status: 200 })]) {

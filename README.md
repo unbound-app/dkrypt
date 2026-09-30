@@ -113,6 +113,8 @@ Set `OTEL_EXPORTER_OTLP_ENDPOINT` to a collector base URL to send traces and met
 
 dkrypt sends OTLP over HTTP using JSON encoding. Exported metrics include job queue and decrypt duration, device availability and reconnects, bridge and agent health, TestFlight lookup performance, artifact and device storage pressure, and webhook reconciliation. The internal `GET /v1/metrics` endpoint provides Prometheus text format to dkrypt's service credential and is unavailable to generated API keys.
 
+The pending span queue is bounded by `OTEL_BSP_MAX_QUEUE_SIZE` (default `2048`). Spans are dropped when the queue is full or when retrying a failed batch would exceed the limit; older failed spans take priority over newer queued spans. The `dkrypt_telemetry_spans_dropped_total` metric reports discarded spans.
+
 </details>
 
 <details>
