@@ -5,6 +5,7 @@ import { bridgeHeartbeatsSchema, dashboardDeviceResponseSchema, deviceTransportS
 
 const subsystemStateSchema = Type.Union([
   Type.Literal('ready'),
+  Type.Literal('idle'),
   Type.Literal('degraded'),
   Type.Literal('offline'),
   Type.Literal('unsupported'),

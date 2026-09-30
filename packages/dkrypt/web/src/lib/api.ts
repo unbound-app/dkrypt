@@ -770,7 +770,7 @@ export interface DeviceHealth extends DeviceTransportStatus {
   networkIpAddress?: string;
   networkInterface?: string;
   bridgeHeartbeats?: Partial<Record<'springboard' | 'testflight' | 'appstore', { bridgeVersion?: string; channel?: string; process?: string; at?: number }>>;
-  subsystems?: Partial<Record<'usb' | 'mux' | 'agent' | 'jailbreak' | 'appStore' | 'testFlight' | 'sshTunnel' | 'storage' | 'battery' | 'thermal', 'ready' | 'degraded' | 'offline' | 'unsupported' | 'unknown'>>;
+  subsystems?: Partial<Record<'usb' | 'mux' | 'agent' | 'jailbreak' | 'appStore' | 'testFlight' | 'sshTunnel' | 'storage' | 'battery' | 'thermal', 'ready' | 'idle' | 'degraded' | 'offline' | 'unsupported' | 'unknown'>>;
   readiness?: DeviceReadiness;
   checkedAt: number;
 }

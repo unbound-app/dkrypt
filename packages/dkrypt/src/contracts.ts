@@ -297,7 +297,7 @@ const PublicStatusResponse = Type.Object({
 const PaginationQuery = paginationQuerySchema;
 const ProviderEnvironment = Type.Union([Type.Literal('test'), Type.Literal('live')]);
 const JobStatus = Type.Union([Type.Literal('queued'), Type.Literal('running'), Type.Literal('done'), Type.Literal('failed')]);
-const DeviceSubsystemState = Type.Union([Type.Literal('ready'), Type.Literal('degraded'), Type.Literal('offline'), Type.Literal('unsupported'), Type.Literal('unknown')]);
+const DeviceSubsystemState = Type.Union([Type.Literal('ready'), Type.Literal('idle'), Type.Literal('degraded'), Type.Literal('offline'), Type.Literal('unsupported'), Type.Literal('unknown')]);
 export const JobSummaryResponse = object({
   id: Identifier,
   correlationId: Identifier,

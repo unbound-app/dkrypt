@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { applyDeviceSshTunnelHealth, coalesceDeviceHealthRequest, collectDeviceTelemetry, DeviceHealthRefreshQueue, formatTestFlightBridgeDownDescription, getDeviceAgentSubsystemState, getDeviceInstallBlocker, getDeviceReadiness, getDeviceSshTunnelSubsystemState, isBridgeHeartbeatFresh, parseDeviceStorageDf, stabilizeDeviceHealth, testFlightBridgeReachability, type DeviceHealth } from '#deviceHealth.js';
+import { applyDeviceSshTunnelHealth, coalesceDeviceHealthRequest, collectDeviceTelemetry, DeviceHealthRefreshQueue, formatTestFlightBridgeDownDescription, getAppStoreSubsystemState, getDeviceAgentSubsystemState, getDeviceInstallBlocker, getDeviceReadiness, getDeviceSshTunnelSubsystemState, isBridgeHeartbeatFresh, parseDeviceStorageDf, stabilizeDeviceHealth, testFlightBridgeReachability, type DeviceHealth } from '#deviceHealth.js';
 
 function health(overrides: Partial<DeviceHealth> = {}): DeviceHealth {
   return { reachable: true, jailbreakAvailable: true, checkedAt: 0, ...overrides };
@@ -143,6 +143,18 @@ describe('device agent subsystem health', () => {
     expect(getDeviceAgentSubsystemState({ udid: 'usb-device' }, true)).toBe('ready');
     expect(getDeviceAgentSubsystemState({ udid: 'usb-device' }, false)).toBe('offline');
     expect(getDeviceAgentSubsystemState({ host: '192.0.2.10' }, true)).toBe('unsupported');
+  });
+});
+
+describe('App Store subsystem health', () => {
+  test('reports an idle bridge instead of unknown while the device agent is healthy', () => {
+    expect(getAppStoreSubsystemState(undefined, true, 1_000_000)).toBe('idle');
+    expect(getAppStoreSubsystemState({ at: 0 }, true, 1_000_000)).toBe('idle');
+    expect(getAppStoreSubsystemState({ at: 999.95 }, true, 1_000_000)).toBe('ready');
+  });
+
+  test('keeps App Store health unknown when the device agent is unavailable', () => {
+    expect(getAppStoreSubsystemState(undefined, false, 1_000_000)).toBe('unknown');
   });
 });
 

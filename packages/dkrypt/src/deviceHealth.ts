@@ -51,7 +51,7 @@ export interface DeviceHealth {
   checkedAt: number;
 }
 
-export type DeviceSubsystemState = 'ready' | 'degraded' | 'offline' | 'unsupported' | 'unknown';
+export type DeviceSubsystemState = 'ready' | 'idle' | 'degraded' | 'offline' | 'unsupported' | 'unknown';
 
 export interface DeviceSubsystemHealth {
   usb: DeviceSubsystemState;
@@ -74,6 +74,11 @@ export function getDeviceAgentSubsystemState(connection: Pick<DeviceConnection, 
 export function getDeviceSshTunnelSubsystemState(connection: Pick<DeviceConnection, 'udid' | 'host'>, sshSftpReady: boolean): DeviceSubsystemState {
   if (isRustDeviceConnection(connection)) return sshSftpReady ? 'ready' : 'degraded';
   return sshSftpReady ? 'ready' : 'offline';
+}
+
+export function getAppStoreSubsystemState(heartbeat: BridgeHeartbeat | undefined, deviceReachable: boolean, now = Date.now()): DeviceSubsystemState {
+  if (isBridgeHeartbeatFresh(heartbeat, now)) return 'ready';
+  return deviceReachable ? 'idle' : 'unknown';
 }
 
 export function applyDeviceSshTunnelHealth(
@@ -579,7 +584,7 @@ async function computeDeviceHealth(device: DeviceRecord, signal?: AbortSignal): 
         mux: 'ready',
         agent: getDeviceAgentSubsystemState(device, true),
         jailbreak: telemetry.jailbreakAvailable === undefined ? 'unknown' : telemetry.jailbreakAvailable ? 'ready' : 'unsupported',
-        appStore: isBridgeHeartbeatFresh(telemetry.bridgeHeartbeats.appstore) ? 'ready' : 'unknown',
+        appStore: getAppStoreSubsystemState(telemetry.bridgeHeartbeats.appstore, true),
         testFlight: isBridgeHeartbeatFresh(telemetry.bridgeHeartbeats.testflight) ? 'ready' : 'unknown',
         sshTunnel: getDeviceSshTunnelSubsystemState(device, sshSftpReady),
         storage: telemetry.storage ? 'ready' : 'unknown',
