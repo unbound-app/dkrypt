@@ -45,6 +45,7 @@ describe('state migrations', () => {
         appStore: { reason: 'dispatched' },
         testflight: { reason: 'no eligible build' },
       };
+      const timeline = { jobId: 'job-history-owned', events: [{ at: 100, label: 'queued' }] };
 
       try {
         const state = database.readState() as Record<string, unknown>;
@@ -55,6 +56,8 @@ describe('state migrations', () => {
         database.db.query('DELETE FROM scheduler_runs;').run();
         database.db.query('INSERT INTO scheduler_runs (id, payload, updated_at) VALUES (?, ?, ?);')
           .run(entry.id, JSON.stringify(entry), entry.ts);
+        database.db.query('INSERT INTO job_timelines (id, payload, updated_at) VALUES (?, ?, ?);')
+          .run(timeline.jobId, JSON.stringify(timeline), entry.ts);
       } finally {
         database.close();
       }
@@ -79,6 +82,7 @@ describe('state migrations', () => {
           appStore: { ok: true, triggered: false, reason: 'dispatched' },
           testflight: { ok: true, triggered: false, reason: 'no eligible build' },
         }]);
+        expect(readStateCollection(normalizedDatabase.db, 'job_timelines')).toEqual([timeline]);
       } finally {
         normalizedDatabase.close();
       }

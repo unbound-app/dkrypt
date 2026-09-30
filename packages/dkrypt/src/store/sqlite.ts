@@ -737,8 +737,8 @@ const domainTables = [
 ] as const;
 
 const stateOwnedDomainTables = domainTables.filter(
-  (table): table is Exclude<(typeof domainTables)[number], 'jobs' | 'billing_records' | 'artifacts' | 'idempotency_keys' | 'webhook_inbox'> =>
-    table !== 'jobs' && table !== 'billing_records' && table !== 'artifacts' && table !== 'idempotency_keys' && table !== 'webhook_inbox',
+  (table): table is Exclude<(typeof domainTables)[number], 'jobs' | 'job_timelines' | 'billing_records' | 'artifacts' | 'idempotency_keys' | 'webhook_inbox'> =>
+    table !== 'jobs' && table !== 'job_timelines' && table !== 'billing_records' && table !== 'artifacts' && table !== 'idempotency_keys' && table !== 'webhook_inbox',
 );
 
 const collectionTables = new Set([
