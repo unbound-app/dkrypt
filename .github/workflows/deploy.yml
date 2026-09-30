@@ -68,6 +68,14 @@ jobs:
         run: |
           cd packages/dkrypt/web
           bun run e2e
+      - name: Upload browser failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: browser-failure-diagnostics-${{ github.run_attempt }}
+          path: packages/dkrypt/web/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
 
   image:
     name: Build immutable image

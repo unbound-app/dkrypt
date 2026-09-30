@@ -814,6 +814,8 @@ test('IPA Library stays populated and does not refetch loaded results during inc
   await page.goto('/?tab=home');
   await artifactResponse;
   const viewport = page.getByRole('region', { name: 'IPA library artifacts list region' });
+  const viewportHandle = await viewport.elementHandle();
+  if (!viewportHandle) throw new Error('IPA Library artifacts viewport did not mount');
   const firstArtifact = viewport.locator('[data-artifact-id="wheel-scroll-artifact-0"]');
   await expect(viewport.locator('[role="listitem"]').first()).toHaveAttribute('aria-setsize', '120');
   await expect.poll(() => viewport.locator('[role="listitem"]').count()).toBeLessThan(120);
@@ -824,7 +826,7 @@ test('IPA Library stays populated and does not refetch loaded results during inc
   const details = firstArtifact.locator('summary').filter({ hasText: 'Artifact details' });
   if (!(await firstArtifact.locator('details').evaluate((element) => element.open))) await details.click();
   await expect(firstArtifact.getByText(warning, { exact: true })).toBeVisible();
-  await viewport.evaluate((element) => {
+  await viewportHandle.evaluate((element) => {
     const samples: Array<{ kind: 'blank' | 'detached'; scrollY: number; renderedRows: number }> = [];
     const browserWindow = window as typeof window & { __ipaLibraryScrollSamples?: typeof samples };
     browserWindow.__ipaLibraryScrollSamples = samples;
@@ -855,18 +857,29 @@ test('IPA Library stays populated and does not refetch loaded results during inc
     for (let step = 0; step < 30; step += 1) {
       await page.mouse.wheel(0, direction * 800);
       await page.waitForTimeout(16);
-      const sample = await viewport.evaluate((element) => {
+      const sample = await viewportHandle.evaluate((element) => {
         const region = element.getBoundingClientRect();
         const regionVisible = region.bottom > 0 && region.top < window.innerHeight;
-        if (!regionVisible) return { regionVisible, hasVisibleRow: true };
+        if (!regionVisible) return { attached: element.isConnected, label: element.getAttribute('aria-label'), regionVisible, hasVisibleRow: true };
         const visibleTop = Math.max(region.top, 0);
         const visibleBottom = Math.min(region.bottom, window.innerHeight);
         const hasVisibleRow = Array.from(element.querySelectorAll<HTMLElement>('[role="listitem"]')).some((row) => {
           const bounds = row.getBoundingClientRect();
           return bounds.bottom > visibleTop && bounds.top < visibleBottom;
         });
-        return { regionVisible, hasVisibleRow };
+        return { attached: element.isConnected, label: element.getAttribute('aria-label'), regionVisible, hasVisibleRow };
       });
+      if (!sample.attached || sample.label !== 'IPA library artifacts list region') {
+        const pageState = await page.locator('body').evaluate((element) => ({
+          regions: Array.from(element.querySelectorAll<HTMLElement>('[role="region"]')).map((region) => ({
+            label: region.getAttribute('aria-label'),
+            visible: region.getBoundingClientRect().bottom > 0 && region.getBoundingClientRect().top < window.innerHeight,
+          })),
+          artifactRows: element.querySelectorAll('[data-artifact-id]').length,
+          text: element.innerText.slice(0, 1200),
+        }));
+        throw new Error(`IPA Library viewport changed during scroll at direction ${direction}, step ${step}: ${JSON.stringify({ sample, artifactListRequestCount, pageState })}`);
+      }
       if (sample.regionVisible) {
         enteredLibrary = true;
         checkedPositions += 1;
