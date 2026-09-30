@@ -1381,11 +1381,7 @@ export function upsertAppCatalogEntries(entries: Array<Omit<AppCatalogEntry, 'up
 
 let dirty = false;
 const state: PersistedState = load();
-let persistedBackups = backupRepository.listAll();
-if (persistedBackups.length === 0 && state.backupHistory.length > 0) {
-  backupRepository.replaceAll(state.backupHistory);
-  persistedBackups = backupRepository.listAll();
-}
+const persistedBackups = backupRepository.listAll();
 if (!sameRecordsByKey(state.backupHistory, persistedBackups, (entry) => entry.id)) {
   throw new Error('persistent backup repository does not match state snapshot');
 }
@@ -1460,7 +1456,7 @@ if (JSON.stringify(state.activeSessions) !== JSON.stringify(persistedSessions)) 
   state.activeSessions = persistedSessions;
   dirty = true;
 }
-cleanupBackupStagingDirectories();
+cleanupBackupSnapshotDirectories(state.backupHistory);
 const unavailableLegacyMirrors = new Set<string>();
 
 function fsyncPath(filePath: string): void {
@@ -4230,10 +4226,14 @@ function removeBackupSnapshotFiles(entry: BackupHistoryEntry): void {
   if (directory) rmSync(path.join(backupsDir, directory), { recursive: true, force: true });
 }
 
-function cleanupBackupStagingDirectories(): void {
+function cleanupBackupSnapshotDirectories(history: BackupHistoryEntry[]): void {
   if (!existsSync(backupsDir)) return;
+  const referencedDirectories = new Set(history.map((entry) => backupSnapshotDirectory(entry.filename)).filter((value): value is string => Boolean(value)));
   for (const entry of readdirSync(backupsDir, { withFileTypes: true })) {
-    if (entry.isDirectory() && entry.name.startsWith('.staging-')) rmSync(path.join(backupsDir, entry.name), { recursive: true, force: true });
+    if (!entry.isDirectory()) continue;
+    if (entry.name.startsWith('.staging-') || (/^snapshot-[0-9a-f-]{36}$/.test(entry.name) && !referencedDirectories.has(entry.name))) {
+      rmSync(path.join(backupsDir, entry.name), { recursive: true, force: true });
+    }
   }
 }
 

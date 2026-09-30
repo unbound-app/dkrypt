@@ -136,6 +136,36 @@ describe('state migrations', () => {
       for (const snapshot of snapshots) {
         expect(await readFile(path.join(backupDir, snapshot.directory, 'backup.json'), 'utf8')).toBe(snapshot.contents);
       }
+
+      const emptyDatabase = openStateDatabase({ stateDir, filename: 'state.sqlite' });
+      try {
+        emptyDatabase.db.query('DELETE FROM backups;').run();
+      } finally {
+        emptyDatabase.close();
+      }
+
+      const emptyReload = Bun.spawn(
+        [process.execPath, '-e', "await import('./src/store/state.ts')"],
+        {
+          cwd: process.cwd(),
+          env: {
+            API_KEY: 'backup-index-api-key',
+            SESSION_SIGNING_SECRET: 'backup-index-session-secret',
+            ADMIN_PASSWORD: 'backup-index-admin-password',
+            STATE_DIR: stateDir,
+            STATE_DATABASE_FILE: 'state.sqlite',
+          },
+          stdout: 'pipe',
+          stderr: 'pipe',
+        },
+      );
+      const [emptyReloadError, emptyReloadExitCode] = await Promise.all([new Response(emptyReload.stderr).text(), emptyReload.exited]);
+
+      expect(emptyReloadExitCode).not.toBe(0);
+      expect(emptyReloadError).toContain('persistent backup repository does not match state snapshot');
+      for (const snapshot of snapshots) {
+        expect(await readFile(path.join(backupDir, snapshot.directory, 'backup.json'), 'utf8')).toBe(snapshot.contents);
+      }
     } finally {
       await rm(stateDir, { recursive: true, force: true });
     }
