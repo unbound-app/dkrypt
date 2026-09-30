@@ -212,11 +212,13 @@ describe('enqueueDecryptJob', () => {
 
     try {
       const job = enqueueDecryptJob(`com.test.expired-${crypto.randomUUID()}`, 'manual', { preferredDeviceId: 'missing-device' });
-      await expect(waitForJob(job, 100)).resolves.toMatchObject({
+      const finished = await waitForJob(job, 100);
+      expect(finished).toMatchObject({
         status: 'failed',
         deadlineExceeded: true,
-        error: 'job deadline exceeded while waiting in the queue',
       });
+      expect(finished.error).toContain('job deadline exceeded while waiting in the queue');
+      expect(finished.error).toContain('Waiting for');
     } finally {
       config.jobMaxWaitSeconds = originalDeadline;
     }

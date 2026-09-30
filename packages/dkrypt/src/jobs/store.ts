@@ -290,13 +290,16 @@ function clearQueuedDeadline(id: string): void {
 
 function failExpiredQueuedJob(job: Job, now = Date.now()): void {
   if (job.status !== 'queued' || job.deadlineAt === undefined || job.deadlineAt > now) return;
+  const queueReason = getQueueReason(job);
   clearQueuedDeadline(job.id);
   const index = queue.indexOf(job.id);
   if (index !== -1) queue.splice(index, 1);
   job.status = 'failed';
   job.deadlineExceeded = true;
   job.progress = 'job deadline exceeded';
-  job.error = 'job deadline exceeded while waiting in the queue';
+  job.error = queueReason
+    ? `job deadline exceeded while waiting in the queue: ${queueReason}`
+    : 'job deadline exceeded while waiting in the queue';
   job.failureClass = classifyJobFailure('job deadline exceeded');
   job.finishedAt = now;
   appendJobTimelineEvent(job, `Failed: ${job.error}`, 'failed', now);
