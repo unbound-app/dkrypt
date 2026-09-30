@@ -18,7 +18,7 @@ import { appendJobTimelineEvent, type Job, type JobSource, type TestFlightJobSou
 import { artifactKeyForJob, buildDashboardArtifactFileUrl, getArtifactById, getArtifactByKey, getArtifactForJob, linkArtifactToProject, migrateLegacyPath, type ArtifactRecord } from '#artifacts.js';
 import { closePersistedJobs, findPersistedActiveJobId, findPersistedReusableCompletedJobIds, loadPersistedJobs, replacePersistedJobs, type JobBuildLookup } from '#jobs/repository.js';
 import { terminateChildProcess } from '#jobs/process.js';
-import { assessQueueServiceObjective, projectCompletedJobDurationP95Ms, queueServiceObjectiveBreachDescription, queueServiceObjectiveMs } from '#jobs/slo.js';
+import { assessQueueServiceObjective, completedJobDurationP95Ms, projectCompletedJobDurationP95Ms, queueServiceObjectiveBreachDescription, queueServiceObjectiveMs } from '#jobs/slo.js';
 import { classifyJobFailure } from '#util/failureCategory.js';
 import { incrementMetric, observeMetric } from '#metrics.js';
 import { recordJobStarted } from '#jobs/metrics.js';
@@ -312,6 +312,18 @@ function failExpiredQueuedJob(job: Job, now = Date.now()): void {
   emitJobsChanged();
 }
 
+function historicalDurationP95ByProject(
+  sourceJobs: readonly Pick<Job, 'projectId'>[],
+  history: ReturnType<typeof getAllJobHistory>,
+): Map<string, number | null> {
+  const globalP95 = completedJobDurationP95Ms(history);
+  const projectIds = new Set(sourceJobs.map((job) => job.projectId ?? DEFAULT_PROJECT_ID));
+  return new Map([...projectIds].map((projectId) => [
+    projectId,
+    projectCompletedJobDurationP95Ms(history, projectId, DEFAULT_PROJECT_ID) ?? globalP95,
+  ]));
+}
+
 function scheduleQueuedDeadline(job: Job): void {
   clearQueuedDeadline(job.id);
   if (job.status !== 'queued' || job.deadlineAt === undefined) return;
@@ -521,7 +533,7 @@ export interface JobQueueSummary {
 export function getJobQueueSummaries(sourceJobs: readonly Job[], now = Date.now()): Map<string, JobQueueSummary> {
   const queuedJobs = sourceJobs.filter((job) => job.status === 'queued');
   const history = queuedJobs.length > 0 ? getAllJobHistory() : [];
-  const historicalP95ByProject = new Map<string, number | null>();
+  const historicalP95ByProject = historicalDurationP95ByProject(queuedJobs, history);
   const summaries = new Map<string, JobQueueSummary>();
 
   for (const job of sourceJobs) {
@@ -533,9 +545,6 @@ export function getJobQueueSummaries(sourceJobs: readonly Job[], now = Date.now(
     }
 
     const projectId = job.projectId ?? DEFAULT_PROJECT_ID;
-    if (!historicalP95ByProject.has(projectId)) {
-      historicalP95ByProject.set(projectId, projectCompletedJobDurationP95Ms(history, projectId, DEFAULT_PROJECT_ID));
-    }
     const assessment = assessQueueServiceObjective({
       createdAt: job.createdAt,
       now,
@@ -1040,13 +1049,10 @@ async function monitorQueueSlo(): Promise<void> {
   for (const jobId of queueSloNotified) if (!activeIds.has(jobId)) queueSloNotified.delete(jobId);
   const targetMs = queueServiceObjectiveMs(config.queueSloMinutes);
   const completedHistory = getAllJobHistory();
-  const historicalP95ByProject = new Map<string, number | null>();
+  const historicalP95ByProject = historicalDurationP95ByProject(active, completedHistory);
   const now = Date.now();
   for (const job of active) {
     const projectId = job.projectId ?? DEFAULT_PROJECT_ID;
-    if (!historicalP95ByProject.has(projectId)) {
-      historicalP95ByProject.set(projectId, projectCompletedJobDurationP95Ms(completedHistory, projectId, DEFAULT_PROJECT_ID));
-    }
     const queue = job.status === 'queued' ? getQueueInfo(job.id) : undefined;
     const assessment = assessQueueServiceObjective({
       createdAt: job.createdAt,

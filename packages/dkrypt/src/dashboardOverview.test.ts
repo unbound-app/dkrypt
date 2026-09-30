@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'bun:test';
 import type { Job } from '#jobs/types.js';
-import { createDevice, createProject, deleteDevice, recordJobHistory } from '#store/state.js';
+import { DEFAULT_PROJECT_ID, createDevice, createProject, deleteDevice, recordJobHistory } from '#store/state.js';
 import { setCachedDeviceHealth } from '#deviceHealthCache.js';
 
 mock.module('./jobs/runner.js', () => ({
@@ -53,6 +53,44 @@ test('dashboard overview reports each queued job estimated start and completion 
   } finally {
     if (queued.status === 'queued') cancelQueuedJob(queued.id, 'dashboard queue ETA test cleanup');
     if (running.status === 'running') cancelJob(running.id, 'dashboard queue ETA test cleanup');
+    await Promise.all([waitForJob(queued, 1_000), waitForJob(running, 1_000)]);
+    deleteDevice(device.id, 'tests');
+  }
+});
+
+test('dashboard overview estimates queue times for a new project from shared job history', async () => {
+  const device = createDevice({ name: 'dashboard-shared-eta-device', transport: 'wifi', host: '127.0.0.5' }, 'tests');
+  const project = createProject({ name: `Dashboard shared ETA ${crypto.randomUUID()}` }, 'tests').project!;
+  setCachedDeviceHealth(device.id, { reachable: true, jailbreakAvailable: true, checkedAt: Date.now() });
+  const historyFinishedAt = Date.now() - 20_000;
+  recordJobHistory({
+    id: `dashboard-shared-eta-history-${crypto.randomUUID()}`,
+    projectId: DEFAULT_PROJECT_ID,
+    bundleId: `com.test.dashboard-shared-history-${crypto.randomUUID()}`,
+    source: 'manual',
+    status: 'done',
+    createdAt: historyFinishedAt - 10_000,
+    startedAt: historyFinishedAt - 10_000,
+    finishedAt: historyFinishedAt,
+  });
+  const running = enqueueDecryptJob(`com.test.dashboard-shared-blocker-${crypto.randomUUID()}`, 'manual', {
+    projectId: project.id,
+    preferredDeviceId: device.id,
+  });
+  const queued = enqueueDecryptJob(`com.test.dashboard-shared-queued-${crypto.randomUUID()}`, 'manual', {
+    projectId: project.id,
+    preferredDeviceId: device.id,
+  });
+
+  try {
+    const activeJob = buildDashboardOverview(0n, 'root', project.id).activeJobs.find((job) => job.id === queued.id);
+    expect(running.status).toBe('running');
+    expect(queued.status).toBe('queued');
+    expect(activeJob?.queue?.predictedStartMs).toBeGreaterThan(0);
+    expect(activeJob?.queue?.predictedCompletionMs).toBeGreaterThan(activeJob?.queue?.predictedStartMs ?? Infinity);
+  } finally {
+    if (queued.status === 'queued') cancelQueuedJob(queued.id, 'dashboard shared queue ETA test cleanup');
+    if (running.status === 'running') cancelJob(running.id, 'dashboard shared queue ETA test cleanup');
     await Promise.all([waitForJob(queued, 1_000), waitForJob(running, 1_000)]);
     deleteDevice(device.id, 'tests');
   }
