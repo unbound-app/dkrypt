@@ -1875,7 +1875,7 @@ test('populated device management and preflight dialog meet accessibility checks
     batteryPercent: 82,
     checkedAt: Date.now(),
     readiness: { score: 100, state: 'ready', reasons: [] },
-    subsystems: { usb: 'ready', mux: 'ready', agent: 'ready', appStore: 'unknown', testFlight: 'ready', sshTunnel: 'ready' },
+    subsystems: { usb: 'ready', mux: 'ready', agent: 'ready', appStore: 'idle', testFlight: 'ready', sshTunnel: 'ready' },
   };
 
   await mockAuthenticatedSession(page, '2097152');
