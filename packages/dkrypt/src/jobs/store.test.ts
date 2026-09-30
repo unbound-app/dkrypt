@@ -33,7 +33,7 @@ mock.module('./runner.js', () => ({
   },
 }));
 
-const { cancelJob, cancelQueuedJob, enqueueDecryptJob, getActiveJobs, getJob, getQueueInfo, getQueueReason, isJobDispatchable, notifyDeviceDispatchStateChanged, prioritizeQueuedJob, reclaimJobFile, recoverPersistedActiveJobs, reorderQueue, waitForJob } = await import('./store.js');
+const { cancelJob, cancelQueuedJob, enqueueDecryptJob, getActiveJobs, getJob, getQueueInfo, getQueueReason, isJobDispatchable, notifyDeviceDispatchStateChanged, prioritizeQueuedJob, reclaimJobFile, recoverPersistedActiveJobs, reorderQueue, ScheduledJobDeferredError, waitForJob } = await import('./store.js');
 
 let testDeviceId = '';
 
@@ -519,6 +519,30 @@ test('keeps a job queued for a known device blocker and dispatches it after reco
     if (job.status === 'running') cancelJob(job.id, 'dispatch recovery test cleanup');
     await waitForJob(job, 1_000);
     setCachedDeviceHealth(testDeviceId, { reachable: true, jailbreakAvailable: true, checkedAt: Date.now() });
+  }
+});
+
+test('does not queue a TestFlight scheduler job when every device is blocked', async () => {
+  await clearActiveTestJobs();
+  setCachedDeviceHealth(testDeviceId, { reachable: false, error: 'USB device is offline', checkedAt: Date.now() });
+  const bundleId = `com.test.scheduler-deferred.${crypto.randomUUID()}`;
+
+  try {
+    let deferredError: unknown;
+    try {
+      enqueueDecryptJob(bundleId, 'scheduler', {
+        testflight: { appId: 42, build: { id: 501, cfBundleShortVersion: '2.0', cfBundleVersion: '501', bundleId } },
+        deferWhenNoEligibleDevice: true,
+      });
+    } catch (error) {
+      deferredError = error;
+    }
+    expect(deferredError).toBeInstanceOf(ScheduledJobDeferredError);
+    expect(deferredError).toMatchObject({ message: expect.stringContaining('USB device is offline') });
+    expect(getActiveJobs().filter((job) => job.bundleId === bundleId)).toHaveLength(0);
+  } finally {
+    setCachedDeviceHealth(testDeviceId, { reachable: true, jailbreakAvailable: true, checkedAt: Date.now() });
+    notifyDeviceDispatchStateChanged();
   }
 });
 

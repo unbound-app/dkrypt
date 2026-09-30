@@ -354,6 +354,14 @@ export interface EnqueueDecryptJobOptions {
   apiKeyId?: string;
   projectId?: string;
   minimumOsVersion?: string;
+  deferWhenNoEligibleDevice?: boolean;
+}
+
+export class ScheduledJobDeferredError extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = 'ScheduledJobDeferredError';
+  }
 }
 
 export function enqueueDecryptJob(bundleId: string, source: JobSource, options: EnqueueDecryptJobOptions = {}): Job {
@@ -413,6 +421,10 @@ export function enqueueDecryptJob(bundleId: string, source: JobSource, options: 
     attempt: 1,
     waiters: [],
   };
+
+  if (source === 'scheduler' && options.deferWhenNoEligibleDevice && getJobEligibleDeviceCount(job) === 0) {
+    throw new ScheduledJobDeferredError(getQueueReason(job) ?? 'No enabled device is eligible for this job');
+  }
 
   jobs.set(job.id, job);
   if (source === 'scheduler') {

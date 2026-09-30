@@ -3,7 +3,7 @@ import { trackBackgroundWork } from '#backgroundWork.js';
 import { config } from '#config.js';
 import { emitJobsChanged } from '#events.js';
 import type { Job } from '#jobs/types.js';
-import { enqueueDecryptJob, waitForJob } from '#jobs/store.js';
+import { enqueueDecryptJob, ScheduledJobDeferredError, waitForJob, type EnqueueDecryptJobOptions } from '#jobs/store.js';
 import { SCHEDULER_JOB_TIMEOUT_MS } from '#jobs/timeouts.js';
 import { getMaintenanceStatus } from '#maintenance.js';
 import { scopedLogger } from '#logger.js';
@@ -223,6 +223,25 @@ async function pollRunToCompletion(dispatchRepo: string, workflowFile: string, d
 interface DispatchResult {
   outcome: SchedulerRunOutcome;
   trackCompletion?: () => Promise<Partial<SchedulerRunOutcome>>;
+}
+
+type ScheduledEnqueueResult = { kind: 'job'; job: Job } | { kind: 'deferred'; reason: string };
+
+function enqueueScheduledDecryptJob(bundleId: string, options: EnqueueDecryptJobOptions): ScheduledEnqueueResult {
+  try {
+    return {
+      kind: 'job',
+      job: enqueueDecryptJob(bundleId, 'scheduler', { ...options, deferWhenNoEligibleDevice: true }),
+    };
+  } catch (error) {
+    if (!(error instanceof ScheduledJobDeferredError)) throw error;
+    log.info('scheduled decrypt deferred until a device is eligible', { bundleId, reason: error.message });
+    return { kind: 'deferred', reason: error.message };
+  }
+}
+
+function deferredScheduledDecryptResult(versionLabel: string, reason: string): DispatchResult {
+  return { outcome: { ok: true, triggered: false, versionLabel, reason: `Scheduled decrypt deferred: ${reason}` } };
 }
 
 function trackRunCompletion(
@@ -451,13 +470,14 @@ async function tickAppStore(watch: AppWatch): Promise<DispatchResult> {
 
   log.info('no matching release found, decrypting', { bundleId: watch.bundleId, version: normalized, externalVersionId });
 
-  const job = enqueueDecryptJob(watch.bundleId, 'scheduler', {
+  const enqueueResult = enqueueScheduledDecryptJob(watch.bundleId, {
     externalVersionId,
     versionLabel: normalized,
     projectId: watch.projectId ?? DEFAULT_PROJECT_ID,
     minimumOsVersion,
   });
-  const result = await decryptAndDispatch(job, watch, false, `v${normalized}`, dispatchTargets);
+  if (enqueueResult.kind === 'deferred') return deferredScheduledDecryptResult(`v${normalized}`, enqueueResult.reason);
+  const result = await decryptAndDispatch(enqueueResult.job, watch, false, `v${normalized}`, dispatchTargets);
   result.outcome = { ...result.outcome, observedVersion: normalized, installMode: externalVersionId ? 'pinned' : 'current' };
   return result;
 }
@@ -505,11 +525,12 @@ async function tickTestFlight(watch: AppWatch): Promise<DispatchResult> {
     tag: check.latestTag,
   });
 
-  const job = enqueueDecryptJob(watch.bundleId, 'scheduler', {
+  const enqueueResult = enqueueScheduledDecryptJob(watch.bundleId, {
     testflight: { appId: check.appId as number, build: check.build },
     projectId: watch.projectId ?? DEFAULT_PROJECT_ID,
   });
-  return decryptAndDispatch(job, watch, true, check.latestTag as string, dispatchTargets);
+  if (enqueueResult.kind === 'deferred') return deferredScheduledDecryptResult(check.latestTag as string, enqueueResult.reason);
+  return decryptAndDispatch(enqueueResult.job, watch, true, check.latestTag as string, dispatchTargets);
 }
 
 const RETRY_BASE_DELAY_MS = 30_000;
