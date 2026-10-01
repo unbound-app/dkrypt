@@ -227,8 +227,14 @@
 			event.preventDefault();
 			element.scrollTo({ left: Math.max(0, Math.min(scrollLeft, element.scrollWidth - element.clientWidth)) });
 		};
+		element.setAttribute("tabindex", "0");
 		element.addEventListener("keydown", onKeydown);
-		return { destroy: () => element.removeEventListener("keydown", onKeydown) };
+		return {
+			destroy: () => {
+				element.removeEventListener("keydown", onKeydown);
+				element.removeAttribute("tabindex");
+			},
+		};
 	}
 </script>
 
@@ -258,7 +264,7 @@
 			</span>
 		{/if}
 	{/snippet}
-	<div class="scroll-fade-x overflow-x-auto" use:scrollFade use:tableKeyboardScroll role="region" aria-label="Active jobs table scroll area" tabindex="0">
+	<div class="scroll-fade-x overflow-x-auto" use:scrollFade use:tableKeyboardScroll role="region" aria-label="Active jobs table scroll area">
 		<table class="responsive-table min-w-[860px]">
 			<thead>
 				<tr>

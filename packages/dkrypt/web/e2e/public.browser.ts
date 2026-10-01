@@ -1143,6 +1143,7 @@ test('active jobs table supports keyboard scrolling on constrained viewports', a
 
   const region = page.getByRole('region', { name: 'Active jobs table scroll area' });
   await expect(region).toBeVisible();
+  await expect(region).toHaveAttribute('tabindex', '0');
   await region.scrollIntoViewIfNeeded();
   await expect.poll(() => region.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
   await region.focus();
@@ -1855,6 +1856,31 @@ test('system forced-colors mode uses system surface and text colors', async ({ p
   await expectAccessible(page);
 });
 
+test('reduced-motion preference minimizes animation and smooth scrolling', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto('/pricing');
+
+  const motionStyles = await page.evaluate(() => {
+    const marker = document.createElement('div');
+    marker.className = 'skeleton';
+    document.body.append(marker);
+    const animation = getComputedStyle(marker);
+    const result = {
+      reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches,
+      animationDuration: animation.animationDuration,
+      animationIterationCount: animation.animationIterationCount,
+      scrollBehavior: getComputedStyle(document.documentElement).scrollBehavior,
+    };
+    marker.remove();
+    return result;
+  });
+
+  expect(motionStyles.reducedMotion).toBe(true);
+  expect(motionStyles.animationDuration).toMatch(/^(0|0\.01ms|1e-0?5s)$/);
+  expect(motionStyles.animationIterationCount).toBe('1');
+  expect(motionStyles.scrollBehavior).toBe('auto');
+});
+
 test('populated device management and preflight dialog meet accessibility checks', async ({ page }) => {
   const device = {
     id: 'test-device',
@@ -2549,6 +2575,7 @@ test('job history stays virtualized as older cursor pages are loaded', async ({ 
   const list = page.getByRole('list', { name: 'Job history entries' });
   const viewport = page.getByRole('region', { name: 'Job history entries scroll area' });
   await expect(list.getByText('com.example.history.000')).toBeVisible();
+  await expect(viewport).toHaveAttribute('tabindex', '0');
   const firstRow = list.getByRole('listitem').first();
   await expect(firstRow).toHaveAttribute('aria-setsize', '15');
   await expect.poll(() => list.getByRole('listitem').count()).toBeLessThan(20);
@@ -2564,7 +2591,8 @@ test('job history stays virtualized as older cursor pages are loaded', async ({ 
   await expect(list.getByText('com.example.history.099')).toHaveCount(0);
   await expect(list.getByRole('listitem').first()).toHaveAttribute('aria-setsize', '100');
   await expect.poll(() => viewport.evaluate((element) => element.scrollHeight)).toBeGreaterThan(5000);
-  await viewport.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  await viewport.focus();
+  await page.keyboard.press('End');
   await expect(list.getByText('com.example.history.099')).toBeVisible();
   await expect(list.getByRole('listitem').last()).toHaveAttribute('aria-posinset', '100');
   await expect.poll(() => list.getByRole('listitem').count()).toBeLessThan(35);

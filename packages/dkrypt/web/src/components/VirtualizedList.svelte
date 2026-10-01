@@ -141,6 +141,7 @@
   }
 
   function virtualizedListKeyboardScroll(element: HTMLDivElement, enabled: boolean): { update: (nextEnabled: boolean) => void; destroy: () => void } {
+    let isEnabled = enabled;
     const onKeydown = (event: KeyboardEvent): void => {
       if (event.target !== element) return;
       let scrollTop = element.scrollTop;
@@ -154,18 +155,30 @@
       event.preventDefault();
       element.scrollTo({ top: Math.max(0, Math.min(scrollTop, element.scrollHeight - element.clientHeight)) });
     };
-    if (enabled) element.addEventListener('keydown', onKeydown);
+    if (enabled) {
+      element.setAttribute('tabindex', '0');
+      element.addEventListener('keydown', onKeydown);
+    }
     return {
       update: (nextEnabled) => {
         element.removeEventListener('keydown', onKeydown);
-        if (nextEnabled) element.addEventListener('keydown', onKeydown);
+        isEnabled = nextEnabled;
+        if (nextEnabled) {
+          element.setAttribute('tabindex', '0');
+          element.addEventListener('keydown', onKeydown);
+        } else {
+          element.removeAttribute('tabindex');
+        }
       },
-      destroy: () => element.removeEventListener('keydown', onKeydown),
+      destroy: () => {
+        element.removeEventListener('keydown', onKeydown);
+        if (isEnabled) element.removeAttribute('tabindex');
+      },
     };
   }
 </script>
 
-<div bind:this={viewport} class={cn(className)} style={style} onscroll={onScroll} use:virtualizedListKeyboardScroll={scrollMode === 'element'} role="region" aria-label={scrollMode === 'window' ? `${label} list region` : `${label} scroll area`} tabindex={scrollMode === 'element' ? 0 : undefined}>
+<div bind:this={viewport} class={cn(className)} style={style} onscroll={onScroll} use:virtualizedListKeyboardScroll={scrollMode === 'element'} role="region" aria-label={scrollMode === 'window' ? `${label} list region` : `${label} scroll area`}>
   <div class="relative w-full" style={`height:${totalSize}px`} role="list" aria-label={label}>
     {#each virtualRows as virtualRow (virtualRow.key)}
       {@const item = items[virtualRow.index]}
