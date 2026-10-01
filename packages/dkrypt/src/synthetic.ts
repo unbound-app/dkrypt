@@ -6,6 +6,8 @@ import { getDiskUsage } from '#util/diskUsage.js';
 import { config, cryptoBillingEnabled, stripeEnabled } from '#config.js';
 import { getTestFlightCatalogCacheState } from '#testflightSubscriptions.js';
 import { listWebhookInbox } from '#webhookInbox.js';
+import { getNowPaymentsProviderStatus } from '#nowpayments.js';
+import { getStripeWebhookHealth } from '#stripeWebhookHealth.js';
 
 export interface SyntheticProbeResult {
   id: 'database' | 'artifacts' | 'device-bridge' | 'device-agent' | 'testflight' | 'webhooks';
@@ -24,6 +26,26 @@ export function classifyTestFlightCatalogProbe(cache: ReturnType<typeof getTestF
     };
   }
   return { status: 'ok', detail: `${cache.apps.length} app(s) recently verified on device` };
+}
+
+export function classifyWebhookProbe(
+  providers: Array<{ name: string; status: 'ready' | 'misconfigured' | 'unavailable'; detail?: string }>,
+  inboxFailures: number,
+): Pick<SyntheticProbeResult, 'status' | 'detail'> {
+  if (providers.length === 0) return { status: 'skipped', detail: 'No billing webhook provider is configured' };
+
+  const configurationIssues = providers
+    .filter((provider) => provider.status === 'misconfigured')
+    .map((provider) => provider.detail ?? `${provider.name} webhook configuration needs attention`);
+  if (configurationIssues.length > 0) return { status: 'error', detail: configurationIssues.join('; ') };
+
+  const warnings = providers
+    .filter((provider) => provider.status === 'unavailable')
+    .map((provider) => provider.detail ?? `${provider.name} is temporarily unavailable`);
+  if (inboxFailures > 0) warnings.push(`${inboxFailures} billing webhook event(s) need attention`);
+  if (warnings.length > 0) return { status: 'warn', detail: warnings.join('; ') };
+
+  return { status: 'ok', detail: `${providers.map((provider) => provider.name).join(' and ')} webhook readiness verified` };
 }
 
 export async function runSyntheticProbe<T extends SyntheticProbeResult['id']>(id: T, action: () => Promise<Omit<SyntheticProbeResult, 'id' | 'durationMs'>>): Promise<SyntheticProbeResult> {
@@ -87,10 +109,41 @@ export async function runSyntheticProbes(): Promise<{ ok: boolean; checkedAt: st
     runSyntheticProbe('webhooks', async () => {
       const inbox = listWebhookInbox();
       const failures = inbox.filter((record) => record.status === 'failed' || record.status === 'quarantined').length;
-      const providers = [stripeEnabled ? 'Stripe' : undefined, cryptoBillingEnabled ? 'NOWPayments' : undefined].filter(Boolean);
-      if (providers.length === 0) return { status: 'skipped' as const, detail: 'No billing webhook provider is configured' };
-      if (failures > 0) return { status: 'warn' as const, detail: `${failures} billing webhook event(s) need attention` };
-      return { status: 'ok' as const, detail: `${providers.join(' and ')} webhook inbox is ready` };
+      const [stripeHealth, nowPaymentsStatus] = await Promise.all([
+        stripeEnabled ? getStripeWebhookHealth(undefined) : undefined,
+        cryptoBillingEnabled ? getNowPaymentsProviderStatus() : undefined,
+      ]);
+      const providers: Array<{ name: string; status: 'ready' | 'misconfigured' | 'unavailable'; detail?: string }> = [];
+
+      if (stripeHealth) {
+        if (stripeHealth.state === 'ready') providers.push({ name: 'Stripe', status: 'ready' });
+        else if (stripeHealth.state === 'missing_events') providers.push({
+          name: 'Stripe',
+          status: 'misconfigured',
+          detail: `Stripe webhook endpoint is missing required events: ${stripeHealth.missingEvents.join(', ')}`,
+        });
+        else if (stripeHealth.state === 'missing_endpoint') providers.push({
+          name: 'Stripe',
+          status: 'misconfigured',
+          detail: 'Stripe webhook endpoint is missing or disabled',
+        });
+        else if (stripeHealth.state === 'unavailable') providers.push({
+          name: 'Stripe',
+          status: 'unavailable',
+          detail: 'Stripe webhook readiness could not be checked',
+        });
+        else providers.push({ name: 'Stripe', status: 'misconfigured', detail: 'Stripe webhook is not configured' });
+      }
+
+      if (nowPaymentsStatus) providers.push(nowPaymentsStatus.ready
+        ? { name: 'NOWPayments', status: 'ready' }
+        : {
+            name: 'NOWPayments',
+            status: 'misconfigured',
+            detail: `NOWPayments webhook provider is not ready${nowPaymentsStatus.issues.length ? `: ${nowPaymentsStatus.issues.join(', ')}` : ''}`,
+          });
+
+      return classifyWebhookProbe(providers, failures);
     }),
   ]);
   return {
