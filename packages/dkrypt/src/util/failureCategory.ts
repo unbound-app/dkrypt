@@ -3,7 +3,7 @@ import { Type, type Static } from '@sinclair/typebox';
 const CANCELLED_RE = /^cancelled by/i;
 const QUEUE_DEADLINE_RE = /deadline exceeded while waiting in the queue/i;
 const TIMEOUT_RE = /timed? ?out/i;
-const UNREACHABLE_RE = /ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EHOSTUNREACH|no route to host|not reachable|connection closed/i;
+const UNREACHABLE_RE = /ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EHOSTUNREACH|no route to host|not reachable|connection closed|device agent connection was lost/i;
 const DISK_RE = /ENOSPC|no space left/i;
 const APP_STORE_RE = /App Store|AppStore|appstore bridge|install.*build/i;
 const TESTFLIGHT_RE = /TestFlight|testflight|beta app|train/i;

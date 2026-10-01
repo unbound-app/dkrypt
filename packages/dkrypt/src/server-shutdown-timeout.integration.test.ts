@@ -78,6 +78,14 @@ test('a decrypt that misses the shutdown drain deadline is queued for recovery',
     expect(recoveredStatus.statusCode).toBe(200);
     expect(recoveredStatus.json()).toMatchObject({ id: jobId, status: 'queued', progress: 'queued after graceful shutdown' });
 
+    const publicTimeline = await server.inject({ method: 'GET', url: `/v1/dashboard/jobs/${jobId}/timeline`, headers: { cookie } });
+    expect(publicTimeline.statusCode).toBe(200);
+    expect(publicTimeline.json()).toMatchObject({
+      id: jobId,
+      status: 'queued',
+      events: expect.arrayContaining([expect.objectContaining({ label: 'Requeued after graceful shutdown', status: 'queued' })]),
+    });
+
     await lifecycle.shutdown('SIGTERM');
   } finally {
     if (!signalSent) await lifecycle.shutdown('test-cleanup');

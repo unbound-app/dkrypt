@@ -318,13 +318,43 @@ jobs:
             echo "::add-mask::$session_cookie"
             echo "Submitted production decrypt job $job_id for $bundle_id"
           fi
+          if [[ -z "$session_cookie" ]]; then
+            session_cookie="$(run_dkrypt_bun 10001:10001 <<'JS'
+          const { setSessionCookie } = await import('/app/src/session.ts');
+          const { PermissionFlag } = await import('/app/src/permissions.ts');
+          let cookie = '';
+          setSessionCookie({ setHeader: (_name, value) => { cookie = value; } }, {
+            sub: 'root',
+            permissions: PermissionFlag.administrator,
+            mfaVerified: true,
+          });
+          process.stdout.write(cookie.split(';', 1)[0]);
+          JS
+            )"
+            echo "::add-mask::$session_cookie"
+          fi
           read_job_status() {
-            read_job_status_for_id "$job_id"
+            run_dkrypt_bun 10001:10001 -e TEST_JOB_ID="$job_id" -e TEST_SESSION_COOKIE="$session_cookie" <<'JS'
+          const base = `http://127.0.0.1:${process.env.PORT || 8080}`;
+          const response = await fetch(`${base}/v1/dashboard/jobs/${encodeURIComponent(process.env.TEST_JOB_ID)}/timeline`, {
+            headers: { cookie: process.env.TEST_SESSION_COOKIE },
+            signal: AbortSignal.timeout(5_000),
+          });
+          if (!response.ok) throw new Error(`dashboard job timeline failed with HTTP ${response.status}`);
+          const timeline = await response.json();
+          const events = Array.isArray(timeline.events) ? timeline.events : [];
+          const requeued = events.some(event => event.label === 'Requeued after graceful shutdown');
+          process.stdout.write(`${timeline.status}\t${timeline.bundleId ?? ''}\t${requeued}\t${events.at(-1)?.label ?? ''}\n`);
+          JS
           }
           running=0
           for attempt in $(seq 1 120); do
             status="$(read_job_status)"
-            IFS=$'\t' read -r job_state job_attempt _ <<< "$status"
+            IFS=$'\t' read -r job_state observed_bundle recovery_event progress_label <<< "$status"
+            if [[ "$observed_bundle" != "$bundle_id" ]]; then
+              echo "dashboard returned an unexpected job for $job_id: $observed_bundle" >&2
+              exit 1
+            fi
             if [[ "$job_state" == running ]]; then
               running=1
               break
@@ -363,40 +393,21 @@ jobs:
             echo "production container did not exit gracefully: exit=$exit_code oomKilled=$oom_killed" >&2
             exit 1
           fi
-          recovery_state="$(run_dkrypt_bun 10001:10001 -e TEST_JOB_ID="$job_id" <<'JS'
-          const { Database } = await import('bun:sqlite');
-          const database = new Database('/data/state/dkrypt.sqlite', { readonly: true });
-          try {
-            const row = database.query('SELECT payload FROM jobs WHERE id = ?').get(process.env.TEST_JOB_ID)
-              ?? database.query('SELECT payload FROM job_history WHERE id = ?').get(process.env.TEST_JOB_ID);
-            if (!row || typeof row.payload !== 'string') throw new Error('shutdown test job is missing from SQLite');
-            const job = JSON.parse(row.payload);
-            const completed = job.status === 'done';
-            const requeued = job.status === 'queued' && job.progress === 'queued after graceful shutdown';
-            const markedForRecovery = job.status === 'running' && job.shutdownRecoveryPending === true;
-            const timelineRequeued = Array.isArray(job.timeline) && job.timeline.some(event => event.label === 'Requeued after graceful shutdown');
-            process.stdout.write(`${job.status}\t${job.progress}\t${job.shutdownRecoveryPending === true}\t${completed || requeued || markedForRecovery || timelineRequeued}\n`);
-          } finally {
-            database.close();
-          }
-          JS
-          )"
-          IFS=$'\t' read -r persisted_status persisted_progress recovery_pending recovery_verified <<< "$recovery_state"
-          if [[ "$recovery_verified" != true ]]; then
-            echo "shutdown neither completed nor persisted recovery for job $job_id: status=$persisted_status progress=$persisted_progress recoveryPending=$recovery_pending" >&2
-            exit 1
-          fi
           recovered=0
           for attempt in $(seq 1 60); do
             status="$(read_job_status)"
-            IFS=$'\t' read -r job_state job_attempt _ <<< "$status"
-            if [[ "$job_state" == queued || "$job_state" == running || "$job_state" == done ]]; then
-              echo "Production decrypt survived shutdown in state $job_state on attempt $job_attempt"
+            IFS=$'\t' read -r job_state observed_bundle recovery_event progress_label <<< "$status"
+            if [[ "$observed_bundle" != "$bundle_id" ]]; then
+              echo "dashboard returned an unexpected job for $job_id after restart: $observed_bundle" >&2
+              exit 1
+            fi
+            if [[ "$job_state" == done || ( "$recovery_event" == true && ( "$job_state" == queued || "$job_state" == running ) ) ]]; then
+              echo "Production decrypt survived shutdown in state $job_state; last event: $progress_label"
               recovered=1
               break
             fi
             if [[ "$job_state" == failed ]]; then
-              echo "Production decrypt failed before becoming recoverable after restart on attempt $job_attempt" >&2
+              echo "Production decrypt failed before becoming recoverable after restart: $progress_label" >&2
               exit 1
             fi
             sleep 2

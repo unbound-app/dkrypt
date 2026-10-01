@@ -7,3 +7,10 @@ test('classifies queue deadline failures separately from work timeouts', () => {
   expect(classifyJobFailure(message)).toBe('queue');
   expect(categorizeFailure(message)).toBe('Queue wait expired');
 });
+
+test('classifies a lost Rust device agent connection as a retryable transport failure', () => {
+  const message = 'the dkrypt device agent connection was lost';
+
+  expect(classifyJobFailure(message)).toBe('device_transport');
+  expect(categorizeFailure(message)).toBe('Device unreachable');
+});

@@ -23,7 +23,7 @@ mock.module('./runner.js', () => ({
     if (job.bundleId === 'com.test.retry-deadline' || job.bundleId === 'com.test.retry-cancel') {
       retryDeadlineAttempts += 1;
       if (job.bundleId === 'com.test.retry-deadline') job.deadlineAt = Date.now() + 75;
-      return Promise.reject(new Error('network unavailable'));
+      return Promise.reject(new Error(job.bundleId === 'com.test.retry-cancel' ? 'the dkrypt device agent connection was lost' : 'network unavailable'));
     }
     return new Promise<void>((_resolve, reject) => {
       const abort = () => reject(signal?.reason instanceof Error ? signal.reason : new Error('operation aborted'));
@@ -568,7 +568,7 @@ test('does not let transient retry backoff extend the end-to-end job deadline', 
   }
 });
 
-test('cancels a running job while it is waiting for transient retry backoff', async () => {
+test('cancels a running job while it is waiting for transient Rust device-agent retry backoff', async () => {
   const originalRetries = config.jobMaxRetries;
   retryDeadlineAttempts = 0;
   config.jobMaxRetries = 1;
