@@ -1,0 +1,267 @@
+name: Production shutdown recovery smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type RUN_DKRYPT_PRODUCTION_SHUTDOWN_RECOVERY to restart production during a real decrypt
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-homelab
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: [self-hosted, homelab]
+    timeout-minutes: 60
+    steps:
+      - name: Submit decrypt and verify job recovery across SIGTERM
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+          EXPECTED_BUILD_REF: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" != refs/heads/main || "$CONFIRMATION" != RUN_DKRYPT_PRODUCTION_SHUTDOWN_RECOVERY ]]; then
+            echo 'dispatch must target main and include the exact production confirmation' >&2
+            exit 1
+          fi
+          if [[ "$(docker inspect --format '{{.State.Running}}' dkrypt)" != true ]]; then
+            echo 'dkrypt production container is not running' >&2
+            exit 1
+          fi
+          check_health() {
+            docker exec -i --user 10001:10001 -e EXPECTED_BUILD_REF="$EXPECTED_BUILD_REF" dkrypt bun - <<'JS'
+          const response = await fetch(`http://127.0.0.1:${process.env.PORT || 8080}/v1/health`, {
+            headers: { authorization: `Bearer ${process.env.API_KEY}` },
+            signal: AbortSignal.timeout(5_000),
+          });
+          const health = await response.json().catch(() => ({}));
+          if (!response.ok || health.database?.integrity !== 'ok' || health.bridge?.state !== 'ready' || health.device?.transportState !== 'ready' || health.device?.subsystems?.agent !== 'ready' || health.deployment?.ref !== process.env.EXPECTED_BUILD_REF) {
+            throw new Error(`production deployment is not the requested healthy build: ${JSON.stringify({ ok: health.ok, deployment: health.deployment, device: health.device })}`);
+          }
+          JS
+          }
+          check_health
+          stopped=0
+          session_cookie=''
+          restore_and_logout() {
+            if [[ "$stopped" == 1 ]]; then
+              docker start dkrypt >/dev/null || true
+            fi
+            if [[ -n "$session_cookie" ]] && [[ "$(docker inspect --format '{{.State.Running}}' dkrypt 2>/dev/null || true)" == true ]]; then
+              docker exec -i --user 10001:10001 -e TEST_SESSION_COOKIE="$session_cookie" dkrypt bun - <<'JS' >/dev/null 2>&1 || true
+          const { config } = await import('/app/src/config.ts');
+          const response = await fetch(`http://127.0.0.1:${process.env.PORT || 8080}/v1/auth/logout`, {
+            method: 'POST',
+            headers: {
+              cookie: process.env.TEST_SESSION_COOKIE,
+              origin: new URL(config.publicBaseUrl).origin,
+              'sec-fetch-site': 'same-origin',
+            },
+          });
+          if (!response.ok) process.exitCode = 1;
+          JS
+            fi
+          }
+          trap restore_and_logout EXIT
+          submission_output="$(docker exec -i --user 10001:10001 dkrypt bun - <<'JS'
+          const { config } = await import('/app/src/config.ts');
+          const { setSessionCookie } = await import('/app/src/session.ts');
+          const { PermissionFlag } = await import('/app/src/permissions.ts');
+          const { getPrimaryDevice } = await import('/app/src/store/state.ts');
+          const { findInstalledAppStoreBundle, withSSH } = await import('/app/src/idevice.ts');
+          const { lookupCurrentVersion } = await import('/app/src/scheduler/itunes.ts');
+          const candidates = ['org.videolan.vlc-ios', 'com.apple.Pages', 'com.apple.Numbers', 'com.apple.Keynote', 'com.apple.iMovie', 'com.apple.GarageBand'];
+          const device = getPrimaryDevice();
+          if (!device?.udid || device.host || device.usbmuxNetwork === true) throw new Error('primary device is not a directly paired USB device');
+          const installed = await withSSH(device, async connection => {
+            const bundles = new Set();
+            for (const bundleId of candidates) {
+              const appPath = await findInstalledAppStoreBundle(connection, bundleId);
+              if (appPath) bundles.add(bundleId);
+            }
+            return bundles;
+          });
+          const eligible = [];
+          const minimumSmokeAppSize = 250 * 1024 * 1024;
+          const maximumSmokeAppSize = 900 * 1024 * 1024;
+          const deviceVersion = device.iosVersion?.split('.').map(Number);
+          for (const bundleId of candidates) {
+            if (installed.has(bundleId)) continue;
+            try {
+              const current = await lookupCurrentVersion(bundleId, AbortSignal.timeout(10_000));
+              const minimumVersion = current.minimumOsVersion?.split('.').map(Number);
+              if (minimumVersion && (!deviceVersion || compareVersions(deviceVersion, minimumVersion) < 0)) continue;
+              if (!current.fileSizeBytes || current.fileSizeBytes < minimumSmokeAppSize || current.fileSizeBytes > maximumSmokeAppSize) continue;
+              eligible.push({ bundleId, fileSizeBytes: current.fileSizeBytes });
+            } catch {
+              continue;
+            }
+          }
+          eligible.sort((left, right) => right.fileSizeBytes - left.fileSizeBytes);
+          if (eligible.length === 0) throw new Error('no safe, compatible, uncached App Store app between 250 and 900 MB was available for the production decrypt smoke');
+          let sessionCookie = '';
+          setSessionCookie({ setHeader: (_name, value) => { sessionCookie = value; } }, {
+            sub: 'root',
+            permissions: PermissionFlag.administrator,
+            mfaVerified: true,
+          });
+          sessionCookie = sessionCookie.split(';', 1)[0];
+          const base = `http://127.0.0.1:${process.env.PORT || 8080}`;
+          const headers = {
+            cookie: sessionCookie,
+            origin: new URL(config.publicBaseUrl).origin,
+            'sec-fetch-site': 'same-origin',
+            'content-type': 'application/json',
+          };
+          const logoutSession = () => fetch(`${base}/v1/auth/logout`, { method: 'POST', headers, signal: AbortSignal.timeout(5_000) }).catch(() => {});
+          let selected;
+          try {
+            for (const candidate of eligible) {
+              const { bundleId } = candidate;
+              const submittedAt = Date.now();
+              const response = await fetch(`${base}/v1/dashboard/decrypt`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({ bundleId, projectId: 'default' }),
+                signal: AbortSignal.timeout(10_000),
+              });
+              const job = await response.json().catch(() => ({}));
+              if (response.status !== 202 || !job.id) throw new Error(`public decrypt request failed with HTTP ${response.status}`);
+              if (job.status === 'done' || job.status === 'failed' || job.cacheHit === true) continue;
+              if (Date.parse(job.createdAt) < submittedAt) continue;
+              selected = { jobId: job.id, bundleId };
+              break;
+            }
+          } catch (error) {
+            await logoutSession();
+            throw error;
+          }
+          if (!selected) {
+            await logoutSession();
+            throw new Error('all compatible App Store smoke candidates were cached, active, or completed before the job could be interrupted');
+          }
+          process.stdout.write(`${selected.jobId}\n${sessionCookie}\n${selected.bundleId}\n`);
+
+          function compareVersions(left, right) {
+            const length = Math.max(left.length, right.length);
+            for (let index = 0; index < length; index += 1) {
+              const difference = (left[index] ?? 0) - (right[index] ?? 0);
+              if (difference !== 0) return Math.sign(difference);
+            }
+            return 0;
+          }
+          JS
+          )"
+          mapfile -t submission_lines <<< "$submission_output"
+          if [[ ${#submission_lines[@]} -lt 3 ]]; then
+            echo 'decrypt submission did not return a job identity' >&2
+            exit 1
+          fi
+          job_id="${submission_lines[-3]}"
+          session_cookie="${submission_lines[-2]}"
+          bundle_id="${submission_lines[-1]}"
+          if [[ -z "$job_id" || -z "$session_cookie" || -z "$bundle_id" ]]; then
+            echo 'decrypt submission did not return a job identity' >&2
+            exit 1
+          fi
+          echo "::add-mask::$session_cookie"
+          echo "Submitted production decrypt job $job_id for $bundle_id"
+          read_job_status() {
+            docker exec -i --user 10001:10001 -e TEST_JOB_ID="$job_id" -e TEST_SESSION_COOKIE="$session_cookie" dkrypt bun - <<'JS'
+          const response = await fetch(`http://127.0.0.1:${process.env.PORT || 8080}/v1/dashboard/jobs/${process.env.TEST_JOB_ID}/status`, {
+            headers: { cookie: process.env.TEST_SESSION_COOKIE },
+            signal: AbortSignal.timeout(5_000),
+          });
+          const job = await response.json().catch(() => ({}));
+          if (!response.ok || !job.id) throw new Error(`job status query failed with HTTP ${response.status}`);
+          process.stdout.write(`${job.status}\t${job.attempt ?? 1}\n`);
+          JS
+          }
+          running=0
+          for attempt in $(seq 1 120); do
+            status="$(read_job_status)"
+            IFS=$'\t' read -r job_state job_attempt <<< "$status"
+            if [[ "$job_state" == running ]]; then
+              running=1
+              break
+            fi
+            if [[ "$job_state" == failed || "$job_state" == done ]]; then
+              echo "production decrypt reached $job_state before SIGTERM; no restart performed" >&2
+              exit 1
+            fi
+            sleep 5
+          done
+          if [[ "$running" != 1 ]]; then
+            echo 'production decrypt did not start within 10 minutes; no restart performed' >&2
+            exit 1
+          fi
+          echo "Sending SIGTERM to production while job $job_id is running"
+          stopped=1
+          docker stop --time 150 dkrypt
+          container_exit="$(docker inspect --format '{{.State.ExitCode}} {{.State.OOMKilled}}' dkrypt)"
+          IFS=' ' read -r exit_code oom_killed <<< "$container_exit"
+          recovery_state="$(docker run --rm --network none --user 10001:10001 --mount type=volume,source=dkrypt_state,target=/data/state,readonly -e TEST_JOB_ID="$job_id" --entrypoint bun dkrypt:latest - <<'JS'
+          const { Database } = await import('bun:sqlite');
+          const database = new Database('/data/state/dkrypt.sqlite', { readonly: true });
+          try {
+            const row = database.query('SELECT payload FROM jobs WHERE id = ?').get(process.env.TEST_JOB_ID);
+            if (!row || typeof row.payload !== 'string') throw new Error('shutdown test job is missing from SQLite');
+            const job = JSON.parse(row.payload);
+            const requeued = job.status === 'queued' && job.progress === 'queued after graceful shutdown';
+            const markedForRecovery = job.status === 'running' && job.shutdownRecoveryPending === true;
+            const timelineRequeued = Array.isArray(job.timeline) && job.timeline.some(event => event.label === 'Requeued after graceful shutdown');
+            process.stdout.write(`${job.status}\t${job.progress}\t${job.shutdownRecoveryPending === true}\t${requeued || markedForRecovery || timelineRequeued}\n`);
+          } finally {
+            database.close();
+          }
+          JS
+          )"
+          IFS=$'\t' read -r persisted_status persisted_progress recovery_pending recovery_verified <<< "$recovery_state"
+          docker start dkrypt >/dev/null
+          stopped=0
+          if [[ "$exit_code" != 0 || "$oom_killed" != false ]]; then
+            echo "production container did not exit gracefully: exit=$exit_code oomKilled=$oom_killed" >&2
+            exit 1
+          fi
+          if [[ "$recovery_verified" != true ]]; then
+            echo "shutdown did not persist a requeue marker for job $job_id: status=$persisted_status progress=$persisted_progress recoveryPending=$recovery_pending" >&2
+            exit 1
+          fi
+          ready=0
+          for attempt in $(seq 1 90); do
+            if check_health; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          if [[ "$ready" != 1 ]]; then
+            docker logs --tail 100 dkrypt
+            echo 'dkrypt did not recover healthy USB-agent readiness after SIGTERM' >&2
+            exit 1
+          fi
+          recovered=0
+          for attempt in $(seq 1 360); do
+            status="$(read_job_status)"
+            IFS=$'\t' read -r job_state job_attempt <<< "$status"
+            if [[ "$job_state" == done ]]; then
+              echo "Production decrypt completed after recovery on attempt $job_attempt"
+              recovered=1
+              break
+            fi
+            if [[ "$job_state" == failed ]]; then
+              echo "Production decrypt failed after restart on attempt $job_attempt" >&2
+              exit 1
+            fi
+            sleep 5
+          done
+          if [[ "$recovered" != 1 ]]; then
+            echo 'production job remained non-terminal after 30 minutes of recovery monitoring' >&2
+            exit 1
+          fi
