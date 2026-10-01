@@ -6,6 +6,7 @@ import type {
   BillingCancelRoute,
   BillingCheckoutControlRoute,
   BillingCheckoutRoute,
+  BillingProviderStatusRoute,
   BillingSubscriptionRoute,
   BillingSubscriptionsRoute,
   BillingWebhookInboxParamsRoute,
@@ -365,7 +366,7 @@ export const billingWebhookRoutes: FastifyPluginAsyncTypebox<{ stripeClient?: ()
 
 export const billingRoutes: FastifyPluginAsyncTypebox<{
   stripeClient?: () => Stripe;
-  stripeWebhookHealth?: () => Promise<StripeWebhookHealth>;
+  stripeWebhookHealth?: (forceRefresh: boolean) => Promise<StripeWebhookHealth>;
 }> = async (server, options) => {
   const callStripe = <T>(request: (client: Stripe) => Promise<T>): Promise<T> => options.stripeClient
     ? request(options.stripeClient())
@@ -553,8 +554,9 @@ export const billingRoutes: FastifyPluginAsyncTypebox<{
     return reply.send({ paused });
   });
 
-  server.get('/v1/billing/provider-status', { schema: getRouteContract('GET', '/v1/billing/provider-status'), preHandler: requireBillingManager }, async (_request, reply) => {
-    const stripeWebhook = await (options.stripeWebhookHealth ?? (() => inspectStripeWebhookHealth(config.stripeSecretKey ? options.stripeClient?.() : undefined)))();
+  server.get<BillingProviderStatusRoute>('/v1/billing/provider-status', { schema: getRouteContract('GET', '/v1/billing/provider-status'), preHandler: requireBillingManager }, async (request, reply) => {
+    const forceRefresh = request.query.refresh === 'true';
+    const stripeWebhook = await (options.stripeWebhookHealth ?? ((refresh) => inspectStripeWebhookHealth(config.stripeSecretKey ? options.stripeClient?.() : undefined, undefined, refresh)))(forceRefresh);
     return reply.send({ checkoutsPaused: areNewBillingCheckoutsPaused(), stripe: { enabled: stripeEnabled, environment: stripeEnvironment, missingConfiguration: stripeMissingConfiguration, webhook: stripeWebhook }, crypto: await getNowPaymentsProviderStatus() });
   });
 

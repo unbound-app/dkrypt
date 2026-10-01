@@ -965,9 +965,11 @@ describe('Stripe billing webhooks', () => {
     const server = Fastify();
     const managerCookie = createSessionCookie(PermissionFlag.manageBilling);
     let healthChecks = 0;
+    const forceRefreshValues: boolean[] = [];
     await server.register(billingRoutes, {
-      stripeWebhookHealth: async () => {
+      stripeWebhookHealth: async (forceRefresh = false) => {
         healthChecks += 1;
+        forceRefreshValues.push(forceRefresh);
         return {
           state: 'missing_events',
           endpointUrl,
@@ -982,17 +984,20 @@ describe('Stripe billing webhooks', () => {
       const anonymous = await server.inject({ method: 'GET', url: '/v1/billing/provider-status' });
       const viewer = await server.inject({ method: 'GET', url: '/v1/billing/provider-status', headers: { cookie: createSessionCookie(0n) } });
       const status = await server.inject({ method: 'GET', url: '/v1/billing/provider-status', headers: { cookie: managerCookie } });
+      const refreshed = await server.inject({ method: 'GET', url: '/v1/billing/provider-status?refresh=true', headers: { cookie: managerCookie } });
 
       expect(anonymous.statusCode).toBe(401);
       expect(viewer.statusCode).toBe(403);
       expect(status.statusCode).toBe(200);
+      expect(refreshed.statusCode).toBe(200);
       expect(status.json().stripe.webhook).toMatchObject({
         state: 'missing_events',
         endpointUrl,
         missingEvents,
       });
       expect(status.json().stripe.webhook.checkedAt).toEqual(expect.any(String));
-      expect(healthChecks).toBe(1);
+      expect(healthChecks).toBe(2);
+      expect(forceRefreshValues).toEqual([false, true]);
     } finally {
       await server.close();
     }

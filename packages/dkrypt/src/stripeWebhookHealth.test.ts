@@ -48,6 +48,25 @@ test('Stripe webhook health accepts an enabled endpoint with every required even
   expect(calls).toBe(1);
 });
 
+test('Stripe webhook health can bypass its cache and replace it with a fresh result', async () => {
+  let calls = 0;
+  const client = createStripeClient([{
+    id: 'we_dkrypt',
+    url: 'https://dkrypt.example/v1/stripe/webhook',
+    status: 'enabled',
+    enabled_events: [...STRIPE_WEBHOOK_EVENTS],
+  }], () => { calls += 1; });
+
+  const first = await getStripeWebhookHealth(client, 15_000);
+  const refreshed = await getStripeWebhookHealth(client, 15_001, true);
+  const cachedRefresh = await getStripeWebhookHealth(client, 15_002);
+
+  expect(first.checkedAt).toBe(new Date(15_000).toISOString());
+  expect(refreshed.checkedAt).toBe(new Date(15_001).toISOString());
+  expect(cachedRefresh).toEqual(refreshed);
+  expect(calls).toBe(2);
+});
+
 test('Stripe webhook health reports all required events when the enabled endpoint is missing', async () => {
   const status = await getStripeWebhookHealth(createStripeClient([]), 20_000);
 

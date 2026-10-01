@@ -29,12 +29,12 @@ export function clearStripeWebhookHealthCache(): void {
   cachedStatus = undefined;
 }
 
-export async function getStripeWebhookHealth(client: Stripe | undefined, now = Date.now()): Promise<StripeWebhookHealth> {
+export async function getStripeWebhookHealth(client: Stripe | undefined, now = Date.now(), forceRefresh = false): Promise<StripeWebhookHealth> {
   const endpointUrl = new URL(endpointPath, config.publicBaseUrl).toString();
   if (!config.stripeSecretKey) {
     return { state: 'not_configured', endpointUrl, requiredEvents: [...STRIPE_WEBHOOK_EVENTS], missingEvents: [] };
   }
-  if (cachedStatus?.endpointUrl === endpointUrl && cachedStatus.expiresAt > now) return cloneStatus(cachedStatus.status);
+  if (!forceRefresh && cachedStatus?.endpointUrl === endpointUrl && cachedStatus.expiresAt > now) return cloneStatus(cachedStatus.status);
 
   const checkedAt = new Date(now).toISOString();
   try {

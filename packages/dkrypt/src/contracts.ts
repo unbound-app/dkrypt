@@ -17,6 +17,7 @@ import {
   billingCheckoutBodySchema,
   billingCheckoutControlBodySchema,
   billingIdempotencyKeyHeadersSchema,
+  billingProviderStatusQuerySchema,
   billingSubscriptionBodySchema,
   billingSubscriptionsQuerySchema,
   billingWebhookInboxParamsSchema,
@@ -926,7 +927,7 @@ register('POST', '/v1/billing/checkout', {
 register('POST', '/v1/billing/cancel', { headers: billingIdempotencyKeyHeadersSchema });
 register('GET', '/v1/billing', {});
 register('POST', '/v1/billing/portal', {});
-register('GET', '/v1/billing/provider-status', {});
+register('GET', '/v1/billing/provider-status', { querystring: billingProviderStatusQuerySchema });
 register('PUT', '/v1/billing/checkouts', { body: billingCheckoutControlBodySchema });
 register('GET', '/v1/billing/subscriptions', {
   querystring: billingSubscriptionsQuerySchema,
@@ -1184,7 +1185,7 @@ register('POST', '/v1/auth/reauthenticate', { response: { 200: AuthTokenResponse
 register('GET', '/v1/auth/sessions', { response: { 200: AuthSessionListResponse } });
 register('DELETE', '/v1/auth/sessions/:id', { params: object({ id: Identifier }), response: { 200: OkResponse } });
 register('POST', '/v1/auth/sessions/revoke-others', { response: { 200: AuthRevokeOthersResponse } });
-register('GET', '/v1/billing/provider-status', { response: { 200: BillingProviderStatusResponse } });
+register('GET', '/v1/billing/provider-status', { querystring: billingProviderStatusQuerySchema, response: { 200: BillingProviderStatusResponse } });
 register('PUT', '/v1/billing/checkouts', { response: { 200: BillingCheckoutControlResponse, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope, 503: ErrorEnvelope } });
 register('GET', '/v1/billing/webhooks/inbox', { response: { 200: WebhookInboxPage } });
 register('GET', '/v1/dashboard/doctor', { response: { 200: dashboardDoctorResponseSchema } });

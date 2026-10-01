@@ -36,6 +36,11 @@ export const billingSubscriptionsQuerySchema = Type.Object(
   { additionalProperties: true },
 );
 
+export const billingProviderStatusQuerySchema = Type.Object(
+  { refresh: Type.Optional(Type.Literal('true')) },
+  { additionalProperties: true },
+);
+
 export const billingWebhookInboxQuerySchema = Type.Object(
   {
     cursor: Type.Optional(Type.String({ minLength: 1, maxLength: 512 })),
@@ -66,6 +71,10 @@ export type BillingCancelRoute = {
 
 export type BillingSubscriptionsRoute = {
   Querystring: Static<typeof billingSubscriptionsQuerySchema>;
+};
+
+export type BillingProviderStatusRoute = {
+  Querystring: Static<typeof billingProviderStatusQuerySchema>;
 };
 
 export type BillingWebhookInboxRoute = {

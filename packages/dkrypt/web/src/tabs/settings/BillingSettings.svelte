@@ -67,12 +67,12 @@
     return state === 'ready' ? 'Events configured' : state === 'not_configured' ? 'Webhook not configured' : 'Webhook needs attention';
   }
 
-  async function load(): Promise<void> {
+  async function load(refreshProviderStatus = false): Promise<void> {
     refreshing = true;
     try {
       const [ledger, status] = await Promise.all([
         fetchBillingSubscriptions(subscriptionFilters()),
-        canManage ? fetchBillingProviderStatus() : Promise.resolve(null),
+        canManage ? fetchBillingProviderStatus(refreshProviderStatus) : Promise.resolve(null),
       ]);
       subscriptions = ledger.subscriptions;
       total = ledger.total;
@@ -182,7 +182,7 @@
 
 <div class="flex flex-col gap-4">
   <Card title="Billing subscriptions">
-    <div class="mb-4 flex flex-wrap items-center justify-between gap-2 text-sm text-muted"><span class="flex items-center gap-2"><CreditCard class="h-4 w-4" /> View active, pending, failed, and canceled member subscriptions across billing providers.</span><Button size="sm" variant="secondary" loading={refreshing} onclick={() => void load()}><RefreshCw class="h-4 w-4" /> Refresh</Button></div>
+    <div class="mb-4 flex flex-wrap items-center justify-between gap-2 text-sm text-muted"><span class="flex items-center gap-2"><CreditCard class="h-4 w-4" /> View active, pending, failed, and canceled member subscriptions across billing providers.</span><Button size="sm" variant="secondary" loading={refreshing} onclick={() => void load(true)}><RefreshCw class="h-4 w-4" /> Refresh</Button></div>
     <div class="grid gap-2 md:grid-cols-[minmax(0,1fr)_10rem_10rem_auto]">
       <Input bind:value={search} placeholder="Search member, email, plan, or subscription" aria-label="Search subscriptions" />
       <select class="rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text" bind:value={providerFilter} onchange={() => void load()} aria-label="Filter by provider"><option value="">All providers</option><option value="stripe">Stripe</option><option value="nowpayments">Crypto</option><option value="legacy">Historical records</option></select>

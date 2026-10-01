@@ -2231,8 +2231,8 @@ export interface BillingProviderStatus {
   crypto: { enabled: boolean; configured: boolean; ready: boolean; environment: 'test' | 'live'; settlementType?: string; settlementCurrency: string; supportedChains: string[]; supportedAssets: string[]; missingConfiguration: string[]; issues: string[]; checkedAt?: string };
 }
 
-export function fetchBillingProviderStatus(): Promise<BillingProviderStatus> {
-  return apiJson('/v1/billing/provider-status');
+export function fetchBillingProviderStatus(refresh = false): Promise<BillingProviderStatus> {
+  return apiJson(`/v1/billing/provider-status${refresh ? '?refresh=true' : ''}`);
 }
 
 export function setBillingCheckoutPaused(paused: boolean): Promise<{ paused: boolean }> {
