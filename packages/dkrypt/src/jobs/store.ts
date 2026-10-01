@@ -1140,19 +1140,9 @@ export function closeJobStore(): void {
 export async function shutdownJobs(timeoutMs = 15_000): Promise<JobShutdownResult> {
   stopJobSweeper();
   stopAcceptingJobs();
-  const now = Date.now();
-  for (const jobId of queue.splice(0)) {
-    clearQueuedDeadline(jobId);
-    const job = jobs.get(jobId);
-    if (!job || job.status !== 'queued') continue;
-    job.status = 'failed';
-    job.error = 'dkrypt is shutting down';
-    job.finishedAt = now;
-    appendJobTimelineEvent(job, job.error, 'failed', now);
-    recordJobHistory(toHistoryEntry(job));
-    settle(job);
-  }
+  const queuedForRecovery = queue.splice(0).filter((jobId) => jobs.get(jobId)?.status === 'queued').length;
   for (const jobId of [...queuedDeadlineTimers.keys()]) clearQueuedDeadline(jobId);
+  if (queuedForRecovery > 0) log.info('queued jobs preserved for recovery after shutdown', { count: queuedForRecovery });
   for (const job of jobs.values()) {
     if (job.status === 'running') {
       runningJobControllers.get(job.id)?.abort(new Error('dkrypt is shutting down'));
