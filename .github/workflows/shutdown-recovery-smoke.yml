@@ -81,7 +81,22 @@ jobs:
           const { getPrimaryDevice } = await import('/app/src/store/state.ts');
           const { findInstalledAppStoreBundle, withSSH } = await import('/app/src/idevice.ts');
           const { lookupCurrentVersion } = await import('/app/src/scheduler/itunes.ts');
-          const candidates = ['org.videolan.vlc-ios', 'com.apple.Pages', 'com.apple.Numbers', 'com.apple.Keynote', 'com.apple.iMovie', 'com.apple.GarageBand'];
+          const candidates = [
+            'org.videolan.vlc-ios',
+            'com.apple.Pages',
+            'com.apple.Numbers',
+            'com.apple.Keynote',
+            'com.apple.iMovie',
+            'com.google.ios.youtube',
+            'com.spotify.client',
+            'com.google.Gmail',
+            'com.google.Maps',
+            'com.facebook.Facebook',
+            'com.amazon.Amazon',
+            'com.reddit.Reddit',
+            'com.google.Drive',
+            'com.microsoft.Office.Word',
+          ];
           const device = getPrimaryDevice();
           if (!device?.udid || device.host || device.usbmuxNetwork === true) throw new Error('primary device is not a directly paired USB device');
           const installed = await withSSH(device, async connection => {
@@ -93,23 +108,34 @@ jobs:
             return bundles;
           });
           const eligible = [];
+          const skipped = { installed: 0, incompatible: 0, size: 0, unavailable: 0 };
           const minimumSmokeAppSize = 250 * 1024 * 1024;
           const maximumSmokeAppSize = 900 * 1024 * 1024;
           const deviceVersion = device.iosVersion?.split('.').map(Number);
           for (const bundleId of candidates) {
-            if (installed.has(bundleId)) continue;
+            if (installed.has(bundleId)) {
+              skipped.installed += 1;
+              continue;
+            }
             try {
               const current = await lookupCurrentVersion(bundleId, AbortSignal.timeout(10_000));
               const minimumVersion = current.minimumOsVersion?.split('.').map(Number);
-              if (minimumVersion && (!deviceVersion || compareVersions(deviceVersion, minimumVersion) < 0)) continue;
-              if (!current.fileSizeBytes || current.fileSizeBytes < minimumSmokeAppSize || current.fileSizeBytes > maximumSmokeAppSize) continue;
-              eligible.push({ bundleId, fileSizeBytes: current.fileSizeBytes });
+              if (minimumVersion && (!deviceVersion || compareVersions(deviceVersion, minimumVersion) < 0)) {
+                skipped.incompatible += 1;
+                continue;
+              }
+              if (current.fileSizeBytes && (current.fileSizeBytes < minimumSmokeAppSize || current.fileSizeBytes > maximumSmokeAppSize)) {
+                skipped.size += 1;
+                continue;
+              }
+              eligible.push({ bundleId, fileSizeBytes: current.fileSizeBytes ?? 0 });
             } catch {
+              skipped.unavailable += 1;
               continue;
             }
           }
           eligible.sort((left, right) => right.fileSizeBytes - left.fileSizeBytes);
-          if (eligible.length === 0) throw new Error('no safe, compatible, uncached App Store app between 250 and 900 MB was available for the production decrypt smoke');
+          if (eligible.length === 0) throw new Error(`no safe, compatible, uncached App Store app was available for the production decrypt smoke: ${JSON.stringify(skipped)}`);
           let sessionCookie = '';
           setSessionCookie({ setHeader: (_name, value) => { sessionCookie = value; } }, {
             sub: 'root',
