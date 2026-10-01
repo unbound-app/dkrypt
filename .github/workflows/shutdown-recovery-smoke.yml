@@ -343,20 +343,24 @@ jobs:
           if (!response.ok) throw new Error(`dashboard job timeline failed with HTTP ${response.status}`);
           const timeline = await response.json();
           const events = Array.isArray(timeline.events) ? timeline.events : [];
-          const requeued = events.some(event => event.label === 'Requeued after graceful shutdown');
-          process.stdout.write(`${timeline.status}\t${timeline.bundleId ?? ''}\t${requeued}\t${events.at(-1)?.label ?? ''}\n`);
+          const latestRequeue = events.filter(event => event.label === 'Requeued after graceful shutdown').at(-1);
+          process.stdout.write(`${timeline.status}\t${timeline.bundleId ?? ''}\t${latestRequeue?.at ?? 0}\t${events.at(-1)?.label ?? ''}\n`);
           JS
+          }
+          parse_job_status() {
+            IFS=$'\t' read -r job_state observed_bundle recovery_event_at progress_label <<< "$1"
+            if [[ "$observed_bundle" != "$bundle_id" ]]; then
+              echo "dashboard returned an unexpected job for $job_id: $observed_bundle" >&2
+              return 1
+            fi
           }
           running=0
           for attempt in $(seq 1 120); do
             status="$(read_job_status)"
-            IFS=$'\t' read -r job_state observed_bundle recovery_event progress_label <<< "$status"
-            if [[ "$observed_bundle" != "$bundle_id" ]]; then
-              echo "dashboard returned an unexpected job for $job_id: $observed_bundle" >&2
-              exit 1
-            fi
+            parse_job_status "$status"
             if [[ "$job_state" == running ]]; then
               running=1
+              pre_shutdown_recovery_at=$recovery_event_at
               break
             fi
             if [[ "$job_state" == failed || "$job_state" == done ]]; then
@@ -396,12 +400,8 @@ jobs:
           recovered=0
           for attempt in $(seq 1 60); do
             status="$(read_job_status)"
-            IFS=$'\t' read -r job_state observed_bundle recovery_event progress_label <<< "$status"
-            if [[ "$observed_bundle" != "$bundle_id" ]]; then
-              echo "dashboard returned an unexpected job for $job_id after restart: $observed_bundle" >&2
-              exit 1
-            fi
-            if [[ "$job_state" == done || ( "$recovery_event" == true && ( "$job_state" == queued || "$job_state" == running ) ) ]]; then
+            parse_job_status "$status"
+            if [[ "$job_state" == done || ( "$recovery_event_at" -gt "$pre_shutdown_recovery_at" && ( "$job_state" == queued || "$job_state" == running ) ) ]]; then
               echo "Production decrypt survived shutdown in state $job_state; last event: $progress_label"
               recovered=1
               break

@@ -2,16 +2,20 @@ import { mock, expect, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import type { Job } from '#jobs/types.js';
+import { appendJobTimelineEvent, type Job } from '#jobs/types.js';
 
 const testStateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-shutdown-recovery-'));
 process.env.STATE_DIR = testStateDir;
 
 let markRunnerStarted: (() => void) | undefined;
+let priorRecoveryAt = 0;
 const runnerStarted = new Promise<void>((resolve) => { markRunnerStarted = resolve; });
 
 mock.module('#jobs/runner.js', () => ({
-  runDecrypt: (_job: Job, _device: unknown, signal?: AbortSignal) => {
+  runDecrypt: (job: Job, _device: unknown, signal?: AbortSignal) => {
+    priorRecoveryAt = Date.now() - 60_000;
+    appendJobTimelineEvent(job, 'Requeued after graceful shutdown', 'queued', priorRecoveryAt);
+    appendJobTimelineEvent(job, 'Started after an earlier recovery', 'running');
     markRunnerStarted?.();
     return new Promise<void>((_resolve, reject) => {
       signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
@@ -85,6 +89,10 @@ test('a decrypt that misses the shutdown drain deadline is queued for recovery',
       status: 'queued',
       events: expect.arrayContaining([expect.objectContaining({ label: 'Requeued after graceful shutdown', status: 'queued' })]),
     });
+    const recoveryEvents = publicTimeline.json().events.filter((event: { label: string }) => event.label === 'Requeued after graceful shutdown');
+    expect(recoveryEvents).toHaveLength(2);
+    expect(recoveryEvents[0].at).toBe(priorRecoveryAt);
+    expect(recoveryEvents[1].at).toBeGreaterThan(priorRecoveryAt);
 
     await lifecycle.shutdown('SIGTERM');
   } finally {
