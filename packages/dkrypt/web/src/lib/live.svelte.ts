@@ -16,6 +16,7 @@ export const liveState = $state<{
   stale: boolean;
   lastEventAt: number | null;
   sequenceGap: boolean;
+  billingRevision: number;
 }>({
 	overview: null,
 	logs: [],
@@ -29,6 +30,7 @@ export const liveState = $state<{
 	stale: false,
 	lastEventAt: null,
 	sequenceGap: false,
+	billingRevision: 0,
 });
 
 let source: EventSource | null = null;
@@ -142,7 +144,10 @@ export function connectLive(): void {
 	eventSource.onopen = () => {
 		const awaitingFreshOverview = liveState.stale || liveState.sequenceGap;
 		sequenceTracker.reset();
-		if (hasConnectedBefore && liveState.disconnectedAt !== null) serverStateCache.invalidateAll();
+		if (hasConnectedBefore && liveState.disconnectedAt !== null) {
+			serverStateCache.invalidateAll();
+			liveState.billingRevision += 1;
+		}
 		hasConnectedBefore = true;
 		liveState.connected = true;
 		if (!awaitingFreshOverview) liveState.disconnectedAt = null;
@@ -180,6 +185,13 @@ export function connectLive(): void {
 
   eventSource.addEventListener('presence', (e) => {
     liveState.onlineUsers = readEvent<string[]>(e);
+  });
+
+  eventSource.addEventListener('billing', (e) => {
+    readEvent(e);
+    serverStateCache.invalidatePrefix('/v1/billing/subscriptions');
+    serverStateCache.invalidatePrefix('/v1/billing/provider-status');
+    liveState.billingRevision += 1;
   });
 
   eventSource.addEventListener('project-access-revoked', () => {

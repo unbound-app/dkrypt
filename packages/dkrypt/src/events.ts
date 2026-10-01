@@ -9,6 +9,10 @@ export function emitJobsChanged(): void {
   dashboardEvents.emit('jobsChanged');
 }
 
+export function emitBillingChanged(): void {
+  dashboardEvents.emit('billingChanged');
+}
+
 export function emitLogAdded(entry: LogEntry): void {
   dashboardEvents.emit('logAdded', entry);
 }

@@ -77,6 +77,7 @@ export const dashboardEventsRoutes: FastifyPluginAsyncTypebox = async (server) =
       if ((entry.projectId ?? DEFAULT_PROJECT_ID) === projectId) sendEvent('history', dashboardHistoryEntry(entry));
     };
     const onPresenceChanged = (usernames: string[]) => sendEvent('presence', usernames);
+    const onBillingChanged = () => sendEvent('billing', {});
     const onProjectChanged = (changedProjectId?: string) => {
       if (changedProjectId === undefined || changedProjectId === projectId) {
         if (closeForRevokedProject()) sendEvent('overview', buildDashboardOverview(session.permissions, sub, projectId));
@@ -87,6 +88,9 @@ export const dashboardEventsRoutes: FastifyPluginAsyncTypebox = async (server) =
     if (hasPermission(session.permissions, PermissionFlag.viewLogs)) dashboardEvents.on('logAdded', onLogAdded);
     dashboardEvents.on('historyAdded', onHistoryAdded);
     dashboardEvents.on('presenceChanged', onPresenceChanged);
+    if (hasPermission(session.permissions, PermissionFlag.viewBilling) || hasPermission(session.permissions, PermissionFlag.manageBilling)) {
+      dashboardEvents.on('billingChanged', onBillingChanged);
+    }
     dashboardEvents.on('projectChanged', onProjectChanged);
     dashboardEvents.on('projectsChanged', onProjectChanged);
 
@@ -102,6 +106,7 @@ export const dashboardEventsRoutes: FastifyPluginAsyncTypebox = async (server) =
       dashboardEvents.off('logAdded', onLogAdded);
       dashboardEvents.off('historyAdded', onHistoryAdded);
       dashboardEvents.off('presenceChanged', onPresenceChanged);
+      dashboardEvents.off('billingChanged', onBillingChanged);
       dashboardEvents.off('projectChanged', onProjectChanged);
       dashboardEvents.off('projectsChanged', onProjectChanged);
     });

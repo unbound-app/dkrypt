@@ -12,7 +12,9 @@ import {
   recordStripeCheckoutIdempotencyAttempt,
   replaceBillingSnapshot,
   resolveBillingEntitlements,
+  upsertBillingSubscription,
 } from '#billing.js';
+import { dashboardEvents } from '#events.js';
 import { PermissionFlag } from '#permissions.js';
 
 function subscription(planId: BillingSubscription['planId'], status = 'active'): BillingSubscription {
@@ -110,6 +112,35 @@ describe('billing provider cutover', () => {
     expect(getBillingCustomerId(userId)).toBeUndefined();
     expect(getBillingEntitlements(userId).planId).toBe('viewer');
     replaceBillingSnapshot({ customers: [], subscriptions: [] });
+  });
+});
+
+describe('billing dashboard updates', () => {
+  test('emits invalidation events for accepted subscription changes only', () => {
+    const previousSnapshot = exportBillingSnapshot();
+    const initial = subscription('regular');
+    initial.subscriptionId = `sub_${crypto.randomUUID()}`;
+    initial.occurredAt = '2026-07-23T00:00:00.000Z';
+    initial.updatedAt = initial.occurredAt;
+    const emitted: string[] = [];
+    const onBillingChanged = () => emitted.push('changed');
+    replaceBillingSnapshot({ customers: [], subscriptions: [] });
+    dashboardEvents.on('billingChanged', onBillingChanged);
+
+    try {
+      expect(upsertBillingSubscription(initial)).toBe(true);
+      expect(upsertBillingSubscription({
+        ...initial,
+        status: 'canceled',
+        occurredAt: '2026-07-24T00:00:00.000Z',
+        updatedAt: '2026-07-24T00:00:00.000Z',
+      })).toBe(true);
+      expect(upsertBillingSubscription({ ...initial, status: 'active' })).toBe(false);
+      expect(emitted).toHaveLength(2);
+    } finally {
+      dashboardEvents.off('billingChanged', onBillingChanged);
+      replaceBillingSnapshot(previousSnapshot);
+    }
   });
 });
 

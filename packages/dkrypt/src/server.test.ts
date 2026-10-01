@@ -7,7 +7,7 @@ import { exportBillingSnapshot, replaceBillingSnapshot, upsertBillingSubscriptio
 import { currentCorrelation } from '#correlation.js';
 import { deleteAuthProfile, upsertAuthProfile } from '#identity.js';
 import { scopedLogger } from '#logger.js';
-import { emitJobsChanged } from '#events.js';
+import { closeDashboardConnections, dashboardEvents, emitBillingChanged, emitJobsChanged } from '#events.js';
 import { cancelQueuedJob, enqueueDecryptJob } from '#jobs/store.js';
 import { config } from '#config.js';
 import { PermissionFlag, serializeBits } from '#permissions.js';
@@ -2330,6 +2330,68 @@ test('Fastify sends the initial dashboard overview over SSE', async () => {
     controller.abort();
     await server.close();
   }
+});
+
+test('billing changes reach billing viewers over SSE without exposing subscription data', async () => {
+  const server = await buildTestServer();
+  const baseUrl = await server.listen({ port: 0, host: '127.0.0.1' });
+  const managerController = new AbortController();
+  const viewerController = new AbortController();
+  const timeout = setTimeout(() => {
+    managerController.abort();
+    viewerController.abort();
+  }, 5_000);
+  const previousListenerCount = dashboardEvents.listenerCount('billingChanged');
+
+  const readEvent = async (reader: { read(): Promise<{ value?: Uint8Array; done: boolean }> }, state: { pending: string }): Promise<string> => {
+    const decoder = new TextDecoder();
+    while (!state.pending.includes('\n\n')) {
+      const chunk = await reader.read();
+      if (chunk.done) throw new Error('dashboard event stream ended unexpectedly');
+      state.pending += decoder.decode(chunk.value, { stream: true });
+    }
+    const boundary = state.pending.indexOf('\n\n');
+    const event = state.pending.slice(0, boundary);
+    state.pending = state.pending.slice(boundary + 2);
+    return event;
+  };
+
+  try {
+    const managerResponse = await fetch(`${baseUrl}/v1/dashboard/events`, {
+      headers: { cookie: createSessionCookie('root', PermissionFlag.viewBilling) },
+      signal: managerController.signal,
+    });
+    const viewerResponse = await fetch(`${baseUrl}/v1/dashboard/events`, {
+      headers: { cookie: createSessionCookie('root', PermissionFlag.viewUsers) },
+      signal: viewerController.signal,
+    });
+    expect(managerResponse.status).toBe(200);
+    expect(viewerResponse.status).toBe(200);
+    const managerReader = managerResponse.body?.getReader();
+    const viewerReader = viewerResponse.body?.getReader();
+    if (!managerReader || !viewerReader) throw new Error('dashboard event stream has no reader');
+    const managerState = { pending: '' };
+    const viewerState = { pending: '' };
+    await readEvent(managerReader, managerState);
+    await readEvent(managerReader, managerState);
+    await readEvent(viewerReader, viewerState);
+    await readEvent(viewerReader, viewerState);
+    expect(dashboardEvents.listenerCount('billingChanged')).toBe(previousListenerCount + 1);
+
+    emitBillingChanged();
+
+    const event = await readEvent(managerReader, managerState);
+    expect(event).toContain('event: billing');
+    expect(JSON.parse(event.split('\n').find((line) => line.startsWith('data: '))?.slice(6) ?? '{}')).toEqual({ sequence: 3 });
+  } finally {
+    clearTimeout(timeout);
+    managerController.abort();
+    viewerController.abort();
+    closeDashboardConnections();
+    await server.close();
+  }
+
+  expect(dashboardEvents.listenerCount('billingChanged')).toBe(previousListenerCount);
 });
 
 test('each dashboard event stream tracks its own sequence while other clients are connected', async () => {

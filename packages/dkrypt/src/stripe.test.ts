@@ -3,7 +3,7 @@ import Fastify from 'fastify';
 import Stripe from 'stripe';
 import { describe, expect, test } from 'bun:test';
 import type { Response as HttpResponse } from '#http.js';
-import { PermissionFlag } from '#permissions.js';
+import { hasPermission, PermissionFlag } from '#permissions.js';
 import {
   exportBillingSnapshot,
   getBillingCustomerId,
@@ -15,7 +15,7 @@ import { config } from '#config.js';
 import { billingRoutes, processStripeEvent } from '#routes/billing.js';
 import { buildTestServer } from '#testServer.js';
 import { STRIPE_WEBHOOK_EVENTS } from '#stripeWebhookEvents.js';
-import { getAuditLog } from '#store/state.js';
+import { getAuditLog, getUserEffectivePermissions } from '#store/state.js';
 import { flushTelemetry } from '#telemetry.js';
 import { setSessionCookie } from '#session.js';
 import { claimWebhook, getWebhookInboxRecord, markWebhookProcessed, quarantineWebhook, receiveWebhook, releaseWebhookClaim } from '#webhookInbox.js';
@@ -285,6 +285,8 @@ describe('Stripe billing webhooks', () => {
     expect(cancelledSubscription).toBe(1);
     expect(getBillingSubscriptionById(subscriptionId)).toMatchObject({ status: 'revoked', failureReason: 'payment refunded' });
     expect(getBillingEntitlements(userId)).toMatchObject({ planId: 'viewer', decrypt: false, api: false });
+    expect(hasPermission(getUserEffectivePermissions(userId), PermissionFlag.requestDecrypt)).toBeFalse();
+    expect(hasPermission(getUserEffectivePermissions(userId), PermissionFlag.createApiKeys)).toBeFalse();
 
     const laterActiveEvent = subscriptionEvent(userId, customerId, subscriptionId);
     laterActiveEvent.type = 'customer.subscription.updated';

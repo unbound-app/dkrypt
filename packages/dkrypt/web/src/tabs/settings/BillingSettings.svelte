@@ -9,6 +9,7 @@
   import { fetchBillingProviderStatus, fetchBillingSubscriptions, fetchBillingWebhookInbox, quarantineBillingWebhook, replayBillingWebhook, setBillingCheckoutPaused, type BillingManagerSubscription, type BillingProviderStatus, type BillingWebhookInboxRecord } from '#lib/api';
   import { PermissionFlag } from '#lib/permissions';
   import { sessionHasPermission } from '#lib/session.svelte';
+  import { liveState } from '#lib/live.svelte';
   import { showToast } from '#lib/ui.svelte';
   import type { BadgeVariant } from '#lib/components/ui/variants';
   import { fmtCalendarDate, fmtCurrency } from '#lib/format.svelte';
@@ -37,6 +38,9 @@
   let webhookProviderFilter = $state('');
   let webhookStatusFilter = $state('');
   let checkoutPauseLoading = $state(false);
+  let observedBillingRevision = liveState.billingRevision;
+  let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+  let loadGeneration = 0;
 
   function subscriptionFilters(cursor?: string): Parameters<typeof fetchBillingSubscriptions>[0] {
     return { q: search || undefined, planId: planId || undefined, provider: providerFilter || undefined, status: statusFilter || undefined, from: from || undefined, to: to || undefined, wallet: wallet || undefined, invoice: invoice || undefined, cursor, limit: 50 };
@@ -68,22 +72,27 @@
   }
 
   async function load(refreshProviderStatus = false): Promise<void> {
+    const generation = ++loadGeneration;
     refreshing = true;
     try {
       const [ledger, status] = await Promise.all([
         fetchBillingSubscriptions(subscriptionFilters()),
         canManage ? fetchBillingProviderStatus(refreshProviderStatus) : Promise.resolve(null),
       ]);
+      if (generation !== loadGeneration) return;
       subscriptions = ledger.subscriptions;
       total = ledger.total;
       nextCursor = ledger.nextCursor;
       providerStatus = status;
       if (canManage) await loadWebhooks();
     } catch (error) {
+      if (generation !== loadGeneration) return;
       showToast(error instanceof Error ? error.message : "Couldn't load billing subscriptions", 'error');
     } finally {
-      loading = false;
-      refreshing = false;
+      if (generation === loadGeneration) {
+        loading = false;
+        refreshing = false;
+      }
     }
   }
 
@@ -154,7 +163,7 @@
   function statusVariant(status: string): BadgeVariant {
     if (status === 'active' || status === 'trialing') return 'success';
     if (status === 'past_due') return 'warning';
-    if (status === 'cancelled' || status === 'canceled' || status === 'unpaid') return 'destructive';
+    if (status === 'cancelled' || status === 'canceled' || status === 'unpaid' || status === 'revoked') return 'destructive';
     return 'secondary';
   }
 
@@ -178,6 +187,21 @@
   }
 
   onMount(() => void load());
+
+  $effect(() => {
+    const revision = liveState.billingRevision;
+    if (revision === observedBillingRevision) return;
+    observedBillingRevision = revision;
+    if (refreshTimer) clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(() => {
+      refreshTimer = undefined;
+      void load();
+    }, 150);
+    return () => {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshTimer = undefined;
+    };
+  });
 </script>
 
 <div class="flex flex-col gap-4">
@@ -186,7 +210,7 @@
     <div class="grid gap-2 md:grid-cols-[minmax(0,1fr)_10rem_10rem_auto]">
       <Input bind:value={search} placeholder="Search member, email, plan, or subscription" aria-label="Search subscriptions" />
       <select class="rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text" bind:value={providerFilter} onchange={() => void load()} aria-label="Filter by provider"><option value="">All providers</option><option value="stripe">Stripe</option><option value="nowpayments">Crypto</option><option value="legacy">Historical records</option></select>
-      <select class="rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text" bind:value={statusFilter} onchange={() => void load()} aria-label="Filter by status"><option value="">All statuses</option><option value="active">Active</option><option value="past_due">Past due</option><option value="cancelled">Canceled</option></select>
+      <select class="rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text" bind:value={statusFilter} onchange={() => void load()} aria-label="Filter by status"><option value="">All statuses</option><option value="active">Active</option><option value="past_due">Past due</option><option value="cancelled">Canceled</option><option value="revoked">Revoked</option></select>
       <Button variant="secondary" onclick={() => void load()}><RefreshCw class="h-4 w-4" /> Apply</Button>
     </div>
     <details class="mt-3 rounded-lg border border-border/70 px-3 py-2">

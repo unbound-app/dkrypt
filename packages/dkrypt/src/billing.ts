@@ -5,6 +5,7 @@ import { openStateCollectionDatabase, writeStateMirror, type StateCollectionRepl
 import { billingSnapshotReplacements, createBillingRepository, type BillingSubscriptionFilter } from '#store/billingRepository.js';
 import { config } from '#config.js';
 import { hasPermission, PermissionFlag } from '#permissions.js';
+import { emitBillingChanged } from '#events.js';
 
 export type BillingProvider = 'stripe' | 'nowpayments' | 'legacy';
 export type PlanId = 'viewer' | 'regular' | 'priority' | 'api' | 'priority_api';
@@ -325,6 +326,7 @@ export function upsertBillingSubscription(subscription: BillingSubscription): bo
     ].slice(-5000);
   }
   persist();
+  emitBillingChanged();
   return true;
 }
 
