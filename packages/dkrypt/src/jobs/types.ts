@@ -50,6 +50,7 @@ export interface Job {
   deadlineAt?: number;
   schedulerDeadlineAt?: number;
   deadlineExceeded?: boolean;
+  shutdownRecoveryPending?: boolean;
   failureClass?: JobFailureClass;
   cancelledBy?: string;
   childProcess?: ChildProcess;

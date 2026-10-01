@@ -25,3 +25,27 @@ test('shutdown preserves queued jobs for the replacement process', async () => {
     closeJobStore();
   }
 });
+
+test('startup recovers a shutdown-marked running job as queued instead of failed', () => {
+  const saved = {
+    id: `shutdown-recovery-${crypto.randomUUID()}`,
+    correlationId: crypto.randomUUID(),
+    projectId: 'default',
+    bundleId: 'com.test.shutdown-recovery',
+    source: 'manual' as const,
+    priority: 0,
+    status: 'running' as const,
+    progress: 'decrypting',
+    createdAt: Date.now(),
+    startedAt: Date.now(),
+    deadlineAt: Date.now() - 1,
+    shutdownRecoveryPending: true,
+    waiters: [],
+  };
+
+  const recovered = recoverPersistedActiveJobs([saved]);
+
+  expect(recovered.queued).toMatchObject([{ id: saved.id, status: 'queued', progress: 'queued after graceful shutdown' }]);
+  expect(recovered.queued[0]?.deadlineAt).toBeGreaterThan(Date.now());
+  expect(recovered.interrupted).toEqual([]);
+});

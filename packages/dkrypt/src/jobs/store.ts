@@ -116,6 +116,34 @@ function loadDoneJobs(): void {
   }
 }
 
+function requeueAfterGracefulShutdown(job: Job, now = Date.now()): Job {
+  const isSchedulerJob = job.source === 'scheduler' || job.schedulerDeadlineAt !== undefined;
+  const requeuedDeadlineAt = now + deadlineDurationMs(isSchedulerJob ? 'scheduler' : 'manual');
+  const requeued = {
+    ...job,
+    status: 'queued' as const,
+    progress: 'queued after graceful shutdown',
+    error: undefined,
+    failureClass: undefined,
+    startedAt: undefined,
+    finishedAt: undefined,
+    deadlineExceeded: false,
+    deadlineAt: requeuedDeadlineAt,
+    schedulerDeadlineAt: isSchedulerJob ? requeuedDeadlineAt : undefined,
+    shutdownRecoveryPending: undefined,
+    childProcess: undefined,
+  };
+  appendJobTimelineEvent(requeued, 'Requeued after graceful shutdown', 'queued', now);
+  return requeued;
+}
+
+function persistShutdownRecovery(job: Job): void {
+  Object.assign(job, requeueAfterGracefulShutdown(job));
+  insertByPriority(job.id, job.priority);
+  persistActiveJobs();
+  emitJobsChanged();
+}
+
 export function recoverPersistedActiveJobs(saved: Job[], now = Date.now()): { queued: Job[]; interrupted: Job[] } {
   const queued: Job[] = [];
   const interrupted: Job[] = [];
@@ -131,6 +159,10 @@ export function recoverPersistedActiveJobs(saved: Job[], now = Date.now()): { qu
       continue;
     }
     if (restored.status === 'running') {
+      if (restored.shutdownRecoveryPending) {
+        queued.push(requeueAfterGracefulShutdown(restored, now));
+        continue;
+      }
       interrupted.push({
         ...restored,
         status: 'failed',
@@ -190,8 +222,17 @@ if (!loadDatabaseJobs()) {
 
 const RETRY_BACKOFF_MS = 5_000;
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function waitForCompletionOrTimeout(completion: Promise<unknown>, timeoutMs: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(false), Math.max(0, timeoutMs));
+    completion.then(() => {
+      clearTimeout(timer);
+      resolve(true);
+    }, () => {
+      clearTimeout(timer);
+      resolve(true);
+    });
+  });
 }
 
 function findActiveJobForBundle(lookup: JobBuildLookup): Job | undefined {
@@ -379,6 +420,15 @@ export class ScheduledJobDeferredError extends Error {
   }
 }
 
+export class JobsShuttingDownError extends Error {
+  readonly statusCode = 503;
+
+  constructor() {
+    super('dkrypt is shutting down and is not accepting new jobs');
+    this.name = 'JobsShuttingDownError';
+  }
+}
+
 function deferScheduledJobIfUnavailable(source: JobSource, job: Job, enabled: boolean | undefined): void {
   if (source !== 'scheduler' || !enabled || job.status !== 'queued' || getJobDispatchableDeviceCount(job) > 0) return;
   throw new ScheduledJobDeferredError(getQueueReason(job) ?? 'No enabled device is available for this job');
@@ -396,7 +446,7 @@ export function enqueueDecryptJob(bundleId: string, source: JobSource, options: 
     projectId = DEFAULT_PROJECT_ID,
     minimumOsVersion,
   } = options;
-  if (!acceptingJobs) throw new Error('dkrypt is shutting down and is not accepting new jobs');
+  if (!acceptingJobs) throw new JobsShuttingDownError();
   const lookup = { bundleId, externalVersionId, testFlightBuildId: testflight?.build.id, projectId };
   const existing = findActiveJobForBundle(lookup);
   if (existing) {
@@ -925,6 +975,7 @@ async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
       if (runningJobControllers.get(job.id) === controller) runningJobControllers.delete(job.id);
     });
     job.status = 'done';
+    job.shutdownRecoveryPending = undefined;
     job.finishedAt = Date.now();
     incrementMetric('jobs_completed_total', { source: job.source });
     observeMetric('job_duration_ms', Math.max(0, job.finishedAt - (job.startedAt ?? job.createdAt)), { source: job.source });
@@ -938,6 +989,10 @@ async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
     if (job.filePath?.startsWith(`${config.artifactDir}/.staging/`)) {
       await rm(job.filePath, { force: true }).catch(() => {});
       job.filePath = undefined;
+    }
+    if (job.shutdownRecoveryPending) {
+      persistShutdownRecovery(job);
+      return;
     }
     job.failureClass = classifyJobFailure(message);
     const remainingDeadlineMs = job.deadlineAt === undefined ? Number.POSITIVE_INFINITY : job.deadlineAt - Date.now();
@@ -971,6 +1026,10 @@ async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
         recordJobHistory(toHistoryEntry(job));
         emitJobsChanged();
         settle(job);
+        return;
+      }
+      if (job.shutdownRecoveryPending) {
+        persistShutdownRecovery(job);
         return;
       }
       if (job.deadlineAt !== undefined && Date.now() >= job.deadlineAt) {
@@ -1137,28 +1196,31 @@ export function closeJobStore(): void {
   closePersistedJobs();
 }
 
-export async function shutdownJobs(timeoutMs = 15_000): Promise<JobShutdownResult> {
+export async function shutdownJobs(timeoutMs = 120_000): Promise<JobShutdownResult> {
   stopJobSweeper();
   stopAcceptingJobs();
   const queuedForRecovery = queue.splice(0).filter((jobId) => jobs.get(jobId)?.status === 'queued').length;
   for (const jobId of [...queuedDeadlineTimers.keys()]) clearQueuedDeadline(jobId);
   if (queuedForRecovery > 0) log.info('queued jobs preserved for recovery after shutdown', { count: queuedForRecovery });
-  for (const job of jobs.values()) {
-    if (job.status === 'running') {
-      runningJobControllers.get(job.id)?.abort(new Error('dkrypt is shutting down'));
-      terminateJobProcess(job);
-    }
-  }
   persistActiveJobs();
   const runs = [...runningJobs.values()];
   if (runs.length === 0) return { drained: true, completion: Promise.resolve() };
   const runsSettled = Promise.allSettled(runs);
-  await Promise.race([runsSettled, sleep(timeoutMs)]);
-  for (const job of jobs.values()) {
-    if (job.status === 'running') terminateChildProcess(job.childProcess, 'SIGKILL');
+  const drainedBeforeTimeout = await waitForCompletionOrTimeout(runsSettled, timeoutMs);
+  if (!drainedBeforeTimeout) {
+    for (const job of jobs.values()) {
+      if (job.status !== 'running') continue;
+      job.shutdownRecoveryPending = true;
+      runningJobControllers.get(job.id)?.abort(new Error('dkrypt is shutting down after the drain deadline'));
+      terminateJobProcess(job);
+    }
+    persistActiveJobs();
+    const forceStopWaitMs = Math.min(config.jobProcessGraceSeconds * 1000, 10_000, Math.max(250, timeoutMs));
+    await waitForCompletionOrTimeout(runsSettled, forceStopWaitMs);
+    for (const job of jobs.values()) {
+      if (job.status === 'running') terminateChildProcess(job.childProcess, 'SIGKILL');
+    }
   }
-  persistActiveJobs();
-  await Promise.race([runsSettled, sleep(1_000)]);
   const drained = runningJobs.size === 0;
   const completion = runsSettled.then(() => undefined);
   if (drained) await completion;

@@ -40,6 +40,7 @@ export async function runWithJobDeadline<T>(
         controller.abort(new Error('job deadline exceeded'));
         options.onDeadline();
       }, Math.max(1, delayMs));
+      timeout.unref();
     };
     scheduleDeadline();
   });

@@ -12,7 +12,7 @@ import { fastifyRejectGeneratedApiKeyOutsidePublicApi } from '#auth.js';
 import { drainBackgroundWork, trackBackgroundWork } from '#backgroundWork.js';
 import { config } from '#config.js';
 import { withCorrelation } from '#correlation.js';
-import { closeJobStore, getArtifactBackedJobs, shutdownJobs, startJobSweeper, stopAcceptingJobs, stopJobSweeper } from '#jobs/store.js';
+import { closeJobStore, getArtifactBackedJobs, JobsShuttingDownError, shutdownJobs, startJobSweeper, stopAcceptingJobs, stopJobSweeper } from '#jobs/store.js';
 import { startJobWebhookDispatcher, stopJobWebhookDispatcher } from '#jobWebhook.js';
 import { startKeyExpiryPoller, stopKeyExpiryPoller } from '#keyExpiryPoller.js';
 import { log, startLogFlusher, stopLogFlusher } from '#logger.js';
@@ -71,6 +71,22 @@ import { createPublicOpenApiDocument } from '#publicApi.js';
 const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 const sharedApiRateLimiter = new FixedWindowRateLimiter(config.apiRateLimitPerMinute, 60_000);
 let stopRustDeviceEventMonitoring: (() => Promise<void>) | undefined;
+const drainingServers = new WeakSet<FastifyInstance>();
+
+function sendServiceDraining(reply: FastifyReply, requestId: string): void {
+  reply.code(503).send({ error: 'service is shutting down', code: 'service_draining', message: 'dkrypt is shutting down; retry shortly', requestId, retryable: true });
+}
+
+async function waitForShutdownOperation(operation: Promise<unknown>, timeoutMs: number): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const completed = operation.then(() => true, () => false);
+  const timedOut = new Promise<boolean>((resolve) => {
+    timer = setTimeout(() => resolve(false), timeoutMs);
+  });
+  const result = await Promise.race([completed, timedOut]);
+  if (timer) clearTimeout(timer);
+  return result;
+}
 
 function shouldRateLimitApiRequest(url: string): boolean {
   const path = url.split('?', 1)[0];
@@ -127,6 +143,11 @@ export async function buildServer(options: {
   server.setNotFoundHandler((request, reply) => reply.code(404).send({ error: 'not found', code: 'not_found', message: 'not found', requestId: request.id, retryable: false }));
   server.setErrorHandler((error, request, reply) => {
     const normalized = error instanceof Error ? error : new Error(String(error));
+    if (error instanceof JobsShuttingDownError) {
+      log.warn('job submission rejected during graceful shutdown', { requestId: request.id });
+      sendServiceDraining(reply, request.id);
+      return;
+    }
     const statusCode = typeof (error as { statusCode?: unknown })?.statusCode === 'number' ? (error as { statusCode: number }).statusCode : 500;
     const status = statusCode >= 400 && statusCode < 600 ? statusCode : 500;
     log.error('unhandled request error', { requestId: request.id, method: request.method, path: request.url, error: normalized.message });
@@ -157,6 +178,11 @@ export async function buildServer(options: {
     withCorrelation({ correlationId: requestId, traceId: trace.context.traceId, traceContext: trace.context }, () => {
       const method = request.method.toUpperCase();
       const isMutation = method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS';
+      if (drainingServers.has(server) && isMutation) {
+        log.warn('mutation rejected during graceful shutdown', { requestId });
+        sendServiceDraining(reply, requestId);
+        return;
+      }
       const isWebhook = request.url.startsWith('/v1/stripe/webhook') || request.url.startsWith('/v1/nowpayments/webhook');
       const hasCookie = typeof request.headers.cookie === 'string' && request.headers.cookie.length > 0;
       if (isMutation && !isWebhook && hasCookie) {
@@ -338,82 +364,118 @@ async function startBackgroundServices(): Promise<void> {
   startNotificationDigestScheduler();
 }
 
-async function start(): Promise<void> {
-  const server = await buildServer();
-  await startBackgroundServices();
-  await server.listen({ port: config.port, host: config.bindHost });
-  log.info(`dkrypt listening on ${config.bindHost}:${config.port}`);
-  let shuttingDown = false;
-  const shutdown = async (signal: string) => {
-    if (shuttingDown) return;
-    shuttingDown = true;
+export function registerShutdownHandlers(
+  server: FastifyInstance,
+  options: { jobDrainTimeoutMs?: number; serverCloseTimeoutMs?: number; processExit?: (code: number) => void } = {},
+): { shutdown: (signal: string) => Promise<void> } {
+  let shutdownPromise: Promise<void> | undefined;
+  const shutdown = (signal: string): Promise<void> => {
+    if (shutdownPromise) return shutdownPromise;
     log.info('graceful shutdown started', { signal });
     const shutdownDeadline = setTimeout(() => {
-      log.error('graceful shutdown exceeded its 25-second deadline', { signal });
-      process.exit(1);
-    }, 25_000);
+      log.error('graceful shutdown is still pending near the container stop deadline', { signal });
+    }, 140_000);
+    drainingServers.add(server);
     stopAcceptingJobs();
     stopScheduler();
     void trackBackgroundWork('telemetry-shutdown', stopTelemetry)
       .catch((error: unknown) => log.warn('telemetry shutdown failed', { error: String(error) }));
     stopDeviceHealthPoller();
-    await stopRustDeviceEventMonitoring?.();
-    stopRustDeviceEventMonitoring = undefined;
     stopTestFlightSubscriptionPoller();
     stopCryptoBillingPoller();
     stopKeyExpiryPoller();
     stopJobSweeper();
-    closeDashboardConnections();
-    await server.close();
     stopStateBackgroundServices();
     void trackBackgroundWork('notification-digest-shutdown', stopNotificationDigestScheduler)
       .catch((error: unknown) => log.warn('notification digest shutdown failed', { error: String(error) }));
-    const [jobShutdown, backgroundShutdown] = await Promise.all([
-      shutdownJobs(),
-      drainBackgroundWork(15_000),
-    ]);
-    const finalBackgroundShutdown = await drainBackgroundWork(1_000);
-    const jobWebhookShutdown = jobShutdown.completion.then(async () => {
-      stopJobWebhookDispatcher();
-      const pendingNotificationWork = await drainBackgroundWork(1_000);
-      await pendingNotificationWork.completion;
-    });
-    const allShutdownWork = Promise.all([
-      jobShutdown.completion,
-      backgroundShutdown.completion,
-      finalBackgroundShutdown.completion,
-      jobWebhookShutdown,
-    ]).then(() => undefined);
-    const finishShutdown = async () => {
-      closeJobStore();
-      closeBillingDatabase();
-      closeIdentityDatabase();
-      closeIdempotencyDatabase();
-      closeWebhookInboxDatabase();
-      closeArtifactDatabase();
-      closeStateDatabase();
-      log.info('graceful shutdown completed', { signal });
-      stopLogFlusher();
-      clearTimeout(shutdownDeadline);
-    };
-    if (jobShutdown.drained && backgroundShutdown.drained && finalBackgroundShutdown.drained) {
-      await allShutdownWork;
-      await finishShutdown();
-      return;
-    }
-    log.warn('work is still active; deferring database shutdown until it settles', {
-      signal,
-      jobRunnersDrained: jobShutdown.drained,
-      backgroundWork: [...new Set([...backgroundShutdown.pending, ...finalBackgroundShutdown.pending])],
-    });
-    void allShutdownWork
-      .then(finishShutdown)
-      .catch((error: unknown) => {
-        log.error('deferred shutdown cleanup failed', { signal, error: String(error) });
+
+    shutdownPromise = (async () => {
+      const rustEventShutdown = (async () => {
+        await stopRustDeviceEventMonitoring?.();
+        stopRustDeviceEventMonitoring = undefined;
+      })().catch((error: unknown) => {
+        log.warn('Rust device event monitor shutdown failed', { error: String(error) });
+        throw error;
       });
+      const [jobShutdown, backgroundShutdown, rustEventDrained] = await Promise.all([
+        shutdownJobs(options.jobDrainTimeoutMs),
+        drainBackgroundWork(15_000),
+        waitForShutdownOperation(rustEventShutdown, 15_000),
+      ]);
+      const finalBackgroundShutdown = await drainBackgroundWork(1_000);
+      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+      closeDashboardConnections();
+      const serverClose = server.close().catch((error: unknown) => {
+        log.warn('HTTP server close failed', { error: String(error) });
+        throw error;
+      });
+      const serverDrained = await waitForShutdownOperation(serverClose, options.serverCloseTimeoutMs ?? 10_000);
+      if (!serverDrained) {
+        log.warn('HTTP connections remain after the shutdown grace period');
+        server.server.closeAllConnections();
+      }
+      const finishShutdown = async () => {
+        closeJobStore();
+        closeBillingDatabase();
+        closeIdentityDatabase();
+        closeIdempotencyDatabase();
+        closeWebhookInboxDatabase();
+        closeArtifactDatabase();
+        closeStateDatabase();
+        log.info('graceful shutdown completed', { signal });
+        stopLogFlusher();
+        clearTimeout(shutdownDeadline);
+      };
+      if (jobShutdown.drained && backgroundShutdown.drained && finalBackgroundShutdown.drained && rustEventDrained && serverDrained) {
+        await Promise.all([
+          jobShutdown.completion,
+          backgroundShutdown.completion,
+          finalBackgroundShutdown.completion,
+        ]);
+        stopJobWebhookDispatcher();
+        const pendingNotificationWork = await drainBackgroundWork(1_000);
+        if (pendingNotificationWork.drained) {
+          await pendingNotificationWork.completion;
+          await finishShutdown();
+          return;
+        }
+        log.warn('notification work remains after its shutdown grace period; closing durable state and exiting', { pending: pendingNotificationWork.pending });
+      } else {
+        log.warn('work remains after the shutdown grace period; closing durable state and exiting', {
+          signal,
+          jobRunnersDrained: jobShutdown.drained,
+          rustEventMonitorDrained: rustEventDrained,
+          httpServerDrained: serverDrained,
+          backgroundWork: [...new Set([...backgroundShutdown.pending, ...finalBackgroundShutdown.pending])],
+        });
+        stopJobWebhookDispatcher();
+        const pendingNotificationWork = await drainBackgroundWork(1_000);
+        if (!pendingNotificationWork.drained) {
+          log.warn('notification work remains; terminating after durable state is closed', { pending: pendingNotificationWork.pending });
+        }
+      }
+      await finishShutdown();
+      if (options.processExit) options.processExit(0);
+      else process.exit(0);
+    })().catch((error: unknown) => {
+      clearTimeout(shutdownDeadline);
+      log.error('graceful shutdown failed', { signal, error: String(error) });
+      throw error;
+    });
+    return shutdownPromise;
   };
-  process.once('SIGTERM', () => void shutdown('SIGTERM'));
-  process.once('SIGINT', () => void shutdown('SIGINT'));
+
+  process.once('SIGTERM', () => { void shutdown('SIGTERM'); });
+  process.once('SIGINT', () => { void shutdown('SIGINT'); });
+  return { shutdown };
+}
+
+async function start(): Promise<void> {
+  const server = await buildServer();
+  await startBackgroundServices();
+  await server.listen({ port: config.port, host: config.bindHost });
+  log.info(`dkrypt listening on ${config.bindHost}:${config.port}`);
+  registerShutdownHandlers(server);
 }
 
 if (import.meta.main) void start();
