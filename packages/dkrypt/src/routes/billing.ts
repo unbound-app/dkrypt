@@ -258,7 +258,7 @@ function persistStripeSubscription(subscription: Stripe.Subscription, occurredAt
     priceId,
     productId,
     subscriptionItemId: item.id,
-    nextBilledAt: scheduledChangeAction ? undefined : unixDate(item.current_period_end),
+    nextBilledAt: refundRevoked || scheduledChangeAction ? undefined : unixDate(item.current_period_end),
     scheduledChangeAction,
     scheduledChangeAt,
     failureReason: refundRevoked ? 'payment refunded' : undefined,

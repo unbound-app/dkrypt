@@ -284,6 +284,7 @@ describe('Stripe billing webhooks', () => {
     }));
     expect(cancelledSubscription).toBe(1);
     expect(getBillingSubscriptionById(subscriptionId)).toMatchObject({ status: 'revoked', failureReason: 'payment refunded' });
+    expect(getBillingSubscriptionById(subscriptionId)?.nextBilledAt).toBeUndefined();
     expect(getBillingEntitlements(userId)).toMatchObject({ planId: 'viewer', decrypt: false, api: false });
     expect(hasPermission(getUserEffectivePermissions(userId), PermissionFlag.requestDecrypt)).toBeFalse();
     expect(hasPermission(getUserEffectivePermissions(userId), PermissionFlag.createApiKeys)).toBeFalse();
@@ -294,6 +295,7 @@ describe('Stripe billing webhooks', () => {
     await processStripeEvent(laterActiveEvent, client);
 
     expect(getBillingSubscriptionById(subscriptionId)).toMatchObject({ status: 'revoked', failureReason: 'payment refunded' });
+    expect(getBillingSubscriptionById(subscriptionId)?.nextBilledAt).toBeUndefined();
     expect(getBillingEntitlements(userId).planId).toBe('viewer');
   });
 
