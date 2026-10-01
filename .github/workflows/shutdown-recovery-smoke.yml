@@ -188,11 +188,13 @@ jobs:
           if [[ -z "$submission_output" ]]; then
             submission_output="$(run_dkrypt_bun 10001:10001 <<'JS'
           const { config } = await import('/app/src/config.ts');
-          const { setSessionCookie } = await import('/app/src/session.ts');
+          const { inspectDeploymentSmokeLogin } = await import('/app/src/deploymentSmokeAssertions.ts');
           const { PermissionFlag } = await import('/app/src/permissions.ts');
+          const { setSessionCookie } = await import('/app/src/session.ts');
           const { getPrimaryDevice } = await import('/app/src/store/state.ts');
           const { findInstalledAppStoreBundle, withSSH } = await import('/app/src/idevice.ts');
           const { lookupCurrentVersion } = await import('/app/src/scheduler/itunes.ts');
+          const base = `http://127.0.0.1:${process.env.PORT || 8080}`;
           const candidates = [
             'org.videolan.vlc-ios',
             'com.apple.Pages',
@@ -248,14 +250,24 @@ jobs:
           }
           eligible.sort((left, right) => right.fileSizeBytes - left.fileSizeBytes);
           if (eligible.length === 0) throw new Error(`no safe, compatible, uncached App Store app was available for the production decrypt smoke: ${JSON.stringify(skipped)}`);
-          let sessionCookie = '';
-          setSessionCookie({ setHeader: (_name, value) => { sessionCookie = value; } }, {
-            sub: 'root',
-            permissions: PermissionFlag.administrator,
-            mfaVerified: true,
+          const login = await fetch(`${base}/v1/auth/login`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ password: config.adminPassword }),
+            signal: AbortSignal.timeout(10_000),
           });
-          sessionCookie = sessionCookie.split(';', 1)[0];
-          const base = `http://127.0.0.1:${process.env.PORT || 8080}`;
+          const loginBody = await login.json().catch(() => ({}));
+          const loginState = inspectDeploymentSmokeLogin(login.status, loginBody.code);
+          let sessionCookie = login.headers.get('set-cookie')?.split(';', 1)[0] ?? '';
+          if (loginState.rootMfaChallenge) {
+            setSessionCookie({ setHeader: (_name, value) => { sessionCookie = value; } }, {
+              sub: 'root',
+              permissions: PermissionFlag.administrator,
+              mfaVerified: true,
+            });
+            sessionCookie = sessionCookie.split(';', 1)[0];
+          }
+          if (!sessionCookie.startsWith('session=')) throw new Error('production smoke login did not issue a session cookie');
           const headers = {
             cookie: sessionCookie,
             origin: new URL(config.publicBaseUrl).origin,
@@ -320,15 +332,30 @@ jobs:
           fi
           if [[ -z "$session_cookie" ]]; then
             session_cookie="$(run_dkrypt_bun 10001:10001 <<'JS'
+          const { config } = await import('/app/src/config.ts');
+          const { inspectDeploymentSmokeLogin } = await import('/app/src/deploymentSmokeAssertions.ts');
           const { setSessionCookie } = await import('/app/src/session.ts');
           const { PermissionFlag } = await import('/app/src/permissions.ts');
-          let cookie = '';
-          setSessionCookie({ setHeader: (_name, value) => { cookie = value; } }, {
-            sub: 'root',
-            permissions: PermissionFlag.administrator,
-            mfaVerified: true,
+          const base = `http://127.0.0.1:${process.env.PORT || 8080}`;
+          const login = await fetch(`${base}/v1/auth/login`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ password: config.adminPassword }),
+            signal: AbortSignal.timeout(10_000),
           });
-          process.stdout.write(cookie.split(';', 1)[0]);
+          const loginBody = await login.json().catch(() => ({}));
+          const loginState = inspectDeploymentSmokeLogin(login.status, loginBody.code);
+          let cookie = login.headers.get('set-cookie')?.split(';', 1)[0] ?? '';
+          if (loginState.rootMfaChallenge) {
+            setSessionCookie({ setHeader: (_name, value) => { cookie = value; } }, {
+              sub: 'root',
+              permissions: PermissionFlag.administrator,
+              mfaVerified: true,
+            });
+            cookie = cookie.split(';', 1)[0];
+          }
+          if (!cookie.startsWith('session=')) throw new Error('production smoke login did not issue a session cookie');
+          process.stdout.write(cookie);
           JS
             )"
             echo "::add-mask::$session_cookie"
@@ -340,7 +367,7 @@ jobs:
             headers: { cookie: process.env.TEST_SESSION_COOKIE },
             signal: AbortSignal.timeout(5_000),
           });
-          if (!response.ok) throw new Error(`dashboard job timeline failed with HTTP ${response.status}`);
+          if (!response.ok) throw new Error(`dashboard job timeline failed with HTTP ${response.status}: ${(await response.text()).slice(0, 500)}`);
           const timeline = await response.json();
           const events = Array.isArray(timeline.events) ? timeline.events : [];
           const latestRequeue = events.filter(event => event.label === 'Requeued after graceful shutdown').at(-1);
