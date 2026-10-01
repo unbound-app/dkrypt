@@ -429,7 +429,7 @@ jobs:
             status="$(read_job_status)"
             parse_job_status "$status"
             if [[ "$job_state" == done || ( "$recovery_event_at" -gt "$pre_shutdown_recovery_at" && ( "$job_state" == queued || "$job_state" == running ) ) ]]; then
-              echo "Production decrypt survived shutdown in state $job_state; last event: $progress_label"
+              echo "Production decrypt became recoverable after shutdown in state $job_state; last event: $progress_label"
               recovered=1
               break
             fi
@@ -443,3 +443,13 @@ jobs:
             echo 'production job did not return to a recoverable state within two minutes of restart' >&2
             exit 1
           fi
+          run_dkrypt_bun 10001:10001 -e TEST_JOB_ID="$job_id" -e TEST_SESSION_COOKIE="$session_cookie" <<'JS'
+          const { waitForSmokeDecryptCompletion } = await import('/app/src/jobs/smokeCompletion.ts');
+          const artifact = await waitForSmokeDecryptCompletion({
+            baseUrl: `http://127.0.0.1:${process.env.PORT || 8080}`,
+            jobId: process.env.TEST_JOB_ID,
+            sessionCookie: process.env.TEST_SESSION_COOKIE,
+            pollIntervalMs: 5_000,
+          });
+          process.stdout.write(`${JSON.stringify({ jobCompleted: true, ...artifact })}\n`);
+          JS

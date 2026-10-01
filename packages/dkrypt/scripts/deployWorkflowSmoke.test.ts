@@ -14,6 +14,18 @@ function workflowLines(): string[] {
   return readFileSync(new URL('../../../.github/workflows/deploy.yml', import.meta.url), 'utf8').split(/\r?\n/);
 }
 
+function shutdownRecoveryWorkflow(): string {
+  return readFileSync(new URL('../../../.github/workflows/shutdown-recovery-smoke.yml', import.meta.url), 'utf8');
+}
+
+function shutdownRecoveryScripts(): string[] {
+  return [...shutdownRecoveryWorkflow().matchAll(/^[ ]+run_dkrypt_bun[^\n]*<<'JS'\r?\n([\s\S]*?)^[ ]+JS$/gm)]
+    .map((match) => {
+      const indentation = match[0].match(/^[ ]+/)?.[0] ?? '';
+      return match[1].split(/\r?\n/).map((line) => line.startsWith(indentation) ? line.slice(indentation.length) : line).join('\n');
+    });
+}
+
 function workflowJob(name: string): string[] {
   const lines = workflowLines();
   const start = lines.indexOf(`  ${name}:`);
@@ -87,4 +99,23 @@ test('deployment USB agent readiness does not require a device SSH key', () => {
   const [script] = deploymentSmokeScripts();
   expect(script).toContain("const usbAgentDevice = { ...primaryDevice, keyPath: '/run/dkrypt/usb-agent-smoke-no-ssh-key' };");
   expect(script).toContain('withAutoinstallDeviceAgent(usbAgentDevice');
+});
+
+test('production shutdown recovery waits for an artifact-backed decrypt completion', () => {
+  const workflow = shutdownRecoveryWorkflow();
+  const recoverableCheck = workflow.indexOf('if [[ "$recovered" != 1 ]]');
+  const completionCheck = workflow.indexOf("import('/app/src/jobs/smokeCompletion.ts')");
+
+  expect(recoverableCheck).toBeGreaterThanOrEqual(0);
+  expect(completionCheck).toBeGreaterThan(recoverableCheck);
+  expect(workflow).toContain('waitForSmokeDecryptCompletion');
+  expect(workflow).toContain('sessionCookie: process.env.TEST_SESSION_COOKIE');
+  expect(workflow).toContain('jobCompleted: true');
+  expect(workflow).not.toContain('echo "Production decrypt survived shutdown in state $job_state; last event: $progress_label"');
+});
+
+test('production shutdown recovery scripts are valid JavaScript before they reach the homelab', () => {
+  const scripts = shutdownRecoveryScripts();
+  expect(scripts.length).toBeGreaterThan(0);
+  for (const script of scripts) expect(() => new Bun.Transpiler({ loader: 'js' }).transformSync(script)).not.toThrow();
 });
