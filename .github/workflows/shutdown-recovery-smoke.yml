@@ -27,7 +27,7 @@ concurrency:
 jobs:
   verify:
     runs-on: [self-hosted, homelab]
-    timeout-minutes: 60
+    timeout-minutes: 180
     steps:
       - name: Submit decrypt and verify job recovery across SIGTERM
         env:

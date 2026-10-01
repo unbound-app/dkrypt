@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { expect, test } from 'bun:test';
+import { SCHEDULER_JOB_TIMEOUT_MS } from '../src/jobs/timeouts.js';
 
 function deploymentSmokeScripts(): string[] {
   const workflow = readFileSync(new URL('../../../.github/workflows/deploy.yml', import.meta.url), 'utf8');
@@ -112,6 +113,15 @@ test('production shutdown recovery waits for an artifact-backed decrypt completi
   expect(workflow).toContain('sessionCookie: process.env.TEST_SESSION_COOKIE');
   expect(workflow).toContain('jobCompleted: true');
   expect(workflow).not.toContain('echo "Production decrypt survived shutdown in state $job_state; last event: $progress_label"');
+});
+
+test('production shutdown recovery has enough time to observe the maximum decrypt deadline', () => {
+  const workflow = shutdownRecoveryWorkflow();
+  const timeout = workflow.match(/^    timeout-minutes: (\d+)$/m);
+  const timeoutMinutes = Number(timeout?.[1]);
+
+  expect(Number.isFinite(timeoutMinutes)).toBeTrue();
+  expect(timeoutMinutes).toBeGreaterThanOrEqual(Math.ceil(SCHEDULER_JOB_TIMEOUT_MS / 60_000) + 30);
 });
 
 test('production shutdown recovery scripts are valid JavaScript before they reach the homelab', () => {
