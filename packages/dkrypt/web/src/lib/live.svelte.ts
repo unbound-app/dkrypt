@@ -39,8 +39,8 @@ let visibilityListenerInstalled = false;
 const sequenceTracker = new DashboardEventSequenceTracker();
 let overviewRefresh: Promise<void> | undefined;
 let overviewRefreshGeneration = 0;
-let hasConnectedBefore = false;
 let liveConnectionRequested = false;
+let billingRefreshAfterReconnect = false;
 
 async function refreshOverview(force = false): Promise<void> {
 	if (overviewRefresh && !force) return overviewRefresh;
@@ -94,6 +94,7 @@ function installVisibilityListener(): void {
 			source = null;
 			liveState.connected = false;
 			if (liveState.disconnectedAt === null) liveState.disconnectedAt = Date.now();
+			billingRefreshAfterReconnect = true;
 			liveState.stale = true;
 			serverStateCache.markAllStale();
 			return;
@@ -114,6 +115,7 @@ function readEvent<T>(event: Event): T {
 		if (sequenceTracker.receive(value.sequence)) {
 			liveState.sequenceGap = true;
 			serverStateCache.invalidateAll();
+			liveState.billingRevision += 1;
 			void refreshOverview(true);
 		}
 		liveState.lastEventAt = Date.now();
@@ -144,11 +146,11 @@ export function connectLive(): void {
 	eventSource.onopen = () => {
 		const awaitingFreshOverview = liveState.stale || liveState.sequenceGap;
 		sequenceTracker.reset();
-		if (hasConnectedBefore && liveState.disconnectedAt !== null) {
+		if (billingRefreshAfterReconnect) {
 			serverStateCache.invalidateAll();
 			liveState.billingRevision += 1;
+			billingRefreshAfterReconnect = false;
 		}
-		hasConnectedBefore = true;
 		liveState.connected = true;
 		if (!awaitingFreshOverview) liveState.disconnectedAt = null;
 		liveState.reconnectAttempts = 0;
@@ -215,6 +217,7 @@ export function connectLive(): void {
     source = null;
     liveState.connected = false;
     if (liveState.disconnectedAt === null) liveState.disconnectedAt = Date.now();
+    billingRefreshAfterReconnect = true;
     liveState.stale = true;
     serverStateCache.markAllStale();
     liveState.reconnectAttempts += 1;
@@ -243,7 +246,7 @@ export function disconnectLive(): void {
   liveState.lastEventAt = null;
   liveState.sequenceGap = false;
   serverStateCache.markAllStale();
-  hasConnectedBefore = false;
+  billingRefreshAfterReconnect = false;
   sequenceTracker.reset();
 }
 

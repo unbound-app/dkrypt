@@ -131,9 +131,10 @@ async function mockVisualDashboardData(page: Page): Promise<void> {
   });
 }
 
-async function mockStableDashboardEvents(page: Page): Promise<void> {
-  await page.addInitScript(() => {
+async function mockStableDashboardEvents(page: Page, failedConnections = 0, holdFirstReconnect = false): Promise<void> {
+  await page.addInitScript(({ initialFailures, holdFirstReconnect: shouldHoldFirstReconnect }) => {
     let visibilityState: DocumentVisibilityState = 'visible';
+    let failuresRemaining = initialFailures;
     Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => visibilityState });
     const eventSources: Array<{ closeCount: number; source: EventTarget }> = [];
     class InstrumentedEventSource extends EventTarget {
@@ -152,7 +153,15 @@ async function mockStableDashboardEvents(page: Page): Promise<void> {
         this.url = String(url);
         this.record = { closeCount: 0, source: this };
         eventSources.push(this.record);
-        queueMicrotask(() => this.onopen?.(new Event('open')));
+        queueMicrotask(() => {
+          if (failuresRemaining > 0) {
+            failuresRemaining -= 1;
+            if (shouldHoldFirstReconnect) visibilityState = 'hidden';
+            this.onerror?.(new Event('error'));
+            return;
+          }
+          this.onopen?.(new Event('open'));
+        });
       }
 
       close(): void {
@@ -176,7 +185,47 @@ async function mockStableDashboardEvents(page: Page): Promise<void> {
         },
       },
     });
+  }, { initialFailures: failedConnections, holdFirstReconnect });
+}
+
+async function mockBillingSubscriptions(page: Page, status: () => string): Promise<() => number> {
+  let subscriptionRequests = 0;
+  await page.route('**/v1/billing/subscriptions*', async (route) => {
+    subscriptionRequests += 1;
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        total: 1,
+        subscriptions: [{
+          user: { id: 'github:jayden', displayName: 'Jayden', email: 'jayden@example.test' },
+          provider: 'stripe',
+          subscriptionId: 'sub_live_billing',
+          customerId: 'cus_live_billing',
+          priceId: 'price_regular',
+          productId: 'prod_regular',
+          plan: { id: 'regular', name: 'Regular', amount: 5, currency: 'EUR' },
+          status: status(),
+          occurredAt: '2026-10-01T18:00:00.000Z',
+          updatedAt: '2026-10-01T18:00:00.000Z',
+          lastCharge: { attempts: [] },
+        }],
+      }),
+    });
   });
+  await page.route('**/v1/billing/provider-status*', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        checkoutsPaused: false,
+        stripe: { enabled: false, environment: 'test', missingConfiguration: [], webhook: { state: 'not_configured', endpointUrl: '', requiredEvents: [], missingEvents: [] } },
+        crypto: { enabled: false, configured: false, ready: false, environment: 'test', settlementCurrency: 'EUR', supportedChains: [], supportedAssets: [], missingConfiguration: [], issues: [] },
+      }),
+    });
+  });
+  await page.route('**/v1/billing/webhooks/inbox*', async (route) => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ inbox: [], total: 0 }) });
+  });
+  return () => subscriptionRequests;
 }
 
 test.beforeEach(async ({ page }) => {
@@ -427,54 +476,68 @@ test('live updates suspend while hidden and refresh immediately when visible aga
 test('billing subscriptions refresh when a subscription change arrives over dashboard events', async ({ page }) => {
   await mockStableDashboardEvents(page);
   await mockAuthenticatedDashboard(page, '1');
-  let subscriptionRequests = 0;
-  await page.route('**/v1/billing/subscriptions*', async (route) => {
-    subscriptionRequests += 1;
-    const status = subscriptionRequests === 1 ? 'active' : 'revoked';
-    await route.fulfill({
-      contentType: 'application/json',
-      body: JSON.stringify({
-        total: 1,
-        subscriptions: [{
-          user: { id: 'github:jayden', displayName: 'Jayden', email: 'jayden@example.test' },
-          provider: 'stripe',
-          subscriptionId: 'sub_live_billing',
-          customerId: 'cus_live_billing',
-          priceId: 'price_regular',
-          productId: 'prod_regular',
-          plan: { id: 'regular', name: 'Regular', amount: 5, currency: 'EUR' },
-          status,
-          occurredAt: '2026-10-01T18:00:00.000Z',
-          updatedAt: '2026-10-01T18:00:00.000Z',
-          lastCharge: { attempts: [] },
-        }],
-      }),
-    });
-  });
-  await page.route('**/v1/billing/provider-status*', async (route) => {
-    await route.fulfill({
-      contentType: 'application/json',
-      body: JSON.stringify({
-        checkoutsPaused: false,
-        stripe: { enabled: false, environment: 'test', missingConfiguration: [], webhook: { state: 'not_configured', endpointUrl: '', requiredEvents: [], missingEvents: [] } },
-        crypto: { enabled: false, configured: false, ready: false, environment: 'test', settlementCurrency: 'EUR', supportedChains: [], supportedAssets: [], missingConfiguration: [], issues: [] },
-      }),
-    });
-  });
-  await page.route('**/v1/billing/webhooks/inbox*', async (route) => {
-    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ inbox: [], total: 0 }) });
-  });
+  let status = 'active';
+  const subscriptionRequests = await mockBillingSubscriptions(page, () => status);
 
   await page.goto('/?tab=settings&stab=billing');
   const subscriptionRow = page.getByRole('row').filter({ hasText: 'sub_live_billing' });
   await expect(subscriptionRow).toContainText('active');
-  const initialRequestCount = subscriptionRequests;
+  const initialRequestCount = subscriptionRequests();
 
+  status = 'revoked';
   await page.evaluate(() => (window as typeof window & {
     __dkryptLiveTest: { emit(type: string, data: unknown): void };
   }).__dkryptLiveTest.emit('billing', { sequence: 1 }));
 
-  await expect.poll(() => subscriptionRequests).toBeGreaterThan(initialRequestCount);
+  await expect.poll(subscriptionRequests).toBeGreaterThan(initialRequestCount);
+  await expect(subscriptionRow).toContainText('revoked');
+});
+
+test('billing refreshes when the first successful dashboard connection recovers from an outage', async ({ page }) => {
+  await mockStableDashboardEvents(page, 1, true);
+  await mockAuthenticatedDashboard(page, '1');
+  let status = 'active';
+  const subscriptionRequests = await mockBillingSubscriptions(page, () => status);
+
+  await page.goto('/?tab=settings&stab=billing');
+  const subscriptionRow = page.getByRole('row').filter({ hasText: 'sub_live_billing' });
+  await expect(subscriptionRow).toContainText('active');
+  const initialRequestCount = subscriptionRequests();
+  status = 'revoked';
+
+  await page.evaluate(() => (window as typeof window & {
+    __dkryptLiveTest: { setVisibility(state: DocumentVisibilityState): void };
+  }).__dkryptLiveTest.setVisibility('visible'));
+
+  const eventSourceCount = () => page.evaluate(() => (window as typeof window & {
+    __dkryptLiveTest: { eventSources: Array<{ closeCount: number }> };
+  }).__dkryptLiveTest.eventSources.length);
+  await expect.poll(eventSourceCount).toBe(2);
+  await expect.poll(subscriptionRequests).toBeGreaterThan(initialRequestCount);
+  await expect(subscriptionRow).toContainText('revoked');
+});
+
+test('billing refreshes when an SSE sequence gap may have hidden a subscription update', async ({ page }) => {
+  await mockStableDashboardEvents(page);
+  await mockAuthenticatedDashboard(page, '1');
+  let status = 'active';
+  const subscriptionRequests = await mockBillingSubscriptions(page, () => status);
+
+  await page.goto('/?tab=settings&stab=billing');
+  const subscriptionRow = page.getByRole('row').filter({ hasText: 'sub_live_billing' });
+  await expect(subscriptionRow).toContainText('active');
+  const initialRequestCount = subscriptionRequests();
+  status = 'revoked';
+
+  await page.evaluate(() => {
+    const liveTest = (window as typeof window & {
+      __dkryptLiveTest: { emit(type: string, data: unknown): void };
+    }).__dkryptLiveTest;
+    liveTest.emit('presence', { sequence: 1, data: [] });
+    liveTest.emit('presence', { sequence: 3, data: [] });
+  });
+
+  await expect.poll(subscriptionRequests).toBeGreaterThan(initialRequestCount);
   await expect(subscriptionRow).toContainText('revoked');
 });
 
