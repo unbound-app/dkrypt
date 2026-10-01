@@ -56,14 +56,46 @@ test('a dedicated Ed25519 SSH key persists independently of host credentials', (
 test('production verifies database migration and restore before replacing the running container', () => {
   const preflightIndex = deploymentWorkflow.indexOf('src/deploymentPreflight.ts');
   const volumeCheckIndex = deploymentWorkflow.indexOf('docker volume inspect dkrypt_state >/dev/null');
+  const stopIndex = deploymentWorkflow.indexOf('docker compose --env-file /home/adrian/.local/share/dkrypt/.env --project-name dkrypt -f /home/adrian/.local/share/dkrypt/compose.yml stop api');
+  const rollbackBackupIndex = deploymentWorkflow.indexOf('src/deploymentDatabase.ts prepare');
   const replaceIndex = deploymentWorkflow.indexOf(composeUpCommand);
   expect(preflightIndex).toBeGreaterThan(-1);
   expect(volumeCheckIndex).toBeGreaterThan(-1);
+  expect(rollbackBackupIndex).toBeGreaterThan(preflightIndex);
+  expect(stopIndex).toBeGreaterThan(preflightIndex);
   expect(volumeCheckIndex).toBeLessThan(preflightIndex);
-  expect(preflightIndex).toBeLessThan(replaceIndex);
+  expect(stopIndex).toBeLessThan(rollbackBackupIndex);
+  expect(rollbackBackupIndex).toBeLessThan(replaceIndex);
   expect(deploymentWorkflow).toContain('--network none');
   expect(deploymentWorkflow).toContain('--mount type=volume,source=dkrypt_state,target=/data/state,readonly');
   expect(deploymentWorkflow).toContain('--tmpfs /tmp:rw,nosuid,size=1g,uid=10001,gid=10001');
+});
+
+test('deployment failures restore the pre-migration database before restarting the previous image', () => {
+  const deploymentStart = deploymentWorkflow.indexOf(composeUpCommand);
+  const restorationStep = deploymentWorkflow.indexOf('name: Restore the database and previous image after deployment failure');
+  const stopCandidate = deploymentWorkflow.indexOf('docker stop --time 150 dkrypt', restorationStep);
+  const databaseRestore = deploymentWorkflow.indexOf('src/deploymentDatabase.ts restore');
+  const previousImageStart = deploymentWorkflow.indexOf('DKRYPT_IMAGE=dkrypt:previous docker compose');
+  const successfulCleanup = deploymentWorkflow.indexOf('src/deploymentDatabase.ts complete');
+
+  expect(deploymentWorkflow).toContain('if: failure() || cancelled()');
+  expect(deploymentStart).toBeGreaterThan(-1);
+  expect(restorationStep).toBeGreaterThan(deploymentStart);
+  expect(stopCandidate).toBeGreaterThan(restorationStep);
+  expect(successfulCleanup).toBeGreaterThan(deploymentStart);
+  expect(successfulCleanup).toBeLessThan(restorationStep);
+  expect(stopCandidate).toBeLessThan(databaseRestore);
+  expect(databaseRestore).toBeGreaterThan(restorationStep);
+  expect(previousImageStart).toBeGreaterThan(databaseRestore);
+  expect(deploymentWorkflow).toContain('src/deploymentDatabase.ts restore');
+  expect(deploymentWorkflow).toContain('the service stopped before a rollback snapshot was prepared; restarting the previous image');
+  expect(deploymentWorkflow).toContain('previous image recovered with the pre-deployment database');
+});
+
+test('deployment health checks use one shared database-integrity probe', () => {
+  expect(deploymentWorkflow.match(/docker exec dkrypt bun src\/deploymentHealthProbe\.ts/g)).toHaveLength(3);
+  expect(deploymentWorkflow).not.toContain('database?.integrity !== \'ok\'');
 });
 
 test('production replaces the container through Compose graceful shutdown', () => {

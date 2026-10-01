@@ -191,6 +191,7 @@ jobs:
     env:
       EXPECTED_BUILD_REF: ${{ github.sha }}
       EXPECTED_DEPLOYMENT_ID: ${{ github.run_id }}
+      DEPLOYMENT_ROLLBACK_ID: ${{ github.run_id }}-${{ github.run_attempt }}
     concurrency:
       group: deploy-homelab
       cancel-in-progress: false
@@ -270,13 +271,15 @@ jobs:
           DKRYPT_IMAGE="$IMAGE" docker compose --env-file /home/adrian/.local/share/dkrypt/.env --project-name dkrypt -f /home/adrian/.local/share/dkrypt/compose.yml config >/dev/null
           docker volume inspect dkrypt_state >/dev/null
           docker run --rm --network none --user 10001:10001 --mount type=volume,source=dkrypt_state,target=/data/state,readonly --tmpfs /tmp:rw,nosuid,size=1g,uid=10001,gid=10001 --env STATE_DIR=/data/state --env STATE_DATABASE_FILE=dkrypt.sqlite --entrypoint bun "$IMAGE" src/deploymentPreflight.ts
+          DKRYPT_IMAGE="$IMAGE" docker compose --env-file /home/adrian/.local/share/dkrypt/.env --project-name dkrypt -f /home/adrian/.local/share/dkrypt/compose.yml stop api
+          docker run --rm --network none --user 10001:10001 --mount type=volume,source=dkrypt_state,target=/data/state --tmpfs /tmp:rw,nosuid,size=1g,uid=10001,gid=10001 --env STATE_DIR=/data/state --entrypoint bun "$IMAGE" src/deploymentDatabase.ts prepare "$DEPLOYMENT_ROLLBACK_ID"
           DKRYPT_IMAGE="$IMAGE" docker compose --env-file /home/adrian/.local/share/dkrypt/.env --project-name dkrypt -f /home/adrian/.local/share/dkrypt/compose.yml up -d --no-build
 
-      - name: Wait for health, roll back on failure
+      - name: Wait for health
         run: |
           set -e
           for i in $(seq 1 90); do
-            if docker exec dkrypt bun -e "const r=await fetch('http://127.0.0.1:'+(process.env.PORT||8080)+'/v1/health',{headers:{authorization:'Bearer '+process.env.API_KEY}}); const b=await r.json(); if (!r.ok || b.database?.integrity !== 'ok') process.exit(1);"; then
+            if docker exec dkrypt bun src/deploymentHealthProbe.ts; then
               echo "healthy"
               exit 0
             fi
@@ -285,31 +288,12 @@ jobs:
 
           echo "service did not become healthy in time" >&2
           docker logs --tail 100 dkrypt || true
-
-          if docker image inspect dkrypt:previous >/dev/null 2>&1; then
-            echo "rolling back to the previous image" >&2
-            DKRYPT_IMAGE=dkrypt:previous docker compose --env-file /home/adrian/.local/share/dkrypt/.env --project-name dkrypt -f /home/adrian/.local/share/dkrypt/compose.yml up -d --no-build
-          else
-            echo "no previous image to roll back to" >&2
-          fi
           exit 1
       - name: Run deployment smoke tests
         run: |
           set -e
-          rollback() {
-            echo "deployment verification failed; rolling back" >&2
-            if docker image inspect dkrypt:previous >/dev/null 2>&1; then
-              if ! DKRYPT_IMAGE=dkrypt:previous docker compose --env-file /home/adrian/.local/share/dkrypt/.env --project-name dkrypt -f /home/adrian/.local/share/dkrypt/compose.yml up -d --no-build; then
-                echo "rollback command failed" >&2
-                return 1
-              fi
-            else
-              echo "no previous image to roll back to" >&2
-            fi
-          }
           fail_deployment() {
             docker logs --tail 100 dkrypt || true
-            rollback || echo "rollback did not complete successfully" >&2
             exit 1
           }
           smoke() {
@@ -619,3 +603,40 @@ jobs:
           else
             echo 'deployment succeeded, but its notification could not be recorded' >&2
           fi
+      - name: Complete the verified deployment rollback window
+        run: docker exec --user 10001:10001 dkrypt bun src/deploymentDatabase.ts complete "$DEPLOYMENT_ROLLBACK_ID"
+      - name: Restore the database and previous image after deployment failure
+        if: failure() || cancelled()
+        run: |
+          set -e
+          rollback_status="$(docker run --rm --network none --user 10001:10001 --mount type=volume,source=dkrypt_state,target=/data/state --entrypoint bun dkrypt:latest -e "const fs=await import('node:fs'); process.stdout.write(fs.existsSync('/data/state/deployment-rollbacks/rollback-${DEPLOYMENT_ROLLBACK_ID}.json') ? 'prepared' : 'absent');")"
+          if [ "$rollback_status" = absent ]; then
+            if docker exec dkrypt bun src/deploymentHealthProbe.ts; then
+              echo 'the existing service is healthy and no rollback transaction was needed'
+              exit 0
+            fi
+            echo 'the service stopped before a rollback snapshot was prepared; restarting the previous image'
+          elif [ "$rollback_status" = prepared ]; then
+            if docker container inspect dkrypt >/dev/null 2>&1 && [ "$(docker inspect --format '{{.State.Running}}' dkrypt)" = true ]; then
+              docker stop --time 150 dkrypt
+            fi
+            docker run --rm --network none --user 10001:10001 --mount type=volume,source=dkrypt_state,target=/data/state --tmpfs /tmp:rw,nosuid,size=1g,uid=10001,gid=10001 --env STATE_DIR=/data/state --entrypoint bun dkrypt:latest src/deploymentDatabase.ts restore "$DEPLOYMENT_ROLLBACK_ID"
+          else
+            echo "unexpected deployment rollback state: $rollback_status" >&2
+            exit 1
+          fi
+          if docker image inspect dkrypt:previous >/dev/null 2>&1; then
+            DKRYPT_IMAGE=dkrypt:previous docker compose --env-file /home/adrian/.local/share/dkrypt/.env --project-name dkrypt -f /home/adrian/.local/share/dkrypt/compose.yml up -d --no-build
+            for i in $(seq 1 90); do
+              if docker exec dkrypt bun src/deploymentHealthProbe.ts; then
+                echo 'previous image recovered with the pre-deployment database'
+                exit 0
+              fi
+              sleep 2
+            done
+            docker logs --tail 100 dkrypt || true
+            echo 'previous image did not become healthy after database recovery' >&2
+            exit 1
+          fi
+          echo 'database restored, but no previous image is available for application rollback' >&2
+          exit 1

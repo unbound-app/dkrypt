@@ -1,0 +1,115 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { Database } from 'bun:sqlite';
+import { expect, test } from 'bun:test';
+import { prepareDeploymentRollback, restoreDeploymentRollback } from '#deploymentDatabase.js';
+import { openStateDatabase, verifyDatabaseForMigration } from '#store/sqlite.js';
+import { rewindApiKeySearchMigration, rewindSessionSearchMigration } from '#store/sqliteTestHelpers.js';
+
+function rewindToSchemaVersion16(database: ReturnType<typeof openStateDatabase>): void {
+  rewindApiKeySearchMigration(database.db);
+  rewindSessionSearchMigration(database.db);
+  database.db.exec(`
+    DROP INDEX billing_events_by_provider_event;
+    DROP INDEX billing_events_by_processed_at;
+    DROP TABLE billing_customers;
+    DROP TABLE billing_subscriptions;
+    DROP TABLE billing_checkouts;
+    DROP TABLE billing_charges;
+    DROP TABLE billing_entitlement_history;
+    DROP TABLE backup_schedule;
+    ALTER TABLE billing_events DROP COLUMN provider;
+    ALTER TABLE billing_events DROP COLUMN event_id;
+    ALTER TABLE billing_events DROP COLUMN occurred_at;
+    ALTER TABLE billing_events DROP COLUMN processed_at;
+    DELETE FROM schema_migrations WHERE version IN (17, 18, 19, 20, 21);
+  `);
+}
+
+function readStateSnapshot(databasePath: string): unknown {
+  const database = new Database(databasePath, { create: false, readonly: true, strict: true });
+  try {
+    const row = database.query('SELECT payload FROM state_snapshots WHERE id = 1').get() as { payload: string };
+    return JSON.parse(row.payload) as unknown;
+  } finally {
+    database.close();
+  }
+}
+
+test('deployment rollback restores the drained database state and preserves the failed candidate database', async () => {
+  const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-deployment-rollback-'));
+  const stateBeforeDrain = { version: 18, devices: [{ id: 'device-before-deploy' }], settings: { maintenanceMode: true } };
+  const originalState = { version: 18, devices: [{ id: 'device-before-deploy' }], settings: { maintenanceMode: false } };
+  const candidateState = { ...originalState, settings: { maintenanceMode: true } };
+  try {
+    const previous = openStateDatabase({ stateDir, filename: 'dkrypt.sqlite' });
+    previous.writeState(stateBeforeDrain);
+    previous.writeState(originalState);
+    rewindToSchemaVersion16(previous);
+    previous.close();
+
+    expect(prepareDeploymentRollback(stateDir, 'run-100-attempt-1')).toMatchObject({
+      deploymentId: 'run-100-attempt-1',
+      databasePresent: true,
+      schemaVersion: 16,
+    });
+
+    const candidate = openStateDatabase({ stateDir, filename: 'dkrypt.sqlite' });
+    candidate.writeState(candidateState);
+    candidate.close();
+
+    const restored = restoreDeploymentRollback(stateDir, 'run-100-attempt-1');
+
+    expect(restored).toMatchObject({ databaseRestored: true, candidateDatabasePreserved: true });
+    expect(verifyDatabaseForMigration(path.join(stateDir, 'dkrypt.sqlite')).schemaVersion).toBe(16);
+    expect(readStateSnapshot(path.join(stateDir, 'dkrypt.sqlite'))).toEqual(originalState);
+    expect(verifyDatabaseForMigration(restored.candidateRecoveryPath!).schemaVersion).toBeGreaterThan(16);
+    expect(readStateSnapshot(restored.candidateRecoveryPath!)).toEqual(candidateState);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test('deployment rollback returns a failed first-start database to the pre-deploy empty state', async () => {
+  const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-deployment-rollback-empty-'));
+  try {
+    expect(prepareDeploymentRollback(stateDir, 'run-101-attempt-1')).toMatchObject({
+      deploymentId: 'run-101-attempt-1',
+      databasePresent: false,
+    });
+
+    const candidate = openStateDatabase({ stateDir, filename: 'dkrypt.sqlite' });
+    candidate.writeState({ version: 18, settings: { initializedByCandidate: true } });
+    candidate.close();
+
+    const restored = restoreDeploymentRollback(stateDir, 'run-101-attempt-1');
+
+    expect(restored).toMatchObject({ databaseRestored: false, candidateDatabasePreserved: true });
+    expect(verifyDatabaseForMigration(restored.candidateRecoveryPath!).schemaVersion).toBeGreaterThan(0);
+    expect(() => verifyDatabaseForMigration(path.join(stateDir, 'dkrypt.sqlite'))).toThrow();
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test('deployment rollback refuses a damaged snapshot without replacing candidate state', async () => {
+  const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-deployment-rollback-damaged-'));
+  const candidateState = { version: 18, settings: { initializedByCandidate: true } };
+  try {
+    const previous = openStateDatabase({ stateDir, filename: 'dkrypt.sqlite' });
+    previous.writeState({ version: 18, settings: { initializedByCandidate: false } });
+    previous.close();
+    prepareDeploymentRollback(stateDir, 'run-102-attempt-1');
+    await writeFile(path.join(stateDir, 'deployment-rollbacks', 'rollback-run-102-attempt-1.sqlite'), 'damaged snapshot');
+
+    const candidate = openStateDatabase({ stateDir, filename: 'dkrypt.sqlite' });
+    candidate.writeState(candidateState);
+    candidate.close();
+
+    expect(() => restoreDeploymentRollback(stateDir, 'run-102-attempt-1')).toThrow('database');
+    expect(readStateSnapshot(path.join(stateDir, 'dkrypt.sqlite'))).toEqual(candidateState);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
