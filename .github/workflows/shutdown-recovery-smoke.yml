@@ -348,13 +348,15 @@ jobs:
           const { Database } = await import('bun:sqlite');
           const database = new Database('/data/state/dkrypt.sqlite', { readonly: true });
           try {
-            const row = database.query('SELECT payload FROM jobs WHERE id = ?').get(process.env.TEST_JOB_ID);
+            const row = database.query('SELECT payload FROM jobs WHERE id = ?').get(process.env.TEST_JOB_ID)
+              ?? database.query('SELECT payload FROM job_history WHERE id = ?').get(process.env.TEST_JOB_ID);
             if (!row || typeof row.payload !== 'string') throw new Error('shutdown test job is missing from SQLite');
             const job = JSON.parse(row.payload);
+            const completed = job.status === 'done';
             const requeued = job.status === 'queued' && job.progress === 'queued after graceful shutdown';
             const markedForRecovery = job.status === 'running' && job.shutdownRecoveryPending === true;
             const timelineRequeued = Array.isArray(job.timeline) && job.timeline.some(event => event.label === 'Requeued after graceful shutdown');
-            process.stdout.write(`${job.status}\t${job.progress}\t${job.shutdownRecoveryPending === true}\t${requeued || markedForRecovery || timelineRequeued}\n`);
+            process.stdout.write(`${job.status}\t${job.progress}\t${job.shutdownRecoveryPending === true}\t${completed || requeued || markedForRecovery || timelineRequeued}\n`);
           } finally {
             database.close();
           }
@@ -368,7 +370,7 @@ jobs:
             exit 1
           fi
           if [[ "$recovery_verified" != true ]]; then
-            echo "shutdown did not persist a requeue marker for job $job_id: status=$persisted_status progress=$persisted_progress recoveryPending=$recovery_pending" >&2
+            echo "shutdown neither completed nor persisted recovery for job $job_id: status=$persisted_status progress=$persisted_progress recoveryPending=$recovery_pending" >&2
             exit 1
           fi
           ready=0

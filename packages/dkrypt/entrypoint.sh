@@ -110,8 +110,8 @@ wait_for_process_stop() {
 
 shutdown() {
   request_process_stop "${api_pid:-}"
-  request_process_stop "${bridge_pid:-}"
   wait_for_process_stop "${api_pid:-}"
+  request_process_stop "${bridge_pid:-}"
   wait_for_process_stop "${bridge_pid:-}"
 }
 

@@ -73,17 +73,19 @@ test('production replaces the container through Compose graceful shutdown', () =
   expect(deploymentWorkflow).toContain(composeUpCommand);
 });
 
-test('shutdown signals API and bridge before waiting for either process', () => {
+test('shutdown drains the API before stopping the USB bridge', () => {
   const apiSignal = entrypoint.indexOf('request_process_stop "${api_pid:-}"');
-  const bridgeSignal = entrypoint.indexOf('request_process_stop "${bridge_pid:-}"');
   const apiWait = entrypoint.indexOf('wait_for_process_stop "${api_pid:-}"');
+  const bridgeSignal = entrypoint.indexOf('request_process_stop "${bridge_pid:-}"');
   const bridgeWait = entrypoint.indexOf('wait_for_process_stop "${bridge_pid:-}"');
 
   expect(apiSignal).toBeGreaterThan(-1);
-  expect(bridgeSignal).toBeGreaterThan(-1);
   expect(apiWait).toBeGreaterThan(-1);
+  expect(bridgeSignal).toBeGreaterThan(-1);
   expect(bridgeWait).toBeGreaterThan(-1);
-  expect(Math.max(apiSignal, bridgeSignal)).toBeLessThan(Math.min(apiWait, bridgeWait));
+  expect(apiSignal).toBeLessThan(apiWait);
+  expect(apiWait).toBeLessThan(bridgeSignal);
+  expect(bridgeSignal).toBeLessThan(bridgeWait);
 });
 
 test('production verifies persistent storage as the already-unprivileged smoke-test user', () => {
