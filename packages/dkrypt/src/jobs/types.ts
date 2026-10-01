@@ -44,6 +44,7 @@ export interface Job {
   warnings?: string[];
   error?: string;
   queueReason?: string;
+  lastQueueReason?: string;
   retryCount?: number;
   attempt?: number;
   deadlineAt?: number;

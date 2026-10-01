@@ -316,24 +316,33 @@ describe('enqueueDecryptJob', () => {
     }
   });
 
-  test('records a diagnostic when a queued deadline expires after its blocker has cleared', async () => {
+  test('preserves the last observed queue blocker when it clears before expiration', async () => {
     await clearActiveTestJobs();
     setCachedDeviceHealth(testDeviceId, { reachable: false, error: 'USB device is offline', checkedAt: Date.now() });
     const job = enqueueDecryptJob(`com.test.expired-unblocked.${crypto.randomUUID()}`, 'scheduler', { preferredDeviceId: testDeviceId });
+    const observedQueueReason = getQueueReason(job);
 
     try {
       expect(job.status).toBe('queued');
+      expect(observedQueueReason).toContain('USB device is offline');
+      expect(job.lastQueueReason).toBe(observedQueueReason);
+      expect(loadPersistedJobs().find((persistedJob) => persistedJob.id === job.id)?.lastQueueReason).toBe(observedQueueReason);
+      setCachedDeviceHealth(testDeviceId, { reachable: false, error: 'USB agent is unavailable', checkedAt: Date.now() });
+      notifyDeviceDispatchStateChanged();
+      const latestQueueReason = getQueueReason(job);
+      expect(latestQueueReason).toContain('USB agent is unavailable');
+      expect(job.lastQueueReason).toBe(latestQueueReason);
       job.deadlineAt = Date.now() - 1;
       setCachedDeviceHealth(testDeviceId, { reachable: true, jailbreakAvailable: true, checkedAt: Date.now() });
       notifyDeviceDispatchStateChanged();
 
       expect(job).toMatchObject({ status: 'failed', deadlineExceeded: true });
-      expect(job.queueReason).toBe('No dispatch blocker was detected; the job remained queued until its deadline');
+      expect(job.queueReason).toBe(latestQueueReason);
       expect(job.error).toContain(job.queueReason!);
       expect(getJobHistoryEntryById(job.id)?.queueReason).toBe(job.queueReason);
     } finally {
-      if (job.status === 'queued') cancelQueuedJob(job.id, 'queue deadline diagnostic test cleanup');
-      if (job.status === 'running') cancelJob(job.id, 'queue deadline diagnostic test cleanup');
+      if (job.status === 'queued') cancelQueuedJob(job.id, 'queue blocker history test cleanup');
+      if (job.status === 'running') cancelJob(job.id, 'queue blocker history test cleanup');
       await waitForJob(job, 1_000);
       setCachedDeviceHealth(testDeviceId, { reachable: true, jailbreakAvailable: true, checkedAt: Date.now() });
       notifyDeviceDispatchStateChanged();

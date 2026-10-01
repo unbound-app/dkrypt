@@ -291,6 +291,7 @@ function clearQueuedDeadline(id: string): void {
 function failExpiredQueuedJob(job: Job, now = Date.now()): void {
   if (job.status !== 'queued' || job.deadlineAt === undefined || job.deadlineAt > now) return;
   const queueReason = getQueueReason(job)
+    ?? job.lastQueueReason
     ?? 'No dispatch blocker was detected; the job remained queued until its deadline';
   job.queueReason = queueReason;
   clearQueuedDeadline(job.id);
@@ -565,8 +566,7 @@ export function getJobQueueSummaries(sourceJobs: readonly Job[], now = Date.now(
   return summaries;
 }
 
-export function getQueueReason(job: Job): string | undefined {
-  if (job.queueReason) return job.queueReason;
+function getCurrentQueueReason(job: Job): string | undefined {
   if (job.status !== 'queued') return undefined;
   const enabledDevices = getEffectiveDevices().filter((device) => device.enabled);
   if (enabledDevices.length === 0) return 'Waiting for an enabled device';
@@ -594,6 +594,25 @@ export function getQueueReason(job: Job): string | undefined {
   const queue = getQueueInfo(job.id);
   if (queue && queue.position > 1) return `Waiting behind ${queue.position - 1} job${queue.position === 2 ? '' : 's'}`;
   return undefined;
+}
+
+export function getQueueReason(job: Job): string | undefined {
+  if (job.status !== 'queued') return job.queueReason;
+  return getCurrentQueueReason(job);
+}
+
+function captureQueuedBlockers(): void {
+  let changed = false;
+  for (const job of jobs.values()) {
+    if (job.status !== 'queued') continue;
+    const queueReason = getCurrentQueueReason(job);
+    if (!queueReason || queueReason === job.lastQueueReason) continue;
+    job.lastQueueReason = queueReason;
+    changed = true;
+  }
+  if (!changed) return;
+  persistActiveJobs();
+  emitJobsChanged();
 }
 
 export function waitForJob(job: Job, timeoutMs: number): Promise<Job> {
@@ -833,6 +852,7 @@ function takeNextDispatchableJobId(device: DeviceRecord): string | undefined {
 }
 
 function pumpWorkers(): void {
+  captureQueuedBlockers();
   expireOverdueQueuedJobs();
   if (!acceptingJobs) return;
   const devices = getEffectiveDevices().filter((d) => d.enabled);
