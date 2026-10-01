@@ -7,6 +7,10 @@ on:
         description: Type RUN_DKRYPT_PRODUCTION_SHUTDOWN_RECOVERY to restart production during a real decrypt
         required: true
         type: string
+      existing_job_id:
+        description: Optional active decrypt job to continue monitoring without submitting another
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -23,6 +27,7 @@ jobs:
       - name: Submit decrypt and verify job recovery across SIGTERM
         env:
           CONFIRMATION: ${{ inputs.confirmation }}
+          EXISTING_JOB_ID: ${{ inputs.existing_job_id }}
           EXPECTED_BUILD_REF: ${{ github.sha }}
         run: |
           set -euo pipefail
@@ -74,7 +79,44 @@ jobs:
             fi
           }
           trap restore_and_logout EXIT
-          submission_output="$(run_dkrypt_bun 10001:10001 <<'JS'
+          read_job_status_for_id() {
+            run_dkrypt_bun 10001:10001 -e TEST_JOB_ID="$1" <<'JS'
+          const { Database } = await import('bun:sqlite');
+          const database = new Database('/data/state/dkrypt.sqlite', { readonly: true });
+          try {
+            const row = database.query('SELECT payload FROM jobs WHERE id = ?').get(process.env.TEST_JOB_ID)
+              ?? database.query('SELECT payload FROM job_history WHERE id = ?').get(process.env.TEST_JOB_ID);
+            if (!row || typeof row.payload !== 'string') {
+              process.stdout.write('missing\t0\t\n');
+            } else {
+              const job = JSON.parse(row.payload);
+              process.stdout.write(`${job.status}\t${job.attempt ?? 1}\t${job.bundleId ?? ''}\n`);
+            }
+          } finally {
+            database.close();
+          }
+          JS
+          }
+          submission_output=''
+          if [[ -n "$EXISTING_JOB_ID" ]]; then
+            existing_status="$(read_job_status_for_id "$EXISTING_JOB_ID")"
+            IFS=$'\t' read -r existing_state existing_attempt existing_bundle <<< "$existing_status"
+            if [[ "$existing_state" == failed ]]; then
+              echo "existing production decrypt $EXISTING_JOB_ID already failed before the shutdown test" >&2
+              exit 1
+            fi
+            if [[ "$existing_state" == queued || "$existing_state" == running ]]; then
+              submission_output="${EXISTING_JOB_ID}"$'\n\n'"${existing_bundle}"
+              echo "Continuing existing production decrypt job $EXISTING_JOB_ID in state $existing_state on attempt $existing_attempt"
+            elif [[ "$existing_state" == done ]]; then
+              echo "Existing production decrypt $EXISTING_JOB_ID completed before SIGTERM; selecting a fresh uncached candidate"
+            else
+              echo "existing production decrypt $EXISTING_JOB_ID could not be found in SQLite" >&2
+              exit 1
+            fi
+          fi
+          if [[ -z "$submission_output" ]]; then
+            submission_output="$(run_dkrypt_bun 10001:10001 <<'JS'
           const { config } = await import('/app/src/config.ts');
           const { setSessionCookie } = await import('/app/src/session.ts');
           const { PermissionFlag } = await import('/app/src/permissions.ts');
@@ -188,7 +230,8 @@ jobs:
             return 0;
           }
           JS
-          )"
+            )"
+          fi
           mapfile -t submission_lines <<< "$submission_output"
           if [[ ${#submission_lines[@]} -lt 3 ]]; then
             echo 'decrypt submission did not return a job identity' >&2
@@ -197,27 +240,21 @@ jobs:
           job_id="${submission_lines[-3]}"
           session_cookie="${submission_lines[-2]}"
           bundle_id="${submission_lines[-1]}"
-          if [[ -z "$job_id" || -z "$session_cookie" || -z "$bundle_id" ]]; then
+          if [[ -z "$job_id" || -z "$bundle_id" || ( -z "$session_cookie" && -z "$EXISTING_JOB_ID" ) ]]; then
             echo 'decrypt submission did not return a job identity' >&2
             exit 1
           fi
-          echo "::add-mask::$session_cookie"
-          echo "Submitted production decrypt job $job_id for $bundle_id"
+          if [[ -n "$session_cookie" ]]; then
+            echo "::add-mask::$session_cookie"
+            echo "Submitted production decrypt job $job_id for $bundle_id"
+          fi
           read_job_status() {
-            run_dkrypt_bun 10001:10001 -e TEST_JOB_ID="$job_id" -e TEST_SESSION_COOKIE="$session_cookie" <<'JS'
-          const response = await fetch(`http://127.0.0.1:${process.env.PORT || 8080}/v1/dashboard/jobs/${process.env.TEST_JOB_ID}/status`, {
-            headers: { cookie: process.env.TEST_SESSION_COOKIE },
-            signal: AbortSignal.timeout(5_000),
-          });
-          const job = await response.json().catch(() => ({}));
-          if (!response.ok || !job.id) throw new Error(`job status query failed with HTTP ${response.status}`);
-          process.stdout.write(`${job.status}\t${job.attempt ?? 1}\n`);
-          JS
+            read_job_status_for_id "$job_id"
           }
           running=0
           for attempt in $(seq 1 120); do
             status="$(read_job_status)"
-            IFS=$'\t' read -r job_state job_attempt <<< "$status"
+            IFS=$'\t' read -r job_state job_attempt _ <<< "$status"
             if [[ "$job_state" == running ]]; then
               running=1
               break
@@ -280,7 +317,7 @@ jobs:
           recovered=0
           for attempt in $(seq 1 360); do
             status="$(read_job_status)"
-            IFS=$'\t' read -r job_state job_attempt <<< "$status"
+            IFS=$'\t' read -r job_state job_attempt _ <<< "$status"
             if [[ "$job_state" == done ]]; then
               echo "Production decrypt completed after recovery on attempt $job_attempt"
               recovered=1
