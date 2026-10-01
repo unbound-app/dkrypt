@@ -102,6 +102,7 @@ try {
   server = await buildServer({ includePublicRoutes: false });
   const address = await server.listen({ host: '127.0.0.1', port: 0 });
   const origin = new URL(address).origin;
+  config.publicBaseUrl = origin;
   const loadTestRole = createRole({
     name: `Load test ${runId}`,
     color: '#526dff',
@@ -165,7 +166,12 @@ try {
   const queueBurst = await Promise.all(Array.from({ length: 32 }, async (_, index) => {
     const response = await fetch(`${origin}/v1/dashboard/decrypt`, {
       method: 'POST',
-      headers: { ...sessionHeaders[index], 'content-type': 'application/json' },
+      headers: {
+        ...sessionHeaders[index],
+        origin,
+        'sec-fetch-site': 'same-origin',
+        'content-type': 'application/json',
+      },
       body: JSON.stringify({
         bundleId: `com.dkrypt.load.${runId.replaceAll('-', '')}.${index}`,
         projectId: 'default',
