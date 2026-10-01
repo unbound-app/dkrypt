@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { assertDatabaseSchemaVersion, inspectDeploymentSmokeLogin } from './deploymentSmokeAssertions.js';
+import { assertAppStoreSubsystemWhenAgentReady, assertDatabaseSchemaVersion, inspectDeploymentSmokeLogin } from './deploymentSmokeAssertions.js';
 import { LATEST_SQLITE_SCHEMA_VERSION } from './store/sqlite.js';
 
 test('deployment smoke accepts authenticated login and an explicit root MFA challenge', () => {
@@ -16,4 +16,13 @@ test('deployment smoke requires the latest database migration to be applied', ()
   expect(() => assertDatabaseSchemaVersion(LATEST_SQLITE_SCHEMA_VERSION, LATEST_SQLITE_SCHEMA_VERSION)).not.toThrow();
   expect(() => assertDatabaseSchemaVersion(LATEST_SQLITE_SCHEMA_VERSION - 1, LATEST_SQLITE_SCHEMA_VERSION)).toThrow('database schema mismatch');
   expect(() => assertDatabaseSchemaVersion(undefined, LATEST_SQLITE_SCHEMA_VERSION)).toThrow('database schema mismatch');
+});
+
+test('deployment smoke rejects unknown App Store health when the USB device agent is ready', () => {
+  expect(() => assertAppStoreSubsystemWhenAgentReady('ready', 'ready')).not.toThrow();
+  expect(() => assertAppStoreSubsystemWhenAgentReady('ready', 'idle')).not.toThrow();
+  for (const state of ['unknown', 'degraded', 'offline', 'unsupported'] as const) {
+    expect(() => assertAppStoreSubsystemWhenAgentReady('ready', state)).toThrow(`App Store subsystem is ${state} while the device agent is ready`);
+  }
+  expect(() => assertAppStoreSubsystemWhenAgentReady('offline', 'unknown')).not.toThrow();
 });

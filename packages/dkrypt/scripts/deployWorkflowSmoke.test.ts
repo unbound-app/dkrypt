@@ -66,6 +66,7 @@ test('deployment smoke verifies API-key artifact access and its reusable health 
   expect(script).toContain("import('/app/src/deploymentSmokeAssertions.ts')");
   expect(script).toContain("import('/app/src/store/sqlite.ts')");
   expect(script).toContain('assertDatabaseSchemaVersion(health.database?.schemaVersion, LATEST_SQLITE_SCHEMA_VERSION);');
+  expect(script).toContain('assertAppStoreSubsystemWhenAgentReady(device?.subsystems?.agent, device?.subsystems?.appStore);');
   expect(script).toContain('inspectDeploymentSmokeLogin(login.status, loginBody.code);');
   expect(script).toContain('apiKeyArtifactListing: true');
   expect(script).not.toContain('authenticated dashboard probes skipped because root MFA is enabled');

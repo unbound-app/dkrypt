@@ -1,3 +1,5 @@
+import type { DeviceSubsystemState } from './deviceHealth.js';
+
 export interface DeploymentSmokeLoginState {
   authenticated: boolean;
   rootMfaChallenge: boolean;
@@ -13,4 +15,9 @@ export function assertDatabaseSchemaVersion(actual: unknown, expected: number): 
   if (typeof actual !== 'number' || !Number.isInteger(actual) || actual !== expected) {
     throw new Error(`database schema mismatch: expected ${expected}, received ${typeof actual === 'number' ? actual : 'unknown'}`);
   }
+}
+
+export function assertAppStoreSubsystemWhenAgentReady(agentState: DeviceSubsystemState, appStoreState: DeviceSubsystemState): void {
+  if (agentState !== 'ready' || appStoreState === 'ready' || appStoreState === 'idle') return;
+  throw new Error(`App Store subsystem is ${appStoreState} while the device agent is ready`);
 }
