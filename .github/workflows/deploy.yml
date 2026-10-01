@@ -471,7 +471,11 @@ jobs:
             });
             cookie = sessionCookie.split(';', 1)[0];
           }
-          const cookieHeaders = { cookie: cookie ?? '' };
+          const cookieHeaders = {
+            cookie: cookie ?? '',
+            origin: new URL(config.publicBaseUrl).origin,
+            'sec-fetch-site': 'same-origin',
+          };
           let authenticatedRoutes = false;
           try {
             if (!cookie?.startsWith('session=')) throw new Error('smoke authentication did not issue a session cookie');
