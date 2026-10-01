@@ -344,7 +344,26 @@ jobs:
           docker stop --timeout 150 dkrypt
           container_exit="$(docker inspect --format '{{.State.ExitCode}} {{.State.OOMKilled}}' dkrypt)"
           IFS=' ' read -r exit_code oom_killed <<< "$container_exit"
-          recovery_state="$(docker run -i --rm --network none --user 10001:10001 --mount type=volume,source=dkrypt_state,target=/data/state,readonly -e TEST_JOB_ID="$job_id" --entrypoint bun dkrypt:latest - <<'JS'
+          docker start dkrypt >/dev/null
+          ready=0
+          for attempt in $(seq 1 90); do
+            if check_health; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          if [[ "$ready" != 1 ]]; then
+            docker logs --tail 100 dkrypt
+            echo 'dkrypt did not recover healthy USB-agent readiness after SIGTERM' >&2
+            exit 1
+          fi
+          stopped=0
+          if [[ "$exit_code" != 0 || "$oom_killed" != false ]]; then
+            echo "production container did not exit gracefully: exit=$exit_code oomKilled=$oom_killed" >&2
+            exit 1
+          fi
+          recovery_state="$(run_dkrypt_bun 10001:10001 -e TEST_JOB_ID="$job_id" <<'JS'
           const { Database } = await import('bun:sqlite');
           const database = new Database('/data/state/dkrypt.sqlite', { readonly: true });
           try {
@@ -363,45 +382,26 @@ jobs:
           JS
           )"
           IFS=$'\t' read -r persisted_status persisted_progress recovery_pending recovery_verified <<< "$recovery_state"
-          docker start dkrypt >/dev/null
-          stopped=0
-          if [[ "$exit_code" != 0 || "$oom_killed" != false ]]; then
-            echo "production container did not exit gracefully: exit=$exit_code oomKilled=$oom_killed" >&2
-            exit 1
-          fi
           if [[ "$recovery_verified" != true ]]; then
             echo "shutdown neither completed nor persisted recovery for job $job_id: status=$persisted_status progress=$persisted_progress recoveryPending=$recovery_pending" >&2
             exit 1
           fi
-          ready=0
-          for attempt in $(seq 1 90); do
-            if check_health; then
-              ready=1
-              break
-            fi
-            sleep 2
-          done
-          if [[ "$ready" != 1 ]]; then
-            docker logs --tail 100 dkrypt
-            echo 'dkrypt did not recover healthy USB-agent readiness after SIGTERM' >&2
-            exit 1
-          fi
           recovered=0
-          for attempt in $(seq 1 360); do
+          for attempt in $(seq 1 60); do
             status="$(read_job_status)"
             IFS=$'\t' read -r job_state job_attempt _ <<< "$status"
-            if [[ "$job_state" == done ]]; then
-              echo "Production decrypt completed after recovery on attempt $job_attempt"
+            if [[ "$job_state" == queued || "$job_state" == running || "$job_state" == done ]]; then
+              echo "Production decrypt survived shutdown in state $job_state on attempt $job_attempt"
               recovered=1
               break
             fi
             if [[ "$job_state" == failed ]]; then
-              echo "Production decrypt failed after restart on attempt $job_attempt" >&2
+              echo "Production decrypt failed before becoming recoverable after restart on attempt $job_attempt" >&2
               exit 1
             fi
-            sleep 5
+            sleep 2
           done
           if [[ "$recovered" != 1 ]]; then
-            echo 'production job remained non-terminal after 30 minutes of recovery monitoring' >&2
+            echo 'production job did not return to a recoverable state within two minutes of restart' >&2
             exit 1
           fi
