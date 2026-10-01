@@ -290,7 +290,8 @@ function clearQueuedDeadline(id: string): void {
 
 function failExpiredQueuedJob(job: Job, now = Date.now()): void {
   if (job.status !== 'queued' || job.deadlineAt === undefined || job.deadlineAt > now) return;
-  const queueReason = getQueueReason(job);
+  const queueReason = getQueueReason(job)
+    ?? 'No dispatch blocker was detected; the job remained queued until its deadline';
   job.queueReason = queueReason;
   clearQueuedDeadline(job.id);
   const index = queue.indexOf(job.id);

@@ -316,6 +316,30 @@ describe('enqueueDecryptJob', () => {
     }
   });
 
+  test('records a diagnostic when a queued deadline expires after its blocker has cleared', async () => {
+    await clearActiveTestJobs();
+    setCachedDeviceHealth(testDeviceId, { reachable: false, error: 'USB device is offline', checkedAt: Date.now() });
+    const job = enqueueDecryptJob(`com.test.expired-unblocked.${crypto.randomUUID()}`, 'scheduler', { preferredDeviceId: testDeviceId });
+
+    try {
+      expect(job.status).toBe('queued');
+      job.deadlineAt = Date.now() - 1;
+      setCachedDeviceHealth(testDeviceId, { reachable: true, jailbreakAvailable: true, checkedAt: Date.now() });
+      notifyDeviceDispatchStateChanged();
+
+      expect(job).toMatchObject({ status: 'failed', deadlineExceeded: true });
+      expect(job.queueReason).toBe('No dispatch blocker was detected; the job remained queued until its deadline');
+      expect(job.error).toContain(job.queueReason!);
+      expect(getJobHistoryEntryById(job.id)?.queueReason).toBe(job.queueReason);
+    } finally {
+      if (job.status === 'queued') cancelQueuedJob(job.id, 'queue deadline diagnostic test cleanup');
+      if (job.status === 'running') cancelJob(job.id, 'queue deadline diagnostic test cleanup');
+      await waitForJob(job, 1_000);
+      setCachedDeviceHealth(testDeviceId, { reachable: true, jailbreakAvailable: true, checkedAt: Date.now() });
+      notifyDeviceDispatchStateChanged();
+    }
+  });
+
   test('gives scheduler jobs the full scheduler deadline instead of the interactive queue deadline', async () => {
     const originalDeadline = config.jobMaxWaitSeconds;
     config.jobMaxWaitSeconds = 0;

@@ -94,6 +94,33 @@ describe('job device eligibility', () => {
     expect(getJobDeviceBlocker(makeJob(), { id: 'ipad-a' }, { health }, Date.now())).toBeUndefined();
   });
 
+  test('stale TestFlight process heartbeats do not block scheduler dispatch when device access is verified', () => {
+    const now = 31 * 60_000;
+    const job = makeJob({
+      source: 'scheduler',
+      testflight: { appId: 42, build: { id: 7, bundleId: 'com.example.app', cfBundleShortVersion: '2.0', cfBundleVersion: '7' } },
+    });
+    const health = makeHealth({
+      subsystems: {
+        usb: 'ready', mux: 'ready', agent: 'ready', appStore: 'unknown', testFlight: 'unknown', sshTunnel: 'ready', storage: 'ready', battery: 'ready', thermal: 'ready',
+      },
+      bridgeHeartbeats: { testflight: { at: 0 } },
+    });
+    const catalog = makeCatalog({
+      fetchedAt: now,
+      apps: [{
+        appId: 42,
+        bundleId: 'com.example.app',
+        displayName: 'Example',
+        devices: [{ id: 'ipad-a', name: 'iPad A', verifiedAt: now }],
+        lastVerifiedAt: now,
+        deviceSource: true,
+      }],
+    });
+
+    expect(getJobDeviceBlocker(job, { id: 'ipad-a' }, { health, testFlightCatalog: catalog }, now)).toBeUndefined();
+  });
+
   test('checks storage requirements before assigning a known TestFlight build', () => {
     const job = makeJob({ testflight: { appId: 42, build: { id: 7, bundleId: 'com.example.app', cfBundleShortVersion: '2.0', cfBundleVersion: '7', fileSize: 100 } } });
     expect(getJobDeviceBlocker(job, { id: 'ipad-a' }, { health: makeHealth({ storageFreeBytes: 150 }), testFlightCatalog: makeCatalog() }, 1_000))
