@@ -7,6 +7,9 @@
 #import <spawn.h>
 #import <errno.h>
 #import <signal.h>
+#import <fcntl.h>
+#import <sys/file.h>
+#import <unistd.h>
 
 extern char **environ;
 
@@ -119,6 +122,7 @@ static void autoinstallLog(NSString *line) {
 static NSString * const kBridgeRootPath = @"/tmp/autoinstall/v1";
 static NSString * const kASInstallStatusPath = @"/tmp/autoinstall-as-install-status.json";
 static NSString * const kPaymentAuthorizationGuardDirectory = @"/tmp/autoinstall-payment-authorization";
+static NSString * const kPaymentAuthorizationGuardLockPath = @"/tmp/autoinstall-payment-authorization.lock";
 static NSString * const kBridgeSecretPath = @"/var/mobile/Library/Preferences/dev.adrian.autoinstall-bridge.secret";
 
 static void writeJSONFile(NSString *path, id obj) {
@@ -1208,6 +1212,29 @@ static id gStashedConfirmVC = nil;
 static BOOL gConfirmDoneThisSheet = NO;
 static BOOL gConfirmAttemptActive = NO;
 static BOOL gPaymentAuthorizationPromptVisible = NO;
+static __weak UIViewController *gPaymentAuthorizationPromptController = nil;
+static int gPaymentAuthorizationGuardLockFd = -1;
+
+static int autoinstallTryAcquirePaymentAuthorizationGuardLock(void) {
+    int fd = open(kPaymentAuthorizationGuardLockPath.fileSystemRepresentation, O_CREAT | O_RDWR | O_CLOEXEC, 0600);
+    if (fd < 0) return -1;
+    if (flock(fd, LOCK_EX | LOCK_NB) != 0) {
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+static void autoinstallReleasePaymentAuthorizationGuardLock(int fd) {
+    if (fd < 0) return;
+    flock(fd, LOCK_UN);
+    close(fd);
+}
+
+static void autoinstallHoldPaymentAuthorizationGuardLock(void) {
+    if (gPaymentAuthorizationGuardLockFd >= 0) return;
+    gPaymentAuthorizationGuardLockFd = autoinstallTryAcquirePaymentAuthorizationGuardLock();
+}
 
 static NSString *autoinstallPaymentAuthorizationGuardPath(pid_t pid) {
     return [kPaymentAuthorizationGuardDirectory stringByAppendingPathComponent:[NSString stringWithFormat:@"%d.json", pid]];
@@ -1218,19 +1245,24 @@ static void autoinstallWritePaymentAuthorizationGuard(NSString *className) {
     writeJSONFile(autoinstallPaymentAuthorizationGuardPath([[NSProcessInfo processInfo] processIdentifier]), @{
         @"pid": @([[NSProcessInfo processInfo] processIdentifier]),
         @"process": [[NSProcessInfo processInfo] processName] ?: @"unknown",
-        @"viewController": className ?: @"unknown"
+        @"viewController": className ?: @"unknown",
+        @"updatedAt": @([[NSDate date] timeIntervalSince1970])
     });
 }
 
-static BOOL autoinstallSharedPaymentAuthorizationGuardActive(void) {
+static BOOL autoinstallSharedPaymentAuthorizationGuardActiveLocked(void) {
     NSFileManager *fileManager = [NSFileManager defaultManager];
-    NSArray *files = [fileManager contentsOfDirectoryAtPath:kPaymentAuthorizationGuardDirectory error:nil];
+    NSError *error = nil;
+    NSArray *files = [fileManager contentsOfDirectoryAtPath:kPaymentAuthorizationGuardDirectory error:&error];
+    if (!files) return [fileManager fileExistsAtPath:kPaymentAuthorizationGuardDirectory];
+    NSTimeInterval now = [NSDate date].timeIntervalSince1970;
     for (NSString *file in files) {
         if (![file.pathExtension isEqualToString:@"json"]) continue;
         NSString *path = [kPaymentAuthorizationGuardDirectory stringByAppendingPathComponent:file];
         NSDictionary *guard = readJSONFile(path);
         pid_t pid = [guard[@"pid"] respondsToSelector:@selector(intValue)] ? [guard[@"pid"] intValue] : 0;
-        if (pid <= 0) {
+        NSTimeInterval updatedAt = [guard[@"updatedAt"] respondsToSelector:@selector(doubleValue)] ? [guard[@"updatedAt"] doubleValue] : 0;
+        if (pid <= 0 || updatedAt <= 0 || now - updatedAt > 10.0) {
             [fileManager removeItemAtPath:path error:nil];
             continue;
         }
@@ -1241,9 +1273,17 @@ static BOOL autoinstallSharedPaymentAuthorizationGuardActive(void) {
     return NO;
 }
 
+static BOOL autoinstallPaymentAuthorizationPromptPendingLocked(void) {
+    return gPaymentAuthorizationPromptVisible || autoinstallSharedPaymentAuthorizationGuardActiveLocked();
+}
+
 static void autoinstallClearPaymentAuthorizationGuard(void) {
     [[NSFileManager defaultManager] removeItemAtPath:autoinstallPaymentAuthorizationGuardPath([[NSProcessInfo processInfo] processIdentifier]) error:nil];
     gPaymentAuthorizationPromptVisible = NO;
+    gPaymentAuthorizationPromptController = nil;
+    int lockFd = gPaymentAuthorizationGuardLockFd;
+    gPaymentAuthorizationGuardLockFd = -1;
+    autoinstallReleasePaymentAuthorizationGuardLock(lockFd);
 }
 
 static BOOL autoinstallIsPaymentAuthorizationController(UIViewController *controller) {
@@ -1257,9 +1297,11 @@ static void autoinstallRecordPaymentAuthorizationPrompt(NSString *className) {
     gConfirmDoneThisSheet = YES;
     gConfirmAttemptActive = NO;
     autoinstallClearAutoConfirmFlags();
+    autoinstallHoldPaymentAuthorizationGuardLock();
 }
 
 static void autoinstallMarkPaymentAuthorizationPrompt(UIViewController *controller) {
+    gPaymentAuthorizationPromptController = controller;
     NSString *className = NSStringFromClass([controller class]);
     autoinstallRecordPaymentAuthorizationPrompt(className);
 }
@@ -1285,13 +1327,8 @@ static BOOL autoinstallVisibleControllerContainsPaymentAuthorization(UIViewContr
     return NO;
 }
 
-static BOOL autoinstallPaymentAuthorizationPromptVisible(void) {
-    if (gPaymentAuthorizationPromptVisible) {
-        autoinstallWritePaymentAuthorizationGuard(@"PKPaymentAuthorizationRemoteAlertViewController");
-        return YES;
-    }
-    if (autoinstallSharedPaymentAuthorizationGuardActive()) return YES;
-    if (!(gIsPassbookProcess || gIsAuthUIService)) return NO;
+static NSString *autoinstallVisiblePaymentAuthorizationClass(void) {
+    if (!(gIsPassbookProcess || gIsAuthUIService)) return nil;
     NSHashTable *visited = [NSHashTable hashTableWithOptions:NSPointerFunctionsObjectPointerPersonality | NSPointerFunctionsStrongMemory];
     NSString *matchedClass = nil;
     @try {
@@ -1313,9 +1350,57 @@ static BOOL autoinstallPaymentAuthorizationPromptVisible(void) {
     } @catch (NSException *exception) {
         autoinstallLog([NSString stringWithFormat:@"payment authorization visibility check failed: %@", exception]);
     }
-    if (!matchedClass) return NO;
-    autoinstallRecordPaymentAuthorizationPrompt(matchedClass);
-    return YES;
+    return matchedClass;
+}
+
+static BOOL autoinstallPaymentAuthorizationPromptVisible(void) {
+    if (gPaymentAuthorizationPromptVisible) {
+        autoinstallWritePaymentAuthorizationGuard(@"PKPaymentAuthorizationRemoteAlertViewController");
+        autoinstallHoldPaymentAuthorizationGuardLock();
+        return YES;
+    }
+    NSString *className = autoinstallVisiblePaymentAuthorizationClass();
+    if (className) {
+        gPaymentAuthorizationPromptController = nil;
+        autoinstallRecordPaymentAuthorizationPrompt(className);
+        return YES;
+    }
+    int lockFd = autoinstallTryAcquirePaymentAuthorizationGuardLock();
+    if (lockFd < 0) return YES;
+    BOOL active = autoinstallPaymentAuthorizationPromptPendingLocked();
+    autoinstallReleasePaymentAuthorizationGuardLock(lockFd);
+    return active;
+}
+
+static void autoinstallRefreshPaymentAuthorizationPromptGuard(void) {
+    if (!gPaymentAuthorizationPromptVisible) return;
+    UIViewController *controller = gPaymentAuthorizationPromptController;
+    NSString *className = controller && controller.viewIfLoaded.window && autoinstallIsPaymentAuthorizationController(controller)
+        ? NSStringFromClass([controller class])
+        : autoinstallVisiblePaymentAuthorizationClass();
+    if (!className) {
+        autoinstallClearPaymentAuthorizationGuard();
+        return;
+    }
+    autoinstallWritePaymentAuthorizationGuard(className);
+    autoinstallHoldPaymentAuthorizationGuardLock();
+}
+
+static BOOL autoinstallRunWithPaymentAuthorizationGuard(void (^action)(void)) {
+    if (gPaymentAuthorizationPromptVisible) return NO;
+    int lockFd = autoinstallTryAcquirePaymentAuthorizationGuardLock();
+    if (lockFd < 0) return NO;
+    BOOL active = autoinstallPaymentAuthorizationPromptPendingLocked();
+    if (!active && action) {
+        @try {
+            action();
+        } @finally {
+            autoinstallReleasePaymentAuthorizationGuardLock(lockFd);
+        }
+        return YES;
+    }
+    autoinstallReleasePaymentAuthorizationGuardLock(lockFd);
+    return NO;
 }
 
 static void autoinstallWalkAX(id element, void (^visit)(id el)) {
@@ -1376,10 +1461,9 @@ static NSString *autoinstallGetPassword(void) {
     return nil;
 }
 
-static BOOL autoinstallHandlePasswordIfPresent(void) {
+static BOOL autoinstallHandlePasswordIfPresentUnlocked(void) {
     NSString *password = autoinstallGetPassword();
     if (!password.length) return NO;
-    if (autoinstallPaymentAuthorizationPromptVisible()) return NO;
 
     NSMutableArray *roots = [NSMutableArray array];
     if (gStashedConfirmVC) {
@@ -1481,18 +1565,22 @@ static BOOL autoinstallHandlePasswordIfPresent(void) {
     }
 
     if (foundField) {
-        if (autoinstallPaymentAuthorizationPromptVisible()) return NO;
+        if (autoinstallPaymentAuthorizationPromptPendingLocked()) return NO;
         autoinstallLog([NSString stringWithFormat:@"[Auth] Found password field (%@), setting text (length=%lu)", NSStringFromClass([foundField class]), (unsigned long)password.length]);
         if ([foundField respondsToSelector:@selector(setText:)]) {
             [foundField setText:password];
         }
+        if (autoinstallPaymentAuthorizationPromptPendingLocked()) return NO;
         if ([foundField respondsToSelector:@selector(sendActionsForControlEvents:)]) {
             [foundField sendActionsForControlEvents:UIControlEventEditingChanged];
+            if (autoinstallPaymentAuthorizationPromptPendingLocked()) return NO;
             [foundField sendActionsForControlEvents:UIControlEventEditingDidEnd];
+            if (autoinstallPaymentAuthorizationPromptPendingLocked()) return NO;
         }
         @try {
             [[NSNotificationCenter defaultCenter] postNotificationName:UITextFieldTextDidChangeNotification object:foundField];
         } @catch (NSException *e) {}
+        if (autoinstallPaymentAuthorizationPromptPendingLocked()) return NO;
 
         if ([foundField conformsToProtocol:@protocol(UIKeyInput)]) {
             @try {
@@ -1502,18 +1590,21 @@ static BOOL autoinstallHandlePasswordIfPresent(void) {
                 }
             } @catch (NSException *e) {}
         }
+        if (autoinstallPaymentAuthorizationPromptPendingLocked()) return NO;
 
         if (foundButton) {
             autoinstallLog([NSString stringWithFormat:@"[Auth] Found submit button (%@), activating...", NSStringFromClass([foundButton class])]);
-            void (^actuateButton)(void) = ^{
+            void (^actuateButtonUnlocked)(void) = ^{
                 @try {
-                    if (autoinstallPaymentAuthorizationPromptVisible()) return;
+                    if (autoinstallPaymentAuthorizationPromptPendingLocked()) return;
                     if ([foundButton respondsToSelector:@selector(accessibilityActivate)]) {
                         [foundButton accessibilityActivate];
                     }
+                    if (autoinstallPaymentAuthorizationPromptPendingLocked()) return;
                     if ([foundButton isKindOfClass:[UIControl class]]) {
                         [(UIControl *)foundButton sendActionsForControlEvents:UIControlEventTouchUpInside];
                     } else if ([foundButton isKindOfClass:[UIView class]]) {
+                        if (autoinstallPaymentAuthorizationPromptPendingLocked()) return;
                         UIView *p = [(UIView *)foundButton superview];
                         while (p) {
                             if ([p isKindOfClass:[UIControl class]]) {
@@ -1525,18 +1616,31 @@ static BOOL autoinstallHandlePasswordIfPresent(void) {
                     }
                 } @catch (NSException *e) {}
             };
-            actuateButton();
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), actuateButton);
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), actuateButton);
+            actuateButtonUnlocked();
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                autoinstallRunWithPaymentAuthorizationGuard(actuateButtonUnlocked);
+            });
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                autoinstallRunWithPaymentAuthorizationGuard(actuateButtonUnlocked);
+            });
         }
         return YES;
     }
     return NO;
 }
 
-static NSArray *autoinstallConfirmMatching(NSString *match) {
-    if (autoinstallPaymentAuthorizationPromptVisible()) return @[];
+static BOOL autoinstallHandlePasswordIfPresent(void) {
+    if (!autoinstallGetPassword().length || autoinstallPaymentAuthorizationPromptVisible()) return NO;
+    __block BOOL handled = NO;
+    if (!autoinstallRunWithPaymentAuthorizationGuard(^{
+        handled = autoinstallHandlePasswordIfPresentUnlocked();
+    })) return NO;
+    return handled;
+}
+
+static NSArray *autoinstallConfirmMatchingUnlocked(NSString *match) {
     NSMutableArray *acted = [NSMutableArray array];
+    __block BOOL paymentAuthorizationPromptPending = NO;
 
     // 1. Direct inspection and dismissal of any presented UIAlertController
     @try {
@@ -1568,7 +1672,7 @@ static NSArray *autoinstallConfirmMatching(NSString *match) {
                                 }
                             }
                             if (matchAlert) {
-                                if (autoinstallPaymentAuthorizationPromptVisible()) return @[];
+                                if (autoinstallPaymentAuthorizationPromptPendingLocked()) return acted;
                                 autoinstallLog([NSString stringWithFormat:@"[Alert] Dismissing UIAlertController with action: %@", title]);
                                 id handler = nil;
                                 @try { handler = [act valueForKey:@"handler"]; } @catch (NSException *e) {}
@@ -1579,6 +1683,8 @@ static NSArray *autoinstallConfirmMatching(NSString *match) {
                                         block(act);
                                     } @catch (NSException *e) {}
                                 }
+                                [acted addObject:@{@"type": @"UIAlertController", @"title": title}];
+                                if (autoinstallPaymentAuthorizationPromptPendingLocked()) return acted;
                                 @try {
                                     if ([alert respondsToSelector:sel_registerName("_dismissWithAction:")]) {
                                         ((void (*)(id, SEL, id))objc_msgSend)(alert, sel_registerName("_dismissWithAction:"), act);
@@ -1586,7 +1692,6 @@ static NSArray *autoinstallConfirmMatching(NSString *match) {
                                         [alert dismissViewControllerAnimated:YES completion:nil];
                                     }
                                 } @catch (NSException *e) {}
-                                [acted addObject:@{@"type": @"UIAlertController", @"title": title}];
                                 return acted;
                             }
                         }
@@ -1623,10 +1728,13 @@ static NSArray *autoinstallConfirmMatching(NSString *match) {
 #pragma clang diagnostic pop
     } @catch (NSException *e) {}
 
-    __block BOOL paymentGuardActive = NO;
     for (id root in roots) {
         autoinstallWalkAX(root, ^(id el) {
-            if (paymentGuardActive) return;
+            if (paymentAuthorizationPromptPending) return;
+            if (autoinstallPaymentAuthorizationPromptPendingLocked()) {
+                paymentAuthorizationPromptPending = YES;
+                return;
+            }
             NSString *label = @"";
             @try { if ([el respondsToSelector:@selector(accessibilityLabel)]) label = [el accessibilityLabel] ?: @""; } @catch (NSException *e) {}
             NSString *title = @"";
@@ -1673,18 +1781,26 @@ static NSArray *autoinstallConfirmMatching(NSString *match) {
                 }
             }
             if (!matched) return;
-            if (autoinstallPaymentAuthorizationPromptVisible()) {
-                paymentGuardActive = YES;
-                return;
-            }
             NSMutableDictionary *rec = [@{@"class": cls, @"label": label, @"title": title, @"text": text} mutableCopy];
             @try {
                 if ([el respondsToSelector:@selector(accessibilityActivate)]) {
                     rec[@"accessibilityActivate"] = @([el accessibilityActivate]);
+                    if (autoinstallPaymentAuthorizationPromptPendingLocked()) {
+                        rec[@"stoppedForPaymentAuthorization"] = @YES;
+                        [acted addObject:rec];
+                        paymentAuthorizationPromptPending = YES;
+                        return;
+                    }
                 }
                 if ([el respondsToSelector:sel_registerName("_actionTriggered")]) {
                     ((void (*)(id, SEL))objc_msgSend)(el, sel_registerName("_actionTriggered"));
                     rec[@"_actionTriggered"] = @YES;
+                    if (autoinstallPaymentAuthorizationPromptPendingLocked()) {
+                        rec[@"stoppedForPaymentAuthorization"] = @YES;
+                        [acted addObject:rec];
+                        paymentAuthorizationPromptPending = YES;
+                        return;
+                    }
                 }
                 id act = nil;
                 if ([el respondsToSelector:sel_registerName("action")]) {
@@ -1701,17 +1817,35 @@ static NSArray *autoinstallConfirmMatching(NSString *match) {
                         void (^block)(id) = handler;
                         block(act);
                         rec[@"calledActionHandler"] = @YES;
+                        if (autoinstallPaymentAuthorizationPromptPendingLocked()) {
+                            rec[@"stoppedForPaymentAuthorization"] = @YES;
+                            [acted addObject:rec];
+                            paymentAuthorizationPromptPending = YES;
+                            return;
+                        }
                     }
                 }
                 if ([el isKindOfClass:[UIControl class]]) {
                     [(UIControl *)el sendActionsForControlEvents:UIControlEventTouchUpInside];
                     rec[@"sentControlEvents"] = @YES;
+                    if (autoinstallPaymentAuthorizationPromptPendingLocked()) {
+                        rec[@"stoppedForPaymentAuthorization"] = @YES;
+                        [acted addObject:rec];
+                        paymentAuthorizationPromptPending = YES;
+                        return;
+                    }
                 } else if ([el isKindOfClass:[UIView class]]) {
                     UIView *p = [(UIView *)el superview];
                     while (p) {
                         if ([p isKindOfClass:[UIControl class]]) {
                             [(UIControl *)p sendActionsForControlEvents:UIControlEventTouchUpInside];
                             rec[@"sentParentControlEvents"] = NSStringFromClass([p class]);
+                            if (autoinstallPaymentAuthorizationPromptPendingLocked()) {
+                                rec[@"stoppedForPaymentAuthorization"] = @YES;
+                                [acted addObject:rec];
+                                paymentAuthorizationPromptPending = YES;
+                                return;
+                            }
                             break;
                         }
                         p = [p superview];
@@ -1735,8 +1869,17 @@ static NSArray *autoinstallConfirmMatching(NSString *match) {
             }
             [acted addObject:rec];
         });
-        if (acted.count > 0 || paymentGuardActive) break;
+        if (acted.count > 0 || paymentAuthorizationPromptPending) break;
     }
+    return acted;
+}
+
+static NSArray *autoinstallConfirmMatching(NSString *match) {
+    if (autoinstallPaymentAuthorizationPromptVisible()) return @[];
+    __block NSArray *acted = @[];
+    if (!autoinstallRunWithPaymentAuthorizationGuard(^{
+        acted = autoinstallConfirmMatchingUnlocked(match);
+    })) return @[];
     return acted;
 }
 
@@ -1776,15 +1919,25 @@ static BOOL autoinstallInviteControlMatches(id element) {
     return NO;
 }
 
-static NSArray *autoinstallActivateInviteControls(void) {
+static NSArray *autoinstallActivateInviteControlsUnlocked(void) {
     NSMutableArray *acted = [NSMutableArray array];
     for (id root in autoinstallInviteRoots()) {
         __block BOOL stopped = NO;
         autoinstallWalkAX(root, ^(id element) {
-            if (stopped || !autoinstallInviteControlMatches(element)) return;
+            if (stopped) return;
+            if (autoinstallPaymentAuthorizationPromptPendingLocked()) {
+                stopped = YES;
+                return;
+            }
+            if (!autoinstallInviteControlMatches(element)) return;
             @try {
                 NSString *label = [element respondsToSelector:@selector(accessibilityLabel)] ? ([element accessibilityLabel] ?: @"") : @"";
                 if ([element respondsToSelector:@selector(accessibilityActivate)]) [element accessibilityActivate];
+                if (autoinstallPaymentAuthorizationPromptPendingLocked()) {
+                    [acted addObject:@{ @"label": label, @"class": NSStringFromClass([element class]) }];
+                    stopped = YES;
+                    return;
+                }
                 if ([element isKindOfClass:[UIControl class]]) [(UIControl *)element sendActionsForControlEvents:UIControlEventTouchUpInside];
                 [acted addObject:@{ @"label": label, @"class": NSStringFromClass([element class]) }];
                 stopped = YES;
@@ -1793,8 +1946,17 @@ static NSArray *autoinstallActivateInviteControls(void) {
                 stopped = YES;
             }
         });
-        if (acted.count > 0) break;
+        if (acted.count > 0 || autoinstallPaymentAuthorizationPromptPendingLocked()) break;
     }
+    return acted;
+}
+
+static NSArray *autoinstallActivateInviteControls(void) {
+    if (autoinstallPaymentAuthorizationPromptVisible()) return @[];
+    __block NSArray *acted = @[];
+    if (!autoinstallRunWithPaymentAuthorizationGuard(^{
+        acted = autoinstallActivateInviteControlsUnlocked();
+    })) return @[];
     return acted;
 }
 
@@ -1836,6 +1998,7 @@ static void startPassbookSide(void) {
     dispatch_source_set_timer(gPassbookBridgeTimer, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), (uint64_t)(0.5 * NSEC_PER_SEC), (uint64_t)(0.1 * NSEC_PER_SEC));
     dispatch_source_set_event_handler(gPassbookBridgeTimer, ^{
         @autoreleasepool {
+        autoinstallRefreshPaymentAuthorizationPromptGuard();
         autoinstallHandlePasswordIfPresent();
 
         if (gConfirmDoneThisSheet) return;
@@ -1862,6 +2025,7 @@ static void startAuthUIServiceSide(void) {
     dispatch_source_set_timer(gAuthUIBridgeTimer, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), (uint64_t)(0.35 * NSEC_PER_SEC), (uint64_t)(0.1 * NSEC_PER_SEC));
     dispatch_source_set_event_handler(gAuthUIBridgeTimer, ^{
         @autoreleasepool {
+        autoinstallRefreshPaymentAuthorizationPromptGuard();
         autoinstallHandlePasswordIfPresent();
         NSString *match = autoinstallAutoConfirmMatchAtPath(kAutoConfirmFlagPath) ?:
                           autoinstallAutoConfirmMatchAtPath(@"/private/var/mobile/Library/Caches/com.apple.AuthKitUIService/autoinstall-autoconfirm.flag");
