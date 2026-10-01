@@ -121,7 +121,34 @@ function processCheckoutSession(event: Stripe.Event): void {
   if (customerId && userId) linkBillingCustomer(customerId, userId);
 }
 
-function processStripeRefund(event: Stripe.Event): void {
+async function stripeOperation<T>(stripeClient: Stripe | undefined, operation: (client: Stripe) => Promise<T>): Promise<T> {
+  return stripeClient ? operation(stripeClient) : stripeRequest(operation);
+}
+
+async function subscriptionIdForRefundedCharge(charge: Stripe.Charge, stripeClient?: Stripe): Promise<string | undefined> {
+  const paymentIntentId = stripeObjectId(charge.payment_intent);
+  if (!paymentIntentId) return undefined;
+
+  const invoicePayments = await stripeOperation(stripeClient, (client) => client.invoicePayments.list({
+    limit: 100,
+    payment: { type: 'payment_intent', payment_intent: paymentIntentId },
+  }));
+  const invoiceIds = new Set(invoicePayments.data
+    .map((payment) => stripeObjectId(payment.invoice))
+    .filter((invoiceId): invoiceId is string => !!invoiceId));
+  const subscriptionIds = new Set<string>();
+
+  for (const invoiceId of invoiceIds) {
+    const invoice = await stripeOperation(stripeClient, (client) => client.invoices.retrieve(invoiceId));
+    const subscriptionId = invoiceSubscriptionId(invoice);
+    if (subscriptionId) subscriptionIds.add(subscriptionId);
+  }
+
+  if (subscriptionIds.size > 1) throw new Error(`fully refunded Stripe payment ${charge.id} maps to multiple subscriptions`);
+  return subscriptionIds.values().next().value;
+}
+
+async function processStripeRefund(event: Stripe.Event, stripeClient?: Stripe): Promise<void> {
   const charge = event.data.object as Stripe.Charge;
   if (!charge?.id) return;
   const customerId = stripeObjectId(charge.customer);
@@ -133,6 +160,46 @@ function processStripeRefund(event: Stripe.Event): void {
     ? `${refundedAmount}/${amount} ${currency} minor units`
     : 'amount unavailable';
   recordAudit(actor, 'billing.refund', charge.id, `${refundSummary}; Stripe event ${event.id}`);
+
+  if (!charge.refunded) return;
+  const subscriptionId = await subscriptionIdForRefundedCharge(charge, stripeClient);
+  if (!subscriptionId) return;
+
+  await runKeyedSerial(`stripe:${subscriptionId}`, async () => {
+    let billingSubscription = getBillingSubscriptionById(subscriptionId);
+    if (!billingSubscription) {
+      const current = await stripeOperation(stripeClient, (client) => client.subscriptions.retrieve(subscriptionId));
+      persistStripeSubscription(current, new Date().toISOString(), customerId ? getBillingUserId(customerId) : undefined);
+      billingSubscription = getBillingSubscriptionById(subscriptionId);
+    }
+    if (!billingSubscription || billingSubscription.provider !== 'stripe') {
+      throw new Error(`refunded Stripe payment ${charge.id} maps to an unknown dkrypt subscription`);
+    }
+    if (customerId && billingSubscription.customerId !== customerId) {
+      throw new Error(`refunded Stripe payment ${charge.id} maps to a different customer`);
+    }
+
+    const processedAt = new Date().toISOString();
+    if (billingSubscription.status !== 'revoked' || billingSubscription.failureReason !== 'payment refunded') {
+      upsertBillingSubscription({
+        ...billingSubscription,
+        status: 'revoked',
+        nextBilledAt: undefined,
+        scheduledChangeAction: undefined,
+        scheduledChangeAt: undefined,
+        failureReason: 'payment refunded',
+        occurredAt: processedAt,
+        updatedAt: processedAt,
+      });
+    }
+
+    const current = await stripeOperation(stripeClient, (client) => client.subscriptions.retrieve(subscriptionId));
+    const canceled = current.status === 'canceled' || current.status === 'incomplete_expired'
+      ? current
+      : await stripeOperation(stripeClient, (client) => client.subscriptions.cancel(subscriptionId));
+    persistStripeSubscription(canceled, new Date().toISOString(), billingSubscription.userId);
+    recordAudit(actor, 'billing.refund', subscriptionId, `full refund of ${charge.id} revoked access and canceled Stripe billing from event ${event.id}`);
+  });
 }
 
 async function reconcileSuccessfulCheckoutSession(event: Stripe.Event, stripeClient?: Stripe): Promise<void> {
@@ -166,13 +233,15 @@ function persistStripeSubscription(subscription: Stripe.Subscription, occurredAt
     : subscription.cancel_at_period_end
       ? unixDate(item.current_period_end)
       : undefined;
+  const existing = getBillingSubscriptionById(subscription.id);
+  const refundRevoked = existing?.provider === 'stripe' && existing.status === 'revoked' && existing.failureReason === 'payment refunded';
 
   upsertBillingSubscription({
     provider: 'stripe',
     subscriptionId: subscription.id,
     customerId,
     userId: metadataUserId(subscription.metadata) ?? fallbackUserId ?? getBillingUserId(customerId),
-    status: subscription.status,
+    status: refundRevoked ? 'revoked' : subscription.status,
     planId,
     priceId,
     productId,
@@ -180,6 +249,7 @@ function persistStripeSubscription(subscription: Stripe.Subscription, occurredAt
     nextBilledAt: scheduledChangeAction ? undefined : unixDate(item.current_period_end),
     scheduledChangeAction,
     scheduledChangeAt,
+    failureReason: refundRevoked ? 'payment refunded' : undefined,
     occurredAt,
     updatedAt,
   });
@@ -237,7 +307,7 @@ export async function processStripeEvent(event: Stripe.Event, stripeClient?: Str
       await processSubscription(event, stripeClient);
       return;
     case 'charge.refunded':
-      processStripeRefund(event);
+      await processStripeRefund(event, stripeClient);
       return;
     case 'invoice.paid':
     case 'invoice.payment_failed':

@@ -225,11 +225,13 @@ describe('Stripe billing webhooks', () => {
     expect(getBillingEntitlements(userId).planId).toBe('priority');
   });
 
-  test('audits a Stripe refund without changing subscription entitlement status', async () => {
+  test('revokes access and cancels the Stripe subscription after a full invoice refund', async () => {
     const userId = `stripe-refund-${crypto.randomUUID()}`;
     const customerId = `cus_${crypto.randomUUID()}`;
     const subscriptionId = `sub_${crypto.randomUUID()}`;
     const chargeId = `ch_${crypto.randomUUID()}`;
+    const paymentIntentId = `pi_${crypto.randomUUID()}`;
+    const invoiceId = `in_${crypto.randomUUID()}`;
     replaceBillingSnapshot({ customers: [], subscriptions: [] });
     await processStripeEvent(event('customer.created', {
       id: customerId,
@@ -247,8 +249,32 @@ describe('Stripe billing webhooks', () => {
       amount_refunded: 1500,
       currency: 'eur',
       refunded: true,
+      payment_intent: paymentIntentId,
     });
-    await processStripeEvent(refundEvent);
+    const currentSubscription = subscriptionEvent(userId, customerId, subscriptionId).data.object as Stripe.Subscription;
+    let cancelledSubscription = 0;
+    const client = {
+      invoicePayments: {
+        list: async () => ({
+          data: [{ invoice: invoiceId, payment: { type: 'payment_intent', payment_intent: paymentIntentId } }],
+        }),
+      },
+      invoices: {
+        retrieve: async () => ({
+          id: invoiceId,
+          parent: { type: 'subscription_details', subscription_details: { subscription: subscriptionId } },
+        }),
+      },
+      subscriptions: {
+        retrieve: async () => currentSubscription,
+        cancel: async () => {
+          cancelledSubscription += 1;
+          return { ...currentSubscription, status: 'canceled' };
+        },
+      },
+    } as unknown as Stripe;
+
+    await processStripeEvent(refundEvent, client);
 
     expect(getAuditLog()).toContainEqual(expect.objectContaining({
       actor: userId,
@@ -256,7 +282,44 @@ describe('Stripe billing webhooks', () => {
       target: chargeId,
       detail: expect.stringContaining(refundEvent.id),
     }));
-    expect(getBillingEntitlements(userId)).toMatchObject({ planId: 'priority', decrypt: true });
+    expect(cancelledSubscription).toBe(1);
+    expect(getBillingSubscriptionById(subscriptionId)).toMatchObject({ status: 'revoked', failureReason: 'payment refunded' });
+    expect(getBillingEntitlements(userId)).toMatchObject({ planId: 'viewer', decrypt: false, api: false });
+
+    const laterActiveEvent = subscriptionEvent(userId, customerId, subscriptionId);
+    laterActiveEvent.type = 'customer.subscription.updated';
+    laterActiveEvent.created = refundEvent.created + 1;
+    await processStripeEvent(laterActiveEvent);
+
+    expect(getBillingSubscriptionById(subscriptionId)).toMatchObject({ status: 'revoked', failureReason: 'payment refunded' });
+    expect(getBillingEntitlements(userId).planId).toBe('viewer');
+  });
+
+  test('does not revoke or cancel access after a partial Stripe refund', async () => {
+    const userId = `stripe-partial-refund-${crypto.randomUUID()}`;
+    const customerId = `cus_${crypto.randomUUID()}`;
+    const subscriptionId = `sub_${crypto.randomUUID()}`;
+    replaceBillingSnapshot({ customers: [], subscriptions: [] });
+    await processStripeEvent(subscriptionEvent(userId, customerId, subscriptionId));
+
+    let cancelledSubscription = 0;
+    const client = {
+      invoicePayments: { list: async () => { throw new Error('partial refunds should not resolve invoices'); } },
+      subscriptions: { cancel: async () => { cancelledSubscription += 1; } },
+    } as unknown as Stripe;
+    await processStripeEvent(event('charge.refunded', {
+      id: `ch_${crypto.randomUUID()}`,
+      object: 'charge',
+      customer: customerId,
+      amount: 1500,
+      amount_refunded: 500,
+      currency: 'eur',
+      refunded: false,
+    }), client);
+
+    expect(cancelledSubscription).toBe(0);
+    expect(getBillingSubscriptionById(subscriptionId)?.status).toBe('active');
+    expect(getBillingEntitlements(userId).planId).toBe('priority');
   });
 
   test('reconciles same-second subscription events from Stripe current state', async () => {
