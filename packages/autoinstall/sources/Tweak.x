@@ -5,6 +5,8 @@
 #import <objc/runtime.h>
 #import <objc/message.h>
 #import <spawn.h>
+#import <errno.h>
+#import <signal.h>
 
 extern char **environ;
 
@@ -116,6 +118,7 @@ static void autoinstallLog(NSString *line) {
 
 static NSString * const kBridgeRootPath = @"/tmp/autoinstall/v1";
 static NSString * const kASInstallStatusPath = @"/tmp/autoinstall-as-install-status.json";
+static NSString * const kPaymentAuthorizationGuardDirectory = @"/tmp/autoinstall-payment-authorization";
 static NSString * const kBridgeSecretPath = @"/var/mobile/Library/Preferences/dev.adrian.autoinstall-bridge.secret";
 
 static void writeJSONFile(NSString *path, id obj) {
@@ -1206,17 +1209,59 @@ static BOOL gConfirmDoneThisSheet = NO;
 static BOOL gConfirmAttemptActive = NO;
 static BOOL gPaymentAuthorizationPromptVisible = NO;
 
+static NSString *autoinstallPaymentAuthorizationGuardPath(pid_t pid) {
+    return [kPaymentAuthorizationGuardDirectory stringByAppendingPathComponent:[NSString stringWithFormat:@"%d.json", pid]];
+}
+
+static void autoinstallWritePaymentAuthorizationGuard(NSString *className) {
+    [[NSFileManager defaultManager] createDirectoryAtPath:kPaymentAuthorizationGuardDirectory withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions: @0700} error:nil];
+    writeJSONFile(autoinstallPaymentAuthorizationGuardPath([[NSProcessInfo processInfo] processIdentifier]), @{
+        @"pid": @([[NSProcessInfo processInfo] processIdentifier]),
+        @"process": [[NSProcessInfo processInfo] processName] ?: @"unknown",
+        @"viewController": className ?: @"unknown"
+    });
+}
+
+static BOOL autoinstallSharedPaymentAuthorizationGuardActive(void) {
+    NSFileManager *fileManager = [NSFileManager defaultManager];
+    NSArray *files = [fileManager contentsOfDirectoryAtPath:kPaymentAuthorizationGuardDirectory error:nil];
+    for (NSString *file in files) {
+        if (![file.pathExtension isEqualToString:@"json"]) continue;
+        NSString *path = [kPaymentAuthorizationGuardDirectory stringByAppendingPathComponent:file];
+        NSDictionary *guard = readJSONFile(path);
+        pid_t pid = [guard[@"pid"] respondsToSelector:@selector(intValue)] ? [guard[@"pid"] intValue] : 0;
+        if (pid <= 0) {
+            [fileManager removeItemAtPath:path error:nil];
+            continue;
+        }
+        errno = 0;
+        if (kill(pid, 0) == 0 || errno == EPERM) return YES;
+        [fileManager removeItemAtPath:path error:nil];
+    }
+    return NO;
+}
+
+static void autoinstallClearPaymentAuthorizationGuard(void) {
+    [[NSFileManager defaultManager] removeItemAtPath:autoinstallPaymentAuthorizationGuardPath([[NSProcessInfo processInfo] processIdentifier]) error:nil];
+    gPaymentAuthorizationPromptVisible = NO;
+}
+
 static BOOL autoinstallIsPaymentAuthorizationController(UIViewController *controller) {
     return [NSStringFromClass([controller class]) containsString:@"PKPaymentAuthorizationRemoteAlertViewController"];
 }
 
-static void autoinstallMarkPaymentAuthorizationPrompt(UIViewController *controller) {
-    NSString *className = NSStringFromClass([controller class]);
+static void autoinstallRecordPaymentAuthorizationPrompt(NSString *className) {
     gPaymentAuthorizationPromptVisible = YES;
+    autoinstallWritePaymentAuthorizationGuard(className);
     markAppStoreInstallRequiresUserAction(@"payment_authorization_ui", className);
     gConfirmDoneThisSheet = YES;
     gConfirmAttemptActive = NO;
     autoinstallClearAutoConfirmFlags();
+}
+
+static void autoinstallMarkPaymentAuthorizationPrompt(UIViewController *controller) {
+    NSString *className = NSStringFromClass([controller class]);
+    autoinstallRecordPaymentAuthorizationPrompt(className);
 }
 
 static BOOL autoinstallVisibleControllerContainsPaymentAuthorization(UIViewController *controller, NSHashTable *visited, NSString **matchedClass) {
@@ -1241,8 +1286,12 @@ static BOOL autoinstallVisibleControllerContainsPaymentAuthorization(UIViewContr
 }
 
 static BOOL autoinstallPaymentAuthorizationPromptVisible(void) {
+    if (gPaymentAuthorizationPromptVisible) {
+        autoinstallWritePaymentAuthorizationGuard(@"PKPaymentAuthorizationRemoteAlertViewController");
+        return YES;
+    }
+    if (autoinstallSharedPaymentAuthorizationGuardActive()) return YES;
     if (!(gIsPassbookProcess || gIsAuthUIService)) return NO;
-    if (gPaymentAuthorizationPromptVisible) return YES;
     NSHashTable *visited = [NSHashTable hashTableWithOptions:NSPointerFunctionsObjectPointerPersonality | NSPointerFunctionsStrongMemory];
     NSString *matchedClass = nil;
     @try {
@@ -1265,11 +1314,7 @@ static BOOL autoinstallPaymentAuthorizationPromptVisible(void) {
         autoinstallLog([NSString stringWithFormat:@"payment authorization visibility check failed: %@", exception]);
     }
     if (!matchedClass) return NO;
-    gPaymentAuthorizationPromptVisible = YES;
-    markAppStoreInstallRequiresUserAction(@"payment_authorization_ui", matchedClass);
-    gConfirmDoneThisSheet = YES;
-    gConfirmAttemptActive = NO;
-    autoinstallClearAutoConfirmFlags();
+    autoinstallRecordPaymentAuthorizationPrompt(matchedClass);
     return YES;
 }
 
@@ -1436,6 +1481,7 @@ static BOOL autoinstallHandlePasswordIfPresent(void) {
     }
 
     if (foundField) {
+        if (autoinstallPaymentAuthorizationPromptVisible()) return NO;
         autoinstallLog([NSString stringWithFormat:@"[Auth] Found password field (%@), setting text (length=%lu)", NSStringFromClass([foundField class]), (unsigned long)password.length]);
         if ([foundField respondsToSelector:@selector(setText:)]) {
             [foundField setText:password];
@@ -1461,6 +1507,7 @@ static BOOL autoinstallHandlePasswordIfPresent(void) {
             autoinstallLog([NSString stringWithFormat:@"[Auth] Found submit button (%@), activating...", NSStringFromClass([foundButton class])]);
             void (^actuateButton)(void) = ^{
                 @try {
+                    if (autoinstallPaymentAuthorizationPromptVisible()) return;
                     if ([foundButton respondsToSelector:@selector(accessibilityActivate)]) {
                         [foundButton accessibilityActivate];
                     }
@@ -1521,6 +1568,7 @@ static NSArray *autoinstallConfirmMatching(NSString *match) {
                                 }
                             }
                             if (matchAlert) {
+                                if (autoinstallPaymentAuthorizationPromptVisible()) return @[];
                                 autoinstallLog([NSString stringWithFormat:@"[Alert] Dismissing UIAlertController with action: %@", title]);
                                 id handler = nil;
                                 @try { handler = [act valueForKey:@"handler"]; } @catch (NSException *e) {}
@@ -1575,8 +1623,10 @@ static NSArray *autoinstallConfirmMatching(NSString *match) {
 #pragma clang diagnostic pop
     } @catch (NSException *e) {}
 
+    __block BOOL paymentGuardActive = NO;
     for (id root in roots) {
         autoinstallWalkAX(root, ^(id el) {
+            if (paymentGuardActive) return;
             NSString *label = @"";
             @try { if ([el respondsToSelector:@selector(accessibilityLabel)]) label = [el accessibilityLabel] ?: @""; } @catch (NSException *e) {}
             NSString *title = @"";
@@ -1623,6 +1673,10 @@ static NSArray *autoinstallConfirmMatching(NSString *match) {
                 }
             }
             if (!matched) return;
+            if (autoinstallPaymentAuthorizationPromptVisible()) {
+                paymentGuardActive = YES;
+                return;
+            }
             NSMutableDictionary *rec = [@{@"class": cls, @"label": label, @"title": title, @"text": text} mutableCopy];
             @try {
                 if ([el respondsToSelector:@selector(accessibilityActivate)]) {
@@ -1681,7 +1735,7 @@ static NSArray *autoinstallConfirmMatching(NSString *match) {
             }
             [acted addObject:rec];
         });
-        if (acted.count > 0) break;
+        if (acted.count > 0 || paymentGuardActive) break;
     }
     return acted;
 }
@@ -1847,7 +1901,7 @@ static void startAuthUIServiceSide(void) {
 - (void)viewDidDisappear:(BOOL)animated {
     %orig;
     if ((gIsPassbookProcess || gIsAuthUIService) && autoinstallIsPaymentAuthorizationController(self)) {
-        gPaymentAuthorizationPromptVisible = NO;
+        autoinstallClearPaymentAuthorizationGuard();
     }
     if (gIsPassbookProcess || gIsAppStoreProcess || gIsAuthUIService) {
         gConfirmDoneThisSheet = NO;
@@ -1869,7 +1923,7 @@ static void startAuthUIServiceSide(void) {
 - (void)viewDidDisappear:(BOOL)animated {
     %orig;
     if ((gIsPassbookProcess || gIsAuthUIService) && autoinstallIsPaymentAuthorizationController((UIViewController *)self)) {
-        gPaymentAuthorizationPromptVisible = NO;
+        autoinstallClearPaymentAuthorizationGuard();
     }
 }
 
