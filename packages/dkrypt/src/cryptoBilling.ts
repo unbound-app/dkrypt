@@ -278,7 +278,7 @@ export function listManagerBillingSubscriptions(filters: { query?: string; provi
       interval: subscription.interval,
       plan: { id: subscription.planId, name: getPlan(subscription.planId)?.name, amount: subscription.amount ?? getPlan(subscription.planId)?.amount, currency: subscription.currency ?? getPlan(subscription.planId)?.currency },
       status: subscription.status,
-      nextBilledAt: subscription.nextBilledAt,
+      nextBilledAt: isBillingSubscriptionActive(subscription) ? subscription.nextBilledAt : undefined,
       occurredAt: subscription.occurredAt,
       updatedAt: subscription.updatedAt,
       crypto: subscription.provider === 'nowpayments' ? { walletAddress: subscription.walletAddress, chain: subscription.chain, asset: subscription.asset } : undefined,

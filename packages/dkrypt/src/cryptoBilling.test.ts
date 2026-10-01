@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  exportBillingSnapshot,
   getBillingEntitlements,
   getBillingSubscriptionById,
   getCryptoCheckout,
@@ -7,8 +8,9 @@ import {
   replaceBillingSnapshot,
   upsertCryptoCheckout,
   type BillingCheckout,
+  type BillingSubscription,
 } from '#billing.js';
-import { processNowPaymentsEvent } from '#cryptoBilling.js';
+import { listManagerBillingSubscriptions, processNowPaymentsEvent } from '#cryptoBilling.js';
 import type { NowPaymentsClient } from '#nowpayments.js';
 
 function checkout(userId: string): BillingCheckout {
@@ -52,6 +54,35 @@ function paymentEvent(localCheckout: BillingCheckout, eventId: string, status = 
 }
 
 describe('crypto billing lifecycle', () => {
+  test('omits renewal dates for refunded subscriptions in the manager ledger', () => {
+    const previousSnapshot = exportBillingSnapshot();
+    const userId = `refunded-member-${crypto.randomUUID()}`;
+    const subscription: BillingSubscription = {
+      provider: 'stripe',
+      subscriptionId: `sub_${crypto.randomUUID()}`,
+      customerId: `cus_${crypto.randomUUID()}`,
+      userId,
+      status: 'revoked',
+      planId: 'regular',
+      priceId: 'price_regular_test',
+      productId: 'prod_regular_test',
+      nextBilledAt: '2026-10-29T00:00:00.000Z',
+      failureReason: 'payment refunded',
+      occurredAt: '2026-10-01T00:00:00.000Z',
+      updatedAt: '2026-10-01T00:00:00.000Z',
+    };
+    replaceBillingSnapshot({ customers: [], subscriptions: [subscription] });
+
+    try {
+      const [record] = listManagerBillingSubscriptions({ query: userId });
+
+      expect(record).toMatchObject({ status: 'revoked' });
+      expect(record?.nextBilledAt).toBeUndefined();
+    } finally {
+      replaceBillingSnapshot(previousSnapshot);
+    }
+  });
+
   test('activates a plan from a verified payment and deduplicates delivery', async () => {
     replaceBillingSnapshot({ customers: [], subscriptions: [] });
     const userId = `crypto-user-${crypto.randomUUID()}`;
