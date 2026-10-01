@@ -5,7 +5,7 @@ import { getEffectiveDevices, getStateDatabaseStatus } from '#store/state.js';
 import { getDiskUsage } from '#util/diskUsage.js';
 import { config, cryptoBillingEnabled, stripeEnabled } from '#config.js';
 import { getTestFlightCatalogCacheState } from '#testflightSubscriptions.js';
-import { listWebhookInbox } from '#webhookInbox.js';
+import { countWebhookInbox } from '#webhookInbox.js';
 import { getNowPaymentsProviderStatus } from '#nowpayments.js';
 import { getStripeWebhookHealth } from '#stripeWebhookHealth.js';
 
@@ -113,8 +113,7 @@ export async function runSyntheticProbes(): Promise<{ ok: boolean; checkedAt: st
       return classifyTestFlightCatalogProbe(getTestFlightCatalogCacheState());
     }),
     runSyntheticProbe('webhooks', async () => {
-      const inbox = listWebhookInbox();
-      const failures = inbox.filter((record) => record.status === 'failed' || record.status === 'quarantined').length;
+      const failures = countWebhookInbox({ status: 'failed' }) + countWebhookInbox({ status: 'quarantined' });
       const [stripeHealth, nowPaymentsStatus] = await Promise.all([
         stripeEnabled ? getStripeWebhookHealth(undefined) : undefined,
         cryptoBillingEnabled ? getNowPaymentsProviderStatus() : undefined,
