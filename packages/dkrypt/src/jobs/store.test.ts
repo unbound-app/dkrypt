@@ -15,11 +15,16 @@ import { setCachedDeviceHealth } from '#deviceHealthCache.js';
 import type { Job } from '#jobs/types.js';
 
 let retryDeadlineAttempts = 0;
+let actionRequiredAttempts = 0;
 let observedWorkerCorrelation: ReturnType<typeof currentCorrelation>;
 
 mock.module('./runner.js', () => ({
   runDecrypt: (job: Job, _device: unknown, signal?: AbortSignal) => {
     if (job.bundleId === 'com.test.trace-propagation') observedWorkerCorrelation = currentCorrelation();
+    if (job.bundleId === 'com.test.appstore-action-required') {
+      actionRequiredAttempts += 1;
+      return Promise.reject(Object.assign(new Error('App Store requires device action before installation can continue'), { retryable: false }));
+    }
     if (job.bundleId === 'com.test.retry-deadline' || job.bundleId === 'com.test.retry-cancel') {
       retryDeadlineAttempts += 1;
       if (job.bundleId === 'com.test.retry-deadline') job.deadlineAt = Date.now() + 75;
@@ -565,6 +570,29 @@ test('does not let transient retry backoff extend the end-to-end job deadline', 
     expect(retryDeadlineAttempts).toBe(1);
   } finally {
     config.jobMaxRetries = originalRetries;
+  }
+});
+
+test('does not retry App Store failures that require a user action', async () => {
+  const originalRetries = config.jobMaxRetries;
+  actionRequiredAttempts = 0;
+  config.jobMaxRetries = 1;
+
+  try {
+    await clearActiveTestJobs();
+    const job = enqueueDecryptJob('com.test.appstore-action-required', 'manual');
+    const finished = await waitForJob(job, 7_000);
+
+    expect(finished).toMatchObject({
+      status: 'failed',
+      failureClass: 'app_store',
+      error: 'App Store requires device action before installation can continue',
+    });
+    expect(finished?.retryCount).toBeUndefined();
+    expect(actionRequiredAttempts).toBe(1);
+  } finally {
+    config.jobMaxRetries = originalRetries;
+    await clearActiveTestJobs();
   }
 });
 

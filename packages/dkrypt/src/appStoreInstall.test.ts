@@ -7,6 +7,8 @@ type InstalledBundle = { path: string; shortVersion: string };
 let installedBundles: Array<InstalledBundle | undefined> = [];
 let lastInstalledBundle: InstalledBundle | undefined;
 let installRequest: Record<string, unknown> | undefined;
+let installStatus: Record<string, unknown> = {};
+let installStatusAfterRequest: Record<string, unknown> | undefined;
 let guardedUninstallFails = false;
 let foregroundStatuses: boolean[] = [];
 let bridgeStatusErrors = 0;
@@ -39,11 +41,12 @@ mock.module('#idevice.js', () => ({
         bridgeStatusErrors -= 1;
         throw new Error('status request timed out');
       }
-      return { capabilities: ['install', 'status', 'diagnostics', 'foreground_status', 'protocol_v1', 'authenticated_requests', 'operation_responses', 'heartbeats', 'stale_artifact_cleanup'], foreground: foregroundStatuses.shift() ?? true };
+      return { capabilities: ['install', 'status', 'diagnostics', 'foreground_status', 'protocol_v1', 'authenticated_requests', 'operation_responses', 'heartbeats', 'stale_artifact_cleanup'], foreground: foregroundStatuses.shift() ?? true, install: installStatus };
     }
     installRequest = request;
     calls.push('request');
-    return { ok: true };
+    if (installStatusAfterRequest) installStatus = installStatusAfterRequest;
+    return { ok: true, requested: true, operationId: request.operationId };
   },
   sendSpringBoardBridgeRequest: async () => {
     foregroundRequests += 1;
@@ -92,6 +95,8 @@ describe('installFromAppStore', () => {
     ];
     lastInstalledBundle = undefined;
     installRequest = undefined;
+    installStatus = {};
+    installStatusAfterRequest = undefined;
     guardedUninstallFails = false;
     foregroundStatuses = [true];
     bridgeStatusErrors = 0;
@@ -115,15 +120,47 @@ describe('installFromAppStore', () => {
     expect(calls).toEqual([]);
   });
 
+  test('surfaces a payment-authorization screen as a non-retryable device action requirement', async () => {
+    let now = 0;
+    Date.now = () => now;
+    globalThis.setTimeout = ((handler: () => void) => {
+      now += 5_000;
+      handler();
+      return 0;
+    }) as unknown as typeof setTimeout;
+    installedBundles = [undefined, undefined];
+    installStatusAfterRequest = {
+      operationId: 'job-payment-authorization',
+      state: 'requires_user_action',
+      reason: 'payment_authorization_ui',
+    };
+
+    try {
+      await expect(installFromAppStore('com.example.app', {
+        operationId: 'job-payment-authorization',
+        onProgress: (message) => progress.push(message),
+      })).rejects.toMatchObject({
+        name: 'AppStoreUserActionRequiredError',
+        retryable: false,
+      });
+    } finally {
+      Date.now = originalDateNow;
+      globalThis.setTimeout = originalSetTimeout;
+    }
+
+    expect(progress.some((message) => message.startsWith('App Store requires device action before installation can continue'))).toBe(true);
+    expect(calls).toEqual(['restart', 'status', 'arm', 'request', 'status', 'clear']);
+  });
+
   test('retries after a temporarily unavailable bridge before purchasing', async () => {
     bridgeStatusErrors = 1;
     installedBundles = [undefined, { path: '/apps/Discord.app', shortVersion: '338.0' }];
 
     await installFromAppStore('com.hammerandchisel.discord');
 
-    expect(calls.filter((call) => call === 'status')).toHaveLength(2);
+    expect(calls.filter((call) => call === 'status')).toHaveLength(3);
     expect(foregroundRequests).toBe(2);
-    expect(calls).toEqual(['restart', 'status', 'status', 'arm', 'request', 'clear']);
+    expect(calls).toEqual(['restart', 'status', 'status', 'arm', 'request', 'status', 'clear']);
   });
 
   test('continues when the App Store bridge is responsive but inactive', async () => {
@@ -144,7 +181,7 @@ describe('installFromAppStore', () => {
       globalThis.setTimeout = originalSetTimeout;
     }
 
-    expect(calls).toEqual(['restart', 'status', 'arm', 'request', 'clear']);
+    expect(calls).toEqual(['restart', 'status', 'arm', 'request', 'status', 'clear']);
   });
 
   test('replaces an installed beta before decrypting a pinned App Store version', async () => {
@@ -154,7 +191,7 @@ describe('installFromAppStore', () => {
       onProgress: (message) => progress.push(message),
     });
 
-    expect(calls).toEqual(['uninstall', 'restart', 'status', 'arm', 'request', 'clear']);
+    expect(calls).toEqual(['uninstall', 'restart', 'status', 'arm', 'request', 'status', 'clear']);
     expect(installRequest).toMatchObject({ action: 'install', adamId: 123, contextMode: 'fallback', versionId: 123456789 });
     expect(installRequest).not.toHaveProperty('requestId');
     expect(progress).toContain('removing the installed app before the App Store install');
@@ -187,7 +224,7 @@ describe('installFromAppStore', () => {
   test('replaces an installed app before decrypting the current App Store version', async () => {
     await installFromAppStore('com.hammerandchisel.discord');
 
-    expect(calls).toEqual(['uninstall', 'restart', 'status', 'arm', 'request', 'clear']);
+    expect(calls).toEqual(['uninstall', 'restart', 'status', 'arm', 'request', 'status', 'clear']);
     expect(installRequest).toMatchObject({ action: 'install', adamId: 123, contextMode: 'fallback' });
   });
 
@@ -196,7 +233,7 @@ describe('installFromAppStore', () => {
 
     await installFromAppStore('com.hammerandchisel.discord', { externalVersionId: '123456789', expectedVersion: '338.0' });
 
-    expect(calls).toEqual(['uninstall', 'force-uninstall', 'restart', 'status', 'arm', 'request', 'clear']);
+    expect(calls).toEqual(['uninstall', 'force-uninstall', 'restart', 'status', 'arm', 'request', 'status', 'clear']);
   });
 
   test('waits for the requested version when a stale App Store install lands first', async () => {
@@ -212,7 +249,7 @@ describe('installFromAppStore', () => {
       onProgress: (message) => progress.push(message),
     });
 
-    expect(calls).toEqual(['restart', 'status', 'arm', 'request', 'clear']);
+    expect(calls).toEqual(['restart', 'status', 'arm', 'request', 'status', 'clear']);
     expect(progress).toContain('waiting for App Store version 338.0; version 337.0 is currently installed');
     expect(progress.at(-1)).toBe('install verified: 338.0 build 106000 in 0s');
   });

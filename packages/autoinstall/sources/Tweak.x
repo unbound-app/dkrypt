@@ -115,6 +115,7 @@ static void autoinstallLog(NSString *line) {
 }
 
 static NSString * const kBridgeRootPath = @"/tmp/autoinstall/v1";
+static NSString * const kASInstallStatusPath = @"/tmp/autoinstall-as-install-status.json";
 static NSString * const kBridgeSecretPath = @"/var/mobile/Library/Preferences/dev.adrian.autoinstall-bridge.secret";
 
 static void writeJSONFile(NSString *path, id obj) {
@@ -177,6 +178,21 @@ static void writeBridgeTransaction(NSString *channel, NSString *operationId, NSS
     transaction[@"state"] = state;
     transaction[@"updatedAt"] = @([[NSDate date] timeIntervalSince1970]);
     writeJSONFile(bridgeTransactionPath(channel, operationId), transaction);
+}
+
+static void markAppStoreInstallRequiresUserAction(NSString *reason, NSString *viewController) {
+    NSDictionary *current = readJSONFile(kASInstallStatusPath);
+    NSString *operationId = [current[@"operationId"] isKindOfClass:[NSString class]] ? current[@"operationId"] : nil;
+    if (![current[@"state"] isEqual:@"requested"] || !operationId.length) return;
+    NSDictionary *status = @{
+        @"ok": @YES,
+        @"operationId": operationId,
+        @"state": @"requires_user_action",
+        @"reason": reason,
+        @"viewController": viewController ?: @"unknown"
+    };
+    writeJSONFile(kASInstallStatusPath, status);
+    writeBridgeTransaction(@"appstore", operationId, @"requires_user_action", status);
 }
 
 static NSString *bridgeHMAC(NSString *secret, NSString *channel, NSString *requestId, NSNumber *issuedAt, NSString *payload) {
@@ -1188,6 +1204,74 @@ static BOOL gIsAuthUIService = NO;
 static id gStashedConfirmVC = nil;
 static BOOL gConfirmDoneThisSheet = NO;
 static BOOL gConfirmAttemptActive = NO;
+static BOOL gPaymentAuthorizationPromptVisible = NO;
+
+static BOOL autoinstallIsPaymentAuthorizationController(UIViewController *controller) {
+    return [NSStringFromClass([controller class]) containsString:@"PKPaymentAuthorizationRemoteAlertViewController"];
+}
+
+static void autoinstallMarkPaymentAuthorizationPrompt(UIViewController *controller) {
+    NSString *className = NSStringFromClass([controller class]);
+    gPaymentAuthorizationPromptVisible = YES;
+    markAppStoreInstallRequiresUserAction(@"payment_authorization_ui", className);
+    gConfirmDoneThisSheet = YES;
+    gConfirmAttemptActive = NO;
+    autoinstallClearAutoConfirmFlags();
+}
+
+static BOOL autoinstallVisibleControllerContainsPaymentAuthorization(UIViewController *controller, NSHashTable *visited, NSString **matchedClass) {
+    if (!controller || [visited containsObject:controller]) return NO;
+    [visited addObject:controller];
+    NSString *className = NSStringFromClass([controller class]);
+    if ([className containsString:@"PKPaymentAuthorizationRemoteAlertViewController"]) {
+        if (matchedClass) *matchedClass = className;
+        return YES;
+    }
+    if (autoinstallVisibleControllerContainsPaymentAuthorization(controller.presentedViewController, visited, matchedClass)) return YES;
+    if ([controller isKindOfClass:[UINavigationController class]]) {
+        if (autoinstallVisibleControllerContainsPaymentAuthorization(((UINavigationController *)controller).visibleViewController, visited, matchedClass)) return YES;
+    }
+    if ([controller isKindOfClass:[UITabBarController class]]) {
+        if (autoinstallVisibleControllerContainsPaymentAuthorization(((UITabBarController *)controller).selectedViewController, visited, matchedClass)) return YES;
+    }
+    for (UIViewController *child in controller.childViewControllers) {
+        if (child.viewIfLoaded.window && autoinstallVisibleControllerContainsPaymentAuthorization(child, visited, matchedClass)) return YES;
+    }
+    return NO;
+}
+
+static BOOL autoinstallPaymentAuthorizationPromptVisible(void) {
+    if (!(gIsPassbookProcess || gIsAuthUIService)) return NO;
+    if (gPaymentAuthorizationPromptVisible) return YES;
+    NSHashTable *visited = [NSHashTable hashTableWithOptions:NSPointerFunctionsObjectPointerPersonality | NSPointerFunctionsStrongMemory];
+    NSString *matchedClass = nil;
+    @try {
+        for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+            if (![scene isKindOfClass:[UIWindowScene class]]) continue;
+            for (UIWindow *window in [(UIWindowScene *)scene windows]) {
+                if (autoinstallVisibleControllerContainsPaymentAuthorization(window.rootViewController, visited, &matchedClass)) break;
+            }
+            if (matchedClass) break;
+        }
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        if (!matchedClass) {
+            for (UIWindow *window in [UIApplication sharedApplication].windows) {
+                if (autoinstallVisibleControllerContainsPaymentAuthorization(window.rootViewController, visited, &matchedClass)) break;
+            }
+        }
+#pragma clang diagnostic pop
+    } @catch (NSException *exception) {
+        autoinstallLog([NSString stringWithFormat:@"payment authorization visibility check failed: %@", exception]);
+    }
+    if (!matchedClass) return NO;
+    gPaymentAuthorizationPromptVisible = YES;
+    markAppStoreInstallRequiresUserAction(@"payment_authorization_ui", matchedClass);
+    gConfirmDoneThisSheet = YES;
+    gConfirmAttemptActive = NO;
+    autoinstallClearAutoConfirmFlags();
+    return YES;
+}
 
 static void autoinstallWalkAX(id element, void (^visit)(id el)) {
     if (!element) return;
@@ -1250,6 +1334,7 @@ static NSString *autoinstallGetPassword(void) {
 static BOOL autoinstallHandlePasswordIfPresent(void) {
     NSString *password = autoinstallGetPassword();
     if (!password.length) return NO;
+    if (autoinstallPaymentAuthorizationPromptVisible()) return NO;
 
     NSMutableArray *roots = [NSMutableArray array];
     if (gStashedConfirmVC) {
@@ -1403,6 +1488,7 @@ static BOOL autoinstallHandlePasswordIfPresent(void) {
 }
 
 static NSArray *autoinstallConfirmMatching(NSString *match) {
+    if (autoinstallPaymentAuthorizationPromptVisible()) return @[];
     NSMutableArray *acted = [NSMutableArray array];
 
     // 1. Direct inspection and dismissal of any presented UIAlertController
@@ -1742,6 +1828,10 @@ static void startAuthUIServiceSide(void) {
     @try {
         NSString *cls = NSStringFromClass([self class]);
         autoinstallLog([NSString stringWithFormat:@"viewDidAppear cls=%@ in process=%@", cls, [[NSProcessInfo processInfo] processName]]);
+        if ((gIsPassbookProcess || gIsAuthUIService) && autoinstallIsPaymentAuthorizationController(self)) {
+            autoinstallMarkPaymentAuthorizationPrompt(self);
+            return;
+        }
         gStashedConfirmVC = self;
         autoinstallEnableAX();
         autoinstallHandlePasswordIfPresent();
@@ -1756,6 +1846,9 @@ static void startAuthUIServiceSide(void) {
 
 - (void)viewDidDisappear:(BOOL)animated {
     %orig;
+    if ((gIsPassbookProcess || gIsAuthUIService) && autoinstallIsPaymentAuthorizationController(self)) {
+        gPaymentAuthorizationPromptVisible = NO;
+    }
     if (gIsPassbookProcess || gIsAppStoreProcess || gIsAuthUIService) {
         gConfirmDoneThisSheet = NO;
         gConfirmAttemptActive = NO;
@@ -1768,10 +1861,15 @@ static void startAuthUIServiceSide(void) {
 
 - (void)viewDidAppear:(BOOL)animated {
     %orig;
-    if (gIsPassbookProcess) {
-        gConfirmDoneThisSheet = NO;
-        gConfirmAttemptActive = NO;
-        autoinstallScheduleConfirm(0);
+    if (!gIsPassbookProcess && !gIsAuthUIService) return;
+    UIViewController *controller = (UIViewController *)self;
+    if (autoinstallIsPaymentAuthorizationController(controller)) autoinstallMarkPaymentAuthorizationPrompt(controller);
+}
+
+- (void)viewDidDisappear:(BOOL)animated {
+    %orig;
+    if ((gIsPassbookProcess || gIsAuthUIService) && autoinstallIsPaymentAuthorizationController((UIViewController *)self)) {
+        gPaymentAuthorizationPromptVisible = NO;
     }
 }
 
@@ -1779,8 +1877,6 @@ static void startAuthUIServiceSide(void) {
 
 static NSString * const kASRequestPath = @"/tmp/autoinstall-as-request.json";
 static NSString * const kASResponsePath = @"/tmp/autoinstall-as-response.json";
-static NSString * const kASInstallStatusPath = @"/tmp/autoinstall-as-install-status.json";
-
 static BOOL appStoreIsForeground(void) {
     return [UIApplication sharedApplication].applicationState == UIApplicationStateActive;
 }
@@ -1873,6 +1969,18 @@ static void handleAppStoreRequest(NSDictionary *req, NSString *responsePath, NSS
 
             void (^completion)(id) = ^(id arg1) {
                 autoinstallLog([NSString stringWithFormat:@"as-install: completionBlock fired arg1=%@", arg1]);
+                if ([arg1 isKindOfClass:[NSError class]]) {
+                    NSError *error = (NSError *)arg1;
+                    NSDictionary *failure = @{
+                        @"ok": @NO,
+                        @"operationId": operationId,
+                        @"state": @"failed",
+                        @"error": error.localizedDescription ?: @"The App Store purchase operation failed"
+                    };
+                    writeBridgeTransaction(@"appstore", operationId, @"failed", failure);
+                    writeJSONFile(kASInstallStatusPath, failure);
+                    return;
+                }
                 writeBridgeTransaction(@"appstore", operationId, @"completed", @{@"ok": @YES, @"adamId": adamId, @"versionId": versionId ?: [NSNull null]});
                 writeJSONFile(kASInstallStatusPath, @{@"ok": @YES, @"operationId": operationId, @"state": @"completed", @"adamId": adamId});
             };

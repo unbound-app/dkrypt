@@ -28,6 +28,38 @@ const APP_EXT_VERSION_ID_RE = /^\d{1,20}$/;
 const APP_STORE_BRIDGE_READY_TIMEOUT_MS = 20_000;
 const APP_STORE_BRIDGE_STATUS_TIMEOUT_MS = 3_000;
 const APP_STORE_BRIDGE_POLL_INTERVAL_MS = 500;
+const APP_STORE_INSTALL_STATUS_POLL_INTERVAL_MS = 5_000;
+
+export class AppStoreUserActionRequiredError extends Error {
+  readonly retryable = false;
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'AppStoreUserActionRequiredError';
+  }
+}
+
+function installStatusFailure(status: unknown, operationId: string): Error | undefined {
+  if (!status || typeof status !== 'object') return undefined;
+  const install = (status as Record<string, unknown>).install;
+  if (!install || typeof install !== 'object') return undefined;
+  const installRecord = install as Record<string, unknown>;
+  if (installRecord.operationId !== operationId) return undefined;
+
+  if (installRecord.state === 'requires_user_action') {
+    const detail = installRecord.reason === 'payment_authorization_ui'
+      ? 'Resolve or dismiss the Apple payment authorization prompt on the device.'
+      : 'Resolve the prompt on the device.';
+    return new AppStoreUserActionRequiredError(`App Store requires device action before installation can continue. ${detail} dkrypt did not approve it.`);
+  }
+
+  if (installRecord.state === 'failed') {
+    const detail = typeof installRecord.error === 'string' ? installRecord.error : 'the App Store reported an installation failure';
+    return new Error(`App Store install operation failed: ${detail}`);
+  }
+
+  return undefined;
+}
 
 export function buildAppStoreOperationId(jobId: string, retryCount = 0): string {
   return retryCount > 0 ? `${jobId}-retry-${retryCount}` : jobId;
@@ -181,8 +213,11 @@ export async function installFromAppStore(bundleId: string, options: AppStoreIns
       const operationId = options.operationId ?? randomUUID();
       const request: Record<string, unknown> = { action: 'install', adamId: trackId, contextMode: 'fallback', operationId };
       if (versionId !== undefined) request.versionId = versionId;
-      await sendAppStoreBridgeRequest(conn, request, 20_000, options.signal);
+      const installResponse = await sendAppStoreBridgeRequest(conn, request, 20_000, options.signal);
       ensureNotCancelled();
+      if (installResponse?.requested === false && installResponse?.completed !== true) {
+        throw new Error('App Store did not start the requested installation');
+      }
       report(
         versionId !== undefined
           ? `App Store accepted the install request (version ${versionId}), waiting for it to land`
@@ -191,10 +226,21 @@ export async function installFromAppStore(bundleId: string, options: AppStoreIns
 
       const start = Date.now();
       const deadline = start + waitTimeoutMs;
+      let lastInstallStatusAt = Number.NEGATIVE_INFINITY;
       let lastReportedAt = 0;
       let lastUnexpectedVersion: string | undefined;
       while (Date.now() < deadline) {
         ensureNotCancelled();
+        if (Date.now() - lastInstallStatusAt >= APP_STORE_INSTALL_STATUS_POLL_INTERVAL_MS) {
+          lastInstallStatusAt = Date.now();
+          const bridgeStatus = await sendAppStoreBridgeRequest(conn, { action: 'status' }, APP_STORE_BRIDGE_STATUS_TIMEOUT_MS, options.signal);
+          ensureNotCancelled();
+          const failure = installStatusFailure(bridgeStatus, operationId);
+          if (failure) {
+            report(failure.message);
+            throw failure;
+          }
+        }
         const bundlePath = await findInstalledAppStoreBundle(conn, bundleId);
         ensureNotCancelled();
         if (bundlePath) {
