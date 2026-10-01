@@ -22,6 +22,7 @@ import {
   getBillingSubscription,
   getBillingUserId,
   getPlan,
+  isBillingSubscriptionActive,
   findCryptoCheckout,
   findStripeCheckoutIdempotencyAttempt,
   hasActiveBillingSubscription,
@@ -136,6 +137,7 @@ async function subscriptionIdForRefundedCharge(charge: Stripe.Charge, stripeClie
   const invoiceIds = new Set(invoicePayments.data
     .map((payment) => stripeObjectId(payment.invoice))
     .filter((invoiceId): invoiceId is string => !!invoiceId));
+  if (invoiceIds.size === 0) return undefined;
   const subscriptionIds = new Set<string>();
 
   for (const invoiceId of invoiceIds) {
@@ -163,7 +165,17 @@ async function processStripeRefund(event: Stripe.Event, stripeClient?: Stripe): 
 
   if (!charge.refunded) return;
   const subscriptionId = await subscriptionIdForRefundedCharge(charge, stripeClient);
-  if (!subscriptionId) return;
+  if (!subscriptionId) {
+    const customerHasActiveSubscription = customerId && listBillingSubscriptions().some((subscription) =>
+      subscription.provider === 'stripe' &&
+      subscription.customerId === customerId &&
+      isBillingSubscriptionActive(subscription),
+    );
+    if (customerHasActiveSubscription) {
+      throw new Error(`fully refunded Stripe payment ${charge.id} could not be resolved to a subscription`);
+    }
+    return;
+  }
 
   await runKeyedSerial(`stripe:${subscriptionId}`, async () => {
     let billingSubscription = getBillingSubscriptionById(subscriptionId);

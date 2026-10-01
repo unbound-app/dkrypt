@@ -297,6 +297,54 @@ describe('Stripe billing webhooks', () => {
     expect(getBillingEntitlements(userId).planId).toBe('viewer');
   });
 
+  test('keeps an unresolved full refund retryable while its customer has paid access', async () => {
+    const userId = `stripe-refund-unresolved-${crypto.randomUUID()}`;
+    const customerId = `cus_${crypto.randomUUID()}`;
+    const subscriptionId = `sub_${crypto.randomUUID()}`;
+    replaceBillingSnapshot({ customers: [], subscriptions: [] });
+    await processStripeEvent(subscriptionEvent(userId, customerId, subscriptionId));
+
+    const client = {
+      invoicePayments: { list: async () => ({ data: [] }) },
+    } as unknown as Stripe;
+
+    await expect(processStripeEvent(event('charge.refunded', {
+      id: `ch_${crypto.randomUUID()}`,
+      object: 'charge',
+      customer: customerId,
+      amount: 1500,
+      amount_refunded: 1500,
+      currency: 'eur',
+      refunded: true,
+      payment_intent: `pi_${crypto.randomUUID()}`,
+    }), client)).rejects.toThrow(/could not be resolved to a subscription/);
+
+    expect(getBillingSubscriptionById(subscriptionId)?.status).toBe('active');
+    expect(getBillingEntitlements(userId).planId).toBe('priority');
+  });
+
+  test('keeps a full refund without a payment intent retryable while its customer has paid access', async () => {
+    const userId = `stripe-refund-no-payment-intent-${crypto.randomUUID()}`;
+    const customerId = `cus_${crypto.randomUUID()}`;
+    const subscriptionId = `sub_${crypto.randomUUID()}`;
+    replaceBillingSnapshot({ customers: [], subscriptions: [] });
+    await processStripeEvent(subscriptionEvent(userId, customerId, subscriptionId));
+
+    await expect(processStripeEvent(event('charge.refunded', {
+      id: `ch_${crypto.randomUUID()}`,
+      object: 'charge',
+      customer: customerId,
+      amount: 1500,
+      amount_refunded: 1500,
+      currency: 'eur',
+      refunded: true,
+      payment_intent: null,
+    }))).rejects.toThrow(/could not be resolved to a subscription/);
+
+    expect(getBillingSubscriptionById(subscriptionId)?.status).toBe('active');
+    expect(getBillingEntitlements(userId).planId).toBe('priority');
+  });
+
   test('does not revoke or cancel access after a partial Stripe refund', async () => {
     const userId = `stripe-partial-refund-${crypto.randomUUID()}`;
     const customerId = `cus_${crypto.randomUUID()}`;
