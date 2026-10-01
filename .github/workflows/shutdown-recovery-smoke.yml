@@ -4,9 +4,14 @@ on:
   workflow_dispatch:
     inputs:
       confirmation:
-        description: Type RUN_DKRYPT_PRODUCTION_SHUTDOWN_RECOVERY to restart production during a real decrypt
-        required: true
+        description: Type the confirmation token required by the selected operation
+        required: false
         type: string
+      diagnostic_only:
+        description: Read device and container diagnostics without submitting a job or restarting production
+        required: false
+        default: false
+        type: boolean
       existing_job_id:
         description: Optional active decrypt job to continue monitoring without submitting another
         required: false
@@ -27,12 +32,13 @@ jobs:
       - name: Submit decrypt and verify job recovery across SIGTERM
         env:
           CONFIRMATION: ${{ inputs.confirmation }}
+          DIAGNOSTIC_ONLY: ${{ inputs.diagnostic_only }}
           EXISTING_JOB_ID: ${{ inputs.existing_job_id }}
           EXPECTED_BUILD_REF: ${{ github.sha }}
         run: |
           set -euo pipefail
-          if [[ "$GITHUB_REF" != refs/heads/main || "$CONFIRMATION" != RUN_DKRYPT_PRODUCTION_SHUTDOWN_RECOVERY ]]; then
-            echo 'dispatch must target main and include the exact production confirmation' >&2
+          if [[ "$GITHUB_REF" != refs/heads/main ]]; then
+            echo 'dispatch must target main' >&2
             exit 1
           fi
           if [[ "$(docker inspect --format '{{.State.Running}}' dkrypt)" != true ]]; then
@@ -44,6 +50,51 @@ jobs:
             shift
             docker exec -i --user "$user" "$@" dkrypt sh -c 'secret_file=${DEVICE_BRIDGE_SECRET_FILE:-${STATE_DIR:-/data/state}/device-bridge.secret}; export DEVICE_BRIDGE_SECRET="$(tr -d "\n" < "$secret_file")"; exec bun -'
           }
+          if [[ "$DIAGNOSTIC_ONLY" == true ]]; then
+            if [[ "$CONFIRMATION" != RUN_DKRYPT_PRODUCTION_DIAGNOSTICS ]]; then
+              echo 'read-only diagnostics require the exact diagnostics confirmation' >&2
+              exit 1
+            fi
+            docker inspect --format 'container={{.Name}} running={{.State.Running}} started={{.State.StartedAt}} restarts={{.RestartCount}} exit={{.State.ExitCode}}' dkrypt
+            run_dkrypt_bun 10001:10001 <<'JS'
+          const headers = { authorization: `Bearer ${process.env.API_KEY}` };
+          const base = `http://127.0.0.1:${process.env.PORT || 8080}`;
+          const [healthResponse, statusResponse, metricsResponse] = await Promise.all([
+            fetch(`${base}/v1/health`, { headers, signal: AbortSignal.timeout(5_000) }),
+            fetch(`${base}/v1/status`, { signal: AbortSignal.timeout(5_000) }),
+            fetch(`${base}/v1/metrics`, { headers, signal: AbortSignal.timeout(5_000) }),
+          ]);
+          const health = await healthResponse.json().catch(() => ({}));
+          const status = await statusResponse.json().catch(() => ({}));
+          const metrics = await metricsResponse.text();
+          let bridge;
+          try {
+            bridge = await (await import('/app/src/idevice.ts')).getRustDeviceBridgeStatus();
+          } catch (error) {
+            bridge = { error: error instanceof Error ? error.message : String(error) };
+          }
+          process.stdout.write(`${JSON.stringify({
+            healthHttpStatus: healthResponse.status,
+            statusHttpStatus: statusResponse.status,
+            health: {
+              ok: health.ok,
+              serviceReady: health.serviceReady,
+              database: health.database,
+              deployment: health.deployment,
+              device: health.device,
+            },
+            status,
+            bridge,
+            usbmuxEventStreamConnected: metrics.match(/dkrypt_device_bridge_event_stream_connected\{transport="usbmux"\} [^\n]+/)?.[0],
+          })}\n`);
+          JS
+            docker logs --since 30m --tail 500 dkrypt 2>&1 | grep -Ei 'device bridge|netmuxd|usbmux|device health check|device agent|autoinstall|pairing|usb' | tail -n 160 || true
+            exit 0
+          fi
+          if [[ "$CONFIRMATION" != RUN_DKRYPT_PRODUCTION_SHUTDOWN_RECOVERY ]]; then
+            echo 'shutdown recovery requires the exact production restart confirmation' >&2
+            exit 1
+          fi
           check_health() {
             run_dkrypt_bun 10001:10001 -e EXPECTED_BUILD_REF="$EXPECTED_BUILD_REF" <<'JS'
           const response = await fetch(`http://127.0.0.1:${process.env.PORT || 8080}/v1/health`, {
@@ -61,7 +112,26 @@ jobs:
           session_cookie=''
           restore_and_logout() {
             if [[ "$stopped" == 1 ]]; then
-              docker start dkrypt >/dev/null || true
+              if [[ "$(docker inspect --format '{{.State.Running}}' dkrypt 2>/dev/null || true)" != true ]]; then
+                docker start dkrypt >/dev/null || true
+              fi
+              if [[ "$(docker inspect --format '{{.State.Running}}' dkrypt 2>/dev/null || true)" == true ]]; then
+                stopped=0
+                recovery_ready=0
+                for attempt in $(seq 1 90); do
+                  if check_health >/dev/null 2>&1; then
+                    recovery_ready=1
+                    break
+                  fi
+                  sleep 2
+                done
+                if [[ "$recovery_ready" != 1 ]]; then
+                  docker logs --tail 100 dkrypt >&2 || true
+                  echo 'production container was restarted by cleanup but did not recover USB-agent readiness' >&2
+                fi
+              else
+                echo 'production container could not be started by cleanup' >&2
+              fi
             fi
             if [[ -n "$session_cookie" ]] && [[ "$(docker inspect --format '{{.State.Running}}' dkrypt 2>/dev/null || true)" == true ]]; then
               run_dkrypt_bun 10001:10001 -e TEST_SESSION_COOKIE="$session_cookie" <<'JS' >/dev/null 2>&1 || true
@@ -271,10 +341,10 @@ jobs:
           fi
           echo "Sending SIGTERM to production while job $job_id is running"
           stopped=1
-          docker stop --time 150 dkrypt
+          docker stop --timeout 150 dkrypt
           container_exit="$(docker inspect --format '{{.State.ExitCode}} {{.State.OOMKilled}}' dkrypt)"
           IFS=' ' read -r exit_code oom_killed <<< "$container_exit"
-          recovery_state="$(docker run --rm --network none --user 10001:10001 --mount type=volume,source=dkrypt_state,target=/data/state,readonly -e TEST_JOB_ID="$job_id" --entrypoint bun dkrypt:latest - <<'JS'
+          recovery_state="$(docker run -i --rm --network none --user 10001:10001 --mount type=volume,source=dkrypt_state,target=/data/state,readonly -e TEST_JOB_ID="$job_id" --entrypoint bun dkrypt:latest - <<'JS'
           const { Database } = await import('bun:sqlite');
           const database = new Database('/data/state/dkrypt.sqlite', { readonly: true });
           try {
