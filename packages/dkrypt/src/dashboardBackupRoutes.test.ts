@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test';
 import type { Response } from '#http.js';
 import { PermissionFlag } from '#permissions.js';
 import { dashboardRouter } from '#routes/dashboard.js';
-import { buildServer } from '#server.js';
+import { buildTestServer } from '#testServer.js';
 import { exportBackup } from '#store/state.js';
 import { setSessionCookie } from '#session.js';
 
@@ -30,7 +30,7 @@ test('backup management routes are absent from the legacy dashboard router', () 
 });
 
 test('backup routes validate access, versioned payloads, and restore workflows', async () => {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   const viewerCookie = createSessionCookie(PermissionFlag.viewBackup);
   const managerCookie = createSessionCookie(PermissionFlag.manageBackup);
   const legacyPayload = { backupVersion: 2 };
@@ -102,7 +102,7 @@ test('backup routes validate access, versioned payloads, and restore workflows',
 }, 30_000);
 
 test('backup snapshots can be created, downloaded, and deleted through native routes', async () => {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   const viewerCookie = createSessionCookie(PermissionFlag.viewBackup);
   const managerCookie = createSessionCookie(PermissionFlag.manageBackup);
   let snapshotId: string | undefined;

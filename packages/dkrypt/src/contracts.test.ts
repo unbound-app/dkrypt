@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { buildServer } from '#server.js';
+import { buildTestServer } from '#testServer.js';
 import { getRouteContracts, JobTimelineResponse } from '#contracts.js';
 import { Value } from '@sinclair/typebox/value';
 import {
@@ -9,7 +9,7 @@ import {
 } from '#dashboardJobContracts.js';
 
 test('every registered versioned route has an explicit TypeBox contract', async () => {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   try {
     await server.ready();
     const document = server.swagger() as { paths?: Record<string, Record<string, unknown>> };
@@ -27,7 +27,7 @@ test('every registered versioned route has an explicit TypeBox contract', async 
 });
 
 test('every versioned route is represented in generated OpenAPI', async () => {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   try {
     await server.ready();
     const document = server.swagger() as { paths?: Record<string, Record<string, unknown>> };
@@ -50,7 +50,7 @@ test('every versioned route is represented in generated OpenAPI', async () => {
 });
 
 test('GitHub automation routes document their upstream failure envelopes', async () => {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   try {
     await server.ready();
     const document = server.swagger() as {
@@ -72,7 +72,7 @@ test('GitHub automation routes document their upstream failure envelopes', async
 });
 
 test('idempotency header contracts match their endpoint validators', async () => {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   try {
     await server.ready();
     const document = server.swagger() as {
@@ -148,7 +148,7 @@ test('job history, exports, and diagnostics expose structured queue failure deta
 });
 
 test('dashboard overview project identifiers publish validation constraints', async () => {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   try {
     await server.ready();
     const document = server.swagger() as {
@@ -162,7 +162,7 @@ test('dashboard overview project identifiers publish validation constraints', as
 });
 
 test('core operational responses publish their required fields', async () => {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   try {
     await server.ready();
     const document = server.swagger() as {
@@ -254,7 +254,7 @@ test('core operational responses publish their required fields', async () => {
 });
 
 test('dashboard job contracts describe history and transport fields', async () => {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   try {
     await server.ready();
     const document = server.swagger() as {
@@ -295,7 +295,7 @@ test('dashboard job contracts describe history and transport fields', async () =
 });
 
 test('public and dashboard job responses document queue failure classification', async () => {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   try {
     await server.ready();
     const document = server.swagger() as {
@@ -316,7 +316,7 @@ test('public and dashboard job responses document queue failure classification',
 });
 
 test('dashboard overview publishes typed nested dashboard records', async () => {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   try {
     await server.ready();
     type Schema = { properties?: Record<string, Schema>; items?: Schema; pattern?: string; minLength?: number; maxLength?: number };
@@ -350,7 +350,7 @@ test('dashboard overview publishes typed nested dashboard records', async () => 
 });
 
 test('device route contracts describe subsystem history and query bounds', async () => {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   try {
     await server.ready();
     const document = server.swagger() as {
@@ -375,7 +375,7 @@ test('device route contracts describe subsystem history and query bounds', async
 });
 
 test('device operation contracts publish typed health, inventory, bridge, and recovery responses', async () => {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   try {
     await server.ready();
     type Schema = { properties?: Record<string, Schema>; items?: Schema; type?: string; minimum?: number; maximum?: number };
@@ -403,7 +403,7 @@ test('device operation contracts publish typed health, inventory, bridge, and re
 });
 
 test('observability contracts publish typed log and audit entry fields', async () => {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   try {
     await server.ready();
     const document = server.swagger() as {
@@ -422,7 +422,7 @@ test('observability contracts publish typed log and audit entry fields', async (
 });
 
 test('device and TestFlight mutation contracts publish their success status', async () => {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   try {
     await server.ready();
     const document = server.swagger() as {
@@ -471,7 +471,7 @@ test('device and TestFlight mutation contracts publish their success status', as
 });
 
 test('dashboard job action contracts describe diagnostic payloads and error statuses', async () => {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   try {
     await server.ready();
     const document = server.swagger() as {
@@ -496,7 +496,7 @@ test('dashboard job action contracts describe diagnostic payloads and error stat
 });
 
 test('device discovery and setup contracts describe bridge results in detail', async () => {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   try {
     await server.ready();
     const document = server.swagger() as {
@@ -525,7 +525,7 @@ test('device discovery and setup contracts describe bridge results in detail', a
 });
 
 test('TestFlight build contracts use the trainVersion query parameter', async () => {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   try {
     await server.ready();
     const document = server.swagger() as { paths?: Record<string, Record<string, { parameters?: Array<{ name?: string; required?: boolean }> }>> };
@@ -541,7 +541,7 @@ test('TestFlight build contracts use the trainVersion query parameter', async ()
 });
 
 test('administrative, notification, and diagnostic contracts publish structured responses', async () => {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   try {
     await server.ready();
     const document = server.swagger() as {
@@ -590,7 +590,7 @@ test('administrative, notification, and diagnostic contracts publish structured 
 });
 
 test('dashboard diagnostics document their session and permission errors', async () => {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   try {
     await server.ready();
     const document = server.swagger() as {
@@ -672,7 +672,7 @@ test('TestFlight catalog contracts include the normalized bridge failure envelop
 });
 
 test('streaming and file responses publish their wire formats', async () => {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   try {
     await server.ready();
     const document = server.swagger() as {

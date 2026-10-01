@@ -7,7 +7,7 @@ import { PermissionFlag } from '#permissions.js';
 import { dashboardRouter } from '#routes/dashboard.js';
 import { createDashboardJobAnalyticsRoutes } from '#routes/dashboardJobAnalyticsRoutes.js';
 import { setSessionCookie } from '#session.js';
-import { buildServer } from '#server.js';
+import { buildTestServer } from '#testServer.js';
 import type { JobHistoryEntry } from '#store/state.js';
 
 function sessionCookie(permissions = 0n): string {
@@ -156,7 +156,7 @@ test('job ETA uses the selected project and hides inaccessible project data', as
 });
 
 test('job analytics endpoints are mounted by the API server', async () => {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   try {
     const response = await server.inject({
       method: 'GET',

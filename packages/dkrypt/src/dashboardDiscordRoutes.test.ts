@@ -5,7 +5,7 @@ import type { Response } from '#http.js';
 import { PermissionFlag } from '#permissions.js';
 import { dashboardRouter } from '#routes/dashboard.js';
 import { createDashboardDiscordRoutes, type DashboardDiscordServices } from '#routes/dashboardDiscordRoutes.js';
-import { buildServer } from '#server.js';
+import { buildTestServer } from '#testServer.js';
 import { setSessionCookie } from '#session.js';
 import type { DiscordGuildConfiguration, DiscordRolePerk, Role } from '#store/state.js';
 
@@ -71,7 +71,7 @@ test('Discord routes are not registered through the legacy dashboard router', ()
 });
 
 test('the API server mounts Discord routes through Fastify', async () => {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
 
   try {
     const response = await server.inject({

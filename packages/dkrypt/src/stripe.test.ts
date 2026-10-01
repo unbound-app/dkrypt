@@ -13,7 +13,7 @@ import {
 } from '#billing.js';
 import { config } from '#config.js';
 import { billingRoutes, processStripeEvent } from '#routes/billing.js';
-import { buildServer } from '#server.js';
+import { buildTestServer } from '#testServer.js';
 import { STRIPE_WEBHOOK_EVENTS } from '#stripeWebhookEvents.js';
 import { getAuditLog } from '#store/state.js';
 import { flushTelemetry } from '#telemetry.js';
@@ -433,7 +433,7 @@ describe('Stripe billing webhooks', () => {
         retrieve: async () => currentSubscription,
       },
     } as unknown as Stripe;
-    const server = await buildServer({ includePublicRoutes: false, stripeClient: () => stripeClient });
+    const server = await buildTestServer({ includePublicRoutes: false, stripeClient: () => stripeClient });
     const previousSampleRate = config.otelSampleRate;
     config.otelSampleRate = 1;
 
@@ -511,7 +511,7 @@ describe('Stripe billing webhooks', () => {
     } as Stripe.Subscription;
     const stripeEvent = { ...original, id: `evt_${crypto.randomUUID()}`, data: { object: unknownPriceSubscription } } as Stripe.Event;
     const request = signedStripeWebhook(stripeEvent);
-    const server = await buildServer({ includePublicRoutes: false });
+    const server = await buildTestServer({ includePublicRoutes: false });
     const headers = { cookie: createSessionCookie(PermissionFlag.manageBilling | PermissionFlag.viewLogs) };
 
     try {
@@ -557,7 +557,7 @@ describe('Stripe billing webhooks', () => {
     } as Stripe.Subscription;
     const stripeEvent = { ...original, id: `evt_${crypto.randomUUID()}`, data: { object: incompleteSubscription } } as Stripe.Event;
     const request = signedStripeWebhook(stripeEvent);
-    const server = await buildServer({ includePublicRoutes: false });
+    const server = await buildTestServer({ includePublicRoutes: false });
 
     try {
       const delivery = await server.inject({
@@ -575,7 +575,7 @@ describe('Stripe billing webhooks', () => {
   });
 
   test('returns the standard error envelope for an invalid webhook signature', async () => {
-    const server = await buildServer({ includePublicRoutes: false });
+    const server = await buildTestServer({ includePublicRoutes: false });
 
     try {
       const response = await server.inject({
@@ -598,7 +598,7 @@ describe('Stripe billing webhooks', () => {
   });
 
   test('billing managers can replay quarantined webhook deliveries', async () => {
-    const server = await buildServer({ includePublicRoutes: false });
+    const server = await buildTestServer({ includePublicRoutes: false });
     const eventId = `evt_quarantined_${crypto.randomUUID()}`;
     const payload = JSON.stringify(event('invoice.created', {}));
     const received = receiveWebhook('stripe', eventId, payload);
@@ -643,7 +643,7 @@ describe('Stripe billing webhooks', () => {
         },
       },
     } as unknown as Stripe;
-    const server = await buildServer({ includePublicRoutes: false, stripeClient: () => stripeClient });
+    const server = await buildTestServer({ includePublicRoutes: false, stripeClient: () => stripeClient });
     const invoiceEvent = event('invoice.paid', {
       id: `in_${crypto.randomUUID()}`,
       object: 'invoice',
@@ -683,7 +683,7 @@ describe('Stripe billing webhooks', () => {
   });
 
   test('processed Stripe webhook deliveries outside subscription invoices remain deduplicated', async () => {
-    const server = await buildServer({ includePublicRoutes: false });
+    const server = await buildTestServer({ includePublicRoutes: false });
     const customerEvent = event('customer.updated', { id: `cus_${crypto.randomUUID()}`, object: 'customer' });
     const received = receiveWebhook('stripe', customerEvent.id, JSON.stringify(customerEvent));
     markWebhookProcessed(received.record.id);
@@ -711,7 +711,7 @@ describe('Stripe billing webhooks', () => {
   });
 
   test('billing manager webhook quarantine actions are audited', async () => {
-    const server = await buildServer({ includePublicRoutes: false });
+    const server = await buildTestServer({ includePublicRoutes: false });
     const eventId = `evt_quarantine_audit_${crypto.randomUUID()}`;
     const payload = JSON.stringify(event('invoice.created', {}));
     const received = receiveWebhook('stripe', eventId, payload);
@@ -734,7 +734,7 @@ describe('Stripe billing webhooks', () => {
   });
 
   test('billing managers cannot quarantine processed or in-flight webhook deliveries', async () => {
-    const server = await buildServer({ includePublicRoutes: false });
+    const server = await buildTestServer({ includePublicRoutes: false });
     const processedEvent = receiveWebhook('stripe', `evt_processed_${crypto.randomUUID()}`, JSON.stringify(event('invoice.created', {})));
     markWebhookProcessed(processedEvent.record.id);
     const inFlightEvent = receiveWebhook('stripe', `evt_in_flight_${crypto.randomUUID()}`, JSON.stringify(event('invoice.created', {})));
@@ -762,7 +762,7 @@ describe('Stripe billing webhooks', () => {
   });
 
   test('exposes Stripe billing metadata without returning a client secret', async () => {
-    const server = await buildServer({ includePublicRoutes: false });
+    const server = await buildTestServer({ includePublicRoutes: false });
     const login = await server.inject({
       method: 'POST',
       url: '/v1/auth/login',
@@ -812,7 +812,7 @@ describe('Stripe billing webhooks', () => {
   });
 
   test('requires an idempotency key before creating checkout', async () => {
-    const server = await buildServer({ includePublicRoutes: false });
+    const server = await buildTestServer({ includePublicRoutes: false });
     const login = await server.inject({
       method: 'POST',
       url: '/v1/auth/login',
@@ -858,7 +858,7 @@ describe('Stripe billing webhooks', () => {
         updatedAt: createdAt,
       }],
     });
-    const server = await buildServer({
+    const server = await buildTestServer({
       includePublicRoutes: false,
       stripeWebhookHealth: async () => ({
         state: 'not_configured',
@@ -1004,7 +1004,7 @@ describe('Stripe billing webhooks', () => {
   });
 
   test('requires an idempotency key before cancellation', async () => {
-    const server = await buildServer({ includePublicRoutes: false });
+    const server = await buildTestServer({ includePublicRoutes: false });
     const login = await server.inject({
       method: 'POST',
       url: '/v1/auth/login',

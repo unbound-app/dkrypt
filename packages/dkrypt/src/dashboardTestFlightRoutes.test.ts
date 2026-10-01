@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import Fastify from 'fastify';
 import { TypeBoxTypeProvider } from '@fastify/type-provider-typebox';
-import { buildServer } from '#server.js';
+import { buildTestServer } from '#testServer.js';
 import type { Response } from '#http.js';
 import { PermissionFlag } from '#permissions.js';
 import { dashboardRouter } from '#routes/dashboard.js';
@@ -51,7 +51,7 @@ test('TestFlight browse and decrypt endpoints are not registered through the leg
 test('TestFlight subscription listing keeps personal requests private', async () => {
   const own = createSubscription(crypto.randomUUID().replaceAll('-', '').slice(0, 12));
   const other = createSubscription(crypto.randomUUID().replaceAll('-', '').slice(0, 12), 'other@example.com');
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   try {
     const response = await server.inject({
       method: 'GET',
@@ -69,7 +69,7 @@ test('TestFlight subscription listing keeps personal requests private', async ()
 });
 
 test('TestFlight invite submission rejects noncanonical links without resolving them', async () => {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   try {
     const response = await server.inject({
       method: 'POST',
@@ -86,7 +86,7 @@ test('TestFlight invite submission rejects noncanonical links without resolving 
 
 test('TestFlight approval requires manager permission', async () => {
   const subscription = createSubscription(crypto.randomUUID().replaceAll('-', '').slice(0, 12));
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   try {
     const response = await server.inject({
       method: 'POST',
@@ -105,7 +105,7 @@ test('TestFlight approval requires manager permission', async () => {
 test('TestFlight duplicate approved links are rejected with the existing subscription', async () => {
   const inviteCode = crypto.randomUUID().replaceAll('-', '').slice(0, 12);
   const subscription = createSubscription(inviteCode, 'root', 'approved');
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   try {
     const response = await server.inject({
       method: 'POST',
@@ -124,7 +124,7 @@ test('TestFlight duplicate approved links are rejected with the existing subscri
 test('TestFlight duplicate links do not reveal another requester’s approved subscription', async () => {
   const inviteCode = crypto.randomUUID().replaceAll('-', '').slice(0, 12);
   const subscription = createSubscription(inviteCode, 'other@example.com', 'approved');
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   try {
     const response = await server.inject({
       method: 'POST',

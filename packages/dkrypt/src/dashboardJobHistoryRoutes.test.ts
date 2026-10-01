@@ -8,7 +8,7 @@ import { PermissionFlag } from '#permissions.js';
 import { dashboardRouter } from '#routes/dashboard.js';
 import { createDashboardJobHistoryRoutes, type DashboardJobHistoryServices } from '#routes/dashboardJobHistoryRoutes.js';
 import { setSessionCookie } from '#session.js';
-import { buildServer } from '#server.js';
+import { buildTestServer } from '#testServer.js';
 import type { JobHistoryEntry } from '#store/state.js';
 
 function sessionCookie(permissions = 0n): string {
@@ -63,7 +63,7 @@ test('job history route contracts are explicit and routes are mounted by the API
   expect(getRouteContract('GET', '/v1/dashboard/jobs/diff')).toHaveProperty('response.200.properties.a.properties.cacheHit');
   expect(getRouteContract('GET', '/v1/dashboard/jobs/diff')).toHaveProperty('response.200.properties.plistDiff.items.properties.key');
 
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   try {
     await server.ready();
     const document = server.swagger() as {

@@ -161,11 +161,15 @@ export async function buildServer(options: {
       const hasCookie = typeof request.headers.cookie === 'string' && request.headers.cookie.length > 0;
       if (isMutation && !isWebhook && hasCookie) {
         const fetchSite = request.headers['sec-fetch-site'];
+        const origin = request.headers.origin;
+        if (typeof fetchSite !== 'string' && typeof origin !== 'string') {
+          rejectCsrfMutation(reply, requestId, 'request origin and fetch metadata are missing');
+          return;
+        }
         if (typeof fetchSite === 'string' && fetchSite.toLowerCase() !== 'same-origin') {
           rejectCsrfMutation(reply, requestId, 'request fetch site is not same-origin');
           return;
         }
-        const origin = request.headers.origin;
         if (typeof origin === 'string') {
           try {
             if (new URL(origin).origin !== new URL(config.publicBaseUrl).origin) {

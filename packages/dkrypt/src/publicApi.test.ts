@@ -1,10 +1,10 @@
 import { expect, test } from 'bun:test';
-import { buildServer } from '#server.js';
+import { buildTestServer } from '#testServer.js';
 import { isPublicApiKeyRoute } from '#publicApi.js';
 import { createApiKey, revokeApiKey } from '#store/state.js';
 
 test('public OpenAPI contains only decrypt and IPA artifact routes', async () => {
-  const server = await buildServer();
+  const server = await buildTestServer();
 
   try {
     const response = await server.inject({ method: 'GET', url: '/openapi.json' });
@@ -56,7 +56,7 @@ test('API-key route policy matches concrete job and TestFlight paths only', () =
 
 test('generated API keys are rejected outside the decrypt and artifact API allowlist', async () => {
   const apiKey = createApiKey(`Public API boundary ${crypto.randomUUID()}`, 'root');
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   const headers = { authorization: `Bearer ${apiKey.key}` };
 
   try {

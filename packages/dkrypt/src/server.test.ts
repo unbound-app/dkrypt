@@ -11,7 +11,8 @@ import { emitJobsChanged } from '#events.js';
 import { cancelQueuedJob, enqueueDecryptJob } from '#jobs/store.js';
 import { config } from '#config.js';
 import { PermissionFlag, serializeBits } from '#permissions.js';
-import { buildServer } from '#server.js';
+import { buildTestServer } from '#testServer.js';
+import { buildServer as buildRawServer } from '#server.js';
 import { dashboardRouter } from '#routes/dashboard.js';
 import { parseDeviceConnection } from '#routes/dashboardDeviceRoutes.js';
 import type { Response } from '#http.js';
@@ -19,7 +20,7 @@ import { addAllowedUser, createApiKey, createDevice, createProject, createRole, 
 import { setSessionCookie } from '#session.js';
 
 test('request trace context is available throughout the Fastify request lifecycle', async () => {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   let observedCorrelation: ReturnType<typeof currentCorrelation>;
   let rejectedCorrelation: ReturnType<typeof currentCorrelation>;
   server.addHook('preHandler', (_request, _reply, done) => {
@@ -75,7 +76,7 @@ function createSessionCookie(userId: string, permissions: bigint): string {
 }
 
 test('cookie-authenticated mutations reject non-same-origin Fetch Metadata values', async () => {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
 
   try {
     for (const fetchSite of ['same-site', 'cross-site', 'none']) {
@@ -131,8 +132,28 @@ test('cookie-authenticated mutations reject non-same-origin Fetch Metadata value
   }
 });
 
+test('cookie-authenticated mutations require same-origin request metadata', async () => {
+  const server = await buildRawServer({ includePublicRoutes: false });
+
+  try {
+    const response = await server.inject({
+      method: 'POST',
+      url: '/v1/auth/logout',
+      headers: { cookie: createSessionCookie('root', PermissionFlag.administrator) },
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toMatchObject({
+      code: 'csrf_origin_rejected',
+      message: 'request origin and fetch metadata are missing',
+    });
+  } finally {
+    await server.close();
+  }
+});
+
 async function signIn() {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   const login = await server.inject({
     method: 'POST',
     url: '/v1/auth/login',
@@ -145,7 +166,7 @@ async function signIn() {
 }
 
 async function signInFromContext(
-  server: Awaited<ReturnType<typeof buildServer>>,
+  server: Awaited<ReturnType<typeof buildTestServer>>,
   userAgent: string,
   remoteAddress: string,
 ): Promise<string> {
@@ -202,7 +223,7 @@ test('native auth routes preserve cookie sessions, refresh, logout, and session 
 });
 
 test('root login records a manager-visible audit event for a new browser and network context', async () => {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   const contextId = crypto.randomUUID();
 
   try {
@@ -234,7 +255,7 @@ test('root login records a manager-visible audit event for a new browser and net
 });
 
 test('root login does not flag a network change when the browser context is unchanged', async () => {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   const userAgent = `dkrypt-test-${crypto.randomUUID()}-same-browser`;
 
   try {
@@ -294,7 +315,7 @@ test('native auth logout-everywhere expires all existing session versions', asyn
 });
 
 test('native auth routes require recent authentication for passkey registration', async () => {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   const cookie = createSessionCookie('root', PermissionFlag.administrator);
   try {
     const response = await server.inject({
@@ -357,7 +378,7 @@ test('dashboard role endpoints are not registered through the legacy adapter', (
 });
 
 test('native role routes preserve management gates and default-role protections', async () => {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   const administratorCookie = createSessionCookie('root', PermissionFlag.administrator);
   const decryptOnlyCookie = createSessionCookie('root', PermissionFlag.requestDecrypt);
   let roleId: string | undefined;
@@ -442,7 +463,7 @@ test('dashboard user endpoints are not registered through the legacy adapter', (
 });
 
 test('native user routes enforce permissions and return normalized management changes', async () => {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   const administratorCookie = createSessionCookie('root', PermissionFlag.administrator);
   const decryptOnlyCookie = createSessionCookie('root', PermissionFlag.requestDecrypt);
   const userManagerCookie = createSessionCookie('root', PermissionFlag.viewUsers | PermissionFlag.manageUsers);
@@ -633,7 +654,7 @@ test('API key endpoints are not registered through the legacy adapter', () => {
 });
 
 test('native API key routes preserve requester, owner, and manager permissions', async () => {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   const ownerId = `github:api-key-owner-${crypto.randomUUID()}`;
   const otherId = `github:api-key-other-${crypto.randomUUID()}`;
   const ownerRole = createRole({
@@ -763,7 +784,7 @@ test('native API key routes preserve requester, owner, and manager permissions',
 });
 
 test('native API key manager controls preserve filtering, normalization, and route coverage', async () => {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   const administratorCookie = createSessionCookie('root', PermissionFlag.administrator);
   const headers = { cookie: administratorCookie };
   const createdIds: string[] = [];
@@ -1002,7 +1023,7 @@ test('native API key manager controls preserve filtering, normalization, and rou
 });
 
 test('native settings routes preserve permission gates and normalize updates', async () => {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   const administratorCookie = createSessionCookie('root', PermissionFlag.administrator);
   const decryptOnlyCookie = createSessionCookie('root', PermissionFlag.requestDecrypt);
   const initialSettings = getEffectiveSettings();
@@ -1086,7 +1107,7 @@ test('device dashboard routes are not registered through the legacy adapter', ()
 });
 
 test('native device discovery and setup retain manager gates and input errors', async () => {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   const administratorCookie = createSessionCookie('root', PermissionFlag.administrator);
   const decryptOnlyCookie = createSessionCookie('root', PermissionFlag.requestDecrypt);
 
@@ -1127,7 +1148,7 @@ test('device setup parser accepts IPv6 hosts declared by the device contract', (
 });
 
 test('native device operations validate inputs and preserve view and manage permissions', async () => {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   const administratorCookie = createSessionCookie('root', PermissionFlag.administrator);
   const decryptOnlyCookie = createSessionCookie('root', PermissionFlag.requestDecrypt);
 
@@ -1168,7 +1189,7 @@ test('dashboard job history and inspection endpoints are not registered through 
 });
 
 test('dashboard diagnostics use native Fastify routes with session and device-management gates', async () => {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   const administratorCookie = createSessionCookie('root', PermissionFlag.administrator);
   const decryptOnlyCookie = createSessionCookie('root', PermissionFlag.requestDecrypt);
   const legacyRoutes = dashboardRouter.routes.map((route) => `${route.method} ${route.path}`);
@@ -1203,7 +1224,7 @@ test('dashboard diagnostics use native Fastify routes with session and device-ma
 });
 
 test('internal deployment notices require the service API key and reject generated user API keys', async () => {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   const generatedKey = createApiKey('deployment notice scope test', 'root');
 
   try {
@@ -1238,7 +1259,7 @@ test('internal deployment notices require the service API key and reject generat
 });
 
 test('dashboard overview uses native Fastify routing and preserves project checks', async () => {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   const administratorCookie = createSessionCookie('root', PermissionFlag.administrator);
   const decryptOnlyCookie = createSessionCookie('root', PermissionFlag.requestDecrypt);
   const legacyRoutes = dashboardRouter.routes.map((route) => `${route.method} ${route.path}`);
@@ -1286,7 +1307,7 @@ test('native dashboard logs and audit routes preserve permissions, paging, and p
   await Bun.sleep(2);
   logger.info('newer native log');
   recordAudit('test', 'project.add', `native-audit-${crypto.randomUUID()}`, 'native route coverage');
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   const legacyRoutes = dashboardRouter.routes.map((route) => `${route.method} ${route.path}`);
 
   try {
@@ -1376,7 +1397,7 @@ test('native dashboard device history routes preserve permissions and validate q
   addAllowedUser(deniedId, [deniedRole.id], 'test');
   const readerCookie = createSessionCookie(readerId, readerPermissions);
   const deniedCookie = createSessionCookie(deniedId, 0n);
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   const legacyRoutes = dashboardRouter.routes.map((route) => `${route.method} ${route.path}`);
 
   try {
@@ -1515,7 +1536,7 @@ test('dashboard account and notification routes validate requests and preserve s
   const role = createRole({ name: `Preferences ${crypto.randomUUID()}`, color: '#3498db', permissions: serializeBits(0n) }, 'test');
   addAllowedUser(userId, [role.id], 'test');
   const cookie = createSessionCookie(userId, 0n);
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   const endpoint = `https://push.example/${crypto.randomUUID()}`;
 
   try {
@@ -1906,7 +1927,7 @@ test('scheduler watch lists and budget history stay within the selected project'
 test('scheduler calendar defers quiet-window runs while preserving local time across daylight-saving changes', async () => {
   const originalToken = config.ghToken;
   config.ghToken = 'timezone-calendar-test-token';
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   const cookie = createSessionCookie('root', PermissionFlag.administrator);
   let watchId: string | undefined;
   let overnightWatchId: string | undefined;
@@ -1979,7 +2000,7 @@ test('scheduler calendar defers quiet-window runs while preserving local time ac
 });
 
 test('native scheduler watch routes enforce permissions and preserve CRUD and import behavior', async () => {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   const administratorCookie = createSessionCookie('root', PermissionFlag.administrator);
   const decryptOnlyCookie = createSessionCookie('root', PermissionFlag.requestDecrypt);
   const suffix = crypto.randomUUID();
@@ -2180,7 +2201,7 @@ test('native scheduler watch routes enforce permissions and preserve CRUD and im
 test('native GitHub lookup failures retain safe upstream diagnostics', async () => {
   const originalToken = config.ghToken;
   const originalFetch = globalThis.fetch;
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
 
   try {
     config.ghToken = 'test-github-token-secret';
@@ -2226,7 +2247,7 @@ test('native dispatch previews share the external request budget with native Tes
   const username = `rate-limit-${crypto.randomUUID()}`;
   const role = createRole({ name: `Rate limit ${username}`, color: '#52637a', permissions: serializeBits(PermissionFlag.manageAutomation) }, 'root');
   addAllowedUser(username, [role.id], 'test setup');
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
 
   try {
     const cookie = createSessionCookie(username, PermissionFlag.manageAutomation);
@@ -2357,7 +2378,7 @@ test('each dashboard event stream tracks its own sequence while other clients ar
 });
 
 test('Fastify serves browser identity assets from the public root', async () => {
-  const server = await buildServer();
+  const server = await buildTestServer();
 
   try {
     const favicon = await server.inject({ method: 'GET', url: '/favicon.svg' });
@@ -2377,7 +2398,7 @@ test('Fastify serves browser identity assets from the public root', async () => 
 });
 
 test('Scalar API reference renders with a per-response nonce and only allows same-origin framing', async () => {
-  const server = await buildServer();
+  const server = await buildTestServer();
 
   try {
     const first = await server.inject({ method: 'GET', url: '/reference/' });
@@ -2404,7 +2425,7 @@ test('Scalar API reference renders with a per-response nonce and only allows sam
 });
 
 test('Fastify emits a narrow content security policy', async () => {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
 
   try {
     const response = await server.inject({ method: 'GET', url: '/v1/status' });
@@ -2419,7 +2440,7 @@ test('Fastify emits a narrow content security policy', async () => {
 });
 
 test('Fastify normalizes API errors into the shared error envelope', async () => {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
 
   try {
     const response = await server.inject({ method: 'GET', url: '/v1/dashboard/overview' });
@@ -2441,7 +2462,7 @@ test('health responses expose transport and subsystem recovery states', async ()
   const originalBuildRef = process.env.BUILD_REF;
   process.env.DEPLOYMENT_ID = 'deploy-456-attempt-2';
   process.env.BUILD_REF = 'abcdef0123456789';
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
 
   try {
     const response = await server.inject({
@@ -2473,7 +2494,7 @@ test('health responses expose transport and subsystem recovery states', async ()
 test('Fastify exposes coarse public service status without device details', async () => {
   const originalBuildRef = process.env.BUILD_REF;
   process.env.BUILD_REF = '0123456789abcdef';
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
 
   try {
     const response = await server.inject({ method: 'GET', url: '/v1/status' });
@@ -2727,7 +2748,7 @@ test('Fastify exposes scheduler artifacts in recent jobs after the job is pruned
 });
 
 test('Fastify requires an API key for stable artifact downloads and rejects old signed tokens', async () => {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   const outputDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-artifact-download-'));
   const outputPath = path.join(outputDir, 'app.ipa');
   await writeFile(outputPath, 'ipa');
@@ -2775,7 +2796,7 @@ test('Fastify requires an API key for stable artifact downloads and rejects old 
 });
 
 test('Fastify enforces API key bundle scopes for artifact downloads', async () => {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   const outputDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-scoped-artifact-'));
   const outputPath = path.join(outputDir, 'app.ipa');
   await writeFile(outputPath, 'scoped ipa');
@@ -2859,7 +2880,7 @@ test('Fastify previews retention and reports queue service objectives', async ()
 });
 
 test('artifact storage preview requires decrypt and automation permissions', async () => {
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
   const automationId = `github:storage-automation-${crypto.randomUUID()}`;
   const decryptId = `github:storage-decrypt-${crypto.randomUUID()}`;
   const permittedId = `github:storage-permitted-${crypto.randomUUID()}`;

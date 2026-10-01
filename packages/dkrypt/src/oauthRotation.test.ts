@@ -1,9 +1,9 @@
 import { expect, test } from 'bun:test';
 import { config } from '#config.js';
 import { deleteAuthProfile } from '#identity.js';
-import { buildServer } from '#server.js';
+import { buildTestServer } from '#testServer.js';
 
-async function runOAuthCallback(server: Awaited<ReturnType<typeof buildServer>>, provider: 'github' | 'discord', code = 'single-use-code') {
+async function runOAuthCallback(server: Awaited<ReturnType<typeof buildTestServer>>, provider: 'github' | 'discord', code = 'single-use-code') {
   const login = await server.inject({ method: 'GET', url: `/v1/auth/${provider}/login` });
   const authorization = new URL(String(login.headers.location), 'http://localhost');
   const cookieHeader = login.headers['set-cookie'];
@@ -48,7 +48,7 @@ test('GitHub OAuth falls back to its previous secret only for incorrect client c
     }
     throw new Error(`unexpected OAuth provider request: ${url}`);
   }) as typeof fetch;
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
 
   try {
     const { login, callback } = await runOAuthCallback(server, 'github');
@@ -109,7 +109,7 @@ test('Discord OAuth falls back to its previous secret only for invalid client au
     if (url === 'https://discord.com/api/v10/users/@me/connections') return new Response('[]', { status: 200 });
     throw new Error(`unexpected OAuth provider request: ${url}`);
   }) as typeof fetch;
-  const server = await buildServer({ includePublicRoutes: false });
+  const server = await buildTestServer({ includePublicRoutes: false });
 
   try {
     const { login, callback } = await runOAuthCallback(server, 'discord');

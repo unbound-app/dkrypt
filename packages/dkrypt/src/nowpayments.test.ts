@@ -2,7 +2,7 @@ import { createHmac } from 'node:crypto';
 import { describe, expect, test } from 'bun:test';
 import { config } from '#config.js';
 import { checkoutFromResponse, NowPaymentsClient, subscriptionFromPayment, verifyNowPaymentsWebhook } from '#nowpayments.js';
-import { buildServer } from '#server.js';
+import { buildTestServer } from '#testServer.js';
 
 describe('NOWPayments adapter', () => {
   test('creates a EUR invoice with the selected crypto currency', async () => {
@@ -93,7 +93,7 @@ describe('NOWPayments adapter', () => {
     const rawBody = JSON.stringify(payment);
     const canonicalBody = JSON.stringify(Object.fromEntries(Object.entries(payment).sort(([left], [right]) => left.localeCompare(right))));
     const signature = createHmac('sha512', secret).update(canonicalBody).digest('hex');
-    const server = await buildServer({ includePublicRoutes: false });
+    const server = await buildTestServer({ includePublicRoutes: false });
 
     try {
       const first = await server.inject({
