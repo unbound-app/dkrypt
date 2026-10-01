@@ -16,6 +16,12 @@ export interface SyntheticProbeResult {
   detail: string;
 }
 
+type WebhookProviderReadiness = {
+  name: string;
+  status: 'ready' | 'misconfigured' | 'unavailable';
+  detail?: string;
+};
+
 export function classifyTestFlightCatalogProbe(cache: ReturnType<typeof getTestFlightCatalogCacheState>): Pick<SyntheticProbeResult, 'status' | 'detail'> {
   if (cache.stale) {
     return {
@@ -29,7 +35,7 @@ export function classifyTestFlightCatalogProbe(cache: ReturnType<typeof getTestF
 }
 
 export function classifyWebhookProbe(
-  providers: Array<{ name: string; status: 'ready' | 'misconfigured' | 'unavailable'; detail?: string }>,
+  providers: WebhookProviderReadiness[],
   inboxFailures: number,
 ): Pick<SyntheticProbeResult, 'status' | 'detail'> {
   if (providers.length === 0) return { status: 'skipped', detail: 'No billing webhook provider is configured' };
@@ -113,7 +119,7 @@ export async function runSyntheticProbes(): Promise<{ ok: boolean; checkedAt: st
         stripeEnabled ? getStripeWebhookHealth(undefined) : undefined,
         cryptoBillingEnabled ? getNowPaymentsProviderStatus() : undefined,
       ]);
-      const providers: Array<{ name: string; status: 'ready' | 'misconfigured' | 'unavailable'; detail?: string }> = [];
+      const providers: WebhookProviderReadiness[] = [];
 
       if (stripeHealth) {
         if (stripeHealth.state === 'ready') providers.push({ name: 'Stripe', status: 'ready' });
