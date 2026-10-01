@@ -66,6 +66,25 @@ export interface DeviceSubsystemHealth {
   thermal: DeviceSubsystemState;
 }
 
+export function getDeviceHealthSubsystemsWithoutAgent(
+  connection: Pick<DeviceConnection, 'udid' | 'host'>,
+  transport: DeviceTransport,
+  sshSftpReady: boolean,
+): DeviceSubsystemHealth {
+  return {
+    usb: transport === 'usb' ? 'ready' : 'unsupported',
+    mux: 'ready',
+    agent: getDeviceAgentSubsystemState(connection, false),
+    jailbreak: 'unknown',
+    appStore: getAppStoreSubsystemState(undefined, true),
+    testFlight: 'unknown',
+    sshTunnel: getDeviceSshTunnelSubsystemState(connection, sshSftpReady),
+    storage: 'unknown',
+    battery: 'unknown',
+    thermal: 'unknown',
+  };
+}
+
 export function getDeviceAgentSubsystemState(connection: Pick<DeviceConnection, 'udid' | 'host'>, agentRequestSucceeded: boolean): DeviceSubsystemState {
   if (!isRustDeviceConnection(connection)) return 'unsupported';
   return agentRequestSucceeded ? 'ready' : 'offline';
@@ -614,18 +633,7 @@ async function computeDeviceHealth(device: DeviceRecord, signal?: AbortSignal): 
             agentHeartbeatAt,
             error: `device agent unavailable: ${error}`,
             testFlightBridgeReachable: undefined,
-            subsystems: {
-              usb: bridge.transport === 'usb' ? 'ready' : 'unsupported',
-              mux: 'ready',
-              agent: getDeviceAgentSubsystemState(device, agentHeartbeatAt !== undefined),
-              jailbreak: 'unknown',
-              appStore: 'unknown',
-              testFlight: 'unknown',
-              sshTunnel: getDeviceSshTunnelSubsystemState(device, sshSftpReady),
-              storage: 'unknown',
-              battery: 'unknown',
-              thermal: 'unknown',
-            },
+            subsystems: getDeviceHealthSubsystemsWithoutAgent(device, bridge.transport, sshSftpReady),
             checkedAt: Date.now(),
           };
           return applyDeviceSshTunnelHealth(health, device, sshSftpReady);

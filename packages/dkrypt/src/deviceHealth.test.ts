@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { applyDeviceSshTunnelHealth, coalesceDeviceHealthRequest, collectDeviceTelemetry, DeviceHealthRefreshQueue, formatTestFlightBridgeDownDescription, getAppStoreSubsystemState, getDeviceAgentSubsystemState, getDeviceInstallBlocker, getDeviceReadiness, getDeviceSshTunnelSubsystemState, isBridgeHeartbeatFresh, parseDeviceStorageDf, stabilizeDeviceHealth, testFlightBridgeReachability, type DeviceHealth } from '#deviceHealth.js';
+import { applyDeviceSshTunnelHealth, coalesceDeviceHealthRequest, collectDeviceTelemetry, DeviceHealthRefreshQueue, formatTestFlightBridgeDownDescription, getAppStoreSubsystemState, getDeviceAgentSubsystemState, getDeviceHealthSubsystemsWithoutAgent, getDeviceInstallBlocker, getDeviceReadiness, getDeviceSshTunnelSubsystemState, isBridgeHeartbeatFresh, parseDeviceStorageDf, stabilizeDeviceHealth, testFlightBridgeReachability, type DeviceHealth } from '#deviceHealth.js';
 
 function health(overrides: Partial<DeviceHealth> = {}): DeviceHealth {
   return { reachable: true, jailbreakAvailable: true, checkedAt: 0, ...overrides };
@@ -155,6 +155,15 @@ describe('App Store subsystem health', () => {
 
   test('keeps App Store health unknown when the device agent is unavailable', () => {
     expect(getAppStoreSubsystemState(undefined, false, 1_000_000)).toBe('unknown');
+  });
+
+  test('reports App Store idle when the Rust transport is reachable but its agent is unavailable', () => {
+    expect(getDeviceHealthSubsystemsWithoutAgent({ udid: 'usb-device' }, 'usb', false)).toMatchObject({
+      usb: 'ready',
+      agent: 'offline',
+      appStore: 'idle',
+      sshTunnel: 'degraded',
+    });
   });
 });
 
