@@ -289,7 +289,7 @@ describe('Stripe billing webhooks', () => {
     const laterActiveEvent = subscriptionEvent(userId, customerId, subscriptionId);
     laterActiveEvent.type = 'customer.subscription.updated';
     laterActiveEvent.created = refundEvent.created + 1;
-    await processStripeEvent(laterActiveEvent);
+    await processStripeEvent(laterActiveEvent, client);
 
     expect(getBillingSubscriptionById(subscriptionId)).toMatchObject({ status: 'revoked', failureReason: 'payment refunded' });
     expect(getBillingEntitlements(userId).planId).toBe('viewer');
