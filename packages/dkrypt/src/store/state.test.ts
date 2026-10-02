@@ -50,6 +50,7 @@ import {
   getInsightsSummary,
   getEffectiveSettings,
   getProject,
+  getWatchHealthRollup,
   getUserEffectivePermissions,
   getRole,
   getEffectiveDevices,
@@ -1287,6 +1288,34 @@ test('scheduler outcome updates persist through the typed SQLite repository', ()
     }));
   } finally {
     database.close();
+  }
+});
+
+test('watch health counts completed downstream workflow failures', () => {
+  const bundleId = `com.example.scheduler.health.${randomUUID()}`;
+  const watch = createWatch({
+    bundleId,
+    repo: 'owner/repo',
+    ghWorkflowFile: 'release.yml',
+    pollCron: '0 * * * *',
+    enabled: false,
+  }, 'tester').watch!;
+
+  try {
+    const entryId = recordSchedulerRunOutcome({
+      watchId: watch.id,
+      bundleId,
+      appStore: { ok: true, triggered: false, reason: 'no new App Store version' },
+      testflight: { ok: true, triggered: true, runStatus: 'dispatched', reason: 'workflow dispatched' },
+    });
+    updateSchedulerRunOutcome(entryId, 'testflight', { runStatus: 'failed', reason: 'workflow failed' });
+
+    expect(getWatchHealthRollup().find((entry) => entry.watchId === watch.id)).toMatchObject({
+      lastCheckOk: false,
+      consecutiveFailures: 1,
+    });
+  } finally {
+    deleteWatch(watch.id, 'tester');
   }
 });
 

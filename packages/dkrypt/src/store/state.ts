@@ -3699,12 +3699,18 @@ export interface WatchHealthSummary {
   medianSchedulerJobDurationMs?: number;
 }
 
+function schedulerRunHasFailure(entry: SchedulerRunEntry): boolean {
+  return [entry.appStore, entry.testflight].some((outcome) =>
+    !outcome.ok || outcome.runStatus === 'failed' || outcome.runStatus === 'timed_out',
+  );
+}
+
 export function getWatchHealthRollup(): WatchHealthSummary[] {
   return getEffectiveWatches().map((watch) => {
     const entries = getSchedulerRunHistory(MAX_SCHEDULER_RUNS, watch.id);
     let consecutiveFailures = 0;
     for (const e of entries) {
-      if (e.appStore.ok && e.testflight.ok) break;
+      if (!schedulerRunHasFailure(e)) break;
       consecutiveFailures += 1;
     }
     const last = entries[0];
@@ -3726,7 +3732,7 @@ export function getWatchHealthRollup(): WatchHealthSummary[] {
       schedulable: isWatchSchedulable(watch),
       dispatchTargetCount: getWatchDispatchTargets(watch).length,
       lastCheckAt: last?.ts,
-      lastCheckOk: last ? last.appStore.ok && last.testflight.ok : undefined,
+      lastCheckOk: last ? !schedulerRunHasFailure(last) : undefined,
       consecutiveFailures,
       everTriggeredInHistory: entries.some((e) => e.appStore.triggered || e.testflight.triggered),
       historyCount: entries.length,
