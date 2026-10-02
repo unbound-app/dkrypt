@@ -113,7 +113,7 @@
 	import Docs from "#tabs/Docs.svelte";
 	import Billing from "#features/billing/BillingPage.svelte";
 	import Home from "#tabs/Home.svelte";
-	import StatusPanel from "#tabs/home/StatusPanel.svelte";
+	import StatusPanel from "#features/devices/StatusPanel.svelte";
 	import Insights from "#tabs/Insights.svelte";
 	import Keys from "#tabs/Keys.svelte";
 	import Logs from "#tabs/Logs.svelte";
