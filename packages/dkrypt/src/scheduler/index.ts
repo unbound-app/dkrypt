@@ -897,35 +897,64 @@ async function reconcileStuckSchedulerRuns(): Promise<void> {
     for (const source of ['appStore', 'testflight'] as const) {
       if (entry[source].runStatus !== 'dispatched') continue;
       log.info('reconciling scheduler run left stuck as dispatched by a previous process', { entryId: entry.id, source, watchId: watch.id });
-      try {
-        const run = await pollRunToCompletion(watch.repo, watch.ghWorkflowFile, new Date(entry.ts));
-        if (!run) {
-          updateSchedulerRunOutcome(entry.id, source, {
-            runStatus: 'timed_out',
-            reason: `${entry[source].reason} - gave up waiting for the workflow run to appear/complete after a restart`,
-          });
-          continue;
-        }
-        const runStatus = workflowRunStatus(run);
-        if (runStatus === 'timed_out') {
-          updateSchedulerRunOutcome(entry.id, source, {
+      const recordedTargetKeys = entry[source].dispatchTargetKeys;
+      const dispatchTargetKeys = recordedTargetKeys ?? [];
+      const hasRecordedTargetKeys = dispatchTargetKeys.length > 0;
+      const configuredTargets = getWatchDispatchTargets(watch);
+      const targets = hasRecordedTargetKeys
+        ? configuredTargets.filter((target) => dispatchTargetKeys.includes(dispatchTargetKey(target)))
+        : [{ repo: watch.repo, ghWorkflowFile: watch.ghWorkflowFile }];
+      const expectedTargetCount = hasRecordedTargetKeys ? dispatchTargetKeys.length : 1;
+      const outcomes = await Promise.all(targets.map(async (target): Promise<Partial<SchedulerRunOutcome>> => {
+        try {
+          const run = await pollRunToCompletion(target.repo, target.ghWorkflowFile, new Date(entry.ts), target.mode ?? 'repository_dispatch');
+          if (!run) {
+            return {
+              runStatus: 'timed_out',
+              reason: `${target.repo}/${target.ghWorkflowFile} - workflow run did not appear or complete after restart`,
+            };
+          }
+          const runStatus = workflowRunStatus(run);
+          if (runStatus === 'timed_out') {
+            return {
+              runStatus,
+              runUrl: run.html_url,
+              reason: `${target.repo}/${target.ghWorkflowFile} - workflow was still ${run.status} after restart polling timed out`,
+            };
+          }
+          const succeeded = runStatus === 'succeeded';
+          const failureSummary = succeeded ? undefined : await workflowFailureSummary(target.repo, run);
+          return {
             runStatus,
             runUrl: run.html_url,
-            reason: `${entry[source].reason} - workflow was still ${run.status} after restart reconciliation polling timed out`,
+            failureSummary,
+            reason: `${target.repo}/${target.ghWorkflowFile} - workflow ${succeeded ? 'succeeded' : `failed (${run.conclusion})${failureSummary ? `: ${failureSummary}` : ''}`}`,
+          };
+        } catch (error) {
+          log.warn('failed to reconcile a dispatched workflow target', {
+            entryId: entry.id,
+            source,
+            repo: target.repo,
+            workflow: target.ghWorkflowFile,
+            error: String(error),
           });
-          continue;
+          return {
+            runStatus: 'timed_out',
+            reason: `${target.repo}/${target.ghWorkflowFile} - workflow reconciliation could not reach GitHub`,
+          };
         }
-        const succeeded = runStatus === 'succeeded';
-        const failureSummary = succeeded ? undefined : await workflowFailureSummary(watch.repo, run);
-        updateSchedulerRunOutcome(entry.id, source, {
-          runStatus,
-          runUrl: run.html_url,
-          failureSummary,
-          reason: `${entry[source].reason} - workflow ${succeeded ? 'succeeded' : `failed (${run.conclusion})${failureSummary ? `: ${failureSummary}` : ''}`}`,
-        });
-      } catch (err) {
-        log.warn('failed to reconcile stuck scheduler run', { entryId: entry.id, source, error: String(err) });
-      }
+      }));
+      const failureSummaries = outcomes.flatMap((outcome) => outcome.failureSummary ? [outcome.failureSummary] : []).slice(0, 3);
+      const failureSummary = failureSummaries.length ? failureSummaries.join('; ').slice(0, 320) : undefined;
+      const runUrl = outcomes.find((outcome) => outcome.runStatus === 'failed' && outcome.runUrl)?.runUrl
+        ?? outcomes.find((outcome) => outcome.runUrl)?.runUrl;
+      const unresolvedTargets = Math.max(0, expectedTargetCount - outcomes.length);
+      updateSchedulerRunOutcome(entry.id, source, {
+        runStatus: aggregateWorkflowRunStatus(outcomes, expectedTargetCount),
+        runUrl,
+        failureSummary,
+        reason: `${entry[source].reason} - reconciled ${outcomes.length}/${expectedTargetCount} dispatched workflow target${expectedTargetCount === 1 ? '' : 's'}${unresolvedTargets ? `; ${unresolvedTargets} target(s) are no longer configured` : ''}${outcomes.length ? `: ${outcomes.map((outcome) => outcome.reason).join('; ')}` : ''}`,
+      });
     }
   }
   emitJobsChanged();
