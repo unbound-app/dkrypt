@@ -15,7 +15,7 @@
   import { csvCell, downloadBlob } from '#lib/format.svelte';
   import { liveState } from '#lib/live.svelte';
   import { createSavedViews } from '#lib/savedViews.svelte';
-  import { tabState } from '#lib/ui.svelte';
+  import { deviceDetailJumpState, jobDetailJumpState, logSearchJumpState, setActiveTab, setSettingsSubtab, tabState } from '#lib/ui.svelte';
   import { getQueryParam, setQueryParams } from '#lib/urlState';
   import { cn } from '#lib/utils';
 
@@ -47,6 +47,41 @@
   const savedViews = createSavedViews<LogFilterPreset>('logFilterPresets');
   let newPresetName = $state('');
 
+  type LogLink = { kind: 'job' | 'device' | 'deployment' | 'correlation'; id: string; label: string };
+
+  function logLinks(entry: LogEntry): LogLink[] {
+    const links: LogLink[] = [];
+    const values: Record<string, unknown> = { ...(entry.meta ?? {}) };
+    for (const match of entry.message.matchAll(/\b(jobId|deviceId|deploymentId|correlationId)=([A-Za-z0-9_.:-]{3,200})/g)) values[match[1]!] = match[2];
+    const fieldLinks: Array<[string, LogLink['kind'], string]> = [
+      ['jobId', 'job', 'Job'],
+      ['deviceId', 'device', 'Device'],
+      ['deploymentId', 'deployment', 'Deployment'],
+      ['correlationId', 'correlation', 'Trace'],
+    ];
+    for (const [field, kind, label] of fieldLinks) {
+      const id = values[field];
+      if (typeof id === 'string' && id.trim() && !links.some((link) => link.id === id && link.kind === kind)) links.push({ kind, id, label });
+    }
+    return links;
+  }
+
+  function openLogLink(link: LogLink): void {
+    if (link.kind === 'job') {
+      jobDetailJumpState.id = link.id;
+      setActiveTab('home');
+      return;
+    }
+    if (link.kind === 'device') {
+      deviceDetailJumpState.id = link.id;
+      setActiveTab('settings');
+      setSettingsSubtab('devices');
+      return;
+    }
+    logSearchJumpState.value = { query: link.id, scope: link.kind === 'deployment' ? 'deploy' : undefined };
+    setActiveTab('logs');
+  }
+
   function applyPreset(p: LogFilterPreset): void {
     scopeFilter = p.scope;
     levelFilter = p.level;
@@ -73,6 +108,15 @@
       q: searchText.trim() || undefined,
       regex: regexMode ? '1' : undefined,
     });
+  });
+
+  $effect(() => {
+    const jump = logSearchJumpState.value;
+    if (!jump) return;
+    searchText = jump.query;
+    scopeFilter = jump.scope ?? 'all';
+    regexMode = false;
+    logSearchJumpState.value = null;
   });
 
   function onListScroll(): void {
@@ -379,11 +423,18 @@
               onclick={() => toggleExpanded(key)}
               title={expandedLogKeys.has(key) ? 'Collapse log entry' : 'Expand log entry'}
             >
-              {l.message}
+              <span data-sensitive="true">{l.message}</span>
               {#if l.meta}
-                <span class={cn('font-mono text-[11px] text-muted', expandedLogKeys.has(key) ? 'mt-1 block break-words' : '')}>{fmtLogMeta(l.meta)}</span>
+                <span data-sensitive="true" class={cn('font-mono text-[11px] text-muted', expandedLogKeys.has(key) ? 'mt-1 block break-words' : '')}>{fmtLogMeta(l.meta)}</span>
               {/if}
             </Button>
+            {#if logLinks(l).length > 0}
+              <div class="flex shrink-0 flex-wrap gap-1" aria-label="Related records">
+                {#each logLinks(l) as link (`${link.kind}:${link.id}`)}
+                  <Button size="sm" variant="ghost" class="h-7 px-2 text-[10px]" onclick={() => openLogLink(link)} aria-label="Open {link.label} {link.id}">{link.label} <span data-sensitive="true">{link.id.slice(0, 8)}</span></Button>
+                {/each}
+              </div>
+            {/if}
             <div class="log-row-copy"><CopyButton text={JSON.stringify(l, null, 2)} label="JSON" /></div>
           </div>
         {/snippet}

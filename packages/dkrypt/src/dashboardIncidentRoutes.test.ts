@@ -1,0 +1,65 @@
+import { expect, test } from 'bun:test';
+import Fastify from 'fastify';
+import { TypeBoxTypeProvider } from '@fastify/type-provider-typebox';
+import { PermissionFlag } from '#permissions.js';
+import { setSessionCookie } from '#session.js';
+import type { Response } from '#http.js';
+import { createDashboardIncidentRoutes } from '#routes/dashboardIncidentRoutes.js';
+
+function sessionCookie(permissions: bigint): string {
+  let value = '';
+  const response = { setHeader: (_name: string, cookie: string) => { value = cookie; } } as unknown as Response;
+  setSessionCookie(response, { sub: 'root', permissions });
+  return value.split(';', 1)[0]!;
+}
+
+test('incident timeline merges authorized project jobs, device history, and deployment outcomes', async () => {
+  const now = Date.now();
+  const server = Fastify().withTypeProvider<TypeBoxTypeProvider>();
+  await server.register(createDashboardIncidentRoutes({
+    canAccessProject: (_userId, _permissions, projectId) => projectId === 'project-a' || projectId === 'default',
+    getProject: (projectId) => projectId === 'project-a' || projectId === 'default' ? { id: projectId } as never : undefined,
+    getEffectiveDevices: () => [{ id: 'device-1', name: 'Test iPad' } as never],
+    getDeviceActivityPage: () => ({ entries: [{ id: 'health-1', ts: now - 3000, deviceId: 'device-1', kind: 'health', message: 'Agent recovered' }], total: 1 }),
+    getAllJobHistory: () => [{
+      id: 'job-1',
+      projectId: 'project-a',
+      bundleId: 'com.example.app',
+      status: 'done',
+      source: 'manual',
+      createdAt: now - 5000,
+      finishedAt: now - 1000,
+      timeline: [{ at: now - 4000, label: 'Started', status: 'running' }, { at: now - 1000, label: 'Finished', status: 'done' }],
+    }] as never,
+    getActiveJobs: () => [],
+    getRecentLogs: () => ({ logs: [{ id: 'deploy-log', ts: now - 500, level: 'info', scope: 'deployment', message: 'Deployment health passed', meta: { deploymentId: 'deploy-1', projectId: 'project-a' } }], total: 1 }),
+    listNotifications: () => ({ notifications: [{ id: 'deploy-ready', userId: 'incident-user', title: 'Deployment is live', message: 'Build abc is serving traffic.', severity: 'success', createdAt: now - 250, deploymentId: 'deploy-1' }], unread: 0 }),
+  }));
+
+  try {
+    const response = await server.inject({
+      method: 'GET',
+      url: `/v1/dashboard/incidents?projectId=project-a&since=${now - 10000}`,
+      headers: { cookie: sessionCookie(PermissionFlag.requestDecrypt | PermissionFlag.viewDevices | PermissionFlag.viewLogs) },
+    });
+    const denied = await server.inject({
+      method: 'GET',
+      url: '/v1/dashboard/incidents?projectId=project-b',
+      headers: { cookie: sessionCookie(PermissionFlag.requestDecrypt) },
+    });
+    const defaultProject = await server.inject({
+      method: 'GET',
+      url: `/v1/dashboard/incidents?projectId=default&since=${now - 10000}`,
+      headers: { cookie: sessionCookie(PermissionFlag.viewDevices) },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().events.map((event: { kind: string }) => event.kind)).toEqual(['deployment', 'job', 'job']);
+    expect(response.json().events.some((event: { jobId?: string }) => event.jobId === 'job-1')).toBe(true);
+    expect(response.json().events.some((event: { deviceId?: string }) => event.deviceId)).toBe(false);
+    expect(defaultProject.statusCode).toBe(200);
+    expect(defaultProject.json().events.some((event: { kind: string }) => event.kind === 'device')).toBe(true);
+    expect(denied.statusCode).toBe(404);
+  } finally {
+    await server.close();
+  }
+});

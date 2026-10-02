@@ -214,10 +214,10 @@ test('command palette searches dkrypt data without triggering live App Store sea
   await page.goto('/?tab=home');
   await page.getByRole('button', { name: 'Open command menu' }).click();
   await page.getByPlaceholder('Search dkrypt…').fill('Example');
-  await expect(page.getByRole('button', { name: /Example App/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Example App App com\.example\./ })).toBeVisible();
   await expect.poll(() => quickSearchQueries.at(-1)).toEqual({ q: 'Example', projectId: 'default' });
   expect(appStoreSearchRequests).toBe(0);
-  await page.getByRole('button', { name: /Example App/ }).click();
+  await page.getByRole('button', { name: /Example App App com\.example\./ }).click();
   await expect(page.getByPlaceholder('Search the App Store to decrypt… (press / to focus)')).toHaveValue('com.example.quick');
   await expect.poll(() => appStoreSearchRequests).toBe(1);
 });
@@ -1016,7 +1016,7 @@ test('IPA Library keeps loaded artifacts visible while scrolling its rows', asyn
 test('IPA Library stays populated and does not refetch loaded results during incremental scrolling', async ({ page }) => {
   test.setTimeout(60_000);
   const runtimeErrors: string[] = [];
-  page.on('pageerror', (error) => runtimeErrors.push(error.message));
+  page.on('pageerror', (error) => runtimeErrors.push(error.stack ?? error.message));
   await mockStableDashboardEvents(page);
   await mockAuthenticatedDashboard(page, '1');
   let artifactListRequestCount = 0;
@@ -1059,6 +1059,7 @@ test('IPA Library stays populated and does not refetch loaded results during inc
   );
   await page.goto('/?tab=home');
   await artifactResponse;
+  expect(runtimeErrors.filter((message) => message.includes('effect_update_depth_exceeded'))).toEqual([]);
   const viewport = page.getByRole('region', { name: 'IPA library artifacts list region' });
   const viewportHandle = await viewport.elementHandle();
   if (!viewportHandle) throw new Error('IPA Library artifacts viewport did not mount');
@@ -1067,6 +1068,7 @@ test('IPA Library stays populated and does not refetch loaded results during inc
   await expect.poll(() => viewport.locator('[role="listitem"]').count()).toBeLessThan(120);
 
   await page.setViewportSize({ width: 390, height: 844 });
+  expect(runtimeErrors.filter((message) => message.includes('effect_update_depth_exceeded'))).toEqual([]);
   await firstArtifact.scrollIntoViewIfNeeded();
   await expect(firstArtifact).toBeVisible();
   await firstArtifact.getByRole('button', { name: 'Artifact details' }).click();
@@ -1711,6 +1713,29 @@ test('scheduler watch time zone selection is searchable and defaults to the brow
   await expectAccessible(page);
 });
 
+test('watch drafts recover after reload without persisting webhook secrets', async ({ page }) => {
+  await mockStableDashboardEvents(page);
+  await mockAuthenticatedDashboard(page, '1');
+
+  await page.goto('/?tab=settings&stab=scheduler');
+  await page.getByRole('button', { name: 'Add watch', exact: true }).click();
+  await page.locator('#w-pollCron').fill('15 */4 * * *');
+  await page.locator('#w-webhookUrl').fill('https://hooks.example.test/private-token');
+
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('dkrypt-form-draft:watch:member:new'))).toBeTruthy();
+  const savedDraft = await page.evaluate(() => localStorage.getItem('dkrypt-form-draft:watch:member:new'));
+  expect(savedDraft).toContain('15 */4 * * *');
+  expect(savedDraft).not.toContain('private-token');
+
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Close form', exact: true }).click();
+  await page.reload();
+  await page.getByRole('button', { name: 'Add watch', exact: true }).click();
+
+  await expect(page.locator('#w-pollCron')).toHaveValue('15 */4 * * *');
+  await expect(page.locator('#w-webhookUrl')).toHaveValue('');
+});
+
 test('scheduler calendar preview labels checks deferred by quiet hours', async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('formattingLocale', 'de'));
   await mockStableDashboardEvents(page);
@@ -2211,6 +2236,94 @@ test('high contrast preference updates the interface and persists to the account
   await expect.poll(() => savedPrefs.highContrast).toBe(false);
 });
 
+test('personalization search, artifact column order, and touch targets sync to the account', async ({ page }) => {
+  await mockAuthenticatedDashboard(page, '1');
+  await page.unroute('**/v1/dashboard/me/prefs');
+
+  const savedPrefs: Record<string, unknown> = {
+    theme: 'dark',
+    accent: 'blue',
+    sound: true,
+    artifactLibrary: { groupByApp: false, columns: ['app', 'bundleId', 'version', 'source', 'size'] },
+    largeTargets: false,
+  };
+  await page.route('**/v1/dashboard/me/prefs', async (route) => {
+    if (route.request().method() === 'PUT') Object.assign(savedPrefs, route.request().postDataJSON());
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify(savedPrefs) });
+  });
+
+  await page.goto('/?tab=settings');
+  await page.getByRole('textbox', { name: 'Search settings' }).fill('timezone');
+  const personalizationResult = page.getByRole('button', { name: 'Personalization', exact: true });
+  await expect(personalizationResult).toBeVisible();
+  await personalizationResult.click();
+
+  await page.getByRole('button', { name: 'Move Version column earlier' }).click();
+  await expect.poll(() => (savedPrefs.artifactLibrary as { columns: string[] }).columns).toEqual(['app', 'version', 'bundleId', 'source', 'size']);
+  await page.getByRole('checkbox', { name: 'Larger touch targets' }).check();
+  await expect(page.locator('html')).toHaveAttribute('data-large-targets', 'true');
+  await expect.poll(() => savedPrefs.largeTargets).toBe(true);
+
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('data-large-targets', 'true');
+  await expect(page.getByRole('button', { name: 'Move Version column earlier' })).toBeEnabled();
+  expect((savedPrefs.artifactLibrary as { columns: string[] }).columns).toEqual(['app', 'version', 'bundleId', 'source', 'size']);
+});
+
+test('diagnostic reports show a redacted preview and submit only after consent', async ({ page }) => {
+  await mockAuthenticatedDashboard(page, '2');
+  let submitted: Record<string, unknown> | undefined;
+  await page.route('**/v1/dashboard/diagnostic-reports', async (route) => {
+    if (route.request().method() === 'GET') {
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ reports: [] }) });
+      return;
+    }
+    submitted = route.request().postDataJSON() as Record<string, unknown>;
+    await route.fulfill({
+      contentType: 'application/json',
+      status: 201,
+      body: JSON.stringify({
+        id: 'report-1',
+        projectId: 'default',
+        category: 'bug',
+        summary: 'Lookup failed',
+        details: 'I saw an error for [redacted] at [redacted]',
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
+        status: 'received',
+      }),
+    });
+  });
+  await page.route('**/v1/dashboard/diagnostic-reports/preview', async (route) => {
+    const draft = route.request().postDataJSON() as { projectId: string; category: string; summary: string };
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ...draft,
+        details: 'I saw an error for [redacted] at [redacted]',
+        previewToken: 'signed-preview-token',
+        expiresAt: Date.now() + 5 * 60 * 1000,
+      }),
+    });
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Report an issue' }).click();
+  await page.getByPlaceholder('Example: TestFlight lookup stays unavailable').fill('Lookup failed');
+  await page.getByPlaceholder('Include the step you tried, what you expected, and any visible error.').fill('I saw an error for person@example.com at https://private.example/path');
+  await page.getByRole('button', { name: 'Preview redactions' }).click();
+
+  const preview = page.getByRole('region', { name: 'Redacted report preview' });
+  await expect(preview).toContainText('[redacted]');
+  await expect(preview).not.toContainText('person@example.com');
+  await expect(page.getByRole('button', { name: 'Submit report' })).toBeDisabled();
+  await page.getByRole('checkbox', { name: 'I reviewed this redacted preview and agree to submit it to dkrypt support.' }).check();
+  await page.getByRole('button', { name: 'Submit report' }).click();
+
+  await expect.poll(() => submitted?.details).toBe('I saw an error for [redacted] at [redacted]');
+  await expect(page.getByText('Your report was submitted.')).toBeVisible();
+});
+
 test('system forced-colors mode uses system surface and text colors', async ({ page }) => {
   await mockAuthenticatedDashboard(page, '1');
   await page.emulateMedia({ forcedColors: 'active', colorScheme: 'dark' });
@@ -2446,7 +2559,7 @@ test('IPA Library virtualizes loaded rows and opens artifact provenance in the i
   await mockStableDashboardEvents(page);
 
   const artifactResponse = page.waitForResponse((response) => response.url().includes('/v1/dashboard/artifacts?') && response.ok());
-  await page.goto('/');
+  await page.goto('/?tab=home&projectId=default&aq=provenance&asource=appstore');
   await artifactResponse;
   const list = page.getByRole('list', { name: 'IPA library artifacts' });
   const viewport = page.getByRole('region', { name: 'IPA library artifacts list region' });
@@ -2459,6 +2572,12 @@ test('IPA Library virtualizes loaded rows and opens artifact provenance in the i
   await expect(page.getByText(sha256, { exact: true })).not.toBeVisible();
 
   await details.click();
+  await expect.poll(() => new URL(page.url()).searchParams.get('artifact')).toBe('artifact-0');
+  const detailUrl = new URL(page.url());
+  expect(detailUrl.searchParams.get('projectId')).toBe('default');
+  expect(detailUrl.searchParams.get('aq')).toBe('provenance');
+  expect(detailUrl.searchParams.get('asource')).toBe('appstore');
+  expect(detailUrl.searchParams.get('artifact')).toBe('artifact-0');
   await expect(page.getByRole('heading', { name: 'Artifact metadata' })).toBeVisible();
   await expect(page.getByText(sha256, { exact: true })).toBeVisible();
   await expect(page.getByText('job-provenance-0', { exact: true })).toBeVisible();
@@ -2472,6 +2591,13 @@ test('IPA Library virtualizes loaded rows and opens artifact provenance in the i
   await viewport.evaluate((element) => window.scrollTo({ top: window.scrollY + element.getBoundingClientRect().top - 80, behavior: 'instant' }));
   await expect(list.locator('[aria-posinset="1"]')).toBeAttached();
   await expect(page.getByText(sha256, { exact: true })).toBeVisible();
+
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'Artifact metadata' })).toBeVisible();
+  await expect(page.getByText(sha256, { exact: true })).toBeVisible();
+  const restoredUrl = new URL(page.url());
+  expect(restoredUrl.searchParams.get('aq')).toBe('provenance');
+  expect(restoredUrl.searchParams.get('asource')).toBe('appstore');
 });
 
 test('IPA Library bulk pinning sends one bounded update for the selected artifacts', async ({ page }) => {

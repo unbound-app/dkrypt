@@ -75,9 +75,10 @@
 	import { liveState } from "#lib/live.svelte";
 	import { projectSelectionState } from "#lib/projectSelection.svelte";
 	import { PermissionFlag } from "#lib/permissions";
-	import { sessionHasPermission } from "#lib/session.svelte";
-	import { confirmDialog, showToast } from "#lib/ui.svelte";
-	import { interfaceLanguageState, systemLocalesState, watchDetailJumpState } from "#lib/ui.svelte";
+import { sessionHasPermission, sessionState } from "#lib/session.svelte";
+import { confirmDialog, showToast } from "#lib/ui.svelte";
+import { createWatchPrefillState, interfaceLanguageState, systemLocalesState, watchDetailJumpState } from "#lib/ui.svelte";
+import { clearFormDraft, readFormDraft, setFormUnsaved, writeFormDraft } from "#lib/formDrafts.svelte";
 	import { resolveInterfaceLanguage } from "#lib/locale";
 	import { translateMessage } from "#lib/messages";
 	import { exampleWebhookPayload } from "#lib/webhookExamples";
@@ -306,6 +307,8 @@
 	};
 
 	let watchDialogOpen = $state(false);
+	let watchDraftStorageKey = $state("");
+	let initialWatchDraft = $state("");
 	let maintenanceWindowStart = $state("");
 	let maintenanceWindowEnd = $state("");
 	let availableProjects = $state<ProjectRecord[]>([]);
@@ -313,6 +316,7 @@
 	let editingWatchId = $state<string | null>(null);
 	let watchForm = $state<WatchInput>({ ...DEFAULT_WATCH_FORM });
 	let dispatchTargets = $state<DispatchTarget[]>([...(DEFAULT_WATCH_FORM.dispatchTargets ?? [])]);
+	const watchFormId = "watch-editor";
 	let watchCronValid = $state<boolean | null>(null);
 	let savingWatch = $state(false);
 	let previewByWatch = $state<Record<string, UpdateCheck | null>>({});
@@ -354,12 +358,76 @@
 		void tick().then(() => document.getElementById(`watch-${watchId}`)?.scrollIntoView({ behavior: "smooth", block: "center" }));
 	});
 	$effect(() => {
+		const prefill = createWatchPrefillState.value;
+		if (!prefill) return;
+		createWatchPrefillState.value = null;
+		openAddWatch();
+		watchForm = { ...watchForm, bundleId: prefill.bundleId };
+		watchSearchTerm = prefill.displayName ?? prefill.bundleId;
+	});
+	$effect(() => {
 		void fetchProjects().then(({ projects }) => {
 			availableProjects = projects.filter((project) => project.archivedAt === undefined);
 		}).catch(() => {
 			availableProjects = [];
 		});
 	});
+	$effect(() => {
+		if (!watchDialogOpen || !watchDraftStorageKey) return;
+		const values = watchDraftValues();
+		const serialized = JSON.stringify(values);
+		const dirty = serialized !== initialWatchDraft;
+		if (dirty) writeFormDraft(watchDraftStorageKey, values);
+		setFormUnsaved(watchFormId, dirty);
+	});
+
+	function watchDraftValues(): {
+		editingWatchId: string | null;
+		watchForm: Omit<WatchInput, "webhookUrl">;
+		maintenanceWindowStart: string;
+		maintenanceWindowEnd: string;
+		dispatchTargets: DispatchTarget[];
+	} {
+		return {
+			editingWatchId,
+			watchForm: {
+				projectId: watchForm.projectId,
+				bundleId: watchForm.bundleId,
+				repo: watchForm.repo,
+				ghWorkflowFile: watchForm.ghWorkflowFile,
+				dispatchTargets: watchForm.dispatchTargets?.map((target) => ({ ...target })),
+				pollCron: watchForm.pollCron,
+				timezone: watchForm.timezone,
+				maintenanceWindow: watchForm.maintenanceWindow,
+				missedRunPolicy: watchForm.missedRunPolicy,
+				enabled: watchForm.enabled,
+				testFlightPolicy: watchForm.testFlightPolicy,
+				testFlightTrain: watchForm.testFlightTrain,
+			},
+			maintenanceWindowStart,
+			maintenanceWindowEnd,
+			dispatchTargets: dispatchTargets.map((target) => ({ ...target })),
+		};
+	}
+
+	function restoreWatchDraft(key: string, expectedWatchId: string | null): boolean {
+		const draft = readFormDraft<ReturnType<typeof watchDraftValues>>(key)?.values;
+		if (!draft || draft.editingWatchId !== expectedWatchId) return false;
+		watchForm = { ...DEFAULT_WATCH_FORM, ...draft.watchForm, webhookUrl: watchForm.webhookUrl };
+		maintenanceWindowStart = draft.maintenanceWindowStart;
+		maintenanceWindowEnd = draft.maintenanceWindowEnd;
+		dispatchTargets = draft.dispatchTargets.map((target) => ({ ...target }));
+		return true;
+	}
+
+	async function setWatchDialogOpen(open: boolean): Promise<void> {
+		if (!open && JSON.stringify(watchDraftValues()) !== initialWatchDraft) {
+			const confirmed = await confirmDialog("Close this watch form? Your non-secret changes will be saved as a draft.", { confirmLabel: "Close form" });
+			if (!confirmed) return;
+		}
+		watchDialogOpen = open;
+		if (!open) setFormUnsaved(watchFormId, false);
+	}
 	function projectName(projectId?: string): string {
 		const id = projectId ?? "default";
 		return availableProjects.find((project) => project.id === id)?.name ?? (id === "default" ? "Default" : "Unavailable project");
@@ -491,6 +559,7 @@
 
 	function openAddWatch(): void {
 		editingWatchId = null;
+		watchDraftStorageKey = `watch:${sessionState.sub ?? "account"}:new`;
 		const selectedProjectId = availableProjects.some((project) => project.id === projectSelectionState.id) ? projectSelectionState.id : "default";
 		watchForm = { ...DEFAULT_WATCH_FORM, projectId: selectedProjectId };
 		maintenanceWindowStart = "";
@@ -502,11 +571,14 @@
 		watchSearchToken += 1;
 		dispatchTargets = [{ repo: "", ghWorkflowFile: "remote-ipa-update.yml" }];
 		draftPreview = null;
+		restoreWatchDraft(watchDraftStorageKey, null);
+		initialWatchDraft = JSON.stringify(watchDraftValues());
 		watchDialogOpen = true;
 	}
 
 	function openEditWatch(w: AppWatch): void {
 		editingWatchId = w.id;
+		watchDraftStorageKey = `watch:${sessionState.sub ?? "account"}:edit:${w.id}`;
 		watchForm = {
 			projectId: w.projectId ?? "default",
 			bundleId: w.bundleId,
@@ -533,6 +605,8 @@
 		watchSearchToken += 1;
 		for (const target of dispatchTargets) void loadGithubWorkflows(target.repo);
 		draftPreview = null;
+		restoreWatchDraft(watchDraftStorageKey, w.id);
+		initialWatchDraft = JSON.stringify(watchDraftValues());
 		watchDialogOpen = true;
 	}
 
@@ -737,7 +811,12 @@
 			const { ok } = editingWatchId
 				? await updateWatch(editingWatchId, { ...watchForm, maintenanceWindow, dispatchTargets })
 				: await createWatch({ ...watchForm, maintenanceWindow, dispatchTargets });
-			if (ok) watchDialogOpen = false;
+			if (ok) {
+				clearFormDraft(watchDraftStorageKey);
+				initialWatchDraft = JSON.stringify(watchDraftValues());
+				setFormUnsaved(watchFormId, false);
+				watchDialogOpen = false;
+			}
 		} finally {
 			savingWatch = false;
 		}
@@ -1427,7 +1506,7 @@
 {#if canManageWatches}
 	<Dialog
 		open={watchDialogOpen}
-		onOpenChange={(v) => (watchDialogOpen = v)}
+		onOpenChange={(v) => void setWatchDialogOpen(v)}
 		class="max-w-md"
 	>
 		<div class="mb-3 text-sm font-medium">

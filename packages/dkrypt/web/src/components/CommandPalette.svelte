@@ -33,6 +33,7 @@
 		openHelp,
 		paletteState,
 		requestFocusSearch,
+		requestCreateWatch,
 		requestOpenBatch,
 		setActiveTab,
 		setSettingsSubtab,
@@ -41,6 +42,7 @@
 		themePrefState,
 	} from "#lib/ui.svelte";
 import { projectSelectionState } from "#lib/projectSelection.svelte";
+import { setProjectSelection } from "#lib/projectSelection.svelte";
 import { interfaceLanguageState, systemLocalesState } from "#lib/ui.svelte";
 import { resolveInterfaceLanguage } from "#lib/locale";
 	import { translateMessage } from "#lib/messages";
@@ -57,6 +59,7 @@ import { resolveInterfaceLanguage } from "#lib/locale";
 		keywords?: string;
 		category?: string;
 		subtitle?: string;
+		sensitive?: boolean;
 		run: () => void;
 	}
 
@@ -251,6 +254,7 @@ import { resolveInterfaceLanguage } from "#lib/locale";
 	}
 
 	function navigateQuickResult(result: DashboardQuickSearchResult): void {
+		if (result.projectId) setProjectSelection(result.projectId);
 		if (result.kind === 'app') {
 			requestFocusSearch(result.id);
 			return;
@@ -316,6 +320,15 @@ import { resolveInterfaceLanguage } from "#lib/locale";
 				subtitle: result.subtitle,
 				run: () => navigateQuickResult(result),
 			});
+			if (result.kind === 'app' && sessionHasPermission(PermissionFlag.manageAutomation)) {
+				base.push({
+					id: `watch-app-${result.id}`,
+					label: `Create watch for ${result.title}`,
+					keywords: `${result.id} automation schedule`,
+					category: 'Automation',
+					run: () => requestCreateWatch(result.id, result.title),
+				});
+			}
 		}
 		if (sessionHasPermission(PermissionFlag.viewLogs)) {
 			base.push({
@@ -474,12 +487,13 @@ import { resolveInterfaceLanguage } from "#lib/locale";
 				run: () => jumpToKeyUsage(key.id),
 			});
 		}
-		for (const u of users) {
+      for (const u of users) {
 			base.push({
 				id: `user-${u.username}`,
 				label: `Jump to user "${u.displayName || u.username}"`,
 				category: "Navigation",
 				keywords: `${u.username} ${u.displayName ?? ""}`,
+				sensitive: true,
 				run: () => jumpToUser(u.username),
 			});
 		}
@@ -552,7 +566,7 @@ import { resolveInterfaceLanguage } from "#lib/locale";
 				onclick={() => run(cmd)}
 			>
 				<div class="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-x-3 gap-y-1">
-					<div class="min-w-0 truncate">{cmd.label}</div>
+					<div class="min-w-0 truncate" data-sensitive={cmd.sensitive ? 'true' : undefined}>{cmd.label}</div>
 					{#if cmd.category}<div class="shrink-0 text-[11px] text-muted">{cmd.category}</div>{/if}
 				</div>
 				{#if cmd.subtitle}<div class="mt-0.5 truncate text-left text-[11px] text-muted">{cmd.subtitle}</div>{/if}

@@ -2,6 +2,7 @@ import type { JobHistoryEntry, LogEntry, OverviewPayload } from '#lib/api';
 import { DashboardEventSequenceTracker } from '#lib/liveSequence';
 import { projectSelectionState, setProjectSelection } from '#lib/projectSelection.svelte';
 import { serverStateCache } from '#lib/serverStateCache.svelte';
+import { announceScreenReader } from '#lib/ui.svelte';
 
 export const liveState = $state<{
   overview: OverviewPayload | null;
@@ -179,6 +180,7 @@ export function connectLive(): void {
 
   eventSource.addEventListener('history', (e) => {
     const entry = readEvent<JobHistoryEntry>(e);
+    if (entry.status === 'done' || entry.status === 'failed') announceScreenReader(`${entry.bundleId} decrypt ${entry.status}.`, `job:${entry.id}`);
     serverStateCache.invalidatePrefix('/v1/dashboard/jobs');
     serverStateCache.invalidatePrefix('/v1/dashboard/artifacts');
     serverStateCache.invalidatePrefix('/v1/dashboard/overview');

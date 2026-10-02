@@ -37,9 +37,10 @@
   import { liveState } from '#lib/live.svelte';
   import { PermissionFlag } from '#lib/permissions';
   import { getAppleDeviceModelName } from '#lib/deviceModel';
-  import { sessionHasAnyPermission, sessionHasPermission } from '#lib/session.svelte';
-  import { confirmDialog, deviceDetailJumpState, homeViewModesState, interfaceLanguageState, showToast, systemLocalesState } from '#lib/ui.svelte';
+  import { sessionHasAnyPermission, sessionHasPermission, sessionState } from '#lib/session.svelte';
+  import { announceScreenReader, confirmDialog, deviceDetailJumpState, homeViewModesState, interfaceLanguageState, showToast, systemLocalesState } from '#lib/ui.svelte';
   import { pushHomeViewMode } from '#lib/session.svelte';
+  import { clearFormDraft, readFormDraft, setFormUnsaved, writeFormDraft } from '#lib/formDrafts.svelte';
   import { resolveInterfaceLanguage } from '#lib/locale';
   import { translateMessage, type MessageKey } from '#lib/messages';
 
@@ -107,6 +108,24 @@
   }
 
   let health = $state<Record<string, DeviceHealth | undefined>>({});
+  const knownSubsystemStates = new Map<string, DeviceSubsystemState>();
+
+  $effect(() => {
+    for (const [deviceId, deviceHealth] of Object.entries(health)) {
+      if (!deviceHealth?.subsystems) continue;
+      const device = devices.find((entry) => entry.id === deviceId);
+      for (const [name, state] of Object.entries(deviceHealth.subsystems)) {
+        const subsystem = name as DeviceSubsystemId;
+        const subsystemState = state as DeviceSubsystemState;
+        const key = `${deviceId}:${subsystem}`;
+        const previousState = knownSubsystemStates.get(key);
+        if (previousState !== undefined && previousState !== subsystemState) {
+          announceScreenReader(`${device?.name ?? 'Device'} ${msg(subsystemNames[subsystem])}: ${msg(subsystemStates[subsystemState])}`, `device-state:${key}:${subsystemState}`);
+        }
+        knownSubsystemStates.set(key, subsystemState);
+      }
+    }
+  });
   let activity = $state<Record<string, DeviceActivityEntry[]>>({});
   let activityNextCursor = $state<Record<string, string | undefined>>({});
   let activityTotals = $state<Record<string, number>>({});
@@ -316,13 +335,47 @@
   let formToolchain = $state('');
   let formNotes = $state('');
   let saving = $state(false);
+  let deviceDraftKey = $state('');
+  let initialDeviceDraft = $state('');
+  const deviceFormId = 'device-editor';
+
+  function deviceDraftValues(): { name: string; iosVersion: string; toolchain: string; notes: string } {
+    return { name: formName, iosVersion: formIosVersion, toolchain: formToolchain, notes: formNotes };
+  }
+
+  $effect(() => {
+    if (!editOpen || !deviceDraftKey) return;
+    const values = deviceDraftValues();
+    const serialized = JSON.stringify(values);
+    const dirty = serialized !== initialDeviceDraft;
+    if (dirty) writeFormDraft(deviceDraftKey, values);
+    setFormUnsaved(deviceFormId, dirty);
+  });
+
+  async function setEditOpen(open: boolean): Promise<void> {
+    if (!open && JSON.stringify(deviceDraftValues()) !== initialDeviceDraft) {
+      const confirmed = await confirmDialog('Close this device form? Your changes will be saved as a draft.', { confirmLabel: 'Close form' });
+      if (!confirmed) return;
+    }
+    editOpen = open;
+    if (!open) setFormUnsaved(deviceFormId, false);
+  }
 
   function openEdit(device: DeviceRecord): void {
     editingId = device.id;
+    deviceDraftKey = `device:${sessionState.sub ?? 'account'}:${device.id}`;
     formName = device.name;
     formIosVersion = device.iosVersion ?? '';
     formToolchain = device.toolchain ?? '';
     formNotes = device.notes ?? '';
+    const draft = readFormDraft<ReturnType<typeof deviceDraftValues>>(deviceDraftKey)?.values;
+    if (draft) {
+      formName = draft.name;
+      formIosVersion = draft.iosVersion;
+      formToolchain = draft.toolchain;
+      formNotes = draft.notes;
+    }
+    initialDeviceDraft = JSON.stringify(deviceDraftValues());
     editOpen = true;
   }
 
@@ -335,6 +388,9 @@
     try {
       const result = await updateDevice(editingId, { name: formName.trim(), iosVersion: formIosVersion.trim(), toolchain: formToolchain.trim(), notes: formNotes.trim() });
       if (result.ok) {
+        clearFormDraft(deviceDraftKey);
+        initialDeviceDraft = JSON.stringify(deviceDraftValues());
+        setFormUnsaved(deviceFormId, false);
         editOpen = false;
         await reloadDevices();
       }
@@ -357,11 +413,14 @@
   }
 
   async function toggleEnabled(device: DeviceRecord): Promise<void> {
-    await updateDevice(device.id, { enabled: !device.enabled });
+    const enabled = !device.enabled;
+    if (!(await confirmDialog(`${enabled ? 'Enable' : 'Disable'} ${device.name}? ${enabled ? 'It can receive new jobs.' : 'It will stop receiving new jobs.'}`, { confirmLabel: enabled ? 'Enable device' : 'Disable device' }))) return;
+    await updateDevice(device.id, { enabled });
     await reloadDevices();
   }
 
   async function makePrimary(device: DeviceRecord): Promise<void> {
+    if (!(await confirmDialog(`Make ${device.name} the primary device? This changes the default device used for eligible jobs.`, { confirmLabel: 'Make primary' }))) return;
     await updateDevice(device.id, { isPrimary: true });
     await reloadDevices();
   }
@@ -408,9 +467,9 @@
           <div class="flex items-start gap-3">
             <DeviceArtwork productType={device.productType} name={device.name} />
             <div class="min-w-0 flex-1">
-              <div class="flex flex-wrap items-center gap-1.5"><span class="truncate text-sm font-semibold">{device.name}</span>{#if device.isPrimary}<Badge variant="default"><Star class="mr-1 h-3 w-3" />primary</Badge>{/if}<Badge variant="secondary">{device.transport === 'usb' ? 'USB' : 'Wi-Fi'}</Badge>{#if h}<Badge variant={h.reachable ? 'success' : 'destructive'}>{h.reachable ? 'online' : 'offline'}</Badge>{/if}{#if h?.readiness}<Badge variant={h.readiness.state === 'ready' ? 'success' : h.readiness.state === 'caution' ? 'secondary' : 'destructive'}>{h.readiness.score}/100 ready</Badge>{/if}</div>
+              <div class="flex flex-wrap items-center gap-1.5"><span class="truncate text-sm font-semibold" data-sensitive="true">{device.name}</span>{#if device.isPrimary}<Badge variant="default"><Star class="mr-1 h-3 w-3" />primary</Badge>{/if}<Badge variant="secondary">{device.transport === 'usb' ? 'USB' : 'Wi-Fi'}</Badge>{#if h}<Badge variant={h.reachable ? 'success' : 'destructive'}>{h.reachable ? 'online' : 'offline'}</Badge>{/if}{#if h?.readiness}<Badge variant={h.readiness.state === 'ready' ? 'success' : h.readiness.state === 'caution' ? 'secondary' : 'destructive'}>{h.readiness.score}/100 ready</Badge>{/if}</div>
               <div class="mt-1 text-xs font-medium text-foreground/80">{model ?? 'Apple device'}{device.productType && model !== device.productType ? ` · ${device.productType}` : ''}</div>
-              <div class="mt-1 truncate font-mono text-[11px] text-muted" title={connectionLabel(device)}>{connectionLabel(device)}</div>
+              <div class="mt-1 truncate font-mono text-[11px] text-muted" data-sensitive="true">{connectionLabel(device)}</div>
             </div>
             {#if canManageDevices}<Button size="icon" variant="ghost" class="h-8 w-8 shrink-0" onclick={() => openEdit(device)} aria-label={`Edit ${device.name}`} title="Edit device"><Pencil class="h-3.5 w-3.5" /></Button>{/if}
           </div>
@@ -481,7 +540,7 @@
     {#if setupResult}<div class="mb-3 flex items-center gap-2 text-sm font-medium">{#if setupResult.ready}<CheckCircle2 class="text-ok h-4 w-4" />Device is ready for decrypts{:else}<AlertTriangle class="text-warn h-4 w-4" />Device connected with attention needed{/if}</div><div class="flex flex-col gap-2">{#each setupResult.steps as step (step.id)}<div class="border-border flex items-start gap-3 rounded-lg border p-3"><div class="mt-0.5">{#if step.status === 'ready'}<CheckCircle2 class="text-ok h-4 w-4" />{:else if step.status === 'attention'}<AlertTriangle class="text-warn h-4 w-4" />{:else}<CircleX class="text-err h-4 w-4" />{/if}</div><div class="min-w-0 flex-1"><div class="text-sm">{step.label}</div>{#if step.detail}<div class="mt-0.5 text-xs text-muted">{step.detail}</div>{/if}</div><Badge variant={step.status === 'ready' ? 'success' : step.status === 'attention' ? 'secondary' : 'destructive'}>{step.status === 'ready' ? 'ready' : step.status}</Badge></div>{/each}</div>{#if !setupResult.ready}<div class="border-warn/40 bg-warn/10 text-warn mt-3 rounded-lg border px-3 py-2 text-xs">The device is saved so you can fix the listed prerequisite and run setup again. No connection directory or CLI command is required.</div>{/if}<Button class="mt-4 w-full" onclick={() => (setupOpen = false)}>Done</Button>{:else if !setupRunning}<div class="mt-4 flex gap-2"><Button variant="secondary" class="flex-1" onclick={() => (setupOpen = false)}>Close</Button><Button class="flex-1" onclick={retrySetup}>Try again</Button></div>{/if}
   </Dialog>
 
-  <Dialog open={editOpen} onOpenChange={(value) => (editOpen = value)} class="max-w-md">
+  <Dialog open={editOpen} onOpenChange={(value) => void setEditOpen(value)} class="max-w-md">
     <div class="mb-3 text-sm font-semibold">Edit device</div><label for="d-name" class="mb-1 block text-xs text-muted">Name</label><Input id="d-name" placeholder="e.g. iPad Pro" bind:value={formName} /><label for="d-ios" class="mt-3 mb-1 block text-xs text-muted">iOS version</label><Input id="d-ios" placeholder="Detected automatically during setup" bind:value={formIosVersion} /><label for="d-toolchain" class="mt-3 mb-1 block text-xs text-muted">Jailbreak</label><Input id="d-toolchain" placeholder="e.g. Dopamine" bind:value={formToolchain} /><label for="d-notes" class="mt-3 mb-1 block text-xs text-muted">Notes</label><Input id="d-notes" placeholder="Optional compatibility notes" bind:value={formNotes} /><Button class="mt-4 w-full" loading={saving} onclick={() => void save()}>Save changes</Button>
   </Dialog>
 {/if}

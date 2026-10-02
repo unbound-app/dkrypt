@@ -10,12 +10,12 @@ export function fmtNumber(value: number, locale?: string, maximumFractionDigits 
   return formatNumber(value, locale, maximumFractionDigits, minimumFractionDigits);
 }
 
-export function fmtTime(ms?: number, locale?: string): string {
+export function fmtTime(ms?: number, locale?: string, timeZone?: string): string {
   if (ms === undefined || !Number.isFinite(ms) || ms === 0) return '-';
-  return fmtDateTime(ms, {}, locale);
+  return fmtDateTime(ms, {}, locale, timeZone);
 }
 
-export function fmtDateTime(value: number | string, options: Intl.DateTimeFormatOptions = {}, locale?: string): string {
+export function fmtDateTime(value: number | string, options: Intl.DateTimeFormatOptions = {}, locale?: string, timeZone?: string): string {
   const timestamp = typeof value === 'number' ? value : Date.parse(value);
   if (!Number.isFinite(timestamp)) return '-';
   return new Intl.DateTimeFormat(locale, {
@@ -25,24 +25,25 @@ export function fmtDateTime(value: number | string, options: Intl.DateTimeFormat
     hour: 'numeric',
     minute: '2-digit',
     timeZoneName: 'short',
+    ...(timeZone ? { timeZone } : {}),
     ...options,
   }).format(new Date(timestamp));
 }
 
-export function fmtCalendarDate(value: number | string, options: Intl.DateTimeFormatOptions = { dateStyle: 'medium' }, locale?: string): string {
+export function fmtCalendarDate(value: number | string, options: Intl.DateTimeFormatOptions = { dateStyle: 'medium' }, locale?: string, timeZone?: string): string {
   const isDateOnly = typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value);
   const timestamp = typeof value === 'number'
     ? value
     : Date.parse(isDateOnly ? `${value}T00:00:00.000Z` : value);
   if (!Number.isFinite(timestamp)) return '-';
-  const timeZone = options.timeZone ?? (isDateOnly ? 'UTC' : undefined);
+  const selectedTimeZone = options.timeZone ?? (isDateOnly ? 'UTC' : timeZone);
   return new Intl.DateTimeFormat(locale, {
     ...options,
-    ...(timeZone ? { timeZone } : {}),
+    ...(selectedTimeZone ? { timeZone: selectedTimeZone } : {}),
   }).format(new Date(timestamp));
 }
 
-export function fmtRelative(ms?: number, locale?: string): string {
+export function fmtRelative(ms?: number, locale?: string, timeZone?: string): string {
   if (!ms) return '-';
   const diff = ms - Date.now();
   const future = diff > 0;
@@ -55,7 +56,7 @@ export function fmtRelative(ms?: number, locale?: string): string {
   if (hr < 24) return relative.format(future ? hr : -hr, 'hour');
   const day = Math.round(hr / 24);
   if (day < 30) return relative.format(future ? day : -day, 'day');
-  return fmtCalendarDate(ms, { dateStyle: 'medium' }, locale);
+  return fmtCalendarDate(ms, { dateStyle: 'medium' }, locale, timeZone);
 }
 
 export function fmtSize(bytes?: number, locale?: string): string {

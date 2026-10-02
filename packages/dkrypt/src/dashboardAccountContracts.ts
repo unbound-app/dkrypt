@@ -21,6 +21,30 @@ const homeViewModesSchema = Type.Object({
   devices: Type.Optional(Type.Union([Type.Literal('list'), Type.Literal('cards')])),
 });
 
+const navigationIdSchema = Type.Union([
+  Type.Literal('home'),
+  Type.Literal('billing'),
+  Type.Literal('keys'),
+  Type.Literal('logs'),
+  Type.Literal('insights'),
+  Type.Literal('docs'),
+  Type.Literal('settings'),
+]);
+
+const artifactColumnSchema = Type.Union([
+  Type.Literal('app'),
+  Type.Literal('bundleId'),
+  Type.Literal('version'),
+  Type.Literal('source'),
+  Type.Literal('size'),
+  Type.Literal('created'),
+]);
+
+const artifactLibraryPreferencesSchema = Type.Object({
+  groupByApp: Type.Boolean(),
+  columns: Type.Array(artifactColumnSchema, { minItems: 1, maxItems: 6, uniqueItems: true }),
+});
+
 const userPrefsProperties = {
   formattingLocale: Type.Optional(Type.Union([Type.Literal('system'), Type.Literal('en'), Type.Literal('de')])),
   interfaceLanguage: Type.Optional(Type.Union([Type.Literal('system'), Type.Literal('en'), Type.Literal('de')])),
@@ -30,6 +54,15 @@ const userPrefsProperties = {
   activeHomeLayoutId: Type.Optional(Type.String({ minLength: 1, maxLength: 40, pattern: '^[a-zA-Z0-9_-]+$' })),
   viewModes: Type.Optional(homeViewModesSchema),
   settingsMode: Type.Optional(Type.Union([Type.Literal('basic'), Type.Literal('advanced')])),
+  displayTimeZone: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
+  appFavorites: Type.Optional(Type.Array(Type.Object({
+    bundleId: Type.String({ minLength: 1, maxLength: 200 }),
+    trackName: Type.String({ minLength: 1, maxLength: 120 }),
+  }, { additionalProperties: false }), { maxItems: 50 })),
+  navigationOrder: Type.Optional(Type.Array(navigationIdSchema, { minItems: 7, maxItems: 7, uniqueItems: true })),
+  pinnedNavigation: Type.Optional(Type.Array(navigationIdSchema, { maxItems: 7, uniqueItems: true })),
+  artifactLibrary: Type.Optional(artifactLibraryPreferencesSchema),
+  largeTargets: Type.Optional(Type.Boolean()),
   accent: Type.Optional(Type.String()),
   highContrast: Type.Optional(Type.Boolean()),
   sound: Type.Optional(Type.Boolean()),

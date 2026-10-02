@@ -2,6 +2,8 @@ import { toast } from 'svelte-sonner';
 import { getQueryParam, setQueryParams } from '#lib/urlState';
 import { normalizeFormattingLocalePreference, normalizeInterfaceLanguagePreference, type FormattingLocalePreference, type InterfaceLanguagePreference } from '#lib/locale';
 import { DEFAULT_HOME_LAYOUT, DEFAULT_HOME_VIEW_MODES, type HomeLayout, type HomeViewModes } from '#lib/homeLayouts';
+import { clearUnsavedFormWarnings, unsavedFormsState } from '#lib/formDrafts.svelte';
+import { projectSelectionState, setProjectSelection } from '#lib/projectSelection.svelte';
 
 export type Theme = 'dark' | 'light';
 export type ThemePref = Theme | 'auto';
@@ -158,9 +160,21 @@ export function setSoundEnabled(enabled: boolean): void {
 
 export type DisplayDensity = 'comfortable' | 'compact';
 export type SettingsMode = 'basic' | 'advanced';
+export type ArtifactColumnId = 'app' | 'bundleId' | 'version' | 'source' | 'size' | 'created';
 
 export const densityState = $state<{ value: DisplayDensity }>({ value: 'comfortable' });
 export const settingsModeState = $state<{ value: SettingsMode }>({ value: 'basic' });
+export const displayTimeZoneState = $state<{ value: string }>({ value: 'system' });
+export const largeTargetsState = $state<{ value: boolean }>({ value: false });
+export const navigationPreferencesState = $state<{ order: TabId[]; pinned: TabId[] }>({
+  order: ['home', 'billing', 'keys', 'logs', 'insights', 'docs', 'settings'],
+  pinned: [],
+});
+export const artifactLibraryPreferencesState = $state<{ groupByApp: boolean; columns: ArtifactColumnId[] }>({
+  groupByApp: false,
+  columns: ['app', 'bundleId', 'version', 'source', 'size'],
+});
+export const screenSharePrivacyState = $state<{ enabled: boolean }>({ enabled: sessionStorage.getItem('screensharePrivacy') === 'true' });
 export const homeLayoutPreferencesState = $state<{ layouts: HomeLayout[]; activeId: string }>({
   layouts: [{ ...DEFAULT_HOME_LAYOUT, order: [...DEFAULT_HOME_LAYOUT.order], hidden: [], collapsed: [] }],
   activeId: DEFAULT_HOME_LAYOUT.id,
@@ -174,6 +188,45 @@ export function setDensity(density: DisplayDensity): void {
 
 export function initDensity(): void {
   document.documentElement.setAttribute('data-density', densityState.value);
+}
+
+export function setDisplayTimeZone(timeZone: string): void {
+  displayTimeZoneState.value = timeZone || 'system';
+}
+
+export function setLargeTargets(enabled: boolean): void {
+  largeTargetsState.value = enabled;
+  if (enabled) document.documentElement.setAttribute('data-large-targets', 'true');
+  else document.documentElement.removeAttribute('data-large-targets');
+}
+
+export function initLargeTargets(): void {
+  if (largeTargetsState.value) document.documentElement.setAttribute('data-large-targets', 'true');
+}
+
+export function setNavigationPreferences(order: TabId[], pinned: TabId[]): void {
+  navigationPreferencesState.order = [...order];
+  navigationPreferencesState.pinned = [...pinned];
+}
+
+export function setArtifactLibraryPreferences(groupByApp: boolean, columns: ArtifactColumnId[]): void {
+  artifactLibraryPreferencesState.groupByApp = groupByApp;
+  artifactLibraryPreferencesState.columns = [...columns];
+}
+
+export function setScreenSharePrivacy(enabled: boolean): void {
+  screenSharePrivacyState.enabled = enabled;
+  if (enabled) {
+    sessionStorage.setItem('screensharePrivacy', 'true');
+    document.documentElement.setAttribute('data-screenshare-privacy', 'true');
+  } else {
+    sessionStorage.removeItem('screensharePrivacy');
+    document.documentElement.removeAttribute('data-screenshare-privacy');
+  }
+}
+
+export function initScreenSharePrivacy(): void {
+  if (screenSharePrivacyState.enabled) document.documentElement.setAttribute('data-screenshare-privacy', 'true');
 }
 
 export function setSettingsMode(mode: SettingsMode): void {
@@ -197,6 +250,10 @@ export function setHomeViewModes(viewModes: Partial<HomeViewModes>): void {
 export function resetUserInterfacePreferences(): void {
   setDensity('comfortable');
   setSettingsMode('basic');
+  setDisplayTimeZone('system');
+  setLargeTargets(false);
+  setNavigationPreferences(['home', 'billing', 'keys', 'logs', 'insights', 'docs', 'settings'], []);
+  setArtifactLibraryPreferences(false, ['app', 'bundleId', 'version', 'source', 'size']);
   setHomeLayoutPreferences([{ ...DEFAULT_HOME_LAYOUT, order: [...DEFAULT_HOME_LAYOUT.order], hidden: [], collapsed: [] }], DEFAULT_HOME_LAYOUT.id);
   setHomeViewModes(DEFAULT_HOME_VIEW_MODES);
 }
@@ -251,6 +308,23 @@ export function showToast(
 
   toastHistoryState.items = [{ id: crypto.randomUUID(), message, type, ts: Date.now(), downloadUrl: options?.downloadUrl }, ...toastHistoryState.items].slice(0, MAX_TOAST_HISTORY);
   persistToastHistory();
+}
+
+export const screenReaderAnnouncementState = $state<{ text: string }>({ text: '' });
+const announcedKeys = new Map<string, number>();
+let announcementTimer: ReturnType<typeof setTimeout> | undefined;
+
+export function announceScreenReader(message: string, key = message): void {
+  const now = Date.now();
+  const lastAnnouncedAt = announcedKeys.get(key);
+  if (lastAnnouncedAt !== undefined && now - lastAnnouncedAt < 30_000) return;
+  announcedKeys.set(key, now);
+  if (announcedKeys.size > 200) announcedKeys.delete(announcedKeys.keys().next().value as string);
+  if (announcementTimer) clearTimeout(announcementTimer);
+  screenReaderAnnouncementState.text = '';
+  announcementTimer = setTimeout(() => {
+    screenReaderAnnouncementState.text = message;
+  }, 40);
 }
 
 interface ConfirmState {
@@ -341,6 +415,14 @@ export const jobDetailJumpState = $state<{ id: string | null }>({ id: null });
 export const artifactDetailJumpState = $state<{ id: string | null }>({ id: null });
 export const deviceDetailJumpState = $state<{ id: string | null }>({ id: null });
 export const watchDetailJumpState = $state<{ id: string | null }>({ id: null });
+export const logSearchJumpState = $state<{ value: { query: string; scope?: string } | null }>({ value: null });
+export const createWatchPrefillState = $state<{ value: { bundleId: string; displayName?: string } | null }>({ value: null });
+
+export function requestCreateWatch(bundleId: string, displayName?: string): void {
+  createWatchPrefillState.value = { bundleId, displayName };
+  setActiveTab('settings');
+  setSettingsSubtab('scheduler');
+}
 
 export const batchDecryptJumpState = $state<{ requested: boolean }>({ requested: false });
 
@@ -364,25 +446,92 @@ export const tabState = $state<{ active: TabId; settingsSubtab: string }>({
   settingsSubtab: getQueryParam('stab') ?? localStorage.getItem('activeSettingsSubtab') ?? 'scheduler',
 });
 
-export function setActiveTab(tab: TabId): void {
+let navigationReviewPending = false;
+const pendingNavigationActions: Array<() => void> = [];
+
+function navigateWithUnsavedReview(action: () => void, onCancel?: () => void): void {
+  if (unsavedFormsState.ids.length === 0) {
+    action();
+    return;
+  }
+  pendingNavigationActions.push(action);
+  if (navigationReviewPending) return;
+  navigationReviewPending = true;
+  void confirmDialog('You have unsaved changes. Leave this view?', { variant: 'default', confirmLabel: 'Leave view' })
+    .then((confirmed) => {
+      if (!confirmed) {
+        onCancel?.();
+        return;
+      }
+      clearUnsavedFormWarnings();
+      for (const navigationAction of pendingNavigationActions.splice(0)) navigationAction();
+    })
+    .finally(() => {
+      pendingNavigationActions.splice(0);
+      navigationReviewPending = false;
+    });
+}
+
+function applyActiveTab(tab: TabId): void {
   tabState.active = tab;
   localStorage.setItem('activeTab', tab);
   setQueryParams({ tab, stab: tab === 'settings' ? tabState.settingsSubtab : undefined });
   window.scrollTo(0, 0);
 }
 
-export function setSettingsSubtab(subtab: string): void {
+export function setActiveTab(tab: TabId): void {
+  if (tab === tabState.active) return;
+  navigateWithUnsavedReview(() => applyActiveTab(tab));
+}
+
+function applySettingsSubtab(subtab: string): void {
   tabState.settingsSubtab = subtab;
   localStorage.setItem('activeSettingsSubtab', subtab);
   setQueryParams({ stab: subtab });
   window.scrollTo(0, 0);
 }
 
+export function setSettingsSubtab(subtab: string): void {
+  if (subtab === tabState.settingsSubtab) return;
+  navigateWithUnsavedReview(() => applySettingsSubtab(subtab));
+}
+
 export function initUrlTabSync(): void {
+  let synchronizedUrl = window.location.href;
   window.addEventListener('popstate', () => {
+    const destination = new URL(window.location.href);
     const tab = getQueryParam('tab');
-    if (tab && VALID_TAB_IDS.includes(tab as TabId) && tab !== tabState.active) tabState.active = tab as TabId;
     const stab = getQueryParam('stab');
-    if (stab && stab !== tabState.settingsSubtab) tabState.settingsSubtab = stab;
+    const nextTab = tab && VALID_TAB_IDS.includes(tab as TabId) ? tab as TabId : tabState.active;
+    const nextSubtab = stab ?? tabState.settingsSubtab;
+    const projectId = destination.searchParams.get('projectId') ?? 'default';
+    const artifactId = getQueryParam('artifact');
+    const jobId = getQueryParam('job');
+    const applyLocation = () => {
+      setProjectSelection(projectId);
+      if (nextTab !== tabState.active) applyActiveTab(nextTab);
+      if (nextSubtab !== tabState.settingsSubtab) applySettingsSubtab(nextSubtab);
+      if (artifactId) {
+        artifactDetailJumpState.id = artifactId;
+        jobDetailJumpState.id = null;
+        if (tabState.active !== 'home') applyActiveTab('home');
+      } else if (jobId) {
+        jobDetailJumpState.id = jobId;
+        artifactDetailJumpState.id = null;
+        if (tabState.active !== 'home') applyActiveTab('home');
+      } else {
+        artifactDetailJumpState.id = '';
+        jobDetailJumpState.id = '';
+      }
+      synchronizedUrl = window.location.href;
+    };
+    const routeChanged = nextTab !== tabState.active || nextSubtab !== tabState.settingsSubtab || projectId !== projectSelectionState.id;
+    if (routeChanged && unsavedFormsState.ids.length > 0) {
+      navigateWithUnsavedReview(applyLocation, () => {
+        window.history.replaceState(window.history.state, '', synchronizedUrl);
+      });
+      return;
+    }
+    applyLocation();
   });
 }

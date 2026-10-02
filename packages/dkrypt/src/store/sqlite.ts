@@ -706,6 +706,23 @@ const migrations = [
       WHERE json_type(project.value, '$.id') = 'text';
     `,
   },
+  {
+    version: 22,
+    sql: `
+      CREATE TABLE IF NOT EXISTS diagnostic_reports (
+        id TEXT PRIMARY KEY NOT NULL,
+        payload TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        user_id TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        status TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS diagnostic_reports_by_user_time ON diagnostic_reports(user_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS diagnostic_reports_by_expiry ON diagnostic_reports(expires_at);
+    `,
+  },
 ] as const;
 
 export const LATEST_SQLITE_SCHEMA_VERSION = migrations.at(-1)?.version ?? 0;
@@ -753,6 +770,7 @@ const collectionTables = new Set([
   'billing_entitlement_history',
   'correlation_events',
   'webhook_attempts',
+  'diagnostic_reports',
 ]);
 
 function assertCollectionTable(table: string): void {
@@ -1029,6 +1047,15 @@ function replaceCollectionRows(database: Database, replacement: StateCollectionR
       const event = asRecord(row.payload);
       const updatedAt = row.updatedAt ?? timestampField(event, 'processedAt', Date.now());
       statement.run(row.id, json(row.payload), updatedAt, stringField(event, 'provider'), stringField(event, 'eventId'), timestampField(event, 'occurredAt', updatedAt), timestampField(event, 'processedAt', updatedAt));
+    }
+    return;
+  }
+  if (replacement.table === 'diagnostic_reports') {
+    const statement = database.query('INSERT INTO diagnostic_reports (id, payload, updated_at, user_id, project_id, created_at, expires_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?);');
+    for (const row of replacement.rows) {
+      const report = asRecord(row.payload);
+      const createdAt = timestampField(report, 'createdAt', row.updatedAt ?? Date.now());
+      statement.run(row.id, json(row.payload), row.updatedAt ?? createdAt, stringField(report, 'userId'), stringField(report, 'projectId'), createdAt, timestampField(report, 'expiresAt', createdAt), stringField(report, 'status'));
     }
     return;
   }

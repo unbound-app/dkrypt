@@ -22,6 +22,7 @@ import { createBackupRepository } from '#store/backupRepository.js';
 import {
   addAllowedUser,
   addPasskey,
+  areNewBillingCheckoutsPaused,
   createApiKey,
   createBackupSnapshot,
   createDevice,
@@ -86,6 +87,7 @@ import {
   removeAllowedUser,
   setDiscordGuildIds,
   setBackupSchedule,
+  setNewBillingCheckoutsPaused,
   syncDiscordPerkRoles,
   updateAllowedUserRoles,
   updateProject,
@@ -355,6 +357,28 @@ test('session repository reads stay active across snapshot writes and revocation
   expect(revokeSessionRecord(session.id, userId)).toBe(true);
   expect(isSessionRecordActive(session.id)).toBe(false);
   expect(listSessionsForUser(userId)).toEqual([]);
+});
+
+test('audit targets redact external URLs before persistence', () => {
+  const userId = `audit-target-${randomUUID()}`;
+  recordAudit(userId, 'billing.webhook.sync', 'https://example.com/webhook?secret=value', 'endpoint updated');
+  expect(getAuditLog().find((entry) => entry.actor === userId)).toMatchObject({ target: '[redacted-url]' });
+});
+
+test('billing checkout pause audit records the safe before and after state', () => {
+  const actor = `checkout-pause-audit-${randomUUID()}`;
+  const before = areNewBillingCheckoutsPaused();
+
+  try {
+    setNewBillingCheckoutsPaused(!before, actor);
+
+    expect(getAuditLog().find((entry) => entry.actor === actor)).toMatchObject({
+      action: 'billing.checkouts.pause',
+      changes: [{ field: 'newCheckoutsPaused', before, after: !before }],
+    });
+  } finally {
+    setNewBillingCheckoutsPaused(before, actor);
+  }
 });
 
 test('session inventory reflects a recent session touch immediately', () => {
@@ -1163,6 +1187,27 @@ describe('watch CRUD', () => {
 });
 
 describe('device CRUD primary invariant', () => {
+  test('device updates audit safe structured changes without recording connection identifiers', () => {
+    const actor = `device-audit-${randomUUID()}`;
+    const udid = randomUUID();
+    const device = createDevice({ name: 'Audit iPad', transport: 'usb', udid }, actor);
+
+    try {
+      updateDevice(device.id, { name: 'Renamed iPad', iosVersion: '18.1' }, actor);
+
+      expect(getAuditLog().find((entry) => entry.actor === actor && entry.action === 'device.update')).toMatchObject({
+        target: device.id,
+        changes: [
+          { field: 'name', before: 'Audit iPad', after: 'Renamed iPad' },
+          { field: 'iosVersion', before: null, after: '18.1' },
+        ],
+      });
+      expect(JSON.stringify(getAuditLog().find((entry) => entry.actor === actor && entry.action === 'device.update'))).not.toContain(udid);
+    } finally {
+      deleteDevice(device.id, actor);
+    }
+  });
+
   test('exactly one enabled device stays primary through add/update/delete', () => {
     const a = createDevice({ name: 'device-a', transport: 'wifi', host: '192.168.1.10' }, 'tester');
     expect(a.isPrimary).toBe(true);

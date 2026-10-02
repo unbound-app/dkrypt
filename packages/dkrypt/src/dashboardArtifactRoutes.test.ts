@@ -1,4 +1,8 @@
 import { expect, test } from 'bun:test';
+import AdmZip from 'adm-zip';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import Fastify from 'fastify';
 import { TypeBoxTypeProvider } from '@fastify/type-provider-typebox';
 import type { Response } from '#http.js';
@@ -43,7 +47,7 @@ test('artifact listing and pinning use native dashboard routes', async () => {
 
   const record = artifact({ pinnedAt: 3, sourceJobId: 'job-1', warnings: ['extension remains encrypted'] });
   const listCalls: unknown[] = [];
-  const audits: Array<[string, string, string, string?]> = [];
+  const audits: Array<[string, string, string, string?, Array<{ field: string; before: unknown; after: unknown }> ?]> = [];
   const server = Fastify().withTypeProvider<TypeBoxTypeProvider>();
   await server.register(createDashboardArtifactRoutes({
     canAccessProject: (_userId, _permissions, projectId) => projectId === 'default',
@@ -153,7 +157,7 @@ test('artifact listing and pinning keep their permission and project boundaries'
 
 test('single artifact mutations report no-op state so clients do not offer undo', async () => {
   const record = artifact({ pinnedAt: 3 });
-  const audits: Array<[string, string, string, string?]> = [];
+  const audits: Array<[string, string, string, string?, Array<{ field: string; before: unknown; after: unknown }> ?]> = [];
   const server = Fastify().withTypeProvider<TypeBoxTypeProvider>();
   await server.register(createDashboardArtifactRoutes({
     canAccessProject: () => true,
@@ -185,7 +189,7 @@ test('bulk pinning updates only artifacts in projects the manager can access', a
     ['artifact-b', artifact({ id: 'artifact-b', projectIds: ['private'] })],
   ]);
   const calls: Array<{ ids: string[]; pinned: boolean }> = [];
-  const audits: Array<[string, string, string, string?]> = [];
+  const audits: Array<[string, string, string, string?, Array<{ field: string; before: unknown; after: unknown }> ?]> = [];
   const server = Fastify().withTypeProvider<TypeBoxTypeProvider>();
   await server.register(createDashboardArtifactRoutes({
     canAccessProject: (_userId, _permissions, projectId) => projectId === 'default',
@@ -281,7 +285,7 @@ test('archive and restore require storage permission, project access, and record
     ['artifact-b', artifact({ id: 'artifact-b', projectIds: ['private'] })],
   ]);
   const calls: Array<{ ids: string[]; archived: boolean }> = [];
-  const audits: Array<[string, string, string, string?]> = [];
+  const audits: Array<[string, string, string, string?, Array<{ field: string; before: unknown; after: unknown }> ?]> = [];
   const server = Fastify().withTypeProvider<TypeBoxTypeProvider>();
   await server.register(createDashboardArtifactRoutes({
     canAccessProject: (_userId, _permissions, projectId) => projectId === 'default',
@@ -353,5 +357,69 @@ test('archive and restore require storage permission, project access, and record
     ]);
   } finally {
     await server.close();
+  }
+});
+
+test('query-wide artifact pinning stays project-scoped and ZIP export uses explicit authorized IDs', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'dkrypt-artifact-routes-'));
+  const firstPath = path.join(directory, 'first.ipa');
+  const secondPath = path.join(directory, 'second.ipa');
+  await writeFile(firstPath, 'first payload');
+  await writeFile(secondPath, 'second payload');
+  const records = [
+    artifact({ id: 'artifact-a', filePath: firstPath, fileSizeBytes: 13, versionLabel: '1.0' }),
+    artifact({ id: 'artifact-b', filePath: secondPath, fileSizeBytes: 14, versionLabel: '2.0' }),
+  ];
+  const listCalls: Array<{ cursor?: string; projectIds?: string[] }> = [];
+  const pinCalls: string[][] = [];
+  const server = Fastify().withTypeProvider<TypeBoxTypeProvider>();
+  await server.register(createDashboardArtifactRoutes({
+    canAccessProject: (_userId, _permissions, projectId) => projectId === 'default',
+    artifactFileAvailable: () => true,
+    getArtifactById: (id) => records.find((record) => record.id === id),
+    listArtifacts: (options) => {
+      listCalls.push({ cursor: options?.cursor, projectIds: options?.projectIds });
+      return options?.cursor
+        ? { artifacts: [records[1]!], total: 2, totalBytes: 27, maxBytes: 100 }
+        : { artifacts: [records[0]!], total: 2, totalBytes: 27, maxBytes: 100, nextCursor: 'next-page' };
+    },
+    setArtifactsPinned: async (ids, pinned) => {
+      pinCalls.push(ids);
+      return {
+        artifacts: ids.map((id) => artifact({ ...records.find((record) => record.id === id)!, pinnedAt: pinned ? 10 : undefined, pinnedStateChangedAt: 11 })),
+        changedIds: ids,
+        missingIds: [],
+        previousPinnedAtById: Object.fromEntries(ids.map((id) => [id, undefined])),
+      };
+    },
+    touchArtifact: async () => undefined,
+  }));
+
+  try {
+    const managerHeaders = { cookie: sessionCookie(PermissionFlag.requestDecrypt | PermissionFlag.manageAutomation) };
+    const pinned = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/artifacts/bulk-pin-query',
+      headers: managerHeaders,
+      payload: { filter: { projectId: 'default', q: 'example', archived: false }, pinned: true },
+    });
+    const zipped = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/artifacts/export.zip',
+      headers: { cookie: sessionCookie(PermissionFlag.requestDecrypt) },
+      payload: { ids: ['artifact-a', 'artifact-b'] },
+    });
+
+    expect(pinned.statusCode).toBe(200);
+    expect(pinned.json().changedIds).toEqual(['artifact-a', 'artifact-b']);
+    expect(listCalls).toEqual([{ cursor: undefined, projectIds: ['default'] }, { cursor: 'next-page', projectIds: ['default'] }]);
+    expect(pinCalls).toEqual([['artifact-a', 'artifact-b']]);
+    expect(zipped.statusCode).toBe(200);
+    const archive = new AdmZip(zipped.rawPayload);
+    expect(archive.getEntries().map((entry) => entry.entryName)).toEqual(['com.example.app-1.0.ipa', 'com.example.app-2.0.ipa']);
+    expect(archive.getEntry('com.example.app-1.0.ipa')?.getData().toString()).toBe('first payload');
+  } finally {
+    await server.close();
+    await rm(directory, { recursive: true, force: true });
   }
 });

@@ -37,6 +37,7 @@ import { dashboardDecryptPreflightRoutes } from '#routes/dashboardDecryptPreflig
 import { dashboardJobAnalyticsRoutes } from '#routes/dashboardJobAnalyticsRoutes.js';
 import { dashboardJobHistoryRoutes } from '#routes/dashboardJobHistoryRoutes.js';
 import { dashboardReportingRoutes } from '#routes/dashboardReportingRoutes.js';
+import { dashboardDiagnosticReportRoutes } from '#routes/dashboardDiagnosticReportRoutes.js';
 import { dashboardDiscordRoutes } from '#routes/dashboardDiscordRoutes.js';
 import { internalDeploymentRoutes } from '#routes/internalDeploymentRoutes.js';
 import { dashboardEventsRoutes } from '#routes/dashboardEventsRoutes.js';
@@ -44,6 +45,7 @@ import { dashboardTestFlightRoutes } from '#routes/dashboardTestFlightRoutes.js'
 import { dashboardTestFlightBrowseRoutes } from '#routes/dashboardTestFlightBrowseRoutes.js';
 import { dashboardAppRoutes } from '#routes/dashboardAppRoutes.js';
 import { dashboardQuickSearchRoutes } from '#routes/dashboardQuickSearchRoutes.js';
+import { dashboardIncidentRoutes } from '#routes/dashboardIncidentRoutes.js';
 import { billingRoutes, billingWebhookRoutes } from '#routes/billing.js';
 import type { StripeWebhookHealth } from '#stripeWebhookHealth.js';
 import { artifactCatalogRoutes, decryptRoutes, testFlightCatalogRoutes } from '#routes/decrypt.js';
@@ -332,10 +334,12 @@ export async function buildServer(options: {
   await server.register(dashboardJobAnalyticsRoutes);
   await server.register(dashboardJobHistoryRoutes);
   await server.register(dashboardReportingRoutes);
+  await server.register(dashboardDiagnosticReportRoutes);
   await server.register(dashboardTestFlightRoutes);
   await server.register(dashboardTestFlightBrowseRoutes);
   await server.register(dashboardAppRoutes);
   await server.register(dashboardQuickSearchRoutes);
+  await server.register(dashboardIncidentRoutes);
   await server.register(dashboardDiscordRoutes);
   await server.register(dashboardEventsRoutes);
   await server.register(dashboardWatchRoutes);

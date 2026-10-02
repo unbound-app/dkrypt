@@ -1158,7 +1158,7 @@ describe('Stripe billing webhooks', () => {
       expect(endpoint.secret).toBe('whsec_preserved');
       expect(getAuditLog()).toContainEqual(expect.objectContaining({
         action: 'billing.webhook.sync',
-        target: endpoint.url,
+        target: '[redacted-url]',
         actor: 'root',
       }));
     } finally {

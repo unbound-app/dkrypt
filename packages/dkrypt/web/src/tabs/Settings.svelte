@@ -1,6 +1,7 @@
 <script lang="ts">
   import Tabs from '#lib/components/ui/Tabs.svelte';
   import Button from '#lib/components/ui/Button.svelte';
+  import Input from '#lib/components/ui/Input.svelte';
   import { PermissionFlag } from '#lib/permissions';
   import { pushSettingsModePref, sessionHasAnyPermission, sessionHasPermission } from '#lib/session.svelte';
   import { interfaceLanguageState, settingsModeState, setSettingsSubtab, systemLocalesState, tabState } from '#lib/ui.svelte';
@@ -17,8 +18,12 @@
   import SystemDoctorSettings from '#features/administration/SystemDoctorSettings.svelte';
   import TestFlightSettings from '#features/testflight/TestFlightSettings.svelte';
   import UsersSettings from '#features/administration/UsersSettings.svelte';
+  import PersonalizationSettings from '#features/settings/PersonalizationSettings.svelte';
+  import DiagnosticReportInbox from '#features/administration/DiagnosticReportInbox.svelte';
+  import { searchSettings, type SettingsSearchItem } from '#lib/settingsSearch';
 
   const ALL_SUBTABS: { id: string; label: string; requires: bigint[]; requiresAll?: bigint[] }[] = [
+    { id: 'personalization', label: 'Personalization', requires: [] },
     { id: 'scheduler', label: 'Automation', requires: [PermissionFlag.viewAutomation, PermissionFlag.manageAutomation] },
     { id: 'storage', label: 'Storage', requires: [PermissionFlag.manageAutomation], requiresAll: [PermissionFlag.requestDecrypt] },
     { id: 'devices', label: 'Devices', requires: [PermissionFlag.viewDevices, PermissionFlag.manageDevices] },
@@ -29,13 +34,37 @@
     { id: 'backup', label: 'Backup', requires: [PermissionFlag.viewBackup, PermissionFlag.manageBackup] },
     { id: 'testflight', label: 'TestFlight', requires: [PermissionFlag.manageTestFlightSubscriptions] },
     { id: 'billing', label: 'Billing', requires: [PermissionFlag.viewBilling, PermissionFlag.manageBilling] },
+    { id: 'reports', label: 'Support reports', requires: [PermissionFlag.viewDiagnosticReports] },
   ];
 
   function hasAccess(requires: bigint[], requiresAll: bigint[] = []): boolean {
-    return sessionHasAnyPermission(requires) && requiresAll.every(sessionHasPermission);
+    return (requires.length === 0 || sessionHasAnyPermission(requires)) && requiresAll.every(sessionHasPermission);
   }
 
   const visibleSubtabs = $derived(ALL_SUBTABS.filter((subtab) => hasAccess(subtab.requires, subtab.requiresAll)));
+  const searchTerms: Record<string, string> = {
+    personalization: 'timezone time zone touch targets navigation favorites artifact columns appearance density',
+    scheduler: 'watch schedule automation cron github webhook testflight',
+    storage: 'artifact retention quota cleanup prune',
+    devices: 'device usb wifi pairing health setup',
+    doctor: 'system diagnostics health configuration',
+    users: 'members accounts access permissions',
+    roles: 'permissions roles access',
+    projects: 'projects scope members',
+    backup: 'backup restore export',
+    testflight: 'testflight subscriptions invites',
+    billing: 'billing subscription payment stripe crypto',
+    reports: 'support diagnostics reports issue user submitted',
+  };
+  const searchableSettings: SettingsSearchItem[] = $derived(visibleSubtabs.map((subtab) => ({
+    id: subtab.id,
+    title: subtab.label,
+    description: searchTerms[subtab.id] ?? '',
+    tab: 'settings',
+    subtab: subtab.id,
+  })));
+  let settingsQuery = $state('');
+  const matchingSettings = $derived(settingsQuery.trim() ? searchSettings(searchableSettings, settingsQuery) : []);
   const mountedSubtabs = createVisitedTabs(() => tabState.settingsSubtab);
   const interfaceLanguage = $derived(resolveInterfaceLanguage(interfaceLanguageState.value, systemLocalesState.value));
   const msg = (key: 'settings.modeLabel' | 'settings.basicMode' | 'settings.advancedMode' | 'settings.advancedModeDescription') => translateMessage(key, interfaceLanguage);
@@ -60,6 +89,22 @@
 </div>
 
 <Tabs items={visibleSubtabs} value={tabState.settingsSubtab} onValueChange={setSettingsSubtab} class="mb-5" />
+
+<div class="mb-5 grid gap-2 sm:grid-cols-[minmax(12rem,1fr)_auto] sm:items-start">
+  <Input bind:value={settingsQuery} aria-label="Search settings" placeholder="Search settings (e.g. timezone, device, retention)" />
+  {#if settingsQuery.trim()}
+    <div class="flex flex-wrap gap-2" aria-live="polite">
+      {#each matchingSettings as result (result.id)}
+        <Button size="sm" variant={tabState.settingsSubtab === result.subtab ? 'secondary' : 'ghost'} onclick={() => setSettingsSubtab(result.subtab)}>{result.title}</Button>
+      {/each}
+      {#if matchingSettings.length === 0}<span class="px-2 py-2 text-xs text-muted">No matching settings</span>{/if}
+    </div>
+  {/if}
+</div>
+
+{#if hasAccess([]) && mountedSubtabs.personalization}
+  <div class:hidden={tabState.settingsSubtab !== 'personalization'}><PersonalizationSettings /></div>
+{/if}
 
 {#if hasAccess([PermissionFlag.viewAutomation, PermissionFlag.manageAutomation]) && mountedSubtabs.scheduler}
   <div class:hidden={tabState.settingsSubtab !== 'scheduler'}>
@@ -109,5 +154,10 @@
 {#if hasAccess([PermissionFlag.viewBilling, PermissionFlag.manageBilling]) && mountedSubtabs.billing}
   <div class:hidden={tabState.settingsSubtab !== 'billing'}>
     <BillingSettings />
+  </div>
+{/if}
+{#if hasAccess([PermissionFlag.viewDiagnosticReports]) && mountedSubtabs.reports}
+  <div class:hidden={tabState.settingsSubtab !== 'reports'}>
+    <DiagnosticReportInbox />
   </div>
 {/if}

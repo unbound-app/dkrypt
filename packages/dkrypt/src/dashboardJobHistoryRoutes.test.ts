@@ -85,6 +85,22 @@ test('job history route contracts are explicit and routes are mounted by the API
   }
 });
 
+test('attempt comparison rejects records without stable build identity', async () => {
+  const first = historyEntry({ id: 'attempt-a', externalVersionId: undefined, versionLabel: undefined });
+  const second = historyEntry({ id: 'attempt-b', externalVersionId: undefined, versionLabel: undefined });
+  const server = build({ getJobHistoryEntryById: (id) => id === first.id ? first : id === second.id ? second : undefined });
+  try {
+    const response = await server.inject({
+      method: 'GET',
+      url: `/v1/dashboard/jobs/attempt-diff?a=${first.id}&b=${second.id}&projectId=default`,
+      headers: { cookie: sessionCookie(PermissionFlag.requestDecrypt) },
+    });
+    expect(response.statusCode).toBe(400);
+  } finally {
+    await server.close();
+  }
+});
+
 test('job history export preserves project scoping, formats, and attachment names', async () => {
   const entries = [
     historyEntry({ queuedBy: 'Doe, "A"', queueReason: 'Waiting for a compatible device' }),

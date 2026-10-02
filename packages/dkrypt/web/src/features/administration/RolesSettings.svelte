@@ -13,6 +13,7 @@
     fetchDiscordStatus,
     fetchRoles,
     fetchUsers,
+    previewRoleImpact,
     reorderRoles,
     setDiscordGuilds,
     updateRole,
@@ -30,8 +31,15 @@
   import SearchSelect from '#lib/components/ui/SearchSelect.svelte';
   import Select from '#lib/components/ui/Select.svelte';
   import { parseBits, permissionLabels, PermissionFlag, serializeBits } from '#lib/permissions';
-  import { sessionHasAnyPermission, sessionHasPermission } from '#lib/session.svelte';
+  import { sessionHasAnyPermission, sessionHasPermission, sessionState } from '#lib/session.svelte';
   import { confirmDialog } from '#lib/ui.svelte';
+  import { clearFormDraft, readFormDraft, setFormUnsaved, writeFormDraft } from '#lib/formDrafts.svelte';
+
+  interface RoleDraft {
+    name: string;
+    color: string;
+    permissions: string;
+  }
 
   const canViewRoles = $derived(sessionHasAnyPermission([PermissionFlag.viewRoles, PermissionFlag.manageRoles]));
   const canManageRoles = $derived(sessionHasPermission(PermissionFlag.manageRoles));
@@ -73,12 +81,32 @@
   let formBits = $state(0n);
   let saving = $state(false);
   let deletingId = $state<string | null>(null);
+  let roleImpact = $state<{ permissions: string; affectedCount: number; members: Array<{ username: string; beforePermissions: string; afterPermissions: string }>; truncated: boolean; memberDetailsHidden?: boolean } | null>(null);
+  let draftStorageKey = $state('');
+  const roleFormId = 'role-editor';
+  const formIsDirty = $derived(Boolean(editingRole
+    ? formName !== editingRole.name || formColor !== editingRole.color || serializeBits(formBits) !== editingRole.permissions
+    : formName.trim() || serializeBits(formBits) !== '0'));
+
+  $effect(() => {
+    if (!dialogOpen || !draftStorageKey) return;
+    if (formIsDirty) writeFormDraft<RoleDraft>(draftStorageKey, { name: formName, color: formColor, permissions: serializeBits(formBits) });
+    setFormUnsaved(roleFormId, formIsDirty);
+  });
 
   function openAdd(): void {
     editingRole = null;
     formName = '';
     formColor = COLOR_PRESETS[Math.floor(Math.random() * COLOR_PRESETS.length)];
     formBits = 0n;
+    draftStorageKey = `role:${sessionState.sub ?? 'account'}:new`;
+    roleImpact = null;
+    const draft = readFormDraft<RoleDraft>(draftStorageKey)?.values;
+    if (draft) {
+      formName = draft.name;
+      formColor = draft.color;
+      formBits = parseBits(draft.permissions);
+    }
     dialogOpen = true;
   }
 
@@ -87,18 +115,41 @@
     formName = r.name;
     formColor = r.color;
     formBits = parseBits(r.permissions);
+    draftStorageKey = `role:${sessionState.sub ?? 'account'}:${r.id}`;
+    roleImpact = null;
+    const draft = readFormDraft<RoleDraft>(draftStorageKey)?.values;
+    if (draft) {
+      formName = draft.name;
+      formColor = draft.color;
+      formBits = parseBits(draft.permissions);
+    }
     dialogOpen = true;
+  }
+
+  async function changeRoleDialogOpen(nextOpen: boolean): Promise<void> {
+    if (!nextOpen && formIsDirty && !(await confirmDialog('Keep this recoverable draft and close the role editor?', { variant: 'default', confirmLabel: 'Keep draft' }))) return;
+    dialogOpen = nextOpen;
+    if (!nextOpen) setFormUnsaved(roleFormId, false);
   }
 
   async function save(): Promise<void> {
     if (!formName.trim()) return;
     saving = true;
     try {
+      const permissions = serializeBits(formBits);
+      if (editingRole && editingRole.permissions !== permissions && roleImpact?.permissions !== permissions) {
+        const preview = await previewRoleImpact(editingRole.id, permissions);
+        roleImpact = { permissions, ...preview };
+        return;
+      }
       const { ok } = editingRole
-        ? await updateRole(editingRole.id, { name: formName.trim(), color: formColor, permissions: serializeBits(formBits) })
-        : await createRole(formName.trim(), formColor, serializeBits(formBits));
+        ? await updateRole(editingRole.id, { name: formName.trim(), color: formColor, permissions })
+        : await createRole(formName.trim(), formColor, permissions);
       if (ok) {
         dialogOpen = false;
+        roleImpact = null;
+        if (draftStorageKey) clearFormDraft(draftStorageKey);
+        setFormUnsaved(roleFormId, false);
         void load();
       }
     } finally {
@@ -453,7 +504,7 @@
 {/if}
 
 {#if canManageRoles}
-  <Dialog open={dialogOpen} onOpenChange={(v) => (dialogOpen = v)} class="max-w-md">
+  <Dialog open={dialogOpen} onOpenChange={(v) => void changeRoleDialogOpen(v)} class="max-w-md">
     <div class="mb-3 text-sm font-medium">{editingRole ? `Edit ${editingRole.name}` : 'Add role'}</div>
     <div class="max-h-[65vh] overflow-y-auto pr-0.5">
       <label for="r-name" class="mb-1 block text-xs text-muted">Name</label>
@@ -477,6 +528,25 @@
         <PermissionEditor bind:value={formBits} />
       </div>
     </div>
-    <Button class="mt-3.5 w-full" loading={saving} onclick={save} disabled={!formName.trim()}>{editingRole ? 'Save' : 'Add'}</Button>
+    {#if roleImpact}
+      <section class="mt-3 rounded-lg border border-border bg-panel-muted/40 p-3" aria-label="Role permission impact review">
+        <div class="text-sm font-semibold">{roleImpact.affectedCount} member{roleImpact.affectedCount === 1 ? '' : 's'} will have effective access changes</div>
+        {#if roleImpact.members.length > 0}
+          <ul class="mt-2 max-h-36 overflow-auto text-xs">
+            {#each roleImpact.members as member (member.username)}
+              {@const before = permissionLabels(parseBits(member.beforePermissions))}
+              {@const after = permissionLabels(parseBits(member.afterPermissions))}
+              {@const added = after.filter((label) => !before.includes(label))}
+              {@const removed = before.filter((label) => !after.includes(label))}
+              <li class="border-t border-border/60 py-2"><span class="font-medium">{member.username}</span><span class="ml-2 text-ok">{added.length ? `+ ${added.join(', ')}` : ''}</span><span class="ml-2 text-err">{removed.length ? `− ${removed.join(', ')}` : ''}</span></li>
+            {/each}
+          </ul>
+        {/if}
+        {#if roleImpact.truncated}<p class="mt-2 text-xs text-muted">Showing the first 100 affected members.</p>{/if}
+        {#if roleImpact.memberDetailsHidden}<p class="mt-2 text-xs text-muted">Member details are hidden because your account cannot view users.</p>{/if}
+        <p class="mt-2 text-xs text-muted">Review the permission changes before applying them.</p>
+      </section>
+    {/if}
+    <Button class="mt-3.5 w-full" loading={saving} onclick={save} disabled={!formName.trim()}>{editingRole ? roleImpact?.permissions === serializeBits(formBits) ? 'Apply reviewed changes' : 'Review access impact' : 'Add'}</Button>
   </Dialog>
 {/if}

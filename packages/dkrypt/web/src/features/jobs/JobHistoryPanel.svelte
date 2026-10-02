@@ -2,6 +2,7 @@
 	import { onDestroy } from "svelte";
 	import { Eye, Grid2X2, History, List, X } from "lucide-svelte";
 	import BundleStatsDialog from "#components/BundleStatsDialog.svelte";
+	import JobAttemptCompareDialog from "#features/jobs/JobAttemptCompareDialog.svelte";
 	import BulkJobPreviewDialog from "#components/BulkJobPreviewDialog.svelte";
 	import AppIcon from "#components/AppIcon.svelte";
 	import JobDetailsDialog from "#components/JobDetailsDialog.svelte";
@@ -346,6 +347,13 @@
 
 	$effect(() => {
 		const id = jobDetailJumpState.id;
+		if (id === "") {
+			jobDetailsOpen = false;
+			jobDetailsId = "";
+			jobDetailsTitle = "";
+			jobDetailJumpState.id = null;
+			return;
+		}
 		if (!id) return;
 		const entry = entries.find((item) => item.id === id);
 		jobDetailsId = id;
@@ -469,6 +477,8 @@
 	let statsOpen = $state(false);
 	let statsBundleId = $state("");
 	let statsPreselectIds = $state<string[] | undefined>(undefined);
+	let attemptCompareOpen = $state(false);
+	let attemptCompareIds = $state<[string, string]>(['', '']);
 
 	function openStats(bundleId: string): void {
 		statsBundleId = bundleId;
@@ -487,6 +497,24 @@
 			return null;
 		return { bundleId: rows[0].bundleId, ids: rows.map((r) => r.id) };
 	});
+	const attemptCompareCandidate = $derived.by(() => {
+		if (selected.size !== 2) return null;
+		const rows = entries.filter((entry) => selected.has(entry.id));
+		if (rows.length !== 2 || rows[0]!.bundleId !== rows[1]!.bundleId) return null;
+		const buildKey = (entry: JobHistoryEntry) => entry.testflight
+			? entry.testflight.appId && entry.testflight.build.id ? `testflight:${entry.testflight.appId}:${entry.testflight.build.id}` : undefined
+			: entry.externalVersionId ? `appstore:${entry.externalVersionId}` : entry.versionLabel ? `version:${entry.versionLabel}` : undefined;
+		const firstBuildKey = buildKey(rows[0]!);
+		const secondBuildKey = buildKey(rows[1]!);
+		if (!firstBuildKey || firstBuildKey !== secondBuildKey) return null;
+		return { ids: [rows[0]!.id, rows[1]!.id] as [string, string] };
+	});
+
+	function openAttemptCompare(): void {
+		if (!attemptCompareCandidate) return;
+		attemptCompareIds = attemptCompareCandidate.ids;
+		attemptCompareOpen = true;
+	}
 
 	function openCompare(): void {
 		if (!compareCandidate) return;
@@ -795,6 +823,9 @@
 					<Button size="sm" variant="secondary" onclick={openCompare}
 						>Compare selected</Button
 					>
+				{/if}
+				{#if attemptCompareCandidate}
+					<Button size="sm" variant="secondary" onclick={openAttemptCompare}>Compare attempts</Button>
 				{/if}
 				<Button
 					size="sm"
@@ -1161,13 +1192,13 @@
 										class="history-feed-actions flex w-full shrink-0 items-center justify-start gap-1.5 self-start sm:w-[15rem] sm:justify-end"
 									>
 										{#if j.status === "failed"}
-											<Button size="sm" variant="secondary" onclick={() => openJobDetails(j)} title="Inspect job"><Eye class="h-3.5 w-3.5" /></Button>
+											<Button data-list-primary-action size="sm" variant="secondary" onclick={() => openJobDetails(j)} title="Inspect job"><Eye class="h-3.5 w-3.5" /></Button>
 											<Button size="sm" loading={requeueing.has(j.id)} onclick={() => retryJobFromHistory(j)}>Retry</Button>
 										{:else}
 											{#if j.downloadUrl}
 												<a class={buttonVariants("default", "sm")} href={j.downloadUrl}>Download</a>
 											{/if}
-											<Button size="sm" variant="secondary" onclick={() => openJobDetails(j)} title="Inspect job"><Eye class="h-3.5 w-3.5" /></Button>
+											<Button data-list-primary-action size="sm" variant="secondary" onclick={() => openJobDetails(j)} title="Inspect job"><Eye class="h-3.5 w-3.5" /></Button>
 											<Button
 												size="sm"
 												variant="secondary"
@@ -1210,6 +1241,7 @@
 	preselectIds={statsPreselectIds}
 	onOpenChange={(v) => (statsOpen = v)}
 />
+<JobAttemptCompareDialog bind:open={attemptCompareOpen} ids={attemptCompareIds} />
 <JobDetailsDialog bind:open={jobDetailsOpen} jobId={jobDetailsId} title={jobDetailsTitle || "Job details"} />
 <BulkJobPreviewDialog
 	open={bulkPreviewOpen}

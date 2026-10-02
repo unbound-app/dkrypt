@@ -34,6 +34,7 @@
   let viewport = $state<HTMLDivElement | undefined>();
   let windowScrollMargin = $state(0);
   let virtualizerRevision = $state(0);
+  let activeIndex = $state(0);
 
   const virtualizer = createVirtualizer<HTMLDivElement, HTMLDivElement>({
     count: 0,
@@ -122,6 +123,7 @@
     const keyForItem = itemKey;
     const windowMargin = windowScrollMargin;
     const mode = scrollMode;
+    if (activeIndex >= rows.length) activeIndex = Math.max(0, rows.length - 1);
     setVirtualizerOptions(rows, scrollContainer, rowEstimateSize, rowOverscan, keyForItem, windowMargin, mode);
     untrack(() => virtualizerRevision += 1);
   });
@@ -140,45 +142,54 @@
     else $virtualizer.measureElement(element);
   }
 
-  function virtualizedListKeyboardScroll(element: HTMLDivElement, enabled: boolean): { update: (nextEnabled: boolean) => void; destroy: () => void } {
-    let isEnabled = enabled;
+  function virtualizedListKeyboardNavigation(element: HTMLDivElement): { destroy: () => void } {
+    element.setAttribute('tabindex', '0');
+    element.setAttribute('aria-keyshortcuts', 'ArrowDown ArrowUp Home End PageDown PageUp');
     const onKeydown = (event: KeyboardEvent): void => {
-      if (event.target !== element) return;
-      let scrollTop = element.scrollTop;
-      if (event.key === 'ArrowDown') scrollTop += 48;
-      else if (event.key === 'ArrowUp') scrollTop -= 48;
-      else if (event.key === 'PageDown') scrollTop += Math.max(48, element.clientHeight * 0.8);
-      else if (event.key === 'PageUp') scrollTop -= Math.max(48, element.clientHeight * 0.8);
-      else if (event.key === 'Home') scrollTop = 0;
-      else if (event.key === 'End') scrollTop = element.scrollHeight;
+      const target = event.target instanceof Element ? event.target : null;
+      const row = target?.closest<HTMLElement>('[role="listitem"]');
+      if (target !== element && (!row || target?.closest('button, a, input, select, textarea'))) return;
+      let nextIndex = row ? Number(row.dataset.index) : activeIndex;
+      const pageSize = Math.max(1, Math.floor(element.clientHeight / (typeof estimateSize === 'number' ? estimateSize : 72)));
+      if (event.key === 'ArrowDown') nextIndex += 1;
+      else if (event.key === 'ArrowUp') nextIndex -= 1;
+      else if (event.key === 'PageDown') nextIndex += pageSize;
+      else if (event.key === 'PageUp') nextIndex -= pageSize;
+      else if (event.key === 'Home') nextIndex = 0;
+      else if (event.key === 'End') nextIndex = items.length - 1;
+      else if ((event.key === 'Enter' || event.key === ' ') && row) {
+        const actionable = row.querySelector<HTMLElement>('[data-list-primary-action]:not([disabled])')
+          ?? row.querySelector<HTMLElement>('button:not([disabled]), a[href]');
+        if (!actionable) return;
+        event.preventDefault();
+        actionable.focus();
+        return;
+      }
       else return;
       event.preventDefault();
-      element.scrollTo({ top: Math.max(0, Math.min(scrollTop, element.scrollHeight - element.clientHeight)) });
+      if (items.length === 0) return;
+      activeIndex = Math.max(0, Math.min(nextIndex, items.length - 1));
+      const virtualizerInstance = scrollMode === 'window' ? get(windowVirtualizer) : get(virtualizer);
+      virtualizerInstance.scrollToIndex(activeIndex, { align: 'auto' });
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          const activeRow = element.querySelector<HTMLElement>(`[role="listitem"][data-index="${activeIndex}"]`);
+          activeRow?.focus({ preventScroll: true });
+        });
+      });
     };
-    if (enabled) {
-      element.setAttribute('tabindex', '0');
-      element.addEventListener('keydown', onKeydown);
-    }
+    element.addEventListener('keydown', onKeydown);
     return {
-      update: (nextEnabled) => {
-        element.removeEventListener('keydown', onKeydown);
-        isEnabled = nextEnabled;
-        if (nextEnabled) {
-          element.setAttribute('tabindex', '0');
-          element.addEventListener('keydown', onKeydown);
-        } else {
-          element.removeAttribute('tabindex');
-        }
-      },
       destroy: () => {
         element.removeEventListener('keydown', onKeydown);
-        if (isEnabled) element.removeAttribute('tabindex');
+        element.removeAttribute('tabindex');
+        element.removeAttribute('aria-keyshortcuts');
       },
     };
   }
 </script>
 
-<div bind:this={viewport} class={cn(className)} style={style} onscroll={onScroll} use:virtualizedListKeyboardScroll={scrollMode === 'element'} role="region" aria-label={scrollMode === 'window' ? `${label} list region` : `${label} scroll area`}>
+<div bind:this={viewport} class={cn(className)} style={style} onscroll={onScroll} use:virtualizedListKeyboardNavigation role="region" aria-label={scrollMode === 'window' ? `${label} list region` : `${label} scroll area`}>
   <div class="relative w-full" style={`height:${totalSize}px`} role="list" aria-label={label}>
     {#each virtualRows as virtualRow (virtualRow.key)}
       {@const item = items[virtualRow.index]}
@@ -187,6 +198,9 @@
           class="absolute top-0 left-0 w-full"
           data-index={virtualRow.index}
           role="listitem"
+          tabindex="-1"
+          aria-current={virtualRow.index === activeIndex ? 'true' : undefined}
+          onfocus={() => activeIndex = virtualRow.index}
           aria-posinset={virtualRow.index + 1}
           aria-setsize={items.length}
           use:measureRow

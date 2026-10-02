@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, untrack } from 'svelte';
-  import { Archive, ArchiveRestore, Download, FileSearch, Grid2X2, List, Pin, PinOff, RefreshCw, X } from 'lucide-svelte';
+  import { Archive, ArchiveRestore, Download, Grid2X2, List, Pin, PinOff, RefreshCw, X } from 'lucide-svelte';
   import AppIcon from '#components/AppIcon.svelte';
   import EmptyState from '#components/EmptyState.svelte';
   import Badge from '#lib/components/ui/Badge.svelte';
@@ -8,22 +8,24 @@
   import Card from '#lib/components/ui/Card.svelte';
   import Input from '#lib/components/ui/Input.svelte';
   import Select from '#lib/components/ui/Select.svelte';
-  import { fetchArtifacts, observeArtifacts, setDashboardArtifactArchived, setDashboardArtifactPinned, setDashboardArtifactsArchived, setDashboardArtifactsPinned, undoDashboardArtifactChanges, type ArtifactRecord, type ArtifactUndoChange } from '#lib/api';
+  import { downloadDashboardArtifactsZip, fetchArtifacts, observeArtifacts, setDashboardArtifactArchived, setDashboardArtifactPinned, setDashboardArtifactsArchived, setDashboardArtifactsArchivedByQuery, setDashboardArtifactsPinned, setDashboardArtifactsPinnedByQuery, undoDashboardArtifactChanges, type ArtifactRecord, type ArtifactUndoChange } from '#lib/api';
   import { appDisplayName, appIconUrl, ensureAppCatalog } from '#lib/appCatalog.svelte';
   import { fmtBytesGB, fmtSize } from '#lib/format.svelte';
   import { createSavedViews } from '#lib/savedViews.svelte';
   import { PermissionFlag } from '#lib/permissions';
   import { sessionHasPermission } from '#lib/session.svelte';
   import { isServerQueryCancelled, mergeServerPage, serverQueryStatus } from '#lib/serverStateCache.svelte';
-  import { buttonVariants } from '#lib/components/ui/variants';
   import { projectSelectionState } from '#lib/projectSelection.svelte';
   import VirtualizedList from '#components/VirtualizedList.svelte';
-  import { artifactDetailJumpState, homeViewModesState } from '#lib/ui.svelte';
+  import { artifactDetailJumpState, artifactLibraryPreferencesState, homeViewModesState } from '#lib/ui.svelte';
   import { pushHomeViewMode } from '#lib/session.svelte';
   import { interfaceLanguageState, systemLocalesState } from '#lib/ui.svelte';
   import { resolveInterfaceLanguage } from '#lib/locale';
   import { translateMessage } from '#lib/messages';
   import { showToast } from '#lib/ui.svelte';
+  import { getQueryParam, setQueryParams } from '#lib/urlState';
+  import ArtifactLibraryRow from '#features/artifacts/ArtifactLibraryRow.svelte';
+  import ArtifactCompareDialog from '#features/artifacts/ArtifactCompareDialog.svelte';
 
   type ArtifactSourceFilter = 'all' | ArtifactRecord['channel'];
 
@@ -51,14 +53,19 @@
   let total = $state(0);
   let totalBytes = $state(0);
   let maxBytes = $state(0);
-  let query = $state('');
-  let channelFilter = $state<ArtifactSourceFilter>('all');
-  let archiveFilter = $state<'active' | 'archived'>('active');
+  let query = $state(getQueryParam('aq') ?? '');
+  let channelFilter = $state<ArtifactSourceFilter>(getQueryParam('asource') === 'appstore' || getQueryParam('asource') === 'testflight' ? getQueryParam('asource') as ArtifactSourceFilter : 'all');
+  let archiveFilter = $state<'active' | 'archived'>(getQueryParam('astatus') === 'archived' ? 'archived' : 'active');
   let newFilterName = $state('');
   let loading = $state(false);
   let loadingMore = $state(false);
   let updatingArtifactIds = $state<string[]>([]);
   let selectedArtifactIds = $state<Set<string>>(new Set());
+  let selectAllMatching = $state(false);
+  let zipBusy = $state(false);
+  let comparisonOpen = $state(false);
+  let comparisonIds = $state<[string, string]>(['', '']);
+  let collapsedArtifactGroups = $state<Set<string>>(new Set());
   let bulkUpdating = $state(false);
   let nextCursor = $state<string | undefined>(undefined);
   let error = $state('');
@@ -68,6 +75,16 @@
   let artifactLoadVersion = 0;
   let artifactPageVersion = 0;
   let activeArtifactQueryKey = '';
+  const artifactGroups = $derived.by(() => {
+    const groups = new Map<string, { bundleId: string; artifacts: ArtifactRecord[] }>();
+    for (const artifact of artifacts) {
+      const group = groups.get(artifact.bundleId) ?? { bundleId: artifact.bundleId, artifacts: [] };
+      group.artifacts.push(artifact);
+      groups.set(artifact.bundleId, group);
+    }
+    return [...groups.values()];
+  });
+  const selectedArtifactBytes = $derived(artifacts.filter((artifact) => selectedArtifactIds.has(artifact.id)).reduce((sum, artifact) => sum + artifact.fileSizeBytes, 0));
 
   function createArtifactQuery(cursorOrOffset?: string | number) {
     return {
@@ -95,7 +112,10 @@
     const artifactQuery = createArtifactQuery();
     const artifactQueryKey = currentArtifactQueryKey();
     const previousArtifactQueryKey = activeArtifactQueryKey;
-    if (artifactQueryKey !== previousArtifactQueryKey || force) selectedArtifactIds = new Set();
+    if (artifactQueryKey !== previousArtifactQueryKey || force) {
+      selectedArtifactIds = new Set();
+      selectAllMatching = false;
+    }
     activeArtifactQueryKey = artifactQueryKey;
     const request = fetchArtifacts(artifactQuery, force);
     const applyPage = (result: Awaited<ReturnType<typeof fetchArtifacts>>) => {
@@ -174,15 +194,17 @@
   });
 
   $effect(() => {
+    setQueryParams({
+      aq: query.trim() || undefined,
+      asource: channelFilter === 'all' ? undefined : channelFilter,
+      astatus: archiveFilter === 'active' ? undefined : archiveFilter,
+    });
+  });
+
+  $effect(() => {
     if (canDecrypt) void ensureAppCatalog(artifacts.map((artifact) => artifact.bundleId));
   });
 
-  function artifactVersion(artifact: ArtifactRecord): string {
-    const value = artifact.versionLabel?.trim().replace(/^TestFlight\s+/i, '').replace(/^v(?=\d)/i, '');
-    if (!value) return 'Version unavailable';
-    const version = artifact.channel === 'testflight' ? value.split('_', 1)[0] : value;
-    return artifact.buildNumber ? `${version} (${artifact.buildNumber})` : version;
-  }
 
   function estimateArtifactRowHeight(_artifact: ArtifactRecord): number {
     const width = typeof window === 'undefined' ? 1024 : window.innerWidth;
@@ -309,6 +331,7 @@
     const allLoadedSelected = artifacts.length > 0 && artifacts.every((artifact) => selectedArtifactIds.has(artifact.id));
     if (allLoadedSelected) {
       selectedArtifactIds = new Set();
+      selectAllMatching = false;
       error = '';
       return;
     }
@@ -318,16 +341,62 @@
       return;
     }
     selectedArtifactIds = next;
+    selectAllMatching = false;
     error = '';
   }
 
+  function selectAllMatchingArtifacts(): void {
+    if (total > 5000) {
+      error = 'Narrow this filter to 5,000 artifacts or fewer before selecting all matching';
+      return;
+    }
+    selectedArtifactIds = new Set();
+    selectAllMatching = true;
+    error = '';
+  }
+
+  function clearArtifactSelection(): void {
+    selectedArtifactIds = new Set();
+    selectAllMatching = false;
+  }
+
+  function currentSelectionFilter() {
+    return {
+      projectId: projectSelectionState.id,
+      q: query.trim() || undefined,
+      channel: channelFilter === 'all' ? undefined : channelFilter,
+      archived: archiveFilter === 'archived',
+    };
+  }
+
+  async function downloadSelectedZip(): Promise<void> {
+    if (zipBusy || selectAllMatching || selectedArtifactIds.size === 0) return;
+    zipBusy = true;
+    error = '';
+    try {
+      await downloadDashboardArtifactsZip([...selectedArtifactIds]);
+    } catch (err) {
+      error = err instanceof Error ? err.message : 'Could not export selected artifacts';
+    } finally {
+      zipBusy = false;
+    }
+  }
+
+  function openArtifactComparison(): void {
+    if (selectedArtifactIds.size !== 2) return;
+    comparisonIds = [...selectedArtifactIds] as [string, string];
+    comparisonOpen = true;
+  }
+
   async function bulkSetPinned(pinned: boolean): Promise<void> {
-    if (bulkUpdating || selectedArtifactIds.size === 0) return;
+    if (bulkUpdating || (!selectAllMatching && selectedArtifactIds.size === 0)) return;
     bulkUpdating = true;
     error = '';
     try {
       const previousById = new Map(artifacts.filter((artifact) => selectedArtifactIds.has(artifact.id)).map((artifact) => [artifact.id, artifact]));
-      const result = await setDashboardArtifactsPinned([...selectedArtifactIds], pinned);
+      const result = selectAllMatching
+        ? await setDashboardArtifactsPinnedByQuery(currentSelectionFilter(), pinned)
+        : await setDashboardArtifactsPinned([...selectedArtifactIds], pinned);
       if (!result.ok) return;
       const updatedById = new Map(result.data.artifacts.map((artifact) => [artifact.artifactId, artifact]));
       artifacts = artifacts.map((artifact) => {
@@ -336,11 +405,12 @@
       });
       const changes = result.data.artifacts.filter((updated) => result.data.changedIds.includes(updated.artifactId)).flatMap((updated) => {
         const previous = previousById.get(updated.artifactId);
-        if (!previous || updated.pinnedStateChangedAt === undefined) return [];
+        if (updated.pinnedStateChangedAt === undefined || (!previous && !selectAllMatching)) return [];
         return [{ id: updated.artifactId, kind: 'pin' as const, expectedStateChangedAt: updated.pinnedStateChangedAt, expectedCurrentState: updated.pinned, restoreAt: updated.previousPinnedAt }];
       });
       if (changes.length > 0) offerUndo(changes, pinned ? 'undo.artifactPinned' : 'undo.artifactUnpinned');
       selectedArtifactIds = new Set();
+      selectAllMatching = false;
     } catch (err) {
       error = err instanceof Error ? err.message : 'Could not update the selected artifacts';
     } finally {
@@ -349,14 +419,18 @@
   }
 
   async function bulkSetArchived(archived: boolean): Promise<void> {
-    if (bulkUpdating || selectedArtifactIds.size === 0) return;
+    if (bulkUpdating || (!selectAllMatching && selectedArtifactIds.size === 0)) return;
+    const querySelection = selectAllMatching;
     bulkUpdating = true;
     error = '';
     try {
       const previousById = new Map(artifacts.filter((artifact) => selectedArtifactIds.has(artifact.id)).map((artifact) => [artifact.id, artifact]));
-      const result = await setDashboardArtifactsArchived([...selectedArtifactIds], archived);
+      const result = selectAllMatching
+        ? await setDashboardArtifactsArchivedByQuery(currentSelectionFilter(), archived)
+        : await setDashboardArtifactsArchived([...selectedArtifactIds], archived);
       if (!result.ok) return;
       selectedArtifactIds = new Set();
+      selectAllMatching = false;
       const count = result.data.changedIds.length;
       archiveAnnouncement = `${archived ? 'Archived' : 'Restored'} ${count} ${count === 1 ? 'artifact' : 'artifacts'}.`;
       focusArchiveStatus();
@@ -368,7 +442,7 @@
       }
       const changes = result.data.artifacts.filter((updated) => result.data.changedIds.includes(updated.artifactId)).flatMap((updated) => {
         const previous = previousById.get(updated.artifactId);
-        if (!previous || updated.archivedStateChangedAt === undefined) return [];
+        if (updated.archivedStateChangedAt === undefined || (!previous && !querySelection)) return [];
         return [{ id: updated.artifactId, kind: 'archive' as const, expectedStateChangedAt: updated.archivedStateChangedAt, expectedCurrentState: updated.archived, restoreAt: updated.previousArchivedAt }];
       });
       if (changes.length > 0) offerUndo(changes, archived ? 'undo.artifactArchived' : 'undo.artifactRestored');
@@ -462,23 +536,29 @@
         {#if archiveFilter === 'archived'}
           <div class="mb-3 text-muted text-xs" role="note">Archived items still use library storage and may be removed automatically unless pinned.</div>
         {/if}
-        {#if canManageStorage && artifacts.length > 0}
+        {#if canDecrypt && artifacts.length > 0}
           <div class="mb-3 flex flex-wrap items-center gap-2" role="group" aria-label="Bulk artifact actions">
-            <Button variant="ghost" size="sm" onclick={toggleAllLoadedArtifacts}>
-              {artifacts.every((artifact) => selectedArtifactIds.has(artifact.id)) ? 'Clear selection' : 'Select loaded'}
-            </Button>
-            {#if selectedArtifactIds.size > 0}
-              <span class="text-muted text-xs" role="status" aria-live="polite">{selectedArtifactIds.size} selected</span>
-              <Button variant="secondary" size="sm" loading={bulkUpdating} onclick={() => void bulkSetPinned(true)}>
-                <Pin class="h-3.5 w-3.5" />Pin selected
+            {#if canManageStorage}
+              <Button variant="ghost" size="sm" onclick={toggleAllLoadedArtifacts}>
+                {artifacts.every((artifact) => selectedArtifactIds.has(artifact.id)) && !selectAllMatching ? 'Clear selection' : 'Select loaded'}
               </Button>
-              <Button variant="secondary" size="sm" loading={bulkUpdating} onclick={() => void bulkSetPinned(false)}>
-                <PinOff class="h-3.5 w-3.5" />Unpin selected
-              </Button>
-              <Button variant="secondary" size="sm" loading={bulkUpdating} onclick={() => void bulkSetArchived(archiveFilter !== 'archived')}>
-                {#if archiveFilter === 'archived'}<ArchiveRestore class="h-3.5 w-3.5" />Restore selected{:else}<Archive class="h-3.5 w-3.5" />Archive selected{/if}
-              </Button>
-              <Button variant="ghost" size="sm" disabled={bulkUpdating} onclick={() => (selectedArtifactIds = new Set())}>Clear</Button>
+              {#if total > artifacts.length && total <= 5000 && !selectAllMatching}
+                <Button variant="ghost" size="sm" onclick={selectAllMatchingArtifacts}>Select all {total} matching</Button>
+              {/if}
+            {/if}
+            {#if selectAllMatching || selectedArtifactIds.size > 0}
+              <span class="text-muted text-xs" role="status" aria-live="polite">{selectAllMatching ? `${total} matching artifacts` : `${selectedArtifactIds.size} selected`}</span>
+              {#if !selectAllMatching && selectedArtifactIds.size > 0}
+                <span class="text-muted text-xs">{fmtSize(selectedArtifactBytes)} selected</span>
+                <Button variant="secondary" size="sm" loading={zipBusy} disabled={bulkUpdating} onclick={() => void downloadSelectedZip()}><Download class="h-3.5 w-3.5" />Download ZIP</Button>
+                {#if selectedArtifactIds.size === 2}<Button variant="secondary" size="sm" onclick={openArtifactComparison}>Compare IPA contents</Button>{/if}
+              {/if}
+              {#if canManageStorage}
+                <Button variant="secondary" size="sm" loading={bulkUpdating} onclick={() => void bulkSetPinned(true)}><Pin class="h-3.5 w-3.5" />Pin selected</Button>
+                <Button variant="secondary" size="sm" loading={bulkUpdating} onclick={() => void bulkSetPinned(false)}><PinOff class="h-3.5 w-3.5" />Unpin selected</Button>
+                <Button variant="secondary" size="sm" loading={bulkUpdating} onclick={() => void bulkSetArchived(archiveFilter !== 'archived')}>{#if archiveFilter === 'archived'}<ArchiveRestore class="h-3.5 w-3.5" />Restore selected{:else}<Archive class="h-3.5 w-3.5" />Archive selected{/if}</Button>
+              {/if}
+              <Button variant="ghost" size="sm" disabled={bulkUpdating || zipBusy} onclick={clearArtifactSelection}>Clear</Button>
             {/if}
           </div>
         {/if}
@@ -498,86 +578,38 @@
             <EmptyState message="No artifacts match this search." />
           {/if}
         {:else}
-          <VirtualizedList
-            items={artifacts}
-            itemKey={(artifact) => artifact.id}
-            estimateSize={estimateArtifactRowHeight}
-            overscan={4}
-            scrollMode="window"
-            label="IPA library artifacts"
-            class={homeViewModesState.value.artifacts === 'list' ? 'rounded-xl border border-border/70 divide-y divide-border' : 'space-y-2'}
-          >
-            {#snippet children(artifact: ArtifactRecord)}
-              <div class={homeViewModesState.value.artifacts === 'list' ? 'border-b border-border/70' : 'pb-1'}>
-                <article data-artifact-id={artifact.id} class={homeViewModesState.value.artifacts === 'list' ? 'grid gap-x-5 gap-y-2.5 px-3.5 py-3 first:pt-3 last:pb-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:px-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1.65fr)_auto] lg:items-center' : 'grid gap-x-4 gap-y-3 rounded-xl border border-border/70 bg-background/50 p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center'}>
-                  <div class="flex min-w-0 items-center gap-3">
-                    {#if canManageStorage}
-                      <input
-                        type="checkbox"
-                        class="accent-accent size-4 shrink-0 rounded border-border"
-                        checked={selectedArtifactIds.has(artifact.id)}
-                        disabled={bulkUpdating || (selectedArtifactIds.size >= 100 && !selectedArtifactIds.has(artifact.id))}
-                        onchange={(event) => toggleArtifactSelection(artifact.id, event.currentTarget.checked)}
-                        aria-label="Select {appDisplayName(artifact.bundleId)} {artifactVersion(artifact)}"
-                      />
-                    {/if}
-                    <AppIcon bundleId={artifact.bundleId} src={appIconUrl(artifact.bundleId)} label={appDisplayName(artifact.bundleId)} class="h-9 w-9" />
-                    <div class="min-w-0 flex-1">
-                      <div class="truncate text-[13px] font-semibold" title={appDisplayName(artifact.bundleId)}>{appDisplayName(artifact.bundleId)}</div>
-                      {#if artifact.pinnedAt}<div class="text-muted mt-0.5 text-[10px]">Pinned</div>{/if}
-                      <div class="text-muted mt-0.5 truncate font-mono text-[11px]" title={artifact.bundleId}>{artifact.bundleId}</div>
-                    </div>
-                  </div>
-                  <dl class="col-span-full grid min-w-0 grid-cols-3 gap-x-3 text-xs sm:col-span-2 sm:col-start-1 sm:row-start-2 lg:col-span-1 lg:col-start-2 lg:row-start-1">
-                    <div class="min-w-0">
-                      <dt class="text-muted text-[10px] font-semibold tracking-[0.08em] uppercase">Version</dt>
-                      <dd class="mt-0.5 truncate text-[13px] font-semibold" title={artifact.buildNumber ? `${artifact.versionLabel ?? ''} (${artifact.buildNumber})` : artifact.versionLabel}>{artifactVersion(artifact)}</dd>
-                    </div>
-                    <div class="min-w-0">
-                      <dt class="text-muted text-[10px] font-semibold tracking-[0.08em] uppercase">Source</dt>
-                      <dd class="mt-0.5"><Badge variant={artifact.channel === 'testflight' ? 'secondary' : 'default'}>{artifact.channel === 'testflight' ? 'TestFlight' : 'App Store'}</Badge></dd>
-                    </div>
-                    <div class="min-w-0">
-                      <dt class="text-muted text-[10px] font-semibold tracking-[0.08em] uppercase">Size</dt>
-                      <dd class="mt-0.5 text-[13px]">{fmtSize(artifact.fileSizeBytes)}</dd>
-                    </div>
-                  </dl>
-                  <div class="flex items-center justify-end gap-1 sm:col-start-2 sm:row-start-1 lg:col-start-3 lg:row-start-1">
-                    {#if canManageStorage}
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        class="h-8 w-8 shrink-0"
-                        disabled={updatingArtifactIds.includes(artifact.id)}
-                        onclick={() => void toggleArtifactPin(artifact)}
-                        aria-label={artifact.pinnedAt ? `Unpin ${artifact.bundleId}` : `Pin ${artifact.bundleId}`}
-                        title={artifact.pinnedAt ? 'Unpin artifact' : 'Keep artifact from automatic eviction'}
-                      >
-                        {#if artifact.pinnedAt}<PinOff class="h-4 w-4" />{:else}<Pin class="h-4 w-4" />{/if}
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        class="h-8 w-8 shrink-0"
-                        disabled={updatingArtifactIds.includes(artifact.id)}
-                        onclick={() => void toggleArtifactArchived(artifact)}
-                        aria-label={artifact.archivedAt ? `Restore ${artifact.bundleId}` : `Archive ${artifact.bundleId}`}
-                        title={artifact.archivedAt ? 'Restore to active library' : 'Hide from active library'}
-                      >
-                        {#if artifact.archivedAt}<ArchiveRestore class="h-4 w-4" />{:else}<Archive class="h-4 w-4" />{/if}
-                      </Button>
-                    {/if}
-                    <a href={artifact.fileUrl} download class="{buttonVariants('secondary', 'sm')} justify-center">
-                      <Download class="h-3.5 w-3.5" />Download
-                    </a>
-                  </div>
-                  <div class="col-span-full flex justify-start">
-                    <Button variant="ghost" size="sm" onclick={() => (artifactDetailJumpState.id = artifact.id)}><FileSearch class="h-3.5 w-3.5" />Artifact details</Button>
-                  </div>
-                </article>
-              </div>
-            {/snippet}
-          </VirtualizedList>
+          {#if artifactLibraryPreferencesState.groupByApp}
+            <div class="space-y-2">
+              {#each artifactGroups as group (group.bundleId)}
+                <details class="overflow-hidden rounded-xl border border-border/70" open={!collapsedArtifactGroups.has(group.bundleId)} ontoggle={(event) => {
+                  const next = new Set(collapsedArtifactGroups);
+                  if (event.currentTarget.open) next.delete(group.bundleId);
+                  else next.add(group.bundleId);
+                  collapsedArtifactGroups = next;
+                }}>
+                  <summary class="flex min-h-14 cursor-pointer list-none items-center gap-3 bg-panel/40 px-4 py-2.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring">
+                    <AppIcon bundleId={group.bundleId} src={appIconUrl(group.bundleId)} label={appDisplayName(group.bundleId)} class="h-8 w-8" />
+                    <span class="min-w-0 flex-1">
+                      <span class="block truncate text-sm font-semibold">{appDisplayName(group.bundleId)}</span>
+                      <span class="text-muted block truncate font-mono text-[11px]" data-sensitive="true">{group.bundleId}</span>
+                    </span>
+                    <Badge variant="secondary">{group.artifacts.length} {group.artifacts.length === 1 ? 'version' : 'versions'}</Badge>
+                  </summary>
+                  <VirtualizedList items={group.artifacts} itemKey={(artifact) => artifact.id} estimateSize={estimateArtifactRowHeight} overscan={4} scrollMode="window" label="Versions for {appDisplayName(group.bundleId)}" class={homeViewModesState.value.artifacts === 'list' ? 'divide-y divide-border' : 'space-y-2 p-2'}>
+                    {#snippet children(artifact: ArtifactRecord)}
+                      <ArtifactLibraryRow artifact={artifact} columns={artifactLibraryPreferencesState.columns} listView={homeViewModesState.value.artifacts === 'list'} {canManageStorage} canSelect={canDecrypt} selected={selectAllMatching || selectedArtifactIds.has(artifact.id)} selectionDisabled={bulkUpdating || selectAllMatching || (selectedArtifactIds.size >= 100 && !selectedArtifactIds.has(artifact.id))} updating={updatingArtifactIds.includes(artifact.id)} onSelection={(selected) => toggleArtifactSelection(artifact.id, selected)} onPin={() => void toggleArtifactPin(artifact)} onArchive={() => void toggleArtifactArchived(artifact)} onDetails={() => (artifactDetailJumpState.id = artifact.id)} />
+                    {/snippet}
+                  </VirtualizedList>
+                </details>
+              {/each}
+            </div>
+          {:else}
+            <VirtualizedList items={artifacts} itemKey={(artifact) => artifact.id} estimateSize={estimateArtifactRowHeight} overscan={4} scrollMode="window" label="IPA library artifacts" class={homeViewModesState.value.artifacts === 'list' ? 'rounded-xl border border-border/70 divide-y divide-border' : 'space-y-2'}>
+              {#snippet children(artifact: ArtifactRecord)}
+                <ArtifactLibraryRow artifact={artifact} columns={artifactLibraryPreferencesState.columns} listView={homeViewModesState.value.artifacts === 'list'} {canManageStorage} canSelect={canDecrypt} selected={selectAllMatching || selectedArtifactIds.has(artifact.id)} selectionDisabled={bulkUpdating || selectAllMatching || (selectedArtifactIds.size >= 100 && !selectedArtifactIds.has(artifact.id))} updating={updatingArtifactIds.includes(artifact.id)} onSelection={(selected) => toggleArtifactSelection(artifact.id, selected)} onPin={() => void toggleArtifactPin(artifact)} onArchive={() => void toggleArtifactArchived(artifact)} onDetails={() => (artifactDetailJumpState.id = artifact.id)} />
+              {/snippet}
+            </VirtualizedList>
+          {/if}
           {#if nextCursor}
             <div class="mt-3 flex justify-center">
               <Button variant="secondary" size="sm" loading={loadingMore} onclick={() => void loadMore()}>Load more ({Math.max(0, total - artifacts.length)} older)</Button>
@@ -586,5 +618,6 @@
         {/if}
       </div>
     </div>
-  </Card>
+</Card>
 {/if}
+<ArtifactCompareDialog bind:open={comparisonOpen} ids={comparisonIds} />

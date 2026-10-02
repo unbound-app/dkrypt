@@ -225,7 +225,7 @@
               <div class="flex flex-wrap gap-2">
                 {#each subscription.devices as device (device.deviceId)}
                   <div class="bg-secondary/50 flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs">
-                    <span class="text-foreground">{deviceNames.get(device.deviceId) ?? device.deviceId}</span>
+                    <span class="text-foreground" data-sensitive="true">{deviceNames.get(device.deviceId) ?? device.deviceId}</span>
                     <Badge variant={statusVariant(device.status)}>{statusLabel(device.status)}</Badge>
                   </div>
                 {/each}

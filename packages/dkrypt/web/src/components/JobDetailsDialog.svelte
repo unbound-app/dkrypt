@@ -8,6 +8,7 @@
   import { fmtSize, fmtTime } from '#lib/format.svelte';
   import { buttonVariants, statusToBadgeVariant } from '#lib/components/ui/variants';
   import { showToast } from '#lib/ui.svelte';
+  import { projectSelectionState } from '#lib/projectSelection.svelte';
 
   let { open = $bindable(), jobId, title }: { open: boolean; jobId: string; title: string } = $props();
   let timeline = $state<JobTimeline | null>(null);
@@ -32,6 +33,7 @@
   async function copyDeepLink(): Promise<void> {
     const url = new URL(location.href);
     url.searchParams.set('job', jobId);
+    url.searchParams.set('projectId', projectSelectionState.id);
     await navigator.clipboard.writeText(url.toString());
     showToast('Job link copied', 'success');
   }
@@ -47,7 +49,7 @@
       <div class="text-sm font-medium">{title}</div>
       <div class="mt-1 flex items-center gap-1.5 text-xs text-muted">
         <GitBranch class="h-3.5 w-3.5" />
-        Correlation {jobId}
+        Correlation <span data-sensitive="true">{timeline?.correlationId ?? jobId}</span>
       </div>
     </div>
     <div class="flex shrink-0 gap-1.5">
@@ -62,7 +64,7 @@
     <div class="border-border mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border p-3">
       <Badge variant={statusToBadgeVariant(timeline.status)}>{timeline.status}</Badge>
       {#if timeline.versionLabel}<span class="text-xs text-muted">{timeline.versionLabel}</span>{/if}
-      {#if timeline.deviceId}<span class="text-xs text-muted">Device: {timeline.deviceId}</span>{/if}
+      {#if timeline.deviceId}<span class="text-xs text-muted">Device: <span data-sensitive="true">{timeline.deviceId}</span></span>{/if}
       {#if timeline.sizeBytes}<span class="text-xs text-muted">{fmtSize(timeline.sizeBytes)}</span>{/if}
     </div>
     {#if timeline.warnings?.length}

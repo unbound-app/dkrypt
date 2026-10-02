@@ -1,9 +1,11 @@
 import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
 import type {
   DashboardJobBulkPreviewRoute,
+  DashboardJobAttemptDiffRoute,
   DashboardJobDiffRoute,
   DashboardJobHistoryExportRoute,
 } from '#dashboardJobContracts.js';
+import { dashboardJobAttemptDiffQuerySchema, dashboardJobAttemptDiffResponseSchema } from '#dashboardJobContracts.js';
 import { recordFastifyDashboardActivity } from '#dashboardActivity.js';
 import { canAccessProject } from '#dashboardJobPresentation.js';
 import { getRouteContract } from '#contracts.js';
@@ -99,6 +101,38 @@ function summarizeComparedJob(entry: JobHistoryEntry) {
     sizeBytes: entry.sizeBytes,
     finishedAt: entry.finishedAt,
     metadata: entry.ipaMetadata,
+  };
+}
+
+function sameBuild(first: JobHistoryEntry, second: JobHistoryEntry): boolean {
+  if (first.bundleId !== second.bundleId) return false;
+  if (first.testflight || second.testflight) {
+    const firstAppId = first.testflight?.appId;
+    const secondAppId = second.testflight?.appId;
+    const firstBuildId = first.testflight?.build.id;
+    const secondBuildId = second.testflight?.build.id;
+    return Boolean(firstAppId && secondAppId && firstBuildId && secondBuildId && firstAppId === secondAppId && firstBuildId === secondBuildId);
+  }
+  if (first.externalVersionId || second.externalVersionId) return Boolean(first.externalVersionId && second.externalVersionId && first.externalVersionId === second.externalVersionId);
+  return Boolean(first.versionLabel && second.versionLabel && first.versionLabel === second.versionLabel);
+}
+
+function summarizeAttempt(entry: JobHistoryEntry) {
+  return {
+    id: entry.id,
+    status: entry.status,
+    attempt: entry.attempt,
+    retryCount: entry.retryCount,
+    startedAt: entry.startedAt,
+    finishedAt: entry.finishedAt,
+    durationMs: entry.startedAt === undefined ? undefined : Math.max(0, entry.finishedAt - entry.startedAt),
+    deviceId: entry.deviceId,
+    transport: entry.transport,
+    cacheHit: entry.cacheHit,
+    deadlineExceeded: entry.deadlineExceeded,
+    error: entry.error,
+    warnings: entry.warnings,
+    artifactId: entry.artifactId,
   };
 }
 
@@ -209,6 +243,30 @@ export function createDashboardJobHistoryRoutes(overrides: Partial<DashboardJobH
         sizeDeltaBytes: (second.sizeBytes ?? 0) - (first.sizeBytes ?? 0),
         plistDiff,
       };
+    });
+
+    server.get<DashboardJobAttemptDiffRoute>('/v1/dashboard/jobs/attempt-diff', {
+      schema: { hide: true, querystring: dashboardJobAttemptDiffQuerySchema, response: { 200: dashboardJobAttemptDiffResponseSchema } },
+      preHandler: [canRequestDecrypt, limitJobDiff],
+    }, (request, reply) => {
+      const session = getFastifySession(request)!;
+      const projectId = request.query.projectId ?? DEFAULT_PROJECT_ID;
+      if (!resolveProjectId(services, session.sub, session.permissions, projectId, reply)) return createHttpErrorEnvelope(request.id, 404, 'project not found');
+      const first = services.getJobHistoryEntryById(request.query.a);
+      const second = services.getJobHistoryEntryById(request.query.b);
+      if (!first || !second || (first.projectId ?? DEFAULT_PROJECT_ID) !== projectId || (second.projectId ?? DEFAULT_PROJECT_ID) !== projectId) {
+        reply.code(404);
+        return createHttpErrorEnvelope(request.id, 404, 'one or both job attempts were not found');
+      }
+      if (!sameBuild(first, second)) {
+        reply.code(400);
+        return createHttpErrorEnvelope(request.id, 400, 'job attempts must belong to the same app build');
+      }
+      const a = summarizeAttempt(first);
+      const b = summarizeAttempt(second);
+      const fields = ['status', 'attempt', 'retryCount', 'durationMs', 'deviceId', 'transport', 'cacheHit', 'deadlineExceeded', 'error', 'warnings', 'artifactId'] as const;
+      const changedFields = fields.filter((field) => JSON.stringify(a[field]) !== JSON.stringify(b[field]));
+      return { a, b, durationDeltaMs: (b.durationMs ?? 0) - (a.durationMs ?? 0), changedFields: [...changedFields] };
     });
   };
 }

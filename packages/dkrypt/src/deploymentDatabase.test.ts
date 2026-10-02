@@ -19,11 +19,14 @@ function rewindToSchemaVersion16(database: ReturnType<typeof openStateDatabase>)
     DROP TABLE billing_charges;
     DROP TABLE billing_entitlement_history;
     DROP TABLE backup_schedule;
+    DROP INDEX diagnostic_reports_by_user_time;
+    DROP INDEX diagnostic_reports_by_expiry;
+    DROP TABLE diagnostic_reports;
     ALTER TABLE billing_events DROP COLUMN provider;
     ALTER TABLE billing_events DROP COLUMN event_id;
     ALTER TABLE billing_events DROP COLUMN occurred_at;
     ALTER TABLE billing_events DROP COLUMN processed_at;
-    DELETE FROM schema_migrations WHERE version IN (17, 18, 19, 20, 21);
+    DELETE FROM schema_migrations WHERE version IN (17, 18, 19, 20, 21, 22);
   `);
 }
 

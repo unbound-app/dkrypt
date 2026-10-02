@@ -38,6 +38,7 @@ export const PermissionFlag = {
   manageBilling: 1n << 37n,
   viewProjects: 1n << 38n,
   manageProjects: 1n << 39n,
+  viewDiagnosticReports: 1n << 40n,
 } as const;
 
 export type PermissionFlagKey = keyof typeof PermissionFlag;
@@ -89,6 +90,7 @@ export const PERMISSION_META = [
   { key: 'manageBilling', label: 'Manage billing setup', description: 'View billing subscriptions and provider readiness, including operational billing configuration checks.', group: 'General' },
   { key: 'viewProjects', label: 'View all projects', description: 'View every project, its membership, and its usage limits. Members can always see projects they belong to.', group: 'Projects' },
   { key: 'manageProjects', label: 'Manage projects', description: 'Create and archive projects, assign members, and configure project quotas.', group: 'Projects' },
+  { key: 'viewDiagnosticReports', label: 'View diagnostic reports', description: 'Read user-submitted redacted support reports and their project context.', group: 'General' },
   { key: 'requestApiKeys', label: 'Request API keys', description: 'Submit a personal API-key request for approval. Requested keys remain unusable until someone with Manage API keys approves them.', group: 'API Keys' },
   { key: 'createApiKeys', label: 'Create API keys', description: 'Create, reveal, regenerate, revoke, and use personal API keys immediately. This bypasses the approval queue only for the account’s own keys.', group: 'API Keys' },
   { key: 'viewApiKeys', label: 'View API keys', description: 'Read every API key, including its owner, status, usage, and configuration. Key secrets are never exposed by this permission.', group: 'API Keys' },

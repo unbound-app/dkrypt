@@ -372,6 +372,7 @@ test('dashboard role endpoints are not registered through the legacy adapter', (
   const routes = dashboardRouter.routes.map((route) => `${route.method} ${route.path}`);
   expect(routes).not.toContain('GET /v1/dashboard/roles');
   expect(routes).not.toContain('POST /v1/dashboard/roles');
+  expect(routes).not.toContain('POST /v1/dashboard/roles/:id/impact-preview');
   expect(routes).not.toContain('PATCH /v1/dashboard/roles/:id');
   expect(routes).not.toContain('DELETE /v1/dashboard/roles/:id');
   expect(routes).not.toContain('POST /v1/dashboard/roles/reorder');
@@ -415,6 +416,23 @@ test('native role routes preserve management gates and default-role protections'
     });
     expect(created.statusCode).toBe(201);
     roleId = created.json().id;
+
+    const deniedImpactPreview = await server.inject({
+      method: 'POST',
+      url: `/v1/dashboard/roles/${roleId}/impact-preview`,
+      headers: { cookie: decryptOnlyCookie },
+      payload: { permissions: serializeBits(PermissionFlag.viewLogs) },
+    });
+    expect(deniedImpactPreview.statusCode).toBe(403);
+
+    const impactPreview = await server.inject({
+      method: 'POST',
+      url: `/v1/dashboard/roles/${roleId}/impact-preview`,
+      headers: { cookie: administratorCookie },
+      payload: { permissions: serializeBits(PermissionFlag.viewLogs) },
+    });
+    expect(impactPreview.statusCode).toBe(200);
+    expect(impactPreview.json()).toMatchObject({ affectedCount: 0, members: [], truncated: false });
 
     const updated = await server.inject({
       method: 'PATCH',
@@ -1577,6 +1595,12 @@ test('dashboard account and notification routes validate requests and preserve s
       homeLayouts: [{ id: 'default', name: 'Default', order: ['artifacts', 'activeJobs', 'jobHistory'], hidden: [], collapsed: [] }],
       viewModes: { artifacts: 'list', jobHistory: 'cards', devices: 'cards' },
       settingsMode: 'basic',
+      displayTimeZone: 'system',
+      appFavorites: [],
+      navigationOrder: ['home', 'billing', 'keys', 'logs', 'insights', 'docs', 'settings'],
+      pinnedNavigation: [],
+      artifactLibrary: { groupByApp: false, columns: ['app', 'bundleId', 'version', 'source', 'size'] },
+      largeTargets: false,
     });
 
     const emailTest = await server.inject({ method: 'POST', url: '/v1/dashboard/email/test', headers: { cookie } });
@@ -1612,6 +1636,12 @@ test('dashboard account and notification routes validate requests and preserve s
         activeHomeLayoutId: 'work',
         viewModes: { artifacts: 'cards', devices: 'cards' },
         settingsMode: 'advanced',
+        displayTimeZone: 'Europe/Berlin',
+        appFavorites: [{ bundleId: 'com.example.app', trackName: 'Example App' }],
+        navigationOrder: ['home', 'logs', 'settings', 'keys', 'insights', 'docs', 'billing'],
+        pinnedNavigation: ['home', 'logs'],
+        artifactLibrary: { groupByApp: true, columns: ['app', 'version', 'source', 'size'] },
+        largeTargets: true,
       },
     });
     expect(updatedPrefs.statusCode).toBe(200);
@@ -1627,6 +1657,12 @@ test('dashboard account and notification routes validate requests and preserve s
       activeHomeLayoutId: 'work',
       viewModes: { artifacts: 'cards', jobHistory: 'cards', devices: 'cards' },
       settingsMode: 'advanced',
+      displayTimeZone: 'Europe/Berlin',
+      appFavorites: [{ bundleId: 'com.example.app', trackName: 'Example App' }],
+      navigationOrder: ['home', 'logs', 'settings', 'keys', 'insights', 'docs', 'billing'],
+      pinnedNavigation: ['home', 'logs'],
+      artifactLibrary: { groupByApp: true, columns: ['app', 'version', 'source', 'size'] },
+      largeTargets: true,
     });
 
     const prefs = await server.inject({ method: 'GET', url: '/v1/dashboard/me/prefs', headers: { cookie } });
@@ -1641,6 +1677,12 @@ test('dashboard account and notification routes validate requests and preserve s
       activeHomeLayoutId: 'work',
       viewModes: { artifacts: 'cards', devices: 'cards' },
       settingsMode: 'advanced',
+      displayTimeZone: 'Europe/Berlin',
+      appFavorites: [{ bundleId: 'com.example.app', trackName: 'Example App' }],
+      navigationOrder: ['home', 'logs', 'settings', 'keys', 'insights', 'docs', 'billing'],
+      pinnedNavigation: ['home', 'logs'],
+      artifactLibrary: { groupByApp: true, columns: ['app', 'version', 'source', 'size'] },
+      largeTargets: true,
     });
 
     const invalidLayout = await server.inject({
@@ -1658,7 +1700,23 @@ test('dashboard account and notification routes validate requests and preserve s
       url: '/v1/dashboard/me/prefs',
       headers: { cookie: createSessionCookie(otherUserId, 0n) },
     });
-    expect(otherUserPrefs.json()).toMatchObject({ activeHomeLayoutId: 'default', settingsMode: 'basic', density: 'comfortable' });
+    expect(otherUserPrefs.json()).toMatchObject({
+      activeHomeLayoutId: 'default',
+      settingsMode: 'basic',
+      density: 'comfortable',
+      displayTimeZone: 'system',
+      appFavorites: [],
+      navigationOrder: ['home', 'billing', 'keys', 'logs', 'insights', 'docs', 'settings'],
+      pinnedNavigation: [],
+      artifactLibrary: { groupByApp: false, columns: ['app', 'bundleId', 'version', 'source', 'size'] },
+      largeTargets: false,
+    });
+
+    const invalidTimeZone = await server.inject({ method: 'PUT', url: '/v1/dashboard/me/prefs', headers: { cookie }, payload: { displayTimeZone: 'Not/A_Time_Zone' } });
+    expect(invalidTimeZone.statusCode).toBe(400);
+
+    const invalidNavigation = await server.inject({ method: 'PUT', url: '/v1/dashboard/me/prefs', headers: { cookie }, payload: { pinnedNavigation: ['not-a-tab'] } });
+    expect(invalidNavigation.statusCode).toBe(400);
 
     const invalidSubscription = await server.inject({
       method: 'POST',

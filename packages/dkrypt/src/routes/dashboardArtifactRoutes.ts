@@ -1,7 +1,7 @@
 import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
 import { ErrorEnvelope } from '#contracts.js';
-import type { DashboardArtifactArchiveRoute, DashboardArtifactBulkArchiveRoute, DashboardArtifactBulkPinRoute, DashboardArtifactDetailRoute, DashboardArtifactFileRoute, DashboardArtifactListRoute, DashboardArtifactPinRoute, DashboardArtifactUndoRoute } from '#dashboardArtifactContracts.js';
-import { dashboardArtifactDetailQuerySchema, dashboardArtifactParamsSchema, dashboardArtifactResponseSchema, dashboardArtifactUndoBodySchema, dashboardArtifactUndoResponseSchema } from '#dashboardArtifactContracts.js';
+import type { DashboardArtifactArchiveRoute, DashboardArtifactBulkArchiveRoute, DashboardArtifactBulkPinRoute, DashboardArtifactBulkQueryArchiveRoute, DashboardArtifactBulkQueryPinRoute, DashboardArtifactCompareRoute, DashboardArtifactDetailRoute, DashboardArtifactFileRoute, DashboardArtifactListRoute, DashboardArtifactPinRoute, DashboardArtifactUndoRoute } from '#dashboardArtifactContracts.js';
+import { dashboardArtifactBulkArchiveResponseSchema, dashboardArtifactBulkPinResponseSchema, dashboardArtifactBulkQueryArchiveBodySchema, dashboardArtifactBulkQueryPinBodySchema, dashboardArtifactCompareBodySchema, dashboardArtifactCompareResponseSchema, dashboardArtifactDetailQuerySchema, dashboardArtifactParamsSchema, dashboardArtifactResponseSchema, dashboardArtifactUndoBodySchema, dashboardArtifactUndoResponseSchema, dashboardArtifactZipBodySchema } from '#dashboardArtifactContracts.js';
 import { artifactDownloadName, artifactFileAvailable, getArtifactById, listArtifacts, setArtifactArchived, setArtifactPinned, setArtifactsArchived, setArtifactsPinned, touchArtifact, undoArtifactStateChanges } from '#artifacts.js';
 import { recordFastifyDashboardActivity } from '#dashboardActivity.js';
 import { canAccessProject } from '#dashboardJobPresentation.js';
@@ -12,6 +12,9 @@ import { fastifyRequirePermission, fastifyRequireSession, getFastifySession } fr
 import { DEFAULT_PROJECT_ID, recordAudit } from '#store/state.js';
 import { Response } from '#http.js';
 import { createHttpErrorEnvelope } from '#util/httpResponse.js';
+import { streamArtifactZip } from '#artifactZip.js';
+import type { ArtifactRecord } from '#artifactTypes.js';
+import { compareIpaStructures, readIpaStructure } from '#ipaStructure.js';
 
 interface DashboardArtifactServices {
   artifactDownloadName: typeof artifactDownloadName;
@@ -48,6 +51,33 @@ const canManageStorage = fastifyRequirePermission(PermissionFlag.manageAutomatio
 
 export function createDashboardArtifactRoutes(overrides: Partial<DashboardArtifactServices> = {}): FastifyPluginAsyncTypebox {
   const services = { ...defaultServices, ...overrides };
+  const resolveMatchingArtifacts = (filter: { projectId: string; q?: string; channel?: 'appstore' | 'testflight'; archived: boolean }, session: NonNullable<ReturnType<typeof getFastifySession>>) => {
+    if (!services.canAccessProject(session.sub, session.permissions, filter.projectId)) return { status: 'not-found' as const, artifacts: [] as ArtifactRecord[] };
+    const artifacts: ArtifactRecord[] = [];
+    const seen = new Set<string>();
+    let cursor: string | undefined;
+    for (let pageNumber = 0; pageNumber < 26; pageNumber += 1) {
+      const page = services.listArtifacts({
+        limit: 200,
+        cursor,
+        query: filter.q,
+        channel: filter.channel,
+        archived: filter.archived,
+        projectIds: [filter.projectId],
+      });
+      for (const artifact of page.artifacts) {
+        if (!seen.has(artifact.id) && artifact.projectIds.includes(filter.projectId) && services.artifactFileAvailable(artifact)) {
+          artifacts.push(artifact);
+          seen.add(artifact.id);
+        }
+      }
+      if (artifacts.length > 5000) return { status: 'too-many' as const, artifacts };
+      if (!page.nextCursor) return { status: 'ok' as const, artifacts };
+      if (page.nextCursor === cursor) return { status: 'too-many' as const, artifacts };
+      cursor = page.nextCursor;
+    }
+    return { status: 'too-many' as const, artifacts };
+  };
 
   return async (server) => {
     server.addHook('preHandler', fastifyRequireSession);
@@ -189,6 +219,50 @@ export function createDashboardArtifactRoutes(overrides: Partial<DashboardArtifa
       };
     });
 
+    server.post<DashboardArtifactBulkQueryPinRoute>('/v1/dashboard/artifacts/bulk-pin-query', {
+      schema: { hide: true, body: dashboardArtifactBulkQueryPinBodySchema, response: { 200: dashboardArtifactBulkPinResponseSchema, 404: ErrorEnvelope } },
+      preHandler: canManageStorage,
+    }, async (request, reply) => {
+      const session = getFastifySession(request)!;
+      const resolved = resolveMatchingArtifacts(request.body.filter, session);
+      if (resolved.status === 'not-found') return reply.code(404).send(createHttpErrorEnvelope(request.id, 404, 'project not found'));
+      if (resolved.status === 'too-many') return reply.code(413).send(createHttpErrorEnvelope(request.id, 413, 'select a narrower filter; query-wide actions are limited to 5,000 artifacts'));
+      const ids = resolved.artifacts.map((artifact) => artifact.id);
+      const result = await services.setArtifactsPinned(ids, request.body.pinned);
+      if (result.missingIds.length > 0) return reply.code(404).send(createHttpErrorEnvelope(request.id, 404, 'one or more artifacts were not found'));
+      const updatedArtifacts = result.artifacts.map((artifact) => ({
+          artifactId: artifact.id,
+          pinned: artifact.pinnedAt !== undefined,
+          pinnedAt: artifact.pinnedAt === undefined ? undefined : new Date(artifact.pinnedAt).toISOString(),
+          pinnedStateChangedAt: artifact.pinnedStateChangedAt,
+          previousPinnedAt: result.previousPinnedAtById[artifact.id],
+        }));
+      if (result.changedIds.length > 0) services.recordAudit(session.sub, request.body.pinned ? 'artifact.pin' : 'artifact.unpin', `query:${request.body.filter.projectId}`, `${result.changedIds.length} artifacts`);
+      return { ok: true, pinned: request.body.pinned, changedIds: result.changedIds, artifacts: updatedArtifacts };
+    });
+
+    server.post<DashboardArtifactBulkQueryArchiveRoute>('/v1/dashboard/artifacts/bulk-archive-query', {
+      schema: { hide: true, body: dashboardArtifactBulkQueryArchiveBodySchema, response: { 200: dashboardArtifactBulkArchiveResponseSchema, 404: ErrorEnvelope } },
+      preHandler: canManageStorage,
+    }, async (request, reply) => {
+      const session = getFastifySession(request)!;
+      const resolved = resolveMatchingArtifacts(request.body.filter, session);
+      if (resolved.status === 'not-found') return reply.code(404).send(createHttpErrorEnvelope(request.id, 404, 'project not found'));
+      if (resolved.status === 'too-many') return reply.code(413).send(createHttpErrorEnvelope(request.id, 413, 'select a narrower filter; query-wide actions are limited to 5,000 artifacts'));
+      const ids = resolved.artifacts.map((artifact) => artifact.id);
+      const result = await services.setArtifactsArchived(ids, request.body.archived);
+      if (result.missingIds.length > 0) return reply.code(404).send(createHttpErrorEnvelope(request.id, 404, 'one or more artifacts were not found'));
+      const updatedArtifacts = result.artifacts.map((artifact) => ({
+          artifactId: artifact.id,
+          archived: artifact.archivedAt !== undefined,
+          archivedAt: artifact.archivedAt === undefined ? undefined : new Date(artifact.archivedAt).toISOString(),
+          archivedStateChangedAt: artifact.archivedStateChangedAt,
+          previousArchivedAt: result.previousArchivedAtById[artifact.id],
+        }));
+      if (result.changedIds.length > 0) services.recordAudit(session.sub, request.body.archived ? 'artifact.archive' : 'artifact.restore', `query:${request.body.filter.projectId}`, `${result.changedIds.length} artifacts`);
+      return { ok: true, archived: request.body.archived, changedIds: result.changedIds, artifacts: updatedArtifacts };
+    });
+
     server.put<DashboardArtifactPinRoute>('/v1/dashboard/artifacts/:id/pin', {
       schema: getRouteContract('PUT', '/v1/dashboard/artifacts/:id/pin'),
       preHandler: canManageStorage,
@@ -294,6 +368,74 @@ export function createDashboardArtifactRoutes(overrides: Partial<DashboardArtifa
       await services.touchArtifact(artifact);
       await streamFilePath(artifact.filePath, request.raw, new Response(reply), services.artifactDownloadName(artifact), artifact.fileSizeBytes, artifact.id);
       return;
+    });
+
+    server.post<{ Body: { ids: string[] } }>('/v1/dashboard/artifacts/export.zip', {
+      schema: { hide: true, body: dashboardArtifactZipBodySchema },
+      preHandler: canRequestDecrypt,
+    }, async (request, reply) => {
+      const session = getFastifySession(request)!;
+      const artifacts = request.body.ids.map((id) => services.getArtifactById(id));
+      const allowed = artifacts.every((artifact) => artifact
+        && services.artifactFileAvailable(artifact)
+        && artifact.projectIds.some((projectId) => services.canAccessProject(session.sub, session.permissions, projectId)));
+      if (!allowed) return reply.code(404).send(createHttpErrorEnvelope(request.id, 404, 'one or more artifacts were not found'));
+      const entries = artifacts.map((artifact) => ({
+        path: artifact!.filePath,
+        name: services.artifactDownloadName(artifact!),
+        size: artifact!.fileSizeBytes,
+      }));
+      const uniqueNames = new Set<string>();
+      for (const entry of entries) {
+        const filename = entry.name.replace(/[\\/\0]/g, '_');
+        if (uniqueNames.has(filename)) return reply.code(400).send(createHttpErrorEnvelope(request.id, 400, 'selected artifact filenames must be unique'));
+        uniqueNames.add(filename);
+      }
+      for (const artifact of artifacts) await services.touchArtifact(artifact!);
+      reply.type('application/zip').header('Content-Disposition', 'attachment; filename="dkrypt-artifacts.zip"');
+      return reply.send(streamArtifactZip(entries));
+    });
+
+    server.post<DashboardArtifactCompareRoute>('/v1/dashboard/artifacts/compare', {
+      schema: { hide: true, body: dashboardArtifactCompareBodySchema, response: { 200: dashboardArtifactCompareResponseSchema, 400: ErrorEnvelope, 404: ErrorEnvelope } },
+      preHandler: canRequestDecrypt,
+    }, (request, reply) => {
+      const session = getFastifySession(request)!;
+      const { projectId } = request.body;
+      if (!services.canAccessProject(session.sub, session.permissions, projectId)) {
+        reply.code(404);
+        return createHttpErrorEnvelope(request.id, 404, 'project not found');
+      }
+      const beforeArtifact = services.getArtifactById(request.body.ids[0]!);
+      const afterArtifact = services.getArtifactById(request.body.ids[1]!);
+      const artifacts = [beforeArtifact, afterArtifact];
+      if (artifacts.some((artifact) => !artifact || !artifact.projectIds.includes(projectId) || !services.artifactFileAvailable(artifact))) {
+        reply.code(404);
+        return createHttpErrorEnvelope(request.id, 404, 'one or both artifacts were not found');
+      }
+      if (beforeArtifact!.bundleId !== afterArtifact!.bundleId) {
+        reply.code(400);
+        return createHttpErrorEnvelope(request.id, 400, 'artifacts must belong to the same app');
+      }
+      try {
+        const diff = compareIpaStructures(readIpaStructure(beforeArtifact!.filePath), readIpaStructure(afterArtifact!.filePath));
+        const added = diff.added.map((entry) => entry.path);
+        const removed = diff.removed.map((entry) => entry.path);
+        const changed = diff.changed.map((entry) => ({ path: entry.path, beforeBytes: entry.before.uncompressedSize, afterBytes: entry.after.uncompressedSize }));
+        return {
+          before: { id: beforeArtifact!.id, bundleId: beforeArtifact!.bundleId, versionLabel: beforeArtifact!.versionLabel, fileSizeBytes: beforeArtifact!.fileSizeBytes },
+          after: { id: afterArtifact!.id, bundleId: afterArtifact!.bundleId, versionLabel: afterArtifact!.versionLabel, fileSizeBytes: afterArtifact!.fileSizeBytes },
+          counts: diff.counts,
+          added: added.slice(0, 200),
+          removed: removed.slice(0, 200),
+          changed: changed.slice(0, 200),
+          truncated: diff.counts.added + diff.counts.removed + diff.counts.changed > added.length + removed.length + changed.length,
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'IPA structure could not be read';
+        reply.code(400);
+        return createHttpErrorEnvelope(request.id, 400, message);
+      }
     });
   };
 }

@@ -79,18 +79,21 @@ function projectMatches(projectId: string, recordProjectId: string | undefined):
   return (recordProjectId ?? DEFAULT_PROJECT_ID) === projectId;
 }
 
-function visibleSettings(permissions: QuickSearchPermissions): Array<{ id: string; title: string; any: bigint[]; all?: bigint[] }> {
+function visibleSettings(permissions: QuickSearchPermissions): Array<{ id: string; title: string; keywords: string; any: bigint[]; all?: bigint[] }> {
   return [
-    { id: 'scheduler', title: 'Automation', any: [PermissionFlag.viewAutomation, PermissionFlag.manageAutomation] },
-    { id: 'storage', title: 'Storage', any: [PermissionFlag.manageAutomation], all: [PermissionFlag.requestDecrypt] },
-    { id: 'devices', title: 'Devices', any: [PermissionFlag.viewDevices, PermissionFlag.manageDevices] },
-    { id: 'doctor', title: 'System', any: [PermissionFlag.manageDevices] },
-    { id: 'users', title: 'Users', any: [PermissionFlag.viewUsers, PermissionFlag.manageUsers] },
-    { id: 'roles', title: 'Roles', any: [PermissionFlag.viewRoles, PermissionFlag.manageRoles] },
-    { id: 'projects', title: 'Projects', any: [PermissionFlag.viewProjects, PermissionFlag.manageProjects] },
-    { id: 'backup', title: 'Backup', any: [PermissionFlag.viewBackup, PermissionFlag.manageBackup] },
-    { id: 'testflight', title: 'TestFlight', any: [PermissionFlag.manageTestFlightSubscriptions] },
-  ].filter((section) => section.any.some((permission) => hasPermission(permissions, permission)) && (section.all ?? []).every((permission) => hasPermission(permissions, permission)));
+    { id: 'personalization', title: 'Personalization', keywords: 'timezone time zone touch targets navigation favorites artifact columns appearance density', any: [] },
+    { id: 'scheduler', title: 'Automation', keywords: 'watch schedule cron github webhook testflight', any: [PermissionFlag.viewAutomation, PermissionFlag.manageAutomation] },
+    { id: 'storage', title: 'Storage', keywords: 'artifact retention quota cleanup prune', any: [PermissionFlag.manageAutomation], all: [PermissionFlag.requestDecrypt] },
+    { id: 'devices', title: 'Devices', keywords: 'usb wifi pairing health setup', any: [PermissionFlag.viewDevices, PermissionFlag.manageDevices] },
+    { id: 'doctor', title: 'System', keywords: 'diagnostics health configuration', any: [PermissionFlag.manageDevices] },
+    { id: 'users', title: 'Users', keywords: 'members accounts access', any: [PermissionFlag.viewUsers, PermissionFlag.manageUsers] },
+    { id: 'roles', title: 'Roles', keywords: 'permissions access', any: [PermissionFlag.viewRoles, PermissionFlag.manageRoles] },
+    { id: 'projects', title: 'Projects', keywords: 'scope members', any: [PermissionFlag.viewProjects, PermissionFlag.manageProjects] },
+    { id: 'backup', title: 'Backup', keywords: 'restore export', any: [PermissionFlag.viewBackup, PermissionFlag.manageBackup] },
+    { id: 'testflight', title: 'TestFlight', keywords: 'subscriptions invites', any: [PermissionFlag.manageTestFlightSubscriptions] },
+    { id: 'billing', title: 'Billing', keywords: 'subscription payment stripe crypto', any: [PermissionFlag.viewBilling, PermissionFlag.manageBilling] },
+    { id: 'reports', title: 'Support reports', keywords: 'support diagnostics reports issue', any: [PermissionFlag.viewDiagnosticReports] },
+  ].filter((section) => (section.any.length === 0 || section.any.some((permission) => hasPermission(permissions, permission))) && (section.all ?? []).every((permission) => hasPermission(permissions, permission)));
 }
 
 function jobResult(entry: JobHistoryEntry, catalog: Map<string, AppCatalogEntry>, project: ProjectRecord | undefined): QuickSearchResult {
@@ -200,7 +203,7 @@ export function createDashboardQuickSearchRoutes(overrides: Partial<QuickSearchS
       }
 
       const settings = visibleSettings(session.permissions)
-        .filter((section) => matches(query, [section.title, section.id]))
+        .filter((section) => matches(query, [section.title, section.id, section.keywords]))
         .map((section) => ({ kind: 'settings' as const, id: section.id, title: section.title, subtitle: 'Settings' }));
       append(settings);
       const kinds: QuickSearchResult['kind'][] = ['app', 'job', 'artifact', 'device', 'watch', 'user', 'settings'];

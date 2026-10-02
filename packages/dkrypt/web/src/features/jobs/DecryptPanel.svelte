@@ -40,7 +40,7 @@
 	import { liveState } from "#lib/live.svelte";
 	import { requestNotificationPermission } from "#lib/notifications";
 	import { PermissionFlag } from "#lib/permissions";
-	import { sessionHasPermission, sessionState } from "#lib/session.svelte";
+	import { pushAppFavoritesPref, sessionHasPermission, sessionState } from "#lib/session.svelte";
 	import {
 		formatSearchResultMeta,
 		shouldShowSearchResultStatus,
@@ -317,6 +317,16 @@
 		highlighted = -1;
 	}
 
+	function updateStarredApp(app: AppStoreSearchResult): void {
+		toggleStarredApp(app);
+		void pushAppFavoritesPref(starredAppsState.items);
+	}
+
+	function removeStarredApp(bundleId: string): void {
+		starredAppsState.items = starredAppsState.items.filter((favorite) => favorite.bundleId !== bundleId);
+		void pushAppFavoritesPref(starredAppsState.items);
+	}
+
 	function testFlightShortcut(app: TestFlightCatalogApp): AppStoreSearchResult {
 		return {
 			bundleId: app.bundleId,
@@ -459,7 +469,7 @@
 						variant="link"
 						size="sm"
 						class="h-auto max-w-42 justify-start truncate p-0 text-xs text-muted"
-						onclick={() => showStarredApp(app)}
+						onclick={() => pickRecent(app.bundleId)}
 						title={app.bundleId}
 						>{appDisplayName(app.bundleId, app.trackName)}</Button
 					>
@@ -467,7 +477,7 @@
 						variant="ghost"
 						size="icon"
 						class="text-warn hover:text-destructive h-6 w-6 rounded-full p-0"
-						onclick={() => toggleStarredApp(app)}
+						onclick={() => removeStarredApp(app.bundleId)}
 						aria-label="Unstar {app.trackName}"
 						title="Unstar"
 					>
@@ -627,7 +637,7 @@
 											? "text-warn"
 											: "text-muted hover:text-text",
 									)}
-									onclick={() => toggleStarredApp(r)}
+									onclick={() => updateStarredApp(r)}
 									aria-label={isStarredBundleId(r.bundleId)
 										? `Unstar ${r.bundleId}`
 										: `Star ${r.bundleId}`}
@@ -737,7 +747,7 @@
 									? "text-warn"
 									: "text-muted hover:text-text",
 							)}
-							onclick={() => toggleStarredApp(r)}
+			onclick={() => updateStarredApp(r)}
 							aria-label={isStarredBundleId(r.bundleId)
 								? `Unstar ${r.bundleId}`
 								: `Star ${r.bundleId}`}

@@ -10,6 +10,9 @@ import { fastifyRequireSession, getFastifySession } from '#session.js';
 import { addPushSubscription, getUserPrefs, removePushSubscription, updateUserPrefs, type HomeLayoutPreference, type HomeModuleId, type UserPrefs } from '#store/state.js';
 
 const homeModuleIds: HomeModuleId[] = ['artifacts', 'activeJobs', 'jobHistory'];
+const navigationIds = ['home', 'billing', 'keys', 'logs', 'insights', 'docs', 'settings'] as const;
+const artifactColumnIds = ['app', 'bundleId', 'version', 'source', 'size', 'created'] as const;
+const defaultArtifactLibrary = { groupByApp: false, columns: ['app', 'bundleId', 'version', 'source', 'size'] as const };
 const defaultHomeLayout: HomeLayoutPreference = {
   id: 'default',
   name: 'Default',
@@ -25,6 +28,12 @@ function normalizedPrefs(prefs: UserPrefs): UserPrefs {
     activeHomeLayoutId: defaultHomeLayout.id,
     viewModes: { artifacts: 'list', jobHistory: 'cards', devices: 'cards' },
     settingsMode: 'basic',
+    displayTimeZone: 'system',
+    appFavorites: [],
+    navigationOrder: [...navigationIds],
+    pinnedNavigation: [],
+    artifactLibrary: { ...defaultArtifactLibrary, columns: [...defaultArtifactLibrary.columns] },
+    largeTargets: false,
   };
   const homeLayouts = prefs.homeLayouts ?? [defaultHomeLayout];
   const activeHomeLayoutId = homeLayouts.some((layout) => layout.id === prefs.activeHomeLayoutId)
@@ -36,6 +45,10 @@ function normalizedPrefs(prefs: UserPrefs): UserPrefs {
     homeLayouts,
     activeHomeLayoutId,
     viewModes: { artifacts: 'list', jobHistory: 'cards', devices: 'cards', ...prefs.viewModes },
+    appFavorites: prefs.appFavorites ?? [],
+    navigationOrder: prefs.navigationOrder ?? [...navigationIds],
+    pinnedNavigation: prefs.pinnedNavigation ?? [],
+    artifactLibrary: { ...defaultArtifactLibrary, ...prefs.artifactLibrary, columns: prefs.artifactLibrary?.columns ?? [...defaultArtifactLibrary.columns] },
   };
 }
 
@@ -52,6 +65,29 @@ function validHomeLayouts(layouts: HomeLayoutPreference[]): boolean {
     if (layout.hidden.some((moduleId) => layout.collapsed.includes(moduleId))) return false;
   }
   return true;
+}
+
+function validDisplayTimeZone(value: string): boolean {
+  if (value === 'system') return true;
+  try {
+    new Intl.DateTimeFormat('en', { timeZone: value }).format(0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function validNavigationPreferences(order: string[], pinned: string[]): boolean {
+  return order.length === navigationIds.length
+    && new Set(order).size === navigationIds.length
+    && navigationIds.every((id) => order.includes(id))
+    && new Set(pinned).size === pinned.length
+    && pinned.every((id) => order.includes(id));
+}
+
+function validArtifactLibraryPreferences(value: UserPrefs['artifactLibrary']): boolean {
+  if (!value || value.columns.length === 0 || value.columns.length > artifactColumnIds.length) return false;
+  return new Set(value.columns).size === value.columns.length && value.columns.every((id) => artifactColumnIds.includes(id));
 }
 
 export const dashboardAccountRoutes: FastifyPluginAsyncTypebox = async (server) => {
@@ -107,6 +143,21 @@ export const dashboardAccountRoutes: FastifyPluginAsyncTypebox = async (server) 
     if (body.activeHomeLayoutId) patch.activeHomeLayoutId = body.activeHomeLayoutId;
     if (body.viewModes) patch.viewModes = { ...normalizedPrefs(getUserPrefs(getFastifySession(request)!.sub)).viewModes, ...body.viewModes };
     if (body.settingsMode) patch.settingsMode = body.settingsMode;
+    if (body.displayTimeZone) patch.displayTimeZone = body.displayTimeZone;
+    if (body.appFavorites) {
+      const seenBundleIds = new Set<string>();
+      const favorites = body.appFavorites.filter((favorite) => {
+        const bundleId = favorite.bundleId.trim();
+        if (!bundleId || seenBundleIds.has(bundleId.toLowerCase())) return false;
+        seenBundleIds.add(bundleId.toLowerCase());
+        return true;
+      }).map((favorite) => ({ bundleId: favorite.bundleId.trim(), trackName: favorite.trackName.trim().slice(0, 120) }));
+      patch.appFavorites = favorites;
+    }
+    if (body.navigationOrder) patch.navigationOrder = body.navigationOrder;
+    if (body.pinnedNavigation) patch.pinnedNavigation = body.pinnedNavigation;
+    if (body.artifactLibrary) patch.artifactLibrary = body.artifactLibrary;
+    if (body.largeTargets !== undefined) patch.largeTargets = body.largeTargets;
     if (typeof body.accent === 'string' && /^[a-z-]{1,32}$/.test(body.accent)) patch.accent = body.accent;
     if (typeof body.highContrast === 'boolean') patch.highContrast = body.highContrast;
     if (typeof body.sound === 'boolean') patch.sound = body.sound;
@@ -126,6 +177,18 @@ export const dashboardAccountRoutes: FastifyPluginAsyncTypebox = async (server) 
     const userId = getFastifySession(request)!.sub;
     const current = normalizedPrefs(getUserPrefs(userId));
     const merged = { ...current, ...patch };
+    if (merged.displayTimeZone && !validDisplayTimeZone(merged.displayTimeZone)) {
+      return reply.code(400).send(createHttpErrorEnvelope(request.id, 400, 'displayTimeZone must be system or a supported time zone'));
+    }
+    if (merged.appFavorites && merged.appFavorites.some((favorite) => !favorite.trackName)) {
+      return reply.code(400).send(createHttpErrorEnvelope(request.id, 400, 'app favorites must include a display name'));
+    }
+    if (merged.navigationOrder && merged.pinnedNavigation && !validNavigationPreferences(merged.navigationOrder, merged.pinnedNavigation)) {
+      return reply.code(400).send(createHttpErrorEnvelope(request.id, 400, 'navigation order must include every tab exactly once and pinned tabs must belong to that order'));
+    }
+    if (merged.artifactLibrary && !validArtifactLibraryPreferences(merged.artifactLibrary)) {
+      return reply.code(400).send(createHttpErrorEnvelope(request.id, 400, 'artifact columns must be unique supported columns'));
+    }
     if (merged.homeLayouts && !validHomeLayouts(merged.homeLayouts)) {
       return reply.code(400).send(createHttpErrorEnvelope(request.id, 400, 'Home layouts must use each available section exactly once and have unique names and IDs'));
     }

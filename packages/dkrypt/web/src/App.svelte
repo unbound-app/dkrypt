@@ -4,9 +4,12 @@
 	import {
 		Command,
 		Download,
+		Eye,
+		EyeOff,
 		KeyRound,
 		Lock,
 		LogOut,
+		MessageSquareWarning,
 		Monitor,
 		Moon,
 		Pencil,
@@ -29,6 +32,7 @@
 	import NotificationBell from "#components/NotificationBell.svelte";
 	import WhatsNewButton from "#components/WhatsNewButton.svelte";
 	import ContactPage from "#components/ContactPage.svelte";
+	import DiagnosticReportDialog from "#components/DiagnosticReportDialog.svelte";
 	import TabIcon from "#components/TabIcon.svelte";
 	import NotificationPreferences from "#features/notifications/NotificationPreferences.svelte";
 	import PublicPricing from "#components/PublicPricing.svelte";
@@ -46,6 +50,7 @@
 	import { cn } from "#lib/utils";
 	import { DISCORD_INVITE_URL, KOFI_URL } from "#lib/constants";
 	import { myDecryptsState } from "#lib/decrypts.svelte";
+	import { projectSelectionState, setProjectSelection } from "#lib/projectSelection.svelte";
 	import { connectLive, disconnectLive, liveState } from "#lib/live.svelte";
 	import {
 		registerServiceWorker,
@@ -84,6 +89,8 @@
 		confirmDialog,
 		initAccent,
 		initDensity,
+		initLargeTargets,
+		initScreenSharePrivacy,
 		initHighContrast,
 		initFormattingLocale,
 		initTheme,
@@ -97,7 +104,13 @@
 		setInterfaceLanguage,
 		setSoundEnabled,
 		setTheme,
+		setScreenSharePrivacy,
 		densityState,
+		navigationPreferencesState,
+		screenSharePrivacyState,
+		screenReaderAnnouncementState,
+		artifactDetailJumpState,
+		jobDetailJumpState,
 		showToast,
 		soundEnabledState,
 		highContrastState,
@@ -112,6 +125,7 @@
 	import { isFormattingLocalePreference, isInterfaceLanguagePreference, resolveInterfaceLanguage } from "#lib/locale";
 	import { translateMessage, translatePermissionLabel, type MessageKey } from "#lib/messages";
 	import { createVisitedTabs } from "#lib/visitedTabs.svelte";
+	import { getQueryParam } from "#lib/urlState";
 
 	import Docs from "#tabs/Docs.svelte";
 	import Billing from "#features/billing/BillingPage.svelte";
@@ -124,6 +138,8 @@
 
 initTheme();
 initDensity();
+	initLargeTargets();
+	initScreenSharePrivacy();
 	initHighContrast();
 	initFormattingLocale();
 	initAccent();
@@ -162,6 +178,7 @@ initDensity();
 	let loggingOut = $state(false);
 	let loggingOutEverywhere = $state(false);
 	let sessionsDialogOpen = $state(false);
+	let diagnosticReportOpen = $state(false);
 	let accountMenuOpen = $state(false);
 	let editingProfileName = $state(false);
 	let profileNameDraft = $state("");
@@ -171,6 +188,7 @@ initDensity();
 	let mobileSwipeStartX = $state<number | null>(null);
 	let passkeys = $state<Array<{ id: string; name?: string; createdAt: number; lastUsedAt?: number }>>([]);
 	let passkeyBusy = $state(false);
+	let appliedDeepLink = '';
 
 	const otherOnlineUsers = $derived(
 		liveState.onlineUsers.filter((u) => u !== sessionState.sub),
@@ -264,12 +282,20 @@ initDensity();
 		{ id: "settings", label: "nav.settings" },
 	];
 
-	const visibleTabs = $derived(
-		TABS.filter((t) => {
+	const visibleTabs = $derived.by(() => {
+		const accessibleTabs = TABS.filter((t) => {
 			if (t.id === "settings") return sessionCanSeeSettings();
 			return !t.requires || sessionHasAnyPermission(t.requires);
-		}),
-	);
+		});
+		const order = navigationPreferencesState.order;
+		return [...accessibleTabs].sort((left, right) => {
+			const leftPinned = navigationPreferencesState.pinned.includes(left.id);
+			const rightPinned = navigationPreferencesState.pinned.includes(right.id);
+			return Number(rightPinned) - Number(leftPinned) || order.indexOf(left.id) - order.indexOf(right.id);
+		});
+	});
+	const pinnedTabs = $derived(visibleTabs.filter((tab) => navigationPreferencesState.pinned.includes(tab.id)));
+	const unpinnedTabs = $derived(visibleTabs.filter((tab) => !navigationPreferencesState.pinned.includes(tab.id)));
 
 	async function doLogout(): Promise<void> {
 		loggingOut = true;
@@ -392,6 +418,24 @@ initDensity();
 		void refreshSession().finally(() => {
 			sessionChecked = true;
 		});
+	});
+
+	$effect(() => {
+		if (!sessionChecked || !sessionState.loggedIn) return;
+		const deepLinkKey = `${sessionState.sub}:${location.search}`;
+		if (deepLinkKey === appliedDeepLink) return;
+		appliedDeepLink = deepLinkKey;
+		const projectId = getQueryParam('projectId');
+		if (projectId && projectId !== projectSelectionState.id) setProjectSelection(projectId);
+		const jobId = getQueryParam('job');
+		const artifactId = getQueryParam('artifact');
+		if (jobId) {
+			jobDetailJumpState.id = jobId;
+			setActiveTab('home');
+		} else if (artifactId) {
+			artifactDetailJumpState.id = artifactId;
+			setActiveTab('home');
+		}
 	});
 
 	$effect(() => {
@@ -594,7 +638,24 @@ initDensity();
 				</div>
 				<nav class="flex flex-1 flex-col gap-1 p-4" aria-label={msg("nav.workspace")} lang={interfaceLanguage}>
 					<div class="mb-2 px-3 text-[10px] font-semibold tracking-[0.14em] text-sidebar-foreground/65 uppercase">{msg("nav.workspace")}</div>
-					{#each visibleTabs as t (t.id)}
+					{#if pinnedTabs.length > 0}
+						<div class="mb-2 mt-3 px-3 text-[10px] font-semibold tracking-[0.14em] text-sidebar-foreground/65 uppercase">Pinned</div>
+					{/if}
+					{#each pinnedTabs as t (t.id)}
+						<Button
+							variant={tabState.active === t.id ? "secondary" : "ghost"}
+							class={cn("group w-full justify-start gap-3 px-3 text-sm", tabState.active === t.id ? "bg-sidebar-accent text-sidebar-accent-foreground shadow-sm" : "text-sidebar-foreground/65 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground")}
+							onclick={() => setActiveTab(t.id)}
+							aria-current={tabState.active === t.id ? "page" : undefined}
+						>
+							<TabIcon id={t.id} class="size-4" />
+							<span>{msg(t.label)}</span>
+						</Button>
+					{/each}
+					{#if unpinnedTabs.length > 0 && pinnedTabs.length > 0}
+						<div class="mb-2 mt-3 px-3 text-[10px] font-semibold tracking-[0.14em] text-sidebar-foreground/65 uppercase">Workspace</div>
+					{/if}
+					{#each unpinnedTabs as t (t.id)}
 						<Button
 							variant={tabState.active === t.id ? "secondary" : "ghost"}
 							class={cn("group w-full justify-start gap-3 px-3 text-sm", tabState.active === t.id ? "bg-sidebar-accent text-sidebar-accent-foreground shadow-sm" : "text-sidebar-foreground/65 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground")}
@@ -624,7 +685,7 @@ initDensity();
 					{/if}
 				</div>
 			</div>
-			<div class="flex items-center gap-2.5">
+			<div class="min-w-0 flex flex-1 flex-wrap items-center justify-end gap-2.5 lg:flex-none">
 				<HeaderOnlineUsers />
 				<a
 					href="https://github.com/unbound-app/dkrypt"
@@ -696,6 +757,20 @@ initDensity();
 				>
 					<Command class="h-4 w-4" />
 				</Button>
+				{#if sessionState.loggedIn}
+					<Button variant="ghost" size="icon" onclick={() => (diagnosticReportOpen = true)} aria-label="Report an issue" title="Report an issue"><MessageSquareWarning class="h-4 w-4" /></Button>
+				{/if}
+				<Button
+					variant={screenSharePrivacyState.enabled ? "secondary" : "ghost"}
+					size="icon"
+					aria-pressed={screenSharePrivacyState.enabled}
+					aria-label={screenSharePrivacyState.enabled ? "Turn off screen-share privacy" : "Turn on screen-share privacy"}
+					title={screenSharePrivacyState.enabled ? "Screen-share privacy is on" : "Mask sensitive identifiers while screen sharing"}
+					onclick={() => setScreenSharePrivacy(!screenSharePrivacyState.enabled)}
+				>
+					{#if screenSharePrivacyState.enabled}<EyeOff class="h-4 w-4" />{:else}<Eye class="h-4 w-4" />{/if}
+				</Button>
+				{#if screenSharePrivacyState.enabled}<Badge variant="secondary" class="hidden text-[10px] sm:inline-flex">Privacy on</Badge>{/if}
 				<WhatsNewButton />
 				<NotificationBell />
 				<DropdownMenu.Root bind:open={accountMenuOpen}>
@@ -703,7 +778,7 @@ initDensity();
 						class="relative shrink-0 cursor-pointer rounded-full border border-border transition-colors hover:border-primary"
 						lang={interfaceLanguage}
 						aria-label={msg("account.menu")}
-						title={sessionState.displayName ?? sessionState.sub}
+						title={msg("account.menu")}
 					>
 						<Avatar
 							src={sessionState.avatarUrl}
@@ -756,8 +831,7 @@ initDensity();
 									<div
 										class="min-w-0 flex-1 truncate text-sm font-medium"
 									>
-										{sessionState.displayName ??
-											sessionState.sub}
+						<span data-sensitive="true">{sessionState.displayName ?? sessionState.sub}</span>
 									</div>
 									{#if sessionState.sub !== "root"}
 										<Button
@@ -776,7 +850,7 @@ initDensity();
 									<div
 										class="mb-1 truncate text-xs text-muted"
 									>
-										{sessionState.sub}
+						<span data-sensitive="true">{sessionState.sub}</span>
 									</div>
 								{/if}
 							{/if}
@@ -801,7 +875,7 @@ initDensity();
 													? "GitHub"
 													: "Discord"}</span
 											>
-										<span class="min-w-0 flex-1 break-all"
+						<span class="min-w-0 flex-1 break-all" data-sensitive="true"
 											>{identity.displayName} · @{identity.username}</span
 										>
 											{#if (sessionState.identities?.length ?? 0) > 1}
@@ -1166,6 +1240,8 @@ initDensity();
 <ConfirmModal />
 <CommandPalette />
 <ShortcutsHelp />
+{#if sessionState.loggedIn}<DiagnosticReportDialog bind:open={diagnosticReportOpen} />{/if}
+<span class="sr-only" role="status" aria-live="polite" aria-atomic="true">{screenReaderAnnouncementState.text}</span>
 <OnboardingTour />
 <SessionsDialog
 	open={sessionsDialogOpen}

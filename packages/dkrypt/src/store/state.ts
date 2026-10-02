@@ -495,6 +495,12 @@ export interface UserPrefs {
   activeHomeLayoutId?: string;
   viewModes?: HomeViewModes;
   settingsMode?: 'basic' | 'advanced';
+  displayTimeZone?: string;
+  appFavorites?: Array<{ bundleId: string; trackName: string }>;
+  navigationOrder?: Array<'home' | 'billing' | 'keys' | 'logs' | 'insights' | 'docs' | 'settings'>;
+  pinnedNavigation?: Array<'home' | 'billing' | 'keys' | 'logs' | 'insights' | 'docs' | 'settings'>;
+  artifactLibrary?: { groupByApp: boolean; columns: Array<'app' | 'bundleId' | 'version' | 'source' | 'size' | 'created'> };
+  largeTargets?: boolean;
   accent?: string;
   highContrast?: boolean;
   sound?: boolean;
@@ -585,6 +591,7 @@ export interface AuditLogEntry {
   action: AuditAction;
   target: string;
   detail?: string;
+  changes?: Array<{ field: string; before: string | number | boolean | null; after: string | number | boolean | null }>;
 }
 
 export type SchedulerRunStatus = 'dispatched' | 'succeeded' | 'failed' | 'timed_out';
@@ -1874,6 +1881,28 @@ export function getRole(id: string): Role | undefined {
   return role ? structuredClone(role) : undefined;
 }
 
+export interface RoleImpactMember {
+  username: string;
+  beforePermissions: string;
+  afterPermissions: string;
+}
+
+export function previewRoleImpact(id: string, permissions: string): { affectedCount: number; members: RoleImpactMember[]; truncated: boolean } | undefined {
+  if (!state.roles.some((role) => role.id === id)) return undefined;
+  const nextBits = parseBits(permissions);
+  const simulatedRoles = state.roles.map((role) => role.id === id ? { ...role, permissions: serializeBits(nextBits) } : role);
+  const impacted = state.allowedUsers.flatMap((user) => {
+    const rawBefore = getUserEffectivePermissions(user.username);
+    const billing = getBillingEntitlements(user.username.toLowerCase());
+    const billingBits = (billing.decrypt ? PermissionFlag.requestDecrypt : 0n) | (billing.api ? PermissionFlag.createApiKeys : 0n);
+    const rawAfter = effectiveBitsForRoleIds(user.roleIds, simulatedRoles) | billingBits;
+    const before = hasPermission(rawBefore, PermissionFlag.administrator) ? PermissionFlag.administrator : rawBefore;
+    const after = hasPermission(rawAfter, PermissionFlag.administrator) ? PermissionFlag.administrator : rawAfter;
+    return before === after ? [] : [{ username: user.username, beforePermissions: serializeBits(before), afterPermissions: serializeBits(after) }];
+  });
+  return { affectedCount: impacted.length, members: impacted.slice(0, 100), truncated: impacted.length > 100 };
+}
+
 export function getUserEffectivePermissions(username: string): bigint {
   const user = state.allowedUsers.find((u) => u.username === username.toLowerCase());
   const billing = getBillingEntitlements(username.toLowerCase());
@@ -2058,8 +2087,30 @@ function roleAssignmentDiff(before: string[], after: string[]): string {
   return parts.length > 0 ? parts.join(', ') : '(no change)';
 }
 
-export function recordAudit(actor: string, action: AuditAction, target: string, detail?: string): void {
-  state.auditLog.unshift({ id: randomUUID(), ts: Date.now(), actor, action, target, detail });
+function safeAuditValue(value: unknown): string | number | boolean | null | undefined {
+  if (value === null || typeof value === 'number' || typeof value === 'boolean') return value;
+  if (typeof value !== 'string') return undefined;
+  return value
+    .replace(/https?:\/\/\S+/gi, '[redacted-url]')
+    .replace(/\b(authorization\s*[:=]\s*(?:bearer|basic)\s+)[^\s,;"']+/gi, '$1[redacted]')
+    .replace(/\b((?:token|secret|password|cookie|credential|api[-_ ]?key)\s*[:=]\s*)[^\s,;"']+/gi, '$1[redacted]')
+    .slice(0, 240);
+}
+
+export function recordAudit(
+  actor: string,
+  action: AuditAction,
+  target: string,
+  detail?: string,
+  changes?: Array<{ field: string; before: unknown; after: unknown }>,
+): void {
+  const safeChanges = changes?.flatMap((change) => {
+    if (/secret|password|token|cookie|credential|private.?key|api.?key|email|host|udid/i.test(change.field)) return [];
+    const before = safeAuditValue(change.before);
+    const after = safeAuditValue(change.after);
+    return before === undefined || after === undefined ? [] : [{ field: change.field.slice(0, 80), before, after }];
+  });
+  state.auditLog.unshift({ id: randomUUID(), ts: Date.now(), actor, action, target: String(safeAuditValue(target) ?? '[redacted]'), detail: safeAuditValue(detail) as string | undefined, changes: safeChanges?.length ? safeChanges : undefined });
   if (state.auditLog.length > MAX_AUDIT_LOG) state.auditLog.length = MAX_AUDIT_LOG;
   persistNow();
 }
@@ -2069,9 +2120,12 @@ export function areNewBillingCheckoutsPaused(): boolean {
 }
 
 export function setNewBillingCheckoutsPaused(paused: boolean, actor: string): boolean {
-  if (areNewBillingCheckoutsPaused() === paused) return paused;
+  const before = areNewBillingCheckoutsPaused();
+  if (before === paused) return paused;
   state.settings = { ...state.settings, billingCheckoutsPaused: paused };
-  recordAudit(actor, 'billing.checkouts.pause', 'new-checkouts', paused ? 'paused' : 'resumed');
+  recordAudit(actor, 'billing.checkouts.pause', 'new-checkouts', paused ? 'paused' : 'resumed', [
+    { field: 'newCheckoutsPaused', before, after: paused },
+  ]);
   return paused;
 }
 
@@ -2255,10 +2309,11 @@ export function updateAllowedUserRoles(username: string, roleIds: string[], acto
   const existing = state.allowedUsers.find((u) => u.username === username.toLowerCase());
   if (!existing) return undefined;
   const sanitized = sanitizeRoleIds(roleIds);
-  const detail = roleAssignmentDiff(existing.roleIds, sanitized);
+  const previousRoleIds = [...existing.roleIds];
+  const detail = roleAssignmentDiff(previousRoleIds, sanitized);
   existing.roleIds = sanitized;
   persistNow();
-  recordAudit(actor, 'user.update', existing.username, detail);
+  recordAudit(actor, 'user.update', existing.username, detail, [{ field: 'roleIds', before: previousRoleIds.join(', '), after: sanitized.join(', ') }]);
   return existing;
 }
 
@@ -2296,6 +2351,7 @@ export interface UpdateRoleInput {
 export function updateRole(id: string, patch: UpdateRoleInput, actor: string): { ok: boolean; role?: Role; error?: string } {
   const role = state.roles.find((r) => r.id === id);
   if (!role) return { ok: false, error: 'role not found' };
+  const before = { name: role.name, color: role.color, permissions: role.permissions };
   if (patch.permissions !== undefined) {
     const newBits = parseBits(patch.permissions);
     if (wouldOrphanManageUsersViaRole(id, newBits)) {
@@ -2307,7 +2363,10 @@ export function updateRole(id: string, patch: UpdateRoleInput, actor: string): {
   if (patch.color !== undefined) role.color = patch.color;
   role.updatedAt = Date.now();
   persistNow();
-  recordAudit(actor, 'role.update', role.id, role.name);
+  recordAudit(actor, 'role.update', role.id, role.name, Object.keys(before).flatMap((field) => {
+    const key = field as keyof typeof before;
+    return before[key] === role[key] ? [] : [{ field, before: before[key], after: role[key] }];
+  }));
   return { ok: true, role };
 }
 
@@ -3288,12 +3347,19 @@ export function createDevice(input: CreateDeviceInput, actor: string): DeviceRec
 }
 
 export function updateDevice(id: string, patch: Partial<CreateDeviceInput>, actor: string): { ok: boolean; device?: DeviceRecord; error?: string } {
+  const previousDevice = deviceRepository.findById(id);
   const devices = deviceRepository.update(id, { ...patch, updatedAt: Date.now() });
   if (!devices) return { ok: false, error: 'device not found' };
   state.devices = devices;
   const device = state.devices.find((candidate) => candidate.id === id)!;
   persistNow();
-  recordAudit(actor, 'device.update', device.id, device.name);
+  const auditFields = ['name', 'transport', 'usbmuxNetwork', 'productType', 'iosVersion', 'toolchain', 'enabled', 'isPrimary'] as const;
+  const changes = auditFields.flatMap((field) => {
+    const before = previousDevice?.[field] ?? null;
+    const after = device[field] ?? null;
+    return before === after ? [] : [{ field, before, after }];
+  });
+  recordAudit(actor, 'device.update', device.id, device.name, changes);
   return { ok: true, device };
 }
 
@@ -4575,7 +4641,13 @@ function isAuditLogEntryShape(value: unknown): value is AuditLogEntry {
     typeof e.ts === 'number' &&
     typeof e.actor === 'string' &&
     typeof e.action === 'string' &&
-    typeof e.target === 'string'
+    typeof e.target === 'string' &&
+    (e.changes === undefined || (Array.isArray(e.changes) && e.changes.every((change) => {
+      if (!change || typeof change !== 'object') return false;
+      const item = change as Record<string, unknown>;
+      const scalar = (candidate: unknown) => candidate === null || typeof candidate === 'string' || typeof candidate === 'number' || typeof candidate === 'boolean';
+      return typeof item.field === 'string' && scalar(item.before) && scalar(item.after);
+    })))
   );
 }
 

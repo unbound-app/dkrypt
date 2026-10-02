@@ -93,6 +93,42 @@ export const dashboardArtifactBulkArchiveBodySchema = Type.Object({
   archived: Type.Boolean(),
 }, additionalProperties);
 
+const dashboardArtifactQuerySelectionSchema = Type.Object({
+  projectId: projectIdentifierSchema,
+  q: Type.Optional(Type.String({ maxLength: 200 })),
+  channel: Type.Optional(Type.Union([Type.Literal('appstore'), Type.Literal('testflight')])),
+  archived: Type.Boolean(),
+}, additionalProperties);
+
+export const dashboardArtifactBulkQueryPinBodySchema = Type.Object({
+  filter: dashboardArtifactQuerySelectionSchema,
+  pinned: Type.Boolean(),
+}, additionalProperties);
+
+export const dashboardArtifactBulkQueryArchiveBodySchema = Type.Object({
+  filter: dashboardArtifactQuerySelectionSchema,
+  archived: Type.Boolean(),
+}, additionalProperties);
+
+export const dashboardArtifactZipBodySchema = Type.Object({
+  ids: Type.Array(identifierSchema, { minItems: 1, maxItems: 100, uniqueItems: true }),
+}, additionalProperties);
+
+export const dashboardArtifactCompareBodySchema = Type.Object({
+  ids: Type.Array(identifierSchema, { minItems: 2, maxItems: 2, uniqueItems: true }),
+  projectId: projectIdentifierSchema,
+}, additionalProperties);
+
+export const dashboardArtifactCompareResponseSchema = Type.Object({
+  before: Type.Object({ id: identifierSchema, bundleId: bundleIdSchema, versionLabel: Type.Optional(Type.String()), fileSizeBytes: Type.Number() }, additionalProperties),
+  after: Type.Object({ id: identifierSchema, bundleId: bundleIdSchema, versionLabel: Type.Optional(Type.String()), fileSizeBytes: Type.Number() }, additionalProperties),
+  counts: Type.Object({ added: Type.Integer(), removed: Type.Integer(), changed: Type.Integer(), unchanged: Type.Integer() }, additionalProperties),
+  added: Type.Array(Type.String(), { maxItems: 200 }),
+  removed: Type.Array(Type.String(), { maxItems: 200 }),
+  changed: Type.Array(Type.Object({ path: Type.String(), beforeBytes: Type.Number(), afterBytes: Type.Number() }, additionalProperties), { maxItems: 200 }),
+  truncated: Type.Boolean(),
+}, additionalProperties);
+
 export const dashboardArtifactBulkArchiveResponseSchema = Type.Object({
   ok: Type.Boolean(),
   archived: Type.Boolean(),
@@ -113,7 +149,7 @@ export const dashboardArtifactUndoBodySchema = Type.Object({
     expectedStateChangedAt: Type.Number({ minimum: 0 }),
     expectedCurrentState: Type.Boolean(),
     restoreAt: Type.Optional(Type.Number({ minimum: 0 })),
-  }), { minItems: 1, maxItems: 100 }),
+  }), { minItems: 1, maxItems: 5000 }),
 }, additionalProperties);
 
 export const dashboardArtifactUndoResponseSchema = Type.Object({
@@ -152,6 +188,21 @@ export type DashboardArtifactArchiveRoute = {
 export type DashboardArtifactBulkArchiveRoute = {
   Body: Static<typeof dashboardArtifactBulkArchiveBodySchema>;
   Reply: { 200: Static<typeof dashboardArtifactBulkArchiveResponseSchema>; 400: ApiErrorEnvelope; 401: ApiErrorEnvelope; 403: ApiErrorEnvelope; 404: ApiErrorEnvelope; 500: ApiErrorEnvelope };
+};
+
+export type DashboardArtifactBulkQueryPinRoute = {
+  Body: Static<typeof dashboardArtifactBulkQueryPinBodySchema>;
+  Reply: { 200: Static<typeof dashboardArtifactBulkPinResponseSchema>; 400: ApiErrorEnvelope; 404: ApiErrorEnvelope; 413: ApiErrorEnvelope };
+};
+
+export type DashboardArtifactBulkQueryArchiveRoute = {
+  Body: Static<typeof dashboardArtifactBulkQueryArchiveBodySchema>;
+  Reply: { 200: Static<typeof dashboardArtifactBulkArchiveResponseSchema>; 400: ApiErrorEnvelope; 404: ApiErrorEnvelope; 413: ApiErrorEnvelope };
+};
+
+export type DashboardArtifactCompareRoute = {
+  Body: Static<typeof dashboardArtifactCompareBodySchema>;
+  Reply: { 200: Static<typeof dashboardArtifactCompareResponseSchema>; 400: ApiErrorEnvelope; 404: ApiErrorEnvelope };
 };
 
 export type DashboardArtifactUndoRoute = {

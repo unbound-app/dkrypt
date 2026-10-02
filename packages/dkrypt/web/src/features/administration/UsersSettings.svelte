@@ -258,6 +258,14 @@
 
   async function saveRoles(): Promise<void> {
     if (!manageUser || rolesUnchanged) return;
+    const beforeRoles = manageUser.roleIds.map((id) => roleById(id)?.name ?? id);
+    const afterRoles = manageRoleIds.map((id) => roleById(id)?.name ?? id);
+    const review = [
+      `Member: ${manageUser.displayName ?? manageUser.username}`,
+      `Roles: ${beforeRoles.join(', ') || 'none'} → ${afterRoles.join(', ') || 'none'}`,
+      `Queue priority: ${manageUser.priority ?? 0} → ${Number(managePriority)}`,
+    ].join('\n');
+    if (!(await confirmDialog(`Review access change before applying:\n\n${review}`, { confirmLabel: 'Apply access change' }))) return;
     savingRoles = true;
     try {
       const { ok } = await updateUserRoles(manageUser.username, manageRoleIds, Number(managePriority));
@@ -344,8 +352,8 @@
                   <div class="flex min-w-0 items-center gap-2">
                     {#if u.avatarUrl}<img src={u.avatarUrl} alt="" class="h-6 w-6 shrink-0 rounded-full object-cover" />{/if}
                     <div class="min-w-0">
-                      <div class="truncate">{u.displayName ?? u.username}{#if isSelf}<span class="ml-1.5 text-xs text-muted">(you)</span>{/if}</div>
-                      {#if u.displayName}<div class="truncate text-xs text-muted">{u.username}</div>{/if}
+                      <div class="truncate" data-sensitive="true">{u.displayName ?? u.username}{#if isSelf}<span class="ml-1.5 text-xs text-muted">(you)</span>{/if}</div>
+                      {#if u.displayName}<div class="truncate text-xs text-muted" data-sensitive="true">{u.username}</div>{/if}
                     </div>
                   </div>
                 </td>
@@ -448,10 +456,10 @@
         {#snippet children(entry: AuditLogEntry)}
           <article class="grid gap-x-3 gap-y-2 border-b border-border/70 px-3 py-2.5 text-xs sm:grid-cols-[minmax(8rem,0.8fr)_minmax(7rem,0.8fr)_minmax(9rem,1fr)_minmax(9rem,1fr)_minmax(12rem,1.6fr)] sm:items-center">
             <div class="min-w-0"><div class="text-[10px] font-semibold tracking-[0.08em] text-muted uppercase sm:hidden">When</div><div class="text-muted"><RelativeTime ms={entry.ts} /></div></div>
-            <div class="min-w-0"><div class="text-[10px] font-semibold tracking-[0.08em] text-muted uppercase sm:hidden">Actor</div><div class="truncate">{entry.actor}</div></div>
+            <div class="min-w-0"><div class="text-[10px] font-semibold tracking-[0.08em] text-muted uppercase sm:hidden">Actor</div><div class="truncate" data-sensitive="true">{entry.actor}</div></div>
             <div class="min-w-0"><div class="text-[10px] font-semibold tracking-[0.08em] text-muted uppercase sm:hidden">Action</div><Badge variant="secondary">{AUDIT_ACTION_LABEL[entry.action]}</Badge></div>
-            <div class="min-w-0"><div class="text-[10px] font-semibold tracking-[0.08em] text-muted uppercase sm:hidden">Target</div><div class="truncate" title={entry.target}>{entry.target}</div></div>
-            <div class="min-w-0"><div class="text-[10px] font-semibold tracking-[0.08em] text-muted uppercase sm:hidden">Detail</div><div class="truncate font-mono text-muted" title={entry.detail ?? ''}>{entry.detail ?? ''}</div></div>
+            <div class="min-w-0"><div class="text-[10px] font-semibold tracking-[0.08em] text-muted uppercase sm:hidden">Target</div><div class="truncate" data-sensitive="true">{entry.target}</div></div>
+            <div class="min-w-0"><div class="text-[10px] font-semibold tracking-[0.08em] text-muted uppercase sm:hidden">Detail</div><div class="truncate font-mono text-muted" data-sensitive="true">{entry.detail ?? ''}</div>{#if entry.changes?.length}<ul class="mt-1 grid gap-0.5 text-[10px] text-muted">{#each entry.changes as change (change.field)}<li><span class="font-medium">{change.field}</span>: {String(change.before)} → {String(change.after)}</li>{/each}</ul>{/if}</div>
           </article>
         {/snippet}
       </VirtualizedList>

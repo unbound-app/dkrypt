@@ -17,27 +17,32 @@ import {
 } from './format';
 import { resolveLocaleTag } from './locale';
 import { formattingLocaleState, systemLocalesState } from './ui.svelte';
+import { displayTimeZoneState } from './ui.svelte';
 
 function activeLocale(): string {
   return resolveLocaleTag(formattingLocaleState.value, systemLocalesState.value);
 }
 
+function activeTimeZone(): string | undefined {
+  return displayTimeZoneState.value === 'system' ? undefined : displayTimeZoneState.value;
+}
+
 export { csvCell, debounce, downloadBlob, trendDelta };
 
 export function fmtTime(ms?: number): string {
-  return formatTime(ms, activeLocale());
+  return formatTime(ms, activeLocale(), activeTimeZone());
 }
 
 export function fmtDateTime(value: number | string, options: Intl.DateTimeFormatOptions = {}): string {
-  return formatDateTime(value, options, activeLocale());
+  return formatDateTime(value, options, activeLocale(), activeTimeZone());
 }
 
 export function fmtCalendarDate(value: number | string, options: Intl.DateTimeFormatOptions = { dateStyle: 'medium' }): string {
-  return formatCalendarDate(value, options, activeLocale());
+  return formatCalendarDate(value, options, activeLocale(), activeTimeZone());
 }
 
 export function fmtRelative(ms?: number): string {
-  return formatRelative(ms, activeLocale());
+  return formatRelative(ms, activeLocale(), activeTimeZone());
 }
 
 export function fmtSize(bytes?: number): string {

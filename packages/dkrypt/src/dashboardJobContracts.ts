@@ -118,6 +118,33 @@ export const dashboardJobDiffResponseSchema = Type.Object({
     after: Type.Optional(Type.Unknown()),
   }, { additionalProperties: true })),
 }, { additionalProperties: true });
+export const dashboardJobAttemptDiffQuerySchema = Type.Object({
+  a: identifierSchema,
+  b: identifierSchema,
+  projectId: Type.Optional(projectIdentifierSchema),
+}, { additionalProperties: true });
+const dashboardJobAttemptSnapshotSchema = Type.Object({
+  id: identifierSchema,
+  status: Type.Union([Type.Literal('done'), Type.Literal('failed')]),
+  attempt: Type.Optional(Type.Number()),
+  retryCount: Type.Optional(Type.Number()),
+  startedAt: Type.Optional(Type.Number()),
+  finishedAt: Type.Number(),
+  durationMs: Type.Optional(Type.Number()),
+  deviceId: Type.Optional(identifierSchema),
+  transport: Type.Optional(deviceTransportSchema),
+  cacheHit: Type.Optional(Type.Boolean()),
+  deadlineExceeded: Type.Optional(Type.Boolean()),
+  error: Type.Optional(Type.String()),
+  warnings: Type.Optional(Type.Array(Type.String())),
+  artifactId: Type.Optional(identifierSchema),
+}, { additionalProperties: true });
+export const dashboardJobAttemptDiffResponseSchema = Type.Object({
+  a: dashboardJobAttemptSnapshotSchema,
+  b: dashboardJobAttemptSnapshotSchema,
+  durationDeltaMs: Type.Number(),
+  changedFields: Type.Array(Type.String()),
+}, { additionalProperties: true });
 const Requester = Type.Object({
   username: Type.Optional(Type.String()),
   displayName: Type.String(),
@@ -358,6 +385,10 @@ export type DashboardJobBulkPreviewRoute = {
 export type DashboardJobDiffRoute = {
   Querystring: Static<typeof dashboardJobDiffQuerySchema>;
   Reply: { 200: Static<typeof dashboardJobDiffResponseSchema>; 400: ApiErrorEnvelope; 401: ApiErrorEnvelope; 404: ApiErrorEnvelope; 429: ApiErrorEnvelope; 500: ApiErrorEnvelope };
+};
+export type DashboardJobAttemptDiffRoute = {
+  Querystring: Static<typeof dashboardJobAttemptDiffQuerySchema>;
+  Reply: { 200: Static<typeof dashboardJobAttemptDiffResponseSchema>; 400: ApiErrorEnvelope; 404: ApiErrorEnvelope };
 };
 
 type ActionErrors = { 400: ApiErrorEnvelope; 401: ApiErrorEnvelope; 403: ApiErrorEnvelope; 404: ApiErrorEnvelope; 429: ApiErrorEnvelope; 500: ApiErrorEnvelope };

@@ -86,34 +86,57 @@ export function removeRecentBundleId(bundleId: string): void {
   localStorage.setItem('recentBundleIds', JSON.stringify(items));
 }
 
-function loadStarredApps(): AppStoreSearchResult[] {
+export interface FavoriteApp {
+  bundleId: string;
+  trackName: string;
+}
+
+function loadStarredApps(): FavoriteApp[] {
   try {
     const raw: unknown = JSON.parse(localStorage.getItem('starredApps') ?? '[]');
     if (!Array.isArray(raw)) return [];
-    return raw.filter(
-      (a): a is AppStoreSearchResult => !!a && typeof a === 'object' && typeof a.bundleId === 'string' && typeof a.trackName === 'string',
-    );
+    return raw.filter((app): app is AppStoreSearchResult => !!app && typeof app === 'object' && typeof app.bundleId === 'string' && typeof app.trackName === 'string')
+      .map(({ bundleId, trackName }) => ({ bundleId, trackName }));
   } catch {
     return [];
   }
 }
 
-export const starredAppsState = $state<{ items: AppStoreSearchResult[] }>({ items: loadStarredApps() });
+export const starredAppsState = $state<{ items: FavoriteApp[] }>({ items: loadStarredApps() });
 
 export function isStarredBundleId(bundleId: string): boolean {
   return starredAppsState.items.some((a) => a.bundleId === bundleId);
 }
 
 export function toggleStarredApp(app: AppStoreSearchResult): void {
-  const items = isStarredBundleId(app.bundleId) ? starredAppsState.items.filter((a) => a.bundleId !== app.bundleId) : [app, ...starredAppsState.items];
+  const items = isStarredBundleId(app.bundleId)
+    ? starredAppsState.items.filter((favorite) => favorite.bundleId !== app.bundleId)
+    : [{ bundleId: app.bundleId, trackName: app.trackName }, ...starredAppsState.items].slice(0, 50);
   starredAppsState.items = items;
-  localStorage.setItem('starredApps', JSON.stringify(items));
+}
+
+export function replaceStarredApps(items: FavoriteApp[]): void {
+  starredAppsState.items = items.slice(0, 50).map(({ bundleId, trackName }) => ({ bundleId, trackName }));
+}
+
+export function readLegacyStarredApps(): Array<{ bundleId: string; trackName: string }> {
+  try {
+    const raw: unknown = JSON.parse(localStorage.getItem('starredApps') ?? '[]');
+    if (!Array.isArray(raw)) return [];
+    return raw.filter((app): app is AppStoreSearchResult => !!app && typeof app === 'object' && typeof app.bundleId === 'string' && typeof app.trackName === 'string')
+      .map(({ bundleId, trackName }) => ({ bundleId, trackName }));
+  } catch {
+    return [];
+  }
+}
+
+export function clearLegacyStarredApps(): void {
+  localStorage.removeItem('starredApps');
 }
 
 if (typeof window !== 'undefined') {
   window.addEventListener('storage', (e) => {
     if (e.key === 'myDecrypts') myDecryptsState.items = loadDecrypts();
     else if (e.key === 'recentBundleIds') recentBundleIdsState.items = loadRecentBundleIds();
-    else if (e.key === 'starredApps') starredAppsState.items = loadStarredApps();
   });
 }

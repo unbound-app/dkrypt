@@ -21,6 +21,8 @@ describe('localized time formatting', () => {
       .find((part) => part.type === 'timeZoneName')?.value;
     expect(localZone).toBeDefined();
     expect(fmtTime(timestamp)).toContain(localZone!);
+    expect(fmtTime(timestamp, undefined, 'Europe/Berlin')).toBe(expected);
+    expect(fmtDateTime(timestamp, {}, undefined, 'Europe/Berlin')).toBe(expected);
   });
 
   test('keeps date-only values on their declared calendar day', () => {
@@ -30,7 +32,7 @@ describe('localized time formatting', () => {
       timeZone: 'UTC',
     }).format(new Date('2026-09-27T00:00:00.000Z'));
 
-    expect(fmtCalendarDate('2026-09-27', { month: 'long', day: 'numeric' })).toBe(expected);
+    expect(fmtCalendarDate('2026-09-27', { month: 'long', day: 'numeric' }, undefined, 'America/Los_Angeles')).toBe(expected);
   });
 
   test('formats dates and relative times in the selected locale', () => {

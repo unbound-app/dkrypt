@@ -470,9 +470,42 @@ export function fetchDashboardQuickSearch(query: string, projectId = projectSele
   return apiJson(`/v1/dashboard/quick-search?${params}`);
 }
 
+export interface DashboardIncidentEvent {
+  id: string;
+  at: number;
+  kind: 'device' | 'job' | 'deployment';
+  title: string;
+  detail?: string;
+  jobId?: string;
+  deviceId?: string;
+  deploymentId?: string;
+  correlationId?: string;
+}
+
+export function fetchDashboardIncidents(projectId = projectSelectionState.id): Promise<{ projectId: string; events: DashboardIncidentEvent[]; truncated: boolean }> {
+  return apiJson(`/v1/dashboard/incidents?projectId=${encodeURIComponent(projectId)}`);
+}
+
 export function fetchDashboardArtifact(id: string, projectId = projectSelectionState.id): Promise<ArtifactRecord> {
   const params = new URLSearchParams({ projectId });
   return apiJson(`/v1/dashboard/artifacts/${encodeURIComponent(id)}?${params}`);
+}
+
+export interface ArtifactStructureComparison {
+  before: { id: string; bundleId: string; versionLabel?: string; fileSizeBytes: number };
+  after: { id: string; bundleId: string; versionLabel?: string; fileSizeBytes: number };
+  counts: { added: number; removed: number; changed: number; unchanged: number };
+  added: string[];
+  removed: string[];
+  changed: Array<{ path: string; beforeBytes: number; afterBytes: number }>;
+  truncated: boolean;
+}
+
+export function compareDashboardArtifacts(ids: [string, string], projectId = projectSelectionState.id): Promise<ArtifactStructureComparison> {
+  return apiJson('/v1/dashboard/artifacts/compare', {
+    method: 'POST',
+    body: JSON.stringify({ ids, projectId }),
+  });
 }
 
 export interface JobTimelineEvent {
@@ -672,6 +705,7 @@ export interface AuditLogEntry {
     | 'artifact.restore';
   target: string;
   detail?: string;
+  changes?: Array<{ field: string; before: string | number | boolean | null; after: string | number | boolean | null }>;
 }
 
 export interface LogEntry {
@@ -1044,6 +1078,18 @@ export function fetchJobDiff(bundleId: string, a: string, b: string): Promise<Jo
   );
 }
 
+export interface JobAttemptComparison {
+  a: { id: string; status: 'done' | 'failed'; attempt?: number; retryCount?: number; startedAt?: number; finishedAt: number; durationMs?: number; deviceId?: string; transport?: 'usb' | 'wifi'; cacheHit?: boolean; deadlineExceeded?: boolean; error?: string; warnings?: string[]; artifactId?: string };
+  b: { id: string; status: 'done' | 'failed'; attempt?: number; retryCount?: number; startedAt?: number; finishedAt: number; durationMs?: number; deviceId?: string; transport?: 'usb' | 'wifi'; cacheHit?: boolean; deadlineExceeded?: boolean; error?: string; warnings?: string[]; artifactId?: string };
+  durationDeltaMs: number;
+  changedFields: string[];
+}
+
+export function fetchJobAttemptComparison(a: string, b: string): Promise<JobAttemptComparison> {
+  const params = new URLSearchParams({ a, b, projectId: projectSelectionState.id });
+  return apiJson(`/v1/dashboard/jobs/attempt-diff?${params}`, undefined, 'jobDiff');
+}
+
 export type JobHistoryPage = { history: JobHistoryEntry[]; total: number } & CursorPage;
 
 export interface JobHistoryQuery {
@@ -1167,6 +1213,13 @@ export function setDashboardArtifactsPinned(ids: string[], pinned: boolean): Pro
   });
 }
 
+export function setDashboardArtifactsPinnedByQuery(filter: { projectId: string; q?: string; channel?: 'appstore' | 'testflight'; archived: boolean }, pinned: boolean): Promise<{ ok: boolean; data: ArtifactBulkPinResult }> {
+  return apiAction('/v1/dashboard/artifacts/bulk-pin-query', {
+    method: 'POST',
+    body: JSON.stringify({ filter, pinned }),
+  });
+}
+
 export interface ArtifactArchiveResult {
   ok: boolean;
   changed: boolean;
@@ -1197,6 +1250,31 @@ export function setDashboardArtifactsArchived(ids: string[], archived: boolean):
     method: 'POST',
     body: JSON.stringify({ ids, archived }),
   });
+}
+
+export function setDashboardArtifactsArchivedByQuery(filter: { projectId: string; q?: string; channel?: 'appstore' | 'testflight'; archived: boolean }, archived: boolean): Promise<{ ok: boolean; data: ArtifactBulkArchiveResult }> {
+  return apiAction('/v1/dashboard/artifacts/bulk-archive-query', {
+    method: 'POST',
+    body: JSON.stringify({ filter, archived }),
+  });
+}
+
+export async function downloadDashboardArtifactsZip(ids: string[]): Promise<void> {
+  const response = await fetch('/v1/dashboard/artifacts/export.zip', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  });
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({}));
+    throw new Error(apiErrorMessage(errorBody, response.status));
+  }
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'dkrypt-artifacts.zip';
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
 export interface ArtifactUndoChange {
@@ -1922,6 +2000,17 @@ export function fetchRoles(): Promise<{ roles: Role[] }> {
   return apiJson('/v1/dashboard/roles');
 }
 
+export interface RoleImpactPreview {
+  affectedCount: number;
+  members: Array<{ username: string; beforePermissions: string; afterPermissions: string }>;
+  truncated: boolean;
+  memberDetailsHidden?: boolean;
+}
+
+export function previewRoleImpact(id: string, permissions: string): Promise<RoleImpactPreview> {
+  return apiJson(`/v1/dashboard/roles/${encodeURIComponent(id)}/impact-preview`, { method: 'POST', body: JSON.stringify({ permissions }) });
+}
+
 export function fetchProjects(): Promise<{ projects: ProjectRecord[] }> {
   return apiJson('/v1/dashboard/projects');
 }
@@ -2312,4 +2401,53 @@ export function setBillingCheckoutPaused(paused: boolean): Promise<{ paused: boo
 
 export function syncStripeBillingWebhookEvents(): Promise<{ ok: boolean; data: { webhook?: BillingProviderStatus['stripe']['webhook'] } }> {
   return apiAction('/v1/billing/stripe-webhook/sync', { method: 'POST' }, 'Stripe webhook events synchronized');
+}
+
+export type DiagnosticReportCategory = 'bug' | 'device' | 'job' | 'other';
+
+export interface DiagnosticReportDraft {
+  projectId: string;
+  category: DiagnosticReportCategory;
+  summary: string;
+  details: string;
+}
+
+export interface DiagnosticReport {
+  id: string;
+  userId?: string;
+  projectId: string;
+  category: DiagnosticReportCategory;
+  summary: string;
+  details: string;
+  createdAt: number;
+  expiresAt: number;
+  status: 'received';
+}
+
+export interface DiagnosticReportPreview extends DiagnosticReportDraft {
+  previewToken: string;
+  expiresAt: number;
+}
+
+export function previewDiagnosticReport(draft: DiagnosticReportDraft): Promise<DiagnosticReportPreview> {
+  return apiJson('/v1/dashboard/diagnostic-reports/preview', { method: 'POST', body: JSON.stringify(draft) });
+}
+
+export function submitDiagnosticReport(preview: DiagnosticReportPreview): Promise<DiagnosticReport> {
+  return apiJson('/v1/dashboard/diagnostic-reports', { method: 'POST', body: JSON.stringify({
+    projectId: preview.projectId,
+    category: preview.category,
+    summary: preview.summary,
+    details: preview.details,
+    previewToken: preview.previewToken,
+    consent: true,
+  }) });
+}
+
+export function fetchDiagnosticReports(): Promise<{ reports: DiagnosticReport[] }> {
+  return apiJson('/v1/dashboard/diagnostic-reports');
+}
+
+export function fetchDiagnosticReportInbox(): Promise<{ reports: DiagnosticReport[] }> {
+  return apiJson('/v1/dashboard/diagnostic-reports/inbox');
 }

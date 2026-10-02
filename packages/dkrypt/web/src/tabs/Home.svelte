@@ -17,6 +17,7 @@
   import ActiveJobsPanel from '#features/jobs/ActiveJobsPanel.svelte';
   import DecryptPanel from '#features/jobs/DecryptPanel.svelte';
   import JobHistoryPanel from '#features/jobs/JobHistoryPanel.svelte';
+  import IncidentTimeline from '#features/operations/IncidentTimeline.svelte';
 
   let decryptPanel: DecryptPanel | undefined = $state();
   let newLayoutName = $state('');
@@ -116,6 +117,7 @@
   <DecryptPanel bind:this={decryptPanel} />
   <DonationNudge />
   <DecryptCompletion />
+  <IncidentTimeline />
 
   <details class="rounded-xl border border-border/70 bg-panel/70 px-4 py-3">
     <summary class="cursor-pointer text-sm font-semibold">{msg('home.layoutLabel')}</summary>

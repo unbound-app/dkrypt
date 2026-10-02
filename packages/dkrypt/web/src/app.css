@@ -361,6 +361,21 @@ summary:focus-visible {
 	text-underline-offset: 0.15em;
 }
 
+:root[data-large-targets='true'] [data-slot='button'],
+:root[data-large-targets='true'] [data-slot='switch'],
+:root[data-large-targets='true'] [data-slot='checkbox'] {
+	min-height: 2.75rem;
+}
+
+:root[data-large-targets='true'] [data-slot='button'][data-size='icon'] {
+	min-width: 2.75rem;
+}
+
+:root[data-screenshare-privacy='true'] [data-sensitive='true'] {
+	filter: blur(5px);
+	user-select: none;
+}
+
 .glass-card {
 	border: 1px solid var(--border);
 	background: var(--card);

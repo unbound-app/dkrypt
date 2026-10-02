@@ -2,6 +2,7 @@ import { hasPermission, parseBits, PermissionFlag, permissionKeys, permissionLab
 import { serverStateCache } from '#lib/serverStateCache.svelte';
 import { resetTestFlightCatalogState } from '#lib/testFlightCatalogState.svelte';
 import { clearPersistedTestFlightCatalog } from '#lib/testFlightCatalogPersistence';
+import { clearLegacyStarredApps, readLegacyStarredApps, replaceStarredApps } from '#lib/decrypts.svelte';
 import {
   accentState,
   highContrastState,
@@ -17,6 +18,10 @@ import {
   setSettingsMode,
   setHomeLayoutPreferences,
   setHomeViewModes,
+  setDisplayTimeZone,
+  setLargeTargets,
+  setNavigationPreferences,
+  setArtifactLibraryPreferences,
   homeLayoutPreferencesState,
   homeViewModesState,
   resetUserInterfacePreferences,
@@ -27,7 +32,7 @@ import {
 import type { FormattingLocalePreference } from '#lib/locale';
 import type { InterfaceLanguagePreference } from '#lib/locale';
 import type { HomeLayout, HomeViewModes } from '#lib/homeLayouts';
-import type { DisplayDensity, SettingsMode } from '#lib/ui.svelte';
+import type { ArtifactColumnId, DisplayDensity, SettingsMode, TabId } from '#lib/ui.svelte';
 
 export interface Role {
   id: string;
@@ -86,22 +91,7 @@ export function sessionPermissionKeys(): PermissionMetaKey[] {
 }
 
 export function sessionCanSeeSettings(): boolean {
-  return sessionHasAnyPermission([
-    PermissionFlag.viewAutomation,
-    PermissionFlag.manageDevices,
-    PermissionFlag.manageAutomation,
-    PermissionFlag.viewUsers,
-    PermissionFlag.manageUsers,
-    PermissionFlag.manageRoles,
-    PermissionFlag.manageBackup,
-    PermissionFlag.viewDevices,
-    PermissionFlag.viewRoles,
-    PermissionFlag.viewBackup,
-    PermissionFlag.requestTestFlightSubscriptions,
-    PermissionFlag.manageTestFlightSubscriptions,
-    PermissionFlag.viewBilling,
-    PermissionFlag.manageBilling,
-  ]);
+  return sessionState.loggedIn;
 }
 
 export async function refreshSession(): Promise<SessionInfo> {
@@ -112,7 +102,10 @@ export async function refreshSession(): Promise<SessionInfo> {
   const permissionsChanged = data.permissions !== sessionState.permissions;
   const accessChanged = identityChanged || permissionsChanged;
   const identitySwitched = previousSub && data.loggedIn && previousSub.toLowerCase() !== data.sub?.trim().toLowerCase();
-  if (identitySwitched) resetUserInterfacePreferences();
+  if (identitySwitched) {
+    resetUserInterfacePreferences();
+    replaceStarredApps([]);
+  }
   if (accessChanged) {
     serverStateCache.clear();
     const leavingIdentity = previousSub && (!data.loggedIn || previousSub.toLowerCase() !== data.sub?.trim().toLowerCase());
@@ -123,6 +116,8 @@ export async function refreshSession(): Promise<SessionInfo> {
   if (data.loggedIn) {
     if (accessChanged) serverStateCache.invalidateAll();
     void syncThemeFromServer();
+  } else {
+    replaceStarredApps([]);
   }
   return data;
 }
@@ -156,6 +151,12 @@ async function syncThemeFromServer(): Promise<void> {
     activeHomeLayoutId?: string;
     viewModes?: Partial<HomeViewModes>;
     settingsMode?: SettingsMode;
+    displayTimeZone?: string;
+    appFavorites?: Array<{ bundleId: string; trackName: string }>;
+    navigationOrder?: TabId[];
+    pinnedNavigation?: TabId[];
+    artifactLibrary?: { groupByApp: boolean; columns: ArtifactColumnId[] };
+    largeTargets?: boolean;
   };
   const formattingLocale = prefs.formattingLocale ?? 'system';
   if (formattingLocale !== formattingLocaleState.value) setFormattingLocale(formattingLocale);
@@ -169,20 +170,76 @@ async function syncThemeFromServer(): Promise<void> {
   if (prefs.homeLayouts?.length) setHomeLayoutPreferences(prefs.homeLayouts, prefs.activeHomeLayoutId ?? prefs.homeLayouts[0]!.id);
   if (prefs.viewModes) setHomeViewModes(prefs.viewModes);
   if (prefs.settingsMode) setSettingsMode(prefs.settingsMode);
+  setDisplayTimeZone(prefs.displayTimeZone ?? 'system');
+  if (prefs.navigationOrder) setNavigationPreferences(prefs.navigationOrder, prefs.pinnedNavigation ?? []);
+  if (prefs.artifactLibrary) setArtifactLibraryPreferences(prefs.artifactLibrary.groupByApp, prefs.artifactLibrary.columns);
+  setLargeTargets(prefs.largeTargets ?? false);
+  const userId = sessionState.sub?.trim().toLowerCase();
+  const migrationKey = userId ? `starredAppsMigrated:${userId}` : undefined;
+  const needsMigration = !!migrationKey && !localStorage.getItem(migrationKey);
+  const legacyFavorites = needsMigration ? readLegacyStarredApps() : [];
+  const favoriteMap = new Map<string, { bundleId: string; trackName: string }>();
+  for (const favorite of [...(prefs.appFavorites ?? []), ...legacyFavorites]) {
+    const key = favorite.bundleId.trim().toLowerCase();
+    if (key && !favoriteMap.has(key)) favoriteMap.set(key, { bundleId: favorite.bundleId.trim(), trackName: favorite.trackName.trim() });
+  }
+  const favorites = [...favoriteMap.values()].slice(0, 50);
+  replaceStarredApps(favorites);
+  if (needsMigration) {
+    if (legacyFavorites.length === 0 || JSON.stringify(favorites) === JSON.stringify(prefs.appFavorites ?? [])) {
+      clearLegacyStarredApps();
+      localStorage.setItem(migrationKey!, 'true');
+    } else {
+      try {
+        await pushAppFavoritesPref(favorites);
+        clearLegacyStarredApps();
+        localStorage.setItem(migrationKey!, 'true');
+      } catch {
+        return;
+      }
+    }
+  }
 }
 
 async function pushDashboardPreference(patch: Record<string, unknown>): Promise<void> {
   if (!sessionState.loggedIn) return;
-  await fetch('/v1/dashboard/me/prefs', {
+  const response = await fetch('/v1/dashboard/me/prefs', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(patch),
   });
+  if (!response.ok) throw new Error('Could not save dashboard preferences');
 }
 
 export function pushDensityPref(density: DisplayDensity): Promise<void> {
   setDensity(density);
   return pushDashboardPreference({ density });
+}
+
+export function pushDisplayTimeZonePref(displayTimeZone: string): Promise<void> {
+  setDisplayTimeZone(displayTimeZone);
+  return pushDashboardPreference({ displayTimeZone });
+}
+
+export function pushLargeTargetsPref(largeTargets: boolean): Promise<void> {
+  setLargeTargets(largeTargets);
+  return pushDashboardPreference({ largeTargets });
+}
+
+export function pushNavigationPreferences(order: TabId[], pinned: TabId[]): Promise<void> {
+  setNavigationPreferences(order, pinned);
+  return pushDashboardPreference({ navigationOrder: order, pinnedNavigation: pinned });
+}
+
+export function pushArtifactLibraryPreferences(groupByApp: boolean, columns: ArtifactColumnId[]): Promise<void> {
+  setArtifactLibraryPreferences(groupByApp, columns);
+  return pushDashboardPreference({ artifactLibrary: { groupByApp, columns } });
+}
+
+export function pushAppFavoritesPref(favorites: Array<{ bundleId: string; trackName: string }>): Promise<void> {
+  const normalized = favorites.slice(0, 50).map(({ bundleId, trackName }) => ({ bundleId, trackName }));
+  replaceStarredApps(normalized);
+  return pushDashboardPreference({ appFavorites: normalized });
 }
 
 export async function pushHomeLayoutPreferences(layouts: HomeLayout[], activeId: string): Promise<void> {
@@ -346,6 +403,7 @@ export async function logoutEverywhere(): Promise<void> {
 
 export function markLoggedOut(): void {
   resetUserInterfacePreferences();
+  replaceStarredApps([]);
   if (sessionState.loggedIn) serverStateCache.clear();
   if (sessionState.sub) clearPersistedTestFlightCatalog(sessionState.sub);
   resetTestFlightCatalogState();

@@ -18,7 +18,7 @@
     {/snippet}
     <div class="flex flex-col gap-1 whitespace-nowrap">
       {#each users as u (u)}
-        <div>{u}{u === sessionState.sub ? ' (you)' : ''}</div>
+        <div data-sensitive="true">{u}{u === sessionState.sub ? ' (you)' : ''}</div>
       {/each}
     </div>
   </Popover>
