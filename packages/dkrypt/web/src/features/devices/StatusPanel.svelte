@@ -953,39 +953,44 @@
 
 {#snippet sourceRow(label: string, outcome: SchedulerRunOutcome)}
 	{@const state = runState(outcome)}
-	<div class="flex items-center gap-1.5">
-		{#if state === "inProgress"}
-			<LoaderCircle
-				class="text-accent h-3.5 w-3.5 shrink-0 animate-spin"
-			/>
-		{:else if state === "succeeded"}
-			<CircleCheck class="text-ok h-3.5 w-3.5 shrink-0" />
-		{:else if state === "failed" || state === "checkFailed"}
-			<TriangleAlert class="text-err h-3.5 w-3.5 shrink-0" />
-		{:else if state === "timedOut"}
-			<TriangleAlert class="text-warn h-3.5 w-3.5 shrink-0" />
-		{:else}
-			<Circle class="text-muted h-3.5 w-3.5 shrink-0" />
-		{/if}
-		<span class="text-muted w-16 shrink-0">{label}</span>
-		{#if outcome.runUrl}
-			<a
-				href={outcome.runUrl}
-				target="_blank"
-				rel="noopener noreferrer"
-				class="hover:underline"
-				title={outcome.reason}
-				aria-label="{outcome.reason} - view run on GitHub"
-			>
-				{RUN_STATE_LABEL[state]} ↗
-			</a>
-		{:else}
-			<span class="truncate" title={outcome.reason}
-				>{RUN_STATE_LABEL[state]}</span
-			>
-		{/if}
-		{#if outcome.observedVersion}
-			<span class="text-muted">v{outcome.observedVersion} · {outcome.installMode === "pinned" ? "pinned" : "current install"}</span>
+	<div class="flex flex-col gap-0.5">
+		<div class="flex items-center gap-1.5">
+			{#if state === "inProgress"}
+				<LoaderCircle
+					class="text-accent h-3.5 w-3.5 shrink-0 animate-spin"
+				/>
+			{:else if state === "succeeded"}
+				<CircleCheck class="text-ok h-3.5 w-3.5 shrink-0" />
+			{:else if state === "failed" || state === "checkFailed"}
+				<TriangleAlert class="text-err h-3.5 w-3.5 shrink-0" />
+			{:else if state === "timedOut"}
+				<TriangleAlert class="text-warn h-3.5 w-3.5 shrink-0" />
+			{:else}
+				<Circle class="text-muted h-3.5 w-3.5 shrink-0" />
+			{/if}
+			<span class="text-muted w-16 shrink-0">{label}</span>
+			{#if outcome.runUrl}
+				<a
+					href={outcome.runUrl}
+					target="_blank"
+					rel="noopener noreferrer"
+					class="hover:underline"
+					title={outcome.reason}
+					aria-label="{outcome.reason} - view run on GitHub"
+				>
+					{RUN_STATE_LABEL[state]} ↗
+				</a>
+			{:else}
+				<span class="truncate" title={outcome.reason}
+					>{RUN_STATE_LABEL[state]}</span
+				>
+			{/if}
+			{#if outcome.observedVersion}
+				<span class="text-muted">v{outcome.observedVersion} · {outcome.installMode === "pinned" ? "pinned" : "current install"}</span>
+			{/if}
+		</div>
+		{#if outcome.failureSummary}
+			<span class="pl-[5.375rem] text-[11px] text-err" title={outcome.failureSummary}>{outcome.failureSummary}</span>
 		{/if}
 	</div>
 {/snippet}

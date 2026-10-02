@@ -32,9 +32,10 @@ import {
 import type { TFBuild } from '#testflight.js';
 import { listBuilds, listTrains } from '#testflight.js';
 import { dispatchTargetKey, filterPendingDispatchTargets } from '#scheduler/pendingDispatch.js';
+import { aggregateWorkflowRunStatus, workflowRunStatus } from '#scheduler/completion.js';
 import { normalizeVersion } from '#util/version.js';
 import { listAppVersions } from '#versions.js';
-import { dispatchIpaUpdate, findDispatchedRun, getGitHubRateLimitBudget, getRun, measureGitHubRequests, releaseTagExists, releaseVersionExists, type WorkflowRun } from '#scheduler/github.js';
+import { dispatchIpaUpdate, findDispatchedRun, getGitHubRateLimitBudget, getRun, getWorkflowFailureSummary, measureGitHubRequests, releaseTagExists, releaseVersionExists, type WorkflowRun } from '#scheduler/github.js';
 import { lookupCurrentVersion } from '#scheduler/itunes.js';
 import { resolveAppStoreDecryptTarget } from '#scheduler/appStoreVersion.js';
 import { buildArtifactFileUrl, getArtifactById } from '#artifacts.js';
@@ -244,6 +245,15 @@ function deferredScheduledDecryptResult(versionLabel: string, reason: string): D
   return { outcome: { ok: true, triggered: false, versionLabel, reason: `Scheduled decrypt deferred: ${reason}` } };
 }
 
+async function workflowFailureSummary(repo: string, run: WorkflowRun): Promise<string | undefined> {
+  try {
+    return await getWorkflowFailureSummary(repo, run.id);
+  } catch (error) {
+    log.warn('failed to load failed workflow job details', { repo, runId: run.id, error: String(error) });
+    return undefined;
+  }
+}
+
 function trackRunCompletion(
   watch: AppWatch,
   target: DispatchTarget,
@@ -270,7 +280,31 @@ function trackRunCompletion(
         return { runStatus: 'timed_out', reason: `Dispatched ${versionLabel} - gave up waiting for the workflow run to appear/complete` };
       }
 
-      const succeeded = run.conclusion === 'success';
+      const runStatus = workflowRunStatus(run);
+      if (runStatus === 'timed_out') {
+        await notify(
+          source === 'App Store' ? 'appStoreAutomationFailure' : 'testFlightAutomationFailure',
+          {
+            title: `${source} automation timed out`,
+            color: EMBED_COLOR.warn,
+            fields: [
+              { name: 'App', value: watch.bundleId, inline: true },
+              { name: 'Version', value: versionLabel, inline: true },
+              { name: 'Stage', value: 'workflow run poll', inline: true },
+              { name: 'Run', value: run.html_url },
+            ],
+          },
+          watch.webhookUrl,
+        );
+        return {
+          runStatus,
+          runUrl: run.html_url,
+          reason: `Dispatched ${versionLabel} - workflow was still ${run.status} when polling timed out`,
+        };
+      }
+
+      const succeeded = runStatus === 'succeeded';
+      const failureSummary = succeeded ? undefined : await workflowFailureSummary(target.repo, run);
       await notify(
         succeeded
           ? source === 'App Store'
@@ -287,15 +321,17 @@ function trackRunCompletion(
             { name: 'Version', value: versionLabel, inline: true },
             { name: 'Channel', value: source, inline: true },
             { name: 'Stage', value: 'workflow run', inline: true },
+            ...(failureSummary ? [{ name: 'Failed job or step', value: failureSummary }] : []),
             { name: 'Run', value: run.html_url },
           ],
         },
         watch.webhookUrl,
       );
       return {
-        runStatus: succeeded ? 'succeeded' : 'failed',
+        runStatus,
         runUrl: run.html_url,
-        reason: `Dispatched ${versionLabel} - workflow ${succeeded ? 'succeeded' : `failed (${run.conclusion})`}`,
+        failureSummary,
+        reason: `Dispatched ${versionLabel} - workflow ${succeeded ? 'succeeded' : `failed (${run.conclusion})${failureSummary ? `: ${failureSummary}` : ''}`}`,
       };
   };
 }
@@ -314,9 +350,12 @@ function trackRunCompletions(
       .map((result) => result.value);
     const succeeded = completed.filter((result) => result.runStatus === 'succeeded').length;
     const unresolved = targets.length - succeeded;
+    const failureSummaries = completed.flatMap((result) => result.failureSummary ? [result.failureSummary] : []).slice(0, 3);
+    const failureSummary = failureSummaries.length ? failureSummaries.join('; ').slice(0, 320) : undefined;
     return {
-      runStatus: unresolved === 0 ? 'succeeded' : succeeded === 0 ? 'failed' : 'timed_out',
+      runStatus: aggregateWorkflowRunStatus(completed, targets.length),
       runUrl: completed.find((result) => result.runUrl)?.runUrl,
+      failureSummary,
       reason: `Dispatched ${versionLabel} to ${targets.length} destination${targets.length === 1 ? '' : 's'} - ${succeeded} workflow${succeeded === 1 ? '' : 's'} succeeded${unresolved ? `, ${unresolved} need attention` : ''}`,
     };
   };
@@ -867,11 +906,22 @@ async function reconcileStuckSchedulerRuns(): Promise<void> {
           });
           continue;
         }
-        const succeeded = run.conclusion === 'success';
+        const runStatus = workflowRunStatus(run);
+        if (runStatus === 'timed_out') {
+          updateSchedulerRunOutcome(entry.id, source, {
+            runStatus,
+            runUrl: run.html_url,
+            reason: `${entry[source].reason} - workflow was still ${run.status} after restart reconciliation polling timed out`,
+          });
+          continue;
+        }
+        const succeeded = runStatus === 'succeeded';
+        const failureSummary = succeeded ? undefined : await workflowFailureSummary(watch.repo, run);
         updateSchedulerRunOutcome(entry.id, source, {
-          runStatus: succeeded ? 'succeeded' : 'failed',
+          runStatus,
           runUrl: run.html_url,
-          reason: `${entry[source].reason} - workflow ${succeeded ? 'succeeded' : `failed (${run.conclusion})`}`,
+          failureSummary,
+          reason: `${entry[source].reason} - workflow ${succeeded ? 'succeeded' : `failed (${run.conclusion})${failureSummary ? `: ${failureSummary}` : ''}`}`,
         });
       } catch (err) {
         log.warn('failed to reconcile stuck scheduler run', { entryId: entry.id, source, error: String(err) });

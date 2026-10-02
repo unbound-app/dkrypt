@@ -333,3 +333,52 @@ export async function getRun(dispatchRepo: string, runId: number): Promise<Workf
   if (!res.ok) throw new Error(describeHttpError('get run failed', res));
   return (await res.json()) as WorkflowRun;
 }
+
+interface WorkflowRunJob {
+  name?: unknown;
+  conclusion?: unknown;
+  steps?: unknown;
+}
+
+interface WorkflowRunJobsResponse {
+  jobs?: unknown;
+}
+
+function safeWorkflowLabel(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback;
+  return value.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/@/g, '@\u200b').trim().slice(0, 80) || fallback;
+}
+
+export async function getWorkflowFailureSummary(dispatchRepo: string, runId: number): Promise<string | undefined> {
+  const res = await githubFetch(`${GITHUB_API}/repos/${dispatchRepo}/actions/runs/${runId}/jobs?per_page=100`, {
+    headers: headers(),
+  });
+  if (!res.ok) throw new Error(describeHttpError('get workflow jobs failed', res));
+
+  const body = (await res.json()) as WorkflowRunJobsResponse;
+  if (!Array.isArray(body.jobs)) return undefined;
+
+  const failures = body.jobs
+    .filter((job): job is WorkflowRunJob => typeof job === 'object' && job !== null && !Array.isArray(job))
+    .filter((job) => job.conclusion === 'failure' || job.conclusion === 'timed_out')
+    .map((job) => {
+      const failedSteps = Array.isArray(job.steps)
+        ? job.steps
+          .filter((step) => typeof step === 'object' && step !== null && !Array.isArray(step))
+          .filter((step) => {
+            const conclusion = (step as Record<string, unknown>).conclusion;
+            return conclusion === 'failure' || conclusion === 'timed_out';
+          })
+          .map((step) => safeWorkflowLabel((step as Record<string, unknown>).name, 'Unnamed step'))
+          .slice(0, 2)
+        : [];
+      const jobName = safeWorkflowLabel(job.name, 'Unnamed job');
+      return failedSteps.length ? `${jobName}: ${failedSteps.join(', ')}` : jobName;
+    });
+
+  if (!failures.length) return undefined;
+  const visibleFailures = failures.slice(0, 3);
+  if (failures.length > visibleFailures.length) visibleFailures.push(`+${failures.length - visibleFailures.length} more failed jobs`);
+  const summary = visibleFailures.join('; ');
+  return summary.length > 320 ? `${summary.slice(0, 319)}…` : summary;
+}

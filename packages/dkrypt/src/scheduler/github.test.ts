@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { config } from '#config.js';
-import { dispatchIpaUpdate, findDispatchedRun, listReleaseVersions, releaseVersionExists } from '#scheduler/github.js';
+import { dispatchIpaUpdate, findDispatchedRun, getWorkflowFailureSummary, listReleaseVersions, releaseVersionExists } from '#scheduler/github.js';
 
 const originalFetch = globalThis.fetch;
 
@@ -79,6 +79,34 @@ describe('GitHub metadata requests', () => {
     globalThis.fetch = (async () => new Response(JSON.stringify({ workflow_runs: [run] }), { status: 200 })) as unknown as typeof fetch;
 
     await expect(findDispatchedRun('example/app', 'dispatch.yml', new Date('2026-08-06T00:00:00Z'))).resolves.toBeUndefined();
+  });
+
+  test('summarizes failed workflow jobs and steps without including successful jobs', async () => {
+    let requestedUrl = '';
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      requestedUrl = String(input);
+      return new Response(JSON.stringify({
+        jobs: [
+          { name: 'Build', conclusion: 'failure', steps: [{ name: 'Checkout', conclusion: 'success' }, { name: 'Build libffi', conclusion: 'failure' }] },
+          { name: 'Package', conclusion: 'success', steps: [{ name: 'Create package', conclusion: 'success' }] },
+        ],
+      }), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    await expect(getWorkflowFailureSummary('example/app', 42)).resolves.toBe('Build: Build libffi');
+    expect(requestedUrl).toBe('https://api.github.com/repos/example/app/actions/runs/42/jobs?per_page=100');
+  });
+
+  test('bounds workflow failure summaries to a few jobs and failed steps', async () => {
+    globalThis.fetch = (async () => new Response(JSON.stringify({
+      jobs: Array.from({ length: 8 }, (_, index) => ({
+        name: `Job ${index + 1}`,
+        conclusion: 'failure',
+        steps: [{ name: `Failed step ${index + 1}`, conclusion: 'failure' }],
+      })),
+    }), { status: 200 })) as unknown as typeof fetch;
+
+    await expect(getWorkflowFailureSummary('example/app', 43)).resolves.toBe('Job 1: Failed step 1; Job 2: Failed step 2; Job 3: Failed step 3; +5 more failed jobs');
   });
 
   test('checks the release tag endpoint when the release list misses a version', async () => {

@@ -574,6 +574,7 @@ export interface SchedulerRunOutcome {
   triggered: boolean;
   reason: string;
   runUrl?: string;
+  failureSummary?: string;
   runStatus?: SchedulerRunStatus;
   observedVersion?: string;
   installMode?: 'pinned' | 'current';
@@ -1191,6 +1192,7 @@ function normalizeLegacySchedulerRunOutcome(raw: unknown): SchedulerRunOutcome {
     triggered: Boolean(o.triggered),
     reason: o.reason ?? '',
     runUrl: o.runUrl,
+    failureSummary: typeof o.failureSummary === 'string' ? o.failureSummary : undefined,
     runStatus: o.runStatus,
     observedVersion: o.observedVersion,
     installMode: o.installMode,

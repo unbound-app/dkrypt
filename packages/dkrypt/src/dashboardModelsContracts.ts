@@ -120,6 +120,7 @@ const schedulerRunOutcomeSchema = Type.Object({
   triggered: Type.Boolean(),
   reason: Type.String(),
   runUrl: Type.Optional(Type.String()),
+  failureSummary: Type.Optional(Type.String()),
   runStatus: Type.Optional(Type.Union([
     Type.Literal('dispatched'),
     Type.Literal('succeeded'),

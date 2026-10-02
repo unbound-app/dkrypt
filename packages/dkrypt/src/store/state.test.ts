@@ -1281,10 +1281,10 @@ test('scheduler outcome updates persist through the typed SQLite repository', ()
 
   try {
     expect(readStateCollection(database.db, 'scheduler_runs')).toContainEqual(expect.objectContaining({ id: entryId }));
-    updateSchedulerRunOutcome(entryId, 'appStore', { reason: 'workflow completed', runStatus: 'succeeded' });
+    updateSchedulerRunOutcome(entryId, 'appStore', { reason: 'workflow completed', runStatus: 'succeeded', failureSummary: 'Build: dependency compile' });
     expect(readStateCollection(database.db, 'scheduler_runs')).toContainEqual(expect.objectContaining({
       id: entryId,
-      appStore: expect.objectContaining({ reason: 'workflow completed', runStatus: 'succeeded' }),
+      appStore: expect.objectContaining({ reason: 'workflow completed', runStatus: 'succeeded', failureSummary: 'Build: dependency compile' }),
     }));
   } finally {
     database.close();

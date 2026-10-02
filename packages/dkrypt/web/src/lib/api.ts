@@ -340,6 +340,7 @@ export interface SchedulerRunOutcome {
   triggered: boolean;
   reason: string;
   runUrl?: string;
+  failureSummary?: string;
   runStatus?: SchedulerRunStatus;
   observedVersion?: string;
   installMode?: 'pinned' | 'current';
