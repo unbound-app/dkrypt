@@ -82,4 +82,22 @@ describe('TestFlight recovery smoke candidate selection', () => {
 
     expect(candidates).toEqual([]);
   });
+
+  test('skips builds the device cannot run when the minimum iOS version is unknown or too high', async () => {
+    const candidates = await listTestFlightSmokeCandidates(app.bundleId, { ...device, iosVersion: '16.7.10' } as DeviceRecord, Date.parse('2026-10-02T00:00:00Z'), services({
+      listBuilds: async () => [
+        build({ id: 1, minimumOsVersion: '17.0' }),
+        build({ id: 2, minimumOSVersion: '16.7' }),
+        build({ id: 3, minOsVersion: '15.0' }),
+      ],
+    }));
+
+    expect(candidates.map(({ build: selected }) => selected.id).sort((left, right) => left - right)).toEqual([2, 3]);
+
+    const unknownOsCandidates = await listTestFlightSmokeCandidates(app.bundleId, device, Date.parse('2026-10-02T00:00:00Z'), services({
+      listBuilds: async () => [build({ id: 4, minimumOsVersion: '15.0' })],
+    }));
+
+    expect(unknownOsCandidates).toEqual([]);
+  });
 });

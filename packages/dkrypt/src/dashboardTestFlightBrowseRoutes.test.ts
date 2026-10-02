@@ -126,13 +126,13 @@ test('TestFlight decrypt queues only for a device with verified access', async (
   };
   const server = Fastify().withTypeProvider<TypeBoxTypeProvider>();
   await server.register(createDashboardTestFlightBrowseRoutes({
-    getVerifiedCatalog: async ({ requireAllDevices }) => {
-      expect(requireAllDevices).toBe(true);
+    getVerifiedCatalog: async (options) => {
+      expect(options).toEqual({ requireAllDevices: false });
       return [{
         appId: 12345,
         bundleId: build.bundleId,
         displayName: 'TestFlight app',
-        devices: [{ id: eligible.id, name: eligible.name }],
+        devices: [{ id: eligible.id, name: eligible.name, verifiedAt: Date.now() }],
         lastVerifiedAt: Date.now(),
         deviceSource: true,
       }];
@@ -165,12 +165,59 @@ test('TestFlight decrypt queues only for a device with verified access', async (
     expect(accepted.json()).toMatchObject({ id: 'testflight-job', channel: 'testflight' });
     expect(queuedDeviceId).toBe(eligible.id);
     expect(rejected.statusCode).toBe(409);
-    expect(rejected.json()).toMatchObject({ code: 'conflict' });
+    expect(rejected.json()).toMatchObject({ code: 'conflict', message: 'TestFlight access is not recently verified on the selected device' });
     expect(enqueueCalls).toBe(1);
   } finally {
     await server.close();
     deleteDevice(eligible.id, 'test cleanup');
     deleteDevice(ineligible.id, 'test cleanup');
+  }
+});
+
+test('TestFlight decrypt rejects stale per-device access without requiring every device to respond', async () => {
+  const device = createEnabledDevice(`TestFlight stale ${crypto.randomUUID()}`);
+  const queuedJob: Job = {
+    id: 'testflight-stale-job',
+    projectId: 'default',
+    bundleId: build.bundleId,
+    testflight: { appId: 12345, build },
+    source: 'manual',
+    queuedBy: 'root',
+    priority: 0,
+    status: 'queued',
+    progress: 'queued',
+    createdAt: Date.now(),
+    waiters: [],
+  };
+  const server = Fastify().withTypeProvider<TypeBoxTypeProvider>();
+  await server.register(createDashboardTestFlightBrowseRoutes({
+    getVerifiedCatalog: async (options) => {
+      expect(options).toEqual({ requireAllDevices: false });
+      return [{
+        appId: 12345,
+        bundleId: build.bundleId,
+        displayName: 'TestFlight app',
+        devices: [{ id: device.id, name: device.name, verifiedAt: Date.now() - 31 * 60_000 }],
+        lastVerifiedAt: Date.now() - 31 * 60_000,
+        deviceSource: true,
+      }];
+    },
+    enqueueDecryptJob: (() => queuedJob) as typeof import('#jobs/store.js').enqueueDecryptJob,
+  }));
+
+  try {
+    const response = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/testflight/decrypt',
+      headers: { cookie: sessionCookie(PermissionFlag.requestDecrypt | PermissionFlag.viewProjects) },
+      payload: { bundleId: build.bundleId, appId: 12345, build, deviceId: device.id },
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({ code: 'conflict', message: 'TestFlight access is not recently verified on the selected device' });
+  } finally {
+    await server.close();
+    deleteDevice(device.id, 'test cleanup');
   }
 });
 

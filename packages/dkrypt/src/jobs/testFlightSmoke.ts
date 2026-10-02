@@ -1,4 +1,5 @@
 import { artifactKeyForTestFlight, getArtifactByKey } from '#artifacts.js';
+import { minimumOsVersionForBuild } from '#jobs/deviceDispatch.js';
 import type { DeviceRecord } from '#store/state.js';
 import { compareVersions } from '#util/version.js';
 import { listBuilds, listTestFlightApps, listTrains, type TFBuild, type TFDeviceApp, type TFTrain } from '#testflight.js';
@@ -39,6 +40,9 @@ export async function listTestFlightSmokeCandidates(
     const builds = await services.listBuilds(app.appId, train.trainVersion, device);
     for (const build of builds) {
       if (build.bundleId !== bundleId || services.hasCachedArtifact(bundleId, build.id)) continue;
+      const minimumOsVersion = minimumOsVersionForBuild(build);
+      const deviceOsVersion = device.iosVersion?.trim();
+      if (minimumOsVersion && (!deviceOsVersion || !/^\d+(?:\.\d+){0,3}$/.test(deviceOsVersion) || compareVersions(deviceOsVersion, minimumOsVersion) < 0)) continue;
       if (build.expiration) {
         const expiresAt = Date.parse(build.expiration);
         if (!Number.isFinite(expiresAt) || expiresAt <= now) continue;

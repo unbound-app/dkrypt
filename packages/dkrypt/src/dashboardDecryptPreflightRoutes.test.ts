@@ -66,12 +66,13 @@ function createHealth(overrides: Partial<DeviceHealth> = {}): DeviceHealth {
 }
 
 function createTestFlightApp(devices: TestFlightCatalogApp['devices']): TestFlightCatalogApp {
+  const verifiedAt = Date.now();
   return {
     appId: 123,
     bundleId: 'com.example.app',
     displayName: 'Example App',
-    devices,
-    lastVerifiedAt: 1,
+    devices: devices.map((device) => ({ ...device, verifiedAt: device.verifiedAt ?? verifiedAt })),
+    lastVerifiedAt: verifiedAt,
     deviceSource: true,
   };
 }
@@ -180,10 +181,14 @@ test('TestFlight preflight exposes only verified devices and rejects an ineligib
   const first = createDevice('device-one');
   const second = createDevice('device-two');
   const checkedDevices: string[] = [];
+  const catalogOptions: Array<{ requireAllDevices?: boolean } | undefined> = [];
   const server = build({
     getEffectiveDevices: () => [first, second],
     getDevice: (id) => [first, second].find((device) => device.id === id),
-    getVerifiedTestFlightCatalog: async () => [createTestFlightApp([{ id: first.id, name: first.name }])],
+    getVerifiedTestFlightCatalog: async (options) => {
+      catalogOptions.push(options);
+      return [createTestFlightApp([{ id: first.id, name: first.name }])];
+    },
     getDeviceHealth: async (deviceId) => {
       checkedDevices.push(deviceId);
       return createHealth({ internetAccess: true });
@@ -208,10 +213,40 @@ test('TestFlight preflight exposes only verified devices and rejects an ineligib
     });
 
     expect(selectedIneligible.statusCode).toBe(409);
-    expect(selectedIneligible.json()).toMatchObject({ error: 'TestFlight access is not verified on the selected device', retryable: false });
+    expect(selectedIneligible.json()).toMatchObject({ error: 'TestFlight access is not recently verified on the selected device', retryable: false });
     expect(available.statusCode).toBe(200);
     expect(available.json()).toMatchObject({ canQueue: true, devices: [{ id: first.id, ready: true }] });
     expect(checkedDevices).toEqual([first.id]);
+    expect(catalogOptions).toEqual([{ requireAllDevices: false }, { requireAllDevices: false }]);
+  } finally {
+    await server.close();
+  }
+});
+
+test('TestFlight preflight rejects stale app access while allowing partial device availability', async () => {
+  const available = createDevice('recent-device');
+  const stale = createDevice('stale-device');
+  const server = build({
+    getEffectiveDevices: () => [available, stale],
+    getVerifiedTestFlightCatalog: async () => [createTestFlightApp([
+      { id: available.id, name: available.name },
+      { id: stale.id, name: stale.name, verifiedAt: Date.now() - 31 * 60_000 },
+    ])],
+    getDeviceHealth: async () => createHealth({ internetAccess: true }),
+    getDeviceInstallBlocker: () => undefined,
+    getDeviceReadiness: () => ({ score: 100, state: 'ready', reasons: [] }),
+  });
+
+  try {
+    const response = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/decrypt/preflight',
+      headers: { cookie: sessionCookie(PermissionFlag.requestDecrypt) },
+      payload: { bundleId: 'com.example.app', testflight: true },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ canQueue: true, devices: [{ id: available.id, ready: true }] });
   } finally {
     await server.close();
   }

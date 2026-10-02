@@ -1,7 +1,7 @@
 import { getDeviceInstallBlocker } from '#deviceInstallEligibility.js';
 import type { DeviceHealth } from '#deviceHealth.js';
 import type { Job } from '#jobs/types.js';
-import { TESTFLIGHT_VERIFICATION_TTL_MS } from '#testflightPolicy.js';
+import { isTestFlightVerificationFresh } from '#testflightPolicy.js';
 import type { DeviceRecord, TestFlightCatalogCache } from '#store/state.js';
 import { compareVersions } from '#util/version.js';
 import type { TFBuild } from '#testflight.js';
@@ -30,7 +30,7 @@ function testFlightAccessBlocker(
   if (!deviceAccess) return 'TestFlight access is not verified on this device';
   const verifiedAt = deviceAccess.verifiedAt;
   if (typeof verifiedAt !== 'number' || !Number.isFinite(verifiedAt)) return 'TestFlight access has not been individually verified on this device';
-  if (now - verifiedAt > TESTFLIGHT_VERIFICATION_TTL_MS) return 'TestFlight access verification is stale on this device';
+  if (!isTestFlightVerificationFresh(verifiedAt, now)) return 'TestFlight access verification is stale on this device';
   return undefined;
 }
 

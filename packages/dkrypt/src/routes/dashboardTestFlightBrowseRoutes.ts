@@ -24,6 +24,7 @@ import {
   type DeviceRecord,
 } from '#store/state.js';
 import { getVerifiedTestFlightCatalog, TestFlightCatalogUnavailableError, type TestFlightCatalogApp } from '#testflightSubscriptions.js';
+import { isTestFlightVerificationFresh } from '#testflightPolicy.js';
 import { externalRequestRateLimiter, fastifyRateLimitPerUser } from '#util/rateLimit.js';
 import { scopedLogger } from '#logger.js';
 
@@ -31,7 +32,7 @@ interface TestFlightBrowseServices {
   listTrains: (appId: number, device?: DeviceRecord) => Promise<TFTrain[]>;
   listBuilds: (appId: number, trainVersion: string, device?: DeviceRecord) => Promise<TFBuild[]>;
   getDiagnostics: (device?: DeviceRecord) => Promise<TestFlightBridgeDiagnostics>;
-  getVerifiedCatalog: (options: { requireAllDevices: boolean }) => Promise<TestFlightCatalogApp[]>;
+  getVerifiedCatalog: (options: { requireAllDevices?: boolean }) => Promise<TestFlightCatalogApp[]>;
   enqueueDecryptJob: typeof enqueueDecryptJob;
 }
 
@@ -215,7 +216,7 @@ export function createDashboardTestFlightBrowseRoutes(overrides: Partial<TestFli
       if (requestedDevice === null) return;
       let verifiedTestFlightApp: TestFlightCatalogApp | undefined;
       try {
-        verifiedTestFlightApp = (await services.getVerifiedCatalog({ requireAllDevices: true }))
+        verifiedTestFlightApp = (await services.getVerifiedCatalog({ requireAllDevices: false }))
           .find((entry) => entry.appId === appId && entry.bundleId === bundleId);
       } catch (error) {
         if (error instanceof TestFlightCatalogUnavailableError) {
@@ -228,16 +229,21 @@ export function createDashboardTestFlightBrowseRoutes(overrides: Partial<TestFli
         sendError(request, reply, 409, 'TestFlight access must be verified on an enabled device before queueing');
         return;
       }
-      if (requestedDevice && !verifiedTestFlightApp.devices.some((device) => device.id === requestedDevice.id)) {
-        sendError(request, reply, 409, 'TestFlight access is not verified on the selected device');
+      const recentlyVerifiedDevices = verifiedTestFlightApp.devices.filter((device) => isTestFlightVerificationFresh(device.verifiedAt));
+      if (requestedDevice && !recentlyVerifiedDevices.some((device) => device.id === requestedDevice.id)) {
+        sendError(request, reply, 409, 'TestFlight access is not recently verified on the selected device');
+        return;
+      }
+      if (!requestedDevice && recentlyVerifiedDevices.length === 0) {
+        sendError(request, reply, 409, 'TestFlight access is not recently verified on an enabled device');
         return;
       }
 
       const primaryDeviceId = getPrimaryDevice()?.id;
       const preferredDeviceId = requestedDevice?.id
-        ?? (request.body.preferPrimary && verifiedTestFlightApp.devices.some((device) => device.id === primaryDeviceId)
+        ?? (request.body.preferPrimary && recentlyVerifiedDevices.some((device) => device.id === primaryDeviceId)
           ? primaryDeviceId
-          : verifiedTestFlightApp.devices[0]?.id);
+          : recentlyVerifiedDevices[0]?.id);
       const session = getFastifySession(request)!;
       const job = services.enqueueDecryptJob(
         bundleId,

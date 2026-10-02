@@ -16,6 +16,7 @@ import {
   getProject,
 } from '#store/state.js';
 import { getVerifiedTestFlightCatalog, TestFlightCatalogUnavailableError } from '#testflightSubscriptions.js';
+import { isTestFlightVerificationFresh } from '#testflightPolicy.js';
 import { canAccessProject } from '#dashboardJobPresentation.js';
 import { createHttpErrorEnvelope } from '#util/httpResponse.js';
 
@@ -85,7 +86,7 @@ export function createDashboardDecryptPreflightRoutes(overrides: Partial<Dashboa
       let verifiedCatalog: Awaited<ReturnType<typeof getVerifiedTestFlightCatalog>> = [];
       if (testflight) {
         try {
-          verifiedCatalog = await services.getVerifiedTestFlightCatalog({ requireAllDevices: true });
+          verifiedCatalog = await services.getVerifiedTestFlightCatalog({ requireAllDevices: false });
         } catch (error) {
           if (error instanceof TestFlightCatalogUnavailableError) {
             reply.code(503);
@@ -105,11 +106,16 @@ export function createDashboardDecryptPreflightRoutes(overrides: Partial<Dashboa
       if (testflight && !verifiedTestFlightApp) {
         return sendPreflightError(request.id, reply, 409, 'TestFlight access must be verified on an enabled device before queueing');
       }
-      if (requestedDevice && verifiedTestFlightApp && !verifiedTestFlightApp.devices.some((device) => device.id === requestedDevice.id)) {
-        return sendPreflightError(request.id, reply, 409, 'TestFlight access is not verified on the selected device');
+      const recentlyVerifiedDevices = verifiedTestFlightApp?.devices.filter((device) => isTestFlightVerificationFresh(device.verifiedAt)) ?? [];
+      if (testflight && recentlyVerifiedDevices.length === 0) {
+        return sendPreflightError(request.id, reply, 409, 'TestFlight access is not recently verified on an enabled device');
       }
 
-      const verifiedDeviceIds = verifiedTestFlightApp ? new Set(verifiedTestFlightApp.devices.map((device) => device.id)) : undefined;
+      if (requestedDevice && verifiedTestFlightApp && !recentlyVerifiedDevices.some((device) => device.id === requestedDevice.id)) {
+        return sendPreflightError(request.id, reply, 409, 'TestFlight access is not recently verified on the selected device');
+      }
+
+      const verifiedDeviceIds = verifiedTestFlightApp ? new Set(recentlyVerifiedDevices.map((device) => device.id)) : undefined;
       const installSource = testflight ? 'testflight' : 'appstore';
       const devices = requestedDevice
         ? [requestedDevice]
