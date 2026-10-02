@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,6 +7,7 @@ import { TypeBoxTypeProvider } from '@fastify/type-provider-typebox';
 import Fastify from 'fastify';
 import type { ArtifactRecord } from '#artifacts.js';
 import { config } from '#config.js';
+import { apiIdempotencyRegistry } from '#idempotency.js';
 import { createArtifactCatalogRoutes, createDecryptRoutes, createTestFlightCatalogRoutes } from '#routes/decrypt.js';
 import type { Job } from '#jobs/types.js';
 import { PermissionFlag, serializeBits } from '#permissions.js';
@@ -528,6 +530,20 @@ test('typed decrypt submission routes preserve API-key scopes and resolved job r
     expect(duplicateTestFlight.statusCode).toBe(202);
     expect(enqueued).toHaveLength(3);
 
+    const reorderedTestFlight = await server.inject({
+      method: 'POST',
+      url: '/v1/testflight/decrypt',
+      headers: testFlightHeaders,
+      payload: {
+        build: { bundleId: 'com.example.allowed', cfBundleVersion: '4', cfBundleShortVersion: '2.0', id: 45 },
+        appId: '123',
+        bundleId: 'com.example.allowed',
+      },
+    });
+    expect(reorderedTestFlight.statusCode).toBe(202);
+    expect(reorderedTestFlight.json().id).toBe(queuedJob.id);
+    expect(enqueued).toHaveLength(3);
+
     const conflictingTestFlight = await server.inject({
       method: 'POST',
       url: '/v1/testflight/decrypt',
@@ -536,6 +552,29 @@ test('typed decrypt submission routes preserve API-key scopes and resolved job r
     });
     expect(conflictingTestFlight.statusCode).toBe(409);
     expect(conflictingTestFlight.json()).toMatchObject({ code: 'request_error' });
+
+    const legacyIdempotencyKey = `tf-legacy-${crypto.randomUUID()}`;
+    const legacyFingerprint = createHash('sha256')
+      .update(JSON.stringify({
+        route: '/v1/testflight/decrypt',
+        body: {
+          bundleId: 'com.example.allowed',
+          appId: 123,
+          build: testFlightPayload.build,
+          projectId: 'default',
+        },
+      }))
+      .digest('hex');
+    apiIdempotencyRegistry.record(testFlightKey.id, legacyIdempotencyKey, legacyFingerprint, queuedJob.id, 60_000);
+    const legacyTestFlightRetry = await server.inject({
+      method: 'POST',
+      url: '/v1/testflight/decrypt',
+      headers: { authorization: `Bearer ${testFlightKey.key}`, 'idempotency-key': legacyIdempotencyKey },
+      payload: testFlightPayload,
+    });
+    expect(legacyTestFlightRetry.statusCode).toBe(202);
+    expect(legacyTestFlightRetry.json().id).toBe(queuedJob.id);
+    expect(enqueued).toHaveLength(3);
 
     const testFlightDisabled = await server.inject({
       method: 'POST',

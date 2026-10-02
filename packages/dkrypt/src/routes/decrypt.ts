@@ -70,11 +70,20 @@ function artifactSummary(artifact: ReturnType<typeof getArtifactById>, projectId
   };
 }
 
-function idempotencyJobId(key: string | undefined, apiKeyId: string | undefined, fingerprint: string): { jobId?: string; error?: string; key?: string } {
+function idempotencyJobId(
+  key: string | undefined,
+  apiKeyId: string | undefined,
+  fingerprint: string,
+  legacyFingerprint?: string,
+): { jobId?: string; error?: string; key?: string } {
   if (!key) return {};
   if (!IDEMPOTENCY_KEY_RE.test(key)) return { error: 'Idempotency-Key must be 1-200 URL-safe characters' };
   if (!apiKeyId) return { error: 'API key identity is unavailable' };
   const existing = apiIdempotencyRegistry.lookup(apiKeyId, key, fingerprint);
+  if (existing.conflict && legacyFingerprint) {
+    const legacy = apiIdempotencyRegistry.lookup(apiKeyId, key, legacyFingerprint);
+    if (legacy.jobId) return { jobId: legacy.jobId, key };
+  }
   if (existing.conflict) return { error: 'Idempotency-Key was already used with a different request' };
   return { jobId: existing.jobId, key };
 }
@@ -100,15 +109,16 @@ async function resolveIdempotentJob<T extends { id: string }>(options: {
   key?: string;
   scope?: string;
   fingerprint: string;
+  legacyFingerprint?: string;
   getJob: (id: string) => T | undefined;
   createJob: () => Promise<T>;
 }): Promise<T> {
-  const { key, scope, fingerprint, getJob, createJob } = options;
+  const { key, scope, fingerprint, legacyFingerprint, getJob, createJob } = options;
   if (!key) return createJob();
   if (!scope) throw new IdempotencyRequestError(409, 'API key identity is unavailable');
 
   return withIdempotencyLock(scope, key, async () => {
-    const idempotency = idempotencyJobId(key, scope, fingerprint);
+    const idempotency = idempotencyJobId(key, scope, fingerprint, legacyFingerprint);
     if (idempotency.error) throw new IdempotencyRequestError(409, idempotency.error);
     if (idempotency.jobId) {
       const existingJob = getJob(idempotency.jobId);
@@ -124,6 +134,21 @@ async function resolveIdempotentJob<T extends { id: string }>(options: {
 
 function requestFingerprint(route: string, body: Record<string, unknown>): string {
   return createHash('sha256').update(JSON.stringify({ route, body })).digest('hex');
+}
+
+function canonicalizeFingerprintValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalizeFingerprintValue);
+  if (value === null || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.entries(value).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+      .map(([key, nestedValue]) => [key, canonicalizeFingerprintValue(nestedValue)]),
+  );
+}
+
+function canonicalRequestFingerprint(route: string, body: Record<string, unknown>): string {
+  return createHash('sha256')
+    .update(JSON.stringify(canonicalizeFingerprintValue({ route, body })))
+    .digest('hex');
 }
 
 function idempotencyKeyFromHeader(header: string | string[] | undefined): string | undefined {
@@ -457,12 +482,15 @@ export function createDecryptRoutes(
         const projectId = resolveApiProjectId(body.projectId, apiKey, reply, { requireActive: true });
         if (!projectId) return projectResolutionError(reply, request.id);
 
-        const fingerprint = requestFingerprint('/v1/testflight/decrypt', { bundleId, appId, build, projectId });
+        const fingerprintInput = { bundleId, appId, build, projectId };
+        const fingerprint = canonicalRequestFingerprint('/v1/testflight/decrypt', fingerprintInput);
+        const legacyFingerprint = requestFingerprint('/v1/testflight/decrypt', fingerprintInput);
         try {
           const job = await resolveIdempotentJob({
             key: idempotencyKeyFromHeader(request.headers['idempotency-key']),
             scope: apiKey.keyId,
             fingerprint,
+            legacyFingerprint,
             getJob: services.getJob,
             createJob: async () => {
               if (apiKey.keyId) services.recordApiKeyBundleUsage(apiKey.keyId, bundleId);
