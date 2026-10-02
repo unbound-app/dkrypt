@@ -32,7 +32,7 @@ import {
 import type { TFBuild } from '#testflight.js';
 import { listBuilds, listTrains } from '#testflight.js';
 import { dispatchTargetKey, filterPendingDispatchTargets } from '#scheduler/pendingDispatch.js';
-import { aggregateWorkflowRunStatus, workflowRunStatus } from '#scheduler/completion.js';
+import { aggregateWorkflowRunStatus, selectWorkflowRunUrl, workflowRunStatus } from '#scheduler/completion.js';
 import { normalizeVersion } from '#util/version.js';
 import { listAppVersions } from '#versions.js';
 import { dispatchIpaUpdate, findDispatchedRun, getGitHubRateLimitBudget, getRun, getWorkflowFailureSummary, measureGitHubRequests, releaseTagExists, releaseVersionExists, type WorkflowRun } from '#scheduler/github.js';
@@ -354,7 +354,7 @@ function trackRunCompletions(
     const failureSummary = failureSummaries.length ? failureSummaries.join('; ').slice(0, 320) : undefined;
     return {
       runStatus: aggregateWorkflowRunStatus(completed, targets.length),
-      runUrl: completed.find((result) => result.runUrl)?.runUrl,
+      runUrl: selectWorkflowRunUrl(completed),
       failureSummary,
       reason: `Dispatched ${versionLabel} to ${targets.length} destination${targets.length === 1 ? '' : 's'} - ${succeeded} workflow${succeeded === 1 ? '' : 's'} succeeded${unresolved ? `, ${unresolved} need attention` : ''}`,
     };

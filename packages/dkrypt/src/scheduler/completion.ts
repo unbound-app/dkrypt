@@ -18,3 +18,9 @@ export function aggregateWorkflowRunStatus(
   if (timedOut > 0 || outcomes.length < targetCount) return 'timed_out';
   return failed > 0 ? 'failed' : 'timed_out';
 }
+
+export function selectWorkflowRunUrl(outcomes: Array<Partial<SchedulerRunOutcome>>): string | undefined {
+  return outcomes.find((outcome) => outcome.runStatus === 'failed' && outcome.runUrl)?.runUrl
+    ?? outcomes.find((outcome) => outcome.runStatus === 'timed_out' && outcome.runUrl)?.runUrl
+    ?? outcomes.find((outcome) => outcome.runUrl)?.runUrl;
+}

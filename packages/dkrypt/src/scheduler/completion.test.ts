@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { aggregateWorkflowRunStatus, workflowRunStatus } from '#scheduler/completion.js';
+import { aggregateWorkflowRunStatus, selectWorkflowRunUrl, workflowRunStatus } from '#scheduler/completion.js';
 
 test('workflow run status distinguishes an incomplete poll from a failed workflow', () => {
   expect(workflowRunStatus({ id: 1, status: 'in_progress', conclusion: null, created_at: '', html_url: '' })).toBe('timed_out');
@@ -23,5 +23,28 @@ describe('aggregate workflow run status', () => {
 
   test('reports failure when all completed targets fail', () => {
     expect(aggregateWorkflowRunStatus([{ runStatus: 'failed' }, { runStatus: 'failed' }], 2)).toBe('failed');
+  });
+});
+
+describe('select workflow run url', () => {
+  test('links mixed outcomes to the failed workflow instead of a successful destination', () => {
+    expect(selectWorkflowRunUrl([
+      { runStatus: 'succeeded', runUrl: 'https://github.com/owner/first/actions/runs/1' },
+      { runStatus: 'failed', runUrl: 'https://github.com/owner/second/actions/runs/2' },
+    ])).toBe('https://github.com/owner/second/actions/runs/2');
+  });
+
+  test('links timed-out outcomes before successful destinations', () => {
+    expect(selectWorkflowRunUrl([
+      { runStatus: 'succeeded', runUrl: 'https://github.com/owner/first/actions/runs/1' },
+      { runStatus: 'timed_out', runUrl: 'https://github.com/owner/second/actions/runs/2' },
+    ])).toBe('https://github.com/owner/second/actions/runs/2');
+  });
+
+  test('uses the first available workflow when every destination succeeded', () => {
+    expect(selectWorkflowRunUrl([
+      { runStatus: 'succeeded', runUrl: 'https://github.com/owner/first/actions/runs/1' },
+      { runStatus: 'succeeded', runUrl: 'https://github.com/owner/second/actions/runs/2' },
+    ])).toBe('https://github.com/owner/first/actions/runs/1');
   });
 });
