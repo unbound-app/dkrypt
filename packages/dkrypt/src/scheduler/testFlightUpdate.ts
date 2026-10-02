@@ -1,5 +1,7 @@
 import type { AppWatch } from '#store/state.js';
 import type { TFBuild, TFTrain } from '#testflight.js';
+import { classifySchedulerFailure } from '#scheduler/failure.js';
+import type { JobFailureClass } from '#util/failureCategory.js';
 
 export interface TestFlightUpdateCheck {
   ok: boolean;
@@ -9,6 +11,8 @@ export interface TestFlightUpdateCheck {
   alreadyReleased?: boolean;
   wouldDispatch: boolean;
   reason: string;
+  failureClass?: JobFailureClass;
+  retryable?: boolean;
 }
 
 type TestFlightWatch = Pick<AppWatch, 'bundleId' | 'repo' | 'testFlightPolicy' | 'testFlightTrain'>;
@@ -28,6 +32,16 @@ function isExpiredBuild(build: TFBuild): boolean {
   return Boolean(build.expiration && Number.isFinite(Date.parse(build.expiration)) && Date.parse(build.expiration) <= Date.now());
 }
 
+function failedCheck(reason: string, error: unknown, details: Pick<TestFlightUpdateCheck, 'appId' | 'latestTag' | 'build'> = {}): TestFlightUpdateCheck {
+  return {
+    ...details,
+    ...classifySchedulerFailure(error),
+    ok: false,
+    wouldDispatch: false,
+    reason,
+  };
+}
+
 export async function checkForTestFlightUpdate(
   watch: TestFlightWatch,
   services: TestFlightUpdateServices,
@@ -40,14 +54,14 @@ export async function checkForTestFlightUpdate(
   try {
     appId = (await services.lookupCurrentVersion(watch.bundleId)).trackId;
   } catch (error) {
-    return { ok: false, wouldDispatch: false, reason: `iTunes lookup failed: ${String(error)}` };
+    return failedCheck(`iTunes lookup failed: ${String(error)}`, error);
   }
 
   let trains: TFTrain[];
   try {
     trains = await services.listTrains(appId);
   } catch (error) {
-    return { ok: false, appId, wouldDispatch: false, reason: `TestFlight trains lookup failed: ${String(error)}` };
+    return failedCheck(`TestFlight trains lookup failed: ${String(error)}`, error, { appId });
   }
 
   const eligibleTrains = trains.filter((train) => trainMatchesPolicy(train.trainVersion, watch));
@@ -61,12 +75,11 @@ export async function checkForTestFlightUpdate(
     try {
       builds = await services.listBuilds(appId, train.trainVersion);
     } catch (error) {
-      return {
-        ok: false,
-        appId,
-        wouldDispatch: false,
-        reason: `TestFlight builds lookup failed for train ${train.trainVersion}: ${String(error)}`,
-      };
+      return failedCheck(
+        `TestFlight builds lookup failed for train ${train.trainVersion}: ${String(error)}`,
+        error,
+        { appId },
+      );
     }
 
     for (const build of builds) {
@@ -86,14 +99,7 @@ export async function checkForTestFlightUpdate(
   try {
     alreadyReleased = await services.releaseTagExists(watch.repo, latestTag);
   } catch (error) {
-    return {
-      ok: false,
-      appId,
-      latestTag,
-      build: latestBuild,
-      wouldDispatch: false,
-      reason: `Failed to verify releases: ${String(error)}`,
-    };
+    return failedCheck(`Failed to verify releases: ${String(error)}`, error, { appId, latestTag, build: latestBuild });
   }
 
   if (alreadyReleased) {

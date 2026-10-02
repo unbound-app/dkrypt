@@ -1,5 +1,6 @@
 import { Type } from '@sinclair/typebox';
 import { bundleIdSchema, deviceTransportSchema, identifierSchema, projectIdentifierSchema } from '#apiCommonContracts.js';
+import { jobFailureClassSchema } from '#util/failureCategory.js';
 
 export const deviceTransportStateSchema = Type.Union([
   Type.Literal('discovered'),
@@ -119,8 +120,11 @@ const schedulerRunOutcomeSchema = Type.Object({
   ok: Type.Boolean(),
   triggered: Type.Boolean(),
   reason: Type.String(),
+  failureClass: Type.Optional(jobFailureClassSchema),
+  retryable: Type.Optional(Type.Boolean()),
   runUrl: Type.Optional(Type.String()),
   failureSummary: Type.Optional(Type.String()),
+  destinationFailureSummary: Type.Optional(Type.String()),
   runStatus: Type.Optional(Type.Union([
     Type.Literal('dispatched'),
     Type.Literal('succeeded'),

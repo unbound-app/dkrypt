@@ -345,6 +345,7 @@ test('dashboard overview publishes typed nested dashboard records', async () => 
     expect(Object.keys(properties.maintenance?.properties ?? {})).toEqual(expect.arrayContaining(['active', 'manual', 'auto', 'reason']));
     expect(Object.keys(properties.disk?.properties ?? {})).toEqual(expect.arrayContaining(['totalBytes', 'freeBytes', 'usedBytes', 'usedPercent']));
     expect(Object.keys(properties.schedulerRunHistory?.items?.properties ?? {})).toEqual(expect.arrayContaining(['id', 'ts', 'appStore', 'testflight']));
+    expect(Object.keys(properties.schedulerRunHistory?.items?.properties?.appStore?.properties ?? {})).toEqual(expect.arrayContaining(['failureClass', 'retryable', 'destinationFailureSummary']));
   } finally {
     await server.close();
   }

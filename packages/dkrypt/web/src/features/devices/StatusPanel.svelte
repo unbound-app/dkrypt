@@ -1022,5 +1022,8 @@
 		{#if outcome.failureSummary}
 			<span class="pl-[5.375rem] text-[11px] text-err" title={outcome.failureSummary}>{outcome.failureSummary}</span>
 		{/if}
+		{#if outcome.destinationFailureSummary}
+			<span class="pl-[5.375rem] text-[11px] text-warn" title={outcome.destinationFailureSummary}>{outcome.destinationFailureSummary}</span>
+		{/if}
 	</div>
 {/snippet}

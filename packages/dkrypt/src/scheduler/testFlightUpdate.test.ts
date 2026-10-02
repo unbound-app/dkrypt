@@ -9,6 +9,8 @@ const watch = {
 
 test('fails the TestFlight check on the first build-train lookup failure', async () => {
   const requestedTrains: string[] = [];
+  const bridgeFailure = new Error('could not connect to the dkrypt device agent');
+  bridgeFailure.name = 'DeviceAgentUnavailableError';
   const result = await checkForTestFlightUpdate(watch, {
     lookupCurrentVersion: async () => ({ trackId: 42 }),
     listTrains: async () => [
@@ -17,7 +19,7 @@ test('fails the TestFlight check on the first build-train lookup failure', async
     ],
     listBuilds: async (_appId, trainVersion) => {
       requestedTrains.push(trainVersion);
-      throw new Error('device agent unavailable');
+      throw bridgeFailure;
     },
     releaseTagExists: async () => false,
   });
@@ -26,7 +28,9 @@ test('fails the TestFlight check on the first build-train lookup failure', async
     ok: false,
     appId: 42,
     wouldDispatch: false,
-    reason: 'TestFlight builds lookup failed for train 342.0: Error: device agent unavailable',
+    reason: 'TestFlight builds lookup failed for train 342.0: DeviceAgentUnavailableError: could not connect to the dkrypt device agent',
+    failureClass: 'device_transport',
+    retryable: true,
   });
   expect(requestedTrains).toEqual(['342.0']);
 });
@@ -40,7 +44,11 @@ test('does not dispatch a potentially stale build after a later train lookup fai
       { trainVersion: '341.0', buildCount: 1 },
     ],
     listBuilds: async (_appId, trainVersion) => {
-      if (trainVersion === '341.0') throw new Error('device agent connection lost');
+      if (trainVersion === '341.0') {
+        const error = new Error('the dkrypt device agent connection was lost');
+        error.name = 'DeviceAgentUnavailableError';
+        throw error;
+      }
       return [{ id: 1, cfBundleShortVersion: '342.0', cfBundleVersion: '100', bundleId: watch.bundleId }];
     },
     releaseTagExists: async (_repo, tag) => {
@@ -49,7 +57,13 @@ test('does not dispatch a potentially stale build after a later train lookup fai
     },
   });
 
-  expect(result).toMatchObject({ ok: false, wouldDispatch: false, reason: expect.stringContaining('device agent connection lost') });
+  expect(result).toMatchObject({
+    ok: false,
+    wouldDispatch: false,
+    reason: expect.stringContaining('device agent connection was lost'),
+    failureClass: 'device_transport',
+    retryable: true,
+  });
   expect(releaseLookups).toEqual([]);
 });
 

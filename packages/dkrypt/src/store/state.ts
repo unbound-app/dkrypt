@@ -573,8 +573,11 @@ export interface SchedulerRunOutcome {
   ok: boolean;
   triggered: boolean;
   reason: string;
+  failureClass?: JobFailureClass;
+  retryable?: boolean;
   runUrl?: string;
   failureSummary?: string;
+  destinationFailureSummary?: string;
   runStatus?: SchedulerRunStatus;
   observedVersion?: string;
   installMode?: 'pinned' | 'current';
@@ -1187,12 +1190,16 @@ function migrate(raw: Record<string, unknown>): PersistedState {
 
 function normalizeLegacySchedulerRunOutcome(raw: unknown): SchedulerRunOutcome {
   const o = (raw ?? {}) as Partial<SchedulerRunOutcome>;
+  const failureClasses: JobFailureClass[] = ['device_transport', 'app_store', 'testflight', 'network', 'storage', 'decrypt', 'queue', 'cancelled', 'unknown'];
   return {
     ok: typeof o.ok === 'boolean' ? o.ok : true,
     triggered: Boolean(o.triggered),
     reason: o.reason ?? '',
+    failureClass: failureClasses.includes(o.failureClass as JobFailureClass) ? o.failureClass : undefined,
+    retryable: typeof o.retryable === 'boolean' ? o.retryable : undefined,
     runUrl: o.runUrl,
     failureSummary: typeof o.failureSummary === 'string' ? o.failureSummary : undefined,
+    destinationFailureSummary: typeof o.destinationFailureSummary === 'string' ? o.destinationFailureSummary : undefined,
     runStatus: o.runStatus,
     observedVersion: o.observedVersion,
     installMode: o.installMode,

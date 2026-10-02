@@ -339,8 +339,11 @@ export interface SchedulerRunOutcome {
   ok: boolean;
   triggered: boolean;
   reason: string;
+  failureClass?: 'device_transport' | 'app_store' | 'testflight' | 'network' | 'storage' | 'decrypt' | 'queue' | 'cancelled' | 'unknown';
+  retryable?: boolean;
   runUrl?: string;
   failureSummary?: string;
+  destinationFailureSummary?: string;
   runStatus?: SchedulerRunStatus;
   observedVersion?: string;
   installMode?: 'pinned' | 'current';

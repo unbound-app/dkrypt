@@ -33,6 +33,8 @@ import { listBuilds, listTrains } from '#testflight.js';
 import { dispatchTargetKey, filterPendingDispatchTargets } from '#scheduler/pendingDispatch.js';
 import { aggregateWorkflowRunStatus, selectWorkflowRunUrl, workflowRunStatus } from '#scheduler/completion.js';
 import { checkForTestFlightUpdate as checkTestFlightUpdate, type TestFlightUpdateCheck } from '#scheduler/testFlightUpdate.js';
+import { destinationFailures, summarizeDestinationFailures } from '#scheduler/destinationFailures.js';
+import { checkDestinationsWithRetries, classifySchedulerFailure } from '#scheduler/failure.js';
 import { normalizeVersion } from '#util/version.js';
 import { listAppVersions } from '#versions.js';
 import { dispatchIpaUpdate, findDispatchedRun, getGitHubRateLimitBudget, getRun, getWorkflowFailureSummary, measureGitHubRequests, releaseTagExists, releaseVersionExists, type WorkflowRun } from '#scheduler/github.js';
@@ -59,6 +61,8 @@ export interface UpdateCheck {
   alreadyReleased?: boolean;
   wouldDispatch: boolean;
   reason: string;
+  failureClass?: SchedulerRunOutcome['failureClass'];
+  retryable?: boolean;
 }
 
 export async function checkForUpdate(watch: AppWatch): Promise<UpdateCheck> {
@@ -66,7 +70,7 @@ export async function checkForUpdate(watch: AppWatch): Promise<UpdateCheck> {
   try {
     itunesVersion = (await lookupCurrentVersion(watch.bundleId)).version;
   } catch (err) {
-    return { ok: false, wouldDispatch: false, reason: `iTunes lookup failed: ${String(err)}` };
+    return { ok: false, wouldDispatch: false, reason: `iTunes lookup failed: ${String(err)}`, ...classifySchedulerFailure(err) };
   }
 
   const normalizedVersion = normalizeVersion(itunesVersion);
@@ -75,7 +79,14 @@ export async function checkForUpdate(watch: AppWatch): Promise<UpdateCheck> {
   try {
     alreadyReleased = await releaseVersionExists(watch.repo, normalizedVersion);
   } catch (err) {
-    return { ok: false, itunesVersion, normalizedVersion, wouldDispatch: false, reason: `Failed to verify releases: ${String(err)}` };
+    return {
+      ok: false,
+      itunesVersion,
+      normalizedVersion,
+      wouldDispatch: false,
+      reason: `Failed to verify releases: ${String(err)}`,
+      ...classifySchedulerFailure(err),
+    };
   }
 
   if (alreadyReleased) {
@@ -309,7 +320,16 @@ async function decryptAndDispatch(job: Job, watch: AppWatch, isTestflight: boole
       },
       watch.webhookUrl,
     );
-    return { outcome: { ...outcomeMetadata, ok: false, triggered: true, reason: `Decrypt failed: ${finished.error ?? 'unknown error'}` } };
+    return {
+      outcome: {
+        ...outcomeMetadata,
+        ...classifySchedulerFailure(finished.error),
+        ok: false,
+        triggered: true,
+        retryable: false,
+        reason: `Decrypt failed: ${finished.error ?? 'unknown error'}`,
+      },
+    };
   }
 
   const dispatchedAt = new Date();
@@ -365,14 +385,62 @@ async function decryptAndDispatch(job: Job, watch: AppWatch, isTestflight: boole
       },
       watch.webhookUrl,
     );
-    return { outcome: { ...outcomeMetadata, ok: false, triggered: true, reason: `Failed to dispatch ${versionLabel}: ${String(err)}` } };
+    return {
+      outcome: {
+        ...outcomeMetadata,
+        ...classifySchedulerFailure(err),
+        ok: false,
+        triggered: true,
+        retryable: false,
+        reason: `Failed to dispatch ${versionLabel}: ${String(err)}`,
+      },
+    };
   }
 
 }
 
-async function tickAppStore(watch: AppWatch): Promise<DispatchResult> {
+function retryAfterMsFromReason(reason: string): number | undefined {
+  const match = /retry after (\d+)s/.exec(reason);
+  return match ? Number(match[1]) * 1000 : undefined;
+}
+
+function retryDestinationChecks<T extends { ok: boolean; reason: string; retryable?: boolean }>(
+  source: 'App Store' | 'TestFlight',
+  watch: AppWatch,
+  targets: DispatchTarget[],
+  retryCount: number,
+  checkTarget: (target: DispatchTarget) => Promise<T>,
+): Promise<T[]> {
+  return checkDestinationsWithRetries(
+    targets,
+    checkTarget,
+    retryCount,
+    sleep,
+    (target, { attempt, delayMs, reason }) => log.warn('scheduler destination check failed, retrying', {
+      source,
+      watchId: watch.id,
+      destination: target.repo,
+      attempt,
+      maxRetries: retryCount,
+      delayMs,
+      rateLimited: retryAfterMsFromReason(reason) !== undefined,
+      reason,
+    }),
+    retryAfterMsFromReason,
+  );
+}
+
+async function tickAppStore(watch: AppWatch, retryCount: number): Promise<DispatchResult> {
   const targets = getWatchDispatchTargets(watch);
-  const checks = await Promise.all(targets.map((target) => checkForUpdate({ ...watch, repo: target.repo, ghWorkflowFile: target.ghWorkflowFile })));
+  const checks = await retryDestinationChecks(
+    'App Store',
+    watch,
+    targets,
+    retryCount,
+    (target) => checkForUpdate({ ...watch, repo: target.repo, ghWorkflowFile: target.ghWorkflowFile }),
+  );
+  const failedDestinations = destinationFailures(targets, checks);
+  const failureSummary = summarizeDestinationFailures(failedDestinations);
   const candidateDispatchTargets = targets.filter((_, index) => checks[index].wouldDispatch);
   const check = checks.find((candidate) => candidate.wouldDispatch) ?? checks.find((candidate) => !candidate.ok) ?? checks[0];
   if (!check) return { outcome: { ok: false, triggered: false, reason: 'No valid dispatch destinations configured' } };
@@ -383,7 +451,16 @@ async function tickAppStore(watch: AppWatch): Promise<DispatchResult> {
   if (dispatchTargets.length === 0) {
     if (candidateDispatchTargets.length > 0 && !check.alreadyReleased && versionLabel) {
       log.info('itunes version already has a pending dispatch, nothing to do', { bundleId: watch.bundleId, version: check.normalizedVersion });
-      return { outcome: { ok: true, triggered: false, versionLabel, reason: `${versionLabel} already dispatched; workflow still pending` } };
+      return {
+        outcome: {
+          ok: true,
+          triggered: false,
+          versionLabel,
+          reason: `${versionLabel} already dispatched; workflow still pending${failedDestinations.length ? `; ${failedDestinations.length} destination${failedDestinations.length === 1 ? '' : 's'} could not be checked` : ''}`,
+          failureClass: failedDestinations[0]?.check.failureClass,
+          destinationFailureSummary: failureSummary,
+        },
+      };
     }
     if (check.alreadyReleased) {
       log.info('itunes version already has a matching release, nothing to do', { bundleId: watch.bundleId, version: check.normalizedVersion });
@@ -405,7 +482,17 @@ async function tickAppStore(watch: AppWatch): Promise<DispatchResult> {
         );
       }
     }
-    return { outcome: { ok: check.ok, triggered: false, versionLabel, reason: check.reason } };
+    return {
+      outcome: {
+        ok: check.ok,
+        triggered: false,
+        versionLabel,
+        reason: failureSummary ?? check.reason,
+        destinationFailureSummary: failureSummary,
+        failureClass: check.failureClass,
+        retryable: check.ok ? undefined : failedDestinations.some((failure) => failure.check.retryable),
+      },
+    };
   }
 
   const normalized = check.normalizedVersion as string;
@@ -438,15 +525,33 @@ async function tickAppStore(watch: AppWatch): Promise<DispatchResult> {
     projectId: watch.projectId ?? DEFAULT_PROJECT_ID,
     minimumOsVersion,
   });
-  if (enqueueResult.kind === 'deferred') return deferredScheduledDecryptResult(`v${normalized}`, enqueueResult.reason);
-  const result = await decryptAndDispatch(enqueueResult.job, watch, false, `v${normalized}`, dispatchTargets);
+  const result = enqueueResult.kind === 'deferred'
+    ? deferredScheduledDecryptResult(`v${normalized}`, enqueueResult.reason)
+    : await decryptAndDispatch(enqueueResult.job, watch, false, `v${normalized}`, dispatchTargets);
+  if (failureSummary) {
+    log.warn('App Store update check failed for some destinations', { bundleId: watch.bundleId, failures: failedDestinations });
+    result.outcome = {
+      ...result.outcome,
+      reason: `${result.outcome.reason}; ${failedDestinations.length} destination${failedDestinations.length === 1 ? '' : 's'} could not be checked`,
+      failureClass: result.outcome.failureClass ?? failedDestinations[0]?.check.failureClass,
+      destinationFailureSummary: failureSummary,
+    };
+  }
   result.outcome = { ...result.outcome, observedVersion: normalized, installMode: externalVersionId ? 'pinned' : 'current' };
   return result;
 }
 
-async function tickTestFlight(watch: AppWatch): Promise<DispatchResult> {
+async function tickTestFlight(watch: AppWatch, retryCount: number): Promise<DispatchResult> {
   const targets = getWatchDispatchTargets(watch);
-  const checks = await Promise.all(targets.map((target) => checkForTestFlightUpdate({ ...watch, repo: target.repo, ghWorkflowFile: target.ghWorkflowFile })));
+  const checks = await retryDestinationChecks(
+    'TestFlight',
+    watch,
+    targets,
+    retryCount,
+    (target) => checkForTestFlightUpdate({ ...watch, repo: target.repo, ghWorkflowFile: target.ghWorkflowFile }),
+  );
+  const failedDestinations = destinationFailures(targets, checks);
+  const failureSummary = summarizeDestinationFailures(failedDestinations);
   const candidateDispatchTargets = targets.filter((_, index) => checks[index].wouldDispatch);
   const check = checks.find((candidate) => candidate.wouldDispatch && candidate.build) ?? checks.find((candidate) => !candidate.ok) ?? checks[0];
   if (!check) return { outcome: { ok: false, triggered: false, reason: 'No valid dispatch destinations configured' } };
@@ -457,7 +562,16 @@ async function tickTestFlight(watch: AppWatch): Promise<DispatchResult> {
   if (dispatchTargets.length === 0 || !check.build) {
     if (candidateDispatchTargets.length > 0 && !check.alreadyReleased && versionLabel && dispatchTargets.length === 0) {
       log.info('TestFlight build already has a pending dispatch, nothing to do', { bundleId: watch.bundleId, tag: check.latestTag });
-      return { outcome: { ok: true, triggered: false, versionLabel, reason: `${versionLabel} already dispatched; workflow still pending` } };
+      return {
+        outcome: {
+          ok: true,
+          triggered: false,
+          versionLabel,
+          reason: `${versionLabel} already dispatched; workflow still pending${failedDestinations.length ? `; ${failedDestinations.length} destination${failedDestinations.length === 1 ? '' : 's'} could not be checked` : ''}`,
+          failureClass: failedDestinations[0]?.check.failureClass,
+          destinationFailureSummary: failureSummary,
+        },
+      };
     }
     if (check.alreadyReleased) {
       log.info('TestFlight build already has a matching release, nothing to do', { bundleId: watch.bundleId, tag: check.latestTag });
@@ -479,7 +593,17 @@ async function tickTestFlight(watch: AppWatch): Promise<DispatchResult> {
         );
       }
     }
-    return { outcome: { ok: check.ok, triggered: false, versionLabel, reason: check.reason } };
+    return {
+      outcome: {
+        ok: check.ok,
+        triggered: false,
+        versionLabel,
+        reason: failureSummary ?? check.reason,
+        destinationFailureSummary: failureSummary,
+        failureClass: check.failureClass,
+        retryable: check.ok ? undefined : failedDestinations.some((failure) => failure.check.retryable),
+      },
+    };
   }
 
   log.info('no matching release found for latest TestFlight build, installing and decrypting', {
@@ -491,39 +615,17 @@ async function tickTestFlight(watch: AppWatch): Promise<DispatchResult> {
     testflight: { appId: check.appId as number, build: check.build },
     projectId: watch.projectId ?? DEFAULT_PROJECT_ID,
   });
-  if (enqueueResult.kind === 'deferred') return deferredScheduledDecryptResult(check.latestTag as string, enqueueResult.reason);
-  return decryptAndDispatch(enqueueResult.job, watch, true, check.latestTag as string, dispatchTargets);
-}
-
-const RETRY_BASE_DELAY_MS = 30_000;
-
-function retryAfterMsFromReason(reason: string): number | undefined {
-  const match = /retry after (\d+)s/.exec(reason);
-  return match ? Number(match[1]) * 1000 : undefined;
-}
-
-async function tickWithRetry(
-  fn: (watch: AppWatch) => Promise<DispatchResult>,
-  watch: AppWatch,
-  retryCount: number,
-  label: string,
-): Promise<DispatchResult> {
-  let result = await fn(watch);
-  for (let attempt = 1; attempt <= retryCount && !result.outcome.ok; attempt++) {
-    const backoffMs = RETRY_BASE_DELAY_MS * 2 ** (attempt - 1);
-    const rateLimitedMs = retryAfterMsFromReason(result.outcome.reason);
-    const delayMs = rateLimitedMs ? Math.max(backoffMs, rateLimitedMs) : backoffMs;
-    log.warn('scheduler check failed, retrying', {
-      source: label,
-      watchId: watch.id,
-      attempt,
-      maxRetries: retryCount,
-      delayMs,
-      rateLimited: rateLimitedMs !== undefined,
-      reason: result.outcome.reason,
-    });
-    await sleep(delayMs);
-    result = await fn(watch);
+  const result = enqueueResult.kind === 'deferred'
+    ? deferredScheduledDecryptResult(check.latestTag as string, enqueueResult.reason)
+    : await decryptAndDispatch(enqueueResult.job, watch, true, check.latestTag as string, dispatchTargets);
+  if (failureSummary) {
+    log.warn('TestFlight update check failed for some destinations', { bundleId: watch.bundleId, failures: failedDestinations });
+    result.outcome = {
+      ...result.outcome,
+      reason: `${result.outcome.reason}; ${failedDestinations.length} destination${failedDestinations.length === 1 ? '' : 's'} could not be checked`,
+      failureClass: result.outcome.failureClass ?? failedDestinations[0]?.check.failureClass,
+      destinationFailureSummary: failureSummary,
+    };
   }
   return result;
 }
@@ -660,8 +762,8 @@ async function tick(watch: AppWatch, mode: 'scheduled' | 'manual' = 'scheduled',
     }
 
     const measured = await measureGitHubRequests(async () => ({
-      appStore: await tickWithRetry(tickAppStore, watch, settings.schedulerRetryCount, 'App Store'),
-      testflight: await tickWithRetry(tickTestFlight, watch, settings.schedulerRetryCount, 'TestFlight'),
+      appStore: await tickAppStore(watch, settings.schedulerRetryCount),
+      testflight: await tickTestFlight(watch, settings.schedulerRetryCount),
     }));
     actualGitHubRequests = measured.requests;
     const { appStore, testflight } = measured.value;

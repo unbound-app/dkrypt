@@ -1274,8 +1274,8 @@ test('scheduler outcome updates persist through the typed SQLite repository', ()
   const entryId = recordSchedulerRunOutcome({
     watchId: 'typed-repository-watch',
     bundleId: `com.example.scheduler.repository-${randomUUID()}`,
-    appStore: { ok: true, triggered: true, reason: 'dispatch requested' },
-    testflight: { ok: false, triggered: false, reason: 'no eligible build' },
+    appStore: { ok: true, triggered: true, reason: 'dispatch requested', destinationFailureSummary: 'owner/failing: lookup timeout' },
+    testflight: { ok: false, triggered: false, reason: 'device agent unavailable', failureClass: 'device_transport', retryable: true },
   });
   const database = openStateDatabase({ stateDir: config.stateDir, filename: config.stateDatabaseFile });
 
@@ -1284,7 +1284,13 @@ test('scheduler outcome updates persist through the typed SQLite repository', ()
     updateSchedulerRunOutcome(entryId, 'appStore', { reason: 'workflow completed', runStatus: 'succeeded', failureSummary: 'Build: dependency compile' });
     expect(readStateCollection(database.db, 'scheduler_runs')).toContainEqual(expect.objectContaining({
       id: entryId,
-      appStore: expect.objectContaining({ reason: 'workflow completed', runStatus: 'succeeded', failureSummary: 'Build: dependency compile' }),
+      appStore: expect.objectContaining({
+        reason: 'workflow completed',
+        runStatus: 'succeeded',
+        failureSummary: 'Build: dependency compile',
+        destinationFailureSummary: 'owner/failing: lookup timeout',
+      }),
+      testflight: expect.objectContaining({ failureClass: 'device_transport', retryable: true }),
     }));
   } finally {
     database.close();
