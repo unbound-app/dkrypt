@@ -1,8 +1,11 @@
 <script lang="ts">
   import Tabs from '#lib/components/ui/Tabs.svelte';
+  import Button from '#lib/components/ui/Button.svelte';
   import { PermissionFlag } from '#lib/permissions';
-  import { sessionHasAnyPermission, sessionHasPermission } from '#lib/session.svelte';
-  import { setSettingsSubtab, tabState } from '#lib/ui.svelte';
+  import { pushSettingsModePref, sessionHasAnyPermission, sessionHasPermission } from '#lib/session.svelte';
+  import { interfaceLanguageState, settingsModeState, setSettingsSubtab, systemLocalesState, tabState } from '#lib/ui.svelte';
+  import { resolveInterfaceLanguage } from '#lib/locale';
+  import { translateMessage } from '#lib/messages';
   import { createVisitedTabs } from '#lib/visitedTabs.svelte';
   import BackupSettings from '#features/administration/BackupSettings.svelte';
   import BillingSettings from '#features/billing/BillingManagement.svelte';
@@ -34,6 +37,8 @@
 
   const visibleSubtabs = $derived(ALL_SUBTABS.filter((subtab) => hasAccess(subtab.requires, subtab.requiresAll)));
   const mountedSubtabs = createVisitedTabs(() => tabState.settingsSubtab);
+  const interfaceLanguage = $derived(resolveInterfaceLanguage(interfaceLanguageState.value, systemLocalesState.value));
+  const msg = (key: 'settings.modeLabel' | 'settings.basicMode' | 'settings.advancedMode' | 'settings.advancedModeDescription') => translateMessage(key, interfaceLanguage);
 
   $effect(() => {
     if (visibleSubtabs.length > 0 && !visibleSubtabs.some((t) => t.id === tabState.settingsSubtab)) {
@@ -42,6 +47,17 @@
   });
 
 </script>
+
+<div class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/70 bg-panel/50 px-4 py-3">
+  <div>
+    <div class="text-sm font-semibold">{msg('settings.modeLabel')}</div>
+    <div class="text-xs text-muted">{msg('settings.advancedModeDescription')}</div>
+  </div>
+  <div class="inline-flex rounded-lg border border-border p-0.5" role="group" aria-label={msg('settings.modeLabel')}>
+    <Button size="sm" variant={settingsModeState.value === 'basic' ? 'secondary' : 'ghost'} aria-pressed={settingsModeState.value === 'basic'} onclick={() => void pushSettingsModePref('basic')}>{msg('settings.basicMode')}</Button>
+    <Button size="sm" variant={settingsModeState.value === 'advanced' ? 'secondary' : 'ghost'} aria-pressed={settingsModeState.value === 'advanced'} onclick={() => void pushSettingsModePref('advanced')}>{msg('settings.advancedMode')}</Button>
+  </div>
+</div>
 
 <Tabs items={visibleSubtabs} value={tabState.settingsSubtab} onValueChange={setSettingsSubtab} class="mb-5" />
 

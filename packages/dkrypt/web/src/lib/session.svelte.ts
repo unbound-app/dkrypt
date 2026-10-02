@@ -13,12 +13,21 @@ import {
   setInterfaceLanguage,
   setSoundEnabled,
   setTheme,
+  setDensity,
+  setSettingsMode,
+  setHomeLayoutPreferences,
+  setHomeViewModes,
+  homeLayoutPreferencesState,
+  homeViewModesState,
+  resetUserInterfacePreferences,
   soundEnabledState,
   themePrefState,
   type ThemePref,
 } from '#lib/ui.svelte';
 import type { FormattingLocalePreference } from '#lib/locale';
 import type { InterfaceLanguagePreference } from '#lib/locale';
+import type { HomeLayout, HomeViewModes } from '#lib/homeLayouts';
+import type { DisplayDensity, SettingsMode } from '#lib/ui.svelte';
 
 export interface Role {
   id: string;
@@ -102,6 +111,8 @@ export async function refreshSession(): Promise<SessionInfo> {
   const identityChanged = data.loggedIn !== sessionState.loggedIn || data.sub !== sessionState.sub;
   const permissionsChanged = data.permissions !== sessionState.permissions;
   const accessChanged = identityChanged || permissionsChanged;
+  const identitySwitched = previousSub && data.loggedIn && previousSub.toLowerCase() !== data.sub?.trim().toLowerCase();
+  if (identitySwitched) resetUserInterfacePreferences();
   if (accessChanged) {
     serverStateCache.clear();
     const leavingIdentity = previousSub && (!data.loggedIn || previousSub.toLowerCase() !== data.sub?.trim().toLowerCase());
@@ -133,7 +144,19 @@ export async function updateProfileDisplayName(displayName: string): Promise<{ o
 async function syncThemeFromServer(): Promise<void> {
   const res = await fetch('/v1/dashboard/me/prefs');
   if (!res.ok) return;
-  const prefs = (await res.json()) as { formattingLocale?: FormattingLocalePreference; interfaceLanguage?: InterfaceLanguagePreference; theme?: ThemePref; accent?: string; sound?: boolean; highContrast?: boolean };
+  const prefs = (await res.json()) as {
+    formattingLocale?: FormattingLocalePreference;
+    interfaceLanguage?: InterfaceLanguagePreference;
+    theme?: ThemePref;
+    accent?: string;
+    sound?: boolean;
+    highContrast?: boolean;
+    density?: DisplayDensity;
+    homeLayouts?: HomeLayout[];
+    activeHomeLayoutId?: string;
+    viewModes?: Partial<HomeViewModes>;
+    settingsMode?: SettingsMode;
+  };
   const formattingLocale = prefs.formattingLocale ?? 'system';
   if (formattingLocale !== formattingLocaleState.value) setFormattingLocale(formattingLocale);
   const interfaceLanguage = prefs.interfaceLanguage ?? 'system';
@@ -142,6 +165,53 @@ async function syncThemeFromServer(): Promise<void> {
   if (prefs.accent && prefs.accent !== accentState.value) setAccent(prefs.accent);
   if (prefs.highContrast !== undefined && prefs.highContrast !== highContrastState.value) setHighContrast(prefs.highContrast);
   if (prefs.sound !== undefined && prefs.sound !== soundEnabledState.value) setSoundEnabled(prefs.sound);
+  if (prefs.density) setDensity(prefs.density);
+  if (prefs.homeLayouts?.length) setHomeLayoutPreferences(prefs.homeLayouts, prefs.activeHomeLayoutId ?? prefs.homeLayouts[0]!.id);
+  if (prefs.viewModes) setHomeViewModes(prefs.viewModes);
+  if (prefs.settingsMode) setSettingsMode(prefs.settingsMode);
+}
+
+async function pushDashboardPreference(patch: Record<string, unknown>): Promise<void> {
+  if (!sessionState.loggedIn) return;
+  await fetch('/v1/dashboard/me/prefs', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  });
+}
+
+export function pushDensityPref(density: DisplayDensity): Promise<void> {
+  setDensity(density);
+  return pushDashboardPreference({ density });
+}
+
+export async function pushHomeLayoutPreferences(layouts: HomeLayout[], activeId: string): Promise<void> {
+  const previousLayouts = homeLayoutPreferencesState.layouts.map((layout) => ({ ...layout, order: [...layout.order], hidden: [...layout.hidden], collapsed: [...layout.collapsed] }));
+  const previousActiveId = homeLayoutPreferencesState.activeId;
+  setHomeLayoutPreferences(layouts, activeId);
+  if (!sessionState.loggedIn) return;
+  try {
+    const response = await fetch('/v1/dashboard/me/prefs', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ homeLayouts: layouts, activeHomeLayoutId: activeId }),
+    });
+    if (!response.ok) throw new Error('Could not save Home layout preferences');
+  } catch (error) {
+    setHomeLayoutPreferences(previousLayouts, previousActiveId);
+    throw error;
+  }
+}
+
+export function pushHomeViewMode(key: keyof HomeViewModes, mode: HomeViewModes[keyof HomeViewModes]): Promise<void> {
+  const viewModes = { ...homeViewModesState.value, [key]: mode };
+  setHomeViewModes(viewModes);
+  return pushDashboardPreference({ viewModes: { [key]: mode } });
+}
+
+export function pushSettingsModePref(mode: SettingsMode): Promise<void> {
+  setSettingsMode(mode);
+  return pushDashboardPreference({ settingsMode: mode });
 }
 
 export interface NotificationPrefs {
@@ -275,6 +345,7 @@ export async function logoutEverywhere(): Promise<void> {
 }
 
 export function markLoggedOut(): void {
+  resetUserInterfacePreferences();
   if (sessionState.loggedIn) serverStateCache.clear();
   if (sessionState.sub) clearPersistedTestFlightCatalog(sessionState.sub);
   resetTestFlightCatalogState();

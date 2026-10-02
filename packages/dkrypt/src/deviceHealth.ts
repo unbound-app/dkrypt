@@ -4,7 +4,7 @@ import { execCommand, getRustDeviceBridgeHealth, isDirectUsbDeviceAgentConnectio
 import { scopedLogger } from '#logger.js';
 import { EMBED_COLOR, notify } from '#notify.js';
 import { notifyDeviceDispatchStateChanged, releasePinnedJobsForDevice } from '#jobs/store.js';
-import { getEffectiveDevices, getEffectiveSettings, hasSustainedDeviceHealthFailures, recordDeviceActivity, recordDeviceAlertNotification, recordDeviceHealthCheck, type DeviceRecord } from '#store/state.js';
+import { getEffectiveDevices, getEffectiveSettings, hasSustainedDeviceHealthFailures, recordDeviceActivity, recordDeviceAlertNotification, recordDeviceHealthCheck, type DeviceRecord, type DeviceSubsystemDetail, type DeviceSubsystemId } from '#store/state.js';
 import { getDiskUsage } from '#util/diskUsage.js';
 import { getCachedDeviceHealth, setCachedDeviceHealth } from '#deviceHealthCache.js';
 import { incrementMetric, observeMetric, setGaugeMetric } from '#metrics.js';
@@ -47,6 +47,7 @@ export interface DeviceHealth {
   networkInterface?: string;
   bridgeHeartbeats?: Partial<Record<'springboard' | 'testflight' | 'appstore', BridgeHeartbeat>>;
   subsystems?: DeviceSubsystemHealth;
+  subsystemDetails?: Partial<Record<DeviceSubsystemId, DeviceSubsystemDetail>>;
   readiness?: DeviceReadiness;
   checkedAt: number;
 }
@@ -93,6 +94,26 @@ export function getDeviceAgentSubsystemState(connection: Pick<DeviceConnection, 
 export function getDeviceSshTunnelSubsystemState(connection: Pick<DeviceConnection, 'udid' | 'host'>, sshSftpReady: boolean): DeviceSubsystemState {
   if (isRustDeviceConnection(connection)) return sshSftpReady ? 'ready' : 'degraded';
   return sshSftpReady ? 'ready' : 'offline';
+}
+
+function subsystemReasons(health: DeviceHealth): Partial<Record<DeviceSubsystemId, string>> {
+  const readinessReasons = health.readiness?.reasons ?? [];
+  const reasonFor = (term: string) => readinessReasons.find((reason) => reason.toLowerCase().includes(term));
+  const reasons: Partial<Record<DeviceSubsystemId, string>> = {};
+  const states = health.subsystems;
+  if (!states) return reasons;
+  if (states.usb === 'offline' || states.mux === 'offline') reasons.usb = health.error;
+  if (states.mux === 'offline') reasons.mux = health.error;
+  if (states.agent === 'offline' || states.agent === 'degraded') reasons.agent = reasonFor('device agent') ?? health.error;
+  if (states.jailbreak === 'degraded' || states.jailbreak === 'offline') reasons.jailbreak = reasonFor('jailbreak') ?? reasonFor('palera1n') ?? reasonFor('dopamine');
+  if (states.appStore === 'idle') reasons.appStore = 'The App Store process has no fresh heartbeat while idle.';
+  if (states.appStore === 'offline' || states.appStore === 'degraded') reasons.appStore = reasonFor('app store') ?? reasonFor('appstore') ?? health.error;
+  if (states.testFlight === 'offline' || states.testFlight === 'degraded') reasons.testFlight = reasonFor('springboard') ?? health.error;
+  if (states.sshTunnel === 'offline' || states.sshTunnel === 'degraded') reasons.sshTunnel = health.error;
+  if (states.storage === 'degraded' || states.storage === 'offline') reasons.storage = reasonFor('storage');
+  if (states.battery === 'degraded' || states.battery === 'offline') reasons.battery = reasonFor('battery');
+  if (states.thermal === 'degraded' || states.thermal === 'offline') reasons.thermal = reasonFor('°c');
+  return Object.fromEntries(Object.entries(reasons).filter(([, reason]) => Boolean(reason))) as Partial<Record<DeviceSubsystemId, string>>;
 }
 
 export function getAppStoreSubsystemState(heartbeat: BridgeHeartbeat | undefined, deviceReachable: boolean, now = Date.now()): DeviceSubsystemState {
@@ -938,6 +959,7 @@ async function pollOneDevice(device: DeviceRecord): Promise<void> {
     health.batteryPercent,
     health.batteryTemperatureC,
     health.storageUsedPercent !== undefined ? Math.round(health.storageUsedPercent * 100) : undefined,
+    health.subsystems ? { states: health.subsystems, reasons: subsystemReasons(health) } : undefined,
   );
   const previous = lastActivityState.get(device.id);
   if (!previous || previous.reachable !== health.reachable) {

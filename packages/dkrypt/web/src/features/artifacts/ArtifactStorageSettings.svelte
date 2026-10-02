@@ -4,6 +4,7 @@
   import Button from '#lib/components/ui/Button.svelte';
   import Card from '#lib/components/ui/Card.svelte';
   import Input from '#lib/components/ui/Input.svelte';
+  import AdvancedSection from '#components/AdvancedSection.svelte';
   import { fetchArtifactStorageStats, previewArtifactQuotaRetention, type ArtifactQuotaRetentionPreview, type ArtifactStorageStats } from '#lib/api';
   import { fmtBytesGB, fmtNumber, fmtSize } from '#lib/format.svelte';
 
@@ -80,6 +81,7 @@
     <div class="text-muted mt-4 text-xs" role="status">Loading storage details…</div>
   {/if}
 
+  <AdvancedSection label="settings.retentionPreview">
   <div class="mt-4 flex flex-wrap items-end gap-2">
     <label class="text-muted text-xs">
       Proposed quota (GB)
@@ -117,4 +119,5 @@
       {/if}
     </div>
   {/if}
+  </AdvancedSection>
 </Card>

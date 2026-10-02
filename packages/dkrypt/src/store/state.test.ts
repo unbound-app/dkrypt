@@ -73,6 +73,7 @@ import {
   listPasskeysForUser,
   recordDeploymentReadyNotifications,
   recordDeviceHealthCheck,
+  getDeviceSubsystemDetails,
   recordDeviceAlertNotification,
   recordAudit,
   recordApiKeyBundleUsage,
@@ -1441,5 +1442,52 @@ describe('device health history', () => {
     expect(getConsecutiveDeviceHealthFailures('device-persisted-failures')).toBe(2);
     recordDeviceHealthCheck('device-persisted-failures', true);
     expect(getConsecutiveDeviceHealthFailures('device-persisted-failures')).toBe(0);
+  });
+
+  test('stores subsystem transitions, carries stable timestamps, and treats first observations as baselines', () => {
+    const deviceId = `device-transitions-${crypto.randomUUID()}`;
+    let now = 10_000;
+    const originalNow = Date.now;
+    Date.now = () => now;
+    try {
+      recordDeviceHealthCheck(deviceId, true, undefined, undefined, undefined, {
+        states: { usb: 'ready', agent: 'ready' },
+        reasons: { agent: 'Agent responded to the health check.' },
+      });
+      expect(getDeviceSubsystemDetails(deviceId, { usb: 'ready', agent: 'ready' })).toMatchObject({
+        usb: { state: 'ready' },
+        agent: { state: 'ready', reason: 'Agent responded to the health check.' },
+      });
+      expect(getDeviceSubsystemDetails(deviceId, { usb: 'ready' })?.usb?.lastChangedAt).toBeUndefined();
+
+      now = 20_000;
+      recordDeviceHealthCheck(deviceId, true, undefined, undefined, undefined, {
+        states: { usb: 'ready', agent: 'offline' },
+        reasons: { agent: 'device agent is unavailable' },
+      });
+      expect(getDeviceSubsystemDetails(deviceId, { agent: 'offline' })?.agent).toEqual({
+        state: 'offline',
+        lastChangedAt: 20_000,
+        reason: 'device agent is unavailable',
+      });
+
+      now = 30_000;
+      recordDeviceHealthCheck(deviceId, true, undefined, undefined, undefined, {
+        states: { usb: 'ready', agent: 'offline' },
+      });
+      expect(getDeviceSubsystemDetails(deviceId, { agent: 'offline' })?.agent).toEqual({
+        state: 'offline',
+        lastChangedAt: 20_000,
+      });
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
+  test('old health samples remain valid and do not manufacture transition times', () => {
+    const deviceId = `device-old-health-${crypto.randomUUID()}`;
+    recordDeviceHealthCheck(deviceId, true);
+    recordDeviceHealthCheck(deviceId, true, undefined, undefined, undefined, { states: { appStore: 'idle' } });
+    expect(getDeviceSubsystemDetails(deviceId, { appStore: 'idle' })?.appStore?.lastChangedAt).toBeUndefined();
   });
 });

@@ -7,10 +7,11 @@
     open: boolean;
     onOpenChange?: (open: boolean) => void;
     class?: string;
+    title?: string;
     children?: Snippet;
   }
 
-  let { open = $bindable(), onOpenChange, class: className, children }: Props = $props();
+  let { open = $bindable(), onOpenChange, class: className, title, children }: Props = $props();
 </script>
 
 <DialogPrimitive.Root bind:open {onOpenChange}>
@@ -22,6 +23,7 @@
         className,
       )}
     >
+      {#if title}<DialogPrimitive.Title class="sr-only">{title}</DialogPrimitive.Title>{/if}
       {@render children?.()}
     </DialogPrimitive.Content>
   </DialogPrimitive.Portal>

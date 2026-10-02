@@ -1,0 +1,228 @@
+import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
+import { Type, type Static } from '@sinclair/typebox';
+import { ErrorEnvelope, type ApiErrorEnvelope } from '#contracts.js';
+import { getAllJobHistory } from '#store/state.js';
+import { getActiveJobs } from '#jobs/store.js';
+import { listArtifacts } from '#artifacts.js';
+import { canAccessProject } from '#dashboardJobPresentation.js';
+import { listAuthProfiles } from '#identity.js';
+import { PermissionFlag, hasPermission } from '#permissions.js';
+import { fastifyRequireSession, getFastifySession } from '#session.js';
+import { DEFAULT_PROJECT_ID, getEffectiveDevices, getProject, listAllowedUsers, listWatches, searchAppCatalogEntries, type AppCatalogEntry, type DeviceRecord, type JobHistoryEntry, type ProjectRecord, type AppWatch } from '#store/state.js';
+import { recordFastifyDashboardActivity } from '#dashboardActivity.js';
+import { createHttpErrorEnvelope } from '#util/httpResponse.js';
+
+const quickSearchQuerySchema = Type.Object({
+  q: Type.String({ maxLength: 120 }),
+  projectId: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
+}, { additionalProperties: false });
+
+const quickSearchResultSchema = Type.Object({
+  kind: Type.Union([
+    Type.Literal('app'),
+    Type.Literal('job'),
+    Type.Literal('artifact'),
+    Type.Literal('device'),
+    Type.Literal('watch'),
+    Type.Literal('user'),
+    Type.Literal('settings'),
+  ]),
+  id: Type.String({ minLength: 1, maxLength: 200 }),
+  title: Type.String({ minLength: 1, maxLength: 200 }),
+  subtitle: Type.Optional(Type.String({ maxLength: 300 })),
+  projectId: Type.Optional(Type.String({ maxLength: 100 })),
+}, { additionalProperties: false });
+
+const quickSearchResponseSchema = Type.Object({
+  results: Type.Array(quickSearchResultSchema, { maxItems: 24 }),
+}, { additionalProperties: false });
+
+type QuickSearchQuery = Static<typeof quickSearchQuerySchema>;
+type QuickSearchResult = Static<typeof quickSearchResultSchema>;
+type QuickSearchPermissions = bigint;
+
+interface QuickSearchServices {
+  canAccessProject: typeof canAccessProject;
+  getProject: typeof getProject;
+  searchAppCatalogEntries: (query: string, limit: number) => AppCatalogEntry[];
+  getAllJobHistory: typeof getAllJobHistory;
+  getActiveJobs: typeof getActiveJobs;
+  listArtifacts: typeof listArtifacts;
+  getEffectiveDevices: typeof getEffectiveDevices;
+  listWatches: typeof listWatches;
+  listAuthProfiles: typeof listAuthProfiles;
+  listAllowedUsers: typeof listAllowedUsers;
+}
+
+const defaultServices: QuickSearchServices = {
+  canAccessProject,
+  getProject,
+  searchAppCatalogEntries,
+  getAllJobHistory,
+  getActiveJobs,
+  listArtifacts,
+  getEffectiveDevices,
+  listWatches,
+  listAuthProfiles,
+  listAllowedUsers,
+};
+
+const MAX_QUICK_SEARCH_RESULTS = 24;
+const MAX_RESULTS_PER_KIND = 8;
+
+function matches(query: string, values: Array<string | undefined>): boolean {
+  const normalizedQuery = query.toLowerCase();
+  return values.some((value) => value?.toLowerCase().includes(normalizedQuery));
+}
+
+function projectMatches(projectId: string, recordProjectId: string | undefined): boolean {
+  return (recordProjectId ?? DEFAULT_PROJECT_ID) === projectId;
+}
+
+function visibleSettings(permissions: QuickSearchPermissions): Array<{ id: string; title: string; any: bigint[]; all?: bigint[] }> {
+  return [
+    { id: 'scheduler', title: 'Automation', any: [PermissionFlag.viewAutomation, PermissionFlag.manageAutomation] },
+    { id: 'storage', title: 'Storage', any: [PermissionFlag.manageAutomation], all: [PermissionFlag.requestDecrypt] },
+    { id: 'devices', title: 'Devices', any: [PermissionFlag.viewDevices, PermissionFlag.manageDevices] },
+    { id: 'doctor', title: 'System', any: [PermissionFlag.manageDevices] },
+    { id: 'users', title: 'Users', any: [PermissionFlag.viewUsers, PermissionFlag.manageUsers] },
+    { id: 'roles', title: 'Roles', any: [PermissionFlag.viewRoles, PermissionFlag.manageRoles] },
+    { id: 'projects', title: 'Projects', any: [PermissionFlag.viewProjects, PermissionFlag.manageProjects] },
+    { id: 'backup', title: 'Backup', any: [PermissionFlag.viewBackup, PermissionFlag.manageBackup] },
+    { id: 'testflight', title: 'TestFlight', any: [PermissionFlag.manageTestFlightSubscriptions] },
+  ].filter((section) => section.any.some((permission) => hasPermission(permissions, permission)) && (section.all ?? []).every((permission) => hasPermission(permissions, permission)));
+}
+
+function jobResult(entry: JobHistoryEntry, catalog: Map<string, AppCatalogEntry>, project: ProjectRecord | undefined): QuickSearchResult {
+  const app = catalog.get(entry.bundleId);
+  return {
+    kind: 'job',
+    id: entry.id,
+    title: app?.displayName ?? entry.bundleId,
+    subtitle: [entry.versionLabel, entry.status, project?.name].filter(Boolean).join(' · '),
+    projectId: entry.projectId ?? DEFAULT_PROJECT_ID,
+  };
+}
+
+export function createDashboardQuickSearchRoutes(overrides: Partial<QuickSearchServices> = {}): FastifyPluginAsyncTypebox {
+  const services = { ...defaultServices, ...overrides };
+  return async (server) => {
+    server.addHook('preHandler', fastifyRequireSession);
+    server.addHook('preHandler', recordFastifyDashboardActivity);
+
+    server.get<{ Querystring: QuickSearchQuery; Reply: { 200: Static<typeof quickSearchResponseSchema>; 404: ApiErrorEnvelope } }>('/v1/dashboard/quick-search', {
+      schema: { hide: true, querystring: quickSearchQuerySchema, response: { 200: quickSearchResponseSchema, 404: ErrorEnvelope } },
+    }, (request, reply) => {
+      const session = getFastifySession(request)!;
+      const query = request.query.q.trim();
+      if (query.length < 2) return { results: [] };
+      const projectId = request.query.projectId ?? DEFAULT_PROJECT_ID;
+      if (!services.getProject(projectId) || !services.canAccessProject(session.sub, session.permissions, projectId)) {
+        reply.code(404);
+        return createHttpErrorEnvelope(request.id, 404, 'project not found');
+      }
+
+      const catalogEntries = services.searchAppCatalogEntries(query, MAX_RESULTS_PER_KIND);
+      const catalog = new Map(catalogEntries.map((entry) => [entry.bundleId, entry]));
+      const results: QuickSearchResult[] = [];
+      const append = (items: QuickSearchResult[]) => {
+        results.push(...items.slice(0, MAX_RESULTS_PER_KIND - results.filter((result) => result.kind === items[0]?.kind).length));
+      };
+      append(catalogEntries.map((entry) => ({ kind: 'app' as const, id: entry.bundleId, title: entry.displayName, subtitle: entry.bundleId })));
+
+      const canSearchJobs = hasPermission(session.permissions, PermissionFlag.requestDecrypt) || hasPermission(session.permissions, PermissionFlag.viewLogs);
+      if (canSearchJobs) {
+        const historicalJobs = services.getAllJobHistory()
+          .filter((entry) => projectMatches(projectId, entry.projectId))
+          .filter((entry) => matches(query, [entry.id, entry.bundleId, entry.versionLabel, catalog.get(entry.bundleId)?.displayName]))
+          .slice(0, MAX_RESULTS_PER_KIND)
+          .map((entry) => jobResult(entry, catalog, services.getProject(projectId)));
+        const activeJobs = services.getActiveJobs()
+          .filter((entry) => projectMatches(projectId, entry.projectId))
+          .filter((entry) => matches(query, [entry.id, entry.bundleId, entry.versionLabel, catalog.get(entry.bundleId)?.displayName]))
+          .slice(0, MAX_RESULTS_PER_KIND)
+          .map((entry) => ({
+            kind: 'job' as const,
+            id: entry.id,
+            title: catalog.get(entry.bundleId)?.displayName ?? entry.bundleId,
+            subtitle: [entry.versionLabel, entry.status, services.getProject(projectId)?.name].filter(Boolean).join(' · '),
+            projectId,
+          }));
+        append([...activeJobs, ...historicalJobs]);
+      }
+
+      if (hasPermission(session.permissions, PermissionFlag.requestDecrypt)) {
+        const directArtifacts = services.listArtifacts({ query, projectIds: [projectId], archived: false, limit: 100 }).artifacts;
+        const appArtifacts = catalogEntries.length > 0
+          ? services.listArtifacts({ bundleIds: catalogEntries.map((entry) => entry.bundleId), projectIds: [projectId], archived: false, limit: 100 }).artifacts
+          : [];
+        const seenArtifactIds = new Set<string>();
+        append([...directArtifacts, ...appArtifacts]
+          .filter((artifact) => {
+            if (seenArtifactIds.has(artifact.id)) return false;
+            seenArtifactIds.add(artifact.id);
+            return true;
+          })
+          .slice(0, MAX_RESULTS_PER_KIND)
+          .map((artifact) => ({
+            kind: 'artifact' as const,
+            id: artifact.id,
+            title: catalog.get(artifact.bundleId)?.displayName ?? artifact.bundleId,
+            subtitle: [artifact.versionLabel, artifact.channel === 'testflight' ? 'TestFlight' : 'App Store', services.getProject(projectId)?.name].filter(Boolean).join(' · '),
+            projectId,
+          })));
+      }
+
+      const canSearchDevices = hasPermission(session.permissions, PermissionFlag.viewDevices) || hasPermission(session.permissions, PermissionFlag.manageDevices);
+      if (canSearchDevices) {
+        append(services.getEffectiveDevices()
+          .filter((device) => matches(query, [device.name, device.udid, device.productType, device.host]))
+          .slice(0, MAX_RESULTS_PER_KIND)
+          .map((device: DeviceRecord) => ({ kind: 'device' as const, id: device.id, title: device.name, subtitle: [device.productType, device.transport === 'usb' ? 'USB' : 'Wi-Fi'].filter(Boolean).join(' · ') })));
+      }
+
+      const canSearchWatches = hasPermission(session.permissions, PermissionFlag.viewAutomation) || hasPermission(session.permissions, PermissionFlag.manageAutomation);
+      if (canSearchWatches) {
+        append(services.listWatches()
+          .filter((watch) => projectMatches(projectId, watch.projectId) && matches(query, [watch.id, watch.bundleId, watch.repo, catalog.get(watch.bundleId)?.displayName]))
+          .slice(0, MAX_RESULTS_PER_KIND)
+          .map((watch: AppWatch) => ({ kind: 'watch' as const, id: watch.id, title: catalog.get(watch.bundleId)?.displayName ?? watch.bundleId, subtitle: [watch.enabled ? 'Enabled' : 'Paused', watch.repo, services.getProject(projectId)?.name].filter(Boolean).join(' · '), projectId })));
+      }
+
+      const canSearchUsers = hasPermission(session.permissions, PermissionFlag.viewUsers) || hasPermission(session.permissions, PermissionFlag.manageUsers);
+      if (canSearchUsers) {
+        const allowedUsers = new Set(services.listAllowedUsers().map((user) => user.username.toLowerCase()));
+        append(services.listAuthProfiles()
+          .filter((profile) => allowedUsers.has(profile.userId.toLowerCase()))
+          .filter((profile) => matches(query, [profile.userId, profile.displayName]))
+          .slice(0, MAX_RESULTS_PER_KIND)
+          .map((profile) => ({ kind: 'user' as const, id: profile.userId, title: profile.displayName || profile.userId, subtitle: profile.userId })));
+      }
+
+      const settings = visibleSettings(session.permissions)
+        .filter((section) => matches(query, [section.title, section.id]))
+        .map((section) => ({ kind: 'settings' as const, id: section.id, title: section.title, subtitle: 'Settings' }));
+      append(settings);
+      const kinds: QuickSearchResult['kind'][] = ['app', 'job', 'artifact', 'device', 'watch', 'user', 'settings'];
+      const grouped = new Map<QuickSearchResult['kind'], QuickSearchResult[]>();
+      const seen = new Set<string>();
+      for (const result of results) {
+        const key = `${result.kind}:${result.id}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        grouped.set(result.kind, [...(grouped.get(result.kind) ?? []), result]);
+      }
+      const balanced: QuickSearchResult[] = [];
+      for (let position = 0; position < MAX_RESULTS_PER_KIND && balanced.length < MAX_QUICK_SEARCH_RESULTS; position += 1) {
+        for (const kind of kinds) {
+          const result = grouped.get(kind)?.[position];
+          if (result) balanced.push(result);
+          if (balanced.length === MAX_QUICK_SEARCH_RESULTS) break;
+        }
+      }
+      return { results: balanced };
+    });
+  };
+}
+
+export const dashboardQuickSearchRoutes = createDashboardQuickSearchRoutes();

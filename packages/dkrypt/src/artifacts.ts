@@ -55,12 +55,26 @@ export interface ArtifactPinBatchResult {
   artifacts: ArtifactRecord[];
   changedIds: string[];
   missingIds: string[];
+  previousPinnedAtById: Record<string, number | undefined>;
 }
 
 export interface ArtifactArchiveBatchResult {
   artifacts: ArtifactRecord[];
   changedIds: string[];
   missingIds: string[];
+  previousArchivedAtById: Record<string, number | undefined>;
+}
+
+export interface ArtifactUndoChange {
+  id: string;
+  kind: 'pin' | 'archive';
+  expectedStateChangedAt: number;
+  expectedCurrentState: boolean;
+  restoreAt?: number;
+}
+
+function nextArtifactStateRevision(previous: number | undefined): number {
+  return Math.max(Date.now(), (previous ?? 0) + 1);
 }
 
 interface ArtifactIndex {
@@ -209,9 +223,9 @@ export function getArtifactByKey(key: string): ArtifactRecord | undefined {
   return artifact;
 }
 
-export async function setArtifactPinned(id: string, pinned: boolean): Promise<{ artifact?: ArtifactRecord; changed: boolean }> {
+export async function setArtifactPinned(id: string, pinned: boolean): Promise<{ artifact?: ArtifactRecord; changed: boolean; previousPinnedAt?: number }> {
   const result = await setArtifactsPinned([id], pinned);
-  return { artifact: result.artifacts[0], changed: result.changedIds.includes(id) };
+  return { artifact: result.artifacts[0], changed: result.changedIds.includes(id), previousPinnedAt: result.previousPinnedAtById[id] };
 }
 
 export async function setArtifactsPinned(ids: string[], pinned: boolean): Promise<ArtifactPinBatchResult> {
@@ -219,28 +233,32 @@ export async function setArtifactsPinned(ids: string[], pinned: boolean): Promis
     const uniqueIds = [...new Set(ids)];
     const artifacts = uniqueIds.map(getArtifactById);
     const missingIds = uniqueIds.filter((_id, index) => artifacts[index] === undefined);
-    if (missingIds.length > 0) return { artifacts: [], changedIds: [], missingIds };
+    if (missingIds.length > 0) return { artifacts: [], changedIds: [], missingIds, previousPinnedAtById: {} };
 
     const currentArtifacts = artifacts as ArtifactRecord[];
     const changedArtifacts = currentArtifacts.filter((artifact) => (artifact.pinnedAt !== undefined) !== pinned);
-    if (changedArtifacts.length === 0) return { artifacts: currentArtifacts, changedIds: [], missingIds: [] };
+    if (changedArtifacts.length === 0) return { artifacts: currentArtifacts, changedIds: [], missingIds: [], previousPinnedAtById: {} };
 
-    const previousPinnedAt = changedArtifacts.map((artifact) => artifact.pinnedAt);
+    const previousStates = changedArtifacts.map((artifact) => ({ pinnedAt: artifact.pinnedAt, pinnedStateChangedAt: artifact.pinnedStateChangedAt }));
+    const previousPinnedAtById = Object.fromEntries(changedArtifacts.map((artifact) => [artifact.id, artifact.pinnedAt]));
     const pinnedAt = pinned ? Date.now() : undefined;
-    for (const artifact of changedArtifacts) artifact.pinnedAt = pinnedAt;
+    for (const artifact of changedArtifacts) {
+      artifact.pinnedAt = pinnedAt;
+      artifact.pinnedStateChangedAt = nextArtifactStateRevision(artifact.pinnedStateChangedAt);
+    }
     try {
       persistIndex();
     } catch (error) {
-      changedArtifacts.forEach((artifact, index) => { artifact.pinnedAt = previousPinnedAt[index]; });
+      changedArtifacts.forEach((artifact, index) => Object.assign(artifact, previousStates[index]));
       throw error;
     }
-    return { artifacts: currentArtifacts, changedIds: changedArtifacts.map((artifact) => artifact.id), missingIds: [] };
+    return { artifacts: currentArtifacts, changedIds: changedArtifacts.map((artifact) => artifact.id), missingIds: [], previousPinnedAtById };
   });
 }
 
-export async function setArtifactArchived(id: string, archived: boolean): Promise<{ artifact?: ArtifactRecord; changed: boolean }> {
+export async function setArtifactArchived(id: string, archived: boolean): Promise<{ artifact?: ArtifactRecord; changed: boolean; previousArchivedAt?: number }> {
   const result = await setArtifactsArchived([id], archived);
-  return { artifact: result.artifacts[0], changed: result.changedIds.includes(id) };
+  return { artifact: result.artifacts[0], changed: result.changedIds.includes(id), previousArchivedAt: result.previousArchivedAtById[id] };
 }
 
 export async function setArtifactsArchived(ids: string[], archived: boolean): Promise<ArtifactArchiveBatchResult> {
@@ -248,22 +266,59 @@ export async function setArtifactsArchived(ids: string[], archived: boolean): Pr
     const uniqueIds = [...new Set(ids)];
     const artifacts = uniqueIds.map(getArtifactById);
     const missingIds = uniqueIds.filter((_id, index) => artifacts[index] === undefined);
-    if (missingIds.length > 0) return { artifacts: [], changedIds: [], missingIds };
+    if (missingIds.length > 0) return { artifacts: [], changedIds: [], missingIds, previousArchivedAtById: {} };
 
     const currentArtifacts = artifacts as ArtifactRecord[];
     const changedArtifacts = currentArtifacts.filter((artifact) => (artifact.archivedAt !== undefined) !== archived);
-    if (changedArtifacts.length === 0) return { artifacts: currentArtifacts, changedIds: [], missingIds: [] };
+    if (changedArtifacts.length === 0) return { artifacts: currentArtifacts, changedIds: [], missingIds: [], previousArchivedAtById: {} };
 
-    const previousArchivedAt = changedArtifacts.map((artifact) => artifact.archivedAt);
+    const previousStates = changedArtifacts.map((artifact) => ({ archivedAt: artifact.archivedAt, archivedStateChangedAt: artifact.archivedStateChangedAt }));
+    const previousArchivedAtById = Object.fromEntries(changedArtifacts.map((artifact) => [artifact.id, artifact.archivedAt]));
     const archivedAt = archived ? Date.now() : undefined;
-    for (const artifact of changedArtifacts) artifact.archivedAt = archivedAt;
+    for (const artifact of changedArtifacts) {
+      artifact.archivedAt = archivedAt;
+      artifact.archivedStateChangedAt = nextArtifactStateRevision(artifact.archivedStateChangedAt);
+    }
     try {
       persistIndex();
     } catch (error) {
-      changedArtifacts.forEach((artifact, index) => { artifact.archivedAt = previousArchivedAt[index]; });
+      changedArtifacts.forEach((artifact, index) => Object.assign(artifact, previousStates[index]));
       throw error;
     }
-    return { artifacts: currentArtifacts, changedIds: changedArtifacts.map((artifact) => artifact.id), missingIds: [] };
+    return { artifacts: currentArtifacts, changedIds: changedArtifacts.map((artifact) => artifact.id), missingIds: [], previousArchivedAtById };
+  });
+}
+
+export async function undoArtifactStateChanges(changes: ArtifactUndoChange[]): Promise<{ undoneIds: string[]; conflictIds: string[] }> {
+  return withMutation(async () => {
+    const undoneIds: string[] = [];
+    const conflictIds: string[] = [];
+    const snapshots: Array<{ artifact: ArtifactRecord; state: Partial<ArtifactRecord> }> = [];
+    for (const change of changes) {
+      const artifact = getArtifactById(change.id);
+      if (!artifact) {
+        conflictIds.push(change.id);
+        continue;
+      }
+      const stateKey = change.kind === 'pin' ? 'pinnedAt' : 'archivedAt';
+      const revisionKey = change.kind === 'pin' ? 'pinnedStateChangedAt' : 'archivedStateChangedAt';
+      if (artifact[revisionKey] !== change.expectedStateChangedAt || (artifact[stateKey] !== undefined) !== change.expectedCurrentState) {
+        conflictIds.push(change.id);
+        continue;
+      }
+      snapshots.push({ artifact, state: { [stateKey]: artifact[stateKey], [revisionKey]: artifact[revisionKey] } });
+      artifact[stateKey] = change.restoreAt;
+      artifact[revisionKey] = nextArtifactStateRevision(artifact[revisionKey]);
+      undoneIds.push(change.id);
+    }
+    if (undoneIds.length === 0) return { undoneIds, conflictIds };
+    try {
+      persistIndex();
+    } catch (error) {
+      for (const snapshot of snapshots) Object.assign(snapshot.artifact, snapshot.state);
+      throw error;
+    }
+    return { undoneIds, conflictIds };
   });
 }
 

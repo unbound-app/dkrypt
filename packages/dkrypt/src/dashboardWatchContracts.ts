@@ -22,7 +22,10 @@ export const dashboardWatchInputSchema = Type.Object({
   testFlightTrain: Type.Optional(Type.String({ maxLength: 100 })),
 }, additionalProperties);
 
-export const dashboardWatchPatchSchema = Type.Partial(dashboardWatchInputSchema);
+export const dashboardWatchPatchSchema = Type.Intersect([
+  Type.Partial(dashboardWatchInputSchema),
+  Type.Object({ expectedUpdatedAt: Type.Optional(Type.Number({ minimum: 0 })) }, additionalProperties),
+]);
 export const dashboardWatchImportBodySchema = Type.Object({ watches: Type.Array(dashboardWatchInputSchema, { minItems: 1, maxItems: 100 }) }, additionalProperties);
 export const dashboardWatchParamsSchema = Type.Object({ id: identifierSchema }, additionalProperties);
 export const dashboardWatchCalendarQuerySchema = Type.Object({

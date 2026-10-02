@@ -1665,7 +1665,7 @@ register('GET', '/v1/dashboard/me/prefs', {
 });
 register('PUT', '/v1/dashboard/me/prefs', {
   body: userPrefsPatchBodySchema,
-  response: { 200: userPrefsResponseSchema },
+  response: { 200: userPrefsResponseSchema, 400: ErrorEnvelope },
 });
 register('GET', '/v1/dashboard/push/public-key', {
   response: { 200: pushKeyResponseSchema },

@@ -9,6 +9,7 @@
   import { PermissionFlag } from '#lib/permissions';
   import { sessionHasPermission } from '#lib/session.svelte';
   import { buttonVariants } from '#lib/components/ui/variants';
+  import AdvancedSection from '#components/AdvancedSection.svelte';
 
   const checkTitles: Record<string, string> = {
     'session-secret': 'Session signing secret',
@@ -169,6 +170,7 @@
     </ul>
   {/if}
 
+  <AdvancedSection label="settings.serviceHealthChecks">
   <section class="mt-5 border-t border-border/70 pt-4" aria-labelledby="system-probes-heading">
     <div class="flex flex-wrap items-start justify-between gap-3">
       <div>
@@ -200,4 +202,5 @@
       </ul>
     {/if}
   </section>
+  </AdvancedSection>
 </Card>

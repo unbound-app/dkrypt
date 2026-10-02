@@ -21,6 +21,7 @@ import {
   setArtifactsPinned,
   setArtifactArchived,
   setArtifactsArchived,
+  undoArtifactStateChanges,
   touchArtifact,
 } from './artifacts.js';
 
@@ -391,6 +392,39 @@ describe('persistent artifact store', () => {
       database.exec(`DROP TRIGGER IF EXISTS ${trigger};`);
       database.close();
     }
+  });
+
+  test('undo restores unchanged artifact state and skips items changed afterward', async () => {
+    config.artifactMaxBytes = 1024 * 1024;
+    const first = await promoteArtifact({
+      key: `test-undo-first-${crypto.randomUUID()}`,
+      bundleId: 'com.example.undo-first',
+      channel: 'appstore',
+      stagingPath: await stagingFile('undo first'),
+    });
+    const second = await promoteArtifact({
+      key: `test-undo-second-${crypto.randomUUID()}`,
+      bundleId: 'com.example.undo-second',
+      channel: 'testflight',
+      stagingPath: await stagingFile('undo second'),
+    });
+
+    const firstPin = await setArtifactPinned(first.id, true);
+    const secondArchive = await setArtifactArchived(second.id, true);
+    const firstRevision = firstPin.artifact?.pinnedStateChangedAt;
+    const secondRevision = secondArchive.artifact?.archivedStateChangedAt;
+    expect(firstRevision).toBeTypeOf('number');
+    expect(secondRevision).toBeTypeOf('number');
+
+    await setArtifactPinned(first.id, false);
+    const result = await undoArtifactStateChanges([
+      { id: first.id, kind: 'pin', expectedStateChangedAt: firstRevision!, expectedCurrentState: true },
+      { id: second.id, kind: 'archive', expectedStateChangedAt: secondRevision!, expectedCurrentState: true },
+    ]);
+
+    expect(result).toEqual({ undoneIds: [second.id], conflictIds: [first.id] });
+    expect(getArtifactById(first.id)?.pinnedAt).toBeUndefined();
+    expect(getArtifactById(second.id)?.archivedAt).toBeUndefined();
   });
 
   test('rejects an artifact larger than the quota without promoting it', async () => {

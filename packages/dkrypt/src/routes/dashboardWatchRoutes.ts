@@ -450,6 +450,10 @@ export const dashboardWatchRoutes: FastifyPluginAsyncTypebox = async (server) =>
     }
     const existingWatch = visibleWatch(request, reply);
     if (!existingWatch) return;
+    if (request.body.expectedUpdatedAt !== undefined && request.body.expectedUpdatedAt !== existingWatch.updatedAt) {
+      sendError(request, reply, 409, 'watch changed after this action; refresh before retrying');
+      return;
+    }
     if ((patch.testFlightPolicy ?? existingWatch.testFlightPolicy) === 'train' && !(patch.testFlightTrain ?? existingWatch.testFlightTrain)) {
       sendError(request, reply, 400, 'testFlightTrain is required when testFlightPolicy is train');
       return;

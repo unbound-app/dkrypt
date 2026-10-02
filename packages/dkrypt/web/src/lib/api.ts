@@ -449,10 +449,30 @@ export interface ArtifactRecord {
   lastAccessedAt: string;
   pinnedAt?: string;
   archivedAt?: string;
+  pinnedStateChangedAt?: number;
+  archivedStateChangedAt?: number;
   accessCount: number;
   fileUrl: string;
   sourceJobId?: string;
   warnings?: string[];
+}
+
+export interface DashboardQuickSearchResult {
+  kind: 'app' | 'job' | 'artifact' | 'device' | 'watch' | 'user' | 'settings';
+  id: string;
+  title: string;
+  subtitle?: string;
+  projectId?: string;
+}
+
+export function fetchDashboardQuickSearch(query: string, projectId = projectSelectionState.id): Promise<{ results: DashboardQuickSearchResult[] }> {
+  const params = new URLSearchParams({ q: query, projectId });
+  return apiJson(`/v1/dashboard/quick-search?${params}`);
+}
+
+export function fetchDashboardArtifact(id: string, projectId = projectSelectionState.id): Promise<ArtifactRecord> {
+  const params = new URLSearchParams({ projectId });
+  return apiJson(`/v1/dashboard/artifacts/${encodeURIComponent(id)}?${params}`);
 }
 
 export interface JobTimelineEvent {
@@ -775,6 +795,11 @@ export interface DeviceHealth extends DeviceTransportStatus {
   networkInterface?: string;
   bridgeHeartbeats?: Partial<Record<'springboard' | 'testflight' | 'appstore', { bridgeVersion?: string; channel?: string; process?: string; at?: number }>>;
   subsystems?: Partial<Record<'usb' | 'mux' | 'agent' | 'jailbreak' | 'appStore' | 'testFlight' | 'sshTunnel' | 'storage' | 'battery' | 'thermal', 'ready' | 'idle' | 'degraded' | 'offline' | 'unsupported' | 'unknown'>>;
+  subsystemDetails?: Partial<Record<'usb' | 'mux' | 'agent' | 'jailbreak' | 'appStore' | 'testFlight' | 'sshTunnel' | 'storage' | 'battery' | 'thermal', {
+    state: 'ready' | 'idle' | 'degraded' | 'offline' | 'unsupported' | 'unknown';
+    lastChangedAt?: number;
+    reason?: string;
+  }>>;
   readiness?: DeviceReadiness;
   checkedAt: number;
 }
@@ -924,8 +949,8 @@ export function createWatch(input: WatchInput): Promise<{ ok: boolean; data: App
   return apiAction('/v1/dashboard/watches', { method: 'POST', body: JSON.stringify(input) }, 'Watch added');
 }
 
-export function updateWatch(id: string, patch: Partial<WatchInput>): Promise<{ ok: boolean; data: AppWatch }> {
-  return apiAction(`/v1/dashboard/watches/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) }, 'Watch updated');
+export function updateWatch(id: string, patch: Partial<WatchInput> & { expectedUpdatedAt?: number }, successMessage: string | null = 'Watch updated'): Promise<{ ok: boolean; data: AppWatch }> {
+  return apiAction(`/v1/dashboard/watches/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) }, successMessage ?? undefined);
 }
 
 export function deleteWatch(id: string): Promise<{ ok: boolean }> {
@@ -1112,9 +1137,12 @@ export function observeArtifacts(
 
 export interface ArtifactPinResult {
   ok: boolean;
+  changed: boolean;
   artifactId: string;
   pinned: boolean;
   pinnedAt?: string;
+  pinnedStateChangedAt?: number;
+  previousPinnedAt?: number;
 }
 
 export function setDashboardArtifactPinned(id: string, pinned: boolean): Promise<{ ok: boolean; data: ArtifactPinResult }> {
@@ -1129,7 +1157,7 @@ export interface ArtifactBulkPinResult {
   ok: boolean;
   pinned: boolean;
   changedIds: string[];
-  artifacts: Array<{ artifactId: string; pinned: boolean; pinnedAt?: string }>;
+  artifacts: Array<{ artifactId: string; pinned: boolean; pinnedAt?: string; pinnedStateChangedAt?: number; previousPinnedAt?: number }>;
 }
 
 export function setDashboardArtifactsPinned(ids: string[], pinned: boolean): Promise<{ ok: boolean; data: ArtifactBulkPinResult }> {
@@ -1141,9 +1169,12 @@ export function setDashboardArtifactsPinned(ids: string[], pinned: boolean): Pro
 
 export interface ArtifactArchiveResult {
   ok: boolean;
+  changed: boolean;
   artifactId: string;
   archived: boolean;
   archivedAt?: string;
+  archivedStateChangedAt?: number;
+  previousArchivedAt?: number;
 }
 
 export function setDashboardArtifactArchived(id: string, archived: boolean): Promise<{ ok: boolean; data: ArtifactArchiveResult }> {
@@ -1158,7 +1189,7 @@ export interface ArtifactBulkArchiveResult {
   ok: boolean;
   archived: boolean;
   changedIds: string[];
-  artifacts: Array<{ artifactId: string; archived: boolean; archivedAt?: string }>;
+  artifacts: Array<{ artifactId: string; archived: boolean; archivedAt?: string; archivedStateChangedAt?: number; previousArchivedAt?: number }>;
 }
 
 export function setDashboardArtifactsArchived(ids: string[], archived: boolean): Promise<{ ok: boolean; data: ArtifactBulkArchiveResult }> {
@@ -1166,6 +1197,23 @@ export function setDashboardArtifactsArchived(ids: string[], archived: boolean):
     method: 'POST',
     body: JSON.stringify({ ids, archived }),
   });
+}
+
+export interface ArtifactUndoChange {
+  id: string;
+  kind: 'pin' | 'archive';
+  expectedStateChangedAt: number;
+  expectedCurrentState: boolean;
+  restoreAt?: number;
+}
+
+export interface ArtifactUndoResult {
+  undoneIds: string[];
+  conflictIds: string[];
+}
+
+export function undoDashboardArtifactChanges(changes: ArtifactUndoChange[]): Promise<{ ok: boolean; data: ArtifactUndoResult }> {
+  return apiAction('/v1/dashboard/artifacts/undo', { method: 'POST', body: JSON.stringify({ changes }) });
 }
 
 export function dashboardArtifactDownloadUrl(id: string): string {

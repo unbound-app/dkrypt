@@ -7,7 +7,52 @@ import { createHttpErrorEnvelope } from '#util/httpResponse.js';
 import { resolveNotifyEmail, sendMailToUser } from '#mail.js';
 import { getVapidPublicKey, sendPushToUser } from '#push.js';
 import { fastifyRequireSession, getFastifySession } from '#session.js';
-import { addPushSubscription, getUserPrefs, removePushSubscription, updateUserPrefs, type UserPrefs } from '#store/state.js';
+import { addPushSubscription, getUserPrefs, removePushSubscription, updateUserPrefs, type HomeLayoutPreference, type HomeModuleId, type UserPrefs } from '#store/state.js';
+
+const homeModuleIds: HomeModuleId[] = ['artifacts', 'activeJobs', 'jobHistory'];
+const defaultHomeLayout: HomeLayoutPreference = {
+  id: 'default',
+  name: 'Default',
+  order: ['artifacts', 'activeJobs', 'jobHistory'],
+  hidden: [],
+  collapsed: [],
+};
+
+function normalizedPrefs(prefs: UserPrefs): UserPrefs {
+  const defaults: UserPrefs = {
+    density: 'comfortable',
+    homeLayouts: [defaultHomeLayout],
+    activeHomeLayoutId: defaultHomeLayout.id,
+    viewModes: { artifacts: 'list', jobHistory: 'cards', devices: 'cards' },
+    settingsMode: 'basic',
+  };
+  const homeLayouts = prefs.homeLayouts ?? [defaultHomeLayout];
+  const activeHomeLayoutId = homeLayouts.some((layout) => layout.id === prefs.activeHomeLayoutId)
+    ? prefs.activeHomeLayoutId
+    : homeLayouts[0]?.id ?? defaultHomeLayout.id;
+  return {
+    ...defaults,
+    ...prefs,
+    homeLayouts,
+    activeHomeLayoutId,
+    viewModes: { artifacts: 'list', jobHistory: 'cards', devices: 'cards', ...prefs.viewModes },
+  };
+}
+
+function validHomeLayouts(layouts: HomeLayoutPreference[]): boolean {
+  const ids = new Set<string>();
+  const names = new Set<string>();
+  for (const layout of layouts) {
+    const normalizedName = layout.name.trim().toLowerCase();
+    if (ids.has(layout.id) || names.has(normalizedName) || normalizedName.length === 0) return false;
+    ids.add(layout.id);
+    names.add(normalizedName);
+    if (layout.order.length !== homeModuleIds.length || homeModuleIds.some((moduleId) => !layout.order.includes(moduleId))) return false;
+    if ([...layout.hidden, ...layout.collapsed].some((moduleId) => !layout.order.includes(moduleId))) return false;
+    if (layout.hidden.some((moduleId) => layout.collapsed.includes(moduleId))) return false;
+  }
+  return true;
+}
 
 export const dashboardAccountRoutes: FastifyPluginAsyncTypebox = async (server) => {
   server.addHook('preHandler', fastifyRequireSession);
@@ -15,7 +60,7 @@ export const dashboardAccountRoutes: FastifyPluginAsyncTypebox = async (server) 
 
   server.get<DashboardPrefsGetRoute>('/v1/dashboard/me/prefs', { schema: getRouteContract('GET', '/v1/dashboard/me/prefs') }, async (request) => {
     const userId = getFastifySession(request)!.sub;
-    return { ...getUserPrefs(userId), accountEmail: getAuthProfile(userId)?.email };
+    return { ...normalizedPrefs(getUserPrefs(userId)), accountEmail: getAuthProfile(userId)?.email };
   });
 
   server.get<DashboardPushPublicKeyRoute>('/v1/dashboard/push/public-key', { schema: getRouteContract('GET', '/v1/dashboard/push/public-key') }, async () => ({ publicKey: getVapidPublicKey() }));
@@ -51,13 +96,17 @@ export const dashboardAccountRoutes: FastifyPluginAsyncTypebox = async (server) 
     return { ok: true };
   });
 
-  server.put<DashboardPrefsUpdateRoute>('/v1/dashboard/me/prefs', { schema: getRouteContract('PUT', '/v1/dashboard/me/prefs') }, async (request) => {
+  server.put<DashboardPrefsUpdateRoute>('/v1/dashboard/me/prefs', { schema: getRouteContract('PUT', '/v1/dashboard/me/prefs') }, async (request, reply) => {
     const body = request.body;
     const patch: Partial<UserPrefs> = {};
     if (body.formattingLocale) patch.formattingLocale = body.formattingLocale;
     if (body.interfaceLanguage) patch.interfaceLanguage = body.interfaceLanguage;
     if (body.theme) patch.theme = body.theme;
     if (body.density) patch.density = body.density;
+    if (body.homeLayouts) patch.homeLayouts = body.homeLayouts.map((layout) => ({ ...layout, name: layout.name.trim() }));
+    if (body.activeHomeLayoutId) patch.activeHomeLayoutId = body.activeHomeLayoutId;
+    if (body.viewModes) patch.viewModes = { ...normalizedPrefs(getUserPrefs(getFastifySession(request)!.sub)).viewModes, ...body.viewModes };
+    if (body.settingsMode) patch.settingsMode = body.settingsMode;
     if (typeof body.accent === 'string' && /^[a-z-]{1,32}$/.test(body.accent)) patch.accent = body.accent;
     if (typeof body.highContrast === 'boolean') patch.highContrast = body.highContrast;
     if (typeof body.sound === 'boolean') patch.sound = body.sound;
@@ -74,6 +123,19 @@ export const dashboardAccountRoutes: FastifyPluginAsyncTypebox = async (server) 
       if (trimmed === '' || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) patch.notifyEmail = trimmed;
     }
     if (typeof body.preferPrimaryDevice === 'boolean') patch.preferPrimaryDevice = body.preferPrimaryDevice;
-    return updateUserPrefs(getFastifySession(request)!.sub, patch);
+    const userId = getFastifySession(request)!.sub;
+    const current = normalizedPrefs(getUserPrefs(userId));
+    const merged = { ...current, ...patch };
+    if (merged.homeLayouts && !validHomeLayouts(merged.homeLayouts)) {
+      return reply.code(400).send(createHttpErrorEnvelope(request.id, 400, 'Home layouts must use each available section exactly once and have unique names and IDs'));
+    }
+    if (merged.activeHomeLayoutId && !merged.homeLayouts?.some((layout) => layout.id === merged.activeHomeLayoutId)) {
+      return reply.code(400).send(createHttpErrorEnvelope(request.id, 400, 'activeHomeLayoutId must match a saved Home layout'));
+    }
+    if (body.homeLayouts && !body.activeHomeLayoutId && !body.homeLayouts.some((layout) => layout.id === current.activeHomeLayoutId)) {
+      patch.activeHomeLayoutId = body.homeLayouts[0]?.id ?? defaultHomeLayout.id;
+    }
+    updateUserPrefs(userId, patch);
+    return normalizedPrefs(getUserPrefs(userId));
   });
 };

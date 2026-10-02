@@ -194,6 +194,34 @@ test('inactive billing waits for selection and stays mounted after first visit',
   expect(billingRequests).toBe(billingRequestsAfterFirstVisit);
 });
 
+test('command palette searches dkrypt data without triggering live App Store search', async ({ page }) => {
+  await mockAuthenticatedDashboard(page, '1');
+  const quickSearchQueries: Array<{ q: string | null; projectId: string | null }> = [];
+  let appStoreSearchRequests = 0;
+  await page.route('**/v1/dashboard/quick-search*', async (route) => {
+    const url = new URL(route.request().url());
+    quickSearchQueries.push({ q: url.searchParams.get('q'), projectId: url.searchParams.get('projectId') });
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ results: [{ kind: 'app', id: 'com.example.quick', title: 'Example App', subtitle: 'com.example.quick' }] }),
+    });
+  });
+  await page.route('**/v1/dashboard/search*', async (route) => {
+    appStoreSearchRequests += 1;
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ results: [] }) });
+  });
+
+  await page.goto('/?tab=home');
+  await page.getByRole('button', { name: 'Open command menu' }).click();
+  await page.getByPlaceholder('Search dkrypt…').fill('Example');
+  await expect(page.getByRole('button', { name: /Example App/ })).toBeVisible();
+  await expect.poll(() => quickSearchQueries.at(-1)).toEqual({ q: 'Example', projectId: 'default' });
+  expect(appStoreSearchRequests).toBe(0);
+  await page.getByRole('button', { name: /Example App/ }).click();
+  await expect(page.getByPlaceholder('Search the App Store to decrypt… (press / to focus)')).toHaveValue('com.example.quick');
+  await expect.poll(() => appStoreSearchRequests).toBe(1);
+});
+
 async function mockStableDashboardEvents(page: Page, failedConnections = 0, holdFirstReconnect = false): Promise<void> {
   await page.addInitScript(({ initialFailures, holdFirstReconnect: shouldHoldFirstReconnect }) => {
     let visibilityState: DocumentVisibilityState = 'visible';
@@ -447,7 +475,7 @@ test('IPA Library visual layout stays consistent on desktop and mobile', async (
       body: JSON.stringify({ entries: [{ bundleId: 'com.example.visual', displayName: 'Visual App', updatedAt: 1790604000000 }] }),
     });
   });
-  await page.route('**/v1/dashboard/artifacts*', async (route) => {
+  await page.route('**/v1/dashboard/artifacts**', async (route) => {
     await route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify({
@@ -745,7 +773,7 @@ test('IPA Library filters can be saved and reapplied across reloads', async ({ p
   await page.route('**/v1/dashboard/apps/metadata?*', async (route) => {
     await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ entries: [] }) });
   });
-  await page.route('**/v1/dashboard/artifacts*', async (route) => {
+  await page.route('**/v1/dashboard/artifacts**', async (route) => {
     const requestUrl = new URL(route.request().url());
     requestedFilters.push({
       channel: requestUrl.searchParams.get('channel') ?? 'all',
@@ -812,6 +840,8 @@ test('IPA Library archive and restore keep archive state separate from eviction 
   };
   let artifactArchivedAt: string | undefined;
   let artifactPinnedAt: string | undefined;
+  let artifactArchivedRevision = 0;
+  let artifactPinnedRevision = 0;
   let artifactListRequestCount = 0;
   const bulkArchiveRequests: Array<{ ids: string[]; archived: boolean }> = [];
   await page.route('**/v1/dashboard/apps/metadata?*', async (route) => {
@@ -821,27 +851,46 @@ test('IPA Library archive and restore keep archive state separate from eviction 
     const url = new URL(route.request().url());
     if (route.request().method() === 'PUT' && url.pathname.endsWith('/archive')) {
       const payload = route.request().postDataJSON() as { archived: boolean };
+      const previousArchivedAt = artifactArchivedAt === undefined ? undefined : Date.parse(artifactArchivedAt);
       artifactArchivedAt = payload.archived ? '2026-09-26T13:00:00.000Z' : undefined;
-      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, artifactId: artifact.id, archived: payload.archived, archivedAt: artifactArchivedAt }) });
+      artifactArchivedRevision += 1;
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, changed: true, artifactId: artifact.id, archived: payload.archived, archivedAt: artifactArchivedAt, archivedStateChangedAt: artifactArchivedRevision, previousArchivedAt }) });
       return;
     }
     if (route.request().method() === 'PUT' && url.pathname.endsWith('/pin')) {
       const payload = route.request().postDataJSON() as { pinned: boolean };
+      const previousPinnedAt = artifactPinnedAt === undefined ? undefined : Date.parse(artifactPinnedAt);
       artifactPinnedAt = payload.pinned ? '2026-09-26T14:00:00.000Z' : undefined;
-      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, artifactId: artifact.id, pinned: payload.pinned, pinnedAt: artifactPinnedAt }) });
+      artifactPinnedRevision += 1;
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, changed: true, artifactId: artifact.id, pinned: payload.pinned, pinnedAt: artifactPinnedAt, pinnedStateChangedAt: artifactPinnedRevision, previousPinnedAt }) });
       return;
     }
     if (route.request().method() === 'POST') {
+      if (url.pathname.endsWith('/undo')) {
+        const payload = route.request().postDataJSON() as { changes: Array<{ id: string; kind: 'archive' | 'pin'; expectedStateChangedAt: number; restoreAt?: number }> };
+        const change = payload.changes[0]!;
+        if (change.kind === 'archive' && change.expectedStateChangedAt === artifactArchivedRevision) {
+          artifactArchivedAt = change.restoreAt === undefined ? undefined : new Date(change.restoreAt).toISOString();
+          artifactArchivedRevision += 1;
+        } else if (change.kind === 'pin' && change.expectedStateChangedAt === artifactPinnedRevision) {
+          artifactPinnedAt = change.restoreAt === undefined ? undefined : new Date(change.restoreAt).toISOString();
+          artifactPinnedRevision += 1;
+        }
+        await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ undoneIds: [change.id], conflictIds: [] }) });
+        return;
+      }
       const payload = route.request().postDataJSON() as { ids: string[]; archived: boolean };
       bulkArchiveRequests.push(payload);
+      const previousArchivedAt = artifactArchivedAt === undefined ? undefined : Date.parse(artifactArchivedAt);
       artifactArchivedAt = payload.archived ? '2026-09-26T15:00:00.000Z' : undefined;
+      artifactArchivedRevision += 1;
       await route.fulfill({
         contentType: 'application/json',
         body: JSON.stringify({
           ok: true,
           archived: payload.archived,
           changedIds: payload.ids,
-          artifacts: payload.ids.map((artifactId) => ({ artifactId, archived: payload.archived, archivedAt: artifactArchivedAt })),
+          artifacts: payload.ids.map((artifactId) => ({ artifactId, archived: payload.archived, archivedAt: artifactArchivedAt, archivedStateChangedAt: artifactArchivedRevision, previousArchivedAt })),
         }),
       });
       return;
@@ -870,6 +919,11 @@ test('IPA Library archive and restore keep archive state separate from eviction 
   await expect.poll(() => artifactListRequestCount).toBe(listRequestsBeforeSingleArchive + 1);
   await expect(page.locator('#artifact-archive-status')).toBeFocused();
   await expect(page.locator('#artifact-archive-announcement')).toHaveText('Archived com.example.archive.');
+
+  await page.getByRole('button', { name: 'Undo' }).click();
+  await expect(page.locator('article').filter({ hasText: 'com.example.archive' })).toHaveCount(1);
+  await page.getByRole('button', { name: 'Archive com.example.archive' }).click();
+  await expect(page.locator('article').filter({ hasText: 'com.example.archive' })).toHaveCount(0);
 
   await page.getByRole('button', { name: 'Active', exact: true }).click();
   await page.getByRole('option', { name: 'Archived', exact: true }).click();
@@ -986,7 +1040,13 @@ test('IPA Library stays populated and does not refetch loaded results during inc
   await page.route('**/v1/dashboard/apps/metadata?*', async (route) => {
     await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ entries: [] }) });
   });
-  await page.route('**/v1/dashboard/artifacts*', async (route) => {
+  await page.route('**/v1/dashboard/artifacts**', async (route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    if (pathname !== '/v1/dashboard/artifacts') {
+      const id = pathname.split('/').at(-1);
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify(artifacts.find((entry) => entry.id === id)) });
+      return;
+    }
     artifactListRequestCount += 1;
     await route.fulfill({
       contentType: 'application/json',
@@ -1009,9 +1069,10 @@ test('IPA Library stays populated and does not refetch loaded results during inc
   await page.setViewportSize({ width: 390, height: 844 });
   await firstArtifact.scrollIntoViewIfNeeded();
   await expect(firstArtifact).toBeVisible();
-  const details = firstArtifact.locator('summary').filter({ hasText: 'Artifact details' });
-  if (!(await firstArtifact.locator('details').evaluate((element) => element.open))) await details.click();
-  await expect(firstArtifact.getByText(warning, { exact: true })).toBeVisible();
+  await firstArtifact.getByRole('button', { name: 'Artifact details' }).click();
+  await expect(page.getByRole('heading', { name: 'Artifact metadata' })).toBeVisible();
+  await expect(page.getByText(warning, { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Close details' }).click();
   await viewportHandle.evaluate((element) => {
     const samples: Array<{ kind: 'blank' | 'detached'; scrollY: number; renderedRows: number }> = [];
     const browserWindow = window as typeof window & { __ipaLibraryScrollSamples?: typeof samples };
@@ -1927,6 +1988,7 @@ test('device managers can run on-demand service health checks', async ({ page })
 
   await page.goto('/?tab=settings&stab=doctor');
   await expect(page.getByRole('heading', { name: 'System doctor' })).toBeVisible();
+  await page.getByRole('button', { name: 'Advanced', exact: true }).click();
   await expect(page.getByText('TestFlight uses its last device verification and is never opened or refreshed.')).toBeVisible();
   expect(probeRequests).toBe(0);
   await page.getByRole('button', { name: 'Run health checks' }).click();
@@ -2303,9 +2365,11 @@ test('populated device management and preflight dialog meet accessibility checks
     localStorage.setItem('onboardingDismissed', 'true');
   });
   await page.goto('/?tab=settings&stab=devices');
+  await page.getByRole('button', { name: 'Advanced', exact: true }).click();
   await expect(page.getByText('Lab iPad', { exact: true })).toBeVisible();
   await expect(page.getByText('online', { exact: true })).toBeVisible();
-  await expect(page.getByText('App Store: idle', { exact: true })).toBeVisible();
+  await expect(page.getByText('App Store', { exact: true })).toBeVisible();
+  await expect(page.getByText('Idle', { exact: true })).toBeVisible();
   const activityList = page.getByRole('list', { name: 'Lab iPad activity' });
   const activityViewport = page.getByRole('region', { name: 'Lab iPad activity scroll area' });
   await expect(activityList.getByRole('listitem').first()).toContainText('Device activity 000');
@@ -2338,7 +2402,7 @@ test('first-time device setup explains USB pairing without asking for manual Wi-
   await expectAccessible(page);
 });
 
-test('IPA Library virtualizes loaded rows and reveals artifact provenance on demand', async ({ page }) => {
+test('IPA Library virtualizes loaded rows and opens artifact provenance in the inspector', async ({ page }) => {
   const sha256 = 'a'.repeat(64);
   const warning = 'Payload/Example.app/Extensions/Share.appex/Share still encrypted (cryptid != 0)';
   const artifacts = Array.from({ length: 100 }, (_, index) => ({
@@ -2360,7 +2424,14 @@ test('IPA Library virtualizes loaded rows and reveals artifact provenance on dem
   }));
 
   await mockAuthenticatedDashboard(page, '1');
-  await page.route('**/v1/dashboard/artifacts*', async (route) => {
+  await page.route('**/v1/dashboard/artifacts**', async (route) => {
+    const requestPath = new URL(route.request().url()).pathname;
+    const detailId = requestPath.split('/').at(-1);
+    if (detailId && detailId !== 'artifacts') {
+      const selected = artifacts.find((entry) => entry.id === detailId);
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify(selected) });
+      return;
+    }
     await route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify({
@@ -2383,14 +2454,15 @@ test('IPA Library virtualizes loaded rows and reveals artifact provenance on dem
   await expect(artifact).toBeVisible();
   await expect.poll(() => list.getByRole('listitem').count()).toBeLessThan(100);
   await expect(list.getByRole('listitem').first()).toHaveAttribute('aria-setsize', '100');
-  const details = artifact.locator('summary').filter({ hasText: 'Artifact details' });
+  const details = artifact.getByRole('button', { name: 'Artifact details' });
   await expect(details).toBeVisible();
-  await expect(artifact.getByText(sha256, { exact: true })).not.toBeVisible();
+  await expect(page.getByText(sha256, { exact: true })).not.toBeVisible();
 
   await details.click();
-  await expect(artifact.getByText(sha256, { exact: true })).toBeVisible();
-  await expect(artifact.getByText('job-provenance-0', { exact: true })).toBeVisible();
-  await expect(artifact.getByText(warning, { exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Artifact metadata' })).toBeVisible();
+  await expect(page.getByText(sha256, { exact: true })).toBeVisible();
+  await expect(page.getByText('job-provenance-0', { exact: true })).toBeVisible();
+  await expect(page.getByText(warning, { exact: true })).toBeVisible();
   await viewport.evaluate((element) => {
     const bounds = element.getBoundingClientRect();
     window.scrollTo({ top: window.scrollY + bounds.bottom - window.innerHeight, behavior: 'instant' });
@@ -2399,7 +2471,7 @@ test('IPA Library virtualizes loaded rows and reveals artifact provenance on dem
   await expect(list.getByText('com.example.provenance.99', { exact: true }).first()).toBeVisible();
   await viewport.evaluate((element) => window.scrollTo({ top: window.scrollY + element.getBoundingClientRect().top - 80, behavior: 'instant' }));
   await expect(list.locator('[aria-posinset="1"]')).toBeAttached();
-  await expect(artifact.getByText(sha256, { exact: true })).toBeVisible();
+  await expect(page.getByText(sha256, { exact: true })).toBeVisible();
 });
 
 test('IPA Library bulk pinning sends one bounded update for the selected artifacts', async ({ page }) => {

@@ -62,6 +62,7 @@
 		logoutEverywhere,
 		permissionsSummary,
 		pushAccentPref,
+		pushDensityPref,
 		pushHighContrastPref,
 		pushFormattingLocale,
 		pushInterfaceLanguage,
@@ -82,6 +83,7 @@
 		accentState,
 		confirmDialog,
 		initAccent,
+		initDensity,
 		initHighContrast,
 		initFormattingLocale,
 		initTheme,
@@ -95,6 +97,7 @@
 		setInterfaceLanguage,
 		setSoundEnabled,
 		setTheme,
+		densityState,
 		showToast,
 		soundEnabledState,
 		highContrastState,
@@ -119,7 +122,8 @@
 	import Logs from "#tabs/Logs.svelte";
 	import Settings from "#tabs/Settings.svelte";
 
-	initTheme();
+initTheme();
+initDensity();
 	initHighContrast();
 	initFormattingLocale();
 	initAccent();
@@ -525,6 +529,11 @@
 		void pushHighContrastPref(next);
 	}
 
+	function chooseDensity(value: string): void {
+		if (value !== "comfortable" && value !== "compact") return;
+		void pushDensityPref(value);
+	}
+
 	function chooseFormattingLocale(value: string): void {
 		if (!isFormattingLocalePreference(value)) return;
 		setFormattingLocale(value);
@@ -708,7 +717,7 @@
 						{/if}
 					</DropdownMenu.Trigger>
 					<DropdownMenu.Content
-							class="account-menu z-50 w-72 rounded-lg border border-border bg-popover p-3 text-popover-foreground shadow-md"
+							class="account-menu z-50 max-h-[calc(100dvh-5rem)] w-72 overflow-y-auto overscroll-contain rounded-lg border border-border bg-popover p-3 text-popover-foreground shadow-md"
 							lang={interfaceLanguage}
 							sideOffset={8}
 							align="end"
@@ -890,8 +899,20 @@
 											<VolumeX class="h-4 w-4" />
 										{/if}
 									</Button>
-								</div>
-								<div class="mb-2 flex items-center justify-between gap-3">
+				</div>
+				<div class="mb-2 flex items-center justify-between gap-3">
+					<label for="display-density" class="text-[13px]">{msg("appearance.density")}</label>
+					<select
+						id="display-density"
+						class="rounded-md border border-border bg-background px-2 py-1 text-xs text-text focus-visible:ring-2 focus-visible:ring-accent"
+						value={densityState.value}
+						onchange={(event) => chooseDensity(event.currentTarget.value)}
+					>
+						<option value="comfortable">{msg("appearance.comfortable")}</option>
+						<option value="compact">{msg("appearance.compact")}</option>
+					</select>
+				</div>
+				<div class="mb-2 flex items-center justify-between gap-3">
 									<div>
 										<div class="text-[13px]">{msg("appearance.highContrast")}</div>
 										<div class="text-[11px] text-muted">{msg("appearance.highContrastDescription")}</div>

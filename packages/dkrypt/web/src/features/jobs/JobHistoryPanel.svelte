@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onDestroy } from "svelte";
-	import { Eye, History, X } from "lucide-svelte";
+	import { Eye, Grid2X2, History, List, X } from "lucide-svelte";
 	import BundleStatsDialog from "#components/BundleStatsDialog.svelte";
 	import BulkJobPreviewDialog from "#components/BulkJobPreviewDialog.svelte";
 	import AppIcon from "#components/AppIcon.svelte";
@@ -46,12 +46,21 @@
 	import {
 		historyJumpState,
 		requestFocusSearch,
+		jobDetailJumpState,
+		homeViewModesState,
+		interfaceLanguageState,
+		systemLocalesState,
 		showToast,
 		tabState,
 	} from "#lib/ui.svelte";
 	import { getQueryParam, setQueryParams } from "#lib/urlState";
+	import { pushHomeViewMode } from "#lib/session.svelte";
+	import { resolveInterfaceLanguage } from "#lib/locale";
+	import { translateMessage } from "#lib/messages";
 
 	const PAGE_SIZE = typeof window !== "undefined" && window.matchMedia("(max-width: 639px)").matches ? 8 : 15;
+	const interfaceLanguage = $derived(resolveInterfaceLanguage(interfaceLanguageState.value, systemLocalesState.value));
+	const viewMessage = (key: 'viewMode.label' | 'viewMode.list' | 'viewMode.cards') => translateMessage(key, interfaceLanguage);
 
 	type SourceFilter = "all" | "manual" | "scheduler";
 	type StatusFilter = "all" | "done" | "failed";
@@ -334,6 +343,19 @@
 		activeQuery = query;
 		void loadInitial(query);
 	}, 300);
+
+	$effect(() => {
+		const id = jobDetailJumpState.id;
+		if (!id) return;
+		const entry = entries.find((item) => item.id === id);
+		jobDetailsId = id;
+		jobDetailsTitle = entry
+			? entry.versionLabel ? `${appDisplayName(entry.bundleId)} (${entry.versionLabel})` : appDisplayName(entry.bundleId)
+			: 'Job details';
+		jobDetailsOpen = true;
+		setQueryParams({ job: id });
+		jobDetailJumpState.id = null;
+	});
 
 	$effect(() => {
 		if (historyJumpState.bundleId) {
@@ -764,6 +786,10 @@
 <Card title="Job history" id="job-history">
 	{#snippet headerExtra()}
 		<div class="flex flex-wrap items-center gap-1.5">
+			<div class="inline-flex rounded-md border border-border/70 p-0.5" role="group" aria-label={viewMessage('viewMode.label')}>
+				<Button variant={homeViewModesState.value.jobHistory === 'list' ? 'secondary' : 'ghost'} size="icon" class="h-7 w-7" aria-label={viewMessage('viewMode.list')} aria-pressed={homeViewModesState.value.jobHistory === 'list'} onclick={() => void pushHomeViewMode('jobHistory', 'list')}><List class="h-3.5 w-3.5" /></Button>
+				<Button variant={homeViewModesState.value.jobHistory === 'cards' ? 'secondary' : 'ghost'} size="icon" class="h-7 w-7" aria-label={viewMessage('viewMode.cards')} aria-pressed={homeViewModesState.value.jobHistory === 'cards'} onclick={() => void pushHomeViewMode('jobHistory', 'cards')}><Grid2X2 class="h-3.5 w-3.5" /></Button>
+			</div>
 			{#if selected.size > 0}
 				{#if compareCandidate}
 					<Button size="sm" variant="secondary" onclick={openCompare}
@@ -1004,7 +1030,7 @@
 					<Button
 						size="sm"
 						variant="secondary"
-						onclick={requestFocusSearch}>Queue a decrypt</Button
+						onclick={() => requestFocusSearch()}>Queue a decrypt</Button
 					>
 				{/if}
 			{/snippet}
@@ -1024,7 +1050,7 @@
 					estimateSize={(item) => 140 + (item.showDateHeader ? 40 : 0)}
 					overscan={4}
 					label="Job history entries"
-					class="h-[min(74dvh,860px)] overflow-y-auto"
+					class="history-feed-{homeViewModesState.value.jobHistory} h-[min(74dvh,860px)] overflow-y-auto"
 				>
 					{#snippet children(g: HistoryFeedItem)}
 					{@const j = g.entry}

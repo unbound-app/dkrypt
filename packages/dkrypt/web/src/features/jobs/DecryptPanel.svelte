@@ -379,7 +379,11 @@
 		resultDetailsOpen = next;
 	}
 
-	export function focusSearch(): void {
+	export function focusSearch(bundleId?: string | null): void {
+		if (bundleId) {
+			term = bundleId;
+			void runSearch(bundleId);
+		}
 		inputEl?.focus();
 	}
 

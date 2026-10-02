@@ -39,6 +39,7 @@ test('artifact listing and pinning use native dashboard routes', async () => {
   expect(routes).not.toContain('PUT /v1/dashboard/artifacts/:id/archive');
   expect(routes).not.toContain('POST /v1/dashboard/artifacts/bulk-archive');
   expect(routes).not.toContain('GET /v1/dashboard/artifacts/:id/file');
+  expect(routes).not.toContain('GET /v1/dashboard/artifacts/:id');
 
   const record = artifact({ pinnedAt: 3, sourceJobId: 'job-1', warnings: ['extension remains encrypted'] });
   const listCalls: unknown[] = [];
@@ -69,6 +70,7 @@ test('artifact listing and pinning use native dashboard routes', async () => {
       headers,
       payload: { pinned: true },
     });
+    const detail = await server.inject({ method: 'GET', url: '/v1/dashboard/artifacts/artifact-1?projectId=default', headers });
 
     expect(listed.statusCode).toBe(200);
     expect(JSON.parse(listed.body)).toEqual({
@@ -95,7 +97,10 @@ test('artifact listing and pinning use native dashboard routes', async () => {
       projectIds: ['default'],
     }]);
     expect(pinned.statusCode).toBe(200);
-    expect(JSON.parse(pinned.body)).toEqual({ ok: true, artifactId: 'artifact-1', pinned: true, pinnedAt: '1970-01-01T00:00:00.004Z' });
+    expect(JSON.parse(pinned.body)).toEqual({ ok: true, changed: true, artifactId: 'artifact-1', pinned: true, pinnedAt: '1970-01-01T00:00:00.004Z' });
+    expect(detail.statusCode).toBe(200);
+    expect(detail.json()).toMatchObject({ id: 'artifact-1', fileUrl: '/v1/dashboard/artifacts/artifact-1/file' });
+    expect(detail.body).not.toContain('filePath');
     expect(audits).toEqual([['root', 'artifact.pin', 'artifact-1']]);
   } finally {
     await server.close();
@@ -131,12 +136,44 @@ test('artifact listing and pinning keep their permission and project boundaries'
       headers: { cookie: sessionCookie(PermissionFlag.manageAutomation) },
       payload: { pinned: true },
     });
+    const missingDetailPermission = await server.inject({ method: 'GET', url: '/v1/dashboard/artifacts/artifact-1', headers: { cookie: sessionCookie() } });
+    const inaccessibleDetail = await server.inject({ method: 'GET', url: '/v1/dashboard/artifacts/artifact-1?projectId=private', headers: { cookie: sessionCookie(PermissionFlag.requestDecrypt) } });
 
     expect(unauthenticated.statusCode).toBe(401);
     expect(missingDecryptPermission.statusCode).toBe(403);
     expect(inaccessibleProject.statusCode).toBe(404);
     expect(missingPinPermission.statusCode).toBe(403);
     expect(inaccessibleArtifact.statusCode).toBe(404);
+    expect(missingDetailPermission.statusCode).toBe(403);
+    expect(inaccessibleDetail.statusCode).toBe(404);
+  } finally {
+    await server.close();
+  }
+});
+
+test('single artifact mutations report no-op state so clients do not offer undo', async () => {
+  const record = artifact({ pinnedAt: 3 });
+  const audits: Array<[string, string, string, string?]> = [];
+  const server = Fastify().withTypeProvider<TypeBoxTypeProvider>();
+  await server.register(createDashboardArtifactRoutes({
+    canAccessProject: () => true,
+    artifactFileAvailable: () => true,
+    getArtifactById: () => record,
+    setArtifactPinned: async () => ({ artifact: record, changed: false }),
+    recordAudit: (...entry) => { audits.push(entry); },
+  }));
+
+  try {
+    const response = await server.inject({
+      method: 'PUT',
+      url: '/v1/dashboard/artifacts/artifact-1/pin',
+      headers: { cookie: sessionCookie(PermissionFlag.manageAutomation) },
+      payload: { pinned: true },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ ok: true, changed: false, pinned: true });
+    expect(audits).toEqual([]);
   } finally {
     await server.close();
   }
@@ -156,13 +193,14 @@ test('bulk pinning updates only artifacts in projects the manager can access', a
     getArtifactById: (id) => records.get(id),
     setArtifactsPinned: async (ids, pinned) => {
       calls.push({ ids, pinned });
+      const previousPinnedAtById = Object.fromEntries(ids.map((id) => [id, records.get(id)!.pinnedAt]));
       const updated = ids.map((id) => {
         const value = records.get(id)!;
         const next = artifact({ ...value, pinnedAt: pinned ? 4 : undefined });
         records.set(id, next);
         return next;
       });
-      return { artifacts: updated, changedIds: ids, missingIds: [] };
+      return { artifacts: updated, changedIds: ids, missingIds: [], previousPinnedAtById };
     },
     recordAudit: (...entry) => { audits.push(entry); },
   }));
@@ -213,7 +251,7 @@ test('bulk pinning requires storage permission and rejects oversized selections'
     canAccessProject: () => true,
     artifactFileAvailable: () => true,
     getArtifactById: (id) => artifact({ id }),
-    setArtifactsPinned: async (ids) => ({ artifacts: ids.map((id) => artifact({ id })), changedIds: ids, missingIds: [] }),
+    setArtifactsPinned: async (ids) => ({ artifacts: ids.map((id) => artifact({ id })), changedIds: ids, missingIds: [], previousPinnedAtById: {} }),
   }));
 
   try {
@@ -254,17 +292,18 @@ test('archive and restore require storage permission, project access, and record
       const value = records.get(id)!;
       const updated = artifact({ ...value, archivedAt: archived ? 4 : undefined });
       records.set(id, updated);
-      return { artifact: updated, changed: true };
+      return { artifact: updated, changed: true, previousArchivedAt: value.archivedAt };
     },
     setArtifactsArchived: async (ids, archived) => {
       calls.push({ ids, archived });
+      const previousArchivedAtById = Object.fromEntries(ids.map((id) => [id, records.get(id)!.archivedAt]));
       const updated = ids.map((id) => {
         const value = records.get(id)!;
         const next = artifact({ ...value, archivedAt: archived ? 4 : undefined });
         records.set(id, next);
         return next;
       });
-      return { artifacts: updated, changedIds: ids, missingIds: [] };
+      return { artifacts: updated, changedIds: ids, missingIds: [], previousArchivedAtById };
     },
     recordAudit: (...entry) => { audits.push(entry); },
   }));
@@ -297,13 +336,13 @@ test('archive and restore require storage permission, project access, and record
     });
 
     expect(archived.statusCode).toBe(200);
-    expect(JSON.parse(archived.body)).toEqual({ ok: true, artifactId: 'artifact-a', archived: true, archivedAt: '1970-01-01T00:00:00.004Z' });
+    expect(JSON.parse(archived.body)).toEqual({ ok: true, changed: true, artifactId: 'artifact-a', archived: true, archivedAt: '1970-01-01T00:00:00.004Z' });
     expect(restored.statusCode).toBe(200);
     expect(JSON.parse(restored.body)).toEqual({
       ok: true,
       archived: false,
       changedIds: ['artifact-a'],
-      artifacts: [{ artifactId: 'artifact-a', archived: false, archivedAt: undefined }],
+      artifacts: [{ artifactId: 'artifact-a', archived: false, previousArchivedAt: 4 }],
     });
     expect(inaccessible.statusCode).toBe(404);
     expect(denied.statusCode).toBe(403);

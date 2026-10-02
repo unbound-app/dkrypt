@@ -4,7 +4,7 @@
   import { fetchJobTimeline, jobDiagnosticUrl, type JobTimeline } from '#lib/api';
   import Badge from '#lib/components/ui/Badge.svelte';
   import Button from '#lib/components/ui/Button.svelte';
-  import Dialog from '#lib/components/ui/Dialog.svelte';
+  import InspectorPane from '#components/InspectorPane.svelte';
   import { fmtSize, fmtTime } from '#lib/format.svelte';
   import { buttonVariants, statusToBadgeVariant } from '#lib/components/ui/variants';
   import { showToast } from '#lib/ui.svelte';
@@ -41,7 +41,7 @@
   }
 </script>
 
-<Dialog bind:open class="max-w-xl">
+<InspectorPane bind:open title={title}>
   <div class="mb-4 flex items-start gap-3">
     <div class="min-w-0 flex-1">
       <div class="text-sm font-medium">{title}</div>
@@ -129,4 +129,4 @@
   {:else}
     <div class="text-sm text-muted">Timeline is unavailable for this job.</div>
   {/if}
-</Dialog>
+</InspectorPane>

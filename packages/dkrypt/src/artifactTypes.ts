@@ -18,6 +18,8 @@ export interface ArtifactRecord {
   accessCount: number;
   pinnedAt?: number;
   archivedAt?: number;
+  pinnedStateChangedAt?: number;
+  archivedStateChangedAt?: number;
   sourceJobId?: string;
   warnings?: string[];
 }
@@ -38,6 +40,8 @@ export function isArtifactRecord(value: unknown): value is ArtifactRecord {
     typeof record.accessCount === 'number' &&
     (record.pinnedAt === undefined || Number.isFinite(record.pinnedAt)) &&
     (record.archivedAt === undefined || Number.isFinite(record.archivedAt)) &&
+    (record.pinnedStateChangedAt === undefined || Number.isFinite(record.pinnedStateChangedAt)) &&
+    (record.archivedStateChangedAt === undefined || Number.isFinite(record.archivedStateChangedAt)) &&
     (record.sourceJobId === undefined || typeof record.sourceJobId === 'string') &&
     (record.warnings === undefined || (Array.isArray(record.warnings) && record.warnings.every((warning) => typeof warning === 'string')))
   );

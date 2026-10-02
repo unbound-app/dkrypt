@@ -12,6 +12,12 @@ const subsystemStateSchema = Type.Union([
   Type.Literal('unknown'),
 ]);
 
+const subsystemDetailSchema = Type.Object({
+  state: subsystemStateSchema,
+  lastChangedAt: Type.Optional(Type.Number()),
+  reason: Type.Optional(Type.String()),
+});
+
 export const deviceHealthResponseSchema = Type.Object({
   reachable: Type.Boolean(),
   transport: Type.Optional(deviceTransportSchema),
@@ -55,6 +61,7 @@ export const deviceHealthResponseSchema = Type.Object({
     battery: subsystemStateSchema,
     thermal: subsystemStateSchema,
   })),
+  subsystemDetails: Type.Optional(Type.Record(Type.String(), subsystemDetailSchema)),
   readiness: Type.Optional(Type.Object({
     score: Type.Number(),
     state: Type.Union([Type.Literal('ready'), Type.Literal('caution'), Type.Literal('blocked')]),

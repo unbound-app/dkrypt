@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { tick } from "svelte";
 	import {
 		CircleCheck,
 		LoaderCircle,
@@ -76,9 +77,13 @@
 	import { PermissionFlag } from "#lib/permissions";
 	import { sessionHasPermission } from "#lib/session.svelte";
 	import { confirmDialog, showToast } from "#lib/ui.svelte";
+	import { interfaceLanguageState, systemLocalesState, watchDetailJumpState } from "#lib/ui.svelte";
+	import { resolveInterfaceLanguage } from "#lib/locale";
+	import { translateMessage } from "#lib/messages";
 	import { exampleWebhookPayload } from "#lib/webhookExamples";
 	import Popover from "#lib/components/ui/Popover.svelte";
 	import CopyButton from "#components/CopyButton.svelte";
+	import AdvancedSection from "#components/AdvancedSection.svelte";
 
 	const FORMAT_OPTIONS = [
 		{ value: "embed", label: "Rich embed (Discord)" },
@@ -341,6 +346,13 @@
 	let refreshingCatalog = $state(false);
 
 	const watches = $derived(liveState.overview?.watches ?? []);
+	const interfaceLanguage = $derived(resolveInterfaceLanguage(interfaceLanguageState.value, systemLocalesState.value));
+	$effect(() => {
+		const watchId = watchDetailJumpState.id;
+		if (!watchId) return;
+		watchDetailJumpState.id = null;
+		void tick().then(() => document.getElementById(`watch-${watchId}`)?.scrollIntoView({ behavior: "smooth", block: "center" }));
+	});
 	$effect(() => {
 		void fetchProjects().then(({ projects }) => {
 			availableProjects = projects.filter((project) => project.archivedAt === undefined);
@@ -749,8 +761,26 @@
 		}
 	}
 
-	async function toggleWatchEnabled(w: AppWatch): Promise<void> {
-		await updateWatch(w.id, { enabled: !w.enabled });
+  async function toggleWatchEnabled(w: AppWatch): Promise<void> {
+    const result = await updateWatch(w.id, { enabled: !w.enabled, expectedUpdatedAt: w.updatedAt }, null);
+		if (!result.ok) return;
+		const desiredState = !w.enabled;
+		showToast(translateMessage(desiredState ? 'undo.watchesEnabled' : 'undo.watchesPaused', interfaceLanguage), 'success', {
+			duration: 8000,
+			action: {
+				label: translateMessage('undo.action', interfaceLanguage),
+				onClick: () => void undoWatchEnabled(w, result.data.updatedAt),
+			},
+		});
+	}
+
+	async function undoWatchEnabled(watch: AppWatch, expectedUpdatedAt: number): Promise<void> {
+		const result = await updateWatch(watch.id, { enabled: watch.enabled, expectedUpdatedAt }, null);
+		if (!result.ok) {
+			showToast(translateMessage('undo.conflict', interfaceLanguage), 'error');
+			return;
+		}
+		showToast(watch.enabled ? translateMessage('undo.watchesPaused', interfaceLanguage) : translateMessage('undo.watchesEnabled', interfaceLanguage), 'success');
 	}
 
 	async function refreshWatchedCatalog(): Promise<void> {
@@ -1066,6 +1096,7 @@
 </script>
 
 <div class="flex flex-col gap-4">
+	<AdvancedSection label="settings.automationDiagnostics">
 	<Card title="Automation health">
 		<div class="flex flex-wrap items-center gap-2 text-sm">
 			<Badge variant={failedWatchCount > 0 ? "destructive" : "success"}>{failedWatchCount > 0 ? "attention needed" : "healthy"}</Badge>
@@ -1090,6 +1121,7 @@
 			</div>
 		{/if}
 	</Card>
+	</AdvancedSection>
 
 	<Card title="Watches">
 		{#snippet headerExtra()}
@@ -1141,7 +1173,7 @@
 		{:else}
 			<div class="flex flex-col gap-2.5">
 				{#each watches as w (w.id)}
-					<div class="border-border rounded-lg border p-3">
+					<div id={`watch-${w.id}`} class="border-border rounded-lg border p-3">
 						<div class="flex flex-wrap items-center gap-2">
 							<span
 								class="flex items-center gap-1.5 text-[13px] font-medium"

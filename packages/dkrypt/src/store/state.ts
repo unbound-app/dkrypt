@@ -491,6 +491,10 @@ export interface UserPrefs {
   interfaceLanguage?: 'system' | 'en' | 'de';
   theme?: 'dark' | 'light' | 'auto';
   density?: 'comfortable' | 'compact';
+  homeLayouts?: HomeLayoutPreference[];
+  activeHomeLayoutId?: string;
+  viewModes?: HomeViewModes;
+  settingsMode?: 'basic' | 'advanced';
   accent?: string;
   highContrast?: boolean;
   sound?: boolean;
@@ -504,6 +508,22 @@ export interface UserPrefs {
   emailOnKeyExpiry?: boolean;
   notifyEmail?: string;
   preferPrimaryDevice?: boolean;
+}
+
+export type HomeModuleId = 'artifacts' | 'activeJobs' | 'jobHistory';
+
+export interface HomeLayoutPreference {
+  id: string;
+  name: string;
+  order: HomeModuleId[];
+  hidden: HomeModuleId[];
+  collapsed: HomeModuleId[];
+}
+
+export interface HomeViewModes {
+  artifacts?: 'list' | 'cards';
+  jobHistory?: 'list' | 'cards';
+  devices?: 'list' | 'cards';
 }
 
 export type AuditAction =
@@ -605,6 +625,17 @@ export interface DeviceHealthCheck {
   batteryPercent?: number;
   batteryTemperatureC?: number;
   storageUsedPercent?: number;
+  subsystems?: Partial<Record<DeviceSubsystemId, DeviceSubsystemState>>;
+  subsystemDetails?: Partial<Record<DeviceSubsystemId, DeviceSubsystemDetail>>;
+}
+
+export type DeviceSubsystemId = 'usb' | 'mux' | 'agent' | 'jailbreak' | 'appStore' | 'testFlight' | 'sshTunnel' | 'storage' | 'battery' | 'thermal';
+export type DeviceSubsystemState = 'ready' | 'idle' | 'degraded' | 'offline' | 'unsupported' | 'unknown';
+
+export interface DeviceSubsystemDetail {
+  state: DeviceSubsystemState;
+  lastChangedAt?: number;
+  reason?: string;
 }
 
 export interface DeviceActivityEntry {
@@ -1368,6 +1399,19 @@ export function getAppCatalogEntries(bundleIds: string[]): AppCatalogEntry[] {
     if (entry) entries.push(entry);
   }
   return entries;
+}
+
+export function searchAppCatalogEntries(query: string, limit = 8): AppCatalogEntry[] {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) return [];
+  return Object.values(state.appCatalog)
+    .filter((entry) => entry.bundleId.toLowerCase().includes(normalizedQuery) || entry.displayName.toLowerCase().includes(normalizedQuery))
+    .sort((left, right) => {
+      const leftPrefix = Number(left.displayName.toLowerCase().startsWith(normalizedQuery) || left.bundleId.toLowerCase().startsWith(normalizedQuery));
+      const rightPrefix = Number(right.displayName.toLowerCase().startsWith(normalizedQuery) || right.bundleId.toLowerCase().startsWith(normalizedQuery));
+      return rightPrefix - leftPrefix || left.displayName.localeCompare(right.displayName);
+    })
+    .slice(0, Math.max(0, Math.min(20, limit)));
 }
 
 export function getAppCatalogStats(): { entries: number; icons: number; oldestUpdatedAt?: number; newestUpdatedAt?: number } {
@@ -2955,7 +2999,7 @@ export function updateWatch(id: string, patch: Partial<CreateWatchInput>, actor:
     || (patch.missedRunPolicy !== undefined && patch.missedRunPolicy !== watch.missedRunPolicy)
     || (patch.enabled !== undefined && patch.enabled !== watch.enabled)
     || ('maintenanceWindow' in patch && (patch.maintenanceWindow?.start !== watch.maintenanceWindow?.start || patch.maintenanceWindow?.end !== watch.maintenanceWindow?.end));
-  Object.assign(watch, patch, dispatch, { updatedAt: Date.now() });
+  Object.assign(watch, patch, dispatch, { updatedAt: Math.max(Date.now(), watch.updatedAt + 1) });
   if (scheduleChanged) watch.lastScheduledAt = Date.now();
   persistNow();
   recordAudit(actor, 'watch.update', watch.id, watch.bundleId);
@@ -3780,12 +3824,53 @@ export function recordDeviceHealthCheck(
   batteryPercent?: number,
   batteryTemperatureC?: number,
   storageUsedPercent?: number,
+  subsystemSnapshot?: {
+    states: Partial<Record<DeviceSubsystemId, DeviceSubsystemState>>;
+    reasons?: Partial<Record<DeviceSubsystemId, string>>;
+  },
 ): void {
   const history = state.deviceHealthHistory[deviceId] ?? [];
-  history.push({ ts: Date.now(), reachable, batteryPercent, batteryTemperatureC, storageUsedPercent });
+  const ts = Date.now();
+  const previous = history.at(-1) ?? historyFor(deviceId)[0];
+  const subsystemDetails = subsystemSnapshot ? Object.fromEntries(
+    Object.entries(subsystemSnapshot.states).map(([key, nextState]) => {
+      const subsystem = key as DeviceSubsystemId;
+      const previousState = previous?.subsystems?.[subsystem];
+      const previousDetail = previous?.subsystemDetails?.[subsystem];
+      return [subsystem, {
+        state: nextState,
+        lastChangedAt: previousState === undefined ? undefined : previousState === nextState ? previousDetail?.lastChangedAt : ts,
+        reason: subsystemSnapshot.reasons?.[subsystem],
+      } satisfies DeviceSubsystemDetail];
+    }),
+  ) as Partial<Record<DeviceSubsystemId, DeviceSubsystemDetail>> : undefined;
+  history.push({
+    ts,
+    reachable,
+    batteryPercent,
+    batteryTemperatureC,
+    storageUsedPercent,
+    subsystems: subsystemSnapshot?.states,
+    subsystemDetails,
+  });
   if (history.length > MAX_DEVICE_HEALTH_CHECKS) history.shift();
   state.deviceHealthHistory[deviceId] = history;
   persistNow();
+}
+
+export function getDeviceSubsystemDetails(
+  deviceId: string,
+  currentStates: Partial<Record<DeviceSubsystemId, DeviceSubsystemState>> | undefined,
+): Partial<Record<DeviceSubsystemId, DeviceSubsystemDetail>> | undefined {
+  if (!currentStates) return undefined;
+  const latest = historyFor(deviceId)[0];
+  return Object.fromEntries(Object.entries(currentStates).map(([key, state]) => {
+    const subsystem = key as DeviceSubsystemId;
+    const storedState = latest?.subsystems?.[subsystem];
+    const storedDetails = latest?.subsystemDetails?.[subsystem];
+    if (storedState === state && storedDetails) return [subsystem, storedDetails];
+    return [subsystem, { state, reason: storedState === state ? storedDetails?.reason : undefined }];
+  }));
 }
 
 function historyFor(deviceId: string): DeviceHealthCheck[] {

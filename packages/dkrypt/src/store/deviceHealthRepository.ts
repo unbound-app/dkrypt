@@ -12,12 +12,9 @@ export function createDeviceHealthRepository(database: Database): DeviceHealthRe
       const rows = statement.all(deviceId) as Array<{ payload: string }>;
       return rows.map((row) => {
         const check = JSON.parse(row.payload) as DeviceHealthCheck;
+        const { deviceId: _deviceId, ...record } = check as DeviceHealthCheck & { deviceId?: string };
         return {
-          ts: check.ts,
-          reachable: check.reachable,
-          batteryPercent: check.batteryPercent,
-          batteryTemperatureC: check.batteryTemperatureC,
-          storageUsedPercent: check.storageUsedPercent,
+          ...record,
         };
       });
     },

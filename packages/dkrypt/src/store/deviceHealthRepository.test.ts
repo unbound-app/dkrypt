@@ -10,7 +10,7 @@ test('device health repository returns checks for one device in newest-first ord
   const database = openStateDatabase({ stateDir, filename: 'state.sqlite' });
   const repository = createDeviceHealthRepository(database.db);
   const older = { ts: 100, reachable: true, batteryPercent: 82 };
-  const newer = { ts: 200, reachable: false, batteryPercent: 81 };
+  const newer = { ts: 200, reachable: false, batteryPercent: 81, subsystems: { agent: 'offline' as const }, subsystemDetails: { agent: { state: 'offline' as const, lastChangedAt: 175, reason: 'agent request timed out' } } };
   const other = { ts: 300, reachable: true };
 
   try {

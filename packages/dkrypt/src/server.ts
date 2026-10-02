@@ -43,6 +43,7 @@ import { dashboardEventsRoutes } from '#routes/dashboardEventsRoutes.js';
 import { dashboardTestFlightRoutes } from '#routes/dashboardTestFlightRoutes.js';
 import { dashboardTestFlightBrowseRoutes } from '#routes/dashboardTestFlightBrowseRoutes.js';
 import { dashboardAppRoutes } from '#routes/dashboardAppRoutes.js';
+import { dashboardQuickSearchRoutes } from '#routes/dashboardQuickSearchRoutes.js';
 import { billingRoutes, billingWebhookRoutes } from '#routes/billing.js';
 import type { StripeWebhookHealth } from '#stripeWebhookHealth.js';
 import { artifactCatalogRoutes, decryptRoutes, testFlightCatalogRoutes } from '#routes/decrypt.js';
@@ -334,6 +335,7 @@ export async function buildServer(options: {
   await server.register(dashboardTestFlightRoutes);
   await server.register(dashboardTestFlightBrowseRoutes);
   await server.register(dashboardAppRoutes);
+  await server.register(dashboardQuickSearchRoutes);
   await server.register(dashboardDiscordRoutes);
   await server.register(dashboardEventsRoutes);
   await server.register(dashboardWatchRoutes);

@@ -40,6 +40,7 @@ import {
   getDevice,
   getDeviceActivityPage,
   getDeviceBatteryHourlyBuckets,
+  getDeviceSubsystemDetails,
   getDeviceHealthHourlyBuckets,
   getDeviceStorageHourlyBuckets,
   getDeviceTemperatureHourlyBuckets,
@@ -296,7 +297,8 @@ export const dashboardDeviceRoutes: FastifyPluginAsyncTypebox = async (server) =
     const device = resolveDevice(request.params.id);
     if (!device) return reply.code(404).send(createHttpErrorEnvelope(request.id, 404, 'device not found'));
     try {
-      return await getDeviceHealth(device.id, request.query.force === 'true');
+      const health = await getDeviceHealth(device.id, request.query.force === 'true');
+      return { ...health, subsystemDetails: getDeviceSubsystemDetails(device.id, health.subsystems) };
     } catch (error) {
       return reply.code(502).send(createHttpErrorEnvelope(request.id, 502, `device health check failed: ${getErrorMessage(error)}`));
     }
@@ -310,6 +312,7 @@ export const dashboardDeviceRoutes: FastifyPluginAsyncTypebox = async (server) =
     if (!device) return reply.code(404).send(createHttpErrorEnvelope(request.id, 404, 'device not found'));
     try {
       const health = await getDeviceHealth(device.id, true);
+      health.subsystemDetails = getDeviceSubsystemDetails(device.id, health.subsystems);
       const bridge = health.reachable ? await getTestFlightBridgeDiagnostics(device).catch(() => undefined) : undefined;
       const checks = [
         { label: 'Device connection', ok: health.reachable, detail: health.error },

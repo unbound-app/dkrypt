@@ -2,12 +2,14 @@
 	import {
 		cancelJob,
 		fetchJobHistory,
+		fetchDashboardQuickSearch,
 		fetchMyKeys,
 		fetchUsers,
 		jobHistoryExportUrl,
 		retryJob,
 		triggerWatchDispatch,
 		type JobHistoryEntry,
+		type DashboardQuickSearchResult,
 	} from "#lib/api";
 	import { addDecrypt, pushRecentBundleId } from "#lib/decrypts.svelte";
 	import { debounce } from "#lib/format.svelte";
@@ -24,8 +26,13 @@
 		jumpToHistoryBundleId,
 		jumpToKeyUsage,
 		jumpToUser,
+		artifactDetailJumpState,
+		deviceDetailJumpState,
+		jobDetailJumpState,
+		watchDetailJumpState,
 		openHelp,
 		paletteState,
+		requestFocusSearch,
 		requestOpenBatch,
 		setActiveTab,
 		setSettingsSubtab,
@@ -33,6 +40,10 @@
 		showToast,
 		themePrefState,
 	} from "#lib/ui.svelte";
+import { projectSelectionState } from "#lib/projectSelection.svelte";
+import { interfaceLanguageState, systemLocalesState } from "#lib/ui.svelte";
+import { resolveInterfaceLanguage } from "#lib/locale";
+	import { translateMessage } from "#lib/messages";
 	import Dialog from "#lib/components/ui/Dialog.svelte";
 	import Button from "#lib/components/ui/Button.svelte";
 	import Input from "#lib/components/ui/Input.svelte";
@@ -45,6 +56,7 @@
 		label: string;
 		keywords?: string;
 		category?: string;
+		subtitle?: string;
 		run: () => void;
 	}
 
@@ -64,11 +76,14 @@
 
 	let recentJobs = $state<RecentJob[]>([]);
 	let queryJobs = $state<RecentJob[]>([]);
+	let quickResults = $state<DashboardQuickSearchResult[]>([]);
 	let myKeys = $state<{ id: string; name: string }[]>([]);
 	let users = $state<{ username: string; displayName?: string }[]>([]);
 	let recentIds = $state<string[]>([]);
 	let historyQueryToken = 0;
+	let quickSearchToken = 0;
 	const RECENT_KEY = "commandPaletteRecent";
+	const interfaceLanguage = $derived(resolveInterfaceLanguage(interfaceLanguageState.value, systemLocalesState.value));
 
 	function loadRecents(): string[] {
 		try {
@@ -155,11 +170,22 @@
 
 	$effect(() => {
 		const q = query.trim();
+		const projectId = projectSelectionState.id;
+		const token = ++quickSearchToken;
 		if (!paletteState.open || q.length < 2) {
+			quickResults = [];
 			queryJobs = [];
 			return;
 		}
 		searchJobHistory(q);
+		const timer = setTimeout(() => {
+			void fetchDashboardQuickSearch(q, projectId).then((response) => {
+				if (token === quickSearchToken && paletteState.open && query.trim() === q && projectSelectionState.id === projectId) quickResults = response.results;
+			}).catch(() => {
+				if (token === quickSearchToken) quickResults = [];
+			});
+		}, 180);
+		return () => clearTimeout(timer);
 	});
 
 	$effect(() => {
@@ -224,6 +250,41 @@
 		else showToast(data.error ?? "Failed to trigger", "error");
 	}
 
+	function navigateQuickResult(result: DashboardQuickSearchResult): void {
+		if (result.kind === 'app') {
+			requestFocusSearch(result.id);
+			return;
+		}
+		if (result.kind === 'job') {
+			jobDetailJumpState.id = result.id;
+			setActiveTab('home');
+			return;
+		}
+		if (result.kind === 'artifact') {
+			artifactDetailJumpState.id = result.id;
+			setActiveTab('home');
+			return;
+		}
+		if (result.kind === 'device') {
+			deviceDetailJumpState.id = result.id;
+			setActiveTab('settings');
+			setSettingsSubtab('devices');
+			return;
+		}
+		if (result.kind === 'watch') {
+			watchDetailJumpState.id = result.id;
+			setActiveTab('settings');
+			setSettingsSubtab('scheduler');
+			return;
+		}
+		if (result.kind === 'user') {
+			jumpToUser(result.id);
+			return;
+		}
+		setActiveTab('settings');
+		setSettingsSubtab(result.id);
+	}
+
 	const commands = $derived.by((): Command[] => {
 		const base: Command[] = [
 			{
@@ -245,6 +306,17 @@
 				run: () => setActiveTab("keys"),
 			},
 		];
+		for (const result of quickResults) {
+			const category = translateMessage(`search.${result.kind}` as 'search.app' | 'search.job' | 'search.artifact' | 'search.device' | 'search.watch' | 'search.user' | 'search.settings', interfaceLanguage);
+			base.push({
+				id: `quick-${result.kind}-${result.id}`,
+				label: result.title,
+				keywords: [result.id, result.subtitle, result.projectId].filter(Boolean).join(' '),
+				category,
+				subtitle: result.subtitle,
+				run: () => navigateQuickResult(result),
+			});
+		}
 		if (sessionHasPermission(PermissionFlag.viewLogs)) {
 			base.push({
 				id: "logs",
@@ -466,7 +538,7 @@
 		bind:ref={inputEl}
 		bind:value={query}
 		onkeydown={onKeydown}
-		placeholder="Type a command…"
+		placeholder={translateMessage('search.placeholder', interfaceLanguage)}
 		autofocus
 	/>
 	<div class="mt-1.5 flex max-h-80 flex-col overflow-y-auto">
@@ -479,15 +551,16 @@
 				)}
 				onclick={() => run(cmd)}
 			>
-				<div>{cmd.label}</div>
-				{#if cmd.category}
-					<div class="text-[11px] text-muted">{cmd.category}</div>
-				{/if}
+				<div class="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-x-3 gap-y-1">
+					<div class="min-w-0 truncate">{cmd.label}</div>
+					{#if cmd.category}<div class="shrink-0 text-[11px] text-muted">{cmd.category}</div>{/if}
+				</div>
+				{#if cmd.subtitle}<div class="mt-0.5 truncate text-left text-[11px] text-muted">{cmd.subtitle}</div>{/if}
 			</Button>
 		{/each}
 		{#if filtered.length === 0}
 			<div class="px-3 py-2.5 text-sm text-muted">
-				No matching commands.
+				{translateMessage('search.empty', interfaceLanguage)}
 			</div>
 		{/if}
 	</div>

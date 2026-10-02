@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick } from 'svelte';
-  import { AlertTriangle, CheckCircle2, CircleX, Pencil, RefreshCw, Search, Smartphone, Star, Trash2, Usb, Wifi } from 'lucide-svelte';
+  import { AlertTriangle, CheckCircle2, CircleX, Grid2X2, List, Pencil, RefreshCw, Search, Smartphone, Star, Trash2, Usb, Wifi } from 'lucide-svelte';
+  import AdvancedSection from '#components/AdvancedSection.svelte';
   import DeviceArtwork from '#components/DeviceArtwork.svelte';
   import EmptyState from '#components/EmptyState.svelte';
   import RelativeTime from '#components/RelativeTime.svelte';
@@ -37,12 +38,22 @@
   import { PermissionFlag } from '#lib/permissions';
   import { getAppleDeviceModelName } from '#lib/deviceModel';
   import { sessionHasAnyPermission, sessionHasPermission } from '#lib/session.svelte';
-  import { confirmDialog, showToast } from '#lib/ui.svelte';
+  import { confirmDialog, deviceDetailJumpState, homeViewModesState, interfaceLanguageState, showToast, systemLocalesState } from '#lib/ui.svelte';
+  import { pushHomeViewMode } from '#lib/session.svelte';
+  import { resolveInterfaceLanguage } from '#lib/locale';
+  import { translateMessage, type MessageKey } from '#lib/messages';
 
-  function subsystemStatusLabel(name: string, status: string): string {
-    const label = name === 'appStore' ? 'App Store' : name;
-    return `${label}: ${status}`;
-  }
+  type DeviceSubsystemId = keyof NonNullable<DeviceHealth['subsystems']>;
+  type DeviceSubsystemState = NonNullable<NonNullable<DeviceHealth['subsystems']>[DeviceSubsystemId]>;
+  const interfaceLanguage = $derived(resolveInterfaceLanguage(interfaceLanguageState.value, systemLocalesState.value));
+  const msg = (key: MessageKey) => translateMessage(key, interfaceLanguage);
+  const subsystemNames: Record<DeviceSubsystemId, MessageKey> = {
+    usb: 'device.subsystem.usb', mux: 'device.subsystem.mux', agent: 'device.subsystem.agent', jailbreak: 'device.subsystem.jailbreak',
+    appStore: 'device.subsystem.appStore', testFlight: 'device.subsystem.testFlight', sshTunnel: 'device.subsystem.sshTunnel', storage: 'device.subsystem.storage', battery: 'device.subsystem.battery', thermal: 'device.subsystem.thermal',
+  };
+  const subsystemStates: Record<DeviceSubsystemState, MessageKey> = {
+    ready: 'device.state.ready', idle: 'device.state.idle', degraded: 'device.state.degraded', offline: 'device.state.offline', unsupported: 'device.state.unsupported', unknown: 'device.state.unknown',
+  };
 
   const canManageDevices = $derived(sessionHasPermission(PermissionFlag.manageDevices));
   const canViewMaintenance = $derived(sessionHasAnyPermission([PermissionFlag.viewAutomation, PermissionFlag.manageAutomation]));
@@ -50,12 +61,30 @@
   const devices = $derived(liveState.overview?.devices ?? []);
   const maintenanceStatus = $derived(liveState.overview?.maintenance);
 
+  function subsystemVariant(status: DeviceSubsystemState): 'success' | 'warning' | 'destructive' | 'secondary' {
+    if (status === 'ready') return 'success';
+    if (status === 'degraded') return 'warning';
+    if (status === 'offline') return 'destructive';
+    return 'secondary';
+  }
+
   let maintenanceSettings = $state<SchedulerSettings | null>(null);
   let togglingMaintenance = $state(false);
 
   $effect(() => {
     if (!canViewMaintenance) return;
     void fetchSettings().then((settings) => (maintenanceSettings = settings));
+  });
+
+  $effect(() => {
+    const deviceId = deviceDetailJumpState.id;
+    if (!deviceId) return;
+    deviceDetailJumpState.id = null;
+    void tick().then(() => {
+      const card = document.getElementById(`device-${encodeURIComponent(deviceId)}`);
+      card?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      card?.focus({ preventScroll: true });
+    });
   });
 
   async function toggleMaintenance(): Promise<void> {
@@ -359,17 +388,23 @@
 
 <Card title="Devices">
   {#snippet headerExtra()}
-    {#if canManageDevices}<Button size="sm" onclick={() => void openDiscovery()}><Search class="h-3.5 w-3.5" />Find a device</Button>{/if}
+    <div class="flex items-center gap-1.5">
+      <div class="inline-flex rounded-md border border-border/70 p-0.5" role="group" aria-label={msg('viewMode.label')}>
+        <Button variant={homeViewModesState.value.devices === 'list' ? 'secondary' : 'ghost'} size="icon" class="h-7 w-7" aria-label={msg('viewMode.list')} aria-pressed={homeViewModesState.value.devices === 'list'} onclick={() => void pushHomeViewMode('devices', 'list')}><List class="h-3.5 w-3.5" /></Button>
+        <Button variant={homeViewModesState.value.devices === 'cards' ? 'secondary' : 'ghost'} size="icon" class="h-7 w-7" aria-label={msg('viewMode.cards')} aria-pressed={homeViewModesState.value.devices === 'cards'} onclick={() => void pushHomeViewMode('devices', 'cards')}><Grid2X2 class="h-3.5 w-3.5" /></Button>
+      </div>
+      {#if canManageDevices}<Button size="sm" onclick={() => void openDiscovery()}><Search class="h-3.5 w-3.5" />Find a device</Button>{/if}
+    </div>
   {/snippet}
   <div class="mb-4 max-w-3xl text-sm text-muted">Connect a jailbroken iPhone or iPad over USB or Wi-Fi. dkrypt discovers it, verifies the connection, checks every prerequisite, and adds it to the pool with a clear readiness summary.</div>
   {#if devices.length === 0}
     <EmptyState icon={Smartphone} message="No devices connected yet." />
   {:else}
-    <div class="grid gap-3 xl:grid-cols-2">
+    <div class={homeViewModesState.value.devices === 'cards' ? 'grid gap-3 xl:grid-cols-2' : 'grid grid-cols-1 gap-2'}>
       {#each devices as device (device.id)}
         {@const h = health[device.id]}
         {@const model = getAppleDeviceModelName(device.productType, device.name)}
-        <div id={`device-${encodeURIComponent(device.id)}`} class="border-border/80 bg-background/30 min-w-0 scroll-mt-4 rounded-xl border p-4">
+        <div id={`device-${encodeURIComponent(device.id)}`} tabindex="-1" class="density-row border-border/80 bg-background/30 min-w-0 scroll-mt-4 rounded-xl border p-4">
           <div class="flex items-start gap-3">
             <DeviceArtwork productType={device.productType} name={device.name} />
             <div class="min-w-0 flex-1">
@@ -380,9 +415,31 @@
             {#if canManageDevices}<Button size="icon" variant="ghost" class="h-8 w-8 shrink-0" onclick={() => openEdit(device)} aria-label={`Edit ${device.name}`} title="Edit device"><Pencil class="h-3.5 w-3.5" /></Button>{/if}
           </div>
           <div class="mt-3 grid grid-cols-2 gap-2 text-xs"><div class="bg-muted/30 rounded-lg px-2.5 py-2"><div class="text-muted">iOS</div><div class="mt-0.5 truncate font-medium">{device.iosVersion ?? 'Not reported'}</div></div><div class="bg-muted/30 rounded-lg px-2.5 py-2"><div class="text-muted">Bridge</div><div class="mt-0.5 truncate font-medium">{h?.bridgeHeartbeats?.springboard?.bridgeVersion ?? 'Not checked'}</div></div></div>
-          {#if h?.subsystems}<div class="mt-3 flex flex-wrap gap-1.5" aria-label="Device subsystem status">{#each Object.entries(h.subsystems) as [name, status]}<span title={name === 'appStore' && status === 'idle' ? 'The App Store process has no fresh heartbeat while idle. This is normal and does not mean the device is disconnected.' : undefined} class="rounded-full border px-2 py-0.5 text-[10px] {status === 'ready' ? 'border-ok/30 text-ok' : status === 'offline' ? 'border-err/30 text-err' : 'border-border text-muted'}">{subsystemStatusLabel(name, status)}</span>{/each}</div>{/if}
+          {#if h?.subsystems}
+            <div class="mt-3 rounded-lg border border-border/70 p-2.5" aria-label="Device subsystem status">
+              <div class="flex flex-wrap gap-1.5">
+                {#each Object.entries(h.subsystems) as [name, status]}
+                  {@const subsystem = name as DeviceSubsystemId}
+                  {@const state = status as DeviceSubsystemState}
+                  {@const detail = h.subsystemDetails?.[subsystem]}
+                  <div class="min-w-[9rem] flex-1 rounded-md bg-muted/20 px-2 py-1">
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                      <span class="text-[11px] font-medium">{msg(subsystemNames[subsystem])}</span>
+                      <Badge variant={subsystemVariant(state)} class="px-1.5 py-0 text-[9px]">{msg(subsystemStates[state])}</Badge>
+                    </div>
+                    {#if detail?.reason}<p class="mt-0.5 break-words text-[10px] leading-4 text-muted">{detail.reason}</p>{/if}
+                    {#if detail?.lastChangedAt}<p class="mt-0.5 text-[9px] text-muted">{msg('device.lastChanged')} <RelativeTime ms={detail.lastChangedAt} /></p>{/if}
+                  </div>
+                {/each}
+              </div>
+              <details class="mt-3 border-t border-border/70 pt-2">
+                <summary class="cursor-pointer text-xs text-muted">{msg('device.rawDiagnostics')}</summary>
+                <pre class="mt-2 max-h-64 overflow-auto rounded-md bg-muted/30 p-2 text-[10px] whitespace-pre-wrap">{JSON.stringify({ error: h.error, readiness: h.readiness, subsystemDetails: h.subsystemDetails, bridgeHeartbeats: h.bridgeHeartbeats }, null, 2)}</pre>
+              </details>
+            </div>
+          {/if}
           {#if h?.readiness?.reasons.length}<div class="text-warn mt-2 text-xs">{h.readiness.reasons.join(' · ')}</div>{/if}
-          <div class="border-border/70 mt-3 flex flex-wrap items-center gap-1.5 border-t pt-3"><Button size="sm" variant="secondary" loading={testingId.has(device.id)} onclick={() => void testConnection(device)}>Test connection</Button><Button size="sm" variant="secondary" loading={inspectingId.has(device.id)} onclick={() => void inspectDevice(device)}>Preflight</Button><Button size="sm" variant="secondary" loading={inspectingId.has(device.id)} onclick={() => void inspectInventory(device)}>Inventory</Button>{#if canManageDevices}<Button size="sm" variant="secondary" loading={recoveringId.has(device.id)} onclick={() => void recover(device)}>Recover</Button>{#if !device.isPrimary}<Button size="sm" variant="ghost" onclick={() => void makePrimary(device)}>Make primary</Button>{/if}<Button size="sm" variant="ghost" onclick={() => void toggleEnabled(device)}>{device.enabled ? 'Disable' : 'Enable'}</Button><Button size="icon" variant="ghost" class="ml-auto h-8 w-8 text-muted hover:text-err" loading={deletingId.has(device.id)} onclick={() => void remove(device)} aria-label={`Remove ${device.name}`} title="Remove device"><Trash2 class="h-3.5 w-3.5" /></Button>{/if}</div>
+          <div class="border-border/70 mt-3 flex flex-wrap items-center gap-1.5 border-t pt-3"><Button size="sm" variant="secondary" loading={testingId.has(device.id)} onclick={() => void testConnection(device)}>Test connection</Button><AdvancedSection label="settings.deviceTools"><div class="flex flex-wrap items-center gap-1.5"><Button size="sm" variant="secondary" loading={inspectingId.has(device.id)} onclick={() => void inspectDevice(device)}>Preflight</Button><Button size="sm" variant="secondary" loading={inspectingId.has(device.id)} onclick={() => void inspectInventory(device)}>Inventory</Button>{#if canManageDevices}<Button size="sm" variant="secondary" loading={recoveringId.has(device.id)} onclick={() => void recover(device)}>Recover</Button>{/if}</div></AdvancedSection>{#if canManageDevices}{#if !device.isPrimary}<Button size="sm" variant="ghost" onclick={() => void makePrimary(device)}>Make primary</Button>{/if}<Button size="sm" variant="ghost" onclick={() => void toggleEnabled(device)}>{device.enabled ? 'Disable' : 'Enable'}</Button><Button size="icon" variant="ghost" class="ml-auto h-8 w-8 text-muted hover:text-err" loading={deletingId.has(device.id)} onclick={() => void remove(device)} aria-label={`Remove ${device.name}`} title="Remove device"><Trash2 class="h-3.5 w-3.5" /></Button>{/if}</div>
           {#if device.isPrimary && h?.reachable && h.darkEnabled !== undefined}<div class="border-border/70 mt-3 flex items-center justify-between gap-3 border-t pt-3"><div class="min-w-0"><div class="text-sm">Keep display dark</div><div class="text-xs text-muted">autoinstall keeps the device awake while the display is blacked out.</div></div><Switch checked={h.darkEnabled} disabled={!canManageDevices || updatingDarkModeId.has(device.id)} onCheckedChange={(enabled) => void toggleDarkMode(device, enabled)} aria-label="Keep display dark" /></div>{/if}
           {#if activity[device.id]?.length}
             <div class="border-border/70 mt-3 border-t pt-3">

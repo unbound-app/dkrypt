@@ -28,6 +28,8 @@ export const dashboardArtifactResponseSchema = Type.Object({
   accessCount: Type.Integer({ minimum: 0 }),
   pinnedAt: Type.Optional(Type.String({ format: 'date-time' })),
   archivedAt: Type.Optional(Type.String({ format: 'date-time' })),
+  pinnedStateChangedAt: Type.Optional(Type.Number()),
+  archivedStateChangedAt: Type.Optional(Type.Number()),
   sourceJobId: Type.Optional(identifierSchema),
   warnings: Type.Optional(Type.Array(Type.String())),
   fileUrl: Type.String(),
@@ -42,14 +44,18 @@ export const dashboardArtifactListResponseSchema = Type.Object({
 }, additionalProperties);
 
 export const dashboardArtifactParamsSchema = Type.Object({ id: identifierSchema }, additionalProperties);
+export const dashboardArtifactDetailQuerySchema = Type.Object({ projectId: Type.Optional(projectIdentifierSchema) }, additionalProperties);
 
 export const dashboardArtifactPinBodySchema = Type.Object({ pinned: Type.Boolean() }, additionalProperties);
 
 export const dashboardArtifactPinResponseSchema = Type.Object({
   ok: Type.Boolean(),
+  changed: Type.Boolean(),
   artifactId: identifierSchema,
   pinned: Type.Boolean(),
   pinnedAt: Type.Optional(Type.String({ format: 'date-time' })),
+  pinnedStateChangedAt: Type.Optional(Type.Number()),
+  previousPinnedAt: Type.Optional(Type.Number()),
 }, additionalProperties);
 
 export const dashboardArtifactBulkPinBodySchema = Type.Object({
@@ -65,6 +71,8 @@ export const dashboardArtifactBulkPinResponseSchema = Type.Object({
     artifactId: identifierSchema,
     pinned: Type.Boolean(),
     pinnedAt: Type.Optional(Type.String({ format: 'date-time' })),
+    pinnedStateChangedAt: Type.Optional(Type.Number()),
+    previousPinnedAt: Type.Optional(Type.Number()),
   }, additionalProperties)),
 }, additionalProperties);
 
@@ -72,9 +80,12 @@ export const dashboardArtifactArchiveBodySchema = Type.Object({ archived: Type.B
 
 export const dashboardArtifactArchiveResponseSchema = Type.Object({
   ok: Type.Boolean(),
+  changed: Type.Boolean(),
   artifactId: identifierSchema,
   archived: Type.Boolean(),
   archivedAt: Type.Optional(Type.String({ format: 'date-time' })),
+  archivedStateChangedAt: Type.Optional(Type.Number()),
+  previousArchivedAt: Type.Optional(Type.Number()),
 }, additionalProperties);
 
 export const dashboardArtifactBulkArchiveBodySchema = Type.Object({
@@ -90,12 +101,35 @@ export const dashboardArtifactBulkArchiveResponseSchema = Type.Object({
     artifactId: identifierSchema,
     archived: Type.Boolean(),
     archivedAt: Type.Optional(Type.String({ format: 'date-time' })),
+    archivedStateChangedAt: Type.Optional(Type.Number()),
+    previousArchivedAt: Type.Optional(Type.Number()),
   }, additionalProperties)),
+}, additionalProperties);
+
+export const dashboardArtifactUndoBodySchema = Type.Object({
+  changes: Type.Array(Type.Object({
+    id: identifierSchema,
+    kind: Type.Union([Type.Literal('pin'), Type.Literal('archive')]),
+    expectedStateChangedAt: Type.Number({ minimum: 0 }),
+    expectedCurrentState: Type.Boolean(),
+    restoreAt: Type.Optional(Type.Number({ minimum: 0 })),
+  }), { minItems: 1, maxItems: 100 }),
+}, additionalProperties);
+
+export const dashboardArtifactUndoResponseSchema = Type.Object({
+  undoneIds: Type.Array(identifierSchema),
+  conflictIds: Type.Array(identifierSchema),
 }, additionalProperties);
 
 export type DashboardArtifactListRoute = {
   Querystring: Static<typeof dashboardArtifactListQuerySchema>;
   Reply: { 200: Static<typeof dashboardArtifactListResponseSchema>; 400: ApiErrorEnvelope; 401: ApiErrorEnvelope; 403: ApiErrorEnvelope; 404: ApiErrorEnvelope; 500: ApiErrorEnvelope };
+};
+
+export type DashboardArtifactDetailRoute = {
+  Params: Static<typeof dashboardArtifactParamsSchema>;
+  Querystring: Static<typeof dashboardArtifactDetailQuerySchema>;
+  Reply: { 200: Static<typeof dashboardArtifactResponseSchema>; 401: ApiErrorEnvelope; 403: ApiErrorEnvelope; 404: ApiErrorEnvelope };
 };
 
 export type DashboardArtifactPinRoute = {
@@ -118,6 +152,11 @@ export type DashboardArtifactArchiveRoute = {
 export type DashboardArtifactBulkArchiveRoute = {
   Body: Static<typeof dashboardArtifactBulkArchiveBodySchema>;
   Reply: { 200: Static<typeof dashboardArtifactBulkArchiveResponseSchema>; 400: ApiErrorEnvelope; 401: ApiErrorEnvelope; 403: ApiErrorEnvelope; 404: ApiErrorEnvelope; 500: ApiErrorEnvelope };
+};
+
+export type DashboardArtifactUndoRoute = {
+  Body: Static<typeof dashboardArtifactUndoBodySchema>;
+  Reply: { 200: Static<typeof dashboardArtifactUndoResponseSchema>; 400: ApiErrorEnvelope; 401: ApiErrorEnvelope; 403: ApiErrorEnvelope; 404: ApiErrorEnvelope; 500: ApiErrorEnvelope };
 };
 
 export type DashboardArtifactFileRoute = {

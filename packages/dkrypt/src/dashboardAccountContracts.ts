@@ -1,10 +1,35 @@
 import { Type, type Static } from '@sinclair/typebox';
+import type { ApiErrorEnvelope } from '#contracts.js';
+
+const homeModuleSchema = Type.Union([
+  Type.Literal('artifacts'),
+  Type.Literal('activeJobs'),
+  Type.Literal('jobHistory'),
+]);
+
+const homeLayoutSchema = Type.Object({
+  id: Type.String({ minLength: 1, maxLength: 40, pattern: '^[a-zA-Z0-9_-]+$' }),
+  name: Type.String({ minLength: 1, maxLength: 40 }),
+  order: Type.Array(homeModuleSchema, { minItems: 3, maxItems: 3, uniqueItems: true }),
+  hidden: Type.Array(homeModuleSchema, { maxItems: 3, uniqueItems: true }),
+  collapsed: Type.Array(homeModuleSchema, { maxItems: 3, uniqueItems: true }),
+});
+
+const homeViewModesSchema = Type.Object({
+  artifacts: Type.Optional(Type.Union([Type.Literal('list'), Type.Literal('cards')])),
+  jobHistory: Type.Optional(Type.Union([Type.Literal('list'), Type.Literal('cards')])),
+  devices: Type.Optional(Type.Union([Type.Literal('list'), Type.Literal('cards')])),
+});
 
 const userPrefsProperties = {
   formattingLocale: Type.Optional(Type.Union([Type.Literal('system'), Type.Literal('en'), Type.Literal('de')])),
   interfaceLanguage: Type.Optional(Type.Union([Type.Literal('system'), Type.Literal('en'), Type.Literal('de')])),
   theme: Type.Optional(Type.Union([Type.Literal('dark'), Type.Literal('light'), Type.Literal('auto')])),
   density: Type.Optional(Type.Union([Type.Literal('comfortable'), Type.Literal('compact')])),
+  homeLayouts: Type.Optional(Type.Array(homeLayoutSchema, { minItems: 1, maxItems: 10 })),
+  activeHomeLayoutId: Type.Optional(Type.String({ minLength: 1, maxLength: 40, pattern: '^[a-zA-Z0-9_-]+$' })),
+  viewModes: Type.Optional(homeViewModesSchema),
+  settingsMode: Type.Optional(Type.Union([Type.Literal('basic'), Type.Literal('advanced')])),
   accent: Type.Optional(Type.String()),
   highContrast: Type.Optional(Type.Boolean()),
   sound: Type.Optional(Type.Boolean()),
@@ -35,7 +60,7 @@ export const dashboardOkResponseSchema = Type.Object({ ok: Type.Boolean() });
 type DashboardOkReply = { 200: Static<typeof dashboardOkResponseSchema> };
 
 export type DashboardPrefsGetRoute = { Reply: { 200: Static<typeof userPrefsResponseSchema> } };
-export type DashboardPrefsUpdateRoute = { Body: Static<typeof userPrefsPatchBodySchema>; Reply: { 200: Static<typeof userPrefsResponseSchema> } };
+export type DashboardPrefsUpdateRoute = { Body: Static<typeof userPrefsPatchBodySchema>; Reply: { 200: Static<typeof userPrefsResponseSchema>; 400: ApiErrorEnvelope } };
 export type DashboardPushPublicKeyRoute = { Reply: { 200: Static<typeof pushKeyResponseSchema> } };
 export type DashboardPushSubscribeRoute = { Body: Static<typeof pushSubscriptionBodySchema>; Reply: DashboardOkReply };
 export type DashboardPushUnsubscribeRoute = { Body: Static<typeof pushUnsubscribeBodySchema>; Reply: DashboardOkReply };

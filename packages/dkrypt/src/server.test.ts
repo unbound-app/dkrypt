@@ -1570,6 +1570,15 @@ test('dashboard account and notification routes validate requests and preserve s
     expect(publicKey.statusCode).toBe(200);
     expect((publicKey.json() as { publicKey: string }).publicKey.length).toBeGreaterThan(0);
 
+    const initialPrefs = await server.inject({ method: 'GET', url: '/v1/dashboard/me/prefs', headers: { cookie } });
+    expect(initialPrefs.json()).toMatchObject({
+      density: 'comfortable',
+      activeHomeLayoutId: 'default',
+      homeLayouts: [{ id: 'default', name: 'Default', order: ['artifacts', 'activeJobs', 'jobHistory'], hidden: [], collapsed: [] }],
+      viewModes: { artifacts: 'list', jobHistory: 'cards', devices: 'cards' },
+      settingsMode: 'basic',
+    });
+
     const emailTest = await server.inject({ method: 'POST', url: '/v1/dashboard/email/test', headers: { cookie } });
     expect(emailTest.statusCode).toBe(400);
     expect(emailTest.json()).toMatchObject({ code: 'request_error', message: 'set a notification email first' });
@@ -1590,13 +1599,66 @@ test('dashboard account and notification routes validate requests and preserve s
       method: 'PUT',
       url: '/v1/dashboard/me/prefs',
       headers: { cookie },
-      payload: { formattingLocale: 'de', interfaceLanguage: 'de', theme: 'dark', density: 'compact', accent: 'slate', highContrast: true, pushOnSuccess: false, notifyEmail: 'test@example.com' },
+      payload: {
+        formattingLocale: 'de',
+        interfaceLanguage: 'de',
+        theme: 'dark',
+        density: 'compact',
+        accent: 'slate',
+        highContrast: true,
+        pushOnSuccess: false,
+        notifyEmail: 'test@example.com',
+        homeLayouts: [{ id: 'work', name: 'Work', order: ['activeJobs', 'artifacts', 'jobHistory'], hidden: ['jobHistory'], collapsed: [] }],
+        activeHomeLayoutId: 'work',
+        viewModes: { artifacts: 'cards', devices: 'cards' },
+        settingsMode: 'advanced',
+      },
     });
     expect(updatedPrefs.statusCode).toBe(200);
-    expect(updatedPrefs.json()).toMatchObject({ formattingLocale: 'de', interfaceLanguage: 'de', theme: 'dark', density: 'compact', accent: 'slate', highContrast: true, pushOnSuccess: false });
+    expect(updatedPrefs.json()).toMatchObject({
+      formattingLocale: 'de',
+      interfaceLanguage: 'de',
+      theme: 'dark',
+      density: 'compact',
+      accent: 'slate',
+      highContrast: true,
+      pushOnSuccess: false,
+      homeLayouts: [{ id: 'work', name: 'Work', order: ['activeJobs', 'artifacts', 'jobHistory'], hidden: ['jobHistory'], collapsed: [] }],
+      activeHomeLayoutId: 'work',
+      viewModes: { artifacts: 'cards', jobHistory: 'cards', devices: 'cards' },
+      settingsMode: 'advanced',
+    });
 
     const prefs = await server.inject({ method: 'GET', url: '/v1/dashboard/me/prefs', headers: { cookie } });
-    expect(prefs.json()).toMatchObject({ formattingLocale: 'de', interfaceLanguage: 'de', theme: 'dark', density: 'compact', accent: 'slate', highContrast: true, pushOnSuccess: false });
+    expect(prefs.json()).toMatchObject({
+      formattingLocale: 'de',
+      interfaceLanguage: 'de',
+      theme: 'dark',
+      density: 'compact',
+      accent: 'slate',
+      highContrast: true,
+      pushOnSuccess: false,
+      activeHomeLayoutId: 'work',
+      viewModes: { artifacts: 'cards', devices: 'cards' },
+      settingsMode: 'advanced',
+    });
+
+    const invalidLayout = await server.inject({
+      method: 'PUT',
+      url: '/v1/dashboard/me/prefs',
+      headers: { cookie },
+      payload: { homeLayouts: [{ id: 'broken', name: 'Broken', order: ['artifacts'], hidden: [], collapsed: [] }] },
+    });
+    expect(invalidLayout.statusCode).toBe(400);
+
+    const otherUserId = `github:preferences-isolation-${crypto.randomUUID()}`;
+    addAllowedUser(otherUserId, [role.id], 'test');
+    const otherUserPrefs = await server.inject({
+      method: 'GET',
+      url: '/v1/dashboard/me/prefs',
+      headers: { cookie: createSessionCookie(otherUserId, 0n) },
+    });
+    expect(otherUserPrefs.json()).toMatchObject({ activeHomeLayoutId: 'default', settingsMode: 'basic', density: 'comfortable' });
 
     const invalidSubscription = await server.inject({
       method: 'POST',
@@ -2156,6 +2218,31 @@ test('native scheduler watch routes enforce permissions and preserve CRUD and im
     });
     expect(maintenanceWindowCleared.statusCode).toBe(200);
     expect(maintenanceWindowCleared.json()).not.toHaveProperty('maintenanceWindow');
+
+    const latestWatch = maintenanceWindowCleared.json() as { enabled: boolean; updatedAt: number };
+    const staleUndo = await server.inject({
+      method: 'PATCH',
+      url: `/v1/dashboard/watches/${createdId}`,
+      headers: { cookie: administratorCookie },
+      payload: { enabled: true, expectedUpdatedAt: latestWatch.updatedAt - 1 },
+    });
+    expect(staleUndo.statusCode).toBe(409);
+    const toggled = await server.inject({
+      method: 'PATCH',
+      url: `/v1/dashboard/watches/${createdId}`,
+      headers: { cookie: administratorCookie },
+      payload: { enabled: !latestWatch.enabled, expectedUpdatedAt: latestWatch.updatedAt },
+    });
+    expect(toggled.statusCode).toBe(200);
+    expect(toggled.json()).toMatchObject({ enabled: true });
+    const restored = await server.inject({
+      method: 'PATCH',
+      url: `/v1/dashboard/watches/${createdId}`,
+      headers: { cookie: administratorCookie },
+      payload: { enabled: latestWatch.enabled, expectedUpdatedAt: (toggled.json() as { updatedAt: number }).updatedAt },
+    });
+    expect(restored.statusCode).toBe(200);
+    expect(restored.json()).toMatchObject({ enabled: false });
 
     const exported = await server.inject({ method: 'GET', url: '/v1/dashboard/watches/export', headers: { cookie: administratorCookie } });
     expect(exported.statusCode).toBe(200);

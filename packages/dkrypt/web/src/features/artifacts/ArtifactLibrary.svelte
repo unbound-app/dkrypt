@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, untrack } from 'svelte';
-  import { Archive, ArchiveRestore, Download, Pin, PinOff, RefreshCw, X } from 'lucide-svelte';
+  import { Archive, ArchiveRestore, Download, FileSearch, Grid2X2, List, Pin, PinOff, RefreshCw, X } from 'lucide-svelte';
   import AppIcon from '#components/AppIcon.svelte';
   import EmptyState from '#components/EmptyState.svelte';
   import Badge from '#lib/components/ui/Badge.svelte';
@@ -8,9 +8,9 @@
   import Card from '#lib/components/ui/Card.svelte';
   import Input from '#lib/components/ui/Input.svelte';
   import Select from '#lib/components/ui/Select.svelte';
-  import { fetchArtifacts, observeArtifacts, setDashboardArtifactArchived, setDashboardArtifactPinned, setDashboardArtifactsArchived, setDashboardArtifactsPinned, type ArtifactRecord } from '#lib/api';
+  import { fetchArtifacts, observeArtifacts, setDashboardArtifactArchived, setDashboardArtifactPinned, setDashboardArtifactsArchived, setDashboardArtifactsPinned, undoDashboardArtifactChanges, type ArtifactRecord, type ArtifactUndoChange } from '#lib/api';
   import { appDisplayName, appIconUrl, ensureAppCatalog } from '#lib/appCatalog.svelte';
-  import { fmtBytesGB, fmtSize, fmtTime } from '#lib/format.svelte';
+  import { fmtBytesGB, fmtSize } from '#lib/format.svelte';
   import { createSavedViews } from '#lib/savedViews.svelte';
   import { PermissionFlag } from '#lib/permissions';
   import { sessionHasPermission } from '#lib/session.svelte';
@@ -18,6 +18,12 @@
   import { buttonVariants } from '#lib/components/ui/variants';
   import { projectSelectionState } from '#lib/projectSelection.svelte';
   import VirtualizedList from '#components/VirtualizedList.svelte';
+  import { artifactDetailJumpState, homeViewModesState } from '#lib/ui.svelte';
+  import { pushHomeViewMode } from '#lib/session.svelte';
+  import { interfaceLanguageState, systemLocalesState } from '#lib/ui.svelte';
+  import { resolveInterfaceLanguage } from '#lib/locale';
+  import { translateMessage } from '#lib/messages';
+  import { showToast } from '#lib/ui.svelte';
 
   type ArtifactSourceFilter = 'all' | ArtifactRecord['channel'];
 
@@ -54,7 +60,6 @@
   let updatingArtifactIds = $state<string[]>([]);
   let selectedArtifactIds = $state<Set<string>>(new Set());
   let bulkUpdating = $state(false);
-  let expandedArtifactIds = $state<Set<string>>(new Set());
   let nextCursor = $state<string | undefined>(undefined);
   let error = $state('');
   let refreshError = $state('');
@@ -179,20 +184,14 @@
     return artifact.buildNumber ? `${version} (${artifact.buildNumber})` : version;
   }
 
-  function estimateArtifactRowHeight(artifact: ArtifactRecord): number {
+  function estimateArtifactRowHeight(_artifact: ArtifactRecord): number {
     const width = typeof window === 'undefined' ? 1024 : window.innerWidth;
     const compact = width < 640;
-    const collapsedHeight = compact ? 196 : width < 1024 ? 160 : 132;
-    if (!expandedArtifactIds.has(artifact.id)) return collapsedHeight;
-    return collapsedHeight + (compact ? 156 : 68) + (artifact.warnings?.length ? 204 : 0);
+    return compact ? 164 : width < 1024 ? 142 : 116;
   }
 
-  function setArtifactDetailsOpen(artifactId: string, expanded: boolean): void {
-    const next = new Set(expandedArtifactIds);
-    if (expanded) next.add(artifactId);
-    else next.delete(artifactId);
-    expandedArtifactIds = next;
-  }
+  const interfaceLanguage = $derived(resolveInterfaceLanguage(interfaceLanguageState.value, systemLocalesState.value));
+  const viewMessage = (key: 'viewMode.label' | 'viewMode.list' | 'viewMode.cards') => translateMessage(key, interfaceLanguage);
 
   function applySavedFilter(preset: ArtifactFilterPreset): void {
     query = preset.query;
@@ -222,9 +221,20 @@
     try {
       const result = await setDashboardArtifactPinned(artifact.id, artifact.pinnedAt === undefined);
       if (!result.ok) return;
+      const expectedCurrentState = result.data.pinned;
       artifacts = artifacts.map((candidate) => candidate.id === artifact.id
-        ? { ...candidate, pinnedAt: result.data.pinnedAt }
+        ? { ...candidate, pinnedAt: result.data.pinnedAt, pinnedStateChangedAt: result.data.pinnedStateChangedAt }
         : candidate);
+      if (result.data.changed && result.data.pinnedStateChangedAt !== undefined) {
+        const change: ArtifactUndoChange = {
+          id: artifact.id,
+          kind: 'pin',
+          expectedStateChangedAt: result.data.pinnedStateChangedAt,
+          expectedCurrentState,
+          restoreAt: result.data.previousPinnedAt,
+        };
+        offerUndo([change], artifact.pinnedAt === undefined ? 'undo.artifactPinned' : 'undo.artifactUnpinned');
+      }
     } catch (err) {
       error = err instanceof Error ? err.message : 'Could not update artifact protection';
     } finally {
@@ -240,17 +250,47 @@
     try {
       const result = await setDashboardArtifactArchived(artifact.id, archived);
       if (result.ok) {
+        if (result.data.changed && result.data.archived !== (archiveFilter === 'archived')) {
+          artifacts = artifacts.filter((candidate) => candidate.id !== artifact.id);
+          total = Math.max(0, total - 1);
+        }
         const nextSelectedIds = new Set(selectedArtifactIds);
         nextSelectedIds.delete(artifact.id);
         selectedArtifactIds = nextSelectedIds;
         archiveAnnouncement = `${archived ? 'Archived' : 'Restored'} ${appDisplayName(artifact.bundleId)}.`;
         focusArchiveStatus();
+        if (result.data.changed && result.data.archivedStateChangedAt !== undefined) {
+          offerUndo([{
+            id: artifact.id,
+            kind: 'archive',
+            expectedStateChangedAt: result.data.archivedStateChangedAt,
+            expectedCurrentState: result.data.archived,
+            restoreAt: result.data.previousArchivedAt,
+          }], archived ? 'undo.artifactArchived' : 'undo.artifactRestored');
+        }
       }
     } catch (err) {
       error = err instanceof Error ? err.message : 'Could not update artifact archive status';
     } finally {
       updatingArtifactIds = updatingArtifactIds.filter((id) => id !== artifact.id);
     }
+  }
+
+  function offerUndo(changes: ArtifactUndoChange[], messageKey: 'undo.artifactArchived' | 'undo.artifactRestored' | 'undo.artifactPinned' | 'undo.artifactUnpinned'): void {
+    showToast(translateMessage(messageKey, interfaceLanguage), 'success', {
+      duration: 8000,
+      action: {
+        label: translateMessage('undo.action', interfaceLanguage),
+        onClick: () => void undoChanges(changes),
+      },
+    });
+  }
+
+  async function undoChanges(changes: ArtifactUndoChange[]): Promise<void> {
+    const result = await undoDashboardArtifactChanges(changes);
+    if (!result.ok) return;
+    if (result.data.conflictIds.length > 0) showToast(translateMessage('undo.conflict', interfaceLanguage), 'error');
+    if (result.data.undoneIds.length > 0) await load(true);
   }
 
   function toggleArtifactSelection(artifactId: string, selected: boolean): void {
@@ -286,13 +326,20 @@
     bulkUpdating = true;
     error = '';
     try {
+      const previousById = new Map(artifacts.filter((artifact) => selectedArtifactIds.has(artifact.id)).map((artifact) => [artifact.id, artifact]));
       const result = await setDashboardArtifactsPinned([...selectedArtifactIds], pinned);
       if (!result.ok) return;
       const updatedById = new Map(result.data.artifacts.map((artifact) => [artifact.artifactId, artifact]));
       artifacts = artifacts.map((artifact) => {
         const updated = updatedById.get(artifact.id);
-        return updated ? { ...artifact, pinnedAt: updated.pinnedAt } : artifact;
+        return updated ? { ...artifact, pinnedAt: updated.pinnedAt, pinnedStateChangedAt: updated.pinnedStateChangedAt } : artifact;
       });
+      const changes = result.data.artifacts.filter((updated) => result.data.changedIds.includes(updated.artifactId)).flatMap((updated) => {
+        const previous = previousById.get(updated.artifactId);
+        if (!previous || updated.pinnedStateChangedAt === undefined) return [];
+        return [{ id: updated.artifactId, kind: 'pin' as const, expectedStateChangedAt: updated.pinnedStateChangedAt, expectedCurrentState: updated.pinned, restoreAt: updated.previousPinnedAt }];
+      });
+      if (changes.length > 0) offerUndo(changes, pinned ? 'undo.artifactPinned' : 'undo.artifactUnpinned');
       selectedArtifactIds = new Set();
     } catch (err) {
       error = err instanceof Error ? err.message : 'Could not update the selected artifacts';
@@ -306,12 +353,25 @@
     bulkUpdating = true;
     error = '';
     try {
+      const previousById = new Map(artifacts.filter((artifact) => selectedArtifactIds.has(artifact.id)).map((artifact) => [artifact.id, artifact]));
       const result = await setDashboardArtifactsArchived([...selectedArtifactIds], archived);
       if (!result.ok) return;
       selectedArtifactIds = new Set();
       const count = result.data.changedIds.length;
       archiveAnnouncement = `${archived ? 'Archived' : 'Restored'} ${count} ${count === 1 ? 'artifact' : 'artifacts'}.`;
       focusArchiveStatus();
+      const changedIds = new Set(result.data.changedIds);
+      const hiddenArtifacts = artifacts.filter((artifact) => changedIds.has(artifact.id) && result.data.archived !== (archiveFilter === 'archived'));
+      if (hiddenArtifacts.length > 0) {
+        artifacts = artifacts.filter((artifact) => !changedIds.has(artifact.id));
+        total = Math.max(0, total - hiddenArtifacts.length);
+      }
+      const changes = result.data.artifacts.filter((updated) => result.data.changedIds.includes(updated.artifactId)).flatMap((updated) => {
+        const previous = previousById.get(updated.artifactId);
+        if (!previous || updated.archivedStateChangedAt === undefined) return [];
+        return [{ id: updated.artifactId, kind: 'archive' as const, expectedStateChangedAt: updated.archivedStateChangedAt, expectedCurrentState: updated.archived, restoreAt: updated.previousArchivedAt }];
+      });
+      if (changes.length > 0) offerUndo(changes, archived ? 'undo.artifactArchived' : 'undo.artifactRestored');
     } catch (err) {
       error = err instanceof Error ? err.message : 'Could not update the selected artifacts';
     } finally {
@@ -333,9 +393,15 @@
             </div>
             <div class="text-muted mt-0.5 text-xs">{fmtBytesGB(totalBytes)} / {fmtBytesGB(maxBytes)} used</div>
           </div>
-          <Button variant="ghost" size="icon" class="text-muted hover:text-foreground h-8 w-8 shrink-0 p-0" disabled={loading} onclick={() => void load(true)} aria-label="Refresh IPA Library" title="Refresh IPA Library">
-            <RefreshCw class={loading ? 'h-3.5 w-3.5 animate-spin' : 'h-3.5 w-3.5'} />
-          </Button>
+          <div class="flex shrink-0 items-center gap-1">
+            <div class="inline-flex rounded-md border border-border/70 p-0.5" role="group" aria-label={viewMessage('viewMode.label')}>
+              <Button variant={homeViewModesState.value.artifacts === 'list' ? 'secondary' : 'ghost'} size="icon" class="h-7 w-7" aria-label={viewMessage('viewMode.list')} aria-pressed={homeViewModesState.value.artifacts === 'list'} onclick={() => void pushHomeViewMode('artifacts', 'list')}><List class="h-3.5 w-3.5" /></Button>
+              <Button variant={homeViewModesState.value.artifacts === 'cards' ? 'secondary' : 'ghost'} size="icon" class="h-7 w-7" aria-label={viewMessage('viewMode.cards')} aria-pressed={homeViewModesState.value.artifacts === 'cards'} onclick={() => void pushHomeViewMode('artifacts', 'cards')}><Grid2X2 class="h-3.5 w-3.5" /></Button>
+            </div>
+            <Button variant="ghost" size="icon" class="text-muted hover:text-foreground h-8 w-8 shrink-0 p-0" disabled={loading} onclick={() => void load(true)} aria-label="Refresh IPA Library" title="Refresh IPA Library">
+              <RefreshCw class={loading ? 'h-3.5 w-3.5 animate-spin' : 'h-3.5 w-3.5'} />
+            </Button>
+          </div>
         </div>
         <div class="flex w-full min-w-0 flex-wrap items-center gap-2">
           <Input bind:value={query} onkeydown={(event) => event.key === 'Enter' && void load(true)} placeholder="Search apps or versions…" class="min-w-[12rem] flex-1" />
@@ -439,11 +505,11 @@
             overscan={4}
             scrollMode="window"
             label="IPA library artifacts"
-            class="rounded-xl border border-border/70 divide-y divide-border"
+            class={homeViewModesState.value.artifacts === 'list' ? 'rounded-xl border border-border/70 divide-y divide-border' : 'space-y-2'}
           >
             {#snippet children(artifact: ArtifactRecord)}
-              <div class="border-b border-border/70">
-                <article data-artifact-id={artifact.id} class="grid gap-x-5 gap-y-2.5 px-3.5 py-3 first:pt-3 last:pb-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:px-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1.65fr)_auto] lg:items-center">
+              <div class={homeViewModesState.value.artifacts === 'list' ? 'border-b border-border/70' : 'pb-1'}>
+                <article data-artifact-id={artifact.id} class={homeViewModesState.value.artifacts === 'list' ? 'grid gap-x-5 gap-y-2.5 px-3.5 py-3 first:pt-3 last:pb-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:px-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1.65fr)_auto] lg:items-center' : 'grid gap-x-4 gap-y-3 rounded-xl border border-border/70 bg-background/50 p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center'}>
                   <div class="flex min-w-0 items-center gap-3">
                     {#if canManageStorage}
                       <input
@@ -505,39 +571,9 @@
                       <Download class="h-3.5 w-3.5" />Download
                     </a>
                   </div>
-                  <details class="col-span-full rounded-lg border border-border/70 px-3 py-2" open={expandedArtifactIds.has(artifact.id)} ontoggle={(event) => setArtifactDetailsOpen(artifact.id, event.currentTarget.open)}>
-                    <summary class="cursor-pointer text-xs font-medium">Artifact details</summary>
-                    <div class="mt-3 space-y-3">
-                      <dl class="grid gap-x-5 gap-y-3 text-xs sm:grid-cols-2">
-                        <div class="min-w-0">
-                          <dt class="text-muted text-[10px] font-semibold tracking-[0.08em] uppercase">SHA-256</dt>
-                          <dd class="mt-1 break-all font-mono">{artifact.sha256}</dd>
-                        </div>
-                        <div class="min-w-0">
-                          <dt class="text-muted text-[10px] font-semibold tracking-[0.08em] uppercase">Source job</dt>
-                          <dd class="mt-1 break-all font-mono">{artifact.sourceJobId ?? 'Unavailable'}</dd>
-                        </div>
-                        <div>
-                          <dt class="text-muted text-[10px] font-semibold tracking-[0.08em] uppercase">Created</dt>
-                          <dd class="mt-1">{fmtTime(Date.parse(artifact.createdAt))}</dd>
-                        </div>
-                        <div>
-                          <dt class="text-muted text-[10px] font-semibold tracking-[0.08em] uppercase">Last accessed</dt>
-                          <dd class="mt-1">{fmtTime(Date.parse(artifact.lastAccessedAt))}</dd>
-                        </div>
-                      </dl>
-                      {#if artifact.warnings?.length}
-                        <div class="rounded-md border border-warn/30 bg-warn/5 p-2.5 text-xs" role="note">
-                          <div class="font-semibold text-warn">Decrypt warnings</div>
-                          <ul class="mt-1 max-h-40 space-y-1 overflow-y-auto break-words text-muted">
-                            {#each artifact.warnings as warning, index (`${artifact.id}-${index}`)}
-                              <li>{warning}</li>
-                            {/each}
-                          </ul>
-                        </div>
-                      {/if}
-                    </div>
-                  </details>
+                  <div class="col-span-full flex justify-start">
+                    <Button variant="ghost" size="sm" onclick={() => (artifactDetailJumpState.id = artifact.id)}><FileSearch class="h-3.5 w-3.5" />Artifact details</Button>
+                  </div>
                 </article>
               </div>
             {/snippet}

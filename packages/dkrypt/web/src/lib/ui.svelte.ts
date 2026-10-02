@@ -1,6 +1,7 @@
 import { toast } from 'svelte-sonner';
 import { getQueryParam, setQueryParams } from '#lib/urlState';
 import { normalizeFormattingLocalePreference, normalizeInterfaceLanguagePreference, type FormattingLocalePreference, type InterfaceLanguagePreference } from '#lib/locale';
+import { DEFAULT_HOME_LAYOUT, DEFAULT_HOME_VIEW_MODES, type HomeLayout, type HomeViewModes } from '#lib/homeLayouts';
 
 export type Theme = 'dark' | 'light';
 export type ThemePref = Theme | 'auto';
@@ -155,6 +156,51 @@ export function setSoundEnabled(enabled: boolean): void {
   localStorage.setItem('soundEnabled', String(enabled));
 }
 
+export type DisplayDensity = 'comfortable' | 'compact';
+export type SettingsMode = 'basic' | 'advanced';
+
+export const densityState = $state<{ value: DisplayDensity }>({ value: 'comfortable' });
+export const settingsModeState = $state<{ value: SettingsMode }>({ value: 'basic' });
+export const homeLayoutPreferencesState = $state<{ layouts: HomeLayout[]; activeId: string }>({
+  layouts: [{ ...DEFAULT_HOME_LAYOUT, order: [...DEFAULT_HOME_LAYOUT.order], hidden: [], collapsed: [] }],
+  activeId: DEFAULT_HOME_LAYOUT.id,
+});
+export const homeViewModesState = $state<{ value: HomeViewModes }>({ value: { ...DEFAULT_HOME_VIEW_MODES } });
+
+export function setDensity(density: DisplayDensity): void {
+  densityState.value = density;
+  document.documentElement.setAttribute('data-density', density);
+}
+
+export function initDensity(): void {
+  document.documentElement.setAttribute('data-density', densityState.value);
+}
+
+export function setSettingsMode(mode: SettingsMode): void {
+  settingsModeState.value = mode;
+}
+
+export function setHomeLayoutPreferences(layouts: HomeLayout[], activeId: string): void {
+  homeLayoutPreferencesState.layouts = layouts.map((layout) => ({
+    ...layout,
+    order: [...layout.order],
+    hidden: [...layout.hidden],
+    collapsed: [...layout.collapsed],
+  }));
+  homeLayoutPreferencesState.activeId = activeId;
+}
+
+export function setHomeViewModes(viewModes: Partial<HomeViewModes>): void {
+  homeViewModesState.value = { ...DEFAULT_HOME_VIEW_MODES, ...viewModes };
+}
+
+export function resetUserInterfacePreferences(): void {
+  setDensity('comfortable');
+  setSettingsMode('basic');
+  setHomeLayoutPreferences([{ ...DEFAULT_HOME_LAYOUT, order: [...DEFAULT_HOME_LAYOUT.order], hidden: [], collapsed: [] }], DEFAULT_HOME_LAYOUT.id);
+  setHomeViewModes(DEFAULT_HOME_VIEW_MODES);
+}
+
 export interface ToastHistoryEntry {
   id: string;
   message: string;
@@ -192,9 +238,11 @@ export function clearToastHistory(): void {
 export function showToast(
   message: string,
   type: 'success' | 'error' = 'success',
-  options?: { track?: boolean; action?: { label: string; onClick: () => void }; id?: string; downloadUrl?: string },
+  options?: { track?: boolean; action?: { label: string; onClick: () => void }; id?: string; downloadUrl?: string; duration?: number },
 ): void {
-  const toastOptions = options?.action || options?.id ? { action: options.action, id: options.id } : undefined;
+  const toastOptions = options?.action || options?.id || options?.duration !== undefined
+    ? { action: options.action, id: options.id, duration: options.duration }
+    : undefined;
   if (type === 'error') toast.error(message, toastOptions);
   else toast.success(message, toastOptions);
 
@@ -281,12 +329,18 @@ export function jumpToUser(username: string): void {
   setSettingsSubtab('users');
 }
 
-export const focusSearchJumpState = $state<{ requested: boolean }>({ requested: false });
+export const focusSearchJumpState = $state<{ requested: boolean; bundleId: string | null }>({ requested: false, bundleId: null });
 
-export function requestFocusSearch(): void {
+export function requestFocusSearch(bundleId?: string): void {
   focusSearchJumpState.requested = true;
+  focusSearchJumpState.bundleId = bundleId ?? null;
   setActiveTab('home');
 }
+
+export const jobDetailJumpState = $state<{ id: string | null }>({ id: null });
+export const artifactDetailJumpState = $state<{ id: string | null }>({ id: null });
+export const deviceDetailJumpState = $state<{ id: string | null }>({ id: null });
+export const watchDetailJumpState = $state<{ id: string | null }>({ id: null });
 
 export const batchDecryptJumpState = $state<{ requested: boolean }>({ requested: false });
 
