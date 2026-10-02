@@ -30,6 +30,7 @@
 	import WhatsNewButton from "#components/WhatsNewButton.svelte";
 	import ContactPage from "#components/ContactPage.svelte";
 	import TabIcon from "#components/TabIcon.svelte";
+	import NotificationPreferences from "#features/notifications/NotificationPreferences.svelte";
 	import PublicPricing from "#components/PublicPricing.svelte";
 	import PublicStatus from "#components/PublicStatus.svelte";
 	import SessionExpiryBanner from "#components/SessionExpiryBanner.svelte";
@@ -40,7 +41,6 @@
 	import Badge from "#lib/components/ui/Badge.svelte";
 	import Avatar from "#lib/components/ui/Avatar.svelte";
 	import Button from "#lib/components/ui/Button.svelte";
-	import Checkbox from "#lib/components/ui/Checkbox.svelte";
 	import Input from "#lib/components/ui/Input.svelte";
 	import { buttonVariants } from "#lib/components/ui/variants";
 	import { cn } from "#lib/utils";
@@ -48,10 +48,6 @@
 	import { myDecryptsState } from "#lib/decrypts.svelte";
 	import { connectLive, disconnectLive, liveState } from "#lib/live.svelte";
 	import {
-		disablePush,
-		enablePush,
-		getExistingPushSubscription,
-		pushSupported,
 		registerServiceWorker,
 	} from "#lib/push";
 	import {
@@ -69,8 +65,6 @@
 		pushHighContrastPref,
 		pushFormattingLocale,
 		pushInterfaceLanguage,
-		fetchNotificationPrefs,
-		pushNotificationPrefs,
 		pushSoundPref,
 		pushThemePref,
 		refreshSession,
@@ -82,7 +76,7 @@
 		sessionState,
 		updateProfileDisplayName,
 	} from "#lib/session.svelte";
-	import { accountExportUrl, deleteAccount, reauthenticate, reauthenticateWithPasskey, testEmail, testPush } from "#lib/api";
+	import { accountExportUrl, deleteAccount, reauthenticate, reauthenticateWithPasskey } from "#lib/api";
 	import {
 		ACCENT_PRESETS,
 		accentState,
@@ -240,140 +234,10 @@
 		if (sessionState.loggedIn) void loadPasskeys();
 	});
 
-	type NotifPermission = NotificationPermission | "unsupported";
-	let notifPermission = $state<NotifPermission>(
-		typeof Notification === "undefined"
-			? "unsupported"
-			: Notification.permission,
-	);
-	let pushEnabled = $state(false);
-	let enablingPush = $state(false);
-	let sendingTestPush = $state(false);
-	let pushOnSuccess = $state(true);
-	let pushOnFailure = $state(true);
-	let pushOnAlerts = $state(true);
-	let pushOnKeyExpiry = $state(true);
-	let accountEmail = $state<string | undefined>(undefined);
-	let notifyEmail = $state("");
-	let sendingTestEmail = $state(false);
-	let emailOnSuccess = $state(false);
-	let emailOnFailure = $state(false);
-	let emailOnAlerts = $state(false);
-	let emailOnKeyExpiry = $state(false);
-
 	void registerServiceWorker().then((registration) => {
 		if (registration) initPwaUpdateWatcher(registration);
 	});
 	initInstallPromptWatcher();
-
-	$effect(() => {
-		if (!sessionState.loggedIn) return;
-		if (pushSupported())
-			void getExistingPushSubscription().then(
-				(sub) => (pushEnabled = !!sub),
-			);
-		void fetchNotificationPrefs().then((prefs) => {
-			pushOnSuccess = prefs.pushOnSuccess ?? true;
-			pushOnFailure = prefs.pushOnFailure ?? true;
-			pushOnAlerts = prefs.pushOnAlerts ?? true;
-			pushOnKeyExpiry = prefs.pushOnKeyExpiry ?? true;
-			accountEmail = prefs.accountEmail;
-			notifyEmail = prefs.notifyEmail ?? "";
-			emailOnSuccess = prefs.emailOnSuccess ?? false;
-			emailOnFailure = prefs.emailOnFailure ?? false;
-			emailOnAlerts = prefs.emailOnAlerts ?? false;
-			emailOnKeyExpiry = prefs.emailOnKeyExpiry ?? false;
-		});
-	});
-
-	async function togglePushOnSuccess(value = pushOnSuccess): Promise<void> {
-		pushOnSuccess = value;
-		await pushNotificationPrefs({ pushOnSuccess: value });
-	}
-
-	async function togglePushOnFailure(value = pushOnFailure): Promise<void> {
-		pushOnFailure = value;
-		await pushNotificationPrefs({ pushOnFailure: value });
-	}
-
-	async function togglePushOnAlerts(value = pushOnAlerts): Promise<void> {
-		pushOnAlerts = value;
-		await pushNotificationPrefs({ pushOnAlerts: value });
-	}
-
-	async function togglePushOnKeyExpiry(value = pushOnKeyExpiry): Promise<void> {
-		pushOnKeyExpiry = value;
-		await pushNotificationPrefs({ pushOnKeyExpiry: value });
-	}
-
-	async function toggleEmailOnSuccess(value = emailOnSuccess): Promise<void> {
-		emailOnSuccess = value;
-		await pushNotificationPrefs({ emailOnSuccess: value });
-	}
-
-	async function toggleEmailOnFailure(value = emailOnFailure): Promise<void> {
-		emailOnFailure = value;
-		await pushNotificationPrefs({ emailOnFailure: value });
-	}
-
-	async function toggleEmailOnAlerts(value = emailOnAlerts): Promise<void> {
-		emailOnAlerts = value;
-		await pushNotificationPrefs({ emailOnAlerts: value });
-	}
-
-	async function toggleEmailOnKeyExpiry(value = emailOnKeyExpiry): Promise<void> {
-		emailOnKeyExpiry = value;
-		await pushNotificationPrefs({ emailOnKeyExpiry: value });
-	}
-
-	async function saveNotifyEmail(): Promise<void> {
-		await pushNotificationPrefs({ notifyEmail: notifyEmail.trim() });
-	}
-
-	async function sendTestEmail(): Promise<void> {
-		sendingTestEmail = true;
-		try {
-			await testEmail();
-		} finally {
-			sendingTestEmail = false;
-		}
-	}
-
-	async function enableNotifications(): Promise<void> {
-		if (typeof Notification === "undefined") return;
-		notifPermission = await Notification.requestPermission();
-		if (notifPermission !== "granted" || !pushSupported()) return;
-		enablingPush = true;
-		try {
-			pushEnabled = await enablePush();
-		} catch {
-			showToast(
-				"Couldn't enable push notifications - try again",
-				"error",
-			);
-		} finally {
-			enablingPush = false;
-		}
-	}
-
-	async function disableNotifications(): Promise<void> {
-		enablingPush = true;
-		try {
-			await disablePush();
-			pushEnabled = false;
-		} finally {
-			enablingPush = false;
-		}
-	}
-
-	async function sendTestPush(): Promise<void> {
-		sendingTestPush = true;
-		try {
-			await testPush();
-		} finally {
-			sendingTestPush = false;
-		}
-	}
 
 	const TABS: { id: TabId; label: MessageKey; requires?: bigint[] }[] = [
 		{ id: "home", label: "nav.home" },
@@ -1093,87 +957,7 @@
 								</div>
 							</div>
 
-							<div class="border-border mb-3 border-t pt-3">
-								<div
-									class="flex items-center justify-between gap-3"
-								>
-									<div class="text-[13px]">{msg("notifications.title")}</div>
-									{#if notifPermission === "granted" && pushEnabled}
-										<Button
-											size="sm"
-											variant="secondary"
-											loading={enablingPush}
-											onclick={disableNotifications}
-											>{msg("notifications.disablePush")}</Button
-										>
-									{:else if notifPermission === "denied"}
-										<Badge
-											variant="destructive"
-											title={msg("notifications.browserBlockedTitle")}
-											>{msg("notifications.pushBlocked")}</Badge
-										>
-									{:else if notifPermission !== "unsupported"}
-										<Button
-											size="sm"
-											variant="secondary"
-											loading={enablingPush}
-											onclick={enableNotifications}
-											>{msg("notifications.enablePush")}</Button
-										>
-									{/if}
-								</div>
-
-								<Input
-									type="email"
-									class="mt-2 h-8 text-xs"
-									placeholder={accountEmail ?? msg("notifications.emailAddress")}
-									bind:value={notifyEmail}
-									onblur={saveNotifyEmail}
-								/>
-
-								<div
-									class="mt-3 grid grid-cols-[1fr_auto_auto] items-center gap-x-3 gap-y-1.5 text-xs text-muted"
-								>
-									<div></div>
-									<div class="text-center">{msg("notifications.pushColumn")}</div>
-									<div class="text-center">{msg("notifications.emailColumn")}</div>
-
-									<div>{msg("notifications.successfulDecrypts")}</div>
-										<Checkbox class="justify-self-center" checked={pushOnSuccess} onCheckedChange={togglePushOnSuccess} aria-label={msg("notifications.pushSuccessfulDecrypts")} />
-										<Checkbox class="justify-self-center" checked={emailOnSuccess} onCheckedChange={toggleEmailOnSuccess} aria-label={msg("notifications.emailSuccessfulDecrypts")} />
-
-									<div>{msg("notifications.failedDecrypts")}</div>
-										<Checkbox class="justify-self-center" checked={pushOnFailure} onCheckedChange={togglePushOnFailure} aria-label={msg("notifications.pushFailedDecrypts")} />
-										<Checkbox class="justify-self-center" checked={emailOnFailure} onCheckedChange={toggleEmailOnFailure} aria-label={msg("notifications.emailFailedDecrypts")} />
-
-									<div>{msg("notifications.deviceSystemAlerts")}</div>
-										<Checkbox class="justify-self-center" checked={pushOnAlerts} onCheckedChange={togglePushOnAlerts} aria-label={msg("notifications.pushDeviceSystemAlerts")} />
-										<Checkbox class="justify-self-center" checked={emailOnAlerts} onCheckedChange={toggleEmailOnAlerts} aria-label={msg("notifications.emailDeviceSystemAlerts")} />
-
-									<div>{msg("notifications.apiKeyExpiring")}</div>
-										<Checkbox class="justify-self-center" checked={pushOnKeyExpiry} onCheckedChange={togglePushOnKeyExpiry} aria-label={msg("notifications.pushApiKeyExpiring")} />
-										<Checkbox class="justify-self-center" checked={emailOnKeyExpiry} onCheckedChange={toggleEmailOnKeyExpiry} aria-label={msg("notifications.emailApiKeyExpiring")} />
-								</div>
-
-								<div class="mt-3 flex gap-2">
-									{#if notifPermission === "granted" && pushEnabled}
-										<Button
-											size="sm"
-											variant="secondary"
-											loading={sendingTestPush}
-											onclick={sendTestPush}
-											>{msg("notifications.testPush")}</Button
-										>
-									{/if}
-									<Button
-										size="sm"
-										variant="secondary"
-										loading={sendingTestEmail}
-										onclick={sendTestEmail}
-										>{msg("notifications.testEmail")}</Button
-									>
-								</div>
-							</div>
+							<NotificationPreferences {interfaceLanguage} />
 
 							{#if pwaState.canInstall}
 								<div class="border-border mb-3 border-t pt-3">

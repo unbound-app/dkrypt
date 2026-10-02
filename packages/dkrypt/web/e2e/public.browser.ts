@@ -1857,6 +1857,52 @@ test('interface language localizes the account menu and persists to the account'
   await expect(page.getByText('Sitzungen verwalten')).toBeVisible();
 });
 
+test('notification preferences load and persist from the account menu', async ({ page }) => {
+  await mockAuthenticatedDashboard(page, '2');
+  await page.unroute('**/v1/dashboard/me/prefs');
+
+  const savedPrefs = {
+    theme: 'dark',
+    accent: 'violet',
+    sound: true,
+    pushOnSuccess: true,
+    pushOnFailure: false,
+    emailOnSuccess: false,
+  };
+  await page.route('**/v1/dashboard/me/prefs', async (route) => {
+    if (route.request().method() === 'PUT') {
+      Object.assign(savedPrefs, route.request().postDataJSON());
+    }
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify(savedPrefs),
+    });
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Account menu' }).click();
+  const emailPreference = page.getByRole('checkbox', {
+    name: 'Email notifications for successful decrypts',
+  });
+  await expect(emailPreference).toHaveAttribute('aria-checked', 'false');
+  await emailPreference.click();
+  await expect(emailPreference).toHaveAttribute('aria-checked', 'true');
+  await expect.poll(() => savedPrefs.emailOnSuccess).toBe(true);
+
+  const pushFailurePreference = page.getByRole('checkbox', {
+    name: 'Push notifications for failed decrypts',
+  });
+  await expect(pushFailurePreference).toHaveAttribute('aria-checked', 'false');
+  await pushFailurePreference.click();
+  await expect(pushFailurePreference).toHaveAttribute('aria-checked', 'true');
+  await expect.poll(() => savedPrefs.pushOnFailure).toBe(true);
+
+  await page.reload();
+  await page.getByRole('button', { name: 'Account menu' }).click();
+  await expect(emailPreference).toHaveAttribute('aria-checked', 'true');
+  await expect(pushFailurePreference).toHaveAttribute('aria-checked', 'true');
+});
+
 test('high contrast preference updates the interface and persists to the account', async ({ page }) => {
   await mockAuthenticatedDashboard(page, '1');
   await page.unroute('**/v1/dashboard/me/prefs');
