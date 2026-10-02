@@ -946,8 +946,7 @@ async function reconcileStuckSchedulerRuns(): Promise<void> {
       }));
       const failureSummaries = outcomes.flatMap((outcome) => outcome.failureSummary ? [outcome.failureSummary] : []).slice(0, 3);
       const failureSummary = failureSummaries.length ? failureSummaries.join('; ').slice(0, 320) : undefined;
-      const runUrl = outcomes.find((outcome) => outcome.runStatus === 'failed' && outcome.runUrl)?.runUrl
-        ?? outcomes.find((outcome) => outcome.runUrl)?.runUrl;
+      const runUrl = selectWorkflowRunUrl(outcomes);
       const unresolvedTargets = Math.max(0, expectedTargetCount - outcomes.length);
       updateSchedulerRunOutcome(entry.id, source, {
         runStatus: aggregateWorkflowRunStatus(outcomes, expectedTargetCount),
