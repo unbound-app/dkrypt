@@ -2238,3 +2238,7 @@ export function fetchBillingProviderStatus(refresh = false): Promise<BillingProv
 export function setBillingCheckoutPaused(paused: boolean): Promise<{ paused: boolean }> {
   return apiJson('/v1/billing/checkouts', { method: 'PUT', body: JSON.stringify({ paused }) });
 }
+
+export function syncStripeBillingWebhookEvents(): Promise<{ ok: boolean; data: { webhook?: BillingProviderStatus['stripe']['webhook'] } }> {
+  return apiAction('/v1/billing/stripe-webhook/sync', { method: 'POST' }, 'Stripe webhook events synchronized');
+}

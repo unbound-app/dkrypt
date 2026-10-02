@@ -52,7 +52,7 @@ import { fastifyRequirePermission, fastifyRequireSession, getFastifySession } fr
 import { PermissionFlag } from '#permissions.js';
 import { areNewBillingCheckoutsPaused, recordAudit, setNewBillingCheckoutsPaused } from '#store/state.js';
 import { constructStripeWebhookEvent, stripeRequest } from '#stripe.js';
-import { getStripeWebhookHealth as inspectStripeWebhookHealth, type StripeWebhookHealth } from '#stripeWebhookHealth.js';
+import { getStripeWebhookHealth as inspectStripeWebhookHealth, StripeWebhookEndpointNotFoundError, syncStripeWebhookEvents, type StripeWebhookHealth } from '#stripeWebhookHealth.js';
 import { claimWebhook, countWebhookInbox, getWebhookInboxRecord, listWebhookInbox, markWebhookFailed, markWebhookProcessed, quarantineWebhook, receiveWebhook, releaseWebhookClaim } from '#webhookInbox.js';
 import { withCorrelationSpan } from '#correlation.js';
 import { decodeCursor, nextCursor, paginateCursor } from '#util/cursor.js';
@@ -640,6 +640,30 @@ export const billingRoutes: FastifyPluginAsyncTypebox<{
     const forceRefresh = request.query.refresh === 'true';
     const stripeWebhook = await (options.stripeWebhookHealth ?? ((refresh) => inspectStripeWebhookHealth(config.stripeSecretKey ? options.stripeClient?.() : undefined, undefined, refresh)))(forceRefresh);
     return reply.send({ checkoutsPaused: areNewBillingCheckoutsPaused(), stripe: { enabled: stripeEnabled, environment: stripeEnvironment, missingConfiguration: stripeMissingConfiguration, webhook: stripeWebhook }, crypto: await getNowPaymentsProviderStatus() });
+  });
+
+  server.post('/v1/billing/stripe-webhook/sync', { schema: getRouteContract('POST', '/v1/billing/stripe-webhook/sync'), preHandler: requireBillingManager }, async (request, reply) => {
+    const actor = getFastifySession(request)!.sub;
+    const endpointUrl = new URL('/v1/stripe/webhook', config.publicBaseUrl).toString();
+    if (!options.stripeClient && !config.stripeSecretKey) return sendBillingError(request, reply, 503, 'Stripe API key is not configured', 'stripe_not_configured');
+
+    try {
+      const webhook = await syncStripeWebhookEvents(options.stripeClient?.());
+      if (webhook.state !== 'ready') {
+        recordAudit(actor, 'billing.webhook.sync', endpointUrl, `required events updated but endpoint verification returned ${webhook.state}`);
+        return sendBillingError(request, reply, 502, 'Stripe webhook events could not be verified after synchronization', 'stripe_webhook_sync_failed');
+      }
+      recordAudit(actor, 'billing.webhook.sync', endpointUrl, 'required events synchronized on the existing endpoint; signing secret unchanged');
+      return reply.send({ webhook });
+    } catch (error) {
+      if (error instanceof StripeWebhookEndpointNotFoundError) {
+        recordAudit(actor, 'billing.webhook.sync', endpointUrl, 'no enabled matching endpoint found; no changes made');
+        return sendBillingError(request, reply, 409, 'No enabled Stripe webhook endpoint exists for dkrypt; no endpoint was created.', 'stripe_webhook_endpoint_missing');
+      }
+      log.error('Stripe webhook event synchronization failed', { error: String(error) });
+      recordAudit(actor, 'billing.webhook.sync', endpointUrl, 'event synchronization failed');
+      return sendBillingError(request, reply, 502, 'could not synchronize Stripe webhook events', 'stripe_webhook_sync_failed');
+    }
   });
 
   server.get<BillingSubscriptionsRoute>('/v1/billing/subscriptions', { schema: getRouteContract('GET', '/v1/billing/subscriptions'), preHandler: fastifyRequirePermission(PermissionFlag.viewBilling, PermissionFlag.manageBilling) }, (request, reply) => {

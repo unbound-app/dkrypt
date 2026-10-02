@@ -6,7 +6,7 @@
   import Card from '#lib/components/ui/Card.svelte';
   import EmptyState from '#components/EmptyState.svelte';
   import Input from '#lib/components/ui/Input.svelte';
-  import { fetchBillingProviderStatus, fetchBillingSubscriptions, fetchBillingWebhookInbox, quarantineBillingWebhook, replayBillingWebhook, setBillingCheckoutPaused, type BillingManagerSubscription, type BillingProviderStatus, type BillingWebhookInboxRecord } from '#lib/api';
+  import { fetchBillingProviderStatus, fetchBillingSubscriptions, fetchBillingWebhookInbox, quarantineBillingWebhook, replayBillingWebhook, setBillingCheckoutPaused, syncStripeBillingWebhookEvents, type BillingManagerSubscription, type BillingProviderStatus, type BillingWebhookInboxRecord } from '#lib/api';
   import { PermissionFlag } from '#lib/permissions';
   import { sessionHasPermission } from '#lib/session.svelte';
   import { liveState } from '#lib/live.svelte';
@@ -38,6 +38,7 @@
   let webhookProviderFilter = $state('');
   let webhookStatusFilter = $state('');
   let checkoutPauseLoading = $state(false);
+  let stripeWebhookSyncLoading = $state(false);
   let observedBillingRevision = liveState.billingRevision;
   let refreshTimer: ReturnType<typeof setTimeout> | undefined;
   let loadGeneration = 0;
@@ -160,6 +161,18 @@
     }
   }
 
+  async function syncStripeWebhookEvents(): Promise<void> {
+    stripeWebhookSyncLoading = true;
+    try {
+      const result = await syncStripeBillingWebhookEvents();
+      if (result.ok) await load(true);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Couldn't synchronize Stripe webhook events", 'error');
+    } finally {
+      stripeWebhookSyncLoading = false;
+    }
+  }
+
   function statusVariant(status: string): BadgeVariant {
     if (status === 'active' || status === 'trialing') return 'success';
     if (status === 'past_due') return 'warning';
@@ -227,7 +240,7 @@
 
   {#if providerStatus}
     <div class="grid gap-3 md:grid-cols-2">
-      <Card title="Stripe"><div class="flex items-center justify-between gap-3 text-sm"><span>{providerStatus.stripe.enabled ? 'Stripe credentials are configured' : 'Not configured'}</span><Badge variant={providerStatus.stripe.enabled ? 'success' : 'secondary'}>{providerStatus.stripe.environment}</Badge></div><div class="mt-3 flex items-start gap-2 text-xs text-muted"><Badge variant={stripeWebhookStatusVariant()}>{stripeWebhookStatusLabel()}</Badge><span class="min-w-0 break-words">{stripeWebhookStatusText()}</span></div></Card>
+      <Card title="Stripe"><div class="flex flex-wrap items-center justify-between gap-3 text-sm"><span>{providerStatus.stripe.enabled ? 'Stripe credentials are configured' : 'Not configured'}</span><div class="flex items-center gap-2">{#if providerStatus.stripe.webhook.state === 'missing_events' && !providerStatus.stripe.missingConfiguration.includes('STRIPE_SECRET_KEY') && !providerStatus.stripe.missingConfiguration.includes('STRIPE_WEBHOOK_SECRET')}<Button size="sm" variant="secondary" loading={stripeWebhookSyncLoading} onclick={() => void syncStripeWebhookEvents()}><RefreshCw class="h-4 w-4" /> Sync events</Button>{/if}<Badge variant={providerStatus.stripe.enabled ? 'success' : 'secondary'}>{providerStatus.stripe.environment}</Badge></div></div><div class="mt-3 flex items-start gap-2 text-xs text-muted"><Badge variant={stripeWebhookStatusVariant()}>{stripeWebhookStatusLabel()}</Badge><span class="min-w-0 break-words">{stripeWebhookStatusText()}</span></div>{#if providerStatus.stripe.webhook.state === 'missing_events' && !providerStatus.stripe.missingConfiguration.includes('STRIPE_SECRET_KEY')}<p class="mt-2 text-xs text-muted">Sync updates the existing endpoint’s event list and leaves its signing secret unchanged.</p>{/if}</Card>
       <Card title="Crypto · NOWPayments"><div class="flex items-center justify-between gap-3 text-sm"><span>{!providerStatus.crypto.enabled ? 'Disabled for new checkouts' : providerStatus.crypto.ready ? 'Ready for EUR-priced crypto invoices' : providerStatus.crypto.issues[0] ?? 'Not ready'}</span><Badge variant={providerStatus.crypto.enabled && providerStatus.crypto.ready ? 'success' : 'warning'}>{providerStatus.crypto.environment}</Badge></div><div class="mt-2 text-xs text-muted">Crypto checkout is separate from Stripe and does not collect billing information.</div></Card>
     </div>
     <Card title="New checkout availability">

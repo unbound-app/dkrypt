@@ -455,25 +455,26 @@ const AuthSessionListResponse = Type.Array(
     current: Type.Boolean(),
   }),
 );
+const StripeWebhookHealthResponse = object({
+  state: Type.Union([
+    Type.Literal('ready'),
+    Type.Literal('missing_endpoint'),
+    Type.Literal('missing_events'),
+    Type.Literal('unavailable'),
+    Type.Literal('not_configured'),
+  ]),
+  endpointUrl: Type.String(),
+  requiredEvents: Type.Array(Type.String()),
+  missingEvents: Type.Array(Type.String()),
+  checkedAt: Type.Optional(Type.String()),
+});
 const BillingProviderStatusResponse = object({
   checkoutsPaused: Type.Boolean(),
   stripe: object({
     enabled: Type.Boolean(),
     environment: ProviderEnvironment,
     missingConfiguration: Type.Array(Type.String()),
-    webhook: object({
-      state: Type.Union([
-        Type.Literal('ready'),
-        Type.Literal('missing_endpoint'),
-        Type.Literal('missing_events'),
-        Type.Literal('unavailable'),
-        Type.Literal('not_configured'),
-      ]),
-      endpointUrl: Type.String(),
-      requiredEvents: Type.Array(Type.String()),
-      missingEvents: Type.Array(Type.String()),
-      checkedAt: Type.Optional(Type.String()),
-    }),
+    webhook: StripeWebhookHealthResponse,
   }),
   crypto: object({
     enabled: Type.Boolean(),
@@ -928,6 +929,7 @@ register('POST', '/v1/billing/cancel', { headers: billingIdempotencyKeyHeadersSc
 register('GET', '/v1/billing', {});
 register('POST', '/v1/billing/portal', {});
 register('GET', '/v1/billing/provider-status', { querystring: billingProviderStatusQuerySchema });
+register('POST', '/v1/billing/stripe-webhook/sync', {});
 register('PUT', '/v1/billing/checkouts', { body: billingCheckoutControlBodySchema });
 register('GET', '/v1/billing/subscriptions', {
   querystring: billingSubscriptionsQuerySchema,
@@ -1186,6 +1188,7 @@ register('GET', '/v1/auth/sessions', { response: { 200: AuthSessionListResponse 
 register('DELETE', '/v1/auth/sessions/:id', { params: object({ id: Identifier }), response: { 200: OkResponse } });
 register('POST', '/v1/auth/sessions/revoke-others', { response: { 200: AuthRevokeOthersResponse } });
 register('GET', '/v1/billing/provider-status', { response: { 200: BillingProviderStatusResponse } });
+register('POST', '/v1/billing/stripe-webhook/sync', { response: { 200: object({ webhook: StripeWebhookHealthResponse }), 401: ErrorEnvelope, 403: ErrorEnvelope, 409: ErrorEnvelope, 502: ErrorEnvelope, 503: ErrorEnvelope } });
 register('PUT', '/v1/billing/checkouts', { response: { 200: BillingCheckoutControlResponse, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope, 503: ErrorEnvelope } });
 register('GET', '/v1/billing/webhooks/inbox', { response: { 200: WebhookInboxPage } });
 register('GET', '/v1/dashboard/doctor', { response: { 200: dashboardDoctorResponseSchema } });

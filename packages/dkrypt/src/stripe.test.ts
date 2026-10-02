@@ -15,6 +15,7 @@ import { config } from '#config.js';
 import { billingRoutes, processStripeEvent } from '#routes/billing.js';
 import { buildTestServer } from '#testServer.js';
 import { STRIPE_WEBHOOK_EVENTS } from '#stripeWebhookEvents.js';
+import { clearStripeWebhookHealthCache } from '#stripeWebhookHealth.js';
 import { getAuditLog, getUserEffectivePermissions } from '#store/state.js';
 import { flushTelemetry } from '#telemetry.js';
 import { setSessionCookie } from '#session.js';
@@ -1114,6 +1115,94 @@ describe('Stripe billing webhooks', () => {
       expect(healthChecks).toBe(2);
       expect(forceRefreshValues).toEqual([false, true]);
     } finally {
+      await server.close();
+    }
+  });
+
+  test('only billing managers can synchronize events on the existing Stripe webhook endpoint', async () => {
+    const previousSecretKey = config.stripeSecretKey;
+    const previousPublicBaseUrl = config.publicBaseUrl;
+    config.stripeSecretKey = 'sk_test_webhook_sync';
+    config.publicBaseUrl = 'https://dkrypt.example';
+    clearStripeWebhookHealthCache();
+    const endpoint = {
+      id: `we_${crypto.randomUUID()}`,
+      url: 'https://dkrypt.example/v1/stripe/webhook',
+      status: 'enabled',
+      enabled_events: ['checkout.session.completed'],
+      secret: 'whsec_preserved',
+    };
+    const updates: Array<{ id: string; parameters: Record<string, unknown> }> = [];
+    const stripeClient = {
+      webhookEndpoints: {
+        list: async () => ({ data: [endpoint], has_more: false }),
+        update: async (id: string, parameters: Record<string, unknown>) => {
+          updates.push({ id, parameters });
+          Object.assign(endpoint, parameters);
+          return endpoint;
+        },
+      },
+    } as unknown as Stripe;
+    const server = await buildTestServer({ includePublicRoutes: false, stripeClient: () => stripeClient });
+
+    try {
+      const anonymous = await server.inject({ method: 'POST', url: '/v1/billing/stripe-webhook/sync' });
+      const viewer = await server.inject({ method: 'POST', url: '/v1/billing/stripe-webhook/sync', headers: { cookie: createSessionCookie(0n) } });
+      const manager = await server.inject({ method: 'POST', url: '/v1/billing/stripe-webhook/sync', headers: { cookie: createSessionCookie(PermissionFlag.manageBilling) } });
+
+      expect(anonymous.statusCode).toBe(401);
+      expect(viewer.statusCode).toBe(403);
+      expect(manager.statusCode).toBe(200);
+      expect(manager.json().webhook).toMatchObject({ state: 'ready', endpointUrl: endpoint.url, missingEvents: [] });
+      expect(updates).toEqual([{ id: endpoint.id, parameters: { enabled_events: [...STRIPE_WEBHOOK_EVENTS] } }]);
+      expect(endpoint.secret).toBe('whsec_preserved');
+      expect(getAuditLog()).toContainEqual(expect.objectContaining({
+        action: 'billing.webhook.sync',
+        target: endpoint.url,
+        actor: 'root',
+      }));
+    } finally {
+      config.stripeSecretKey = previousSecretKey;
+      config.publicBaseUrl = previousPublicBaseUrl;
+      clearStripeWebhookHealthCache();
+      await server.close();
+    }
+  });
+
+  test('Stripe webhook synchronization does not create a missing endpoint', async () => {
+    const previousSecretKey = config.stripeSecretKey;
+    config.stripeSecretKey = 'sk_test_webhook_sync';
+    clearStripeWebhookHealthCache();
+    let updateCalls = 0;
+    let createCalls = 0;
+    const stripeClient = {
+      webhookEndpoints: {
+        list: async () => ({ data: [], has_more: false }),
+        update: async () => { updateCalls += 1; },
+        create: async () => { createCalls += 1; },
+      },
+    } as unknown as Stripe;
+    const server = await buildTestServer({ includePublicRoutes: false, stripeClient: () => stripeClient });
+
+    try {
+      const response = await server.inject({
+        method: 'POST',
+        url: '/v1/billing/stripe-webhook/sync',
+        headers: { cookie: createSessionCookie(PermissionFlag.manageBilling) },
+      });
+
+      expect(response.statusCode).toBe(409);
+      expect(response.json()).toMatchObject({ code: 'stripe_webhook_endpoint_missing', retryable: false });
+      expect(updateCalls).toBe(0);
+      expect(createCalls).toBe(0);
+      expect(getAuditLog()).toContainEqual(expect.objectContaining({
+        action: 'billing.webhook.sync',
+        detail: 'no enabled matching endpoint found; no changes made',
+        actor: 'root',
+      }));
+    } finally {
+      config.stripeSecretKey = previousSecretKey;
+      clearStripeWebhookHealthCache();
       await server.close();
     }
   });

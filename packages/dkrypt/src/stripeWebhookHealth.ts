@@ -19,6 +19,13 @@ export interface StripeWebhookHealth {
   checkedAt?: string;
 }
 
+export class StripeWebhookEndpointNotFoundError extends Error {
+  constructor(readonly endpointUrl: string) {
+    super(`enabled Stripe webhook endpoint was not found at ${endpointUrl}`);
+    this.name = 'StripeWebhookEndpointNotFoundError';
+  }
+}
+
 let cachedStatus: { endpointUrl: string; expiresAt: number; status: StripeWebhookHealth } | undefined;
 
 function cloneStatus(status: StripeWebhookHealth): StripeWebhookHealth {
@@ -27,6 +34,37 @@ function cloneStatus(status: StripeWebhookHealth): StripeWebhookHealth {
 
 export function clearStripeWebhookHealthCache(): void {
   cachedStatus = undefined;
+}
+
+async function findEnabledEndpoint(client: Stripe | undefined, endpointUrl: string): Promise<Stripe.WebhookEndpoint | undefined> {
+  const requestOptions = { timeout: API_TIMEOUT_MS, maxNetworkRetries: 0 };
+  let startingAfter: string | undefined;
+
+  while (true) {
+    const parameters = { limit: 100, ...(startingAfter ? { starting_after: startingAfter } : {}) };
+    const page = client
+      ? await client.webhookEndpoints.list(parameters, requestOptions)
+      : await stripeRequest((activeClient) => activeClient.webhookEndpoints.list(parameters, requestOptions));
+    const endpoint = page.data.find((candidate) => candidate.url === endpointUrl && candidate.status === 'enabled');
+    if (endpoint || !page.has_more || page.data.length === 0) return endpoint;
+    startingAfter = page.data.at(-1)?.id;
+    if (!startingAfter) return undefined;
+  }
+}
+
+export async function syncStripeWebhookEvents(client?: Stripe, now = Date.now()): Promise<StripeWebhookHealth> {
+  const endpointUrl = new URL(endpointPath, config.publicBaseUrl).toString();
+  const endpoint = await findEnabledEndpoint(client, endpointUrl);
+  if (!endpoint) throw new StripeWebhookEndpointNotFoundError(endpointUrl);
+  const parameters = { enabled_events: [...STRIPE_WEBHOOK_EVENTS] };
+  const requestOptions = { timeout: API_TIMEOUT_MS, maxNetworkRetries: 0 };
+  if (client) {
+    await client.webhookEndpoints.update(endpoint.id, parameters, requestOptions);
+  } else {
+    await stripeRequest((activeClient) => activeClient.webhookEndpoints.update(endpoint.id, parameters, requestOptions));
+  }
+  clearStripeWebhookHealthCache();
+  return getStripeWebhookHealth(client, now, true);
 }
 
 export async function getStripeWebhookHealth(client: Stripe | undefined, now = Date.now(), forceRefresh = false): Promise<StripeWebhookHealth> {
@@ -38,20 +76,7 @@ export async function getStripeWebhookHealth(client: Stripe | undefined, now = D
 
   const checkedAt = new Date(now).toISOString();
   try {
-    const requestOptions = { timeout: API_TIMEOUT_MS, maxNetworkRetries: 0 };
-    let startingAfter: string | undefined;
-    let endpoint: Stripe.WebhookEndpoint | undefined;
-
-    while (true) {
-      const parameters = { limit: 100, ...(startingAfter ? { starting_after: startingAfter } : {}) };
-      const page = client
-        ? await client.webhookEndpoints.list(parameters, requestOptions)
-        : await stripeRequest((activeClient) => activeClient.webhookEndpoints.list(parameters, requestOptions));
-      endpoint = page.data.find((candidate) => candidate.url === endpointUrl && candidate.status === 'enabled');
-      if (endpoint || !page.has_more || page.data.length === 0) break;
-      startingAfter = page.data.at(-1)?.id;
-      if (!startingAfter) break;
-    }
+    const endpoint = await findEnabledEndpoint(client, endpointUrl);
 
     const configuredEvents = new Set(endpoint?.enabled_events ?? []);
     const missingEvents = configuredEvents.has('*') ? [] : STRIPE_WEBHOOK_EVENTS.filter((event) => !configuredEvents.has(event));
