@@ -4,10 +4,10 @@
   import DecryptCompletion from '#components/DecryptCompletion.svelte';
   import OnboardingBanner from '#components/OnboardingBanner.svelte';
   import { batchDecryptJumpState, focusSearchJumpState } from '#lib/ui.svelte';
-  import ActiveJobsPanel from '#tabs/home/ActiveJobsPanel.svelte';
-  import ArtifactLibrary from '#tabs/home/ArtifactLibrary.svelte';
-  import DecryptPanel from '#tabs/home/DecryptPanel.svelte';
-  import JobHistoryPanel from '#tabs/home/JobHistoryPanel.svelte';
+  import ArtifactLibrary from '#features/artifacts/ArtifactLibrary.svelte';
+  import ActiveJobsPanel from '#features/jobs/ActiveJobsPanel.svelte';
+  import DecryptPanel from '#features/jobs/DecryptPanel.svelte';
+  import JobHistoryPanel from '#features/jobs/JobHistoryPanel.svelte';
 
   let decryptPanel: DecryptPanel | undefined = $state();
 

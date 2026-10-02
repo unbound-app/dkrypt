@@ -48,9 +48,9 @@
 	import { showToast } from "#lib/ui.svelte";
 	import { loadTestFlightCatalog, testFlightCatalogState } from "#lib/testflightCatalog.svelte";
 	import { cn } from "#lib/utils";
-	import TestFlightPickerDialog from "#tabs/home/TestFlightPickerDialog.svelte";
-	import TestFlightInviteDialog from "#tabs/home/TestFlightInviteDialog.svelte";
-	import VersionPickerDialog from "#tabs/home/VersionPickerDialog.svelte";
+	import TestFlightPickerDialog from "#features/testflight/TestFlightPickerDialog.svelte";
+	import TestFlightInviteDialog from "#features/testflight/TestFlightInviteDialog.svelte";
+	import VersionPickerDialog from "#features/jobs/VersionPickerDialog.svelte";
 
 	let term = $state("");
 	let results = $state<AppStoreSearchResult[]>([]);
