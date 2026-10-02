@@ -4,16 +4,16 @@
   import { sessionHasAnyPermission, sessionHasPermission } from '#lib/session.svelte';
   import { setSettingsSubtab, tabState } from '#lib/ui.svelte';
   import { createVisitedTabs } from '#lib/visitedTabs.svelte';
-  import BackupSettings from '#tabs/settings/BackupSettings.svelte';
+  import BackupSettings from '#features/administration/BackupSettings.svelte';
   import BillingSettings from '#features/billing/BillingManagement.svelte';
-  import ArtifactStorageSettings from '#tabs/settings/ArtifactStorageSettings.svelte';
-  import DevicesSettings from '#tabs/settings/DevicesSettings.svelte';
-  import ProjectsSettings from '#tabs/settings/ProjectsSettings.svelte';
-  import RolesSettings from '#tabs/settings/RolesSettings.svelte';
-  import SchedulerSettings from '#tabs/settings/SchedulerSettings.svelte';
-  import SystemDoctorSettings from '#tabs/settings/SystemDoctorSettings.svelte';
-  import TestFlightSettings from '#tabs/settings/TestFlightSettings.svelte';
-  import UsersSettings from '#tabs/settings/UsersSettings.svelte';
+  import ArtifactStorageSettings from '#features/artifacts/ArtifactStorageSettings.svelte';
+  import DevicesSettings from '#features/devices/DevicesSettings.svelte';
+  import ProjectsSettings from '#features/administration/ProjectsSettings.svelte';
+  import RolesSettings from '#features/administration/RolesSettings.svelte';
+  import SchedulerSettings from '#features/scheduler/SchedulerSettings.svelte';
+  import SystemDoctorSettings from '#features/administration/SystemDoctorSettings.svelte';
+  import TestFlightSettings from '#features/testflight/TestFlightSettings.svelte';
+  import UsersSettings from '#features/administration/UsersSettings.svelte';
 
   const ALL_SUBTABS: { id: string; label: string; requires: bigint[]; requiresAll?: bigint[] }[] = [
     { id: 'scheduler', label: 'Automation', requires: [PermissionFlag.viewAutomation, PermissionFlag.manageAutomation] },
