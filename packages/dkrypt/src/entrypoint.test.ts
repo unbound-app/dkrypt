@@ -6,6 +6,7 @@ const entrypoint = readFileSync(path.resolve(import.meta.dir, '../entrypoint.sh'
 const dockerfile = readFileSync(path.resolve(import.meta.dir, '../Dockerfile'), 'utf8');
 const compose = readFileSync(path.resolve(import.meta.dir, '../../../docker-compose.yml'), 'utf8');
 const deploymentWorkflow = readFileSync(path.resolve(import.meta.dir, '../../../.github/workflows/deploy.yml'), 'utf8');
+const shutdownRecoveryWorkflow = readFileSync(path.resolve(import.meta.dir, '../../../.github/workflows/shutdown-recovery-smoke.yml'), 'utf8');
 const composeUpCommand = 'DKRYPT_IMAGE="$IMAGE" docker compose --env-file /home/adrian/.local/share/dkrypt/.env --project-name dkrypt -f /home/adrian/.local/share/dkrypt/compose.yml up -d --no-build';
 
 test('every device bridge launch runs with USB access and API socket group access', () => {
@@ -158,6 +159,17 @@ test('production smoke verifies the saved Rust pairing, USB agent, and decrypt S
   expect(deploymentWorkflow).toContain("grep -q '/root/.ipadecrypt'");
   expect(deploymentWorkflow).toContain('docker exec -i --user 10001:10001');
   expect(deploymentWorkflow).not.toContain('process.kill(');
+});
+
+test('production recovery smoke can target a device-visible uncached TestFlight build', () => {
+  expect(shutdownRecoveryWorkflow).toContain('source_channel:');
+  expect(shutdownRecoveryWorkflow).toContain('default: appstore');
+  expect(shutdownRecoveryWorkflow).toContain("SOURCE_CHANNEL: ${{ inputs.source_channel || 'appstore' }}");
+  expect(shutdownRecoveryWorkflow).toContain("if [[ \"$SOURCE_CHANNEL\" == \"testflight\" ]]; then");
+  expect(shutdownRecoveryWorkflow).toContain("listTestFlightSmokeCandidates(bundleId, device)");
+  expect(shutdownRecoveryWorkflow).toContain("/v1/dashboard/testflight/decrypt");
+  expect(shutdownRecoveryWorkflow).toContain('RUN_DKRYPT_PRODUCTION_SHUTDOWN_RECOVERY');
+  expect(shutdownRecoveryWorkflow).toContain('EXISTING_JOB_ID');
 });
 
 test('production smoke checks bridge-private pairing material as root', () => {

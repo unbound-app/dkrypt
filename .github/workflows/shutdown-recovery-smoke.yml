@@ -16,6 +16,19 @@ on:
         description: Optional active decrypt job to continue monitoring without submitting another
         required: false
         type: string
+      source_channel:
+        description: TestFlight may update the selected app on the iPad; App Store is the default
+        required: false
+        default: appstore
+        type: choice
+        options:
+          - appstore
+          - testflight
+      testflight_bundle_id:
+        description: Device-visible TestFlight app to use when source_channel is testflight
+        required: false
+        default: com.hammerandchisel.discord
+        type: string
 
 permissions:
   contents: read
@@ -34,6 +47,8 @@ jobs:
           CONFIRMATION: ${{ inputs.confirmation }}
           DIAGNOSTIC_ONLY: ${{ inputs.diagnostic_only }}
           EXISTING_JOB_ID: ${{ inputs.existing_job_id }}
+          SOURCE_CHANNEL: ${{ inputs.source_channel || 'appstore' }}
+          TESTFLIGHT_BUNDLE_ID: ${{ inputs.testflight_bundle_id || 'com.hammerandchisel.discord' }}
           EXPECTED_BUILD_REF: ${{ github.sha }}
         run: |
           set -euo pipefail
@@ -186,6 +201,82 @@ jobs:
             fi
           fi
           if [[ -z "$submission_output" ]]; then
+            if [[ "$SOURCE_CHANNEL" == "testflight" ]]; then
+              submission_output="$(run_dkrypt_bun 10001:10001 -e TESTFLIGHT_BUNDLE_ID="$TESTFLIGHT_BUNDLE_ID" <<'JS'
+          const { config } = await import('/app/src/config.ts');
+          const { inspectDeploymentSmokeLogin } = await import('/app/src/deploymentSmokeAssertions.ts');
+          const { listTestFlightSmokeCandidates } = await import('/app/src/jobs/testFlightSmoke.ts');
+          const { PermissionFlag } = await import('/app/src/permissions.ts');
+          const { setSessionCookie } = await import('/app/src/session.ts');
+          const { getPrimaryDevice } = await import('/app/src/store/state.ts');
+          const base = `http://127.0.0.1:${process.env.PORT || 8080}`;
+          const bundleId = process.env.TESTFLIGHT_BUNDLE_ID;
+          const device = getPrimaryDevice();
+          if (!device?.udid || device.host || device.usbmuxNetwork === true) throw new Error('primary device is not a directly paired USB device');
+          const candidates = await listTestFlightSmokeCandidates(bundleId, device);
+          if (candidates.length === 0) throw new Error(`no uncached, unexpired TestFlight build is available for ${bundleId}`);
+          const login = await fetch(`${base}/v1/auth/login`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ password: config.adminPassword }),
+            signal: AbortSignal.timeout(10_000),
+          });
+          const loginBody = await login.json().catch(() => ({}));
+          const loginState = inspectDeploymentSmokeLogin(login.status, loginBody.code);
+          let sessionCookie = login.headers.get('set-cookie')?.split(';', 1)[0] ?? '';
+          if (loginState.rootMfaChallenge) {
+            setSessionCookie({ setHeader: (_name, value) => { sessionCookie = value; } }, {
+              sub: 'root',
+              permissions: PermissionFlag.administrator,
+              mfaVerified: true,
+            });
+            sessionCookie = sessionCookie.split(';', 1)[0];
+          }
+          if (!sessionCookie.startsWith('session=')) throw new Error('production smoke login did not issue a session cookie');
+          const headers = {
+            cookie: sessionCookie,
+            origin: new URL(config.publicBaseUrl).origin,
+            'sec-fetch-site': 'same-origin',
+            'content-type': 'application/json',
+          };
+          const logoutSession = () => fetch(`${base}/v1/auth/logout`, { method: 'POST', headers, signal: AbortSignal.timeout(5_000) }).catch(() => {});
+          let selected;
+          try {
+            for (const candidate of candidates) {
+              const submittedAt = Date.now();
+              const response = await fetch(`${base}/v1/dashboard/testflight/decrypt`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({
+                  bundleId,
+                  appId: candidate.appId,
+                  build: candidate.build,
+                  deviceId: device.id,
+                  projectId: 'default',
+                }),
+                signal: AbortSignal.timeout(10_000),
+              });
+              const job = await response.json().catch(() => ({}));
+              if (response.status !== 202 || !job.id) {
+                throw new Error(`TestFlight decrypt request failed with HTTP ${response.status}: ${job.message ?? job.error ?? 'unknown error'}`);
+              }
+              if (job.status === 'done' || job.status === 'failed' || job.cacheHit === true) continue;
+              if (Date.parse(job.createdAt) < submittedAt) continue;
+              selected = { jobId: job.id, bundleId };
+              break;
+            }
+          } catch (error) {
+            await logoutSession();
+            throw error;
+          }
+          if (!selected) {
+            await logoutSession();
+            throw new Error(`all available TestFlight builds for ${bundleId} were cached, active, or completed before the recovery test`);
+          }
+          process.stdout.write(`${selected.jobId}\n${sessionCookie}\n${selected.bundleId}\n`);
+          JS
+              )"
+            else
             submission_output="$(run_dkrypt_bun 10001:10001 <<'JS'
           const { config } = await import('/app/src/config.ts');
           const { inspectDeploymentSmokeLogin } = await import('/app/src/deploymentSmokeAssertions.ts');
@@ -313,6 +404,7 @@ jobs:
           }
           JS
             )"
+            fi
           fi
           mapfile -t submission_lines <<< "$submission_output"
           if [[ ${#submission_lines[@]} -lt 3 ]]; then
