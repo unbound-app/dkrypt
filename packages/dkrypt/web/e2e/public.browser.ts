@@ -91,6 +91,9 @@ async function mockAuthenticatedDashboard(page: Page, permissions: string): Prom
   await page.route('**/v1/dashboard/events', async (route) => {
     await route.fulfill({ contentType: 'text/event-stream', body: ': connected\n\n' });
   });
+  await page.route('**/v1/dashboard/jobs/volume*', async (route) => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ days: [] }) });
+  });
   await page.addInitScript(() => {
     localStorage.setItem('onboardingTourSeen', 'true');
     localStorage.setItem('onboardingDismissed', 'true');
@@ -99,6 +102,11 @@ async function mockAuthenticatedDashboard(page: Page, permissions: string): Prom
 
 async function mockVisualDashboardData(page: Page): Promise<void> {
   await page.route('**/v1/dashboard/**', async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/v1/dashboard/jobs/volume') {
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ days: [] }) });
+      return;
+    }
     await route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify({
@@ -1830,6 +1838,62 @@ test('system doctor is hidden from accounts without device-management permission
   await expect(page.getByRole('tab', { name: 'Devices' })).toBeVisible();
   await expect(page.getByRole('tab', { name: 'System' })).toHaveCount(0);
   expect(doctorRequests).toBe(0);
+});
+
+test('status panel handles an unavailable job volume response without an unhandled rejection', async ({ page }) => {
+  await mockStableDashboardEvents(page);
+  await mockAuthenticatedDashboard(page, '2');
+  await page.addInitScript(() => {
+    const target = window as typeof window & { jobVolumeRejections: string[] };
+    target.jobVolumeRejections = [];
+    window.addEventListener('unhandledrejection', (event) => {
+      const message = event.reason instanceof Error ? event.reason.message : String(event.reason);
+      if (message.includes('job volume unavailable') || message.includes("reading 'map'")) target.jobVolumeRejections.push(message);
+    });
+  });
+  let volumeRequests = 0;
+  await page.route('**/v1/dashboard/jobs/volume*', async (route) => {
+    volumeRequests += 1;
+    if (volumeRequests === 1) {
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({}) });
+      return;
+    }
+    if (volumeRequests === 2) {
+      await route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'job volume unavailable' }),
+      });
+      return;
+    }
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ days: [{ date: '2026-10-01', count: 3 }] }),
+    });
+  });
+
+  const volumeResponse = page.waitForResponse((response) => new URL(response.url()).pathname === '/v1/dashboard/jobs/volume');
+  await page.goto('/?tab=home');
+  expect((await volumeResponse).status()).toBe(200);
+  expect(volumeRequests).toBe(1);
+  await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  await expect(page.getByText('Decrypt activity unavailable').first()).toBeVisible();
+
+  const failedRetry = page.waitForResponse((response) => new URL(response.url()).pathname === '/v1/dashboard/jobs/volume');
+  await page.getByRole('button', { name: 'Retry decrypt history' }).first().click();
+  expect((await failedRetry).status()).toBe(503);
+  expect(volumeRequests).toBe(2);
+  await expect(page.getByText('Decrypt activity unavailable').first()).toBeVisible();
+
+  const recoveredRetry = page.waitForResponse((response) => new URL(response.url()).pathname === '/v1/dashboard/jobs/volume');
+  await page.getByRole('button', { name: 'Retry decrypt history' }).first().click();
+  expect((await recoveredRetry).status()).toBe(200);
+  await expect(page.getByText('3 decrypts · last 14 days').first()).toBeVisible();
+  expect(volumeRequests).toBe(3);
+
+  const failures = await page.evaluate(() => (window as typeof window & { jobVolumeRejections: string[] }).jobVolumeRejections);
+  expect(failures).toEqual([]);
+  await expect(page.getByRole('button', { name: 'Home', exact: true })).toBeVisible();
 });
 
 test('device managers can run on-demand service health checks', async ({ page }) => {

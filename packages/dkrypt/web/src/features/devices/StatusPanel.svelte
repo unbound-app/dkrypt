@@ -21,7 +21,8 @@
 		fetchDeviceHealth,
 		fetchDeviceHealthHistory,
 		fetchDeviceTemperatureHistory,
-		fetchJobVolume,
+		observeJobVolume,
+		refreshJobVolume as refreshDashboardJobVolume,
 		type DeviceHealth,
 		type HourlyBatteryBucket,
 		type HourlyHealthBucket,
@@ -128,6 +129,7 @@
 	}
 
 	let volume = $state<{ label: string; value: number }[] | null>(null);
+	let volumeUnavailable = $state(false);
 	let health = $state<DeviceHealth | null>(null);
 	let refreshingHealth = $state(false);
 
@@ -142,23 +144,25 @@
 	}
 
 	$effect(() => {
-		void fetchJobVolume(14).then((r) => {
-			volume = r.days.map((d) => ({
-				label: fmtDayLabel(d.date),
-				value: d.count,
-			}));
+		return observeJobVolume((snapshot) => {
+			const days = snapshot.data?.days;
+			if (Array.isArray(days)) {
+				volume = days
+					.filter(
+						(day) =>
+							typeof day?.date === "string" &&
+							typeof day.count === "number" &&
+							Number.isFinite(day.count),
+					)
+					.map((day) => ({
+						label: fmtDayLabel(day.date),
+						value: day.count,
+					}));
+				volumeUnavailable = Boolean(snapshot.error);
+				return;
+			}
+			if (snapshot.error || snapshot.data !== undefined) volumeUnavailable = true;
 		});
-	});
-
-	$effect(() => {
-		if (liveState.historyAdditions.length > 0) {
-			void fetchJobVolume(14).then((r) => {
-				volume = r.days.map((d) => ({
-					label: fmtDayLabel(d.date),
-					value: d.count,
-				}));
-			});
-		}
 	});
 
 	$effect(() => {
@@ -909,6 +913,19 @@
 				<span
 					>{total} decrypt{total === 1 ? "" : "s"} · last 14 days</span
 				>
+				{#if volumeUnavailable}
+					<span role="status">Refresh unavailable</span>
+					<Button
+						variant="ghost"
+						size="icon"
+						class="h-5 w-5 p-0 text-muted"
+						onclick={() => refreshDashboardJobVolume()}
+						aria-label="Retry decrypt history"
+						title="Retry decrypt history"
+					>
+						<RefreshCw class="h-3 w-3" />
+					</Button>
+				{/if}
 				{#if volumeDeltaPct !== null}
 					<Badge
 						variant={volumeDeltaPct > 0
@@ -927,6 +944,19 @@
 				width={280}
 				ariaLabel="{total} decrypts over the last 14 days"
 			/>
+		</div>
+	{:else if volumeUnavailable}
+		<div role="status" class="border-border mt-1 flex items-center justify-between border-t pt-3 text-xs text-muted">
+			<span>Decrypt activity unavailable</span>
+			<Button
+				variant="ghost"
+				size="sm"
+				class="h-7 px-2 text-[11px]"
+				onclick={() => refreshDashboardJobVolume()}
+				aria-label="Retry decrypt history"
+			>
+				Retry
+			</Button>
 		</div>
 	{/if}
 	{#if overview?.schedulerRunHistory?.length}

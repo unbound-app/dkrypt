@@ -1262,7 +1262,26 @@ export function fetchJobEta(bundleId: string): Promise<{ avgMs: number | null }>
 }
 
 export function fetchJobVolume(days = 14): Promise<{ days: { date: string; count: number }[] }> {
-  return apiJson(`/v1/dashboard/jobs/volume?days=${days}&projectId=${encodeURIComponent(projectSelectionState.id)}`);
+  const path = jobVolumePath(days);
+  return serverStateCache.query(path, () => apiJson<{ days: { date: string; count: number }[] }>(path), SERVER_QUERY_STALE_TIME_MS);
+}
+
+export function observeJobVolume(
+  listener: ServerQueryListener<{ days: { date: string; count: number }[] }>,
+  days = 14,
+): () => void {
+  const path = jobVolumePath(days);
+  return serverStateCache.observe(path, () => apiJson<{ days: { date: string; count: number }[] }>(path), listener, SERVER_QUERY_STALE_TIME_MS);
+}
+
+export function refreshJobVolume(days = 14): void {
+  const path = jobVolumePath(days);
+  if (serverStateCache.getSnapshot(path).isFetching) return;
+  serverStateCache.invalidatePrefix(path);
+}
+
+function jobVolumePath(days: number): string {
+  return `/v1/dashboard/jobs/volume?days=${days}&projectId=${encodeURIComponent(projectSelectionState.id)}`;
 }
 
 export interface JobSloAssessment {
