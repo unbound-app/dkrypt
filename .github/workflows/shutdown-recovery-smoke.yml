@@ -400,12 +400,14 @@ jobs:
           if (!response.ok) throw new Error(`dashboard job timeline failed with HTTP ${response.status}: ${(await response.text()).slice(0, 500)}`);
           const timeline = await response.json();
           const events = Array.isArray(timeline.events) ? timeline.events : [];
-          const latestRequeue = events.filter(event => event.label === 'Requeued after graceful shutdown').at(-1);
-          process.stdout.write(`${timeline.status}\t${timeline.bundleId ?? ''}\t${latestRequeue?.at ?? 0}\t${events.at(-1)?.label ?? ''}\n`);
+          const { isSmokeDecryptActive } = await import('/app/src/jobs/smokeCompletion.ts');
+          const decryptActive = isSmokeDecryptActive(timeline.status, timeline.executionStage);
+          const shutdownRecoveryAt = typeof timeline.shutdownRecoveryAt === 'number' ? timeline.shutdownRecoveryAt : 0;
+          process.stdout.write(`${timeline.status}\t${timeline.bundleId ?? ''}\t${shutdownRecoveryAt}\t${decryptActive}\t${events.at(-1)?.label ?? ''}\n`);
           JS
           }
           parse_job_status() {
-            IFS=$'\t' read -r job_state observed_bundle recovery_event_at progress_label <<< "$1"
+            IFS=$'\t' read -r job_state observed_bundle shutdown_recovery_at decrypt_active progress_label <<< "$1"
             if [[ "$observed_bundle" != "$bundle_id" ]]; then
               echo "dashboard returned an unexpected job for $job_id: $observed_bundle" >&2
               return 1
@@ -415,9 +417,9 @@ jobs:
           for attempt in $(seq 1 120); do
             status="$(read_job_status)"
             parse_job_status "$status"
-            if [[ "$job_state" == running ]]; then
+            if [[ "$job_state" == running && "$decrypt_active" == true ]]; then
               running=1
-              pre_shutdown_recovery_at=$recovery_event_at
+              pre_shutdown_recovery_at=$shutdown_recovery_at
               break
             fi
             if [[ "$job_state" == failed || "$job_state" == done ]]; then
@@ -427,10 +429,16 @@ jobs:
             sleep 5
           done
           if [[ "$running" != 1 ]]; then
-            echo 'production decrypt did not start within 10 minutes; no restart performed' >&2
+            echo 'production decrypt did not reach the ipadecrypt process within 10 minutes; no restart performed' >&2
             exit 1
           fi
-          echo "Sending SIGTERM to production while job $job_id is running"
+          status="$(read_job_status)"
+          parse_job_status "$status"
+          if [[ "$job_state" != running || "$decrypt_active" != true ]]; then
+            echo 'production decrypt left the ipadecrypt process before SIGTERM; no restart performed' >&2
+            exit 1
+          fi
+          echo "Requesting SIGTERM after a final ipadecrypt-live check for job $job_id"
           stopped=1
           docker stop --timeout 150 dkrypt
           container_exit="$(docker inspect --format '{{.State.ExitCode}} {{.State.OOMKilled}}' dkrypt)"
@@ -455,11 +463,19 @@ jobs:
             exit 1
           fi
           recovered=0
+          recovery_outcome=unknown
           for attempt in $(seq 1 60); do
             status="$(read_job_status)"
             parse_job_status "$status"
-            if [[ "$job_state" == done || ( "$recovery_event_at" -gt "$pre_shutdown_recovery_at" && ( "$job_state" == queued || "$job_state" == running ) ) ]]; then
-              echo "Production decrypt became recoverable after shutdown in state $job_state; last event: $progress_label"
+            if [[ "$shutdown_recovery_at" -gt "$pre_shutdown_recovery_at" && ( "$job_state" == queued || "$job_state" == running || "$job_state" == done ) ]]; then
+              echo "Production decrypt was requeued after shutdown and is now $job_state; last event: $progress_label"
+              recovery_outcome=requeued
+              recovered=1
+              break
+            fi
+            if [[ "$job_state" == done ]]; then
+              echo 'Production decrypt completed during shutdown; no job requeue was required'
+              recovery_outcome=completed_during_shutdown
               recovered=1
               break
             fi
@@ -473,7 +489,7 @@ jobs:
             echo 'production job did not return to a recoverable state within two minutes of restart' >&2
             exit 1
           fi
-          run_dkrypt_bun 10001:10001 -e TEST_JOB_ID="$job_id" -e TEST_SESSION_COOKIE="$session_cookie" <<'JS'
+          run_dkrypt_bun 10001:10001 -e TEST_JOB_ID="$job_id" -e TEST_SESSION_COOKIE="$session_cookie" -e RECOVERY_OUTCOME="$recovery_outcome" <<'JS'
           const { waitForSmokeDecryptCompletion } = await import('/app/src/jobs/smokeCompletion.ts');
           const artifact = await waitForSmokeDecryptCompletion({
             baseUrl: `http://127.0.0.1:${process.env.PORT || 8080}`,
@@ -481,5 +497,5 @@ jobs:
             sessionCookie: process.env.TEST_SESSION_COOKIE,
             pollIntervalMs: 5_000,
           });
-          process.stdout.write(`${JSON.stringify({ jobCompleted: true, ...artifact })}\n`);
+          process.stdout.write(`${JSON.stringify({ jobCompleted: true, recoveryOutcome: process.env.RECOVERY_OUTCOME, ...artifact })}\n`);
           JS

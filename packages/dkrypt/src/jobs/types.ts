@@ -9,6 +9,8 @@ export type JobStatus = 'queued' | 'running' | 'done' | 'failed';
 
 export type JobSource = 'manual' | 'scheduler';
 
+export type JobExecutionStage = 'preparing' | 'installing' | 'decrypting' | 'finalizing';
+
 export type { JobFailureClass } from '#util/failureCategory.js';
 
 export interface TestFlightJobSource {
@@ -39,6 +41,7 @@ export interface Job {
   preferredDeviceId?: string;
   priority: number;
   status: JobStatus;
+  executionStage?: JobExecutionStage;
   progress: string;
   timeline?: JobTimelineEvent[];
   warnings?: string[];
@@ -51,6 +54,7 @@ export interface Job {
   schedulerDeadlineAt?: number;
   deadlineExceeded?: boolean;
   shutdownRecoveryPending?: boolean;
+  shutdownRecoveryAt?: number;
   failureClass?: JobFailureClass;
   cancelledBy?: string;
   childProcess?: ChildProcess;

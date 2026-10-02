@@ -73,13 +73,14 @@ describe('recoverPersistedActiveJobs', () => {
       waiters: [],
     };
     const { queued, interrupted } = recoverPersistedActiveJobs([
-      { ...base, id: 'queued', status: 'queued', parentCorrelationId: 'request-recovered-1', traceContext },
-      { ...base, id: 'running', status: 'running', startedAt: 2 },
+      { ...base, id: 'queued', status: 'queued', executionStage: 'decrypting', parentCorrelationId: 'request-recovered-1', traceContext },
+      { ...base, id: 'running', status: 'running', executionStage: 'decrypting', startedAt: 2 },
     ], 3);
 
     expect(queued.map((job) => job.id)).toEqual(['queued']);
     expect(queued[0]?.parentCorrelationId).toBe('request-recovered-1');
     expect(queued[0]?.traceContext).toEqual(traceContext);
+    expect(queued[0]?.executionStage).toBeUndefined();
     expect(interrupted).toHaveLength(1);
     expect(interrupted[0]).toMatchObject({
       id: 'running',
@@ -87,6 +88,7 @@ describe('recoverPersistedActiveJobs', () => {
       error: 'interrupted by dkrypt restart',
       finishedAt: 3,
     });
+    expect(interrupted[0]?.executionStage).toBeUndefined();
   });
 
   test('restores queued scheduler jobs with the scheduler deadline', () => {
@@ -127,6 +129,25 @@ describe('recoverPersistedActiveJobs', () => {
 
     expect(queued[0]?.deadlineAt).toBe(deadlineAt);
     expect(queued[0]?.schedulerDeadlineAt).toBe(schedulerDeadlineAt);
+  });
+
+  test('records graceful shutdown recovery independently from the bounded timeline', () => {
+    const { queued } = recoverPersistedActiveJobs([{
+      id: 'graceful-shutdown-recovery',
+      bundleId: 'com.test.graceful-shutdown-recovery',
+      source: 'manual',
+      status: 'running',
+      progress: 'decrypting',
+      priority: 0,
+      createdAt: 1,
+      startedAt: 2,
+      shutdownRecoveryPending: true,
+      executionStage: 'decrypting',
+      waiters: [],
+    }], 3);
+
+    expect(queued[0]?.shutdownRecoveryAt).toBe(3);
+    expect(queued[0]?.executionStage).toBeUndefined();
   });
 });
 

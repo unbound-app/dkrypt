@@ -131,6 +131,8 @@ function requeueAfterGracefulShutdown(job: Job, now = Date.now()): Job {
     deadlineAt: requeuedDeadlineAt,
     schedulerDeadlineAt: isSchedulerJob ? requeuedDeadlineAt : undefined,
     shutdownRecoveryPending: undefined,
+    shutdownRecoveryAt: now,
+    executionStage: undefined,
     childProcess: undefined,
   };
   appendJobTimelineEvent(requeued, 'Requeued after graceful shutdown', 'queued', now);
@@ -148,7 +150,7 @@ export function recoverPersistedActiveJobs(saved: Job[], now = Date.now()): { qu
   const queued: Job[] = [];
   const interrupted: Job[] = [];
   for (const job of saved) {
-    const restored = { ...job, projectId: job.projectId ?? DEFAULT_PROJECT_ID, childProcess: undefined, waiters: [] };
+    const restored = { ...job, projectId: job.projectId ?? DEFAULT_PROJECT_ID, executionStage: undefined, childProcess: undefined, waiters: [] };
     if (restored.status === 'queued') {
       if (restored.source === 'scheduler') {
         const schedulerDeadlineAt = restored.createdAt + SCHEDULER_JOB_TIMEOUT_MS;

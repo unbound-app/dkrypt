@@ -1459,7 +1459,7 @@ test('native dashboard job inspection serves timelines and validates history que
   const queueHistoryId = `native-job-queue-history-${crypto.randomUUID()}`;
   const missingDeviceId = `missing-device-${crypto.randomUUID()}`;
   const activeJob = enqueueDecryptJob(bundleId, 'manual', { queuedBy: 'root', preferredDeviceId: missingDeviceId });
-  Object.assign(activeJob, { deviceId: 'test-device', transport: 'usb', attempt: 4 });
+  Object.assign(activeJob, { deviceId: 'test-device', transport: 'usb', attempt: 4, executionStage: 'decrypting', shutdownRecoveryAt: 1234 });
   const finishedAt = Date.now();
   recordJobHistory({
     id: historyId,
@@ -1517,6 +1517,17 @@ test('native dashboard job inspection serves timelines and validates history que
     const activeStatus = await server.inject({ method: 'GET', url: `/v1/dashboard/jobs/${activeJob.id}/status`, headers: { cookie } });
     expect(activeStatus.statusCode).toBe(200);
     expect(activeStatus.json()).toMatchObject({ id: activeJob.id, status: 'queued', attempt: 4, deviceId: 'test-device', transport: 'usb' });
+
+    const activeTimeline = await server.inject({ method: 'GET', url: `/v1/dashboard/jobs/${activeJob.id}/timeline`, headers: { cookie } });
+    expect(activeTimeline.statusCode).toBe(200);
+    expect(activeTimeline.json()).toMatchObject({ id: activeJob.id, status: 'queued', shutdownRecoveryAt: 1234 });
+    expect(activeTimeline.json().executionStage).toBeUndefined();
+
+    activeJob.status = 'running';
+    const runningTimeline = await server.inject({ method: 'GET', url: `/v1/dashboard/jobs/${activeJob.id}/timeline`, headers: { cookie } });
+    expect(runningTimeline.statusCode).toBe(200);
+    expect(runningTimeline.json()).toMatchObject({ id: activeJob.id, status: 'running', executionStage: 'decrypting' });
+    activeJob.status = 'queued';
 
     const missingStatus = await server.inject({ method: 'GET', url: `/v1/dashboard/jobs/${historyId}/status`, headers: { cookie } });
     expect(missingStatus.statusCode).toBe(404);

@@ -405,6 +405,13 @@ export const JobTimelineResponse = object({
   correlationId: Identifier,
   bundleId: BundleId,
   status: JobStatus,
+  executionStage: Type.Optional(Type.Union([
+    Type.Literal('preparing'),
+    Type.Literal('installing'),
+    Type.Literal('decrypting'),
+    Type.Literal('finalizing'),
+  ])),
+  shutdownRecoveryAt: Type.Optional(Type.Number()),
   versionLabel: Type.Optional(Type.String()),
   deviceId: Type.Optional(Identifier),
   transport: Type.Optional(deviceTransportSchema),

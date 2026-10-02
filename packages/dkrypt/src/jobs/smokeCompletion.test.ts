@@ -1,10 +1,26 @@
 import { afterEach, expect, test } from 'bun:test';
-import { waitForSmokeDecryptCompletion } from '#jobs/smokeCompletion.js';
+import { isSmokeDecryptActive, waitForSmokeDecryptCompletion } from '#jobs/smokeCompletion.js';
 
 const servers: Array<ReturnType<typeof Bun.serve>> = [];
 
 afterEach(() => {
   for (const server of servers.splice(0)) server.stop(true);
+});
+
+test('the shutdown smoke does not interrupt a job while it is installing', () => {
+  expect(isSmokeDecryptActive('running', 'installing')).toBe(false);
+});
+
+test('the shutdown smoke interrupts only while ipadecrypt is running', () => {
+  expect(isSmokeDecryptActive('running', 'decrypting')).toBe(true);
+});
+
+test('the shutdown smoke does not interrupt a job after ipadecrypt exits', () => {
+  expect(isSmokeDecryptActive('running', 'finalizing')).toBe(false);
+});
+
+test('the shutdown smoke does not interrupt a queued job with a stale decrypt stage', () => {
+  expect(isSmokeDecryptActive('queued', 'decrypting')).toBe(false);
 });
 
 function startStatusServer(responses: Array<Record<string, unknown>>): { url: string; requests: string[]; cookies: string[] } {

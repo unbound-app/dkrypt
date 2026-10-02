@@ -11,6 +11,10 @@ export interface WaitForSmokeDecryptCompletionOptions {
   pollIntervalMs: number;
 }
 
+export function isSmokeDecryptActive(status: unknown, executionStage: unknown): boolean {
+  return status === 'running' && executionStage === 'decrypting';
+}
+
 export async function waitForSmokeDecryptCompletion({
   baseUrl,
   jobId,

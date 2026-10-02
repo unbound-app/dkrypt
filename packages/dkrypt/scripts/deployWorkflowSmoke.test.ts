@@ -96,6 +96,16 @@ test('deployment smoke always verifies authenticated dashboard and event-stream 
   expect(script).toContain('if (!logout.ok) throw new Error');
 });
 
+test('shutdown recovery shell stays inside its YAML run block', () => {
+  const lines = shutdownRecoveryWorkflow().split(/\r?\n/);
+  const runBlockStart = lines.indexOf('        run: |');
+  expect(runBlockStart).toBeGreaterThan(-1);
+  for (const line of lines.slice(runBlockStart + 1)) {
+    if (line.trim().length === 0) continue;
+    expect(line.startsWith('          ')).toBe(true);
+  }
+});
+
 test('deployment USB agent readiness does not require a device SSH key', () => {
   const [script] = deploymentSmokeScripts();
   expect(script).toContain("const usbAgentDevice = { ...primaryDevice, keyPath: '/run/dkrypt/usb-agent-smoke-no-ssh-key' };");
@@ -105,13 +115,15 @@ test('deployment USB agent readiness does not require a device SSH key', () => {
 test('production shutdown recovery waits for an artifact-backed decrypt completion', () => {
   const workflow = shutdownRecoveryWorkflow();
   const recoverableCheck = workflow.indexOf('if [[ "$recovered" != 1 ]]');
-  const completionCheck = workflow.indexOf("import('/app/src/jobs/smokeCompletion.ts')");
+  const completionCheck = workflow.indexOf('waitForSmokeDecryptCompletion', recoverableCheck);
 
   expect(recoverableCheck).toBeGreaterThanOrEqual(0);
   expect(completionCheck).toBeGreaterThan(recoverableCheck);
   expect(workflow).toContain('waitForSmokeDecryptCompletion');
   expect(workflow).toContain('sessionCookie: process.env.TEST_SESSION_COOKIE');
   expect(workflow).toContain('jobCompleted: true');
+  expect(workflow).toContain('Production decrypt completed during shutdown; no job requeue was required');
+  expect(workflow).toContain('Production decrypt was requeued after shutdown');
   expect(workflow).not.toContain('echo "Production decrypt survived shutdown in state $job_state; last event: $progress_label"');
 });
 

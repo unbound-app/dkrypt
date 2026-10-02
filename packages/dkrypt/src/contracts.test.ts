@@ -141,6 +141,7 @@ test('job history, exports, and diagnostics expose structured queue failure deta
   expect(Object.keys(dashboardJobExportEntrySchema.properties)).toContain('queueReason');
   expect(Object.keys(dashboardJobDiagnosticResponseSchema.properties.job.properties)).toContain('queueReason');
   expect(Object.keys(JobTimelineResponse.properties)).toContain('queueReason');
+  expect(Object.keys(JobTimelineResponse.properties)).toContain('executionStage');
   expect(Value.Check(dashboardJobHistoryPageSchema, {
     history: [{ ...historyEntry, failureClass: 'not-a-job-failure-class' }],
     total: 1,

@@ -19,7 +19,7 @@ import { startSpan } from '#telemetry.js';
 import { abortedOperationError, throwIfAborted } from '#util/abort.js';
 
 const log = scopedLogger('jobs');
-import { appendJobTimelineEvent, type Job } from '#jobs/types.js';
+import { appendJobTimelineEvent, type Job, type JobExecutionStage } from '#jobs/types.js';
 
 export async function runDecrypt(job: Job, device: DeviceRecord, signal?: AbortSignal): Promise<void> {
   const parentContext = currentCorrelation();
@@ -37,12 +37,22 @@ export async function runDecrypt(job: Job, device: DeviceRecord, signal?: AbortS
       if (job.filePath?.includes('/.staging/')) await rm(job.filePath, { force: true }).catch(() => {});
       span.end(error);
       throw error;
+    } finally {
+      if (job.executionStage !== undefined) {
+        job.executionStage = undefined;
+        emitJobsChanged();
+      }
     }
   });
 }
 
 async function runDecryptOperation(job: Job, device: DeviceRecord, signal?: AbortSignal): Promise<void> {
   const recordTimeline = (label: string) => appendJobTimelineEvent(job, label, 'running');
+  const setExecutionStage = (executionStage: JobExecutionStage) => {
+    if (job.executionStage === executionStage) return;
+    job.executionStage = executionStage;
+    emitJobsChanged();
+  };
 
   const ensureNotCancelled = () => {
     if (job.cancelledBy) throw new Error(`cancelled by ${job.cancelledBy}`);
@@ -53,6 +63,7 @@ async function runDecryptOperation(job: Job, device: DeviceRecord, signal?: Abor
     }
   };
 
+  setExecutionStage('preparing');
   ensureNotCancelled();
   job.warnings = undefined;
   const health = await getDeviceHealth(device.id, true, signal);
@@ -97,6 +108,7 @@ async function runDecryptOperation(job: Job, device: DeviceRecord, signal?: Abor
 
   report(`autoinstall transaction ${job.id}`);
 
+  setExecutionStage('installing');
   if (job.testflight) {
     await installBuild(job.testflight.appId, job.testflight.build, report, undefined, job.id, undefined, device, signal);
   } else {
@@ -114,8 +126,7 @@ async function runDecryptOperation(job: Job, device: DeviceRecord, signal?: Abor
   }
 
   ensureNotCancelled();
-
-  recordDeviceActivity({ deviceId: device.id, kind: 'job', bundleId: job.bundleId, message: 'Decrypting app bundle' });
+  setExecutionStage('preparing');
 
   await withIpadecrypt(device, async (runtimeDir) => {
     ensureNotCancelled();
@@ -123,6 +134,10 @@ async function runDecryptOperation(job: Job, device: DeviceRecord, signal?: Abor
     await new Promise<void>((resolve, reject) => {
       const child = spawn(config.ipadecryptBin, args, { stdio: ['ignore', 'pipe', 'pipe'], detached: process.platform !== 'win32' });
       job.childProcess = child;
+      child.once('spawn', () => {
+        setExecutionStage('decrypting');
+        report('Decrypting app bundle');
+      });
       const abortChild = () => terminateChildProcess(child, 'SIGTERM');
       signal?.addEventListener('abort', abortChild, { once: true });
       if (signal?.aborted) abortChild();
@@ -148,12 +163,16 @@ async function runDecryptOperation(job: Job, device: DeviceRecord, signal?: Abor
       child.on('error', (err) => {
         signal?.removeEventListener('abort', abortChild);
         if (job.childProcess === child) job.childProcess = undefined;
+        setExecutionStage('finalizing');
         reject(err);
       });
+
+      child.once('exit', () => setExecutionStage('finalizing'));
 
       child.on('close', (code) => {
         signal?.removeEventListener('abort', abortChild);
         if (job.childProcess === child) job.childProcess = undefined;
+        setExecutionStage('finalizing');
         if (signal?.aborted) {
           reject(abortedOperationError(signal));
           return;

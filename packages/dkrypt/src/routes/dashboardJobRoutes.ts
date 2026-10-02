@@ -5,7 +5,7 @@ import { canAccessProject, dashboardHistoryEntry } from '#dashboardJobPresentati
 import { getRouteContract } from '#contracts.js';
 import { jobSummary } from '#jobs/http.js';
 import { getJob } from '#jobs/store.js';
-import type { Job } from '#jobs/types.js';
+import type { Job, JobExecutionStage } from '#jobs/types.js';
 import type { DeviceTransport } from '#apiCommonContracts.js';
 import { getFailureGuidance } from '#util/failureGuidance.js';
 import { fastifyRequireSession, getFastifySession } from '#session.js';
@@ -17,6 +17,8 @@ type TimelineSource = {
   correlationId?: string;
   bundleId: string;
   status: Job['status'];
+  executionStage?: JobExecutionStage;
+  shutdownRecoveryAt?: number;
   versionLabel?: string;
   deviceId?: string;
   transport?: DeviceTransport;
@@ -46,6 +48,8 @@ function dashboardJobTimeline(source: TimelineSource) {
     correlationId: source.correlationId ?? source.id,
     bundleId: source.bundleId,
     status: source.status,
+    executionStage: source.status === 'running' ? source.executionStage : undefined,
+    shutdownRecoveryAt: source.shutdownRecoveryAt,
     versionLabel: source.versionLabel,
     deviceId: source.deviceId,
     transport: source.transport,

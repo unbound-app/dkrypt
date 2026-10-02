@@ -7,6 +7,7 @@ const dockerfile = readFileSync(path.resolve(import.meta.dir, '../Dockerfile'), 
 const compose = readFileSync(path.resolve(import.meta.dir, '../../../docker-compose.yml'), 'utf8');
 const deploymentWorkflow = readFileSync(path.resolve(import.meta.dir, '../../../.github/workflows/deploy.yml'), 'utf8');
 const shutdownRecoveryWorkflow = readFileSync(path.resolve(import.meta.dir, '../../../.github/workflows/shutdown-recovery-smoke.yml'), 'utf8');
+const decryptRunner = readFileSync(path.resolve(import.meta.dir, 'jobs/runner.ts'), 'utf8');
 const composeUpCommand = 'DKRYPT_IMAGE="$IMAGE" docker compose --env-file /home/adrian/.local/share/dkrypt/.env --project-name dkrypt -f /home/adrian/.local/share/dkrypt/compose.yml up -d --no-build';
 
 test('every device bridge launch runs with USB access and API socket group access', () => {
@@ -177,6 +178,22 @@ test('production recovery smoke can target a device-visible uncached TestFlight 
   expect(shutdownRecoveryWorkflow.match(/createDeploymentSmokeSession\(base\)/g)).toHaveLength(3);
   expect(shutdownRecoveryWorkflow).not.toContain('inspectDeploymentSmokeLogin');
   expect(shutdownRecoveryWorkflow).not.toContain('setSessionCookie');
+});
+
+test('shutdown smoke waits for the live ipadecrypt stage before stopping production', () => {
+  const stageEligibility = shutdownRecoveryWorkflow.indexOf('isSmokeDecryptActive(timeline.status, timeline.executionStage)');
+  const lastStageEligibility = shutdownRecoveryWorkflow.lastIndexOf('if [[ "$job_state" == running && "$decrypt_active" == true ]]');
+  const shutdownSignal = shutdownRecoveryWorkflow.indexOf('Requesting SIGTERM after a final ipadecrypt-live check for job');
+
+  expect(decryptRunner).toContain("child.once('spawn', () => {");
+  expect(decryptRunner).toContain("setExecutionStage('decrypting');");
+  expect(decryptRunner).toContain("child.once('exit', () => setExecutionStage('finalizing'));");
+  expect(decryptRunner).toContain("setExecutionStage('finalizing');");
+  expect(stageEligibility).toBeGreaterThan(-1);
+  expect(lastStageEligibility).toBeGreaterThan(stageEligibility);
+  expect(shutdownSignal).toBeGreaterThan(lastStageEligibility);
+  expect(shutdownRecoveryWorkflow).toContain('production decrypt did not reach the ipadecrypt process within 10 minutes; no restart performed');
+  expect(shutdownRecoveryWorkflow).toContain('production decrypt left the ipadecrypt process before SIGTERM; no restart performed');
 });
 
 test('production smoke checks bridge-private pairing material as root', () => {
