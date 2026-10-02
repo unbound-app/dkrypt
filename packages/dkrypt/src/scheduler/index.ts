@@ -29,10 +29,10 @@ import {
   DEFAULT_PROJECT_ID,
   updateSchedulerRunOutcome,
 } from '#store/state.js';
-import type { TFBuild } from '#testflight.js';
 import { listBuilds, listTrains } from '#testflight.js';
 import { dispatchTargetKey, filterPendingDispatchTargets } from '#scheduler/pendingDispatch.js';
 import { aggregateWorkflowRunStatus, selectWorkflowRunUrl, workflowRunStatus } from '#scheduler/completion.js';
+import { checkForTestFlightUpdate as checkTestFlightUpdate, type TestFlightUpdateCheck } from '#scheduler/testFlightUpdate.js';
 import { normalizeVersion } from '#util/version.js';
 import { listAppVersions } from '#versions.js';
 import { dispatchIpaUpdate, findDispatchedRun, getGitHubRateLimitBudget, getRun, getWorkflowFailureSummary, measureGitHubRequests, releaseTagExists, releaseVersionExists, type WorkflowRun } from '#scheduler/github.js';
@@ -99,99 +99,22 @@ export async function checkForUpdate(watch: AppWatch): Promise<UpdateCheck> {
   };
 }
 
-export interface TestFlightUpdateCheck {
-  ok: boolean;
-  appId?: number;
-  latestTag?: string;
-  build?: TFBuild;
-  alreadyReleased?: boolean;
-  wouldDispatch: boolean;
-  reason: string;
-}
+export { type TestFlightUpdateCheck } from '#scheduler/testFlightUpdate.js';
 
-function testFlightTrainMatchesPolicy(trainVersion: string, watch: AppWatch): boolean {
-  return watch.testFlightPolicy !== 'train' || trainVersion === watch.testFlightTrain;
-}
-
-function isExpiredTestFlightBuild(build: TFBuild): boolean {
-  return Boolean(build.expiration && Number.isFinite(Date.parse(build.expiration)) && Date.parse(build.expiration) <= Date.now());
-}
-
-export async function checkForTestFlightUpdate(watch: AppWatch): Promise<TestFlightUpdateCheck> {
-  if (!watch.bundleId) {
-    return { ok: true, wouldDispatch: false, reason: 'No watch bundle ID configured' };
-  }
-
-  let appId: number;
-  try {
-    appId = (await lookupCurrentVersion(watch.bundleId)).trackId;
-  } catch (err) {
-    return { ok: false, wouldDispatch: false, reason: `iTunes lookup failed: ${String(err)}` };
-  }
-
-  let trains: Awaited<ReturnType<typeof listTrains>>;
-  try {
-    trains = await listTrains(appId);
-  } catch (err) {
-    return { ok: false, appId, wouldDispatch: false, reason: `TestFlight trains lookup failed: ${String(err)}` };
-  }
-
-  let latestBuild: TFBuild | undefined;
-  const eligibleTrains = trains.filter((train) => testFlightTrainMatchesPolicy(train.trainVersion, watch));
-  if (eligibleTrains.length === 0) {
-    return { ok: true, appId, wouldDispatch: false, reason: 'No TestFlight trains matched this watch policy' };
-  }
-
-  for (const train of eligibleTrains) {
-    let builds: TFBuild[];
-    try {
-      builds = await listBuilds(appId, train.trainVersion);
-    } catch (err) {
-      log.error('failed to list TestFlight builds for train', { appId, trainVersion: train.trainVersion, error: String(err) });
-      continue;
-    }
-    for (const build of builds) {
-      if (watch.testFlightPolicy === 'latestNonExpired' && isExpiredTestFlightBuild(build)) continue;
-      const buildNum = Number.parseInt(build.cfBundleVersion, 10) || 0;
-      const latestNum = latestBuild ? Number.parseInt(latestBuild.cfBundleVersion, 10) || 0 : -1;
-      if (buildNum > latestNum) latestBuild = build;
-    }
-  }
-
-  if (!latestBuild) {
-    return { ok: true, appId, wouldDispatch: false, reason: 'No TestFlight builds found' };
-  }
-
-  const latestTag = `v${latestBuild.cfBundleShortVersion}_${latestBuild.cfBundleVersion}`;
-
-  let alreadyReleased: boolean;
-  try {
-    alreadyReleased = await releaseTagExists(watch.repo, latestTag);
-  } catch (err) {
-    return { ok: false, appId, latestTag, build: latestBuild, wouldDispatch: false, reason: `Failed to verify releases: ${String(err)}` };
-  }
-
-  if (alreadyReleased) {
-    return {
-      ok: true,
-      appId,
-      latestTag,
-      build: latestBuild,
-      alreadyReleased: true,
-      wouldDispatch: false,
-      reason: `${latestTag} already released`,
-    };
-  }
-
-  return {
-    ok: true,
-    appId,
-    latestTag,
-    build: latestBuild,
-    alreadyReleased: false,
-    wouldDispatch: true,
-    reason: `${latestTag} not yet released - would dispatch`,
-  };
+export function checkForTestFlightUpdate(watch: AppWatch): Promise<TestFlightUpdateCheck> {
+  return checkTestFlightUpdate(watch, {
+    lookupCurrentVersion,
+    listTrains,
+    listBuilds: async (appId, trainVersion) => {
+      try {
+        return await listBuilds(appId, trainVersion);
+      } catch (error) {
+        log.error('failed to list TestFlight builds for train', { appId, trainVersion, error: String(error) });
+        throw error;
+      }
+    },
+    releaseTagExists,
+  });
 }
 
 async function pollRunToCompletion(dispatchRepo: string, workflowFile: string, dispatchedAt: Date, event: 'repository_dispatch' | 'workflow_dispatch' = 'repository_dispatch'): Promise<WorkflowRun | undefined> {
