@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test';
-import { listTestFlightSmokeCandidates, type TestFlightSmokeServices } from '#jobs/testFlightSmoke.js';
+import { isTestFlightSmokeDeviceVerified, listTestFlightSmokeCandidates, waitForTestFlightSmokeDeviceVerification, type TestFlightSmokeServices } from '#jobs/testFlightSmoke.js';
+import type { TestFlightCatalogApp } from '#testflightSubscriptions.js';
+import { TESTFLIGHT_VERIFICATION_TTL_MS } from '#testflightPolicy.js';
 import type { DeviceRecord } from '#store/state.js';
 import type { TFBuild, TFDeviceApp } from '#testflight.js';
 
@@ -27,6 +29,49 @@ function services(overrides: Partial<TestFlightSmokeServices> = {}): TestFlightS
 }
 
 describe('TestFlight recovery smoke candidate selection', () => {
+  test('accepts only recently verified access for the selected device', () => {
+    const apps = [{
+      bundleId: app.bundleId,
+      devices: [
+        { id: 'other-ipad', verifiedAt: 90_000 },
+        { id: device.id, verifiedAt: 110_000 },
+      ],
+    }] as TestFlightCatalogApp[];
+
+    expect(isTestFlightSmokeDeviceVerified(apps, app.bundleId, device.id, 110_000)).toBe(true);
+    expect(isTestFlightSmokeDeviceVerified(apps, app.bundleId, 'other-ipad', 110_000)).toBe(true);
+    expect(isTestFlightSmokeDeviceVerified(apps, app.bundleId, 'missing-ipad', 110_000)).toBe(false);
+    expect(isTestFlightSmokeDeviceVerified(apps, app.bundleId, device.id, 2_000_000)).toBe(false);
+  });
+
+  test('retries completed coalesced refreshes until selected-device access is fresh', async () => {
+    let now = 100_000_000;
+    let refreshCalls = 0;
+    let readsInCurrentRefresh = 0;
+
+    await waitForTestFlightSmokeDeviceVerification(app.bundleId, device.id, {
+      readCatalog: async () => {
+        if (refreshCalls === 0) return { apps: [], fetchedAt: 1, refreshing: false };
+        if (refreshCalls >= 3) return { apps: [{ bundleId: app.bundleId, devices: [{ id: device.id, name: 'iPad', verifiedAt: now }] }], fetchedAt: 4, refreshing: false };
+        readsInCurrentRefresh += 1;
+        if (readsInCurrentRefresh === 1) return { apps: [], fetchedAt: refreshCalls, refreshing: true };
+        return {
+          apps: [{ bundleId: app.bundleId, devices: [{ id: device.id, name: 'iPad', verifiedAt: now - TESTFLIGHT_VERIFICATION_TTL_MS - 1 }] }],
+          fetchedAt: refreshCalls + 1,
+          refreshing: false,
+        };
+      },
+      refreshCatalog: async () => {
+        refreshCalls += 1;
+        readsInCurrentRefresh = 0;
+      },
+      now: () => now,
+      wait: async (milliseconds) => { now += milliseconds; },
+    });
+
+    expect(refreshCalls).toBe(3);
+  });
+
   test('refreshes the device catalog and orders uncached, unexpired builds newest first', async () => {
     const calls: unknown[][] = [];
     const candidates = await listTestFlightSmokeCandidates(app.bundleId, device, Date.parse('2026-10-02T00:00:00Z'), services({

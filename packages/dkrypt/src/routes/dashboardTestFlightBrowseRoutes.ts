@@ -24,7 +24,7 @@ import {
   type DeviceRecord,
 } from '#store/state.js';
 import { getVerifiedTestFlightCatalog, TestFlightCatalogUnavailableError, type TestFlightCatalogApp } from '#testflightSubscriptions.js';
-import { isTestFlightVerificationFresh } from '#testflightPolicy.js';
+import { recentlyVerifiedTestFlightDevices } from '#testflightPolicy.js';
 import { externalRequestRateLimiter, fastifyRateLimitPerUser } from '#util/rateLimit.js';
 import { scopedLogger } from '#logger.js';
 
@@ -229,7 +229,7 @@ export function createDashboardTestFlightBrowseRoutes(overrides: Partial<TestFli
         sendError(request, reply, 409, 'TestFlight access must be verified on an enabled device before queueing');
         return;
       }
-      const recentlyVerifiedDevices = verifiedTestFlightApp.devices.filter((device) => isTestFlightVerificationFresh(device.verifiedAt));
+      const recentlyVerifiedDevices = recentlyVerifiedTestFlightDevices(verifiedTestFlightApp.devices);
       if (requestedDevice && !recentlyVerifiedDevices.some((device) => device.id === requestedDevice.id)) {
         sendError(request, reply, 409, 'TestFlight access is not recently verified on the selected device');
         return;

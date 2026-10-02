@@ -167,9 +167,16 @@ test('production recovery smoke can target a device-visible uncached TestFlight 
   expect(shutdownRecoveryWorkflow).toContain("SOURCE_CHANNEL: ${{ inputs.source_channel || 'appstore' }}");
   expect(shutdownRecoveryWorkflow).toContain("if [[ \"$SOURCE_CHANNEL\" == \"testflight\" ]]; then");
   expect(shutdownRecoveryWorkflow).toContain("listTestFlightSmokeCandidates(bundleId, device)");
+  expect(shutdownRecoveryWorkflow).toContain('waitForTestFlightSmokeDeviceVerification(bundleId, device.id, {');
+  expect(shutdownRecoveryWorkflow).toContain('createDeploymentSmokeSession(base)');
+  expect(shutdownRecoveryWorkflow).toContain('/v1/dashboard/testflight/catalog?refresh=true');
+  expect(shutdownRecoveryWorkflow.indexOf('/v1/dashboard/testflight/catalog?refresh=true')).toBeLessThan(shutdownRecoveryWorkflow.indexOf('/v1/dashboard/testflight/decrypt'));
   expect(shutdownRecoveryWorkflow).toContain("/v1/dashboard/testflight/decrypt");
   expect(shutdownRecoveryWorkflow).toContain('RUN_DKRYPT_PRODUCTION_SHUTDOWN_RECOVERY');
   expect(shutdownRecoveryWorkflow).toContain('EXISTING_JOB_ID');
+  expect(shutdownRecoveryWorkflow.match(/createDeploymentSmokeSession\(base\)/g)).toHaveLength(3);
+  expect(shutdownRecoveryWorkflow).not.toContain('inspectDeploymentSmokeLogin');
+  expect(shutdownRecoveryWorkflow).not.toContain('setSessionCookie');
 });
 
 test('production smoke checks bridge-private pairing material as root', () => {

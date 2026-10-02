@@ -3,6 +3,8 @@ import { minimumOsVersionForBuild } from '#jobs/deviceDispatch.js';
 import type { DeviceRecord } from '#store/state.js';
 import { compareVersions } from '#util/version.js';
 import { listBuilds, listTestFlightApps, listTrains, type TFBuild, type TFDeviceApp, type TFTrain } from '#testflight.js';
+import type { TestFlightCatalogApp } from '#testflightSubscriptions.js';
+import { isTestFlightVerificationFresh } from '#testflightPolicy.js';
 
 export interface TestFlightSmokeCandidate {
   appId: number;
@@ -15,6 +17,66 @@ export interface TestFlightSmokeServices {
   listTrains(appId: number, device: DeviceRecord): Promise<TFTrain[]>;
   listBuilds(appId: number, trainVersion: string, device: DeviceRecord): Promise<TFBuild[]>;
   hasCachedArtifact(bundleId: string, buildId: number): boolean;
+}
+
+export interface TestFlightSmokeCatalogState {
+  apps: readonly Pick<TestFlightCatalogApp, 'bundleId' | 'devices'>[];
+  fetchedAt?: number;
+  refreshing?: boolean;
+}
+
+export interface TestFlightSmokeVerificationServices {
+  readCatalog(): Promise<TestFlightSmokeCatalogState>;
+  refreshCatalog(): Promise<void>;
+  now?(): number;
+  wait?(milliseconds: number): Promise<void>;
+}
+
+export function isTestFlightSmokeDeviceVerified(
+  apps: TestFlightSmokeCatalogState['apps'],
+  bundleId: string,
+  deviceId: string,
+  now = Date.now(),
+): boolean {
+  return apps.some((app) => app.bundleId === bundleId && app.devices.some((device) =>
+    device.id === deviceId
+      && typeof device.verifiedAt === 'number'
+      && isTestFlightVerificationFresh(device.verifiedAt, now),
+  ));
+}
+
+export async function waitForTestFlightSmokeDeviceVerification(
+  bundleId: string,
+  deviceId: string,
+  services: TestFlightSmokeVerificationServices,
+  timeoutMs = 90_000,
+): Promise<void> {
+  const now = services.now ?? Date.now;
+  const wait = services.wait ?? ((milliseconds) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
+  let catalog = await services.readCatalog();
+  if (isTestFlightSmokeDeviceVerified(catalog.apps, bundleId, deviceId, now())) return;
+
+  let observedFetchedAt = catalog.fetchedAt;
+  let refreshNeedsRetry = false;
+  await services.refreshCatalog();
+  const deadline = now() + timeoutMs;
+  let nextRefreshAt = now() + 5_000;
+  while (now() < deadline) {
+    catalog = await services.readCatalog();
+    if (isTestFlightSmokeDeviceVerified(catalog.apps, bundleId, deviceId, now())) return;
+
+    if (catalog.refreshing !== true && catalog.fetchedAt !== undefined && catalog.fetchedAt !== observedFetchedAt) {
+      observedFetchedAt = catalog.fetchedAt;
+      refreshNeedsRetry = true;
+    }
+    if (refreshNeedsRetry && now() >= nextRefreshAt) {
+      await services.refreshCatalog();
+      refreshNeedsRetry = false;
+      nextRefreshAt = now() + 5_000;
+    }
+    await wait(1_000);
+  }
+  throw new Error(`TestFlight access verification did not refresh for ${bundleId} on device ${deviceId} within ${timeoutMs / 1_000} seconds`);
 }
 
 const defaultServices: TestFlightSmokeServices = {

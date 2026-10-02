@@ -16,7 +16,7 @@ import {
   getProject,
 } from '#store/state.js';
 import { getVerifiedTestFlightCatalog, TestFlightCatalogUnavailableError } from '#testflightSubscriptions.js';
-import { isTestFlightVerificationFresh } from '#testflightPolicy.js';
+import { recentlyVerifiedTestFlightDevices } from '#testflightPolicy.js';
 import { canAccessProject } from '#dashboardJobPresentation.js';
 import { createHttpErrorEnvelope } from '#util/httpResponse.js';
 
@@ -106,7 +106,7 @@ export function createDashboardDecryptPreflightRoutes(overrides: Partial<Dashboa
       if (testflight && !verifiedTestFlightApp) {
         return sendPreflightError(request.id, reply, 409, 'TestFlight access must be verified on an enabled device before queueing');
       }
-      const recentlyVerifiedDevices = verifiedTestFlightApp?.devices.filter((device) => isTestFlightVerificationFresh(device.verifiedAt)) ?? [];
+      const recentlyVerifiedDevices = recentlyVerifiedTestFlightDevices(verifiedTestFlightApp?.devices ?? []);
       if (testflight && recentlyVerifiedDevices.length === 0) {
         return sendPreflightError(request.id, reply, 409, 'TestFlight access is not recently verified on an enabled device');
       }

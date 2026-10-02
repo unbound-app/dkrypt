@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { isTestFlightVerificationFresh, TESTFLIGHT_VERIFICATION_TTL_MS } from '#testflightPolicy.js';
+import { isTestFlightVerificationFresh, recentlyVerifiedTestFlightDevices, TESTFLIGHT_VERIFICATION_TTL_MS } from '#testflightPolicy.js';
 
 test('TestFlight verification freshness enforces the time limit and rejects invalid timestamps', () => {
   const now = 100_000_000;
@@ -9,4 +9,15 @@ test('TestFlight verification freshness enforces the time limit and rejects inva
   expect(isTestFlightVerificationFresh(now + 1, now)).toBe(false);
   expect(isTestFlightVerificationFresh(Number.NaN, now)).toBe(false);
   expect(isTestFlightVerificationFresh(undefined, now)).toBe(false);
+});
+
+test('recently verified TestFlight devices preserve only device records with fresh timestamps', () => {
+  const now = 100_000_000;
+  const devices = [
+    { id: 'fresh-device', verifiedAt: now },
+    { id: 'stale-device', verifiedAt: now - TESTFLIGHT_VERIFICATION_TTL_MS - 1 },
+    { id: 'unknown-device' },
+  ];
+
+  expect(recentlyVerifiedTestFlightDevices(devices, now)).toEqual([devices[0]]);
 });

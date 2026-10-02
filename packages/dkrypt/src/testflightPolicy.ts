@@ -6,3 +6,7 @@ export function isTestFlightVerificationFresh(verifiedAt: number | undefined, no
     && verifiedAt <= now
     && now - verifiedAt <= TESTFLIGHT_VERIFICATION_TTL_MS;
 }
+
+export function recentlyVerifiedTestFlightDevices<T extends { verifiedAt?: number }>(devices: readonly T[], now = Date.now()): T[] {
+  return devices.filter((device) => isTestFlightVerificationFresh(device.verifiedAt, now));
+}
