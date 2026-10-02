@@ -108,6 +108,7 @@
 	} from "#lib/ui.svelte";
 	import { isFormattingLocalePreference, isInterfaceLanguagePreference, resolveInterfaceLanguage } from "#lib/locale";
 	import { translateMessage, translatePermissionLabel, type MessageKey } from "#lib/messages";
+	import { createVisitedTabs } from "#lib/visitedTabs.svelte";
 
 	import Docs from "#tabs/Docs.svelte";
 	import Billing from "#tabs/Billing.svelte";
@@ -153,6 +154,7 @@
 		| undefined;
 
 	let homeRef: Home | undefined = $state();
+	const mountedTabs = createVisitedTabs(() => tabState.active);
 	let loggingOut = $state(false);
 	let loggingOutEverywhere = $state(false);
 	let sessionsDialogOpen = $state(false);
@@ -1043,27 +1045,37 @@
 				class={tabState.active === "docs" ? "grid grid-cols-1 items-start" : "grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_340px] lg:gap-5"}
 			>
 				<div class="workspace-content min-w-0">
-					<div class:hidden={tabState.active !== "home"}>
-						<Home bind:this={homeRef} />
-					</div>
-					<div class:hidden={tabState.active !== "billing"}>
-						<Billing />
-					</div>
-					<div class:hidden={tabState.active !== "keys"}>
-						<Keys />
-					</div>
-					{#if sessionHasPermission(PermissionFlag.viewLogs)}
+					{#if mountedTabs.home}
+						<div class:hidden={tabState.active !== "home"}>
+							<Home bind:this={homeRef} />
+						</div>
+					{/if}
+					{#if mountedTabs.billing}
+						<div class:hidden={tabState.active !== "billing"}>
+							<Billing />
+						</div>
+					{/if}
+					{#if mountedTabs.keys}
+						<div class:hidden={tabState.active !== "keys"}>
+							<Keys />
+						</div>
+					{/if}
+					{#if sessionHasPermission(PermissionFlag.viewLogs) && mountedTabs.logs}
 						<div class:hidden={tabState.active !== "logs"}>
 							<Logs />
 						</div>
 					{/if}
-					<div class:hidden={tabState.active !== "insights"}>
-						<Insights />
-					</div>
-					{#if tabState.active === "docs"}
-						<Docs />
+					{#if mountedTabs.insights}
+						<div class:hidden={tabState.active !== "insights"}>
+							<Insights />
+						</div>
 					{/if}
-					{#if sessionCanSeeSettings()}
+					{#if mountedTabs.docs}
+						<div class:hidden={tabState.active !== "docs"}>
+							<Docs />
+						</div>
+					{/if}
+					{#if sessionCanSeeSettings() && mountedTabs.settings}
 						<div class:hidden={tabState.active !== "settings"}>
 							<Settings />
 						</div>

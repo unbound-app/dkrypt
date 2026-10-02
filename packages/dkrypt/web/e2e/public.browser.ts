@@ -34,6 +34,15 @@ async function expectVisualSnapshot(page: Page, target: Page | Locator, name: st
   });
 }
 
+async function waitForBrowserFrames(page: Page): Promise<void> {
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      }),
+  );
+}
+
 async function mockAuthenticatedSession(page: Page, permissions: string): Promise<void> {
   await page.unroute('**/v1/auth/session');
   await page.route('**/v1/auth/session', async (route) => {
@@ -130,6 +139,52 @@ async function mockVisualDashboardData(page: Page): Promise<void> {
     await route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) });
   });
 }
+
+test('inactive billing waits for selection and stays mounted after first visit', async ({ page }) => {
+  await mockAuthenticatedDashboard(page, '2');
+  let billingRequests = 0;
+  await page.route('**/v1/billing', async (route) => {
+    billingRequests += 1;
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        enabled: false,
+        provider: 'legacy',
+        environment: 'live',
+        managedPayments: false,
+        missingConfiguration: [],
+        plans: [],
+        legacyBilling: false,
+        entitlement: { planId: 'viewer', decrypt: true, api: false, priority: 0 },
+        providers: {
+          stripe: { enabled: false, ready: false, environment: 'live' },
+          crypto: { enabled: false, ready: false, environment: 'live', provider: 'nowpayments', assets: [] },
+        },
+      }),
+    });
+  });
+
+  const overviewLoaded = page.waitForResponse((response) => new URL(response.url()).pathname === '/v1/dashboard/overview');
+  await page.goto('/?tab=home');
+  await overviewLoaded;
+  await waitForBrowserFrames(page);
+  await expect(page.getByRole('button', { name: 'Home', exact: true })).toBeVisible();
+  expect(billingRequests).toBe(0);
+
+  await page.getByRole('button', { name: 'Plans', exact: true }).click();
+  const billingHeading = page.locator('h2').filter({ hasText: 'Choose your dkrypt plan' });
+  await expect(billingHeading).toBeVisible();
+  await expect.poll(() => billingRequests).toBe(1);
+  const billingRequestsAfterFirstVisit = billingRequests;
+
+  await page.getByRole('button', { name: 'Home', exact: true }).click();
+  await expect(billingHeading).toBeAttached();
+  await expect(billingHeading).toBeHidden();
+  await page.getByRole('button', { name: 'Plans', exact: true }).click();
+  await expect(billingHeading).toBeVisible();
+  await waitForBrowserFrames(page);
+  expect(billingRequests).toBe(billingRequestsAfterFirstVisit);
+});
 
 async function mockStableDashboardEvents(page: Page, failedConnections = 0, holdFirstReconnect = false): Promise<void> {
   await page.addInitScript(({ initialFailures, holdFirstReconnect: shouldHoldFirstReconnect }) => {
@@ -1638,6 +1693,70 @@ test('scheduler calendar preview labels checks deferred by quiet hours', async (
   }).format(new Date(at)), scheduledAt);
   await expect(page.getByRole('main').locator('time')).toContainText(`${expectedScheduleTime} · America/Los_Angeles`);
   await expectAccessible(page, 'main div.max-h-64.divide-border');
+});
+
+test('settings panels load on first visit and remain mounted after revisiting', async ({ page }) => {
+  await mockStableDashboardEvents(page);
+  await mockAuthenticatedDashboard(page, '1');
+  let doctorRequests = 0;
+  let roleRequests = 0;
+  await page.route('**/v1/dashboard/doctor', async (route) => {
+    doctorRequests += 1;
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        checkedAt: '2026-10-02T12:00:00.000Z',
+        deployment: { id: 'run-lazy-settings-1', ref: 'abcdef0123456789' },
+        checks: [],
+      }),
+    });
+  });
+  await page.route('**/v1/dashboard/roles', async (route) => {
+    roleRequests += 1;
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ roles: [] }) });
+  });
+  await page.route('**/v1/dashboard/users', async (route) => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ users: [] }) });
+  });
+  await page.route('**/v1/dashboard/discord/status', async (route) => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ botEnabled: false, guilds: [] }) });
+  });
+
+  const overviewLoaded = page.waitForResponse((response) => new URL(response.url()).pathname === '/v1/dashboard/overview');
+  await page.goto('/?tab=settings&stab=scheduler');
+  await overviewLoaded;
+  await waitForBrowserFrames(page);
+  await expect(page.getByRole('tab', { name: 'Automation' })).toBeVisible();
+  expect(doctorRequests).toBe(0);
+  expect(roleRequests).toBe(0);
+
+  await page.getByRole('tab', { name: 'System' }).click();
+  const doctorHeading = page.locator('h2').filter({ hasText: 'System doctor' });
+  await expect(doctorHeading).toBeVisible();
+  await expect.poll(() => doctorRequests).toBeGreaterThan(0);
+  const doctorRequestsAfterFirstVisit = doctorRequests;
+
+  await page.getByRole('tab', { name: 'Automation' }).click();
+  await expect(doctorHeading).toBeAttached();
+  await expect(doctorHeading).toBeHidden();
+  await page.getByRole('tab', { name: 'System' }).click();
+  await expect(doctorHeading).toBeVisible();
+  await waitForBrowserFrames(page);
+  expect(doctorRequests).toBe(doctorRequestsAfterFirstVisit);
+
+  await page.getByRole('tab', { name: 'Roles' }).click();
+  await expect.poll(() => roleRequests).toBeGreaterThan(0);
+  const rolesDescription = page.getByText('Every signed-in user automatically holds');
+  await expect(rolesDescription).toBeVisible();
+  const roleRequestsAfterFirstVisit = roleRequests;
+  await page.getByRole('tab', { name: 'Automation' }).click();
+  await expect(rolesDescription).toBeAttached();
+  await expect(rolesDescription).toBeHidden();
+  await page.getByRole('tab', { name: 'Roles' }).click();
+  await expect(rolesDescription).toBeVisible();
+  await waitForBrowserFrames(page);
+  expect(roleRequests).toBe(roleRequestsAfterFirstVisit);
 });
 
 test('self-hosters can review configuration doctor checks from Settings', async ({ page }) => {

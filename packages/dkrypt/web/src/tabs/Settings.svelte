@@ -3,6 +3,7 @@
   import { PermissionFlag } from '#lib/permissions';
   import { sessionHasAnyPermission, sessionHasPermission } from '#lib/session.svelte';
   import { setSettingsSubtab, tabState } from '#lib/ui.svelte';
+  import { createVisitedTabs } from '#lib/visitedTabs.svelte';
   import BackupSettings from '#tabs/settings/BackupSettings.svelte';
   import BillingSettings from '#tabs/settings/BillingSettings.svelte';
   import ArtifactStorageSettings from '#tabs/settings/ArtifactStorageSettings.svelte';
@@ -32,58 +33,64 @@
   }
 
   const visibleSubtabs = $derived(ALL_SUBTABS.filter((subtab) => hasAccess(subtab.requires, subtab.requiresAll)));
+  const mountedSubtabs = createVisitedTabs(() => tabState.settingsSubtab);
 
   $effect(() => {
     if (visibleSubtabs.length > 0 && !visibleSubtabs.some((t) => t.id === tabState.settingsSubtab)) {
       setSettingsSubtab(visibleSubtabs[0].id);
     }
   });
+
 </script>
 
 <Tabs items={visibleSubtabs} value={tabState.settingsSubtab} onValueChange={setSettingsSubtab} class="mb-5" />
 
-{#if hasAccess([PermissionFlag.viewAutomation, PermissionFlag.manageAutomation])}
+{#if hasAccess([PermissionFlag.viewAutomation, PermissionFlag.manageAutomation]) && mountedSubtabs.scheduler}
   <div class:hidden={tabState.settingsSubtab !== 'scheduler'}>
     <SchedulerSettings />
   </div>
 {/if}
-{#if hasAccess([PermissionFlag.manageAutomation], [PermissionFlag.requestDecrypt]) && tabState.settingsSubtab === 'storage'}
-  <ArtifactStorageSettings />
+{#if hasAccess([PermissionFlag.manageAutomation], [PermissionFlag.requestDecrypt]) && mountedSubtabs.storage}
+  <div class:hidden={tabState.settingsSubtab !== 'storage'}>
+    <ArtifactStorageSettings />
+  </div>
 {/if}
-{#if hasAccess([PermissionFlag.viewDevices, PermissionFlag.manageDevices])}
+{#if hasAccess([PermissionFlag.viewDevices, PermissionFlag.manageDevices]) && mountedSubtabs.devices}
   <div class:hidden={tabState.settingsSubtab !== 'devices'}>
     <DevicesSettings />
   </div>
 {/if}
-{#if hasAccess([PermissionFlag.manageDevices]) && tabState.settingsSubtab === 'doctor'}
-  <SystemDoctorSettings />
+{#if hasAccess([PermissionFlag.manageDevices]) && mountedSubtabs.doctor}
+  <div class:hidden={tabState.settingsSubtab !== 'doctor'}>
+    <SystemDoctorSettings />
+  </div>
 {/if}
-{#if hasAccess([PermissionFlag.viewUsers, PermissionFlag.manageUsers])}
+{#if hasAccess([PermissionFlag.viewUsers, PermissionFlag.manageUsers]) && mountedSubtabs.users}
   <div class:hidden={tabState.settingsSubtab !== 'users'}>
     <UsersSettings />
   </div>
 {/if}
-{#if hasAccess([PermissionFlag.viewRoles, PermissionFlag.manageRoles])}
+{#if hasAccess([PermissionFlag.viewRoles, PermissionFlag.manageRoles]) && mountedSubtabs.roles}
   <div class:hidden={tabState.settingsSubtab !== 'roles'}>
     <RolesSettings />
   </div>
 {/if}
-{#if hasAccess([PermissionFlag.viewProjects, PermissionFlag.manageProjects])}
+{#if hasAccess([PermissionFlag.viewProjects, PermissionFlag.manageProjects]) && mountedSubtabs.projects}
   <div class:hidden={tabState.settingsSubtab !== 'projects'}>
     <ProjectsSettings />
   </div>
 {/if}
-{#if hasAccess([PermissionFlag.viewBackup, PermissionFlag.manageBackup])}
+{#if hasAccess([PermissionFlag.viewBackup, PermissionFlag.manageBackup]) && mountedSubtabs.backup}
   <div class:hidden={tabState.settingsSubtab !== 'backup'}>
     <BackupSettings />
   </div>
 {/if}
-{#if hasAccess([PermissionFlag.manageTestFlightSubscriptions])}
+{#if hasAccess([PermissionFlag.manageTestFlightSubscriptions]) && mountedSubtabs.testflight}
   <div class:hidden={tabState.settingsSubtab !== 'testflight'}>
     <TestFlightSettings />
   </div>
 {/if}
-{#if hasAccess([PermissionFlag.viewBilling, PermissionFlag.manageBilling])}
+{#if hasAccess([PermissionFlag.viewBilling, PermissionFlag.manageBilling]) && mountedSubtabs.billing}
   <div class:hidden={tabState.settingsSubtab !== 'billing'}>
     <BillingSettings />
   </div>
