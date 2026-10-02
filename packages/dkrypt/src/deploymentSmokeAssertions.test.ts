@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { assertAppStoreSubsystemWhenAgentReady, assertDatabaseSchemaVersion, inspectDeploymentSmokeLogin } from './deploymentSmokeAssertions.js';
+import { assertAppStoreSubsystemWhenAgentReady, assertDatabaseSchemaVersion, assertDeploymentPublicStatus, inspectDeploymentSmokeLogin } from './deploymentSmokeAssertions.js';
 import { LATEST_SQLITE_SCHEMA_VERSION } from './store/sqlite.js';
 
 test('deployment smoke accepts authenticated login and an explicit root MFA challenge', () => {
@@ -25,4 +25,44 @@ test('deployment smoke rejects unknown App Store health when the USB device agen
     expect(() => assertAppStoreSubsystemWhenAgentReady('ready', state)).toThrow(`App Store subsystem is ${state} while the device agent is ready`);
   }
   expect(() => assertAppStoreSubsystemWhenAgentReady('offline', 'unknown')).not.toThrow();
+});
+
+test('deployment smoke accepts an operational service with scheduler-only degradation', () => {
+  expect(() => assertDeploymentPublicStatus({
+    status: 'degraded',
+    components: {
+      service: { state: 'operational' },
+      automation: { state: 'operational' },
+      scheduler: { state: 'degraded' },
+    },
+  })).not.toThrow();
+
+  expect(() => assertDeploymentPublicStatus({
+    status: 'operational',
+    components: {
+      service: { state: 'operational' },
+      automation: { state: 'operational' },
+      scheduler: { state: 'operational' },
+    },
+  })).not.toThrow();
+});
+
+test('deployment smoke rejects service or automation degradation', () => {
+  expect(() => assertDeploymentPublicStatus({
+    status: 'degraded',
+    components: {
+      service: { state: 'operational' },
+      automation: { state: 'degraded' },
+      scheduler: { state: 'operational' },
+    },
+  })).toThrow('deployment is not operational after device recovery');
+
+  expect(() => assertDeploymentPublicStatus({
+    status: 'maintenance',
+    components: {
+      service: { state: 'maintenance' },
+      automation: { state: 'operational' },
+      scheduler: { state: 'operational' },
+    },
+  })).toThrow('deployment is not operational after device recovery');
 });

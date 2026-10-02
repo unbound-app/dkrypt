@@ -333,9 +333,9 @@ jobs:
           }
           const deploymentStatusResponse = await fetchWithTimeout(`${base}/v1/status`);
           const deploymentStatus = await readObject(deploymentStatusResponse);
-          if (deploymentStatusResponse.status !== 200 || deploymentStatus.status !== 'operational' || deploymentStatus.components?.automation?.state !== 'operational') {
-            throw new Error(`deployment is not operational after device recovery: ${JSON.stringify(deploymentStatus)}`);
-          }
+          if (deploymentStatusResponse.status !== 200) throw new Error(`deployment status returned HTTP ${deploymentStatusResponse.status}`);
+          const { assertDeploymentPublicStatus } = await import('/app/src/deploymentSmokeAssertions.ts');
+          assertDeploymentPublicStatus(deploymentStatus);
           const metrics = await (await fetchWithTimeout(`${base}/v1/metrics`, { headers })).text();
           if (!metrics.includes('dkrypt_device_bridge_event_stream_connected{transport="usbmux"} 1')) throw new Error('Rust usbmuxd event stream is not connected');
           const openapi = await (await fetchWithTimeout(`${base}/openapi.json`)).json();
