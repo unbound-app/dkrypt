@@ -2,7 +2,7 @@ import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
 import { fastifyRequireApiKey } from '#auth.js';
 import { peekPrimaryDeviceHealth } from '#deviceHealth.js';
 import { getRustDeviceBridgeStatus } from '#idevice.js';
-import { getEffectiveWatches, getPrimaryDevice, getStateDatabaseStatus, isWatchSchedulable } from '#store/state.js';
+import { getEffectiveWatches, getPrimaryDevice, getStateDatabaseStatus, getWatchHealthRollup, isWatchSchedulable } from '#store/state.js';
 import { renderMetrics } from '#metrics.js';
 import { getMaintenanceStatus } from '#maintenance.js';
 import { getRouteContract } from '#contracts.js';
@@ -85,7 +85,9 @@ export async function getPublicStatus(): Promise<PublicStatusResponse> {
   const primary = getPrimaryDevice();
   const health = peekPrimaryDeviceHealth();
   const maintenance = getMaintenanceStatus();
-  const schedulerEnabled = getEffectiveWatches().some(isWatchSchedulable);
+  const schedulerHealth = getWatchHealthRollup().filter((watch) => watch.schedulable);
+  const schedulerEnabled = schedulerHealth.length > 0;
+  const schedulerFailed = schedulerHealth.some((watch) => watch.lastCheckOk === false);
   const automation: PublicStatusState = !primary
     ? 'not_configured'
     : maintenance.active
@@ -96,10 +98,10 @@ export async function getPublicStatus(): Promise<PublicStatusResponse> {
           ? 'degraded'
           : 'unknown';
   const service: PublicStatusState = databaseOk ? 'operational' : 'maintenance';
-  const scheduler: PublicStatusState = schedulerEnabled ? 'operational' : 'paused';
+  const scheduler: PublicStatusState = schedulerFailed ? 'degraded' : schedulerEnabled ? 'operational' : 'paused';
   const status = !databaseOk || maintenance.active
     ? 'maintenance'
-    : automation === 'degraded' || automation === 'unknown'
+    : automation === 'degraded' || automation === 'unknown' || scheduler === 'degraded'
       ? 'degraded'
       : 'operational';
 

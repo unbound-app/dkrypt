@@ -16,7 +16,7 @@ import { buildServer as buildRawServer } from '#server.js';
 import { dashboardRouter } from '#routes/dashboard.js';
 import { parseDeviceConnection } from '#routes/dashboardDeviceRoutes.js';
 import type { Response } from '#http.js';
-import { addAllowedUser, createApiKey, createDevice, createProject, createRole, createTestFlightSubscription, createWatch, deleteDevice, deleteRole, deleteUserPersonalData, deleteWatch, getEffectiveSettings, recordAudit, recordDeviceActivity, recordGitHubBudgetTelemetry, recordJobHistory, recordNotification, revokeApiKey, updateRole, updateSettings, withdrawTestFlightSubscription } from '#store/state.js';
+import { addAllowedUser, createApiKey, createDevice, createProject, createRole, createTestFlightSubscription, createWatch, deleteDevice, deleteRole, deleteUserPersonalData, deleteWatch, getEffectiveSettings, recordAudit, recordDeviceActivity, recordGitHubBudgetTelemetry, recordJobHistory, recordNotification, recordSchedulerRunOutcome, revokeApiKey, updateRole, updateSchedulerRunOutcome, updateSettings, withdrawTestFlightSubscription } from '#store/state.js';
 import { setSessionCookie } from '#session.js';
 
 test('request trace context is available throughout the Fastify request lifecycle', async () => {
@@ -2577,6 +2577,53 @@ test('Fastify exposes coarse public service status without device details', asyn
     await server.close();
     if (originalBuildRef === undefined) delete process.env.BUILD_REF;
     else process.env.BUILD_REF = originalBuildRef;
+  }
+});
+
+test('public status degrades for a failed scheduled workflow and recovers after success', async () => {
+  const originalToken = config.ghToken;
+  config.ghToken = 'public-status-scheduler-test-token';
+  const bundleId = `com.example.public-status.${crypto.randomUUID()}`;
+  const watch = createWatch({
+    bundleId,
+    repo: 'owner/repo',
+    ghWorkflowFile: 'release.yml',
+    pollCron: '0 * * * *',
+  }, 'test').watch;
+  if (!watch) throw new Error('test watch was not created');
+  const server = await buildTestServer({ includePublicRoutes: false });
+
+  try {
+    const failedRunId = recordSchedulerRunOutcome({
+      watchId: watch.id,
+      bundleId,
+      appStore: { ok: true, triggered: false, reason: 'no new App Store version' },
+      testflight: { ok: true, triggered: true, runStatus: 'dispatched', reason: 'workflow dispatched' },
+    });
+    updateSchedulerRunOutcome(failedRunId, 'testflight', { runStatus: 'failed', reason: 'workflow failed' });
+
+    const failed = await server.inject({ method: 'GET', url: '/v1/status' });
+    expect(failed.json()).toMatchObject({
+      status: 'degraded',
+      components: { scheduler: { state: 'degraded' } },
+    });
+
+    recordSchedulerRunOutcome({
+      watchId: watch.id,
+      bundleId,
+      appStore: { ok: true, triggered: false, reason: 'no new App Store version' },
+      testflight: { ok: true, triggered: false, reason: 'workflow completed', runStatus: 'succeeded' },
+    });
+
+    const recovered = await server.inject({ method: 'GET', url: '/v1/status' });
+    expect(recovered.json()).toMatchObject({
+      status: 'operational',
+      components: { scheduler: { state: 'operational' } },
+    });
+  } finally {
+    await server.close();
+    deleteWatch(watch.id, 'test');
+    config.ghToken = originalToken;
   }
 });
 
