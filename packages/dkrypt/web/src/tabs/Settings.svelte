@@ -5,7 +5,7 @@
   import { setSettingsSubtab, tabState } from '#lib/ui.svelte';
   import { createVisitedTabs } from '#lib/visitedTabs.svelte';
   import BackupSettings from '#tabs/settings/BackupSettings.svelte';
-  import BillingSettings from '#tabs/settings/BillingSettings.svelte';
+  import BillingSettings from '#features/billing/BillingManagement.svelte';
   import ArtifactStorageSettings from '#tabs/settings/ArtifactStorageSettings.svelte';
   import DevicesSettings from '#tabs/settings/DevicesSettings.svelte';
   import ProjectsSettings from '#tabs/settings/ProjectsSettings.svelte';

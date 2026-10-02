@@ -111,7 +111,7 @@
 	import { createVisitedTabs } from "#lib/visitedTabs.svelte";
 
 	import Docs from "#tabs/Docs.svelte";
-	import Billing from "#tabs/Billing.svelte";
+	import Billing from "#features/billing/BillingPage.svelte";
 	import Home from "#tabs/Home.svelte";
 	import StatusPanel from "#tabs/home/StatusPanel.svelte";
 	import Insights from "#tabs/Insights.svelte";
