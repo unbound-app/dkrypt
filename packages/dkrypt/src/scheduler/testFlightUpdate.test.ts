@@ -90,3 +90,20 @@ test('selects the newest build only after every eligible train is checked succes
     wouldDispatch: true,
   });
 });
+
+test('marks an aborted release metadata request as retryable', async () => {
+  const result = await checkForTestFlightUpdate(watch, {
+    lookupCurrentVersion: async () => ({ trackId: 42 }),
+    listTrains: async () => [{ trainVersion: '347.0', buildCount: 1 }],
+    listBuilds: async () => [{ id: 1, cfBundleShortVersion: '347.0', cfBundleVersion: '111371', bundleId: watch.bundleId }],
+    releaseTagExists: async () => { throw new DOMException('The operation was aborted.', 'AbortError'); },
+  });
+
+  expect(result).toMatchObject({
+    ok: false,
+    wouldDispatch: false,
+    reason: 'Failed to verify releases: AbortError: The operation was aborted.',
+    failureClass: 'network',
+    retryable: true,
+  });
+});

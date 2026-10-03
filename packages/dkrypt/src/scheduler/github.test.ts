@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { config } from '#config.js';
-import { dispatchIpaUpdate, findDispatchedRun, getWorkflowFailureSummary, listReleaseVersions, releaseVersionExists } from '#scheduler/github.js';
+import { dispatchIpaUpdate, findDispatchedRun, getWorkflowFailureSummary, listReleaseVersions, releaseTagExists, releaseVersionExists } from '#scheduler/github.js';
 
 const originalFetch = globalThis.fetch;
 
@@ -128,6 +128,25 @@ describe('GitHub metadata requests', () => {
       'https://api.github.com/repos/example/app/releases?per_page=100',
       'https://api.github.com/repos/example/app/releases/tags/v341.0',
     ]);
+  });
+
+  test('verifies a known TestFlight tag without requesting the release list', async () => {
+    const urls: string[] = [];
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      const url = String(input);
+      urls.push(url);
+      if (url.endsWith('/releases/tags/v347.0_111371')) return new Response(null, { status: 200 });
+      throw new DOMException('The operation was aborted.', 'AbortError');
+    }) as unknown as typeof fetch;
+
+    await expect(releaseTagExists('example/app', 'v347.0_111371')).resolves.toBe(true);
+    expect(urls).toEqual(['https://api.github.com/repos/example/app/releases/tags/v347.0_111371']);
+  });
+
+  test('treats a missing exact TestFlight release tag as not released', async () => {
+    globalThis.fetch = (async () => new Response(null, { status: 404 })) as unknown as typeof fetch;
+
+    await expect(releaseTagExists('example/app', 'v347.0_111372')).resolves.toBe(false);
   });
 
   test('dispatches a stable artifact URL without an expiry token', async () => {

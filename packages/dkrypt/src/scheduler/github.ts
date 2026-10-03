@@ -43,8 +43,8 @@ async function githubFetch(input: string, init: RequestInit): Promise<Response> 
       if (response.body) await response.body.cancel().catch(() => {});
       await sleep(githubRetryDelay(response, attempt));
     } catch (err) {
-      lastError = err;
-      if (!retryable || attempt === GITHUB_GET_RETRY_COUNT) throw err;
+      lastError = controller.signal.aborted ? new Error(`GitHub API request timed out after ${GITHUB_REQUEST_TIMEOUT_MS}ms`, { cause: err }) : err;
+      if (!retryable || attempt === GITHUB_GET_RETRY_COUNT) throw lastError;
       await sleep(githubRetryDelay(undefined, attempt));
     } finally {
       clearTimeout(timeout);
@@ -243,8 +243,6 @@ export async function listReleaseTagNames(repo: string): Promise<Set<string>> {
 }
 
 export async function releaseTagExists(repo: string, tagName: string): Promise<boolean> {
-  const tagNames = await listReleaseTagNames(repo);
-  if (tagNames.has(tagName)) return true;
   return releaseExistsByTag(repo, tagName);
 }
 

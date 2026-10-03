@@ -6,7 +6,7 @@ export interface SchedulerFailure {
 }
 
 const PERMANENT_HTTP_ERROR_RE = /\bHTTP\s*4(?!(?:03|08|29)\b)\d\d\b/i;
-const TRANSIENT_ERROR_RE = /\bHTTP\s*(?:408|429|5\d\d)\b|rate limit|retry after \d+s|temporarily unavailable|timed? ?out|timeout|connection reset|connection closed|socket hang up|fetch failed|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EHOSTUNREACH|ENOTFOUND|no route to host|device agent connection was lost|could not connect to (?:the dkrypt device agent|the Rust device bridge)/i;
+const TRANSIENT_ERROR_RE = /\bHTTP\s*(?:408|429|5\d\d)\b|rate limit|retry after \d+s|temporarily unavailable|timed? ?out|timeout|AbortError|connection reset|connection closed|socket hang up|fetch failed|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EHOSTUNREACH|ENOTFOUND|no route to host|device agent connection was lost|could not connect to (?:the dkrypt device agent|the Rust device bridge)/i;
 const DEVICE_AGENT_FAILURE_RE = /DeviceAgentUnavailableError|could not connect to (?:the dkrypt device agent|the Rust device bridge)|device agent connection (?:was )?lost/i;
 const RATE_LIMIT_ERROR_RE = /rate.?limit|API rate limit|secondary rate limit|abuse detection|retry after \d+s/i;
 
@@ -47,6 +47,8 @@ export function classifySchedulerFailure(error: unknown): SchedulerFailure {
     ? 'device_transport'
     : RATE_LIMIT_ERROR_RE.test(message)
       ? 'network'
+      : /AbortError/i.test(message)
+        ? 'network'
       : classifyJobFailure(message);
   const explicit = explicitRetryability(error);
   if (explicit !== undefined) return { failureClass, retryable: explicit };

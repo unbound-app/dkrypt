@@ -34,6 +34,10 @@ test('retries HTTP request timeouts and rate limits', () => {
   expect(classifySchedulerFailure(new Error('GitHub API returned HTTP 403: resource forbidden'))).toEqual({ failureClass: 'network', retryable: false });
 });
 
+test('classifies an aborted GitHub metadata request as a retryable network failure', () => {
+  expect(classifySchedulerFailure(new DOMException('The operation was aborted.', 'AbortError'))).toEqual({ failureClass: 'network', retryable: true });
+});
+
 test('retries retryable scheduler failures and stops on non-retryable failures', async () => {
   let calls = 0;
   const delays: number[] = [];
