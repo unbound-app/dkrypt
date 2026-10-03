@@ -20,6 +20,7 @@
     regenerateKey,
     requestKey,
     revealKey,
+    simulateApiKeyScope,
     revokeKey,
     updateKeyAllowTestFlight,
     updateKeyMaxConcurrent,
@@ -38,6 +39,7 @@
   import { scrollFade } from '#lib/scrollFade';
   import { PermissionFlag } from '#lib/permissions';
   import { sessionHasAnyPermission, sessionHasPermission, sessionState } from '#lib/session.svelte';
+  import { projectSelectionState } from '#lib/projectSelection.svelte';
   import { confirmDialog, keyUsageJumpState, showToast } from '#lib/ui.svelte';
 
   const PAGE_SIZE = 25;
@@ -46,6 +48,16 @@
   let keyExpiry = $state('never');
   let keyScope = $state('');
   let keyDailyLimit = $state('');
+  let simulateBundleId = $state('');
+  let simulateSource = $state<'appstore' | 'testflight'>('appstore');
+  let simulateKeyId = $state('');
+  let simulateScope = $state('');
+  let simulateClearScope = $state(false);
+  let simulateDailyLimit = $state('');
+  let simulateConcurrentLimit = $state('');
+  let simulateTestFlight = $state('keep');
+  let simulation = $state<Awaited<ReturnType<typeof simulateApiKeyScope>> | null>(null);
+  let simulationBusy = $state(false);
   let revealedKey = $state('');
   let mine = $state<ApiKeyRecord[] | null>(null);
   let pending = $state<ApiKeyRecord[] | null>(null);
@@ -188,6 +200,27 @@
       .map((s) => s.trim())
       .filter(Boolean);
     return ids.length > 0 ? ids : undefined;
+  }
+
+  async function previewScope(): Promise<void> {
+    if (!simulateBundleId.trim()) return;
+    simulationBusy = true;
+    try {
+      simulation = await simulateApiKeyScope({
+        keyId: simulateKeyId || undefined,
+        projectId: projectSelectionState.id,
+        bundleId: simulateBundleId.trim(),
+        source: simulateSource,
+        allowedBundleIds: simulateKeyId ? simulateClearScope ? [] : parseScope(simulateScope) : parseScope(keyScope),
+        allowTestFlight: simulateTestFlight === 'keep' ? undefined : simulateTestFlight === 'allow',
+        dailyLimit: simulateKeyId ? simulateDailyLimit.trim() ? Number(simulateDailyLimit) || null : undefined : keyDailyLimit.trim() ? Number(keyDailyLimit) : undefined,
+        maxConcurrent: simulateConcurrentLimit.trim() ? Number(simulateConcurrentLimit) || null : undefined,
+      });
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Could not preview API key scope', 'error');
+    } finally {
+      simulationBusy = false;
+    }
   }
 
   async function submitRequest(): Promise<void> {
@@ -458,6 +491,30 @@
     <label for="key-daily-limit" class="mt-3 mb-1 block text-xs text-muted">Daily request limit (optional)</label>
     <Input id="key-daily-limit" type="number" min="1" placeholder="e.g. 100" bind:value={keyDailyLimit} />
     <div class="mt-1 text-xs text-muted">Blank = no limit. Over-limit requests get a 429 until the next day.</div>
+    <div class="mt-3 rounded-lg border border-border/70 p-3">
+      <h3 class="text-xs font-semibold">Preview access before creating or changing a key</h3>
+      <label class="mt-2 block text-xs"><span class="mb-1 block text-muted">Key to preview</span><Select items={[{ value: '', label: 'Proposed new key' }, ...[...new Map([...(mine ?? []), ...(all ?? [])].map((key) => [key.id, key])).values()].map((key) => ({ value: key.id, label: `${key.name} · ${key.ownerId}` }))]} bind:value={simulateKeyId} /></label>
+      <div class="mt-2 flex flex-wrap gap-2">
+        <label class="min-w-40 flex-1 text-xs"><span class="mb-1 block text-muted">Bundle ID</span><Input id="scope-simulator-bundle" placeholder="com.example.app" bind:value={simulateBundleId} class="w-full" /></label>
+        <label class="text-xs"><span class="mb-1 block text-muted">Source</span><Select id="scope-simulator-source" items={[{ value: 'appstore', label: 'App Store' }, { value: 'testflight', label: 'TestFlight' }]} bind:value={simulateSource} /></label>
+        <Button size="sm" variant="secondary" loading={simulationBusy} onclick={() => void previewScope()}>Preview scope</Button>
+      </div>
+      {#if simulateKeyId}
+        <label class="mt-2 block text-xs"><span class="mb-1 block text-muted">Proposed bundle scope, blank keeps current</span><Input bind:value={simulateScope} placeholder="com.example.app, com.example.app2" disabled={simulateClearScope} /></label>
+        <label class="mt-2 flex items-center gap-2 text-xs"><input type="checkbox" bind:checked={simulateClearScope} /> Remove bundle restriction</label>
+      {/if}
+      <div class="mt-2 flex flex-wrap gap-2">
+        <label class="min-w-28 flex-1 text-xs"><span class="mb-1 block text-muted">{simulateKeyId ? 'Proposed daily limit, blank keeps current' : 'Daily limit from form'}</span>{#if simulateKeyId}<Input type="number" min="0" bind:value={simulateDailyLimit} placeholder="0 = unlimited" />{:else}<span class="block py-2">{keyDailyLimit || 'Unlimited'}</span>{/if}</label>
+        <label class="min-w-28 flex-1 text-xs"><span class="mb-1 block text-muted">Proposed concurrency, blank keeps current</span><Input type="number" min="0" bind:value={simulateConcurrentLimit} placeholder="0 = unlimited" /></label>
+        <label class="min-w-28 flex-1 text-xs"><span class="mb-1 block text-muted">TestFlight access</span><Select items={[{ value: 'keep', label: 'Keep current/default' }, { value: 'allow', label: 'Allow' }, { value: 'deny', label: 'Deny' }]} bind:value={simulateTestFlight} /></label>
+      </div>
+      {#if simulation}
+        <p role="status" class="mt-2 text-xs">{simulation.allowed ? 'This request is within the proposed key scope.' : simulation.reasons.join(' · ')}</p>
+        {#if simulation.warnings.length}<p class="mt-1 text-xs text-warn">{simulation.warnings.join(' · ')}</p>{/if}
+        <p class="mt-1 text-xs text-muted">{simulation.routes.length} available public routes · {simulation.limits.daily === null ? 'No daily limit' : `${simulation.limits.dailyUsed}/${simulation.limits.daily} requests used today`} · {simulation.limits.concurrent === null ? 'No key concurrency limit' : `${simulation.limits.concurrentRunning}/${simulation.limits.concurrent} running jobs`}{simulation.limits.queueWait ? ' · new jobs would wait' : ''}</p>
+        <details class="mt-2 text-xs"><summary class="cursor-pointer">Route-by-route access</summary><ul class="mt-1 space-y-1">{#each simulation.operations as operation (operation.route)}<li>{operation.allowed ? '✓' : '×'} {operation.route}{operation.reasons.length ? ` · ${operation.reasons.join(', ')}` : ''}</li>{/each}</ul></details>
+      {/if}
+    </div>
     <Button class="mt-3" loading={submitting} onclick={submitRequest}>{canCreate ? 'Create key' : 'Request key'}</Button>
     {#if revealedKey}
       <div class="border-accent bg-panel-muted mt-3 rounded-md border p-2.5 text-xs break-all">

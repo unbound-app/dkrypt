@@ -172,6 +172,10 @@ Dashboard-generated API keys use `Authorization: Bearer <generated-key>` and cov
 
 Dashboard, billing, account, session, health, and administration routes are internal to dkrypt and are not available to generated API keys. The public OpenAPI document is available at `/openapi.json` and the Scalar reference UI at `/reference`.
 
+Administrators can configure exact GitHub Actions OIDC trust policies in Settings → System Doctor. A policy pins the numeric repository ID, workflow ref, Git ref or environment, audience, project, and bundle IDs. A workflow requests an ID token for that audience and sends it as a Bearer token to the existing decrypt, job-status, or IPA artifact routes. Tokens are verified against GitHub's signing keys and grant no dashboard access. No OIDC policy is active until an administrator creates one.
+
+Administrators can also create a signed decrypt trigger in System Doctor. Send `POST /v1/integrations/decrypt-trigger/<integration-id>` with a JSON body containing `bundleId`, `source` (`appstore` or `testflight`), and optionally `version`. TestFlight requires a version with a build number such as `1.2_345`. Include `X-Dkrypt-Timestamp` as Unix milliseconds, `X-Dkrypt-Event-Id` as a unique delivery ID, and `X-Dkrypt-Signature` as the lowercase hex HMAC-SHA256 of `<timestamp>.<event-id>.<exact raw JSON body>` using the secret shown once at creation or rotation. Signatures expire after five minutes. Duplicate event IDs never queue another decrypt. The endpoint uses its own signature authentication and is not available to generated API keys.
+
 </details>
 
 <details>

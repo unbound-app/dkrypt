@@ -4,6 +4,7 @@ import { bundleIdSchema as BundleId, deviceTransportSchema, identifierSchema, pa
 import { jobFailureClassSchema as JobFailureClass } from '#util/failureCategory.js';
 import {
   authConnectionParamsSchema,
+  authConnectionBodySchema,
   authIdentifierParamsSchema,
   authLoginBodySchema,
   authOAuthCallbackQuerySchema,
@@ -1158,7 +1159,7 @@ const remainingContracts: Array<[ContractMethod, string]> = [
 for (const [method, path] of remainingContracts) registerGenericContract(method, path);
 
 register('PATCH', '/v1/auth/profile', { body: authProfileBodySchema });
-register('DELETE', '/v1/auth/connections/:provider', { params: authConnectionParamsSchema });
+register('DELETE', '/v1/auth/connections/:provider', { params: authConnectionParamsSchema, body: authConnectionBodySchema });
 register('GET', '/v1/auth/github/callback', { querystring: authOAuthCallbackQuerySchema });
 register('GET', '/v1/auth/discord/callback', { querystring: authOAuthCallbackQuerySchema });
 register('POST', '/v1/dashboard/notifications/read', { body: notificationReadBodySchema });
@@ -1217,6 +1218,7 @@ register('POST', '/v1/auth/privacy/delete', { response: { 200: OkResponse } });
 register('PATCH', '/v1/auth/profile', { response: { 200: AuthProfileResponse } });
 register('DELETE', '/v1/auth/connections/:provider', {
   params: object({ provider: Type.Union([Type.Literal('github'), Type.Literal('discord')]) }),
+  body: authConnectionBodySchema,
   response: { 200: AuthConnectionResponse },
 });
 register('POST', '/v1/auth/refresh', { response: { 200: AuthTokenResponse } });

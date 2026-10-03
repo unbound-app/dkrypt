@@ -39,6 +39,8 @@ export const PermissionFlag = {
   viewProjects: 1n << 38n,
   manageProjects: 1n << 39n,
   viewDiagnosticReports: 1n << 40n,
+  viewIncidents: 1n << 41n,
+  manageIncidents: 1n << 42n,
 } as const;
 
 export type PermissionFlagKey = keyof typeof PermissionFlag;

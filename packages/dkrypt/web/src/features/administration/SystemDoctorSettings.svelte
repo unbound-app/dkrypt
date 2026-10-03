@@ -4,12 +4,14 @@
   import Badge from '#lib/components/ui/Badge.svelte';
   import Button from '#lib/components/ui/Button.svelte';
   import Card from '#lib/components/ui/Card.svelte';
-  import { fetchDashboardDoctor, runDashboardSyntheticProbes, supportBundleUrl, type DashboardDoctorReport, type DashboardSyntheticReport } from '#lib/api';
+  import { fetchCompatibilityMatrix, fetchDashboardDoctor, runDashboardSyntheticProbes, supportBundleUrl, type CompatibilityMatrix, type DashboardDoctorReport, type DashboardSyntheticReport } from '#lib/api';
   import { fmtDateTime } from '#lib/format.svelte';
   import { PermissionFlag } from '#lib/permissions';
   import { sessionHasPermission } from '#lib/session.svelte';
   import { buttonVariants } from '#lib/components/ui/variants';
   import AdvancedSection from '#components/AdvancedSection.svelte';
+  import SignedTriggerSettings from '#features/administration/SignedTriggerSettings.svelte';
+  import GithubOidcSettings from '#features/administration/GithubOidcSettings.svelte';
 
   const checkTitles: Record<string, string> = {
     'session-secret': 'Session signing secret',
@@ -42,6 +44,7 @@
 
   let report = $state<DashboardDoctorReport | null>(null);
   let probeReport = $state<DashboardSyntheticReport | null>(null);
+  let compatibility = $state<CompatibilityMatrix | null>(null);
   let loading = $state(false);
   let probing = $state(false);
   let error = $state('');
@@ -81,6 +84,7 @@
 
   onMount(() => {
     void loadChecks();
+    if (sessionHasPermission(PermissionFlag.administrator)) void fetchCompatibilityMatrix().then((result) => compatibility = result);
   });
 
   $effect(() => {
@@ -169,6 +173,24 @@
       {/each}
     </ul>
   {/if}
+
+  {#if compatibility}
+    <section class="mt-5 border-t border-border/70 pt-4" aria-label="Supported compatibility">
+      <h3 class="text-sm font-semibold">Compatibility matrix</h3>
+      <p class="mt-1 text-xs text-muted">Versions are checked against dkrypt’s supported deployment policy.</p>
+      <div class="mt-3 divide-y divide-border/70">
+        {#each compatibility.rows as row (row.component)}
+          <div class="flex flex-wrap items-center justify-between gap-2 py-2 text-xs">
+            <div><span class="font-medium">{row.component}</span><span class="ml-2 text-muted">{row.observed} · supports {row.supported}</span></div>
+            <Badge variant={row.state === 'unsupported' ? 'destructive' : row.state === 'unknown' ? 'warning' : 'outline'}>{row.state}</Badge>
+          </div>
+        {/each}
+      </div>
+    </section>
+  {/if}
+
+  {#if sessionHasPermission(PermissionFlag.administrator)}<SignedTriggerSettings />{/if}
+  {#if sessionHasPermission(PermissionFlag.administrator)}<GithubOidcSettings />{/if}
 
   <AdvancedSection label="settings.serviceHealthChecks">
   <section class="mt-5 border-t border-border/70 pt-4" aria-labelledby="system-probes-heading">

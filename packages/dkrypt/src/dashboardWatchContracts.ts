@@ -17,6 +17,7 @@ export const dashboardWatchInputSchema = Type.Object({
   maintenanceWindow: Type.Optional(Type.Union([dashboardMaintenanceWindowSchema, Type.Null()])),
   missedRunPolicy: Type.Optional(Type.Union([Type.Literal('skip'), Type.Literal('runOnce')])),
   enabled: Type.Optional(Type.Boolean()),
+  acknowledgeConflicts: Type.Optional(Type.Boolean()),
   webhookUrl: Type.Optional(Type.String({ maxLength: 500 })),
   testFlightPolicy: Type.Optional(Type.Union([Type.Literal('latest'), Type.Literal('latestNonExpired'), Type.Literal('train')])),
   testFlightTrain: Type.Optional(Type.String({ maxLength: 100 })),

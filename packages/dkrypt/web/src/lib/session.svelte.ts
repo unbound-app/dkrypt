@@ -33,6 +33,7 @@ import type { FormattingLocalePreference } from '#lib/locale';
 import type { InterfaceLanguagePreference } from '#lib/locale';
 import type { HomeLayout, HomeViewModes } from '#lib/homeLayouts';
 import type { ArtifactColumnId, DisplayDensity, SettingsMode, TabId } from '#lib/ui.svelte';
+import { resetShortcutBindings, setShortcutBindings, type ShortcutBindings } from '#lib/shortcuts.svelte';
 
 export interface Role {
   id: string;
@@ -104,6 +105,7 @@ export async function refreshSession(): Promise<SessionInfo> {
   const identitySwitched = previousSub && data.loggedIn && previousSub.toLowerCase() !== data.sub?.trim().toLowerCase();
   if (identitySwitched) {
     resetUserInterfacePreferences();
+    resetShortcutBindings();
     replaceStarredApps([]);
   }
   if (accessChanged) {
@@ -157,6 +159,7 @@ async function syncThemeFromServer(): Promise<void> {
     pinnedNavigation?: TabId[];
     artifactLibrary?: { groupByApp: boolean; columns: ArtifactColumnId[] };
     largeTargets?: boolean;
+    shortcutBindings?: ShortcutBindings;
   };
   const formattingLocale = prefs.formattingLocale ?? 'system';
   if (formattingLocale !== formattingLocaleState.value) setFormattingLocale(formattingLocale);
@@ -174,6 +177,7 @@ async function syncThemeFromServer(): Promise<void> {
   if (prefs.navigationOrder) setNavigationPreferences(prefs.navigationOrder, prefs.pinnedNavigation ?? []);
   if (prefs.artifactLibrary) setArtifactLibraryPreferences(prefs.artifactLibrary.groupByApp, prefs.artifactLibrary.columns);
   setLargeTargets(prefs.largeTargets ?? false);
+  if (prefs.shortcutBindings) setShortcutBindings(prefs.shortcutBindings);
   const userId = sessionState.sub?.trim().toLowerCase();
   const migrationKey = userId ? `starredAppsMigrated:${userId}` : undefined;
   const needsMigration = !!migrationKey && !localStorage.getItem(migrationKey);
@@ -299,6 +303,13 @@ export async function pushNotificationPrefs(patch: NotificationPrefs): Promise<v
   });
 }
 
+export async function pushShortcutBindings(bindings: ShortcutBindings): Promise<void> {
+  if (!sessionState.loggedIn) return;
+  const response = await fetch('/v1/dashboard/me/prefs', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shortcutBindings: bindings }) });
+  if (!response.ok) throw new Error((await response.json().catch(() => null))?.message ?? 'Shortcut bindings could not be saved');
+  setShortcutBindings(bindings);
+}
+
 export async function pushThemePref(theme: ThemePref): Promise<void> {
   if (!sessionState.loggedIn) return;
   await fetch('/v1/dashboard/me/prefs', {
@@ -403,6 +414,7 @@ export async function logoutEverywhere(): Promise<void> {
 
 export function markLoggedOut(): void {
   resetUserInterfacePreferences();
+  resetShortcutBindings();
   replaceStarredApps([]);
   if (sessionState.loggedIn) serverStateCache.clear();
   if (sessionState.sub) clearPersistedTestFlightCatalog(sessionState.sub);

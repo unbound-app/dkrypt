@@ -1,4 +1,5 @@
 import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
+import { Type } from '@sinclair/typebox';
 import type { DashboardDoctorRoute, DashboardSyntheticRoute } from '#dashboardDiagnosticsContracts.js';
 import { recordFastifyDashboardActivity } from '#dashboardActivity.js';
 import { getDeploymentMetadata } from '#deployment.js';
@@ -7,6 +8,7 @@ import { PermissionFlag } from '#permissions.js';
 import { fastifyRequirePermission, fastifyRequireSession } from '#session.js';
 import { getRouteContract } from '#contracts.js';
 import { runSyntheticProbes } from '#synthetic.js';
+import { getCompatibilityMatrix } from '#compatibility.js';
 
 const canManageDevices = fastifyRequirePermission(PermissionFlag.manageDevices);
 
@@ -23,4 +25,9 @@ export const dashboardDiagnosticsRoutes: FastifyPluginAsyncTypebox = async (serv
     schema: getRouteContract('GET', '/v1/dashboard/synthetic'),
     preHandler: canManageDevices,
   }, async () => runSyntheticProbes());
+
+  server.get('/v1/dashboard/compatibility', {
+    schema: { hide: true, response: { 200: Type.Object({ policy: Type.Object({ sqliteSchema: Type.Number(), rustBridge: Type.String(), autoinstallMinimum: Type.String(), autoinstallMajor: Type.Number() }), rows: Type.Array(Type.Object({ component: Type.String(), observed: Type.String(), supported: Type.String(), state: Type.Union([Type.Literal('supported'), Type.Literal('unsupported'), Type.Literal('unknown')]), detail: Type.Optional(Type.String()) })) }) } },
+    preHandler: fastifyRequirePermission(PermissionFlag.administrator),
+  }, async () => getCompatibilityMatrix());
 };

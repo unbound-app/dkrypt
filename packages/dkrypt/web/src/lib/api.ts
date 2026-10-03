@@ -473,10 +473,11 @@ export function fetchDashboardQuickSearch(query: string, projectId = projectSele
 export interface DashboardIncidentEvent {
   id: string;
   at: number;
-  kind: 'device' | 'job' | 'deployment';
+  kind: 'device' | 'job' | 'watch' | 'deployment';
   title: string;
   detail?: string;
   jobId?: string;
+  watchId?: string;
   deviceId?: string;
   deploymentId?: string;
   correlationId?: string;
@@ -961,9 +962,61 @@ export interface WatchInput {
   maintenanceWindow?: MaintenanceWindow | null;
   missedRunPolicy?: MissedRunPolicy;
   enabled?: boolean;
+  acknowledgeConflicts?: boolean;
   webhookUrl?: string;
   testFlightPolicy?: 'latest' | 'latestNonExpired' | 'train';
   testFlightTrain?: string;
+}
+
+export interface WatchDraft {
+  id: string;
+  ownerId: string;
+  projectId: string;
+  input: Partial<WatchInput>;
+  updatedAt: number;
+  expiresAt: number;
+}
+
+export interface WatchRevision {
+  id: string;
+  watchId: string;
+  actor: string;
+  at: number;
+  action: 'created' | 'updated' | 'restored' | 'deleted';
+  changedFields: string[];
+  changes?: Array<{ field: string; before?: string; after?: string }>;
+  snapshot: WatchInput & { webhookConfigured: boolean };
+}
+
+export interface WatchConflict {
+  watchId: string;
+  bundleId: string;
+  target: string;
+  nextOverlapAt: number;
+}
+
+export function fetchWatchDrafts(projectId: string): Promise<{ drafts: WatchDraft[] }> {
+  return apiJson(`/v1/dashboard/watches/drafts?projectId=${encodeURIComponent(projectId)}`);
+}
+
+export function saveWatchDraft(id: string | undefined, projectId: string, input: Partial<WatchInput>): Promise<WatchDraft> {
+  return apiJson('/v1/dashboard/watches/drafts', { method: 'POST', body: JSON.stringify({ id, projectId, input }) });
+}
+
+export function deleteWatchDraft(id: string): Promise<{ deleted: boolean }> {
+  return apiJson(`/v1/dashboard/watches/drafts/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+export function previewWatchConflicts(watch: WatchInput, excludeWatchId?: string): Promise<{ conflicts: WatchConflict[] }> {
+  return apiJson('/v1/dashboard/watches/conflicts', { method: 'POST', body: JSON.stringify({ watch, excludeWatchId }) });
+}
+
+export function fetchWatchRevisions(id: string): Promise<{ revisions: WatchRevision[] }> {
+  return apiJson(`/v1/dashboard/watches/${encodeURIComponent(id)}/revisions`);
+}
+
+export function restoreWatchRevision(watchId: string, revisionId: string, expectedUpdatedAt: number, webhookUrl?: string, acknowledgeConflicts = false): Promise<AppWatch> {
+  return apiJson(`/v1/dashboard/watches/${encodeURIComponent(watchId)}/revisions/${encodeURIComponent(revisionId)}/restore`, { method: 'POST', body: JSON.stringify({ expectedUpdatedAt, webhookUrl, acknowledgeConflicts }) });
 }
 
 export interface GithubRepoOption {
@@ -1471,6 +1524,107 @@ export interface DeviceThroughputStats {
   avgDurationMs?: number;
 }
 
+export interface ReleaseCoverageItem {
+  bundleId: string;
+  name: string;
+  iconUrl?: string;
+  recentJob?: { id: string; status: string; at: number };
+  appStore: { latestVersion?: string; checkedAt?: number; artifactId?: string };
+  testFlight?: { latestVersion?: string; buildId?: number; checkedAt?: number; verifiedAt?: number; artifactId?: string; stale: boolean };
+}
+
+export function fetchReleaseCoverage(projectId: string): Promise<{ projectId: string; items: ReleaseCoverageItem[] }> {
+  return apiJson(`/v1/dashboard/release-coverage?projectId=${encodeURIComponent(projectId)}`);
+}
+
+export interface OperationalIncident {
+  id: string;
+  projectId: string;
+  sourceKey: string;
+  kind: 'job' | 'watch' | 'device' | 'deployment';
+  title: string;
+  detail: string;
+  sourceId: string;
+  status: 'open' | 'in_progress' | 'snoozed' | 'resolved';
+  recoveredAt?: number;
+  assignedTo?: string;
+  snoozedUntil?: number;
+  resolutionNote?: string;
+  createdAt: number;
+  updatedAt: number;
+  history: Array<{ at: number; actor: string; action: string; note?: string }>;
+}
+
+export function fetchActionCenter(projectId: string): Promise<{ projectId: string; incidents: OperationalIncident[] }> {
+  return apiJson(`/v1/dashboard/action-center?projectId=${encodeURIComponent(projectId)}`);
+}
+
+export function simulateApiKeyScope(input: { keyId?: string; projectId: string; bundleId: string; source: 'appstore' | 'testflight'; allowedBundleIds?: string[]; allowTestFlight?: boolean; dailyLimit?: number | null; maxConcurrent?: number | null }): Promise<{ allowed: boolean; reasons: string[]; warnings: string[]; routes: string[]; operations: Array<{ route: string; allowed: boolean; reasons: string[] }>; projectId: string; bundleId: string; source: string; limits: { daily: number | null; dailyUsed: number; dailyRemaining: number | null; concurrent: number | null; concurrentRunning: number; queueWait: boolean } }> {
+  return apiJson('/v1/dashboard/keys/simulate', { method: 'POST', body: JSON.stringify(input) });
+}
+
+export interface SignedTriggerIntegration {
+  id: string;
+  kind: 'signed_decrypt';
+  projectId: string;
+  bundleIds: string[];
+  sources: Array<'appstore' | 'testflight'>;
+  enabled: boolean;
+  createdBy: string;
+  createdAt: number;
+  updatedAt: number;
+  previousSecretExpiresAt?: number;
+}
+
+export function fetchSignedTriggerIntegrations(): Promise<{ integrations: SignedTriggerIntegration[] }> {
+  return apiJson('/v1/dashboard/integrations/signed-triggers');
+}
+
+export function createSignedTriggerIntegration(input: { projectId: string; bundleIds: string[]; sources: Array<'appstore' | 'testflight'> }): Promise<{ integration: SignedTriggerIntegration; secret: string }> {
+  return apiJson('/v1/dashboard/integrations/signed-triggers', { method: 'POST', body: JSON.stringify(input) });
+}
+
+export function rotateSignedTriggerIntegration(id: string): Promise<{ integration: SignedTriggerIntegration; secret: string }> {
+  return apiJson(`/v1/dashboard/integrations/signed-triggers/${encodeURIComponent(id)}/rotate`, { method: 'POST' });
+}
+
+export function revokeSignedTriggerIntegration(id: string): Promise<{ integration: SignedTriggerIntegration }> {
+  return apiJson(`/v1/dashboard/integrations/signed-triggers/${encodeURIComponent(id)}/revoke`, { method: 'POST' });
+}
+
+export interface GithubOidcTrustPolicy {
+  id: string;
+  repositoryId: string;
+  workflowRef: string;
+  ref?: string;
+  environment?: string;
+  audience: string;
+  projectId: string;
+  bundleIds: string[];
+  allowTestFlight: boolean;
+  enabled: boolean;
+}
+
+export function fetchGithubOidcPolicies(): Promise<{ policies: GithubOidcTrustPolicy[] }> {
+  return apiJson('/v1/dashboard/integrations/github-oidc');
+}
+
+export function createGithubOidcTrust(input: Omit<GithubOidcTrustPolicy, 'id' | 'enabled'>): Promise<{ policy: GithubOidcTrustPolicy }> {
+  return apiJson('/v1/dashboard/integrations/github-oidc', { method: 'POST', body: JSON.stringify(input) });
+}
+
+export function revokeGithubOidcTrust(id: string): Promise<{ ok: true }> {
+  return apiJson(`/v1/dashboard/integrations/github-oidc/${encodeURIComponent(id)}/revoke`, { method: 'POST' });
+}
+
+export function updateActionCenterIncident(id: string, input: { projectId: string; status?: OperationalIncident['status']; assignedTo?: string | null; snoozedUntil?: number; resolutionNote?: string }): Promise<{ incident: OperationalIncident }> {
+  return apiJson(`/v1/dashboard/action-center/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) });
+}
+
+export function refreshReleaseCoverage(projectId: string, bundleId: string): Promise<{ item: ReleaseCoverageItem; failures: string[] }> {
+  return apiJson(`/v1/dashboard/release-coverage/${encodeURIComponent(bundleId)}/refresh`, { method: 'POST', body: JSON.stringify({ projectId }) });
+}
+
 export function fetchInsights(trendDays = 14, topApps = 5): Promise<InsightsSummary> {
   return apiJson(`/v1/dashboard/insights?trendDays=${trendDays}&topApps=${topApps}&projectId=${encodeURIComponent(projectSelectionState.id)}`);
 }
@@ -1690,6 +1844,15 @@ export interface DashboardSyntheticReport {
 
 export function fetchDashboardDoctor(): Promise<DashboardDoctorReport> {
   return apiJson('/v1/dashboard/doctor');
+}
+
+export interface CompatibilityMatrix {
+  policy: { sqliteSchema: number; rustBridge: string; autoinstallMinimum: string; autoinstallMajor: number };
+  rows: Array<{ component: string; observed: string; supported: string; state: 'supported' | 'unsupported' | 'unknown'; detail?: string }>;
+}
+
+export function fetchCompatibilityMatrix(): Promise<CompatibilityMatrix> {
+  return apiJson('/v1/dashboard/compatibility');
 }
 
 export function runDashboardSyntheticProbes(): Promise<DashboardSyntheticReport> {

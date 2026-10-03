@@ -1,4 +1,5 @@
 import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
+import { Type } from '@sinclair/typebox';
 import type { DashboardIncidentRoute } from '#dashboardIncidentContracts.js';
 import { dashboardIncidentQuerySchema, dashboardIncidentResponseSchema } from '#dashboardIncidentContracts.js';
 import { getRecentLogs, type LogEntry } from '#logger.js';
@@ -8,7 +9,8 @@ import { logBelongsToProject } from '#dashboardLogPresentation.js';
 import { PermissionFlag, hasPermission } from '#permissions.js';
 import { fastifyRequireSession, getFastifySession } from '#session.js';
 import { canAccessProject } from '#dashboardJobPresentation.js';
-import { DEFAULT_PROJECT_ID, getAllJobHistory, getDeviceActivityPage, getEffectiveDevices, getProject, listNotifications, type DeviceActivityEntry, type DeviceRecord, type JobHistoryEntry, type NotificationRecord } from '#store/state.js';
+import { DEFAULT_PROJECT_ID, getAllJobHistory, getDeviceActivityPage, getEffectiveDevices, getProject, listAllowedUsers, listNotifications, recordAudit, userCanAccessProject, type DeviceActivityEntry, type DeviceRecord, type JobHistoryEntry, type NotificationRecord } from '#store/state.js';
+import { listOperationalIncidents, reconcileOperationalIncidents, updateOperationalIncident } from '#store/incidentRepository.js';
 import { recordFastifyDashboardActivity } from '#dashboardActivity.js';
 import { createHttpErrorEnvelope } from '#util/httpResponse.js';
 
@@ -88,6 +90,34 @@ export function createDashboardIncidentRoutes(overrides: Partial<DashboardIncide
     server.addHook('preHandler', fastifyRequireSession);
     server.addHook('preHandler', recordFastifyDashboardActivity);
 
+    server.get('/v1/dashboard/action-center', {
+      schema: { hide: true, querystring: Type.Object({ projectId: Type.Optional(Type.String()) }) },
+    }, (request, reply) => {
+      const session = getFastifySession(request)!;
+      if (!hasPermission(session.permissions, PermissionFlag.viewIncidents) && !hasPermission(session.permissions, PermissionFlag.manageIncidents)) return reply.code(403).send(createHttpErrorEnvelope(request.id, 403, 'incident view permission required'));
+      const projectId = request.query.projectId ?? DEFAULT_PROJECT_ID;
+      if (!services.getProject(projectId) || !services.canAccessProject(session.sub, session.permissions, projectId)) return reply.code(404).send(createHttpErrorEnvelope(request.id, 404, 'project not found'));
+      reconcileOperationalIncidents();
+      return { projectId, incidents: listOperationalIncidents(projectId) };
+    });
+
+    server.patch('/v1/dashboard/action-center/:id', {
+      schema: { hide: true, params: Type.Object({ id: Type.String() }), body: Type.Object({ projectId: Type.String(), status: Type.Optional(Type.Union([Type.Literal('open'), Type.Literal('in_progress'), Type.Literal('snoozed'), Type.Literal('resolved')])), assignedTo: Type.Optional(Type.Union([Type.String(), Type.Null()])), snoozedUntil: Type.Optional(Type.Number()), resolutionNote: Type.Optional(Type.String({ maxLength: 1000 })) }, { additionalProperties: false }) },
+    }, (request, reply) => {
+      const session = getFastifySession(request)!;
+      if (!hasPermission(session.permissions, PermissionFlag.manageIncidents)) return reply.code(403).send(createHttpErrorEnvelope(request.id, 403, 'incident management permission required'));
+      if (!services.getProject(request.body.projectId) || !services.canAccessProject(session.sub, session.permissions, request.body.projectId)) return reply.code(404).send(createHttpErrorEnvelope(request.id, 404, 'project not found'));
+      if (request.body.assignedTo && (!listAllowedUsers().some((user) => user.username === request.body.assignedTo) || !userCanAccessProject(request.body.assignedTo, request.body.projectId))) return reply.code(400).send(createHttpErrorEnvelope(request.id, 400, 'assignee must belong to this project'));
+      try {
+        const incident = updateOperationalIncident(request.params.id, request.body.projectId, session.sub, request.body);
+        if (!incident) return reply.code(404).send(createHttpErrorEnvelope(request.id, 404, 'incident not found'));
+        recordAudit(session.sub, 'incident.update', incident.id, `${incident.kind} · ${incident.status}`);
+        return { incident };
+      } catch (error) {
+        return reply.code(400).send(createHttpErrorEnvelope(request.id, 400, error instanceof Error ? error.message : 'invalid incident change'));
+      }
+    });
+
     server.get<DashboardIncidentRoute>('/v1/dashboard/incidents', {
       schema: { hide: true, querystring: dashboardIncidentQuerySchema, response: { 200: dashboardIncidentResponseSchema } },
     }, (request, reply) => {
@@ -99,6 +129,21 @@ export function createDashboardIncidentRoutes(overrides: Partial<DashboardIncide
         return createHttpErrorEnvelope(request.id, 404, 'project not found');
       }
       const since = Math.max(request.query.since ?? Date.now() - 30 * 24 * 60 * 60 * 1000, Date.now() - 90 * 24 * 60 * 60 * 1000);
+      if (hasPermission(session.permissions, PermissionFlag.viewIncidents) || hasPermission(session.permissions, PermissionFlag.manageIncidents)) {
+        reconcileOperationalIncidents();
+        const events = listOperationalIncidents(projectId).flatMap((incident) => incident.history.filter((change) => change.at >= since).map((change, index) => ({
+          id: `incident:${incident.id}:${index}:${change.at}`,
+          at: change.at,
+          kind: incident.kind,
+          title: change.action === 'opened' ? incident.title : `${incident.title} · ${change.action.replaceAll('_', ' ')}`,
+          detail: change.note ?? incident.detail,
+          ...(incident.kind === 'job' ? { jobId: incident.sourceId } : {}),
+          ...(incident.kind === 'watch' ? { watchId: incident.sourceId } : {}),
+          ...(incident.kind === 'device' ? { deviceId: incident.sourceId } : {}),
+          ...(incident.kind === 'deployment' ? { deploymentId: incident.sourceId } : {}),
+        }))).sort((left, right) => right.at - left.at);
+        return { projectId, events: events.slice(0, 200), truncated: events.length > 200 };
+      }
       const events: IncidentEvent[] = [];
       const canViewDevices = hasPermission(session.permissions, PermissionFlag.viewDevices) || hasPermission(session.permissions, PermissionFlag.manageDevices);
       const canViewJobs = hasPermission(session.permissions, PermissionFlag.requestDecrypt) || hasPermission(session.permissions, PermissionFlag.viewLogs);

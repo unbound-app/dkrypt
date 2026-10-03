@@ -26,6 +26,12 @@
 		fetchTestFlightBridgeDiagnostics,
 		fetchWatchHealth,
 		fetchWatchCalendar,
+		fetchWatchDrafts,
+		fetchWatchRevisions,
+		previewWatchConflicts,
+		saveWatchDraft,
+		deleteWatchDraft,
+		restoreWatchRevision,
 		previewWatchDispatchSource,
 		previewWatchDispatchDraft,
 		validateWatchDispatchDraft,
@@ -50,6 +56,8 @@
 		type TestFlightBridgeDiagnostics,
 		type UpdateCheck,
 		type WatchInput,
+		type WatchConflict,
+		type WatchRevision,
 		type WatchHealthSummary,
 		type SchedulerCalendarRun,
 		type WebhookDeliveryEntry,
@@ -300,7 +308,7 @@ import { clearFormDraft, readFormDraft, setFormUnsaved, writeFormDraft } from "#
 		timezone: LOCAL_TIME_ZONE,
 		maintenanceWindow: null,
 		missedRunPolicy: "skip",
-		enabled: true,
+		enabled: false,
 		webhookUrl: "",
 		testFlightPolicy: "latest",
 		testFlightTrain: "",
@@ -315,6 +323,13 @@ import { clearFormDraft, readFormDraft, setFormUnsaved, writeFormDraft } from "#
 	const projectItems = $derived(availableProjects.length > 0 ? availableProjects.map((project) => ({ value: project.id, label: project.name })) : [{ value: "default", label: "Default" }]);
 	let editingWatchId = $state<string | null>(null);
 	let watchForm = $state<WatchInput>({ ...DEFAULT_WATCH_FORM });
+	let wizardStep = $state(0);
+	let syncedDraftId = $state<string | undefined>(undefined);
+	let watchConflicts = $state<WatchConflict[]>([]);
+	let acknowledgeWatchConflicts = $state(false);
+	let revisionWatch = $state<AppWatch | null>(null);
+	let revisions = $state<WatchRevision[]>([]);
+	let revisionsOpen = $state(false);
 	let dispatchTargets = $state<DispatchTarget[]>([...(DEFAULT_WATCH_FORM.dispatchTargets ?? [])]);
 	const watchFormId = "watch-editor";
 	let watchCronValid = $state<boolean | null>(null);
@@ -361,7 +376,7 @@ import { clearFormDraft, readFormDraft, setFormUnsaved, writeFormDraft } from "#
 		const prefill = createWatchPrefillState.value;
 		if (!prefill) return;
 		createWatchPrefillState.value = null;
-		openAddWatch();
+		openAddWatch(true);
 		watchForm = { ...watchForm, bundleId: prefill.bundleId };
 		watchSearchTerm = prefill.displayName ?? prefill.bundleId;
 	});
@@ -380,6 +395,62 @@ import { clearFormDraft, readFormDraft, setFormUnsaved, writeFormDraft } from "#
 		if (dirty) writeFormDraft(watchDraftStorageKey, values);
 		setFormUnsaved(watchFormId, dirty);
 	});
+	$effect(() => {
+		if (!watchDialogOpen || editingWatchId) return;
+		const serialized = JSON.stringify(watchDraftValues());
+		const timer = setTimeout(() => {
+			const values = JSON.parse(serialized) as ReturnType<typeof watchDraftValues>;
+			const projectId = values.watchForm.projectId ?? 'default';
+			void saveWatchDraft(syncedDraftId, projectId, { ...values.watchForm, dispatchTargets: values.dispatchTargets }).then((draft) => {
+				if (watchDialogOpen && watchForm.projectId === projectId) syncedDraftId = draft.id;
+			}).catch(() => undefined);
+		}, 900);
+		return () => clearTimeout(timer);
+	});
+
+	async function loadWatchConflicts(): Promise<void> {
+		if (!watchForm.bundleId || !watchForm.repo) return;
+		try {
+			watchConflicts = (await previewWatchConflicts({ ...watchForm, dispatchTargets }, editingWatchId ?? undefined)).conflicts;
+		} catch (error) {
+			showToast(error instanceof Error ? error.message : 'Could not check watch conflicts', 'error');
+		}
+	}
+
+	async function openWatchRevisions(watch: AppWatch): Promise<void> {
+		revisionWatch = watch;
+		revisionsOpen = true;
+		try {
+			revisions = (await fetchWatchRevisions(watch.id)).revisions;
+		} catch (error) {
+			showToast(error instanceof Error ? error.message : 'Could not load watch revisions', 'error');
+		}
+	}
+
+	async function restoreRevision(revision: WatchRevision): Promise<void> {
+		if (!revisionWatch) return;
+		if (!window.confirm(`Restore this watch configuration? The watch will remain ${revisionWatch.enabled ? 'enabled' : 'disabled'}.`)) return;
+		try {
+			const preview = await previewWatchConflicts({ ...revision.snapshot, enabled: revisionWatch.enabled, webhookUrl: revisionWatch.webhookUrl, projectId: revisionWatch.projectId }, revisionWatch.id);
+			if (preview.conflicts.length && !window.confirm(`This schedule overlaps with ${preview.conflicts.length} other watch${preview.conflicts.length === 1 ? '' : 'es'}. Restore anyway?`)) return;
+			const restored = await restoreWatchRevision(revisionWatch.id, revision.id, revisionWatch.updatedAt, revisionWatch.webhookUrl, preview.conflicts.length > 0);
+			revisionWatch = restored;
+			revisions = (await fetchWatchRevisions(restored.id)).revisions;
+			showToast('Watch configuration restored', 'success');
+		} catch (error) {
+			showToast(error instanceof Error ? error.message : 'Could not restore watch revision', 'error');
+		}
+	}
+
+	function readableRevisionValue(value: string | undefined): string {
+		if (value === undefined) return 'Not set';
+		try {
+			const parsed = JSON.parse(value) as unknown;
+			return typeof parsed === 'string' ? parsed : JSON.stringify(parsed);
+		} catch {
+			return value;
+		}
+	}
 
 	function watchDraftValues(): {
 		editingWatchId: string | null;
@@ -557,8 +628,12 @@ import { clearFormDraft, readFormDraft, setFormUnsaved, writeFormDraft } from "#
 				: "",
 	});
 
-	function openAddWatch(): void {
+	function openAddWatch(skipResume = false): void {
 		editingWatchId = null;
+		wizardStep = 0;
+		syncedDraftId = undefined;
+		watchConflicts = [];
+		acknowledgeWatchConflicts = false;
 		watchDraftStorageKey = `watch:${sessionState.sub ?? "account"}:new`;
 		const selectedProjectId = availableProjects.some((project) => project.id === projectSelectionState.id) ? projectSelectionState.id : "default";
 		watchForm = { ...DEFAULT_WATCH_FORM, projectId: selectedProjectId };
@@ -571,9 +646,18 @@ import { clearFormDraft, readFormDraft, setFormUnsaved, writeFormDraft } from "#
 		watchSearchToken += 1;
 		dispatchTargets = [{ repo: "", ghWorkflowFile: "remote-ipa-update.yml" }];
 		draftPreview = null;
+		const localDraftSavedAt = readFormDraft<ReturnType<typeof watchDraftValues>>(watchDraftStorageKey)?.savedAt ?? 0;
 		restoreWatchDraft(watchDraftStorageKey, null);
 		initialWatchDraft = JSON.stringify(watchDraftValues());
 		watchDialogOpen = true;
+		if (!skipResume) void fetchWatchDrafts(selectedProjectId).then(({ drafts }) => {
+			const draft = drafts[0];
+			if (!draft || !watchDialogOpen || editingWatchId) return;
+			syncedDraftId = draft.id;
+			if (watchForm.bundleId && localDraftSavedAt >= draft.updatedAt) return;
+			watchForm = { ...DEFAULT_WATCH_FORM, ...draft.input, webhookUrl: '' } as WatchInput;
+			dispatchTargets = draft.input.dispatchTargets?.length ? draft.input.dispatchTargets : dispatchTargets;
+		}).catch(() => undefined);
 	}
 
 	function openEditWatch(w: AppWatch): void {
@@ -745,6 +829,7 @@ import { clearFormDraft, readFormDraft, setFormUnsaved, writeFormDraft } from "#
 	}
 
 	let draftPreview = $state<UpdateCheck | null>(null);
+	let previewedWatchTarget = $state('');
 	let previewingDraft = $state(false);
 	let draftPreviewError = $state("");
 	let validatingDraft = $state(false);
@@ -764,6 +849,7 @@ import { clearFormDraft, readFormDraft, setFormUnsaved, writeFormDraft } from "#
 				watchForm.bundleId.trim(),
 				watchForm.repo.trim(),
 			);
+			previewedWatchTarget = `${watchForm.bundleId.trim()}:${watchForm.repo.trim()}`;
 		} catch (err) {
 			draftPreview = null;
 			draftPreviewError =
@@ -787,6 +873,15 @@ import { clearFormDraft, readFormDraft, setFormUnsaved, writeFormDraft } from "#
 	}
 
 	async function saveWatch(): Promise<void> {
+		if (!draftPreview || previewedWatchTarget !== `${watchForm.bundleId.trim()}:${watchForm.repo.trim()}`) {
+			await previewDraft();
+			return;
+		}
+		await loadWatchConflicts();
+		if (watchConflicts.length > 0 && !acknowledgeWatchConflicts) {
+			showToast('Review and acknowledge the overlapping watch schedules', 'error');
+			return;
+		}
 		if (watchCronValid === false) {
 			showToast("Poll cron is not a valid cron expression", "error");
 			return;
@@ -809,9 +904,10 @@ import { clearFormDraft, readFormDraft, setFormUnsaved, writeFormDraft } from "#
 				? { start: maintenanceWindowStart, end: maintenanceWindowEnd }
 				: null;
 			const { ok } = editingWatchId
-				? await updateWatch(editingWatchId, { ...watchForm, maintenanceWindow, dispatchTargets })
-				: await createWatch({ ...watchForm, maintenanceWindow, dispatchTargets });
+				? await updateWatch(editingWatchId, { ...watchForm, maintenanceWindow, dispatchTargets, acknowledgeConflicts: acknowledgeWatchConflicts })
+				: await createWatch({ ...watchForm, maintenanceWindow, dispatchTargets, acknowledgeConflicts: acknowledgeWatchConflicts });
 			if (ok) {
+				if (syncedDraftId) void deleteWatchDraft(syncedDraftId);
 				clearFormDraft(watchDraftStorageKey);
 				initialWatchDraft = JSON.stringify(watchDraftValues());
 				setFormUnsaved(watchFormId, false);
@@ -1210,7 +1306,7 @@ import { clearFormDraft, readFormDraft, setFormUnsaved, writeFormDraft } from "#
 					<input class="hidden" bind:this={watchImportInput} type="file" accept="application/json" onchange={importWatchFile} />
 					<Button size="sm" variant="secondary" onclick={() => watchImportInput?.click()} loading={importingWatches}>Import</Button>
 					<a class={buttonVariants("secondary", "sm")} href={watchesExportUrl()}>Export</a>
-					<Button size="sm" onclick={openAddWatch}>
+					<Button size="sm" onclick={() => openAddWatch()}>
 						<Plus class="h-3.5 w-3.5" />
 						Add watch
 					</Button>
@@ -1287,6 +1383,7 @@ import { clearFormDraft, readFormDraft, setFormUnsaved, writeFormDraft } from "#
 										onclick={() => openEditWatch(w)}
 										>Edit</Button
 									>
+									<Button size="sm" variant="secondary" onclick={() => void openWatchRevisions(w)}>History</Button>
 									<Button
 										size="sm"
 										variant="destructive"
@@ -1512,7 +1609,15 @@ import { clearFormDraft, readFormDraft, setFormUnsaved, writeFormDraft } from "#
 		<div class="mb-3 text-sm font-medium">
 			{editingWatchId ? "Edit watch" : "Add watch"}
 		</div>
+		{#if !editingWatchId}
+			<div class="mb-3 flex gap-1" aria-label="Watch setup progress">
+				{#each ['App', 'Destination', 'Schedule', 'Review'] as label, index}
+					<span class={`flex-1 rounded px-1 py-1 text-center text-[11px] ${wizardStep === index ? 'bg-primary text-primary-foreground' : 'bg-muted/40 text-foreground'}`}>{label}</span>
+				{/each}
+			</div>
+		{/if}
 		<div class="max-h-[60vh] overflow-y-auto pr-0.5">
+			{#if editingWatchId || wizardStep === 0}
 			<label for="w-search" class="mb-1 block text-xs text-muted"
 				>App search</label
 			>
@@ -1578,7 +1683,7 @@ import { clearFormDraft, readFormDraft, setFormUnsaved, writeFormDraft } from "#
 				id="w-project"
 				items={projectItems}
 				value={watchForm.projectId ?? "default"}
-				onValueChange={(projectId) => (watchForm = { ...watchForm, projectId })}
+				onValueChange={(projectId) => { if (projectId !== watchForm.projectId) syncedDraftId = undefined; watchForm = { ...watchForm, projectId }; }}
 				class="w-full"
 			/>
 
@@ -1602,7 +1707,9 @@ import { clearFormDraft, readFormDraft, setFormUnsaved, writeFormDraft } from "#
 				>
 				<Input id="w-testFlightTrain" placeholder="341.0" bind:value={watchForm.testFlightTrain} />
 			{/if}
+			{/if}
 
+			{#if editingWatchId || wizardStep === 1}
 			<div class="mt-3 flex items-center justify-between gap-3">
 				<div class="text-xs text-muted">Dispatch destinations</div>
 				<Button size="sm" variant="secondary" onclick={addDispatchTarget}>Add destination</Button>
@@ -1668,7 +1775,9 @@ import { clearFormDraft, readFormDraft, setFormUnsaved, writeFormDraft } from "#
 			{#if watchRepoErrors.repo}
 				<div class="mt-1 text-xs text-err">{watchRepoErrors.repo}</div>
 			{/if}
+			{/if}
 
+			{#if editingWatchId || wizardStep === 2}
 			<label for="w-timezone" class="mt-3 mb-1 block text-xs text-muted"
 				>Schedule time zone</label
 			>
@@ -1725,7 +1834,27 @@ import { clearFormDraft, readFormDraft, setFormUnsaved, writeFormDraft } from "#
 					</Button>
 				{/each}
 			</div>
+			{/if}
 
+			{#if editingWatchId || wizardStep === 3}
+			{#if !editingWatchId}
+				<div class="rounded-lg border border-border p-3 text-xs">
+					<div class="font-medium">Review this watch</div>
+					<div class="mt-2">{watchForm.bundleId} · {projectName(watchForm.projectId)}</div>
+					<div class="mt-1">{dispatchTargets.map((target) => `${target.repo}/${target.ghWorkflowFile}`).join(', ')}</div>
+					<div class="mt-1">{watchForm.pollCron} · {watchForm.timezone}</div>
+					<label class="mt-3 flex items-center gap-2"><input type="checkbox" bind:checked={watchForm.enabled} /> Enable scheduled checks after saving</label>
+				</div>
+			{/if}
+			{#if watchConflicts.length > 0}
+				<div class="mt-3 rounded-lg border border-warn/40 bg-warn/5 p-3 text-xs" role="alert">
+					<div class="font-medium">Possible duplicate dispatches</div>
+					{#each watchConflicts as conflict (conflict.watchId)}
+						<div class="mt-1">{conflict.bundleId} uses {conflict.target} at {new Date(conflict.nextOverlapAt).toLocaleString()}</div>
+					{/each}
+					<label class="mt-2 flex items-center gap-2"><input type="checkbox" bind:checked={acknowledgeWatchConflicts} /> I understand and want to save this watch</label>
+				</div>
+			{/if}
 			<label for="w-webhookUrl" class="mt-3 mb-1 block text-xs text-muted"
 				>Webhook override (optional)</label
 			>
@@ -1755,6 +1884,7 @@ import { clearFormDraft, readFormDraft, setFormUnsaved, writeFormDraft } from "#
 			>
 				Preview what this would do
 			</Button>
+			{#if !draftPreview || previewedWatchTarget !== `${watchForm.bundleId.trim()}:${watchForm.repo.trim()}`}<p class="mt-1 text-xs text-muted">Review the dispatch preview before saving this watch.</p>{/if}
 			<Button
 				variant="secondary"
 				class="mt-2 w-full"
@@ -1800,12 +1930,41 @@ import { clearFormDraft, readFormDraft, setFormUnsaved, writeFormDraft } from "#
 			{:else if draftPreviewError}
 				<div class="mt-2 text-xs text-err">{draftPreviewError}</div>
 			{/if}
+			{/if}
 		</div>
-		<Button class="mt-3.5 w-full" loading={savingWatch} onclick={saveWatch}
-			>{editingWatchId ? "Save" : "Add"}</Button
-		>
+		{#if !editingWatchId && wizardStep < 3}
+			<div class="mt-3.5 flex gap-2">
+				{#if wizardStep > 0}<Button variant="secondary" onclick={() => (wizardStep -= 1)}>Back</Button>{/if}
+				<Button class="flex-1" disabled={wizardStep === 0 ? !watchForm.bundleId.trim() : wizardStep === 1 ? dispatchTargets.some((target) => !REPO_RE.test(target.repo) || !target.ghWorkflowFile.trim()) : watchCronValid === false} onclick={() => { wizardStep += 1; if (wizardStep === 3) void loadWatchConflicts(); }}>Continue</Button>
+			</div>
+		{:else}
+			<div class="mt-3.5 flex gap-2">
+				{#if !editingWatchId}<Button variant="secondary" onclick={() => (wizardStep = 2)}>Back</Button>{/if}
+				<Button class="flex-1" loading={savingWatch} disabled={watchConflicts.length > 0 && !acknowledgeWatchConflicts} onclick={saveWatch}>{editingWatchId ? "Save" : "Create watch"}</Button>
+			</div>
+		{/if}
 	</Dialog>
 {/if}
+
+<Dialog open={revisionsOpen} onOpenChange={(open) => (revisionsOpen = open)} class="max-w-lg">
+	<h2 class="text-sm font-semibold">Watch revisions</h2>
+	<p class="mt-1 text-xs text-muted">Restoring a configuration preserves the current enabled state.</p>
+	<div class="mt-3 max-h-[60vh] space-y-2 overflow-y-auto">
+		{#each revisions as revision (revision.id)}
+			<div class="rounded-lg border border-border p-3 text-xs">
+				<div class="flex items-center justify-between gap-2"><span class="font-medium">{revision.action} · {new Date(revision.at).toLocaleString()}</span><Button size="sm" variant="secondary" onclick={() => void restoreRevision(revision)}>Restore</Button></div>
+				<div class="mt-1 text-muted">By {revision.actor}</div>
+				{#if revision.changes?.length}
+					<dl class="mt-2 space-y-1">
+						{#each revision.changes as change (change.field)}
+							<div class="break-words"><dt class="font-medium">{change.field}</dt><dd class="text-muted">{readableRevisionValue(change.before)} → {readableRevisionValue(change.after)}</dd></div>
+						{/each}
+					</dl>
+				{:else}<div class="mt-1">{revision.changedFields.join(', ') || 'No configuration fields changed'}</div>{/if}
+			</div>
+		{/each}
+	</div>
+</Dialog>
 
 <Dialog
 	open={settingsDialogOpen}

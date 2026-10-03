@@ -723,6 +723,27 @@ const migrations = [
       CREATE INDEX IF NOT EXISTS diagnostic_reports_by_expiry ON diagnostic_reports(expires_at);
     `,
   },
+  {
+    version: 23,
+    sql: `
+      CREATE TABLE IF NOT EXISTS watch_drafts (id TEXT PRIMARY KEY NOT NULL, payload TEXT NOT NULL, updated_at INTEGER NOT NULL, owner_id TEXT NOT NULL, project_id TEXT NOT NULL, expires_at INTEGER NOT NULL);
+      CREATE INDEX IF NOT EXISTS watch_drafts_by_owner ON watch_drafts(owner_id, project_id, updated_at DESC);
+      CREATE TABLE IF NOT EXISTS watch_revisions (id TEXT PRIMARY KEY NOT NULL, payload TEXT NOT NULL, updated_at INTEGER NOT NULL, watch_id TEXT NOT NULL, project_id TEXT NOT NULL, deleted_at INTEGER);
+      CREATE INDEX IF NOT EXISTS watch_revisions_by_watch ON watch_revisions(watch_id, updated_at DESC);
+      CREATE TABLE IF NOT EXISTS operational_incidents (id TEXT PRIMARY KEY NOT NULL, payload TEXT NOT NULL, updated_at INTEGER NOT NULL, project_id TEXT NOT NULL, source_key TEXT NOT NULL UNIQUE, status TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS operational_incidents_by_project ON operational_incidents(project_id, status, updated_at DESC);
+      CREATE TABLE IF NOT EXISTS integration_policies (id TEXT PRIMARY KEY NOT NULL, payload TEXT NOT NULL, updated_at INTEGER NOT NULL, kind TEXT NOT NULL, project_id TEXT NOT NULL, enabled INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS integration_deliveries (id TEXT PRIMARY KEY NOT NULL, payload TEXT NOT NULL, updated_at INTEGER NOT NULL, integration_id TEXT NOT NULL, event_id TEXT NOT NULL, UNIQUE(integration_id, event_id));
+      CREATE INDEX IF NOT EXISTS integration_deliveries_by_time ON integration_deliveries(updated_at);
+    `,
+  },
+  {
+    version: 24,
+    sql: `
+      CREATE TABLE IF NOT EXISTS pending_oauth_links (id TEXT PRIMARY KEY NOT NULL, payload TEXT NOT NULL, updated_at INTEGER NOT NULL, owner_id TEXT NOT NULL, expires_at INTEGER NOT NULL);
+      CREATE INDEX IF NOT EXISTS pending_oauth_links_by_expiry ON pending_oauth_links(expires_at);
+    `,
+  },
 ] as const;
 
 export const LATEST_SQLITE_SCHEMA_VERSION = migrations.at(-1)?.version ?? 0;
@@ -771,6 +792,12 @@ const collectionTables = new Set([
   'correlation_events',
   'webhook_attempts',
   'diagnostic_reports',
+  'watch_drafts',
+  'watch_revisions',
+  'operational_incidents',
+  'integration_policies',
+  'integration_deliveries',
+  'pending_oauth_links',
 ]);
 
 function assertCollectionTable(table: string): void {
@@ -1619,7 +1646,7 @@ export class StateDatabase {
     return JSON.parse(row.payload) as unknown;
   }
 
-  writeState(state: unknown, legacyMirrorPath?: string, additionalCollections: readonly StateCollectionReplacement[] = []): void {
+  writeState(state: unknown, legacyMirrorPath?: string, additionalCollections: readonly StateCollectionReplacement[] = [], afterCollections?: (database: Database) => void): void {
     const updatedTables = new Set<string>();
     for (const replacement of additionalCollections) {
       assertCollectionTable(replacement.table);
@@ -1645,6 +1672,7 @@ export class StateDatabase {
       for (const replacement of additionalCollections) {
         replaceCollectionRows(this.db, replacement);
       }
+      afterCollections?.(this.db);
       this.db.exec('COMMIT;');
     } catch (error) {
       this.db.exec('ROLLBACK;');

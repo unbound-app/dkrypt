@@ -23,6 +23,7 @@ export const authConnectionParamsSchema = Type.Object(
   { provider: Type.Union([Type.Literal('github'), Type.Literal('discord')]) },
   { additionalProperties: true },
 );
+export const authConnectionBodySchema = Type.Object({ confirmation: Type.Literal('DISCONNECT') }, { additionalProperties: false });
 export const authIdentifierParamsSchema = Type.Object({ id: identifierSchema }, { additionalProperties: true });
 export const authPasskeyPayloadSchema = Type.Record(Type.String({ minLength: 1, maxLength: 120 }), Type.Unknown());
 export const authOAuthCallbackQuerySchema = Type.Object(
@@ -38,7 +39,7 @@ export type AuthTokenRoute = { Body: Static<typeof authTokenBodySchema> };
 export type AuthReauthenticateRoute = { Body: Static<typeof authReauthenticateBodySchema> };
 export type AuthPrivacyDeleteRoute = { Body: Static<typeof authPrivacyDeleteBodySchema> };
 export type AuthProfileRoute = { Body: Static<typeof authProfileBodySchema> };
-export type AuthConnectionRoute = { Params: Static<typeof authConnectionParamsSchema> };
+export type AuthConnectionRoute = { Params: Static<typeof authConnectionParamsSchema>; Body: Static<typeof authConnectionBodySchema> };
 export type AuthIdentifierRoute = { Params: Static<typeof authIdentifierParamsSchema> };
 export type AuthPasskeyPayloadRoute = { Body: Static<typeof authPasskeyPayloadSchema> };
 export type AuthOAuthCallbackRoute = { Querystring: Static<typeof authOAuthCallbackQuerySchema> };

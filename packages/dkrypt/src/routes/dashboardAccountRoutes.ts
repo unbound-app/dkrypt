@@ -8,6 +8,7 @@ import { resolveNotifyEmail, sendMailToUser } from '#mail.js';
 import { getVapidPublicKey, sendPushToUser } from '#push.js';
 import { fastifyRequireSession, getFastifySession } from '#session.js';
 import { addPushSubscription, getUserPrefs, removePushSubscription, updateUserPrefs, type HomeLayoutPreference, type HomeModuleId, type UserPrefs } from '#store/state.js';
+import { defaultShortcutBindings, validateShortcutBindings } from '#shortcutBindings.js';
 
 const homeModuleIds: HomeModuleId[] = ['artifacts', 'activeJobs', 'jobHistory'];
 const navigationIds = ['home', 'billing', 'keys', 'logs', 'insights', 'docs', 'settings'] as const;
@@ -23,6 +24,7 @@ const defaultHomeLayout: HomeLayoutPreference = {
 
 function normalizedPrefs(prefs: UserPrefs): UserPrefs {
   const defaults: UserPrefs = {
+    shortcutBindings: { ...defaultShortcutBindings },
     density: 'comfortable',
     homeLayouts: [defaultHomeLayout],
     activeHomeLayoutId: defaultHomeLayout.id,
@@ -42,6 +44,7 @@ function normalizedPrefs(prefs: UserPrefs): UserPrefs {
   return {
     ...defaults,
     ...prefs,
+    shortcutBindings: prefs.shortcutBindings && validateShortcutBindings(prefs.shortcutBindings) ? prefs.shortcutBindings : { ...defaultShortcutBindings },
     homeLayouts,
     activeHomeLayoutId,
     viewModes: { artifacts: 'list', jobHistory: 'cards', devices: 'cards', ...prefs.viewModes },
@@ -135,6 +138,11 @@ export const dashboardAccountRoutes: FastifyPluginAsyncTypebox = async (server) 
   server.put<DashboardPrefsUpdateRoute>('/v1/dashboard/me/prefs', { schema: getRouteContract('PUT', '/v1/dashboard/me/prefs') }, async (request, reply) => {
     const body = request.body;
     const patch: Partial<UserPrefs> = {};
+    if (body.shortcutBindings) {
+      const validated = validateShortcutBindings(body.shortcutBindings);
+      if (!validated) return reply.code(400).send(createHttpErrorEnvelope(request.id, 400, 'shortcut bindings conflict or use a browser-reserved key'));
+      patch.shortcutBindings = validated;
+    }
     if (body.formattingLocale) patch.formattingLocale = body.formattingLocale;
     if (body.interfaceLanguage) patch.interfaceLanguage = body.interfaceLanguage;
     if (body.theme) patch.theme = body.theme;

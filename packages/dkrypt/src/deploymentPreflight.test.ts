@@ -32,13 +32,19 @@ test('deployment preflight dry-runs and restores a database without changing the
       DROP INDEX diagnostic_reports_by_user_time;
       DROP INDEX diagnostic_reports_by_expiry;
       DROP TABLE diagnostic_reports;
+      DROP TABLE pending_oauth_links;
+      DROP TABLE integration_deliveries;
+      DROP TABLE integration_policies;
+      DROP TABLE operational_incidents;
+      DROP TABLE watch_revisions;
+      DROP TABLE watch_drafts;
       DROP INDEX billing_events_by_provider_event;
       DROP INDEX billing_events_by_processed_at;
       ALTER TABLE billing_events DROP COLUMN provider;
       ALTER TABLE billing_events DROP COLUMN event_id;
       ALTER TABLE billing_events DROP COLUMN occurred_at;
       ALTER TABLE billing_events DROP COLUMN processed_at;
-      DELETE FROM schema_migrations WHERE version IN (17, 18, 19, 20, 21, 22);
+      DELETE FROM schema_migrations WHERE version IN (17, 18, 19, 20, 21, 22, 23, 24);
     `);
 
     const result = runDeploymentPreflight(path.join(stateDir, 'dkrypt.sqlite'), root);

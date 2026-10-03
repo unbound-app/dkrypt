@@ -46,6 +46,7 @@ const artifactLibraryPreferencesSchema = Type.Object({
 });
 
 const userPrefsProperties = {
+  shortcutBindings: Type.Optional(Type.Record(Type.String(), Type.String({ minLength: 1, maxLength: 8 }), { maxProperties: 12 })),
   formattingLocale: Type.Optional(Type.Union([Type.Literal('system'), Type.Literal('en'), Type.Literal('de')])),
   interfaceLanguage: Type.Optional(Type.Union([Type.Literal('system'), Type.Literal('en'), Type.Literal('de')])),
   theme: Type.Optional(Type.Union([Type.Literal('dark'), Type.Literal('light'), Type.Literal('auto')])),

@@ -83,7 +83,7 @@ describe('resolveOauthAccount', () => {
     expect(reauthenticated.userId).toBe(`github:${githubId}`);
   });
 
-  test('merges a Discord GitHub connection into a legacy GitHub account immediately', () => {
+  test('does not merge a Discord GitHub connection into a legacy GitHub account without review', () => {
     const discordId = randomUUID();
     const githubId = randomUUID();
     const discordUserId = `discord:${discordId}`;
@@ -106,14 +106,14 @@ describe('resolveOauthAccount', () => {
       discoveredIdentities: [connectedGithubIdentity],
     });
 
-    expect(merged.userId).toBe(legacyGithubUserId);
-    expect(getLinkedAuthProviders(legacyGithubUserId).sort()).toEqual(['discord', 'github']);
+    expect(merged.userId).toBe(discordUserId);
+    expect(getLinkedAuthProviders(legacyGithubUserId)).toEqual([]);
     expect(listAllowedUsers().some((user) => user.username === discordUserId)).toBe(false);
     expect(listAllowedUsers().find((user) => user.username === legacyGithubUserId)?.roleIds).toContain(role.id);
     expect(listApiKeysForOwner(legacyGithubUserId)).toHaveLength(1);
   });
 
-  test('merges a linked OAuth profile into a legacy GitHub account', () => {
+  test('does not merge a later GitHub login into a legacy account without review', () => {
     const discordId = randomUUID();
     const githubId = randomUUID();
     const discordUserId = `discord:${discordId}`;
@@ -141,13 +141,12 @@ describe('resolveOauthAccount', () => {
     });
 
     expect(merged.userId).toBe(legacyGithubUserId);
-    expect(getLinkedAuthProviders(legacyGithubUserId).sort()).toEqual(['discord', 'github']);
-    expect(listAllowedUsers().some((user) => user.username === discordUserId)).toBe(false);
+    expect(getLinkedAuthProviders(legacyGithubUserId)).toEqual(['github']);
     expect(listAllowedUsers().find((user) => user.username === legacyGithubUserId)?.roleIds).toContain(role.id);
     expect(listApiKeysForOwner(legacyGithubUserId)).toHaveLength(1);
   });
 
-  test('links a later GitHub login to a Discord-first account', () => {
+  test('keeps later GitHub and Discord logins separate until explicit linking', () => {
     const discordId = randomUUID();
     const githubId = randomUUID();
     const discordUserId = `discord:${discordId}`;
@@ -163,12 +162,12 @@ describe('resolveOauthAccount', () => {
     });
 
     expect(discordProfile.userId).toBe(discordUserId);
-    expect(githubProfile.userId).toBe(discordUserId);
-    expect(getLinkedAuthProviders(discordUserId).sort()).toEqual(['discord', 'github']);
+    expect(githubProfile.userId).toBe(`github:${githubId}`);
+    expect(getLinkedAuthProviders(discordUserId)).toEqual(['discord']);
     expect(listAllowedUsers().filter((user) => user.username === discordUserId)).toHaveLength(0);
   });
 
-  test('merges independently used Discord and GitHub accounts', () => {
+  test('merges independently used Discord and GitHub accounts only on explicit link', () => {
     const discordId = randomUUID();
     const githubId = randomUUID();
     const discordUserId = `discord:${discordId}`;
@@ -214,12 +213,14 @@ describe('resolveOauthAccount', () => {
       updatedAt: new Date().toISOString(),
     });
 
-    const merged = resolveOauthAccount({
+    const independent = resolveOauthAccount({
       fallbackUserId: discordUserId,
       identity: identity('discord', discordId),
       discoveredIdentities: [identity('github', githubId, 'discord_connection')],
     });
 
+    expect(independent.userId).toBe(discordUserId);
+    const merged = linkOauthAccount(githubUserId, identity('discord', discordId));
     expect(merged.userId).toBe(githubUserId);
     expect(merged.displayName).toBe('Chosen profile name');
     expect(getLinkedAuthProviders(githubUserId).sort()).toEqual(['discord', 'github']);

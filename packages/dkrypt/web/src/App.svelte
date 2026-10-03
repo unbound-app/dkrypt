@@ -62,6 +62,7 @@
 		pwaState,
 	} from "#lib/pwa.svelte";
 	import { PermissionFlag } from "#lib/permissions";
+	import { shortcutBindingsState } from "#lib/shortcuts.svelte";
 	import {
 		logout,
 		logoutEverywhere,
@@ -381,12 +382,19 @@ initDensity();
 	}
 
 	async function disconnectIdentity(provider: "github" | "discord"): Promise<void> {
-		if ((sessionState.identities?.length ?? 0) < 2) {
-			showToast("Connect another sign-in method before removing this one.", "error");
+		const previewResponse = await fetch(`/v1/auth/connections/${provider}/preview`);
+		if (!previewResponse.ok) {
+			showToast("Could not review this sign-in method.", "error");
 			return;
 		}
-		if (!(await confirmDialog(`Disconnect ${provider === "github" ? "GitHub" : "Discord"}? It will no longer sign you in to this account.`, { confirmLabel: "Disconnect", variant: "destructive" }))) return;
-		const response = await fetch(`/v1/auth/connections/${provider}`, { method: "DELETE" });
+		const preview = await previewResponse.json() as { canUnlink: boolean; affectedCategories: string[] };
+		if (!preview.canUnlink) {
+			showToast("Connect another usable sign-in method before removing this one.", "error");
+			return;
+		}
+		if (!(await confirmDialog(`Disconnect ${provider === "github" ? "GitHub" : "Discord"}? This changes ${preview.affectedCategories.join(' and ')}.`, { confirmLabel: "Disconnect", variant: "destructive" }))) return;
+		if (passkeys.length > 0 && !(await tryPasskeyReauthentication())) return;
+		const response = await fetch(`/v1/auth/connections/${provider}`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirmation: 'DISCONNECT' }) });
 		if (!response.ok) {
 			const body = (await response.json().catch(() => ({}))) as { error?: string };
 			showToast(body.error ?? "Could not disconnect this sign-in method.", "error");
@@ -395,6 +403,30 @@ initDensity();
 		await refreshSession();
 		showToast(`${provider === "github" ? "GitHub" : "Discord"} disconnected.`, "success");
 	}
+
+	let processedLinkReview = false;
+	$effect(() => {
+		if (!sessionChecked || !sessionState.loggedIn || processedLinkReview) return;
+		const id = new URLSearchParams(location.search).get('link_review');
+		if (!id) return;
+		processedLinkReview = true;
+		void (async () => {
+			const response = await fetch(`/v1/auth/link-review/${encodeURIComponent(id)}`);
+			if (!response.ok) { showToast('Account link review expired. Try connecting again.', 'error'); return; }
+			const preview = await response.json() as { provider: string; willMerge: boolean; categories: string[] };
+			const action = preview.willMerge ? 'MERGE ACCOUNTS' : 'LINK ACCOUNT';
+			const accepted = await confirmDialog(`${preview.willMerge ? 'Merge accounts' : 'Link sign-in method'} with ${preview.provider}? Affected data: ${preview.categories.join(', ')}. No other account identity is shown.`, { confirmLabel: preview.willMerge ? 'Merge accounts' : 'Link account', variant: preview.willMerge ? 'destructive' : 'default' });
+			if (!accepted) return;
+			if (passkeys.length > 0 && !(await tryPasskeyReauthentication())) return;
+			const confirmResponse = await fetch(`/v1/auth/link-review/${encodeURIComponent(id)}/confirm`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirmation: action }) });
+			if (!confirmResponse.ok) { const body = await confirmResponse.json().catch(() => ({})); showToast(body.message ?? body.error ?? 'Sign in again to confirm this account change.', 'error'); return; }
+			const url = new URL(location.href);
+			url.searchParams.delete('link_review');
+			history.replaceState(null, '', url.pathname + url.search + url.hash);
+			await refreshSession();
+			showToast(preview.willMerge ? 'Accounts merged' : 'Sign-in method linked', 'success');
+		})();
+	});
 
 	async function saveProfileName(): Promise<void> {
 		savingProfileName = true;
@@ -478,15 +510,6 @@ initDensity();
 		document.title = count > 0 ? `(${count}) ${BASE_TITLE}` : BASE_TITLE;
 	});
 
-	const TAB_JUMP_KEYS: Record<string, TabId> = {
-		h: "home",
-		b: "billing",
-		k: "keys",
-		l: "logs",
-		i: "insights",
-		d: "docs",
-		s: "settings",
-	};
 	let awaitingTabJump = $state(false);
 	let tabJumpTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -494,7 +517,8 @@ initDensity();
 		const typingInField = ["INPUT", "TEXTAREA", "SELECT"].includes(
 			(document.activeElement as HTMLElement)?.tagName ?? "",
 		);
-		if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+		const bindings = shortcutBindingsState.value;
+		if (((e.metaKey || e.ctrlKey) && `Mod+${e.key.toUpperCase()}` === bindings.palette) || (!e.metaKey && !e.ctrlKey && !e.altKey && !typingInField && e.key.toLowerCase() === bindings.palette)) {
 			e.preventDefault();
 			openPalette();
 			return;
@@ -502,30 +526,30 @@ initDensity();
 		if (awaitingTabJump) {
 			awaitingTabJump = false;
 			clearTimeout(tabJumpTimer);
-			const target = TAB_JUMP_KEYS[e.key.toLowerCase()];
+			const target = (['home', 'billing', 'keys', 'logs', 'insights', 'docs', 'settings'] as TabId[]).find((tab) => bindings[tab] === e.key.toLowerCase());
 			if (target && visibleTabs.some((t) => t.id === target)) {
 				e.preventDefault();
 				setActiveTab(target);
 			}
 			return;
 		}
-		if (e.key === "g" && !typingInField) {
+		if (e.key === bindings.jumpPrefix && !typingInField) {
 			e.preventDefault();
 			awaitingTabJump = true;
 			tabJumpTimer = setTimeout(() => (awaitingTabJump = false), 900);
 			return;
 		}
-		if (e.key === "/" && !typingInField && tabState.active === "home") {
+		if (e.key === bindings.focusSearch && !typingInField && tabState.active === "home") {
 			e.preventDefault();
 			homeRef?.focusSearch();
 			return;
 		}
-		if (e.key === "b" && !typingInField && tabState.active === "home") {
+		if (e.key === bindings.batch && !typingInField && tabState.active === "home") {
 			e.preventDefault();
 			homeRef?.openBatch();
 			return;
 		}
-		if (e.key === "?" && !typingInField) {
+		if (e.key === bindings.help && !typingInField) {
 			e.preventDefault();
 			openHelp();
 		}

@@ -6,8 +6,8 @@ import { fastifyRequireApiKey, fastifyRequireTestFlightScope, getFastifyApiKeyCo
 import { fastifyBlockDuringMaintenance } from '#maintenance.js';
 import { jobFileAvailable, jobSummary, streamFilePath, streamJobFile } from '#jobs/http.js';
 import { enqueueDecryptJob, getJob, waitForJob } from '#jobs/store.js';
-import { DEFAULT_PROJECT_ID, getProject, getUserEffectivePermissions, recordApiKeyBundleUsage, userCanAccessProject } from '#store/state.js';
-import { hasPermission, PermissionFlag } from '#permissions.js';
+import { DEFAULT_PROJECT_ID, getProject, recordApiKeyBundleUsage } from '#store/state.js';
+import { apiKeyCanAccessProject, isBundleIdAllowed } from '#apiKeyAccess.js';
 import { listBuilds, listTrains, type TFBuild } from '#testflight.js';
 import { apiIdempotencyRegistry } from '#idempotency.js';
 import { artifactDownloadName, artifactFileAvailable, getArtifactById, listArtifacts, touchArtifact } from '#artifacts.js';
@@ -155,21 +155,8 @@ function idempotencyKeyFromHeader(header: string | string[] | undefined): string
   return typeof header === 'string' ? header : undefined;
 }
 
-function isBundleIdAllowed(scope: string[] | undefined, bundleId: string): boolean {
-  return !scope || scope.length === 0 || scope.includes(bundleId);
-}
-
 function normalizeBundleScope(scope: string[] | undefined): string[] | undefined {
   return scope && scope.length > 0 ? scope : undefined;
-}
-
-function apiKeyCanAccessProject(apiKey: ReturnType<typeof getFastifyApiKeyContext>, projectId: string, requireActive = false): boolean {
-  const project = getProject(projectId);
-  if (!project || (requireActive && project.archivedAt !== undefined)) return false;
-  if (!apiKey?.ownerId || apiKey.ownerId === 'root') return true;
-  const permissions = getUserEffectivePermissions(apiKey.ownerId);
-  if (hasPermission(permissions, PermissionFlag.viewProjects) || hasPermission(permissions, PermissionFlag.manageProjects)) return true;
-  return project.archivedAt === undefined && userCanAccessProject(apiKey.ownerId, projectId);
 }
 
 function resolveApiProjectId(

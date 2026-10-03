@@ -1,5 +1,6 @@
 import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
 import type { FastifyReply, FastifyRequest } from 'fastify';
+import { Type } from '@sinclair/typebox';
 import type {
   DashboardApiKeyBulkApproveRoute,
   DashboardApiKeyBulkDailyLimitRoute,
@@ -37,6 +38,7 @@ import {
   getApiKeyById,
   getApiKeyOutcomeUsage,
   getApiKeyUsage,
+  getUserEffectivePermissions,
   listAllApiKeysPage,
   listApiKeysForOwner,
   listPendingApiKeys,
@@ -50,6 +52,11 @@ import {
 } from '#store/state.js';
 import { decodeCursor, nextCursor } from '#util/cursor.js';
 import { createHttpErrorEnvelope } from '#util/httpResponse.js';
+import { publicApiOperations } from '#publicApi.js';
+import { canAccessProject } from '#dashboardJobPresentation.js';
+import { getProject } from '#store/state.js';
+import { getActiveJobs } from '#jobs/store.js';
+import { apiKeyCanAccessProject, isBundleIdAllowed } from '#apiKeyAccess.js';
 
 const canRequestApiKeys = fastifyRequirePermission(PermissionFlag.requestApiKeys);
 const canAccessApi = fastifyRequirePermission(PermissionFlag.createApiKeys);
@@ -129,6 +136,44 @@ export const dashboardApiKeyRoutes: FastifyPluginAsyncTypebox = async (server) =
   server.addHook('preHandler', recordFastifyDashboardActivity);
   server.addHook('preValidation', async (request) => {
     rawBodies.set(request, request.body === undefined ? undefined : structuredClone(request.body));
+  });
+
+  server.post('/v1/dashboard/keys/simulate', {
+    schema: { hide: true, body: Type.Object({ keyId: Type.Optional(Type.String()), projectId: Type.String(), bundleId: Type.String({ minLength: 3, maxLength: 200, pattern: '^[A-Za-z0-9.-]+$' }), source: Type.Union([Type.Literal('appstore'), Type.Literal('testflight')]), allowedBundleIds: Type.Optional(Type.Array(Type.String(), { maxItems: 25 })), allowTestFlight: Type.Optional(Type.Boolean()), dailyLimit: Type.Optional(Type.Union([Type.Number(), Type.Null()])), maxConcurrent: Type.Optional(Type.Union([Type.Number(), Type.Null()])) }, { additionalProperties: false }) },
+    preHandler: canViewOwnApiKeys,
+  }, (request, reply) => {
+    const session = getFastifySession(request)!;
+    const project = getProject(request.body.projectId);
+    if (!project || !canAccessProject(session.sub, session.permissions, request.body.projectId)) return reply.code(404).send(createHttpErrorEnvelope(request.id, 404, 'project not found'));
+    const key = request.body.keyId ? getApiKeyById(request.body.keyId) : undefined;
+    if (request.body.keyId && (!key || !hasUsageAccess(key.ownerId, session.sub, session.permissions))) return reply.code(404).send(createHttpErrorEnvelope(request.id, 404, 'key not found'));
+    const ownerId = key?.ownerId ?? session.sub;
+    const warnings = request.body.allowedBundleIds?.some((bundleId) => !BUNDLE_ID_RE.test(bundleId.trim())) ? ['Invalid bundle IDs are ignored when a key scope is saved'] : [];
+    const allowedBundleIds = request.body.allowedBundleIds === undefined ? key?.allowedBundleIds : parseAllowedBundleIds(request.body.allowedBundleIds);
+    const allowTestFlight = request.body.allowTestFlight ?? key?.allowTestFlight ?? true;
+    const dailyLimit = request.body.dailyLimit === null ? undefined : request.body.dailyLimit === undefined ? key?.dailyLimit : parseDailyLimit(request.body.dailyLimit);
+    const maxConcurrent = request.body.maxConcurrent === null ? undefined : request.body.maxConcurrent === undefined ? key?.maxConcurrent : request.body.maxConcurrent > 0 ? Math.floor(request.body.maxConcurrent) : undefined;
+    const dailyUsed = key ? getApiKeyUsage(key.id, 1)[0]?.count ?? 0 : 0;
+    const concurrentRunning = key ? getActiveJobs().filter((job) => job.status === 'running' && job.apiKeyId === key.id).length : 0;
+    const commonReasons: string[] = [];
+    if (ownerId !== 'root' && !hasPermission(getUserEffectivePermissions(ownerId), PermissionFlag.createApiKeys)) commonReasons.push('API key access is not active for this account');
+    if (key && key.status !== 'approved') commonReasons.push(`key is ${key.status}`);
+    if (key?.expiresAt && key.expiresAt <= Date.now()) commonReasons.push('key has expired');
+    if (!apiKeyCanAccessProject({ ownerId }, request.body.projectId)) commonReasons.push('key owner cannot access this project');
+    if (!isBundleIdAllowed(allowedBundleIds, request.body.bundleId)) commonReasons.push('bundle ID is outside the proposed scope');
+    if (dailyLimit && dailyUsed >= dailyLimit) commonReasons.push('daily request limit is exhausted');
+    const operations = Object.entries(publicApiOperations).flatMap(([path, methods]) => methods.map((method) => {
+      const route = `${method.toUpperCase()} ${path}`;
+      const reasons = [...commonReasons];
+      const submitsDecrypt = path === '/v1/decrypt' || path === '/v1/decrypts' || path === '/v1/testflight/decrypt';
+      if (submitsDecrypt && project.archivedAt) reasons.push('project is archived');
+      if (submitsDecrypt && request.body.source === 'testflight' && !allowTestFlight) reasons.push('TestFlight is disabled for this key');
+      if (path === '/v1/testflight/decrypt' && request.body.source !== 'testflight') reasons.push('route accepts TestFlight builds only');
+      return { route, allowed: reasons.length === 0, reasons };
+    }));
+    const selectedRoute = request.body.source === 'testflight' ? 'POST /v1/testflight/decrypt' : 'POST /v1/decrypts';
+    const selectedOperation = operations.find((operation) => operation.route === selectedRoute)!;
+    return { allowed: selectedOperation.allowed, reasons: selectedOperation.reasons, warnings, operations, routes: operations.filter((operation) => operation.allowed).map((operation) => operation.route), projectId: request.body.projectId, bundleId: request.body.bundleId, source: request.body.source, limits: { daily: dailyLimit ?? null, dailyUsed, dailyRemaining: dailyLimit === undefined ? null : Math.max(0, dailyLimit - dailyUsed), concurrent: maxConcurrent ?? null, concurrentRunning, queueWait: maxConcurrent !== undefined && concurrentRunning >= maxConcurrent } };
   });
 
   server.get<DashboardApiKeyListRoute>('/v1/dashboard/keys/mine', {

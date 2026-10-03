@@ -34,11 +34,17 @@ function rewindToSchemaVersion16(database: ReturnType<typeof openStateDatabase>)
     DROP INDEX diagnostic_reports_by_user_time;
     DROP INDEX diagnostic_reports_by_expiry;
     DROP TABLE diagnostic_reports;
+    DROP TABLE pending_oauth_links;
+    DROP TABLE integration_deliveries;
+    DROP TABLE integration_policies;
+    DROP TABLE operational_incidents;
+    DROP TABLE watch_revisions;
+    DROP TABLE watch_drafts;
     ALTER TABLE billing_events DROP COLUMN provider;
     ALTER TABLE billing_events DROP COLUMN event_id;
     ALTER TABLE billing_events DROP COLUMN occurred_at;
     ALTER TABLE billing_events DROP COLUMN processed_at;
-    DELETE FROM schema_migrations WHERE version IN (17, 18, 19, 20, 21, 22);
+    DELETE FROM schema_migrations WHERE version IN (17, 18, 19, 20, 21, 22, 23, 24);
   `);
 }
 
@@ -124,6 +130,24 @@ test('SQLite state snapshots survive restart and retain independently owned coll
     expect(reopened.readCollection('projects')).toEqual(state.projects);
     reopened.close();
   } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test('SQLite state and watch revision writes roll back together', async () => {
+  const stateDir = await mkdtemp(path.join(tmpdir(), 'dkrypt-sqlite-watch-revision-'));
+  const database = openStateDatabase({ stateDir, filename: 'state.sqlite' });
+  try {
+    const original = { version: 1, watches: [] };
+    database.writeState(original);
+    expect(() => database.writeState({ version: 1, watches: [{ id: 'watch-1', bundleId: 'com.example.app' }] }, undefined, [], (transaction) => {
+      transaction.query('INSERT INTO watch_revisions (id, payload, updated_at, watch_id, project_id, deleted_at) VALUES (?, ?, ?, ?, ?, ?)').run('revision-1', '{}', Date.now(), 'watch-1', 'default', null);
+      throw new Error('revision write failed');
+    })).toThrow('revision write failed');
+    expect(database.readState()).toEqual(original);
+    expect(database.db.query('SELECT COUNT(*) AS count FROM watch_revisions WHERE id = ?').get('revision-1')).toEqual({ count: 0 });
+  } finally {
+    database.close();
     await rm(stateDir, { recursive: true, force: true });
   }
 });

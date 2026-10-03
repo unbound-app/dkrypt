@@ -46,6 +46,9 @@ import { dashboardTestFlightBrowseRoutes } from '#routes/dashboardTestFlightBrow
 import { dashboardAppRoutes } from '#routes/dashboardAppRoutes.js';
 import { dashboardQuickSearchRoutes } from '#routes/dashboardQuickSearchRoutes.js';
 import { dashboardIncidentRoutes } from '#routes/dashboardIncidentRoutes.js';
+import { dashboardCoverageRoutes } from '#routes/dashboardCoverageRoutes.js';
+import { dashboardIntegrationRoutes } from '#routes/dashboardIntegrationRoutes.js';
+import { signedTriggerRoutes } from '#routes/signedTriggerRoutes.js';
 import { billingRoutes, billingWebhookRoutes } from '#routes/billing.js';
 import type { StripeWebhookHealth } from '#stripeWebhookHealth.js';
 import { artifactCatalogRoutes, decryptRoutes, testFlightCatalogRoutes } from '#routes/decrypt.js';
@@ -70,10 +73,15 @@ import { FixedWindowRateLimiter } from '#util/rateLimit.js';
 import { createHttpErrorEnvelope } from '#util/httpResponse.js';
 import { startRustDeviceEventMonitoring } from '#deviceBridgeEvents.js';
 import { createPublicOpenApiDocument } from '#publicApi.js';
+import { closeWatchWorkflowRepository } from '#store/watchWorkflowRepository.js';
+import { closeIncidentRepository, reconcileOperationalIncidents } from '#store/incidentRepository.js';
+import { closeIntegrationRepository } from '#store/integrationRepository.js';
+import { closeOauthLinkReviewRepository } from '#store/oauthLinkReview.js';
 
 const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 const sharedApiRateLimiter = new FixedWindowRateLimiter(config.apiRateLimitPerMinute, 60_000);
 let stopRustDeviceEventMonitoring: (() => Promise<void>) | undefined;
+let incidentReconciliationTimer: ReturnType<typeof setInterval> | undefined;
 const drainingServers = new WeakSet<FastifyInstance>();
 
 function sendServiceDraining(reply: FastifyReply, requestId: string): void {
@@ -340,6 +348,9 @@ export async function buildServer(options: {
   await server.register(dashboardAppRoutes);
   await server.register(dashboardQuickSearchRoutes);
   await server.register(dashboardIncidentRoutes);
+  await server.register(dashboardCoverageRoutes);
+  await server.register(dashboardIntegrationRoutes);
+  await server.register(signedTriggerRoutes);
   await server.register(dashboardDiscordRoutes);
   await server.register(dashboardEventsRoutes);
   await server.register(dashboardWatchRoutes);
@@ -368,6 +379,14 @@ async function startBackgroundServices(): Promise<void> {
   startCryptoBillingPoller();
   startJobWebhookDispatcher();
   startNotificationDigestScheduler();
+  incidentReconciliationTimer = setInterval(() => {
+    try {
+      reconcileOperationalIncidents();
+    } catch (error) {
+      log.warn('incident reconciliation failed', { error: String(error) });
+    }
+  }, 60_000);
+  incidentReconciliationTimer.unref();
 }
 
 export function registerShutdownHandlers(
@@ -392,6 +411,8 @@ export function registerShutdownHandlers(
     stopKeyExpiryPoller();
     stopJobSweeper();
     stopStateBackgroundServices();
+    if (incidentReconciliationTimer) clearInterval(incidentReconciliationTimer);
+    incidentReconciliationTimer = undefined;
     void trackBackgroundWork('notification-digest-shutdown', stopNotificationDigestScheduler)
       .catch((error: unknown) => log.warn('notification digest shutdown failed', { error: String(error) }));
 
@@ -427,6 +448,10 @@ export function registerShutdownHandlers(
         closeIdempotencyDatabase();
         closeWebhookInboxDatabase();
         closeArtifactDatabase();
+        closeWatchWorkflowRepository();
+        closeIncidentRepository();
+        closeIntegrationRepository();
+        closeOauthLinkReviewRepository();
         closeStateDatabase();
         log.info('graceful shutdown completed', { signal });
         stopLogFlusher();

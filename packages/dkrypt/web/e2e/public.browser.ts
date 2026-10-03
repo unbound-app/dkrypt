@@ -1694,7 +1694,10 @@ test('scheduler watch time zone selection is searchable and defaults to the brow
   await mockAuthenticatedDashboard(page, '1');
 
   await page.goto('/?tab=settings&stab=scheduler');
+  await page.evaluate(() => localStorage.setItem('dkrypt-form-draft:watch:member:new', JSON.stringify({ savedAt: Date.now(), values: { editingWatchId: null, watchForm: { bundleId: 'com.example.test', repo: 'example/repo', ghWorkflowFile: 'remote-ipa-update.yml', dispatchTargets: [{ repo: 'example/repo', ghWorkflowFile: 'remote-ipa-update.yml' }] }, maintenanceWindowStart: '', maintenanceWindowEnd: '', dispatchTargets: [{ repo: 'example/repo', ghWorkflowFile: 'remote-ipa-update.yml' }] } })));
   await page.getByRole('button', { name: 'Add watch', exact: true }).click();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByRole('button', { name: 'Continue' }).click();
 
   const timezone = page.getByRole('combobox', { name: 'Schedule time zone' });
   const browserTimezone = await page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone);
@@ -1718,8 +1721,12 @@ test('watch drafts recover after reload without persisting webhook secrets', asy
   await mockAuthenticatedDashboard(page, '1');
 
   await page.goto('/?tab=settings&stab=scheduler');
+  await page.evaluate(() => localStorage.setItem('dkrypt-form-draft:watch:member:new', JSON.stringify({ savedAt: Date.now(), values: { editingWatchId: null, watchForm: { bundleId: 'com.example.test', repo: 'example/repo', ghWorkflowFile: 'remote-ipa-update.yml', dispatchTargets: [{ repo: 'example/repo', ghWorkflowFile: 'remote-ipa-update.yml' }] }, maintenanceWindowStart: '', maintenanceWindowEnd: '', dispatchTargets: [{ repo: 'example/repo', ghWorkflowFile: 'remote-ipa-update.yml' }] } })));
   await page.getByRole('button', { name: 'Add watch', exact: true }).click();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByRole('button', { name: 'Continue' }).click();
   await page.locator('#w-pollCron').fill('15 */4 * * *');
+  await page.getByRole('button', { name: 'Continue' }).click();
   await page.locator('#w-webhookUrl').fill('https://hooks.example.test/private-token');
 
   await expect.poll(() => page.evaluate(() => localStorage.getItem('dkrypt-form-draft:watch:member:new'))).toBeTruthy();
@@ -1731,8 +1738,11 @@ test('watch drafts recover after reload without persisting webhook secrets', asy
   await page.getByRole('button', { name: 'Close form', exact: true }).click();
   await page.reload();
   await page.getByRole('button', { name: 'Add watch', exact: true }).click();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByRole('button', { name: 'Continue' }).click();
 
   await expect(page.locator('#w-pollCron')).toHaveValue('15 */4 * * *');
+  await page.getByRole('button', { name: 'Continue' }).click();
   await expect(page.locator('#w-webhookUrl')).toHaveValue('');
 });
 
@@ -2582,6 +2592,10 @@ test('IPA Library virtualizes loaded rows and opens artifact provenance in the i
   await expect(page.getByText(sha256, { exact: true })).toBeVisible();
   await expect(page.getByText('job-provenance-0', { exact: true })).toBeVisible();
   await expect(page.getByText(warning, { exact: true })).toBeVisible();
+  const resizeHandle = page.getByRole('button', { name: /Resize Artifact details panel/ });
+  await resizeHandle.focus();
+  await resizeHandle.press('ArrowLeft');
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('dkrypt-inspector-width:artifact'))).toBe('0.62');
   await viewport.evaluate((element) => {
     const bounds = element.getBoundingClientRect();
     window.scrollTo({ top: window.scrollY + bounds.bottom - window.innerHeight, behavior: 'instant' });
@@ -2595,6 +2609,9 @@ test('IPA Library virtualizes loaded rows and opens artifact provenance in the i
   await page.reload();
   await expect(page.getByRole('heading', { name: 'Artifact metadata' })).toBeVisible();
   await expect(page.getByText(sha256, { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Resize Artifact details panel, 62 percent wide/ })).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByRole('button', { name: /Resize Artifact details panel/ })).toBeHidden();
   const restoredUrl = new URL(page.url());
   expect(restoredUrl.searchParams.get('aq')).toBe('provenance');
   expect(restoredUrl.searchParams.get('asource')).toBe('appstore');

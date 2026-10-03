@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
 import type { FastifyReply, FastifyRequest, HookHandlerDoneFunction } from 'fastify';
+import { Type } from '@sinclair/typebox';
 import {
   type AuthConnectionRoute,
   type AuthIdentifierRoute,
@@ -52,6 +53,7 @@ import {
 } from '#session.js';
 import { FixedWindowRateLimiter } from '#util/rateLimit.js';
 import { getDeploymentMetadata } from '#deployment.js';
+import { createPendingOauthLink, deletePendingOauthLink, getPendingOauthLink, pendingOauthLinkPreview } from '#store/oauthLinkReview.js';
 
 const LOCKOUT_AFTER = 5;
 const MAX_LOCKOUT_MS = 5 * 60_000;
@@ -330,18 +332,48 @@ export const authRoutes: FastifyPluginAsyncTypebox = async (server) => {
 
   server.delete<AuthConnectionRoute>('/v1/auth/connections/:provider', {
     schema: getRouteContract('DELETE', '/v1/auth/connections/:provider'),
-    preHandler: fastifyRequireSession,
+    preHandler: [fastifyRequireSession, fastifyRequireRecentAuthentication()],
   }, async (request, reply) => {
     const session = getFastifySession(request)!;
     const userId = session.sub;
     const provider = request.params.provider;
     if (userId === 'root') return sendValidationError(request, reply, 400, 'the root account does not have OAuth connections');
-    if (getLinkedAuthIdentities(userId).length < 2) return sendValidationError(request, reply, 400, 'connect another provider before removing this sign-in method');
+    if (request.body.confirmation !== 'DISCONNECT') return sendValidationError(request, reply, 400, 'confirm the sign-in method removal');
+    const remainingOauthMethods = new Set((getAuthProfile(userId)?.identities ?? []).filter((identity) => identity.source !== 'discord_connection' && identity.provider !== provider).map((identity) => identity.provider));
+    if (remainingOauthMethods.size === 0 && listUserPasskeys(userId).length === 0) return sendValidationError(request, reply, 400, 'connect another usable sign-in method before removing this one');
     const profile = removeAuthIdentity(userId, provider);
     if (!profile) return sendValidationError(request, reply, 404, 'connection not found');
     bumpSessionVersion(userId);
     setFastifySessionCookie(reply, { sub: userId, permissions: getUserEffectivePermissions(userId) ?? 0n, reauthenticatedAt: session.reauthenticatedAt }, fastifySessionOptsFromRequest(request));
     return reply.send({ identities: getLinkedAuthIdentities(userId), linkedProviders: getLinkedAuthProviders(userId) });
+  });
+
+  server.get('/v1/auth/connections/:provider/preview', { schema: { hide: true, params: Type.Object({ provider: Type.Union([Type.Literal('github'), Type.Literal('discord')]) }) }, preHandler: fastifyRequireSession }, (request, reply) => {
+    const userId = getFastifySession(request)!.sub;
+    const connected = (getAuthProfile(userId)?.identities ?? []).some((identity) => identity.provider === request.params.provider && identity.source !== 'discord_connection');
+    if (!connected) return reply.code(404).send({ error: 'sign-in method not found' });
+    const remaining = new Set((getAuthProfile(userId)?.identities ?? []).filter((identity) => identity.source !== 'discord_connection' && identity.provider !== request.params.provider).map((identity) => identity.provider));
+    return { provider: request.params.provider, canUnlink: remaining.size > 0 || listUserPasskeys(userId).length > 0, affectedCategories: ['sign-in methods', 'active sessions'] };
+  });
+
+  server.get('/v1/auth/link-review/:id', { schema: { hide: true, params: Type.Object({ id: Type.String() }) }, preHandler: fastifyRequireSession }, (request, reply) => {
+    const link = getPendingOauthLink(request.params.id, getFastifySession(request)!.sub);
+    if (!link) return reply.code(404).send({ error: 'link review expired or unavailable' });
+    return pendingOauthLinkPreview(link);
+  });
+
+  server.post('/v1/auth/link-review/:id/confirm', { schema: { hide: true, params: Type.Object({ id: Type.String() }), body: Type.Object({ confirmation: Type.Union([Type.Literal('LINK ACCOUNT'), Type.Literal('MERGE ACCOUNTS')]) }) }, preHandler: [fastifyRequireSession, fastifyRequireRecentAuthentication()] }, (request, reply) => {
+    const userId = getFastifySession(request)!.sub;
+    const link = getPendingOauthLink(request.params.id, userId);
+    if (!link) return reply.code(404).send({ error: 'link review expired or unavailable' });
+    const preview = pendingOauthLinkPreview(link);
+    if (request.body.confirmation !== (preview.willMerge ? 'MERGE ACCOUNTS' : 'LINK ACCOUNT')) return reply.code(400).send({ error: 'confirmation does not match the requested action' });
+    const profile = linkOauthAccount(userId, link.identity);
+    deletePendingOauthLink(link.id, userId);
+    recordAudit(userId, preview.willMerge ? 'auth.account.merge' : 'auth.account.link', profile.userId, link.identity.provider);
+    const permissions = getUserEffectivePermissions(userId);
+    setFastifySessionCookie(reply, { sub: userId, permissions, reauthenticatedAt: getFastifySession(request)!.reauthenticatedAt }, fastifySessionOptsFromRequest(request));
+    return { ok: true, linkedProviders: getLinkedAuthProviders(userId) };
   });
 
   server.post('/v1/auth/refresh', { schema: getRouteContract('POST', '/v1/auth/refresh'), preHandler: fastifyRequireSession }, async (request, reply) => {
@@ -625,9 +657,11 @@ function registerOAuthRoutes(server: Parameters<FastifyPluginAsyncTypebox>[0]): 
         source: 'oauth',
         updatedAt: new Date().toISOString(),
       };
-      const profile = linkUserId
-        ? linkOauthAccount(linkUserId, identity)
-        : resolveOauthAccount({ fallbackUserId: oauthUserId('github', String(user.id), user.login), identity });
+      if (linkUserId) {
+        const pending = createPendingOauthLink(linkUserId, identity);
+        return reply.redirect(`/?link_review=${encodeURIComponent(pending.id)}`);
+      }
+      const profile = resolveOauthAccount({ fallbackUserId: oauthUserId('github', String(user.id), user.login), identity });
       const userId = profile.userId;
       const permissions = getUserEffectivePermissions(userId) ?? 0n;
       setFastifySessionCookie(reply, { sub: userId, permissions, mfaVerified: !mfaStatus(userId).enabled, reauthenticatedAt: Date.now() }, fastifySessionOptsFromRequest(request));
@@ -681,24 +715,7 @@ function registerOAuthRoutes(server: Parameters<FastifyPluginAsyncTypebox>[0]): 
         email?: string;
         avatar?: string | null;
       };
-      const connectionsRes = await fetch('https://discord.com/api/v10/users/@me/connections', {
-        headers: { Authorization: `Bearer ${token.access_token}` },
-      });
-      const connections = connectionsRes.ok
-        ? ((await connectionsRes.json()) as { id: string; name: string; type: string; verified?: boolean }[])
-        : [];
-      if (!connectionsRes.ok) log.warn('discord connections lookup failed', { status: connectionsRes.status });
       const updatedAt = new Date().toISOString();
-      const discoveredIdentities: AuthIdentity[] = connections
-        .filter((connection) => connection.type === 'github' && connection.verified === true && connection.id.length > 0 && connection.name.length > 0)
-        .map((connection) => ({
-          provider: 'github',
-          providerId: connection.id,
-          username: connection.name,
-          displayName: connection.name,
-          source: 'discord_connection',
-          updatedAt,
-        }));
       const identity: AuthIdentity = {
         provider: 'discord',
         providerId: user.id,
@@ -709,9 +726,11 @@ function registerOAuthRoutes(server: Parameters<FastifyPluginAsyncTypebox>[0]): 
         source: 'oauth',
         updatedAt,
       };
-      const profile = linkUserId
-        ? linkOauthAccount(linkUserId, identity)
-        : resolveOauthAccount({ fallbackUserId: oauthUserId('discord', user.id, `discord:${user.username}`), identity, discoveredIdentities });
+      if (linkUserId) {
+        const pending = createPendingOauthLink(linkUserId, identity);
+        return reply.redirect(`/?link_review=${encodeURIComponent(pending.id)}`);
+      }
+      const profile = resolveOauthAccount({ fallbackUserId: oauthUserId('discord', user.id, `discord:${user.username}`), identity });
       const userId = profile.userId;
       const guildIds = getDiscordGuildIds();
       if (isDiscordBotEnabled() && guildIds.length > 0) {

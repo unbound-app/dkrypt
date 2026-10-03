@@ -911,7 +911,7 @@ async fn execute(state: Arc<BridgeState>, request: RpcRequest) -> Result<Value, 
                 },
             );
             Ok(
-                json!({ "state": "ready", "transport": transport, "deviceCount": devices.as_array().map_or(0, Vec::len), "devicePresent": device_present, "muxSocket": state.mux_socket, "capabilities": bridge_capabilities() }),
+                json!({ "state": "ready", "transport": transport, "deviceCount": devices.as_array().map_or(0, Vec::len), "devicePresent": device_present, "muxSocket": state.mux_socket, "capabilities": bridge_capabilities(), "version": env!("CARGO_PKG_VERSION") }),
             )
         }
         "list_devices" => list_devices(&state).await,

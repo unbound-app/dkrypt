@@ -1,5 +1,6 @@
 import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
 import type { FastifyReply, FastifyRequest } from 'fastify';
+import { Type } from '@sinclair/typebox';
 import type {
   DashboardGitHubBudgetHistoryRoute,
   DashboardGitHubRateLimitRoute,
@@ -51,6 +52,8 @@ import {
 import { externalRequestRateLimiter, fastifyRateLimitPerUser } from '#util/rateLimit.js';
 import { effectiveTimeZone, isValidTimeZone } from '#util/timezone.js';
 import { isValidMaintenanceWindow, nextRunnableCronOccurrence } from '#util/maintenanceWindow.js';
+import { findWatchConflicts } from '#watchConflicts.js';
+import { deleteWatchDraft, getWatchRevision, listWatchDrafts, listWatchRevisions, saveWatchDraft } from '#store/watchWorkflowRepository.js';
 import { sendHttpErrorEnvelope } from '#util/httpResponse.js';
 import { validate as validateCronExpr } from 'node-cron';
 
@@ -230,9 +233,9 @@ function parseWatchPatch(body: WatchPatchInput): Partial<WatchCreateInput> {
   return patch;
 }
 
-function visibleWatch(request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply): AppWatch | undefined {
+function visibleWatch(request: FastifyRequest<any>, reply: FastifyReply): AppWatch | undefined {
   const session = getFastifySession(request);
-  const watch = getWatch(request.params.id);
+  const watch = getWatch((request.params as { id: string }).id);
   if (!watch || !session || !canAccessProject(session.sub, session.permissions, watch.projectId ?? DEFAULT_PROJECT_ID)) {
     sendError(request, reply, 404, 'watch not found');
     return undefined;
@@ -243,6 +246,78 @@ function visibleWatch(request: FastifyRequest<{ Params: { id: string } }>, reply
 export const dashboardWatchRoutes: FastifyPluginAsyncTypebox = async (server) => {
   server.addHook('preHandler', fastifyRequireSession);
   server.addHook('preHandler', recordFastifyDashboardActivity);
+
+  server.get('/v1/dashboard/watches/drafts', {
+    schema: { hide: true, querystring: Type.Object({ projectId: Type.Optional(Type.String()) }) },
+    preHandler: canManageWatches,
+  }, (request, reply) => {
+    const projectId = projectForRequest(request, reply, request.query.projectId, true);
+    if (!projectId) return;
+    return { drafts: listWatchDrafts(getFastifySession(request)!.sub, projectId) };
+  });
+
+  server.post('/v1/dashboard/watches/drafts', {
+    schema: { hide: true, body: Type.Object({ id: Type.Optional(Type.String()), projectId: Type.String(), input: Type.Record(Type.String(), Type.Unknown()) }) },
+    preHandler: canManageWatches,
+  }, (request, reply) => {
+    const projectId = projectForRequest(request, reply, request.body.projectId, true);
+    if (!projectId) return;
+    try {
+      return saveWatchDraft(getFastifySession(request)!.sub, projectId, request.body.input, request.body.id);
+    } catch {
+      sendError(request, reply, 404, 'watch draft not found');
+      return;
+    }
+  });
+
+  server.delete('/v1/dashboard/watches/drafts/:id', {
+    schema: { hide: true, params: Type.Object({ id: Type.String() }) },
+    preHandler: canManageWatches,
+  }, (request) => ({ deleted: deleteWatchDraft(request.params.id, getFastifySession(request)!.sub) }));
+
+  server.post('/v1/dashboard/watches/conflicts', {
+    schema: { hide: true, body: Type.Object({ watch: Type.Record(Type.String(), Type.Unknown()), excludeWatchId: Type.Optional(Type.String()) }) },
+    preHandler: canManageWatches,
+  }, (request, reply) => {
+    const input = parseWatchInput(request.body.watch);
+    if (!input) return sendError(request, reply, 400, 'watch input is malformed');
+    const projectId = projectForRequest(request, reply, input.projectId, true);
+    if (!projectId) return;
+    return { conflicts: findWatchConflicts({ ...input, projectId }, request.body.excludeWatchId) };
+  });
+
+  server.get('/v1/dashboard/watches/:id/revisions', {
+    schema: { hide: true, params: Type.Object({ id: Type.String() }), querystring: Type.Object({ projectId: Type.Optional(Type.String()) }) },
+    preHandler: canManageWatches,
+  }, (request, reply) => {
+    const watch = getWatch(request.params.id);
+    const projectId = watch?.projectId ?? request.query.projectId ?? DEFAULT_PROJECT_ID;
+    const session = getFastifySession(request)!;
+    if (!getProject(projectId) || !canAccessProject(session.sub, session.permissions, projectId) || (watch && request.query.projectId && request.query.projectId !== projectId)) return sendError(request, reply, 404, 'watch not found');
+    const revisions = listWatchRevisions(request.params.id, projectId);
+    if (!watch && revisions.length === 0) return sendError(request, reply, 404, 'watch revisions not found');
+    return { revisions };
+  });
+
+  server.post('/v1/dashboard/watches/:id/revisions/:revisionId/restore', {
+    schema: { hide: true, params: Type.Object({ id: Type.String(), revisionId: Type.String() }), body: Type.Object({ expectedUpdatedAt: Type.Number(), webhookUrl: Type.Optional(Type.String()), acknowledgeConflicts: Type.Optional(Type.Boolean()) }) },
+    preHandler: canManageWatches,
+  }, (request, reply) => {
+    const watch = visibleWatch(request, reply);
+    if (!watch) return;
+    if (watch.updatedAt !== request.body.expectedUpdatedAt) return sendError(request, reply, 409, 'watch changed after this revision was selected');
+    const revision = getWatchRevision(request.params.revisionId);
+    if (!revision || revision.watchId !== watch.id || revision.projectId !== (watch.projectId ?? DEFAULT_PROJECT_ID)) return sendError(request, reply, 404, 'watch revision not found');
+    if (revision.snapshot.webhookConfigured && !watch.webhookUrl && !request.body.webhookUrl) return sendError(request, reply, 409, 'enter the webhook URL before restoring this revision');
+    const { id: _id, createdAt: _createdAt, updatedAt: _updatedAt, lastScheduledAt: _lastScheduledAt, webhookConfigured: _webhookConfigured, ...configuration } = revision.snapshot;
+    const patch: Partial<WatchCreateInput> = { ...configuration, enabled: watch.enabled, webhookUrl: request.body.webhookUrl ?? watch.webhookUrl };
+    if (findWatchConflicts(patch as WatchCreateInput, watch.id).length > 0 && request.body.acknowledgeConflicts !== true) return sendError(request, reply, 409, 'watch schedule conflicts require acknowledgement');
+    const result = updateWatch(watch.id, patch, getFastifySession(request)!.sub, 'restored');
+    if (!result.ok || !result.watch) return sendError(request, reply, 409, result.error ?? 'watch revision could not be restored');
+    applyWatchSchedules();
+    emitJobsChanged();
+    return serializeWatch(result.watch);
+  });
 
   server.get<DashboardGitHubRateLimitRoute>('/v1/dashboard/github/rate-limit', {
     schema: getRouteContract('GET', '/v1/dashboard/github/rate-limit'),
@@ -397,6 +472,10 @@ export const dashboardWatchRoutes: FastifyPluginAsyncTypebox = async (server) =>
     const projectId = projectForRequest(request, reply, input.projectId, true);
     if (!projectId) return;
     input.projectId = projectId;
+    if (findWatchConflicts(input).length > 0 && request.body.acknowledgeConflicts !== true) {
+      sendError(request, reply, 409, 'watch schedule overlaps another dispatch target; review conflicts and acknowledge before saving');
+      return;
+    }
     if (input.pollCron && !validateCronExpr(input.pollCron)) {
       sendError(request, reply, 400, 'pollCron is not a valid cron expression');
       return;
@@ -450,6 +529,10 @@ export const dashboardWatchRoutes: FastifyPluginAsyncTypebox = async (server) =>
     }
     const existingWatch = visibleWatch(request, reply);
     if (!existingWatch) return;
+    if (findWatchConflicts({ ...existingWatch, ...patch }, existingWatch.id).length > 0 && request.body.acknowledgeConflicts !== true) {
+      sendError(request, reply, 409, 'watch schedule overlaps another dispatch target; review conflicts and acknowledge before saving');
+      return;
+    }
     if (request.body.expectedUpdatedAt !== undefined && request.body.expectedUpdatedAt !== existingWatch.updatedAt) {
       sendError(request, reply, 409, 'watch changed after this action; refresh before retrying');
       return;

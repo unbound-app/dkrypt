@@ -47,6 +47,7 @@
 		appIconUrl,
 		ensureAppCatalog,
 	} from "#lib/appCatalog.svelte";
+	import ReleaseCoverage from "#features/operations/ReleaseCoverage.svelte";
 
 	const TREND_DAYS_OPTIONS = [
 		{ value: "7", label: "Last 7 days" },
@@ -582,6 +583,8 @@
 		{/if}
 	{/if}
 </Card>
+
+{#if canViewQueueSlo}<ReleaseCoverage />{/if}
 
 {#if canViewQueueSlo}
 	<Card title="Queue objective" class="mt-4">

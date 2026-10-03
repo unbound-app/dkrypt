@@ -5,6 +5,8 @@ import { PermissionFlag } from '#permissions.js';
 import { setSessionCookie } from '#session.js';
 import type { Response } from '#http.js';
 import { createDashboardIncidentRoutes } from '#routes/dashboardIncidentRoutes.js';
+import { openIncident } from '#store/incidentRepository.js';
+import { randomUUID } from 'node:crypto';
 
 function sessionCookie(permissions: bigint): string {
   let value = '';
@@ -59,6 +61,32 @@ test('incident timeline merges authorized project jobs, device history, and depl
     expect(defaultProject.statusCode).toBe(200);
     expect(defaultProject.json().events.some((event: { kind: string }) => event.kind === 'device')).toBe(true);
     expect(denied.statusCode).toBe(404);
+  } finally {
+    await server.close();
+  }
+});
+
+test('Action Center separates view and management permissions while retaining project isolation', async () => {
+  const incident = openIncident({ projectId: 'default', sourceKey: `job:${randomUUID()}`, sourceId: randomUUID(), kind: 'job', title: 'Decrypt failed', detail: 'com.example.app' });
+  const server = Fastify().withTypeProvider<TypeBoxTypeProvider>();
+  await server.register(createDashboardIncidentRoutes({
+    canAccessProject: (_userId, _permissions, projectId) => projectId === 'default',
+    getProject: (projectId) => projectId === 'default' ? { id: projectId } as never : undefined,
+  }));
+  try {
+    const url = '/v1/dashboard/action-center';
+    const denied = await server.inject({ method: 'GET', url, headers: { cookie: sessionCookie(PermissionFlag.viewLogs) } });
+    expect(denied.statusCode).toBe(403);
+    const visible = await server.inject({ method: 'GET', url, headers: { cookie: sessionCookie(PermissionFlag.viewIncidents) } });
+    expect(visible.statusCode).toBe(200);
+    expect(visible.json().incidents.some((entry: { id: string }) => entry.id === incident.id)).toBe(true);
+    const isolated = await server.inject({ method: 'GET', url: `${url}?projectId=other`, headers: { cookie: sessionCookie(PermissionFlag.viewIncidents) } });
+    expect(isolated.statusCode).toBe(404);
+    const readonlyChange = await server.inject({ method: 'PATCH', url: `${url}/${incident.id}`, headers: { cookie: sessionCookie(PermissionFlag.viewIncidents) }, payload: { projectId: 'default', status: 'in_progress' } });
+    expect(readonlyChange.statusCode).toBe(403);
+    const managed = await server.inject({ method: 'PATCH', url: `${url}/${incident.id}`, headers: { cookie: sessionCookie(PermissionFlag.manageIncidents) }, payload: { projectId: 'default', status: 'resolved', resolutionNote: 'Verified recovery' } });
+    expect(managed.statusCode).toBe(200);
+    expect(managed.json().incident.status).toBe('resolved');
   } finally {
     await server.close();
   }

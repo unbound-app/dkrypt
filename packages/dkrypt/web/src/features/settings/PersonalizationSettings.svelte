@@ -2,7 +2,29 @@
   import { ArrowDown, ArrowUp, Pin, PinOff } from 'lucide-svelte';
   import Button from '#lib/components/ui/Button.svelte';
   import { artifactLibraryPreferencesState, displayTimeZoneState, largeTargetsState, navigationPreferencesState, type ArtifactColumnId, type TabId } from '#lib/ui.svelte';
-  import { pushArtifactLibraryPreferences, pushDisplayTimeZonePref, pushLargeTargetsPref, pushNavigationPreferences } from '#lib/session.svelte';
+  import { pushArtifactLibraryPreferences, pushDisplayTimeZonePref, pushLargeTargetsPref, pushNavigationPreferences, pushShortcutBindings } from '#lib/session.svelte';
+  import { DEFAULT_SHORTCUT_BINDINGS, shortcutBindingsState, type ShortcutAction, type ShortcutBindings } from '#lib/shortcuts.svelte';
+  import { showToast } from '#lib/ui.svelte';
+
+  const shortcutLabels: Record<ShortcutAction, string> = { palette: 'Command palette', focusSearch: 'Focus search', batch: 'Batch decrypt', help: 'Shortcut help', jumpPrefix: 'Navigation prefix', home: 'Home', billing: 'Plans', keys: 'API keys', logs: 'Logs', insights: 'Insights', docs: 'Docs', settings: 'Settings' };
+  let shortcutDraft = $state<ShortcutBindings>({ ...DEFAULT_SHORTCUT_BINDINGS });
+  let shortcutBusy = $state(false);
+
+  $effect(() => {
+    shortcutDraft = { ...shortcutBindingsState.value };
+  });
+
+  async function saveShortcuts(bindings: ShortcutBindings): Promise<void> {
+    shortcutBusy = true;
+    try {
+      await pushShortcutBindings(bindings);
+      showToast('Keyboard shortcuts saved', 'success');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Could not save shortcuts', 'error');
+    } finally {
+      shortcutBusy = false;
+    }
+  }
 
   const tabLabels: Record<TabId, string> = {
     home: 'Home',
@@ -116,5 +138,16 @@
         </li>
       {/each}
     </ol>
+  </section>
+
+  <section class="rounded-xl border border-border/70 bg-panel/40 p-4 xl:col-span-2">
+    <h2 class="text-sm font-semibold">Keyboard shortcuts</h2>
+    <p class="mt-1 text-xs text-muted">Use one lowercase key for actions and navigation. The command palette also accepts Mod+K. Conflicting and browser-reserved keys are rejected.</p>
+    <div class="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      {#each Object.entries(shortcutLabels) as [action, label] (action)}
+        <label class="block text-xs"><span class="mb-1 block text-muted">{label}</span><input class="min-h-10 w-full rounded-md border border-border bg-background px-3 font-mono text-sm" maxlength="8" value={shortcutDraft[action as ShortcutAction]} oninput={(event) => shortcutDraft = { ...shortcutDraft, [action]: event.currentTarget.value }} /></label>
+      {/each}
+    </div>
+    <div class="mt-3 flex gap-2"><Button size="sm" loading={shortcutBusy} onclick={() => void saveShortcuts(shortcutDraft)}>Save shortcuts</Button><Button size="sm" variant="secondary" loading={shortcutBusy} onclick={() => void saveShortcuts({ ...DEFAULT_SHORTCUT_BINDINGS })}>Reset defaults</Button></div>
   </section>
 </div>

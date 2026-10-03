@@ -345,12 +345,12 @@ class RustDeviceBridgeClient {
     return result as Record<string, unknown>;
   }
 
-  async health(deviceId?: string): Promise<{ state: string; transport: string; deviceCount: number; devicePresent: boolean }> {
+  async health(deviceId?: string): Promise<{ state: string; transport: string; deviceCount: number; devicePresent: boolean; version?: string }> {
     const result = await this.request('health', deviceId ? { deviceId } : {}, 5_000);
     if (!result || typeof result !== 'object') throw new Error('Rust device bridge returned invalid health');
     const value = result as Record<string, unknown>;
     if (typeof value.state !== 'string' || typeof value.transport !== 'string' || typeof value.deviceCount !== 'number' || typeof value.devicePresent !== 'boolean') throw new Error('Rust device bridge returned incomplete health');
-    return { state: value.state, transport: value.transport, deviceCount: value.deviceCount, devicePresent: value.devicePresent };
+    return { state: value.state, transport: value.transport, deviceCount: value.deviceCount, devicePresent: value.devicePresent, version: typeof value.version === 'string' ? value.version : undefined };
   }
 
   async events(): Promise<Record<string, unknown>> {
@@ -1029,6 +1029,7 @@ export interface RustDeviceBridgeStatus {
   transport: string;
   deviceCount: number;
   capabilities: string[];
+  version?: string;
 }
 
 export async function getRustDeviceBridgeStatus(): Promise<RustDeviceBridgeStatus> {
@@ -1039,6 +1040,7 @@ export async function getRustDeviceBridgeStatus(): Promise<RustDeviceBridgeStatu
     transport: health.transport,
     deviceCount: health.deviceCount,
     capabilities,
+    ...(health.version ? { version: health.version } : {}),
   };
 }
 

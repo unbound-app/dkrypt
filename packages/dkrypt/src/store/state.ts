@@ -44,6 +44,7 @@ import { createJobHistoryRepository } from '#store/jobHistoryRepository.js';
 import { createSessionRepository } from '#store/sessionRepository.js';
 import { createSettingsRepository } from '#store/settingsRepository.js';
 import { createWatchRepository, isAppWatchRecord } from '#store/watchRepository.js';
+import { recordWatchRevision } from '#store/watchWorkflowRepository.js';
 import { firstStateOwnedCollectionMismatch, openStateDatabase, readStateCollection, stableJson, verifyDatabaseBackup, writeStateMirror, type StateCollectionReplacement, type StateDatabase } from '#store/sqlite.js';
 import { paginateCursor } from '#util/cursor.js';
 import { effectiveTimeZone } from '#util/timezone.js';
@@ -261,6 +262,7 @@ export interface ApiKeyRecord {
 }
 
 export interface ApiKeyAuthResult {
+  projectId?: string;
 
   allowedBundleIds?: string[];
 
@@ -427,6 +429,12 @@ export interface AppCatalogEntry {
   releaseNotes?: string;
   price?: number;
   metadataFetchedAt?: number;
+  latestAppStoreVersion?: string;
+  latestAppStoreExternalId?: string;
+  appStoreReleaseCheckedAt?: number;
+  latestTestFlightVersion?: string;
+  latestTestFlightBuildId?: number;
+  testFlightReleaseCheckedAt?: number;
   updatedAt: number;
 }
 
@@ -487,6 +495,7 @@ export interface TestFlightSubscription {
 }
 
 export interface UserPrefs {
+  shortcutBindings?: Record<string, string>;
   formattingLocale?: 'system' | 'en' | 'de';
   interfaceLanguage?: 'system' | 'en' | 'de';
   theme?: 'dark' | 'light' | 'auto';
@@ -582,7 +591,13 @@ export type AuditAction =
   | 'artifact.pin'
   | 'artifact.unpin'
   | 'artifact.archive'
-  | 'artifact.restore';
+  | 'artifact.restore'
+  | 'incident.update'
+  | 'integration.create'
+  | 'integration.rotate'
+  | 'integration.revoke'
+  | 'auth.account.link'
+  | 'auth.account.merge';
 
 export interface AuditLogEntry {
   id: string;
@@ -1470,6 +1485,12 @@ export function upsertAppCatalogEntry(entry: Omit<AppCatalogEntry, 'updatedAt'>)
     releaseNotes: entry.releaseNotes ?? previous?.releaseNotes,
     price: entry.price ?? previous?.price,
     metadataFetchedAt: entry.metadataFetchedAt ?? previous?.metadataFetchedAt,
+    latestAppStoreVersion: entry.latestAppStoreVersion ?? previous?.latestAppStoreVersion,
+    latestAppStoreExternalId: entry.latestAppStoreExternalId ?? previous?.latestAppStoreExternalId,
+    appStoreReleaseCheckedAt: entry.appStoreReleaseCheckedAt ?? previous?.appStoreReleaseCheckedAt,
+    latestTestFlightVersion: entry.latestTestFlightVersion ?? previous?.latestTestFlightVersion,
+    latestTestFlightBuildId: entry.latestTestFlightBuildId ?? previous?.latestTestFlightBuildId,
+    testFlightReleaseCheckedAt: entry.testFlightReleaseCheckedAt ?? previous?.testFlightReleaseCheckedAt,
     updatedAt: Date.now(),
   };
   if (!normalized.bundleId || !normalized.displayName) {
@@ -1497,6 +1518,12 @@ export function upsertAppCatalogEntries(entries: Array<Omit<AppCatalogEntry, 'up
         releaseNotes: entry.releaseNotes,
         price: entry.price,
         metadataFetchedAt: entry.metadataFetchedAt,
+        latestAppStoreVersion: entry.latestAppStoreVersion,
+        latestAppStoreExternalId: entry.latestAppStoreExternalId,
+        appStoreReleaseCheckedAt: entry.appStoreReleaseCheckedAt,
+        latestTestFlightVersion: entry.latestTestFlightVersion,
+        latestTestFlightBuildId: entry.latestTestFlightBuildId,
+        testFlightReleaseCheckedAt: entry.testFlightReleaseCheckedAt,
       }),
     );
   }
@@ -1582,7 +1609,7 @@ function fsyncPath(filePath: string): void {
   }
 }
 
-function persistNow(additionalCollections: readonly StateCollectionReplacement[] = []): void {
+function persistNow(additionalCollections: readonly StateCollectionReplacement[] = [], afterCollections?: (database: StateDatabase['db']) => void): void {
   const collections = [...additionalCollections];
   for (const replacement of accountRepository.collectionReplacements({ users: state.allowedUsers, roles: state.roles })) {
     if (!collections.some((collection) => collection.table === replacement.table)) collections.push(replacement);
@@ -1608,7 +1635,7 @@ function persistNow(additionalCollections: readonly StateCollectionReplacement[]
   if (!collections.some((collection) => collection.table === 'backup_schedule')) {
     collections.push(backupScheduleRepository.collectionReplacement(state.backupSchedule));
   }
-  stateDatabase.writeState(state, undefined, collections);
+  stateDatabase.writeState(state, undefined, collections, afterCollections);
   dirty = false;
   syncLegacyStateMirror('state', () => writeStateMirror(statePath, state));
 }
@@ -3034,12 +3061,12 @@ export function createWatch(input: CreateWatchInput, actor: string): { ok: boole
     updatedAt: now,
   };
   state.watches.push(watch);
-  persistNow();
+  persistNow([], (database) => { recordWatchRevision(watch, actor, 'created', undefined, database); });
   recordAudit(actor, 'watch.add', watch.id, watch.bundleId);
   return { ok: true, watch };
 }
 
-export function updateWatch(id: string, patch: Partial<CreateWatchInput>, actor: string): { ok: boolean; watch?: AppWatch; error?: string } {
+export function updateWatch(id: string, patch: Partial<CreateWatchInput>, actor: string, revisionAction: 'updated' | 'restored' = 'updated'): { ok: boolean; watch?: AppWatch; error?: string } {
   materializeWatches();
   const watch = state.watches.find((w) => w.id === id);
   if (!watch) return { ok: false, error: 'watch not found' };
@@ -3052,6 +3079,7 @@ export function updateWatch(id: string, patch: Partial<CreateWatchInput>, actor:
     return { ok: false, error: `another enabled watch already targets ${nextBundleId}` };
   }
   const merged = { ...watch, ...patch } as CreateWatchInput;
+  const previous = structuredClone(watch);
   const dispatch = normalizedWatchInput(merged);
   const scheduleChanged = (patch.pollCron !== undefined && patch.pollCron !== watch.pollCron)
     || (patch.timezone !== undefined && effectiveTimeZone(patch.timezone) !== effectiveTimeZone(watch.timezone))
@@ -3060,18 +3088,19 @@ export function updateWatch(id: string, patch: Partial<CreateWatchInput>, actor:
     || ('maintenanceWindow' in patch && (patch.maintenanceWindow?.start !== watch.maintenanceWindow?.start || patch.maintenanceWindow?.end !== watch.maintenanceWindow?.end));
   Object.assign(watch, patch, dispatch, { updatedAt: Math.max(Date.now(), watch.updatedAt + 1) });
   if (scheduleChanged) watch.lastScheduledAt = Date.now();
-  persistNow();
+  persistNow([], (database) => { recordWatchRevision(watch, actor, revisionAction, previous, database); });
   recordAudit(actor, 'watch.update', watch.id, watch.bundleId);
   return { ok: true, watch };
 }
 
 export function deleteWatch(id: string, actor: string): boolean {
   materializeWatches();
+  const removed = state.watches.find((watch) => watch.id === id);
   const before = state.watches.length;
   state.watches = state.watches.filter((w) => w.id !== id);
   const changed = state.watches.length !== before;
   if (changed) {
-    persistNow();
+    persistNow([], (database) => { if (removed) recordWatchRevision(removed, actor, 'deleted', undefined, database); });
     recordAudit(actor, 'watch.remove', id);
   }
   return changed;

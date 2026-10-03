@@ -2,6 +2,7 @@ import type { NextFunction, Request, Response } from '#http.js';
 import type { FastifyReply, FastifyRequest, HookHandlerDoneFunction } from 'fastify';
 import { isGeneratedApiKey, recordApiKeyOutcome, verifyApiKey, type ApiKeyAuthResult } from '#store/state.js';
 import { isPublicApiKeyRoute } from '#publicApi.js';
+import { authenticateGithubOidc } from '#githubOidc.js';
 
 const fastifyApiKeyContext = new WeakMap<FastifyRequest, ApiKeyAuthResult>();
 
@@ -59,6 +60,19 @@ export function fastifyRequireApiKey(request: FastifyRequest, reply: FastifyRepl
     return;
   }
   if (!result) {
+    if (scheme === 'Bearer' && token && token.split('.').length === 3 && isPublicApiKeyRoute(request.method, request.routeOptions.url)) {
+      void authenticateGithubOidc(token).then((policy) => {
+        if (!policy) {
+          reply.code(401).send({ error: 'unauthorized', code: 'unauthorized', message: 'unauthorized', requestId: request.id, retryable: false });
+          return;
+        }
+        fastifyApiKeyContext.set(request, { ownerId: 'root', projectId: policy.projectId, allowedBundleIds: policy.bundleIds, allowTestFlight: policy.allowTestFlight });
+        done();
+      }, () => {
+        reply.code(401).send({ error: 'unauthorized', code: 'unauthorized', message: 'unauthorized', requestId: request.id, retryable: false });
+      });
+      return;
+    }
     reply.code(401).send({ error: 'unauthorized', code: 'unauthorized', message: 'unauthorized', requestId: request.id, retryable: false });
     return;
   }
