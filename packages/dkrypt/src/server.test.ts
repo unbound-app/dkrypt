@@ -152,6 +152,131 @@ test('cookie-authenticated mutations require same-origin request metadata', asyn
   }
 });
 
+test('self-hosted device setup accepts its actual same-origin browser URL', async () => {
+  const server = await buildRawServer({ includePublicRoutes: false });
+
+  try {
+    const response = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/devices/setup',
+      headers: {
+        cookie: createSessionCookie('root', PermissionFlag.administrator),
+        host: '192.168.1.20:8080',
+        origin: 'http://192.168.1.20:8080',
+        'sec-fetch-site': 'same-origin',
+      },
+      payload: {},
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ message: 'a discovered device connection is required' });
+
+    const originOnly = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/devices/setup',
+      headers: {
+        cookie: createSessionCookie('root', PermissionFlag.administrator),
+        host: '192.168.1.20:8080',
+        origin: 'http://192.168.1.20:8080',
+      },
+      payload: {},
+    });
+    expect(originOnly.statusCode).toBe(400);
+    expect(originOnly.json()).toMatchObject({ message: 'a discovered device connection is required' });
+  } finally {
+    await server.close();
+  }
+});
+
+test('self-hosted device setup accepts a trusted HTTPS proxy origin', async () => {
+  const server = await buildRawServer({ includePublicRoutes: false });
+
+  try {
+    const response = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/devices/setup',
+      remoteAddress: '127.0.0.1',
+      headers: {
+        cookie: createSessionCookie('root', PermissionFlag.administrator),
+        host: '127.0.0.1:8080',
+        origin: 'https://dkrypt.example.org',
+        'x-forwarded-host': 'dkrypt.example.org',
+        'x-forwarded-proto': 'https',
+        'sec-fetch-site': 'same-origin',
+      },
+      payload: {},
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ message: 'a discovered device connection is required' });
+  } finally {
+    await server.close();
+  }
+});
+
+test('self-hosted device setup accepts a same-origin HTTPS browser behind a non-loopback proxy', async () => {
+  const server = await buildRawServer({ includePublicRoutes: false });
+
+  try {
+    const response = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/devices/setup',
+      remoteAddress: '172.18.0.2',
+      headers: {
+        cookie: createSessionCookie('root', PermissionFlag.administrator),
+        host: 'dkrypt.example.org',
+        origin: 'https://dkrypt.example.org',
+        'x-forwarded-proto': 'https',
+        'sec-fetch-site': 'same-origin',
+      },
+      payload: {},
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ message: 'a discovered device connection is required' });
+  } finally {
+    await server.close();
+  }
+});
+
+test('self-hosted device setup rejects untrusted proxy forwarding and mismatched origins', async () => {
+  const server = await buildRawServer({ includePublicRoutes: false });
+
+  try {
+    const cookie = createSessionCookie('root', PermissionFlag.administrator);
+    const untrustedProxy = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/devices/setup',
+      remoteAddress: '203.0.113.10',
+      headers: {
+        cookie,
+        host: '127.0.0.1:8080',
+        origin: 'https://attacker.example',
+        'x-forwarded-host': 'attacker.example',
+        'x-forwarded-proto': 'https',
+        'sec-fetch-site': 'same-origin',
+      },
+      payload: {},
+    });
+    expect(untrustedProxy.json()).toMatchObject({ code: 'csrf_origin_rejected' });
+
+    const mismatchedOrigin = await server.inject({
+      method: 'POST',
+      url: '/v1/dashboard/devices/setup',
+      headers: {
+        cookie,
+        host: '192.168.1.20:8080',
+        origin: 'https://attacker.example',
+        'sec-fetch-site': 'same-origin',
+      },
+      payload: {},
+    });
+    expect(mismatchedOrigin.json()).toMatchObject({ code: 'csrf_origin_rejected' });
+  } finally {
+    await server.close();
+  }
+});
+
 async function signIn() {
   const server = await buildTestServer({ includePublicRoutes: false });
   const login = await server.inject({

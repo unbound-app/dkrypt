@@ -209,9 +209,17 @@ export async function buildServer(options: {
         }
         if (typeof origin === 'string') {
           try {
-            if (new URL(origin).origin !== new URL(config.publicBaseUrl).origin) {
-              rejectCsrfMutation(reply, requestId, 'request origin is not allowed');
-              return;
+            const requestedUrl = new URL(origin);
+            const requestedOrigin = requestedUrl.origin;
+            const configuredOrigin = new URL(config.publicBaseUrl).origin;
+            if (requestedOrigin !== configuredOrigin) {
+              const sameHostThroughProxy = typeof fetchSite === 'string'
+                && fetchSite.toLowerCase() === 'same-origin'
+                && requestedUrl.host === new URL(`${requestedUrl.protocol}//${request.host}`).host;
+              if (!sameHostThroughProxy && requestedOrigin !== new URL(`${request.protocol}://${request.host}`).origin) {
+                rejectCsrfMutation(reply, requestId, 'request origin is not allowed');
+                return;
+              }
             }
           } catch {
             rejectCsrfMutation(reply, requestId, 'request origin is not allowed');
