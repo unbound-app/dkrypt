@@ -177,16 +177,16 @@ export async function ensureTestFlightRunning(device = primaryDevice(), required
 
 export async function listTrains(appId: number, device = primaryDevice()): Promise<TFTrain[]> {
   return observeTestFlightLookup('trains', () => withTestFlightOperation('list_trains', device, () => withReadyBridgeRequest(async (conn) => {
-    const response = await sendTestFlightBridgeRequest(conn, { action: 'list_trains', appId });
+    const response = await sendTestFlightBridgeRequest(conn, { action: 'list_trains', appId }, 45_000);
     return response.data as TFTrain[];
-  }, device), { 'testflight.app_id': appId }));
+  }, device, [], true), { 'testflight.app_id': appId }));
 }
 
 export async function listBuilds(appId: number, trainVersion: string, device = primaryDevice()): Promise<TFBuild[]> {
   return observeTestFlightLookup('builds', () => withTestFlightOperation('list_builds', device, () => withReadyBridgeRequest(async (conn) => {
-    const response = await sendTestFlightBridgeRequest(conn, { action: 'list_builds', appId, trainVersion });
+    const response = await sendTestFlightBridgeRequest(conn, { action: 'list_builds', appId, trainVersion }, 45_000);
     return response.data as TFBuild[];
-  }, device), { 'testflight.app_id': appId, 'testflight.train_version': trainVersion }));
+  }, device, [], true), { 'testflight.app_id': appId, 'testflight.train_version': trainVersion }));
 }
 
 const TESTFLIGHT_INVITE_URL_RE = /^https:\/\/testflight\.apple\.com\/join\/([A-Za-z0-9]{4,32})$/;
@@ -232,22 +232,28 @@ export async function listTestFlightApps(device = primaryDevice(), refreshCatalo
   }, device, TESTFLIGHT_DEVICE_CATALOG_CAPABILITIES), { 'testflight.refresh_catalog': refreshCatalog });
 }
 
-async function withReadyBridgeRequest<T>(request: (conn: DeviceClient) => Promise<T>, device: DeviceRecord, requiredCapabilities: readonly string[] = []): Promise<T> {
+async function withReadyBridgeRequest<T>(request: (conn: DeviceClient) => Promise<T>, device: DeviceRecord, requiredCapabilities: readonly string[] = [], retryMetadataTimeout = false): Promise<T> {
   return withBridgeRecovery(
     () => withSSH(device, async (conn) => {
       await ensureTestFlightRunningOnConnection(conn, device, requiredCapabilities);
       return request(conn);
     }),
     device,
+    retryMetadataTimeout,
   );
 }
 
-async function withBridgeRecovery<T>(request: () => Promise<T>, device: DeviceRecord): Promise<T> {
+async function withBridgeRecovery<T>(request: () => Promise<T>, device: DeviceRecord, retryMetadataTimeout = false): Promise<T> {
   try {
     return await request();
   } catch (err) {
-    if (!(err instanceof BridgeError) || !err.details.retryable) throw err;
-    log.warn('recovering a retryable TestFlight bridge request', { code: err.details.code, stage: err.details.stage });
+    const bridgeRetryable = err instanceof BridgeError && err.details.retryable;
+    const metadataTimedOut = retryMetadataTimeout && err instanceof Error && /^autoinstall bridge request timed out \([^)]+\) on testflight:/.test(err.message);
+    if (!bridgeRetryable && !metadataTimedOut) throw err;
+    log.warn('recovering a retryable TestFlight bridge request', {
+      code: bridgeRetryable ? err.details.code : 'metadata_timeout',
+      stage: bridgeRetryable ? err.details.stage : 'metadata_fetch',
+    });
     invalidateTestFlightBridge(device);
     return request();
   }

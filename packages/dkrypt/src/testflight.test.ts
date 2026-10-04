@@ -8,6 +8,8 @@ const originalSetTimeout = globalThis.setTimeout;
 let installRequests = 0;
 let installedBuild = '107127';
 let abortOnInstall: AbortController | undefined;
+let buildLookupTimeouts = 0;
+let buildLookupRequests = 0;
 const lifecycleActions: string[] = [];
 const listAppRefreshes: boolean[] = [];
 const listTrainTraceContexts: TraceContext[] = [];
@@ -49,7 +51,14 @@ mock.module('#idevice.js', () => ({
       return { ok: true, apps: [{ appId: 985746746, bundleId: 'com.hammerandchisel.discord', name: 'Discord' }] };
     }
     if (request.action === 'list_trains') return { data: [{ trainVersion: '341.0', buildCount: 1 }] };
-    if (request.action === 'list_builds') return { data: [{ id: 1, cfBundleShortVersion: '341.0', cfBundleVersion: '107127', bundleId: 'com.hammerandchisel.discord' }] };
+    if (request.action === 'list_builds') {
+      buildLookupRequests += 1;
+      if (buildLookupTimeouts > 0) {
+        buildLookupTimeouts -= 1;
+        throw new Error(`autoinstall bridge request timed out (test-request-${buildLookupRequests}) on testflight: {"action":"list_builds","appId":985746746,"trainVersion":"349.0"}`);
+      }
+      return { data: [{ id: 1, cfBundleShortVersion: '349.0', cfBundleVersion: '111500', bundleId: 'com.hammerandchisel.discord' }] };
+    }
     return { ok: true };
   },
   withSSH: async (_device: object, fn: (conn: object) => Promise<void>) => fn({}),
@@ -60,7 +69,7 @@ mock.module('#store/state.js', () => ({
   getPrimaryDevice: () => ({ id: 'test-device', transport: 'usb', udid: 'test-device' }),
 }));
 
-const { installBuild, listTestFlightApps, listTrains, statusTestFlightInvite, subscribeToTestFlightInvite, unsubscribeFromTestFlightInvite } = await import('./testflight.js');
+const { installBuild, listBuilds, listTestFlightApps, listTrains, statusTestFlightInvite, subscribeToTestFlightInvite, unsubscribeFromTestFlightInvite } = await import('./testflight.js');
 
 describe('installBuild', () => {
   afterAll(() => {
@@ -70,6 +79,8 @@ describe('installBuild', () => {
 
   beforeEach(() => {
     installRequests = 0;
+    buildLookupTimeouts = 0;
+    buildLookupRequests = 0;
     abortOnInstall = undefined;
     installedBuild = '107127';
     lifecycleActions.length = 0;
@@ -128,6 +139,12 @@ describe('installBuild', () => {
     await expect(listTestFlightApps()).resolves.toEqual([{ appId: 985746746, bundleId: 'com.hammerandchisel.discord', name: 'Discord' }]);
     await expect(listTestFlightApps(undefined, true)).resolves.toEqual([{ appId: 985746746, bundleId: 'com.hammerandchisel.discord', name: 'Discord' }]);
     expect(listAppRefreshes).toEqual([false, true]);
+  });
+
+  test('recovers a timed-out TestFlight builds lookup instead of failing metadata check', async () => {
+    buildLookupTimeouts = 1;
+    await expect(listBuilds(985746746, '349.0')).resolves.toMatchObject([{ cfBundleShortVersion: '349.0' }]);
+    expect(buildLookupRequests).toBe(2);
   });
 
   test('records TestFlight lookup counts and latency', async () => {

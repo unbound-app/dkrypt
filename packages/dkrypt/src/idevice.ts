@@ -1563,7 +1563,7 @@ async function sendBridgeRequestRawTo(
     const requestPath = `${requestDirectory}/${requestId}.json`;
     const responsePath = `${responseDirectory}/${requestId}.response.json`;
     const envelope = createBridgeEnvelope(secret, channel, request, requestId);
-    const deadline = Date.now() + timeoutMs;
+    let deadline = Date.now() + timeoutMs;
     const commandTimeout = () => Math.max(1, Math.min(REMOTE_COMMAND_TIMEOUT_MS, deadline - Date.now()));
     let requestMayExist = false;
     let completed = false;
@@ -1586,6 +1586,7 @@ async function sendBridgeRequestRawTo(
       requestMayExist = true;
       await writeRemoteFileAtomically(conn, requestPath, JSON.stringify(envelope), commandTimeout());
       throwIfAborted(signal);
+      deadline = Date.now() + timeoutMs;
 
       while (Date.now() < deadline) {
         throwIfAborted(signal);
