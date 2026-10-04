@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-const { lookupAppMetadata, searchApps } = await import(`${new URL('./itunes.ts', import.meta.url).href}?storefront-test`);
+const { lookupAppMetadata, lookupAppMetadataByTrackId, searchApps } = await import(`${new URL('./itunes.ts', import.meta.url).href}?storefront-test`);
 
 const originalFetch = globalThis.fetch;
 
@@ -87,6 +87,21 @@ describe('iTunes storefront selection', () => {
       expect(requests).toHaveLength(2);
       expect(requests.every((url) => url.searchParams.get('country') === 'US')).toBe(true);
       expect(results[0]?.minimumOsVersion).toBe('16.0');
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  test('resolves an App Store URL track ID through the software lookup', async () => {
+    const requests: URL[] = [];
+    mockFetch(requests);
+    try {
+      const metadata = await lookupAppMetadataByTrackId(985746746);
+      expect(metadata.bundleId).toBe('com.hammerandchisel.discord');
+      expect(requests[0]?.pathname).toBe('/lookup');
+      expect(requests[0]?.searchParams.get('id')).toBe('985746746');
+      expect(requests[0]?.searchParams.get('entity')).toBe('software');
+      expect(() => lookupAppMetadataByTrackId(-1)).toThrow();
     } finally {
       restoreFetch();
     }

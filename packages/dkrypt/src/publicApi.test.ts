@@ -49,6 +49,7 @@ test('API-key route policy matches concrete job and TestFlight paths only', () =
   expect(isPublicApiKeyRoute('PUT', '/v1/billing/checkouts')).toBe(false);
   expect(isPublicApiKeyRoute('GET', '/v1/auth/session')).toBe(false);
   expect(isPublicApiKeyRoute('GET', '/v1/auth/sessions')).toBe(false);
+  expect(isPublicApiKeyRoute('GET', '/v1/dashboard/apps/lookup-track')).toBe(false);
   expect(isPublicApiKeyRoute('POST', '/v1/auth/sessions/revoke-others')).toBe(false);
   expect(isPublicApiKeyRoute('GET', '/v1/health')).toBe(false);
   expect(isPublicApiKeyRoute('POST', '/v1/artifacts')).toBe(false);
@@ -76,6 +77,7 @@ test('generated API keys are rejected outside the decrypt and artifact API allow
       ['DELETE', '/v1/auth/sessions/session-123'],
       ['POST', '/v1/auth/sessions/revoke-others'],
       ['GET', '/v1/dashboard/overview'],
+      ['GET', '/v1/dashboard/apps/lookup-track?trackId=12345'],
       ['GET', '/v1/status'],
       ['GET', '/v1/testflight/123/trains'],
       ['GET', '/v1/testflight/123/builds?trainVersion=1.0'],

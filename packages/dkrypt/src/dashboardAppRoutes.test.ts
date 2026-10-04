@@ -26,6 +26,29 @@ test('app search and metadata endpoints are not registered through the legacy ro
   expect(routes).not.toContain('GET /v1/dashboard/versions/:bundleId');
 });
 
+test('App Store links resolve track IDs only for dashboard sessions', async () => {
+  const lookups: number[] = [];
+  const server = Fastify().withTypeProvider<TypeBoxTypeProvider>();
+  await server.register(createDashboardAppRoutes({
+    lookupAppMetadataByTrackId: async (trackId) => {
+      lookups.push(trackId);
+      return { bundleId: 'com.example.linked', trackId, trackName: 'Linked app', version: '1.0', sellerName: 'Seller', artworkUrl: '', price: 0 };
+    },
+  }));
+  try {
+    const anonymous = await server.inject({ method: 'GET', url: '/v1/dashboard/apps/lookup-track?trackId=12345' });
+    const invalid = await server.inject({ method: 'GET', url: '/v1/dashboard/apps/lookup-track?trackId=-1', headers: { cookie: sessionCookie(0n) } });
+    const resolved = await server.inject({ method: 'GET', url: '/v1/dashboard/apps/lookup-track?trackId=12345', headers: { cookie: sessionCookie(0n) } });
+    expect(anonymous.statusCode).toBe(401);
+    expect(invalid.statusCode).toBe(400);
+    expect(resolved.statusCode).toBe(200);
+    expect(resolved.json() as Record<string, unknown>).toEqual({ bundleId: 'com.example.linked', trackName: 'Linked app', trackId: 12345 });
+    expect(lookups).toEqual([12345]);
+  } finally {
+    await server.close();
+  }
+});
+
 test('App Store versions include matching artifact IDs and preserve force semantics', async () => {
   const versions: AppVersionEntry[] = [
     { externalVersionId: 'version-3', isLatest: true, displayVersion: '3.0' },

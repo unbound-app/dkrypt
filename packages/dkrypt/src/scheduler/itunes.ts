@@ -77,15 +77,15 @@ export async function lookupCurrentVersion(bundleId: string, signal?: AbortSigna
   };
 }
 
-export async function lookupAppMetadata(bundleId: string): Promise<ItunesAppMetadata> {
-  const url = buildItunesUrl('lookup', { bundleId });
+async function lookupMetadata(params: Record<string, string>): Promise<ItunesAppMetadata> {
+  const url = buildItunesUrl('lookup', params);
   const res = await fetch(url);
   if (!res.ok) throw new Error(describeHttpError('itunes lookup failed', res));
 
   const body = (await res.json()) as ItunesLookupResponse;
   const result = body.results[0];
   if (body.resultCount < 1 || !result || !result.trackName) {
-    throw new Error(`itunes lookup returned no metadata for ${bundleId}`);
+    throw new Error(`itunes lookup returned no metadata for ${params.bundleId ?? params.id}`);
   }
 
   return {
@@ -102,6 +102,15 @@ export async function lookupAppMetadata(bundleId: string): Promise<ItunesAppMeta
     releaseNotes: result.releaseNotes,
     price: result.price,
   };
+}
+
+export function lookupAppMetadata(bundleId: string): Promise<ItunesAppMetadata> {
+  return lookupMetadata({ bundleId });
+}
+
+export function lookupAppMetadataByTrackId(trackId: number): Promise<ItunesAppMetadata> {
+  if (!Number.isSafeInteger(trackId) || trackId < 1) throw new Error('trackId must be a positive integer');
+  return lookupMetadata({ id: String(trackId), entity: 'software' });
 }
 
 export interface ItunesSearchResult {

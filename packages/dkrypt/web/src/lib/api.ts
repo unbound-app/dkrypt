@@ -1781,6 +1781,10 @@ export function searchApps(term: string): Promise<{ results: AppStoreSearchResul
   return apiJson(`/v1/dashboard/search?q=${encodeURIComponent(term)}`);
 }
 
+export function lookupAppStoreTrack(trackId: number): Promise<{ bundleId: string; trackName: string; trackId: number }> {
+  return apiJson(`/v1/dashboard/apps/lookup-track?trackId=${encodeURIComponent(trackId)}`);
+}
+
 export function fetchAppCatalog(bundleIds: string[]): Promise<{ entries: AppCatalogEntry[] }> {
   const unique = [...new Set(bundleIds.map((bundleId) => bundleId.trim()).filter(Boolean))];
   if (unique.length === 0) return Promise.resolve({ entries: [] });

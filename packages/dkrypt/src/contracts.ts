@@ -75,6 +75,8 @@ import {
   dashboardAppMetadataResponseSchema as AppMetadataResponse,
   dashboardAppSearchQuerySchema,
   dashboardAppSearchResponseSchema as SearchResponse,
+  dashboardAppTrackLookupQuerySchema,
+  dashboardAppTrackLookupResponseSchema,
   dashboardAppVersionsParamsSchema,
   dashboardAppVersionsQuerySchema,
   dashboardAppVersionsResponseSchema,
@@ -1376,6 +1378,10 @@ register('POST', '/v1/dashboard/testflight/decrypt', {
 register('GET', '/v1/dashboard/search', {
   querystring: dashboardAppSearchQuerySchema,
   response: { 200: SearchResponse, 400: ErrorEnvelope, 401: ErrorEnvelope, 500: ErrorEnvelope, 502: ErrorEnvelope },
+});
+register('GET', '/v1/dashboard/apps/lookup-track', {
+  querystring: dashboardAppTrackLookupQuerySchema,
+  response: { 200: dashboardAppTrackLookupResponseSchema, 400: ErrorEnvelope, 401: ErrorEnvelope, 502: ErrorEnvelope },
 });
 register('GET', '/v1/dashboard/testflight/subscriptions', {
   querystring: PaginationQuery,

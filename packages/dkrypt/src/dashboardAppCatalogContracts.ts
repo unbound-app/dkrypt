@@ -22,6 +22,8 @@ export const dashboardAppSearchResultSchema = Type.Object({
   }, additionalProperties)),
 }, additionalProperties);
 export const dashboardAppSearchResponseSchema = Type.Object({ results: Type.Array(dashboardAppSearchResultSchema) }, additionalProperties);
+export const dashboardAppTrackLookupQuerySchema = Type.Object({ trackId: Type.String() });
+export const dashboardAppTrackLookupResponseSchema = Type.Object({ bundleId: bundleIdSchema, trackName: Type.String(), trackId: Type.Integer({ minimum: 1 }) });
 export const dashboardAppMetadataQuerySchema = Type.Object({
   bundleIds: Type.Optional(Type.String({ maxLength: 20_000 })),
 }, additionalProperties);

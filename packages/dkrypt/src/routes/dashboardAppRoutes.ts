@@ -11,7 +11,7 @@ import { artifactKeyForAppStoreVersion, getArtifactByKey, type ArtifactRecord } 
 import { getRouteContract } from '#contracts.js';
 import { scopedLogger } from '#logger.js';
 import { PermissionFlag } from '#permissions.js';
-import { lookupAppMetadata, searchApps, type ItunesAppMetadata, type ItunesSearchResult } from '#scheduler/itunes.js';
+import { lookupAppMetadata, lookupAppMetadataByTrackId, searchApps, type ItunesAppMetadata, type ItunesSearchResult } from '#scheduler/itunes.js';
 import { fastifyRequirePermission, fastifyRequireSession } from '#session.js';
 import {
   getAppCatalogEntries,
@@ -31,6 +31,7 @@ interface DashboardAppServices {
   searchApps: typeof searchApps;
   decorateSearchResults: (results: ItunesSearchResult[]) => Promise<SearchResult[]>;
   lookupAppMetadata: typeof lookupAppMetadata;
+  lookupAppMetadataByTrackId: typeof lookupAppMetadataByTrackId;
   getAppCatalogEntries: typeof getAppCatalogEntries;
   getAppCatalogStats: typeof getAppCatalogStats;
   upsertAppCatalogEntries: typeof upsertAppCatalogEntries;
@@ -43,6 +44,7 @@ const defaultServices: DashboardAppServices = {
   searchApps,
   decorateSearchResults,
   lookupAppMetadata,
+  lookupAppMetadataByTrackId,
   getAppCatalogEntries,
   getAppCatalogStats,
   upsertAppCatalogEntries,
@@ -124,6 +126,24 @@ export function createDashboardAppRoutes(overrides: Partial<DashboardAppServices
           requestId: request.id,
           retryable: true,
         };
+      }
+    });
+
+    server.get<{ Querystring: { trackId: string } }>('/v1/dashboard/apps/lookup-track', {
+      schema: getRouteContract('GET', '/v1/dashboard/apps/lookup-track'),
+    }, async (request, reply) => {
+      const trackId = Number(request.query.trackId);
+      if (!/^\d+$/.test(request.query.trackId) || !Number.isSafeInteger(trackId) || trackId < 1) {
+        return reply.code(400).send(createHttpErrorEnvelope(request.id, 400, 'Invalid App Store app ID'));
+      }
+      try {
+        const metadata = await services.lookupAppMetadataByTrackId(trackId);
+        if (metadata.trackId !== trackId) throw new Error('App Store returned a different app');
+        services.upsertAppCatalogEntries([catalogEntryFromMetadata(metadata)]);
+        return { bundleId: metadata.bundleId, trackName: metadata.trackName, trackId: metadata.trackId };
+      } catch (error) {
+        log.warn('dashboard App Store link lookup failed', { requestId: request.id, trackId, error: error instanceof Error ? error.message : String(error) });
+        return reply.code(502).send(createHttpErrorEnvelope(request.id, 502, 'App Store link could not be resolved'));
       }
     });
 

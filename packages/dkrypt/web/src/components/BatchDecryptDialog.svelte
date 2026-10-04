@@ -4,8 +4,10 @@
 	import {
 		fetchTestFlightBuilds,
 		fetchTestFlightTrains,
+		lookupAppStoreTrack,
 		queueDecrypt,
 		queueTestFlightDecrypt,
+		submitTestFlightSubscription,
 		type TFBuild,
 	} from "#lib/api";
 	import {
@@ -19,6 +21,7 @@
 		type BatchQueueEntry,
 		type BatchQueueSource,
 	} from "#lib/batchQueue";
+	import { parsePastedDecryptInput, parsePastedDecryptInputs } from "#lib/pastedDecryptInputs";
 	import {
 		appDisplayName,
 		appIconUrl,
@@ -35,6 +38,8 @@
 	} from "#lib/decrypts.svelte";
 	import { liveState } from "#lib/live.svelte";
 	import { requestNotificationPermission } from "#lib/notifications";
+	import { PermissionFlag } from "#lib/permissions";
+	import { sessionHasPermission } from "#lib/session.svelte";
 	import { loadTestFlightCatalog, testFlightCatalogState } from "#lib/testflightCatalog.svelte";
 	import { showToast } from "#lib/ui.svelte";
 	import { cn } from "#lib/utils";
@@ -53,6 +58,10 @@
 
 	let text = $state("");
 	let source = $state<BatchQueueSource>("appstore");
+	let inputMode = $state<BatchQueueSource | "links">("appstore");
+	let pastedRows = $state<string[]>([]);
+	let inviteRequests = $state<Record<string, "pending" | "done" | "error">>({});
+	let resolving = $state(false);
 	let submittedSource = $state<BatchQueueSource>("appstore");
 	let selectedDeviceByBundleId = $state<Record<string, string>>({});
 	let now = $state(Date.now());
@@ -60,6 +69,10 @@
 	let results = $state<BatchResult[]>([]);
 
 	const parsedResult = $derived(parseBatchQueueEntries(text, source));
+	const pastedInputs = $derived(pastedRows.map(parsePastedDecryptInput));
+	const pastedInvalid = $derived(pastedInputs.some((row) => row.kind === "invalid"));
+	const pastedQueueable = $derived(pastedInputs.filter((row) => row.kind === "bundle" || row.kind === "appstore"));
+	const canRequestTestFlight = $derived(sessionHasPermission(PermissionFlag.requestTestFlightSubscriptions));
 	const parsed = $derived(parsedResult.entries);
 	const activeTemplate = $derived(BATCH_QUEUE_TEMPLATES.find((template) => template.source === source)!);
 	const missingTestFlightSelectors = $derived(source === "testflight" ? parsed.filter((entry) => !entry.selector) : []);
@@ -178,10 +191,63 @@
 	}
 
 	function close(): void {
-		if (submitting) return;
+		if (submitting || resolving) return;
 		text = "";
+		pastedRows = [];
+		inviteRequests = {};
 		results = [];
 		onOpenChange(false);
+	}
+
+	function addPastedRows(): void {
+		const parsed = parsePastedDecryptInputs(text);
+		const current = new Set(pastedRows.map((value) => {
+			const row = parsePastedDecryptInput(value);
+			return row.kind === "bundle" ? `bundle:${row.bundleId}` : row.kind === "appstore" ? `appstore:${row.trackId}` : row.kind === "testflight" ? row.url : row.value;
+		}));
+		for (const row of parsed.rows) {
+			const key = row.kind === "bundle" ? `bundle:${row.bundleId}` : row.kind === "appstore" ? `appstore:${row.trackId}` : row.kind === "testflight" ? row.url : row.value;
+			if (current.has(key)) continue;
+			if (pastedRows.length >= MAX_BATCH_QUEUE_ENTRIES) break;
+			pastedRows = [...pastedRows, row.value];
+			current.add(key);
+		}
+		text = "";
+		if (parsed.duplicates.length || parsed.overflow) showToast(parsed.overflow ? `Only the first ${MAX_BATCH_QUEUE_ENTRIES} entries were added` : "Repeated entries were skipped", "error");
+	}
+
+	async function requestInvite(url: string): Promise<void> {
+		inviteRequests = { ...inviteRequests, [url]: "pending" };
+		try {
+			const result = await submitTestFlightSubscription(url);
+			inviteRequests = { ...inviteRequests, [url]: result.ok ? "done" : "error" };
+			if (result.ok) showToast("TestFlight request submitted", "success");
+		} catch {
+			inviteRequests = { ...inviteRequests, [url]: "error" };
+		}
+	}
+
+	async function submitPasted(): Promise<void> {
+		if (pastedInvalid || pastedQueueable.length === 0) return;
+		resolving = true;
+		const entries: BatchQueueEntry[] = [];
+		try {
+			for (const row of pastedQueueable) {
+				if (row.kind === "bundle") entries.push({ bundleId: row.bundleId });
+				if (row.kind === "appstore") {
+					const metadata = await lookupAppStoreTrack(row.trackId);
+					entries.push({ bundleId: metadata.bundleId });
+				}
+			}
+			const unique = [...new Map(entries.map((entry) => [entry.bundleId, entry])).values()];
+			submittedSource = "appstore";
+			results = unique.map((entry) => ({ ...entry, state: "pending" }));
+			await submitEntries(unique, "appstore");
+		} catch (error) {
+			showToast(error instanceof Error ? error.message : "Could not resolve App Store link", "error");
+		} finally {
+			resolving = false;
+		}
 	}
 
 	async function submitEntries(entries: BatchQueueEntry[], queueSource: BatchQueueSource): Promise<void> {
@@ -297,21 +363,48 @@
 
 <Dialog {open} onOpenChange={(v) => !v && close()} class="max-w-md">
 	<div class="mb-1 text-sm font-medium">Batch decrypt</div>
-	<div class="mb-3 text-xs text-muted">
-		Choose a workflow. Enter up to {MAX_BATCH_QUEUE_ENTRIES} bundle IDs, one per line.
-	</div>
+	<div class="mb-3 text-xs text-muted">Choose a workflow. Enter up to {MAX_BATCH_QUEUE_ENTRIES} apps.</div>
 
 	{#if results.length === 0}
-		<div class="mb-2 flex gap-2" role="group" aria-label="Batch queue template">
+		<div class="mb-2 flex flex-wrap gap-2" role="group" aria-label="Batch queue template">
 			{#each BATCH_QUEUE_TEMPLATES as template (template.source)}
 				<Button
-					variant={source === template.source ? "default" : "secondary"}
+					variant={inputMode === template.source ? "default" : "secondary"}
 					size="sm"
-					aria-pressed={source === template.source}
-					onclick={() => (source = template.source)}>{template.label}</Button
+					aria-pressed={inputMode === template.source}
+					onclick={() => { source = template.source; inputMode = template.source; text = ""; }}>{template.label}</Button
 				>
 			{/each}
+			<Button variant={inputMode === "links" ? "default" : "secondary"} size="sm" aria-pressed={inputMode === "links"} onclick={() => { inputMode = "links"; text = ""; }}>Paste links</Button>
 		</div>
+		{#if inputMode === "links"}
+			<div class="mb-2 text-xs text-muted">Paste bundle IDs, App Store links, or public TestFlight invites. Invites are never subscribed automatically.</div>
+			<Textarea bind:value={text} disabled={submitting || resolving} placeholder={'com.example.app\nhttps://apps.apple.com/us/app/example/id123456789\nhttps://testflight.apple.com/join/ABC123'} rows={4} class="border-border bg-panel-muted focus:border-accent w-full rounded-md border px-3 py-2 font-mono text-xs text-text focus:outline-none"></Textarea>
+			<Button class="mt-2" size="sm" variant="secondary" disabled={!text.trim() || pastedRows.length >= MAX_BATCH_QUEUE_ENTRIES} onclick={addPastedRows}>Add rows</Button>
+			{#if pastedRows.length > 0}
+				<div class="mt-3 flex max-h-64 flex-col gap-2 overflow-y-auto">
+					{#each pastedRows as rowValue, index (index)}
+						{@const row = pastedInputs[index]}
+						<div class="border-border rounded-md border px-2 py-2">
+							<div class="flex items-center gap-2">
+								<input aria-label={`Pasted app ${index + 1}`} class="bg-transparent min-w-0 flex-1 font-mono text-xs outline-none" value={rowValue} oninput={(event) => { pastedRows[index] = event.currentTarget.value; pastedRows = [...pastedRows]; }} />
+								<Button size="sm" variant="ghost" aria-label={`Remove pasted app ${index + 1}`} onclick={() => (pastedRows = pastedRows.filter((_, item) => item !== index))}>Remove</Button>
+							</div>
+							{#if row?.kind === "invalid"}<div class="mt-1 text-xs text-warn" role="status">{row.error}</div>{/if}
+							{#if row?.kind === "testflight"}
+								<div class="mt-1 flex items-center justify-between gap-2 text-xs text-muted">
+									<span>TestFlight invite · requires a separate request</span>
+									{#if canRequestTestFlight}
+										<Button size="sm" variant="secondary" disabled={inviteRequests[row.url] === "pending" || inviteRequests[row.url] === "done"} onclick={() => void requestInvite(row.url)}>{inviteRequests[row.url] === "done" ? "Requested" : inviteRequests[row.url] === "pending" ? "Requesting…" : "Request access"}</Button>
+									{/if}
+								</div>
+							{/if}
+						</div>
+					{/each}
+				</div>
+				<Button class="mt-3 w-full" disabled={pastedInvalid || pastedQueueable.length === 0 || resolving || submitting} loading={resolving || submitting} onclick={submitPasted}>Queue {pastedQueueable.length} App Store app{pastedQueueable.length === 1 ? "" : "s"}</Button>
+			{/if}
+		{:else}
 		<div class="mb-2 text-xs text-muted">{activeTemplate.description}</div>
 		{#if source === "testflight"}
 			{#if parsed.length === 0}
@@ -398,6 +491,7 @@
 			loading={submitting}
 			onclick={submit}>Queue all</Button
 		>
+		{/if}
 	{:else}
 		<div class="flex max-h-72 flex-col gap-1 overflow-y-auto">
 			{#each results as r (batchQueueEntryKey(r))}
