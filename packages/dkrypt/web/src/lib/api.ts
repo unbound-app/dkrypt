@@ -942,7 +942,7 @@ export function createDevice(connection: Pick<DeviceRecord, 'name' | 'transport'
   return apiAction('/v1/dashboard/devices', { method: 'POST', body: JSON.stringify(connection) }, 'Device added');
 }
 
-export function updateDevice(id: string, patch: Partial<Pick<DeviceRecord, 'name' | 'transport' | 'host' | 'port' | 'user' | 'udid' | 'usbmuxNetwork' | 'productType' | 'iosVersion' | 'toolchain' | 'notes' | 'enabled' | 'isPrimary'>>): Promise<{ ok: boolean; data: DeviceRecord }> {
+export function updateDevice(id: string, patch: Partial<Pick<DeviceRecord, 'name' | 'transport' | 'host' | 'port' | 'user' | 'udid' | 'usbmuxNetwork' | 'productType' | 'iosVersion' | 'toolchain' | 'notes' | 'enabled' | 'isPrimary'>> & { expectedUpdatedAt?: number }): Promise<{ ok: boolean; data: DeviceRecord }> {
   return apiAction(`/v1/dashboard/devices/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) }, 'Device updated');
 }
 

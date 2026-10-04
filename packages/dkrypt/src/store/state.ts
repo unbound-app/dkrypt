@@ -3384,7 +3384,7 @@ export function createDevice(input: CreateDeviceInput, actor: string): DeviceRec
 
 export function updateDevice(id: string, patch: Partial<CreateDeviceInput>, actor: string): { ok: boolean; device?: DeviceRecord; error?: string } {
   const previousDevice = deviceRepository.findById(id);
-  const devices = deviceRepository.update(id, { ...patch, ...(patch.enabled !== undefined ? { draining: false } : {}), updatedAt: Date.now() });
+  const devices = deviceRepository.update(id, { ...patch, ...(patch.enabled !== undefined ? { draining: false } : {}), updatedAt: Math.max(Date.now(), (previousDevice?.updatedAt ?? 0) + 1) });
   if (!devices) return { ok: false, error: 'device not found' };
   state.devices = devices;
   const device = state.devices.find((candidate) => candidate.id === id)!;

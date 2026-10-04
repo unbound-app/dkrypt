@@ -1957,6 +1957,22 @@ test('device drain stops assignment and disables an idle device until explicitly
   }
 });
 
+test('device edits reject stale revisions and return the latest record for review', async () => {
+  const { server, cookie } = await signIn();
+  const device = createDevice({ name: 'Revision iPad', transport: 'wifi', host: '127.0.0.1' }, 'test');
+  try {
+    const url = `/v1/dashboard/devices/${device.id}`;
+    const first = await server.inject({ method: 'PATCH', url, headers: { cookie }, payload: { name: 'Operator A iPad', expectedUpdatedAt: device.updatedAt } });
+    const stale = await server.inject({ method: 'PATCH', url, headers: { cookie }, payload: { name: 'Operator B iPad', expectedUpdatedAt: device.updatedAt } });
+    expect(first.statusCode).toBe(200);
+    expect(stale.statusCode).toBe(409);
+    expect(stale.json()).toMatchObject({ code: 'revision_conflict', remediation: { current: { id: device.id, name: 'Operator A iPad' } } });
+  } finally {
+    deleteDevice(device.id, 'test');
+    await server.close();
+  }
+});
+
 test('project administration is permission-gated and project membership controls visibility', async () => {
   const root = await signIn();
   const managerId = `github:project-manager-${crypto.randomUUID()}`;
@@ -2426,6 +2442,8 @@ test('native scheduler watch routes enforce permissions and preserve CRUD and im
       payload: { enabled: true, expectedUpdatedAt: latestWatch.updatedAt - 1 },
     });
     expect(staleUndo.statusCode).toBe(409);
+    expect(staleUndo.json()).toMatchObject({ remediation: { current: { id: createdId, pollCron: '15 * * * *', updatedAt: latestWatch.updatedAt } } });
+    expect(staleUndo.json().remediation.current).not.toHaveProperty('webhookUrl');
     const toggled = await server.inject({
       method: 'PATCH',
       url: `/v1/dashboard/watches/${createdId}`,

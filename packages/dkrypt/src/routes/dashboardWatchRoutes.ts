@@ -529,12 +529,13 @@ export const dashboardWatchRoutes: FastifyPluginAsyncTypebox = async (server) =>
     }
     const existingWatch = visibleWatch(request, reply);
     if (!existingWatch) return;
-    if (findWatchConflicts({ ...existingWatch, ...patch }, existingWatch.id).length > 0 && request.body.acknowledgeConflicts !== true) {
-      sendError(request, reply, 409, 'watch schedule overlaps another dispatch target; review conflicts and acknowledge before saving');
+    if (request.body.expectedUpdatedAt !== undefined && request.body.expectedUpdatedAt !== existingWatch.updatedAt) {
+      const { webhookUrl: _webhookUrl, ...current } = serializeWatch(existingWatch);
+      sendError(request, reply, 409, 'watch changed after this action; review the current configuration before retrying', { current });
       return;
     }
-    if (request.body.expectedUpdatedAt !== undefined && request.body.expectedUpdatedAt !== existingWatch.updatedAt) {
-      sendError(request, reply, 409, 'watch changed after this action; refresh before retrying');
+    if (findWatchConflicts({ ...existingWatch, ...patch }, existingWatch.id).length > 0 && request.body.acknowledgeConflicts !== true) {
+      sendError(request, reply, 409, 'watch schedule overlaps another dispatch target; review conflicts and acknowledge before saving');
       return;
     }
     if ((patch.testFlightPolicy ?? existingWatch.testFlightPolicy) === 'train' && !(patch.testFlightTrain ?? existingWatch.testFlightTrain)) {

@@ -30,7 +30,7 @@ export const deviceRecordInputSchema = Type.Object({
   isPrimary: Type.Optional(Type.Boolean()),
 }, { additionalProperties: true });
 
-export const devicePatchInputSchema = Type.Partial(deviceRecordInputSchema);
+export const devicePatchInputSchema = Type.Intersect([Type.Partial(deviceRecordInputSchema), Type.Object({ expectedUpdatedAt: Type.Optional(Type.Integer({ minimum: 0 })) })]);
 
 export const deviceDiscoveryCandidateSchema = Type.Object({
   discoveryId: identifierSchema,
@@ -102,7 +102,7 @@ export type DashboardDeviceCreateRoute = {
 export type DashboardDeviceUpdateRoute = {
   Params: Static<typeof dashboardDeviceParamsSchema>;
   Body: DevicePatchInput;
-  Reply: { 200: DeviceRecordResponse; 400: DeviceManagementError; 401: DeviceManagementError; 403: DeviceManagementError; 404: DeviceManagementError };
+  Reply: { 200: DeviceRecordResponse; 400: DeviceManagementError; 401: DeviceManagementError; 403: DeviceManagementError; 404: DeviceManagementError; 409: DeviceManagementError };
 };
 
 export type DashboardDeviceDeleteRoute = {

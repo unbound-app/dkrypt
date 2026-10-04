@@ -358,6 +358,9 @@
 
   let editOpen = $state(false);
   let editingId = $state<string | null>(null);
+  let editingUpdatedAt = $state(0);
+  let conflictDevice = $state<DeviceRecord | null>(null);
+  let formError = $state('');
   let formName = $state('');
   let formIosVersion = $state('');
   let formToolchain = $state('');
@@ -391,6 +394,9 @@
 
   function openEdit(device: DeviceRecord): void {
     editingId = device.id;
+    editingUpdatedAt = device.updatedAt;
+    conflictDevice = null;
+    formError = '';
     deviceDraftKey = `device:${sessionState.sub ?? 'account'}:${device.id}`;
     formName = device.name;
     formIosVersion = device.iosVersion ?? '';
@@ -409,22 +415,46 @@
 
   async function save(): Promise<void> {
     if (!editingId || !formName.trim()) {
-      showToast('A device name is required', 'error');
+      formError = 'A device name is required';
+      document.getElementById('d-name')?.focus();
       return;
     }
+    formError = '';
     saving = true;
     try {
-      const result = await updateDevice(editingId, { name: formName.trim(), iosVersion: formIosVersion.trim(), toolchain: formToolchain.trim(), notes: formNotes.trim() });
+      const result = await updateDevice(editingId, { name: formName.trim(), iosVersion: formIosVersion.trim(), toolchain: formToolchain.trim(), notes: formNotes.trim(), expectedUpdatedAt: editingUpdatedAt });
       if (result.ok) {
         clearFormDraft(deviceDraftKey);
         initialDeviceDraft = JSON.stringify(deviceDraftValues());
         setFormUnsaved(deviceFormId, false);
         editOpen = false;
         await reloadDevices();
+      } else {
+        const response = result.data as unknown as { code?: string; remediation?: { current?: DeviceRecord } };
+        if (response.code === 'revision_conflict' && response.remediation?.current) conflictDevice = response.remediation.current;
       }
     } finally {
       saving = false;
     }
+  }
+
+  function reloadConflictedDevice(): void {
+    if (!conflictDevice) return;
+    formName = conflictDevice.name;
+    formIosVersion = conflictDevice.iosVersion ?? '';
+    formToolchain = conflictDevice.toolchain ?? '';
+    formNotes = conflictDevice.notes ?? '';
+    editingUpdatedAt = conflictDevice.updatedAt;
+    initialDeviceDraft = JSON.stringify(deviceDraftValues());
+    clearFormDraft(deviceDraftKey);
+    conflictDevice = null;
+  }
+
+  async function applyEditsToLatest(): Promise<void> {
+    if (!conflictDevice) return;
+    editingUpdatedAt = conflictDevice.updatedAt;
+    conflictDevice = null;
+    await save();
   }
 
   async function remove(device: DeviceRecord): Promise<void> {
@@ -596,7 +626,31 @@
   </Dialog>
 
   <Dialog open={editOpen} onOpenChange={(value) => void setEditOpen(value)} class="max-w-md">
-    <div class="mb-3 text-sm font-semibold">Edit device</div><label for="d-name" class="mb-1 block text-xs text-muted">Name</label><Input id="d-name" placeholder="e.g. iPad Pro" bind:value={formName} /><label for="d-ios" class="mt-3 mb-1 block text-xs text-muted">iOS version</label><Input id="d-ios" placeholder="Detected automatically during setup" bind:value={formIosVersion} /><label for="d-toolchain" class="mt-3 mb-1 block text-xs text-muted">Jailbreak</label><Input id="d-toolchain" placeholder="e.g. Dopamine" bind:value={formToolchain} /><label for="d-notes" class="mt-3 mb-1 block text-xs text-muted">Notes</label><Input id="d-notes" placeholder="Optional compatibility notes" bind:value={formNotes} /><Button class="mt-4 w-full" loading={saving} onclick={() => void save()}>Save changes</Button>
+    <div class="mb-3 text-sm font-semibold">Edit device</div>
+    {#if formError}<div class="mb-3 rounded-md border border-err/40 bg-err/10 p-2 text-xs text-err" role="alert">{formError}</div>{/if}
+    <label for="d-name" class="mb-1 block text-xs text-muted">Name</label><Input id="d-name" placeholder="e.g. iPad Pro" bind:value={formName} aria-invalid={Boolean(formError)} />
+    <label for="d-ios" class="mt-3 mb-1 block text-xs text-muted">iOS version</label><Input id="d-ios" placeholder="Detected automatically during setup" bind:value={formIosVersion} />
+    <label for="d-toolchain" class="mt-3 mb-1 block text-xs text-muted">Jailbreak</label><Input id="d-toolchain" placeholder="e.g. Dopamine" bind:value={formToolchain} />
+    <label for="d-notes" class="mt-3 mb-1 block text-xs text-muted">Notes</label><Input id="d-notes" placeholder="Optional compatibility notes" bind:value={formNotes} />
+    {#if conflictDevice}
+      <section class="mt-4 rounded-lg border border-warn/50 bg-warn/5 p-3 text-xs" aria-label="Device edit conflict">
+        <h3 class="font-semibold">This device changed while you were editing</h3>
+        <p class="mt-1 text-muted">Review your values against the latest saved version. Nothing has been overwritten.</p>
+        <div class="mt-2 grid grid-cols-[minmax(4rem,5rem)_repeat(2,minmax(0,1fr))] gap-2 break-words">
+          <span></span><span class="font-medium">Your edits</span><span class="font-medium">Saved now</span>
+          <span>Name</span><span>{formName}</span><span>{conflictDevice.name}</span>
+          <span>iOS</span><span>{formIosVersion || '—'}</span><span>{conflictDevice.iosVersion || '—'}</span>
+          <span>Jailbreak</span><span>{formToolchain || '—'}</span><span>{conflictDevice.toolchain || '—'}</span>
+          <span>Notes</span><span>{formNotes || '—'}</span><span>{conflictDevice.notes || '—'}</span>
+        </div>
+        <div class="mt-3 flex flex-wrap gap-2">
+          <Button size="sm" variant="secondary" onclick={reloadConflictedDevice}>Reload saved version</Button>
+          <Button size="sm" variant="secondary" onclick={() => (conflictDevice = null)}>Keep editing</Button>
+          <Button size="sm" loading={saving} onclick={() => void applyEditsToLatest()}>Apply my edits to latest</Button>
+        </div>
+      </section>
+    {/if}
+    <Button class="mt-4 w-full" loading={saving} onclick={() => void save()}>Save changes</Button>
   </Dialog>
 {/if}
 

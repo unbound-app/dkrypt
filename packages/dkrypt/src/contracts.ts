@@ -1427,7 +1427,7 @@ register('POST', '/v1/dashboard/devices', {
 register('PATCH', '/v1/dashboard/devices/:id', {
   params: object({ id: Identifier }),
   body: DevicePatchInput,
-  response: { 200: DeviceResponse, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope },
+  response: { 200: DeviceResponse, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope, 409: ErrorEnvelope },
 });
 register('GET', '/v1/dashboard/devices/:id/disable-impact', {
   params: object({ id: Identifier }),

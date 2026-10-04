@@ -1910,6 +1910,17 @@ test('device comparison keeps unknown readings distinct from unhealthy readings'
     auditRequests += 1;
     await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ entries: [{ id: 'audit-a', ts: Date.now(), actor: 'operator-a', action: 'device.update', target: 'ipad-a', changes: [{ field: 'enabled', before: true, after: false }] }] }) });
   });
+  const deviceEdits: Array<{ expectedUpdatedAt?: number; name?: string }> = [];
+  await page.route('**/v1/dashboard/devices/ipad-a', async (route) => {
+    if (route.request().method() !== 'PATCH') return route.continue();
+    const payload = route.request().postDataJSON() as { expectedUpdatedAt?: number; name?: string };
+    deviceEdits.push(payload);
+    if (deviceEdits.length === 1) {
+      await route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ code: 'revision_conflict', error: 'device changed in another session', message: 'device changed in another session', requestId: 'conflict-1', retryable: false, remediation: { current: { id: 'ipad-a', name: 'Saved by another operator', transport: 'usb', enabled: true, updatedAt: 2 } } }) });
+      return;
+    }
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ id: 'ipad-a', name: payload.name, transport: 'usb', enabled: true, updatedAt: 3 }) });
+  });
   await page.goto('/?tab=settings&stab=devices');
   await page.getByRole('button', { name: 'Compare devices' }).click();
   const comparison = page.getByRole('region', { name: 'Device comparison' });
@@ -1921,6 +1932,13 @@ test('device comparison keeps unknown readings distinct from unhealthy readings'
   await page.locator('#device-ipad-a').getByText('Who changed this?').click();
   await expect(page.locator('#device-ipad-a')).toContainText('operator-a');
   expect(auditRequests).toBe(1);
+  await page.getByRole('button', { name: 'Edit Studio iPad' }).click();
+  await page.getByLabel('Name', { exact: true }).fill('My revised name');
+  await page.getByRole('button', { name: 'Save changes' }).click();
+  await expect(page.getByRole('region', { name: 'Device edit conflict' })).toContainText('Saved by another operator');
+  await expect(page.getByLabel('Name', { exact: true })).toHaveValue('My revised name');
+  await page.getByRole('button', { name: 'Apply my edits to latest' }).click();
+  expect(deviceEdits.map((edit) => edit.expectedUpdatedAt)).toEqual([1, 2]);
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(comparison).toBeVisible();
   expect(await comparison.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);

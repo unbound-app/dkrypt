@@ -253,6 +253,15 @@ export const dashboardDeviceRoutes: FastifyPluginAsyncTypebox = async (server) =
       reply.code(400).send(createHttpErrorEnvelope(request.id, 400, 'device update contains invalid fields'));
       return;
     }
+    const current = getDevice(request.params.id);
+    if (!current) {
+      reply.code(404).send(createHttpErrorEnvelope(request.id, 404, 'device not found'));
+      return;
+    }
+    if (body.expectedUpdatedAt !== undefined && body.expectedUpdatedAt !== current.updatedAt) {
+      reply.code(409).send({ ...createHttpErrorEnvelope(request.id, 409, 'device changed in another session'), code: 'revision_conflict', remediation: { current: serializeDashboardDevice(current) } });
+      return;
+    }
     const patch: Partial<DeviceInput> = {};
     const connection = normalizeConnectionFields(body);
     if (connection.host && !isSupportedDeviceHost(connection.host)) {

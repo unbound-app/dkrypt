@@ -16,6 +16,7 @@
 		createWatch,
 		deleteWatch,
 		fetchSettings,
+		fetchWatches,
 		fetchProjects,
 		previewJobHistoryRetention,
 		fetchWebhookDeliveries,
@@ -323,6 +324,8 @@ import { clearFormDraft, readFormDraft, setFormUnsaved, writeFormDraft } from "#
 	let availableProjects = $state<ProjectRecord[]>([]);
 	const projectItems = $derived(availableProjects.length > 0 ? availableProjects.map((project) => ({ value: project.id, label: project.name })) : [{ value: "default", label: "Default" }]);
 	let editingWatchId = $state<string | null>(null);
+	let editingWatchUpdatedAt = $state<number | null>(null);
+	let conflictingWatch = $state<AppWatch | null>(null);
 	let watchForm = $state<WatchInput>({ ...DEFAULT_WATCH_FORM });
 	let wizardStep = $state(0);
 	let syncedDraftId = $state<string | undefined>(undefined);
@@ -631,6 +634,8 @@ import { clearFormDraft, readFormDraft, setFormUnsaved, writeFormDraft } from "#
 
 	function openAddWatch(skipResume = false): void {
 		editingWatchId = null;
+		editingWatchUpdatedAt = null;
+		conflictingWatch = null;
 		wizardStep = 0;
 		syncedDraftId = undefined;
 		watchConflicts = [];
@@ -663,6 +668,8 @@ import { clearFormDraft, readFormDraft, setFormUnsaved, writeFormDraft } from "#
 
 	function openEditWatch(w: AppWatch): void {
 		editingWatchId = w.id;
+		editingWatchUpdatedAt = w.updatedAt;
+		conflictingWatch = null;
 		watchDraftStorageKey = `watch:${sessionState.sub ?? "account"}:edit:${w.id}`;
 		watchForm = {
 			projectId: w.projectId ?? "default",
@@ -904,9 +911,13 @@ import { clearFormDraft, readFormDraft, setFormUnsaved, writeFormDraft } from "#
 			const maintenanceWindow = maintenanceWindowStart && maintenanceWindowEnd
 				? { start: maintenanceWindowStart, end: maintenanceWindowEnd }
 				: null;
-			const { ok } = editingWatchId
-				? await updateWatch(editingWatchId, { ...watchForm, maintenanceWindow, dispatchTargets, acknowledgeConflicts: acknowledgeWatchConflicts })
+			const { ok, data } = editingWatchId
+				? await updateWatch(editingWatchId, { ...watchForm, maintenanceWindow, dispatchTargets, acknowledgeConflicts: acknowledgeWatchConflicts, expectedUpdatedAt: editingWatchUpdatedAt ?? undefined })
 				: await createWatch({ ...watchForm, maintenanceWindow, dispatchTargets, acknowledgeConflicts: acknowledgeWatchConflicts });
+			if (!ok) {
+				const response = data as AppWatch & { code?: string; remediation?: { current?: AppWatch } };
+				if (response.code === 'revision_conflict' && response.remediation?.current) conflictingWatch = response.remediation.current;
+			}
 			if (ok) {
 				if (syncedDraftId) void deleteWatchDraft(syncedDraftId);
 				clearFormDraft(watchDraftStorageKey);
@@ -917,6 +928,23 @@ import { clearFormDraft, readFormDraft, setFormUnsaved, writeFormDraft } from "#
 		} finally {
 			savingWatch = false;
 		}
+	}
+
+	async function reloadConflictingWatch(): Promise<void> {
+		if (!conflictingWatch || !editingWatchId) return;
+		const currentId = editingWatchId;
+		const { watches: latestWatches } = await fetchWatches();
+		const latest = latestWatches.find((watch) => watch.id === currentId);
+		if (!latest) return;
+		clearFormDraft(watchDraftStorageKey);
+		openEditWatch(latest);
+	}
+
+	async function applyWatchEditsToLatest(): Promise<void> {
+		if (!conflictingWatch) return;
+		editingWatchUpdatedAt = conflictingWatch.updatedAt;
+		conflictingWatch = null;
+		await saveWatch();
 	}
 
 	async function removeWatch(w: AppWatch): Promise<void> {
@@ -1619,6 +1647,22 @@ import { clearFormDraft, readFormDraft, setFormUnsaved, writeFormDraft } from "#
 			</div>
 		{/if}
 		<div class="max-h-[60vh] overflow-y-auto pr-0.5">
+			{#if conflictingWatch}
+				<section class="mb-3 rounded-lg border border-warn/50 bg-warn/5 p-3 text-xs" aria-label="Watch edit conflict">
+					<p class="font-medium">This watch changed while you were editing. Review the saved version before applying your edits.</p>
+					<div class="mt-2 grid grid-cols-3 gap-2"><span>Field</span><span>Your edit</span><span>Saved version</span>
+						<span>Schedule</span><span>{watchForm.pollCron}</span><span>{conflictingWatch.pollCron}</span>
+						<span>Repository</span><span>{watchForm.repo}</span><span>{conflictingWatch.repo}</span>
+						<span>Time zone</span><span>{watchForm.timezone}</span><span>{conflictingWatch.timezone}</span>
+						<span>TestFlight policy</span><span>{watchForm.testFlightPolicy}</span><span>{conflictingWatch.testFlightPolicy}</span>
+					</div>
+					<div class="mt-3 flex flex-wrap gap-2">
+						<Button size="sm" variant="secondary" onclick={() => void reloadConflictingWatch()}>Reload saved version</Button>
+						<Button size="sm" variant="secondary" onclick={() => (conflictingWatch = null)}>Keep editing</Button>
+						<Button size="sm" onclick={() => void applyWatchEditsToLatest()}>Apply my edits to latest</Button>
+					</div>
+				</section>
+			{/if}
 			{#if editingWatchId || wizardStep === 0}
 			<label for="w-search" class="mb-1 block text-xs text-muted"
 				>App search</label
