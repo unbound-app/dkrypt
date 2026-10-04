@@ -744,6 +744,13 @@ const migrations = [
       CREATE INDEX IF NOT EXISTS pending_oauth_links_by_expiry ON pending_oauth_links(expires_at);
     `,
   },
+  {
+    version: 25,
+    sql: `
+      CREATE TABLE IF NOT EXISTS device_setup_operations (id TEXT PRIMARY KEY NOT NULL, payload TEXT NOT NULL, updated_at INTEGER NOT NULL);
+      CREATE INDEX IF NOT EXISTS device_setup_operations_by_owner ON device_setup_operations(json_extract(payload, '$.ownerId'), updated_at DESC);
+    `,
+  },
 ] as const;
 
 export const LATEST_SQLITE_SCHEMA_VERSION = migrations.at(-1)?.version ?? 0;
@@ -798,6 +805,7 @@ const collectionTables = new Set([
   'integration_policies',
   'integration_deliveries',
   'pending_oauth_links',
+  'device_setup_operations',
 ]);
 
 function assertCollectionTable(table: string): void {

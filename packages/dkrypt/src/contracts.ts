@@ -53,6 +53,8 @@ import {
   devicePatchInputSchema as DevicePatchInput,
   deviceRecordInputSchema as DeviceRecordInput,
   deviceSetupResponseSchema as DeviceSetupResponse,
+  deviceSetupOperationResponseSchema as DeviceSetupOperationResponse,
+  deviceSetupOperationListResponseSchema as DeviceSetupOperationListResponse,
 } from '#dashboardDeviceManagementContracts.js';
 import {
   deviceBridgeActionBodySchema as DeviceBridgeActionInput,
@@ -893,6 +895,7 @@ const bodylessPostContracts = new Set([
   '/v1/dashboard/keys/:id/approve',
   '/v1/dashboard/keys/:id/deny',
   '/v1/dashboard/watches/:id/trigger-dispatch',
+  '/v1/dashboard/devices/setup-operations/:id/resume',
 ]);
 
 function registerGenericContract(method: ContractMethod, path: string): void {
@@ -1419,6 +1422,21 @@ register('GET', '/v1/dashboard/versions/:bundleId', {
 register('POST', '/v1/dashboard/devices/setup', {
   body: DeviceConnectionInput,
   response: { 201: DeviceSetupResponse, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope, 502: ErrorEnvelope },
+});
+register('POST', '/v1/dashboard/devices/setup-operations', {
+  body: DeviceConnectionInput,
+  response: { 202: DeviceSetupOperationResponse, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope },
+});
+register('GET', '/v1/dashboard/devices/setup-operations', {
+  response: { 200: DeviceSetupOperationListResponse, 401: ErrorEnvelope, 403: ErrorEnvelope },
+});
+register('GET', '/v1/dashboard/devices/setup-operations/:id', {
+  params: object({ id: Identifier }),
+  response: { 200: DeviceSetupOperationResponse, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope },
+});
+register('POST', '/v1/dashboard/devices/setup-operations/:id/resume', {
+  params: object({ id: Identifier }),
+  response: { 202: DeviceSetupOperationResponse, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope, 409: ErrorEnvelope },
 });
 register('POST', '/v1/dashboard/devices', {
   body: DeviceRecordInput,

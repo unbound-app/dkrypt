@@ -1199,8 +1199,9 @@ async function readRemoteValue(conn: DeviceClient, command: string): Promise<str
   return value || undefined;
 }
 
-export async function setupDeviceConnection(connection: DeviceConnection): Promise<DeviceSetupResult> {
+export async function setupDeviceConnection(connection: DeviceConnection, onStage?: (id: string, label: string) => void): Promise<DeviceSetupResult> {
   if (isDirectUsbDeviceAgentConnection(connection)) {
+    onStage?.('pairing', 'Verifying USB pairing');
     try {
       await verifyRustDevicePairing(connection);
     } catch (error) {
@@ -1208,6 +1209,7 @@ export async function setupDeviceConnection(connection: DeviceConnection): Promi
       await pairDevice(connection);
     }
   }
+  onStage?.('connecting', 'Checking the device and automation bridge');
   let sshKeyInstallError: string | undefined;
   const result = await withSSH(connection, async (conn) => {
     try {
@@ -1252,6 +1254,7 @@ export async function setupDeviceConnection(connection: DeviceConnection): Promi
     if (!systemReady) steps[1] = { id: 'ios', label: 'iOS device detected', status: 'unavailable', detail: 'The device connection did not report Darwin.' };
     return { info, steps };
   });
+  onStage?.('sftp', 'Checking decrypt file access');
   const sshSftpReady = await probeDeviceSshTunnel(connection);
   result.steps.push({
     id: 'ssh_sftp',

@@ -1961,6 +1961,33 @@ test('device comparison keeps unknown readings distinct from unhealthy readings'
   expect(await comparison.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
 });
 
+test('interrupted device setup remains available after navigation and can resume', async ({ page }) => {
+  await mockStableDashboardEvents(page);
+  await mockAuthenticatedDashboard(page, '1');
+  let resumed = false;
+  const operation = { id: 'setup-operation-1', status: 'interrupted', stage: 'connecting', stages: [{ id: 'connecting', label: 'Connecting and checking the device', at: Date.now(), status: 'failed' }], error: 'Setup was interrupted. Reconnect the device and resume setup.', createdAt: Date.now(), updatedAt: Date.now() };
+  await page.route('**/v1/dashboard/devices/setup-operations**', async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith('/resume')) {
+      resumed = true;
+      await route.fulfill({ status: 202, contentType: 'application/json', body: JSON.stringify({ operation: { ...operation, status: 'running', error: undefined } }) });
+      return;
+    }
+    if (url.pathname.endsWith('/setup-operations')) {
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ operations: [operation] }) });
+      return;
+    }
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ operation }) });
+  });
+  await page.route('**/v1/dashboard/devices/discover', async (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ devices: [], scannedNetworks: [], warnings: [] }) }));
+  await page.goto('/?tab=settings&stab=devices');
+  await expect(page.getByRole('button', { name: 'Continue setup' })).toBeVisible();
+  await page.getByRole('button', { name: 'Continue setup' }).click();
+  await expect(page.getByRole('dialog')).toContainText('Connecting and checking the device');
+  await page.getByRole('dialog').getByRole('button', { name: 'Try again' }).click();
+  expect(resumed).toBe(true);
+});
+
 test('incident time view labels gaps before recorded transitions', async ({ page }) => {
   await mockStableDashboardEvents(page);
   await mockAuthenticatedDashboard(page, '1');

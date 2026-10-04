@@ -782,6 +782,7 @@ test('device setup provisions dkrypt SSH access and does not report decrypt read
   const originalSshPublicKeyPath = config.deviceSshPublicKeyPath;
   const originalSshPort = config.deviceSshPort;
   const commands: string[] = [];
+  const stages: string[] = [];
   const deviceId = 'fixture-setup-device';
   let paired = false;
 
@@ -824,11 +825,12 @@ test('device setup provisions dkrypt SSH access and does not report decrypt read
                   : '';
       return signedAgentResponse(agentSecret, String(envelope.requestId), { stdout, stderr: '', code: 0 });
     }, async () => [
-      await setupDeviceConnection({ transport: 'usb', udid: deviceId }),
+      await setupDeviceConnection({ transport: 'usb', udid: deviceId }, (id: string) => stages.push(id)),
       await setupDeviceConnection({ transport: 'usb', udid: deviceId }),
     ]);
 
     expect(result).toHaveLength(2);
+    expect(stages).toEqual(['pairing', 'connecting', 'sftp']);
     expect(result.every((setup) => !setup.ready)).toBe(true);
     expect(operations.slice(0, 3)).toEqual(['metadata', 'pair', 'metadata']);
     expect(operations.filter((operation) => operation === 'pair')).toHaveLength(1);

@@ -77,6 +77,22 @@ export const deviceSetupResponseSchema = Type.Object({
   }, { additionalProperties: true }),
 }, { additionalProperties: true });
 
+export const deviceSetupOperationSchema = Type.Object({
+  id: identifierSchema,
+  status: Type.Union([Type.Literal('queued'), Type.Literal('running'), Type.Literal('interrupted'), Type.Literal('complete'), Type.Literal('failed')]),
+  stage: Type.String(),
+  stages: Type.Array(Type.Object({ id: Type.String(), label: Type.String(), at: Type.Number(), status: Type.Union([Type.Literal('running'), Type.Literal('complete'), Type.Literal('failed')]) })),
+  deviceId: Type.Optional(identifierSchema),
+  ready: Type.Optional(Type.Boolean()),
+  setup: Type.Optional(deviceSetupResponseSchema.properties.setup),
+  error: Type.Optional(Type.String()),
+  createdAt: Type.Number(),
+  updatedAt: Type.Number(),
+  completedAt: Type.Optional(Type.Number()),
+});
+export const deviceSetupOperationResponseSchema = Type.Object({ operation: deviceSetupOperationSchema });
+export const deviceSetupOperationListResponseSchema = Type.Object({ operations: Type.Array(deviceSetupOperationSchema) });
+
 export type DeviceConnectionInput = Static<typeof deviceConnectionInputSchema>;
 export type DeviceRecordInput = Static<typeof deviceRecordInputSchema>;
 export type DevicePatchInput = Static<typeof devicePatchInputSchema>;

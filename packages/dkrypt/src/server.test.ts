@@ -1270,6 +1270,16 @@ test('native device discovery and setup retain manager gates and input errors', 
     expect(invalidSetup.statusCode).toBe(400);
     expect(invalidSetup.json()).toMatchObject({ error: 'a discovered device connection is required' });
 
+    const deniedOperations = await server.inject({ method: 'GET', url: '/v1/dashboard/devices/setup-operations', headers: { cookie: decryptOnlyCookie } });
+    expect(deniedOperations.statusCode).toBe(403);
+    const operations = await server.inject({ method: 'GET', url: '/v1/dashboard/devices/setup-operations', headers: { cookie: administratorCookie } });
+    expect(operations.statusCode).toBe(200);
+    expect(operations.json()).toMatchObject({ operations: expect.any(Array) });
+    const invalidOperation = await server.inject({ method: 'POST', url: '/v1/dashboard/devices/setup-operations', headers: { cookie: administratorCookie }, payload: { transport: 'usb' } });
+    expect(invalidOperation.statusCode).toBe(400);
+    const missingOperation = await server.inject({ method: 'GET', url: '/v1/dashboard/devices/setup-operations/missing', headers: { cookie: administratorCookie } });
+    expect(missingOperation.statusCode).toBe(404);
+
     const invalidDevice = await server.inject({
       method: 'POST',
       url: '/v1/dashboard/devices',

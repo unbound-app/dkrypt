@@ -57,6 +57,8 @@ import { createHttpErrorEnvelope } from '#util/httpResponse.js';
 import type { DeviceTransport } from '#apiCommonContracts.js';
 import { config } from '#config.js';
 import { isSupportedDeviceHost } from '#deviceHost.js';
+import { openStateCollectionDatabase } from '#store/sqlite.js';
+import { createDeviceSetupOperationRepository, type DeviceSetupOperation } from '#store/deviceSetupOperationRepository.js';
 
 const canViewDevices = fastifyRequirePermission(PermissionFlag.viewDevices, PermissionFlag.manageDevices);
 const canManageDevices = fastifyRequirePermission(PermissionFlag.manageDevices);
@@ -147,6 +149,81 @@ const springBoardActions = {
 export const dashboardDeviceRoutes: FastifyPluginAsyncTypebox = async (server) => {
   server.addHook('preHandler', fastifyRequireSession);
   server.addHook('preHandler', recordFastifyDashboardActivity);
+  const setupOperations = createDeviceSetupOperationRepository(openStateCollectionDatabase({ stateDir: config.stateDir, filename: config.stateDatabaseFile, busyTimeoutMs: config.stateDbBusyTimeoutMs }, ['device_setup_operations']));
+  setupOperations.interruptRunning();
+  let closing = false;
+  server.addHook('onClose', async () => {
+    closing = true;
+    setupOperations.interruptRunning();
+    setupOperations.close();
+  });
+
+  const publicSetupOperation = (operation: DeviceSetupOperation) => {
+    const { input: _input, ownerId: _ownerId, ...visible } = operation;
+    return visible;
+  };
+
+  const performDeviceSetup = async (input: NonNullable<ReturnType<typeof parseDeviceConnection>>, userId: string, onStage?: (id: string, label: string) => void) => {
+    const setup = await setupDeviceConnection(input.connection, onStage);
+    if (closing) throw new Error('device setup interrupted by service shutdown');
+    const existingId = input.existingId ?? getEffectiveDevices().find((candidate) => {
+      if (input.connection.udid && candidate.udid === input.connection.udid) return true;
+      return Boolean(input.connection.host && candidate.host === input.connection.host && (candidate.port ?? config.deviceSshPort) === (input.connection.port ?? config.deviceSshPort));
+    })?.id;
+    const connectionFields: Pick<DeviceInput, 'transport' | 'host' | 'port' | 'user' | 'udid' | 'usbmuxNetwork' | 'productType' | 'iosVersion'> = {
+      transport: input.connection.transport as DeviceTransport,
+      host: input.connection.host,
+      port: input.connection.port,
+      user: input.connection.user,
+      udid: input.connection.udid,
+      usbmuxNetwork: input.connection.usbmuxNetwork,
+      productType: input.productType ?? setup.info.productType,
+      iosVersion: input.iosVersion ?? setup.info.productVersion,
+    };
+    let device: DeviceRecord;
+    if (existingId) {
+      const existing = getDevice(existingId);
+      if (!existing) throw new Error('device not found');
+      const patch: Partial<DeviceInput> = {
+        ...connectionFields,
+        productType: connectionFields.productType ?? existing.productType,
+        name: input.name ?? existing.name,
+        iosVersion: connectionFields.iosVersion ?? existing.iosVersion,
+        enabled: true,
+      };
+      if (input.toolchain !== undefined) patch.toolchain = input.toolchain;
+      if (input.notes !== undefined) patch.notes = input.notes;
+      const result = updateDevice(existing.id, patch, userId);
+      if (!result.ok || !result.device) throw new Error(result.error ?? 'device not found');
+      device = result.device;
+    } else {
+      device = createDevice({ ...connectionFields, name: input.name ?? setup.info.name, toolchain: input.toolchain, notes: input.notes }, userId);
+    }
+    emitJobsChanged();
+    return { device, setup };
+  };
+
+  const runSetupOperation = async (operation: DeviceSetupOperation) => {
+    if (closing) return;
+    setupOperations.advance(operation.id, 'starting', 'Starting device setup');
+    try {
+      const result = await performDeviceSetup(operation.input, operation.ownerId, (id, label) => {
+        if (!closing) setupOperations.advance(operation.id, id, label);
+      });
+      setupOperations.advance(operation.id, 'verifying', 'Verifying decrypt readiness');
+      const health = await getDeviceHealth(result.device.id, true).catch(() => undefined);
+      if (closing) return;
+      const ready = result.setup.ready && health?.reachable === true;
+      const setup = ready ? result.setup : {
+        ...result.setup,
+        ready: false,
+        steps: [...result.setup.steps, { id: 'fresh-health', label: 'Fresh device health', status: 'attention' as const, detail: health?.error ?? 'The device did not pass a fresh connection check.' }],
+      };
+      setupOperations.complete(operation.id, { deviceId: result.device.id, ready, setup });
+    } catch (error) {
+      if (!closing) setupOperations.fail(operation.id, `Device setup failed: ${getErrorMessage(error)}`);
+    }
+  };
 
   server.get<DashboardDeviceDiscoveryRoute>('/v1/dashboard/devices/discover', {
     schema: getRouteContract('GET', '/v1/dashboard/devices/discover'),
@@ -169,50 +246,53 @@ export const dashboardDeviceRoutes: FastifyPluginAsyncTypebox = async (server) =
     if (request.validationError) return reply.code(400).send(createHttpErrorEnvelope(request.id, 400, 'device connection contains invalid fields'));
     const userId = getFastifySession(request)!.sub;
     try {
-      const setup = await setupDeviceConnection(input.connection);
-      const existingId = input.existingId ?? getEffectiveDevices().find((candidate) => {
-        if (input.connection.udid && candidate.udid === input.connection.udid) return true;
-        return Boolean(input.connection.host && candidate.host === input.connection.host && (candidate.port ?? config.deviceSshPort) === (input.connection.port ?? config.deviceSshPort));
-      })?.id;
-      const connectionFields: Pick<DeviceInput, 'transport' | 'host' | 'port' | 'user' | 'udid' | 'usbmuxNetwork' | 'productType' | 'iosVersion'> = {
-        transport: input.connection.transport as DeviceTransport,
-        host: input.connection.host,
-        port: input.connection.port,
-        user: input.connection.user,
-        udid: input.connection.udid,
-        usbmuxNetwork: input.connection.usbmuxNetwork,
-        productType: input.productType ?? setup.info.productType,
-        iosVersion: input.iosVersion ?? setup.info.productVersion,
-      };
-      let device: DeviceRecord;
-      if (existingId) {
-        const existing = getDevice(existingId);
-        if (!existing) return reply.code(404).send(createHttpErrorEnvelope(request.id, 404, 'device not found'));
-        const patch: Partial<DeviceInput> = {
-          ...connectionFields,
-          productType: connectionFields.productType ?? existing.productType,
-          name: input.name ?? existing.name,
-          iosVersion: connectionFields.iosVersion ?? existing.iosVersion,
-          enabled: true,
-        };
-        if (input.toolchain !== undefined) patch.toolchain = input.toolchain;
-        if (input.notes !== undefined) patch.notes = input.notes;
-        const result = updateDevice(existing.id, patch, userId);
-        if (!result.ok || !result.device) return reply.code(404).send(createHttpErrorEnvelope(request.id, 404, result.error ?? 'device not found'));
-        device = result.device;
-      } else {
-        device = createDevice({
-          ...connectionFields,
-          name: input.name ?? setup.info.name,
-          toolchain: input.toolchain,
-          notes: input.notes,
-        }, userId);
-      }
-      emitJobsChanged();
+      const { device, setup } = await performDeviceSetup(input, userId);
       return reply.code(201).send({ device: serializeDashboardDevice(device), setup });
     } catch (error) {
+      if (getErrorMessage(error) === 'device not found') return reply.code(404).send(createHttpErrorEnvelope(request.id, 404, 'device not found'));
       return reply.code(502).send(createHttpErrorEnvelope(request.id, 502, `could not connect to the device: ${getErrorMessage(error)}`));
     }
+  });
+
+  server.post('/v1/dashboard/devices/setup-operations', {
+    schema: getRouteContract('POST', '/v1/dashboard/devices/setup-operations'),
+    preHandler: canManageDevices,
+    attachValidation: true,
+  }, async (request, reply) => {
+    const input = parseDeviceConnection(request.body);
+    if (!input || request.validationError) return reply.code(400).send(createHttpErrorEnvelope(request.id, 400, 'a valid discovered device connection is required'));
+    const operation = setupOperations.create(getFastifySession(request)!.sub, input);
+    void runSetupOperation(operation);
+    return reply.code(202).send({ operation: publicSetupOperation(operation) });
+  });
+
+  server.get('/v1/dashboard/devices/setup-operations', {
+    schema: getRouteContract('GET', '/v1/dashboard/devices/setup-operations'),
+    preHandler: canManageDevices,
+  }, (request) => ({ operations: setupOperations.list(getFastifySession(request)!.sub).map(publicSetupOperation) }));
+
+  server.get<{ Params: { id: string } }>('/v1/dashboard/devices/setup-operations/:id', {
+    schema: getRouteContract('GET', '/v1/dashboard/devices/setup-operations/:id'),
+    preHandler: canManageDevices,
+  }, (request, reply) => {
+    const operation = setupOperations.get(request.params.id);
+    if (!operation || operation.ownerId !== getFastifySession(request)!.sub) return reply.code(404).send(createHttpErrorEnvelope(request.id, 404, 'setup operation not found'));
+    return { operation: publicSetupOperation(operation) };
+  });
+
+  server.post<{ Params: { id: string } }>('/v1/dashboard/devices/setup-operations/:id/resume', {
+    schema: getRouteContract('POST', '/v1/dashboard/devices/setup-operations/:id/resume'),
+    preHandler: canManageDevices,
+  }, async (request, reply) => {
+    const previous = setupOperations.get(request.params.id);
+    if (!previous || previous.ownerId !== getFastifySession(request)!.sub) return reply.code(404).send(createHttpErrorEnvelope(request.id, 404, 'setup operation not found'));
+    if (previous.status !== 'interrupted' && previous.status !== 'failed') return reply.code(409).send(createHttpErrorEnvelope(request.id, 409, 'only interrupted or failed setup can resume'));
+    const discovered = await discoverDevices().catch(() => undefined);
+    const available = discovered?.devices.some((candidate) => candidate.udid && candidate.udid === previous.input.connection.udid && candidate.transport === previous.input.connection.transport);
+    if (!available) return reply.code(409).send(createHttpErrorEnvelope(request.id, 409, 'reconnect the device before resuming setup'));
+    const operation = setupOperations.resume(previous.id)!;
+    void runSetupOperation(operation);
+    return reply.code(202).send({ operation: publicSetupOperation(operation) });
   });
 
   server.post<DashboardDeviceCreateRoute>('/v1/dashboard/devices', {

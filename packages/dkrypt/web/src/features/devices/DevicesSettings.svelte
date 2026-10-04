@@ -16,12 +16,15 @@
     fetchDeviceHealth,
     fetchDeviceInventory,
     fetchDevicePreflight,
+    fetchDeviceSetupOperation,
+    fetchDeviceSetupOperations,
     fetchDevices,
     fetchSettings,
     recoverDevice,
     saveSettings,
     setDeviceDarkMode,
-    setupDevice,
+    startDeviceSetupOperation,
+    resumeDeviceSetupOperation,
     updateDevice,
     deleteDevice,
     type DeviceDiscoveryCandidate,
@@ -30,6 +33,7 @@
     type DeviceActivityEntry,
     type DeviceRecord,
     type DeviceSetupResult,
+    type DeviceSetupOperation,
     type SchedulerSettings,
   } from '#lib/api';
   import Badge from '#lib/components/ui/Badge.svelte';
@@ -306,6 +310,43 @@
   let setupRunning = $state(false);
   let setupError = $state('');
   let setupResult = $state<DeviceSetupResult | null>(null);
+  let setupOperation = $state<DeviceSetupOperation | null>(null);
+  let setupOperationsLoaded = false;
+
+  $effect(() => {
+    if (!canManageDevices || setupOperationsLoaded) return;
+    setupOperationsLoaded = true;
+    void fetchDeviceSetupOperations().then(({ operations }) => {
+      const latest = operations.find((operation) => operation.status === 'running' || operation.status === 'queued' || operation.status === 'interrupted' || operation.status === 'failed');
+      if (latest) {
+        setupOperation = latest;
+        setupRunning = latest.status === 'running' || latest.status === 'queued';
+        setupError = latest.error ?? '';
+      }
+    }).catch(() => undefined);
+  });
+
+  $effect(() => {
+    const operation = setupOperation;
+    if (!operation || !['queued', 'running'].includes(operation.status)) return;
+    const timer = setInterval(() => void refreshSetupOperation(operation.id), 1000);
+    return () => clearInterval(timer);
+  });
+
+  async function refreshSetupOperation(id: string): Promise<void> {
+    try {
+      const { operation } = await fetchDeviceSetupOperation(id);
+      if (setupOperation?.id !== id) return;
+      const wasComplete = setupOperation.status === 'complete';
+      setupOperation = operation;
+      setupRunning = operation.status === 'queued' || operation.status === 'running';
+      setupResult = operation.setup ?? null;
+      setupError = operation.error ?? '';
+      if (operation.status === 'complete' && !wasComplete) await reloadDevices();
+    } catch (error) {
+      setupError = error instanceof Error ? error.message : 'Could not load setup progress';
+    }
+  }
 
   async function openDiscovery(existingId?: string): Promise<void> {
     setupExistingId = existingId;
@@ -327,6 +368,7 @@
     setupName = candidate.name;
     setupError = '';
     setupResult = null;
+    setupOperation = null;
     setupOpen = true;
     void runSetup(candidate);
   }
@@ -334,26 +376,32 @@
   async function runSetup(candidate: DeviceDiscoveryCandidate): Promise<void> {
     setupRunning = true;
     try {
-      const result = await setupDevice(candidate, { name: setupName.trim() || candidate.name, existingId: setupExistingId });
+      const result = await startDeviceSetupOperation(candidate, { name: setupName.trim() || candidate.name, existingId: setupExistingId });
       if (result.ok) {
-        setupResult = result.data.setup;
-        await reloadDevices();
+        setupOperation = result.data.operation;
       } else {
-        const message = (result.data as { error?: unknown }).error;
+        const message = result.data.error;
         setupError = typeof message === 'string' ? message : 'Device setup could not be completed. Try again.';
       }
     } catch (error) {
       setupError = error instanceof Error ? error.message : 'Device setup failed';
     } finally {
-      setupRunning = false;
+      if (!setupOperation || !['queued', 'running'].includes(setupOperation.status)) setupRunning = false;
     }
   }
 
-  function retrySetup(): void {
-    if (!setupCandidate) return;
+  async function retrySetup(): Promise<void> {
     setupError = '';
     setupResult = null;
-    void runSetup(setupCandidate);
+    if (setupOperation && ['interrupted', 'failed'].includes(setupOperation.status)) {
+      const result = await resumeDeviceSetupOperation(setupOperation.id);
+      if (result.ok) {
+        setupOperation = result.data.operation;
+        setupRunning = true;
+      } else setupError = result.data.error ?? 'Reconnect the device before resuming setup';
+      return;
+    }
+    if (setupCandidate) await runSetup(setupCandidate);
   }
 
   let editOpen = $state(false);
@@ -523,6 +571,12 @@
     </div>
   {/snippet}
   <div class="mb-4 max-w-3xl text-sm text-muted">Connect a jailbroken iPhone or iPad over USB or Wi-Fi. dkrypt discovers it, verifies the connection, checks every prerequisite, and adds it to the pool with a clear readiness summary.</div>
+  {#if canManageDevices && setupOperation && setupOperation.status !== 'complete'}
+    <div class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-panel-muted p-3 text-sm" role="status">
+      <div><span class="font-medium">Device setup: {setupOperation.status}</span><div class="text-xs text-muted">{setupOperation.stages.at(-1)?.label ?? 'Waiting to connect'}</div></div>
+      <Button size="sm" variant="secondary" onclick={() => (setupOpen = true)}>{setupOperation.status === 'interrupted' || setupOperation.status === 'failed' ? 'Continue setup' : 'View progress'}</Button>
+    </div>
+  {/if}
   {#if devices.length > 1}
     <Button size="sm" variant="secondary" class="mb-3" aria-expanded={comparingDevices} onclick={() => (comparingDevices = !comparingDevices)}>{comparingDevices ? 'Close comparison' : 'Compare devices'}</Button>
     {#if comparingDevices}<DeviceComparison {devices} {health} />{/if}
@@ -621,7 +675,8 @@
   <Dialog open={setupOpen} onOpenChange={(value) => (setupOpen = value)} class="max-w-xl">
     <div class="mb-1 text-sm font-semibold">Set up {setupName || 'device'}</div><div class="mb-4 text-xs text-muted">dkrypt is connecting, identifying the device, preparing decrypt access, and checking automation prerequisites.</div>
     {#if setupError}<div class="border-err/40 bg-err/10 text-err mb-3 rounded-lg border px-3 py-2 text-sm">{setupError}</div>{/if}
-    {#if setupRunning}<div class="flex items-center justify-center gap-2 py-8 text-sm text-muted"><RefreshCw class="h-4 w-4 animate-spin" />Running device setup…</div>{/if}
+    {#if setupOperation?.stages.length}<ol class="mb-3 space-y-2" aria-label="Device setup progress">{#each setupOperation.stages as stage (stage.at)}<li class="flex items-center gap-2 text-xs"><span class={stage.status === 'failed' ? 'text-err' : stage.status === 'complete' ? 'text-ok' : 'text-muted'}>{stage.status === 'complete' ? '✓' : stage.status === 'failed' ? '!' : '…'}</span><span>{stage.label}</span></li>{/each}</ol>{/if}
+    {#if setupRunning}<div class="flex items-center justify-center gap-2 py-4 text-sm text-muted"><RefreshCw class="h-4 w-4 animate-spin" />{setupOperation?.stages.at(-1)?.label ?? 'Preparing device setup…'}</div><Button class="w-full" variant="secondary" onclick={() => (setupOpen = false)}>Continue in background</Button>{/if}
     {#if setupResult}<div class="mb-3 flex items-center gap-2 text-sm font-medium">{#if setupResult.ready}<CheckCircle2 class="text-ok h-4 w-4" />Device is ready for decrypts{:else}<AlertTriangle class="text-warn h-4 w-4" />Device connected with attention needed{/if}</div><div class="flex flex-col gap-2">{#each setupResult.steps as step (step.id)}<div class="border-border flex items-start gap-3 rounded-lg border p-3"><div class="mt-0.5">{#if step.status === 'ready'}<CheckCircle2 class="text-ok h-4 w-4" />{:else if step.status === 'attention'}<AlertTriangle class="text-warn h-4 w-4" />{:else}<CircleX class="text-err h-4 w-4" />{/if}</div><div class="min-w-0 flex-1"><div class="text-sm">{step.label}</div>{#if step.detail}<div class="mt-0.5 text-xs text-muted">{step.detail}</div>{/if}</div><Badge variant={step.status === 'ready' ? 'success' : step.status === 'attention' ? 'secondary' : 'destructive'}>{step.status === 'ready' ? 'ready' : step.status}</Badge></div>{/each}</div>{#if !setupResult.ready}<div class="border-warn/40 bg-warn/10 text-warn mt-3 rounded-lg border px-3 py-2 text-xs">The device is saved so you can fix the listed prerequisite and run setup again. No connection directory or CLI command is required.</div>{/if}<Button class="mt-4 w-full" onclick={() => (setupOpen = false)}>Done</Button>{:else if !setupRunning}<div class="mt-4 flex gap-2"><Button variant="secondary" class="flex-1" onclick={() => (setupOpen = false)}>Close</Button><Button class="flex-1" onclick={retrySetup}>Try again</Button></div>{/if}
   </Dialog>
 

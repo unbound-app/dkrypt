@@ -334,6 +334,20 @@ export interface DeviceSetupResult {
   ready: boolean;
 }
 
+export interface DeviceSetupOperation {
+  id: string;
+  status: 'queued' | 'running' | 'interrupted' | 'complete' | 'failed';
+  stage: string;
+  stages: Array<{ id: string; label: string; at: number; status: 'running' | 'complete' | 'failed' }>;
+  deviceId?: string;
+  ready?: boolean;
+  setup?: DeviceSetupResult;
+  error?: string;
+  createdAt: number;
+  updatedAt: number;
+  completedAt?: number;
+}
+
 export type SchedulerRunStatus = 'dispatched' | 'succeeded' | 'failed' | 'timed_out';
 
 export interface SchedulerRunOutcome {
@@ -936,6 +950,25 @@ export function setupDevice(
   profile?: { name?: string; existingId?: string; iosVersion?: string; toolchain?: string; notes?: string },
 ): Promise<{ ok: boolean; data: { device: DeviceRecord; setup: DeviceSetupResult } }> {
   return apiAction('/v1/dashboard/devices/setup', { method: 'POST', body: JSON.stringify({ ...connection, ...profile }) });
+}
+
+export function startDeviceSetupOperation(
+  connection: Pick<DeviceDiscoveryCandidate, 'transport' | 'host' | 'port' | 'user' | 'udid' | 'usbmuxNetwork' | 'productType'>,
+  profile?: { name?: string; existingId?: string; iosVersion?: string; toolchain?: string; notes?: string },
+): Promise<{ ok: boolean; data: { operation: DeviceSetupOperation; error?: string } }> {
+  return apiAction('/v1/dashboard/devices/setup-operations', { method: 'POST', body: JSON.stringify({ ...connection, ...profile }) });
+}
+
+export function fetchDeviceSetupOperations(): Promise<{ operations: DeviceSetupOperation[] }> {
+  return apiJson('/v1/dashboard/devices/setup-operations');
+}
+
+export function fetchDeviceSetupOperation(id: string): Promise<{ operation: DeviceSetupOperation }> {
+  return apiJson(`/v1/dashboard/devices/setup-operations/${encodeURIComponent(id)}`);
+}
+
+export function resumeDeviceSetupOperation(id: string): Promise<{ ok: boolean; data: { operation: DeviceSetupOperation; error?: string } }> {
+  return apiAction(`/v1/dashboard/devices/setup-operations/${encodeURIComponent(id)}/resume`, { method: 'POST' });
 }
 
 export function createDevice(connection: Pick<DeviceRecord, 'name' | 'transport' | 'host' | 'port' | 'user' | 'udid' | 'usbmuxNetwork' | 'productType'>): Promise<{ ok: boolean; data: DeviceRecord }> {
