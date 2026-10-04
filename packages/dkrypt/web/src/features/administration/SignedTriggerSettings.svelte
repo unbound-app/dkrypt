@@ -1,4 +1,5 @@
 <script lang="ts">
+  import AuditRibbon from '#components/AuditRibbon.svelte';
   import Card from '#lib/components/ui/Card.svelte';
   import Button from '#lib/components/ui/Button.svelte';
   import Input from '#lib/components/ui/Input.svelte';
@@ -64,9 +65,12 @@
   {/if}
   <div class="mt-4 divide-y divide-border/70">
     {#each integrations as integration (integration.id)}
-      <div class="flex flex-wrap items-center justify-between gap-2 py-2 text-xs">
-        <div><div class="font-medium">{integration.projectId} · {integration.bundleIds.join(', ')}</div><div class="text-muted">{integration.id} · {integration.sources.join(' / ')} · {integration.enabled ? 'Active' : 'Revoked'}</div></div>
-        {#if integration.enabled}<div class="flex gap-1"><Button size="sm" variant="secondary" disabled={busy} onclick={() => void rotate(integration.id)}>Rotate</Button><Button size="sm" variant="secondary" disabled={busy} onclick={() => void revoke(integration.id)}>Revoke</Button></div>{/if}
+      <div class="py-2 text-xs">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div><div class="font-medium">{integration.projectId} · {integration.bundleIds.join(', ')}</div><div class="text-muted">{integration.id} · {integration.sources.join(' / ')} · {integration.enabled ? 'Active' : 'Revoked'}</div></div>
+          {#if integration.enabled}<div class="flex gap-1"><Button size="sm" variant="secondary" disabled={busy} onclick={() => void rotate(integration.id)}>Rotate</Button><Button size="sm" variant="secondary" disabled={busy} onclick={() => void revoke(integration.id)}>Revoke</Button></div>{/if}
+        </div>
+        <AuditRibbon target={integration.id} />
       </div>
     {/each}
   </div>

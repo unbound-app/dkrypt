@@ -9,6 +9,7 @@
 		X,
 	} from "lucide-svelte";
 	import EmptyState from "#components/EmptyState.svelte";
+	import AuditRibbon from "#components/AuditRibbon.svelte";
 	import AppIcon from "#components/AppIcon.svelte";
 	import RelativeTime from "#components/RelativeTime.svelte";
 	import {
@@ -1431,6 +1432,7 @@ import { clearFormDraft, readFormDraft, setFormUnsaved, writeFormDraft } from "#
 								{w.configIssues.join(" ")}
 							</div>
 						{/if}
+						<AuditRibbon target={w.id} />
 						{#if previewProgressByWatch[w.id]}
 							<div
 								class="border-border bg-panel-muted mt-2 rounded-md border p-2.5 text-xs"

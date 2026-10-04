@@ -2190,6 +2190,10 @@ export function fetchAuditLog(limit = 100, cursor?: string): Promise<{ entries: 
   return apiJson(`/v1/dashboard/audit-log?limit=${limit}${cursorQuery}`);
 }
 
+export function fetchAuditLogByTarget(target: string): Promise<{ entries: AuditLogEntry[] }> {
+  return apiJson(`/v1/dashboard/audit-log/target/${encodeURIComponent(target)}`);
+}
+
 export function auditLogExportUrl(format: 'csv' | 'json'): string {
   return `/v1/dashboard/audit-log/export?format=${format}`;
 }

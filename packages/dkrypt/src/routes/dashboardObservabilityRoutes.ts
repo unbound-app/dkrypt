@@ -1,4 +1,5 @@
 import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
+import { Type } from '@sinclair/typebox';
 import type { DashboardAuditLogExportRoute, DashboardAuditLogRoute, DashboardLogsRoute } from '#dashboardObservabilityContracts.js';
 import { recordFastifyDashboardActivity } from '#dashboardActivity.js';
 import { canAccessProject } from '#dashboardJobPresentation.js';
@@ -7,7 +8,7 @@ import { getRouteContract } from '#contracts.js';
 import { getRecentLogs } from '#logger.js';
 import { PermissionFlag } from '#permissions.js';
 import { fastifyRequirePermission, fastifyRequireSession, getFastifySession } from '#session.js';
-import { DEFAULT_PROJECT_ID, getAuditLog, getAuditLogPage } from '#store/state.js';
+import { DEFAULT_PROJECT_ID, getAuditLog, getAuditLogByTarget, getAuditLogPage } from '#store/state.js';
 import { csvCell } from '#util/csv.js';
 import { createHttpErrorEnvelope } from '#util/httpResponse.js';
 
@@ -58,6 +59,11 @@ export const dashboardObservabilityRoutes: FastifyPluginAsyncTypebox = async (se
     const { cursor, limit, offset } = request.query;
     return getAuditLogPage(cursor ? 0 : offset ?? 0, Math.min(limit ?? 100, 200), cursor);
   });
+
+  server.get('/v1/dashboard/audit-log/target/:target', {
+    schema: { hide: true, params: Type.Object({ target: Type.String({ minLength: 1, maxLength: 200 }) }) },
+    preHandler: canViewAuditLog,
+  }, (request) => ({ entries: getAuditLogByTarget(request.params.target, 5) }));
 
   server.get<DashboardAuditLogExportRoute>('/v1/dashboard/audit-log/export', {
     schema: getRouteContract('GET', '/v1/dashboard/audit-log/export'),

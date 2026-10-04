@@ -2162,6 +2162,10 @@ export function getAuditLog(limit = 100): AuditLogEntry[] {
   return auditRepository.listRecent(MAX_AUDIT_LOG).slice(0, limit);
 }
 
+export function getAuditLogByTarget(target: string, limit = 5): AuditLogEntry[] {
+  return auditRepository.listByTarget(target, limit);
+}
+
 export function getAuditLogPage(offset = 0, limit = 100, cursor?: string): { entries: AuditLogEntry[]; total: number; nextCursor?: string } {
   const page = paginateCursor(auditRepository.listRecent(MAX_AUDIT_LOG), {
     cursor,

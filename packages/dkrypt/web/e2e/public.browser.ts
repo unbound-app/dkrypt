@@ -1905,6 +1905,11 @@ test('device comparison keeps unknown readings distinct from unhealthy readings'
       ? { reachable: true, batteryPercent: 72, storageFreeBytes: 10_000_000_000, readiness: { state: 'ready', score: 95, reasons: [] }, checkedAt: Date.now() }
       : { reachable: false, error: 'Wi-Fi connection timed out', checkedAt: Date.now() }) });
   });
+  let auditRequests = 0;
+  await page.route('**/v1/dashboard/audit-log/target/ipad-a', async (route) => {
+    auditRequests += 1;
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ entries: [{ id: 'audit-a', ts: Date.now(), actor: 'operator-a', action: 'device.update', target: 'ipad-a', changes: [{ field: 'enabled', before: true, after: false }] }] }) });
+  });
   await page.goto('/?tab=settings&stab=devices');
   await page.getByRole('button', { name: 'Compare devices' }).click();
   const comparison = page.getByRole('region', { name: 'Device comparison' });
@@ -1912,6 +1917,10 @@ test('device comparison keeps unknown readings distinct from unhealthy readings'
   await expect(comparison).toContainText('Travel iPad');
   await expect(comparison).toContainText('72%');
   await expect(comparison).toContainText('Not checked');
+  expect(auditRequests).toBe(0);
+  await page.locator('#device-ipad-a').getByText('Who changed this?').click();
+  await expect(page.locator('#device-ipad-a')).toContainText('operator-a');
+  expect(auditRequests).toBe(1);
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(comparison).toBeVisible();
   expect(await comparison.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);

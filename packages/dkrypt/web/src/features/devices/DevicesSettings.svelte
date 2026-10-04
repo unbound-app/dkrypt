@@ -2,6 +2,7 @@
   import { tick } from 'svelte';
   import { AlertTriangle, CheckCircle2, CircleX, Grid2X2, List, Pencil, RefreshCw, Search, Smartphone, Star, Trash2, Usb, Wifi } from 'lucide-svelte';
   import AdvancedSection from '#components/AdvancedSection.svelte';
+  import AuditRibbon from '#components/AuditRibbon.svelte';
   import DeviceArtwork from '#components/DeviceArtwork.svelte';
   import DeviceComparison from '#features/devices/DeviceComparison.svelte';
   import EmptyState from '#components/EmptyState.svelte';
@@ -552,6 +553,7 @@
           {#if h?.readiness?.reasons.length}<div class="text-warn mt-2 text-xs">{h.readiness.reasons.join(' · ')}</div>{/if}
           <div class="border-border/70 mt-3 flex flex-wrap items-center gap-1.5 border-t pt-3"><Button size="sm" variant="secondary" loading={testingId.has(device.id)} onclick={() => void testConnection(device)}>Test connection</Button><AdvancedSection label="settings.deviceTools"><div class="flex flex-wrap items-center gap-1.5"><Button size="sm" variant="secondary" loading={inspectingId.has(device.id)} onclick={() => void inspectDevice(device)}>Preflight</Button><Button size="sm" variant="secondary" loading={inspectingId.has(device.id)} onclick={() => void inspectInventory(device)}>Inventory</Button>{#if canManageDevices}<Button size="sm" variant="secondary" loading={recoveringId.has(device.id)} onclick={() => void recover(device)}>Recover</Button>{/if}</div></AdvancedSection>{#if canManageDevices}{#if !device.isPrimary}<Button size="sm" variant="ghost" onclick={() => void makePrimary(device)}>Make primary</Button>{/if}{#if device.enabled && !device.draining}<Button size="sm" variant="ghost" onclick={() => void startDrain(device)}>Drain</Button>{/if}<Button size="sm" variant="ghost" onclick={() => void toggleEnabled(device)}>{device.enabled ? 'Disable' : 'Enable'}</Button><Button size="icon" variant="ghost" class="ml-auto h-8 w-8 text-muted hover:text-err" loading={deletingId.has(device.id)} onclick={() => void remove(device)} aria-label={`Remove ${device.name}`} title="Remove device"><Trash2 class="h-3.5 w-3.5" /></Button>{/if}</div>
           {#if device.draining}<div class="mt-2 text-xs text-warn">Draining: no new jobs will start on this device.</div>{/if}
+          <AuditRibbon target={device.id} />
           {#if device.isPrimary && h?.reachable && h.darkEnabled !== undefined}<div class="border-border/70 mt-3 flex items-center justify-between gap-3 border-t pt-3"><div class="min-w-0"><div class="text-sm">Keep display dark</div><div class="text-xs text-muted">autoinstall keeps the device awake while the display is blacked out.</div></div><Switch checked={h.darkEnabled} disabled={!canManageDevices || updatingDarkModeId.has(device.id)} onCheckedChange={(enabled) => void toggleDarkMode(device, enabled)} aria-label="Keep display dark" /></div>{/if}
           {#if activity[device.id]?.length}
             <div class="border-border/70 mt-3 border-t pt-3">
