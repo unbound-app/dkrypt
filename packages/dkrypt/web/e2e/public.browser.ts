@@ -2115,8 +2115,10 @@ test('system doctor is hidden from accounts without device-management permission
 
   await page.goto('/?tab=settings&stab=doctor');
 
-  await expect(page.getByRole('tab', { name: 'Devices' })).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'System' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Operations', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'System', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Operations', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Devices', exact: true })).toBeVisible();
   expect(doctorRequests).toBe(0);
 });
 
@@ -2688,7 +2690,7 @@ test('populated device management and preflight dialog meet accessibility checks
   await expect(page.getByText('Lab iPad', { exact: true })).toBeVisible();
   await expect(page.getByText('online', { exact: true })).toBeVisible();
   await expect(page.getByText('App Store', { exact: true })).toBeVisible();
-  await expect(page.getByText('Idle', { exact: true })).toBeVisible();
+  await expect(page.getByText('Not open', { exact: true })).toBeVisible();
   const activityList = page.getByRole('list', { name: 'Lab iPad activity' });
   const activityViewport = page.getByRole('region', { name: 'Lab iPad activity scroll area' });
   await expect(activityList.getByRole('listitem').first()).toContainText('Device activity 000');
