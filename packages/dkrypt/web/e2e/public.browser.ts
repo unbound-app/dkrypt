@@ -1580,7 +1580,7 @@ test('batch TestFlight queue selects an eligible device independently for each a
 test('batch paste resolves App Store links and never auto-subscribes TestFlight invites', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockStableDashboardEvents(page);
-  await mockAuthenticatedDashboard(page, '2');
+  await mockAuthenticatedDashboard(page, (2n | (1n << 34n)).toString());
   const queued: string[] = [];
   let inviteRequests = 0;
   await page.route('**/v1/dashboard/apps/lookup-track?*', async (route) => {
@@ -1591,7 +1591,11 @@ test('batch paste resolves App Store links and never auto-subscribes TestFlight 
     await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ id: `job-${queued.length}`, status: 'queued', progress: 'Queued', queue: { position: 1, total: 1 } }) });
   });
   await page.route('**/v1/dashboard/testflight/subscriptions', async (route) => {
-    if (route.request().method() === 'POST') inviteRequests += 1;
+    if (route.request().method() === 'POST') {
+      inviteRequests += 1;
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, data: { subscription: { id: 'invite-1', status: 'pending' } } }) });
+      return;
+    }
     await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ subscriptions: [], total: 0 }) });
   });
 
@@ -1601,9 +1605,12 @@ test('batch paste resolves App Store links and never auto-subscribes TestFlight 
   await page.getByPlaceholder('com.example.app\nhttps://apps.apple.com/us/app/example/id123456789\nhttps://testflight.apple.com/join/ABC123').fill('com.example.bundle\nhttps://apps.apple.com/us/app/linked/id123456789\nhttps://testflight.apple.com/join/ABC123');
   await page.getByRole('button', { name: 'Add rows' }).click();
   await expect(page.getByText('TestFlight invite · requires a separate request')).toBeVisible();
+  expect(inviteRequests).toBe(0);
+  await page.getByRole('button', { name: 'Request access' }).click();
+  await expect.poll(() => inviteRequests).toBe(1);
   await page.getByRole('button', { name: 'Queue 2 App Store apps' }).click();
   await expect.poll(() => queued).toEqual(['com.example.bundle', 'com.example.linked']);
-  expect(inviteRequests).toBe(0);
+  expect(inviteRequests).toBe(1);
 });
 
 test('batch queue retries only failed entries after a partial success', async ({ page }) => {
