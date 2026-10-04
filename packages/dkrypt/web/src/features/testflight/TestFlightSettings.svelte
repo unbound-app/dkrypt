@@ -191,7 +191,7 @@
                   <div class="flex flex-wrap items-center gap-2">
                     <span class="truncate text-sm font-medium">{displayName}</span>
                     {#if protectedAccess}
-                      <Badge variant="secondary"><LockKeyhole class="h-3 w-3" /> Protected</Badge>
+                      <Badge variant="secondary"><LockKeyhole class="mr-1 h-3 w-3" /> Protected</Badge>
                     {:else if app}
                       <Badge variant="success">Available</Badge>
                     {:else if subscription}
