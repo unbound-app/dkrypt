@@ -75,6 +75,33 @@ export function listOperationalIncidents(projectId: string): OperationalIncident
   });
 }
 
+export function getOperationalIncidentStateAt(projectId: string, at: number): {
+  coverage: 'recorded' | 'incomplete';
+  coverageStartAt?: number;
+  incidents: Array<Pick<OperationalIncident, 'id' | 'kind' | 'title' | 'sourceId' | 'status'> & { recovered: boolean }>;
+} {
+  const records = listOperationalIncidents(projectId);
+  const coverageStartAt = records.reduce<number | undefined>((earliest, incident) => {
+    const first = incident.history[0]?.at;
+    return first === undefined ? earliest : Math.min(earliest ?? first, first);
+  }, undefined);
+  if (coverageStartAt === undefined || at < coverageStartAt) return { coverage: 'incomplete', coverageStartAt, incidents: [] };
+  const incidents = records.flatMap((incident) => {
+    const changes = incident.history.filter((change) => change.at <= at).sort((left, right) => left.at - right.at);
+    if (changes.length === 0) return [];
+    let status: IncidentStatus = 'open';
+    let recovered = false;
+    for (const change of changes) {
+      if (change.action === 'opened' || change.action === 'reopened' || change.action === 'snooze_expired') status = 'open';
+      if (change.action === 'in_progress' || change.action === 'snoozed' || change.action === 'resolved') status = change.action;
+      if (change.action === 'recovered') recovered = true;
+      if (change.action === 'reopened') recovered = false;
+    }
+    return [{ id: incident.id, kind: incident.kind, title: incident.title, sourceId: incident.sourceId, status, recovered }];
+  });
+  return { coverage: 'recorded', coverageStartAt, incidents };
+}
+
 export function updateOperationalIncident(id: string, projectId: string, actor: string, change: { status?: IncidentStatus; assignedTo?: string | null; snoozedUntil?: number; resolutionNote?: string }): OperationalIncident | undefined {
   const incident = fromRow(database.query('SELECT payload FROM operational_incidents WHERE id = ? AND project_id = ?').get(id, projectId) as { payload: string } | null);
   if (!incident) return undefined;

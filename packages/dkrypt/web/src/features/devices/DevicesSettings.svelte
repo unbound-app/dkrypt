@@ -3,6 +3,7 @@
   import { AlertTriangle, CheckCircle2, CircleX, Grid2X2, List, Pencil, RefreshCw, Search, Smartphone, Star, Trash2, Usb, Wifi } from 'lucide-svelte';
   import AdvancedSection from '#components/AdvancedSection.svelte';
   import DeviceArtwork from '#components/DeviceArtwork.svelte';
+  import DeviceComparison from '#features/devices/DeviceComparison.svelte';
   import EmptyState from '#components/EmptyState.svelte';
   import RelativeTime from '#components/RelativeTime.svelte';
   import VirtualizedList from '#components/VirtualizedList.svelte';
@@ -95,6 +96,7 @@
   }
 
   let maintenanceSettings = $state<SchedulerSettings | null>(null);
+  let comparingDevices = $state(false);
   let togglingMaintenance = $state(false);
 
   $effect(() => {
@@ -490,6 +492,10 @@
     </div>
   {/snippet}
   <div class="mb-4 max-w-3xl text-sm text-muted">Connect a jailbroken iPhone or iPad over USB or Wi-Fi. dkrypt discovers it, verifies the connection, checks every prerequisite, and adds it to the pool with a clear readiness summary.</div>
+  {#if devices.length > 1}
+    <Button size="sm" variant="secondary" class="mb-3" aria-expanded={comparingDevices} onclick={() => (comparingDevices = !comparingDevices)}>{comparingDevices ? 'Close comparison' : 'Compare devices'}</Button>
+    {#if comparingDevices}<DeviceComparison {devices} {health} />{/if}
+  {/if}
   {#if devices.length === 0}
     <EmptyState icon={Smartphone} message="No devices connected yet." />
   {:else}

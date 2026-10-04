@@ -488,6 +488,18 @@ export function fetchDashboardIncidents(projectId = projectSelectionState.id): P
   return apiJson(`/v1/dashboard/incidents?projectId=${encodeURIComponent(projectId)}`);
 }
 
+export interface IncidentStateAtTime {
+  projectId: string;
+  at: number;
+  coverage: 'recorded' | 'incomplete';
+  coverageStartAt?: number;
+  incidents: Array<{ id: string; kind: 'job' | 'watch' | 'device' | 'deployment'; title: string; sourceId: string; status: 'open' | 'in_progress' | 'snoozed' | 'resolved'; recovered: boolean }>;
+}
+
+export function fetchIncidentStateAtTime(at: number, projectId = projectSelectionState.id): Promise<IncidentStateAtTime> {
+  return apiJson(`/v1/dashboard/incidents/state-at?projectId=${encodeURIComponent(projectId)}&at=${Math.floor(at)}`);
+}
+
 export function fetchDashboardArtifact(id: string, projectId = projectSelectionState.id): Promise<ArtifactRecord> {
   const params = new URLSearchParams({ projectId });
   return apiJson(`/v1/dashboard/artifacts/${encodeURIComponent(id)}?${params}`);

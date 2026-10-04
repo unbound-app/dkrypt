@@ -10,7 +10,7 @@ import { PermissionFlag, hasPermission } from '#permissions.js';
 import { fastifyRequireSession, getFastifySession } from '#session.js';
 import { canAccessProject } from '#dashboardJobPresentation.js';
 import { DEFAULT_PROJECT_ID, getAllJobHistory, getDeviceActivityPage, getEffectiveDevices, getProject, listAllowedUsers, listNotifications, recordAudit, userCanAccessProject, type DeviceActivityEntry, type DeviceRecord, type JobHistoryEntry, type NotificationRecord } from '#store/state.js';
-import { listOperationalIncidents, reconcileOperationalIncidents, updateOperationalIncident } from '#store/incidentRepository.js';
+import { getOperationalIncidentStateAt, listOperationalIncidents, reconcileOperationalIncidents, updateOperationalIncident } from '#store/incidentRepository.js';
 import { recordFastifyDashboardActivity } from '#dashboardActivity.js';
 import { createHttpErrorEnvelope } from '#util/httpResponse.js';
 
@@ -116,6 +116,18 @@ export function createDashboardIncidentRoutes(overrides: Partial<DashboardIncide
       } catch (error) {
         return reply.code(400).send(createHttpErrorEnvelope(request.id, 400, error instanceof Error ? error.message : 'invalid incident change'));
       }
+    });
+
+    server.get('/v1/dashboard/incidents/state-at', {
+      schema: { hide: true, querystring: Type.Object({ projectId: Type.Optional(Type.String()), at: Type.Integer({ minimum: 0 }) }, { additionalProperties: false }) },
+    }, (request, reply) => {
+      const session = getFastifySession(request)!;
+      if (!hasPermission(session.permissions, PermissionFlag.viewIncidents) && !hasPermission(session.permissions, PermissionFlag.manageIncidents)) return reply.code(403).send(createHttpErrorEnvelope(request.id, 403, 'incident view permission required'));
+      const projectId = request.query.projectId ?? DEFAULT_PROJECT_ID;
+      if (!services.getProject(projectId) || !services.canAccessProject(session.sub, session.permissions, projectId)) return reply.code(404).send(createHttpErrorEnvelope(request.id, 404, 'project not found'));
+      if (request.query.at > Date.now()) return reply.code(400).send(createHttpErrorEnvelope(request.id, 400, 'time must not be in the future'));
+      reconcileOperationalIncidents();
+      return { projectId, at: request.query.at, ...getOperationalIncidentStateAt(projectId, request.query.at) };
     });
 
     server.get<DashboardIncidentRoute>('/v1/dashboard/incidents', {

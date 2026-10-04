@@ -1879,6 +1879,63 @@ test('operations panels stay out of the Home layout and remain reachable in Insi
   await expect(page.getByText('Operations · Action Center and incident timeline')).toBeVisible();
 });
 
+test('device comparison keeps unknown readings distinct from unhealthy readings', async ({ page }) => {
+  await mockStableDashboardEvents(page);
+  await mockAuthenticatedDashboard(page, '1');
+  await page.unroute('**/v1/dashboard/overview*');
+  await page.route('**/v1/dashboard/overview*', async (route) => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+      schedulerEnabled: false,
+      settings: {},
+      watches: [],
+      schedulerRunHistory: [],
+      disk: { totalBytes: 1, freeBytes: 1, usedBytes: 0, usedPercent: 0 },
+      isPaidPlan: false,
+      maintenance: { active: false, manual: false, auto: false },
+      activeJobs: [],
+      devices: [
+        { id: 'ipad-a', name: 'Studio iPad', transport: 'usb', productType: 'iPad13,4', iosVersion: '17.4', enabled: true, createdAt: 1, updatedAt: 1 },
+        { id: 'ipad-b', name: 'Travel iPad', transport: 'wifi', productType: 'iPad8,1', iosVersion: '16.7', enabled: true, createdAt: 1, updatedAt: 1 },
+      ],
+    }) });
+  });
+  await page.route('**/v1/dashboard/devices/*/health*', async (route) => {
+    const id = new URL(route.request().url()).pathname.split('/')[4];
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify(id === 'ipad-a'
+      ? { reachable: true, batteryPercent: 72, storageFreeBytes: 10_000_000_000, readiness: { state: 'ready', score: 95, reasons: [] }, checkedAt: Date.now() }
+      : { reachable: false, error: 'Wi-Fi connection timed out', checkedAt: Date.now() }) });
+  });
+  await page.goto('/?tab=settings&stab=devices');
+  await page.getByRole('button', { name: 'Compare devices' }).click();
+  const comparison = page.getByRole('region', { name: 'Device comparison' });
+  await expect(comparison).toContainText('Studio iPad');
+  await expect(comparison).toContainText('Travel iPad');
+  await expect(comparison).toContainText('72%');
+  await expect(comparison).toContainText('Not checked');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(comparison).toBeVisible();
+  expect(await comparison.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+});
+
+test('incident time view labels gaps before recorded transitions', async ({ page }) => {
+  await mockStableDashboardEvents(page);
+  await mockAuthenticatedDashboard(page, '1');
+  await page.route('**/v1/dashboard/incidents?*', async (route) => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ projectId: 'default', events: [], truncated: false }) });
+  });
+  await page.route('**/v1/dashboard/action-center?*', async (route) => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ projectId: 'default', incidents: [] }) });
+  });
+  await page.route('**/v1/dashboard/incidents/state-at?*', async (route) => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ projectId: 'default', at: Date.now(), coverage: 'incomplete', coverageStartAt: Date.now() - 86_400_000, incidents: [] }) });
+  });
+  await page.goto('/?tab=insights');
+  await page.getByText('Operations · Action Center and incident timeline').click();
+  await page.getByRole('button', { name: 'Explore time' }).click();
+  await expect(page.getByRole('region', { name: 'Incident state at a time' })).toContainText('History before');
+  await expect(page.getByRole('slider', { name: /Recorded state at/ })).toBeVisible();
+});
+
 test('self-hosters can review configuration doctor checks from Settings', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.route('**/v1/**', async (route) => {

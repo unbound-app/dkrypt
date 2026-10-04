@@ -3,8 +3,8 @@
   import EmptyState from '#components/EmptyState.svelte';
   import Button from '#lib/components/ui/Button.svelte';
   import Card from '#lib/components/ui/Card.svelte';
-  import { fetchActionCenter, fetchDashboardIncidents, updateActionCenterIncident, type DashboardIncidentEvent, type OperationalIncident } from '#lib/api';
-  import { fmtTime } from '#lib/format.svelte';
+  import { fetchActionCenter, fetchDashboardIncidents, fetchIncidentStateAtTime, updateActionCenterIncident, type DashboardIncidentEvent, type IncidentStateAtTime, type OperationalIncident } from '#lib/api';
+  import { fmtDateTime, fmtTime } from '#lib/format.svelte';
   import { projectSelectionState } from '#lib/projectSelection.svelte';
   import { deviceDetailJumpState, jobDetailJumpState, logSearchJumpState, setActiveTab, setSettingsSubtab } from '#lib/ui.svelte';
   import { promptDialog, showToast } from '#lib/ui.svelte';
@@ -17,11 +17,23 @@
   let truncated = $state(false);
   let activeProject = '';
   let incidents = $state<OperationalIncident[]>([]);
+  let scrubOpen = $state(false);
+  let scrubMaxAt = $state(Date.now());
+  let scrubAt = $state(Date.now());
+  let scrubState = $state<IncidentStateAtTime | null>(null);
+  let scrubLoading = $state(false);
+  let scrubRequest = 0;
+  const scrubMinAt = $derived(scrubMaxAt - 90 * 24 * 60 * 60 * 1000);
   const canViewIncidents = $derived(sessionHasPermission(PermissionFlag.viewIncidents) || sessionHasPermission(PermissionFlag.manageIncidents));
   const canManageIncidents = $derived(sessionHasPermission(PermissionFlag.manageIncidents));
 
   async function load(): Promise<void> {
     loading = true;
+    if (activeProject && activeProject !== projectSelectionState.id) {
+      scrubOpen = false;
+      scrubState = null;
+      scrubRequest += 1;
+    }
     try {
       const result = await fetchDashboardIncidents(projectSelectionState.id);
       events = result.events;
@@ -34,6 +46,28 @@
     } finally {
       loading = false;
     }
+  }
+
+  async function loadStateAtTime(at: number): Promise<void> {
+    const token = ++scrubRequest;
+    const projectId = projectSelectionState.id;
+    scrubLoading = true;
+    try {
+      const result = await fetchIncidentStateAtTime(at, projectId);
+      if (token === scrubRequest && projectId === projectSelectionState.id) scrubState = result;
+    } catch (error) {
+      if (token === scrubRequest) showToast(error instanceof Error ? error.message : 'Could not inspect recorded incident state', 'error');
+    } finally {
+      if (token === scrubRequest) scrubLoading = false;
+    }
+  }
+
+  function toggleScrubber(): void {
+    scrubOpen = !scrubOpen;
+    if (!scrubOpen) return;
+    scrubMaxAt = Date.now();
+    scrubAt = scrubMaxAt;
+    void loadStateAtTime(scrubAt);
   }
 
   $effect(() => {
@@ -118,8 +152,27 @@
 
 <Card title="Incident timeline">
   {#snippet headerExtra()}
-    <Button variant="ghost" size="icon" class="h-8 w-8" loading={loading} aria-label="Refresh incident timeline" onclick={() => void load()}><RefreshCw class="h-4 w-4" /></Button>
+    <div class="flex items-center gap-2">
+      {#if canViewIncidents}<Button variant="secondary" size="sm" aria-expanded={scrubOpen} onclick={toggleScrubber}>{scrubOpen ? 'Close time view' : 'Explore time'}</Button>{/if}
+      <Button variant="ghost" size="icon" class="h-8 w-8" loading={loading} aria-label="Refresh incident timeline" onclick={() => void load()}><RefreshCw class="h-4 w-4" /></Button>
+    </div>
   {/snippet}
+  {#if scrubOpen && canViewIncidents}
+    <section class="mb-4 rounded-lg border border-border/70 bg-muted/20 p-3" aria-label="Incident state at a time">
+      <label for="incident-time-scrubber" class="text-xs font-medium">Recorded state at {fmtDateTime(scrubAt)}</label>
+      <input id="incident-time-scrubber" type="range" class="mt-2 w-full accent-accent" min={scrubMinAt} max={scrubMaxAt} step="3600000" value={scrubAt} onchange={(event) => { scrubAt = event.currentTarget.valueAsNumber; void loadStateAtTime(scrubAt); }} />
+      {#if scrubLoading}<p class="mt-2 text-xs text-muted" role="status">Checking recorded state…</p>
+      {:else if scrubState?.coverage === 'incomplete'}<p class="mt-2 text-xs text-warn">History before {scrubState.coverageStartAt ? fmtDateTime(scrubState.coverageStartAt) : 'the first recorded incident'} is incomplete. No earlier state is assumed.</p>
+      {:else if scrubState}
+        <p class="mt-2 text-xs text-muted">{scrubState.incidents.length} recorded incident{scrubState.incidents.length === 1 ? '' : 's'} at this time.</p>
+        <ul class="mt-2 space-y-1 text-xs">
+          {#each scrubState.incidents as incident (incident.id)}
+            <li class="flex flex-wrap justify-between gap-2"><span>{incident.title}</span><span class="text-muted">{incident.status.replaceAll('_', ' ')}{incident.recovered ? ' · source recovered' : ''}</span></li>
+          {/each}
+        </ul>
+      {/if}
+    </section>
+  {/if}
   {#if loading && !loaded}
     <div role="status" class="py-5 text-sm text-muted">Loading recent activity…</div>
   {:else if events.length === 0}
