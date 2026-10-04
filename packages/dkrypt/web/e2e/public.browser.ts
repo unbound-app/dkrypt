@@ -2093,6 +2093,15 @@ test('device managers can run on-demand service health checks', async ({ page })
       }),
     });
   });
+  await page.route('**/v1/dashboard/browser-check', async (route) => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+      cookieSessionValid: true,
+      expectedOrigin: 'http://127.0.0.1:4173',
+      observedOrigin: 'http://127.0.0.1:4173',
+      forwardedHeadersPresent: false,
+      oauthCallbacks: { github: 'http://127.0.0.1:4173/v1/auth/github/callback', discord: 'Not configured' },
+    }) });
+  });
 
   await page.goto('/?tab=settings&stab=doctor');
   await expect(page.getByRole('heading', { name: 'System doctor' })).toBeVisible();
@@ -2105,6 +2114,9 @@ test('device managers can run on-demand service health checks', async ({ page })
   await expect(page.getByText('SQLite integrity is clean')).toBeVisible();
   await expect(page.getByText('The device agent did not respond')).toBeVisible();
   expect(probeRequests).toBe(1);
+  await page.getByRole('button', { name: 'Run browser checks' }).click();
+  await expect(page.getByRole('region', { name: 'Self-hosting browser check' })).toContainText('PUBLIC_BASE_URL matches this browser.');
+  await expect(page.getByRole('region', { name: 'Self-hosting browser check' })).toContainText('Confirm the provider dashboard has this exact callback URL');
   await expectAccessible(page);
 });
 

@@ -1869,6 +1869,18 @@ export function fetchDashboardDoctor(): Promise<DashboardDoctorReport> {
   return apiJson('/v1/dashboard/doctor');
 }
 
+export interface DashboardBrowserCheck {
+  cookieSessionValid: boolean;
+  expectedOrigin: string | null;
+  observedOrigin: string;
+  forwardedHeadersPresent: boolean;
+  oauthCallbacks: { github: string; discord: string };
+}
+
+export function fetchDashboardBrowserCheck(): Promise<DashboardBrowserCheck> {
+  return apiJson('/v1/dashboard/browser-check');
+}
+
 export interface CompatibilityMatrix {
   policy: { sqliteSchema: number; rustBridge: string; autoinstallMinimum: string; autoinstallMajor: number };
   rows: Array<{ component: string; observed: string; supported: string; state: 'supported' | 'unsupported' | 'unknown'; detail?: string }>;

@@ -4,7 +4,7 @@
   import Badge from '#lib/components/ui/Badge.svelte';
   import Button from '#lib/components/ui/Button.svelte';
   import Card from '#lib/components/ui/Card.svelte';
-  import { fetchCompatibilityMatrix, fetchDashboardDoctor, runDashboardSyntheticProbes, supportBundleUrl, type CompatibilityMatrix, type DashboardDoctorReport, type DashboardSyntheticReport } from '#lib/api';
+  import { fetchCompatibilityMatrix, fetchDashboardBrowserCheck, fetchDashboardDoctor, runDashboardSyntheticProbes, supportBundleUrl, type CompatibilityMatrix, type DashboardDoctorReport, type DashboardSyntheticReport } from '#lib/api';
   import { fmtDateTime } from '#lib/format.svelte';
   import { PermissionFlag } from '#lib/permissions';
   import { sessionHasPermission } from '#lib/session.svelte';
@@ -49,6 +49,9 @@
   let probing = $state(false);
   let error = $state('');
   let probeError = $state('');
+  let browserChecks = $state<Array<{ label: string; status: 'ok' | 'warn' | 'error' | 'manual'; detail: string }>>([]);
+  let browserChecking = $state(false);
+  let browserError = $state('');
 
   const warningCount = $derived(report?.checks.filter((check) => check.status === 'warn').length ?? 0);
   const errorCount = $derived(report?.checks.filter((check) => check.status === 'error').length ?? 0);
@@ -79,6 +82,41 @@
       probeError = cause instanceof Error ? cause.message : 'Could not run service health checks.';
     } finally {
       probing = false;
+    }
+  }
+
+  async function runBrowserChecks(): Promise<void> {
+    browserChecking = true;
+    browserError = '';
+    try {
+      const result = await fetchDashboardBrowserCheck();
+      const browserOrigin = window.location.origin;
+      const checks: typeof browserChecks = [
+        { label: 'Browser origin', status: result.expectedOrigin === browserOrigin ? 'ok' : 'error', detail: result.expectedOrigin === browserOrigin ? 'PUBLIC_BASE_URL matches this browser.' : `This browser uses ${browserOrigin}; set PUBLIC_BASE_URL to this origin if it is the intended public address.` },
+        { label: 'Session cookie', status: result.cookieSessionValid ? 'ok' : 'error', detail: result.cookieSessionValid ? 'This same-origin request was authenticated with the dashboard session.' : 'Sign in again and check cookie domain, Secure, and SameSite settings.' },
+        { label: 'Proxy origin', status: result.expectedOrigin === result.observedOrigin ? 'ok' : 'warn', detail: result.expectedOrigin === result.observedOrigin ? 'dkrypt sees the expected public origin.' : `dkrypt sees ${result.observedOrigin}. Check trusted proxy Host and X-Forwarded-Proto forwarding.` },
+      ];
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 4000);
+      try {
+        const response = await fetch('/v1/dashboard/events', { headers: { Accept: 'text/event-stream' }, credentials: 'same-origin', signal: controller.signal });
+        const ready = response.ok && response.headers.get('content-type')?.includes('text/event-stream');
+        checks.push({ label: 'Live updates', status: ready ? 'ok' : 'error', detail: ready ? 'The browser can open the same-origin SSE stream.' : 'The event stream did not return text/event-stream; check proxy buffering and SSE routing.' });
+        await response.body?.cancel().catch(() => undefined);
+      } catch {
+        checks.push({ label: 'Live updates', status: 'error', detail: 'The SSE stream did not open within four seconds. Check proxy buffering and connection timeouts.' });
+      } finally {
+        clearTimeout(timeout);
+        controller.abort();
+      }
+      for (const [provider, callback] of Object.entries(result.oauthCallbacks)) {
+        checks.push({ label: `${provider === 'github' ? 'GitHub' : 'Discord'} OAuth callback`, status: callback === 'Not configured' ? 'warn' : 'manual', detail: callback === 'Not configured' ? 'OAuth is not configured for this provider.' : `Confirm the provider dashboard has this exact callback URL: ${callback}` });
+      }
+      browserChecks = checks;
+    } catch (cause) {
+      browserError = cause instanceof Error ? cause.message : 'Could not run browser checks.';
+    } finally {
+      browserChecking = false;
     }
   }
 
@@ -220,6 +258,21 @@
               <Badge variant="outline" class="text-foreground">{probe.status === 'ok' ? 'Ready' : probe.status === 'warn' ? 'Review' : probe.status === 'error' ? 'Action needed' : 'Skipped'}</Badge>
             </div>
           </li>
+        {/each}
+      </ul>
+    {/if}
+  </section>
+  <section class="mt-5 border-t border-border/70 pt-4" aria-label="Self-hosting browser check">
+    <div class="flex flex-wrap items-start justify-between gap-3">
+      <div><h3 class="text-sm font-semibold">Self-hosting browser check</h3><p class="mt-1 text-xs text-muted">Check this browser's origin, authenticated cookie, proxy origin, live updates, and expected OAuth callback URLs.</p></div>
+      <Button size="sm" variant="secondary" loading={browserChecking} onclick={() => void runBrowserChecks()}>Run browser checks</Button>
+    </div>
+    {#if browserError}<p class="mt-3 text-xs text-err" role="alert">{browserError}</p>
+    {:else if browserChecks.length === 0}<p class="mt-3 text-xs text-muted">Checks run only when requested. OAuth provider registration requires manual confirmation.</p>
+    {:else}
+      <ul class="mt-3 divide-y divide-border/70">
+        {#each browserChecks as check (check.label)}
+          <li class="flex flex-wrap items-start justify-between gap-2 py-2 text-xs"><div class="min-w-0 flex-1"><div class="font-medium">{check.label}</div><p class="mt-0.5 break-words text-muted">{check.detail}</p></div><Badge variant={check.status === 'error' ? 'destructive' : check.status === 'warn' ? 'warning' : 'outline'}>{check.status === 'manual' ? 'Confirm' : check.status === 'ok' ? 'Passed' : 'Review'}</Badge></li>
         {/each}
       </ul>
     {/if}
