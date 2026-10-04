@@ -326,6 +326,7 @@ import { clearFormDraft, readFormDraft, setFormUnsaved, writeFormDraft } from "#
 	let editingWatchId = $state<string | null>(null);
 	let editingWatchUpdatedAt = $state<number | null>(null);
 	let conflictingWatch = $state<AppWatch | null>(null);
+	let watchValidationError = $state<{ message: string; fieldId: string } | null>(null);
 	let watchForm = $state<WatchInput>({ ...DEFAULT_WATCH_FORM });
 	let wizardStep = $state(0);
 	let syncedDraftId = $state<string | undefined>(undefined);
@@ -636,6 +637,7 @@ import { clearFormDraft, readFormDraft, setFormUnsaved, writeFormDraft } from "#
 		editingWatchId = null;
 		editingWatchUpdatedAt = null;
 		conflictingWatch = null;
+		watchValidationError = null;
 		wizardStep = 0;
 		syncedDraftId = undefined;
 		watchConflicts = [];
@@ -670,6 +672,7 @@ import { clearFormDraft, readFormDraft, setFormUnsaved, writeFormDraft } from "#
 		editingWatchId = w.id;
 		editingWatchUpdatedAt = w.updatedAt;
 		conflictingWatch = null;
+		watchValidationError = null;
 		watchDraftStorageKey = `watch:${sessionState.sub ?? "account"}:edit:${w.id}`;
 		watchForm = {
 			projectId: w.projectId ?? "default",
@@ -881,29 +884,31 @@ import { clearFormDraft, readFormDraft, setFormUnsaved, writeFormDraft } from "#
 	}
 
 	async function saveWatch(): Promise<void> {
+		watchValidationError = null;
+		if (watchCronValid === false) {
+			await focusWatchError('Poll cron is not a valid cron expression', 'w-pollCron');
+			return;
+		}
+		if (!watchForm.timezone || !TIME_ZONE_OPTIONS.some((option) => option.value === watchForm.timezone)) {
+			await focusWatchError('Choose a valid time zone', 'w-timezone');
+			return;
+		}
+		if (Boolean(maintenanceWindowStart) !== Boolean(maintenanceWindowEnd) || (maintenanceWindowStart && maintenanceWindowStart === maintenanceWindowEnd)) {
+			await focusWatchError('Choose different start and end times for quiet hours', 'w-maintenance-start');
+			return;
+		}
+		if (watchRepoErrors.repo || watchRepoErrors.webhookUrl || dispatchTargets.some((target) => !REPO_RE.test(target.repo) || !target.ghWorkflowFile.trim())) {
+			const fieldId = watchRepoErrors.webhookUrl ? 'w-webhookUrl' : dispatchTargets.some((target) => !REPO_RE.test(target.repo)) ? `w-repo-${Math.max(0, dispatchTargets.findIndex((target) => !REPO_RE.test(target.repo)))}` : `w-workflow-${Math.max(0, dispatchTargets.findIndex((target) => !target.ghWorkflowFile.trim()))}`;
+			await focusWatchError('Fix the invalid fields before saving', fieldId);
+			return;
+		}
 		if (!draftPreview || previewedWatchTarget !== `${watchForm.bundleId.trim()}:${watchForm.repo.trim()}`) {
 			await previewDraft();
 			return;
 		}
 		await loadWatchConflicts();
 		if (watchConflicts.length > 0 && !acknowledgeWatchConflicts) {
-			showToast('Review and acknowledge the overlapping watch schedules', 'error');
-			return;
-		}
-		if (watchCronValid === false) {
-			showToast("Poll cron is not a valid cron expression", "error");
-			return;
-		}
-		if (!watchForm.timezone || !TIME_ZONE_OPTIONS.some((option) => option.value === watchForm.timezone)) {
-			showToast("Choose a valid time zone", "error");
-			return;
-		}
-		if (Boolean(maintenanceWindowStart) !== Boolean(maintenanceWindowEnd) || (maintenanceWindowStart && maintenanceWindowStart === maintenanceWindowEnd)) {
-			showToast("Choose different start and end times for quiet hours", "error");
-			return;
-		}
-		if (watchRepoErrors.repo || watchRepoErrors.webhookUrl || dispatchTargets.some((target) => !REPO_RE.test(target.repo) || !target.ghWorkflowFile.trim())) {
-			showToast("Fix the invalid fields before saving", "error");
+			await focusWatchError('Review and acknowledge the overlapping watch schedules', 'watch-conflict-acknowledgement');
 			return;
 		}
 		savingWatch = true;
@@ -928,6 +933,12 @@ import { clearFormDraft, readFormDraft, setFormUnsaved, writeFormDraft } from "#
 		} finally {
 			savingWatch = false;
 		}
+	}
+
+	async function focusWatchError(message: string, fieldId: string): Promise<void> {
+		watchValidationError = { message, fieldId };
+		await tick();
+		document.getElementById(fieldId)?.focus();
 	}
 
 	async function reloadConflictingWatch(): Promise<void> {
@@ -1647,6 +1658,12 @@ import { clearFormDraft, readFormDraft, setFormUnsaved, writeFormDraft } from "#
 			</div>
 		{/if}
 		<div class="max-h-[60vh] overflow-y-auto pr-0.5">
+			{#if watchValidationError}
+				<div class="mb-3 rounded-md border border-err/40 bg-err/10 p-2 text-xs text-err" role="alert">
+					{watchValidationError.message}
+					<button type="button" class="ml-1 underline" onclick={() => document.getElementById(watchValidationError?.fieldId ?? '')?.focus()}>Go to field</button>
+				</div>
+			{/if}
 			{#if conflictingWatch}
 				<section class="mb-3 rounded-lg border border-warn/50 bg-warn/5 p-3 text-xs" aria-label="Watch edit conflict">
 					<p class="font-medium">This watch changed while you were editing. Review the saved version before applying your edits.</p>
@@ -1898,7 +1915,7 @@ import { clearFormDraft, readFormDraft, setFormUnsaved, writeFormDraft } from "#
 					{#each watchConflicts as conflict (conflict.watchId)}
 						<div class="mt-1">{conflict.bundleId} uses {conflict.target} at {new Date(conflict.nextOverlapAt).toLocaleString()}</div>
 					{/each}
-					<label class="mt-2 flex items-center gap-2"><input type="checkbox" bind:checked={acknowledgeWatchConflicts} /> I understand and want to save this watch</label>
+					<label class="mt-2 flex items-center gap-2"><input id="watch-conflict-acknowledgement" type="checkbox" bind:checked={acknowledgeWatchConflicts} /> I understand and want to save this watch</label>
 				</div>
 			{/if}
 			<label for="w-webhookUrl" class="mt-3 mb-1 block text-xs text-muted"
@@ -1986,7 +2003,7 @@ import { clearFormDraft, readFormDraft, setFormUnsaved, writeFormDraft } from "#
 		{:else}
 			<div class="mt-3.5 flex gap-2">
 				{#if !editingWatchId}<Button variant="secondary" onclick={() => (wizardStep = 2)}>Back</Button>{/if}
-				<Button class="flex-1" loading={savingWatch} disabled={watchConflicts.length > 0 && !acknowledgeWatchConflicts} onclick={saveWatch}>{editingWatchId ? "Save" : "Create watch"}</Button>
+				<Button class="flex-1" loading={savingWatch} onclick={saveWatch}>{editingWatchId ? "Save" : "Create watch"}</Button>
 			</div>
 		{/if}
 	</Dialog>

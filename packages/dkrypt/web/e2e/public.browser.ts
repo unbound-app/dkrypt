@@ -1746,6 +1746,23 @@ test('watch drafts recover after reload without persisting webhook secrets', asy
   await expect(page.locator('#w-webhookUrl')).toHaveValue('');
 });
 
+test('watch editor keeps invalid values and focuses its error field', async ({ page }) => {
+  await mockStableDashboardEvents(page);
+  await mockAuthenticatedDashboard(page, '1');
+
+  await page.goto('/?tab=settings&stab=scheduler');
+  await page.evaluate(() => localStorage.setItem('dkrypt-form-draft:watch:member:new', JSON.stringify({ savedAt: Date.now(), values: { editingWatchId: null, watchForm: { bundleId: 'com.example.test', repo: 'example/repo', ghWorkflowFile: 'remote-ipa-update.yml', dispatchTargets: [{ repo: 'example/repo', ghWorkflowFile: 'remote-ipa-update.yml' }] }, maintenanceWindowStart: '', maintenanceWindowEnd: '', dispatchTargets: [{ repo: 'example/repo', ghWorkflowFile: 'remote-ipa-update.yml' }] } })));
+  await page.getByRole('button', { name: 'Add watch', exact: true }).click();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.locator('#w-webhookUrl').fill('not-a-url');
+  await page.getByRole('button', { name: 'Create watch' }).click();
+  await expect(page.getByRole('alert')).toContainText('Fix the invalid fields before saving');
+  await expect(page.locator('#w-webhookUrl')).toBeFocused();
+  await expect(page.locator('#w-webhookUrl')).toHaveValue('not-a-url');
+});
+
 test('scheduler calendar preview labels checks deferred by quiet hours', async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('formattingLocale', 'de'));
   await mockStableDashboardEvents(page);
