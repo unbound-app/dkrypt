@@ -36,6 +36,7 @@
         <div class="mt-0.5 text-sm font-medium">{preflight.queueLength} job{preflight.queueLength === 1 ? '' : 's'}</div>
       </div>
     </div>
+    <p class="mb-3 text-xs text-muted">Jobs are ordered by priority, then queue time. The estimate may change when higher-priority jobs or device issues appear.{preflight.estimatedDurationMs && preflight.devices.some((device) => device.ready) ? ` Approximate wait: ${fmtDurationApprox(preflight.estimatedDurationMs * preflight.queueLength / preflight.devices.filter((device) => device.ready).length)}.` : ''}</p>
 
     <div class="mb-4 flex flex-col gap-2">
       {#each preflight.devices as device (device.id)}
@@ -48,6 +49,8 @@
           </div>
           {#if device.blockers.length > 0}
             <div class="mt-1.5 text-xs text-err">{device.blockers.join(' · ')}</div>
+          {:else if device.warnings?.length}
+            <div class="mt-1.5 text-xs text-warn">{device.warnings.join(' · ')}</div>
           {:else if device.readiness?.reasons.length}
             <div class="mt-1.5 text-xs text-muted">{device.readiness.reasons.join(' · ')}</div>
           {:else}

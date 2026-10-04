@@ -4,7 +4,7 @@
   import Input from '#lib/components/ui/Input.svelte';
   import { createGithubOidcTrust, fetchGithubOidcPolicies, revokeGithubOidcTrust, type GithubOidcTrustPolicy } from '#lib/api';
   import { projectSelectionState } from '#lib/projectSelection.svelte';
-  import { showToast } from '#lib/ui.svelte';
+  import { confirmDialog, showToast } from '#lib/ui.svelte';
 
   let policies = $state<GithubOidcTrustPolicy[]>([]);
   let repositoryId = $state('');
@@ -40,7 +40,7 @@
   }
 
   async function revoke(id: string): Promise<void> {
-    if (!window.confirm('Revoke this GitHub Actions trust policy?')) return;
+    if (!(await confirmDialog('Revoke this GitHub Actions trust policy?', { confirmLabel: 'Revoke policy' }))) return;
     busy = true;
     try { await revokeGithubOidcTrust(id); await load(); }
     catch (error) { showToast(error instanceof Error ? error.message : 'Could not revoke trust policy', 'error'); }

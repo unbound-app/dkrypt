@@ -7,7 +7,7 @@
   import { fmtTime } from '#lib/format.svelte';
   import { projectSelectionState } from '#lib/projectSelection.svelte';
   import { deviceDetailJumpState, jobDetailJumpState, logSearchJumpState, setActiveTab, setSettingsSubtab } from '#lib/ui.svelte';
-  import { showToast } from '#lib/ui.svelte';
+  import { promptDialog, showToast } from '#lib/ui.svelte';
   import { PermissionFlag } from '#lib/permissions';
   import { sessionHasPermission } from '#lib/session.svelte';
 
@@ -65,7 +65,7 @@
   }
 
   async function changeIncident(incident: OperationalIncident, status: OperationalIncident['status']): Promise<void> {
-    const resolutionNote = status === 'resolved' ? window.prompt('Resolution note') : undefined;
+    const resolutionNote = status === 'resolved' ? await promptDialog('Resolution note', { confirmLabel: 'Resolve incident' }) : undefined;
     if (status === 'resolved' && !resolutionNote?.trim()) return;
     const snoozedUntil = status === 'snoozed' ? Date.now() + 60 * 60 * 1000 : undefined;
     try {
@@ -77,7 +77,7 @@
   }
 
   async function assignIncident(incident: OperationalIncident): Promise<void> {
-    const assignedTo = window.prompt('Assign to account name, or leave blank to unassign', incident.assignedTo ?? '');
+    const assignedTo = await promptDialog('Assign to account name, or leave blank to unassign', { value: incident.assignedTo ?? '', confirmLabel: 'Save assignment' });
     if (assignedTo === null) return;
     try {
       const result = await updateActionCenterIncident(incident.id, { projectId: projectSelectionState.id, assignedTo: assignedTo.trim() || null });

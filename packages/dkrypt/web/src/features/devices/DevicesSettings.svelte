@@ -8,6 +8,8 @@
   import VirtualizedList from '#components/VirtualizedList.svelte';
   import {
     discoverDevices,
+    drainDevice,
+    fetchDeviceDisableImpact,
     fetchDeviceActivity,
     fetchDeviceHealth,
     fetchDeviceInventory,
@@ -56,6 +58,12 @@
     ready: 'device.state.ready', idle: 'device.state.idle', degraded: 'device.state.degraded', offline: 'device.state.offline', unsupported: 'device.state.unsupported', unknown: 'device.state.unknown',
   };
 
+  function statusLabel(status: DeviceSubsystemState, process: boolean): string {
+    if (process && status === 'ready') return msg('device.state.running');
+    if (process && status === 'idle') return msg('device.state.notOpen');
+    return msg(subsystemStates[status]);
+  }
+
   const canManageDevices = $derived(sessionHasPermission(PermissionFlag.manageDevices));
   const canViewMaintenance = $derived(sessionHasAnyPermission([PermissionFlag.viewAutomation, PermissionFlag.manageAutomation]));
   const canManageMaintenance = $derived(sessionHasPermission(PermissionFlag.manageAutomation));
@@ -67,6 +75,23 @@
     if (status === 'degraded') return 'warning';
     if (status === 'offline') return 'destructive';
     return 'secondary';
+  }
+
+  function connectionChain(device: DeviceRecord, value: DeviceHealth | undefined): Array<{ label: string; status: DeviceSubsystemState; reason?: string }> {
+    const stages: Array<{ label: string; subsystem: DeviceSubsystemId }> = [
+      { label: 'Mux', subsystem: 'mux' },
+      { label: 'Agent', subsystem: 'agent' },
+      { label: 'SSH/SFTP', subsystem: 'sshTunnel' },
+      { label: 'App Store', subsystem: 'appStore' },
+      { label: 'TestFlight', subsystem: 'testFlight' },
+    ];
+    const connectionStatus = device.transport === 'usb'
+      ? value?.subsystems?.usb ?? 'unknown'
+      : value ? value.reachable ? 'ready' : 'offline' : 'unknown';
+    return [
+      { label: device.transport === 'usb' ? 'USB' : 'Wi-Fi', status: connectionStatus, reason: device.transport === 'usb' ? value?.subsystemDetails?.usb?.reason : value?.error },
+      ...stages.map(({ label, subsystem }) => ({ label, status: value?.subsystems?.[subsystem] ?? 'unknown', reason: value?.subsystemDetails?.[subsystem]?.reason })),
+    ];
   }
 
   let maintenanceSettings = $state<SchedulerSettings | null>(null);
@@ -414,8 +439,17 @@
 
   async function toggleEnabled(device: DeviceRecord): Promise<void> {
     const enabled = !device.enabled;
-    if (!(await confirmDialog(`${enabled ? 'Enable' : 'Disable'} ${device.name}? ${enabled ? 'It can receive new jobs.' : 'It will stop receiving new jobs.'}`, { confirmLabel: enabled ? 'Enable device' : 'Disable device' }))) return;
+    const impact = enabled ? undefined : await fetchDeviceDisableImpact(device.id);
+    const consequence = impact ? ` ${impact.queuedJobCount} queued jobs and ${impact.watchCount} watches may be affected. ${impact.runningJobCount} running jobs will not be cancelled.` : ' It can receive new jobs.';
+    if (!(await confirmDialog(`${enabled ? 'Enable' : 'Disable'} ${device.name}?${consequence}`, { confirmLabel: enabled ? 'Enable device' : 'Disable device' }))) return;
     await updateDevice(device.id, { enabled });
+    await reloadDevices();
+  }
+
+  async function startDrain(device: DeviceRecord): Promise<void> {
+    const impact = await fetchDeviceDisableImpact(device.id);
+    if (!(await confirmDialog(`Drain ${device.name}? It will stop receiving new jobs now and disable after ${impact.runningJobCount} running jobs finish. ${impact.queuedJobCount} queued jobs and ${impact.watchCount} watches may be affected.`, { confirmLabel: 'Drain device' }))) return;
+    await drainDevice(device.id);
     await reloadDevices();
   }
 
@@ -462,6 +496,8 @@
     <div class={homeViewModesState.value.devices === 'cards' ? 'grid gap-3 xl:grid-cols-2' : 'grid grid-cols-1 gap-2'}>
       {#each devices as device (device.id)}
         {@const h = health[device.id]}
+        {@const chain = connectionChain(device, h)}
+        {@const failingStage = chain.find((stage) => stage.status === 'offline' || stage.status === 'degraded')}
         {@const model = getAppleDeviceModelName(device.productType, device.name)}
         <div id={`device-${encodeURIComponent(device.id)}`} tabindex="-1" class="density-row border-border/80 bg-background/30 min-w-0 scroll-mt-4 rounded-xl border p-4">
           <div class="flex items-start gap-3">
@@ -474,6 +510,16 @@
             {#if canManageDevices}<Button size="icon" variant="ghost" class="h-8 w-8 shrink-0" onclick={() => openEdit(device)} aria-label={`Edit ${device.name}`} title="Edit device"><Pencil class="h-3.5 w-3.5" /></Button>{/if}
           </div>
           <div class="mt-3 grid grid-cols-2 gap-2 text-xs"><div class="bg-muted/30 rounded-lg px-2.5 py-2"><div class="text-muted">iOS</div><div class="mt-0.5 truncate font-medium">{device.iosVersion ?? 'Not reported'}</div></div><div class="bg-muted/30 rounded-lg px-2.5 py-2"><div class="text-muted">Bridge</div><div class="mt-0.5 truncate font-medium">{h?.bridgeHeartbeats?.springboard?.bridgeVersion ?? 'Not checked'}</div></div></div>
+          <div class="mt-3" aria-label="Device connection chain">
+            <div class="mb-1.5 text-[11px] font-medium text-muted">Connection path</div>
+            <ol class="flex flex-wrap items-center gap-1 text-[10px]">
+              {#each chain as stage, index (stage.label)}
+                {#if index > 0}<li aria-hidden="true" class="text-muted">→</li>{/if}
+                <li title={stage.reason ?? stage.status} class="rounded-md border border-border px-1.5 py-1" class:border-err={stage.status === 'offline'} class:border-warn={stage.status === 'degraded'}>{stage.label} · {statusLabel(stage.status, stage.label === 'App Store' || stage.label === 'TestFlight')}</li>
+              {/each}
+            </ol>
+            {#if failingStage}<p class="mt-1.5 text-xs text-warn">{failingStage.label} needs attention{failingStage.reason ? `: ${failingStage.reason}` : '.'}</p>{/if}
+          </div>
           {#if h?.subsystems}
             <div class="mt-3 rounded-lg border border-border/70 p-2.5" aria-label="Device subsystem status">
               <div class="flex flex-wrap gap-1.5">
@@ -484,7 +530,7 @@
                   <div class="min-w-[9rem] flex-1 rounded-md bg-muted/20 px-2 py-1">
                     <div class="flex flex-wrap items-center justify-between gap-2">
                       <span class="text-[11px] font-medium">{msg(subsystemNames[subsystem])}</span>
-                      <Badge variant={subsystemVariant(state)} class="px-1.5 py-0 text-[9px]">{msg(subsystemStates[state])}</Badge>
+                      <Badge variant={subsystemVariant(state)} class="px-1.5 py-0 text-[9px]">{statusLabel(state, subsystem === 'appStore' || subsystem === 'testFlight')}</Badge>
                     </div>
                     {#if detail?.reason}<p class="mt-0.5 break-words text-[10px] leading-4 text-muted">{detail.reason}</p>{/if}
                     {#if detail?.lastChangedAt}<p class="mt-0.5 text-[9px] text-muted">{msg('device.lastChanged')} <RelativeTime ms={detail.lastChangedAt} /></p>{/if}
@@ -498,7 +544,8 @@
             </div>
           {/if}
           {#if h?.readiness?.reasons.length}<div class="text-warn mt-2 text-xs">{h.readiness.reasons.join(' · ')}</div>{/if}
-          <div class="border-border/70 mt-3 flex flex-wrap items-center gap-1.5 border-t pt-3"><Button size="sm" variant="secondary" loading={testingId.has(device.id)} onclick={() => void testConnection(device)}>Test connection</Button><AdvancedSection label="settings.deviceTools"><div class="flex flex-wrap items-center gap-1.5"><Button size="sm" variant="secondary" loading={inspectingId.has(device.id)} onclick={() => void inspectDevice(device)}>Preflight</Button><Button size="sm" variant="secondary" loading={inspectingId.has(device.id)} onclick={() => void inspectInventory(device)}>Inventory</Button>{#if canManageDevices}<Button size="sm" variant="secondary" loading={recoveringId.has(device.id)} onclick={() => void recover(device)}>Recover</Button>{/if}</div></AdvancedSection>{#if canManageDevices}{#if !device.isPrimary}<Button size="sm" variant="ghost" onclick={() => void makePrimary(device)}>Make primary</Button>{/if}<Button size="sm" variant="ghost" onclick={() => void toggleEnabled(device)}>{device.enabled ? 'Disable' : 'Enable'}</Button><Button size="icon" variant="ghost" class="ml-auto h-8 w-8 text-muted hover:text-err" loading={deletingId.has(device.id)} onclick={() => void remove(device)} aria-label={`Remove ${device.name}`} title="Remove device"><Trash2 class="h-3.5 w-3.5" /></Button>{/if}</div>
+          <div class="border-border/70 mt-3 flex flex-wrap items-center gap-1.5 border-t pt-3"><Button size="sm" variant="secondary" loading={testingId.has(device.id)} onclick={() => void testConnection(device)}>Test connection</Button><AdvancedSection label="settings.deviceTools"><div class="flex flex-wrap items-center gap-1.5"><Button size="sm" variant="secondary" loading={inspectingId.has(device.id)} onclick={() => void inspectDevice(device)}>Preflight</Button><Button size="sm" variant="secondary" loading={inspectingId.has(device.id)} onclick={() => void inspectInventory(device)}>Inventory</Button>{#if canManageDevices}<Button size="sm" variant="secondary" loading={recoveringId.has(device.id)} onclick={() => void recover(device)}>Recover</Button>{/if}</div></AdvancedSection>{#if canManageDevices}{#if !device.isPrimary}<Button size="sm" variant="ghost" onclick={() => void makePrimary(device)}>Make primary</Button>{/if}{#if device.enabled && !device.draining}<Button size="sm" variant="ghost" onclick={() => void startDrain(device)}>Drain</Button>{/if}<Button size="sm" variant="ghost" onclick={() => void toggleEnabled(device)}>{device.enabled ? 'Disable' : 'Enable'}</Button><Button size="icon" variant="ghost" class="ml-auto h-8 w-8 text-muted hover:text-err" loading={deletingId.has(device.id)} onclick={() => void remove(device)} aria-label={`Remove ${device.name}`} title="Remove device"><Trash2 class="h-3.5 w-3.5" /></Button>{/if}</div>
+          {#if device.draining}<div class="mt-2 text-xs text-warn">Draining: no new jobs will start on this device.</div>{/if}
           {#if device.isPrimary && h?.reachable && h.darkEnabled !== undefined}<div class="border-border/70 mt-3 flex items-center justify-between gap-3 border-t pt-3"><div class="min-w-0"><div class="text-sm">Keep display dark</div><div class="text-xs text-muted">autoinstall keeps the device awake while the display is blacked out.</div></div><Switch checked={h.darkEnabled} disabled={!canManageDevices || updatingDarkModeId.has(device.id)} onCheckedChange={(enabled) => void toggleDarkMode(device, enabled)} aria-label="Keep display dark" /></div>{/if}
           {#if activity[device.id]?.length}
             <div class="border-border/70 mt-3 border-t pt-3">

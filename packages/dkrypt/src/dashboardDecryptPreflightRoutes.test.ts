@@ -94,7 +94,7 @@ test('dashboard decrypt preflight is not registered through the legacy router', 
 });
 
 test('decrypt preflight limits checks to enabled devices and returns project queue readiness', async () => {
-  const devices = [createDevice('enabled-device', { name: 'Enabled iPad', isPrimary: true }), createDevice('disabled-device', { enabled: false })];
+  const devices = [createDevice('enabled-device', { name: 'Enabled iPad', isPrimary: true }), createDevice('disabled-device', { enabled: false }), createDevice('draining-device', { draining: true })];
   const checkedDevices: string[] = [];
   const server = build({
     getProject: () => createProject({ id: 'workspace' }),
@@ -325,6 +325,9 @@ test('decrypt preflight enforces permission, project visibility, and enabled-dev
   const disabledDeviceServer = build({
     getDevice: (id) => id === 'disabled-device' ? createDevice(id, { enabled: false }) : undefined,
   });
+  const drainingDeviceServer = build({
+    getDevice: (id) => id === 'draining-device' ? createDevice(id, { draining: true }) : undefined,
+  });
 
   try {
     const denied = await permissionServer.inject({
@@ -345,16 +348,25 @@ test('decrypt preflight enforces permission, project visibility, and enabled-dev
       headers: { cookie: sessionCookie(PermissionFlag.requestDecrypt) },
       payload: { bundleId: 'com.example.app', deviceId: 'disabled-device' },
     });
+    const drainingDevice = await drainingDeviceServer.inject({
+      method: 'POST',
+      url: '/v1/dashboard/decrypt/preflight',
+      headers: { cookie: sessionCookie(PermissionFlag.requestDecrypt) },
+      payload: { bundleId: 'com.example.app', deviceId: 'draining-device' },
+    });
 
     expect(denied.statusCode).toBe(403);
     expect(denied.json()).toMatchObject({ code: 'forbidden', requestId: expect.any(String), retryable: false });
     expect(hiddenProject.statusCode).toBe(404);
     expect(hiddenProject.json()).toMatchObject({ error: 'project not found', retryable: false });
     expect(disabledDevice.statusCode).toBe(400);
-    expect(disabledDevice.json()).toMatchObject({ error: 'deviceId must refer to an enabled device', retryable: false });
+    expect(disabledDevice.json()).toMatchObject({ error: 'deviceId must refer to an enabled device accepting jobs', retryable: false });
+    expect(drainingDevice.statusCode).toBe(400);
+    expect(drainingDevice.json()).toMatchObject({ error: 'deviceId must refer to an enabled device accepting jobs', retryable: false });
   } finally {
     await permissionServer.close();
     await hiddenProjectServer.close();
     await disabledDeviceServer.close();
+    await drainingDeviceServer.close();
   }
 });

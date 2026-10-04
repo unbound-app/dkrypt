@@ -22,6 +22,7 @@
 	import { Toaster } from "svelte-sonner";
 	import CommandPalette from "#components/CommandPalette.svelte";
 	import ConfirmModal from "#components/ConfirmModal.svelte";
+	import PromptModal from "#components/PromptModal.svelte";
 	import ConnectionBanner from "#components/ConnectionBanner.svelte";
 	import MaintenanceBanner from "#components/MaintenanceBanner.svelte";
 	import UpdateAvailableBanner from "#components/UpdateAvailableBanner.svelte";
@@ -88,6 +89,7 @@
 		ACCENT_PRESETS,
 		accentState,
 		confirmDialog,
+		promptDialog,
 		initAccent,
 		initDensity,
 		initLargeTargets,
@@ -219,7 +221,8 @@ initDensity();
 			}
 			const { startRegistration } = await import("@simplewebauthn/browser");
 			const credential = await startRegistration({ optionsJSON: await optionsResponse.json() });
-			const name = window.prompt("Name this passkey (optional)") ?? "";
+			const name = await promptDialog("Name this passkey (optional)", { confirmLabel: "Save passkey" });
+			if (name === null) return;
 			const response = await fetch("/v1/auth/passkeys/register", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
@@ -340,14 +343,14 @@ initDensity();
 	async function doDeleteAccount(): Promise<void> {
 		if (sessionState.sub === "root") return;
 		if (!(await confirmDialog("Delete your dkrypt account and personal data? This cannot be undone.", { confirmLabel: "Continue", variant: "destructive" }))) return;
-		const confirmation = window.prompt("Type DELETE MY ACCOUNT to confirm.");
+		const confirmation = await promptDialog("Type DELETE MY ACCOUNT to confirm.", { confirmLabel: "Confirm deletion" });
 		if (confirmation !== "DELETE MY ACCOUNT") {
 			showToast("Account deletion was not confirmed.", "error");
 			return;
 		}
 		const passkeyReauthenticated = passkeys.length > 0 ? await tryPasskeyReauthentication() : false;
 		if (!passkeyReauthenticated && sessionState.sub === "root") {
-			const password = window.prompt("Enter your administrator password to continue.");
+			const password = await promptDialog("Enter your administrator password to continue.", { type: "password" });
 			if (!password) return;
 			const reauth = await reauthenticate({ password });
 			if (!reauth.ok) {
@@ -355,7 +358,7 @@ initDensity();
 				return;
 			}
 		} else if (!passkeyReauthenticated && sessionState.mfa?.enabled) {
-			const mfaToken = window.prompt("Enter your authenticator or recovery code to continue.");
+			const mfaToken = await promptDialog("Enter your authenticator or recovery code to continue.", { type: "password" });
 			if (!mfaToken) return;
 			const reauth = await reauthenticate({ mfaToken });
 			if (!reauth.ok) {
@@ -1262,6 +1265,7 @@ initDensity();
 {/if}
 
 <ConfirmModal />
+<PromptModal />
 <CommandPalette />
 <ShortcutsHelp />
 {#if sessionState.loggedIn}<DiagnosticReportDialog bind:open={diagnosticReportOpen} />{/if}

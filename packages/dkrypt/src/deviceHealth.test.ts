@@ -157,11 +157,11 @@ describe('App Store subsystem health', () => {
     expect(getAppStoreSubsystemState(undefined, false, 1_000_000)).toBe('unknown');
   });
 
-  test('reports App Store idle when the Rust transport is reachable but its agent is unavailable', () => {
+  test('does not claim App Store activity when the Rust transport is reachable but its agent is unavailable', () => {
     expect(getDeviceHealthSubsystemsWithoutAgent({ udid: 'usb-device' }, 'usb', false)).toMatchObject({
       usb: 'ready',
       agent: 'offline',
-      appStore: 'idle',
+      appStore: 'unknown',
       sshTunnel: 'degraded',
     });
   });

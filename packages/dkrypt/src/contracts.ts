@@ -401,6 +401,7 @@ const BillingResponse = object({
 const BillingSubscriptionPage = object({ subscriptions: Type.Array(JsonObject), total: Type.Integer({ minimum: 0 }), nextCursor: PageCursor });
 const ArtifactPage = object({ artifacts: Type.Array(JsonObject), total: Type.Integer({ minimum: 0 }), totalBytes: Type.Number(), maxBytes: Type.Number(), nextCursor: PageCursor });
 const DeviceListResponse = object({ devices: Type.Array(DeviceResponse) });
+const DeviceDisableImpactResponse = object({ deviceId: Identifier, queuedJobCount: Type.Integer({ minimum: 0 }), watchCount: Type.Integer({ minimum: 0 }), runningJobCount: Type.Integer({ minimum: 0 }) });
 export const JobTimelineResponse = object({
   id: Identifier,
   correlationId: Identifier,
@@ -514,7 +515,7 @@ const WebhookInboxRecordResponse = object({
 });
 const WebhookInboxPage = object({ inbox: Type.Array(WebhookInboxRecordResponse), total: Type.Integer({ minimum: 0 }), nextCursor: PageCursor });
 const DeviceHealthHistoryResponse = object({
-  buckets: Type.Array(object({ hourStart: Type.Number(), reachablePercent: Type.Union([Type.Number(), Type.Null()]) })),
+  buckets: Type.Array(object({ hourStart: Type.Number(), reachablePercent: Type.Union([Type.Number(), Type.Null()]), transitions: Type.Integer({ minimum: 0 }) })),
   uptimePercent: Type.Union([Type.Number(), Type.Null()]),
 });
 const DeviceActivityResponse = object({
@@ -1427,6 +1428,14 @@ register('PATCH', '/v1/dashboard/devices/:id', {
   params: object({ id: Identifier }),
   body: DevicePatchInput,
   response: { 200: DeviceResponse, 400: ErrorEnvelope, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope },
+});
+register('GET', '/v1/dashboard/devices/:id/disable-impact', {
+  params: object({ id: Identifier }),
+  response: { 200: DeviceDisableImpactResponse, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope },
+});
+register('POST', '/v1/dashboard/devices/:id/drain', {
+  params: object({ id: Identifier }),
+  response: { 200: DeviceResponse, 401: ErrorEnvelope, 403: ErrorEnvelope, 404: ErrorEnvelope },
 });
 register('GET', '/v1/dashboard/jobs/export', {
   querystring: dashboardJobExportQuerySchema,

@@ -1,14 +1,32 @@
 <script lang="ts">
   import { ArrowDown, ArrowUp, Pin, PinOff } from 'lucide-svelte';
   import Button from '#lib/components/ui/Button.svelte';
-  import { artifactLibraryPreferencesState, displayTimeZoneState, largeTargetsState, navigationPreferencesState, type ArtifactColumnId, type TabId } from '#lib/ui.svelte';
-  import { pushArtifactLibraryPreferences, pushDisplayTimeZonePref, pushLargeTargetsPref, pushNavigationPreferences, pushShortcutBindings } from '#lib/session.svelte';
+  import { artifactFilenameTemplateState, artifactLibraryPreferencesState, displayTimeZoneState, largeTargetsState, navigationPreferencesState, type ArtifactColumnId, type TabId } from '#lib/ui.svelte';
+  import { pushArtifactFilenameTemplate, pushArtifactLibraryPreferences, pushDisplayTimeZonePref, pushLargeTargetsPref, pushNavigationPreferences, pushShortcutBindings } from '#lib/session.svelte';
   import { DEFAULT_SHORTCUT_BINDINGS, shortcutBindingsState, type ShortcutAction, type ShortcutBindings } from '#lib/shortcuts.svelte';
   import { showToast } from '#lib/ui.svelte';
 
   const shortcutLabels: Record<ShortcutAction, string> = { palette: 'Command palette', focusSearch: 'Focus search', batch: 'Batch decrypt', help: 'Shortcut help', jumpPrefix: 'Navigation prefix', home: 'Home', billing: 'Plans', keys: 'API keys', logs: 'Logs', insights: 'Insights', docs: 'Docs', settings: 'Settings' };
   let shortcutDraft = $state<ShortcutBindings>({ ...DEFAULT_SHORTCUT_BINDINGS });
   let shortcutBusy = $state(false);
+  let filenameDraft = $state('{app}-{version}');
+  let filenameBusy = $state(false);
+
+  $effect(() => {
+    filenameDraft = artifactFilenameTemplateState.value;
+  });
+
+  async function saveFilenameTemplate(): Promise<void> {
+    filenameBusy = true;
+    try {
+      await pushArtifactFilenameTemplate(filenameDraft);
+      showToast('Download filename template saved');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Could not save filename template', 'error');
+    } finally {
+      filenameBusy = false;
+    }
+  }
 
   $effect(() => {
     shortcutDraft = { ...shortcutBindingsState.value };
@@ -103,6 +121,12 @@
 
   <section class="rounded-xl border border-border/70 bg-panel/40 p-4">
     <h2 class="text-sm font-semibold">Artifact Library</h2>
+    <label for="artifact-filename-template" class="mt-4 block text-xs font-medium">IPA download filename</label>
+    <p class="mt-1 text-xs text-muted">Use {'{app}'}, {'{version}'}, {'{build}'}, and {'{source}'}. App uses the bundle ID.</p>
+    <div class="mt-2 flex flex-wrap gap-2">
+      <input id="artifact-filename-template" class="min-h-10 min-w-0 flex-1 rounded-md border border-border bg-background px-3 font-mono text-sm" maxlength="120" bind:value={filenameDraft} />
+      <Button size="sm" loading={filenameBusy} onclick={() => void saveFilenameTemplate()}>Save</Button>
+    </div>
     <label class="mt-4 flex min-h-11 items-center justify-between gap-3 text-sm">
       <span>Group versions by app</span>
       <input type="checkbox" class="size-5 accent-accent" checked={artifactLibraryPreferencesState.groupByApp} onchange={(event) => void pushArtifactLibraryPreferences(event.currentTarget.checked, artifactLibraryPreferencesState.columns)} />

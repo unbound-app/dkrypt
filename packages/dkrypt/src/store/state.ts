@@ -350,6 +350,7 @@ export interface DeviceRecord {
   toolchain?: string;
   notes?: string;
   enabled: boolean;
+  draining?: boolean;
   isPrimary?: boolean;
   createdAt: number;
   updatedAt: number;
@@ -495,6 +496,7 @@ export interface TestFlightSubscription {
 }
 
 export interface UserPrefs {
+  artifactFilenameTemplate?: string;
   shortcutBindings?: Record<string, string>;
   formattingLocale?: 'system' | 'en' | 'de';
   interfaceLanguage?: 'system' | 'en' | 'de';
@@ -3157,7 +3159,7 @@ export function getDevice(id: string): DeviceRecord | undefined {
 }
 
 export function getPrimaryDevice(): DeviceRecord | undefined {
-  const devices = getEffectiveDevices().filter((d) => d.enabled);
+  const devices = getEffectiveDevices().filter((d) => d.enabled && !d.draining);
   return devices.find((d) => d.isPrimary) ?? devices[0];
 }
 
@@ -3344,6 +3346,7 @@ export interface CreateDeviceInput {
   toolchain?: string;
   notes?: string;
   enabled?: boolean;
+  draining?: boolean;
   isPrimary?: boolean;
 }
 
@@ -3377,12 +3380,12 @@ export function createDevice(input: CreateDeviceInput, actor: string): DeviceRec
 
 export function updateDevice(id: string, patch: Partial<CreateDeviceInput>, actor: string): { ok: boolean; device?: DeviceRecord; error?: string } {
   const previousDevice = deviceRepository.findById(id);
-  const devices = deviceRepository.update(id, { ...patch, updatedAt: Date.now() });
+  const devices = deviceRepository.update(id, { ...patch, ...(patch.enabled !== undefined ? { draining: false } : {}), updatedAt: Date.now() });
   if (!devices) return { ok: false, error: 'device not found' };
   state.devices = devices;
   const device = state.devices.find((candidate) => candidate.id === id)!;
   persistNow();
-  const auditFields = ['name', 'transport', 'usbmuxNetwork', 'productType', 'iosVersion', 'toolchain', 'enabled', 'isPrimary'] as const;
+  const auditFields = ['name', 'transport', 'usbmuxNetwork', 'productType', 'iosVersion', 'toolchain', 'enabled', 'draining', 'isPrimary'] as const;
   const changes = auditFields.flatMap((field) => {
     const before = previousDevice?.[field] ?? null;
     const after = device[field] ?? null;
@@ -3975,17 +3978,20 @@ function historyFor(deviceId: string): DeviceHealthCheck[] {
 export interface HourlyHealthBucket {
   hourStart: number;
   reachablePercent: number | null;
+  transitions: number;
 }
 
 export function getDeviceHealthHourlyBuckets(deviceId: string, hours = 24): HourlyHealthBucket[] {
   const now = Date.now();
+  const currentHourStart = Math.floor(now / 3_600_000) * 3_600_000;
   const history = historyFor(deviceId);
   const buckets: HourlyHealthBucket[] = [];
   for (let i = hours - 1; i >= 0; i--) {
-    const hourStart = now - i * 3_600_000;
+    const hourStart = currentHourStart - i * 3_600_000;
     const hourEnd = hourStart + 3_600_000;
-    const checks = history.filter((c) => c.ts >= hourStart && c.ts < hourEnd);
-    buckets.push({ hourStart, reachablePercent: checks.length > 0 ? checks.filter((c) => c.reachable).length / checks.length : null });
+    const checks = history.filter((c) => c.ts >= hourStart && c.ts < hourEnd).sort((left, right) => left.ts - right.ts);
+    const transitions = checks.slice(1).filter((check, index) => check.reachable !== checks[index]?.reachable).length;
+    buckets.push({ hourStart, reachablePercent: checks.length > 0 ? checks.filter((c) => c.reachable).length / checks.length : null, transitions });
   }
   return buckets;
 }

@@ -30,6 +30,7 @@ export const dashboardDeviceResponseSchema = Type.Object({
   id: identifierSchema,
   name: Type.String(),
   enabled: Type.Boolean(),
+  draining: Type.Optional(Type.Boolean()),
   isPrimary: Type.Optional(Type.Boolean()),
   transport: deviceTransportSchema,
   host: Type.Optional(Type.String()),

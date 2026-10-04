@@ -10,7 +10,7 @@ import { scopedLogger } from '#logger.js';
 const log = scopedLogger('jobs');
 import { sendMailToUser } from '#mail.js';
 import { sendPushToUser } from '#push.js';
-import { DEFAULT_PROJECT_ID, getAllJobHistory, getApiKeyById, getDevice, getEffectiveDevices, getProject, getTestFlightCatalogCache, getUserPrefs, isBundleWatched, recordDeviceActivity, recordJobHistory, type DeviceRecord } from '#store/state.js';
+import { DEFAULT_PROJECT_ID, getAllJobHistory, getApiKeyById, getDevice, getEffectiveDevices, getProject, getTestFlightCatalogCache, getUserPrefs, isBundleWatched, recordDeviceActivity, recordJobHistory, updateDevice, type DeviceRecord } from '#store/state.js';
 import { AppStoreUserActionRequiredError, uninstallFromDevice } from '#appStoreInstall.js';
 import { getCachedDeviceHealth } from '#deviceHealthCache.js';
 import { runDecrypt } from '#jobs/runner.js';
@@ -620,8 +620,8 @@ export function getJobQueueSummaries(sourceJobs: readonly Job[], now = Date.now(
 
 function getCurrentQueueReason(job: Job): string | undefined {
   if (job.status !== 'queued') return undefined;
-  const enabledDevices = getEffectiveDevices().filter((device) => device.enabled);
-  if (enabledDevices.length === 0) return 'Waiting for an enabled device';
+  const enabledDevices = getEffectiveDevices().filter((device) => device.enabled && !device.draining);
+  if (enabledDevices.length === 0) return 'Waiting for a device accepting jobs';
   const devices = job.preferredDeviceId
     ? enabledDevices.filter((device) => device.id === job.preferredDeviceId)
     : enabledDevices;
@@ -834,12 +834,12 @@ export function isJobDispatchable(job: Job, device: DeviceRecord): boolean {
 }
 
 export function getJobEligibleDeviceCount(job: Job): number {
-  return getEffectiveDevices().filter((device) => device.enabled && isJobDispatchable(job, device)).length;
+  return getEffectiveDevices().filter((device) => device.enabled && !device.draining && isJobDispatchable(job, device)).length;
 }
 
 function getJobDispatchableDeviceCount(job: Job): number {
   if (getJobConcurrencyBlocker(job)) return 0;
-  return getEffectiveDevices().filter((device) => device.enabled && !busyDeviceIds.has(device.id) && isJobDispatchable(job, device)).length;
+  return getEffectiveDevices().filter((device) => device.enabled && !device.draining && !busyDeviceIds.has(device.id) && isJobDispatchable(job, device)).length;
 }
 
 export function notifyDeviceDispatchStateChanged(): void {
@@ -904,10 +904,13 @@ function takeNextDispatchableJobId(device: DeviceRecord): string | undefined {
 }
 
 function pumpWorkers(): void {
+  for (const device of getEffectiveDevices()) {
+    if (device.draining && !busyDeviceIds.has(device.id)) updateDevice(device.id, { enabled: false }, 'system');
+  }
   captureQueuedBlockers();
   expireOverdueQueuedJobs();
   if (!acceptingJobs) return;
-  const devices = getEffectiveDevices().filter((d) => d.enabled);
+  const devices = getEffectiveDevices().filter((d) => d.enabled && !d.draining);
   if (devices.length === 0) return;
   const primary = devices.find((d) => d.isPrimary) ?? devices[0];
 

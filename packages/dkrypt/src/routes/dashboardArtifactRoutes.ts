@@ -15,6 +15,8 @@ import { createHttpErrorEnvelope } from '#util/httpResponse.js';
 import { streamArtifactZip } from '#artifactZip.js';
 import type { ArtifactRecord } from '#artifactTypes.js';
 import { compareIpaStructures, readIpaStructure } from '#ipaStructure.js';
+import { formatArtifactFilename } from '#artifactFilename.js';
+import { getUserPrefs } from '#store/state.js';
 
 interface DashboardArtifactServices {
   artifactDownloadName: typeof artifactDownloadName;
@@ -366,7 +368,8 @@ export function createDashboardArtifactRoutes(overrides: Partial<DashboardArtifa
         return createHttpErrorEnvelope(request.id, 404, 'artifact not found');
       }
       await services.touchArtifact(artifact);
-      await streamFilePath(artifact.filePath, request.raw, new Response(reply), services.artifactDownloadName(artifact), artifact.fileSizeBytes, artifact.id);
+      const filename = formatArtifactFilename(getUserPrefs(session.sub).artifactFilenameTemplate, artifact);
+      await streamFilePath(artifact.filePath, request.raw, new Response(reply), filename, artifact.fileSizeBytes, artifact.id);
       return;
     });
 

@@ -9,6 +9,7 @@ import { getVapidPublicKey, sendPushToUser } from '#push.js';
 import { fastifyRequireSession, getFastifySession } from '#session.js';
 import { addPushSubscription, getUserPrefs, removePushSubscription, updateUserPrefs, type HomeLayoutPreference, type HomeModuleId, type UserPrefs } from '#store/state.js';
 import { defaultShortcutBindings, validateShortcutBindings } from '#shortcutBindings.js';
+import { validArtifactFilenameTemplate } from '#artifactFilename.js';
 
 const homeModuleIds: HomeModuleId[] = ['artifacts', 'activeJobs', 'jobHistory'];
 const navigationIds = ['home', 'billing', 'keys', 'logs', 'insights', 'docs', 'settings'] as const;
@@ -35,6 +36,7 @@ function normalizedPrefs(prefs: UserPrefs): UserPrefs {
     navigationOrder: [...navigationIds],
     pinnedNavigation: [],
     artifactLibrary: { ...defaultArtifactLibrary, columns: [...defaultArtifactLibrary.columns] },
+    artifactFilenameTemplate: '{app}-{version}',
     largeTargets: false,
   };
   const homeLayouts = prefs.homeLayouts ?? [defaultHomeLayout];
@@ -165,6 +167,10 @@ export const dashboardAccountRoutes: FastifyPluginAsyncTypebox = async (server) 
     if (body.navigationOrder) patch.navigationOrder = body.navigationOrder;
     if (body.pinnedNavigation) patch.pinnedNavigation = body.pinnedNavigation;
     if (body.artifactLibrary) patch.artifactLibrary = body.artifactLibrary;
+    if (body.artifactFilenameTemplate !== undefined) {
+      if (!validArtifactFilenameTemplate(body.artifactFilenameTemplate)) return reply.code(400).send(createHttpErrorEnvelope(request.id, 400, 'artifact filename template must use app, version, build, or source tokens and cannot contain path characters'));
+      patch.artifactFilenameTemplate = body.artifactFilenameTemplate;
+    }
     if (body.largeTargets !== undefined) patch.largeTargets = body.largeTargets;
     if (typeof body.accent === 'string' && /^[a-z-]{1,32}$/.test(body.accent)) patch.accent = body.accent;
     if (typeof body.highContrast === 'boolean') patch.highContrast = body.highContrast;

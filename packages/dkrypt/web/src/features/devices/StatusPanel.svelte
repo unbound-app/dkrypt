@@ -227,7 +227,7 @@
 	function bucketTitle(bucket: HourlyHealthBucket): string {
 		const time = fmtDateTime(bucket.hourStart, { year: undefined, minute: undefined });
 		if (bucket.reachablePercent === null) return `${time}: no data`;
-		return `${time}: ${Math.round(bucket.reachablePercent * 100)}% reachable`;
+		return `${time}: ${Math.round(bucket.reachablePercent * 100)}% reachable · ${bucket.transitions} state changes`;
 	}
 
 	let batteryHistory = $state<HourlyBatteryBucket[] | null>(null);
@@ -782,9 +782,9 @@
 			<div class="flex gap-0.5">
 				{#each healthHistory as bucket (bucket.hourStart)}
 					<div
-						class="h-4 flex-1 rounded-sm {bucketColor(
-							bucket.reachablePercent,
-						)}"
+					class="h-4 flex-1 rounded-sm {bucketColor(
+						bucket.reachablePercent,
+					)} {bucket.transitions >= 2 ? 'ring-2 ring-warn' : ''}"
 						title={bucketTitle(bucket)}
 					></div>
 				{/each}

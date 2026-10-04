@@ -77,7 +77,7 @@ export function getDeviceHealthSubsystemsWithoutAgent(
     mux: 'ready',
     agent: getDeviceAgentSubsystemState(connection, false),
     jailbreak: 'unknown',
-    appStore: getAppStoreSubsystemState(undefined, true),
+    appStore: getAppStoreSubsystemState(undefined, false),
     testFlight: 'unknown',
     sshTunnel: getDeviceSshTunnelSubsystemState(connection, sshSftpReady),
     storage: 'unknown',
@@ -106,7 +106,7 @@ function subsystemReasons(health: DeviceHealth): Partial<Record<DeviceSubsystemI
   if (states.mux === 'offline') reasons.mux = health.error;
   if (states.agent === 'offline' || states.agent === 'degraded') reasons.agent = reasonFor('device agent') ?? health.error;
   if (states.jailbreak === 'degraded' || states.jailbreak === 'offline') reasons.jailbreak = reasonFor('jailbreak') ?? reasonFor('palera1n') ?? reasonFor('dopamine');
-  if (states.appStore === 'idle') reasons.appStore = 'The App Store process has no fresh heartbeat while idle.';
+  if (states.appStore === 'idle') reasons.appStore = 'The App Store app is not open; dkrypt can launch it when needed.';
   if (states.appStore === 'offline' || states.appStore === 'degraded') reasons.appStore = reasonFor('app store') ?? reasonFor('appstore') ?? health.error;
   if (states.testFlight === 'offline' || states.testFlight === 'degraded') reasons.testFlight = reasonFor('springboard') ?? health.error;
   if (states.sshTunnel === 'offline' || states.sshTunnel === 'degraded') reasons.sshTunnel = health.error;

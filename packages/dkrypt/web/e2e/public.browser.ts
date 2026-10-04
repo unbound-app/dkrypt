@@ -1831,36 +1831,52 @@ test('settings panels load on first visit and remain mounted after revisiting', 
   await page.goto('/?tab=settings&stab=scheduler');
   await overviewLoaded;
   await waitForBrowserFrames(page);
-  await expect(page.getByRole('tab', { name: 'Automation' })).toBeVisible();
+  const groups = page.getByRole('navigation', { name: 'Settings groups' });
+  await expect(groups.getByRole('button', { name: 'Operations' })).toBeVisible();
   expect(doctorRequests).toBe(0);
   expect(roleRequests).toBe(0);
 
-  await page.getByRole('tab', { name: 'System' }).click();
+  await groups.getByRole('button', { name: 'System' }).click();
   const doctorHeading = page.locator('h2').filter({ hasText: 'System doctor' });
   await expect(doctorHeading).toBeVisible();
   await expect.poll(() => doctorRequests).toBeGreaterThan(0);
   const doctorRequestsAfterFirstVisit = doctorRequests;
 
-  await page.getByRole('tab', { name: 'Automation' }).click();
+  await groups.getByRole('button', { name: 'Operations' }).click();
   await expect(doctorHeading).toBeAttached();
   await expect(doctorHeading).toBeHidden();
-  await page.getByRole('tab', { name: 'System' }).click();
+  await groups.getByRole('button', { name: 'System' }).click();
   await expect(doctorHeading).toBeVisible();
   await waitForBrowserFrames(page);
   expect(doctorRequests).toBe(doctorRequestsAfterFirstVisit);
 
-  await page.getByRole('tab', { name: 'Roles' }).click();
+  await groups.getByRole('button', { name: 'Team' }).click();
+  await page.getByRole('navigation', { name: 'Team settings' }).getByRole('button', { name: 'Roles' }).click();
   await expect.poll(() => roleRequests).toBeGreaterThan(0);
   const rolesDescription = page.getByText('Every signed-in user automatically holds');
   await expect(rolesDescription).toBeVisible();
   const roleRequestsAfterFirstVisit = roleRequests;
-  await page.getByRole('tab', { name: 'Automation' }).click();
+  await groups.getByRole('button', { name: 'Operations' }).click();
   await expect(rolesDescription).toBeAttached();
   await expect(rolesDescription).toBeHidden();
-  await page.getByRole('tab', { name: 'Roles' }).click();
+  await groups.getByRole('button', { name: 'Team' }).click();
+  await page.getByRole('navigation', { name: 'Team settings' }).getByRole('button', { name: 'Roles' }).click();
   await expect(rolesDescription).toBeVisible();
   await waitForBrowserFrames(page);
   expect(roleRequests).toBe(roleRequestsAfterFirstVisit);
+  await page.setViewportSize({ width: 375, height: 800 });
+  expect(await groups.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+  expect(await page.getByRole('navigation', { name: 'Team settings' }).evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+});
+
+test('operations panels stay out of the Home layout and remain reachable in Insights', async ({ page }) => {
+  await mockStableDashboardEvents(page);
+  await mockAuthenticatedDashboard(page, '1');
+  await page.goto('/?tab=home');
+  await expect(page.getByRole('main').getByText('Action Center', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('main').getByText('Incident timeline', { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Insights', exact: true }).click();
+  await expect(page.getByText('Operations · Action Center and incident timeline')).toBeVisible();
 });
 
 test('self-hosters can review configuration doctor checks from Settings', async ({ page }) => {

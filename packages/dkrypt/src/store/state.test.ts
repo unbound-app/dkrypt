@@ -1464,6 +1464,13 @@ describe('webhook delivery log', () => {
 });
 
 describe('device health history', () => {
+  test('counts repeated reachability changes within a time bucket', () => {
+    const deviceId = `flap-${crypto.randomUUID()}`;
+    recordDeviceHealthCheck(deviceId, true);
+    recordDeviceHealthCheck(deviceId, false);
+    recordDeviceHealthCheck(deviceId, true);
+    expect(getDeviceHealthHourlyBuckets(deviceId, 1)[0]?.transitions).toBe(2);
+  });
   test('returns undefined uptime before any check has ever been recorded', () => {
     expect(getDeviceUptimePercent('unused-device')).toBeUndefined();
   });

@@ -31,6 +31,7 @@ import { getRouteContract } from '#contracts.js';
 import { fastifyRequirePermission, fastifyRequireSession, getFastifySession } from '#session.js';
 import { PermissionFlag } from '#permissions.js';
 import { emitJobsChanged } from '#events.js';
+import { getActiveJobs, notifyDeviceDispatchStateChanged } from '#jobs/store.js';
 import { getDeviceHealth, isBridgeHeartbeatFresh } from '#deviceHealth.js';
 import { discoverDevices, execCommand, isDirectUsbDeviceAgentConnection, listInstalledAppStoreBundles, sendSpringBoardBridgeRequest, setupDeviceConnection, withAutoinstallDeviceAgent, withSSH, type DeviceConnection } from '#idevice.js';
 import { getTestFlightBridgeDiagnostics } from '#testflight.js';
@@ -47,6 +48,7 @@ import {
   getDeviceUptimePercent,
   getEffectiveDevices,
   getPrimaryDevice,
+  listWatches,
   recordDeviceActivity,
   type DeviceRecord,
   updateDevice,
@@ -274,6 +276,31 @@ export const dashboardDeviceRoutes: FastifyPluginAsyncTypebox = async (server) =
     }
     emitJobsChanged();
     return serializeDashboardDevice(result.device as DeviceRecord);
+  });
+
+  server.get<{ Params: { id: string } }>('/v1/dashboard/devices/:id/disable-impact', {
+    schema: getRouteContract('GET', '/v1/dashboard/devices/:id/disable-impact'),
+    preHandler: canManageDevices,
+  }, (request, reply) => {
+    const device = getDevice(request.params.id);
+    if (!device) return reply.code(404).send(createHttpErrorEnvelope(request.id, 404, 'device not found'));
+    const alternatives = getEffectiveDevices().filter((candidate) => candidate.id !== device.id && candidate.enabled && !candidate.draining);
+    const jobs = getActiveJobs().filter((job) => job.status === 'queued' && (job.preferredDeviceId === device.id || (!job.preferredDeviceId && alternatives.length === 0)));
+    const watches = alternatives.length === 0 ? listWatches().filter((watch) => watch.enabled) : [];
+    return { deviceId: device.id, queuedJobCount: jobs.length, watchCount: watches.length, runningJobCount: getActiveJobs().filter((job) => job.status === 'running' && job.deviceId === device.id).length };
+  });
+
+  server.post<{ Params: { id: string } }>('/v1/dashboard/devices/:id/drain', {
+    schema: getRouteContract('POST', '/v1/dashboard/devices/:id/drain'),
+    preHandler: canManageDevices,
+  }, (request, reply) => {
+    const device = getDevice(request.params.id);
+    if (!device) return reply.code(404).send(createHttpErrorEnvelope(request.id, 404, 'device not found'));
+    if (!device.enabled) return serializeDashboardDevice(device);
+    const result = updateDevice(device.id, { draining: true }, getFastifySession(request)!.sub);
+    notifyDeviceDispatchStateChanged();
+    emitJobsChanged();
+    return serializeDashboardDevice(getDevice(device.id) ?? result.device!);
   });
 
   server.delete<DashboardDeviceDeleteRoute>('/v1/dashboard/devices/:id', {

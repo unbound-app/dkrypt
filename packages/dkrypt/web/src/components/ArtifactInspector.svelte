@@ -106,6 +106,16 @@
         <div><dt class="text-muted">Source job</dt><dd class="mt-1 break-all font-mono" data-sensitive="true">{artifact.sourceJobId ?? 'Unavailable'}</dd></div>
         <div class="sm:col-span-2"><dt class="text-muted">SHA-256</dt><dd class="mt-1 break-all font-mono" data-sensitive="true">{artifact.sha256}</dd></div>
       </dl>
+      <details class="mt-4 border-t border-border/70 pt-3 text-xs">
+        <summary class="cursor-pointer font-medium focus-visible:rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">What do these IPA terms mean?</summary>
+        <dl class="mt-3 space-y-2 text-muted">
+          <div><dt class="font-medium text-text">Build</dt><dd>The developer's identifier for this specific release.</dd></div>
+          <div><dt class="font-medium text-text">SHA-256</dt><dd>A fingerprint you can use to verify that two IPA files are identical.</dd></div>
+          <div><dt class="font-medium text-text">cryptid</dt><dd>An iOS binary flag. A nonzero value means that binary is still encrypted.</dd></div>
+          <div><dt class="font-medium text-text">Extensions</dt><dd>Small companion programs bundled with an app. A warning about one does not necessarily mean the main app failed to decrypt.</dd></div>
+          <div><dt class="font-medium text-text">Signing</dt><dd>The code signature used by iOS to validate an app. Decrypting does not automatically make an IPA installable on every device.</dd></div>
+        </dl>
+      </details>
     </section>
     {#if artifact.warnings?.length}
       <section class="mt-4 rounded-xl border border-warn/30 bg-warn/5 p-4" aria-labelledby="artifact-inspector-warnings">

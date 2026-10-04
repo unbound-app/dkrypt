@@ -1941,6 +1941,22 @@ test('Fastify persists dashboard device mutations and returns the updated overvi
   }
 });
 
+test('device drain stops assignment and disables an idle device until explicitly enabled', async () => {
+  const { server, cookie } = await signIn();
+  const device = createDevice({ name: 'drain test device', transport: 'wifi', host: '127.0.0.1' }, 'test');
+  try {
+    const drained = await server.inject({ method: 'POST', url: `/v1/dashboard/devices/${device.id}/drain`, headers: { cookie } });
+    expect(drained.statusCode).toBe(200);
+    expect(drained.json()).toMatchObject({ id: device.id, enabled: false, draining: false });
+    const enabled = await server.inject({ method: 'PATCH', url: `/v1/dashboard/devices/${device.id}`, headers: { cookie }, payload: { enabled: true } });
+    expect(enabled.statusCode).toBe(200);
+    expect(enabled.json()).toMatchObject({ id: device.id, enabled: true, draining: false });
+  } finally {
+    deleteDevice(device.id, 'test');
+    await server.close();
+  }
+});
+
 test('project administration is permission-gated and project membership controls visibility', async () => {
   const root = await signIn();
   const managerId = `github:project-manager-${crypto.randomUUID()}`;

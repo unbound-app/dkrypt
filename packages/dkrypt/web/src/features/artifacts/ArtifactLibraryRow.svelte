@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Archive, ArchiveRestore, Download, FileSearch, Pin, PinOff } from 'lucide-svelte';
   import AppIcon from '#components/AppIcon.svelte';
+  import RevealText from '#components/RevealText.svelte';
   import Badge from '#lib/components/ui/Badge.svelte';
   import Button from '#lib/components/ui/Button.svelte';
   import { buttonVariants } from '#lib/components/ui/variants';
@@ -58,10 +59,10 @@
             <dd class="mt-1 flex min-h-6 min-w-0 items-center gap-2 text-[13px]">
               {#if column === 'app'}
                 <AppIcon bundleId={artifact.bundleId} src={appIconUrl(artifact.bundleId)} label={appDisplayName(artifact.bundleId)} class="h-7 w-7 shrink-0" />
-                <span class="truncate font-semibold">{appDisplayName(artifact.bundleId)}</span>
+                <RevealText value={appDisplayName(artifact.bundleId)} />
                 {#if artifact.pinnedAt}<Badge variant="success">Pinned</Badge>{/if}
               {:else if column === 'bundleId'}
-                <span class="truncate font-mono text-[11px]" data-sensitive="true">{artifact.bundleId}</span>
+                <RevealText value={artifact.bundleId} monospace sensitive />
               {:else if column === 'version'}
                 <span class="truncate font-semibold">{artifactVersion}</span>
               {:else if column === 'source'}

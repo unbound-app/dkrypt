@@ -4,7 +4,7 @@
   import Input from '#lib/components/ui/Input.svelte';
   import { createSignedTriggerIntegration, fetchSignedTriggerIntegrations, revokeSignedTriggerIntegration, rotateSignedTriggerIntegration, type SignedTriggerIntegration } from '#lib/api';
   import { projectSelectionState } from '#lib/projectSelection.svelte';
-  import { showToast } from '#lib/ui.svelte';
+  import { confirmDialog, showToast } from '#lib/ui.svelte';
 
   let integrations = $state<SignedTriggerIntegration[]>([]);
   let bundles = $state('');
@@ -45,7 +45,7 @@
   }
 
   async function revoke(id: string): Promise<void> {
-    if (!window.confirm('Revoke this signed decrypt integration? Existing signatures will stop working.')) return;
+    if (!(await confirmDialog('Revoke this signed decrypt integration? Existing signatures will stop working.', { confirmLabel: 'Revoke integration' }))) return;
     busy = true;
     try { await revokeSignedTriggerIntegration(id); if (revealed?.id === id) revealed = null; await load(); }
     catch (error) { showToast(error instanceof Error ? error.message : 'Could not revoke integration', 'error'); }

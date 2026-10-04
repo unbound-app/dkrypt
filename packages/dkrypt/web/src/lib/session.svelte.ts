@@ -22,6 +22,7 @@ import {
   setLargeTargets,
   setNavigationPreferences,
   setArtifactLibraryPreferences,
+  setArtifactFilenameTemplate,
   homeLayoutPreferencesState,
   homeViewModesState,
   resetUserInterfacePreferences,
@@ -158,6 +159,7 @@ async function syncThemeFromServer(): Promise<void> {
     navigationOrder?: TabId[];
     pinnedNavigation?: TabId[];
     artifactLibrary?: { groupByApp: boolean; columns: ArtifactColumnId[] };
+    artifactFilenameTemplate?: string;
     largeTargets?: boolean;
     shortcutBindings?: ShortcutBindings;
   };
@@ -176,6 +178,7 @@ async function syncThemeFromServer(): Promise<void> {
   setDisplayTimeZone(prefs.displayTimeZone ?? 'system');
   if (prefs.navigationOrder) setNavigationPreferences(prefs.navigationOrder, prefs.pinnedNavigation ?? []);
   if (prefs.artifactLibrary) setArtifactLibraryPreferences(prefs.artifactLibrary.groupByApp, prefs.artifactLibrary.columns);
+  setArtifactFilenameTemplate(prefs.artifactFilenameTemplate ?? '{app}-{version}');
   setLargeTargets(prefs.largeTargets ?? false);
   if (prefs.shortcutBindings) setShortcutBindings(prefs.shortcutBindings);
   const userId = sessionState.sub?.trim().toLowerCase();
@@ -238,6 +241,11 @@ export function pushNavigationPreferences(order: TabId[], pinned: TabId[]): Prom
 export function pushArtifactLibraryPreferences(groupByApp: boolean, columns: ArtifactColumnId[]): Promise<void> {
   setArtifactLibraryPreferences(groupByApp, columns);
   return pushDashboardPreference({ artifactLibrary: { groupByApp, columns } });
+}
+
+export async function pushArtifactFilenameTemplate(template: string): Promise<void> {
+  await pushDashboardPreference({ artifactFilenameTemplate: template });
+  setArtifactFilenameTemplate(template);
 }
 
 export function pushAppFavoritesPref(favorites: Array<{ bundleId: string; trackName: string }>): Promise<void> {

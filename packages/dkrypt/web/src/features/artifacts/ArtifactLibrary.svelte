@@ -575,7 +575,7 @@
               {/each}
             </div>
           {:else}
-            <EmptyState message="No artifacts match this search." />
+            <EmptyState message={query.trim() || channelFilter !== 'all' || archiveFilter === 'archived' ? 'No artifacts match these filters.' : 'No IPA artifacts have been saved in this project yet.'} />
           {/if}
         {:else}
           {#if artifactLibraryPreferencesState.groupByApp}

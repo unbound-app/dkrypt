@@ -48,6 +48,7 @@
 		ensureAppCatalog,
 	} from "#lib/appCatalog.svelte";
 	import ReleaseCoverage from "#features/operations/ReleaseCoverage.svelte";
+	import IncidentTimeline from "#features/operations/IncidentTimeline.svelte";
 
 	const TREND_DAYS_OPTIONS = [
 		{ value: "7", label: "Last 7 days" },
@@ -730,6 +731,11 @@
 		{/if}
 	</Card>
 {/if}
+
+<details class="mt-4 rounded-xl border border-border/70 bg-panel/40 px-4 py-3">
+  <summary class="cursor-pointer text-sm font-semibold focus-visible:rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">Operations · Action Center and incident timeline</summary>
+  <div class="mt-4"><IncidentTimeline /></div>
+</details>
 
 <BundleStatsDialog
 	open={statsOpen}

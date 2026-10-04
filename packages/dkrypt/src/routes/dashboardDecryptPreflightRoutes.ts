@@ -79,8 +79,8 @@ export function createDashboardDecryptPreflightRoutes(overrides: Partial<Dashboa
       const installSizeBytes = request.body.installSizeBytes;
       const requestedDeviceId = request.body.deviceId?.trim() ?? '';
       const requestedDevice = requestedDeviceId ? services.getDevice(requestedDeviceId) : undefined;
-      if (requestedDeviceId && (!requestedDevice || !requestedDevice.enabled)) {
-        return sendPreflightError(request.id, reply, 400, 'deviceId must refer to an enabled device');
+      if (requestedDeviceId && (!requestedDevice || !requestedDevice.enabled || requestedDevice.draining)) {
+        return sendPreflightError(request.id, reply, 400, 'deviceId must refer to an enabled device accepting jobs');
       }
 
       let verifiedCatalog: Awaited<ReturnType<typeof getVerifiedTestFlightCatalog>> = [];
@@ -119,7 +119,7 @@ export function createDashboardDecryptPreflightRoutes(overrides: Partial<Dashboa
       const installSource = testflight ? 'testflight' : 'appstore';
       const devices = requestedDevice
         ? [requestedDevice]
-        : services.getEffectiveDevices().filter((device) => device.enabled && (!verifiedDeviceIds || verifiedDeviceIds.has(device.id)));
+        : services.getEffectiveDevices().filter((device) => device.enabled && !device.draining && (!verifiedDeviceIds || verifiedDeviceIds.has(device.id)));
       const primary = devices.find((device) => device.isPrimary) ?? devices[0];
       const checks = await Promise.all(devices.map(async (device) => {
         try {
@@ -131,12 +131,16 @@ export function createDashboardDecryptPreflightRoutes(overrides: Partial<Dashboa
           const installBlocker = services.getDeviceInstallBlocker(health, installSizeBytes, installSource);
           if (installBlocker) blockers.push(installBlocker);
           if (readiness.state === 'blocked') blockers.push(...(readiness.reasons.length > 0 ? readiness.reasons : ['device readiness is blocked']));
+          const warnings: string[] = [];
+          if (health.batteryPercent !== undefined && !health.batteryCharging && health.batteryPercent >= 15 && health.batteryPercent < 25) warnings.push(`battery is ${health.batteryPercent}% and may fall below the 15% minimum before this job starts`);
+          if (installSizeBytes && health.storageFreeBytes !== undefined && health.storageFreeBytes >= installSizeBytes * 2 && health.storageFreeBytes < installSizeBytes * 2.5) warnings.push('free storage is close to the 2× install-size minimum');
           return {
             id: device.id,
             name: device.name,
             isPrimary: device.id === primary?.id,
             ready: blockers.length === 0,
             blockers: [...new Set(blockers)],
+            warnings,
             readiness,
             reachable: health.reachable,
             storageFreeBytes: health.storageFreeBytes,

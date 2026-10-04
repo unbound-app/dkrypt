@@ -174,6 +174,7 @@ export const artifactLibraryPreferencesState = $state<{ groupByApp: boolean; col
   groupByApp: false,
   columns: ['app', 'bundleId', 'version', 'source', 'size'],
 });
+export const artifactFilenameTemplateState = $state<{ value: string }>({ value: '{app}-{version}' });
 export const screenSharePrivacyState = $state<{ enabled: boolean }>({ enabled: sessionStorage.getItem('screensharePrivacy') === 'true' });
 export const homeLayoutPreferencesState = $state<{ layouts: HomeLayout[]; activeId: string }>({
   layouts: [{ ...DEFAULT_HOME_LAYOUT, order: [...DEFAULT_HOME_LAYOUT.order], hidden: [], collapsed: [] }],
@@ -212,6 +213,10 @@ export function setNavigationPreferences(order: TabId[], pinned: TabId[]): void 
 export function setArtifactLibraryPreferences(groupByApp: boolean, columns: ArtifactColumnId[]): void {
   artifactLibraryPreferencesState.groupByApp = groupByApp;
   artifactLibraryPreferencesState.columns = [...columns];
+}
+
+export function setArtifactFilenameTemplate(template: string): void {
+  artifactFilenameTemplateState.value = template;
 }
 
 export function setScreenSharePrivacy(enabled: boolean): void {
@@ -254,6 +259,7 @@ export function resetUserInterfacePreferences(): void {
   setLargeTargets(false);
   setNavigationPreferences(['home', 'billing', 'keys', 'logs', 'insights', 'docs', 'settings'], []);
   setArtifactLibraryPreferences(false, ['app', 'bundleId', 'version', 'source', 'size']);
+  setArtifactFilenameTemplate('{app}-{version}');
   setHomeLayoutPreferences([{ ...DEFAULT_HOME_LAYOUT, order: [...DEFAULT_HOME_LAYOUT.order], hidden: [], collapsed: [] }], DEFAULT_HOME_LAYOUT.id);
   setHomeViewModes(DEFAULT_HOME_VIEW_MODES);
 }
@@ -354,6 +360,35 @@ export function resolveConfirm(result: boolean): void {
   confirmState.open = false;
   confirmState.resolve?.(result);
   confirmState.resolve = undefined;
+}
+
+interface PromptState {
+  open: boolean;
+  message: string;
+  value: string;
+  type: 'text' | 'password';
+  confirmLabel: string;
+  resolve?: (value: string | null) => void;
+}
+
+export const promptState = $state<PromptState>({ open: false, message: '', value: '', type: 'text', confirmLabel: 'Continue' });
+
+export function promptDialog(message: string, options?: { value?: string; type?: 'text' | 'password'; confirmLabel?: string }): Promise<string | null> {
+  return new Promise((resolve) => {
+    promptState.open = true;
+    promptState.message = message;
+    promptState.value = options?.value ?? '';
+    promptState.type = options?.type ?? 'text';
+    promptState.confirmLabel = options?.confirmLabel ?? 'Continue';
+    promptState.resolve = resolve;
+  });
+}
+
+export function resolvePrompt(value: string | null): void {
+  promptState.open = false;
+  promptState.resolve?.(value);
+  promptState.resolve = undefined;
+  promptState.value = '';
 }
 
 export const paletteState = $state<{ open: boolean }>({ open: false });

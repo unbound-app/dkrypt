@@ -429,10 +429,10 @@ import { clearFormDraft, readFormDraft, setFormUnsaved, writeFormDraft } from "#
 
 	async function restoreRevision(revision: WatchRevision): Promise<void> {
 		if (!revisionWatch) return;
-		if (!window.confirm(`Restore this watch configuration? The watch will remain ${revisionWatch.enabled ? 'enabled' : 'disabled'}.`)) return;
+		if (!(await confirmDialog(`Restore this watch configuration? The watch will remain ${revisionWatch.enabled ? 'enabled' : 'disabled'}.`, { confirmLabel: 'Restore watch' }))) return;
 		try {
 			const preview = await previewWatchConflicts({ ...revision.snapshot, enabled: revisionWatch.enabled, webhookUrl: revisionWatch.webhookUrl, projectId: revisionWatch.projectId }, revisionWatch.id);
-			if (preview.conflicts.length && !window.confirm(`This schedule overlaps with ${preview.conflicts.length} other watch${preview.conflicts.length === 1 ? '' : 'es'}. Restore anyway?`)) return;
+			if (preview.conflicts.length && !(await confirmDialog(`This schedule overlaps with ${preview.conflicts.length} other watch${preview.conflicts.length === 1 ? '' : 'es'}. Restore anyway?`, { confirmLabel: 'Restore anyway' }))) return;
 			const restored = await restoreWatchRevision(revisionWatch.id, revision.id, revisionWatch.updatedAt, revisionWatch.webhookUrl, preview.conflicts.length > 0);
 			revisionWatch = restored;
 			revisions = (await fetchWatchRevisions(restored.id)).revisions;

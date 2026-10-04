@@ -6,7 +6,7 @@
   import Card from '#lib/components/ui/Card.svelte';
   import LegalLinks from '#components/LegalLinks.svelte';
   import { refreshSession } from '#lib/session.svelte';
-  import { showToast } from '#lib/ui.svelte';
+  import { confirmDialog, showToast } from '#lib/ui.svelte';
   import type { BadgeVariant } from '#lib/components/ui/variants';
   import { fmtCalendarDate, fmtCurrency } from '#lib/format.svelte';
 
@@ -135,7 +135,7 @@
   }
 
   async function cancelSubscription(): Promise<void> {
-    if (!window.confirm('Stop this crypto renewal now? Access ends immediately.')) return;
+    if (!(await confirmDialog('Stop this crypto renewal now? Access ends immediately.', { confirmLabel: 'Stop renewal' }))) return;
     cancelling = true;
     cancelIdempotencyKey ??= crypto.randomUUID();
     try {

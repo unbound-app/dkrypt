@@ -280,6 +280,7 @@ export interface DeviceRecord extends DeviceTransportStatus {
   notes?: string;
   transportCapabilities?: string[];
   enabled: boolean;
+  draining?: boolean;
   isPrimary?: boolean;
   createdAt: number;
   updatedAt: number;
@@ -538,6 +539,7 @@ export interface DecryptPreflightDevice {
   isPrimary: boolean;
   ready: boolean;
   blockers: string[];
+  warnings?: string[];
   readiness?: DeviceReadiness;
   reachable: boolean;
   storageFreeBytes?: number;
@@ -869,6 +871,7 @@ export function fetchDeviceInventory(deviceId: string): Promise<{ deviceId: stri
 export interface HourlyHealthBucket {
   hourStart: number;
   reachablePercent: number | null;
+  transitions: number;
 }
 
 export function fetchDeviceHealthHistory(deviceId: string, hours = 24): Promise<{ buckets: HourlyHealthBucket[]; uptimePercent: number | null }> {
@@ -929,6 +932,14 @@ export function createDevice(connection: Pick<DeviceRecord, 'name' | 'transport'
 
 export function updateDevice(id: string, patch: Partial<Pick<DeviceRecord, 'name' | 'transport' | 'host' | 'port' | 'user' | 'udid' | 'usbmuxNetwork' | 'productType' | 'iosVersion' | 'toolchain' | 'notes' | 'enabled' | 'isPrimary'>>): Promise<{ ok: boolean; data: DeviceRecord }> {
   return apiAction(`/v1/dashboard/devices/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) }, 'Device updated');
+}
+
+export async function fetchDeviceDisableImpact(id: string): Promise<{ queuedJobCount: number; watchCount: number; runningJobCount: number }> {
+  return apiJson(`/v1/dashboard/devices/${encodeURIComponent(id)}/disable-impact`);
+}
+
+export function drainDevice(id: string): Promise<{ ok: boolean; data: DeviceRecord }> {
+  return apiAction(`/v1/dashboard/devices/${encodeURIComponent(id)}/drain`, { method: 'POST' }, 'Device draining');
 }
 
 export function deleteDevice(id: string): Promise<{ ok: boolean }> {

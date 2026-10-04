@@ -263,6 +263,7 @@ const dashboardManualDecryptPreflightDeviceSchema = Type.Object({
   isPrimary: Type.Boolean(),
   ready: Type.Boolean(),
   blockers: Type.Array(Type.String()),
+  warnings: Type.Optional(Type.Array(Type.String())),
   readiness: Type.Optional(dashboardManualDecryptPreflightReadinessSchema),
   reachable: Type.Optional(Type.Boolean()),
   storageFreeBytes: Type.Optional(Type.Number({ minimum: 0 })),

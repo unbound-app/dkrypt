@@ -1,5 +1,4 @@
 <script lang="ts">
-  import Tabs from '#lib/components/ui/Tabs.svelte';
   import Button from '#lib/components/ui/Button.svelte';
   import Input from '#lib/components/ui/Input.svelte';
   import { PermissionFlag } from '#lib/permissions';
@@ -36,12 +35,21 @@
     { id: 'billing', label: 'Billing', requires: [PermissionFlag.viewBilling, PermissionFlag.manageBilling] },
     { id: 'reports', label: 'Support reports', requires: [PermissionFlag.viewDiagnosticReports] },
   ];
+  const SETTINGS_GROUPS = [
+    { id: 'personal', label: 'Personal', subtabs: ['personalization'] },
+    { id: 'operations', label: 'Operations', subtabs: ['scheduler', 'storage', 'devices', 'testflight'] },
+    { id: 'team', label: 'Team', subtabs: ['users', 'roles', 'projects'] },
+    { id: 'system', label: 'System', subtabs: ['doctor', 'backup', 'reports'] },
+    { id: 'billing', label: 'Billing', subtabs: ['billing'] },
+  ];
 
   function hasAccess(requires: bigint[], requiresAll: bigint[] = []): boolean {
     return (requires.length === 0 || sessionHasAnyPermission(requires)) && requiresAll.every(sessionHasPermission);
   }
 
   const visibleSubtabs = $derived(ALL_SUBTABS.filter((subtab) => hasAccess(subtab.requires, subtab.requiresAll)));
+  const visibleGroups = $derived(SETTINGS_GROUPS.map((group) => ({ ...group, visibleSubtabs: visibleSubtabs.filter((subtab) => group.subtabs.includes(subtab.id)) })).filter((group) => group.visibleSubtabs.length > 0));
+  const activeGroup = $derived(visibleGroups.find((group) => group.visibleSubtabs.some((subtab) => subtab.id === tabState.settingsSubtab)) ?? visibleGroups[0]);
   const searchTerms: Record<string, string> = {
     personalization: 'timezone time zone touch targets navigation favorites artifact columns appearance density',
     scheduler: 'watch schedule automation cron github webhook testflight',
@@ -67,7 +75,7 @@
   const matchingSettings = $derived(settingsQuery.trim() ? searchSettings(searchableSettings, settingsQuery) : []);
   const mountedSubtabs = createVisitedTabs(() => tabState.settingsSubtab);
   const interfaceLanguage = $derived(resolveInterfaceLanguage(interfaceLanguageState.value, systemLocalesState.value));
-  const msg = (key: 'settings.modeLabel' | 'settings.basicMode' | 'settings.advancedMode' | 'settings.advancedModeDescription') => translateMessage(key, interfaceLanguage);
+  const msg = (key: 'settings.modeLabel' | 'settings.basicMode' | 'settings.basicModeDescription' | 'settings.advancedMode' | 'settings.advancedModeDescription') => translateMessage(key, interfaceLanguage);
 
   $effect(() => {
     if (visibleSubtabs.length > 0 && !visibleSubtabs.some((t) => t.id === tabState.settingsSubtab)) {
@@ -80,7 +88,7 @@
 <div class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/70 bg-panel/50 px-4 py-3">
   <div>
     <div class="text-sm font-semibold">{msg('settings.modeLabel')}</div>
-    <div class="text-xs text-muted">{msg('settings.advancedModeDescription')}</div>
+    <div class="text-xs text-muted">{msg(settingsModeState.value === 'basic' ? 'settings.basicModeDescription' : 'settings.advancedModeDescription')}</div>
   </div>
   <div class="inline-flex rounded-lg border border-border p-0.5" role="group" aria-label={msg('settings.modeLabel')}>
     <Button size="sm" variant={settingsModeState.value === 'basic' ? 'secondary' : 'ghost'} aria-pressed={settingsModeState.value === 'basic'} onclick={() => void pushSettingsModePref('basic')}>{msg('settings.basicMode')}</Button>
@@ -88,7 +96,18 @@
   </div>
 </div>
 
-<Tabs items={visibleSubtabs} value={tabState.settingsSubtab} onValueChange={setSettingsSubtab} class="mb-5" />
+<nav class="mb-3 flex flex-wrap gap-1 rounded-lg bg-ui-muted p-1" aria-label="Settings groups">
+  {#each visibleGroups as group (group.id)}
+    <Button size="sm" variant={activeGroup?.id === group.id ? 'secondary' : 'ghost'} aria-pressed={activeGroup?.id === group.id} onclick={() => setSettingsSubtab(group.visibleSubtabs[0]!.id)}>{group.label}</Button>
+  {/each}
+</nav>
+{#if activeGroup && activeGroup.visibleSubtabs.length > 1}
+  <nav class="mb-5 flex flex-wrap gap-1.5" aria-label={`${activeGroup.label} settings`}>
+    {#each activeGroup.visibleSubtabs as subtab (subtab.id)}
+      <Button size="sm" variant={tabState.settingsSubtab === subtab.id ? 'secondary' : 'ghost'} aria-current={tabState.settingsSubtab === subtab.id ? 'page' : undefined} onclick={() => setSettingsSubtab(subtab.id)}>{subtab.label}</Button>
+    {/each}
+  </nav>
+{/if}
 
 <div class="mb-5 grid gap-2 sm:grid-cols-[minmax(12rem,1fr)_auto] sm:items-start">
   <Input bind:value={settingsQuery} aria-label="Search settings" placeholder="Search settings (e.g. timezone, device, retention)" />
