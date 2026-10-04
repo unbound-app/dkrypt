@@ -146,6 +146,7 @@ struct BridgeState {
     tunnels: Mutex<HashMap<String, Tunnel>>,
     cancellations: Mutex<HashMap<String, CancellationToken>>,
     event_sequence: AtomicU64,
+    mux_recovery: Option<mpsc::UnboundedSender<String>>,
 }
 
 impl BridgeState {
@@ -1089,6 +1090,7 @@ async fn handle_client(mut stream: UnixStream, state: Arc<BridgeState>) {
         };
         let request_id = request.request_id.clone();
         let operation = request.operation.clone();
+        let request_device_id = request.device_id.clone();
         let follow_events = operation == "events" && request.follow == Some(true);
         let result = if request.version != RPC_VERSION {
             Err(error(
@@ -1139,6 +1141,17 @@ async fn handle_client(mut stream: UnixStream, state: Arc<BridgeState>) {
                 result
             }
         };
+        if matches!(
+            operation.as_str(),
+            "agent" | "remote_command" | "file_read" | "file_write" | "metadata"
+        ) && matches!(&result, Err(value) if value.code == "deadline_exceeded")
+        {
+            if let (Some(sender), Some(device_id)) =
+                (&state.mux_recovery, request_device_id.as_ref())
+            {
+                let _ = sender.send(device_id.clone());
+            }
+        }
         let output = match result {
             Ok(result) => response(request_id, result),
             Err(value) => failure(request_id, value),
@@ -1225,8 +1238,11 @@ async fn supervise_netmuxd(
     socket: PathBuf,
     pairing_store: PathBuf,
     shutdown: CancellationToken,
+    recovery_state: Option<Arc<BridgeState>>,
+    mut recovery_requests: mpsc::UnboundedReceiver<String>,
 ) {
     let mut consecutive_failures = 0_u32;
+    let mut last_recovery = Instant::now() - Duration::from_secs(60);
     loop {
         if shutdown.is_cancelled() {
             break;
@@ -1246,12 +1262,31 @@ async fn supervise_netmuxd(
                     };
                     match startup {
                         Ok(()) => {
-                            let status = tokio::select! {
-                                _ = shutdown.cancelled() => {
-                                    stop_netmuxd_and_clear_socket(&mut child, &socket).await;
-                                    return;
+                            let status = loop {
+                                tokio::select! {
+                                    _ = shutdown.cancelled() => {
+                                        stop_netmuxd_and_clear_socket(&mut child, &socket).await;
+                                        return;
+                                    }
+                                    status = child.wait() => break status.map(|value| value.to_string()).map_err(|value| value.to_string()),
+                                    Some(device_id) = recovery_requests.recv(), if recovery_state.is_some() => {
+                                        let state = recovery_state.as_ref().expect("recovery state exists");
+                                        if last_recovery.elapsed() < Duration::from_secs(60) || !state.tunnels.lock().await.is_empty() {
+                                            continue;
+                                        }
+                                        let probe = timeout(Duration::from_secs(3), state.service_connector.connect(device_id, 62078)).await;
+                                        if matches!(probe, Ok(Ok(_))) {
+                                            continue;
+                                        }
+                                        if !state.tunnels.lock().await.is_empty() {
+                                            continue;
+                                        }
+                                        last_recovery = Instant::now();
+                                        eprintln!("netmuxd service connection stalled; restarting mux process");
+                                        stop_netmuxd_and_clear_socket(&mut child, &socket).await;
+                                        break Err("netmuxd service connection stalled".to_string());
+                                    }
                                 }
-                                status = child.wait() => status.map(|value| value.to_string()).map_err(|value| value.to_string()),
                             };
                             failure = Some(match status {
                                 Ok(status) => format!("netmuxd exited with {status}"),
@@ -1394,6 +1429,7 @@ async fn main() -> Result<(), String> {
         .map(Ok)
         .unwrap_or_else(|| persistent_pairing_host_id(&pairing_store))?;
     let shutdown = CancellationToken::new();
+    let (mux_recovery, recovery_requests) = mpsc::unbounded_channel();
     let state = Arc::new(BridgeState {
         secrets,
         service_connector: Arc::new(UsbmuxdDeviceServiceConnector {
@@ -1406,6 +1442,7 @@ async fn main() -> Result<(), String> {
         tunnels: Mutex::new(HashMap::new()),
         cancellations: Mutex::new(HashMap::new()),
         event_sequence: AtomicU64::new(0),
+        mux_recovery: Some(mux_recovery),
     });
     let listener = UnixListener::bind(&rpc_socket).map_err(|value| value.to_string())?;
     let permissions = std::os::unix::fs::PermissionsExt::from_mode(0o660);
@@ -1419,6 +1456,8 @@ async fn main() -> Result<(), String> {
         state.mux_socket.clone(),
         pairing_store,
         supervisor_shutdown,
+        Some(state.clone()),
+        recovery_requests,
     ));
     let server = serve_rpc(listener, state.clone());
     tokio::pin!(server);
@@ -1476,13 +1515,21 @@ mod tests {
         io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, DuplexStream, ReadBuf},
         net::{TcpStream, UnixListener, UnixStream},
         process::Command,
-        sync::{Mutex, RwLock, oneshot},
+        sync::{Mutex, RwLock, mpsc, oneshot},
         time::timeout,
     };
 
     struct DropSignalStream {
         stream: DuplexStream,
         drop_signal: Option<oneshot::Sender<()>>,
+    }
+
+    struct StalledDeviceServiceConnector;
+
+    impl DeviceServiceConnector for StalledDeviceServiceConnector {
+        fn connect(&self, _device_id: String, _port: u16) -> DeviceServiceConnectFuture {
+            Box::pin(std::future::pending())
+        }
     }
 
     impl Drop for DropSignalStream {
@@ -1746,6 +1793,8 @@ mod tests {
             socket_path.clone(),
             pairing_store,
             shutdown.clone(),
+            None,
+            mpsc::unbounded_channel().1,
         ));
 
         timeout(Duration::from_secs(2), async {
@@ -1776,6 +1825,133 @@ mod tests {
             .expect("supervisor task panicked");
         assert!(!socket_path.exists());
         fs::remove_dir_all(directory).expect("fixture directory should be removed");
+    }
+
+    #[tokio::test]
+    async fn stalled_agent_rpc_requests_mux_recovery_before_client_timeout() {
+        let directory = PathBuf::from(format!("/tmp/dkrypt-rpc-recovery-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&directory).expect("test directory should be created");
+        let socket_path = directory.join("bridge.sock");
+        let listener = UnixListener::bind(&socket_path).expect("RPC socket should bind");
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let state = Arc::new(BridgeState {
+            secrets: vec!["bridge-test-secret".to_string()],
+            mux_socket: directory.join("mux.sock"),
+            host_id: "test-host".to_string(),
+            service_connector: Arc::new(StalledDeviceServiceConnector),
+            shutdown: CancellationToken::new(),
+            operation_gate: RwLock::new(()),
+            tunnels: Mutex::new(HashMap::new()),
+            cancellations: Mutex::new(HashMap::new()),
+            event_sequence: AtomicU64::new(0),
+            mux_recovery: Some(sender),
+        });
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("RPC socket should accept");
+            handle_client(stream, state).await;
+        });
+        let mut client = UnixStream::connect(&socket_path)
+            .await
+            .expect("RPC socket should connect");
+        let request = json!({
+            "version": RPC_VERSION,
+            "requestId": "stalled-agent",
+            "auth": "bridge-test-secret",
+            "operation": "agent",
+            "deviceId": "fixture-device",
+            "agentSecret": "fixture-agent-secret",
+            "payload": {},
+            "deadlineMs": 50,
+        });
+        let payload = serde_json::to_vec(&request).expect("request should encode");
+        client
+            .write_u32(payload.len() as u32)
+            .await
+            .expect("length should write");
+        client
+            .write_all(&payload)
+            .await
+            .expect("request should write");
+        let frame = timeout(Duration::from_secs(1), read_frame(&mut client))
+            .await
+            .expect("RPC should respond before client timeout")
+            .expect("RPC frame should be valid")
+            .expect("RPC frame should exist");
+        let reply: Value = serde_json::from_slice(&frame).expect("RPC response should decode");
+        assert_eq!(reply["error"]["code"], "deadline_exceeded");
+        assert_eq!(
+            receiver
+                .try_recv()
+                .expect("mux recovery should be requested"),
+            "fixture-device"
+        );
+        drop(client);
+        server.await.expect("RPC server should stop");
+        fs::remove_dir_all(directory).expect("test directory should be removed");
+    }
+
+    #[tokio::test]
+    async fn stalled_service_probe_restarts_live_netmuxd_child() {
+        let directory = PathBuf::from(format!(
+            "/tmp/dkrypt-netmuxd-stall-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let socket_path = directory.join("netmuxd.sock");
+        let pairing_store = directory.join("pairing");
+        let restart_counter = pairing_store.join("restarts");
+        let executable = directory.join("netmuxd-fixture");
+        fs::create_dir_all(&pairing_store).expect("pairing directory should be created");
+        fs::write(&executable, "#!/bin/sh\nset -eu\nsocket=\nstore=\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"--socket-path\" ]; then socket=$2; shift 2; elif [ \"$1\" = \"--plist-storage\" ]; then store=$2; shift 2; else shift; fi\ndone\nprintf x >> \"$store/restarts\"\n: > \"$socket\"\nexec sleep 30\n").expect("fixture executable should be written");
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))
+            .expect("fixture executable should be executable");
+        let (stream, _peer) = tokio::io::duplex(16);
+        let connector = FixtureDeviceServiceConnector::new(stream);
+        connector.stream.lock().await.take();
+        let shutdown = CancellationToken::new();
+        let (sender, receiver) = mpsc::unbounded_channel();
+        let state = Arc::new(BridgeState {
+            secrets: vec!["bridge-test-secret".to_string()],
+            mux_socket: socket_path.clone(),
+            host_id: "test-host".to_string(),
+            service_connector: Arc::new(connector),
+            shutdown: shutdown.clone(),
+            operation_gate: RwLock::new(()),
+            tunnels: Mutex::new(HashMap::new()),
+            cancellations: Mutex::new(HashMap::new()),
+            event_sequence: AtomicU64::new(0),
+            mux_recovery: Some(sender.clone()),
+        });
+        let supervisor = tokio::spawn(supervise_netmuxd(
+            executable.to_string_lossy().into_owned(),
+            socket_path.clone(),
+            pairing_store,
+            shutdown.clone(),
+            Some(state),
+            receiver,
+        ));
+        timeout(Duration::from_secs(2), async {
+            while fs::read_to_string(&restart_counter).map_or(true, |value| value.len() < 1) {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("netmuxd fixture should start");
+        sender
+            .send("fixture-device".to_string())
+            .expect("recovery request should send");
+        timeout(Duration::from_secs(3), async {
+            while fs::read_to_string(&restart_counter).map_or(true, |value| value.len() < 2) {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("stalled netmuxd fixture should restart");
+        shutdown.cancel();
+        timeout(Duration::from_secs(2), supervisor)
+            .await
+            .expect("supervisor should stop")
+            .expect("supervisor should not panic");
+        fs::remove_dir_all(directory).expect("test directory should be removed");
     }
 
     #[tokio::test]
@@ -1925,6 +2101,7 @@ mod tests {
             tunnels: Mutex::new(HashMap::new()),
             cancellations: Mutex::new(HashMap::new()),
             event_sequence: AtomicU64::new(0),
+            mux_recovery: None,
         });
         let server = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.expect("test socket accept failed");
@@ -2000,6 +2177,7 @@ mod tests {
             tunnels: Mutex::new(HashMap::new()),
             cancellations: Mutex::new(HashMap::new()),
             event_sequence: AtomicU64::new(0),
+            mux_recovery: None,
         });
         let server = tokio::spawn(async move {
             for _ in 0..2 {
@@ -2130,6 +2308,7 @@ mod tests {
             tunnels: Mutex::new(HashMap::new()),
             cancellations: Mutex::new(HashMap::new()),
             event_sequence: AtomicU64::new(0),
+            mux_recovery: None,
         });
         let server = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.expect("test socket accept failed");
@@ -2210,6 +2389,7 @@ mod tests {
             tunnels: Mutex::new(HashMap::new()),
             cancellations: Mutex::new(HashMap::new()),
             event_sequence: AtomicU64::new(0),
+            mux_recovery: None,
         });
         let admission_blocker = state.operation_gate.write().await;
         let server = tokio::spawn(serve_rpc(listener, state.clone()));
@@ -2267,6 +2447,7 @@ mod tests {
             tunnels: Mutex::new(HashMap::new()),
             cancellations: Mutex::new(HashMap::new()),
             event_sequence: AtomicU64::new(0),
+            mux_recovery: None,
         });
         let active_operation = state.register_cancellation("active-operation").await;
         let admission_blocker = state.operation_gate.write().await;
@@ -2322,6 +2503,7 @@ mod tests {
             tunnels: Mutex::new(HashMap::new()),
             cancellations: Mutex::new(HashMap::new()),
             event_sequence: AtomicU64::new(0),
+            mux_recovery: None,
         });
         let server = tokio::spawn(serve_rpc(listener, state));
         let mut client = UnixStream::connect(&socket_path)
@@ -2373,6 +2555,7 @@ mod tests {
             tunnels: Mutex::new(HashMap::new()),
             cancellations: Mutex::new(HashMap::new()),
             event_sequence: AtomicU64::new(0),
+            mux_recovery: None,
         });
         let server = tokio::spawn(serve_rpc(listener, state));
         let mut client = UnixStream::connect(&socket_path)
@@ -2477,6 +2660,7 @@ mod tests {
             tunnels: Mutex::new(HashMap::new()),
             cancellations: Mutex::new(HashMap::new()),
             event_sequence: AtomicU64::new(0),
+            mux_recovery: None,
         });
         let server = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.expect("test socket accept failed");
@@ -2620,6 +2804,7 @@ mod tests {
             tunnels: Mutex::new(HashMap::new()),
             cancellations: Mutex::new(HashMap::new()),
             event_sequence: AtomicU64::new(0),
+            mux_recovery: None,
         });
         let bridge_server = tokio::spawn(async move {
             let (stream, _) = bridge_listener

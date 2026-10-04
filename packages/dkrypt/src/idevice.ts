@@ -196,7 +196,7 @@ class RustDeviceBridgeClient {
     throwIfAborted(signal);
     if (secret.length < 32) throw new DeviceAgentUnavailableError('DEVICE_BRIDGE_SECRET is missing or too short');
     const requestId = randomUUID();
-    const body = Buffer.from(JSON.stringify({ version: 1, requestId, auth: secret, operation, ...details }), 'utf8');
+    const body = Buffer.from(JSON.stringify({ version: 1, requestId, auth: secret, operation, ...details, deadlineMs: Math.max(1, timeoutMs - 1_000) }), 'utf8');
     if (body.length === 0 || body.length > 16 * 1024 * 1024) throw new Error('Rust device bridge request is too large');
     const frame = Buffer.allocUnsafe(body.length + 4);
     frame.writeUInt32BE(body.length, 0);

@@ -746,6 +746,16 @@ test('reports a device as paired only after the saved record authenticates that 
   expect(operations).toEqual(['pair', 'metadata']);
 });
 
+test('sets the Rust request deadline before the client timeout', async () => {
+  let rustDeadline: unknown;
+  await withRustBridgeFixture((request) => {
+    rustDeadline = request.deadlineMs;
+    return { UniqueDeviceID: 'fixture-paired-device-identifier' };
+  }, () => verifyRustDevicePairing({ transport: 'usb', udid: 'fixture-paired-device-identifier' }));
+
+  expect(rustDeadline).toBe(9_000);
+});
+
 test('rejects a saved pairing record that authenticates a different device', async () => {
   const deviceId = 'fixture-paired-device-identifier';
   const { operations } = await withRustBridgeFixture(
