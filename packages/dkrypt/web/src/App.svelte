@@ -27,6 +27,7 @@
 	import MaintenanceBanner from "#components/MaintenanceBanner.svelte";
 	import UpdateAvailableBanner from "#components/UpdateAvailableBanner.svelte";
 	import HeaderOnlineUsers from "#components/HeaderOnlineUsers.svelte";
+	import BackgroundTaskTray from "#components/BackgroundTaskTray.svelte";
 	import Login from "#components/Login.svelte";
 	import MfaVerification from "#components/MfaVerification.svelte";
 	import LegalPage from "#components/LegalPage.svelte";
@@ -705,15 +706,11 @@ initDensity();
 			</div>
 			<div class="hidden min-w-0 flex-1 lg:block">
 				<div class="text-[11px] font-medium tracking-[0.14em] text-muted-foreground uppercase" lang={interfaceLanguage}>{msg("nav.workspace")}</div>
-				<div class="flex min-w-0 items-center justify-between gap-3">
-					<div class="truncate text-sm font-semibold text-foreground" lang={interfaceLanguage}>{msg(visibleTabs.find((tab) => tab.id === tabState.active)?.label ?? "nav.workspace")}</div>
-					{#if sessionState.deployment?.ref}
-						<span class="shrink-0 font-mono text-[10px] text-muted" title={sessionState.deployment.ref}>Build {sessionState.deployment.ref.slice(0, 7)}</span>
-					{/if}
-				</div>
+				<div class="truncate text-sm font-semibold text-foreground" lang={interfaceLanguage}>{msg(visibleTabs.find((tab) => tab.id === tabState.active)?.label ?? "nav.workspace")}</div>
 			</div>
 			<div class="min-w-0 flex flex-1 flex-wrap items-center justify-end gap-2.5 lg:flex-none">
 				<HeaderOnlineUsers />
+				<BackgroundTaskTray />
 				<a
 					href="https://github.com/unbound-app/dkrypt"
 					target="_blank"

@@ -1962,6 +1962,7 @@ test('device comparison keeps unknown readings distinct from unhealthy readings'
 });
 
 test('interrupted device setup remains available after navigation and can resume', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
   await mockStableDashboardEvents(page);
   await mockAuthenticatedDashboard(page, '1');
   let resumed = false;
@@ -1981,6 +1982,9 @@ test('interrupted device setup remains available after navigation and can resume
   });
   await page.route('**/v1/dashboard/devices/discover', async (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ devices: [], scannedNetworks: [], warnings: [] }) }));
   await page.goto('/?tab=settings&stab=devices');
+  await page.getByRole('button', { name: 'Background tasks' }).click();
+  await expect(page.getByRole('dialog')).toContainText('Device setup');
+  await page.keyboard.press('Escape');
   await expect(page.getByRole('button', { name: 'Continue setup' })).toBeVisible();
   await page.getByRole('button', { name: 'Continue setup' }).click();
   await expect(page.getByRole('dialog')).toContainText('Connecting and checking the device');
@@ -2229,12 +2233,12 @@ test('authenticated top bar exposes community links without mobile overflow', as
   await expectAccessible(page, 'header.glass-topbar');
 });
 
-test('authenticated dashboard shows the running build revision', async ({ page }) => {
+test('authenticated dashboard keeps the build revision out of its header', async ({ page }) => {
   await mockAuthenticatedDashboard(page, '1');
 
   await page.goto('/');
 
-  await expect(page.getByText('Build abcdef0', { exact: true })).toBeVisible();
+  await expect(page.getByText('Build abcdef0', { exact: true })).toHaveCount(0);
 });
 
 test('API documentation embeds Scalar in the Docs tab with a new-tab fallback', async ({ page }) => {
@@ -2828,6 +2832,11 @@ test('IPA Library bulk pinning sends one bounded update for the selected artifac
   expect(bulkRequests[0]).toEqual({ ids: ['bulk-artifact-a'], pinned: true });
   await expect(page.getByText('Pinned', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Pin selected', exact: true })).not.toBeVisible();
+  await page.getByRole('button', { name: 'Background tasks' }).click();
+  await expect(page.getByRole('dialog')).toContainText('Updated 1 artifacts');
+  await page.reload();
+  await page.getByRole('button', { name: 'Background tasks' }).click();
+  await expect(page.getByRole('dialog')).toContainText('Updated 1 artifacts');
 });
 
 test('audit history virtualizes entries without losing older records', async ({ page }) => {

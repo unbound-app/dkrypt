@@ -49,6 +49,7 @@
   import { announceScreenReader, confirmDialog, deviceDetailJumpState, homeViewModesState, interfaceLanguageState, showToast, systemLocalesState } from '#lib/ui.svelte';
   import { pushHomeViewMode } from '#lib/session.svelte';
   import { clearFormDraft, readFormDraft, setFormUnsaved, writeFormDraft } from '#lib/formDrafts.svelte';
+  import { startBackgroundTask, updateBackgroundTask } from '#lib/backgroundTasks.svelte';
   import { resolveInterfaceLanguage } from '#lib/locale';
   import { translateMessage, type MessageKey } from '#lib/messages';
 
@@ -226,12 +227,15 @@
   let inventory = $state<{ deviceId: string; bundles: string[] } | null>(null);
 
   async function testConnection(device: DeviceRecord): Promise<void> {
+    const taskId = startBackgroundTask('device_check', 'Device connection check', 'Contacting device transport', '/?tab=settings&stab=devices');
     testingId = new Set(testingId).add(device.id);
     try {
       const value = await fetchDeviceHealth(device.id, true);
       health = { ...health, [device.id]: value };
+      updateBackgroundTask(taskId, value.reachable ? 'complete' : 'failed', value.reachable ? 'Connection verified' : 'Device unreachable', value.error);
       showToast(value.reachable ? `${device.name} is reachable` : `${device.name} is unreachable${value.error ? `: ${value.error}` : ''}`, value.reachable ? 'success' : 'error');
     } catch (error) {
+      updateBackgroundTask(taskId, 'failed', 'Connection check failed', error instanceof Error ? error.message : undefined);
       showToast(error instanceof Error ? error.message : 'Connection test failed', 'error');
     } finally {
       const next = new Set(testingId);
@@ -241,11 +245,14 @@
   }
 
   async function inspectDevice(device: DeviceRecord): Promise<void> {
+    const taskId = startBackgroundTask('device_check', 'Device preflight', 'Checking prerequisites', '/?tab=settings&stab=devices');
     inspectingId = new Set(inspectingId).add(device.id);
     try {
       preflight = await fetchDevicePreflight(device.id);
       preflightOpen = true;
+      updateBackgroundTask(taskId, preflight.ready ? 'complete' : 'failed', preflight.ready ? 'Prerequisites verified' : 'Prerequisites need attention');
     } catch (error) {
+      updateBackgroundTask(taskId, 'failed', 'Preflight failed', error instanceof Error ? error.message : undefined);
       showToast(error instanceof Error ? error.message : 'Preflight failed', 'error');
     } finally {
       const next = new Set(inspectingId);
@@ -255,11 +262,14 @@
   }
 
   async function inspectInventory(device: DeviceRecord): Promise<void> {
+    const taskId = startBackgroundTask('device_check', 'Device inventory', 'Reading installed apps', '/?tab=settings&stab=devices');
     inspectingId = new Set(inspectingId).add(device.id);
     try {
       inventory = await fetchDeviceInventory(device.id);
       inventoryOpen = true;
+      updateBackgroundTask(taskId, 'complete', 'Inventory available');
     } catch (error) {
+      updateBackgroundTask(taskId, 'failed', 'Inventory lookup failed', error instanceof Error ? error.message : undefined);
       showToast(error instanceof Error ? error.message : 'Inventory lookup failed', 'error');
     } finally {
       const next = new Set(inspectingId);

@@ -23,6 +23,7 @@
   import { resolveInterfaceLanguage } from '#lib/locale';
   import { translateMessage } from '#lib/messages';
   import { showToast } from '#lib/ui.svelte';
+  import { startBackgroundTask, updateBackgroundTask } from '#lib/backgroundTasks.svelte';
   import { getQueryParam, setQueryParams } from '#lib/urlState';
   import ArtifactLibraryRow from '#features/artifacts/ArtifactLibraryRow.svelte';
   import ArtifactCompareDialog from '#features/artifacts/ArtifactCompareDialog.svelte';
@@ -371,12 +372,15 @@
 
   async function downloadSelectedZip(): Promise<void> {
     if (zipBusy || selectAllMatching || selectedArtifactIds.size === 0) return;
+    const taskId = startBackgroundTask('export', `Export ${selectedArtifactIds.size} artifacts`, 'Preparing ZIP archive', '/?tab=home');
     zipBusy = true;
     error = '';
     try {
       await downloadDashboardArtifactsZip([...selectedArtifactIds]);
+      updateBackgroundTask(taskId, 'complete', 'ZIP downloaded');
     } catch (err) {
       error = err instanceof Error ? err.message : 'Could not export selected artifacts';
+      updateBackgroundTask(taskId, 'failed', 'ZIP export failed', error);
     } finally {
       zipBusy = false;
     }
@@ -390,6 +394,7 @@
 
   async function bulkSetPinned(pinned: boolean): Promise<void> {
     if (bulkUpdating || (!selectAllMatching && selectedArtifactIds.size === 0)) return;
+    const taskId = startBackgroundTask('bulk', pinned ? 'Pin artifacts' : 'Unpin artifacts', 'Applying selection', '/?tab=home');
     bulkUpdating = true;
     error = '';
     try {
@@ -397,7 +402,11 @@
       const result = selectAllMatching
         ? await setDashboardArtifactsPinnedByQuery(currentSelectionFilter(), pinned)
         : await setDashboardArtifactsPinned([...selectedArtifactIds], pinned);
-      if (!result.ok) return;
+      if (!result.ok) {
+        updateBackgroundTask(taskId, 'failed', 'Bulk pin change failed');
+        return;
+      }
+      updateBackgroundTask(taskId, 'complete', `Updated ${result.data.changedIds.length} artifacts`);
       const updatedById = new Map(result.data.artifacts.map((artifact) => [artifact.artifactId, artifact]));
       artifacts = artifacts.map((artifact) => {
         const updated = updatedById.get(artifact.id);
@@ -413,6 +422,7 @@
       selectAllMatching = false;
     } catch (err) {
       error = err instanceof Error ? err.message : 'Could not update the selected artifacts';
+      updateBackgroundTask(taskId, 'failed', 'Bulk pin change failed', error);
     } finally {
       bulkUpdating = false;
     }
@@ -420,6 +430,7 @@
 
   async function bulkSetArchived(archived: boolean): Promise<void> {
     if (bulkUpdating || (!selectAllMatching && selectedArtifactIds.size === 0)) return;
+    const taskId = startBackgroundTask('bulk', archived ? 'Archive artifacts' : 'Restore artifacts', 'Applying selection', '/?tab=home');
     const querySelection = selectAllMatching;
     bulkUpdating = true;
     error = '';
@@ -428,7 +439,11 @@
       const result = selectAllMatching
         ? await setDashboardArtifactsArchivedByQuery(currentSelectionFilter(), archived)
         : await setDashboardArtifactsArchived([...selectedArtifactIds], archived);
-      if (!result.ok) return;
+      if (!result.ok) {
+        updateBackgroundTask(taskId, 'failed', 'Bulk archive change failed');
+        return;
+      }
+      updateBackgroundTask(taskId, 'complete', `Updated ${result.data.changedIds.length} artifacts`);
       selectedArtifactIds = new Set();
       selectAllMatching = false;
       const count = result.data.changedIds.length;
@@ -448,6 +463,7 @@
       if (changes.length > 0) offerUndo(changes, archived ? 'undo.artifactArchived' : 'undo.artifactRestored');
     } catch (err) {
       error = err instanceof Error ? err.message : 'Could not update the selected artifacts';
+      updateBackgroundTask(taskId, 'failed', 'Bulk archive change failed', error);
     } finally {
       bulkUpdating = false;
     }
