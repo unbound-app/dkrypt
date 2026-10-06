@@ -277,11 +277,14 @@ test('self-hosted device setup rejects untrusted proxy forwarding and mismatched
   }
 });
 
+let signInCount = 0;
+
 async function signIn() {
   const server = await buildTestServer({ includePublicRoutes: false });
   const login = await server.inject({
     method: 'POST',
     url: '/v1/auth/login',
+    remoteAddress: `198.18.0.${++signInCount}`,
     payload: { password: process.env.ADMIN_PASSWORD },
   });
   const cookie = login.headers['set-cookie'];
