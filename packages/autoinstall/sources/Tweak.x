@@ -9,13 +9,32 @@
 #import <signal.h>
 #import <fcntl.h>
 #import <sys/file.h>
+#import <sys/wait.h>
 #import <unistd.h>
 
 extern char **environ;
 
 static void runSpawnAsync(const char *path, char *const argv[]) {
     pid_t pid = 0;
-    posix_spawn(&pid, path, NULL, NULL, argv, environ);
+    if (posix_spawn(&pid, path, NULL, NULL, argv, environ) != 0 || pid <= 0) return;
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        int status = 0;
+        for (NSUInteger attempt = 0; attempt < 300; attempt++) {
+            pid_t result = waitpid(pid, &status, WNOHANG);
+            if (result == pid || (result < 0 && errno == ECHILD)) return;
+            if (result < 0 && errno != EINTR) return;
+            usleep(100000);
+        }
+        kill(pid, SIGTERM);
+        for (NSUInteger attempt = 0; attempt < 10; attempt++) {
+            pid_t result = waitpid(pid, &status, WNOHANG);
+            if (result == pid || (result < 0 && errno == ECHILD)) return;
+            if (result < 0 && errno != EINTR) return;
+            usleep(100000);
+        }
+        kill(pid, SIGKILL);
+        while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+    });
 }
 
 @protocol TFNetworkManagerProtocol <NSObject>
