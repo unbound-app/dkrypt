@@ -227,7 +227,13 @@ export async function installFromAppStore(bundleId: string, options: AppStoreIns
         ensureNotCancelled();
         if (Date.now() - lastInstallStatusAt >= APP_STORE_INSTALL_STATUS_POLL_INTERVAL_MS) {
           lastInstallStatusAt = Date.now();
-          const bridgeStatus = await sendAppStoreBridgeRequest(conn, { action: 'status' }, APP_STORE_BRIDGE_STATUS_TIMEOUT_MS, options.signal);
+          let bridgeStatus: unknown;
+          try {
+            bridgeStatus = await sendAppStoreBridgeRequest(conn, { action: 'status' }, APP_STORE_BRIDGE_STATUS_TIMEOUT_MS, options.signal);
+          } catch (error) {
+            ensureNotCancelled();
+            log.warn('App Store status poll failed while installation continues', { bundleId, externalVersionId, error: String(error) });
+          }
           ensureNotCancelled();
           const install = currentInstallStatus(bridgeStatus, operationId);
           lastInstallState = typeof install?.state === 'string' ? install.state : lastInstallState;

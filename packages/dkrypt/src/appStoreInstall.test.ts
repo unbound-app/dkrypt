@@ -13,6 +13,7 @@ let installStatusSequence: Record<string, unknown>[] = [];
 let guardedUninstallFails = false;
 let foregroundStatuses: boolean[] = [];
 let bridgeStatusErrors = 0;
+let postInstallStatusErrors = 0;
 let foregroundRequests = 0;
 let listingPrice = 0;
 let listingBundleId = '';
@@ -40,6 +41,10 @@ mock.module('#idevice.js', () => ({
   sendAppStoreBridgeRequest: async (_conn: object, request: Record<string, unknown>) => {
     if (request.action === 'status') {
       calls.push('status');
+      if (installRequest && postInstallStatusErrors > 0) {
+        postInstallStatusErrors -= 1;
+        throw new Error('could not publish bridge request: command timed out');
+      }
       if (bridgeStatusErrors > 0) {
         bridgeStatusErrors -= 1;
         throw new Error('status request timed out');
@@ -109,6 +114,7 @@ describe('installFromAppStore', () => {
     guardedUninstallFails = false;
     foregroundStatuses = [true];
     bridgeStatusErrors = 0;
+    postInstallStatusErrors = 0;
     foregroundRequests = 0;
     listingPrice = 0;
     listingBundleId = '';
@@ -206,6 +212,15 @@ describe('installFromAppStore', () => {
     expect(calls.filter((call) => call === 'status')).toHaveLength(3);
     expect(foregroundRequests).toBe(2);
     expect(calls).toEqual(['restart', 'status', 'status', 'arm', 'request', 'status', 'clear']);
+  });
+
+  test('keeps waiting when an App Store status poll times out after the purchase starts', async () => {
+    postInstallStatusErrors = 1;
+    installedBundles = [undefined, { path: '/apps/Discord.app', shortVersion: '338.0' }];
+
+    await expect(installFromAppStore('com.hammerandchisel.discord')).resolves.toMatchObject({ shortVersion: '338.0' });
+
+    expect(calls).toEqual(['restart', 'status', 'arm', 'request', 'status', 'clear']);
   });
 
   test('continues when the App Store bridge is responsive but inactive', async () => {
