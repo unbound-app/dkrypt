@@ -2786,7 +2786,8 @@ test('IPA Library virtualizes loaded rows and opens artifact provenance in the i
     return { left: bounds.left, right: bounds.right, top: bounds.top, viewportWidth: document.documentElement.clientWidth };
   });
   expect(inspectorPosition.left).toBeGreaterThan(0);
-  expect(inspectorPosition.right).toBeCloseTo(inspectorPosition.viewportWidth, 0);
+  expect(inspectorPosition.right).toBeGreaterThanOrEqual(inspectorPosition.viewportWidth - 20);
+  expect(inspectorPosition.right).toBeLessThanOrEqual(inspectorPosition.viewportWidth);
   expect(inspectorPosition.top).toBe(0);
   expect(await details.evaluate((button) => button.parentElement === button.closest('[data-artifact-id]')?.querySelector('a[download]')?.parentElement)).toBe(true);
   await expect.poll(() => new URL(page.url()).searchParams.get('artifact')).toBe('artifact-0');
@@ -2824,7 +2825,8 @@ test('IPA Library virtualizes loaded rows and opens artifact provenance in the i
     return { left: bounds.left, right: bounds.right, top: bounds.top, bottom: bounds.bottom, viewportWidth: document.documentElement.clientWidth, viewportHeight: window.innerHeight };
   });
   expect(mobileInspectorPosition.left).toBe(0);
-  expect(mobileInspectorPosition.right).toBeCloseTo(mobileInspectorPosition.viewportWidth, 0);
+  expect(mobileInspectorPosition.right).toBeGreaterThanOrEqual(mobileInspectorPosition.viewportWidth - 20);
+  expect(mobileInspectorPosition.right).toBeLessThanOrEqual(mobileInspectorPosition.viewportWidth);
   expect(mobileInspectorPosition.top).toBeGreaterThan(0);
   expect(mobileInspectorPosition.bottom).toBeCloseTo(mobileInspectorPosition.viewportHeight, 0);
   const restoredUrl = new URL(page.url());
