@@ -6,6 +6,7 @@ import type { Job } from '#jobs/types.js';
 import { enqueueDecryptJob, ScheduledJobDeferredError, waitForJob, type EnqueueDecryptJobOptions } from '#jobs/store.js';
 import { SCHEDULER_JOB_TIMEOUT_MS } from '#jobs/timeouts.js';
 import { getMaintenanceStatus } from '#maintenance.js';
+import { getDeviceHealth } from '#deviceHealth.js';
 import { scopedLogger } from '#logger.js';
 
 const log = scopedLogger('scheduler');
@@ -16,6 +17,7 @@ import {
   createBackupSnapshot,
   getBackupSchedule,
   getEffectiveSettings,
+  getEffectiveDevices,
   getEffectiveWatches,
   markWatchScheduleRun,
   getWatchDispatchTargets,
@@ -162,7 +164,12 @@ interface DispatchResult {
 
 type ScheduledEnqueueResult = { kind: 'job'; job: Job } | { kind: 'deferred'; reason: string };
 
-function enqueueScheduledDecryptJob(bundleId: string, options: EnqueueDecryptJobOptions): ScheduledEnqueueResult {
+async function enqueueScheduledDecryptJob(bundleId: string, options: EnqueueDecryptJobOptions): Promise<ScheduledEnqueueResult> {
+  await Promise.all(getEffectiveDevices()
+    .filter((device) => device.enabled && !device.draining)
+    .map((device) => getDeviceHealth(device.id).catch((error: unknown) => {
+      log.warn('could not refresh device health before scheduled decrypt', { deviceId: device.id, error: String(error) });
+    })));
   try {
     return {
       kind: 'job',
@@ -519,7 +526,7 @@ async function tickAppStore(watch: AppWatch, retryCount: number): Promise<Dispat
 
   log.info('no matching release found, decrypting', { bundleId: watch.bundleId, version: normalized, externalVersionId });
 
-  const enqueueResult = enqueueScheduledDecryptJob(watch.bundleId, {
+  const enqueueResult = await enqueueScheduledDecryptJob(watch.bundleId, {
     externalVersionId,
     versionLabel: normalized,
     projectId: watch.projectId ?? DEFAULT_PROJECT_ID,
@@ -611,7 +618,7 @@ async function tickTestFlight(watch: AppWatch, retryCount: number): Promise<Disp
     tag: check.latestTag,
   });
 
-  const enqueueResult = enqueueScheduledDecryptJob(watch.bundleId, {
+  const enqueueResult = await enqueueScheduledDecryptJob(watch.bundleId, {
     testflight: { appId: check.appId as number, build: check.build },
     projectId: watch.projectId ?? DEFAULT_PROJECT_ID,
   });
