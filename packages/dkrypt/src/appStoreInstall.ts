@@ -29,6 +29,7 @@ const APP_STORE_BRIDGE_READY_TIMEOUT_MS = 20_000;
 const APP_STORE_BRIDGE_STATUS_TIMEOUT_MS = 3_000;
 const APP_STORE_BRIDGE_POLL_INTERVAL_MS = 500;
 const APP_STORE_INSTALL_STATUS_POLL_INTERVAL_MS = 5_000;
+const APP_STORE_USER_ACTION_SETTLE_MS = 10_000;
 
 export class AppStoreUserActionRequiredError extends Error {
   readonly retryable = false;
@@ -229,6 +230,7 @@ export async function installFromAppStore(bundleId: string, options: AppStoreIns
       let lastInstallStatusAt = Number.NEGATIVE_INFINITY;
       let lastReportedAt = 0;
       let lastUnexpectedVersion: string | undefined;
+      let userActionFirstSeenAt: number | undefined;
       while (Date.now() < deadline) {
         ensureNotCancelled();
         if (Date.now() - lastInstallStatusAt >= APP_STORE_INSTALL_STATUS_POLL_INTERVAL_MS) {
@@ -236,7 +238,16 @@ export async function installFromAppStore(bundleId: string, options: AppStoreIns
           const bridgeStatus = await sendAppStoreBridgeRequest(conn, { action: 'status' }, APP_STORE_BRIDGE_STATUS_TIMEOUT_MS, options.signal);
           ensureNotCancelled();
           const failure = installStatusFailure(bridgeStatus, operationId);
-          if (failure) {
+          if (failure instanceof AppStoreUserActionRequiredError) {
+            userActionFirstSeenAt ??= Date.now();
+            if (Date.now() - userActionFirstSeenAt >= APP_STORE_USER_ACTION_SETTLE_MS) {
+              report(failure.message);
+              throw failure;
+            }
+          } else {
+            userActionFirstSeenAt = undefined;
+          }
+          if (failure && !(failure instanceof AppStoreUserActionRequiredError)) {
             report(failure.message);
             throw failure;
           }

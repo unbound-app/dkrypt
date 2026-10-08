@@ -9,6 +9,7 @@ let lastInstalledBundle: InstalledBundle | undefined;
 let installRequest: Record<string, unknown> | undefined;
 let installStatus: Record<string, unknown> = {};
 let installStatusAfterRequest: Record<string, unknown> | undefined;
+let installStatusSequence: Record<string, unknown>[] = [];
 let guardedUninstallFails = false;
 let foregroundStatuses: boolean[] = [];
 let bridgeStatusErrors = 0;
@@ -41,6 +42,7 @@ mock.module('#idevice.js', () => ({
         bridgeStatusErrors -= 1;
         throw new Error('status request timed out');
       }
+      if (installRequest && installStatusSequence.length > 0) installStatus = installStatusSequence.shift()!;
       return { capabilities: ['install', 'status', 'diagnostics', 'foreground_status', 'protocol_v1', 'authenticated_requests', 'operation_responses', 'heartbeats', 'stale_artifact_cleanup'], foreground: foregroundStatuses.shift() ?? true, install: installStatus };
     }
     installRequest = request;
@@ -97,6 +99,7 @@ describe('installFromAppStore', () => {
     installRequest = undefined;
     installStatus = {};
     installStatusAfterRequest = undefined;
+    installStatusSequence = [];
     guardedUninstallFails = false;
     foregroundStatuses = [true];
     bridgeStatusErrors = 0;
@@ -149,7 +152,34 @@ describe('installFromAppStore', () => {
     }
 
     expect(progress.some((message) => message.startsWith('App Store requires device action before installation can continue'))).toBe(true);
-    expect(calls).toEqual(['restart', 'status', 'arm', 'request', 'status', 'clear']);
+    expect(calls).toEqual(['restart', 'status', 'arm', 'request', 'status', 'status', 'status', 'clear']);
+  });
+
+  test('waits for a transient payment authorization screen before failing the install', async () => {
+    let now = 0;
+    Date.now = () => now;
+    globalThis.setTimeout = ((handler: () => void) => {
+      now += 5_000;
+      handler();
+      return 0;
+    }) as unknown as typeof setTimeout;
+    installedBundles = [undefined, undefined, { path: '/apps/Discord.app', shortVersion: '348.0' }];
+    installStatusSequence = [
+      { operationId: 'job-transient-payment-authorization', state: 'requires_user_action', reason: 'payment_authorization_ui' },
+      { operationId: 'job-transient-payment-authorization', state: 'completed' },
+    ];
+
+    try {
+      await expect(installFromAppStore('com.example.app', {
+        expectedVersion: '348.0',
+        operationId: 'job-transient-payment-authorization',
+      })).resolves.toMatchObject({ shortVersion: '348.0' });
+    } finally {
+      Date.now = originalDateNow;
+      globalThis.setTimeout = originalSetTimeout;
+    }
+
+    expect(calls).toEqual(['restart', 'status', 'arm', 'request', 'status', 'status', 'clear']);
   });
 
   test('retries after a temporarily unavailable bridge before purchasing', async () => {
