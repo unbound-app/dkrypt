@@ -11,7 +11,7 @@ const log = scopedLogger('jobs');
 import { sendMailToUser } from '#mail.js';
 import { sendPushToUser } from '#push.js';
 import { DEFAULT_PROJECT_ID, getAllJobHistory, getApiKeyById, getDevice, getEffectiveDevices, getProject, getTestFlightCatalogCache, getUserPrefs, isBundleWatched, recordDeviceActivity, recordJobHistory, updateDevice, type DeviceRecord } from '#store/state.js';
-import { AppStoreUserActionRequiredError, uninstallFromDevice } from '#appStoreInstall.js';
+import { uninstallFromDevice } from '#appStoreInstall.js';
 import { getCachedDeviceHealth } from '#deviceHealthCache.js';
 import { runDecrypt } from '#jobs/runner.js';
 import { appendJobTimelineEvent, type Job, type JobSource, type TestFlightJobSource } from '#jobs/types.js';
@@ -1000,8 +1000,7 @@ async function runOneJob(device: DeviceRecord, job: Job): Promise<void> {
       return;
     }
     job.failureClass = classifyJobFailure(message);
-    const explicitlyNonRetryable = err instanceof AppStoreUserActionRequiredError
-      || Boolean(err && typeof err === 'object' && 'retryable' in err && err.retryable === false);
+    const explicitlyNonRetryable = Boolean(err && typeof err === 'object' && 'retryable' in err && err.retryable === false);
     const remainingDeadlineMs = job.deadlineAt === undefined ? Number.POSITIVE_INFINITY : job.deadlineAt - Date.now();
     const canRetry = !explicitlyNonRetryable
       && !job.cancelledBy

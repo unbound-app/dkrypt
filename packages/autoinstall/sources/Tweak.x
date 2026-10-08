@@ -11,6 +11,7 @@
 #import <sys/file.h>
 #import <sys/wait.h>
 #import <unistd.h>
+#import "FreeInstallConfirmation.h"
 
 extern char **environ;
 
@@ -140,6 +141,7 @@ static void autoinstallLog(NSString *line) {
 
 static NSString * const kBridgeRootPath = @"/tmp/autoinstall/v1";
 static NSString * const kASInstallStatusPath = @"/tmp/autoinstall-as-install-status.json";
+static NSString * const kFreeAppStoreAuthorizationPath = @"/tmp/autoinstall-free-appstore-authorization.json";
 static NSString * const kPaymentAuthorizationGuardDirectory = @"/tmp/autoinstall-payment-authorization";
 static NSString * const kPaymentAuthorizationGuardLockPath = @"/tmp/autoinstall-payment-authorization.lock";
 static NSString * const kBridgeSecretPath = @"/var/mobile/Library/Preferences/dev.adrian.autoinstall-bridge.secret";
@@ -206,19 +208,41 @@ static void writeBridgeTransaction(NSString *channel, NSString *operationId, NSS
     writeJSONFile(bridgeTransactionPath(channel, operationId), transaction);
 }
 
-static void markAppStoreInstallRequiresUserAction(NSString *reason, NSString *viewController) {
+static NSDictionary *autoinstallActiveFreeAppStoreAuthorization(void) {
+    NSDictionary *authorization = readJSONFile(kFreeAppStoreAuthorizationPath);
+    NSDictionary *status = readJSONFile(kASInstallStatusPath);
+    NSString *operationId = [authorization[@"operationId"] isKindOfClass:[NSString class]] ? authorization[@"operationId"] : nil;
+    NSString *appName = [authorization[@"appName"] isKindOfClass:[NSString class]] ? authorization[@"appName"] : nil;
+    NSNumber *verifiedPrice = [authorization[@"verifiedPrice"] isKindOfClass:[NSNumber class]] ? authorization[@"verifiedPrice"] : nil;
+    NSNumber *issuedAt = [authorization[@"issuedAt"] isKindOfClass:[NSNumber class]] ? authorization[@"issuedAt"] : nil;
+    if (!operationId.length || !appName.length || !verifiedPrice || !issuedAt) return nil;
+    if (![status[@"operationId"] isEqual:operationId]) return nil;
+    if (![status[@"state"] isEqual:@"requested"] && ![status[@"state"] isEqual:@"authorizing"]) return nil;
+    NSTimeInterval age = [NSDate date].timeIntervalSince1970 - issuedAt.doubleValue;
+    if (age < 0 || age > 120 || verifiedPrice.doubleValue != 0) return nil;
+    return authorization;
+}
+
+static void autoinstallClearFreeAppStoreAuthorization(NSString *operationId) {
+    NSDictionary *authorization = readJSONFile(kFreeAppStoreAuthorizationPath);
+    if ([authorization[@"operationId"] isEqual:operationId]) [[NSFileManager defaultManager] removeItemAtPath:kFreeAppStoreAuthorizationPath error:nil];
+}
+
+static void markAppStoreInstallAuthorizationPending(NSString *viewController) {
     NSDictionary *current = readJSONFile(kASInstallStatusPath);
     NSString *operationId = [current[@"operationId"] isKindOfClass:[NSString class]] ? current[@"operationId"] : nil;
     if (![current[@"state"] isEqual:@"requested"] || !operationId.length) return;
+    BOOL freeInstall = autoinstallActiveFreeAppStoreAuthorization() != nil;
+    NSString *state = freeInstall ? @"authorizing" : @"requires_user_action";
     NSDictionary *status = @{
         @"ok": @YES,
         @"operationId": operationId,
-        @"state": @"requires_user_action",
-        @"reason": reason,
+        @"state": state,
+        @"reason": freeInstall ? @"free_install_confirmation" : @"payment_authorization_ui",
         @"viewController": viewController ?: @"unknown"
     };
     writeJSONFile(kASInstallStatusPath, status);
-    writeBridgeTransaction(@"appstore", operationId, @"requires_user_action", status);
+    writeBridgeTransaction(@"appstore", operationId, state, status);
 }
 
 static NSString *bridgeHMAC(NSString *secret, NSString *channel, NSString *requestId, NSNumber *issuedAt, NSString *payload) {
@@ -1232,6 +1256,9 @@ static BOOL gConfirmDoneThisSheet = NO;
 static BOOL gConfirmAttemptActive = NO;
 static BOOL gPaymentAuthorizationPromptVisible = NO;
 static __weak UIViewController *gPaymentAuthorizationPromptController = nil;
+static BOOL gFreeInstallConfirmationAttempted = NO;
+static NSString *gFreeInstallDiagnosticOperationId = nil;
+static BOOL gFreeInstallDiagnosticHasLabels = NO;
 static int gPaymentAuthorizationGuardLockFd = -1;
 static __weak id gPasswordSubmissionField = nil;
 
@@ -1301,6 +1328,7 @@ static void autoinstallClearPaymentAuthorizationGuard(void) {
     [[NSFileManager defaultManager] removeItemAtPath:autoinstallPaymentAuthorizationGuardPath([[NSProcessInfo processInfo] processIdentifier]) error:nil];
     gPaymentAuthorizationPromptVisible = NO;
     gPaymentAuthorizationPromptController = nil;
+    gFreeInstallConfirmationAttempted = NO;
     int lockFd = gPaymentAuthorizationGuardLockFd;
     gPaymentAuthorizationGuardLockFd = -1;
     autoinstallReleasePaymentAuthorizationGuardLock(lockFd);
@@ -1313,7 +1341,7 @@ static BOOL autoinstallIsPaymentAuthorizationController(UIViewController *contro
 static void autoinstallRecordPaymentAuthorizationPrompt(NSString *className) {
     gPaymentAuthorizationPromptVisible = YES;
     autoinstallWritePaymentAuthorizationGuard(className);
-    markAppStoreInstallRequiresUserAction(@"payment_authorization_ui", className);
+    markAppStoreInstallAuthorizationPending(className);
     gConfirmDoneThisSheet = YES;
     gConfirmAttemptActive = NO;
     autoinstallClearAutoConfirmFlags();
@@ -1321,6 +1349,7 @@ static void autoinstallRecordPaymentAuthorizationPrompt(NSString *className) {
 }
 
 static void autoinstallMarkPaymentAuthorizationPrompt(UIViewController *controller) {
+    if (gPaymentAuthorizationPromptController != controller) gFreeInstallConfirmationAttempted = NO;
     gPaymentAuthorizationPromptController = controller;
     NSString *className = NSStringFromClass([controller class]);
     autoinstallRecordPaymentAuthorizationPrompt(className);
@@ -1443,6 +1472,97 @@ static void autoinstallWalkAX(id element, void (^visit)(id el)) {
             for (UIView *sub in [(UIView *)element subviews]) autoinstallWalkAX(sub, visit);
         }
     } @catch (NSException *e) {}
+}
+
+static void autoinstallTryConfirmFreeAppStoreAuthorization(void) {
+    if (!gIsPassbookProcess || !gPaymentAuthorizationPromptVisible || gFreeInstallConfirmationAttempted) return;
+    NSDictionary *authorization = autoinstallActiveFreeAppStoreAuthorization();
+    if (!authorization) return;
+    NSMutableArray<NSString *> *labels = [NSMutableArray array];
+    NSMutableArray<NSString *> *buttons = [NSMutableArray array];
+    NSMutableArray *buttonElements = [NSMutableArray array];
+    NSMutableArray *roots = [NSMutableArray array];
+    UIView *controllerView = gPaymentAuthorizationPromptController.viewIfLoaded;
+    if (controllerView) [roots addObject:controllerView];
+    UIView *hostingView = [gStashedConfirmVC isKindOfClass:[UIViewController class]] ? [(UIViewController *)gStashedConfirmVC viewIfLoaded] : nil;
+    if (hostingView && ![roots containsObject:hostingView]) [roots addObject:hostingView];
+    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        if (![scene isKindOfClass:[UIWindowScene class]]) continue;
+        for (UIWindow *window in [(UIWindowScene *)scene windows]) {
+            if (window && ![roots containsObject:window]) [roots addObject:window];
+        }
+    }
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    for (UIWindow *window in [UIApplication sharedApplication].windows) {
+        if (window && ![roots containsObject:window]) [roots addObject:window];
+    }
+#pragma clang diagnostic pop
+    NSHashTable *visited = [NSHashTable hashTableWithOptions:NSPointerFunctionsObjectPointerPersonality | NSPointerFunctionsStrongMemory];
+    for (id root in roots) {
+        autoinstallWalkAX(root, ^(id element) {
+            if ([visited containsObject:element]) return;
+            [visited addObject:element];
+            NSMutableArray<NSString *> *values = [NSMutableArray array];
+            @try {
+                if ([element respondsToSelector:@selector(accessibilityLabel)]) {
+                    id label = [element accessibilityLabel];
+                    if ([label isKindOfClass:[NSString class]] && [label length]) [values addObject:label];
+                }
+                if ([element respondsToSelector:@selector(currentTitle)]) {
+                    id title = [element currentTitle];
+                    if ([title isKindOfClass:[NSString class]] && [title length]) [values addObject:title];
+                }
+                if ([element respondsToSelector:@selector(text)]) {
+                    id text = [element text];
+                    if ([text isKindOfClass:[NSString class]] && [text length]) [values addObject:text];
+                }
+            } @catch (NSException *exception) {}
+            BOOL isButton = NO;
+            @try {
+                isButton = [element isKindOfClass:[UIControl class]] || ([element respondsToSelector:@selector(accessibilityTraits)] && ([element accessibilityTraits] & UIAccessibilityTraitButton) != 0);
+            } @catch (NSException *exception) {}
+            for (NSString *value in values) {
+                if (![labels containsObject:value]) [labels addObject:value];
+                if (!isButton) continue;
+                if (![buttons containsObject:value]) [buttons addObject:value];
+                NSString *title = [value stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+                if (([title caseInsensitiveCompare:@"Install"] == NSOrderedSame || [title caseInsensitiveCompare:@"Installieren"] == NSOrderedSame) && ![buttonElements containsObject:element]) [buttonElements addObject:element];
+            }
+        });
+    }
+    NSTimeInterval age = [NSDate date].timeIntervalSince1970 - [authorization[@"issuedAt"] doubleValue];
+    BOOL canConfirm = autoinstallCanConfirmFreeInstall(authorization[@"appName"], labels, buttons, authorization[@"verifiedPrice"], age);
+    BOOL newDiagnosticOperation = ![gFreeInstallDiagnosticOperationId isEqualToString:authorization[@"operationId"]];
+    if (newDiagnosticOperation) gFreeInstallDiagnosticHasLabels = NO;
+    if (newDiagnosticOperation || (labels.count > 0 && !gFreeInstallDiagnosticHasLabels)) {
+        gFreeInstallDiagnosticOperationId = authorization[@"operationId"];
+        gFreeInstallDiagnosticHasLabels = labels.count > 0;
+        NSString *expectedName = autoinstallCanonicalAppName(authorization[@"appName"]);
+        BOOL headingFound = NO;
+        BOOL appNameFound = NO;
+        BOOL installLabelFound = NO;
+        for (NSString *label in labels) {
+            if ([label caseInsensitiveCompare:@"App Store"] == NSOrderedSame) headingFound = YES;
+            if ([autoinstallCanonicalAppName(label) isEqualToString:expectedName]) appNameFound = YES;
+            if ([label caseInsensitiveCompare:@"Install"] == NSOrderedSame || [label caseInsensitiveCompare:@"Installieren"] == NSOrderedSame) installLabelFound = YES;
+        }
+        autoinstallLog([NSString stringWithFormat:@"free App Store confirmation scan roots=%lu labels=%lu buttons=%lu heading=%@ app=%@ installLabel=%@ eligible=%@ operationId=%@", (unsigned long)roots.count, (unsigned long)labels.count, (unsigned long)buttons.count, headingFound ? @"yes" : @"no", appNameFound ? @"yes" : @"no", installLabelFound ? @"yes" : @"no", canConfirm ? @"yes" : @"no", authorization[@"operationId"]]);
+    }
+    if (!canConfirm || !buttonElements.count) return;
+    gFreeInstallConfirmationAttempted = YES;
+    id button = buttonElements.firstObject;
+    BOOL activated = NO;
+    @try {
+        if ([button respondsToSelector:@selector(accessibilityActivate)]) activated = [button accessibilityActivate];
+        if (!activated && [button isKindOfClass:[UIControl class]]) {
+            [(UIControl *)button sendActionsForControlEvents:UIControlEventTouchUpInside];
+            activated = YES;
+        }
+    } @catch (NSException *exception) {
+        autoinstallLog([NSString stringWithFormat:@"free App Store confirmation failed: %@", exception.name]);
+    }
+    autoinstallLog([NSString stringWithFormat:@"free App Store confirmation activation=%@ operationId=%@", activated ? @"yes" : @"no", authorization[@"operationId"]]);
 }
 
 static void autoinstallEnableAX(void) {
@@ -1981,6 +2101,7 @@ static void startPassbookSide(void) {
     dispatch_source_set_event_handler(gPassbookBridgeTimer, ^{
         @autoreleasepool {
         autoinstallRefreshPaymentAuthorizationPromptGuard();
+        autoinstallTryConfirmFreeAppStoreAuthorization();
         autoinstallHandlePasswordIfPresent();
 
         if (gConfirmDoneThisSheet) return;
@@ -2114,6 +2235,8 @@ static void handleAppStoreRequest(NSDictionary *req, NSString *responsePath, NSS
 
     NSNumber *adamId = req[@"adamId"];
     NSNumber *versionId = req[@"versionId"];
+    NSString *appName = [req[@"appName"] isKindOfClass:[NSString class]] ? req[@"appName"] : nil;
+    NSNumber *verifiedPrice = [req[@"verifiedPrice"] isKindOfClass:[NSNumber class]] ? req[@"verifiedPrice"] : nil;
     NSString *operationId = [req[@"operationId"] isKindOfClass:[NSString class]] ? req[@"operationId"] : [[NSUUID UUID] UUIDString];
     if (!adamId) {
         respond(@{@"ok": @NO, @"error": @"missing adamId"});
@@ -2169,6 +2292,7 @@ static void handleAppStoreRequest(NSDictionary *req, NSString *responsePath, NSS
 
             void (^completion)(id) = ^(id arg1) {
                 autoinstallLog([NSString stringWithFormat:@"as-install: completionBlock fired arg1=%@", arg1]);
+                autoinstallClearFreeAppStoreAuthorization(operationId);
                 if ([arg1 isKindOfClass:[NSError class]]) {
                     NSError *error = (NSError *)arg1;
                     NSDictionary *failure = @{
@@ -2187,9 +2311,15 @@ static void handleAppStoreRequest(NSDictionary *req, NSString *responsePath, NSS
 
             writeBridgeTransaction(@"appstore", operationId, @"requested", @{@"ok": @YES, @"adamId": adamId, @"versionId": versionId ?: [NSNull null]});
             writeJSONFile(kASInstallStatusPath, @{@"ok": @YES, @"operationId": operationId, @"state": @"requested", @"adamId": adamId, @"versionId": versionId ?: [NSNull null]});
+            if (appName.length && verifiedPrice && verifiedPrice.doubleValue == 0) {
+                writeJSONFile(kFreeAppStoreAuthorizationPath, @{@"operationId": operationId, @"appName": appName, @"verifiedPrice": verifiedPrice, @"issuedAt": @([NSDate date].timeIntervalSince1970)});
+            } else {
+                [[NSFileManager defaultManager] removeItemAtPath:kFreeAppStoreAuthorizationPath error:nil];
+            }
             [center _performPurchases:purchases hasBundlePurchase:NO withClientContext:(id)clientContext completionBlock:completion];
             respond(@{@"ok": @YES, @"requested": @YES, @"operationId": operationId});
         } @catch (NSException *exception) {
+            autoinstallClearFreeAppStoreAuthorization(operationId);
             autoinstallLog([NSString stringWithFormat:@"as-install: EXCEPTION name=%@ reason=%@", exception.name, exception.reason]);
             respond(@{@"ok": @NO, @"error": [NSString stringWithFormat:@"exception: %@ %@", exception.name, exception.reason]});
         }

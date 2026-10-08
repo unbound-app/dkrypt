@@ -14,6 +14,8 @@ let guardedUninstallFails = false;
 let foregroundStatuses: boolean[] = [];
 let bridgeStatusErrors = 0;
 let foregroundRequests = 0;
+let listingPrice = 0;
+let listingBundleId = '';
 const originalSetTimeout = globalThis.setTimeout;
 const originalDateNow = Date.now;
 
@@ -67,7 +69,11 @@ mock.module('#idevice.js', () => ({
 
 mock.module('#scheduler/itunes.js', () => ({
   ...itunes,
-  lookupCurrentVersion: async () => ({ trackId: 123, version: '338.0' }),
+  lookupCurrentVersion: async (bundleId: string) => {
+    listingBundleId = bundleId;
+    return { trackId: 123, version: '338.0' };
+  },
+  lookupAppMetadataByTrackId: async () => ({ trackId: 123, bundleId: listingBundleId, trackName: 'Example App', price: listingPrice }),
 }));
 
 mock.module('#store/state.js', () => ({
@@ -104,6 +110,8 @@ describe('installFromAppStore', () => {
     foregroundStatuses = [true];
     bridgeStatusErrors = 0;
     foregroundRequests = 0;
+    listingPrice = 0;
+    listingBundleId = '';
   });
 
   test('uses a distinct bridge operation id for each job retry', () => {
@@ -123,7 +131,13 @@ describe('installFromAppStore', () => {
     expect(calls).toEqual([]);
   });
 
-  test('surfaces a payment-authorization screen as a non-retryable device action requirement', async () => {
+  test('refuses a paid listing before changing the device', async () => {
+    listingPrice = 1.99;
+    await expect(installFromAppStore('com.example.app')).rejects.toThrow('requires a verified free listing');
+    expect(calls).toEqual([]);
+  });
+
+  test('does not demand human action while App Store authorization remains pending', async () => {
     let now = 0;
     Date.now = () => now;
     globalThis.setTimeout = ((handler: () => void) => {
@@ -131,7 +145,7 @@ describe('installFromAppStore', () => {
       handler();
       return 0;
     }) as unknown as typeof setTimeout;
-    installedBundles = [undefined, undefined];
+    installedBundles = [undefined, undefined, undefined, undefined, undefined];
     installStatusAfterRequest = {
       operationId: 'job-payment-authorization',
       state: 'requires_user_action',
@@ -141,21 +155,19 @@ describe('installFromAppStore', () => {
     try {
       await expect(installFromAppStore('com.example.app', {
         operationId: 'job-payment-authorization',
+        waitTimeoutMs: 20_000,
         onProgress: (message) => progress.push(message),
-      })).rejects.toMatchObject({
-        name: 'AppStoreUserActionRequiredError',
-        retryable: false,
-      });
+      })).rejects.toThrow('Autoinstall could not complete the free App Store confirmation');
     } finally {
       Date.now = originalDateNow;
       globalThis.setTimeout = originalSetTimeout;
     }
 
-    expect(progress.some((message) => message.startsWith('App Store requires device action before installation can continue'))).toBe(true);
-    expect(calls).toEqual(['restart', 'status', 'arm', 'request', 'status', 'status', 'status', 'clear']);
+    expect(progress.some((message) => message.includes('device action'))).toBe(false);
+    expect(calls).toEqual(['restart', 'status', 'arm', 'request', 'status', 'status', 'status', 'status', 'clear']);
   });
 
-  test('waits for a transient payment authorization screen before failing the install', async () => {
+  test('waits through a payment sheet until the requested version installs', async () => {
     let now = 0;
     Date.now = () => now;
     globalThis.setTimeout = ((handler: () => void) => {
@@ -163,8 +175,11 @@ describe('installFromAppStore', () => {
       handler();
       return 0;
     }) as unknown as typeof setTimeout;
-    installedBundles = [undefined, undefined, { path: '/apps/Discord.app', shortVersion: '348.0' }];
+    installedBundles = [undefined, undefined, undefined, undefined, undefined, { path: '/apps/Discord.app', shortVersion: '348.0' }];
     installStatusSequence = [
+      { operationId: 'job-transient-payment-authorization', state: 'requires_user_action', reason: 'payment_authorization_ui' },
+      { operationId: 'job-transient-payment-authorization', state: 'requires_user_action', reason: 'payment_authorization_ui' },
+      { operationId: 'job-transient-payment-authorization', state: 'requires_user_action', reason: 'payment_authorization_ui' },
       { operationId: 'job-transient-payment-authorization', state: 'requires_user_action', reason: 'payment_authorization_ui' },
       { operationId: 'job-transient-payment-authorization', state: 'completed' },
     ];
@@ -179,7 +194,7 @@ describe('installFromAppStore', () => {
       globalThis.setTimeout = originalSetTimeout;
     }
 
-    expect(calls).toEqual(['restart', 'status', 'arm', 'request', 'status', 'status', 'clear']);
+    expect(calls).toEqual(['restart', 'status', 'arm', 'request', 'status', 'status', 'status', 'status', 'status', 'clear']);
   });
 
   test('retries after a temporarily unavailable bridge before purchasing', async () => {
@@ -222,7 +237,7 @@ describe('installFromAppStore', () => {
     });
 
     expect(calls).toEqual(['uninstall', 'restart', 'status', 'arm', 'request', 'status', 'clear']);
-    expect(installRequest).toMatchObject({ action: 'install', adamId: 123, contextMode: 'fallback', versionId: 123456789 });
+    expect(installRequest).toMatchObject({ action: 'install', adamId: 123, appName: 'Example App', verifiedPrice: 0, contextMode: 'fallback', versionId: 123456789 });
     expect(installRequest).not.toHaveProperty('requestId');
     expect(progress).toContain('removing the installed app before the App Store install');
     expect(progress.at(-1)).toBe('install verified: 338.0 build 106000 in 0s');

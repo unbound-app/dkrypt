@@ -15,7 +15,7 @@ import {
   type InstallVerification,
 } from '#idevice.js';
 import { scopedLogger } from '#logger.js';
-import { lookupCurrentVersion, type ItunesLookupResult } from '#scheduler/itunes.js';
+import { lookupAppMetadataByTrackId, lookupCurrentVersion, type ItunesLookupResult } from '#scheduler/itunes.js';
 import { getPrimaryDevice, type DeviceRecord } from '#store/state.js';
 import { BRIDGE_CAPABILITIES, hasBridgeCapabilities } from '#bridgeProtocol.js';
 import { normalizeVersion } from '#util/version.js';
@@ -29,37 +29,23 @@ const APP_STORE_BRIDGE_READY_TIMEOUT_MS = 20_000;
 const APP_STORE_BRIDGE_STATUS_TIMEOUT_MS = 3_000;
 const APP_STORE_BRIDGE_POLL_INTERVAL_MS = 500;
 const APP_STORE_INSTALL_STATUS_POLL_INTERVAL_MS = 5_000;
-const APP_STORE_USER_ACTION_SETTLE_MS = 10_000;
 
-export class AppStoreUserActionRequiredError extends Error {
+class AppStoreAuthorizationTimeoutError extends Error {
   readonly retryable = false;
 
   constructor(message: string) {
     super(message);
-    this.name = 'AppStoreUserActionRequiredError';
+    this.name = 'AppStoreAuthorizationTimeoutError';
   }
 }
 
-function installStatusFailure(status: unknown, operationId: string): Error | undefined {
+function currentInstallStatus(status: unknown, operationId: string): Record<string, unknown> | undefined {
   if (!status || typeof status !== 'object') return undefined;
   const install = (status as Record<string, unknown>).install;
   if (!install || typeof install !== 'object') return undefined;
   const installRecord = install as Record<string, unknown>;
   if (installRecord.operationId !== operationId) return undefined;
-
-  if (installRecord.state === 'requires_user_action') {
-    const detail = installRecord.reason === 'payment_authorization_ui'
-      ? 'Resolve or dismiss the Apple payment authorization prompt on the device.'
-      : 'Resolve the prompt on the device.';
-    return new AppStoreUserActionRequiredError(`App Store requires device action before installation can continue. ${detail} dkrypt did not approve it.`);
-  }
-
-  if (installRecord.state === 'failed') {
-    const detail = typeof installRecord.error === 'string' ? installRecord.error : 'the App Store reported an installation failure';
-    return new Error(`App Store install operation failed: ${detail}`);
-  }
-
-  return undefined;
+  return installRecord;
 }
 
 export function buildAppStoreOperationId(jobId: string, retryCount = 0): string {
@@ -183,6 +169,11 @@ export async function installFromAppStore(bundleId: string, options: AppStoreIns
     : versionId === undefined
       ? normalizeVersion(latestVersion)
       : undefined;
+  const listing = await lookupAppMetadataByTrackId(trackId);
+  ensureNotCancelled();
+  if (listing.bundleId !== bundleId || listing.price !== 0) {
+    throw new Error(`App Store automation requires a verified free listing for ${bundleId}`);
+  }
 
   return withSSH(options.device ?? primaryDevice(), async (conn) => {
     ensureNotCancelled();
@@ -212,7 +203,7 @@ export async function installFromAppStore(bundleId: string, options: AppStoreIns
       ensureNotCancelled();
 
       const operationId = options.operationId ?? randomUUID();
-      const request: Record<string, unknown> = { action: 'install', adamId: trackId, contextMode: 'fallback', operationId };
+      const request: Record<string, unknown> = { action: 'install', adamId: trackId, appName: listing.trackName, verifiedPrice: listing.price, contextMode: 'fallback', operationId };
       if (versionId !== undefined) request.versionId = versionId;
       const installResponse = await sendAppStoreBridgeRequest(conn, request, 20_000, options.signal);
       ensureNotCancelled();
@@ -230,26 +221,23 @@ export async function installFromAppStore(bundleId: string, options: AppStoreIns
       let lastInstallStatusAt = Number.NEGATIVE_INFINITY;
       let lastReportedAt = 0;
       let lastUnexpectedVersion: string | undefined;
-      let userActionFirstSeenAt: number | undefined;
+      let lastInstallState: string | undefined;
+      let authorizationReported = false;
       while (Date.now() < deadline) {
         ensureNotCancelled();
         if (Date.now() - lastInstallStatusAt >= APP_STORE_INSTALL_STATUS_POLL_INTERVAL_MS) {
           lastInstallStatusAt = Date.now();
           const bridgeStatus = await sendAppStoreBridgeRequest(conn, { action: 'status' }, APP_STORE_BRIDGE_STATUS_TIMEOUT_MS, options.signal);
           ensureNotCancelled();
-          const failure = installStatusFailure(bridgeStatus, operationId);
-          if (failure instanceof AppStoreUserActionRequiredError) {
-            userActionFirstSeenAt ??= Date.now();
-            if (Date.now() - userActionFirstSeenAt >= APP_STORE_USER_ACTION_SETTLE_MS) {
-              report(failure.message);
-              throw failure;
-            }
-          } else {
-            userActionFirstSeenAt = undefined;
+          const install = currentInstallStatus(bridgeStatus, operationId);
+          lastInstallState = typeof install?.state === 'string' ? install.state : lastInstallState;
+          if (install?.state === 'failed') {
+            const detail = typeof install.error === 'string' ? install.error : 'the App Store reported an installation failure';
+            throw new Error(`App Store install operation failed: ${detail}`);
           }
-          if (failure && !(failure instanceof AppStoreUserActionRequiredError)) {
-            report(failure.message);
-            throw failure;
+          if ((install?.state === 'authorizing' || install?.state === 'requires_user_action') && !authorizationReported) {
+            authorizationReported = true;
+            report('Autoinstall is confirming the free App Store install');
           }
         }
         const bundlePath = await findInstalledAppStoreBundle(conn, bundleId);
@@ -278,6 +266,12 @@ export async function installFromAppStore(bundleId: string, options: AppStoreIns
       }
       if (lastUnexpectedVersion && targetVersion) {
         throw new Error(`timed out waiting for ${bundleId} version ${targetVersion}; version ${lastUnexpectedVersion} remained installed after ${Math.round(waitTimeoutMs / 1000)}s`);
+      }
+      if (lastInstallState === 'authorizing' || lastInstallState === 'requires_user_action') {
+        throw new AppStoreAuthorizationTimeoutError(`Autoinstall could not complete the free App Store confirmation for ${bundleId} within ${Math.round(waitTimeoutMs / 1000)}s`);
+      }
+      if (lastInstallState === 'completed') {
+        throw new Error(`App Store purchase request completed but ${bundleId} was not installed within ${Math.round(waitTimeoutMs / 1000)}s`);
       }
       throw new Error(`timed out waiting for ${bundleId} to install from the App Store after ${Math.round(waitTimeoutMs / 1000)}s`);
     } finally {
