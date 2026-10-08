@@ -86,7 +86,7 @@
           {#if artifact.archivedAt}<ArchiveRestore class="h-4 w-4" />{:else}<Archive class="h-4 w-4" />{/if}
         </Button>
       {/if}
-      <Button data-list-primary-action variant="ghost" size="sm" onclick={onDetails} aria-label="Artifact details"><FileSearch class="h-3.5 w-3.5" />Details</Button>
+      <Button data-list-primary-action variant="ghost" size="icon" class="h-8 w-8 shrink-0" onclick={onDetails} aria-label="Artifact details" title="Artifact details"><FileSearch class="h-4 w-4" /></Button>
       <a href={artifact.fileUrl} download class="{buttonVariants('secondary', 'sm')} justify-center"><Download class="h-3.5 w-3.5" />Download</a>
     </div>
   </div>
