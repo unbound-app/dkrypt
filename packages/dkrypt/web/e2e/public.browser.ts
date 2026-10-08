@@ -2783,7 +2783,7 @@ test('IPA Library virtualizes loaded rows and opens artifact provenance in the i
   const inspector = page.getByRole('dialog', { name: 'Artifact details' });
   const inspectorPosition = await inspector.evaluate((element) => {
     const bounds = element.getBoundingClientRect();
-    return { left: bounds.left, right: bounds.right, top: bounds.top, viewportWidth: window.innerWidth };
+    return { left: bounds.left, right: bounds.right, top: bounds.top, viewportWidth: document.documentElement.clientWidth };
   });
   expect(inspectorPosition.left).toBeGreaterThan(0);
   expect(inspectorPosition.right).toBeCloseTo(inspectorPosition.viewportWidth, 0);
@@ -2821,7 +2821,7 @@ test('IPA Library virtualizes loaded rows and opens artifact provenance in the i
   await expect(page.getByRole('button', { name: /Resize Artifact details panel/ })).toBeHidden();
   const mobileInspectorPosition = await inspector.evaluate((element) => {
     const bounds = element.getBoundingClientRect();
-    return { left: bounds.left, right: bounds.right, top: bounds.top, bottom: bounds.bottom, viewportWidth: window.innerWidth, viewportHeight: window.innerHeight };
+    return { left: bounds.left, right: bounds.right, top: bounds.top, bottom: bounds.bottom, viewportWidth: document.documentElement.clientWidth, viewportHeight: window.innerHeight };
   });
   expect(mobileInspectorPosition.left).toBe(0);
   expect(mobileInspectorPosition.right).toBeCloseTo(mobileInspectorPosition.viewportWidth, 0);
