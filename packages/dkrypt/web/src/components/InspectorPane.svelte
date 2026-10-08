@@ -70,7 +70,7 @@
   aria-label={title}
   tabindex="-1"
   style={`width: min(${Math.round(widthRatio * 100)}vw, calc(100vw - 20rem))`}
-  class="fixed inset-y-0 right-0 z-50 m-0 max-h-none max-w-none border-0 border-l border-border bg-card p-0 text-card-foreground shadow-2xl max-lg:inset-x-0 max-lg:inset-y-auto max-lg:bottom-0 max-lg:h-[85dvh] max-lg:!w-full max-lg:rounded-t-2xl max-lg:border-l-0 max-lg:border-t"
+  class="fixed inset-y-0 right-0 left-auto z-50 m-0 h-dvh max-h-none max-w-none border-0 border-l border-border bg-card p-0 text-card-foreground shadow-2xl max-lg:inset-x-0 max-lg:inset-y-auto max-lg:bottom-0 max-lg:h-[85dvh] max-lg:!w-full max-lg:rounded-t-2xl max-lg:border-l-0 max-lg:border-t"
 >
 		<button type="button" aria-label={`Resize ${title} panel, ${Math.round(widthRatio * 100)} percent wide. Use left and right arrow keys.`} class="absolute inset-y-0 left-0 hidden w-2 -translate-x-1/2 cursor-col-resize touch-none focus-visible:bg-primary/30 lg:block" onpointerdown={startResize} onkeydown={resizeWithKeyboard}></button>
   <div class="h-full overflow-y-auto p-5 sm:p-7">

@@ -1016,7 +1016,7 @@
 				>
 			{/if}
 			{#if outcome.observedVersion}
-				<span class="text-muted">v{outcome.observedVersion} · {outcome.installMode === "pinned" ? "pinned" : "current install"}</span>
+				<span class="text-muted">v{outcome.observedVersion}</span>
 			{/if}
 		</div>
 		{#if outcome.failureSummary}

@@ -2780,6 +2780,15 @@ test('IPA Library virtualizes loaded rows and opens artifact provenance in the i
   await expect(page.getByText(sha256, { exact: true })).not.toBeVisible();
 
   await details.click();
+  const inspector = page.getByRole('dialog', { name: 'Artifact details' });
+  const inspectorPosition = await inspector.evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    return { left: bounds.left, right: bounds.right, top: bounds.top, viewportWidth: window.innerWidth };
+  });
+  expect(inspectorPosition.left).toBeGreaterThan(0);
+  expect(inspectorPosition.right).toBeCloseTo(inspectorPosition.viewportWidth, 0);
+  expect(inspectorPosition.top).toBe(0);
+  expect(await details.evaluate((button) => button.parentElement === button.closest('[data-artifact-id]')?.querySelector('a[download]')?.parentElement)).toBe(true);
   await expect.poll(() => new URL(page.url()).searchParams.get('artifact')).toBe('artifact-0');
   const detailUrl = new URL(page.url());
   expect(detailUrl.searchParams.get('projectId')).toBe('default');
@@ -2810,6 +2819,14 @@ test('IPA Library virtualizes loaded rows and opens artifact provenance in the i
   await expect(page.getByRole('button', { name: /Resize Artifact details panel, 62 percent wide/ })).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.getByRole('button', { name: /Resize Artifact details panel/ })).toBeHidden();
+  const mobileInspectorPosition = await inspector.evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    return { left: bounds.left, right: bounds.right, top: bounds.top, bottom: bounds.bottom, viewportWidth: window.innerWidth, viewportHeight: window.innerHeight };
+  });
+  expect(mobileInspectorPosition.left).toBe(0);
+  expect(mobileInspectorPosition.right).toBeCloseTo(mobileInspectorPosition.viewportWidth, 0);
+  expect(mobileInspectorPosition.top).toBeGreaterThan(0);
+  expect(mobileInspectorPosition.bottom).toBeCloseTo(mobileInspectorPosition.viewportHeight, 0);
   const restoredUrl = new URL(page.url());
   expect(restoredUrl.searchParams.get('aq')).toBe('provenance');
   expect(restoredUrl.searchParams.get('asource')).toBe('appstore');
