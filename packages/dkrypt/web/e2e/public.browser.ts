@@ -485,8 +485,8 @@ test('IPA Library visual layout stays consistent on desktop and mobile', async (
           projectIds: ['default'],
           bundleId: 'com.example.visual',
           channel: 'appstore',
-          versionLabel: '2.4.0',
-          buildNumber: '240',
+          versionLabel: '348.0',
+          buildNumber: '113691',
           fileSizeBytes: 104857600,
           sha256: 'a'.repeat(64),
           createdAt: '2026-09-25T12:00:00.000Z',
@@ -509,9 +509,26 @@ test('IPA Library visual layout stays consistent on desktop and mobile', async (
   await artifactResponse;
   const libraryCard = page.locator('[data-slot="card"]').filter({ hasText: 'IPA Library' });
   await expect(page.getByText('Visual App', { exact: true })).toBeVisible();
+  const artifactRow = libraryCard.locator('[data-artifact-id="visual-artifact"]');
+  await expect(artifactRow.locator('dd > span.truncate.font-semibold')).toHaveText('348.0 (113691)');
+  const metadataRows = await artifactRow.locator('dt').evaluateAll((headings) => Object.fromEntries(headings.map((heading) => [heading.textContent?.trim(), heading.getBoundingClientRect().top])));
+  expect(metadataRows.Size).toBe(metadataRows.App);
   await expectVisualSnapshot(page, libraryCard, 'ipa-library-desktop.png');
 
+  for (const width of [1200, 1652]) {
+    await page.setViewportSize({ width, height: 1000 });
+    const rows = await artifactRow.locator('dt').evaluateAll((headings) => Object.fromEntries(headings.map((heading) => [heading.textContent?.trim(), heading.getBoundingClientRect().top])));
+    expect(rows.Size, `viewport ${width}`).toBe(rows.App);
+    const versionIsVisible = await artifactRow.locator('dd > span.truncate.font-semibold').evaluate((element) => element.scrollWidth <= element.clientWidth);
+    expect(versionIsVisible, `viewport ${width}`).toBe(true);
+    if (width === 1200) await expectVisualSnapshot(page, libraryCard, 'ipa-library-narrow-desktop.png');
+  }
+
   await page.setViewportSize({ width: 390, height: 844 });
+  const mobileRows = await artifactRow.locator('dt').evaluateAll((headings) => Object.fromEntries(headings.map((heading) => [heading.textContent?.trim(), heading.getBoundingClientRect().top])));
+  expect(mobileRows.Size).toBe(mobileRows.Version);
+  const mobileVersionIsVisible = await artifactRow.locator('dd > span.truncate.font-semibold').evaluate((element) => element.scrollWidth <= element.clientWidth);
+  expect(mobileVersionIsVisible).toBe(true);
   await expectVisualSnapshot(page, libraryCard, 'ipa-library-mobile.png');
 });
 

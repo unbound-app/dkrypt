@@ -46,13 +46,13 @@
   });
 </script>
 
-<article data-artifact-id={artifact.id} class={listView ? 'grid gap-y-2.5 px-3.5 py-3 first:pt-3 last:pb-3 sm:px-4' : 'grid gap-3 rounded-xl border border-border/70 bg-background/50 p-4'}>
-  <div class={canSelect ? 'grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-2 sm:grid-cols-[auto_minmax(0,1fr)_auto]' : 'grid min-w-0 grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-2'}>
+<article data-artifact-id={artifact.id} class="artifact-library-row {listView ? 'grid gap-y-2.5 px-3.5 py-3 first:pt-3 last:pb-3 sm:px-4' : 'grid gap-3 rounded-xl border border-border/70 bg-background/50 p-4'}">
+  <div class="artifact-library-row-content {canSelect ? 'grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-2 sm:grid-cols-[auto_minmax(0,1fr)_auto]' : 'grid min-w-0 grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-2'}" class:has-selection={canSelect}>
     {#if canSelect}
       <input type="checkbox" class="accent-accent col-start-1 row-start-1 mt-1 size-4 shrink-0 rounded border-border" checked={selected} disabled={selectionDisabled} onchange={(event) => onSelection(event.currentTarget.checked)} aria-label="Select {appDisplayName(artifact.bundleId)} {artifactVersion}" />
     {/if}
     <div class={canSelect ? 'col-start-2 row-start-1 min-w-0' : 'col-start-1 row-start-1 min-w-0'}>
-      <dl class="grid min-w-0 gap-x-2 gap-y-2 text-xs" style="grid-template-columns: repeat(auto-fit, minmax(min(100%, 6rem), 1fr))">
+      <dl class="artifact-library-row-metadata grid min-w-0 gap-x-2 gap-y-2 text-xs" class:five-columns={columns.length === 5}>
         {#each columns as column (column)}
           <div class="min-w-0">
             <dt class="text-muted text-[10px] font-semibold tracking-[0.08em] uppercase">{column === 'app' ? 'App' : column === 'bundleId' ? 'Bundle ID' : column === 'version' ? 'Version' : column === 'source' ? 'Source' : column === 'size' ? 'Size' : 'Added'}</dt>
@@ -77,7 +77,7 @@
         {/each}
       </dl>
     </div>
-    <div class={canSelect ? 'col-start-2 row-start-2 flex min-w-0 items-center justify-end gap-1 sm:col-start-3 sm:row-start-1' : 'col-start-2 row-start-2 flex min-w-0 items-center justify-end gap-1 sm:row-start-1'}>
+    <div class="artifact-library-row-actions {canSelect ? 'col-start-2 row-start-2 flex min-w-0 items-center justify-end gap-1 sm:col-start-3 sm:row-start-1' : 'col-start-2 row-start-2 flex min-w-0 items-center justify-end gap-1 sm:row-start-1'}">
       {#if canManageStorage}
         <Button variant="ghost" size="icon" class="h-8 w-8 shrink-0" disabled={updating} onclick={onPin} aria-label={artifact.pinnedAt ? `Unpin ${artifact.bundleId}` : `Pin ${artifact.bundleId}`} title={artifact.pinnedAt ? 'Unpin artifact' : 'Keep artifact from automatic eviction'}>
           {#if artifact.pinnedAt}<PinOff class="h-4 w-4" />{:else}<Pin class="h-4 w-4" />{/if}
@@ -91,3 +91,57 @@
     </div>
   </div>
 </article>
+
+<style>
+  .artifact-library-row {
+    container-type: inline-size;
+  }
+
+  .artifact-library-row-metadata {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 6rem), 1fr));
+  }
+
+  @container (max-width: 800px) {
+    .artifact-library-row-content.has-selection {
+      grid-template-columns: auto minmax(0, 1fr);
+    }
+
+    .artifact-library-row-content:not(.has-selection) {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .artifact-library-row-actions {
+      grid-column: -2 / -1;
+      grid-row: 2;
+    }
+  }
+
+  @container (min-width: 430px) and (max-width: 580px) {
+    .artifact-library-row-metadata.five-columns {
+      grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 0.9fr) minmax(0, 0.8fr);
+    }
+  }
+
+  @container (max-width: 429px) {
+    .artifact-library-row-metadata.five-columns {
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+      column-gap: 0;
+    }
+
+    .artifact-library-row-metadata.five-columns > :nth-child(-n + 2) {
+      grid-column: span 6;
+    }
+
+    .artifact-library-row-metadata.five-columns > :nth-child(3) {
+      grid-column: span 5;
+    }
+
+    .artifact-library-row-metadata.five-columns > :nth-child(4) {
+      grid-column: span 4;
+    }
+
+    .artifact-library-row-metadata.five-columns > :nth-child(5) {
+      grid-column: span 3;
+    }
+  }
+</style>
