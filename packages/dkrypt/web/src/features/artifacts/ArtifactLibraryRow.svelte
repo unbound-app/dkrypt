@@ -101,7 +101,7 @@
     grid-template-columns: repeat(auto-fit, minmax(min(100%, 6rem), 1fr));
   }
 
-  @container (max-width: 699px) {
+  @container (max-width: 679px) {
     .artifact-library-row-content.has-selection {
       grid-template-columns: auto minmax(0, 1fr);
     }
@@ -116,7 +116,7 @@
     }
   }
 
-  @container (min-width: 700px) and (max-width: 800px) {
+  @container (min-width: 680px) and (max-width: 800px) {
     .artifact-library-row-metadata.five-columns {
       grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 0.9fr) minmax(0, 0.8fr);
     }

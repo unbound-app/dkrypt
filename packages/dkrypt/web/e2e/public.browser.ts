@@ -517,6 +517,11 @@ test('IPA Library visual layout stays consistent on desktop and mobile', async (
   expect(actionsTop).toBeLessThan(metadataRows.App + 35);
   await expectVisualSnapshot(page, libraryCard, 'ipa-library-desktop.png');
 
+  const boundaryStyle = await page.addStyleTag({ content: '[data-artifact-id="visual-artifact"] { width: calc(100% - 2px); }' });
+  const boundaryActionsTop = await artifactRow.locator('.artifact-library-row-actions').evaluate((element) => element.getBoundingClientRect().top);
+  expect(boundaryActionsTop).toBeLessThan(metadataRows.App + 35);
+  await boundaryStyle.evaluate((element) => element.remove());
+
   for (const width of [1200, 1652]) {
     await page.setViewportSize({ width, height: 1000 });
     const rows = await artifactRow.locator('dt').evaluateAll((headings) => Object.fromEntries(headings.map((heading) => [heading.textContent?.trim(), heading.getBoundingClientRect().top])));
