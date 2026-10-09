@@ -513,12 +513,16 @@ test('IPA Library visual layout stays consistent on desktop and mobile', async (
   await expect(artifactRow.locator('dd > span.truncate.font-semibold')).toHaveText('348.0 (113691)');
   const metadataRows = await artifactRow.locator('dt').evaluateAll((headings) => Object.fromEntries(headings.map((heading) => [heading.textContent?.trim(), heading.getBoundingClientRect().top])));
   expect(metadataRows.Size).toBe(metadataRows.App);
+  const actionsTop = await artifactRow.locator('.artifact-library-row-actions').evaluate((element) => element.getBoundingClientRect().top);
+  expect(actionsTop).toBeLessThan(metadataRows.App + 35);
   await expectVisualSnapshot(page, libraryCard, 'ipa-library-desktop.png');
 
   for (const width of [1200, 1652]) {
     await page.setViewportSize({ width, height: 1000 });
     const rows = await artifactRow.locator('dt').evaluateAll((headings) => Object.fromEntries(headings.map((heading) => [heading.textContent?.trim(), heading.getBoundingClientRect().top])));
     expect(rows.Size, `viewport ${width}`).toBe(rows.App);
+    const rowActionsTop = await artifactRow.locator('.artifact-library-row-actions').evaluate((element) => element.getBoundingClientRect().top);
+    expect(rowActionsTop, `viewport ${width}`).toBeLessThan(rows.App + 35);
     const versionIsVisible = await artifactRow.locator('dd > span.truncate.font-semibold').evaluate((element) => element.scrollWidth <= element.clientWidth);
     expect(versionIsVisible, `viewport ${width}`).toBe(true);
     if (width === 1200) await expectVisualSnapshot(page, libraryCard, 'ipa-library-narrow-desktop.png');
@@ -2176,18 +2180,20 @@ test('status panel handles an unavailable job volume response without an unhandl
   expect((await volumeResponse).status()).toBe(200);
   expect(volumeRequests).toBe(1);
   await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 0)));
-  await expect(page.getByText('Decrypt activity unavailable').first()).toBeVisible();
+  await page.getByRole('button', { name: 'Open status drawer' }).click();
+  const statusDrawer = page.getByRole('complementary', { name: 'Status drawer' });
+  await expect(statusDrawer.getByText('Decrypt activity unavailable')).toBeVisible();
 
   const failedRetry = page.waitForResponse((response) => new URL(response.url()).pathname === '/v1/dashboard/jobs/volume');
-  await page.getByRole('button', { name: 'Retry decrypt history' }).first().click();
+  await statusDrawer.getByRole('button', { name: 'Retry decrypt history' }).click();
   expect((await failedRetry).status()).toBe(503);
   expect(volumeRequests).toBe(2);
-  await expect(page.getByText('Decrypt activity unavailable').first()).toBeVisible();
+  await expect(statusDrawer.getByText('Decrypt activity unavailable')).toBeVisible();
 
   const recoveredRetry = page.waitForResponse((response) => new URL(response.url()).pathname === '/v1/dashboard/jobs/volume');
-  await page.getByRole('button', { name: 'Retry decrypt history' }).first().click();
+  await statusDrawer.getByRole('button', { name: 'Retry decrypt history' }).click();
   expect((await recoveredRetry).status()).toBe(200);
-  await expect(page.getByText('3 decrypts · last 14 days').first()).toBeVisible();
+  await expect(statusDrawer.getByText('3 decrypts · last 14 days')).toBeVisible();
   expect(volumeRequests).toBe(3);
 
   const failures = await page.evaluate(() => (window as typeof window & { jobVolumeRejections: string[] }).jobVolumeRejections);

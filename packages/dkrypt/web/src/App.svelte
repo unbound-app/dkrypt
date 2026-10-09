@@ -1161,7 +1161,7 @@ initDensity();
 			<UpdateAvailableBanner />
 			<SetupBanner />
 			<div
-				class={tabState.active === "docs" ? "grid grid-cols-1 items-start" : "grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_340px] lg:gap-5"}
+				class={tabState.active === "docs" ? "grid grid-cols-1 items-start" : "grid grid-cols-1 items-start gap-4 min-[1440px]:grid-cols-[minmax(0,1fr)_340px] min-[1440px]:gap-5"}
 			>
 				<div class="workspace-content min-w-0">
 					{#if mountedTabs.home}
@@ -1201,7 +1201,7 @@ initDensity();
 					{/if}
 				</div>
 				{#if tabState.active !== "docs"}
-					<div class="hidden min-w-0 flex-col gap-4 lg:sticky lg:top-6 lg:flex">
+					<div class="hidden min-w-0 flex-col gap-4 min-[1440px]:sticky min-[1440px]:top-6 min-[1440px]:flex">
 						<StatusPanel />
 					</div>
 				{/if}
@@ -1210,7 +1210,7 @@ initDensity();
 		<Button
 			variant="outline"
 			size="icon"
-			class="fixed top-1/2 right-0 z-40 h-20 w-8 -translate-y-1/2 rounded-l-lg rounded-r-none lg:hidden"
+			class="fixed top-1/2 right-0 z-40 h-20 w-8 -translate-y-1/2 rounded-l-lg rounded-r-none min-[1440px]:hidden"
 			onclick={() => (mobileStatusOpen = true)}
 			aria-label="Open status drawer"
 		>
@@ -1220,14 +1220,14 @@ initDensity();
 			<Button
 				variant="ghost"
 				type="button"
-				class="fixed inset-0 z-40 h-auto w-auto rounded-none bg-black/35 p-0 hover:bg-black/35 lg:hidden"
+			class="fixed inset-0 z-40 h-auto w-auto rounded-none bg-black/35 p-0 hover:bg-black/35 min-[1440px]:hidden"
 				onclick={() => (mobileStatusOpen = false)}
 				aria-label="Close status drawer"
 			></Button>
 		{/if}
 		<aside
 			class={cn(
-				"fixed top-0 right-0 z-50 h-[100dvh] w-[min(24rem,calc(100vw-1.5rem))] overflow-y-auto border-l border-border bg-panel p-3 pt-[max(0.75rem,env(safe-area-inset-top))] shadow-2xl transition-transform duration-200 lg:hidden",
+				"fixed top-0 right-0 z-50 h-[100dvh] w-[min(24rem,calc(100vw-1.5rem))] overflow-y-auto border-l border-border bg-panel p-3 pt-[max(0.75rem,env(safe-area-inset-top))] shadow-2xl transition-transform duration-200 min-[1440px]:hidden",
 				mobileStatusOpen ? "translate-x-0" : "translate-x-full",
 			)}
 			aria-label="Status drawer"
